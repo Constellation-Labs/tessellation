@@ -1,0 +1,6 @@
+.idea
+target/
+.DS_STORE
+.metals/
+.bloop/
+project/metals.sbt
