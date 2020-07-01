@@ -14,7 +14,7 @@ import org.scalacheck.Arbitrary.arbitrary
 import org.scalacheck.Prop._
 
 
-final class TransDemo extends Properties("TransDemo") {
+object TransverseTest extends Properties("TransDemo") {
   import TransDemo._
 
   import higherkindness.droste.Embed.drosteBasisForFix
