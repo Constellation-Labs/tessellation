@@ -1,77 +1,60 @@
 package org.tesselation
 
-import cats.{Applicative, Traverse}
 import cats.data.NonEmptyList
-import cats.implicits._
-import higherkindness.droste.data.Fix
-import higherkindness.droste.data.list.{ConsF, ListF, NilF}
-import higherkindness.droste.{Trans, TransM, scheme}
-import higherkindness.droste.util.DefaultTraverse
-import org.scalacheck.Prop.forAll
-import org.scalacheck.{Arbitrary, Properties}
-import org.scalacheck.Arbitrary.arbitrary
-import org.scalacheck.Prop._
-import org.tessellation.schema.{Cell, Cocell, Hom}
+import higherkindness.droste.Embed.drosteBasisForFix
+import higherkindness.droste.data.list.{ListF, NilF}
+import higherkindness.droste.data.{Fix, Mu, Nu}
+import higherkindness.droste.scheme
+import org.scalacheck.Prop.{forAll, _}
+import org.scalacheck.Properties
+import org.tessellation.schema.Hom._
+import org.tessellation.schema.MutuallyRecursive._
+import org.tessellation.schema.{Cocell, Context, Hom}
 
 
-object TransverseTest extends Properties("TransDemo") {
-  import MutuallyRecursive._
+object TransverseTest extends Properties("TransverseTest") {
+  property("empty list to Hom fails") =
+    toHomF(Fix[ListF[Int, ?]](NilF)) ?= None
 
-  import higherkindness.droste.Embed.drosteBasisForFix
-
-  property("empty list to NelF fails") =
-    toNelF(Fix[ListF[Int, ?]](NilF)) ?= None
-
-  property("round trip NelF") = {
+  property("round trip Nil") = {
     forAll { (nel: NonEmptyList[Int]) =>
       val listF = ListF.fromScalaList(nel.toList)(drosteBasisForFix)
-      toNelF(listF).map(fromNelF) ?= Some(listF)
+      toHomF(listF).map(fromHomF) ?= Some(listF)
     }
   }
 
-}
+  property("Fix Hom -> List") = {
+    val fixed: Fix[Hom[Int, ?]] =
+      Fix(Cocell(1,
+        Fix(Cocell(2,
+          Fix(Cocell(3,
+            Fix(Context: Hom[Int, Fix[Hom[Int, ?]]])))))))
 
-object MutuallyRecursive {
-  import higherkindness.droste.Project._
-
-  implicit def drosteTraverseForNeListF[A]: Traverse[Hom[A, ?]] =
-    new DefaultTraverse[Hom[A, ?]] {
-
-      def traverse[F[_]: Applicative, B, C](fb: Hom[A, B])(f: B => F[C]): F[Hom[A, C]] =
-        fb match {
-          case Cocell(head, tail) => f(tail).map(Cocell(head, _))
-          case Cell(value)      => (Cell(value): Hom[A, C]).pure[F]
-        }
-    }
-
-  // converting a list to a non-empty list can fail, so we use TransM
-  def transListToNeList[A]: TransM[Option, ListF[A, ?], Hom[A, ?], Fix[ListF[A, ?]]] = TransM {
-    case ConsF(head, tail) =>
-      Fix.un(tail) match {
-        case NilF => Cell(head).some
-        case _    => Cocell(head, tail).some
-      }
-    case NilF => None
+    Hom.toScalaList(fixed) ?= 1 :: 2 :: 3 :: Nil
   }
 
-  def toNelF[A]: Fix[ListF[A, ?]] => Option[Fix[Hom[A, ?]]] =
-    scheme.anaM(transListToNeList[A].coalgebra)
+  property("Mu Hom -> List") = {
+    val mu: Mu[Hom[Int, ?]] =
+      Mu(Cocell(1,
+        Mu(Cocell(2,
+          Mu(Cocell(3,
+            Mu(Context: Hom[Int, Mu[Hom[Int, ?]]])))))))
 
-  // converting a non-empty list to a list can't fail, so we use Trans
-  def transNeListToList[A]: Trans[Hom[A, ?], ListF[A, ?], Fix[ListF[A, ?]]] = Trans {
-    case Cocell(head, tail) => ConsF(head, tail)
-    case Cell(last)       => ConsF(last, Fix[ListF[A, ?]](NilF))
+    Hom.toScalaList(mu) ?= 1 :: 2 :: 3 :: Nil
   }
 
-  def fromNelF[A]: Fix[Hom[A, ?]] => Fix[ListF[A, ?]] =
-    scheme.cata(transNeListToList[A].algebra)
+  property("Nu Hom -> List") = {
+    val nu: Nu[Hom[Int, ?]] =
+      Nu(Cocell(1,
+        Nu(Cocell(2,
+          Nu(Cocell(3,
+            Nu(Context: Hom[Int, Nu[Hom[Int, ?]]])))))))
 
-  // misc
+    Hom.toScalaList(nu) ?= 1 :: 2 :: 3 :: Nil
+  }
 
-  implicit def arbitraryNEL[A: Arbitrary]: Arbitrary[NonEmptyList[A]] =
-    Arbitrary(for {
-      head <- arbitrary[A]
-      tail <- arbitrary[List[A]]
-    } yield NonEmptyList.of(head, tail: _*))
-
+  property("rountrip Hom") = {
+    val f = scheme.hylo(Hom.toScalaListAlgebra[String], Hom.fromScalaListCoalgebra[String])
+    forAll((list: List[String]) => f(list) ?= list)
+  }
 }
