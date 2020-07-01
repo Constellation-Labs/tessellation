@@ -7,15 +7,15 @@ import higherkindness.droste.data.Fix
 import higherkindness.droste.data.list.{ConsF, ListF, NilF}
 import higherkindness.droste.{Trans, TransM, scheme}
 import higherkindness.droste.util.DefaultTraverse
-import org.scalacheck.Arbitrary.arbitrary
 import org.scalacheck.Prop.forAll
 import org.scalacheck.{Arbitrary, Properties}
 import org.scalacheck.Arbitrary.arbitrary
 import org.scalacheck.Prop._
+import org.tessellation.schema.{Cell, Cocell, Hom}
 
 
 object TransverseTest extends Properties("TransDemo") {
-  import TransDemo._
+  import MutuallyRecursive._
 
   import higherkindness.droste.Embed.drosteBasisForFix
 
@@ -31,46 +31,39 @@ object TransverseTest extends Properties("TransDemo") {
 
 }
 
-object TransDemo {
-
-  // non empty variant of ListF
-
-  sealed trait NeListF[A, B]
-  final case class NeLastF[A, B](value: A) extends NeListF[A, B]
-  final case class NeConsF[A, B](head: A, tail: B) extends NeListF[A, B]
-
+object MutuallyRecursive {
   import higherkindness.droste.Project._
 
-  implicit def drosteTraverseForNeListF[A]: Traverse[NeListF[A, ?]] =
-    new DefaultTraverse[NeListF[A, ?]] {
+  implicit def drosteTraverseForNeListF[A]: Traverse[Hom[A, ?]] =
+    new DefaultTraverse[Hom[A, ?]] {
 
-      def traverse[F[_]: Applicative, B, C](fb: NeListF[A, B])(f: B => F[C]): F[NeListF[A, C]] =
+      def traverse[F[_]: Applicative, B, C](fb: Hom[A, B])(f: B => F[C]): F[Hom[A, C]] =
         fb match {
-          case NeConsF(head, tail) => f(tail).map(NeConsF(head, _))
-          case NeLastF(value)      => (NeLastF(value): NeListF[A, C]).pure[F]
+          case Cocell(head, tail) => f(tail).map(Cocell(head, _))
+          case Cell(value)      => (Cell(value): Hom[A, C]).pure[F]
         }
     }
 
   // converting a list to a non-empty list can fail, so we use TransM
-  def transListToNeList[A]: TransM[Option, ListF[A, ?], NeListF[A, ?], Fix[ListF[A, ?]]] = TransM {
+  def transListToNeList[A]: TransM[Option, ListF[A, ?], Hom[A, ?], Fix[ListF[A, ?]]] = TransM {
     case ConsF(head, tail) =>
       Fix.un(tail) match {
-        case NilF => NeLastF(head).some
-        case _    => NeConsF(head, tail).some
+        case NilF => Cell(head).some
+        case _    => Cocell(head, tail).some
       }
     case NilF => None
   }
 
-  def toNelF[A]: Fix[ListF[A, ?]] => Option[Fix[NeListF[A, ?]]] =
+  def toNelF[A]: Fix[ListF[A, ?]] => Option[Fix[Hom[A, ?]]] =
     scheme.anaM(transListToNeList[A].coalgebra)
 
   // converting a non-empty list to a list can't fail, so we use Trans
-  def transNeListToList[A]: Trans[NeListF[A, ?], ListF[A, ?], Fix[ListF[A, ?]]] = Trans {
-    case NeConsF(head, tail) => ConsF(head, tail)
-    case NeLastF(last)       => ConsF(last, Fix[ListF[A, ?]](NilF))
+  def transNeListToList[A]: Trans[Hom[A, ?], ListF[A, ?], Fix[ListF[A, ?]]] = Trans {
+    case Cocell(head, tail) => ConsF(head, tail)
+    case Cell(last)       => ConsF(last, Fix[ListF[A, ?]](NilF))
   }
 
-  def fromNelF[A]: Fix[NeListF[A, ?]] => Fix[ListF[A, ?]] =
+  def fromNelF[A]: Fix[Hom[A, ?]] => Fix[ListF[A, ?]] =
     scheme.cata(transNeListToList[A].algebra)
 
   // misc
