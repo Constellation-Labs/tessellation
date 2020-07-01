@@ -17,7 +17,16 @@ lazy val dependencies = Seq(
   ("org.typelevel" %% "cats-effect" % "2.0.0").withSources().withJavadoc(),
 )
 
-libraryDependencies ++= dependencies
+lazy val testDependencies = Seq(
+  "org.scalacheck" %% "scalacheck" % "1.14.0",
+  "org.scalatest" %% "scalatest" % "3.0.8",
+  "org.scalactic" %% "scalactic" % "3.0.8",
+  "org.scalamock" %% "scalamock" % "4.4.0",
+  "org.mockito" %% "mockito-scala" % "1.5.16",
+  "org.mockito" %% "mockito-scala-cats" % "1.5.16",
+).map(_ % "test")
+
+libraryDependencies ++= dependencies ++ testDependencies
 
 // scalac options come from the sbt-tpolecat plugin so need to set any here
 
