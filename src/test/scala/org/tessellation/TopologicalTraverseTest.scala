@@ -1,4 +1,4 @@
-package org.tesselation
+package org.tessellation
 
 import cats.effect.IO
 import cats.implicits._

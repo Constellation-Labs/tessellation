@@ -1,4 +1,4 @@
-package org.tesselation
+package org.tessellation
 
 import cats.data.NonEmptyList
 import higherkindness.droste.Embed.drosteBasisForFix
