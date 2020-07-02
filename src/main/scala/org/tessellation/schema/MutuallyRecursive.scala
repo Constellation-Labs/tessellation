@@ -9,7 +9,7 @@ import org.scalacheck.Arbitrary
 import org.scalacheck.Arbitrary.arbitrary
 
 object MutuallyRecursive {
-  def transListToHom[A]: TransM[Option, ListF[A, ?], Hom[A, ?], Fix[ListF[A, ?]]] = TransM {
+  def transListToHom[A]: TransM[Option, ListF[A, *], Hom[A, *], Fix[ListF[A, *]]] = TransM {
     case ConsF(head, tail) =>
       Fix.un(tail) match {
         case NilF => Cell(head).some
@@ -18,15 +18,15 @@ object MutuallyRecursive {
     case NilF => None
   }
 
-  def toHomF[A]: Fix[ListF[A, ?]] => Option[Fix[Hom[A, ?]]] =
+  def toHomF[A]: Fix[ListF[A, *]] => Option[Fix[Hom[A, *]]] =
     scheme.anaM(transListToHom[A].coalgebra)
 
-  def transHomToList[A]: Trans[Hom[A, ?], ListF[A, ?], Fix[ListF[A, ?]]] = Trans {
+  def transHomToList[A]: Trans[Hom[A, *], ListF[A, *], Fix[ListF[A, *]]] = Trans {
     case Cocell(head, tail) => ConsF(head, tail)
-    case Cell(last) => ConsF(last, Fix[ListF[A, ?]](NilF))
+    case Cell(last) => ConsF(last, Fix[ListF[A, *]](NilF))
   }
 
-  def fromHomF[A]: Fix[Hom[A, ?]] => Fix[ListF[A, ?]] =
+  def fromHomF[A]: Fix[Hom[A, *]] => Fix[ListF[A, *]] =
     scheme.cata(transHomToList[A].algebra)
 
   implicit def arbitraryHOM[A: Arbitrary]: Arbitrary[NonEmptyList[A]] =

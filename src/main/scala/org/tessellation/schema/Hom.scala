@@ -33,8 +33,8 @@ case class Cocell[A, B](value: A, stateTransitionEval: B) extends Hom[A, B]
 case object Context extends Hom[Nothing, Nothing]
 
 object Hom {
-  implicit def drosteTraverseForHom[A]: Traverse[Hom[A, ?]] =
-    new DefaultTraverse[Hom[A, ?]] {
+  implicit def drosteTraverseForHom[A]: Traverse[Hom[A, *]] =
+    new DefaultTraverse[Hom[A, *]] {
       def traverse[F[_] : Applicative, B, C](fb: Hom[A, B])(f: B => F[C]): F[Hom[A, C]] =
         fb match {
           case Cocell(head, tail) => f(tail).map(Cocell(head, _))
@@ -43,36 +43,35 @@ object Hom {
         }
     }
 
-  def toScalaList[A, PatR[_[_]]](list: PatR[Hom[A, ?]])(
-    implicit ev: Project[Hom[A, ?], PatR[Hom[A, ?]]]
+  def toScalaList[A, PatR[_[_]]](list: PatR[Hom[A, *]])(
+    implicit ev: Project[Hom[A, *], PatR[Hom[A, *]]]
   ): List[A] =
     scheme.cata(toScalaListAlgebra[A]).apply(list)
 
-  def toScalaListAlgebra[A]: Algebra[Hom[A, ?], List[A]] = Algebra {
+  def toScalaListAlgebra[A]: Algebra[Hom[A, *], List[A]] = Algebra {
     case Cocell(head, tail) => head :: tail
     case Cell(thing) => thing :: Nil
     case Context => Nil
   }
 
   def fromScalaList[A, PatR[_[_]]](list: List[A])(
-    implicit ev: Embed[Hom[A, ?], PatR[Hom[A, ?]]]
-  ): PatR[Hom[A, ?]] =
+    implicit ev: Embed[Hom[A, *], PatR[Hom[A, *]]]
+  ): PatR[Hom[A, *]] =
     scheme.ana(fromScalaListCoalgebra[A]).apply(list)
 
-  def fromScalaListCoalgebra[A]: Coalgebra[Hom[A, ?], List[A]] = Coalgebra {
+  def fromScalaListCoalgebra[A]: Coalgebra[Hom[A, *], List[A]] = Coalgebra {
     case head :: Nil => Cell(head)
     case head :: tail => Cocell(head, tail)
     case Nil => Context
   }
 
-  implicit def basisHomMonoid[T, A](
-                                     implicit T: Basis[Hom[A, ?], T]): Monoid[T] =
+  implicit def basisHomMonoid[T, A](implicit T: Basis[Hom[A, *], T]): Monoid[T] =
     new Monoid[T] {
       def empty = T.algebra(Context)
 
       def combine(f1: T, f2: T): T = {
         scheme
-          .cata(Algebra[Hom[A, ?], T] {
+          .cata(Algebra[Hom[A, *], T] {
             case Context => f2
             case cons => T.algebra(cons)
           })
@@ -83,8 +82,8 @@ object Hom {
   import cats.~>
   import syntax.compose._
 
-  implicit def drosteDelayEqHom[A](implicit eh: Eq[A]): Delay[Eq, Hom[A, ?]] =
-    λ[Eq ~> (Eq ∘ Hom[A, ?])#λ](et =>
+  implicit def drosteDelayEqHom[A](implicit eh: Eq[A]): Delay[Eq, Hom[A, *]] =
+    λ[Eq ~> (Eq ∘ Hom[A, *])#λ](et =>
       Eq.instance((x, y) =>
         x match {
           case Cocell(hx, tx) =>
