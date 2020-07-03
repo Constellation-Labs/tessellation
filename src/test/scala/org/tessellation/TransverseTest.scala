@@ -28,7 +28,7 @@ object TransverseTest extends Properties("TransverseTest") {
       Fix(Cocell(1,
         Fix(Cocell(2,
           Fix(Cocell(3,
-            Fix(Context: Hom[Int, Fix[Hom[Int, *]]])))))))
+            Fix(Context(): Hom[Int, Fix[Hom[Int, *]]])))))))
 
     Hom.toScalaList(fixed) ?= 1 :: 2 :: 3 :: Nil
   }
@@ -38,7 +38,7 @@ object TransverseTest extends Properties("TransverseTest") {
       Mu(Cocell(1,
         Mu(Cocell(2,
           Mu(Cocell(3,
-            Mu(Context: Hom[Int, Mu[Hom[Int, *]]])))))))
+            Mu(Context(): Hom[Int, Mu[Hom[Int, *]]])))))))
 
     Hom.toScalaList(mu) ?= 1 :: 2 :: 3 :: Nil
   }
@@ -48,7 +48,7 @@ object TransverseTest extends Properties("TransverseTest") {
       Nu(Cocell(1,
         Nu(Cocell(2,
           Nu(Cocell(3,
-            Nu(Context: Hom[Int, Nu[Hom[Int, *]]])))))))
+            Nu(Context(): Hom[Int, Nu[Hom[Int, *]]])))))))
 
     Hom.toScalaList(nu) ?= 1 :: 2 :: 3 :: Nil
   }

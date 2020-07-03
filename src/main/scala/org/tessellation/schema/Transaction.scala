@@ -20,9 +20,6 @@ case class TransactionEdgeData(amount: Long) extends Edge
 
 case class Transaction(data: TransactionEdgeData) extends Fiber[Edge, Edge] with Edge {
   override def unit: Hom[Edge, Edge] = this
-
-  def newEdge(baseData: TransactionEdgeData) = tensor(this, Transaction(baseData))
-
 }
 
 object Transaction {
