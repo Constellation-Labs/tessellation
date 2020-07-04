@@ -18,7 +18,7 @@ case class EdgeBundle(fibers: Seq[Edge]) extends HyperEdge
 
 case class TransactionEdgeData(amount: Long) extends Edge
 
-case class Transaction(data: TransactionEdgeData) extends Fiber[Edge, Edge] with Edge {
+case class Transaction(val data: TransactionEdgeData) extends Fiber[Edge, Edge] with Edge {
   override def unit: Hom[Edge, Edge] = this
 }
 
