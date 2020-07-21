@@ -1,10 +1,11 @@
 package org.tessellation.schema
 
+import cats.arrow.{Profunctor, Strong}
 import cats.effect.Concurrent
-import cats.free.FreeT
+import cats.free.{Coyoneda, Free, FreeT}
 import cats.syntax.applicative._
 import cats.syntax.functor._
-import cats.{Applicative, Bimonad, Eq, Eval, Functor, Monoid, MonoidK, Traverse, ~>}
+import cats.{Applicative, Bimonad, Eq, Eval, Functor, Monoid, MonoidK, Representable, Traverse, ~>}
 import higherkindness.droste.syntax.compose._
 import higherkindness.droste.util.DefaultTraverse
 import higherkindness.droste._
@@ -83,6 +84,38 @@ object Hom {
      * @tparam T
      */
   type Operad[T] = Hom[T, T]
+
+  type FreeF[S[_], A] = Free[({type f[x] = Coyoneda[S, x]})#f, A]
+
+  implicit val hom = new Strong[Hom] {
+    override def first[A, B, C](fa: Hom[A, B]): Hom[(A, C), (B, C)] = ???
+
+    override def second[A, B, C](fa: Hom[A, B]): Hom[(C, A), (C, B)] = ???
+
+    override def dimap[A, B, C, D](fab: Hom[A, B])(f: C => A)(g: B => D): Hom[C, D] = ???
+  }
+
+  implicit val rep = new Representable[Operad] {
+    override def F: Functor[Operad] = ???
+
+    override type Representation = this.type
+
+    override def index[A](f: Operad[A]): this.type => A = ???
+    // https://ncatlab.org/nlab/show/2-sheaf
+    // https://ncatlab.org/nlab/show/indexed+category
+
+    override def tabulate[A](f: this.type => A): Operad[A] = ???
+  }
+
+  def inject[F[_], G[_]](transformation: F ~> G) =
+    new (FreeF[F, *] ~> FreeF[G, *]) {//transformation of free algebras
+      def apply[A](fa: FreeF[F, A]): FreeF[G, A] =
+        fa.mapK[Coyoneda[G, *]](
+          new (Coyoneda[F, *] ~> Coyoneda[G, *]) {
+            def apply[B](fb: Coyoneda[F, B]): Coyoneda[G, B] = fb.mapK(transformation)
+          }
+        )
+    }
 
   def apply[T](t: T): Operad[T] = new Hom[T, T] {}
 
