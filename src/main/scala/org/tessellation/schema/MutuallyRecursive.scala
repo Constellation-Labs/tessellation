@@ -13,7 +13,7 @@ object MutuallyRecursive {
     case ConsF(head, tail) =>
       Fix.un(tail) match {
         case NilF => Cell(head).some
-        case _ => Cocell(head, tail).some
+        case _ => Cell(head).op(tail) .some//CoCell(head, tail).some
       }
     case NilF => None
   }
