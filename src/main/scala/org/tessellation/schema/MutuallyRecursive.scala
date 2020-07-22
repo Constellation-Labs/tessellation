@@ -12,17 +12,17 @@ object MutuallyRecursive {
   def transListToHom[A]: TransM[Option, ListF[A, *], Hom[A, *], Fix[ListF[A, *]]] = TransM {
     case ConsF(head, tail) =>
       Fix.un(tail) match {
-        case NilF => Cell(head).some
+        case NilF => (Cell(head).asInstanceOf[Hom[A, Fix[ListF[A,*]]]]).some
         case _ => Cell(head).op(tail) .some//CoCell(head, tail).some
       }
-    case NilF => None
+    case NilF => none[Hom[A, Fix[ListF[A, *]]]]
   }
 
   def toHomF[A]: Fix[ListF[A, *]] => Option[Fix[Hom[A, *]]] =
     scheme.anaM(transListToHom[A].coalgebra)
 
   def transHomToList[A]: Trans[Hom[A, *], ListF[A, *], Fix[ListF[A, *]]] = Trans {
-    case Cocell(head, tail) => ConsF(head, tail)
+    case Cocell(head, tail) => ConsF(tail, head(tail)._2)
     case Cell(last) => ConsF(last, Fix[ListF[A, *]](NilF))
   }
 

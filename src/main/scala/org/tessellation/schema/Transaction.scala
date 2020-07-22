@@ -75,7 +75,7 @@ case class LastTransactionRef(prevHash: String, ordinal: Long)
 case class TransactionEdgeData(amount: Long, lastTxRef: LastTransactionRef, fee: Option[Long] = None) extends Signable
 
 case class Transaction(data: Edge[TransactionEdgeData]) extends Fiber[Edge[TransactionEdgeData], Edge[TransactionEdgeData]] {
-  override def unit: Hom[Edge[TransactionEdgeData], Edge[TransactionEdgeData]] = this
+  override def unit: Hom[Edge[TransactionEdgeData], Edge[TransactionEdgeData]] = null // TODO
 }
 
 object Transaction {
@@ -118,7 +118,7 @@ object Block {
 
 /* SNAPSHOT */
 
-case class Snapshot[A, B, C](convergedState: Seq[Fiber[A, B]])
+case class Snapshot[A, B, C](convergedState: Seq[Hom[A, B]])
   extends Simplex[A, B, C](convergedState) {
     def combine(x: Snapshot[A, B, _], y: Snapshot[A, B, _]): Snapshot[A, B, C] =
       Snapshot(x.convergedState ++ y.convergedState)

@@ -103,7 +103,7 @@ object Hom {
 
   def fromScalaListCoalgebra[A]: Coalgebra[Hom[A, *], List[A]] = Coalgebra {
     case head :: Nil => Cell(head)
-    case head :: tail => tail.map(Cell(_)).fold(Cell(head))((l, r) => l.tensor(r))
+    case head :: tail => tail.map(Cell(_)).fold(Cell(head))((l, r) => l.tensor(r)) // TODO
     //Cell(head).tensor(Cell(tail))
     case Nil => Context()
   }
@@ -169,7 +169,7 @@ trait Topos[O, C[_, _]] extends Category[C] with Hom[O, C]{//todo use lambdas A 
 }
 
 object Topos {
-  type FreeF[S[_], A] = Free[({type f[x] = Coyoneda[S, x]})#f, A]
+  type FreeF[S[_], A] = Free[Coyoneda[S, *], A]
   type Enriched[O] = Topos[O, Hom]
 
   implicit val rep = new Representable[Enriched] {
