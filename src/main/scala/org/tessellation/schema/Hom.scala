@@ -77,7 +77,7 @@ object Hom {
     new DefaultTraverse[Hom[A, *]] {
       def traverse[F[_] : Applicative, B, C](fb: Hom[A, B])(f: B => F[C]): F[Hom[A, C]] =
         fb match {
-          case Cocell(op, tail) => f(op(tail: A)._2).map(Cocell(op, _))
+//          case Cocell(op, tail) => f(op(tail: A)._2).map(Cocell(op, _))
           case Cocell(op, Nil) => (Context(): Hom[A, C]).pure[F]
           case Cell(value) => (Cell(value): Hom[A, C]).pure[F]
           case Context() => (Context(): Hom[A, C]).pure[F]
@@ -103,7 +103,7 @@ object Hom {
 
   def fromScalaListCoalgebra[A]: Coalgebra[Hom[A, *], List[A]] = Coalgebra {
     case head :: Nil => Cell(head)
-    case head :: tail => tail.map(Cell(_)).fold(Cell(head))((l, r) => l.tensor(r)) // TODO
+//    case head :: tail => tail.map(Cell(_)).fold(Cell(head))((l, r) => l.tensor(r)) // TODO
     //Cell(head).tensor(Cell(tail))
     case Nil => Context()
   }
@@ -159,18 +159,17 @@ object Hom {
 /**
  * Topos context
  */
-trait Topos[O, C[_, _]] extends Category[C] with Hom[O, C]{//todo use lambdas A <-> O here
+trait Topos[C[_, _]] extends Category[C]{//todo use lambdas A <-> O here
   // finite limits should exist
-  type Obj = O
-  def tensor(x: O, y: O): O
+  def tensor(x: this.type , y: this.type): this.type
   // subobject classifier
-  val Ω: O
-  def pow: Obj => Obj
+  val Ω: this.type
+  def pow: this.type => this.type
 }
 
 object Topos {
   type FreeF[S[_], A] = Free[Coyoneda[S, *], A]
-  type Enriched[O] = Topos[O, Hom]
+  type Enriched[O] = Topos[Hom[O, *]]
 
   implicit val rep = new Representable[Enriched] {
     override def F: Functor[Enriched] = ???
