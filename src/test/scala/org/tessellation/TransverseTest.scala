@@ -7,9 +7,8 @@ import higherkindness.droste.data.{Fix, Mu, Nu}
 import higherkindness.droste.scheme
 import org.scalacheck.Prop.{forAll, _}
 import org.scalacheck.Properties
-import org.tessellation.schema.OldHom._
 import org.tessellation.schema.MutuallyRecursive._
-import org.tessellation.schema.{OldCocell, Context, OldHom}
+import org.tessellation.schema.{Context, Hom, TwoCell}
 
 
 object TransverseTest extends Properties("TransverseTest") {
@@ -24,37 +23,37 @@ object TransverseTest extends Properties("TransverseTest") {
   }
 
   property("Fix Hom -> List") = {
-    val fixed: Fix[OldHom[Int, *]] =
-      Fix(OldCocell(1,
-        Fix(OldCocell(2,
-          Fix(OldCocell(3,
-            Fix(Context(): OldHom[Int, Fix[OldHom[Int, *]]])))))))
+    val fixed: Fix[Hom[Int, *]] =
+      Fix(TwoCell(1,
+        Fix(TwoCell(2,
+          Fix(TwoCell(3,
+            Fix(Context(): Hom[Int, Fix[Hom[Int, *]]])))))))
 
-    OldHom.toScalaList(fixed) ?= 1 :: 2 :: 3 :: Nil
+    Hom.toScalaList(fixed) ?= 1 :: 2 :: 3 :: Nil
   }
 
   property("Mu Hom -> List") = {
-    val mu: Mu[OldHom[Int, *]] =
-      Mu(OldCocell(1,
-        Mu(OldCocell(2,
-          Mu(OldCocell(3,
-            Mu(Context(): OldHom[Int, Mu[OldHom[Int, *]]])))))))
+    val mu: Mu[Hom[Int, *]] =
+      Mu(TwoCell(1,
+        Mu(TwoCell(2,
+          Mu(TwoCell(3,
+            Mu(Context(): Hom[Int, Mu[Hom[Int, *]]])))))))
 
-    OldHom.toScalaList(mu) ?= 1 :: 2 :: 3 :: Nil
+    Hom.toScalaList(mu) ?= 1 :: 2 :: 3 :: Nil
   }
 
   property("Nu Hom -> List") = {
-    val nu: Nu[OldHom[Int, *]] =
-      Nu(OldCocell(1,
-        Nu(OldCocell(2,
-          Nu(OldCocell(3,
-            Nu(Context(): OldHom[Int, Nu[OldHom[Int, *]]])))))))
+    val nu: Nu[Hom[Int, *]] =
+      Nu(TwoCell(1,
+        Nu(TwoCell(2,
+          Nu(TwoCell(3,
+            Nu(Context(): Hom[Int, Nu[Hom[Int, *]]])))))))
 
-    OldHom.toScalaList(nu) ?= 1 :: 2 :: 3 :: Nil
+    Hom.toScalaList(nu) ?= 1 :: 2 :: 3 :: Nil
   }
 
   property("rountrip Hom") = {
-    val f = scheme.hylo(OldHom.toScalaListAlgebra[String], OldHom.fromScalaListCoalgebra[String])
+    val f = scheme.hylo(Hom.toScalaListAlgebra[String], Hom.fromScalaListCoalgebra[String])
     forAll((list: List[String]) => f(list) ?= list)
   }
 }

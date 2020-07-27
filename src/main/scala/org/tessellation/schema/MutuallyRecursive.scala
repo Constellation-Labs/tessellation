@@ -8,21 +8,22 @@ import higherkindness.droste.{Trans, TransM, scheme}
 import org.scalacheck.Arbitrary
 import org.scalacheck.Arbitrary.arbitrary
 
+
 object MutuallyRecursive {
   def transListToHom[A]: TransM[Option, ListF[A, *], Hom[A, *], Fix[ListF[A, *]]] = TransM {
     case ConsF(head, tail) =>
       Fix.un(tail) match {
-        case NilF => (Cell(head).asInstanceOf[Hom[A, Fix[ListF[A,*]]]]).some
-        case _ => Cell(head).op(tail) .some//CoCell(head, tail).some
+        case NilF => Cell(head).some
+        case _ => TwoCell(head, tail).some
       }
-    case NilF => none[Hom[A, Fix[ListF[A, *]]]]
+    case NilF => None
   }
 
   def toHomF[A]: Fix[ListF[A, *]] => Option[Fix[Hom[A, *]]] =
     scheme.anaM(transListToHom[A].coalgebra)
 
   def transHomToList[A]: Trans[Hom[A, *], ListF[A, *], Fix[ListF[A, *]]] = Trans {
-    case Cocell(head, tail) => ConsF(tail, head(tail)._2)
+    case TwoCell(head, tail) => ConsF(head, tail)
     case Cell(last) => ConsF(last, Fix[ListF[A, *]](NilF))
   }
 

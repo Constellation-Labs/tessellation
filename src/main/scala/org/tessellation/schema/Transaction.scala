@@ -75,7 +75,7 @@ case class LastTransactionRef(prevHash: String, ordinal: Long)
 case class TransactionEdgeData(amount: Long, lastTxRef: LastTransactionRef, fee: Option[Long] = None) extends Signable
 
 case class Transaction(data: Edge[TransactionEdgeData]) extends Fiber[Edge[TransactionEdgeData], Edge[TransactionEdgeData]] {
-  override def unit: Hom[Edge[TransactionEdgeData], Edge[TransactionEdgeData]] = null // TODO
+  def unit: Hom[Edge[TransactionEdgeData], Edge[TransactionEdgeData]] = null // TODO
 }
 
 object Transaction {
