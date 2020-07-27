@@ -1,33 +1,27 @@
 package org.tessellation.schema
 
 import cats.arrow.{Arrow, Category}
-import cats.free.{Coyoneda, Free}
+import cats.free.{Cofree, Coyoneda, Free}
 import cats.implicits._
 import cats.kernel.Monoid
-import cats.{
-  Applicative,
-  Bifunctor,
-  Eq,
-  Functor,
-  MonoidK,
-  Representable,
-  Traverse,
-  ~>
-}
+import cats.{Applicative, Bifunctor, Eq, Eval, Functor, MonoidK, PartialOrder, Representable, Traverse, ~>}
 import higherkindness.droste._
-import higherkindness.droste.data.Coattr
+import higherkindness.droste.data.{:<, Attr, Coattr}
 import higherkindness.droste.syntax.compose._
 import higherkindness.droste.util.DefaultTraverse
+import org.tessellation.schema.Topos.{Enriched, FreeF, Invariant}
 
 /**
   * Terminal object
   */
-sealed trait Ω
+sealed trait Ω {
+  val topology = new Topology
+}
 
 /**
   * Homomorphism object for determining morphism isomorphism
   */
-sealed trait Hom[+A, +B] extends Ω
+trait Hom[+A, +B] extends Ω
 
 case class CoCell[A, B](run: A => (CoCell[A, B], B)) extends Hom[A, B]
 
@@ -40,6 +34,8 @@ case class Context() extends Hom[Nothing, Nothing]
 object Hom {
   import cats.syntax.applicative._
   import cats.syntax.functor._
+
+  def empty[A] = new Hom[A, A]{}
 
   def combine[F[_, _]: Arrow, A, B, C](fab: F[A, B],
                                        fac: F[A, C]): F[A, (B, C)] =
@@ -169,31 +165,27 @@ object Hom {
 /**
   * Topos context
   */
-trait Topos[C[_, _]] extends Category[C] { //todo use lambdas A <-> O here
-  // finite limits should exist
-  def tensor(x: this.type, y: this.type): this.type
-  // subobject classifier
-  val Ω: this.type
-  def pow: this.type => this.type
+trait Topos extends Poset with Category[Hom] with Ω { //todo use lambdas A <-> O here
+  self: Ω => // finite limits should exist
+  val terminator: Ω = this  // subobject classifier
+  def pow: Ω => Ω = _ => this
+  val repr: Representable[Enriched]
+  override def id[A]: Hom[A, A] = Hom.empty[A]
+  override def compose[A, B, C](
+      f: Hom[B, C],
+      g: Hom[A, B]
+    ): Hom[A, C] = ??? //todo add run method/val in Hom, and define as mix of algebra/coalgebra
+}
+
+trait Poset {
+  val topology: PartialOrder[Ω]
 }
 
 object Topos {
-  type FreeF[S[_], A] = Free[Coyoneda[S, *], A]
-  type Enriched[A] = Coattr[Hom[?, A], A]
+  type FreeF[S[_], A] = Free[Coyoneda[S, ?], A]
+  type Enriched[A] = FreeF[Hom[?, A], A]
 
-  implicit val rep = new Representable[Enriched] {
-    override def F: Functor[Enriched] = ???
-
-    override type Representation = this.type
-
-    override def index[A](f: Enriched[A]): this.type => A = ???
-    // https://ncatlab.org/nlab/show/2-sheaf
-    // https://ncatlab.org/nlab/show/indexed+category
-
-    override def tabulate[A](f: this.type => A): Enriched[A] = ???
-  }
-
-  def inject[F[_], G[_]](transformation: F ~> G) =
+  implicit def inject[F[_], G[_]](transformation: F ~> G) =
     new (FreeF[F, *] ~> FreeF[G, *]) { //transformation of free algebras
       def apply[A](fa: FreeF[F, A]): FreeF[G, A] =
         fa.mapK[Coyoneda[G, *]](new (Coyoneda[F, *] ~> Coyoneda[G, *]) {
@@ -201,12 +193,6 @@ object Topos {
             fb.mapK(transformation)
         })
     }
-
-  implicit val monoidK = new MonoidK[Enriched] {
-    override def empty[A]: Enriched[A] = ???
-
-    override def combineK[A](x: Enriched[A], y: Enriched[A]): Enriched[A] = ???
-  }
 }
 
 abstract class Fiber[A, B]
