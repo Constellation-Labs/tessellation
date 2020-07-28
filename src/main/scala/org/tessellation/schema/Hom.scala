@@ -1,24 +1,30 @@
 package org.tessellation.schema
 
-import cats.arrow.{Arrow, Category, FunctionK}
-import cats.free.{Cofree, Coyoneda, Free}
+import cats.arrow.Arrow
+import cats.free.{Coyoneda, Free}
 import cats.implicits._
-import cats.kernel.Monoid
-import cats.{Applicative, Bifunctor, Eq, Eval, Functor, MonoidK, Representable, Traverse, ~>}
-import higherkindness.droste.{Algebra, _}
+import cats.kernel.{Monoid, PartialOrder}
+import cats.{
+  Applicative,
+  Bifunctor,
+  Eq,
+  Functor,
+  MonoidK,
+  Representable,
+  Traverse,
+  ~>
+}
 import higherkindness.droste.syntax.compose._
 import higherkindness.droste.util.DefaultTraverse
-import org.tessellation.schema.Topos.{Enriched, FreeF}
-import cats.kernel.PartialOrder
-import org.tessellation.schema.Hom.combine
-
+import higherkindness.droste.{Algebra, _}
+import org.tessellation.schema.Cocell.accum
+import org.tessellation.schema.Topos.Enriched
 
 /**
   * Characteristic Sheaf just needs to be Poset
   */
-trait Poset extends PartialOrder[Ω]{
-  override def partialCompare(x: Ω,
-                              y: Ω): Double = if (x == y) 0.0 else 1.0
+trait Poset extends PartialOrder[Ω] {
+  override def partialCompare(x: Ω, y: Ω): Double = if (x == y) 0.0 else 1.0
 }
 
 /**
@@ -31,73 +37,14 @@ trait Ω extends Poset
   */
 trait Hom[+A, +B] extends Ω
 
-case class Cell[A, B](data: A) extends Hom[A, B] 
-
-case class TwoCell[A, B](data: A, stateTransitionEval: B) extends Hom[A, B]
-
-case class Context() extends Hom[Nothing, Nothing]
-
-case class Cocell[A, B](run: A => (Cocell[A, B], B)) extends Hom[A, B]
-
-object Cocell {
-  type CofreeCocell[A] = Cocell[A, _]
-
-  implicit val monoidK = new MonoidK[CofreeCocell] {
-    override def empty[A]: _root_.org.tessellation.schema.Cocell.CofreeCocell[A] =
-      ???
-    override def combineK[A](
-      x: _root_.org.tessellation.schema.Cocell.CofreeCocell[A],
-      y: _root_.org.tessellation.schema.Cocell.CofreeCocell[A]
-    ): _root_.org.tessellation.schema.Cocell.CofreeCocell[A] = ???
-  }
-
-    implicit val arrowInstance: Arrow[Cocell] = new Arrow[Cocell] {
-
-      override def lift[A, B](f: A => B): Cocell[A, B] = Cocell(lift(f) -> f(_))
-
-      override def first[A, B, C](fa: Cocell[A, B]): Cocell[(A, C), (B, C)] =
-        Cocell {
-          case (a, c) =>
-            val (fa2, b) = fa.run(a)
-            (first(fa2), (b, c))
-        }
-
-      override def compose[A, B, C](f: Cocell[B, C],
-                                    g: Cocell[A, B]): Cocell[A, C] = Cocell { a =>
-        val (gg, b) = g.run(a)
-        val (ff, c) = f.run(b)
-        (compose(ff, gg), c)
-      }
-    }
-
-  def runList[A, B](ff: Cocell[A, B], as: List[A]): List[B] = as match {
-    case h :: t =>
-      val (ff2, b) = ff.run(h)
-      b :: runList(ff2, t)
-    case _ => List()
-  }
-
-  def accum[A, B](b: B)(f: (A, B) => B): Cocell[A, B] = Cocell { a =>
-    val b2 = f(a, b)
-    (accum(b2)(f), b2)
-  }
-
-  def sum[A: Monoid]: Cocell[A, A] = accum(Monoid[A].empty)(_ |+| _)
-  def count[A]: Cocell[A, Int] = Arrow[Cocell].lift((_: A) => 1) >>> sum
-  def avg: Cocell[Int, Double] =
-    combine(sum[Int], count[Int]) >>> Arrow[Cocell].lift {
-      case (x, y) => x.toDouble / y
-    }
-}
-
 /**
-* Category of groups
+  * Category of groups https://github.com/higherkindness/droste/blob/master/modules/tests/src/test/scala/higherkindness/droste/tests/SchemeEquivalence.scala
+  *
   * @tparam A
   * @tparam B
   */
 trait Group[A, B] extends Hom[A, B] {
-  val op: A => (Cocell[A, B], B)
-  def toCocell = Cocell[A, B](op)
+  import higherkindness.droste._
   implicit val repr: Representable[Enriched] = new Representable[Enriched] {
     override def F: Functor[Enriched] = ???
 
@@ -109,6 +56,7 @@ trait Group[A, B] extends Hom[A, B] {
 
     /**
       * todo use Enrichment to maintain order
+      *
       * @param f
       * @tparam A
       * @return
@@ -116,21 +64,22 @@ trait Group[A, B] extends Hom[A, B] {
     override def tabulate[A](f: this.type => A): Enriched[A] = ???
   }
 
-  def act = scheme.hylo(algebra, coalgebra)(repr.F)
-  import higherkindness.droste._
-
-  val coalgebra: Coalgebra[Enriched, B]
-  val algebra: Algebra[Enriched, A]
-
+  val coalgebra = Hom.fromScalaListCoalgebra
+  val algebra = Hom.toScalaListAlgebra
+  def action = scheme.hylo(algebra, coalgebra)(Hom.bifunctor.rightFunctor)
+  // todo use left derived for cofree/monoid combine ?
 }
 
 object Hom {
   import cats.syntax.applicative._
   import cats.syntax.functor._
-  def empty[A] = new Hom[A, A]{}
-  def combine[F[_, _]: Arrow, A, B, C](fab: F[A, B],
-                                       fac: F[A, C]): F[A, (B, C)] =
-    Arrow[F].lift((a: A) => (a, a)) >>> (fab *** fac)
+
+  implicit val bifunctor: Bifunctor[Hom] = new Bifunctor[Hom] {
+    override def bimap[A, B, C, D](fab: Hom[A, B])(f: A => C,
+                                                   g: B => D): Hom[C, D] = ???
+  }
+
+  def empty[A] = new Hom[A, A] {}
 
   /**
     * For traversing allong Enrichment
@@ -215,11 +164,64 @@ object Hom {
   }
 }
 
+case class Cell[A, B](data: A) extends Group[A, B]
+
+case class TwoCell[A, B](data: A, stateTransitionEval: B) extends Group[A, B]
+
+case class Context() extends Hom[Nothing, Nothing]
+
+case class Cocell[A, B](run: A => (Cocell[A, B], B)) extends Hom[A, B]
+
+object Cocell {
+  type CofreeCocell[A] = Cocell[A, _]
+
+  implicit val monoidK = new MonoidK[CofreeCocell] {
+    override def empty[A]
+      : _root_.org.tessellation.schema.Cocell.CofreeCocell[A] =
+      ???
+    override def combineK[A](
+      x: _root_.org.tessellation.schema.Cocell.CofreeCocell[A],
+      y: _root_.org.tessellation.schema.Cocell.CofreeCocell[A]
+    ): _root_.org.tessellation.schema.Cocell.CofreeCocell[A] = ???
+  }
+
+  implicit val arrowInstance: Arrow[Cocell] = new Arrow[Cocell] {
+
+    override def lift[A, B](f: A => B): Cocell[A, B] = Cocell(lift(f) -> f(_))
+
+    override def first[A, B, C](fa: Cocell[A, B]): Cocell[(A, C), (B, C)] =
+      Cocell {
+        case (a, c) =>
+          val (fa2, b) = fa.run(a)
+          (first(fa2), (b, c))
+      }
+
+    override def compose[A, B, C](f: Cocell[B, C],
+                                  g: Cocell[A, B]): Cocell[A, C] = Cocell { a =>
+      val (gg, b) = g.run(a)
+      val (ff, c) = f.run(b)
+      (compose(ff, gg), c)
+    }
+  }
+
+  def runList[A, B](ff: Cocell[A, B], as: List[A]): List[B] = as match {
+    case h :: t =>
+      val (ff2, b) = ff.run(h)
+      b :: runList(ff2, t)
+    case _ => List()
+  }
+
+  def accum[A, B](b: B)(f: (A, B) => B): Cocell[A, B] = Cocell { a =>
+    val b2 = f(a, b)
+    (accum(b2)(f), b2)
+  }
+}
+
 /**
   * Topos context
   */
-trait Topos[G[_, _] <: Group[_, _]] extends Arrow[G] with Ω { //todo use lambdas A <-> O here
-  val terminator: Ω = this  // subobject classifier
+trait Topos[G[_, _] <: Group[_, _]] extends Arrow[G] with Ω {
+  val terminator: Ω = this // subobject classifier
   def pow: Ω => Ω = _ => this
   // finite limits should exist
   implicit val repr = new Representable[Enriched] {
@@ -233,6 +235,7 @@ trait Topos[G[_, _] <: Group[_, _]] extends Arrow[G] with Ω { //todo use lambda
 
     /**
       * todo use Enrichment to maintain order
+      *
       * @param f
       * @tparam A
       * @return
@@ -252,8 +255,13 @@ object Topos {
   //  val coAttr = Coattr.fromCats()
   //  val listToOption = λ[FunctionK[List, Option]](_.headOption)
 
+  def combine[F[_, _]: Arrow, A, B, C](fab: F[A, B],
+                                       fac: F[A, C]): F[A, (B, C)] =
+    Arrow[F].lift((a: A) => (a, a)) >>> (fab *** fac)
+
   /**
     * FunctionK but with a CoYoneda decomposition
+    *
     * @param transformation
     * @tparam F
     * @tparam G
@@ -275,6 +283,13 @@ object Topos {
       y: _root_.org.tessellation.schema.Topos.Enriched[A]
     ): _root_.org.tessellation.schema.Topos.Enriched[A] = ???
   }
+
+  def sum[A: Monoid]: Cocell[A, A] = accum(Monoid[A].empty)(_ |+| _)
+  def count[A]: Cocell[A, Int] = Arrow[Cocell].lift((_: A) => 1) >>> sum
+  def avg: Cocell[Int, Double] =
+    Topos.combine(sum[Int], count[Int]) >>> Arrow[Cocell].lift {
+      case (x, y) => x.toDouble / y
+    }
 }
 
 abstract class Fiber[A, B]

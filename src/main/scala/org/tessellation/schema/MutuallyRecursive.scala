@@ -19,6 +19,8 @@ object MutuallyRecursive {
     case NilF => None
   }
 
+//  val test = transListToHom.algebra
+
   def toHomF[A]: Fix[ListF[A, *]] => Option[Fix[Hom[A, *]]] =
     scheme.anaM(transListToHom[A].coalgebra)
 
