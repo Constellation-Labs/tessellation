@@ -29,46 +29,52 @@ trait Ω extends Poset
 /**
   * Homomorphism object for determining morphism isomorphism
   */
-class Hom[+A, +B] extends Ω with Monoid[Hom[Ω, _]] {
-    override def empty
-      : _root_.org.tessellation.schema.Hom[_root_.org.tessellation.schema.Ω,
-                                           _] =
-      ???
-    override def combine(
-      x: _root_.org.tessellation.schema.Hom[_root_.org.tessellation.schema.Ω,
-                                            _],
-      y: _root_.org.tessellation.schema.Hom[_root_.org.tessellation.schema.Ω, _]
-    ): _root_.org.tessellation.schema.Hom[_root_.org.tessellation.schema.Ω, _] =
-      ???
-  }
+trait Hom[+A, +B] extends Ω
+
+case class Cell[A, B](data: A) extends Hom[A, B] 
+
+case class TwoCell[A, B](data: A, stateTransitionEval: B) extends Hom[A, B]
+
+case class Context() extends Hom[Nothing, Nothing]
 
 case class Cocell[A, B](run: A => (Cocell[A, B], B)) extends Hom[A, B]
 
 object Cocell {
+  type CofreeCocell[A] = Cocell[A, _]
+
+  implicit val monoidK = new MonoidK[CofreeCocell] {
+    override def empty[A]: _root_.org.tessellation.schema.Cocell.CofreeCocell[A] =
+      ???
+    override def combineK[A](
+      x: _root_.org.tessellation.schema.Cocell.CofreeCocell[A],
+      y: _root_.org.tessellation.schema.Cocell.CofreeCocell[A]
+    ): _root_.org.tessellation.schema.Cocell.CofreeCocell[A] = ???
+  }
+
+    implicit val arrowInstance: Arrow[Cocell] = new Arrow[Cocell] {
+
+      override def lift[A, B](f: A => B): Cocell[A, B] = Cocell(lift(f) -> f(_))
+
+      override def first[A, B, C](fa: Cocell[A, B]): Cocell[(A, C), (B, C)] =
+        Cocell {
+          case (a, c) =>
+            val (fa2, b) = fa.run(a)
+            (first(fa2), (b, c))
+        }
+
+      override def compose[A, B, C](f: Cocell[B, C],
+                                    g: Cocell[A, B]): Cocell[A, C] = Cocell { a =>
+        val (gg, b) = g.run(a)
+        val (ff, c) = f.run(b)
+        (compose(ff, gg), c)
+      }
+    }
+
   def runList[A, B](ff: Cocell[A, B], as: List[A]): List[B] = as match {
     case h :: t =>
       val (ff2, b) = ff.run(h)
       b :: runList(ff2, t)
     case _ => List()
-  }
-
-  implicit val arrowInstance: Arrow[Cocell] = new Arrow[Cocell] {
-
-    override def lift[A, B](f: A => B): Cocell[A, B] = Cocell(lift(f) -> f(_))
-
-    override def first[A, B, C](fa: Cocell[A, B]): Cocell[(A, C), (B, C)] =
-      Cocell {
-        case (a, c) =>
-          val (fa2, b) = fa.run(a)
-          (first(fa2), (b, c))
-      }
-
-    override def compose[A, B, C](f: Cocell[B, C],
-                                  g: Cocell[A, B]): Cocell[A, C] = Cocell { a =>
-      val (gg, b) = g.run(a)
-      val (ff, c) = f.run(b)
-      (compose(ff, gg), c)
-    }
   }
 
   def accum[A, B](b: B)(f: (A, B) => B): Cocell[A, B] = Cocell { a =>
@@ -117,12 +123,6 @@ trait Group[A, B] extends Hom[A, B] {
   val algebra: Algebra[Enriched, A]
 
 }
-
-case class Cell[A, B](data: A) extends Hom[A, B]
-
-case class TwoCell[A, B](data: A, stateTransitionEval: B) extends Hom[A, B]
-
-case class Context() extends Hom[Nothing, Nothing]
 
 object Hom {
   import cats.syntax.applicative._
@@ -267,6 +267,14 @@ object Topos {
             fb.mapK(transformation)
         })
     }
+  implicit val monoidK = new MonoidK[Enriched] {
+    override def empty[A]: _root_.org.tessellation.schema.Topos.Enriched[A] =
+      ???
+    override def combineK[A](
+      x: _root_.org.tessellation.schema.Topos.Enriched[A],
+      y: _root_.org.tessellation.schema.Topos.Enriched[A]
+    ): _root_.org.tessellation.schema.Topos.Enriched[A] = ???
+  }
 }
 
 abstract class Fiber[A, B]
