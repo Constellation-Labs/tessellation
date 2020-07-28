@@ -1,6 +1,5 @@
 package org.tessellation.schema
 import cats.{Functor, Representable, ~>}
-import cats.kernel.PartialOrder
 import org.tessellation.schema.Topos.Enriched
 
 class DAG extends Topos {
@@ -17,9 +16,7 @@ class DAG extends Topos {
     }
 
   val representation: Representable[Enriched] = Representable(repr)
-}
-
-class Topology extends PartialOrder[Ω]{
-  override def partialCompare(x: Ω,//todo define domain on omega
-                              y: Ω): Double = if (x == y) 0.0 else 1.0
+  override def first[A, B, C](
+    fa: Hom[A, B]
+  ): Hom[(A, C), (B, C)] = ???
 }

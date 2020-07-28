@@ -1,33 +1,46 @@
 package org.tessellation.schema
 
-import cats.arrow.{Arrow, Category}
+import cats.arrow.{Arrow, Category, FunctionK}
 import cats.free.{Cofree, Coyoneda, Free}
 import cats.implicits._
-import cats.kernel.Monoid
-import cats.{Applicative, Bifunctor, Eq, Eval, Functor, MonoidK, PartialOrder, Representable, Traverse, ~>}
+import cats.kernel.{Monoid}
+import cats.{Applicative, Bifunctor, Eq, Eval, Functor, MonoidK, Representable, Traverse, ~>}
 import higherkindness.droste._
-import higherkindness.droste.data.{:<, Attr, Coattr}
 import higherkindness.droste.syntax.compose._
 import higherkindness.droste.util.DefaultTraverse
-import org.tessellation.schema.Topos.{Enriched, FreeF, Invariant}
+import org.tessellation.schema.Topos.{Enriched, FreeF}
+import cats.kernel.PartialOrder
+
+
+/**
+  * Characteristic Sheaf just needs to be Poset
+  */
+trait Poset extends PartialOrder[Ω]{
+  override def partialCompare(x: Ω,
+                              y: Ω): Double = if (x == y) 0.0 else 1.0
+}
 
 /**
   * Terminal object
   */
-sealed trait Ω {
-  val topology = new Topology
-}
+trait Ω extends Poset
 
 /**
   * Homomorphism object for determining morphism isomorphism
   */
 trait Hom[+A, +B] extends Ω
 
-case class CoCell[A, B](run: A => (CoCell[A, B], B)) extends Hom[A, B]
+case class Cocell[A, B](run: A => (Cocell[A, B], B)) extends Hom[A, B]
 
-case class Cell[A, B](data: A) extends Hom[A, B]
+case class Cell[A, B](data: A) extends Hom[A, B] {
+  def run: A => (Cocell[A, B], B) = null
+  def toCocell = Cocell[A, B](run)
+}
 
-case class TwoCell[A, B](data: A, stateTransitionEval: B) extends Hom[A, B]
+case class TwoCell[A, B](data: A, stateTransitionEval: B) extends Hom[A, B]{
+  def run: A => (Cocell[A, B], B) = null
+  def toCocell = Cocell[A, B](run)
+}
 
 case class Context() extends Hom[Nothing, Nothing]
 
@@ -41,31 +54,43 @@ object Hom {
                                        fac: F[A, C]): F[A, (B, C)] =
     Arrow[F].lift((a: A) => (a, a)) >>> (fab *** fac)
 
-  def runList[A, B](ff: CoCell[A, B], as: List[A]): List[B] = as match {
+  def runList[A, B](ff: Cocell[A, B], as: List[A]): List[B] = as match {
     case h :: t =>
       val (ff2, b) = ff.run(h)
       b :: runList(ff2, t)
     case _ => List()
   }
 
-  implicit val arrowInstance: Arrow[CoCell] = new Arrow[CoCell] {
+  implicit val arrowInstance: Arrow[Cocell] = new Arrow[Cocell] {
 
-    override def lift[A, B](f: A => B): CoCell[A, B] = CoCell(lift(f) -> f(_))
+    override def lift[A, B](f: A => B): Cocell[A, B] = Cocell(lift(f) -> f(_))
 
-    override def first[A, B, C](fa: CoCell[A, B]): CoCell[(A, C), (B, C)] =
-      CoCell {
+    override def first[A, B, C](fa: Cocell[A, B]): Cocell[(A, C), (B, C)] =
+      Cocell {
         case (a, c) =>
           val (fa2, b) = fa.run(a)
           (first(fa2), (b, c))
       }
 
-    override def compose[A, B, C](f: CoCell[B, C],
-                                  g: CoCell[A, B]): CoCell[A, C] = CoCell { a =>
+    override def compose[A, B, C](f: Cocell[B, C],
+                                  g: Cocell[A, B]): Cocell[A, C] = Cocell { a =>
       val (gg, b) = g.run(a)
       val (ff, c) = f.run(b)
       (compose(ff, gg), c)
     }
   }
+
+  def accum[A, B](b: B)(f: (A, B) => B): Cocell[A, B] = Cocell { a =>
+    val b2 = f(a, b)
+    (accum(b2)(f), b2)
+  }
+
+  def sum[A: Monoid]: Cocell[A, A] = accum(Monoid[A].empty)(_ |+| _)
+  def count[A]: Cocell[A, Int] = Arrow[Cocell].lift((_: A) => 1) >>> sum
+  def avg: Cocell[Int, Double] =
+    combine(sum[Int], count[Int]) >>> Arrow[Cocell].lift {
+      case (x, y) => x.toDouble / y
+    }
 
   /**
     * For traversing allong Enrichment
@@ -148,43 +173,41 @@ object Hom {
       val newA = g(a)
       if (pred(newA)) newA else a
   }
-
-  def accum[A, B](b: B)(f: (A, B) => B): CoCell[A, B] = CoCell { a =>
-    val b2 = f(a, b)
-    (accum(b2)(f), b2)
-  }
-
-  def sum[A: Monoid]: CoCell[A, A] = accum(Monoid[A].empty)(_ |+| _)
-  def count[A]: CoCell[A, Int] = Arrow[CoCell].lift((_: A) => 1) >>> sum
-  def avg: CoCell[Int, Double] =
-    combine(sum[Int], count[Int]) >>> Arrow[CoCell].lift {
-      case (x, y) => x.toDouble / y
-    }
 }
 
 /**
   * Topos context
   */
-trait Topos extends Poset with Category[Hom] with Ω { //todo use lambdas A <-> O here
-  self: Ω => // finite limits should exist
+trait Topos extends Arrow[Hom] with Ω { //todo use lambdas A <-> O here
   val terminator: Ω = this  // subobject classifier
   def pow: Ω => Ω = _ => this
-  val repr: Representable[Enriched]
+  val repr: Representable[Enriched]// finite limits should exist
   override def id[A]: Hom[A, A] = Hom.empty[A]
   override def compose[A, B, C](
       f: Hom[B, C],
       g: Hom[A, B]
     ): Hom[A, C] = ??? //todo add run method/val in Hom, and define as mix of algebra/coalgebra
-}
-
-trait Poset {
-  val topology: PartialOrder[Ω]
+  override def lift[A, B](f: A => B): Hom[A, B] =
+    ???
+  override def first[A, B, C](
+    fa: Hom[A, B]
+  ): Hom[(A, C), (B, C)] = ???
 }
 
 object Topos {
   type FreeF[S[_], A] = Free[Coyoneda[S, ?], A]
   type Enriched[A] = FreeF[Hom[?, A], A]
+  //todo map between recursion schemes and Cofree, define morphisms and colimits with lambdas below ->
+  //  val coAttr = Coattr.fromCats()
+  //  val listToOption = λ[FunctionK[List, Option]](_.headOption)
 
+  /**
+    * FunctionK but with a CoYoneda decomposition
+    * @param transformation
+    * @tparam F
+    * @tparam G
+    * @return
+    */
   implicit def inject[F[_], G[_]](transformation: F ~> G) =
     new (FreeF[F, *] ~> FreeF[G, *]) { //transformation of free algebras
       def apply[A](fa: FreeF[F, A]): FreeF[G, A] =
