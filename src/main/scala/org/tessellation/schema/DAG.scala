@@ -1,22 +1,13 @@
 package org.tessellation.schema
-import cats.{Functor, Representable, ~>}
+import higherkindness.droste.{Algebra, Coalgebra}
 import org.tessellation.schema.Topos.Enriched
 
-class DAG extends Topos {
-  implicit val repr = new Representable[Enriched] {
-      override def F: Functor[Enriched] = ???
+class DAG extends Topos[Abelian]
 
-      override type Representation = this.type
+class Abelian[A, B] extends Group[Ω, Ω] {
+  override  val op: Ω => (Cocell[Ω, Ω], Ω) = ???
 
-      override def index[A](f: Enriched[A]): this.type => A = ???
-      // https://ncatlab.org/nlab/show/2-sheaf
-      // https://ncatlab.org/nlab/show/indexed+category
+  override  val coalgebra: Coalgebra[Enriched, Ω] = ???
 
-      override def tabulate[A](f: this.type => A): Enriched[A] = ???
-    }
-
-  val representation: Representable[Enriched] = Representable(repr)
-  override def first[A, B, C](
-    fa: Hom[A, B]
-  ): Hom[(A, C), (B, C)] = ???
+  override  val algebra: Algebra[Enriched, Ω] = ???
 }

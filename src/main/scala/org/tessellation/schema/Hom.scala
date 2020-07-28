@@ -3,13 +3,14 @@ package org.tessellation.schema
 import cats.arrow.{Arrow, Category, FunctionK}
 import cats.free.{Cofree, Coyoneda, Free}
 import cats.implicits._
-import cats.kernel.{Monoid}
+import cats.kernel.Monoid
 import cats.{Applicative, Bifunctor, Eq, Eval, Functor, MonoidK, Representable, Traverse, ~>}
-import higherkindness.droste._
+import higherkindness.droste.{Algebra, _}
 import higherkindness.droste.syntax.compose._
 import higherkindness.droste.util.DefaultTraverse
 import org.tessellation.schema.Topos.{Enriched, FreeF}
 import cats.kernel.PartialOrder
+import org.tessellation.schema.Hom.combine
 
 
 /**
@@ -28,32 +29,22 @@ trait Ω extends Poset
 /**
   * Homomorphism object for determining morphism isomorphism
   */
-trait Hom[+A, +B] extends Ω
+class Hom[+A, +B] extends Ω with Monoid[Hom[Ω, _]] {
+    override def empty
+      : _root_.org.tessellation.schema.Hom[_root_.org.tessellation.schema.Ω,
+                                           _] =
+      ???
+    override def combine(
+      x: _root_.org.tessellation.schema.Hom[_root_.org.tessellation.schema.Ω,
+                                            _],
+      y: _root_.org.tessellation.schema.Hom[_root_.org.tessellation.schema.Ω, _]
+    ): _root_.org.tessellation.schema.Hom[_root_.org.tessellation.schema.Ω, _] =
+      ???
+  }
 
 case class Cocell[A, B](run: A => (Cocell[A, B], B)) extends Hom[A, B]
 
-case class Cell[A, B](data: A) extends Hom[A, B] {
-  def run: A => (Cocell[A, B], B) = null
-  def toCocell = Cocell[A, B](run)
-}
-
-case class TwoCell[A, B](data: A, stateTransitionEval: B) extends Hom[A, B]{
-  def run: A => (Cocell[A, B], B) = null
-  def toCocell = Cocell[A, B](run)
-}
-
-case class Context() extends Hom[Nothing, Nothing]
-
-object Hom {
-  import cats.syntax.applicative._
-  import cats.syntax.functor._
-
-  def empty[A] = new Hom[A, A]{}
-
-  def combine[F[_, _]: Arrow, A, B, C](fab: F[A, B],
-                                       fac: F[A, C]): F[A, (B, C)] =
-    Arrow[F].lift((a: A) => (a, a)) >>> (fab *** fac)
-
+object Cocell {
   def runList[A, B](ff: Cocell[A, B], as: List[A]): List[B] = as match {
     case h :: t =>
       val (ff2, b) = ff.run(h)
@@ -91,6 +82,55 @@ object Hom {
     combine(sum[Int], count[Int]) >>> Arrow[Cocell].lift {
       case (x, y) => x.toDouble / y
     }
+}
+
+/**
+* Category of groups
+  * @tparam A
+  * @tparam B
+  */
+trait Group[A, B] extends Hom[A, B] {
+  val op: A => (Cocell[A, B], B)
+  def toCocell = Cocell[A, B](op)
+  implicit val repr: Representable[Enriched] = new Representable[Enriched] {
+    override def F: Functor[Enriched] = ???
+
+    override type Representation = this.type
+
+    override def index[A](f: Enriched[A]): this.type => A = ???
+    // https://ncatlab.org/nlab/show/2-sheaf
+    // https://ncatlab.org/nlab/show/indexed+category
+
+    /**
+      * todo use Enrichment to maintain order
+      * @param f
+      * @tparam A
+      * @return
+      */
+    override def tabulate[A](f: this.type => A): Enriched[A] = ???
+  }
+
+  def act = scheme.hylo(algebra, coalgebra)(repr.F)
+  import higherkindness.droste._
+
+  val coalgebra: Coalgebra[Enriched, B]
+  val algebra: Algebra[Enriched, A]
+
+}
+
+case class Cell[A, B](data: A) extends Hom[A, B]
+
+case class TwoCell[A, B](data: A, stateTransitionEval: B) extends Hom[A, B]
+
+case class Context() extends Hom[Nothing, Nothing]
+
+object Hom {
+  import cats.syntax.applicative._
+  import cats.syntax.functor._
+  def empty[A] = new Hom[A, A]{}
+  def combine[F[_, _]: Arrow, A, B, C](fab: F[A, B],
+                                       fac: F[A, C]): F[A, (B, C)] =
+    Arrow[F].lift((a: A) => (a, a)) >>> (fab *** fac)
 
   /**
     * For traversing allong Enrichment
@@ -178,20 +218,31 @@ object Hom {
 /**
   * Topos context
   */
-trait Topos extends Arrow[Hom] with Ω { //todo use lambdas A <-> O here
+trait Topos[G[_, _] <: Group[_, _]] extends Arrow[G] with Ω { //todo use lambdas A <-> O here
   val terminator: Ω = this  // subobject classifier
   def pow: Ω => Ω = _ => this
-  val repr: Representable[Enriched]// finite limits should exist
-  override def id[A]: Hom[A, A] = Hom.empty[A]
-  override def compose[A, B, C](
-      f: Hom[B, C],
-      g: Hom[A, B]
-    ): Hom[A, C] = ??? //todo add run method/val in Hom, and define as mix of algebra/coalgebra
-  override def lift[A, B](f: A => B): Hom[A, B] =
-    ???
-  override def first[A, B, C](
-    fa: Hom[A, B]
-  ): Hom[(A, C), (B, C)] = ???
+  // finite limits should exist
+  implicit val repr = new Representable[Enriched] {
+    override def F: Functor[Enriched] = ???
+
+    override type Representation = this.type
+
+    override def index[A](f: Enriched[A]): this.type => A = ???
+    // https://ncatlab.org/nlab/show/2-sheaf
+    // https://ncatlab.org/nlab/show/indexed+category
+
+    /**
+      * todo use Enrichment to maintain order
+      * @param f
+      * @tparam A
+      * @return
+      */
+    override def tabulate[A](f: this.type => A): Enriched[A] = ???
+  }
+  val representation: Representable[Enriched] = Representable(repr)
+  override def lift[A, B](f: A => B): G[A, B] = ???
+  override def first[A, B, C](fa: G[A, B]): G[(A, C), (B, C)] = ???
+  override def compose[A, B, C](f: G[B, C], g: G[A, B]): G[A, C] = ???
 }
 
 object Topos {
