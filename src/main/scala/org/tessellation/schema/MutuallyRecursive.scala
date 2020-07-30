@@ -7,6 +7,7 @@ import higherkindness.droste.data.list.{ConsF, ListF, NilF}
 import higherkindness.droste.{Trans, TransM, scheme}
 import org.scalacheck.Arbitrary
 import org.scalacheck.Arbitrary.arbitrary
+import org.tessellation.schema.Topos.Enriched
 
 
 object MutuallyRecursive {
@@ -19,8 +20,6 @@ object MutuallyRecursive {
     case NilF => None
   }
 
-//  val test = transListToHom.algebra
-
   def toHomF[A]: Fix[ListF[A, *]] => Option[Fix[Hom[A, *]]] =
     scheme.anaM(transListToHom[A].coalgebra)
 
@@ -32,9 +31,12 @@ object MutuallyRecursive {
   def fromHomF[A]: Fix[Hom[A, *]] => Fix[ListF[A, *]] =
     scheme.cata(transHomToList[A].algebra)
 
-  implicit def arbitraryHOM[A: Arbitrary]: Arbitrary[NonEmptyList[A]] =
+  implicit def arbitraryNEL[A: Arbitrary]: Arbitrary[NonEmptyList[A]] =
     Arbitrary(for {
       head <- arbitrary[A]
       tail <- arbitrary[List[A]]
     } yield NonEmptyList.of(head, tail: _*))
+
+  // todo define arbitraryHom implicit for Hom
+//  implicit def arbitraryHom[A: Arbitrary]: Arbitrary[Hom[A, *]]
 }

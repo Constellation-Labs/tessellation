@@ -1,11 +1,17 @@
 package org.tessellation.schema
-import higherkindness.droste.{Algebra, Coalgebra}
-import org.tessellation.schema.Topos.Enriched
 
-class DAG extends Topos[Abelian]
+abstract class DAG[A, B](data: A) extends Topos[Frobenius]
 
-class Abelian[A, B] extends Group[Ω, Ω] {
-//  override  val coalgebra: Coalgebra[Enriched, Ω] = ???
-//
-//  override  val algebra: Algebra[Enriched, Ω] = ???
-}
+/**
+* Preserves Trace
+  * @tparam A
+  * @tparam B
+  */
+abstract class Abelian[A, B](data: A) extends Group[A, B]
+
+/**
+* Preserves Braiding
+  * @tparam A
+  * @tparam B
+  */
+abstract class Frobenius[A, B](data: A) extends Abelian[A, B](data)

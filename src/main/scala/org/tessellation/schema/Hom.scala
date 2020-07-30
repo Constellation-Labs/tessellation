@@ -4,16 +4,8 @@ import cats.arrow.Arrow
 import cats.free.{Coyoneda, Free}
 import cats.implicits._
 import cats.kernel.{Monoid, PartialOrder}
-import cats.{
-  Applicative,
-  Bifunctor,
-  Eq,
-  Functor,
-  MonoidK,
-  Representable,
-  Traverse,
-  ~>
-}
+import cats.{Applicative, Bifunctor, Eq, Functor, MonoidK, Representable, Traverse, ~>}
+import higherkindness.droste.data.{Fix, Mu}
 import higherkindness.droste.syntax.compose._
 import higherkindness.droste.util.DefaultTraverse
 import higherkindness.droste.{Algebra, _}
@@ -36,39 +28,6 @@ trait Ω extends Poset
   * Homomorphism object for determining morphism isomorphism
   */
 trait Hom[+A, +B] extends Ω
-
-/**
-  * Category of groups https://github.com/higherkindness/droste/blob/master/modules/tests/src/test/scala/higherkindness/droste/tests/SchemeEquivalence.scala
-  *
-  * @tparam A
-  * @tparam B
-  */
-trait Group[A, B] extends Hom[A, B] {
-  import higherkindness.droste._
-  implicit val repr: Representable[Enriched] = new Representable[Enriched] {
-    override def F: Functor[Enriched] = ???
-
-    override type Representation = this.type
-
-    override def index[A](f: Enriched[A]): this.type => A = ???
-    // https://ncatlab.org/nlab/show/2-sheaf
-    // https://ncatlab.org/nlab/show/indexed+category
-
-    /**
-      * todo use Enrichment to maintain order
-      *
-      * @param f
-      * @tparam A
-      * @return
-      */
-    override def tabulate[A](f: this.type => A): Enriched[A] = ???
-  }
-
-  val coalgebra = Hom.fromScalaListCoalgebra
-  val algebra = Hom.toScalaListAlgebra
-  def action = scheme.hylo(algebra, coalgebra)(Hom.bifunctor.rightFunctor)
-  // todo use left derived for cofree/monoid combine ?
-}
 
 object Hom {
   import cats.syntax.applicative._
@@ -137,6 +96,7 @@ object Hom {
       }
     }
 
+  // todo this is where we use Poset to order events
   implicit def drosteDelayEqHom[A](implicit eh: Eq[A]): Delay[Eq, Hom[A, *]] =
     λ[Eq ~> (Eq ∘ Hom[A, *])#λ](
       et =>
@@ -161,6 +121,52 @@ object Hom {
     a =>
       val newA = g(a)
       if (pred(newA)) newA else a
+  }
+}
+import higherkindness.droste.data.Nu
+
+/**
+  * Category of groups https://github.com/higherkindness/droste/blob/master/modules/tests/src/test/scala/higherkindness/droste/tests/SchemeEquivalence.scala
+  *
+  * @tparam A
+  * @tparam B
+  */
+trait Group[A, B] extends Hom[A, B] {
+  import Group._
+  import higherkindness.droste._
+  val data: A
+//  def action = scheme.hylo(this.algebra, this.coalgebra)(repr.F)
+//  def coaction = scheme.cata(this.algebra)
+}
+
+
+object Group {
+  type Top[C] = Mu[Hom[C, *]]
+  type Man[C] = Nu[Hom[*, C]]
+
+  implicit val repr: Representable[Top] = new Representable[Top] {
+    override def F
+    : Functor[Top] = ???
+    override type Representation = this.type
+    override def index[A](
+      f: Top[A]
+    ): this.type => A = ???
+    override def tabulate[A](
+      f: this.type => A
+    ): Top[A] = ???
+  }
+
+  implicit val rightDerivedF: Functor[Top] = repr.F
+
+  implicit class GroupBasis[A](data: A) extends Embed[Top, A] with Project[Top, A]{
+    override def coalgebra: Coalgebra[
+      Top,
+    A
+  ] = ???
+    override def algebra: Algebra[
+      Top,
+      A
+    ] = ???
   }
 }
 
@@ -242,6 +248,7 @@ trait Topos[G[_, _] <: Group[_, _]] extends Arrow[G] with Ω {
       */
     override def tabulate[A](f: this.type => A): Enriched[A] = ???
   }
+
   val representation: Representable[Enriched] = Representable(repr)
   override def lift[A, B](f: A => B): G[A, B] = ???
   override def first[A, B, C](fa: G[A, B]): G[(A, C), (B, C)] = ???
@@ -251,6 +258,7 @@ trait Topos[G[_, _] <: Group[_, _]] extends Arrow[G] with Ω {
 object Topos {
   type FreeF[S[_], A] = Free[Coyoneda[S, ?], A]
   type Enriched[A] = FreeF[Hom[?, A], A]
+
   //todo map between recursion schemes and Cofree, define morphisms and colimits with lambdas below ->
   //  val coAttr = Coattr.fromCats()
   //  val listToOption = λ[FunctionK[List, Option]](_.headOption)
@@ -258,6 +266,28 @@ object Topos {
   def combine[F[_, _]: Arrow, A, B, C](fab: F[A, B],
                                        fac: F[A, C]): F[A, (B, C)] =
     Arrow[F].lift((a: A) => (a, a)) >>> (fab *** fac)
+
+  def combineImplicit[F[_, _]: Arrow, A, B, C](fab: F[A, B], fac: F[A, C]): F[A, (B, C)] = {
+    val fa = implicitly[Arrow[F]]
+    fa.lmap[(A, A), (B, C), A](fa.split[A, B, A, C](fab, fac))(a => (a, a))
+  }
+
+  /**
+    * similar to the combine function with the addition of running a function on the result of combine
+    * @param fab
+    * @param fac
+    * @param f
+    * @tparam F
+    * @tparam A
+    * @tparam B
+    * @tparam C
+    * @tparam D
+    * @return
+    */
+  def liftA2[F[_, _]: Arrow, A, B, C, D](fab: F[A, B], fac: F[A, C])(f: B => C => D): F[A, D] = {
+    val fa = implicitly[Arrow[F]]
+    combine[F, A, B, C](fab, fac).rmap { case (b, c) => f(b)(c) }
+  }
 
   /**
     * FunctionK but with a CoYoneda decomposition

@@ -8,7 +8,7 @@ import higherkindness.droste.scheme
 import org.scalacheck.Prop.{forAll, _}
 import org.scalacheck.Properties
 import org.tessellation.schema.MutuallyRecursive._
-import org.tessellation.schema.{Context, Hom, TwoCell}
+import org.tessellation.schema.{Cell, Context, Hom, TwoCell}
 
 
 object TransverseTest extends Properties("TransverseTest") {
@@ -56,4 +56,6 @@ object TransverseTest extends Properties("TransverseTest") {
     val f = scheme.hylo(Hom.toScalaListAlgebra[String], Hom.fromScalaListCoalgebra[String])
     forAll((list: List[String]) => f(list) ?= list)
   }
+
+//  def mu[A](hom: Hom[A, _]) = Mu(hom)
 }
