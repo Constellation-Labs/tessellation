@@ -8,7 +8,7 @@ import higherkindness.droste.scheme
 import org.scalacheck.Prop.{forAll, _}
 import org.scalacheck.Properties
 import org.tessellation.schema.MutuallyRecursive._
-import org.tessellation.schema.{Cell, Context, Hom, TwoCell}
+import org.tessellation.schema.{Cell, Context, Hom, Cell2}
 
 
 object TransverseTest extends Properties("TransverseTest") {
@@ -24,9 +24,9 @@ object TransverseTest extends Properties("TransverseTest") {
 
   property("Fix Hom -> List") = {
     val fixed: Fix[Hom[Int, *]] =
-      Fix(TwoCell(1,
-        Fix(TwoCell(2,
-          Fix(TwoCell(3,
+      Fix(Cell2(1,
+        Fix(Cell2(2,
+          Fix(Cell2(3,
             Fix(Context(): Hom[Int, Fix[Hom[Int, *]]])))))))
 
     Hom.toScalaList(fixed) ?= 1 :: 2 :: 3 :: Nil
@@ -34,9 +34,9 @@ object TransverseTest extends Properties("TransverseTest") {
 
   property("Mu Hom -> List") = {
     val mu: Mu[Hom[Int, *]] =
-      Mu(TwoCell(1,
-        Mu(TwoCell(2,
-          Mu(TwoCell(3,
+      Mu(Cell2(1,
+        Mu(Cell2(2,
+          Mu(Cell2(3,
             Mu(Context(): Hom[Int, Mu[Hom[Int, *]]])))))))
 
     Hom.toScalaList(mu) ?= 1 :: 2 :: 3 :: Nil
@@ -44,9 +44,9 @@ object TransverseTest extends Properties("TransverseTest") {
 
   property("Nu Hom -> List") = {
     val nu: Nu[Hom[Int, *]] =
-      Nu(TwoCell(1,
-        Nu(TwoCell(2,
-          Nu(TwoCell(3,
+      Nu(Cell2(1,
+        Nu(Cell2(2,
+          Nu(Cell2(3,
             Nu(Context(): Hom[Int, Nu[Hom[Int, *]]])))))))
 
     Hom.toScalaList(nu) ?= 1 :: 2 :: 3 :: Nil

@@ -14,10 +14,10 @@ object TopologicalTraverseTest extends Properties("TopologicalTraverseTest") {
 
 
     def g(i: Cell[Int, Int]): IO[Int] = IO {
-      Thread.sleep(i.data * 100)
-      results = results :+ i.data
-      println(i.data)
-      i.data
+      Thread.sleep(i.a * 100)
+      results = results :+ i.a
+      println(i.a)
+      i.a
     }
 
     //Note: we want topologicalTraverse for Stateful (Ordered) operations. Traverse might be faster for parallel

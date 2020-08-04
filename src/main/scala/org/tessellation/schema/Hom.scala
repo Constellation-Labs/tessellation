@@ -3,7 +3,7 @@ package org.tessellation.schema
 import cats.arrow.Arrow
 import cats.implicits._
 import cats.kernel.{Monoid, PartialOrder}
-import cats.{Applicative, Bifunctor, Eq, Traverse, ~>}
+import cats.{Applicative, Bifunctor, Eq, Functor, Traverse, ~>}
 import higherkindness.droste.syntax.compose._
 import higherkindness.droste.util.DefaultTraverse
 import higherkindness.droste.{Algebra, _}
@@ -43,7 +43,7 @@ object Hom {
         fb: Hom[A, B]
       )(f: B => F[C]): F[Hom[A, C]] =
         fb match {
-          case TwoCell(head, tail) => f(tail).map(TwoCell(head, _))
+          case Cell2(head, tail) => f(tail).map(Cell2(head, _))
           case Cell(value)         => (Cell(value): Hom[A, C]).pure[F]
           case Context()           => (Context(): Hom[A, C]).pure[F]
         }
@@ -55,7 +55,7 @@ object Hom {
     scheme.cata(toScalaListAlgebra[A]).apply(list)
 
   def toScalaListAlgebra[A]: Algebra[Hom[A, *], List[A]] = Algebra {
-    case TwoCell(head, tail) => head :: tail
+    case Cell2(head, tail) => head :: tail
     case Cell(thing)         => thing :: Nil
     case Context()           => Nil
   }
@@ -67,7 +67,7 @@ object Hom {
 
   def fromScalaListCoalgebra[A]: Coalgebra[Hom[A, *], List[A]] = Coalgebra {
     case head :: Nil  => Cell(head)
-    case head :: tail => TwoCell(head, tail)
+    case head :: tail => Cell2(head, tail)
     case Nil          => Context()
   }
 
@@ -94,9 +94,9 @@ object Hom {
         Eq.instance(
           (x, y) =>
             x match {
-              case TwoCell(hx, tx) =>
+              case Cell2(hx, tx) =>
                 y match {
-                  case TwoCell(hy, ty) => eh.eqv(hx, hy) && et.eqv(tx, ty)
+                  case Cell2(hy, ty) => eh.eqv(hx, hy) && et.eqv(tx, ty)
                   case Context()       => false
                 }
               case Context() =>
@@ -115,9 +115,13 @@ object Hom {
   }
 }
 
-case class Cell[A, B](data: A) extends Hom[A, B]
+case class Cell[A, B](a: A) extends Hom[A, B]{
+  def run(a: A = a)(implicit cocell: Cocell[A, B]) = cocell.run(a)
+  def b(a: A)(implicit cocell: Cocell[A, B]): B = run(a)._2
+  def morphism(f: A => B)(implicit cocell: Cocell[A, B]) = Cell2(a, f(a))
+}
 
-case class TwoCell[A, B](data: A, stateTransitionEval: B) extends Hom[A, B]
+case class Cell2[A, B](a: A, b: B) extends Topos[A, B]
 
 case class Context() extends Hom[Nothing, Nothing]
 

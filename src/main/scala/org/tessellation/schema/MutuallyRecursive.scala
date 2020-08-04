@@ -7,7 +7,7 @@ import higherkindness.droste.data.list.{ConsF, ListF, NilF}
 import higherkindness.droste.{Trans, TransM, scheme}
 import org.scalacheck.Arbitrary
 import org.scalacheck.Arbitrary.arbitrary
-import org.tessellation.schema.Topos.Enriched
+import org.tessellation.schema.Topos.Contravariant
 
 
 object MutuallyRecursive {
@@ -15,7 +15,7 @@ object MutuallyRecursive {
     case ConsF(head, tail) =>
       Fix.un(tail) match {
         case NilF => Cell(head).some
-        case _ => TwoCell(head, tail).some
+        case _ => Cell2(head, tail).some
       }
     case NilF => None
   }
@@ -24,7 +24,7 @@ object MutuallyRecursive {
     scheme.anaM(transListToHom[A].coalgebra)
 
   def transHomToList[A]: Trans[Hom[A, *], ListF[A, *], Fix[ListF[A, *]]] = Trans {
-    case TwoCell(head, tail) => ConsF(head, tail)
+    case Cell2(head, tail) => ConsF(head, tail)
     case Cell(last) => ConsF(last, Fix[ListF[A, *]](NilF))
   }
 
