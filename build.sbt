@@ -6,6 +6,7 @@ version := "0.0.1-SNAPSHOT"
 scalaVersion := "2.13.1"
 
 lazy val dependencies = Seq(
+  "org.typelevel" %% "spire" % "0.17.0-M1",
   "io.higherkindness" %% "droste-core" % "0.8.0",
   "io.higherkindness" %% "droste-laws" % "0.8.0",
   "io.higherkindness" %% "droste-macros" % "0.8.0",

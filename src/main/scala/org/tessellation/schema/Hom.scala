@@ -1,16 +1,12 @@
 package org.tessellation.schema
 
 import cats.arrow.Arrow
-import cats.free.{Coyoneda, Free}
 import cats.implicits._
 import cats.kernel.{Monoid, PartialOrder}
-import cats.{Applicative, Bifunctor, Eq, Functor, MonoidK, Representable, Traverse, ~>}
-import higherkindness.droste.data.{Fix, Mu}
+import cats.{Applicative, Bifunctor, Eq, Traverse, ~>}
 import higherkindness.droste.syntax.compose._
 import higherkindness.droste.util.DefaultTraverse
 import higherkindness.droste.{Algebra, _}
-import org.tessellation.schema.Cocell.accum
-import org.tessellation.schema.Topos.Enriched
 
 /**
   * Characteristic Sheaf just needs to be Poset
@@ -32,11 +28,6 @@ trait Hom[+A, +B] extends Ω
 object Hom {
   import cats.syntax.applicative._
   import cats.syntax.functor._
-
-  implicit val bifunctor: Bifunctor[Hom] = new Bifunctor[Hom] {
-    override def bimap[A, B, C, D](fab: Hom[A, B])(f: A => C,
-                                                   g: B => D): Hom[C, D] = ???
-  }
 
   def empty[A] = new Hom[A, A] {}
 
@@ -123,74 +114,17 @@ object Hom {
       if (pred(newA)) newA else a
   }
 }
-import higherkindness.droste.data.Nu
 
-/**
-  * Category of groups https://github.com/higherkindness/droste/blob/master/modules/tests/src/test/scala/higherkindness/droste/tests/SchemeEquivalence.scala
-  *
-  * @tparam A
-  * @tparam B
-  */
-trait Group[A, B] extends Hom[A, B] {
-  import Group._
-  import higherkindness.droste._
-  val data: A
-//  def action = scheme.hylo(this.algebra, this.coalgebra)(repr.F)
-//  def coaction = scheme.cata(this.algebra)
-}
+case class Cell[A, B](data: A) extends Hom[A, B]
 
-
-object Group {
-  type Top[C] = Mu[Hom[C, *]]
-  type Man[C] = Nu[Hom[*, C]]
-
-  implicit val repr: Representable[Top] = new Representable[Top] {
-    override def F
-    : Functor[Top] = ???
-    override type Representation = this.type
-    override def index[A](
-      f: Top[A]
-    ): this.type => A = ???
-    override def tabulate[A](
-      f: this.type => A
-    ): Top[A] = ???
-  }
-
-  implicit val rightDerivedF: Functor[Top] = repr.F
-
-  implicit class GroupBasis[A](data: A) extends Embed[Top, A] with Project[Top, A]{
-    override def coalgebra: Coalgebra[
-      Top,
-    A
-  ] = ???
-    override def algebra: Algebra[
-      Top,
-      A
-    ] = ???
-  }
-}
-
-case class Cell[A, B](data: A) extends Group[A, B]
-
-case class TwoCell[A, B](data: A, stateTransitionEval: B) extends Group[A, B]
+case class TwoCell[A, B](data: A, stateTransitionEval: B) extends Hom[A, B]
 
 case class Context() extends Hom[Nothing, Nothing]
 
+//todo convert to => Either[Cocell[A, B], B]
 case class Cocell[A, B](run: A => (Cocell[A, B], B)) extends Hom[A, B]
 
 object Cocell {
-  type CofreeCocell[A] = Cocell[A, _]
-
-  implicit val monoidK = new MonoidK[CofreeCocell] {
-    override def empty[A]
-      : _root_.org.tessellation.schema.Cocell.CofreeCocell[A] =
-      ???
-    override def combineK[A](
-      x: _root_.org.tessellation.schema.Cocell.CofreeCocell[A],
-      y: _root_.org.tessellation.schema.Cocell.CofreeCocell[A]
-    ): _root_.org.tessellation.schema.Cocell.CofreeCocell[A] = ???
-  }
-
   implicit val arrowInstance: Arrow[Cocell] = new Arrow[Cocell] {
 
     override def lift[A, B](f: A => B): Cocell[A, B] = Cocell(lift(f) -> f(_))
@@ -220,98 +154,6 @@ object Cocell {
   def accum[A, B](b: B)(f: (A, B) => B): Cocell[A, B] = Cocell { a =>
     val b2 = f(a, b)
     (accum(b2)(f), b2)
-  }
-}
-
-/**
-  * Topos context
-  */
-trait Topos[G[_, _] <: Group[_, _]] extends Arrow[G] with Ω {
-  val terminator: Ω = this // subobject classifier
-  def pow: Ω => Ω = _ => this
-  // finite limits should exist
-  implicit val repr = new Representable[Enriched] {
-    override def F: Functor[Enriched] = ???
-
-    override type Representation = this.type
-
-    override def index[A](f: Enriched[A]): this.type => A = ???
-    // https://ncatlab.org/nlab/show/2-sheaf
-    // https://ncatlab.org/nlab/show/indexed+category
-
-    /**
-      * todo use Enrichment to maintain order
-      *
-      * @param f
-      * @tparam A
-      * @return
-      */
-    override def tabulate[A](f: this.type => A): Enriched[A] = ???
-  }
-
-  val representation: Representable[Enriched] = Representable(repr)
-  override def lift[A, B](f: A => B): G[A, B] = ???
-  override def first[A, B, C](fa: G[A, B]): G[(A, C), (B, C)] = ???
-  override def compose[A, B, C](f: G[B, C], g: G[A, B]): G[A, C] = ???
-}
-
-object Topos {
-  type FreeF[S[_], A] = Free[Coyoneda[S, ?], A]
-  type Enriched[A] = FreeF[Hom[?, A], A]
-
-  //todo map between recursion schemes and Cofree, define morphisms and colimits with lambdas below ->
-  //  val coAttr = Coattr.fromCats()
-  //  val listToOption = λ[FunctionK[List, Option]](_.headOption)
-
-  def combine[F[_, _]: Arrow, A, B, C](fab: F[A, B],
-                                       fac: F[A, C]): F[A, (B, C)] =
-    Arrow[F].lift((a: A) => (a, a)) >>> (fab *** fac)
-
-  def combineImplicit[F[_, _]: Arrow, A, B, C](fab: F[A, B], fac: F[A, C]): F[A, (B, C)] = {
-    val fa = implicitly[Arrow[F]]
-    fa.lmap[(A, A), (B, C), A](fa.split[A, B, A, C](fab, fac))(a => (a, a))
-  }
-
-  /**
-    * similar to the combine function with the addition of running a function on the result of combine
-    * @param fab
-    * @param fac
-    * @param f
-    * @tparam F
-    * @tparam A
-    * @tparam B
-    * @tparam C
-    * @tparam D
-    * @return
-    */
-  def liftA2[F[_, _]: Arrow, A, B, C, D](fab: F[A, B], fac: F[A, C])(f: B => C => D): F[A, D] = {
-    val fa = implicitly[Arrow[F]]
-    combine[F, A, B, C](fab, fac).rmap { case (b, c) => f(b)(c) }
-  }
-
-  /**
-    * FunctionK but with a CoYoneda decomposition
-    *
-    * @param transformation
-    * @tparam F
-    * @tparam G
-    * @return
-    */
-  implicit def inject[F[_], G[_]](transformation: F ~> G) =
-    new (FreeF[F, *] ~> FreeF[G, *]) { //transformation of free algebras
-      def apply[A](fa: FreeF[F, A]): FreeF[G, A] =
-        fa.mapK[Coyoneda[G, *]](new (Coyoneda[F, *] ~> Coyoneda[G, *]) {
-          def apply[B](fb: Coyoneda[F, B]): Coyoneda[G, B] =
-            fb.mapK(transformation)
-        })
-    }
-  implicit val monoidK = new MonoidK[Enriched] {
-    override def empty[A]: _root_.org.tessellation.schema.Topos.Enriched[A] =
-      ???
-    override def combineK[A](
-      x: _root_.org.tessellation.schema.Topos.Enriched[A],
-      y: _root_.org.tessellation.schema.Topos.Enriched[A]
-    ): _root_.org.tessellation.schema.Topos.Enriched[A] = ???
   }
 
   def sum[A: Monoid]: Cocell[A, A] = accum(Monoid[A].empty)(_ |+| _)
