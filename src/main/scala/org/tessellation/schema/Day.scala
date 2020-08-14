@@ -42,7 +42,7 @@ object Day {
       case Day(None, (h: A, _), _) => h
       case Day(Some(x: d.B), (_, t: d.C), f: ((d.B, d.C) => A)) => f(x, t)
     }
-  
+
   /**
    * Lattice bounds for bounded lattice given by coposition of Topos. Morphisms of two different comonads are therefore
    * composed by precomposing the morphisms with comonad morphisms from the least-upper bound comonad

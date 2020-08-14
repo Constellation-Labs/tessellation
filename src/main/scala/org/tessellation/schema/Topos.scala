@@ -9,17 +9,15 @@ import org.tessellation.schema.Topos.{Contravariant, Covariant}
 import cats.implicits._
 
 /**
- * Topos context
+ * Topos context for morphisms of morphisms
  */
-abstract class Topos[A, B] extends Hom[A, B] {
-  val a: A
-  val b: B
+trait Topos[A, B] extends Hom[A, B] {
+  val run: A => (Topos[A, B], B)
   val terminator: Ω = this // subobject classifier
   val identity = natTrans
   def pow: Ω => Ω = _ => this // finite limits should exist
   def natTrans: ~>[Covariant, Covariant] = λ[Covariant ~> Covariant](fa => fa)
   val freeTransform = Topos.inject(natTrans)
-  implicit def left(b: B, a: A = a): B = b //default left bias
   implicit val rFunctor: Functor[Hom[A, *]] = Topos.rFunctor[A]
 }
 
@@ -29,17 +27,29 @@ object Topos {
   type Covariant[A] = FreeF[Topos[A, ?], A]
 
   implicit val arrowInstance: Arrow[Topos] = new Arrow[Topos] {
-    override def lift[A, B](f: A => B): Topos[A, B] = ???
 
-    override def compose[A, B, C](f: Topos[B, C], g: Topos[A, B]): Topos[A, C] = {
-      val convolution = Day[Topos[B, *], C, Topos[A, *], B, C](f, g, f.left)
-      val left: Topos[B, convolution.B] = convolution.f
-      val right: Topos[A, convolution.C] = convolution.g
-      val composed: C = convolution.a(left.left(left.b), right.left(right.b))
-      Cell2(g.a, composed)
+    override def lift[A, B](f: A => B): Topos[A, B] = new Topos[A, B] {
+      val run = lift(f) -> f(_)
     }
 
-    override def first[A, B, C](fa: Topos[A, B]): Topos[(A, C), (B, C)] = ???
+    override def first[A, B, C](fa: Topos[A, B]): Topos[(A, C), (B, C)] =
+      new Topos[(A, C), (B, C)] {
+        val run = {
+          case (a, c) =>
+            val (fa2, b) = fa.run(a)
+            (first(fa2), (b, c))
+        }
+      }
+
+    override def compose[A, B, C](f: Topos[B, C],
+                                  g: Topos[A, B]): Topos[A, C] = new Topos[A, C] {
+      def morph(a: A) = {
+        val (gg, b) = g.run(a)
+        val (ff, c) = f.run(b)
+        (compose(ff, gg), c)
+      }
+      val run = morph(_)
+    }
   }
 
   def combine[F[_, _]: Arrow, A, B, C](fab: F[A, B],
@@ -123,9 +133,10 @@ object Topos {
 }
 
 abstract class Channel[A, B](data: A) extends Topos[A, B] {
-  val consensus: Topos[A, B] = Cell2(data, left(b))
-  val convergeSnapshots: Topos[B, Context.type] = Cell2(left(b), Context)
-  val pipeline = consensus >>> convergeSnapshots
+  import Topos.arrowInstance
+//  val consensus: Hom[A, B] = Cell(data)
+//  val convergeSnapshots: Hom[B, Context.type] = Cell(consensus.run)
+//  val pipeline = consensus |+| convergeSnapshots
 }
 
 object Channel {

@@ -3,10 +3,11 @@ package org.tessellation.schema
 import cats.arrow.Arrow
 import cats.implicits._
 import cats.kernel.{Monoid, PartialOrder}
-import cats.{Applicative, Bifunctor, Eq, Functor, Traverse, ~>}
+import cats.{Applicative, Eq, Traverse, ~>}
 import higherkindness.droste.syntax.compose._
 import higherkindness.droste.util.DefaultTraverse
 import higherkindness.droste.{Algebra, _}
+import Topos.arrowInstance
 
 /**
   * Characteristic Sheaf just needs to be Poset
@@ -115,39 +116,17 @@ object Hom {
   }
 }
 
-case class Cell[A, B](a: A) extends Hom[A, B]{
-  def run(a: A = a)(implicit cocell: Cocell[A, B]) = cocell.run(a)
-  def b(a: A)(implicit cocell: Cocell[A, B]): B = run(a)._2
-  def morphism(f: A => B)(implicit cocell: Cocell[A, B]) = Cell2(a, f(a))
-}
+case class Cell[A, B](a: A) extends Hom[A, B]
 
-case class Cell2[A, B](a: A, b: B) extends Topos[A, B]
+case class Cell2[A, B](a: A, b: B) extends Topos[A, B]{
+  val run: A => (Topos[A, B], B) = _ => (this, b)
+}
 
 case class Context() extends Hom[Nothing, Nothing]
 
-//todo convert to => Either[Cocell[A, B], B]
-case class Cocell[A, B](run: A => (Cocell[A, B], B)) extends Hom[A, B]
+case class Cocell[A, B](run: A => (Cocell[A, B], B)) extends Topos[A, B]
 
 object Cocell {
-  implicit val arrowInstance: Arrow[Cocell] = new Arrow[Cocell] {
-
-    override def lift[A, B](f: A => B): Cocell[A, B] = Cocell(lift(f) -> f(_))
-
-    override def first[A, B, C](fa: Cocell[A, B]): Cocell[(A, C), (B, C)] =
-      Cocell {
-        case (a, c) =>
-          val (fa2, b) = fa.run(a)
-          (first(fa2), (b, c))
-      }
-
-    override def compose[A, B, C](f: Cocell[B, C],
-                                  g: Cocell[A, B]): Cocell[A, C] = Cocell { a =>
-      val (gg, b) = g.run(a)
-      val (ff, c) = f.run(b)
-      (compose(ff, gg), c)
-    }
-  }
-
   def runList[A, B](ff: Cocell[A, B], as: List[A]): List[B] = as match {
     case h :: t =>
       val (ff2, b) = ff.run(h)
@@ -161,9 +140,9 @@ object Cocell {
   }
 
   def sum[A: Monoid]: Cocell[A, A] = accum(Monoid[A].empty)(_ |+| _)
-  def count[A]: Cocell[A, Int] = Arrow[Cocell].lift((_: A) => 1) >>> sum
-  def avg: Cocell[Int, Double] =
-    Topos.combine(sum[Int], count[Int]) >>> Arrow[Cocell].lift {
+  def count[A]: Topos[A, Int] = Arrow[Topos].lift((_: A) => 1) >>> sum
+  def avg: Topos[Int, Double] =
+    Topos.combine(sum[Int], count[Int]) >>> Arrow[Topos].lift {
       case (x, y) => x.toDouble / y
     }
 }
