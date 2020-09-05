@@ -31,7 +31,7 @@ object TransverseTest extends Properties("TransverseTest") {
 
     Hom.toScalaList(fixed) ?= 1 :: 2 :: 3 :: Nil
   }
-
+  // proof of least fixed point
   property("Mu Hom -> List") = {
     val mu: Mu[Hom[Int, *]] =
       Mu(Cell2(1,
@@ -42,6 +42,7 @@ object TransverseTest extends Properties("TransverseTest") {
     Hom.toScalaList(mu) ?= 1 :: 2 :: 3 :: Nil
   }
 
+  // proof of greatest fixed point
   property("Nu Hom -> List") = {
     val nu: Nu[Hom[Int, *]] =
       Nu(Cell2(1,

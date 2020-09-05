@@ -3,7 +3,7 @@ package org.tessellation.schema
 import cats.MonoidK
 
 /**
- * CoTopos or monad transformer for Topos
+ * CoTopos or monad transformer for Topos, todo use for validation (contravariant natural transformations)
  * @tparam F
  * @tparam G
  * @tparam A

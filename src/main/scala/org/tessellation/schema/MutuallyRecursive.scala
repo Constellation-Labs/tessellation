@@ -7,7 +7,7 @@ import higherkindness.droste.data.list.{ConsF, ListF, NilF}
 import higherkindness.droste.{Trans, TransM, scheme}
 import org.scalacheck.Arbitrary
 import org.scalacheck.Arbitrary.arbitrary
-import org.tessellation.schema.Topos.Contravariant
+//import org.tessellation.schema.Topos.Contravariant
 
 
 object MutuallyRecursive {

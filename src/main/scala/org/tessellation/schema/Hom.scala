@@ -4,77 +4,109 @@ import cats.arrow.Arrow
 import cats.implicits._
 import cats.kernel.{Monoid, PartialOrder}
 import cats.{Applicative, Eq, Traverse, ~>}
+import higherkindness.droste.data.{:<, Coattr}
 import higherkindness.droste.syntax.compose._
 import higherkindness.droste.util.DefaultTraverse
 import higherkindness.droste.{Algebra, _}
-import Topos.arrowInstance
 
 /**
-  * Characteristic Sheaf just needs to be Poset
-  */
+ * Characteristic Sheaf just needs to be Poset
+ */
 trait Poset extends PartialOrder[Ω] {
   override def partialCompare(x: Ω, y: Ω): Double = if (x == y) 0.0 else 1.0
 }
 
 /**
-  * Terminal object
-  */
+ * Terminal object
+ */
 trait Ω extends Poset
 
 /**
-  * Homomorphism object for determining morphism isomorphism
-  */
-trait Hom[+A, +B] extends Ω
+ * Homomorphism object for determining morphism isomorphism
+ */
+trait Hom[+A, +B] extends Ω {
+
+}
 
 object Hom {
+
   import cats.syntax.applicative._
   import cats.syntax.functor._
 
-  def empty[A] = new Hom[A, A] {}
+  type Endo[O] = Hom[Ω, O]
+  val coalgebra: Coalgebra[Hom[Ω, ?], Ω] = Coalgebra[Hom[Ω, ?], Ω] { thing: Ω => Cell(thing) }
+
+  val rcoalgebra: RCoalgebra[Ω, Hom[Ω, ?], Ω] = RCoalgebra {
+    case cell: Cell[Ω, Ω] => Cell2(cell.a, Left(cell.run(cell.a)))
+  }
+
+  val cvAlgebra: CVAlgebra[Hom[Ω, ?], Ω] = CVAlgebra {
+    case cell@Cell(aa) => cell.run(aa)
+    case cell2@Cell2(aaa, b :< Cell(c :< _)) => monoidΩ.combine(cell2.run(aaa), b)
+    case cell2@Cell2(a, b :< Cell2(c, d :< _)) => monoidΩ.combine(cell2.run(a), monoidΩ.combine(b, c))
+  }
+
+  val ralgebra: RAlgebra[Ω, Hom[Ω, ?], Ω] = RAlgebra {
+    case cell@Cell(ohm) => cell.run(ohm)
+    case cell2@Cell2(ohm, (b, x)) =>
+      b match {
+        case _: Ω => monoidΩ.combine(cell2.run(ohm), monoidΩ.combine(ohm, x))
+      }
+  }
+
+  val cvCoalgebra = CVCoalgebra[Endo, Ω] {
+    case ohm: Ω => Cell2(ohm, Coattr.pure[Endo, Ω](ohm))
+  }
+
+  implicit val monoidΩ = new Monoid[Ω] {
+    override def empty: Ω = ???
+
+    override def combine(x: Ω, y: Ω): Ω = ???
+  }
 
   /**
-    * For traversing allong Enrichment
-    *
-    * @tparam A Fixed type
-    * @return
-    */
+   * For traversing allong Enrichment
+   *
+   * @tparam A Fixed type
+   * @return
+   */
   implicit def drosteTraverseForHom[A]: Traverse[Hom[A, *]] =
     new DefaultTraverse[Hom[A, *]] {
-      def traverse[F[_]: Applicative, B, C](
-        fb: Hom[A, B]
-      )(f: B => F[C]): F[Hom[A, C]] =
+      def traverse[F[_] : Applicative, B, C](
+                                              fb: Hom[A, B]
+                                            )(f: B => F[C]): F[Hom[A, C]] =
         fb match {
           case Cell2(head, tail) => f(tail).map(Cell2(head, _))
-          case Cell(value)         => (Cell(value): Hom[A, C]).pure[F]
-          case Context()           => (Context(): Hom[A, C]).pure[F]
+          case Cell(value) => (Cell(value): Hom[A, C]).pure[F]
+          case Context() => (Context(): Hom[A, C]).pure[F]
         }
     }
 
   def toScalaList[A, PatR[_[_]]](
-    list: PatR[Hom[A, *]]
-  )(implicit ev: Project[Hom[A, *], PatR[Hom[A, *]]]): List[A] =
+                                  list: PatR[Hom[A, *]]
+                                )(implicit ev: Project[Hom[A, *], PatR[Hom[A, *]]]): List[A] =
     scheme.cata(toScalaListAlgebra[A]).apply(list)
 
   def toScalaListAlgebra[A]: Algebra[Hom[A, *], List[A]] = Algebra {
     case Cell2(head, tail) => head :: tail
-    case Cell(thing)         => thing :: Nil
-    case Context()           => Nil
+    case Cell(thing) => thing :: Nil
+    case Context() => Nil
   }
 
   def fromScalaList[A, PatR[_[_]]](
-    list: List[A]
-  )(implicit ev: Embed[Hom[A, *], PatR[Hom[A, *]]]): PatR[Hom[A, *]] =
+                                    list: List[A]
+                                  )(implicit ev: Embed[Hom[A, *], PatR[Hom[A, *]]]): PatR[Hom[A, *]] =
     scheme.ana(fromScalaListCoalgebra[A]).apply(list)
 
   def fromScalaListCoalgebra[A]: Coalgebra[Hom[A, *], List[A]] = Coalgebra {
-    case head :: Nil  => Cell(head)
+    case head :: Nil => Cell(head)
     case head :: tail => Cell2(head, tail)
-    case Nil          => Context()
+    case Nil => Context()
   }
 
   implicit def basisHomMonoid[T, A](
-    implicit T: Basis[Hom[A, *], T]
-  ): Monoid[T] =
+                                     implicit T: Basis[Hom[A, *], T]
+                                   ): Monoid[T] =
     new Monoid[T] {
       def empty = T.algebra(Context())
 
@@ -82,7 +114,7 @@ object Hom {
         scheme
           .cata(Algebra[Hom[A, *], T] {
             case Context() => f2
-            case cons      => T.algebra(cons)
+            case cons => T.algebra(cons)
           })
           .apply(f1)
       }
@@ -92,41 +124,67 @@ object Hom {
   implicit def drosteDelayEqHom[A](implicit eh: Eq[A]): Delay[Eq, Hom[A, *]] =
     λ[Eq ~> (Eq ∘ Hom[A, *])#λ](
       et =>
-        Eq.instance(
+        Eq.instance( //todo use BoundedSemilattice here or Semilattice
           (x, y) =>
             x match {
               case Cell2(hx, tx) =>
                 y match {
                   case Cell2(hy, ty) => eh.eqv(hx, hy) && et.eqv(tx, ty)
-                  case Context()       => false
+                  case Context() => false
                 }
               case Context() =>
                 y match {
                   case Context() => true
-                  case _         => false
+                  case _ => false
                 }
-          }
-      )
+            }
+        )
     )
+}
 
-  def ifEndo[A](g: A => A, pred: A => Boolean): A => A = { //todo use for lifts
+object DummyCellMethods {
+  def dummyAlgebra[A, B](a: A): B = ???
+}
+
+//todo Cv algebras here
+case class Cell[A, B](override val a: A) extends Topos[A, B] {
+}
+
+//todo postpro/prePro here
+case class Cell2[A, B](override val a: A, b: B) extends Topos[A, B] {
+}
+
+case class Context() extends Hom[Nothing, Nothing]
+
+//todo use RAlgebra here, parallel ops
+case class Cocell[A, B](run: A => (Cocell[A, B], B)) extends Hom[A, B] {
+
+  def ifM[A](g: A => A, pred: A => Boolean): A => A = {
     a =>
       val newA = g(a)
       if (pred(newA)) newA else a
   }
 }
 
-case class Cell[A, B](a: A) extends Hom[A, B]
-
-case class Cell2[A, B](a: A, b: B) extends Topos[A, B]{
-  val run: A => (Topos[A, B], B) = _ => (this, b)
-}
-
-case class Context() extends Hom[Nothing, Nothing]
-
-case class Cocell[A, B](run: A => (Cocell[A, B], B)) extends Topos[A, B]
-
 object Cocell {
+
+  implicit val arrowInstance: Arrow[Cocell] = new Arrow[Cocell] {
+    def lift[A, B](f: A => B): Cocell[A, B] = Cocell {
+      lift(f) -> f(_)
+    }
+
+    override def compose[A, B, C](f: Cocell[B, C], g: Cocell[A, B]): Cocell[A, C] = Cocell { a =>
+      val (gg, b) = g.run(a)
+      val (ff, c) = f.run(b)
+      (compose(ff, gg), c)
+    }
+
+    override def first[A, B, C](fa: Cocell[A, B]): Cocell[(A, C), (B, C)] = Cocell { case (a, c) =>
+      val (fa2, b) = fa.run(a)
+      (first(fa2), (b, c))
+    }
+  }
+
   def runList[A, B](ff: Cocell[A, B], as: List[A]): List[B] = as match {
     case h :: t =>
       val (ff2, b) = ff.run(h)
@@ -140,9 +198,11 @@ object Cocell {
   }
 
   def sum[A: Monoid]: Cocell[A, A] = accum(Monoid[A].empty)(_ |+| _)
-  def count[A]: Topos[A, Int] = Arrow[Topos].lift((_: A) => 1) >>> sum
-  def avg: Topos[Int, Double] =
-    Topos.combine(sum[Int], count[Int]) >>> Arrow[Topos].lift {
+
+  def count[A]: Cocell[A, Int] = Arrow[Cocell].lift((_: A) => 1) >>> sum
+
+  def avg: Cocell[Int, Double] =
+    Topos.combine(sum[Int], count[Int]) >>> Arrow[Cocell].lift {
       case (x, y) => x.toDouble / y
     }
 }
