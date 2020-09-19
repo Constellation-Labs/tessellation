@@ -1,6 +1,6 @@
 package org.tessellation.schema
 
-import cats.arrow.Arrow
+import cats.arrow.{Arrow, ArrowChoice, CommutativeArrow}
 import cats.implicits._
 import cats.kernel.{Monoid, PartialOrder}
 import cats.{Applicative, Eq, Traverse, ~>}
@@ -8,6 +8,7 @@ import higherkindness.droste.data.{:<, Coattr}
 import higherkindness.droste.syntax.compose._
 import higherkindness.droste.util.DefaultTraverse
 import higherkindness.droste.{Algebra, _}
+import org.tessellation.schema.Hom.Endo
 
 /**
  * Characteristic Sheaf just needs to be Poset
@@ -34,9 +35,25 @@ object Hom {
   import cats.syntax.functor._
 
   type Endo[O] = Hom[Ω, O]
+
+  def apply[A](a: A) = Cell[A, A](a)
+  def apply[A, B](a: A, b: B) = Cell2[A, B](a, b)
+  //todo use fusion to map in between run: Ω => (Hom[A, B], Ω)
+  def apply[A, B](run: A => (Cocell[A, B], B)) = Cocell[A, B](run)
+  implicit val arrowInstance: ArrowChoice[Hom] = new ArrowChoice[Hom] with CommutativeArrow[Hom] {
+    override def choose[A, B, C, D](f: Hom[A, C])(g: Hom[B, D]): Hom[Either[A, B], Either[C, D]] = ???
+
+    override def lift[A, B](f: A => B): Hom[A, B] = ???
+
+    override def compose[A, B, C](f: Hom[B, C], g: Hom[A, B]): Hom[A, C] = ???
+
+    override def first[A, B, C](fa: Hom[A, B]): Hom[(A, C), (B, C)] = ???
+  }
+
   val coalgebra: Coalgebra[Hom[Ω, ?], Ω] = Coalgebra[Hom[Ω, ?], Ω] { thing: Ω => Cell(thing) }
 
   val rcoalgebra: RCoalgebra[Ω, Hom[Ω, ?], Ω] = RCoalgebra {
+    case ohm: Ω => Cell(ohm)
     case cell: Cell[Ω, Ω] => Cell2(cell.a, Left(cell.run(cell.a)))
   }
 
@@ -47,7 +64,7 @@ object Hom {
   }
 
   val ralgebra: RAlgebra[Ω, Hom[Ω, ?], Ω] = RAlgebra {
-    case cell@Cell(ohm) => cell.run(ohm)
+    case cell@Cell(ohm) => cell.run(ohm)//todo cocell here
     case cell2@Cell2(ohm, (b, x)) =>
       b match {
         case _: Ω => monoidΩ.combine(cell2.run(ohm), monoidΩ.combine(ohm, x))
@@ -205,10 +222,21 @@ object Cocell {
     Topos.combine(sum[Int], count[Int]) >>> Arrow[Cocell].lift {
       case (x, y) => x.toDouble / y
     }
+
+//  def runList[A, B](ff: Cocell[A, B], as: List[A]): List[B] = as match {
+//    case h :: t =>
+//      val (ff2, b) = ff.run(h)
+//      b :: runList(ff2, t)
+//    case _ => List()
+//  }
+
+
+  def runEndo[A, B](ff: Cocell[A, B], as: Endo[A]): Endo[B] = ???
 }
 
 abstract class Fiber[A, B]
 
 abstract class Bundle[F, G](fibers: F)
 
+//todo use Kleisli like gRPC server? SimplexServer[Kleisli[IO, Span[IO], *]]
 abstract class Simplex[T, U, V](fibers: Seq[Hom[T, U]])

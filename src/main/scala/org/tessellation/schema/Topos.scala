@@ -14,7 +14,7 @@ trait Topos[A, B] extends Hom[A, B] {
 
   import Hom._
 
-  val arrow = Topos.arrowInstance
+  val arrow = Hom.arrowInstance
   val a: A
   val terminator: Ω = this // subobject classifier
   val identity = natTrans
@@ -32,16 +32,6 @@ trait Topos[A, B] extends Hom[A, B] {
 
 object Topos {
   type FreeF[S[_], A] = Free[Coyoneda[S, ?], A]
-
-  implicit val arrowInstance: ArrowChoice[Topos] = new ArrowChoice[Topos] with CommutativeArrow[Topos] {
-    override def choose[A, B, C, D](f: Topos[A, C])(g: Topos[B, D]): Topos[Either[A, B], Either[C, D]] = ???
-
-    override def lift[A, B](f: A => B): Topos[A, B] = ???
-
-    override def compose[A, B, C](f: Topos[B, C], g: Topos[A, B]): Topos[A, C] = ???
-
-    override def first[A, B, C](fa: Topos[A, B]): Topos[(A, C), (B, C)] = ???
-  }
 
   def combine[F[_, _] : Arrow, A, B, C](fab: F[A, B],
                                         fac: F[A, C]): F[A, (B, C)] =

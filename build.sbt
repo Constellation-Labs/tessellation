@@ -7,6 +7,7 @@ scalaVersion := "2.13.1"
 
 lazy val dependencies = Seq(
   "org.typelevel" %% "spire" % "0.17.0-M1",
+  "io.higherkindness" %% "mu-rpc-fs2" % "0.23.0",
   "io.higherkindness" %% "droste-core" % "0.8.0",
   "io.higherkindness" %% "droste-laws" % "0.8.0",
   "io.higherkindness" %% "droste-macros" % "0.8.0",
@@ -15,6 +16,7 @@ lazy val dependencies = Seq(
   "org.typelevel" %% "discipline-core" % "1.0.0",
   "org.typelevel" %% "discipline-scalatest" % "1.0.0",
   "org.typelevel" %% "cats-core" % "2.0.0",
+  "org.tpolecat" %% "natchez-jaeger" % "0.0.12",
   ("org.typelevel" %% "cats-effect" % "2.0.0").withSources().withJavadoc(),
 )
 
