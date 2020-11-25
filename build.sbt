@@ -13,7 +13,8 @@ lazy val drosteDependencies = Seq(
 
 lazy val kryoDependencies = Seq(
   "com.twitter" %% "chill" % "0.9.5",
-  "com.twitter" %% "bijection-core" % "0.9.7"
+  "com.twitter" %% "bijection-core" % "0.9.7",
+  "com.twitter" %% "chill-bijection" % "0.9.5"
 )
 
 lazy val fs2Dependencies = Seq(

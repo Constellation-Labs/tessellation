@@ -11,6 +11,7 @@ import org.tessellation.ConsensusExample.{intGather, intScatter}
 import org.tessellation.StreamExample.pipeline
 import org.tessellation.hypergraph.EdgePartitioner
 import org.tessellation.hypergraph.EdgePartitioner.EdgePartitioner
+import org.tessellation.serialization.{Kryo, KryoRegistrar, SerDe}
 
 object Main extends App {
   println("Welcome to " |+| "Tessellation!")
@@ -91,4 +92,41 @@ object ConsensusExample extends App {
 
   val dummyStream = Stream(1,2,3)
   val effectfulStream = dummyStream.flatMap(pipeline)
+}
+
+/**
+ * Serialization use-case example
+ * Remember to remove registration entry in `KryoRegistrar` when removing this example
+ */
+object SerializationExample extends App {
+  import cats.syntax.all._
+  /**
+   * Instantiate the de/serialization service.
+   * Use `SerDe` as a dependency trait.
+   */
+  val registrar = new KryoRegistrar()
+  val ser: SerDe = Kryo(registrar)
+
+  def roundtrip[T <: Any](obj: T) = {
+    val result = for {
+      serialized <- ser.serialize(obj).leftMap(e => s"Serialization error: ${e.reason.getMessage}")
+      _ = println(s"Serialized ${obj} is ${serialized}")
+      deserialized <- ser.deserialize[T](serialized).leftMap(e => s"Deserialization error: ${e.reason.getMessage}")
+      _ = println(s"Deserialized is ${deserialized}")
+    } yield ()
+
+    result match {
+      case Left(a) => println(a)
+      case _ => ()
+    }
+  }
+
+
+  case class Lorem(a: String)
+
+  roundtrip(2L)
+  roundtrip(Lorem("ipsum"))
+
+  case class UnknownLorem(a: Int)
+  roundtrip(UnknownLorem(4))
 }
