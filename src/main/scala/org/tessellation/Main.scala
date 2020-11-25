@@ -1,13 +1,12 @@
 package org.tessellation
 
 import cats.effect.{ExitCode, IOApp}
-import cats.implicits._
 import org.tessellation.schema.{Cell, Cell2, Cocell, Context, Hom, Topos, Ω}
 import org.tessellation.schema.Hom._
-import cats.implicits._
+import fs2.Stream
+import cats.syntax.all._
 import higherkindness.droste.{Algebra, CVAlgebra, Coalgebra, GAlgebra, GCoalgebra, Gather, RAlgebra, RCoalgebra, Scatter, scheme}
 import higherkindness.droste.data.{:<, Attr}
-import higherkindness.mu.rpc.protocol._
 import org.tessellation.ConsensusExample.{intGather, intScatter}
 import org.tessellation.StreamExample.pipeline
 import org.tessellation.hypergraph.EdgePartitioner

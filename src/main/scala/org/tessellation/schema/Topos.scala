@@ -2,7 +2,7 @@ package org.tessellation.schema
 
 import cats.arrow.{Arrow, ArrowChoice, CommutativeArrow}
 import cats.free.{Coyoneda, Free}
-import cats.implicits._
+import cats.syntax.all._
 import cats.{Functor, Representable, ~>}
 import higherkindness.droste._
 import higherkindness.droste.data.{Mu, Nu}
