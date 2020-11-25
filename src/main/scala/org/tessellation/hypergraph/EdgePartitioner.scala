@@ -1,11 +1,8 @@
 package org.tessellation.hypergraph
 
-import cats.effect.Concurrent
-import higherkindness.mu.rpc.protocol.{Protobuf, service}
 import org.tessellation.schema.Ω
 
 import scala.collection.mutable
-import scala.collection.mutable.HashMap
 import fs2.Stream
 
 /**

@@ -1,7 +1,7 @@
 package org.tessellation.schema
 
 import cats.arrow.{Arrow, ArrowChoice, CommutativeArrow}
-import cats.implicits._
+import cats.syntax.all._
 import cats.kernel.{Monoid, PartialOrder}
 import cats.{Applicative, Eq, Traverse, ~>}
 import higherkindness.droste.data.{:<, Coattr}

@@ -5,20 +5,34 @@ version := "0.0.1-SNAPSHOT"
 
 scalaVersion := "2.13.1"
 
+lazy val drosteDependencies = Seq(
+  "io.higherkindness" %% "droste-core",
+  "io.higherkindness" %% "droste-laws",
+  "io.higherkindness" %% "droste-macros",
+).map(_ % "0.8.0")
+
+lazy val kryoDependencies = Seq(
+  "com.twitter" %% "chill" % "0.9.5",
+  "com.twitter" %% "bijection-core" % "0.9.7"
+)
+
+lazy val fs2Dependencies = Seq(
+  "co.fs2" %% "fs2-core",
+  "co.fs2" %% "fs2-io",
+  "co.fs2" %% "fs2-reactive-streams"
+).map(_ % "2.4.4")
+
 lazy val dependencies = Seq(
   "org.typelevel" %% "spire" % "0.17.0-M1",
-  "io.higherkindness" %% "mu-rpc-fs2" % "0.23.0",
-  "io.higherkindness" %% "droste-core" % "0.8.0",
-  "io.higherkindness" %% "droste-laws" % "0.8.0",
-  "io.higherkindness" %% "droste-macros" % "0.8.0",
   "org.typelevel" %% "cats-laws" % "2.0.0",
   "com.github.alexarchambault" %% "scalacheck-shapeless_1.14" % "1.2.3",
   "org.typelevel" %% "discipline-core" % "1.0.0",
   "org.typelevel" %% "discipline-scalatest" % "1.0.0",
-  "org.typelevel" %% "cats-core" % "2.0.0",
+  "org.typelevel" %% "cats-core" % "2.2.0",
   "org.tpolecat" %% "natchez-jaeger" % "0.0.12",
-  ("org.typelevel" %% "cats-effect" % "2.0.0").withSources().withJavadoc(),
-)
+  ("org.typelevel" %% "cats-effect" % "2.2.0").withSources().withJavadoc(),
+  "com.beachape" %% "enumeratum" % "1.6.1"
+) ++ drosteDependencies ++ kryoDependencies ++ fs2Dependencies
 
 lazy val testDependencies = Seq(
   "org.scalacheck" %% "scalacheck" % "1.14.0",

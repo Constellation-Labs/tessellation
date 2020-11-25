@@ -2,7 +2,7 @@ package org.tessellation.schema
 
 import cats.kernel.Semigroup
 import cats.SemigroupK
-import cats.implicits._
+import cats.syntax.all._
 import org.tessellation.schema.EdgeHashType.EdgeHashType
 
 trait Signable {
