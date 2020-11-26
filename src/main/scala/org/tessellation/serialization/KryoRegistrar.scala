@@ -10,6 +10,6 @@ class KryoRegistrar extends IKryoRegistrar {
   }
 
   private def registerClasses(kryo: Kryo): Unit = {
-     kryo.register(classOf[Lorem])
+    kryo.register(classOf[Lorem])
   }
 }
