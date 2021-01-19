@@ -2,7 +2,7 @@ package org.tessellation
 
 import cats.Functor
 import cats.effect.{ExitCase, ExitCode, IO, IOApp, Sync}
-import org.tessellation.schema.{AciF, Cell, Cell2, CellM, Cocell, Context, Hom, L0Consensus, L1Consensus, Topos, Ω}
+import org.tessellation.schema.{AciF, Cell, Cell0, Cell2, Cocell, Context, Hom, L0Consensus, L1Consensus, Topos, Ω}
 import org.tessellation.schema.Hom._
 import fs2.{Pipe, Stream}
 import cats.syntax.all._
@@ -48,6 +48,7 @@ object LiftExample extends App {
 //  println(pipeline.compile.toList)
 //}
 
+/*
 object RunExample extends App {
   val L1 = CellM[IO, Int, Option[Int], AciF](L1Consensus.coalgebra, L1Consensus.algebra)
   val L0 = CellM[IO, Int, String, AciF](L0Consensus.coalgebra, L0Consensus.algebra)
@@ -76,6 +77,76 @@ object RunExample extends App {
 
   println(pipeline2.unsafeRunSync)
 }
+*/
+
+object RunExample extends App {
+
+  class L1Cell(txs: List[Int]) extends Cell[List[Int], Int](txs) {
+    val coalgebraGAPO: Coalgebra[Hom[Ω, *], Ω] = Coalgebra[Hom[Ω, *], Ω] { thing: Ω => {
+      println(thing)
+      Cell(thing)
+    } }
+
+    val coalgebra: RCoalgebra[Ω, Hom[Ω, ?], Ω] = RCoalgebra {
+      case cell: Cell[List[Int], Int] => {
+        Cell0(IO { cell.a.sum })
+      }
+    }
+
+    val algebra: CVAlgebra[Hom[Ω, ?], Ω] = CVAlgebra {
+      case Cell0(a: IO[_]) => {
+        Cell0(a.unsafeRunSync)
+      }
+    }
+
+    val g = algebra.gather(Gather.histo)
+    val s = coalgebra.scatter(Scatter.gapo(coalgebraGAPO))
+
+    override val run: Ω => Ω = scheme.ghylo(g, s)
+
+  }
+
+  object L1Cell {
+    def apply(txs: List[Int]): L1Cell = new L1Cell(txs)
+  }
+
+  val pipeline = Stream[IO, Int](1, 2, 3, 4, 5)
+    .chunkN(2, true)
+    .map(_.toList)
+    .map(L1Cell(_))
+    .map(cell => cell.run(cell))
+    .compile
+    .toList
+
+  println(pipeline.unsafeRunSync)
+
+}
+
+/*
+tx1, tx2
+--buffer->
+0-Cell(tx1, tx2)
+-->
+1-Cell L1 ( 0-Cell(tx1, tx2) )
+--run-->
+block1
+
+--buffer->
+0-Cell(block1)
+-->
+1-Cell L0 ( 0-Cell(block1) )
+--run-->
+snapshot
+ */
+
+
+object FinalStreamExample extends App {
+  val tx$ = Stream.emit()
+
+
+
+}
+
 
 object StreamExample extends App {
   import fs2.Stream

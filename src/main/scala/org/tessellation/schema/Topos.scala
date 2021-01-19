@@ -14,7 +14,7 @@ trait Topos[A, B] extends Hom[A, B] {
   import Hom._
 
   val arrow = Hom.arrowInstance
-   val a: A
+  val a: A
   val terminator: Ω = this // subobject classifier
   val identity = natTrans
 
