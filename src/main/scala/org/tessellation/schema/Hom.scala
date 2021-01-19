@@ -61,7 +61,8 @@ object Hom {
   val rcoalgebra: RCoalgebra[Ω, Hom[Ω, ?], Ω] = RCoalgebra {
     case cell: Cell[Ω, Ω] => {
       println(cell.a)
-      Cell2(cell.a, Left(cell.run(cell.a)))
+      // Cell2(cell.a, Left(cell.run(cell.a)))
+      Cell0(cell.a)
     }
     case ohm: Ω => {
       println(ohm)
@@ -70,6 +71,10 @@ object Hom {
   }
 
   val cvAlgebra: CVAlgebra[Hom[Ω, ?], Ω] = CVAlgebra {
+    case cell@Cell0(a) => {
+      Cell0((a.asInstanceOf[List[Int]]).sum) // consensus execute
+    }
+
     case cell@Cell(aa) => cell.run(aa)
     case cell2@Cell2(aaa, b :< Cell(c :< _)) => monoidΩ.combine(cell2.run(aaa), b)
     case cell2@Cell2(a, b :< Cell2(c, d :< _)) => monoidΩ.combine(cell2.run(a), monoidΩ.combine(b, c))
@@ -107,6 +112,7 @@ object Hom {
         fb match {
           case Cell2(head, tail) => f(tail).map(Cell2(head, _))
           case Cell(value) => (Cell(value): Hom[A, C]).pure[F]
+          case Cell0(value) => (Cell0(value): Hom[A, C]).pure[F]
           case Context() => (Context(): Hom[A, C]).pure[F]
         }
     }
@@ -171,35 +177,6 @@ object Hom {
     )
 }
 
-object DummyCellMethods {
-  def dummyAlgebra[A, B](a: A): B = ???
-}
-
-// 1. Cell takes algebra and coalgebra
-// 2. Run method takes INPUT and produces OUTPUT (IMO it should be a stream/pipe)
-// 3. Nested cell is a composition of two cells
-
-case class CellM[M[_], In, Out, S[_]: Functor](run: In => Out) {
-  val pipe: Pipe[M, In, Out] = in => in.map(run)
-}
-
-object CellM {
-  def apply[M[_], In, Out, S[_]: Functor](run: In => Out) = new CellM[M, In, Out, S](run)
-  def apply[M[_], In, Out, S[_]: Functor](coalgebra: Coalgebra[S, In], algebra: Algebra[S, Out]) =
-    new CellM[M, In, Out, S](
-      scheme.ghylo(algebra.gather(Gather.cata), coalgebra.scatter(Scatter.ana))
-    )
-
-  def compose[M[_], A, B, C, S[_]: Functor](f: CellM[M, A, B, S], g: CellM[M, B, C, S]): CellM[M, A, C, S] = {
-    CellM[M, A, C, S](f.run andThen g.run)
-  }
-
-  def compose[M[_], A, B, C, D, S[_]: Functor](f: CellM[M, A, B, S], g: CellM[M, C, D, S], bc: B => C): CellM[M, A, D, S] = {
-    CellM[M, A, D, S](f.run andThen bc andThen g.run)
-  }
-}
-
-
 //todo Cv algebras here
 case class Cell[A, B](override val a: A) extends Topos[A, B] {}
 
@@ -220,6 +197,8 @@ object Cell {
 //todo postpro/prePro here
 case class Cell2[A, B](override val a: A, b: B) extends Topos[A, B] {
 }
+
+case class Cell0[A](val a: A) extends Hom[Nothing, Nothing]
 
 case class Context() extends Hom[Nothing, Nothing]
 
