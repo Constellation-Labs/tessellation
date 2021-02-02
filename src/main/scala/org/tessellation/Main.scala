@@ -2,7 +2,7 @@ package org.tessellation
 
 import cats.Functor
 import cats.effect.{ExitCase, ExitCode, IO, IOApp, Sync}
-import org.tessellation.schema.{AciF, Cell, Cell0, Cell2, Cocell, Context, Hom, L0Consensus, L1Consensus, Topos, Ω}
+import org.tessellation.schema.{Cell, Cell0, Cell2, Cocell, Context, Hom, L1Consensus, Topos, L1Transaction, L1Edge, Ω}
 import org.tessellation.schema.Hom._
 import fs2.{Pipe, Stream}
 import cats.syntax.all._
@@ -12,6 +12,7 @@ import org.tessellation.ConsensusExample.{intGather, intScatter}
 import org.tessellation.StreamExample.pipeline
 import org.tessellation.hypergraph.EdgePartitioner
 import org.tessellation.hypergraph.EdgePartitioner.EdgePartitioner
+import org.tessellation.schema.L1Consensus.{L1ConsensusMetadata, algebra, coalgebra}
 import org.tessellation.serialization.{Kryo, KryoRegistrar, SerDe}
 
 object Main extends App {
@@ -81,44 +82,25 @@ object RunExample extends App {
 
 object RunExample extends App {
 
-  class L1Cell(txs: List[Int]) extends Cell[List[Int], Int](txs) {
-    val coalgebraGAPO: Coalgebra[Hom[Ω, *], Ω] = Coalgebra[Hom[Ω, *], Ω] { thing: Ω => {
-      println(thing)
-      Cell(thing)
-    } }
+  val input = L1Edge(Set(L1Transaction(2)))
+  val initialState = L1ConsensusMetadata.empty
 
-    val coalgebra: RCoalgebra[Ω, Hom[Ω, ?], Ω] = RCoalgebra {
-      case cell: Cell[List[Int], Int] => {
-        Cell0(IO { cell.a.sum })
-      }
-    }
+  val ana = scheme.anaM(coalgebra)
+  val hylo = scheme.hyloM(algebra, coalgebra)
 
-    val algebra: CVAlgebra[Hom[Ω, ?], Ω] = CVAlgebra {
-      case Cell0(a: IO[_]) => {
-        Cell0(a.unsafeRunSync)
-      }
-    }
-
-    val g = algebra.gather(Gather.histo)
-    val s = coalgebra.scatter(Scatter.gapo(coalgebraGAPO))
-
-    override val run: Ω => Ω = scheme.ghylo(g, s)
-
+  val result = hylo(input).run(initialState)
+  val result2 = result.flatMap {
+    case (state, cmd) => { hylo(cmd).run(state) }
+  }
+  val result3 = result2.flatMap {
+    case (state, cmd) => { hylo(cmd).run(state) }
   }
 
-  object L1Cell {
-    def apply(txs: List[Int]): L1Cell = new L1Cell(txs)
+  result3.unsafeRunSync match {
+    case (state, block) =>
+      println(s"*** State: ${state}")
+      println(s"*** Block: ${block}")
   }
-
-  val pipeline = Stream[IO, Int](1, 2, 3, 4, 5)
-    .chunkN(2, true)
-    .map(_.toList)
-    .map(L1Cell(_))
-    .map(cell => cell.run(cell))
-    .compile
-    .toList
-
-  println(pipeline.unsafeRunSync)
 
 }
 
