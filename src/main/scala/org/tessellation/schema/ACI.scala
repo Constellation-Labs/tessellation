@@ -7,6 +7,7 @@ import higherkindness.droste.{Algebra, Coalgebra}
 
 import scala.util.Random
 
+/*
 object L1Consensus {
   type Peer = String
   type Facilitators = Set[Peer]
@@ -56,3 +57,4 @@ object AciF {
     }
   }
 }
+ */

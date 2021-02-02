@@ -27,6 +27,11 @@ lazy val doobieDependencies = Seq(
   "org.tpolecat" %% "doobie-quill" % "0.9.0"
 )
 
+lazy val monocleDependencies = Seq(
+  "com.github.julien-truffaut" %% "monocle-core"  % "2.0.3",
+  "com.github.julien-truffaut" %% "monocle-macro" % "2.0.3",
+)
+
 lazy val dependencies = Seq(
   "org.typelevel" %% "spire" % "0.17.0-M1",
   "org.typelevel" %% "cats-laws" % "2.0.0",
@@ -37,7 +42,7 @@ lazy val dependencies = Seq(
   "org.tpolecat" %% "natchez-jaeger" % "0.0.12",
   ("org.typelevel" %% "cats-effect" % "2.2.0").withSources().withJavadoc(),
   "com.beachape" %% "enumeratum" % "1.6.1"
-) ++ drosteDependencies ++ kryoDependencies ++ fs2Dependencies ++ doobieDependencies
+) ++ drosteDependencies ++ kryoDependencies ++ fs2Dependencies ++ doobieDependencies ++ monocleDependencies
 
 lazy val testDependencies = Seq(
   "org.scalacheck" %% "scalacheck" % "1.14.0",
