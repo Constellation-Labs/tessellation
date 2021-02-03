@@ -2,7 +2,7 @@ package org.tessellation
 
 import cats.Functor
 import cats.effect.{ExitCase, ExitCode, IO, IOApp, Sync}
-import org.tessellation.schema.{Cell, Cell0, Cell2, Cocell, Context, Hom, L1Consensus, Topos, L1Transaction, L1Edge, Ω}
+import org.tessellation.schema.{Cell, Cell0, Cell2, Cocell, Context, Hom, L1Consensus, L1Edge, L1Transaction, StackL1Consensus, Topos, Ω}
 import org.tessellation.schema.Hom._
 import fs2.{Pipe, Stream}
 import cats.syntax.all._
@@ -85,50 +85,12 @@ object RunExample extends App {
   val input = L1Edge(Set(L1Transaction(2)))
   val initialState = L1ConsensusMetadata.empty
 
-  val ana = scheme.anaM(coalgebra)
-  val hylo = scheme.hyloM(algebra, coalgebra)
+  val hylo = scheme.hyloM(StackL1Consensus.algebra, StackL1Consensus.coalgebra)
 
-  val result = hylo(input).run(initialState)
+  val result = hylo.apply((initialState, input)).unsafeRunSync
 
-  result.unsafeRunSync match {
-    case (state, block) =>
-      println(s"****** First pass")
-      println(s"*** State: ${state}")
-      println(s"*** Object: ${block}")
-  }
+  println(result)
 
-  val result2 = result.flatMap {
-    case (state, cmd) => { hylo(cmd).run(state) }
-  }
-
-  result2.unsafeRunSync match {
-    case (state, block) =>
-      println(s"****** Second pass")
-      println(s"*** State: ${state}")
-      println(s"*** Object: ${block}")
-  }
-
-  val result3 = result2.flatMap {
-    case (state, cmd) => { hylo(cmd).run(state) }
-  }
-
-  result3.unsafeRunSync match {
-    case (state, block) =>
-      println(s"****** Third pass")
-      println(s"*** State: ${state}")
-      println(s"*** Object: ${block}")
-  }
-
-  val result4 = result3.flatMap {
-    case (state, cmd) => { hylo(cmd).run(state) }
-  }
-
-  result4.unsafeRunSync match {
-    case (state, block) =>
-      println(s"****** Forth pass")
-      println(s"*** State: ${state}")
-      println(s"*** Object: ${block}")
-  }
 
 }
 
