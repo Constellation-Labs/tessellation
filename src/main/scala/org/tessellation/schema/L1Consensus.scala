@@ -14,19 +14,17 @@ import scala.util.Random
 
 // run: Ω => Ω
 
-sealed trait L1ConsensusF[A]
+sealed trait L1ConsensusF[A] extends Hom[Ω, A]
 
 case class L1Transaction(a: Int) extends Ω
 case class L1Block(a: Int) extends Ω
 
-// select facilitators
-// gather proposals
-// validate responses
-
-case class L1Edge[A](txs: Set[L1Transaction]) extends L1ConsensusF[A] with Ω
-case class SelectFacilitators[A]() extends L1ConsensusF[A] with Ω
-case class GatherProposals[A]() extends L1ConsensusF[A] with Ω
-case class ProposalResponses[A](responses: Set[(Peer, Proposal)]) extends L1ConsensusF[A] with Ω
+case class L1Edge[A](txs: Set[L1Transaction]) extends L1ConsensusF[A]
+case class SelectFacilitators[A]() extends L1ConsensusF[A]
+case class GatherProposals[A]() extends L1ConsensusF[A]
+case class ProposalResponses[A](responses: Set[(Peer, Proposal)]) extends L1ConsensusF[A]
+case class ValidateResponses[A](responses: Set[(Peer, Proposal)]) extends L1ConsensusF[A]
+case class CreateBlock[A](data: Option[Int]) extends L1ConsensusF[A]
 
 object L1ConsensusF {
 
@@ -37,6 +35,8 @@ object L1ConsensusF {
         case SelectFacilitators() => (SelectFacilitators(): L1ConsensusF[B]).pure[G]
         case GatherProposals() => (GatherProposals(): L1ConsensusF[B]).pure[G]
         case ProposalResponses(responses) => (ProposalResponses(responses): L1ConsensusF[B]).pure[G]
+        case ValidateResponses(responses) => (ValidateResponses(responses): L1ConsensusF[B]).pure[G]
+        case CreateBlock(data) => (CreateBlock(data): L1ConsensusF[B]).pure[G]
       }
   }
 
@@ -72,9 +72,7 @@ object L1Consensus {
 
   val coalgebra: CoalgebraM[StateM, L1ConsensusF, Ω] = CoalgebraM {
     case L1Edge(txs) => StateT { metadata =>
-      apiCall().map { int =>
-        (metadata.lens(_.txs).set(txs ++ Set(L1Transaction(int))), SelectFacilitators())
-      }
+      IO { (metadata.lens(_.txs).set(txs), SelectFacilitators()) }
     }
 
     case SelectFacilitators() => StateT { metadata =>
@@ -89,22 +87,23 @@ object L1Consensus {
         (metadata, ProposalResponses(proposals))
       }
     }
-  }
-
-
-  val algebra: AlgebraM[StateM, L1ConsensusF, Ω] = AlgebraM {
-    case SelectFacilitators() => StateT { metadata =>
-      IO { (metadata, SelectFacilitators()) }
-    }
-
-    case GatherProposals() => StateT { metadata =>
-      IO { (metadata, GatherProposals() )}
-    }
 
     case ProposalResponses(responses) => StateT { metadata =>
+      val proposals = responses.map { case (_, proposal) => proposal }
+      val cmd: L1ConsensusF[Ω] = if (proposals.isEmpty) CreateBlock(none[Int]) else CreateBlock(proposals.sum.some)
+      IO { (metadata, cmd) }
+    }
+  }
+
+  val algebra: AlgebraM[StateM, L1ConsensusF, Ω] = AlgebraM {
+    case CreateBlock(data) => StateT { metadata =>
       IO {
-        (metadata, L1Block(responses.map(_._2).sum))
+        (metadata, L1Block(data.getOrElse(-1))) // TODO: Option ?
       }
+    }
+
+    case cmd: Ω => StateT { metadata =>
+      IO { (metadata, cmd) }
     }
   }
 

@@ -89,17 +89,45 @@ object RunExample extends App {
   val hylo = scheme.hyloM(algebra, coalgebra)
 
   val result = hylo(input).run(initialState)
+
+  result.unsafeRunSync match {
+    case (state, block) =>
+      println(s"****** First pass")
+      println(s"*** State: ${state}")
+      println(s"*** Object: ${block}")
+  }
+
   val result2 = result.flatMap {
     case (state, cmd) => { hylo(cmd).run(state) }
   }
+
+  result2.unsafeRunSync match {
+    case (state, block) =>
+      println(s"****** Second pass")
+      println(s"*** State: ${state}")
+      println(s"*** Object: ${block}")
+  }
+
   val result3 = result2.flatMap {
     case (state, cmd) => { hylo(cmd).run(state) }
   }
 
   result3.unsafeRunSync match {
     case (state, block) =>
+      println(s"****** Third pass")
       println(s"*** State: ${state}")
-      println(s"*** Block: ${block}")
+      println(s"*** Object: ${block}")
+  }
+
+  val result4 = result3.flatMap {
+    case (state, cmd) => { hylo(cmd).run(state) }
+  }
+
+  result4.unsafeRunSync match {
+    case (state, block) =>
+      println(s"****** Forth pass")
+      println(s"*** State: ${state}")
+      println(s"*** Object: ${block}")
   }
 
 }
