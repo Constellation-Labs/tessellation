@@ -1,8 +1,9 @@
 package org.tessellation
 
 import cats.Functor
+import cats.effect.concurrent.Ref
 import cats.effect.{ExitCase, ExitCode, IO, IOApp, Sync}
-import org.tessellation.schema.{Cell, Cell0, Cell2, Cocell, Context, Hom, L1Consensus, L1Edge, L1Transaction, StackL1Consensus, Topos, Ω}
+import org.tessellation.schema.{Cell, Cell0, Cell2, Cocell, Context, Hom, L1Consensus, L1Edge, L1Transaction, L1TransactionPool, StackL1Consensus, Topos, Ω}
 import org.tessellation.schema.Hom._
 import fs2.{Pipe, Stream}
 import cats.syntax.all._
@@ -12,7 +13,7 @@ import org.tessellation.ConsensusExample.{intGather, intScatter}
 import org.tessellation.StreamExample.pipeline
 import org.tessellation.hypergraph.EdgePartitioner
 import org.tessellation.hypergraph.EdgePartitioner.EdgePartitioner
-import org.tessellation.schema.L1Consensus.{L1ConsensusMetadata, algebra, coalgebra}
+import org.tessellation.schema.L1Consensus.{L1ConsensusContext, L1ConsensusMetadata, algebra, coalgebra}
 import org.tessellation.serialization.{Kryo, KryoRegistrar, SerDe}
 
 object Main extends App {
@@ -82,14 +83,24 @@ object RunExample extends App {
 
 object RunExample extends App {
 
-  val input = L1Edge(Set(L1Transaction(2)))
-  val initialState = L1ConsensusMetadata.empty
+  val input = L1Edge(Set(L1Transaction(10)))
 
-  val hylo = scheme.hyloM(StackL1Consensus.algebra, StackL1Consensus.coalgebra)
+  implicit val contextShift = IO.contextShift(scala.concurrent.ExecutionContext.global)
 
-  val result = hylo.apply((initialState, input)).unsafeRunSync
+  val result = for {
+    ref <- Ref.of[IO, Set[L1Transaction]](Set.empty)
+    txPool <- L1TransactionPool.apply[IO](ref)
 
-  println(result)
+    context = L1ConsensusContext(peer = "nodeA", peers = Set("nodeB", "nodeC"), txPool = txPool)
+    initialState = L1ConsensusMetadata.empty(context)
+
+    txs = List(L1Transaction(1), L1Transaction(2), L1Transaction(3), L1Transaction(4), L1Transaction(5))
+    _ <- txs.traverse(txPool.enqueue)
+
+    run <- scheme.hyloM(StackL1Consensus.algebra, StackL1Consensus.coalgebra).apply((initialState, input))
+  } yield run
+
+  println(result.unsafeRunSync)
 
 
 }

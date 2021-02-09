@@ -6,7 +6,7 @@ import cats.{Applicative, Traverse}
 import cats.syntax.all._
 import higherkindness.droste.{Algebra, AlgebraM, Coalgebra, CoalgebraM, scheme}
 import higherkindness.droste.util.DefaultTraverse
-import org.tessellation.schema.L1Consensus.{L1ConsensusMetadata, StateM, algebra, coalgebra}
+import org.tessellation.schema.L1Consensus.{L1ConsensusContext, L1ConsensusMetadata, StateM, algebra, coalgebra}
 
 trait StackF[A]
 
@@ -24,10 +24,12 @@ object StackF {
 }
 
 object StackL1Consensus {
-  val coalgebra: CoalgebraM[IO, StackF, (L1ConsensusMetadata, Ω)] = CoalgebraM { in =>
-    in._2 match {
+  val coalgebra: CoalgebraM[IO, StackF, (L1ConsensusMetadata, Ω)] = CoalgebraM {
+    case (metadata, cmd) => cmd match {
       case block @ L1Block(_) => IO { Done(block) }
-      case _ => scheme.hyloM(L1Consensus.algebra, L1Consensus.coalgebra).apply(in._2).run(in._1).map(More(_))
+      case end @ ConsensusEnd(_) => IO { Done(end) }
+      case response @ ProposalResponse(_) => IO { Done(response) }
+      case _ => scheme.hyloM(L1Consensus.algebra, L1Consensus.coalgebra).apply(cmd).run(metadata).map(More(_))
     }
   }
 
