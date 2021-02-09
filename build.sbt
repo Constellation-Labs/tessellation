@@ -41,7 +41,8 @@ lazy val dependencies = Seq(
   "org.typelevel" %% "cats-core" % "2.2.0",
   "org.tpolecat" %% "natchez-jaeger" % "0.0.12",
   ("org.typelevel" %% "cats-effect" % "2.2.0").withSources().withJavadoc(),
-  "com.beachape" %% "enumeratum" % "1.6.1"
+  "com.beachape" %% "enumeratum" % "1.6.1",
+  "io.chrisdavenport" %% "fuuid" % "0.5.0"
 ) ++ drosteDependencies ++ kryoDependencies ++ fs2Dependencies ++ doobieDependencies ++ monocleDependencies
 
 lazy val testDependencies = Seq(
