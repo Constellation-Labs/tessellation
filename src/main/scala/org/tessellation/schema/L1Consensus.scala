@@ -45,9 +45,17 @@ object L1ConsensusF {
 }
 
 object L1TransactionPool {
+  def init[F[_]](txs: Set[L1Transaction])(implicit F: Concurrent[F]): F[L1TransactionPoolEnqueue[F]] = for {
+    ref <- Ref.of[F, Set[L1Transaction]](Set.empty)
+    txPool <- L1TransactionPool.apply[F](ref)
+    _ <- txs.toList.traverse(txPool.enqueue)
+  } yield txPool
+
   def apply[F[_]](ref: Ref[F, Set[L1Transaction]])(implicit F: Concurrent[F]): F[L1TransactionPoolEnqueue[F]] = {
     F.delay {
       new L1TransactionPoolEnqueue[F] {
+        private val pulledTxs: Ref[F, Map[FUUID, Set[L1Transaction]]] = Ref.unsafe(Map.empty[FUUID, Set[L1Transaction]])
+
         def enqueue(tx: L1Transaction): F[Unit] =
           ref.modify(txs => (txs + tx, ()))
 
@@ -57,6 +65,32 @@ object L1TransactionPool {
 
             (txs -- taken, taken)
           }
+
+        def pull(roundId: FUUID, n: Int): F[Set[L1Transaction]] = {
+          pulledTxs.get
+            .map(_.get(roundId))
+            .flatMap {
+              case Some(txs) => F.pure(txs)
+              case None => for {
+                txs <- dequeue(n)
+                _ <- addToPulled(roundId, txs)
+              } yield txs
+            }
+        }
+
+        private def addToPulled(roundId: FUUID, txs: Set[L1Transaction]): F[Unit] =
+          pulledTxs.modify(m => (m.updated(roundId, txs), ()))
+
+        private def removeFromPulled(roundId: FUUID): F[Set[L1Transaction]] =
+          pulledTxs.modify(m => {
+            val pulled = m.getOrElse(roundId, Set.empty[L1Transaction])
+            (m.removed(roundId), pulled)
+          })
+
+        private def reenqueue(roundId: FUUID): F[Unit] = for {
+          removedTxs <- removeFromPulled(roundId)
+          _ <- removedTxs.toList.traverse(enqueue)
+        } yield ()
       }
     }
   }
@@ -65,6 +99,8 @@ object L1TransactionPool {
     def enqueue(tx: L1Transaction): F[Unit]
 
     def dequeue(n: Int): F[Set[L1Transaction]]
+
+    def pull(roundId: FUUID, n: Int): F[Set[L1Transaction]]
   }
 
 }
@@ -72,6 +108,12 @@ object L1TransactionPool {
 object L1Consensus {
   type Peer = String
   type StateM[A] = StateT[IO, L1ConsensusMetadata, A]
+  implicit val contextShift = IO.contextShift(scala.concurrent.ExecutionContext.global)
+
+  val bTxs = Set(L1Transaction(1), L1Transaction(2))
+  val cTxs = Set(L1Transaction(4), L1Transaction(5))
+
+  val txMap = Map("nodeB" -> bTxs, "nodeC" -> cTxs)
 
   // TODO: Use Reader monad -> Reader[L1ConsensusContext, Ω]
   val coalgebra: CoalgebraM[StateM, L1ConsensusF, Ω] = CoalgebraM {
@@ -139,11 +181,7 @@ object L1Consensus {
   val hyloM = scheme.hyloM(L1Consensus.algebra, L1Consensus.coalgebra)
 
   def pullTxs(n: Int): StateM[Set[L1Transaction]] = StateT { metadata =>
-    metadata.roundId
-      .flatMap(metadata.txs.get) // TODO: We should persist the state and get from state as metadata is not shared across hylos
-      .flatMap(_.get(metadata.context.peer))
-      .map(IO.pure)
-      .getOrElse(metadata.context.txPool.dequeue(n))
+    metadata.context.txPool.pull(metadata.roundId.get, n)
       .map(txs => (metadata, txs))
   }
 
@@ -171,6 +209,7 @@ object L1Consensus {
       }
     }
 
+
     val r = for {
       facilitators <- metadata.facilitators.map(_.filterNot(_ == metadata.context.peer))
       _ <- Option({
@@ -179,7 +218,14 @@ object L1Consensus {
       })
       txs <- metadata.roundId.flatMap(metadata.txs.get).flatMap(_.get(metadata.context.peer))
       request <- metadata.roundId.map(BroadcastProposalRequest(_, txs, facilitators))
-      responses <- facilitators.toList.traverse(facilitator => apiCall(request, metadata.context.peer, metadata.context.lens(_.peer).set(facilitator))).some
+      responses <- facilitators.toList.traverse(facilitator => for {
+        txPool <- L1TransactionPool.init[IO](txMap(facilitator))
+        proposalResponse <- apiCall(
+          request,
+          metadata.context.peer,
+          metadata.context.lens(_.peer).set(facilitator).lens(_.txPool).set(txPool)
+        )
+      } yield proposalResponse).some
     } yield responses
 
     r.sequence.map(_.getOrElse(List.empty)).map((metadata, _))

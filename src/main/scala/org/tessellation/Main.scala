@@ -83,19 +83,16 @@ object RunExample extends App {
 
 object RunExample extends App {
 
-  val input = L1Edge(Set(L1Transaction(10)))
+  val aTxs = Set(L1Transaction(12))
+
+  val input = L1Edge(aTxs)
 
   implicit val contextShift = IO.contextShift(scala.concurrent.ExecutionContext.global)
 
   val result = for {
-    ref <- Ref.of[IO, Set[L1Transaction]](Set.empty)
-    txPool <- L1TransactionPool.apply[IO](ref)
-
+    txPool <- L1TransactionPool.init[IO](Set(L1Transaction(10), L1Transaction(11)))
     context = L1ConsensusContext(peer = "nodeA", peers = Set("nodeB", "nodeC"), txPool = txPool)
     initialState = L1ConsensusMetadata.empty(context)
-
-    txs = List(L1Transaction(1), L1Transaction(2), L1Transaction(3), L1Transaction(4), L1Transaction(5))
-    _ <- txs.traverse(txPool.enqueue)
 
     run <- scheme.hyloM(StackL1Consensus.algebra, StackL1Consensus.coalgebra).apply((initialState, input))
   } yield run
@@ -132,15 +129,18 @@ object FinalStreamExample extends App {
 
 
 object StreamExample extends App {
+
   import fs2.Stream
   import cats.effect.IO
 
-  def intCell(i: Int): Hom[Int, Int] = Cell[Int, Int](i)
-  def chainEffects(operad: Hom[Int, Int])(i: Int): Hom[Int, Int] = operad >>> intCell(i)
-  def pipeline(i: Int): Stream[Hom[Int, *], Int] = Stream.eval[Hom[Int, *], Int] (chainEffects(Context())(i))
-
-  val dummyStream = Stream(1,2,3)
+  val dummyStream = Stream(1, 2, 3)
   val effectfulStream = dummyStream.flatMap(pipeline)
+
+  def pipeline(i: Int): Stream[Hom[Int, *], Int] = Stream.eval[Hom[Int, *], Int](chainEffects(Context())(i))
+
+  def chainEffects(operad: Hom[Int, Int])(i: Int): Hom[Int, Int] = operad >>> intCell(i)
+
+  def intCell(i: Int): Hom[Int, Int] = Cell[Int, Int](i)
 }
 
 import higherkindness.droste.data.{:<, Coattr}
@@ -205,6 +205,14 @@ object ConsensusExample extends App {
     intGather,
     intScatter)
   //todo note we can just use Cell istead of new class I just ran out of time to make new constructor
+  val dummyStream = Stream(1, 2, 3)
+  val effectfulStream = dummyStream.flatMap(pipeline)
+
+  def pipeline(i: Int): Stream[Hom[Int, *], Int] = Stream.eval[Hom[Int, *], Int](chainEffects(Context())(i))
+
+  def chainEffects(operad: Hom[Int, Int])(i: Int): Hom[Int, Int] = operad >>> intCell(i)
+
+  def intCell(i: Int): Hom[Int, Int] = MyNewCell[Int, Int](i)
 
   case class MyNewCell[A, B](override val a: A) extends Topos[A, B] {
     val takeHighestIntegerConsensus: Int => Int = scheme.ghylo(
@@ -212,14 +220,7 @@ object ConsensusExample extends App {
       intScatter)
   }
 
-  def intCell(i: Int): Hom[Int, Int] = MyNewCell[Int, Int](i)
-  def chainEffects(operad: Hom[Int, Int])(i: Int): Hom[Int, Int] = operad >>> intCell(i)
-  def pipeline(i: Int): Stream[Hom[Int, *], Int] = Stream.eval[Hom[Int, *], Int] (chainEffects(Context())(i))
-
-  val dummyStream = Stream(1,2,3)
-  val effectfulStream = dummyStream.flatMap(pipeline)
-
-//  effectfulStream.compile
+  //  effectfulStream.compile
 }
 
 object ConsensusExample2 extends App {
@@ -359,15 +360,15 @@ object TryDoobie extends App {
 
   val res = (drop, create).mapN(_ + _).transact(xa).unsafeRunSync
   println(res)
-
-  def insert1(name: String, age: Option[Short]): Update0 =
-    sql"insert into person (name, age) values ($name, $age)".update
+  val l = sql"select rowid, name, age from person".query[Person].to[List].transact(xa).unsafeRunSync
 
   insert1("Alice", Some(12)).run.transact(xa).unsafeRunSync
   insert1("Bob", None).quick.unsafeRunSync // switch to YOLO mode
 
+  def insert1(name: String, age: Option[Short]): Update0 =
+    sql"insert into person (name, age) values ($name, $age)".update
+
   case class Person(id: Long, name: String, age: Option[Short])
 
-  val l = sql"select rowid, name, age from person".query[Person].to[List].transact(xa).unsafeRunSync
   l.foreach(println)
 }
