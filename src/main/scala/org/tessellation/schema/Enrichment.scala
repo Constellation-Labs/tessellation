@@ -65,6 +65,6 @@ abstract class Yoneda[F[_], A] {
   def run: F[A] = transformation(identity)
 
   def map[B](f: A => B): Yoneda[F, B] = new Yoneda[F, B] {
-    def transformation[C](g: (B) => C): F[C] = self.transformation(g compose f)
+    def transformation[C](g: (B) => C): F[C] = self.transformation(g.compose(f))
   }
 }
