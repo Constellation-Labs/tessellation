@@ -11,7 +11,7 @@ import higherkindness.droste.{AlgebraM, CoalgebraM, scheme}
 import io.chrisdavenport.fuuid.FUUID
 import monocle.macros.syntax.lens._
 import monocle.syntax.apply._
-import org.tessellation.Node
+import org.tessellation.{Log, Node}
 import org.tessellation.schema.L1Consensus.BroadcastProposalResponse
 import org.tessellation.schema.L1TransactionPool.L1TransactionPoolEnqueue
 
@@ -21,9 +21,9 @@ import scala.util.Random
 
 sealed trait L1ConsensusF[A] extends Hom[Ω, A]
 
-case class L1Transaction(a: Int) extends Ω
+case class L1Transaction(a: Int, node: Option[String] = None) extends Ω
 
-case class L1Block(a: Int) extends Ω
+case class L1Block(txs: Set[L1Transaction]) extends Ω
 
 case class L1Edge[A](txs: Set[L1Transaction]) extends L1ConsensusF[A]
 
@@ -123,7 +123,7 @@ object L1Consensus {
         L1ConsensusF[Ω]
       ] { metadata =>
         IO {
-          println(s"[${metadata.context.peer}][L1Edge] Stored transactions: ${txs.toList.sortBy(_.a)}")
+          Log.logNode(metadata.context.peer)(s"[${metadata.context.peer.id}][L1Edge] Stored transactions: ${txs.toList.sortBy(_.a)}")
           (metadata, BroadcastProposal())
         }
       }
@@ -149,7 +149,7 @@ object L1Consensus {
               }
             }
 
-            println(s"[${metadata.context.peer}][ReceiveProposal] Stored transaction (pull): ${state.txs
+            Log.logNode(metadata.context.peer)(s"[${metadata.context.peer.id}][ReceiveProposal] Stored transaction (pull): ${state.txs
               .get(roundId)
               .flatMap(_.get(metadata.context.peer).map(_.toList.sortBy(_.a)))}")
 
@@ -172,9 +172,18 @@ object L1Consensus {
           }
         }
       }
+
+    case ConsensusEnd(responses) => StateT { metadata => IO.pure(metadata, ConsensusEnd(responses)) }
   }
 
   val algebra: AlgebraM[StateM, L1ConsensusF, Ω] = AlgebraM {
+    case ConsensusEnd(responses) => StateT { metadata =>
+      IO {
+        val txs = responses.map(_.receiverProposals).foldRight(Set.empty[L1Transaction])(_ ++ _)
+        (metadata, L1Block(txs))
+      }
+    }
+
     case cmd: Ω =>
       StateT { metadata =>
         IO {
@@ -204,37 +213,38 @@ object L1Consensus {
         facilitators = request.facilitators.some,
         roundId = request.roundId.some
       )
-      println(s"\n[${context.peer}] InitialState: facilitators=${initialState.facilitators}, txs=${initialState.txs}")
+      Log.logNode(context.peer)(s"\n[${context.peer.id}] InitialState: facilitators=${initialState.facilitators}, txs=${initialState.txs}")
       val input = ReceiveProposal()
 
       scheme.hyloM(StackL1Consensus.algebra, StackL1Consensus.coalgebra).apply((initialState, input)).map {
-        case result @ ProposalResponse(txs) => {
-          println(s"[${metadata.context.peer}][ProposalResponse] ${txs.toList.sortBy(_.a)}")
+        case ProposalResponse(txs) => {
+          Log.logNode(metadata.context.peer)(s"[${metadata.context.peer.id}][ProposalResponse] ${txs.toList.sortBy(_.a)}")
           BroadcastProposalResponse(request.roundId, request.proposal, txs)
         }
         case _ => {
-          println("unexpected")
+          // TODO: in case of other flow in algebras, handle error
+          Log.red("unexpected")
           ???
-        } // TODO: in case of other flow in algebras, handle error
+        }
       }
     }
 
     val r = for {
       facilitators <- metadata.facilitators.map(_.filterNot(_ == metadata.context.peer))
       _ <- Option({
-        println(s"[${metadata.context.peer}][BroadcastProposal] Facilitators: ${facilitators}")
+        Log.logNode(metadata.context.peer)(s"[${metadata.context.peer.id}] [BroadcastProposal] Facilitators: ${facilitators}")
         ()
       })
       txs <- metadata.roundId.flatMap(metadata.txs.get).flatMap(_.get(metadata.context.peer))
       request <- metadata.roundId.map(BroadcastProposalRequest(_, txs, facilitators))
       responses <- facilitators.toList
-        .traverse(
+        .parTraverse(
           facilitator =>
             for {
               proposalResponse <- apiCall(
                 request,
                 metadata.context.peer,
-                metadata.context.lens(_.peer).set(facilitator).lens(_.txPool).set(metadata.context.peer.txPool)
+                metadata.context.lens(_.peer).set(facilitator).lens(_.txPool).set(metadata.context.peers.find(_ == facilitator).get.txPool) // TODO: peers.find(..).get
               )
             } yield proposalResponse
         )
@@ -286,7 +296,7 @@ object L1Consensus {
 
   case class L1ConsensusMetadata(
     context: L1ConsensusContext,
-    txs: Map[FUUID, Map[Node, Set[L1Transaction]]],
+    txs: Map[FUUID, Map[Node, Set[L1Transaction]]], // TODO: @mwadon - why FUUID?
     facilitators: Option[Set[Node]],
     roundId: Option[FUUID]
   )

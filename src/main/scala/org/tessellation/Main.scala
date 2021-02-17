@@ -111,13 +111,13 @@ object RunExample extends App {
 
 object RunExample extends App {
 
-  val aTxs = Set(L1Transaction(12))
+  val aTxs = Set(L1Transaction(12, "nodeA".some))
 
   val input = L1Edge(aTxs)
 
   implicit val contextShift: ContextShift[IO] = IO.contextShift(scala.concurrent.ExecutionContext.global)
 
-  val result: IO[Unit] = for {
+  val result: IO[Ω] = for {
     nodeA <- Node.run("nodeA")
     nodeB <- Node.run("nodeB")
     nodeC <- Node.run("nodeC")
@@ -125,10 +125,13 @@ object RunExample extends App {
     _ <- nodeA.joinTo(Set(nodeB, nodeC))
     _ <- nodeB.joinTo(Set(nodeA, nodeC))
     _ <- nodeC.joinTo(Set(nodeA, nodeB))
-    //    _ <- nodeA.startL1Consensus(L1Edge(txs))
-  } yield ()
 
-  println(result.unsafeRunSync)
+    block <- nodeA.startL1Consensus(L1Edge(aTxs))
+  } yield block
+
+  val output = result.unsafeRunSync
+
+  Log.magenta(s"Output: ${output}")
 
 }
 
