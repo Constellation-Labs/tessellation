@@ -18,7 +18,7 @@ object EdgeHashType extends Enumeration {
 
 case class TypedEdgeHash(
   hashReference: String,
-  hashType: EdgeHashType,
+  hashType: EdgeHashType
 )
 
 case class ObservationEdge(
@@ -41,9 +41,10 @@ case class SignedObservationEdge(signatureBatch: SignatureBatch) extends Signabl
 
 object SignedObservationEdge {
   implicit val semigroupInstance: Semigroup[SignedObservationEdge] =
-    (x: SignedObservationEdge, y: SignedObservationEdge) => x.copy(
-      signatureBatch = x.signatureBatch |+| y.signatureBatch
-    )
+    (x: SignedObservationEdge, y: SignedObservationEdge) =>
+      x.copy(
+        signatureBatch = x.signatureBatch |+| y.signatureBatch
+      )
 }
 
 case class Edge[D](
@@ -54,11 +55,10 @@ case class Edge[D](
 
 object Edge {
   implicit val semigroupKInstance: SemigroupK[Edge] = new SemigroupK[Edge] {
-    override def combineK[A](x: Edge[A], y: Edge[A]): Edge[A] = {
+    override def combineK[A](x: Edge[A], y: Edge[A]): Edge[A] =
       x.copy(
         signedObservationEdge = x.signedObservationEdge |+| y.signedObservationEdge
       )
-    }
   }
 }
 
@@ -74,13 +74,20 @@ case class LastTransactionRef(prevHash: String, ordinal: Long)
 
 case class TransactionEdgeData(amount: Long, lastTxRef: LastTransactionRef, fee: Option[Long] = None) extends Signable
 
-case class Transaction(data: Edge[TransactionEdgeData]) extends Fiber[Edge[TransactionEdgeData], Edge[TransactionEdgeData]] {
+case class Transaction(data: Edge[TransactionEdgeData])
+    extends Fiber[Edge[TransactionEdgeData], Edge[TransactionEdgeData]] {
   def unit: Hom[Edge[TransactionEdgeData], Edge[TransactionEdgeData]] = null // TODO
 }
 
 object Transaction {
-  def apply(src: Address, dst: Address, amount: Long, lastTxRef: LastTransactionRef, fee: Option[Long] = None)(keyPair: String): Transaction = {
-    val observationEdge = ObservationEdge(Seq(src, dst).map(_.address).map(TypedEdgeHash(_, EdgeHashType.AddressHash)), TypedEdgeHash("", EdgeHashType.AddressHash))
+
+  def apply(src: Address, dst: Address, amount: Long, lastTxRef: LastTransactionRef, fee: Option[Long] = None)(
+    keyPair: String
+  ): Transaction = {
+    val observationEdge = ObservationEdge(
+      Seq(src, dst).map(_.address).map(TypedEdgeHash(_, EdgeHashType.AddressHash)),
+      TypedEdgeHash("", EdgeHashType.AddressHash)
+    )
     val signedObservationEdge = SignedObservationEdge(SignatureBatch("abc", Seq(HashSignature("bcd", Id("aa")))))
     val data = TransactionEdgeData(amount, lastTxRef, fee)
 
@@ -97,6 +104,7 @@ case class Block(edge: Edge[BlockEdgeData]) extends Bundle[Edge[BlockEdgeData], 
 }
 
 object Block {
+
   def apply(txs: List[Transaction]): Block = {
     val oe: ObservationEdge = ObservationEdge(Seq.empty, TypedEdgeHash("", EdgeHashType.AddressHash))
     val soe: SignedObservationEdge = SignedObservationEdge(SignatureBatch("", Seq(HashSignature("sig", Id("foo")))))
@@ -107,19 +115,20 @@ object Block {
 
   // TODO: Consider using monocle
   implicit val semigroupInstance: Semigroup[Block] =
-    (x: Block, y: Block) => new Block(
-      (x.edge <+> y.edge).copy(
-        data = x.edge.data.copy(
-          fibers = x.edge.data.fibers ++ y.edge.data.fibers
+    (x: Block, y: Block) =>
+      new Block(
+        (x.edge <+> y.edge).copy(
+          data = x.edge.data.copy(
+            fibers = x.edge.data.fibers ++ y.edge.data.fibers
+          )
         )
       )
-    )
 }
 
 /* SNAPSHOT */
 
-case class Snapshot[A, B, C](convergedState: Seq[Hom[A, B]])
-  extends Simplex[A, B, C](convergedState) {
-    def combine(x: Snapshot[A, B, _], y: Snapshot[A, B, _]): Snapshot[A, B, C] =
-      Snapshot(x.convergedState ++ y.convergedState)
+case class Snapshot[A, B, C](convergedState: Seq[Hom[A, B]]) extends Simplex[A, B, C](convergedState) {
+
+  def combine(x: Snapshot[A, B, _], y: Snapshot[A, B, _]): Snapshot[A, B, C] =
+    Snapshot(x.convergedState ++ y.convergedState)
 }

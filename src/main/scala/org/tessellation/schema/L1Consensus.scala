@@ -41,22 +41,25 @@ case class ProposalResponse[A](txs: Set[L1Transaction]) extends L1ConsensusF[A] 
 
 object L1ConsensusF {
   implicit val traverse: Traverse[L1ConsensusF] = new DefaultTraverse[L1ConsensusF] {
-    override def traverse[G[_] : Applicative, A, B](fa: L1ConsensusF[A])(f: A => G[B]): G[L1ConsensusF[B]] =
+    override def traverse[G[_]: Applicative, A, B](fa: L1ConsensusF[A])(f: A => G[B]): G[L1ConsensusF[B]] =
       fa.asInstanceOf[L1ConsensusF[B]].pure[G]
   }
 }
 
 object L1TransactionPool {
-  def init(txs: Set[L1Transaction]): IO[L1TransactionPoolEnqueue] = for {
-    ref <- Ref.of[IO, Set[L1Transaction]](Set.empty)
-    txPool <- L1TransactionPool.apply(ref)
-    _ <- txs.toList.traverse(txPool.enqueue)
-  } yield txPool
 
-  def apply(ref: Ref[IO, Set[L1Transaction]]): IO[L1TransactionPoolEnqueue] = {
+  def init(txs: Set[L1Transaction]): IO[L1TransactionPoolEnqueue] =
+    for {
+      ref <- Ref.of[IO, Set[L1Transaction]](Set.empty)
+      txPool <- L1TransactionPool.apply(ref)
+      _ <- txs.toList.traverse(txPool.enqueue)
+    } yield txPool
+
+  def apply(ref: Ref[IO, Set[L1Transaction]]): IO[L1TransactionPoolEnqueue] =
     IO.delay {
       new L1TransactionPoolEnqueue {
-        private val pulledTxs: Ref[IO, Map[FUUID, Set[L1Transaction]]] = Ref.unsafe(Map.empty[FUUID, Set[L1Transaction]])
+        private val pulledTxs: Ref[IO, Map[FUUID, Set[L1Transaction]]] =
+          Ref.unsafe(Map.empty[FUUID, Set[L1Transaction]])
 
         def enqueue(tx: L1Transaction): IO[Unit] =
           ref.modify(txs => (txs + tx, ()))
@@ -68,17 +71,17 @@ object L1TransactionPool {
             (txs -- taken, taken)
           }
 
-        def pull(roundId: FUUID, n: Int): IO[Set[L1Transaction]] = {
+        def pull(roundId: FUUID, n: Int): IO[Set[L1Transaction]] =
           pulledTxs.get
             .map(_.get(roundId))
             .flatMap {
               case Some(txs) => IO.pure(txs)
-              case None => for {
-                txs <- dequeue(n)
-                _ <- addToPulled(roundId, txs)
-              } yield txs
+              case None =>
+                for {
+                  txs <- dequeue(n)
+                  _ <- addToPulled(roundId, txs)
+                } yield txs
             }
-        }
 
         private def addToPulled(roundId: FUUID, txs: Set[L1Transaction]): IO[Unit] =
           pulledTxs.modify(m => (m.updated(roundId, txs), ()))
@@ -89,13 +92,13 @@ object L1TransactionPool {
             (m.removed(roundId), pulled)
           })
 
-        private def reenqueue(roundId: FUUID): IO[Unit] = for {
-          removedTxs <- removeFromPulled(roundId)
-          _ <- removedTxs.toList.traverse(enqueue)
-        } yield ()
+        private def reenqueue(roundId: FUUID): IO[Unit] =
+          for {
+            removedTxs <- removeFromPulled(roundId)
+            _ <- removedTxs.toList.traverse(enqueue)
+          } yield ()
       }
     }
-  }
 
   trait L1TransactionPoolEnqueue {
     def enqueue(tx: L1Transaction): IO[Unit]
@@ -114,73 +117,88 @@ object L1Consensus {
 
   // TODO: Use Reader monad -> Reader[L1ConsensusContext, Ω]
   val coalgebra: CoalgebraM[StateM, L1ConsensusF, Ω] = CoalgebraM {
-    case L1Edge(txs) => generateRoundId() >> storeTransactions(txs) >> selectFacilitators(2) >> StateT[IO, L1ConsensusMetadata, L1ConsensusF[Ω]] { metadata =>
-      IO {
-        println(s"[${metadata.context.peer}][L1Edge] Stored transactions: ${txs.toList.sortBy(_.a)}")
-        (metadata, BroadcastProposal())
-      }
-    }
-
-    case BroadcastProposal() => broadcastProposal() >>= { responses =>
-      StateT[IO, L1ConsensusMetadata, L1ConsensusF[Ω]] { metadata =>
+    case L1Edge(txs) =>
+      generateRoundId() >> storeTransactions(txs) >> selectFacilitators(2) >> StateT[
+        IO,
+        L1ConsensusMetadata,
+        L1ConsensusF[Ω]
+      ] { metadata =>
         IO {
-          (metadata, ConsensusEnd(responses))
+          println(s"[${metadata.context.peer}][L1Edge] Stored transactions: ${txs.toList.sortBy(_.a)}")
+          (metadata, BroadcastProposal())
         }
       }
-    }
 
-    case ReceiveProposal() => pullTxs(2) >>= { txs =>
-      StateT[IO, L1ConsensusMetadata, L1ConsensusF[Ω]] { metadata =>
-        IO {
-          val roundId = metadata.roundId.get
-          val state = metadata.lens(_.txs).modify { t =>
-            t.updatedWith(roundId) {
-              case Some(mapping) => (mapping + (metadata.context.peer -> txs)).some
-              case None => Map[Node, Set[L1Transaction]](metadata.context.peer -> txs).some
-            }
+    case BroadcastProposal() =>
+      broadcastProposal() >>= { responses =>
+        StateT[IO, L1ConsensusMetadata, L1ConsensusF[Ω]] { metadata =>
+          IO {
+            (metadata, ConsensusEnd(responses))
           }
-
-          println(s"[${metadata.context.peer}][ReceiveProposal] Stored transaction (pull): ${state.txs.get(roundId).flatMap(_.get(metadata.context.peer).map(_.toList.sortBy(_.a)))}")
-
-          (state, BroadcastReceivedProposal())
         }
       }
-    }
 
-    case BroadcastReceivedProposal() => broadcastProposal() >>= { responses =>
-      StateT[IO, L1ConsensusMetadata, L1ConsensusF[Ω]] { metadata =>
-        IO {
-          val roundTxs = metadata.roundId
-            .flatMap(metadata.txs.get)
+    case ReceiveProposal() =>
+      pullTxs(2) >>= { txs =>
+        StateT[IO, L1ConsensusMetadata, L1ConsensusF[Ω]] { metadata =>
+          IO {
+            val roundId = metadata.roundId.get
+            val state = metadata.lens(_.txs).modify { t =>
+              t.updatedWith(roundId) {
+                case Some(mapping) => (mapping + (metadata.context.peer -> txs)).some
+                case None          => Map[Node, Set[L1Transaction]](metadata.context.peer -> txs).some
+              }
+            }
 
-          val txs = roundTxs.map(_.values.flatten.toSet).getOrElse(Set.empty[L1Transaction])
-          val resTxs = responses.flatMap(_.receiverProposals).toSet
-          // TODO: We can't send ProposalResponse because C can get proposal from B before proposal A reaches C! (Race condition)
-          (metadata, ProposalResponse(txs ++ resTxs))
+            println(s"[${metadata.context.peer}][ReceiveProposal] Stored transaction (pull): ${state.txs
+              .get(roundId)
+              .flatMap(_.get(metadata.context.peer).map(_.toList.sortBy(_.a)))}")
+
+            (state, BroadcastReceivedProposal())
+          }
         }
       }
-    }
+
+    case BroadcastReceivedProposal() =>
+      broadcastProposal() >>= { responses =>
+        StateT[IO, L1ConsensusMetadata, L1ConsensusF[Ω]] { metadata =>
+          IO {
+            val roundTxs = metadata.roundId
+              .flatMap(metadata.txs.get)
+
+            val txs = roundTxs.map(_.values.flatten.toSet).getOrElse(Set.empty[L1Transaction])
+            val resTxs = responses.flatMap(_.receiverProposals).toSet
+            // TODO: We can't send ProposalResponse because C can get proposal from B before proposal A reaches C! (Race condition)
+            (metadata, ProposalResponse(txs ++ resTxs))
+          }
+        }
+      }
   }
 
   val algebra: AlgebraM[StateM, L1ConsensusF, Ω] = AlgebraM {
-    case cmd: Ω => StateT { metadata =>
-      IO {
-        (metadata, cmd)
+    case cmd: Ω =>
+      StateT { metadata =>
+        IO {
+          (metadata, cmd)
+        }
       }
-    }
   }
-
 
   val hyloM = scheme.hyloM(L1Consensus.algebra, L1Consensus.coalgebra)
 
   def pullTxs(n: Int): StateM[Set[L1Transaction]] = StateT { metadata =>
-    metadata.context.txPool.pull(metadata.roundId.get, n)
+    metadata.context.txPool
+      .pull(metadata.roundId.get, n)
       .map(txs => (metadata, txs))
   }
 
   def broadcastProposal(): StateM[List[BroadcastProposalResponse]] = StateT { metadata =>
     // TODO: apiCall peer should be taken from node
-    def apiCall(request: BroadcastProposalRequest, from: Peer, context: L1ConsensusContext): IO[BroadcastProposalResponse] = {
+    def apiCall(
+      request: BroadcastProposalRequest,
+      from: Peer,
+      context: L1ConsensusContext
+    ): IO[BroadcastProposalResponse] = {
       val initialState = L1ConsensusMetadata(
         context = context,
         txs = Map(metadata.roundId.get -> Map(from -> request.proposal)),
@@ -191,7 +209,7 @@ object L1Consensus {
       val input = ReceiveProposal()
 
       scheme.hyloM(StackL1Consensus.algebra, StackL1Consensus.coalgebra).apply((initialState, input)).map {
-        case result@ProposalResponse(txs) => {
+        case result @ ProposalResponse(txs) => {
           println(s"[${metadata.context.peer}][ProposalResponse] ${txs.toList.sortBy(_.a)}")
           BroadcastProposalResponse(request.roundId, request.proposal, txs)
         }
@@ -202,7 +220,6 @@ object L1Consensus {
       }
     }
 
-
     val r = for {
       facilitators <- metadata.facilitators.map(_.filterNot(_ == metadata.context.peer))
       _ <- Option({
@@ -211,13 +228,18 @@ object L1Consensus {
       })
       txs <- metadata.roundId.flatMap(metadata.txs.get).flatMap(_.get(metadata.context.peer))
       request <- metadata.roundId.map(BroadcastProposalRequest(_, txs, facilitators.map(_.id)))
-      responses <- facilitators.toList.traverse(facilitator => for {
-        proposalResponse <- apiCall(
-          request,
-          metadata.context.peer.id,
-          metadata.context.lens(_.peer).set(facilitator).lens(_.txPool).set(metadata.context.peer.txPool)
+      responses <- facilitators.toList
+        .traverse(
+          facilitator =>
+            for {
+              proposalResponse <- apiCall(
+                request,
+                metadata.context.peer.id,
+                metadata.context.lens(_.peer).set(facilitator).lens(_.txPool).set(metadata.context.peer.txPool)
+              )
+            } yield proposalResponse
         )
-      } yield proposalResponse).some
+        .some
     } yield responses
 
     r.sequence.map(_.getOrElse(List.empty)).map((metadata, _))
@@ -225,7 +247,8 @@ object L1Consensus {
   }
 
   def generateRoundId(): StateM[Unit] = StateT { metadata =>
-    FUUID.randomFUUID[IO]
+    FUUID
+      .randomFUUID[IO]
       .map(_.some)
       .map(o => (metadata.lens(_.roundId).set(o), ()))
   }
@@ -245,28 +268,32 @@ object L1Consensus {
   def selectFacilitators(n: Int = 2): StateM[Unit] = StateT { metadata =>
     IO {
       Random.shuffle(metadata.context.peers).take(n)
-    }
-      .map(facilitators => (metadata.lens(_.facilitators).set(facilitators.some), ()))
+    }.map(facilitators => (metadata.lens(_.facilitators).set(facilitators.some), ()))
   }
 
   case class BroadcastProposalRequest(roundId: FUUID, proposal: Set[L1Transaction], facilitators: Set[Peer])
 
-  case class BroadcastProposalResponse(roundId: FUUID, senderProposals: Set[L1Transaction], receiverProposals: Set[L1Transaction])
+  case class BroadcastProposalResponse(
+    roundId: FUUID,
+    senderProposals: Set[L1Transaction],
+    receiverProposals: Set[L1Transaction]
+  )
 
   case class L1ConsensusContext(
-                                 peer: Node,
-                                 peers: Set[Node],
-                                 txPool: L1TransactionPoolEnqueue
-                               )
+    peer: Node,
+    peers: Set[Node],
+    txPool: L1TransactionPoolEnqueue
+  )
 
   case class L1ConsensusMetadata(
-                                  context: L1ConsensusContext,
-                                  txs: Map[FUUID, Map[Node, Set[L1Transaction]]],
-                                  facilitators: Option[Set[Node]],
-                                  roundId: Option[FUUID]
-                                )
+    context: L1ConsensusContext,
+    txs: Map[FUUID, Map[Node, Set[L1Transaction]]],
+    facilitators: Option[Set[Node]],
+    roundId: Option[FUUID]
+  )
 
   object L1ConsensusMetadata {
+
     def empty(context: L1ConsensusContext) =
       L1ConsensusMetadata(context = context, txs = Map.empty, facilitators = None, roundId = None)
   }

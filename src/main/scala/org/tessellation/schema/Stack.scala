@@ -24,17 +24,19 @@ object StackF {
 }
 
 object StackL1Consensus {
+
   val coalgebra: CoalgebraM[IO, StackF, (L1ConsensusMetadata, Ω)] = CoalgebraM {
-    case (metadata, cmd) => cmd match {
-      case block @ L1Block(_) => IO { Done(block) }
-      case end @ ConsensusEnd(_) => IO { Done(end) }
-      case response @ ProposalResponse(_) => IO { Done(response) }
-      case _ => scheme.hyloM(L1Consensus.algebra, L1Consensus.coalgebra).apply(cmd).run(metadata).map(More(_))
-    }
+    case (metadata, cmd) =>
+      cmd match {
+        case block @ L1Block(_)             => IO { Done(block) }
+        case end @ ConsensusEnd(_)          => IO { Done(end) }
+        case response @ ProposalResponse(_) => IO { Done(response) }
+        case _                              => scheme.hyloM(L1Consensus.algebra, L1Consensus.coalgebra).apply(cmd).run(metadata).map(More(_))
+      }
   }
 
   val algebra: AlgebraM[IO, StackF, Ω] = AlgebraM {
-    case More(a) => IO { a }
+    case More(a)      => IO { a }
     case Done(result) => IO { result }
   }
 }

@@ -9,13 +9,13 @@ import org.scalacheck.Arbitrary
 import org.scalacheck.Arbitrary.arbitrary
 //import org.tessellation.schema.Topos.Contravariant
 
-
 object MutuallyRecursive {
+
   def transListToHom[A]: TransM[Option, ListF[A, *], Hom[A, *], Fix[ListF[A, *]]] = TransM {
     case ConsF(head, tail) =>
       Fix.un(tail) match {
         case NilF => Cell(head).some
-        case _ => Cell2(head, tail).some
+        case _    => Cell2(head, tail).some
       }
     case NilF => None
   }
@@ -25,11 +25,11 @@ object MutuallyRecursive {
 
   def transHomToList[A]: Trans[Hom[A, *], ListF[A, *], Fix[ListF[A, *]]] = Trans {
     case Cell2(head, tail) => ConsF(head, tail)
-    case Cell(last) => ConsF(last, Fix[ListF[A, *]](NilF))
+    case Cell(last)        => ConsF(last, Fix[ListF[A, *]](NilF))
   }
 
   def fromHomF[A]: Fix[Hom[A, *]] => Fix[ListF[A, *]] =
-    scheme.cata(transHomToList[A].algebra) (Hom.drosteTraverseForHom, Basis.drosteBasisForFix[Hom[A, *]])
+    scheme.cata(transHomToList[A].algebra)(Hom.drosteTraverseForHom, Basis.drosteBasisForFix[Hom[A, *]])
 
   implicit def arbitraryNEL[A: Arbitrary]: Arbitrary[NonEmptyList[A]] =
     Arbitrary(for {

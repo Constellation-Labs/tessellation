@@ -3,11 +3,39 @@ package org.tessellation
 import cats.Functor
 import cats.effect.concurrent.Ref
 import cats.effect.{ContextShift, ExitCase, ExitCode, IO, IOApp, Sync}
-import org.tessellation.schema.{Cell, Cell0, Cell2, Cocell, Context, Hom, L1Consensus, L1Edge, L1Transaction, L1TransactionPool, StackL1Consensus, Topos, Ω}
+import org.tessellation.schema.{
+  Cell,
+  Cell0,
+  Cell2,
+  Cocell,
+  Context,
+  Hom,
+  L1Consensus,
+  L1Edge,
+  L1Transaction,
+  L1TransactionPool,
+  StackL1Consensus,
+  Topos,
+  Ω
+}
 import org.tessellation.schema.Hom._
 import fs2.{Pipe, Stream}
 import cats.syntax.all._
-import higherkindness.droste.{Algebra, CVAlgebra, Coalgebra, CoalgebraM, GAlgebra, GAlgebraM, GCoalgebra, Gather, RAlgebra, RCoalgebra, RCoalgebraM, Scatter, scheme}
+import higherkindness.droste.{
+  Algebra,
+  CVAlgebra,
+  Coalgebra,
+  CoalgebraM,
+  GAlgebra,
+  GAlgebraM,
+  GCoalgebra,
+  Gather,
+  RAlgebra,
+  RCoalgebra,
+  RCoalgebraM,
+  Scatter,
+  scheme
+}
 import higherkindness.droste.data.{:<, Attr, Fix}
 import org.tessellation.ConsensusExample.{intGather, intScatter}
 import org.tessellation.StreamExample.pipeline
@@ -79,12 +107,11 @@ object RunExample extends App {
 
   println(pipeline2.unsafeRunSync)
 }
-*/
+ */
 
 object RunExample extends App {
 
   val aTxs = Set(L1Transaction(12))
-
 
   val input = L1Edge(aTxs)
 
@@ -98,13 +125,10 @@ object RunExample extends App {
     _ <- nodeA.joinTo(Set(nodeB, nodeC))
     _ <- nodeB.joinTo(Set(nodeA, nodeC))
     _ <- nodeC.joinTo(Set(nodeA, nodeB))
-
-
     //    _ <- nodeA.startL1Consensus(L1Edge(txs))
   } yield ()
 
   println(result.unsafeRunSync)
-
 
 }
 
@@ -125,14 +149,10 @@ block1
 snapshot
  */
 
-
 object FinalStreamExample extends App {
   val tx$ = Stream.emit()
 
-
-
 }
-
 
 object StreamExample extends App {
 
@@ -151,6 +171,7 @@ object StreamExample extends App {
 
 import higherkindness.droste.data.{:<, Coattr}
 import higherkindness.droste.syntax.compose._
+
 object ConsensusExample extends App {
   import fs2.Stream
   import cats.effect.IO
@@ -162,17 +183,19 @@ object ConsensusExample extends App {
     }
   }
 
-  val cellCoalgebra: Coalgebra[Hom[Int, *], Int] = Coalgebra[Hom[Int, *], Int] { thing: Int => {
-    println("cc", thing)
-    Cell(thing)
-  } }
+  val cellCoalgebra: Coalgebra[Hom[Int, *], Int] = Coalgebra[Hom[Int, *], Int] { thing: Int =>
+    {
+      println("cc", thing)
+      Cell(thing)
+    }
+  }
 
   val fromCellHelper: Algebra[Hom[Int, *], Int] = Algebra {
     case Cell(n) => {
       println(n)
       n + 1
     }
-    case Cell2(a, b)    => {
+    case Cell2(a, b) => {
       println(a, b)
       a + b
     }
@@ -191,11 +214,11 @@ object ConsensusExample extends App {
   }
 
   val combineProposals: CVAlgebra[Hom[Int, *], Int] = CVAlgebra {
-    case Cell2(a, r1 :< Cell(r2)) =>{
+    case Cell2(a, r1 :< Cell(r2)) => {
       println("cp cell2", a, r1, r2)
       a + r2
     }
-    case cell@Cell(aa) => {
+    case cell @ Cell(aa) => {
       println("cp cell@Cell", aa)
       aa
     }
@@ -203,13 +226,10 @@ object ConsensusExample extends App {
 
   val intGather: GAlgebra.Gathered[Hom[Int, *], Attr[Hom[Int, *], Int], Int] = combineProposals.gather(Gather.histo)
 
+  val intScatter: GCoalgebra.Scattered[Hom[Int, *], Int, Either[Int, Int]] =
+    submitResult.scatter(Scatter.gapo(cellCoalgebra))
 
-  val intScatter: GCoalgebra.Scattered[Hom[Int, *], Int, Either[Int, Int]] = submitResult.scatter(Scatter.gapo(cellCoalgebra))
-
-
-  val takeHighestIntegerConsensus: Int => Int = scheme.ghylo(
-    intGather,
-    intScatter)
+  val takeHighestIntegerConsensus: Int => Int = scheme.ghylo(intGather, intScatter)
   //todo note we can just use Cell istead of new class I just ran out of time to make new constructor
   val dummyStream = Stream(1, 2, 3)
   val effectfulStream = dummyStream.flatMap(pipeline)
@@ -221,15 +241,14 @@ object ConsensusExample extends App {
   def intCell(i: Int): Hom[Int, Int] = MyNewCell[Int, Int](i)
 
   case class MyNewCell[A, B](override val a: A) extends Topos[A, B] {
-    val takeHighestIntegerConsensus: Int => Int = scheme.ghylo(
-      intGather,
-      intScatter)
+    val takeHighestIntegerConsensus: Int => Int = scheme.ghylo(intGather, intScatter)
   }
 
   //  effectfulStream.compile
 }
 
 object ConsensusExample2 extends App {
+
   val natCoalgebra: Coalgebra[Option, BigDecimal] =
     Coalgebra(n => if (n > 0) Some(n - 1) else None)
 
@@ -243,7 +262,7 @@ object ConsensusExample2 extends App {
 
   val combineProposals: CVAlgebra[Hom[Int, *], Int] = CVAlgebra {
     case Cell2(a, r1 :< Cell(r2)) => a + r2
-    case cell@Cell(aa) => aa
+    case cell @ Cell(aa)          => aa
   }
 
   val intGather = combineProposals.gather(Gather.histo)
@@ -255,8 +274,8 @@ object ConsensusExample2 extends App {
 
   val fibAlgebra: CVAlgebra[Option, BigDecimal] = CVAlgebra {
     case Some(r1 :< Some(r2 :< _)) => r1 + r2
-    case Some(_ :< None) => 1
-    case None => 0
+    case Some(_ :< None)           => 1
+    case None                      => 0
   }
 
 //  val fib: BigDecimal => BigDecimal = scheme.ghylo(
@@ -270,12 +289,12 @@ object ConsensusExample2 extends App {
 
   val fromNatAlgebra: Algebra[Option, BigDecimal] = Algebra {
     case Some(n) => n + 1
-    case None => 0
+    case None    => 0
   }
 
   val sumSquaresAlgebra: RAlgebra[BigDecimal, Option, BigDecimal] = RAlgebra {
     case Some((n, value)) => value + (n + 1) * (n + 1)
-    case None => 0
+    case None             => 0
   }
 
 //  val sumSquares: BigDecimal => BigDecimal = scheme.ghylo(
@@ -297,15 +316,16 @@ object ConsensusExample2 extends App {
 }
 
 /**
- * Serialization use-case example
- * Remember to remove registration entry in `KryoRegistrar` when removing this example
- */
+  * Serialization use-case example
+  * Remember to remove registration entry in `KryoRegistrar` when removing this example
+  */
 object SerializationExample extends App {
   import cats.syntax.all._
+
   /**
-   * Instantiate the de/serialization service.
-   * Use `SerDe` as a dependency trait.
-   */
+    * Instantiate the de/serialization service.
+    * Use `SerDe` as a dependency trait.
+    */
   val registrar = new KryoRegistrar()
   val ser: SerDe = Kryo(registrar)
 
@@ -319,10 +339,9 @@ object SerializationExample extends App {
 
     result match {
       case Left(a) => println(a)
-      case _ => ()
+      case _       => ()
     }
   }
-
 
   case class Lorem(a: String)
 
@@ -345,7 +364,10 @@ object TryDoobie extends App {
   implicit val cs = IO.contextShift(doobie.ExecutionContexts.synchronous)
 
   val xa = Transactor.fromDriverManager[IO](
-    "org.sqlite.JDBC", "jdbc:sqlite:sample.db", "", ""
+    "org.sqlite.JDBC",
+    "jdbc:sqlite:sample.db",
+    "",
+    ""
   )
 
   val y = xa.yolo
