@@ -4,7 +4,6 @@ import cats.data.StateT
 import cats.effect.concurrent.Ref
 import cats.effect.{Concurrent, IO}
 import cats.syntax.all._
-import cats.implicits._
 import cats.{Applicative, Traverse}
 import fs2.concurrent.Queue
 import higherkindness.droste.util.DefaultTraverse
@@ -196,7 +195,7 @@ object L1Consensus {
     // TODO: apiCall peer should be taken from node
     def apiCall(
       request: BroadcastProposalRequest,
-      from: Peer,
+      from: Node,
       context: L1ConsensusContext
     ): IO[BroadcastProposalResponse] = {
       val initialState = L1ConsensusMetadata(
@@ -227,14 +226,14 @@ object L1Consensus {
         ()
       })
       txs <- metadata.roundId.flatMap(metadata.txs.get).flatMap(_.get(metadata.context.peer))
-      request <- metadata.roundId.map(BroadcastProposalRequest(_, txs, facilitators.map(_.id)))
+      request <- metadata.roundId.map(BroadcastProposalRequest(_, txs, facilitators))
       responses <- facilitators.toList
         .traverse(
           facilitator =>
             for {
               proposalResponse <- apiCall(
                 request,
-                metadata.context.peer.id,
+                metadata.context.peer,
                 metadata.context.lens(_.peer).set(facilitator).lens(_.txPool).set(metadata.context.peer.txPool)
               )
             } yield proposalResponse
@@ -271,7 +270,7 @@ object L1Consensus {
     }.map(facilitators => (metadata.lens(_.facilitators).set(facilitators.some), ()))
   }
 
-  case class BroadcastProposalRequest(roundId: FUUID, proposal: Set[L1Transaction], facilitators: Set[Peer])
+  case class BroadcastProposalRequest(roundId: FUUID, proposal: Set[L1Transaction], facilitators: Set[Node])
 
   case class BroadcastProposalResponse(
     roundId: FUUID,
