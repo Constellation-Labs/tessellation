@@ -2,7 +2,7 @@ package org.tessellation
 
 import cats.Functor
 import cats.effect.concurrent.Ref
-import cats.effect.{ExitCase, ExitCode, IO, IOApp, Sync}
+import cats.effect.{ContextShift, ExitCase, ExitCode, IO, IOApp, Sync}
 import org.tessellation.schema.{Cell, Cell0, Cell2, Cocell, Context, Hom, L1Consensus, L1Edge, L1Transaction, L1TransactionPool, StackL1Consensus, Topos, Ω}
 import org.tessellation.schema.Hom._
 import fs2.{Pipe, Stream}
@@ -85,17 +85,23 @@ object RunExample extends App {
 
   val aTxs = Set(L1Transaction(12))
 
+
   val input = L1Edge(aTxs)
 
-  implicit val contextShift = IO.contextShift(scala.concurrent.ExecutionContext.global)
+  implicit val contextShift: ContextShift[IO] = IO.contextShift(scala.concurrent.ExecutionContext.global)
 
-  val result = for {
-    txPool <- L1TransactionPool.init[IO](Set(L1Transaction(10), L1Transaction(11)))
-    context = L1ConsensusContext(peer = "nodeA", peers = Set("nodeB", "nodeC"), txPool = txPool)
-    initialState = L1ConsensusMetadata.empty(context)
+  val result: IO[Unit] = for {
+    nodeA <- Node.run("nodeA")
+    nodeB <- Node.run("nodeB")
+    nodeC <- Node.run("nodeC")
 
-    run <- scheme.hyloM(StackL1Consensus.algebra, StackL1Consensus.coalgebra).apply((initialState, input))
-  } yield run
+    _ <- nodeA.joinTo(Set(nodeB, nodeC))
+    _ <- nodeB.joinTo(Set(nodeA, nodeC))
+    _ <- nodeC.joinTo(Set(nodeA, nodeB))
+
+
+    //    _ <- nodeA.startL1Consensus(L1Edge(txs))
+  } yield ()
 
   println(result.unsafeRunSync)
 

@@ -4,6 +4,7 @@ import cats.data.StateT
 import cats.effect.concurrent.Ref
 import cats.effect.{Concurrent, IO}
 import cats.syntax.all._
+import cats.implicits._
 import cats.{Applicative, Traverse}
 import fs2.concurrent.Queue
 import higherkindness.droste.util.DefaultTraverse
@@ -11,6 +12,7 @@ import higherkindness.droste.{AlgebraM, CoalgebraM, scheme}
 import io.chrisdavenport.fuuid.FUUID
 import monocle.macros.syntax.lens._
 import monocle.syntax.apply._
+import org.tessellation.Node
 import org.tessellation.schema.L1Consensus.BroadcastProposalResponse
 import org.tessellation.schema.L1TransactionPool.L1TransactionPoolEnqueue
 
@@ -45,32 +47,32 @@ object L1ConsensusF {
 }
 
 object L1TransactionPool {
-  def init[F[_]](txs: Set[L1Transaction])(implicit F: Concurrent[F]): F[L1TransactionPoolEnqueue[F]] = for {
-    ref <- Ref.of[F, Set[L1Transaction]](Set.empty)
-    txPool <- L1TransactionPool.apply[F](ref)
+  def init(txs: Set[L1Transaction]): IO[L1TransactionPoolEnqueue] = for {
+    ref <- Ref.of[IO, Set[L1Transaction]](Set.empty)
+    txPool <- L1TransactionPool.apply(ref)
     _ <- txs.toList.traverse(txPool.enqueue)
   } yield txPool
 
-  def apply[F[_]](ref: Ref[F, Set[L1Transaction]])(implicit F: Concurrent[F]): F[L1TransactionPoolEnqueue[F]] = {
-    F.delay {
-      new L1TransactionPoolEnqueue[F] {
-        private val pulledTxs: Ref[F, Map[FUUID, Set[L1Transaction]]] = Ref.unsafe(Map.empty[FUUID, Set[L1Transaction]])
+  def apply(ref: Ref[IO, Set[L1Transaction]]): IO[L1TransactionPoolEnqueue] = {
+    IO.delay {
+      new L1TransactionPoolEnqueue {
+        private val pulledTxs: Ref[IO, Map[FUUID, Set[L1Transaction]]] = Ref.unsafe(Map.empty[FUUID, Set[L1Transaction]])
 
-        def enqueue(tx: L1Transaction): F[Unit] =
+        def enqueue(tx: L1Transaction): IO[Unit] =
           ref.modify(txs => (txs + tx, ()))
 
-        def dequeue(n: Int): F[Set[L1Transaction]] =
+        def dequeue(n: Int): IO[Set[L1Transaction]] =
           ref.modify { txs =>
             val taken: Set[L1Transaction] = txs.take(n)
 
             (txs -- taken, taken)
           }
 
-        def pull(roundId: FUUID, n: Int): F[Set[L1Transaction]] = {
+        def pull(roundId: FUUID, n: Int): IO[Set[L1Transaction]] = {
           pulledTxs.get
             .map(_.get(roundId))
             .flatMap {
-              case Some(txs) => F.pure(txs)
+              case Some(txs) => IO.pure(txs)
               case None => for {
                 txs <- dequeue(n)
                 _ <- addToPulled(roundId, txs)
@@ -78,16 +80,16 @@ object L1TransactionPool {
             }
         }
 
-        private def addToPulled(roundId: FUUID, txs: Set[L1Transaction]): F[Unit] =
+        private def addToPulled(roundId: FUUID, txs: Set[L1Transaction]): IO[Unit] =
           pulledTxs.modify(m => (m.updated(roundId, txs), ()))
 
-        private def removeFromPulled(roundId: FUUID): F[Set[L1Transaction]] =
+        private def removeFromPulled(roundId: FUUID): IO[Set[L1Transaction]] =
           pulledTxs.modify(m => {
             val pulled = m.getOrElse(roundId, Set.empty[L1Transaction])
             (m.removed(roundId), pulled)
           })
 
-        private def reenqueue(roundId: FUUID): F[Unit] = for {
+        private def reenqueue(roundId: FUUID): IO[Unit] = for {
           removedTxs <- removeFromPulled(roundId)
           _ <- removedTxs.toList.traverse(enqueue)
         } yield ()
@@ -95,12 +97,12 @@ object L1TransactionPool {
     }
   }
 
-  trait L1TransactionPoolEnqueue[F[_]] {
-    def enqueue(tx: L1Transaction): F[Unit]
+  trait L1TransactionPoolEnqueue {
+    def enqueue(tx: L1Transaction): IO[Unit]
 
-    def dequeue(n: Int): F[Set[L1Transaction]]
+    def dequeue(n: Int): IO[Set[L1Transaction]]
 
-    def pull(roundId: FUUID, n: Int): F[Set[L1Transaction]]
+    def pull(roundId: FUUID, n: Int): IO[Set[L1Transaction]]
   }
 
 }
@@ -109,11 +111,6 @@ object L1Consensus {
   type Peer = String
   type StateM[A] = StateT[IO, L1ConsensusMetadata, A]
   implicit val contextShift = IO.contextShift(scala.concurrent.ExecutionContext.global)
-
-  val bTxs = Set(L1Transaction(1), L1Transaction(2))
-  val cTxs = Set(L1Transaction(4), L1Transaction(5))
-
-  val txMap = Map("nodeB" -> bTxs, "nodeC" -> cTxs)
 
   // TODO: Use Reader monad -> Reader[L1ConsensusContext, Ω]
   val coalgebra: CoalgebraM[StateM, L1ConsensusF, Ω] = CoalgebraM {
@@ -132,11 +129,6 @@ object L1Consensus {
       }
     }
 
-      // A ---> B
-      // A ---> C
-
-      // B (A) --- b ---> C
-
     case ReceiveProposal() => pullTxs(2) >>= { txs =>
       StateT[IO, L1ConsensusMetadata, L1ConsensusF[Ω]] { metadata =>
         IO {
@@ -144,7 +136,7 @@ object L1Consensus {
           val state = metadata.lens(_.txs).modify { t =>
             t.updatedWith(roundId) {
               case Some(mapping) => (mapping + (metadata.context.peer -> txs)).some
-              case None => Map[Peer, Set[L1Transaction]](metadata.context.peer -> txs).some
+              case None => Map[Node, Set[L1Transaction]](metadata.context.peer -> txs).some
             }
           }
 
@@ -177,6 +169,7 @@ object L1Consensus {
       }
     }
   }
+
 
   val hyloM = scheme.hyloM(L1Consensus.algebra, L1Consensus.coalgebra)
 
@@ -217,13 +210,12 @@ object L1Consensus {
         ()
       })
       txs <- metadata.roundId.flatMap(metadata.txs.get).flatMap(_.get(metadata.context.peer))
-      request <- metadata.roundId.map(BroadcastProposalRequest(_, txs, facilitators))
+      request <- metadata.roundId.map(BroadcastProposalRequest(_, txs, facilitators.map(_.id)))
       responses <- facilitators.toList.traverse(facilitator => for {
-        txPool <- L1TransactionPool.init[IO](txMap(facilitator))
         proposalResponse <- apiCall(
           request,
-          metadata.context.peer,
-          metadata.context.lens(_.peer).set(facilitator).lens(_.txPool).set(txPool)
+          metadata.context.peer.id,
+          metadata.context.lens(_.peer).set(facilitator).lens(_.txPool).set(metadata.context.peer.txPool)
         )
       } yield proposalResponse).some
     } yield responses
@@ -262,15 +254,15 @@ object L1Consensus {
   case class BroadcastProposalResponse(roundId: FUUID, senderProposals: Set[L1Transaction], receiverProposals: Set[L1Transaction])
 
   case class L1ConsensusContext(
-    peer: Peer,
-    peers: Set[Peer],
-    txPool: L1TransactionPoolEnqueue[IO]
-  )
+                                 peer: Node,
+                                 peers: Set[Node],
+                                 txPool: L1TransactionPoolEnqueue
+                               )
 
   case class L1ConsensusMetadata(
                                   context: L1ConsensusContext,
-                                  txs: Map[FUUID, Map[Peer, Set[L1Transaction]]],
-                                  facilitators: Option[Set[Peer]],
+                                  txs: Map[FUUID, Map[Node, Set[L1Transaction]]],
+                                  facilitators: Option[Set[Node]],
                                   roundId: Option[FUUID]
                                 )
 
