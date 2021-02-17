@@ -1,8 +1,8 @@
 package org.tessellation
 
-import cats.effect.{Concurrent, IO}
+import cats.effect.{ContextShift, IO}
 import cats.effect.concurrent.Ref
-import cats.implicits._
+import cats.syntax.all._
 import higherkindness.droste.scheme
 import org.tessellation.RunExample.input
 import org.tessellation.schema.L1Consensus.{L1ConsensusContext, L1ConsensusMetadata}
@@ -33,7 +33,7 @@ case class Node(id: String, txPool: L1TransactionPoolEnqueue) {
 }
 
 object Node {
-  implicit val contextShift = IO.contextShift(scala.concurrent.ExecutionContext.global)
+  implicit val contextShift: ContextShift[IO] = IO.contextShift(scala.concurrent.ExecutionContext.global)
 
   def run(id: String): IO[Node] =
     for {
