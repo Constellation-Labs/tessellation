@@ -41,7 +41,13 @@ import org.tessellation.ConsensusExample.{intGather, intScatter}
 import org.tessellation.StreamExample.pipeline
 import org.tessellation.hypergraph.EdgePartitioner
 import org.tessellation.hypergraph.EdgePartitioner.EdgePartitioner
-import org.tessellation.schema.L1Consensus.{L1ConsensusContext, L1ConsensusMetadata, algebra, coalgebra}
+import org.tessellation.schema.L1Consensus.{
+  L1ConsensusContext,
+  L1ConsensusError,
+  L1ConsensusMetadata,
+  algebra,
+  coalgebra
+}
 import org.tessellation.serialization.{Kryo, KryoRegistrar, SerDe}
 
 object Main extends App {
@@ -117,7 +123,7 @@ object RunExample extends App {
 
   implicit val contextShift: ContextShift[IO] = IO.contextShift(scala.concurrent.ExecutionContext.global)
 
-  val result: IO[Ω] = for {
+  val result: IO[Either[L1ConsensusError, Ω]] = for {
     nodeA <- Node.run("nodeA")
     nodeB <- Node.run("nodeB")
     nodeC <- Node.run("nodeC")
