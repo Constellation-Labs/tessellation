@@ -5,7 +5,7 @@ import cats.effect.concurrent.Ref
 import cats.syntax.all._
 import higherkindness.droste.scheme
 import org.tessellation.RunExample.input
-import org.tessellation.schema.L1Consensus.{L1ConsensusContext, L1ConsensusMetadata}
+import org.tessellation.schema.L1Consensus.{L1ConsensusContext, L1ConsensusError, L1ConsensusMetadata}
 import org.tessellation.schema.L1TransactionPool.L1TransactionPoolEnqueue
 import org.tessellation.schema.{L1Block, L1Edge, L1Transaction, L1TransactionPool, StackL1Consensus, Ω}
 
@@ -23,7 +23,7 @@ case class Node(id: String, txPool: L1TransactionPoolEnqueue) {
   def updatePeers(node: Node): IO[Unit] =
     peers.modify(p => (p + node, ()))
 
-  def startL1Consensus(edge: L1Edge[L1Transaction]): IO[Ω] =
+  def startL1Consensus(edge: L1Edge[L1Transaction]): IO[Either[L1ConsensusError, Ω]] =
     for {
       peers <- peers.get
       context = L1ConsensusContext(peer = this, peers = peers, txPool = txPool)

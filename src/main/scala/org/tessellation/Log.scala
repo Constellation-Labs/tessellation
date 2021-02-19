@@ -17,6 +17,6 @@ object Log {
     case "nodeB" => cyan
     case "nodeC" => yellow
     case "nodeD" => blue
-    case _ => red
+    case _       => red
   }
 }

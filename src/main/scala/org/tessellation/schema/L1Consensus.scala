@@ -25,6 +25,8 @@ case class L1Transaction(a: Int, node: Option[String] = None) extends Ω
 
 case class L1Block(txs: Set[L1Transaction]) extends Ω
 
+case class L1Error[A](reason: String) extends L1ConsensusF[A]
+
 case class L1Edge[A](txs: Set[L1Transaction]) extends L1ConsensusF[A]
 
 case class BroadcastProposal[A]() extends L1ConsensusF[A]
@@ -114,6 +116,8 @@ object L1Consensus {
   type StateM[A] = StateT[IO, L1ConsensusMetadata, A]
   implicit val contextShift = IO.contextShift(scala.concurrent.ExecutionContext.global)
 
+  case class L1ConsensusError(reason: String) extends Throwable(reason)
+
   // TODO: Use Reader monad -> Reader[L1ConsensusContext, Ω]
   val coalgebra: CoalgebraM[StateM, L1ConsensusF, Ω] = CoalgebraM {
     case L1Edge(txs) =>
@@ -123,7 +127,9 @@ object L1Consensus {
         L1ConsensusF[Ω]
       ] { metadata =>
         IO {
-          Log.logNode(metadata.context.peer)(s"[${metadata.context.peer.id}][L1Edge] Stored transactions: ${txs.toList.sortBy(_.a)}")
+          Log.logNode(metadata.context.peer)(
+            s"[${metadata.context.peer.id}][L1Edge] Stored transactions: ${txs.toList.sortBy(_.a)}"
+          )
           (metadata, BroadcastProposal())
         }
       }
@@ -132,7 +138,7 @@ object L1Consensus {
       broadcastProposal() >>= { responses =>
         StateT[IO, L1ConsensusMetadata, L1ConsensusF[Ω]] { metadata =>
           IO {
-            (metadata, ConsensusEnd(responses))
+            (metadata, responses.fold(error => L1Error(error.reason), ConsensusEnd(_)))
           }
         }
       }
@@ -149,9 +155,11 @@ object L1Consensus {
               }
             }
 
-            Log.logNode(metadata.context.peer)(s"[${metadata.context.peer.id}][ReceiveProposal] Stored transaction (pull): ${state.txs
-              .get(roundId)
-              .flatMap(_.get(metadata.context.peer).map(_.toList.sortBy(_.a)))}")
+            Log.logNode(metadata.context.peer)(
+              s"[${metadata.context.peer.id}][ReceiveProposal] Stored transaction (pull): ${state.txs
+                .get(roundId)
+                .flatMap(_.get(metadata.context.peer).map(_.toList.sortBy(_.a)))}"
+            )
 
             (state, BroadcastReceivedProposal())
           }
@@ -162,32 +170,43 @@ object L1Consensus {
       broadcastProposal() >>= { responses =>
         StateT[IO, L1ConsensusMetadata, L1ConsensusF[Ω]] { metadata =>
           IO {
-            val roundTxs = metadata.roundId
-              .flatMap(metadata.txs.get)
+            responses match {
+              case Right(r) => {
+                val roundTxs = metadata.roundId
+                  .flatMap(metadata.txs.get)
 
-            val txs = roundTxs.map(_.values.flatten.toSet).getOrElse(Set.empty[L1Transaction])
-            val resTxs = responses.flatMap(_.receiverProposals).toSet
-            // TODO: We can't send ProposalResponse because C can get proposal from B before proposal A reaches C! (Race condition)
-            (metadata, ProposalResponse(txs ++ resTxs))
+                val txs = roundTxs.map(_.values.flatten.toSet).getOrElse(Set.empty[L1Transaction])
+                val resTxs = r.flatMap(_.receiverProposals).toSet
+                // TODO: We can't send ProposalResponse because C can get proposal from B before proposal A reaches C! (Race condition)
+                (metadata, ProposalResponse(txs ++ resTxs))
+              }
+              case Left(error) => (metadata, L1Error(error.reason))
+            }
           }
         }
       }
-
-    case ConsensusEnd(responses) => StateT { metadata => IO.pure(metadata, ConsensusEnd(responses)) }
   }
 
-  val algebra: AlgebraM[StateM, L1ConsensusF, Ω] = AlgebraM {
-    case ConsensusEnd(responses) => StateT { metadata =>
-      IO {
-        val txs = responses.map(_.receiverProposals).foldRight(Set.empty[L1Transaction])(_ ++ _)
-        (metadata, L1Block(txs))
+  val algebra: AlgebraM[StateM, L1ConsensusF, Either[L1ConsensusError, Ω]] = AlgebraM {
+    case ConsensusEnd(responses) =>
+      StateT { metadata =>
+        IO {
+          val txs = responses.map(_.receiverProposals).foldRight(Set.empty[L1Transaction])(_ ++ _)
+          (metadata, L1Block(txs).asRight[L1ConsensusError])
+        }
       }
-    }
+
+    case L1Error(reason) =>
+      StateT { metadata =>
+        IO {
+          (metadata, L1ConsensusError(reason).asLeft[Ω])
+        }
+      }
 
     case cmd: Ω =>
       StateT { metadata =>
         IO {
-          (metadata, cmd)
+          (metadata, cmd.asRight[L1ConsensusError])
         }
       }
   }
@@ -200,7 +219,7 @@ object L1Consensus {
       .map(txs => (metadata, txs))
   }
 
-  def broadcastProposal(): StateM[List[BroadcastProposalResponse]] = StateT { metadata =>
+  def broadcastProposal(): StateM[Either[L1ConsensusError, List[BroadcastProposalResponse]]] = StateT { metadata =>
     // TODO: apiCall peer should be taken from node
     def apiCall(
       request: BroadcastProposalRequest,
@@ -213,45 +232,55 @@ object L1Consensus {
         facilitators = request.facilitators.some,
         roundId = request.roundId.some
       )
-      Log.logNode(context.peer)(s"\n[${context.peer.id}] InitialState: facilitators=${initialState.facilitators}, txs=${initialState.txs}")
+      Log.logNode(context.peer)(
+        s"\n[${context.peer.id}] InitialState: facilitators=${initialState.facilitators}, txs=${initialState.txs}"
+      )
       val input = ReceiveProposal()
 
-      scheme.hyloM(StackL1Consensus.algebra, StackL1Consensus.coalgebra).apply((initialState, input)).map {
-        case ProposalResponse(txs) => {
-          Log.logNode(metadata.context.peer)(s"[${metadata.context.peer.id}][ProposalResponse] ${txs.toList.sortBy(_.a)}")
-          BroadcastProposalResponse(request.roundId, request.proposal, txs)
+      scheme.hyloM(StackL1Consensus.algebra, StackL1Consensus.coalgebra).apply((initialState, input)).flatMap {
+        case Right(ProposalResponse(txs)) => {
+          Log.logNode(metadata.context.peer)(
+            s"[${metadata.context.peer.id}][ProposalResponse] ${txs.toList.sortBy(_.a)}"
+          )
+          IO { BroadcastProposalResponse(request.roundId, request.proposal, txs) }
         }
-        case _ => {
+        case Left(L1ConsensusError(reason)) => {
           // TODO: in case of other flow in algebras, handle error
           Log.red("unexpected")
-          ???
+          IO.raiseError(L1ConsensusError(reason))
         }
       }
     }
 
     val r = for {
       facilitators <- metadata.facilitators.map(_.filterNot(_ == metadata.context.peer))
-      _ <- Option({
-        Log.logNode(metadata.context.peer)(s"[${metadata.context.peer.id}] [BroadcastProposal] Facilitators: ${facilitators}")
+      _ <- Option {
+        Log.logNode(metadata.context.peer)(
+          s"[${metadata.context.peer.id}] [BroadcastProposal] Facilitators: ${facilitators}"
+        )
         ()
-      })
+      }
       txs <- metadata.roundId.flatMap(metadata.txs.get).flatMap(_.get(metadata.context.peer))
       request <- metadata.roundId.map(BroadcastProposalRequest(_, txs, facilitators))
-      responses <- facilitators.toList
-        .parTraverse(
-          facilitator =>
-            for {
-              proposalResponse <- apiCall(
-                request,
-                metadata.context.peer,
-                metadata.context.lens(_.peer).set(facilitator).lens(_.txPool).set(metadata.context.peers.find(_ == facilitator).get.txPool) // TODO: peers.find(..).get
-              )
-            } yield proposalResponse
-        )
-        .some
+      responses <- facilitators.toList.parTraverse { facilitator =>
+        (for {
+          proposalResponse <- apiCall(
+            request,
+            metadata.context.peer,
+            metadata.context
+              .lens(_.peer)
+              .set(facilitator)
+              .lens(_.txPool)
+              .set(metadata.context.peers.find(_ == facilitator).get.txPool) // TODO: peers.find(..).get
+          )
+        } yield proposalResponse).attempt.map(_.leftMap(e => L1ConsensusError(e.getMessage)))
+      }.some
     } yield responses
 
-    r.sequence.map(_.getOrElse(List.empty)).map((metadata, _))
+    // TODO: handle Either instead of Option above
+    r.sequence
+      .map(_.map(_.sequence).getOrElse(List.empty.asRight[L1ConsensusError]))
+      .map((metadata, _))
 
   }
 
