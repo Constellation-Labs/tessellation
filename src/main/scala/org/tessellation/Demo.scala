@@ -1,9 +1,11 @@
 package org.tessellation
 
+import cats.effect.concurrent.Semaphore
 import cats.effect.{ExitCode, IO, IOApp}
 import cats.syntax.all._
-import org.tessellation.schema.{L1Edge, L1Transaction}
+import org.tessellation.schema.{L1Block, L1Edge, L1Transaction}
 import fs2.Stream
+import org.tessellation.schema.L1Consensus.L1ConsensusError
 
 import scala.concurrent.duration._
 import scala.util.Random
@@ -31,10 +33,11 @@ object SingleL1ConsensusDemo extends IOApp {
 object StreamTransactionsDemo extends IOApp {
   override def run(args: List[String]): IO[ExitCode] = {
 
-    val generateTxEvery = 10.milliseconds
+    val generateTxEvery = 0.1.seconds
     val nTxs = 10
     val txsInChunk = 2
-    val maxRoundsInProgress = 1
+    val maxRoundsInProgress = 2
+    val parallelJobs = 3
 
     val cluster: Stream[IO, (Node, Node, Node)] = Stream.eval {
       for {
@@ -56,41 +59,27 @@ object StreamTransactionsDemo extends IOApp {
     val pipeline: Stream[IO, Unit] = for {
       (nodeA, nodeB, nodeC) <- cluster
 
-      txs <- transactions.flatMap(
-        tx =>
-          Stream.eval {
-            nodeA.countRoundsInProgress.map(_ < maxRoundsInProgress).ifM((tx, true).pure[IO], (tx, false).pure[IO])
-          }
-      )
-      _ <- Stream.eval { IO { println(txs) } }
-      /*
-      ownRoundTxs = transactions.evalFilter { tx =>
-        nodeA.countRoundsInProgress
-          .map(_ < maxRoundsInProgress)
-          .flatTap { filter =>
-            if (filter) {
-              IO.delay { println("own") }
-            } else IO.unit
-          }
-      }.chunkN(txsInChunk)
+      s <- Stream.eval(Semaphore[IO](maxRoundsInProgress))
+      txs <- transactions
+        .chunkN(txsInChunk)
         .map(_.toList.toSet)
         .map(L1Edge[L1Transaction])
-        .flatMap(edge => Stream.eval { nodeA.startL1Consensus(edge) })
+        .map { edge =>
+          Stream.eval {
+            s.tryAcquire.ifM(
+              nodeA.startL1Consensus(edge).guarantee(s.release),
+              IO {
+                println(s"store txs = ${edge.txs}")
+                L1Block(Set.empty).asRight[L1ConsensusError] // TODO: ???
+              }
+            )
+
+          }
+        }
+        .parJoin(parallelJobs)
         .flatTap(block => Stream.eval { IO { Log.magenta(block) } })
 
-      poolTxs = transactions.evalFilter { tx =>
-        nodeA.countRoundsInProgress
-          .map(_ >= maxRoundsInProgress)
-          .flatTap { filter =>
-            if (filter) {
-              IO.delay { println("store in pool") }
-            } else IO.unit
-          }
-          .map(_ => false)
-      }
-
-      _ <- ownRoundTxs.merge(poolTxs)
-     */
+      _ <- Stream.eval { IO { println(txs) } }
     } yield ()
 
     pipeline.compile.drain.as(ExitCode.Success)
@@ -99,5 +88,7 @@ object StreamTransactionsDemo extends IOApp {
   def generateRandomTransaction(): IO[L1Transaction] =
     IO.delay {
       Random.nextInt(Integer.MAX_VALUE)
-    }.map(a => L1Transaction(a, "nodeA".some)) // TODO: we hardcode generation for nodeA only
+    }.map(a => L1Transaction(a, "nodeA".some)).flatTap { tx =>
+      IO { Log.blue(s"Generated transaction: ${tx.a}") }
+    } // TODO: we hardcode generation for nodeA only
 }
