@@ -3,7 +3,7 @@ package org.tessellation
 import cats.effect.concurrent.Semaphore
 import cats.effect.{ExitCode, IO, IOApp}
 import cats.syntax.all._
-import org.tessellation.schema.{L1Block, L1Edge, L1Transaction}
+import org.tessellation.schema.{L1Block, L1Cell, L1Edge, L1Transaction}
 import fs2.Stream
 import org.tessellation.schema.L1Consensus.L1ConsensusError
 
@@ -23,7 +23,10 @@ object SingleL1ConsensusDemo extends IOApp {
 
       txs = Set(L1Transaction(12, "nodeA".some))
 
-      block <- nodeA.startL1Consensus(L1Edge(txs))
+      // cell pool
+      cell = L1Cell(L1Edge(txs))
+
+      block <- nodeA.startL1Consensus(cell)
 
       _ = Log.magenta(s"Output: ${block}")
 
@@ -64,12 +67,13 @@ object StreamTransactionsDemo extends IOApp {
         .chunkN(txsInChunk)
         .map(_.toList.toSet)
         .map(L1Edge[L1Transaction])
-        .map { edge =>
+        .map(L1Cell)
+        .map { l1cell => // from cache
           Stream.eval {
             s.tryAcquire.ifM(
-              nodeA.startL1Consensus(edge).guarantee(s.release),
+              nodeA.startL1Consensus(l1cell).guarantee(s.release),
               IO {
-                println(s"store txs = ${edge.txs}")
+                println(s"store txs = ${l1cell.edge.txs}")
                 L1Block(Set.empty).asRight[L1ConsensusError] // TODO: ???
               }
             )

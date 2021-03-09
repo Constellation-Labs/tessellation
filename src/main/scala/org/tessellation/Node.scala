@@ -6,7 +6,17 @@ import cats.syntax.all._
 import higherkindness.droste.scheme
 import org.tessellation.schema.L1Consensus.{L1ConsensusContext, L1ConsensusError, L1ConsensusMetadata}
 import org.tessellation.schema.L1TransactionPool.L1TransactionPoolEnqueue
-import org.tessellation.schema.{L1Block, L1Edge, L1Transaction, L1TransactionPool, StackL1Consensus, Ω}
+import org.tessellation.schema.{
+  JoinRound,
+  L1Block,
+  L1Cell,
+  L1Edge,
+  L1Transaction,
+  L1TransactionPool,
+  StackL1Consensus,
+  StartOwnRound,
+  Ω
+}
 
 import scala.concurrent.duration.DurationInt
 import scala.util.Random
@@ -26,14 +36,20 @@ case class Node(id: String, txPool: L1TransactionPoolEnqueue) {
   def updatePeers(node: Node): IO[Unit] =
     peers.modify(p => (p + node, ()))
 
-  def startL1Consensus(edge: L1Edge[L1Transaction]): IO[Either[L1ConsensusError, Ω]] =
+  def participateInL1Consensus(cell: L1Cell): IO[Either[L1ConsensusError, Ω]] =
+    for {
+      peers <- peers.get
+      context = L1ConsensusContext(peer = this, peers = peers, txPool = txPool)
+      ohm <- cell.run(context, JoinRound(_))
+    } yield ohm
+
+  def startL1Consensus(cell: L1Cell): IO[Either[L1ConsensusError, Ω]] =
     for {
       _ <- rounds.modify(n => (n + 1, ()))
       peers <- peers.get
       context = L1ConsensusContext(peer = this, peers = peers, txPool = txPool)
-      initialState = L1ConsensusMetadata.empty(context)
       _ <- IO.sleep(1.second)(IO.timer(scala.concurrent.ExecutionContext.global))
-      ohm <- scheme.hyloM(StackL1Consensus.algebra, StackL1Consensus.coalgebra).apply((initialState, edge))
+      ohm <- cell.run(context, StartOwnRound(_))
       _ <- rounds.modify(n => (n - 1, ()))
     } yield ohm
 }

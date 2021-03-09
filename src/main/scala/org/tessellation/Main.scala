@@ -5,10 +5,10 @@ import cats.effect.concurrent.Ref
 import cats.effect.{ContextShift, ExitCase, ExitCode, IO, IOApp, Sync}
 import org.tessellation.schema.{
   Cell,
-  Cell0,
-  Cell2,
-  Cocell,
-  Context,
+  //  Cell0,
+  //  Cell2,
+  //  Cocell,
+  //  Context,
   Hom,
   L1Consensus,
   L1Edge,
@@ -18,7 +18,7 @@ import org.tessellation.schema.{
   Topos,
   Ω
 }
-import org.tessellation.schema.Hom._
+//import org.tessellation.schema.Hom._
 import fs2.{Pipe, Stream}
 import cats.syntax.all._
 import higherkindness.droste.{
@@ -37,8 +37,8 @@ import higherkindness.droste.{
   scheme
 }
 import higherkindness.droste.data.{:<, Attr, Fix}
-import org.tessellation.ConsensusExample.{intGather, intScatter}
-import org.tessellation.StreamExample.pipeline
+//import org.tessellation.ConsensusExample.{intGather, intScatter}
+//import org.tessellation.StreamExample.pipeline
 import org.tessellation.hypergraph.EdgePartitioner
 import org.tessellation.hypergraph.EdgePartitioner.EdgePartitioner
 import org.tessellation.schema.L1Consensus.{
@@ -52,19 +52,19 @@ import org.tessellation.serialization.{Kryo, KryoRegistrar, SerDe}
 
 object Main extends App {
   println("Welcome to " |+| "Tessellation!")
-  LiftExample
+  //  LiftExample
 }
 
-object LiftExample extends App {
-  println("Lift " |+| "Example!")
-
-  val intCell: Hom[Int, Int] = Cell[Int, Int](0)
-  val intTopos: Hom[Int, Int] = Cell2[Int, Int](2, 3)
-  val constellation = intCell >>> intTopos
-
-  val intToposClone = Cell2[Int, Int](0, 1)
-  val myClone = constellation >>> intToposClone
-}
+//object LiftExample extends App {
+//  println("Lift " |+| "Example!")
+//
+//  val intCell: Hom[Int, Int] = Cell[Int, Int](0)
+//  val intTopos: Hom[Int, Int] = Cell2[Int, Int](2, 3)
+//  val constellation = intCell >>> intTopos
+//
+//  val intToposClone = Cell2[Int, Int](0, 1)
+//  val myClone = constellation >>> intToposClone
+//}
 
 //object RunExample extends App {
 //
@@ -137,172 +137,173 @@ object FinalStreamExample extends App {
 
 }
 
-object StreamExample extends App {
-
-  import fs2.Stream
-  import cats.effect.IO
-
-  val dummyStream = Stream(1, 2, 3)
-  val effectfulStream = dummyStream.flatMap(pipeline)
-
-  def pipeline(i: Int): Stream[Hom[Int, *], Int] = Stream.eval[Hom[Int, *], Int](chainEffects(Context())(i))
-
-  def chainEffects(operad: Hom[Int, Int])(i: Int): Hom[Int, Int] = operad >>> intCell(i)
-
-  def intCell(i: Int): Hom[Int, Int] = Cell[Int, Int](i)
-}
+//object StreamExample extends App {
+//
+//  import fs2.Stream
+//  import cats.effect.IO
+//
+//  val dummyStream = Stream(1, 2, 3)
+//  val effectfulStream = dummyStream.flatMap(pipeline)
+//
+//  def pipeline(i: Int): Stream[Hom[Int, *], Int] = Stream.eval[Hom[Int, *], Int](chainEffects(Context())(i))
+//
+//  def chainEffects(operad: Hom[Int, Int])(i: Int): Hom[Int, Int] = operad >>> intCell(i)
+//
+//  def intCell(i: Int): Hom[Int, Int] = Cell[Int, Int](i)
+//}
 
 import higherkindness.droste.data.{:<, Coattr}
 import higherkindness.droste.syntax.compose._
 
-object ConsensusExample extends App {
-  import fs2.Stream
-  import cats.effect.IO
-
-  val submitResult: RCoalgebra[Int, Hom[Int, *], Int] = RCoalgebra {
-    case int: Int => {
-      println("sr", int)
-      Cell2(int, Left(2))
-    }
-  }
-
-  val cellCoalgebra: Coalgebra[Hom[Int, *], Int] = Coalgebra[Hom[Int, *], Int] { thing: Int =>
-    {
-      println("cc", thing)
-      Cell(thing)
-    }
-  }
-
-  val fromCellHelper: Algebra[Hom[Int, *], Int] = Algebra {
-    case Cell(n) => {
-      println(n)
-      n + 1
-    }
-    case Cell2(a, b) => {
-      println(a, b)
-      a + b
-    }
-  }
-
-  // note: n is the fromCellHelper helper value from the previous level of recursion
-  val proposalRingAlgebra: RAlgebra[Int, Hom[Int, *], Int] = RAlgebra {
-    case Cell2(a, (n, value)) => {
-      println(a, value, n)
-      value + (n + 1) * (n + 1)
-    }
-    case Cell(a) => {
-      println(a)
-      a
-    }
-  }
-
-  val combineProposals: CVAlgebra[Hom[Int, *], Int] = CVAlgebra {
-    case Cell2(a, r1 :< Cell(r2)) => {
-      println("cp cell2", a, r1, r2)
-      a + r2
-    }
-    case cell @ Cell(aa) => {
-      println("cp cell@Cell", aa)
-      aa
-    }
-  }
-
-  val intGather: GAlgebra.Gathered[Hom[Int, *], Attr[Hom[Int, *], Int], Int] = combineProposals.gather(Gather.histo)
-
-  val intScatter: GCoalgebra.Scattered[Hom[Int, *], Int, Either[Int, Int]] =
-    submitResult.scatter(Scatter.gapo(cellCoalgebra))
-
-  val takeHighestIntegerConsensus: Int => Int = scheme.ghylo(intGather, intScatter)
-  //todo note we can just use Cell istead of new class I just ran out of time to make new constructor
-  val dummyStream = Stream(1, 2, 3)
-  val effectfulStream = dummyStream.flatMap(pipeline)
-
-  def pipeline(i: Int): Stream[Hom[Int, *], Int] = Stream.eval[Hom[Int, *], Int](chainEffects(Context())(i))
-
-  def chainEffects(operad: Hom[Int, Int])(i: Int): Hom[Int, Int] = operad >>> intCell(i)
-
-  def intCell(i: Int): Hom[Int, Int] = MyNewCell[Int, Int](i)
-
-  case class MyNewCell[A, B](override val a: A) extends Topos[A, B] {
-    val takeHighestIntegerConsensus: Int => Int = scheme.ghylo(intGather, intScatter)
-  }
-
-  //  effectfulStream.compile
-}
-
-object ConsensusExample2 extends App {
-
-  val natCoalgebra: Coalgebra[Option, BigDecimal] =
-    Coalgebra(n => if (n > 0) Some(n - 1) else None)
-
-  val cellCoalgebra: Coalgebra[Hom[Int, *], Int] = Coalgebra { int =>
-    Cell(int)
-  }
-
-  val submitResult: RCoalgebra[Int, Hom[Int, *], Int] = RCoalgebra {
-    case int => Cell(int)
-  }
-
-  val combineProposals: CVAlgebra[Hom[Int, *], Int] = CVAlgebra {
-    case Cell2(a, r1 :< Cell(r2)) => a + r2
-    case cell @ Cell(aa)          => aa
-  }
-
-  val intGather = combineProposals.gather(Gather.histo)
-  val intScatter = submitResult.scatter(Scatter.gapo(cellCoalgebra))
-
-  println(scheme.ghylo(intGather, intScatter).apply(10))
-
-  // ---
-
-  val fibAlgebra: CVAlgebra[Option, BigDecimal] = CVAlgebra {
-    case Some(r1 :< Some(r2 :< _)) => r1 + r2
-    case Some(_ :< None)           => 1
-    case None                      => 0
-  }
-
-//  val fib: BigDecimal => BigDecimal = scheme.ghylo(
-//    fibAlgebra.gather(Gather.histo),
-//    natCoalgebra.scatter(Scatter.ana)
-//  )
+//object ConsensusExample extends App {
+//  import fs2.Stream
+//  import cats.effect.IO
 //
-//  val fib10 = fib(10)
-
-  // ---
-
-  val fromNatAlgebra: Algebra[Option, BigDecimal] = Algebra {
-    case Some(n) => n + 1
-    case None    => 0
-  }
-
-  val sumSquaresAlgebra: RAlgebra[BigDecimal, Option, BigDecimal] = RAlgebra {
-    case Some((n, value)) => value + (n + 1) * (n + 1)
-    case None             => 0
-  }
-
-//  val sumSquares: BigDecimal => BigDecimal = scheme.ghylo(
-//    sumSquaresAlgebra.gather(Gather.zygo(fromNatAlgebra)),
-//    natCoalgebra.scatter(Scatter.ana))
+//  val submitResult: RCoalgebra[Int, Hom[Int, *], Int] = RCoalgebra {
+//    case int: Int => {
+//      println("sr", int)
+//      Cell2(int, Left(2))
+//    }
+//  }
 //
-//  val sumSquares10 = sumSquares(10)
-
-  // ---
-
-//  val fused: BigDecimal => (BigDecimal, BigDecimal) =
-//    scheme.ghylo(
-//      fibAlgebra.gather(Gather.histo) zip
-//        sumSquaresAlgebra.gather(Gather.zygo(fromNatAlgebra)),
-//      natCoalgebra.scatter(Scatter.ana))
+//  val cellCoalgebra: Coalgebra[Hom[Int, *], Int] = Coalgebra[Hom[Int, *], Int] { thing: Int =>
+//    {
+//      println("cc", thing)
+//      Cell(thing)
+//    }
+//  }
 //
-//  val fused10 = fused(10)
+//  val fromCellHelper: Algebra[Hom[Int, *], Int] = Algebra {
+//    case Cell(n) => {
+//      println(n)
+//      n + 1
+//    }
+//    case Cell2(a, b) => {
+//      println(a, b)
+//      a + b
+//    }
+//  }
+//
+//  // note: n is the fromCellHelper helper value from the previous level of recursion
+//  val proposalRingAlgebra: RAlgebra[Int, Hom[Int, *], Int] = RAlgebra {
+//    case Cell2(a, (n, value)) => {
+//      println(a, value, n)
+//      value + (n + 1) * (n + 1)
+//    }
+//    case Cell(a) => {
+//      println(a)
+//      a
+//    }
+//  }
+//
+//  val combineProposals: CVAlgebra[Hom[Int, *], Int] = CVAlgebra {
+//    case Cell2(a, r1 :< Cell(r2)) => {
+//      println("cp cell2", a, r1, r2)
+//      a + r2
+//    }
+//    case cell @ Cell(aa) => {
+//      println("cp cell@Cell", aa)
+//      aa
+//    }
+//  }
+//
+//  val intGather: GAlgebra.Gathered[Hom[Int, *], Attr[Hom[Int, *], Int], Int] = combineProposals.gather(Gather.histo)
+//
+//  val intScatter: GCoalgebra.Scattered[Hom[Int, *], Int, Either[Int, Int]] =
+//    submitResult.scatter(Scatter.gapo(cellCoalgebra))
+//
+//  val takeHighestIntegerConsensus: Int => Int = scheme.ghylo(intGather, intScatter)
+//  //todo note we can just use Cell istead of new class I just ran out of time to make new constructor
+//  val dummyStream = Stream(1, 2, 3)
+//  val effectfulStream = dummyStream.flatMap(pipeline)
+//
+//  def pipeline(i: Int): Stream[Hom[Int, *], Int] = Stream.eval[Hom[Int, *], Int](chainEffects(Context())(i))
+//
+//  def chainEffects(operad: Hom[Int, Int])(i: Int): Hom[Int, Int] = operad >>> intCell(i)
+//
+//  def intCell(i: Int): Hom[Int, Int] = MyNewCell[Int, Int](i)
+//
+//  case class MyNewCell[A, B](override val a: A) extends Topos[A, B] {
+//    val takeHighestIntegerConsensus: Int => Int = scheme.ghylo(intGather, intScatter)
+//  }
+//
+//  //  effectfulStream.compile
+//}
 
-}
+//object ConsensusExample2 extends App {
+//
+//  val natCoalgebra: Coalgebra[Option, BigDecimal] =
+//    Coalgebra(n => if (n > 0) Some(n - 1) else None)
+//
+//  val cellCoalgebra: Coalgebra[Hom[Int, *], Int] = Coalgebra { int =>
+//    Cell(int)
+//  }
+//
+//  val submitResult: RCoalgebra[Int, Hom[Int, *], Int] = RCoalgebra {
+//    case int => Cell(int)
+//  }
+//
+//  val combineProposals: CVAlgebra[Hom[Int, *], Int] = CVAlgebra {
+//    case Cell2(a, r1 :< Cell(r2)) => a + r2
+//    case cell @ Cell(aa)          => aa
+//  }
+//
+//  val intGather = combineProposals.gather(Gather.histo)
+//  val intScatter = submitResult.scatter(Scatter.gapo(cellCoalgebra))
+//
+//  println(scheme.ghylo(intGather, intScatter).apply(10))
+//
+//  // ---
+//
+//  val fibAlgebra: CVAlgebra[Option, BigDecimal] = CVAlgebra {
+//    case Some(r1 :< Some(r2 :< _)) => r1 + r2
+//    case Some(_ :< None)           => 1
+//    case None                      => 0
+//  }
+//
+////  val fib: BigDecimal => BigDecimal = scheme.ghylo(
+////    fibAlgebra.gather(Gather.histo),
+////    natCoalgebra.scatter(Scatter.ana)
+////  )
+////
+////  val fib10 = fib(10)
+//
+//  // ---
+//
+//  val fromNatAlgebra: Algebra[Option, BigDecimal] = Algebra {
+//    case Some(n) => n + 1
+//    case None    => 0
+//  }
+//
+//  val sumSquaresAlgebra: RAlgebra[BigDecimal, Option, BigDecimal] = RAlgebra {
+//    case Some((n, value)) => value + (n + 1) * (n + 1)
+//    case None             => 0
+//  }
+//
+////  val sumSquares: BigDecimal => BigDecimal = scheme.ghylo(
+////    sumSquaresAlgebra.gather(Gather.zygo(fromNatAlgebra)),
+////    natCoalgebra.scatter(Scatter.ana))
+////
+////  val sumSquares10 = sumSquares(10)
+//
+//  // ---
+//
+////  val fused: BigDecimal => (BigDecimal, BigDecimal) =
+////    scheme.ghylo(
+////      fibAlgebra.gather(Gather.histo) zip
+////        sumSquaresAlgebra.gather(Gather.zygo(fromNatAlgebra)),
+////      natCoalgebra.scatter(Scatter.ana))
+////
+////  val fused10 = fused(10)
+//
+//}
 
 /**
   * Serialization use-case example
   * Remember to remove registration entry in `KryoRegistrar` when removing this example
   */
 object SerializationExample extends App {
+
   import cats.syntax.all._
 
   /**
