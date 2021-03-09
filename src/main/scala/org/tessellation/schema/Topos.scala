@@ -11,10 +11,10 @@ import higherkindness.droste.data.{Mu, Nu}
   * Topos context for morphisms of morphisms
   */
 trait Topos[A, B] extends Hom[A, B] {
-  import Hom._
+//  import Hom._
 
-  val arrow = Hom.arrowInstance
-  val a: A
+  //  val arrow = Hom.arrowInstance
+  //  val a: A
   val terminator: Ω = this // subobject classifier
   val identity = natTrans
 
@@ -22,9 +22,9 @@ trait Topos[A, B] extends Hom[A, B] {
   // todo mock for lookups of natTrans: F ~> F for _pro morphisms
   def natTrans: ~>[Topos[A, *], Topos[A, *]] = λ[Topos[A, *] ~> Topos[A, *]](fa => fa)
 
-  val gather = cvAlgebra.gather(Gather.histo)
-  val scatter = rcoalgebra.scatter(Scatter.gapo(coalgebra))
-  val run: Ω => Ω = scheme.ghylo(gather, scatter)
+  //  val gather = cvAlgebra.gather(Gather.histo)
+  //  val scatter = rcoalgebra.scatter(Scatter.gapo(coalgebra))
+  //  val run: Ω => Ω = scheme.ghylo(gather, scatter)
 }
 
 object Topos {

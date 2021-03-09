@@ -12,7 +12,13 @@ import io.chrisdavenport.fuuid.FUUID
 import monocle.macros.syntax.lens._
 import monocle.syntax.apply._
 import org.tessellation.{Log, Node}
-import org.tessellation.schema.L1Consensus.BroadcastProposalResponse
+import org.tessellation.schema.L1Consensus.{
+  BroadcastProposalResponse,
+  L1ConsensusContext,
+  L1ConsensusError,
+  L1ConsensusMetadata,
+  StateM
+}
 import org.tessellation.schema.L1TransactionPool.L1TransactionPoolEnqueue
 
 import scala.util.Random
@@ -31,6 +37,10 @@ case class L1Edge[A](txs: Set[L1Transaction]) extends L1ConsensusF[A]
 
 case class BroadcastProposal[A]() extends L1ConsensusF[A]
 
+case class StartOwnRound[A](edge: L1Edge[L1Transaction]) extends L1ConsensusF[A]
+
+case class JoinRound[A](proposalEdge: L1Edge[L1Transaction]) extends L1ConsensusF[A]
+
 case class BroadcastReceivedProposal[A]() extends L1ConsensusF[A]
 
 case class ConsensusEnd[A](responses: List[BroadcastProposalResponse]) extends L1ConsensusF[A]
@@ -39,6 +49,13 @@ case class ReceiveProposal[A]() extends L1ConsensusF[A]
 
 case class ProposalResponse[A](txs: Set[L1Transaction]) extends L1ConsensusF[A] // output as facilitator
 // ?? - output as owner
+
+case class L1Cell(edge: L1Edge[L1Transaction])
+    extends Cell(edge, StackL1Consensus.algebra, StackL1Consensus.coalgebra) {
+
+  def run(context: L1ConsensusContext, cmd: L1Edge[L1Transaction] => Ω) =
+    hyloM(edge => (L1ConsensusMetadata.empty(context), cmd(edge)))
+}
 
 object L1ConsensusF {
   implicit val traverse: Traverse[L1ConsensusF] = new DefaultTraverse[L1ConsensusF] {
@@ -116,10 +133,10 @@ object L1Consensus {
   type StateM[A] = StateT[IO, L1ConsensusMetadata, A]
   implicit val contextShift = IO.contextShift(scala.concurrent.ExecutionContext.global)
 
-  case class L1ConsensusError(reason: String) extends Throwable(reason)
-
   // TODO: Use Reader monad -> Reader[L1ConsensusContext, Ω]
   val coalgebra: CoalgebraM[StateM, L1ConsensusF, Ω] = CoalgebraM {
+
+    // TODO: Use StartOwnRound
     case L1Edge(txs) =>
       generateRoundId() >> storeTransactions(txs) >> selectFacilitators(2) >> StateT[
         IO,
@@ -143,26 +160,25 @@ object L1Consensus {
         }
       }
 
-    case ReceiveProposal() =>
-      pullTxs(2) >>= { txs =>
-        StateT[IO, L1ConsensusMetadata, L1ConsensusF[Ω]] { metadata =>
-          IO {
-            val roundId = metadata.roundId.get
-            val state = metadata.lens(_.txs).modify { t =>
-              t.updatedWith(roundId) {
-                case Some(mapping) => (mapping + (metadata.context.peer -> txs)).some
-                case None          => Map[Node, Set[L1Transaction]](metadata.context.peer -> txs).some
-              }
+    case JoinRound(ownTxsEdge) =>
+      StateT[IO, L1ConsensusMetadata, L1ConsensusF[Ω]] { metadata =>
+        IO {
+          val txs = ownTxsEdge.txs
+          val roundId = metadata.roundId.get
+          val state = metadata.lens(_.txs).modify { t =>
+            t.updatedWith(roundId) {
+              case Some(mapping) => (mapping + (metadata.context.peer -> txs)).some
+              case None          => Map[Node, Set[L1Transaction]](metadata.context.peer -> txs).some
             }
-
-            Log.logNode(metadata.context.peer)(
-              s"[${metadata.context.peer.id}][ReceiveProposal] Stored transaction (pull): ${state.txs
-                .get(roundId)
-                .flatMap(_.get(metadata.context.peer).map(_.toList.sortBy(_.a)))}"
-            )
-
-            (state, BroadcastReceivedProposal())
           }
+
+          Log.logNode(metadata.context.peer)(
+            s"[${metadata.context.peer.id}][ReceiveProposal] Stored transaction (pull): ${state.txs
+              .get(roundId)
+              .flatMap(_.get(metadata.context.peer).map(_.toList.sortBy(_.a)))}"
+          )
+
+          (state, BroadcastReceivedProposal())
         }
       }
 
@@ -210,8 +226,7 @@ object L1Consensus {
         }
       }
   }
-
-  val hyloM = scheme.hyloM(L1Consensus.algebra, L1Consensus.coalgebra)
+  val hyloM: Ω => StateM[Either[L1ConsensusError, Ω]] = scheme.hyloM(L1Consensus.algebra, L1Consensus.coalgebra)
 
   def pullTxs(n: Int): StateM[Set[L1Transaction]] = StateT { metadata =>
     metadata.context.txPool
@@ -308,6 +323,8 @@ object L1Consensus {
       Random.shuffle(metadata.context.peers).take(n)
     }.map(facilitators => (metadata.lens(_.facilitators).set(facilitators.some), ()))
   }
+
+  case class L1ConsensusError(reason: String) extends Throwable(reason)
 
   case class BroadcastProposalRequest(roundId: FUUID, proposal: Set[L1Transaction], facilitators: Set[Node])
 
