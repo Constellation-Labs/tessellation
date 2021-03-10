@@ -12,6 +12,8 @@ case class L1Edge[A](txs: Set[L1Transaction]) extends Ω
 
 case class L1Block(txs: Set[L1Transaction]) extends Ω
 
+sealed trait L1ConsensusF[A] extends Hom[Ω, A]
+
 /**
   * Input as owner
   */
@@ -47,5 +49,3 @@ object L1ConsensusF {
       fa.asInstanceOf[L1ConsensusF[B]].pure[G]
   }
 }
-
-sealed trait L1ConsensusF[A] extends Hom[Ω, A]

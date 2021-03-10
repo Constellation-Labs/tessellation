@@ -126,9 +126,10 @@ object Block {
 }
 
 /* SNAPSHOT */
-
+/*
 case class Snapshot[A, B, C](convergedState: Seq[Hom[A, B]]) extends Simplex[A, B, C](convergedState) {
 
   def combine(x: Snapshot[A, B, _], y: Snapshot[A, B, _]): Snapshot[A, B, C] =
     Snapshot(x.convergedState ++ y.convergedState)
 }
+ */

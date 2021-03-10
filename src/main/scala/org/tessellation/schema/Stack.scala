@@ -1,15 +1,15 @@
-package org.tessellation.consensus
+package org.tessellation.schema
 
 import cats.syntax.all._
 import cats.{Applicative, Traverse}
 import higherkindness.droste.util.DefaultTraverse
-import org.tessellation.consensus.L1ConsensusStep.L1ConsensusError
-import org.tessellation.schema.Ω
+
+case class CellError(reason: String) extends Throwable(reason)
 
 trait StackF[A]
 
 case class More[A](a: A) extends StackF[A]
-case class Done[A](result: Either[L1ConsensusError, Ω]) extends StackF[A] // TODO: make it generic and remove parametrized either
+case class Done[A](result: Either[CellError, Ω]) extends StackF[A]
 
 object StackF {
   implicit val traverse: Traverse[StackF] = new DefaultTraverse[StackF] {

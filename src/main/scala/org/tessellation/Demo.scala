@@ -5,7 +5,7 @@ import cats.effect.{ExitCode, IO, IOApp}
 import cats.syntax.all._
 import fs2.Stream
 import org.tessellation.consensus.{L1Block, L1Cell, L1Edge, L1Transaction}
-import org.tessellation.consensus.L1ConsensusStep.L1ConsensusError
+import org.tessellation.schema.CellError
 
 import scala.concurrent.duration._
 import scala.util.Random
@@ -74,7 +74,7 @@ object StreamTransactionsDemo extends IOApp {
               nodeA.startL1Consensus(l1cell).guarantee(s.release),
               IO {
                 println(s"store txs = ${l1cell.edge.txs}")
-                L1Block(Set.empty).asRight[L1ConsensusError] // TODO: ???
+                L1Block(Set.empty).asRight[CellError] // TODO: ???
               }
             )
 
