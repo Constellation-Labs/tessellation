@@ -10,11 +10,6 @@ import org.tessellation.schema.{
   //  Cocell,
   //  Context,
   Hom,
-  L1Consensus,
-  L1Edge,
-  L1Transaction,
-  L1TransactionPool,
-  StackL1Consensus,
   Topos,
   Ω
 }
@@ -41,7 +36,7 @@ import higherkindness.droste.data.{:<, Attr, Fix}
 //import org.tessellation.StreamExample.pipeline
 import org.tessellation.hypergraph.EdgePartitioner
 import org.tessellation.hypergraph.EdgePartitioner.EdgePartitioner
-import org.tessellation.schema.L1Consensus.{
+import org.tessellation.consensus.L1ConsensusStep.{
   L1ConsensusContext,
   L1ConsensusError,
   L1ConsensusMetadata,

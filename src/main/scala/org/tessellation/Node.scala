@@ -3,20 +3,10 @@ package org.tessellation
 import cats.effect.{ContextShift, IO}
 import cats.effect.concurrent.Ref
 import cats.syntax.all._
-import higherkindness.droste.scheme
-import org.tessellation.schema.L1Consensus.{L1ConsensusContext, L1ConsensusError, L1ConsensusMetadata}
-import org.tessellation.schema.L1TransactionPool.L1TransactionPoolEnqueue
-import org.tessellation.schema.{
-  JoinRound,
-  L1Block,
-  L1Cell,
-  L1Edge,
-  L1Transaction,
-  L1TransactionPool,
-  StackL1Consensus,
-  StartOwnRound,
-  Ω
-}
+import org.tessellation.consensus.{L1Cell, L1Transaction, L1TransactionPool, ReceiveProposal, StartOwnRound}
+import org.tessellation.consensus.L1ConsensusStep.{L1ConsensusContext, L1ConsensusError}
+import org.tessellation.consensus.L1TransactionPool.L1TransactionPoolEnqueue
+import org.tessellation.schema.Ω
 
 import scala.concurrent.duration.DurationInt
 import scala.util.Random
@@ -40,7 +30,7 @@ case class Node(id: String, txPool: L1TransactionPoolEnqueue) {
     for {
       peers <- peers.get
       context = L1ConsensusContext(peer = this, peers = peers, txPool = txPool)
-      ohm <- cell.run(context, JoinRound(_))
+      ohm <- cell.run(context, ReceiveProposal(_))
     } yield ohm
 
   def startL1Consensus(cell: L1Cell): IO[Either[L1ConsensusError, Ω]] =

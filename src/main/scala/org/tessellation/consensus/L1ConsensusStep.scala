@@ -1,134 +1,18 @@
-package org.tessellation.schema
+package org.tessellation.consensus
 
 import cats.data.StateT
-import cats.effect.concurrent.Ref
-import cats.effect.{Concurrent, IO}
+import cats.effect.IO
 import cats.syntax.all._
-import cats.{Applicative, Traverse}
-import fs2.concurrent.Queue
-import higherkindness.droste.util.DefaultTraverse
 import higherkindness.droste.{AlgebraM, CoalgebraM, scheme}
 import io.chrisdavenport.fuuid.FUUID
-import monocle.macros.syntax.lens._
-import monocle.syntax.apply._
+import org.tessellation.consensus.L1TransactionPool.L1TransactionPoolEnqueue
+import org.tessellation.schema.Ω
 import org.tessellation.{Log, Node}
-import org.tessellation.schema.L1Consensus.{
-  BroadcastProposalResponse,
-  L1ConsensusContext,
-  L1ConsensusError,
-  L1ConsensusMetadata,
-  StateM
-}
-import org.tessellation.schema.L1TransactionPool.L1TransactionPoolEnqueue
+import monocle.macros.syntax.lens._
 
 import scala.util.Random
 
-// run: Ω => Ω
-
-sealed trait L1ConsensusF[A] extends Hom[Ω, A]
-
-case class L1Transaction(a: Int, node: Option[String] = None) extends Ω
-
-case class L1Block(txs: Set[L1Transaction]) extends Ω
-
-case class L1Error[A](reason: String) extends L1ConsensusF[A]
-
-case class L1Edge[A](txs: Set[L1Transaction]) extends L1ConsensusF[A]
-
-case class BroadcastProposal[A]() extends L1ConsensusF[A]
-
-case class StartOwnRound[A](edge: L1Edge[L1Transaction]) extends L1ConsensusF[A]
-
-case class JoinRound[A](proposalEdge: L1Edge[L1Transaction]) extends L1ConsensusF[A]
-
-case class BroadcastReceivedProposal[A]() extends L1ConsensusF[A]
-
-case class ConsensusEnd[A](responses: List[BroadcastProposalResponse]) extends L1ConsensusF[A]
-
-case class ReceiveProposal[A]() extends L1ConsensusF[A]
-
-case class ProposalResponse[A](txs: Set[L1Transaction]) extends L1ConsensusF[A] // output as facilitator
-// ?? - output as owner
-
-case class L1Cell(edge: L1Edge[L1Transaction])
-    extends Cell(edge, StackL1Consensus.algebra, StackL1Consensus.coalgebra) {
-
-  def run(context: L1ConsensusContext, cmd: L1Edge[L1Transaction] => Ω) =
-    hyloM(edge => (L1ConsensusMetadata.empty(context), cmd(edge)))
-}
-
-object L1ConsensusF {
-  implicit val traverse: Traverse[L1ConsensusF] = new DefaultTraverse[L1ConsensusF] {
-    override def traverse[G[_]: Applicative, A, B](fa: L1ConsensusF[A])(f: A => G[B]): G[L1ConsensusF[B]] =
-      fa.asInstanceOf[L1ConsensusF[B]].pure[G]
-  }
-}
-
-object L1TransactionPool {
-
-  def init(txs: Set[L1Transaction]): IO[L1TransactionPoolEnqueue] =
-    for {
-      ref <- Ref.of[IO, Set[L1Transaction]](Set.empty)
-      txPool <- L1TransactionPool.apply(ref)
-      _ <- txs.toList.traverse(txPool.enqueue)
-    } yield txPool
-
-  def apply(ref: Ref[IO, Set[L1Transaction]]): IO[L1TransactionPoolEnqueue] =
-    IO.delay {
-      new L1TransactionPoolEnqueue {
-        private val pulledTxs: Ref[IO, Map[FUUID, Set[L1Transaction]]] =
-          Ref.unsafe(Map.empty[FUUID, Set[L1Transaction]])
-
-        def enqueue(tx: L1Transaction): IO[Unit] =
-          ref.modify(txs => (txs + tx, ()))
-
-        def dequeue(n: Int): IO[Set[L1Transaction]] =
-          ref.modify { txs =>
-            val taken: Set[L1Transaction] = txs.take(n)
-
-            (txs -- taken, taken)
-          }
-
-        def pull(roundId: FUUID, n: Int): IO[Set[L1Transaction]] =
-          pulledTxs.get
-            .map(_.get(roundId))
-            .flatMap {
-              case Some(txs) => IO.pure(txs)
-              case None =>
-                for {
-                  txs <- dequeue(n)
-                  _ <- addToPulled(roundId, txs)
-                } yield txs
-            }
-
-        private def addToPulled(roundId: FUUID, txs: Set[L1Transaction]): IO[Unit] =
-          pulledTxs.modify(m => (m.updated(roundId, txs), ()))
-
-        private def removeFromPulled(roundId: FUUID): IO[Set[L1Transaction]] =
-          pulledTxs.modify(m => {
-            val pulled = m.getOrElse(roundId, Set.empty[L1Transaction])
-            (m.removed(roundId), pulled)
-          })
-
-        private def reenqueue(roundId: FUUID): IO[Unit] =
-          for {
-            removedTxs <- removeFromPulled(roundId)
-            _ <- removedTxs.toList.traverse(enqueue)
-          } yield ()
-      }
-    }
-
-  trait L1TransactionPoolEnqueue {
-    def enqueue(tx: L1Transaction): IO[Unit]
-
-    def dequeue(n: Int): IO[Set[L1Transaction]]
-
-    def pull(roundId: FUUID, n: Int): IO[Set[L1Transaction]]
-  }
-
-}
-
-object L1Consensus {
+object L1ConsensusStep {
   type Peer = String
   type StateM[A] = StateT[IO, L1ConsensusMetadata, A]
   implicit val contextShift = IO.contextShift(scala.concurrent.ExecutionContext.global)
@@ -137,15 +21,15 @@ object L1Consensus {
   val coalgebra: CoalgebraM[StateM, L1ConsensusF, Ω] = CoalgebraM {
 
     // TODO: Use StartOwnRound
-    case L1Edge(txs) =>
-      generateRoundId() >> storeTransactions(txs) >> selectFacilitators(2) >> StateT[
+    case StartOwnRound(edge) =>
+      generateRoundId() >> storeTransactions(edge.txs) >> selectFacilitators(2) >> StateT[
         IO,
         L1ConsensusMetadata,
         L1ConsensusF[Ω]
       ] { metadata =>
         IO {
           Log.logNode(metadata.context.peer)(
-            s"[${metadata.context.peer.id}][L1Edge] Stored transactions: ${txs.toList.sortBy(_.a)}"
+            s"[${metadata.context.peer.id}][L1Edge] Stored transactions: ${edge.txs.toList.sortBy(_.a)}"
           )
           (metadata, BroadcastProposal())
         }
@@ -160,27 +44,28 @@ object L1Consensus {
         }
       }
 
-    case JoinRound(ownTxsEdge) =>
-      StateT[IO, L1ConsensusMetadata, L1ConsensusF[Ω]] { metadata =>
-        IO {
-          val txs = ownTxsEdge.txs
-          val roundId = metadata.roundId.get
-          val state = metadata.lens(_.txs).modify { t =>
-            t.updatedWith(roundId) {
-              case Some(mapping) => (mapping + (metadata.context.peer -> txs)).some
-              case None          => Map[Node, Set[L1Transaction]](metadata.context.peer -> txs).some
+    case ReceiveProposal(edge) =>
+      storeTransactions(edge.txs) >>
+        StateT[IO, L1ConsensusMetadata, L1ConsensusF[Ω]] { metadata =>
+          IO {
+            val txs = edge.txs
+            val roundId = metadata.roundId.get
+            val state = metadata.lens(_.txs).modify { t =>
+              t.updatedWith(roundId) {
+                case Some(mapping) => (mapping + (metadata.context.peer -> txs)).some
+                case None          => Map[Node, Set[L1Transaction]](metadata.context.peer -> txs).some
+              }
             }
+
+            Log.logNode(metadata.context.peer)(
+              s"[${metadata.context.peer.id}][ReceiveProposal] Stored transaction (pull): ${state.txs
+                .get(roundId)
+                .flatMap(_.get(metadata.context.peer).map(_.toList.sortBy(_.a)))}"
+            )
+
+            (state, BroadcastReceivedProposal())
           }
-
-          Log.logNode(metadata.context.peer)(
-            s"[${metadata.context.peer.id}][ReceiveProposal] Stored transaction (pull): ${state.txs
-              .get(roundId)
-              .flatMap(_.get(metadata.context.peer).map(_.toList.sortBy(_.a)))}"
-          )
-
-          (state, BroadcastReceivedProposal())
         }
-      }
 
     case BroadcastReceivedProposal() =>
       broadcastProposal() >>= { responses =>
@@ -226,7 +111,7 @@ object L1Consensus {
         }
       }
   }
-  val hyloM: Ω => StateM[Either[L1ConsensusError, Ω]] = scheme.hyloM(L1Consensus.algebra, L1Consensus.coalgebra)
+  val hyloM: Ω => StateM[Either[L1ConsensusError, Ω]] = scheme.hyloM(L1ConsensusStep.algebra, L1ConsensusStep.coalgebra)
 
   def pullTxs(n: Int): StateM[Set[L1Transaction]] = StateT { metadata =>
     metadata.context.txPool
@@ -250,9 +135,9 @@ object L1Consensus {
       Log.logNode(context.peer)(
         s"\n[${context.peer.id}] InitialState: facilitators=${initialState.facilitators}, txs=${initialState.txs}"
       )
-      val input = ReceiveProposal()
+      val input = ReceiveProposal(L1Edge(Set.empty)) // TODO: cell cache
 
-      scheme.hyloM(StackL1Consensus.algebra, StackL1Consensus.coalgebra).apply((initialState, input)).flatMap {
+      scheme.hyloM(L1Consensus.algebra, L1Consensus.coalgebra).apply((initialState, input)).flatMap {
         case Right(ProposalResponse(txs)) => {
           Log.logNode(metadata.context.peer)(
             s"[${metadata.context.peer.id}][ProposalResponse] ${txs.toList.sortBy(_.a)}"
