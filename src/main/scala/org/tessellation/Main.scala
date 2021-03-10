@@ -36,13 +36,7 @@ import higherkindness.droste.data.{:<, Attr, Fix}
 //import org.tessellation.StreamExample.pipeline
 import org.tessellation.hypergraph.EdgePartitioner
 import org.tessellation.hypergraph.EdgePartitioner.EdgePartitioner
-import org.tessellation.consensus.L1ConsensusStep.{
-  L1ConsensusContext,
-  L1ConsensusError,
-  L1ConsensusMetadata,
-  algebra,
-  coalgebra
-}
+import org.tessellation.consensus.L1ConsensusStep.{L1ConsensusContext, L1ConsensusMetadata, algebra, coalgebra}
 import org.tessellation.serialization.{Kryo, KryoRegistrar, SerDe}
 
 object Main extends App {

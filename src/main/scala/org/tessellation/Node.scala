@@ -4,9 +4,9 @@ import cats.effect.{ContextShift, IO}
 import cats.effect.concurrent.Ref
 import cats.syntax.all._
 import org.tessellation.consensus.{L1Cell, L1Transaction, L1TransactionPool, ReceiveProposal, StartOwnRound}
-import org.tessellation.consensus.L1ConsensusStep.{L1ConsensusContext, L1ConsensusError}
+import org.tessellation.consensus.L1ConsensusStep.{L1ConsensusContext}
 import org.tessellation.consensus.L1TransactionPool.L1TransactionPoolEnqueue
-import org.tessellation.schema.Ω
+import org.tessellation.schema.{CellError, Ω}
 
 import scala.concurrent.duration.DurationInt
 import scala.util.Random
@@ -26,14 +26,14 @@ case class Node(id: String, txPool: L1TransactionPoolEnqueue) {
   def updatePeers(node: Node): IO[Unit] =
     peers.modify(p => (p + node, ()))
 
-  def participateInL1Consensus(cell: L1Cell): IO[Either[L1ConsensusError, Ω]] =
+  def participateInL1Consensus(cell: L1Cell): IO[Either[CellError, Ω]] =
     for {
       peers <- peers.get
       context = L1ConsensusContext(peer = this, peers = peers, txPool = txPool)
       ohm <- cell.run(context, ReceiveProposal(_))
     } yield ohm
 
-  def startL1Consensus(cell: L1Cell): IO[Either[L1ConsensusError, Ω]] =
+  def startL1Consensus(cell: L1Cell): IO[Either[CellError, Ω]] =
     for {
       _ <- rounds.modify(n => (n + 1, ()))
       peers <- peers.get

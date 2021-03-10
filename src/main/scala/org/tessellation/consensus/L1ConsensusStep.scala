@@ -6,7 +6,7 @@ import cats.syntax.all._
 import higherkindness.droste.{AlgebraM, CoalgebraM, scheme}
 import io.chrisdavenport.fuuid.FUUID
 import org.tessellation.consensus.L1TransactionPool.L1TransactionPoolEnqueue
-import org.tessellation.schema.Ω
+import org.tessellation.schema.{CellError, Ω}
 import org.tessellation.{Log, Node}
 import monocle.macros.syntax.lens._
 
@@ -88,30 +88,30 @@ object L1ConsensusStep {
       }
   }
 
-  val algebra: AlgebraM[StateM, L1ConsensusF, Either[L1ConsensusError, Ω]] = AlgebraM {
+  val algebra: AlgebraM[StateM, L1ConsensusF, Either[CellError, Ω]] = AlgebraM {
     case ConsensusEnd(responses) =>
       StateT { metadata =>
         IO {
           val txs = responses.map(_.receiverProposals).foldRight(Set.empty[L1Transaction])(_ ++ _)
-          (metadata, L1Block(txs).asRight[L1ConsensusError])
+          (metadata, L1Block(txs).asRight[CellError])
         }
       }
 
     case L1Error(reason) =>
       StateT { metadata =>
         IO {
-          (metadata, L1ConsensusError(reason).asLeft[Ω])
+          (metadata, CellError(reason).asLeft[Ω])
         }
       }
 
     case cmd: Ω =>
       StateT { metadata =>
         IO {
-          (metadata, cmd.asRight[L1ConsensusError])
+          (metadata, cmd.asRight[CellError])
         }
       }
   }
-  val hyloM: Ω => StateM[Either[L1ConsensusError, Ω]] = scheme.hyloM(L1ConsensusStep.algebra, L1ConsensusStep.coalgebra)
+  val hyloM: Ω => StateM[Either[CellError, Ω]] = scheme.hyloM(L1ConsensusStep.algebra, L1ConsensusStep.coalgebra)
 
   def pullTxs(n: Int): StateM[Set[L1Transaction]] = StateT { metadata =>
     metadata.context.txPool
@@ -119,7 +119,7 @@ object L1ConsensusStep {
       .map(txs => (metadata, txs))
   }
 
-  def broadcastProposal(): StateM[Either[L1ConsensusError, List[BroadcastProposalResponse]]] = StateT { metadata =>
+  def broadcastProposal(): StateM[Either[CellError, List[BroadcastProposalResponse]]] = StateT { metadata =>
     // TODO: apiCall peer should be taken from node
     def apiCall(
       request: BroadcastProposalRequest,
@@ -144,10 +144,10 @@ object L1ConsensusStep {
           )
           IO { BroadcastProposalResponse(request.roundId, request.proposal, txs) }
         }
-        case Left(L1ConsensusError(reason)) => {
+        case Left(CellError(reason)) => {
           // TODO: in case of other flow in algebras, handle error
           Log.red("unexpected")
-          IO.raiseError(L1ConsensusError(reason))
+          IO.raiseError(CellError(reason))
         }
       }
     }
@@ -173,13 +173,13 @@ object L1ConsensusStep {
               .lens(_.txPool)
               .set(metadata.context.peers.find(_ == facilitator).get.txPool) // TODO: peers.find(..).get
           )
-        } yield proposalResponse).attempt.map(_.leftMap(e => L1ConsensusError(e.getMessage)))
+        } yield proposalResponse).attempt.map(_.leftMap(e => CellError(e.getMessage)))
       }.some
     } yield responses
 
     // TODO: handle Either instead of Option above
     r.sequence
-      .map(_.map(_.sequence).getOrElse(List.empty.asRight[L1ConsensusError]))
+      .map(_.map(_.sequence).getOrElse(List.empty.asRight[CellError]))
       .map((metadata, _))
 
   }
@@ -209,8 +209,6 @@ object L1ConsensusStep {
     }.map(facilitators => (metadata.lens(_.facilitators).set(facilitators.some), ()))
   }
 
-  case class L1ConsensusError(reason: String) extends Throwable(reason)
-
   case class BroadcastProposalRequest(roundId: FUUID, proposal: Set[L1Transaction], facilitators: Set[Node])
 
   case class BroadcastProposalResponse(
@@ -234,7 +232,7 @@ object L1ConsensusStep {
 
   object L1ConsensusMetadata {
 
-    def empty(context: L1ConsensusContext) =
+    def empty(context: L1ConsensusContext): L1ConsensusMetadata =
       L1ConsensusMetadata(context = context, txs = Map.empty, facilitators = None, roundId = None)
   }
 }
