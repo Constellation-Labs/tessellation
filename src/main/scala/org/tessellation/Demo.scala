@@ -3,9 +3,9 @@ package org.tessellation
 import cats.effect.concurrent.Semaphore
 import cats.effect.{ExitCode, IO, IOApp}
 import cats.syntax.all._
-import org.tessellation.schema.{L1Block, L1Cell, L1Edge, L1Transaction}
 import fs2.Stream
-import org.tessellation.schema.L1Consensus.L1ConsensusError
+import org.tessellation.consensus.{L1Block, L1Cell, L1Edge, L1Transaction}
+import org.tessellation.consensus.L1ConsensusStep.L1ConsensusError
 
 import scala.concurrent.duration._
 import scala.util.Random
