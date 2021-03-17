@@ -8,8 +8,9 @@ import higherkindness.droste.data.{Fix, Mu, Nu}
 import higherkindness.droste.scheme
 import org.scalacheck.Prop.{forAll, _}
 import org.scalacheck.Properties
-import org.tessellation.schema.MutuallyRecursive._
-import org.tessellation.schema.{Cell, Context, Hom, Cell2}
+
+//import org.tessellation.schema.MutuallyRecursive._
+//import org.tessellation.schema.{Cell, Context, Hom, Cell2}
 
 object TransverseTest extends Properties("TransverseTest") {
   property("empty list to Hom fails") =

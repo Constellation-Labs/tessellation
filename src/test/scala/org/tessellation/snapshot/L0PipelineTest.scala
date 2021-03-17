@@ -16,7 +16,7 @@ class L0PipelineTest extends AnyFreeSpec with GivenWhenThen with Matchers {
 
     val blocks: Stream[IO, L1Block] = Stream
       .range[IO](1, 100)
-      .map(L1Transaction(_))
+      .map(v => L1Transaction(v, "a", "b", "", 0))
       .map(Set(_))
       .map(L1Block)
       .take(5)
@@ -38,8 +38,8 @@ class L0PipelineTest extends AnyFreeSpec with GivenWhenThen with Matchers {
     Then(s"it returns edges with blocks of range ${tipInterval}")
     result.compile.toList.unsafeRunSync() shouldBe
       List(
-        L0Edge(Set(L1Block(Set(L1Transaction(1, None))), L1Block(Set(L1Transaction(2, None))))),
-        L0Edge(Set(L1Block(Set(L1Transaction(3, None))), L1Block(Set(L1Transaction(4, None)))))
+        L0Edge(Set(L1Block(Set(L1Transaction(1, "a", "b", "", 0))), L1Block(Set(L1Transaction(2, "a", "b", "", 0))))),
+        L0Edge(Set(L1Block(Set(L1Transaction(3, "a", "b", "", 0))), L1Block(Set(L1Transaction(4, "a", "b", "", 0)))))
       )
   }
 
@@ -69,7 +69,7 @@ class L0PipelineTest extends AnyFreeSpec with GivenWhenThen with Matchers {
     Given("stream of edges")
     val blocks: Stream[IO, L1Block] = Stream
       .range[IO](1, 100)
-      .map(L1Transaction(_))
+      .map(L1Transaction(_, "a","b", "", 0))
       .map(Set(_))
       .map(L1Block)
       .take(5)

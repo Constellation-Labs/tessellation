@@ -9,8 +9,8 @@ import org.tessellation.schema.Transaction
 class L0CellTest extends AnyFreeSpec with GivenWhenThen with Matchers {
   "snapshot creation" in {
     Given("edge with blocks")
-    val tx1 = L1Transaction(1)
-    val tx2 = L1Transaction(2)
+    val tx1 = L1Transaction(1, "a", "b", "", 0)
+    val tx2 = L1Transaction(2, "a", "b", tx1.hash, 1)
     val block1 = L1Block(Set(tx1))
     val block2 = L1Block(Set(tx2))
 
