@@ -61,7 +61,7 @@ object Node {
         _ =>
           IO.delay {
             Random.nextInt(Integer.MAX_VALUE)
-          }.map(a => L1Transaction(a, id.some))
+          }.map(a => L1Transaction(a, "a", "b", ""))
       )
       .map(_.toSet) >>= L1TransactionPool.init
 }

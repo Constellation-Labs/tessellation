@@ -4,6 +4,7 @@ import cats.effect.concurrent.Semaphore
 import cats.effect.{ExitCode, IO, IOApp}
 import cats.syntax.all._
 import fs2.Stream
+import org.tessellation.consensus.transaction.L1TransactionSorter
 import org.tessellation.consensus.{L1Block, L1Cell, L1Edge, L1Transaction}
 import org.tessellation.schema.CellError
 
@@ -21,7 +22,7 @@ object SingleL1ConsensusDemo extends IOApp {
       _ <- nodeB.joinTo(Set(nodeA, nodeC))
       _ <- nodeC.joinTo(Set(nodeA, nodeB))
 
-      txs = Set(L1Transaction(12, "nodeA".some))
+      txs = Set(L1Transaction(12, "a", "b", ""))
 
       // cell pool
       cell = L1Cell(L1Edge(txs))
@@ -54,16 +55,20 @@ object StreamTransactionsDemo extends IOApp {
       } yield (nodeA, nodeB, nodeC)
     }
 
-    val transactions: Stream[IO, L1Transaction] = Stream
-      .repeatEval(generateRandomTransaction())
-      .metered(generateTxEvery)
-      .take(nTxs)
+    val transactions: Stream[IO, L1Transaction] =
+      Stream
+        .repeatEval(generateRandomTransaction())
+        .metered(generateTxEvery)
+        .take(nTxs)
 
     val pipeline: Stream[IO, Unit] = for {
+      sorter <- Stream.eval(L1TransactionSorter.apply())
+
       (nodeA, nodeB, nodeC) <- cluster
 
       s <- Stream.eval(Semaphore[IO](maxRoundsInProgress))
       txs <- transactions
+        .through(sorter.optimize)
         .chunkN(txsInChunk)
         .map(_.toList.toSet)
         .map(L1Edge[L1Transaction])
@@ -92,7 +97,9 @@ object StreamTransactionsDemo extends IOApp {
   def generateRandomTransaction(): IO[L1Transaction] =
     IO.delay {
       Random.nextInt(Integer.MAX_VALUE)
-    }.map(a => L1Transaction(a, "nodeA".some)).flatTap { tx =>
-      IO { Log.blue(s"Generated transaction: ${tx.a}") }
+    }.map(a => L1Transaction(a, "a", "b", "")).flatTap { tx =>
+      IO {
+        Log.blue(s"Generated transaction: ${tx.a}")
+      }
     } // TODO: we hardcode generation for nodeA only
 }

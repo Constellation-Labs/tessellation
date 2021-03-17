@@ -6,7 +6,18 @@ import higherkindness.droste.util.DefaultTraverse
 import L1ConsensusStep.BroadcastProposalResponse
 import org.tessellation.schema.{Hom, Ω}
 
-case class L1Transaction(a: Int, node: Option[String] = None) extends Ω
+import java.util.Calendar
+
+case class L1Transaction(
+  a: Int,
+  src: String,
+  dst: String,
+  parentHash: String = ""
+) extends Ω {
+  lazy val hash = s"$a$src$dst$parentHash${Calendar.getInstance.getTime}"
+}
+
+object L1Transaction {}
 
 case class L1Edge[A](txs: Set[L1Transaction]) extends Ω
 
