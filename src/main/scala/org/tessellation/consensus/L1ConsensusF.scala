@@ -14,7 +14,7 @@ case class L1Transaction(
   dst: String,
   parentHash: String = ""
 ) extends Ω {
-  lazy val hash = s"$a$src$dst$parentHash${Calendar.getInstance.getTime}"
+  val hash = s"$a$src$dst${Calendar.getInstance.getTimeInMillis}"
 }
 
 object L1Transaction {}
