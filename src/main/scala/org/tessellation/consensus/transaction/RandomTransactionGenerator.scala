@@ -9,18 +9,22 @@ import scala.util.Random
 
 class RandomTransactionGenerator {
   private val addresses = Set("A", "B", "C")
-  private val generatedTxs: Ref[IO, Map[String, String]] = Ref.unsafe(Map.empty)
+  private val generatedTxs: Ref[IO, Map[String, L1Transaction]] = Ref.unsafe(Map.empty)
 
   def generateRandomTransaction(): IO[L1Transaction] =
     for {
       src <- getRandomSrcAddress
       dst <- getRandomDstAddress(src)
       a <- getRandomValue
-      parentHash <- getPreviouslyGeneratedTransactionHash(src)
-      tx = L1Transaction(a, src, dst, parentHash)
-      _ <- updatePreviouslyGeneratedTransactionHash(src, tx.hash)
+      tx <- generatedTxs.modify { txs =>
+        val tx = txs
+          .get(src)
+          .map(prevTx => L1Transaction(a, src, dst, prevTx.hash, prevTx.ordinal + 1))
+          .getOrElse(L1Transaction(a, src, dst, "", 0))
+        (txs.updated(src, tx), tx)
+      }
       _ <- IO {
-        Log.blue(s"Generated transaction: $tx with hash ${tx.hash}")
+        Log.blue(s"Generated transaction: $tx")
       }
     } yield tx
 
@@ -35,13 +39,6 @@ class RandomTransactionGenerator {
   private def getRandomValue: IO[Int] = IO {
     Random.nextInt(Integer.MAX_VALUE)
   }
-
-  private def getPreviouslyGeneratedTransactionHash(src: String): IO[String] =
-    generatedTxs.get
-      .map(_.getOrElse(src, ""))
-
-  private def updatePreviouslyGeneratedTransactionHash(src: String, hash: String): IO[Unit] =
-    generatedTxs.modify(txs => (txs.updated(src, hash), ()))
 }
 
 object RandomTransactionGenerator {

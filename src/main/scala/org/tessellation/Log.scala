@@ -11,6 +11,7 @@ object Log {
   val cyan = log(Console.CYAN) _
   val yellow = log(Console.YELLOW) _
   val magenta = log(Console.MAGENTA) _
+  val white = log(Console.WHITE) _
 
   def logNode[A](node: Node): A => Unit = node.id match {
     case "nodeA" => green

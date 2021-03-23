@@ -4,7 +4,7 @@ import cats.effect.concurrent.Semaphore
 import cats.effect.{ExitCode, IO, IOApp}
 import cats.syntax.all._
 import fs2.Stream
-import org.tessellation.consensus.transaction.L1TransactionSorter
+import org.tessellation.consensus.transaction.L1EdgeFactory
 import org.tessellation.consensus.{L1Block, L1Cell, L1Edge, L1Transaction}
 import org.tessellation.schema.CellError
 import org.tessellation.consensus.transaction.RandomTransactionGenerator
@@ -23,7 +23,7 @@ object SingleL1ConsensusDemo extends IOApp {
       _ <- nodeB.joinTo(Set(nodeA, nodeC))
       _ <- nodeC.joinTo(Set(nodeA, nodeB))
 
-      txs = Set(L1Transaction(12, "a", "b", ""))
+      txs = Set(L1Transaction(12, "a", "b", "", 0))
 
       // cell pool
       cell = L1Cell(L1Edge(txs))
@@ -35,15 +35,11 @@ object SingleL1ConsensusDemo extends IOApp {
     } yield ExitCode.Success
 }
 
-object WaitingPoolDemo extends IOApp {
+object PredefinedScenarioDemo extends IOApp {
   override def run(args: List[String]): IO[ExitCode] = {
-
-    val generateTxEvery = 0.1.seconds
-    val nTxs = 10
-    val txsInChunk = 4
     val maxRoundsInProgress = 2
     val parallelJobs = 3
-    val transactionGenerator = RandomTransactionGenerator()
+    val edgeFactory = L1EdgeFactory()
 
     val cluster: Stream[IO, (Node, Node, Node)] = Stream.eval {
       for {
@@ -57,45 +53,40 @@ object WaitingPoolDemo extends IOApp {
       } yield (nodeA, nodeB, nodeC)
     }
 
-    def simulate(sorter: L1TransactionSorter): Stream[IO, L1Transaction] = {
-      val tx1 = L1Transaction(1, "A", "B")
-      val tx2 = L1Transaction(2, "A", "B", parentHash = tx1.hash)
-      val tx3 = L1Transaction(3, "A", "B", parentHash = tx2.hash)
-      val tx4 = L1Transaction(4, "B", "C")
-      val tx5 = L1Transaction(5, "B", "C", parentHash = tx4.hash)
-      val tx6 = L1Transaction(6, "B", "C", parentHash = tx5.hash)
+    def runPredefinedScenario: Stream[IO, L1Transaction] = {
+      val tx1 = L1Transaction(1, "A", "B", parentHash = "", 0)
+      val tx2 = L1Transaction(2, "A", "B", parentHash = tx1.hash, 1)
+      val tx3 = L1Transaction(3, "A", "B", parentHash = tx2.hash, 2)
+      val tx4 = L1Transaction(4, "B", "C", parentHash = "", 0)
+      val tx5 = L1Transaction(5, "B", "C", parentHash = tx4.hash, 1)
+      val tx6 = L1Transaction(6, "B", "C", parentHash = tx5.hash, 2)
 
       Stream.emits(Seq(tx1, tx2, tx3)) ++ Stream
-        .eval(sorter.done(tx1) >> IO {
-          Log.red(s"[Accepted] ${tx1}")
+        .eval(edgeFactory.ready(tx1) >> IO {
+          Log.white(s"[ConsensusEnd] ${tx1}")
         })
         .flatMap(
           _ =>
             Stream.emits(Seq(tx4, tx5)) ++ Stream
-              .eval(sorter.done(tx4) >> IO {
-                Log.red(s"[Accepted] ${tx4}")
+              .eval(edgeFactory.ready(tx4) >> IO {
+                Log.white(s"[ConsensusEnd] ${tx4}")
               })
               .map(_ => tx6)
         )
     }
 
     val pipeline: Stream[IO, Unit] = for {
-      sorter <- Stream.eval(L1TransactionSorter.apply())
-
       (nodeA, nodeB, nodeC) <- cluster
 
       s <- Stream.eval(Semaphore[IO](maxRoundsInProgress))
-      txs <- simulate(sorter)
-        .through(sorter.optimize)
+      txs <- runPredefinedScenario
+        .through(edgeFactory.createEdges)
         .evalTap(
-          tx =>
+          edge =>
             IO {
-              Log.red(s"[Forward] ${tx}")
+              Log.red(s"[Edge] ${edge}")
             }
         )
-        .chunkN(txsInChunk)
-        .map(_.toList.toSet)
-        .map(L1Edge[L1Transaction])
         .map(L1Cell)
         .map { l1cell => // from cache
           Stream.eval {
@@ -106,7 +97,6 @@ object WaitingPoolDemo extends IOApp {
                 L1Block(Set.empty).asRight[CellError] // TODO: ???
               }
             )
-
           }
         }
         .parJoin(parallelJobs)
@@ -118,27 +108,21 @@ object WaitingPoolDemo extends IOApp {
               }
             }
         )
-
-      _ <- Stream.eval {
-        IO {
-          println(txs)
-        }
-      }
     } yield ()
 
     pipeline.compile.drain.as(ExitCode.Success)
   }
 }
 
-object StreamTransactionsDemo extends IOApp {
+object RandomScenarioDemo extends IOApp {
   override def run(args: List[String]): IO[ExitCode] = {
 
     val generateTxEvery = 0.1.seconds
-    val nTxs = 10
-    val txsInChunk = 2
+    val nTxs = 40
     val maxRoundsInProgress = 2
     val parallelJobs = 3
     val transactionGenerator = RandomTransactionGenerator()
+    val edgeFactory = L1EdgeFactory()
 
     val cluster: Stream[IO, (Node, Node, Node)] = Stream.eval {
       for {
@@ -159,18 +143,13 @@ object StreamTransactionsDemo extends IOApp {
         .take(nTxs)
 
     val pipeline: Stream[IO, Unit] = for {
-      sorter <- Stream.eval(L1TransactionSorter.apply())
-
       (nodeA, nodeB, nodeC) <- cluster
 
       s <- Stream.eval(Semaphore[IO](maxRoundsInProgress))
       txs <- transactions
-        .through(sorter.optimize)
-        .chunkN(txsInChunk)
-        .map(_.toList.toSet)
-        .map(L1Edge[L1Transaction])
+        .through(edgeFactory.createEdges)
         .map(L1Cell)
-        .map { l1cell => // from cache
+        .map { l1cell =>
           Stream.eval {
             s.tryAcquire.ifM(
               nodeA.startL1Consensus(l1cell).guarantee(s.release),
@@ -183,9 +162,13 @@ object StreamTransactionsDemo extends IOApp {
           }
         }
         .parJoin(parallelJobs)
+        .flatTap {
+          case Right(L1Block(txs)) => Stream.eval(txs.toList.traverse(edgeFactory.ready))
+          case _                   => Stream.emit(())
+        }
         .flatTap(block => Stream.eval { IO { Log.magenta(block) } })
 
-      _ <- Stream.eval { IO { println(txs) } }
+      //      _ <- Stream.eval { IO { println(txs) } }
     } yield ()
 
     pipeline.compile.drain.as(ExitCode.Success)

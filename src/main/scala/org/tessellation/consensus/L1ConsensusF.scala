@@ -12,9 +12,13 @@ case class L1Transaction(
   a: Int,
   src: String,
   dst: String,
-  parentHash: String = ""
+  parentHash: String = "",
+  ordinal: Int
 ) extends Ω {
   val hash = s"$a$src$dst${Calendar.getInstance.getTimeInMillis}"
+
+  override def toString: String =
+    s"L1Transaction($ordinal: $src -> $dst, hash $hash, parentHash $parentHash)"
 }
 
 object L1Transaction {}

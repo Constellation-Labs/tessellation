@@ -1,17 +1,15 @@
 package org.tessellation
 
-import cats.effect.{ContextShift, IO}
 import cats.effect.concurrent.Ref
+import cats.effect.{ContextShift, IO}
 import cats.syntax.all._
-import org.tessellation.consensus.{L1Cell, L1Transaction, L1TransactionPool, ReceiveProposal, StartOwnRound}
-import org.tessellation.consensus.L1ConsensusStep.{L1ConsensusContext}
-import org.tessellation.consensus.L1TransactionPool.L1TransactionPoolEnqueue
+import org.tessellation.consensus.L1ConsensusStep.L1ConsensusContext
+import org.tessellation.consensus.{L1Cell, ReceiveProposal, StartOwnRound}
 import org.tessellation.schema.{CellError, Ω}
 
 import scala.concurrent.duration.DurationInt
-import scala.util.Random
 
-case class Node(id: String, txPool: L1TransactionPoolEnqueue) {
+case class Node(id: String) {
   private val peers = Ref.unsafe[IO, Set[Node]](Set.empty[Node])
   private val rounds = Ref.unsafe[IO, Int](0)
 
@@ -29,7 +27,7 @@ case class Node(id: String, txPool: L1TransactionPoolEnqueue) {
   def participateInL1Consensus(cell: L1Cell): IO[Either[CellError, Ω]] =
     for {
       peers <- peers.get
-      context = L1ConsensusContext(peer = this, peers = peers, txPool = txPool)
+      context = L1ConsensusContext(peer = this, peers = peers)
       ohm <- cell.run(context, ReceiveProposal(_))
     } yield ohm
 
@@ -37,7 +35,7 @@ case class Node(id: String, txPool: L1TransactionPoolEnqueue) {
     for {
       _ <- rounds.modify(n => (n + 1, ()))
       peers <- peers.get
-      context = L1ConsensusContext(peer = this, peers = peers, txPool = txPool)
+      context = L1ConsensusContext(peer = this, peers = peers)
       _ <- IO.sleep(1.second)(IO.timer(scala.concurrent.ExecutionContext.global))
       ohm <- cell.run(context, StartOwnRound(_))
       _ <- rounds.modify(n => (n - 1, ()))
@@ -49,19 +47,8 @@ object Node {
 
   def run(id: String): IO[Node] =
     for {
-      txPool <- generateRandomTxPool(id)
       node <- IO.pure {
-        Node(id, txPool)
+        Node(id)
       }
     } yield node
-
-  private def generateRandomTxPool(id: String): IO[L1TransactionPoolEnqueue] =
-    List(1, 2, 3)
-      .traverse(
-        _ =>
-          IO.delay {
-            Random.nextInt(Integer.MAX_VALUE)
-          }.map(a => L1Transaction(a, "a", "b", ""))
-      )
-      .map(_.toSet) >>= L1TransactionPool.init
 }

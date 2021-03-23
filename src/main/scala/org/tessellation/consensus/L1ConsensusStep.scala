@@ -113,12 +113,6 @@ object L1ConsensusStep {
   }
   val hyloM: Ω => StateM[Either[CellError, Ω]] = scheme.hyloM(L1ConsensusStep.algebra, L1ConsensusStep.coalgebra)
 
-  def pullTxs(n: Int): StateM[Set[L1Transaction]] = StateT { metadata =>
-    metadata.context.txPool
-      .pull(metadata.roundId.get, n)
-      .map(txs => (metadata, txs))
-  }
-
   def broadcastProposal(): StateM[Either[CellError, List[BroadcastProposalResponse]]] = StateT { metadata =>
     // TODO: apiCall peer should be taken from node
     def apiCall(
@@ -170,8 +164,6 @@ object L1ConsensusStep {
             metadata.context
               .lens(_.peer)
               .set(facilitator)
-              .lens(_.txPool)
-              .set(metadata.context.peers.find(_ == facilitator).get.txPool) // TODO: peers.find(..).get
           )
         } yield proposalResponse).attempt.map(_.leftMap(e => CellError(e.getMessage)))
       }.some
@@ -219,8 +211,7 @@ object L1ConsensusStep {
 
   case class L1ConsensusContext(
     peer: Node,
-    peers: Set[Node],
-    txPool: L1TransactionPoolEnqueue
+    peers: Set[Node]
   )
 
   case class L1ConsensusMetadata(
