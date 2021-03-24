@@ -111,7 +111,6 @@ object L1ConsensusStep {
         }
       }
   }
-  val hyloM: Ω => StateM[Either[CellError, Ω]] = scheme.hyloM(L1ConsensusStep.algebra, L1ConsensusStep.coalgebra)
 
   def pullTxs(n: Int): StateM[Set[L1Transaction]] = StateT { metadata =>
     metadata.context.txPool

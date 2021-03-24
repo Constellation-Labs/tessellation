@@ -8,7 +8,7 @@ import org.tessellation.schema.{CellError, Done, More, StackF, Ω}
 object L0Snapshot { // TODO: make it generic and reuse together L1Consensus and L0Snapshot
 
   val coalgebra: CoalgebraM[IO, StackF, Ω] = CoalgebraM {
-    case end @ SnapshotEnd(_) =>
+    case end @ Snapshot(_) =>
       IO {
         Done(end.asRight[CellError])
       }
