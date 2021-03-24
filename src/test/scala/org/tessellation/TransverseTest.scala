@@ -1,5 +1,6 @@
 package org.tessellation
 
+/*
 import cats.data.NonEmptyList
 import higherkindness.droste.Embed.drosteBasisForFix
 import higherkindness.droste.data.list.{ListF, NilF}
@@ -10,7 +11,6 @@ import org.scalacheck.Properties
 import org.tessellation.schema.MutuallyRecursive._
 import org.tessellation.schema.{Cell, Context, Hom, Cell2}
 
-/*
 object TransverseTest extends Properties("TransverseTest") {
   property("empty list to Hom fails") =
     toHomF(Fix[ListF[Int, *]](NilF)) ?= None

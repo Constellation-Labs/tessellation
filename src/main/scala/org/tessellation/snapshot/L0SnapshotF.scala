@@ -6,13 +6,13 @@ import higherkindness.droste.util.DefaultTraverse
 import org.tessellation.consensus.L1Block
 import org.tessellation.schema.{Hom, Ω}
 
-case class L0Edge[A](blocks: Set[L1Block]) extends Ω
+case class L0Edge(blocks: Set[L1Block]) extends Ω
 
 case class Snapshot(blocks: Set[L1Block]) extends Ω
 
 trait L0SnapshotF[A] extends Hom[Ω, A]
 
-case class CreateSnapshot[A](edge: L0Edge[Snapshot]) extends L0SnapshotF[A]
+case class CreateSnapshot[A](edge: L0Edge) extends L0SnapshotF[A]
 
 case class SnapshotEnd[A](blocks: Set[L1Block]) extends L0SnapshotF[A]
 

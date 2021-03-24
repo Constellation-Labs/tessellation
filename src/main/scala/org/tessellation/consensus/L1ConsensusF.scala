@@ -8,7 +8,7 @@ import org.tessellation.schema.{Hom, Ω}
 
 case class L1Transaction(a: Int, node: Option[String] = None) extends Ω
 
-case class L1Edge[A](txs: Set[L1Transaction]) extends Ω
+case class L1Edge(txs: Set[L1Transaction]) extends Ω
 
 case class L1Block(txs: Set[L1Transaction]) extends Ω
 
@@ -17,12 +17,12 @@ sealed trait L1ConsensusF[A] extends Hom[Ω, A]
 /**
   * Input as owner
   */
-case class StartOwnRound[A](edge: L1Edge[L1Transaction]) extends L1ConsensusF[A]
+case class StartOwnRound[A](edge: L1Edge) extends L1ConsensusF[A]
 
 /**
   * Input as facilitator
   */
-case class ReceiveProposal[A](edge: L1Edge[L1Transaction]) extends L1ConsensusF[A]
+case class ReceiveProposal[A](edge: L1Edge) extends L1ConsensusF[A]
 
 case class BroadcastProposal[A]() extends L1ConsensusF[A]
 

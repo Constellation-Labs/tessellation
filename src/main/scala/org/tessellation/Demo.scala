@@ -3,9 +3,10 @@ package org.tessellation
 import cats.effect.concurrent.Semaphore
 import cats.effect.{ExitCode, IO, IOApp}
 import cats.syntax.all._
-import fs2.Stream
+import fs2.{Pull, Stream}
 import org.tessellation.consensus.{L1Block, L1Cell, L1Edge, L1Transaction}
 import org.tessellation.schema.CellError
+import org.tessellation.snapshot.{L0Cell, L0Edge}
 
 import scala.concurrent.duration._
 import scala.util.Random
@@ -66,7 +67,7 @@ object StreamTransactionsDemo extends IOApp {
       txs <- transactions
         .chunkN(txsInChunk)
         .map(_.toList.toSet)
-        .map(L1Edge[L1Transaction])
+        .map(L1Edge)
         .map(L1Cell)
         .map { l1cell => // from cache
           Stream.eval {
@@ -95,4 +96,45 @@ object StreamTransactionsDemo extends IOApp {
     }.map(a => L1Transaction(a, "nodeA".some)).flatTap { tx =>
       IO { Log.blue(s"Generated transaction: ${tx.a}") }
     } // TODO: we hardcode generation for nodeA only
+}
+
+object StreamBlocksDemo extends IOApp {
+
+  val tips: Stream[IO, Int] = Stream
+    .range[IO](1, 100)
+    .metered(1.second)
+
+  val blocks: Stream[IO, L1Block] = Stream
+    .range[IO](1, 100)
+    .map(L1Transaction(_))
+    .map(Set(_))
+    .map(L1Block)
+
+  // TODO: Pre-filtering
+  val edges: Pull[IO, Some[String], Unit] = blocks.flatMap { b =>
+    tips.map(a => (b, a))
+  }.pull.uncons1.flatMap {
+    case None                => Pull.done
+    case Some((block, tail)) => Pull.output1(Some(s"${block}"))
+  }
+
+  override def run(args: List[String]): IO[ExitCode] = {
+    val pipeline = for {
+      blocks <- blocks.chunkN(2)
+      edge = L0Edge(blocks.toList.toSet)
+      cell = L0Cell(edge)
+      result <- Stream.eval { cell.run() }
+      _ <- Stream.eval { IO { println(result) } }
+    } yield ()
+
+    /*
+    pipeline.broadcast(
+      // ...
+      // snapshot acceptance
+      // majority state chooser
+    )
+     */
+
+    pipeline.compile.drain.as(ExitCode.Success)
+  }
 }
