@@ -7,13 +7,13 @@ import org.tessellation.consensus.L1Transaction
 
 import scala.util.Random
 
-class RandomTransactionGenerator {
+class RandomTransactionGenerator(src: Option[String] = None) {
   private val addresses = Set("A", "B", "C")
   private val generatedTxs: Ref[IO, Map[String, L1Transaction]] = Ref.unsafe(Map.empty)
 
   def generateRandomTransaction(): IO[L1Transaction] =
     for {
-      src <- getRandomSrcAddress
+      src <- src.fold(getRandomSrcAddress)(IO.pure)
       dst <- getRandomDstAddress(src)
       a <- getRandomValue
       tx <- generatedTxs.modify { txs =>
@@ -42,5 +42,5 @@ class RandomTransactionGenerator {
 }
 
 object RandomTransactionGenerator {
-  def apply(): RandomTransactionGenerator = new RandomTransactionGenerator()
+  def apply(src: Option[String] = None): RandomTransactionGenerator = new RandomTransactionGenerator(src)
 }

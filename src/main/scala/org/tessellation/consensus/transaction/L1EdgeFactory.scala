@@ -23,12 +23,29 @@ class L1EdgeFactory()(implicit O: Ordering[L1Transaction]) {
     val x = a.evalMap { incomingTransaction =>
       isParentAccepted(incomingTransaction)
         .ifM(
-          IO(Log.red(s"[Forward to the Edge] ${incomingTransaction}")) >> dequeue1ReadyTransactions()
+          IO(Log.red(s"[Accepted] ${incomingTransaction}"))
+            .flatMap(
+              _ =>
+                dequeue1ReadyTransactions().handleErrorWith(
+                  e =>
+                    IO {
+                      Log.white(s"ERR: $e")
+                    }.map(_ => TreeSet.empty)
+                )
+            )
             .map(_ + incomingTransaction)
             .map(L1Edge[L1Transaction](_)),
-          IO(Log.red(s"[Put on the WaitingPool] ${incomingTransaction}")) >> wait(incomingTransaction) >> IO(
-            L1Edge[L1Transaction](TreeSet.empty)
-          )
+          IO(Log.red(s"[NotAccepted (put to WaitingPool)] ${incomingTransaction}")) >> wait(incomingTransaction)
+            .flatMap(
+              _ =>
+                dequeue1ReadyTransactions().handleErrorWith(
+                  e =>
+                    IO {
+                      Log.white(s"ERR: $e")
+                    }.map(_ => TreeSet.empty)
+                )
+            )
+            .map(L1Edge[L1Transaction](_))
         )
     }
 
@@ -56,7 +73,10 @@ class L1EdgeFactory()(implicit O: Ordering[L1Transaction]) {
     ready
       .foldRight((ready, TreeSet.empty)) {
         case ((address, enqueued), (updatedReady, dequeued)) =>
-          (updatedReady.updated(address, enqueued.drop(1)), dequeued + enqueued.head)
+          val newUpdatedReady =
+            updatedReady.updated(address, if (enqueued.nonEmpty) enqueued.drop(1) else TreeSet.empty)
+          val newDequeued: TreeSet[L1Transaction] = enqueued.headOption.map(dequeued + _).getOrElse(TreeSet.empty)
+          (newUpdatedReady, newDequeued)
       }
   }
 
@@ -80,12 +100,23 @@ class L1EdgeFactory()(implicit O: Ordering[L1Transaction]) {
 
       _ <- unlockedTx.fold(IO.unit) { tx =>
         readyTransactions.modify { readyPool =>
-          (readyPool.updatedWith(tx.src)(_.map(_ + tx)), ())
+          (readyPool.updatedWith(tx.src)(_.map(_ + tx).orElse(Some(TreeSet(tx)))), ())
         }
       }
 
       _ <- IO {
-        Log.white(s"[Parent accepted] $acceptedTransaction")
+        Log.white(s"[ConsensusEnd] $acceptedTransaction")
+      }
+
+      _ <- readyTransactions.get.flatTap { t =>
+        IO {
+          Log.white(s"  Ready pool: $t")
+        }
+      }
+      _ <- waitingTransactions.get.flatTap { t =>
+        IO {
+          Log.white(s"  Waiting pool: $t")
+        }
       }
 
     } yield ()

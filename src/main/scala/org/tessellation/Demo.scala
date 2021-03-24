@@ -35,7 +35,7 @@ object SingleL1ConsensusDemo extends IOApp {
     } yield ExitCode.Success
 }
 
-object PredefinedScenarioDemo extends IOApp {
+object WaitingPoolDemo extends IOApp {
   override def run(args: List[String]): IO[ExitCode] = {
     val maxRoundsInProgress = 2
     val parallelJobs = 3
@@ -62,15 +62,11 @@ object PredefinedScenarioDemo extends IOApp {
       val tx6 = L1Transaction(6, "B", "C", parentHash = tx5.hash, 2)
 
       Stream.emits(Seq(tx1, tx2, tx3)) ++ Stream
-        .eval(edgeFactory.ready(tx1) >> IO {
-          Log.white(s"[ConsensusEnd] ${tx1}")
-        })
+        .eval(edgeFactory.ready(tx1))
         .flatMap(
           _ =>
             Stream.emits(Seq(tx4, tx5)) ++ Stream
-              .eval(edgeFactory.ready(tx4) >> IO {
-                Log.white(s"[ConsensusEnd] ${tx4}")
-              })
+              .eval(edgeFactory.ready(tx4))
               .map(_ => tx6)
         )
     }
@@ -81,17 +77,13 @@ object PredefinedScenarioDemo extends IOApp {
       s <- Stream.eval(Semaphore[IO](maxRoundsInProgress))
       txs <- runPredefinedScenario
         .through(edgeFactory.createEdges)
-        .evalTap(
-          edge =>
-            IO {
-              Log.red(s"[Edge] ${edge}")
-            }
-        )
         .map(L1Cell)
         .map { l1cell => // from cache
           Stream.eval {
             s.tryAcquire.ifM(
-              nodeA.startL1Consensus(l1cell).guarantee(s.release),
+              IO(Log.green(s"[nodeA][ConsensusStart] ${l1cell}")) >> nodeA
+                .startL1Consensus(l1cell)
+                .guarantee(s.release),
               IO {
                 println(s"store txs = ${l1cell.edge.txs}")
                 L1Block(Set.empty).asRight[CellError] // TODO: ???
@@ -114,14 +106,14 @@ object PredefinedScenarioDemo extends IOApp {
   }
 }
 
-object RandomScenarioDemo extends IOApp {
+object RandomDemo extends IOApp {
   override def run(args: List[String]): IO[ExitCode] = {
 
     val generateTxEvery = 0.1.seconds
-    val nTxs = 40
+    val nTxs = 20
     val maxRoundsInProgress = 2
     val parallelJobs = 3
-    val transactionGenerator = RandomTransactionGenerator()
+    val transactionGenerator = RandomTransactionGenerator(Some("A"))
     val edgeFactory = L1EdgeFactory()
 
     val cluster: Stream[IO, (Node, Node, Node)] = Stream.eval {
@@ -152,7 +144,13 @@ object RandomScenarioDemo extends IOApp {
         .map { l1cell =>
           Stream.eval {
             s.tryAcquire.ifM(
-              nodeA.startL1Consensus(l1cell).guarantee(s.release),
+              IO(Log.green(s"[nodeA][ConsensusStart] ${l1cell}")) >> nodeA
+                .startL1Consensus(l1cell)
+                .guarantee(s.release)
+                .flatTap {
+                  case Right(L1Block(txs)) => txs.toList.traverse(edgeFactory.ready)
+                  case _                   => IO.unit
+                },
               IO {
                 println(s"store txs = ${l1cell.edge.txs}")
                 L1Block(Set.empty).asRight[CellError] // TODO: ???
@@ -162,10 +160,6 @@ object RandomScenarioDemo extends IOApp {
           }
         }
         .parJoin(parallelJobs)
-        .flatTap {
-          case Right(L1Block(txs)) => Stream.eval(txs.toList.traverse(edgeFactory.ready))
-          case _                   => Stream.emit(())
-        }
         .flatTap(block => Stream.eval { IO { Log.magenta(block) } })
 
       //      _ <- Stream.eval { IO { println(txs) } }

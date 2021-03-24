@@ -18,7 +18,9 @@ case class L1Transaction(
   val hash = s"$a$src$dst${Calendar.getInstance.getTimeInMillis}"
 
   override def toString: String =
-    s"L1Transaction($ordinal: $src -> $dst, hash $hash, parentHash $parentHash)"
+    s"Tx$ordinal($src -> $dst)"
+
+  //    s"L1Transaction($ordinal: $src -> $dst, hash $hash, parentHash $parentHash)"
 }
 
 object L1Transaction {}
