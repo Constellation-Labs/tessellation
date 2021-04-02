@@ -11,7 +11,7 @@ case class L1Transaction(a: Int, node: Option[String] = None) extends Ω
 case class L1Edge(txs: Set[L1Transaction]) extends Ω
 
 case class L1Block(txs: Set[L1Transaction]) extends Ω {
-  val height: Int = txs.maxBy(_.a).a // TODO: height should be based on block parents (parents + 1)
+  def height: Int = txs.maxBy(_.a).a // TODO: height should be based on block parents (parents + 1)
 }
 
 sealed trait L1ConsensusF[A] extends Hom[Ω, A]
