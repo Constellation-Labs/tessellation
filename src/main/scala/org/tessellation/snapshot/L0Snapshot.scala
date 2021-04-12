@@ -3,7 +3,7 @@ package org.tessellation.snapshot
 import cats.effect.IO
 import cats.syntax.all._
 import higherkindness.droste.{AlgebraM, CoalgebraM, scheme}
-import org.tessellation.schema.{CellError, Done, More, StackF, Ω}
+import org.tessellation.schema._
 
 object L0Snapshot { // TODO: make it generic and reuse together L1Consensus and L0Snapshot
 

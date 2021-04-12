@@ -9,7 +9,8 @@ import fs2.{Pipe, Pull, Stream}
 import org.tessellation.StreamTransactionsDemo.generateRandomTransaction
 import org.tessellation.consensus.{L1Block, L1Cell, L1Edge, L1Transaction}
 import org.tessellation.schema.{CellError, Ω}
-import org.tessellation.snapshot.{L0Cell, L0Edge, Snapshot}
+import org.tessellation.snapshot.L0Pipeline.edges
+import org.tessellation.snapshot.{L0Cell, L0Edge, L0Pipeline, Snapshot}
 
 import scala.concurrent.duration._
 import scala.util.Random
@@ -103,17 +104,19 @@ object StreamTransactionsDemo extends IOApp {
     } // TODO: we hardcode generation for nodeA only
 }
 
-
 object PipeArrow {
   implicit val arrowInstance: Arrow[Pipe[IO, *, *]] = new Arrow[Pipe[IO, *, *]] {
     override def lift[A, B](f: A => B): Pipe[IO, A, B] = (a: Stream[IO, A]) => a.map(f)
 
-    override def compose[A, B, C](f: Pipe[IO, B, C], g: Pipe[IO, A, B]): Pipe[IO, A, C] = (a: Stream[IO, A]) => (f compose g) (a)
+    override def compose[A, B, C](f: Pipe[IO, B, C], g: Pipe[IO, A, B]): Pipe[IO, A, C] =
+      (a: Stream[IO, A]) => f.compose(g)(a)
 
-    override def first[A, B, C](fa: Pipe[IO, A, B]): Pipe[IO, (A, C), (B, C)] = (a: Stream[IO, (A, C)]) => a.flatMap {
-      case (aa, ac) => fa(Stream(aa)).map((_, ac))
-    }
-  } ą
+    override def first[A, B, C](fa: Pipe[IO, A, B]): Pipe[IO, (A, C), (B, C)] =
+      (a: Stream[IO, (A, C)]) =>
+        a.flatMap {
+          case (aa, ac) => fa(Stream(aa)).map((_, ac))
+        }
+  }
 }
 
 object StreamBlocksDemo extends IOApp {
@@ -131,53 +134,9 @@ object StreamBlocksDemo extends IOApp {
 
   type Height = Int
   type HeightsMap = Map[Height, Set[L1Block]]
-  val tipInterval = 2
-  val tipDelay = 5
-
-  val edges = blocks.map(_.asRight[Int]).merge(tips.map(_.asLeft[L1Block])).through {
-    def go(s: Stream[IO, Either[Int, L1Block]], state: (HeightsMap, Int, Int)): Pull[IO, L0Edge, Unit] =
-      state match {
-        case (heights, lastTip, lastEmitted) =>
-          s.pull.uncons1.flatMap {
-            case None => Pull.done
-            case Some((Left(tip), tail)) if tip - tipDelay >= lastEmitted + tipInterval =>
-              val range = ((lastEmitted + 1) to (lastEmitted + tipInterval))
-              val blocks = range.flatMap(heights.get).flatten.toSet
-
-              Log.yellow(
-                s"Triggering snapshot at range: ${range} | Blocks: ${blocks.size} | Heights aggregated: ${heights.removedAll(range).keySet.size}"
-              )
-
-              Pull.output1(L0Edge(blocks)) >> go(tail, (heights.removedAll(range), tip, lastEmitted + tipInterval))
-            case Some((Left(tip), tail)) => go(tail, (heights, tip, lastEmitted))
-            case Some((Right(block), tail)) =>
-              go(
-                tail,
-                (
-                  heights.updatedWith(block.height)(_.map(_ ++ Set(block)).orElse(Set(block).some)),
-                  lastTip,
-                  lastEmitted
-                )
-              )
-          }
-      }
-
-    in => go(in, (Map.empty, 0, 0)).stream
-  }
 
   override def run(args: List[String]): IO[ExitCode] = {
-    val pipeline: Stream[IO, Either[CellError, Ω]] = for {
-      edge <- edges
-      cell = L0Cell(edge)
-      result <- Stream.eval {
-        cell.run()
-      }
-      _ <- Stream.eval {
-        IO {
-          Log.red(result)
-        }
-      }
-    } yield result
+    val pipeline = L0Pipeline.pipeline(edges(blocks, tips, tipInterval = 2, tipDelay = 5))
 
     val l0: Stream[IO, Unit] = pipeline
       .mapFilter(_.toOption) // pipeline returns Either[CellError, Ω] but we want to broadcast correct snapshots only
@@ -201,7 +160,6 @@ object ArrowDemo extends IOApp {
 
   override def run(args: List[String]): IO[ExitCode] = {
 
-
     val generateTxEvery = 0.1.seconds
     val txsInChunk = 1
     val maxRoundsInProgress = 2
@@ -224,36 +182,43 @@ object ArrowDemo extends IOApp {
       .map(L1Transaction(_))
       .metered(generateTxEvery)
 
-    val pipelineL1: Pipe[IO, L1Transaction, L1Block] = (in: Stream[IO, L1Transaction]) => for {
-      (nodeA, nodeB, nodeC) <- cluster
+    val pipelineL1: Pipe[IO, L1Transaction, L1Block] = (in: Stream[IO, L1Transaction]) =>
+      for {
+        (nodeA, nodeB, nodeC) <- cluster
 
-      s <- Stream.eval(Semaphore[IO](maxRoundsInProgress))
-      txs <- in
-        .chunkN(txsInChunk)
-        .map(_.toList.toSet)
-        .map(L1Edge)
-        .map(L1Cell)
-        .map { l1cell => // from cache
-          Stream.eval {
-            s.tryAcquire.ifM(
-              nodeA.startL1Consensus(l1cell).guarantee(s.release),
-              IO {
-                L1Block(Set.empty).asRight[CellError] // TODO: ???
-              }
-            )
+        s <- Stream.eval(Semaphore[IO](maxRoundsInProgress))
+        txs <- in
+          .chunkN(txsInChunk)
+          .map(_.toList.toSet)
+          .map(L1Edge)
+          .map(L1Cell)
+          .map { l1cell => // from cache
+            Stream.eval {
+              s.tryAcquire.ifM(
+                nodeA.startL1Consensus(l1cell).guarantee(s.release),
+                IO {
+                  L1Block(Set.empty).asRight[CellError] // TODO: ???
+                }
+              )
 
+            }
           }
-        }
-        .map(_.filter(e => e.map {
-          case b: L1Block => b.txs.nonEmpty
-        }.fold(_ => true, identity)))
-        .parJoin(parallelJobs)
-        .map {
-          case Left(error) => Left(error)
-          case Right(ohm: L1Block) => Right(ohm)
-          case _ => Left(CellError("Invalid Ω type"))
-        }.map(_.right.get)
-    } yield txs
+          .map(
+            _.filter(
+              e =>
+                e.map {
+                  case b: L1Block => b.txs.nonEmpty
+                }.fold(_ => true, identity)
+            )
+          )
+          .parJoin(parallelJobs)
+          .map {
+            case Left(error)         => Left(error)
+            case Right(ohm: L1Block) => Right(ohm)
+            case _                   => Left(CellError("Invalid Ω type"))
+          }
+          .map(_.right.get)
+      } yield txs
 
     val tips: Stream[IO, Int] = Stream
       .range[IO](1, 1000)
@@ -265,52 +230,63 @@ object ArrowDemo extends IOApp {
     val tipDelay = 5
 
     val pipelineL0: Pipe[IO, L1Block, Snapshot] = (in: Stream[IO, L1Block]) =>
-      in.map(_.asRight[Int]).merge(tips.map(_.asLeft[L1Block])).through {
-        def go(s: Stream[IO, Either[Int, L1Block]], state: (HeightsMap, Int, Int)): Pull[IO, L0Edge, Unit] =
-          state match {
-            case (heights, lastTip, lastEmitted) =>
-              s.pull.uncons1.flatMap {
-                case None => Pull.done
-                case Some((Left(tip), tail)) if tip - tipDelay >= lastEmitted + tipInterval =>
-                  val range = ((lastEmitted + 1) to (lastEmitted + tipInterval))
-                  val blocks = range.flatMap(heights.get).flatten.toSet
+      in.map(_.asRight[Int])
+        .merge(tips.map(_.asLeft[L1Block]))
+        .through {
+          def go(s: Stream[IO, Either[Int, L1Block]], state: (HeightsMap, Int, Int)): Pull[IO, L0Edge, Unit] =
+            state match {
+              case (heights, lastTip, lastEmitted) =>
+                s.pull.uncons1.flatMap {
+                  case None => Pull.done
+                  case Some((Left(tip), tail)) if tip - tipDelay >= lastEmitted + tipInterval =>
+                    val range = ((lastEmitted + 1) to (lastEmitted + tipInterval))
+                    val blocks = range.flatMap(heights.get).flatten.toSet
 
-                  Log.yellow(
-                    s"Triggering snapshot at range: ${range} | Blocks: ${blocks.size} | Heights aggregated: ${heights.removedAll(range).keySet.size}"
-                  )
-
-                  Pull.output1(L0Edge(blocks)) >> go(tail, (heights.removedAll(range), tip, lastEmitted + tipInterval))
-                case Some((Left(tip), tail)) => go(tail, (heights, tip, lastEmitted))
-                case Some((Right(block), tail)) =>
-                  go(
-                    tail,
-                    (
-                      heights.updatedWith(block.height)(_.map(_ ++ Set(block)).orElse(Set(block).some)),
-                      lastTip,
-                      lastEmitted
+                    Log.yellow(
+                      s"Triggering snapshot at range: ${range} | Blocks: ${blocks.size} | Heights aggregated: ${heights.removedAll(range).keySet.size}"
                     )
-                  )
-              }
-          }
 
-        in => go(in, (Map.empty, 0, 0)).stream
-      }.map(L0Cell).evalMap(_.run())
+                    Pull.output1(L0Edge(blocks)) >> go(
+                      tail,
+                      (heights.removedAll(range), tip, lastEmitted + tipInterval)
+                    )
+                  case Some((Left(tip), tail)) => go(tail, (heights, tip, lastEmitted))
+                  case Some((Right(block), tail)) =>
+                    go(
+                      tail,
+                      (
+                        heights.updatedWith(block.height)(_.map(_ ++ Set(block)).orElse(Set(block).some)),
+                        lastTip,
+                        lastEmitted
+                      )
+                    )
+                }
+            }
+
+          in => go(in, (Map.empty, 0, 0)).stream
+        }
+        .map(L0Cell)
+        .evalMap(_.run())
         .map {
-          case Left(error) => Left(error)
+          case Left(error)          => Left(error)
           case Right(ohm: Snapshot) => Right(ohm)
-          case _ => Left(CellError("Invalid Ω type"))
-        }.map(_.right.get)
+          case _                    => Left(CellError("Invalid Ω type"))
+        }
+        .map(_.right.get)
 
     import PipeArrow._
 
-    val pipeline = (pipelineL1 >>> pipelineL0) (transactions)
+    val pipeline = (pipelineL1 >>> pipelineL0)(transactions)
 
     pipeline
-      .flatTap(snapshot => Stream.eval {
-        IO {
-          println(snapshot)
-        }
-      })
+      .flatTap(
+        snapshot =>
+          Stream.eval {
+            IO {
+              println(snapshot)
+            }
+          }
+      )
       .compile
       .drain
       .as(ExitCode.Success)
