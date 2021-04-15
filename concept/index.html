@@ -59,8 +59,6 @@
                 <ul class="current">
                     <li class="toctree-l1 current"><a class="reference internal current" href="./">Concept</a>
     <ul class="current">
-    <li class="toctree-l2"><a class="reference internal" href="#there-are-following-type-parameters">There are following type parameters:</a>
-    </li>
     <li class="toctree-l2"><a class="reference internal" href="#stackf">StackF</a>
     </li>
     <li class="toctree-l2"><a class="reference internal" href="#algebra-and-coalgebra-for-stackf-structure">Algebra and Coalgebra for StackF structure</a>
@@ -76,10 +74,6 @@
                 </ul>
                 <ul>
                     <li class="toctree-l1"><a class="reference internal" href="../l1/">L1 Protocol</a>
-                    </li>
-                </ul>
-                <ul>
-                    <li class="toctree-l1"><a class="reference internal" href="../project-structure/">Project structure</a>
                     </li>
                 </ul>
                 <ul>
@@ -133,7 +127,7 @@
 
 }
 </code></pre>
-<h6 id="there-are-following-type-parameters">There are following type parameters:</h6>
+<p><strong>There are following type parameters:</strong></p>
 <p>The very first type <code>M[_]</code> is required to be a <code>Monad</code>. State channels can execute some side effects
 and due to that fact it needs to encapsulate these effects inside a monad.</p>
 <p>The second type <code>F[_]</code> is required to be a <code>Functor</code> (<code>Traverse</code>).
