@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<!--[if IE 8]><html class="no-js lt-ie9" lang="en" > <![endif]-->
+<!--[if gt IE 8]><!--> <html class="no-js" lang="en" > <!--<![endif]-->
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  
+  <link rel="canonical" href="https://constellation-labs.github.io/tessellation/l1/">
+  <link rel="shortcut icon" href="../img/favicon.ico">
+  <title>L1 Protocol - Tessellation Documentation</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Lato:400,700|Roboto+Slab:400,700|Inconsolata:400,700" />
+
+  <link rel="stylesheet" href="../css/theme.css" />
+  <link rel="stylesheet" href="../css/theme_extra.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/styles/github.min.css" />
+  
+  <script>
+    // Current page data
+    var mkdocs_page_name = "L1 Protocol";
+    var mkdocs_page_input_path = "l1.md";
+    var mkdocs_page_url = "/tessellation/l1/";
+  </script>
+  
+  <script src="../js/jquery-2.1.1.min.js" defer></script>
+  <script src="../js/modernizr-2.8.3.min.js" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/languages/scala.min.js"></script>
+  <script>hljs.initHighlightingOnLoad();</script> 
+  
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+
+    
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+        <a href=".." class="icon icon-home"> Tessellation Documentation</a>
+        <div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="main navigation">
+                <ul>
+                    <li class="toctree-l1"><a class="reference internal" href="..">Tesselation</a>
+                    </li>
+                </ul>
+                <ul>
+                    <li class="toctree-l1"><a class="reference internal" href="../architecture/">Architecture</a>
+                    </li>
+                </ul>
+                <ul>
+                    <li class="toctree-l1"><a class="reference internal" href="../concept/">Concept</a>
+                    </li>
+                </ul>
+                <ul>
+                    <li class="toctree-l1"><a class="reference internal" href="../l0/">L0 State Channel - snapshots</a>
+                    </li>
+                </ul>
+                <ul class="current">
+                    <li class="toctree-l1 current"><a class="reference internal current" href="./">L1 Protocol</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#concept-explanation">Concept explanation</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#implementation-explanation">Implementation explanation</a>
+    </li>
+    </ul>
+                    </li>
+                </ul>
+                <ul>
+                    <li class="toctree-l1"><a class="reference internal" href="../project-structure/">Project structure</a>
+                    </li>
+                </ul>
+                <ul>
+                    <li class="toctree-l1"><a class="reference internal" href="../recursion-schemes/">Basics of the recursion schemes</a>
+                    </li>
+                </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+
+      
+      <nav class="wy-nav-top" role="navigation" aria-label="top navigation">
+        <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+        <a href="..">Tessellation Documentation</a>
+      </nav>
+
+      
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href="..">Docs</a> &raquo;</li>
+    
+      
+    
+    <li>L1 Protocol</li>
+    <li class="wy-breadcrumbs-aside">
+      
+        <a href="https://github.com/Constellation-Labs/tessellation/edit/master/docs/l1.md"
+          class="icon icon-github"> Edit on GitHub</a>
+      
+    </li>
+  </ul>
+  
+  <hr/>
+</div>
+          <div role="main">
+            <div class="section">
+              
+                <h1 id="l1-protocol">L1 Protocol</h1>
+<h2 id="concept-explanation">Concept explanation</h2>
+<p>L1 is the inner layer of the L0 protocol. The main purpose of that part is to form a tetrahedron of edges during
+consensus process and produce a block which is then consumed by the L0 layer.</p>
+<p>Base input for L1 protocol is an <code>L1Edge</code> formed from a set of <code>L1Transaction</code> (<code>L1Edge</code>s are created continuously over time
+as the process is implemented as <code>Pipe[IO, L1Transaction, L1Edge</code>).
+The consensus owner selects 2 facilitators and forms <code>L1Edge(A)</code> with each facilitator. <code>L1Edge(A)</code> stands for <code>L1Edge</code> which
+contains all transactions proposed by <em>Node A</em>. By forming <code>L1Edge</code> <em>Node A</em> sends proposals
+and forces <em>Node B</em> and <em>Node C</em> to participate in consensus round.</p>
+<p><img alt="alt text" src="../img/l1_0.jpeg" title="L1" /></p>
+<p>Depending on which edge is formed faster either <em>Node B</em> or <em>Node C</em> starts forming a triangle (first dimension of a tetrahedron).
+Let's assume that <code>L1Edge</code> from <em>Node A</em> to <em>Node B</em> was formed first. In that case <em>Node B</em> is forced to create another <code>L1Edge(B)</code>
+with <em>Node C</em>. It also means that <em>Node B</em> proposes transactions to <em>Node C</em>.</p>
+<p><img alt="alt text" src="../img/l1_1a.jpeg" title="L1_A" /></p>
+<p>In the meantime edge formed from <em>Node A</em> to  <em>Node C</em> forced <em>Node C</em> to ask <em>Node B</em> for proposal which means that
+<em>Node B</em> and <em>Node C</em> need to exchange proposals between each other bidirectionally. Such structure starts forming the second dimension
+of a tetrahedron. The whole process is asynchronous so forming edges to <em>Node B</em> and <em>Node C</em> happens in parallel.</p>
+<p><img alt="alt text" src="../img/l1_1b.jpeg" title="L1_B" /></p>
+<p>Once <em>Node B</em> and <em>Node C</em> exchanged the proposals then these nodes need to send accumulated proposals back to the consensus
+owner (<em>Node A</em>). That being said both facilitators form <code>L1Edge</code> back to <em>Node A</em> which forms a complete structure of 2 triangles.</p>
+<p><img alt="alt text" src="../img/l1_2.jpeg" title="L1_2" /></p>
+<p>The role of <em>Node A</em> is to validate if <code>L1Edge</code> from <em>Node B</em> and <em>Node C</em> contains the same transactions inside. If so then
+the consensus owner can confirm that facilitators exchanged proposals properly. That being said both <code>L1Edges</code> are equal, so it forms a single edge back from facilitators and forms a tetrahedron.</p>
+<p><img alt="alt text" src="../img/l1_3.jpeg" title="L1_3" /></p>
+<p>The last step is to create a block by the consensus owner and send it to facilitators and other nodes in the network.</p>
+<p><img alt="alt text" src="../img/l1_4.jpeg" title="L1_4" /></p>
+<h2 id="implementation-explanation">Implementation explanation</h2>
+<p>The L1 protocol is based on the concept of recursive structures and <a href="https://github.com/higherkindness/droste" title="droste">droste</a> library or to be more specific on
+<a href="https://en.wikipedia.org/wiki/Hylomorphism_(computer_science)" title="Hylomorphism">hylomorphism</a>.
+All the steps needed to perform a consensus are implemented via <code>CoalgebraM[StateM, L1ConsensusF, Ω]</code>. Each step is a unique type
+of recursive scheme so the whole process is just a recursive structure of steps which is then executed by folding the structure
+via <code>AlgebraM[StateM, L1ConsensusF, Either[CellError, Ω]]</code> .<code>Coalgebra</code> and <code>Algebra</code> are needed to execute a hylomorphism <code>scheme.hyloM(L1ConsensusStep.algebra, L1ConsensusStep.coalgebra)</code>.
+Technically speaking hylomorphism is just a catamorphism after anamorphism. That being said anamorphic part creates (unfolds) the structure
+and catamorphic part runs (folds) that structure to create a block. By traversing over the structure of steps it executes the steps and folds
+to either <code>L1Block</code> or <code>CellError</code> in case of failure.</p>
+              
+            </div>
+          </div>
+          <footer>
+  
+    <div class="rst-footer-buttons" role="navigation" aria-label="footer navigation">
+      
+        <a href="../project-structure/" class="btn btn-neutral float-right" title="Project structure">Next <span class="icon icon-circle-arrow-right"></span></a>
+      
+      
+        <a href="../l0/" class="btn btn-neutral" title="L0 State Channel - snapshots"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+      
+    </div>
+  
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+    
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/snide/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+      
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="versions">
+    <span class="rst-current-version" data-toggle="rst-current-version">
+      
+          <a href="https://github.com/Constellation-Labs/tessellation/" class="fa fa-github" style="float: left; color: #fcfcfc"> GitHub</a>
+      
+      
+        <span><a href="../l0/" style="color: #fcfcfc;">&laquo; Previous</a></span>
+      
+      
+        <span style="margin-left: 15px"><a href="../project-structure/" style="color: #fcfcfc">Next &raquo;</a></span>
+      
+    </span>
+</div>
+    <script>var base_url = '..';</script>
+    <script src="../js/theme.js" defer></script>
+      <script src="../search/main.js" defer></script>
+    <script defer>
+        window.onload = function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        };
+    </script>
+
+</body>
+</html>

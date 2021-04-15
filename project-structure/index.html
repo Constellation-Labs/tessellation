@@ -7,17 +7,24 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   
   
-  
-  <link rel="shortcut icon" href="/tessellation/img/favicon.ico">
-  <title>Tessellation Documentation</title>
+  <link rel="canonical" href="https://constellation-labs.github.io/tessellation/project-structure/">
+  <link rel="shortcut icon" href="../img/favicon.ico">
+  <title>Project structure - Tessellation Documentation</title>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Lato:400,700|Roboto+Slab:400,700|Inconsolata:400,700" />
 
-  <link rel="stylesheet" href="/tessellation/css/theme.css" />
-  <link rel="stylesheet" href="/tessellation/css/theme_extra.css" />
+  <link rel="stylesheet" href="../css/theme.css" />
+  <link rel="stylesheet" href="../css/theme_extra.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/styles/github.min.css" />
   
-  <script src="/tessellation/js/jquery-2.1.1.min.js" defer></script>
-  <script src="/tessellation/js/modernizr-2.8.3.min.js" defer></script>
+  <script>
+    // Current page data
+    var mkdocs_page_name = "Project structure";
+    var mkdocs_page_input_path = "project-structure.md";
+    var mkdocs_page_url = "/tessellation/project-structure/";
+  </script>
+  
+  <script src="../js/jquery-2.1.1.min.js" defer></script>
+  <script src="../js/modernizr-2.8.3.min.js" defer></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/languages/scala.min.js"></script>
   <script>hljs.initHighlightingOnLoad();</script> 
@@ -32,9 +39,9 @@
     <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
     <div class="wy-side-scroll">
       <div class="wy-side-nav-search">
-        <a href="/tessellation/." class="icon icon-home"> Tessellation Documentation</a>
+        <a href=".." class="icon icon-home"> Tessellation Documentation</a>
         <div role="search">
-  <form id ="rtd-search-form" class="wy-form" action="/tessellation/search.html" method="get">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
     <input type="text" name="q" placeholder="Search docs" title="Type search term here" />
   </form>
 </div>
@@ -42,31 +49,35 @@
 
       <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="main navigation">
                 <ul>
-                    <li class="toctree-l1"><a class="reference internal" href="/tessellation/.">Tesselation</a>
+                    <li class="toctree-l1"><a class="reference internal" href="..">Tesselation</a>
                     </li>
                 </ul>
                 <ul>
-                    <li class="toctree-l1"><a class="reference internal" href="/tessellation/architecture/">Architecture</a>
+                    <li class="toctree-l1"><a class="reference internal" href="../architecture/">Architecture</a>
                     </li>
                 </ul>
                 <ul>
-                    <li class="toctree-l1"><a class="reference internal" href="/tessellation/concept/">Concept</a>
+                    <li class="toctree-l1"><a class="reference internal" href="../concept/">Concept</a>
                     </li>
                 </ul>
                 <ul>
-                    <li class="toctree-l1"><a class="reference internal" href="/tessellation/l0/">L0 State Channel - snapshots</a>
+                    <li class="toctree-l1"><a class="reference internal" href="../l0/">L0 State Channel - snapshots</a>
                     </li>
                 </ul>
                 <ul>
-                    <li class="toctree-l1"><a class="reference internal" href="/tessellation/l1/">L1 Protocol</a>
+                    <li class="toctree-l1"><a class="reference internal" href="../l1/">L1 Protocol</a>
+                    </li>
+                </ul>
+                <ul class="current">
+                    <li class="toctree-l1 current"><a class="reference internal current" href="./">Project structure</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#directories">Directories</a>
+    </li>
+    </ul>
                     </li>
                 </ul>
                 <ul>
-                    <li class="toctree-l1"><a class="reference internal" href="/tessellation/project-structure/">Project structure</a>
-                    </li>
-                </ul>
-                <ul>
-                    <li class="toctree-l1"><a class="reference internal" href="/tessellation/recursion-schemes/">Basics of the recursion schemes</a>
+                    <li class="toctree-l1"><a class="reference internal" href="../recursion-schemes/">Basics of the recursion schemes</a>
                     </li>
                 </ul>
       </div>
@@ -78,7 +89,7 @@
       
       <nav class="wy-nav-top" role="navigation" aria-label="top navigation">
         <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
-        <a href="/tessellation/.">Tessellation Documentation</a>
+        <a href="..">Tessellation Documentation</a>
       </nav>
 
       
@@ -86,10 +97,15 @@
         <div class="rst-content">
           <div role="navigation" aria-label="breadcrumbs navigation">
   <ul class="wy-breadcrumbs">
-    <li><a href="/tessellation/.">Docs</a> &raquo;</li>
+    <li><a href="..">Docs</a> &raquo;</li>
     
+      
     
+    <li>Project structure</li>
     <li class="wy-breadcrumbs-aside">
+      
+        <a href="https://github.com/Constellation-Labs/tessellation/edit/master/docs/project-structure.md"
+          class="icon icon-github"> Edit on GitHub</a>
       
     </li>
   </ul>
@@ -99,15 +115,21 @@
           <div role="main">
             <div class="section">
               
-
-  <h1 id="404-page-not-found">404</h1>
-
-  <p><strong>Page not found</strong></p>
-
-
+                <h1 id="project-structure">Project structure</h1>
+<h3 id="directories">Directories</h3>
+              
             </div>
           </div>
           <footer>
+  
+    <div class="rst-footer-buttons" role="navigation" aria-label="footer navigation">
+      
+        <a href="../recursion-schemes/" class="btn btn-neutral float-right" title="Basics of the recursion schemes">Next <span class="icon icon-circle-arrow-right"></span></a>
+      
+      
+        <a href="../l1/" class="btn btn-neutral" title="L1 Protocol"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+      
+    </div>
   
 
   <hr/>
@@ -133,12 +155,16 @@
           <a href="https://github.com/Constellation-Labs/tessellation/" class="fa fa-github" style="float: left; color: #fcfcfc"> GitHub</a>
       
       
+        <span><a href="../l1/" style="color: #fcfcfc;">&laquo; Previous</a></span>
+      
+      
+        <span style="margin-left: 15px"><a href="../recursion-schemes/" style="color: #fcfcfc">Next &raquo;</a></span>
       
     </span>
 </div>
-    <script>var base_url = '/tessellation';</script>
-    <script src="/tessellation/js/theme.js" defer></script>
-      <script src="/tessellation/search/main.js" defer></script>
+    <script>var base_url = '..';</script>
+    <script src="../js/theme.js" defer></script>
+      <script src="../search/main.js" defer></script>
     <script defer>
         window.onload = function () {
             SphinxRtdTheme.Navigation.enable(true);

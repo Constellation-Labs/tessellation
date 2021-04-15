@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<!--[if IE 8]><html class="no-js lt-ie9" lang="en" > <![endif]-->
+<!--[if gt IE 8]><!--> <html class="no-js" lang="en" > <!--<![endif]-->
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  
+  <link rel="canonical" href="https://constellation-labs.github.io/tessellation/l0/">
+  <link rel="shortcut icon" href="../img/favicon.ico">
+  <title>L0 State Channel - snapshots - Tessellation Documentation</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Lato:400,700|Roboto+Slab:400,700|Inconsolata:400,700" />
+
+  <link rel="stylesheet" href="../css/theme.css" />
+  <link rel="stylesheet" href="../css/theme_extra.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/styles/github.min.css" />
+  
+  <script>
+    // Current page data
+    var mkdocs_page_name = "L0 State Channel - snapshots";
+    var mkdocs_page_input_path = "l0.md";
+    var mkdocs_page_url = "/tessellation/l0/";
+  </script>
+  
+  <script src="../js/jquery-2.1.1.min.js" defer></script>
+  <script src="../js/modernizr-2.8.3.min.js" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/languages/scala.min.js"></script>
+  <script>hljs.initHighlightingOnLoad();</script> 
+  
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+
+    
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+        <a href=".." class="icon icon-home"> Tessellation Documentation</a>
+        <div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="main navigation">
+                <ul>
+                    <li class="toctree-l1"><a class="reference internal" href="..">Tesselation</a>
+                    </li>
+                </ul>
+                <ul>
+                    <li class="toctree-l1"><a class="reference internal" href="../architecture/">Architecture</a>
+                    </li>
+                </ul>
+                <ul>
+                    <li class="toctree-l1"><a class="reference internal" href="../concept/">Concept</a>
+                    </li>
+                </ul>
+                <ul class="current">
+                    <li class="toctree-l1 current"><a class="reference internal current" href="./">L0 State Channel - snapshots</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#idea">Idea</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#implementation">Implementation</a>
+        <ul>
+    <li class="toctree-l3"><a class="reference internal" href="#step-structure">Step structure</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#pipeline">Pipeline</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#inner-algebra-and-coalgebra">Inner Algebra and Coalgebra</a>
+    </li>
+    <li class="toctree-l3"><a class="reference internal" href="#stackf-algebra-and-coalgebra">StackF Algebra and Coalgebra</a>
+    </li>
+        </ul>
+    </li>
+    </ul>
+                    </li>
+                </ul>
+                <ul>
+                    <li class="toctree-l1"><a class="reference internal" href="../l1/">L1 Protocol</a>
+                    </li>
+                </ul>
+                <ul>
+                    <li class="toctree-l1"><a class="reference internal" href="../project-structure/">Project structure</a>
+                    </li>
+                </ul>
+                <ul>
+                    <li class="toctree-l1"><a class="reference internal" href="../recursion-schemes/">Basics of the recursion schemes</a>
+                    </li>
+                </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+
+      
+      <nav class="wy-nav-top" role="navigation" aria-label="top navigation">
+        <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+        <a href="..">Tessellation Documentation</a>
+      </nav>
+
+      
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href="..">Docs</a> &raquo;</li>
+    
+      
+    
+    <li>L0 State Channel - snapshots</li>
+    <li class="wy-breadcrumbs-aside">
+      
+        <a href="https://github.com/Constellation-Labs/tessellation/edit/master/docs/l0.md"
+          class="icon icon-github"> Edit on GitHub</a>
+      
+    </li>
+  </ul>
+  
+  <hr/>
+</div>
+          <div role="main">
+            <div class="section">
+              
+                <h1 id="l0-state-channel-snapshots">L0 State Channel - snapshots</h1>
+<h3 id="idea">Idea</h3>
+<p>tbc</p>
+<h3 id="implementation">Implementation</h3>
+<h4 id="step-structure">Step structure</h4>
+<p>The input for the state channel is a stream of blocks.
+It is computed by an initial pipeline to create a final edge of blocks.</p>
+<p>The input for the Cell is an <code>L0Edge</code> with checkpoint blocks. </p>
+<pre><code class="language-scala">case class L0Edge(blocks: Set[L1Block]) extends Ω
+</code></pre>
+<p>The output of the Cell is a <code>Snapshot</code> class holding all the blocks provided in the <code>L0Edge</code>.</p>
+<pre><code class="language-scala">case class Snapshot(blocks: Set[L1Block]) extends Ω
+</code></pre>
+<h4 id="pipeline">Pipeline</h4>
+<p>This is for now the most complex part of an <code>L0</code> implementation.
+The idea behind this pipeline is converting an initial stream of blocks into the final edge that can be consumed by the Cell.
+Stream of blocks is unordered, so the pipeline must aggregate blocks within height ranges and push the Edge when the snapshot condition is met.</p>
+<p>Snapshot condition is a formula allowing the pipeline to emit an edge for the next snapshot: <code>tip - tipDelay &gt;= lastEmittedHeight + heightInterval</code>, where
+<code>tip</code> is a minimum height of all parents used to create blocks, <code>tipDelay</code> is the initial delay before creating the very first snapshot,
+<code>lastEmittedHeight</code> is a height of the previous snapshot and <code>heightInterval</code> is the range of snapshot.</p>
+<p>The initial pipeline can be reduced to the following pseudocode which works as a more complex <code>scan</code> operator:</p>
+<pre><code class="language-scala">  case Some((Left(tip), tail)) if tip - tipDelay &gt;= lastEmittedHeight + heightInterval =&gt;
+    // get cached blocks and output L0Edge with these blocks
+
+  case Some((Left(tip), tail)) =&gt;
+    // increment minimum tip height
+
+  case Some((Right(block), tail)) =&gt;
+    // add block to cache under its height 
+</code></pre>
+<h4 id="inner-algebra-and-coalgebra">Inner Algebra and Coalgebra</h4>
+<p>Algebra reacts on <code>SnapshotEnd(blocks)</code> class and folds all the blocks to the single <code>Snapshot</code> class.
+It also reacts on <code>L0Error</code> class to produce a <code>CellError</code> class.</p>
+<p>Coalgebra takes <code>CreateSnapshot(edge)</code> where the edge is a <code>Set</code> of blocks prepared in the initial pipeline and produces <code>SnapshotEnd</code> class.</p>
+<h4 id="stackf-algebra-and-coalgebra">StackF Algebra and Coalgebra</h4>
+<p>When the inner algebra produces a <code>Snapshot</code> or <code>L0Error</code>, it must end the computation, so here is the conversion to <code>Done(result)</code> class.
+For every other case it executes the inner hylomorphism over and over again.</p>
+              
+            </div>
+          </div>
+          <footer>
+  
+    <div class="rst-footer-buttons" role="navigation" aria-label="footer navigation">
+      
+        <a href="../l1/" class="btn btn-neutral float-right" title="L1 Protocol">Next <span class="icon icon-circle-arrow-right"></span></a>
+      
+      
+        <a href="../concept/" class="btn btn-neutral" title="Concept"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+      
+    </div>
+  
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+    
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/snide/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+      
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="versions">
+    <span class="rst-current-version" data-toggle="rst-current-version">
+      
+          <a href="https://github.com/Constellation-Labs/tessellation/" class="fa fa-github" style="float: left; color: #fcfcfc"> GitHub</a>
+      
+      
+        <span><a href="../concept/" style="color: #fcfcfc;">&laquo; Previous</a></span>
+      
+      
+        <span style="margin-left: 15px"><a href="../l1/" style="color: #fcfcfc">Next &raquo;</a></span>
+      
+    </span>
+</div>
+    <script>var base_url = '..';</script>
+    <script src="../js/theme.js" defer></script>
+      <script src="../search/main.js" defer></script>
+    <script defer>
+        window.onload = function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        };
+    </script>
+
+</body>
+</html>

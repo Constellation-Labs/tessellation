@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<!--[if IE 8]><html class="no-js lt-ie9" lang="en" > <![endif]-->
+<!--[if gt IE 8]><!--> <html class="no-js" lang="en" > <!--<![endif]-->
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  
+  <link rel="canonical" href="https://constellation-labs.github.io/tessellation/concept/">
+  <link rel="shortcut icon" href="../img/favicon.ico">
+  <title>Concept - Tessellation Documentation</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Lato:400,700|Roboto+Slab:400,700|Inconsolata:400,700" />
+
+  <link rel="stylesheet" href="../css/theme.css" />
+  <link rel="stylesheet" href="../css/theme_extra.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/styles/github.min.css" />
+  
+  <script>
+    // Current page data
+    var mkdocs_page_name = "Concept";
+    var mkdocs_page_input_path = "concept.md";
+    var mkdocs_page_url = "/tessellation/concept/";
+  </script>
+  
+  <script src="../js/jquery-2.1.1.min.js" defer></script>
+  <script src="../js/modernizr-2.8.3.min.js" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/languages/scala.min.js"></script>
+  <script>hljs.initHighlightingOnLoad();</script> 
+  
+</head>
+
+<body class="wy-body-for-nav" role="document">
+
+  <div class="wy-grid-for-nav">
+
+    
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side stickynav">
+    <div class="wy-side-scroll">
+      <div class="wy-side-nav-search">
+        <a href=".." class="icon icon-home"> Tessellation Documentation</a>
+        <div role="search">
+  <form id ="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" title="Type search term here" />
+  </form>
+</div>
+      </div>
+
+      <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="main navigation">
+                <ul>
+                    <li class="toctree-l1"><a class="reference internal" href="..">Tesselation</a>
+                    </li>
+                </ul>
+                <ul>
+                    <li class="toctree-l1"><a class="reference internal" href="../architecture/">Architecture</a>
+                    </li>
+                </ul>
+                <ul class="current">
+                    <li class="toctree-l1 current"><a class="reference internal current" href="./">Concept</a>
+    <ul class="current">
+    <li class="toctree-l2"><a class="reference internal" href="#there-are-following-type-parameters">There are following type parameters:</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#stackf">StackF</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#algebra-and-coalgebra-for-stackf-structure">Algebra and Coalgebra for StackF structure</a>
+    </li>
+    <li class="toctree-l2"><a class="reference internal" href="#inner-algebra-and-coalgebra-for-single-execution-step">Inner Algebra and Coalgebra - for single execution step</a>
+    </li>
+    </ul>
+                    </li>
+                </ul>
+                <ul>
+                    <li class="toctree-l1"><a class="reference internal" href="../l0/">L0 State Channel - snapshots</a>
+                    </li>
+                </ul>
+                <ul>
+                    <li class="toctree-l1"><a class="reference internal" href="../l1/">L1 Protocol</a>
+                    </li>
+                </ul>
+                <ul>
+                    <li class="toctree-l1"><a class="reference internal" href="../project-structure/">Project structure</a>
+                    </li>
+                </ul>
+                <ul>
+                    <li class="toctree-l1"><a class="reference internal" href="../recursion-schemes/">Basics of the recursion schemes</a>
+                    </li>
+                </ul>
+      </div>
+    </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+
+      
+      <nav class="wy-nav-top" role="navigation" aria-label="top navigation">
+        <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+        <a href="..">Tessellation Documentation</a>
+      </nav>
+
+      
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="breadcrumbs navigation">
+  <ul class="wy-breadcrumbs">
+    <li><a href="..">Docs</a> &raquo;</li>
+    
+      
+    
+    <li>Concept</li>
+    <li class="wy-breadcrumbs-aside">
+      
+        <a href="https://github.com/Constellation-Labs/tessellation/edit/master/docs/concept.md"
+          class="icon icon-github"> Edit on GitHub</a>
+      
+    </li>
+  </ul>
+  
+  <hr/>
+</div>
+          <div role="main">
+            <div class="section">
+              
+                <h1 id="concept">Concept</h1>
+<p>In order to implement a state channel, one has to use the following <code>Cell</code> class.</p>
+<pre><code class="language-scala">abstract class Cell[M[_]: Monad, F[_]: Traverse, A, B, C](
+  data: A,
+  algebra: AlgebraM[M, F, B],
+  coalgebra: CoalgebraM[M, F, C]
+) extends Topos[A, B] {
+
+  protected def hyloM(implicit input: A =&gt; C) = scheme.hyloM(algebra, coalgebra).apply(input(data))
+
+}
+</code></pre>
+<h6 id="there-are-following-type-parameters">There are following type parameters:</h6>
+<p>The very first type <code>M[_]</code> is required to be a <code>Monad</code>. State channels can execute some side effects
+and due to that fact it needs to encapsulate these effects inside a monad.</p>
+<p>The second type <code>F[_]</code> is required to be a <code>Functor</code> (<code>Traverse</code>).
+This is a structure used for executing state channel recursion.
+For <strong>L0 consensus</strong> and <strong>L1 consensus</strong> implementations, it's a <code>StackF</code> case class which is explained below.</p>
+<p><code>A</code> is a data holder. To create a <code>Cell</code> one has to provide a data which will be consumed by the state channel.
+These data are stored inside the Cell for later execution.</p>
+<p><code>B</code> is the algebra output (see: <a href="../recursion-schemes/#Catamorphism and algebra">Catamorpism and algebra</a>)</p>
+<p><code>C</code> is the coalgebra input (see: <a href="../recursion-schemes/#Anamorphism and coalgebra">Anamorphism and coalgebra</a>)</p>
+<h3 id="stackf">StackF</h3>
+<p>The common stack is a well-known idea. In the context of an execution chain, the stack consists of two things:
+either some work to do <code>More(work)</code> or a computed result <code>Done(result)</code>.</p>
+<p><code>StackF</code> is an implementation of that idea using recursion schemes: </p>
+<pre><code class="language-scala">trait StackF[A]
+
+case class More[A](a: A) extends StackF[A]
+case class Done[A](result: Either[CellError, Ω]) extends StackF[A]
+</code></pre>
+<p>where the job to do is parametrized by type. The result has strict type <code>Either[CellError, Ω]</code>
+as the output from the state channel is either an error of computation or a terminal object.</p>
+<p>The following idea allows to write an algebra and coalgebra working at a single step of state channel and then
+repetitively execute the Cell passing output of the first execution as input to the second execution, until <code>Done(result)</code> is returned.   </p>
+<h3 id="algebra-and-coalgebra-for-stackf-structure">Algebra and Coalgebra for StackF structure</h3>
+<p>It is pretty straightforward to write an implementation of <code>StackF</code> scheme.
+Most of the parts are common between state channels so ideally this will be extracted and used as a plug-in code.</p>
+<p>Algebra is used for proxying inner value <code>work</code> or <code>result</code> from types <code>More(work)</code>/<code>Done(result)</code> and passing it to the output.
+Coalgebra is a termination condition for the execution chain - it reacts on a single or multiple classes to return <code>Done</code> class.
+For every other type it executes repetitively the inner algebra and coalgebra for single steps.</p>
+<h3 id="inner-algebra-and-coalgebra-for-single-execution-step">Inner Algebra and Coalgebra - for single execution step</h3>
+<p>This part is responsible for the core logic of a state channel.</p>
+<p>Coalgebra consists of all steps used by a Cell and holds the execution order.
+Algebra is a fold operation which reduces the ending type to the output terminal object. </p>
+              
+            </div>
+          </div>
+          <footer>
+  
+    <div class="rst-footer-buttons" role="navigation" aria-label="footer navigation">
+      
+        <a href="../l0/" class="btn btn-neutral float-right" title="L0 State Channel - snapshots">Next <span class="icon icon-circle-arrow-right"></span></a>
+      
+      
+        <a href="../architecture/" class="btn btn-neutral" title="Architecture"><span class="icon icon-circle-arrow-left"></span> Previous</a>
+      
+    </div>
+  
+
+  <hr/>
+
+  <div role="contentinfo">
+    <!-- Copyright etc -->
+    
+  </div>
+
+  Built with <a href="https://www.mkdocs.org/">MkDocs</a> using a <a href="https://github.com/snide/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>.
+</footer>
+      
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+
+  <div class="rst-versions" role="note" aria-label="versions">
+    <span class="rst-current-version" data-toggle="rst-current-version">
+      
+          <a href="https://github.com/Constellation-Labs/tessellation/" class="fa fa-github" style="float: left; color: #fcfcfc"> GitHub</a>
+      
+      
+        <span><a href="../architecture/" style="color: #fcfcfc;">&laquo; Previous</a></span>
+      
+      
+        <span style="margin-left: 15px"><a href="../l0/" style="color: #fcfcfc">Next &raquo;</a></span>
+      
+    </span>
+</div>
+    <script>var base_url = '..';</script>
+    <script src="../js/theme.js" defer></script>
+      <script src="../search/main.js" defer></script>
+    <script defer>
+        window.onload = function () {
+            SphinxRtdTheme.Navigation.enable(true);
+        };
+    </script>
+
+</body>
+</html>
