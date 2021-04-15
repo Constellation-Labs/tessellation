@@ -1,6 +1,10 @@
 site_name: Tessellation Documentation
 site_url: https://constellation-labs.github.io/tessellation
 docs_dir: docs
-theme: readthedocs
+theme:
+  name: readthedocs
+  highlightjs: true
+  hljs_languages:
+    - scala
 edit_uri: edit/master/docs
 repo_url: https://github.com/Constellation-Labs/tessellation/
