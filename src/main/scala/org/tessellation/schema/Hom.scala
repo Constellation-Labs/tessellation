@@ -1,20 +1,15 @@
 package org.tessellation.schema
 
-import cats.arrow.{Arrow, ArrowChoice, CommutativeArrow}
-import cats.free.Free
-import cats.syntax.all._
-import cats.kernel.{Monoid, PartialOrder}
-import cats.{Applicative, CoflatMap, Eq, Functor, Monad, Traverse, ~>}
-import fs2.Pipe
-import higherkindness.droste.data.{:<, Coattr}
-import higherkindness.droste.syntax.compose._
-import higherkindness.droste.util.DefaultTraverse
-import higherkindness.droste.{Algebra, _}
+import cats.kernel.PartialOrder
+import cats.{Applicative, Monad, MonoidK, Traverse, ~>}
+import higherkindness.droste._
+import org.tessellation.schema.EmptyCell.NullTerminal
+//import org.tessellation.schema.Cell.NullTerminal
 //import org.tessellation.schema.Hom.Endo
 
 /**
-  * Characteristic Sheaf just needs to be Poset
-  */
+ * Characteristic Sheaf just needs to be Poset
+ */
 trait Poset extends PartialOrder[Ω] {
   override def partialCompare(x: Ω, y: Ω): Double = if (x == y) 0.0 else 1.0
 }
@@ -178,27 +173,44 @@ trait Hom[+A, +B] extends Ω {}
 //}
 
 //todo Cv algebras here
-abstract class Cell[M[_]: Monad, F[_]: Traverse, A, B, C](
-  data: A, // L1Edge(txs)
-  // input: G[A], A => G[A]
-  algebra: AlgebraM[M, F, B],
-  coalgebra: CoalgebraM[M, F, C]
-) extends Topos[A, B] {
-  protected def hyloM(implicit input: A => C) = scheme.hyloM(algebra, coalgebra).apply(input(data))
+class Cell[M[_] : Monad, F[_] : Traverse, D, O, S](
+                                                    val data: D,
+                                                    algebra: AlgebraM[M, F, O],
+                                                    coalgebra: CoalgebraM[M, F, S]
+                                                  ) extends Topos[D, O] {
+  protected def hyloM(implicit input: D => S): M[O] = scheme.hyloM(algebra, coalgebra).apply(input(data)) // Int extends Ω      StartOwnConsensus(Int) / ParticipateInConsensus(Int)
+}
+
+object EmptyCell {
+  def emptyAlgebraM[F[_], M[_], A](implicit nat: F ~> M): AlgebraM[M, F, A] = AlgebraM[M, F, A](nat(_))
+
+  def emptyCoalgebraM[F[_] : Applicative, M[_], A](implicit M: Monad[M], F: Traverse[F]): CoalgebraM[M, F, A] = CoalgebraM[M, F, A](M.compose[F].pure)
+
+  case class NullTerminal() extends Ω
 }
 
 object Cell {
-  //  def create(data, algebra, coalgebra)
-  //  implicit val arrowInstance: Arrow[Cell] = new Arrow[Cell] {
-  //    override def lift[A, B](f: A => B): Cell[A, B] = ???
-  //
-  //    override def first[A, B, C](fa: Cell[A, B]): Cell[(A, C), (B, C)] = ???
-  //
-  //    override def compose[A, B, C](f: Cell[B, C], g: Cell[A, B]): Cell[A, C] =
-  //      // A ---> B ---> C
-  //      f.run(g.run(g)).asInstanceOf[Cell[A, C]]
-  ////      Cell(g.transform).transform
-  //  }
+  /**
+   * @tparam M - Monadic context of value returned from Cell
+   * @tparam F - Traverse functor for traversing over recursive structure
+   * @tparam D /Ω - Data
+   * @tparam O - Final output type
+   * @tparam S - Structure type for steps
+   * @return
+   */
+
+  def unapply[M[_], F[_], Ω, O, A](cell: Cell[M, F, Ω, O, A]): Some[Ω] = Some(cell.data)
+
+  implicit def cellMonoid[M[_] : Applicative, F[_] : Applicative, Ω, O](implicit M: Monad[M], F: Traverse[F], natTrans: F ~> M): MonoidK[Cell[M, F, Ω, O, *]] = new MonoidK[Cell[M, F, Ω, O, *]] {
+
+    override def empty[A]: Cell[M, F, Ω, O, A] = new Cell[M, F, Ω, O, A](NullTerminal().asInstanceOf[Ω], EmptyCell.emptyAlgebraM, EmptyCell.emptyCoalgebraM)
+
+    override def combineK[A](x: Cell[M, F, Ω, O, A], y: Cell[M, F, Ω, O, A]): Cell[M, F, Ω, O, A] = (x, y) match {
+      case (Cell(NullTerminal), yy) => yy
+      case (xx, Cell(NullTerminal)) => xx
+      case _ => ???
+    }
+  }
 }
 
 ////todo postpro/prePro here
@@ -275,3 +287,4 @@ abstract class Bundle[F, G](fibers: F)
 
 //todo use Kleisli like gRPC server? SimplexServer[Kleisli[IO, Span[IO], *]]
 abstract class Simplex[T, U, V](fibers: Seq[Hom[T, U]])
+
