@@ -2,8 +2,8 @@ package org.tessellation.schema
 
 import cats.kernel.PartialOrder
 import cats.{Applicative, Monad, MonoidK, Traverse, ~>}
+import cats.implicits._
 import higherkindness.droste._
-import org.tessellation.schema.EmptyCell.NullTerminal
 //import org.tessellation.schema.Cell.NullTerminal
 //import org.tessellation.schema.Hom.Endo
 
@@ -172,43 +172,47 @@ trait Hom[+A, +B] extends Ω {}
 //    )
 //}
 
+
+/*
+ *
+ */
 //todo Cv algebras here
 class Cell[M[_] : Monad, F[_] : Traverse, D, O, S](
                                                     val data: D,
-                                                    algebra: AlgebraM[M, F, O],
-                                                    coalgebra: CoalgebraM[M, F, S]
+                                                    algebra: AlgebraM[M, F, O], // M[O]
+                                                    coalgebra: CoalgebraM[M, F, S], // M[S]
                                                   ) extends Topos[D, O] {
-  protected def hyloM(implicit input: D => S): M[O] = scheme.hyloM(algebra, coalgebra).apply(input(data)) // Int extends Ω      StartOwnConsensus(Int) / ParticipateInConsensus(Int)
-}
-
-object EmptyCell {
-  def emptyAlgebraM[F[_], M[_], A](implicit nat: F ~> M): AlgebraM[M, F, A] = AlgebraM[M, F, A](nat(_))
-
-  def emptyCoalgebraM[F[_] : Applicative, M[_], A](implicit M: Monad[M], F: Traverse[F]): CoalgebraM[M, F, A] = CoalgebraM[M, F, A](M.compose[F].pure)
-
-  case class NullTerminal() extends Ω
+  def hyloM(implicit input: D => S): M[O] = scheme.hyloM(algebra, coalgebra).apply(input(data))
 }
 
 object Cell {
-  /**
-   * @tparam M - Monadic context of value returned from Cell
-   * @tparam F - Traverse functor for traversing over recursive structure
-   * @tparam D /Ω - Data
-   * @tparam O - Final output type
-   * @tparam S - Structure type for steps
-   * @return
-   */
 
-  def unapply[M[_], F[_], Ω, O, A](cell: Cell[M, F, Ω, O, A]): Some[Ω] = Some(cell.data)
+  case class NullData() extends Ω
 
-  implicit def cellMonoid[M[_] : Applicative, F[_] : Applicative, Ω, O](implicit M: Monad[M], F: Traverse[F], natTrans: F ~> M): MonoidK[Cell[M, F, Ω, O, *]] = new MonoidK[Cell[M, F, Ω, O, *]] {
+  def unapply[M[_], F[_], Ω, O, A](cell: Cell[M, F, Ω, O, A]): Some[Ω] = Some(cell.data) // We can distinguish
 
-    override def empty[A]: Cell[M, F, Ω, O, A] = new Cell[M, F, Ω, O, A](NullTerminal().asInstanceOf[Ω], EmptyCell.emptyAlgebraM, EmptyCell.emptyCoalgebraM)
+  case class NullOutput() extends Ω
 
-    override def combineK[A](x: Cell[M, F, Ω, O, A], y: Cell[M, F, Ω, O, A]): Cell[M, F, Ω, O, A] = (x, y) match {
-      case (Cell(NullTerminal), yy) => yy
-      case (xx, Cell(NullTerminal)) => xx
-      case _ => ???
+
+  implicit def cellMonoid[M[_] : Applicative, F[_] : Applicative](implicit M: Monad[M], F: Traverse[F]): MonoidK[Cell[M, F, Ω, Either[CellError, Ω], *]] = {
+    new MonoidK[Cell[M, F, Ω, Either[CellError, Ω], *]] {
+
+      override def empty[A]: Cell[M, F, Ω, Either[CellError, Ω], A] =
+        new Cell[M, F, Ω, Either[CellError, Ω], A](
+          NullData(),
+          AlgebraM {
+            _ => M.pure(NullOutput().asInstanceOf[Ω].asRight[CellError])
+          },
+          CoalgebraM {
+            _ => M.compose[F].pure(NullData().asInstanceOf[A])
+          }
+        )
+
+      override def combineK[A](x: Cell[M, F, Ω, Either[CellError, Ω], A], y: Cell[M, F, Ω, Either[CellError, Ω], A]): Cell[M, F, Ω, Either[CellError, Ω], A] = (x, y) match {
+        case (Cell(null), yy) => yy
+        case (xx, Cell(null)) => xx
+        case _ => ???
+      }
     }
   }
 }
