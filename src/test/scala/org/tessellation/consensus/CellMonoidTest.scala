@@ -7,11 +7,12 @@ import org.mockito.cats.IdiomaticMockitoCats
 import org.scalatest.BeforeAndAfter
 import org.scalatest.freespec.AnyFreeSpec
 import org.scalatest.matchers.should.Matchers
-import org.tessellation.schema.Cell.NullData
-import org.tessellation.schema.{Cell, StackF, Ω}
+import org.tessellation.schema.Cell.{NullTerminal, cellMonoid}
+import org.tessellation.schema.{Cell, CellError, StackF, Ω}
 
 
 case class SampleData() extends Ω
+
 case class SampleOutput() extends Ω
 
 class CellMonoidTest extends AnyFreeSpec
@@ -26,13 +27,15 @@ class CellMonoidTest extends AnyFreeSpec
 
     "creates empty" in {
       val empty = M.empty[(Int, Int)]
-      empty.data.isInstanceOf[NullData] shouldBe true
+      empty.data.isInstanceOf[NullTerminal] shouldBe true
     }
 
-    "empty hylo does nothing" in {
+    "empty hylo is just an identity" in {
       val empty = M.empty[(Int, Int)]
-      val hyloResult = empty.hyloM(_ => (1, 1))
-      println(hyloResult)
+      val hylo = empty.hyloM(_ => (1, 1))
+      val input = empty.data
+      val output = hylo.unsafeRunSync()
+      output shouldBe Right(input)
     }
   }
 
