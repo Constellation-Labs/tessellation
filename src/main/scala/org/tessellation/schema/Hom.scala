@@ -177,41 +177,39 @@ trait Hom[+A, +B] extends Ω {}
  *
  */
 //todo Cv algebras here
-class Cell[M[_] : Monad, F[_] : Traverse, D, O, S](
-                                                    val data: D,
-                                                    algebra: AlgebraM[M, F, O], // M[O]
-                                                    coalgebra: CoalgebraM[M, F, S], // M[S]
-                                                  ) extends Topos[D, O] {
-  def hyloM(implicit input: D => S): M[O] = scheme.hyloM(algebra, coalgebra).apply(input(data))
+class Cell[M[_] : Monad, F[_] : Traverse, A, B, S](
+                                                    val data: A,
+                                                    val algebra: AlgebraM[M, F, B], // M[O]
+                                                    val coalgebra: CoalgebraM[M, F, S], // M[S]
+                                                  ) extends Topos[A, B] {
+  def hyloM(implicit input: A => S): M[B] = scheme.hyloM(algebra, coalgebra).apply(input(data))
 }
 
+
 object Cell {
+  case class NullTerminal() extends Ω
 
-  case class NullData() extends Ω
-
-  def unapply[M[_], F[_], Ω, O, A](cell: Cell[M, F, Ω, O, A]): Some[Ω] = Some(cell.data) // We can distinguish
-
-  case class NullOutput() extends Ω
-
+  def unapply[M[_], F[_], A, B, S](cell: Cell[M, F, A, B, S]): Some[(A, AlgebraM[M, F, B], CoalgebraM[M, F, S])] = Some(cell.data, cell.algebra, cell.coalgebra)
 
   implicit def cellMonoid[M[_] : Applicative, F[_] : Applicative](implicit M: Monad[M], F: Traverse[F]): MonoidK[Cell[M, F, Ω, Either[CellError, Ω], *]] = {
     new MonoidK[Cell[M, F, Ω, Either[CellError, Ω], *]] {
 
       override def empty[A]: Cell[M, F, Ω, Either[CellError, Ω], A] =
         new Cell[M, F, Ω, Either[CellError, Ω], A](
-          NullData(),
+          NullTerminal(),
           AlgebraM {
-            _ => M.pure(NullOutput().asInstanceOf[Ω].asRight[CellError])
+            _ => M.pure(NullTerminal().asInstanceOf[Ω].asRight[CellError])
           },
           CoalgebraM {
-            _ => M.compose[F].pure(NullData().asInstanceOf[A])
+            _ => M.compose[F].pure(NullTerminal().asInstanceOf[A])
           }
         )
 
       override def combineK[A](x: Cell[M, F, Ω, Either[CellError, Ω], A], y: Cell[M, F, Ω, Either[CellError, Ω], A]): Cell[M, F, Ω, Either[CellError, Ω], A] = (x, y) match {
-        case (Cell(null), yy) => yy
-        case (xx, Cell(null)) => xx
-        case _ => ???
+        case (Cell(NullTerminal(), _, _), yy) => yy
+        case (xx, Cell(NullTerminal(), _, _)) => xx
+        case (Cell(NullTerminal(), _, _), Cell(NullTerminal(), _, _)) => empty[A]
+        case (Cell(a, aAlgebra, aCoalgebra), Cell(b, bAlgebra, bCoalgebra)) => ???
       }
     }
   }
