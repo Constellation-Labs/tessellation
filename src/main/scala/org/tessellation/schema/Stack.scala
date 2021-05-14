@@ -21,12 +21,18 @@ object StackF {
   }
 
   implicit val applicative: Applicative[StackF] = new Applicative[StackF] {
-    override def pure[A](x: A): StackF[A] = More(x)
+    override def pure[A](x: A): StackF[A] = {
+      x match {
+        case terminal: Ω => Done(terminal.asRight[CellError])
+        case _ => Done(CellError("Non terminal type").asLeft)
+      }
+    }
 
     override def ap[A, B](ff: StackF[A => B])(fa: StackF[A]): StackF[B] = {
       (ff, fa) match {
         case (More(ff), More(fa)) => More(ff(fa))
-        case (Done(ff), Done(fa)) => Done(fa)
+        case (_, Done(fa)) => Done(fa)
+        case (Done(ff), _) => Done(ff)
       }
     }
   }
