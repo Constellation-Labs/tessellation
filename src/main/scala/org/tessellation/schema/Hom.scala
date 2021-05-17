@@ -185,7 +185,6 @@ class Cell[M[_] : Monad, F[_] : Traverse, A, B, S](
   def hyloM(implicit input: A => S): M[B] = scheme.hyloM(algebra, coalgebra).apply(input(data))
 }
 
-
 object Cell {
   case class NullTerminal() extends Ω
 
@@ -209,7 +208,7 @@ object Cell {
         case (Cell(NullTerminal(), _, _), yy) => yy
         case (xx, Cell(NullTerminal(), _, _)) => xx
         case (Cell(NullTerminal(), _, _), Cell(NullTerminal(), _, _)) => empty[A]
-        case (Cell(a, aAlgebra, aCoalgebra), Cell(b, bAlgebra, bCoalgebra)) => ???
+        case (cella@Cell(a, aAlgebra, aCoalgebra), cellB@Cell(b, bAlgebra, bCoalgebra)) => ???
       }
     }
   }
