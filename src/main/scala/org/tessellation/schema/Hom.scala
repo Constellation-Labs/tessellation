@@ -179,36 +179,41 @@ trait Hom[+A, +B] extends Ω {}
 //todo Cv algebras here
 class Cell[M[_] : Monad, F[_] : Traverse, A, B, S](
                                                     val data: A,
-                                                    val algebra: AlgebraM[M, F, B], // M[O]
-                                                    val coalgebra: CoalgebraM[M, F, S], // M[S]
+                                                    val hylo: S => M[B],
                                                   ) extends Topos[A, B] {
-  def hyloM(implicit input: A => S): M[B] = scheme.hyloM(algebra, coalgebra).apply(input(data))
+  def hyloM(implicit input: A => S): M[B] = hylo.apply(input(data))
 }
 
 object Cell {
   case class NullTerminal() extends Ω
 
-  def unapply[M[_], F[_], A, B, S](cell: Cell[M, F, A, B, S]): Some[(A, AlgebraM[M, F, B], CoalgebraM[M, F, S])] = Some(cell.data, cell.algebra, cell.coalgebra)
+  def unapply[M[_], F[_], A, B, S](cell: Cell[M, F, A, B, S]): Some[(A, S => M[B])] = Some(cell.data, cell.hylo)
 
   implicit def cellMonoid[M[_] : Applicative, F[_] : Applicative](implicit M: Monad[M], F: Traverse[F]): MonoidK[Cell[M, F, Ω, Either[CellError, Ω], *]] = {
     new MonoidK[Cell[M, F, Ω, Either[CellError, Ω], *]] {
 
-      override def empty[A]: Cell[M, F, Ω, Either[CellError, Ω], A] =
+      override def empty[A]: Cell[M, F, Ω, Either[CellError, Ω], A] = {
+        val algebra = AlgebraM[M, F, Either[CellError, Ω]] {
+          _ => M.pure(NullTerminal().asInstanceOf[Ω].asRight[CellError])
+        }
+
+        val coalgebra = CoalgebraM[M, F, A] {
+          _ => M.compose[F].pure(NullTerminal().asInstanceOf[A])
+        }
+
+        val hyloM = scheme.hyloM(algebra, coalgebra)
+
         new Cell[M, F, Ω, Either[CellError, Ω], A](
           NullTerminal(),
-          AlgebraM {
-            _ => M.pure(NullTerminal().asInstanceOf[Ω].asRight[CellError])
-          },
-          CoalgebraM {
-            _ => M.compose[F].pure(NullTerminal().asInstanceOf[A])
-          }
+          hyloM
         )
+      }
 
       override def combineK[A](x: Cell[M, F, Ω, Either[CellError, Ω], A], y: Cell[M, F, Ω, Either[CellError, Ω], A]): Cell[M, F, Ω, Either[CellError, Ω], A] = (x, y) match {
-        case (Cell(NullTerminal(), _, _), yy) => yy
-        case (xx, Cell(NullTerminal(), _, _)) => xx
-        case (Cell(NullTerminal(), _, _), Cell(NullTerminal(), _, _)) => empty[A]
-        case (cella@Cell(a, aAlgebra, aCoalgebra), cellB@Cell(b, bAlgebra, bCoalgebra)) => ???
+        case (Cell(NullTerminal(), _), yy) => yy
+        case (xx, Cell(NullTerminal(), _)) => xx
+        case (Cell(NullTerminal(), _), Cell(NullTerminal(), _)) => empty[A]
+        case (cella@Cell(a, aHylo), cellB@Cell(b, bHylo)) => ???
       }
     }
   }

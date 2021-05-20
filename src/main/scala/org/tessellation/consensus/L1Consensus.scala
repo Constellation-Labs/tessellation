@@ -49,4 +49,6 @@ object L1Consensus {
         result
       }
   }
+
+  def hyloM: ((L1ConsensusMetadata, Ω)) => IO[Either[CellError, Ω]] = scheme.hyloM(algebra, coalgebra)
 }
