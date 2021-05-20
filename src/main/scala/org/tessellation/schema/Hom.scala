@@ -177,11 +177,16 @@ trait Hom[+A, +B] extends Ω {}
  *
  */
 //todo Cv algebras here
-class Cell[M[_] : Monad, F[_] : Traverse, A, B, S](
-                                                    val data: A,
-                                                    val hylo: S => M[B],
-                                                  ) extends Topos[A, B] {
-  def hyloM(implicit input: A => S): M[B] = hylo.apply(input(data))
+
+trait ΩList extends Ω
+
+case class ΩCons(h: Ω, t: ΩList) extends ΩList
+
+case object ΩNil extends ΩList
+
+
+class Cell[M[_] : Monad, F[_] : Traverse, A, B, S](val data: A, val hylo: S => M[B]) extends Topos[A, B] {
+  def run(): M[B] = ??? // TODO: We should try to make Cell abstract again and just implement EmptyCell casted back to Cell by asInstanceOf
 }
 
 object Cell {
@@ -206,14 +211,33 @@ object Cell {
         new Cell[M, F, Ω, Either[CellError, Ω], A](
           NullTerminal(),
           hyloM
-        )
+        ) {
+          override def run(): M[Either[CellError, Ω]] = M.pure(NullTerminal().asInstanceOf[Ω].asRight[CellError])
+        }
       }
 
-      override def combineK[A](x: Cell[M, F, Ω, Either[CellError, Ω], A], y: Cell[M, F, Ω, Either[CellError, Ω], A]): Cell[M, F, Ω, Either[CellError, Ω], A] = (x, y) match {
+      // TODO: A param should be Ω as well to make it possible to combine Cells with different A type
+      override def combineK[A](
+        x: Cell[M, F, Ω, Either[CellError, Ω], A],
+        y: Cell[M, F, Ω, Either[CellError, Ω], A]
+      ): Cell[M, F, Ω, Either[CellError, Ω], A] = (x, y) match {
         case (Cell(NullTerminal(), _), yy) => yy
         case (xx, Cell(NullTerminal(), _)) => xx
         case (Cell(NullTerminal(), _), Cell(NullTerminal(), _)) => empty[A]
-        case (cella@Cell(a, aHylo), cellB@Cell(b, bHylo)) => ???
+        case (cella@Cell(a, _), cellb@Cell(b, _)) => {
+          val input: Ω = ΩCons(a, ΩCons(b, ΩNil))
+          val combinedHyloM = (a: A) => {
+            for {
+              aOutput <- cella.run()
+              bOutput <- cellb.run()
+              combinedOutput = aOutput.flatMap(aΩ => bOutput.map(bΩ => ΩCons(aΩ, ΩCons(bΩ, ΩNil)).asInstanceOf[Ω]))
+            } yield combinedOutput
+          }
+          new Cell[M, F, Ω, Either[CellError, Ω], A](
+            input,
+            combinedHyloM
+          )
+        }
       }
     }
   }

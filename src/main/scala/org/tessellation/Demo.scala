@@ -6,7 +6,7 @@ import cats.effect.{ExitCode, IO, IOApp}
 import cats.syntax.all._
 import fs2.{Pipe, Pull, Stream}
 import org.tessellation.consensus.transaction.RandomTransactionGenerator
-import org.tessellation.consensus.{L1Block, L1Cell, L1Edge, L1Transaction, _}
+import org.tessellation.consensus.{L1Block, L1Edge, L1Transaction, _}
 import org.tessellation.schema.{CellError, Ω}
 import org.tessellation.snapshot.L0Pipeline.edges
 import org.tessellation.snapshot.{L0Cell, L0Edge, L0Pipeline, Snapshot}
@@ -28,7 +28,7 @@ object SingleL1ConsensusDemo extends IOApp {
       txs = Set(L1Transaction(12, "a", "b", "", 0))
 
       // cell pool
-      cell = L1Cell(L1Edge(txs))
+      cell = new L1Cell(L1Edge(Set.empty[L1Transaction]))
 
       block <- nodeA.startL1Consensus(cell)
 
@@ -79,7 +79,7 @@ object WaitingPoolDemo extends IOApp {
       s <- Stream.eval(Semaphore[IO](maxRoundsInProgress))
       txs <- runPredefinedScenario
         .through(edgeFactory.createEdges)
-        .map(L1Cell)
+        .map(L1Cell(_))
         .map { l1cell => // from cache
           Stream.eval {
             s.tryAcquire.ifM(
@@ -87,7 +87,7 @@ object WaitingPoolDemo extends IOApp {
                 .startL1Consensus(l1cell)
                 .guarantee(s.release),
               IO {
-                println(s"store txs = ${l1cell.edge.txs}")
+                println(s"store txs = ${l1cell.data.txs}")
                 L1Block(Set.empty).asRight[CellError] // TODO: ???
               }
             )
@@ -141,7 +141,7 @@ object RandomDemo extends IOApp {
       s <- Stream.eval(Semaphore[IO](maxRoundsInProgress))
       txs <- transactions(nodeA.txGenerator) // We simulate transactions coming to nodeA from address A
         .through(edgeFactory.createEdges)
-        .map(L1Cell)
+        .map(L1Cell(_))
         .map { l1cell =>
           Stream.eval {
             s.tryAcquire.ifM(
@@ -153,7 +153,7 @@ object RandomDemo extends IOApp {
                   case _                   => IO.unit
                 },
               IO {
-                println(s"store txs = ${l1cell.edge.txs}")
+                println(s"store txs = ${l1cell.data.txs}")
                 L1Block(Set.empty).asRight[CellError] // TODO: ???
               }
             )
@@ -266,7 +266,7 @@ object ArrowDemo extends IOApp {
           .chunkN(txsInChunk)
           .map(_.toList.toSet)
           .map(L1Edge)
-          .map(L1Cell)
+          .map(L1Cell(_))
           .map { l1cell => // from cache
             Stream.eval {
               s.tryAcquire.ifM(

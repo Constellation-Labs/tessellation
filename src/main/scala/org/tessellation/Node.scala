@@ -4,10 +4,10 @@ import cats.effect.concurrent.Ref
 import cats.effect.{ContextShift, IO}
 import cats.syntax.all._
 import io.chrisdavenport.fuuid.FUUID
-import org.tessellation.consensus.L1ConsensusStep.L1ConsensusContext
+import org.tessellation.consensus.L1ConsensusStep.{L1ConsensusContext, L1ConsensusMetadata}
 import org.tessellation.consensus.transaction.RandomTransactionGenerator
-import org.tessellation.consensus.{L1Cell, L1Edge, L1Transaction, ReceiveProposal, StartOwnRound}
-import org.tessellation.schema.{CellError, Ω}
+import org.tessellation.consensus.{L1Edge, L1ParticipateInConsensusCell, L1StartConsensusCell, L1Transaction, ReceiveProposal, StartOwnRound}
+import org.tessellation.schema.{Cell, CellError, StackF, Ω}
 
 import scala.concurrent.duration.DurationInt
 
@@ -24,23 +24,27 @@ case class Node(id: String, txGenerator: RandomTransactionGenerator) {
     peers.modify(p => (p + node, ()))
 
   def participateInL1Consensus(
-     roundId: FUUID,
-     proposalNode: Node,
-     receiverProposal: L1Edge,
-     cachedCell: L1Cell
+                                roundId: FUUID,
+                                proposalNode: Node,
+                                receiverProposal: L1Edge,
+                                cachedCell: Cell[IO, StackF, L1Edge, Either[CellError, Ω], (L1ConsensusMetadata, Ω)]
   ): IO[Either[CellError, Ω]] =
     for {
       peers <- peers.get
       context = L1ConsensusContext(peer = this, peers = peers, txGenerator = txGenerator)
-      ohm <- cachedCell.run(context, ownProposal => ReceiveProposal(roundId, proposalNode, receiverProposal, ownProposal))
+      metadata = L1ConsensusMetadata.empty(context)
+      l1Cell = L1ParticipateInConsensusCell.fromCell[IO, StackF](cachedCell)(metadata, roundId, proposalNode, receiverProposal)
+      ohm <- l1Cell.run()
     } yield ohm
 
-  def startL1Consensus(cell: L1Cell): IO[Either[CellError, Ω]] =
+  def startL1Consensus(cell: Cell[IO, StackF, L1Edge, Either[CellError, Ω], (L1ConsensusMetadata, Ω)]): IO[Either[CellError, Ω]] =
     for {
       peers <- peers.get
       context = L1ConsensusContext(peer = this, peers = peers, txGenerator = txGenerator)
+      metadata = L1ConsensusMetadata.empty(context)
+      l1Cell = L1StartConsensusCell.fromCell[IO, StackF](cell)(metadata)
       _ <- IO.sleep(1.second)(IO.timer(scala.concurrent.ExecutionContext.global))
-      ohm <- cell.run(context, StartOwnRound(_))
+      ohm <- l1Cell.run()
     } yield ohm
 }
 
