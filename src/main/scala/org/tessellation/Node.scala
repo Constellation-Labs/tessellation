@@ -6,7 +6,7 @@ import cats.syntax.all._
 import io.chrisdavenport.fuuid.FUUID
 import org.tessellation.consensus.L1ConsensusStep.{L1ConsensusContext, L1ConsensusMetadata}
 import org.tessellation.consensus.transaction.RandomTransactionGenerator
-import org.tessellation.consensus.{L1Edge, L1ParticipateInConsensusCell, L1StartConsensusCell, L1Transaction, ReceiveProposal, StartOwnRound}
+import org.tessellation.consensus.{L1CoalgebraStruct, L1Edge, L1ParticipateInConsensusCell, L1StartConsensusCell, L1Transaction, ReceiveProposal, StartOwnRound}
 import org.tessellation.schema.{Cell, CellError, StackF, Ω}
 
 import scala.concurrent.duration.DurationInt
@@ -27,7 +27,7 @@ case class Node(id: String, txGenerator: RandomTransactionGenerator) {
                                 roundId: FUUID,
                                 proposalNode: Node,
                                 receiverProposal: L1Edge,
-                                cachedCell: Cell[IO, StackF, L1Edge, Either[CellError, Ω], (L1ConsensusMetadata, Ω)]
+                                cachedCell: Cell[IO, StackF, L1Edge, Either[CellError, Ω], L1CoalgebraStruct]
   ): IO[Either[CellError, Ω]] =
     for {
       peers <- peers.get
@@ -37,7 +37,7 @@ case class Node(id: String, txGenerator: RandomTransactionGenerator) {
       ohm <- l1Cell.run()
     } yield ohm
 
-  def startL1Consensus(cell: Cell[IO, StackF, L1Edge, Either[CellError, Ω], (L1ConsensusMetadata, Ω)]): IO[Either[CellError, Ω]] =
+  def startL1Consensus(cell: Cell[IO, StackF, L1Edge, Either[CellError, Ω], L1CoalgebraStruct]): IO[Either[CellError, Ω]] =
     for {
       peers <- peers.get
       context = L1ConsensusContext(peer = this, peers = peers, txGenerator = txGenerator)

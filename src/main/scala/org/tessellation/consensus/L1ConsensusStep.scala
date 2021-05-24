@@ -20,7 +20,6 @@ object L1ConsensusStep {
 
   // TODO: Use Reader monad -> Reader[L1ConsensusContext, Ω]
   val coalgebra: CoalgebraM[StateM, L1ConsensusF, Ω] = CoalgebraM {
-
     case StartOwnRound(edge) =>
       generateRoundId() >> storeOwnTransactions(edge.txs) >> selectFacilitators(2) >> StateT[
         IO,
