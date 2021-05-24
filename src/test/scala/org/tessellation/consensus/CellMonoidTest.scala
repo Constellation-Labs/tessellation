@@ -1,6 +1,6 @@
 package org.tessellation.consensus
 
-import cats.{Applicative, MonoidK}
+import cats.{Applicative, Monoid, MonoidK}
 import cats.effect.IO
 import org.mockito.{ArgumentMatchersSugar, IdiomaticMockito}
 import org.mockito.cats.IdiomaticMockitoCats
@@ -11,12 +11,10 @@ import org.tessellation.Node
 import org.tessellation.consensus.L1ConsensusStep.{L1ConsensusContext, L1ConsensusMetadata}
 import org.tessellation.consensus.transaction.RandomTransactionGenerator
 import org.tessellation.schema.Cell.{NullTerminal, cellMonoid}
-import org.tessellation.schema.{Cell, CellError, StackF, Ω}
+import org.tessellation.schema.{Cell, CellError, StackF, Ω, ΩList}
+import org.tessellation.snapshot.{L0Cell, L0Edge, Snapshot}
+import cats.syntax._
 
-
-case class SampleData() extends Ω
-
-case class SampleOutput() extends Ω
 
 class CellMonoidTest extends AnyFreeSpec
   with IdiomaticMockito
@@ -25,16 +23,16 @@ class CellMonoidTest extends AnyFreeSpec
   with ArgumentMatchersSugar
   with BeforeAndAfter {
 
-  "empty" - {
-    implicit val M: MonoidK[Cell[IO, StackF, Ω, Either[CellError, Ω], *]] = Cell.cellMonoid[IO, StackF]
+  implicit val M: Monoid[Cell[IO, StackF, Ω, Either[CellError, Ω], Ω]] = Cell.cellMonoid[IO, StackF]
 
+  "empty" - {
     "creates empty" in {
-      val empty = M.empty[(Int, Int)]
+      val empty = M.empty
       empty.data.isInstanceOf[NullTerminal] shouldBe true
     }
 
     "empty hylo is just an identity" in {
-      val empty = M.empty[(Int, Int)]
+      val empty = M.empty
       val hylo = empty.run()
       val input = empty.data
       val output = hylo.unsafeRunSync()
@@ -50,9 +48,9 @@ class CellMonoidTest extends AnyFreeSpec
         )
       )
       val l1Cell = L1StartConsensusCell(L1Edge(Set.empty[L1Transaction]), metadata)
-      val emptyCell = M.empty[(L1ConsensusMetadata, Ω)]
-      val combined = M.combineK[(L1ConsensusMetadata, Ω)](
-        l1Cell.asInstanceOf[Cell[IO, StackF, Ω, Either[CellError, Ω], (L1ConsensusMetadata, Ω)]],
+      val emptyCell = M.empty
+      val combined = M.combine(
+        l1Cell,
         emptyCell
       )
 
@@ -68,13 +66,67 @@ class CellMonoidTest extends AnyFreeSpec
         )
       )
       val l1Cell = L1StartConsensusCell(L1Edge(Set.empty[L1Transaction]), metadata)
-      val emptyCell = M.empty[(L1ConsensusMetadata, Ω)]
-      val combined = M.combineK[(L1ConsensusMetadata, Ω)](
+      val emptyCell = M.empty
+      val combined = M.combine(
         emptyCell,
-        l1Cell.asInstanceOf[Cell[IO, StackF, Ω, Either[CellError, Ω], (L1ConsensusMetadata, Ω)]],
+        l1Cell
       )
 
       combined shouldBe l1Cell
+    }
+
+    "combine same types" in {
+      val metadata = L1ConsensusMetadata.empty(
+        L1ConsensusContext(
+          Node("A", RandomTransactionGenerator("A")),
+          Set.empty[Node],
+          RandomTransactionGenerator("A")
+        )
+      )
+      val txA = L1Transaction(1, "a", "b", "", 0)
+      val l1CellA = L1StartConsensusCell(L1Edge(Set(txA)), metadata)
+      val txB = L1Transaction(1, "b", "c", "", 0)
+      val l1CellB = L1StartConsensusCell(L1Edge(Set(txB)), metadata)
+
+
+      val resultA = l1CellA.run().unsafeRunSync()
+      val resultB = l1CellB.run().unsafeRunSync()
+      val expectedResult = resultA.flatMap(a => resultB.map(b => a :: b))
+
+      val combined = M.combine(
+        l1CellA,
+        l1CellB
+      )
+
+      val result = combined.run().unsafeRunSync()
+
+      result shouldBe expectedResult
+    }
+
+    "combine different types" in {
+      val metadata = L1ConsensusMetadata.empty(
+        L1ConsensusContext(
+          Node("A", RandomTransactionGenerator("A")),
+          Set.empty[Node],
+          RandomTransactionGenerator("A")
+        )
+      )
+      val l1Cell = L1StartConsensusCell(L1Edge(Set.empty[L1Transaction]), metadata)
+      val l0Cell = L0Cell(L0Edge(Set.empty[L1Block]))
+
+      val l1Result = l1Cell.run().unsafeRunSync()
+      val l0Result = l0Cell.run().unsafeRunSync()
+      val expectedResult = l1Result.flatMap(a => l0Result.map(b => a :: b))
+
+      // TODO: Investigate why syntax doesn't work
+      //      val combined  = l1Cell |+| l0Cell
+      val combined = M.combine(l1Cell, l0Cell)
+
+      val result = combined.run().unsafeRunSync()
+
+      println(result)
+
+      result shouldBe expectedResult
     }
   }
 

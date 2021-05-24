@@ -340,7 +340,7 @@ object ArrowDemo extends IOApp {
 
           in => go(in, (Map.empty, 0, 0)).stream
         }
-        .map(L0Cell)
+        .map(L0Cell(_))
         .evalMap(_.run())
         .map {
           case Left(error)          => Left(error)

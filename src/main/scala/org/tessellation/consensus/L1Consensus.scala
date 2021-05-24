@@ -6,20 +6,22 @@ import higherkindness.droste.{AlgebraM, CoalgebraM, scheme}
 import org.tessellation.consensus.L1ConsensusStep.L1ConsensusMetadata
 import org.tessellation.schema.{CellError, Done, More, StackF, Ω}
 
+case class L1CoalgebraStruct(metadata: L1ConsensusMetadata, cmd: Ω) extends Ω
+
 object L1Consensus {
 
-  val coalgebra: CoalgebraM[IO, StackF, (L1ConsensusMetadata, Ω)] = CoalgebraM {
-    case (metadata, cmd) =>
+  val coalgebra: CoalgebraM[IO, StackF, L1CoalgebraStruct] = CoalgebraM {
+    case L1CoalgebraStruct(metadata, cmd) =>
       cmd match {
-        case block @ L1Block(_) =>
+        case block@L1Block(_) =>
           IO {
             Done(block.asRight[CellError])
           }
-        case end @ ConsensusEnd(_) =>
+        case end@ConsensusEnd(_) =>
           IO {
             Done(end.asRight[CellError])
           }
-        case response @ ProposalResponse(_) =>
+        case response@ProposalResponse(_) =>
           IO {
             Done(response.asRight[CellError])
           }
@@ -31,9 +33,9 @@ object L1Consensus {
           scheme.hyloM(L1ConsensusStep.algebra, L1ConsensusStep.coalgebra).apply(cmd).run(metadata).map {
             case (m, cmd) =>
               if (cmd.isLeft) {
-                Done(CellError(cmd.left.get.reason).asLeft[Ω])
+                Done(CellError(cmd.left.get.reason).asLeft[Ω]) // TODO: Get rid of `get`
               } else {
-                More((m, cmd.right.get))
+                More(L1CoalgebraStruct(m, cmd.right.get)) // TODO: Get rid of `get`
               }
           }
       }
@@ -50,5 +52,5 @@ object L1Consensus {
       }
   }
 
-  def hyloM: ((L1ConsensusMetadata, Ω)) => IO[Either[CellError, Ω]] = scheme.hyloM(algebra, coalgebra)
+  def hyloM: L1CoalgebraStruct => IO[Either[CellError, Ω]] = scheme.hyloM(algebra, coalgebra)
 }
