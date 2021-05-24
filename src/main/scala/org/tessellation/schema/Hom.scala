@@ -1,11 +1,9 @@
 package org.tessellation.schema
 
-import cats.kernel.PartialOrder
-import cats.{Applicative, Monad, MonoidK, Traverse, ~>}
 import cats.implicits._
+import cats.kernel.PartialOrder
+import cats.{Applicative, Monad, Monoid, Traverse}
 import higherkindness.droste._
-//import org.tessellation.schema.Cell.NullTerminal
-//import org.tessellation.schema.Hom.Endo
 
 /**
  * Characteristic Sheaf just needs to be Poset
@@ -15,13 +13,18 @@ trait Poset extends PartialOrder[Ω] {
 }
 
 /**
-  * Terminal object
-  */
+ * Terminal object
+ */
+
 trait Ω extends Poset
 
+object Ω {
+  implicit def toΩList(a: Ω): ΩList = org.tessellation.schema.::(a, ΩNil)
+}
+
 /**
-  * Homomorphism object for determining morphism isomorphism
-  */
+ * Homomorphism object for determining morphism isomorphism
+ */
 trait Hom[+A, +B] extends Ω {}
 
 //object Hom {
@@ -178,15 +181,9 @@ trait Hom[+A, +B] extends Ω {}
  */
 //todo Cv algebras here
 
-trait ΩList extends Ω
 
-case class ΩCons(h: Ω, t: ΩList) extends ΩList
-
-case object ΩNil extends ΩList
-
-
-class Cell[M[_] : Monad, F[_] : Traverse, A, B, S](val data: A, val hylo: S => M[B]) extends Topos[A, B] {
-  def run(): M[B] = ??? // TODO: We should try to make Cell abstract again and just implement EmptyCell casted back to Cell by asInstanceOf
+class Cell[M[_] : Monad, F[_] : Traverse, A, B, S](val data: A, val hylo: S => M[B], val convert: A => S) extends Topos[A, B] {
+  def run(): M[B] = hylo(convert(data))
 }
 
 object Cell {
@@ -194,48 +191,55 @@ object Cell {
 
   def unapply[M[_], F[_], A, B, S](cell: Cell[M, F, A, B, S]): Some[(A, S => M[B])] = Some(cell.data, cell.hylo)
 
-  implicit def cellMonoid[M[_] : Applicative, F[_] : Applicative](implicit M: Monad[M], F: Traverse[F]): MonoidK[Cell[M, F, Ω, Either[CellError, Ω], *]] = {
-    new MonoidK[Cell[M, F, Ω, Either[CellError, Ω], *]] {
+  implicit def toCell[M[_], F[_], A <: Cell[M, F, Ω, Either[CellError, Ω], Ω]](a: A): Cell[M, F, Ω, Either[CellError, Ω], Ω] = a.asInstanceOf[Cell[M, F, Ω, Either[CellError, Ω], Ω]]
 
-      override def empty[A]: Cell[M, F, Ω, Either[CellError, Ω], A] = {
+  implicit def cellMonoid[M[_] : Applicative, F[_] : Applicative](implicit M: Monad[M], F: Traverse[F]): Monoid[Cell[M, F, Ω, Either[CellError, Ω], Ω]] = {
+    new Monoid[Cell[M, F, Ω, Either[CellError, Ω], Ω]] {
+
+      override def empty: Cell[M, F, Ω, Either[CellError, Ω], Ω] = {
         val algebra = AlgebraM[M, F, Either[CellError, Ω]] {
           _ => M.pure(NullTerminal().asInstanceOf[Ω].asRight[CellError])
         }
 
-        val coalgebra = CoalgebraM[M, F, A] {
-          _ => M.compose[F].pure(NullTerminal().asInstanceOf[A])
+        val coalgebra = CoalgebraM[M, F, Ω] {
+          _ => M.compose[F].pure(NullTerminal().asInstanceOf[Ω])
         }
 
         val hyloM = scheme.hyloM(algebra, coalgebra)
 
-        new Cell[M, F, Ω, Either[CellError, Ω], A](
+        new Cell[M, F, Ω, Either[CellError, Ω], Ω](
           NullTerminal(),
-          hyloM
+          hyloM,
+          _ => NullTerminal()
         ) {
           override def run(): M[Either[CellError, Ω]] = M.pure(NullTerminal().asInstanceOf[Ω].asRight[CellError])
         }
       }
 
+
       // TODO: A param should be Ω as well to make it possible to combine Cells with different A type
-      override def combineK[A](
-        x: Cell[M, F, Ω, Either[CellError, Ω], A],
-        y: Cell[M, F, Ω, Either[CellError, Ω], A]
-      ): Cell[M, F, Ω, Either[CellError, Ω], A] = (x, y) match {
+      override def combine(
+                            x: Cell[M, F, Ω, Either[CellError, Ω], Ω],
+                            y: Cell[M, F, Ω, Either[CellError, Ω], Ω]
+                          ): Cell[M, F, Ω, Either[CellError, Ω], Ω] = (x, y) match {
         case (Cell(NullTerminal(), _), yy) => yy
         case (xx, Cell(NullTerminal(), _)) => xx
-        case (Cell(NullTerminal(), _), Cell(NullTerminal(), _)) => empty[A]
+        case (Cell(NullTerminal(), _), Cell(NullTerminal(), _)) => empty
         case (cella@Cell(a, _), cellb@Cell(b, _)) => {
-          val input: Ω = ΩCons(a, ΩCons(b, ΩNil))
-          val combinedHyloM = (a: A) => {
+
+          val input: ΩList = a :: b
+
+          val combinedHyloM: Ω => M[Either[CellError, Ω]] = (a: Ω) => {
             for {
               aOutput <- cella.run()
               bOutput <- cellb.run()
-              combinedOutput = aOutput.flatMap(aΩ => bOutput.map(bΩ => ΩCons(aΩ, ΩCons(bΩ, ΩNil)).asInstanceOf[Ω]))
+              combinedOutput = aOutput.flatMap(aΩ => bOutput.map(bΩ => aΩ :: bΩ))
             } yield combinedOutput
           }
-          new Cell[M, F, Ω, Either[CellError, Ω], A](
+          new Cell[M, F, Ω, Either[CellError, Ω], Ω](
             input,
-            combinedHyloM
+            combinedHyloM,
+            _ => input
           )
         }
       }
