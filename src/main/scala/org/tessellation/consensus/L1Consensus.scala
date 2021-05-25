@@ -13,15 +13,15 @@ object L1Consensus {
   val coalgebra: CoalgebraM[IO, StackF, L1CoalgebraStruct] = CoalgebraM {
     case L1CoalgebraStruct(metadata, cmd) =>
       cmd match {
-        case block@L1Block(_) =>
+        case block @ L1Block(_) =>
           IO {
             Done(block.asRight[CellError])
           }
-        case end@ConsensusEnd(_) =>
+        case end @ ConsensusEnd(_) =>
           IO {
             Done(end.asRight[CellError])
           }
-        case response@ProposalResponse(_) =>
+        case response @ ProposalResponse(_) =>
           IO {
             Done(response.asRight[CellError])
           }

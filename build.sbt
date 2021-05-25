@@ -1,4 +1,3 @@
-
 name := "tessellation"
 organization := "org.constellation"
 version := "0.0.1-SNAPSHOT"
@@ -8,7 +7,7 @@ scalaVersion := "2.13.1"
 lazy val drosteDependencies = Seq(
   "io.higherkindness" %% "droste-core",
   "io.higherkindness" %% "droste-laws",
-  "io.higherkindness" %% "droste-macros",
+  "io.higherkindness" %% "droste-macros"
 ).map(_ % "0.8.0")
 
 lazy val kryoDependencies = Seq(
@@ -28,8 +27,8 @@ lazy val doobieDependencies = Seq(
 )
 
 lazy val monocleDependencies = Seq(
-  "com.github.julien-truffaut" %% "monocle-core"  % "2.0.3",
-  "com.github.julien-truffaut" %% "monocle-macro" % "2.0.3",
+  "com.github.julien-truffaut" %% "monocle-core" % "2.0.3",
+  "com.github.julien-truffaut" %% "monocle-macro" % "2.0.3"
 )
 
 lazy val dependencies = Seq(
@@ -52,7 +51,7 @@ lazy val testDependencies = Seq(
   "org.scalamock" %% "scalamock" % "4.4.0",
   "org.mockito" %% "mockito-scala" % "1.5.16",
   "org.mockito" %% "mockito-scala-cats" % "1.5.16",
-  "org.tpolecat" %% "doobie-specs2"    % "0.9.0",
+  "org.tpolecat" %% "doobie-specs2" % "0.9.0",
   "org.tpolecat" %% "doobie-scalatest" % "0.9.0"
 ).map(_ % "test")
 
@@ -60,6 +59,6 @@ libraryDependencies ++= dependencies ++ testDependencies
 
 // scalac options come from the sbt-tpolecat plugin so need to set any here
 
-addCompilerPlugin("org.typelevel" %% "kind-projector" % "0.11.0" cross CrossVersion.full)
+addCompilerPlugin(("org.typelevel" %% "kind-projector" % "0.11.0").cross(CrossVersion.full))
 
 scalacOptions ~= filterConsoleScalacOptions
