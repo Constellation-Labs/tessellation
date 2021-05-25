@@ -17,18 +17,17 @@ object L0Snapshot { // TODO: make it generic and reuse together L1Consensus and 
         Done(CellError(reason).asLeft[Ω])
       }
     case cmd =>
-      scheme.hyloM(L0SnapshotStep.algebra, L0SnapshotStep.coalgebra).apply(cmd).map {
-        c =>
-          if (c.isLeft) {
-            Done(CellError(c.left.get.reason).asLeft[Ω])
-          } else {
-            More(c.right.get)
-          }
+      scheme.hyloM(L0SnapshotStep.algebra, L0SnapshotStep.coalgebra).apply(cmd).map { c =>
+        if (c.isLeft) {
+          Done(CellError(c.left.get.reason).asLeft[Ω])
+        } else {
+          More(c.right.get)
+        }
       }
   }
 
   val algebra: AlgebraM[IO, StackF, Either[CellError, Ω]] = AlgebraM {
-    case More(a) => IO(a)
+    case More(a)      => IO(a)
     case Done(result) => IO(result)
   }
 

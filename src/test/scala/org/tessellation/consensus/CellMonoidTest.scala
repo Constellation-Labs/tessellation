@@ -15,13 +15,13 @@ import org.tessellation.schema.{Cell, CellError, StackF, Ω, ΩList}
 import org.tessellation.snapshot.{L0Cell, L0Edge, Snapshot}
 import cats.syntax._
 
-
-class CellMonoidTest extends AnyFreeSpec
-  with IdiomaticMockito
-  with IdiomaticMockitoCats
-  with Matchers
-  with ArgumentMatchersSugar
-  with BeforeAndAfter {
+class CellMonoidTest
+    extends AnyFreeSpec
+    with IdiomaticMockito
+    with IdiomaticMockitoCats
+    with Matchers
+    with ArgumentMatchersSugar
+    with BeforeAndAfter {
 
   implicit val M: Monoid[Cell[IO, StackF, Ω, Either[CellError, Ω], Ω]] = Cell.cellMonoid[IO, StackF]
 
@@ -87,7 +87,6 @@ class CellMonoidTest extends AnyFreeSpec
       val l1CellA = L1StartConsensusCell(L1Edge(Set(txA)), metadata)
       val txB = L1Transaction(1, "b", "c", "", 0)
       val l1CellB = L1StartConsensusCell(L1Edge(Set(txB)), metadata)
-
 
       val resultA = l1CellA.run().unsafeRunSync()
       val resultB = l1CellB.run().unsafeRunSync()

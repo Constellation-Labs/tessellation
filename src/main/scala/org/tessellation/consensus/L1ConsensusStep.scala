@@ -28,7 +28,8 @@ object L1ConsensusStep {
       ] { metadata =>
         IO {
           Log.logNode(metadata.context.peer)(
-            s"[${metadata.context.peer.id}][${metadata.roundId}][StartOwnRound] Locked transactions ${edge.txs.toList.sortBy(_.a)} and running consensus"
+            s"[${metadata.context.peer.id}][${metadata.roundId}][StartOwnRound] Locked transactions ${edge.txs.toList
+              .sortBy(_.a)} and running consensus"
           )
           (metadata, BroadcastProposal())
         }
@@ -115,10 +116,15 @@ object L1ConsensusStep {
   }
 
   def broadcastProposal(): StateM[Either[CellError, List[BroadcastProposalResponse]]] = StateT { metadata =>
-    def simulateHttpConsensusRequest(request: BroadcastProposalRequest, caller: Node, context: L1ConsensusContext): IO[BroadcastProposalResponse] = {
+    def simulateHttpConsensusRequest(
+      request: BroadcastProposalRequest,
+      caller: Node,
+      context: L1ConsensusContext
+    ): IO[BroadcastProposalResponse] = {
       val facilitatorTxs = context.peer.txGenerator.generateRandomTransaction().unsafeRunSync()
       val facilitatorCell = L1Cell(L1Edge(Set(facilitatorTxs)))
-      val facilitatorConsensus = context.peer.participateInL1Consensus(request.roundId, caller, L1Edge(request.proposal), facilitatorCell)
+      val facilitatorConsensus =
+        context.peer.participateInL1Consensus(request.roundId, caller, L1Edge(request.proposal), facilitatorCell)
 
       facilitatorConsensus.flatMap {
         case Right(ProposalResponse(txs)) => {
@@ -140,7 +146,8 @@ object L1ConsensusStep {
       facilitators <- metadata.facilitators.map(_.filterNot(_ == metadata.context.peer))
       _ <- Option {
         Log.logNode(metadata.context.peer)(
-          s"[${metadata.context.peer.id}][${metadata.roundId}][BroadcastProposal] Broadcasting proposal to facilitators: ${facilitators.map(_.id)}"
+          s"[${metadata.context.peer.id}][${metadata.roundId}][BroadcastProposal] Broadcasting proposal to facilitators: ${facilitators
+            .map(_.id)}"
         )
         ()
       }
