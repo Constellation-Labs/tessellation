@@ -5,10 +5,11 @@ import org.tessellation.OperadLawsTest.property
 import cats.laws.StrongLaws
 
 object ConvolutionLawsTest extends Properties("ConvolutionLawsTest") {
+
   /**
-   * Enrichment induces ends (colimit) and coends (limit) of homotopy groups isomorphic to Poincare Protocol
-   * https://ncatlab.org/nlab/show/end "Replace "vector" with "functor" and you get a colimit."
-   */
+    * Enrichment induces ends (colimit) and coends (limit) of homotopy groups isomorphic to Poincare Protocol
+    * https://ncatlab.org/nlab/show/end "Replace "vector" with "functor" and you get a colimit."
+    */
   //https://ncatlab.org/nlab/show/representable+multicategory
   //todo show that all actions come from n-ary tensor injections
   property("Hom is right adjoint") = true
@@ -20,9 +21,9 @@ object ConvolutionLawsTest extends Properties("ConvolutionLawsTest") {
   property("There exists contravariant action ρc,d,e:F(d,e)⊗C(c,d)→F(c,e).") = true
 
   /**
-   * Enrichment is symmetric monoidal enriched
-   * "In functional programming,these monoids give rise to the notion of Applicative."
-   */
+    * Enrichment is symmetric monoidal enriched
+    * "In functional programming,these monoids give rise to the notion of Applicative."
+    */
   property("tensor is commutative") = true
   /*
   B y,x∘B x,y=1 x⊗
@@ -30,8 +31,8 @@ object ConvolutionLawsTest extends Properties("ConvolutionLawsTest") {
   property("Composition of opposite arrows is identity") = true
 
   /**
-   * Simplex induces Join operator
-   */
+    * Simplex induces Join operator
+    */
   //https://bartoszmilewski.com/2018/12/11/keep-it-simplex-stupid/
   //todo just need flatten/flatmap
   //import cats._, cats.data._, cats.implicits._
@@ -44,8 +45,8 @@ object ConvolutionLawsTest extends Properties("ConvolutionLawsTest") {
   property("The join of two simplices is a reduceByKey over an indexed copower") = true
 
   /**
-   * Monoid laws form Day convolution monoidal category <=> action spectra under tensor is smash and is symmetric
-   */
+    * Monoid laws form Day convolution monoidal category <=> action spectra under tensor is smash and is symmetric
+    */
   //https://ncatlab.org/nlab/show/Day+convolution
   //https://ncatlab.org/nlab/show/symmetric+spectrum
   //todo show that tensor of two chains is another chain such that this is for any two symmetric Cell spectra A and B

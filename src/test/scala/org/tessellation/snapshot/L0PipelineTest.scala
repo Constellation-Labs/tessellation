@@ -69,7 +69,7 @@ class L0PipelineTest extends AnyFreeSpec with GivenWhenThen with Matchers {
     Given("stream of edges")
     val blocks: Stream[IO, L1Block] = Stream
       .range[IO](1, 100)
-      .map(L1Transaction(_, "a","b", "", 0))
+      .map(L1Transaction(_, "a", "b", "", 0))
       .map(Set(_))
       .map(L1Block)
       .take(5)
