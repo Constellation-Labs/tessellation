@@ -3,9 +3,8 @@ package org.tessellation
 import cats.Show
 
 object Log {
-  private def log[A](color: String)(a: A): Unit = {
-    //    println(s"${color}${a.toString}${Console.RESET}")
-  }
+  private def log[A](color: String)(a: A): Unit =
+    println(s"${color}${a.toString}${Console.RESET}")
 
   val red = log(Console.RED) _
   val green = log(Console.GREEN) _

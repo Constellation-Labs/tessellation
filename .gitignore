@@ -3,5 +3,15 @@ target/
 .DS_STORE
 .metals/
 .bloop/
+*.terraform/
+terraform/default-*
+terraform/custom-image-*
+terraform/docker-highmem-*
+terraform/aws/hosts-*
+terraform/aws/whitelisting-*
+.dag
+*.log
+/logs
 project/metals.sbt
 site/
+.bsp

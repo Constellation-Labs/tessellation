@@ -3,7 +3,7 @@ package org.tessellation.consensus
 import cats.effect.IO
 import io.chrisdavenport.fuuid.FUUID
 import org.tessellation.Node
-import org.tessellation.consensus.L1ConsensusStep.L1ConsensusMetadata
+import org.tessellation.consensus.L1ConsensusStep.{L1ConsensusMetadata, RoundId}
 import org.tessellation.schema.{Cell, CellError, StackF, Ω}
 
 class L1Cell(edge: L1Edge)
@@ -35,8 +35,8 @@ object L1StartConsensusCell {
 case class L1ParticipateInConsensusCell(
   edge: L1Edge,
   metadata: L1ConsensusMetadata,
-  roundId: FUUID,
-  proposalNode: Node,
+  roundId: RoundId,
+  proposalNode: String,
   receivedEdge: L1Edge
 ) extends L1Cell(edge) {
   override val convert: L1Edge => L1CoalgebraStruct = _ =>
@@ -47,8 +47,8 @@ object L1ParticipateInConsensusCell {
 
   def fromCell[M[_], F[_]](cell: Cell[M, F, L1Edge, Either[CellError, Ω], L1CoalgebraStruct])(
     metadata: L1ConsensusMetadata,
-    roundId: FUUID,
-    proposalNode: Node,
+    roundId: RoundId,
+    proposalNode: String,
     receivedEdge: L1Edge
   ): L1ParticipateInConsensusCell =
     L1ParticipateInConsensusCell(cell.data, metadata, roundId, proposalNode, receivedEdge)
