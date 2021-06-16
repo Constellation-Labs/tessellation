@@ -1,100 +1,38 @@
 package org.tessellation.consensus
 
-import cats.data.StateT
+import cats.data.{EitherT, StateT}
 import cats.effect.IO
 import cats.syntax.all._
-import higherkindness.droste.{AlgebraM, CoalgebraM, scheme}
+import higherkindness.droste.{AlgebraM, CoalgebraM}
 import io.chrisdavenport.fuuid.FUUID
-import org.tessellation.consensus.L1TransactionPool.L1TransactionPoolEnqueue
-import org.tessellation.schema.{CellError, Ω}
-import org.tessellation.{Log, Node}
+import io.chrisdavenport.log4cats.SelfAwareStructuredLogger
+import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
+import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
+import io.circe.generic.auto._
+import io.circe.syntax._
+import io.circe.{Decoder, Encoder}
 import monocle.macros.syntax.lens._
+import org.http4s.client.Client
 import org.tessellation.consensus.transaction.RandomTransactionGenerator
+import org.tessellation.schema.{CellError, Ω}
+import org.tessellation.{Log, Node, Peer}
+import org.http4s.dsl.io._
+import org.http4s.client.dsl.io._
+import org.tessellation.consensus.L1ConsensusStep.StateM
+import org.tessellation.http.HttpClient
 
 import scala.util.Random
 
 object L1ConsensusStep {
-  type Peer = String
   type StateM[A] = StateT[IO, L1ConsensusMetadata, A]
   implicit val contextShift = IO.contextShift(scala.concurrent.ExecutionContext.global)
-
-  // TODO: Use Reader monad -> Reader[L1ConsensusContext, Ω]
-  val coalgebra: CoalgebraM[StateM, L1ConsensusF, Ω] = CoalgebraM {
-    case StartOwnRound(edge) =>
-      generateRoundId() >> storeOwnTransactions(edge.txs) >> selectFacilitators(2) >> StateT[
-        IO,
-        L1ConsensusMetadata,
-        L1ConsensusF[Ω]
-      ] { metadata =>
-        IO {
-          Log.logNode(metadata.context.peer)(
-            s"[${metadata.context.peer.id}][${metadata.roundId}][StartOwnRound] Locked transactions ${edge.txs.toList
-              .sortBy(_.a)} and running consensus"
-          )
-          (metadata, BroadcastProposal())
-        }
-      }
-
-    case BroadcastProposal() =>
-      broadcastProposal() >>= { responses =>
-        StateT[IO, L1ConsensusMetadata, L1ConsensusF[Ω]] { metadata =>
-          IO {
-            (metadata, responses.fold(error => L1Error(error.reason), ConsensusEnd(_)))
-          }
-        }
-      }
-
-    case ReceiveProposal(roundId, proposalNode, proposalEdge, ownEdge) =>
-      storeRoundId(roundId) >> storeOwnTransactions(proposalEdge.txs) >>
-        StateT[IO, L1ConsensusMetadata, L1ConsensusF[Ω]] { metadata =>
-          IO {
-            val roundId = metadata.roundId.get
-
-            val state = metadata.lens(_.txs).modify { t =>
-              t.updatedWith(roundId) { prev =>
-                prev
-                  .map(_.updated(metadata.context.peer, ownEdge.txs).updated(proposalNode, proposalEdge.txs))
-                  .orElse(Map(metadata.context.peer -> ownEdge.txs, proposalNode -> proposalEdge.txs).some)
-              }
-            }
-
-            Log.logNode(metadata.context.peer)(
-              s"[${metadata.context.peer.id}][${metadata.roundId}][ReceiveProposal] Received proposal ${proposalEdge.txs} from (${proposalNode.id}). Broadcasting facilitator proposal ${ownEdge.txs}."
-            )
-
-            Log.logNode(metadata.context.peer)(
-              s"[${metadata.context.peer.id}][${metadata.roundId}][ReceiveProposal] Stored for round: ${state.txs.get(roundId).map(_.values.flatten.toSet)}"
-            )
-
-            (state, BroadcastReceivedProposal())
-          }
-        }
-
-    case BroadcastReceivedProposal() =>
-      broadcastProposal() >>= { responses =>
-        StateT[IO, L1ConsensusMetadata, L1ConsensusF[Ω]] { metadata =>
-          IO {
-            responses match {
-              case Right(r) => {
-                val roundTxs = metadata.roundId
-                  .flatMap(metadata.txs.get)
-
-                val txs = roundTxs.map(_.values.flatten.toSet).getOrElse(Set.empty[L1Transaction])
-                val resTxs = r.flatMap(_.receiverProposals).toSet
-                // TODO: We can't send ProposalResponse because C can get proposal from B before proposal A reaches C! (Race condition)
-                (metadata, ProposalResponse(txs ++ resTxs))
-              }
-              case Left(error) => (metadata, L1Error(error.reason))
-            }
-          }
-        }
-      }
-  }
+  type RoundId = String
+  val logger: SelfAwareStructuredLogger[IO] = Slf4jLogger.getLogger[IO]
 
   val algebra: AlgebraM[StateM, L1ConsensusF, Either[CellError, Ω]] = AlgebraM {
     case ConsensusEnd(responses) =>
       StateT { metadata =>
-        IO {
+        logger.debug("[ConsensusEnd] Producing block") >> IO {
           val txs = responses.map(_.receiverProposals).foldRight(Set.empty[L1Transaction])(_ ++ _)
           (metadata, L1Block(txs).asRight[CellError])
         }
@@ -102,80 +40,119 @@ object L1ConsensusStep {
 
     case L1Error(reason) =>
       StateT { metadata =>
-        IO {
-          (metadata, CellError(reason).asLeft[Ω])
+        logger.error(reason)("L1Error in Algebra") >> IO {
+          (metadata, CellError(reason.getMessage).asLeft[Ω])
         }
       }
 
     case cmd: Ω =>
       StateT { metadata =>
-        IO {
+        logger.debug(s"Ω: ${cmd}") >> IO {
           (metadata, cmd.asRight[CellError])
         }
       }
   }
 
-  def broadcastProposal(): StateM[Either[CellError, List[BroadcastProposalResponse]]] = StateT { metadata =>
-    def simulateHttpConsensusRequest(
-      request: BroadcastProposalRequest,
-      caller: Node,
-      context: L1ConsensusContext
-    ): IO[BroadcastProposalResponse] = {
-      val facilitatorTxs = context.peer.txGenerator.generateRandomTransaction().unsafeRunSync()
-      val facilitatorCell = L1Cell(L1Edge(Set(facilitatorTxs)))
-      val facilitatorConsensus =
-        context.peer.participateInL1Consensus(request.roundId, caller, L1Edge(request.proposal), facilitatorCell)
+  // TODO: Use Reader monad -> Reader[L1ConsensusContext, Ω]
+  val coalgebra: CoalgebraM[StateM, L1ConsensusF, Ω] = CoalgebraM {
+    case StartOwnRound(edge) =>
+      for {
+        _ <- generateRoundId()
+        _ <- storeOwnTransactions(edge.txs)
+        _ <- selectFacilitators(2)
+        next <- StateT[IO, L1ConsensusMetadata, L1ConsensusF[Ω]] { metadata =>
+          for {
+            _ <- logger.debug("[StartOwnRound]")
+          } yield (metadata, BroadcastProposal())
+        }
+      } yield next
 
-      facilitatorConsensus.flatMap {
-        case Right(ProposalResponse(txs)) => {
-          Log.logNode(metadata.context.peer)(
-            s"[${metadata.context.peer.id}][ProposalResponse] ${txs.toList.sortBy(_.a)}"
-          )
-          IO {
-            BroadcastProposalResponse(request.roundId, request.proposal, txs)
-          }
+    case BroadcastProposal() =>
+      for {
+        responses <- broadcastProposal()
+        next <- StateT[IO, L1ConsensusMetadata, L1ConsensusF[Ω]] { metadata =>
+          for {
+            _ <- logger.debug(s"[BroadcastProposal]")
+            nextStep: L1ConsensusF[Ω] = responses.fold(L1Error(_), ConsensusEnd(_))
+          } yield (metadata, nextStep)
         }
-        case Left(CellError(reason)) => {
-          Log.red("unexpected")
-          IO.raiseError(CellError(reason))
+      } yield next
+
+    case ReceiveProposal(roundId, senderId, proposal, ownEdge) =>
+      for {
+        _ <- storeRoundId(roundId)
+        _ <- storeSenderId(senderId)
+        _ <- storeReceivedTransactions(senderId, proposal.txs) // Storing received transactions
+        _ <- storeOwnTransactions(ownEdge.txs)
+        next <- StateT[IO, L1ConsensusMetadata, L1ConsensusF[Ω]] { metadata =>
+          for {
+            _ <- logger.debug("[ReceiveProposal]")
+          } yield (metadata, BroadcastReceivedProposal())
         }
+      } yield next
+
+    case BroadcastReceivedProposal() =>
+      for {
+        responses <- broadcastProposal()
+        next <- StateT[IO, L1ConsensusMetadata, L1ConsensusF[Ω]] { metadata =>
+          for {
+            _ <- logger.debug("[BroadcastReceivedProposal]")
+            nextStep: L1ConsensusF[Ω] = responses.fold(
+              L1Error(_),
+              r => {
+                val existingTxs = metadata.roundId
+                  .flatMap(metadata.txs.get)
+                  .map(_.values.flatten.toSet)
+                  .getOrElse(Set.empty[L1Transaction])
+                val receivedTxs = r.flatMap(_.receiverProposals).toSet
+                ProposalResponse(existingTxs ++ receivedTxs)
+              }
+            )
+          } yield (metadata, nextStep)
+        }
+      } yield next
+  }
+
+  def broadcastProposal(): StateM[Either[Throwable, List[BroadcastProposalResponse]]] = StateT { metadata =>
+    val request = for {
+      roundId <- metadata.roundId
+      facilitators <- metadata.facilitators
+      senderId <- metadata.senderId.orElse(metadata.consensusOwnerId)
+      consensusOwnerId <- metadata.consensusOwnerId
+      selfId = metadata.context.selfId
+      txs <- metadata.txs.get(roundId).map(_.values.flatten.toSet)
+      dst <- metadata.facilitators.map {
+        _.filterNot(_.id == selfId)
+          .filterNot(_.id == consensusOwnerId)
+          .filterNot(_.id == senderId)
       }
-    }
+      request <- Some(
+        logger.debug(
+          s"Broadcasting proposal for round $roundId started by consensusOwner $consensusOwnerId to facilitators $dst"
+        ) >> dst.toList
+          .parTraverse(
+            metadata.context.httpClient.sendConsensusProposal(roundId, consensusOwnerId, txs, facilitators)
+          )
+      )
+    } yield request
 
-    val responsesFromFacilitators = for {
-      facilitators <- metadata.facilitators.map(_.filterNot(_ == metadata.context.peer))
-      _ <- Option {
-        Log.logNode(metadata.context.peer)(
-          s"[${metadata.context.peer.id}][${metadata.roundId}][BroadcastProposal] Broadcasting proposal to facilitators: ${facilitators
-            .map(_.id)}"
+    request
+      .getOrElse(
+        IO.raiseError(
+          CellError(
+            s"Missing data to broadcast proposal: roundId ${metadata.roundId}, senderId ${metadata.senderId}, consensusOwnerId ${metadata.consensusOwnerId}"
+          )
         )
-        ()
-      }
-      txs <- metadata.roundId.flatMap(metadata.txs.get).flatMap(_.get(metadata.context.peer))
-      request <- metadata.roundId.map(BroadcastProposalRequest(_, txs, facilitators))
-      responses <- facilitators.toList.parTraverse { facilitator =>
-        (for {
-          proposalResponse <- simulateHttpConsensusRequest(
-            request,
-            metadata.context.peer,
-            metadata.context
-              .lens(_.peer)
-              .set(facilitator)
-          )
-        } yield proposalResponse).attempt.map(_.leftMap(e => CellError(e.getMessage)))
-      }.some
-    } yield responses
-
-    // TODO: handle Either instead of Option above
-    responsesFromFacilitators.sequence
-      .map(_.map(_.sequence).getOrElse(List.empty.asRight[CellError]))
-      .map((metadata, _))
+      )
+      .attempt
+      .map(result => (metadata, result))
 
   }
 
   def generateRoundId(): StateM[Unit] = StateT { metadata =>
     FUUID
       .randomFUUID[IO]
+      .map(_.toString)
       .map(_.some)
       .map(o => (metadata.lens(_.roundId).set(o), ()))
   }
@@ -185,16 +162,28 @@ object L1ConsensusStep {
       (metadata.lens(_.txs).modify { t =>
         t.updatedWith(metadata.roundId.get) { prev =>
           prev
-            .map(_.updated(metadata.context.peer, txs))
-            .orElse(Map(metadata.context.peer -> txs).some)
+            .map(_.updated(metadata.context.selfId, txs))
+            .orElse(Map(metadata.context.selfId -> txs).some)
         }
       }, ())
     }
   }
 
-  def storeRoundId(roundId: FUUID): StateM[Unit] = StateT { metadata =>
+  def storeSenderId(senderId: String): StateM[Unit] = StateT { metadata =>
     IO {
-      (metadata.lens(_.roundId).set(roundId.some), ())
+      (metadata.lens(_.senderId).set(senderId.some), ())
+    }
+  }
+
+  def storeReceivedTransactions(senderId: String, txs: Set[L1Transaction]): StateM[Unit] = StateT { metadata =>
+    IO {
+      (metadata.lens(_.txs).modify { t =>
+        t.updatedWith(metadata.roundId.get) { prev =>
+          prev
+            .map(_.updated(senderId, txs))
+            .orElse(Map(senderId -> txs).some)
+        }
+      }, ())
     }
   }
 
@@ -204,30 +193,62 @@ object L1ConsensusStep {
     }.map(facilitators => (metadata.lens(_.facilitators).set(facilitators.some), ()))
   }
 
-  case class BroadcastProposalRequest(roundId: FUUID, proposal: Set[L1Transaction], facilitators: Set[Node])
+  def storeRoundId(roundId: RoundId): StateM[Unit] = StateT { metadata =>
+    IO {
+      (metadata.lens(_.roundId).set(roundId.some), ())
+    }
+  }
+
+  case class BroadcastProposalPayload(
+    senderId: String,
+    consensusOwnerId: String,
+    roundId: RoundId,
+    proposal: Set[L1Transaction],
+    facilitators: Set[Peer]
+  )
 
   case class BroadcastProposalResponse(
-    roundId: FUUID,
+    roundId: RoundId,
     senderProposals: Set[L1Transaction],
     receiverProposals: Set[L1Transaction]
   )
 
   case class L1ConsensusContext(
-    peer: Node,
-    peers: Set[Node],
-    txGenerator: RandomTransactionGenerator
+    selfId: String,
+    peers: Set[Peer],
+    txGenerator: RandomTransactionGenerator,
+    httpClient: HttpClient
   )
 
   case class L1ConsensusMetadata(
     context: L1ConsensusContext,
-    txs: Map[FUUID, Map[Node, Set[L1Transaction]]], // TODO: @mwadon - why FUUID?
-    facilitators: Option[Set[Node]],
-    roundId: Option[FUUID]
+    txs: Map[RoundId, Map[String, Set[L1Transaction]]], // TODO: @mwadon - why FUUID?
+    facilitators: Option[Set[Peer]],
+    roundId: Option[RoundId],
+    consensusOwnerId: Option[String],
+    senderId: Option[String]
   )
+
+  object BroadcastProposalResponse {
+    implicit val decoder: Decoder[BroadcastProposalResponse] = deriveDecoder
+    implicit val encoder: Encoder[BroadcastProposalResponse] = deriveEncoder
+  }
+
+  object BroadcastProposalPayload {
+    implicit val decoder: Decoder[BroadcastProposalPayload] = deriveDecoder
+    implicit val encoder: Encoder[BroadcastProposalPayload] = deriveEncoder
+  }
 
   object L1ConsensusMetadata {
 
     def empty(context: L1ConsensusContext): L1ConsensusMetadata =
-      L1ConsensusMetadata(context = context, txs = Map.empty, facilitators = None, roundId = None)
+      L1ConsensusMetadata(
+        context = context,
+        txs = Map.empty,
+        facilitators = None,
+        roundId = None,
+        consensusOwnerId = None,
+        senderId = None
+      )
   }
 }

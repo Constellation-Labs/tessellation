@@ -1,14 +1,10 @@
 package org.tessellation.consensus
 
-import cats.{Applicative, Traverse}
 import cats.syntax.all._
+import cats.{Applicative, Traverse}
 import higherkindness.droste.util.DefaultTraverse
-import L1ConsensusStep.BroadcastProposalResponse
-import io.chrisdavenport.fuuid.FUUID
-import org.tessellation.Node
+import org.tessellation.consensus.L1ConsensusStep.{BroadcastProposalResponse, RoundId}
 import org.tessellation.schema.{Hom, Ω}
-
-import java.util.Calendar
 
 case class L1Transaction(
   a: Int,
@@ -17,10 +13,10 @@ case class L1Transaction(
   parentHash: String = "",
   ordinal: Int
 ) extends Ω {
-  val hash = s"$a$src$dst${Calendar.getInstance.getTimeInMillis}"
+  val hash = s"$a$src$dst$ordinal$parentHash"
 
   override def toString: String =
-    s"Tx$ordinal($src -> $dst)"
+    s"L1Transaction($hash)"
 }
 
 object L1Transaction {}
@@ -41,8 +37,12 @@ case class StartOwnRound[A](edge: L1Edge) extends L1ConsensusF[A]
 /**
   * Input as facilitator
   */
-case class ReceiveProposal[A](roundId: FUUID, proposalNode: Node, receivedEdge: L1Edge, ownEdge: L1Edge)
-    extends L1ConsensusF[A]
+case class ReceiveProposal[A](
+  roundId: RoundId,
+  senderId: String,
+  proposal: L1Edge,
+  ownEdge: L1Edge
+) extends L1ConsensusF[A]
 
 case class BroadcastProposal[A]() extends L1ConsensusF[A]
 
@@ -51,7 +51,7 @@ case class BroadcastReceivedProposal[A]() extends L1ConsensusF[A]
 /**
   * Output - error
   */
-case class L1Error[A](reason: String) extends L1ConsensusF[A]
+case class L1Error[A](reason: Throwable) extends L1ConsensusF[A]
 
 /**
   * Output from coalgebra to algebra to create a block
