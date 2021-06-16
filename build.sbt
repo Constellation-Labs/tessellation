@@ -1,8 +1,10 @@
 name := "tessellation"
 organization := "org.constellation"
-version := "0.0.1-SNAPSHOT"
+version := "0.0.1"
 
 scalaVersion := "2.13.1"
+
+mainClass in assembly := Some("org.tessellation.App")
 
 lazy val drosteDependencies = Seq(
   "io.higherkindness" %% "droste-core",
@@ -31,6 +33,17 @@ lazy val monocleDependencies = Seq(
   "com.github.julien-truffaut" %% "monocle-macro" % "2.0.3"
 )
 
+lazy val http4sDependencies = Seq(
+  "org.http4s" %% "http4s-dsl" % http4sVersion,
+  "org.http4s" %% "http4s-blaze-server" % http4sVersion,
+  "org.http4s" %% "http4s-blaze-client" % http4sVersion,
+  "org.http4s" %% "http4s-circe" % http4sVersion,
+  "io.circe" %% "circe-core" % "0.13.0",
+  "io.circe" %% "circe-generic" % "0.13.0",
+  "io.circe" %% "circe-generic-extras" % "0.13.0",
+  "io.circe" %% "circe-parser" % "0.13.0",
+  "com.beachape" %% "enumeratum-circe" % "1.6.1"
+)
 lazy val dependencies = Seq(
   "org.typelevel" %% "spire" % "0.17.0-M1",
   "org.typelevel" %% "cats-laws" % "2.0.0",
@@ -41,8 +54,13 @@ lazy val dependencies = Seq(
   "org.tpolecat" %% "natchez-jaeger" % "0.0.12",
   ("org.typelevel" %% "cats-effect" % "2.2.0").withSources().withJavadoc(),
   "com.beachape" %% "enumeratum" % "1.6.1",
-  "io.chrisdavenport" %% "fuuid" % "0.5.0"
-) ++ drosteDependencies ++ kryoDependencies ++ fs2Dependencies ++ doobieDependencies ++ monocleDependencies
+  "io.chrisdavenport" %% "fuuid" % "0.5.0",
+  "com.typesafe.scala-logging" %% "scala-logging" % "3.9.2",
+  "ch.qos.logback" % "logback-classic" % "1.2.3",
+  "io.chrisdavenport" %% "log4cats-slf4j" % "1.1.1",
+  "com.github.pureconfig" %% "pureconfig" % "0.16.0"
+) ++ drosteDependencies ++ kryoDependencies ++ fs2Dependencies ++ doobieDependencies ++ monocleDependencies ++ http4sDependencies
+val http4sVersion = "0.21.22"
 
 lazy val testDependencies = Seq(
   "org.scalacheck" %% "scalacheck" % "1.14.0",

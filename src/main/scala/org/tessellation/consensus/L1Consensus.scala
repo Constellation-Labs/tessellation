@@ -3,6 +3,7 @@ package org.tessellation.consensus
 import cats.effect.IO
 import cats.syntax.all._
 import higherkindness.droste.{AlgebraM, CoalgebraM, scheme}
+import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import org.tessellation.consensus.L1ConsensusStep.L1ConsensusMetadata
 import org.tessellation.schema.{CellError, Done, More, StackF, Ω}
 
@@ -10,25 +11,41 @@ case class L1CoalgebraStruct(metadata: L1ConsensusMetadata, cmd: Ω) extends Ω
 
 object L1Consensus {
 
+  val logger = Slf4jLogger.getLogger[IO]
+
   val coalgebra: CoalgebraM[IO, StackF, L1CoalgebraStruct] = CoalgebraM {
     case L1CoalgebraStruct(metadata, cmd) =>
       cmd match {
         case block @ L1Block(_) =>
-          IO {
-            Done(block.asRight[CellError])
-          }
+          logger.debug(s"L1Block: ${block}").flatMap(_ => IO(Done(block.asRight[CellError])))
+
         case end @ ConsensusEnd(_) =>
-          IO {
-            Done(end.asRight[CellError])
-          }
+          logger
+            .debug(s"ConsensusEnd: ${end}")
+            .flatMap(
+              _ =>
+                IO {
+                  Done(end.asRight[CellError])
+                }
+            )
         case response @ ProposalResponse(_) =>
-          IO {
-            Done(response.asRight[CellError])
-          }
+          logger
+            .debug(s"ProposalResponse: ${response}")
+            .flatMap(
+              _ =>
+                IO {
+                  Done(response.asRight[CellError])
+                }
+            )
         case _ @L1Error(reason) =>
-          IO {
-            Done(CellError(reason).asLeft[Ω])
-          }
+          logger
+            .debug(s"L1Error: ${reason}")
+            .flatMap(
+              _ =>
+                IO {
+                  Done(CellError(reason.getMessage).asLeft[Ω])
+                }
+            )
         case _ =>
           scheme.hyloM(L1ConsensusStep.algebra, L1ConsensusStep.coalgebra).apply(cmd).run(metadata).map {
             case (m, cmd) =>

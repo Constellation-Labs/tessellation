@@ -2,15 +2,17 @@ package org.tessellation.consensus
 
 import cats.effect.IO
 import cats.effect.concurrent.Ref
+import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import cats.implicits._
 import fs2._
-import org.tessellation.Log
 
 import scala.collection.immutable.TreeSet
 
 class L1EdgeFactory(node: String)(implicit O: Ordering[L1Transaction]) {
   type Address = String
   type TransactionHash = String
+
+  val logger = Slf4jLogger.getLogger[IO]
 
   private[consensus] val lastAccepted: Ref[IO, Map[Address, TransactionHash]] = Ref.unsafe(Map.empty)
   private[consensus] val waitingTransactions: Ref[IO, Map[Address, TreeSet[L1Transaction]]] = Ref.unsafe(Map.empty)
@@ -21,9 +23,10 @@ class L1EdgeFactory(node: String)(implicit O: Ordering[L1Transaction]) {
     def optimizeWithReadyPool(incomingTransaction: L1Transaction): IO[TreeSet[L1Transaction]] =
       isParentAccepted(incomingTransaction)
         .ifM(
-          IO(Log.red(s"[$node][Accepted] ${incomingTransaction}")) >> dequeue1ReadyTransactions()
+          logger.debug(s"[$node][Accepted] ${incomingTransaction}") >> dequeue1ReadyTransactions()
             .map(_ + incomingTransaction),
-          IO(Log.red(s"[$node][NotAccepted (put to WaitingPool)] ${incomingTransaction}")) >> wait(incomingTransaction) >> dequeue1ReadyTransactions()
+          logger
+            .debug(s"[$node][NotAccepted (put to WaitingPool)] ${incomingTransaction}") >> wait(incomingTransaction) >> dequeue1ReadyTransactions()
         )
 
     incomingTransactions
@@ -31,7 +34,7 @@ class L1EdgeFactory(node: String)(implicit O: Ordering[L1Transaction]) {
       .filter(_.nonEmpty)
       .map(_.toList.toSet)
       .map(L1Edge)
-      .evalTap(edge => IO(Log.red(s"[$node][Created Edge] ${edge}")))
+      .evalTap(edge => logger.debug(s"[$node][Created Edge] ${edge}"))
   }
 
   private def wait(transaction: L1Transaction): IO[Unit] =
@@ -83,21 +86,6 @@ class L1EdgeFactory(node: String)(implicit O: Ordering[L1Transaction]) {
       _ <- unlockedTx.fold(IO.unit) { tx =>
         readyTransactions.modify { readyPool =>
           (readyPool.updatedWith(tx.src)(_.map(_ + tx).orElse(Some(TreeSet(tx)))), ())
-        }
-      }
-
-      _ <- IO {
-        Log.white(s"[$node][ConsensusEnd] $acceptedTransaction")
-      }
-
-      _ <- readyTransactions.get.flatTap { t =>
-        IO {
-          Log.white(s"  Ready pool: $t")
-        }
-      }
-      _ <- waitingTransactions.get.flatTap { t =>
-        IO {
-          Log.white(s"  Waiting pool: $t")
         }
       }
 
