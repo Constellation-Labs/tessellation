@@ -8,6 +8,9 @@ import org.tessellation.config.Config
 import org.tessellation.consensus.transaction.RandomTransactionGenerator
 import org.tessellation.http.HttpServer
 import org.tessellation.http.HttpClient
+import org.tessellation.implicits._
+import cats.syntax._
+import cats.implicits._
 
 import scala.concurrent.duration._
 import scala.util.Random
@@ -49,7 +52,11 @@ object App extends IOApp {
               .evalTap(tx => logger.debug(s"$tx"))
               .metered(generateTxEvery)
               .take(maxTxs)
-              .through(node.l1ConsensusPipeline(httpClient))
+              .through { txs =>
+                val l1 = node.pipelineL1(httpClient)
+                val l0 = node.pipelineL0
+                l0.compose(l1)(txs)
+              }
           )
       } else {
         httpServer.run()
