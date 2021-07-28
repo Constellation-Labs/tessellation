@@ -42,8 +42,19 @@ lazy val http4sDependencies = Seq(
   "io.circe" %% "circe-generic" % "0.13.0",
   "io.circe" %% "circe-generic-extras" % "0.13.0",
   "io.circe" %% "circe-parser" % "0.13.0",
-  "com.beachape" %% "enumeratum-circe" % "1.6.1"
+  "com.beachape" %% "enumeratum-circe" % "1.6.1",
+  "org.http4s" %% "http4s-prometheus-metrics" % http4sVersion
 )
+
+lazy val prometheusVersion = "0.9.0"
+lazy val prometheusDependencies = Seq(
+  "io.micrometer" % "micrometer-registry-prometheus" % "1.5.5",
+  "io.prometheus" % "simpleclient" % prometheusVersion,
+  "io.prometheus" % "simpleclient_common" % prometheusVersion,
+  "io.prometheus" % "simpleclient_caffeine" % prometheusVersion,
+  "io.prometheus" % "simpleclient_logback" % prometheusVersion
+)
+
 lazy val dependencies = Seq(
   "org.typelevel" %% "spire" % "0.17.0-M1",
   "org.typelevel" %% "cats-laws" % "2.0.0",
@@ -58,8 +69,11 @@ lazy val dependencies = Seq(
   "com.typesafe.scala-logging" %% "scala-logging" % "3.9.2",
   "ch.qos.logback" % "logback-classic" % "1.2.3",
   "io.chrisdavenport" %% "log4cats-slf4j" % "1.1.1",
-  "com.github.pureconfig" %% "pureconfig" % "0.16.0"
-) ++ drosteDependencies ++ kryoDependencies ++ fs2Dependencies ++ doobieDependencies ++ monocleDependencies ++ http4sDependencies
+  "com.github.pureconfig" %% "pureconfig" % "0.16.0",
+  ("com.github.blemale" %% "scaffeine" % "4.0.1").withSources().withJavadoc(),
+  "joda-time" % "joda-time" % "1.6",
+  "com.google.guava" % "guava" % "30.1.1-jre"
+) ++ drosteDependencies ++ kryoDependencies ++ fs2Dependencies ++ doobieDependencies ++ monocleDependencies ++ http4sDependencies ++ prometheusDependencies
 val http4sVersion = "0.21.22"
 
 lazy val testDependencies = Seq(

@@ -11,6 +11,11 @@ import org.tessellation.http.HttpClient
 import org.tessellation.implicits._
 import cats.syntax._
 import cats.implicits._
+import org.tessellation.metrics.Metric._
+import org.http4s.metrics.prometheus.Prometheus
+import org.tessellation.consensus.L1Pipeline
+import org.tessellation.metrics.{Metric, Metrics}
+import org.tessellation.snapshot.L0Pipeline
 
 import scala.concurrent.duration._
 import scala.util.Random
@@ -25,8 +30,13 @@ object App extends IOApp {
       config <- Stream.eval(Config.load())
       _ <- Stream.eval(logger.debug(s"Loaded config $config"))
 
+      registry <- Stream.resource(Prometheus.collectorRegistry[IO])
+      unbounded = executionContext
+      metrics = new Metrics(registry, unboundedExecutionContext = unbounded, nodeID = config.ip)
+
+      _ <- Stream.eval(metrics.incrementMetricAsync[IO](Metric.LoadConfig.success))
       randomTransactionGenerator = RandomTransactionGenerator(config.ip, Some(config.generatorSrc))
-      node = Node(config.ip, randomTransactionGenerator, ip = config.ip)
+      node = Node(config.ip, metrics, randomTransactionGenerator, ip = config.ip)
 
       blazeClient <- Stream.resource {
         BlazeClientBuilder[IO](scala.concurrent.ExecutionContext.global) // TODO: Use unbounded
@@ -36,9 +46,12 @@ object App extends IOApp {
           .resource
       }
       httpClient = HttpClient(node, blazeClient)
-      httpServer = HttpServer(node, httpClient)
+      httpServer = HttpServer(node, httpClient, metrics)
 
       _ <- Stream.eval(logger.debug(s"Created http server and client"))
+
+      l1Pipeline = new L1Pipeline(node, httpClient, metrics).pipeline
+      l0Pipeline = new L0Pipeline(metrics).pipeline
 
       _ <- if (config.startOwnConsensusRounds) {
         httpServer
@@ -53,9 +66,7 @@ object App extends IOApp {
               .metered(generateTxEvery)
               .take(maxTxs)
               .through { txs =>
-                val l1 = node.pipelineL1(httpClient)
-                val l0 = node.pipelineL0
-                l0.compose(l1)(txs)
+                l0Pipeline.compose(l1Pipeline)(txs)
               }
           )
       } else {
