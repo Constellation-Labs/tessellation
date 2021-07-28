@@ -2,8 +2,8 @@ package org.tessellation.consensus
 
 import cats.effect.IO
 import io.chrisdavenport.fuuid.FUUID
-import org.tessellation.Node
 import org.tessellation.consensus.L1ConsensusStep.{L1ConsensusMetadata, RoundId}
+import org.tessellation.node.Node
 import org.tessellation.schema.{Cell, CellError, StackF, Ω}
 
 class L1Cell(edge: L1Edge)

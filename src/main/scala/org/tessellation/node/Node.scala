@@ -1,39 +1,18 @@
-package org.tessellation
+package org.tessellation.node
 
-import cats.effect.concurrent.{Ref, Semaphore}
-import cats.effect.{ContextShift, IO, Timer}
-import cats.implicits._
-import fs2.{Pipe, Pull, Stream}
-import io.chrisdavenport.fuuid.FUUID
+import cats.effect.concurrent.Ref
+import cats.effect.{IO, Timer}
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
-import io.circe.generic.auto._
-import org.http4s.client.Client
-import org.http4s.client.blaze.BlazeClientBuilder
-import org.tessellation.StreamBlocksDemo.HeightsMap
-import org.tessellation.config.Config
 import org.tessellation.consensus.L1ConsensusStep.{L1ConsensusContext, L1ConsensusMetadata, RoundId}
 import org.tessellation.consensus.transaction.RandomTransactionGenerator
+import org.tessellation.consensus._
 import org.tessellation.metrics.Metric._
-import org.tessellation.consensus.{
-  L1Block,
-  L1Cell,
-  L1CellCache,
-  L1CoalgebraStruct,
-  L1Edge,
-  L1EdgeFactory,
-  L1ParticipateInConsensusCell,
-  L1StartConsensusCell,
-  L1Transaction
-}
+import cats.implicits._
 import org.tessellation.http.HttpClient
 import org.tessellation.metrics.{Metric, Metrics}
 import org.tessellation.schema.{Cell, CellError, StackF, Ω}
-import org.tessellation.snapshot.{L0Cell, L0Edge, Snapshot}
-
+import scala.concurrent.duration._
 import scala.concurrent.ExecutionContext.global
-import scala.concurrent.duration.DurationInt
-
-case class Peer(host: String, port: Int, id: String = "")
 
 case class Node(
   id: String,
@@ -44,11 +23,9 @@ case class Node(
 ) {
   val edgeFactory: L1EdgeFactory = L1EdgeFactory(id)
   val cellCache: L1CellCache = L1CellCache(txGenerator)
-  implicit val contextShift = IO.contextShift(scala.concurrent.ExecutionContext.global)
-  implicit val timer: Timer[IO] = IO.timer(global)
 
-  val logger = Slf4jLogger.getLogger[IO]
-
+  private implicit val contextShift = IO.contextShift(scala.concurrent.ExecutionContext.global)
+  private val logger = Slf4jLogger.getLogger[IO]
   private val peers = Ref.unsafe[IO, Map[String, Peer]](Map.empty[String, Peer])
 
   def enoughPeersForConsensus: IO[Boolean] = peers.get.map(_.size >= 2)
@@ -72,7 +49,7 @@ case class Node(
     for {
       _ <- metrics.incrementMetricAsync[IO](Metric.L1ParticipateInConsensus)
       _ <- logger.debug(
-        s"[Participate] Received proposal $proposal from $facilitatorId for round $roundId owned by $consensusOwnerId."
+        s"[L1][Participate] Received proposal $proposal from $facilitatorId for round $roundId owned by $consensusOwnerId."
       )
       peers <- peers.get.map(_.values.toSet)
 
@@ -118,7 +95,6 @@ case class Node(
       )
       metadata = L1ConsensusMetadata.empty(context).copy(consensusOwnerId = id.some)
       l1Cell = L1StartConsensusCell.fromCell[IO, StackF](cell)(metadata)
-      //      _ <- logger.debug(s"Starting L1 Consensus with peers: ${context.peers.map(_.host)}")
       _ <- IO.sleep(1.second)(IO.timer(scala.concurrent.ExecutionContext.global))
       ohm <- l1Cell.run()
       _ <- metrics.incrementMetricAsync[IO](Metric.L1StartConsensus.success)

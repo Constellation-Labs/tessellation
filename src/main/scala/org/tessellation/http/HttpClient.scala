@@ -10,7 +10,7 @@ import org.http4s.dsl.io._
 import org.http4s.{Method, Request, Uri}
 import org.tessellation.consensus.L1ConsensusStep.{BroadcastProposalPayload, BroadcastProposalResponse, RoundId}
 import org.tessellation.consensus.L1Transaction
-import org.tessellation.{Node, Peer}
+import org.tessellation.node.{Node, Peer}
 
 import scala.concurrent.ExecutionContext.global
 
