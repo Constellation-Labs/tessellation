@@ -1,6 +1,7 @@
 package org.tessellation
 
 import cats.Show
+import org.tessellation.node.Node
 
 object Log {
   private def log[A](color: String)(a: A): Unit =
