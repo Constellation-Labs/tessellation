@@ -64,7 +64,6 @@ object App extends IOApp {
               .evalMap(_ => node.txGenerator.generateRandomTransaction())
               .evalTap(tx => logger.debug(s"$tx"))
               .metered(generateTxEvery)
-              .take(maxTxs)
               .through { txs =>
                 l0Pipeline.compose(l1Pipeline)(txs)
               }
