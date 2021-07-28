@@ -196,7 +196,7 @@ object StreamBlocksDemo extends IOApp {
   type HeightsMap = Map[Height, Set[L1Block]]
 
   override def run(args: List[String]): IO[ExitCode] = {
-    val pipeline = L0Pipeline.pipeline(edges(blocks, tips, tipInterval = 2, tipDelay = 5))
+    val pipeline = L0Pipeline.runPipeline(edges(blocks, tips, tipInterval = 2, tipDelay = 5))
 
     val l0: Stream[IO, Unit] = pipeline
       .mapFilter(_.toOption) // pipeline returns Either[CellError, Ω] but we want to broadcast correct snapshots only

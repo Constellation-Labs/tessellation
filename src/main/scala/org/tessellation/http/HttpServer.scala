@@ -4,6 +4,7 @@ import cats.effect._
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import io.circe.generic.auto._
 import io.circe.syntax._
+import io.prometheus.client.exporter.common.TextFormat
 import org.http4s._
 import org.http4s.circe._
 import org.http4s.client.Client
@@ -14,11 +15,13 @@ import org.http4s.server.blaze.BlazeServerBuilder
 import org.tessellation.{Node, Peer}
 import org.tessellation.consensus.L1ConsensusStep.{BroadcastProposalPayload, BroadcastProposalResponse}
 import org.tessellation.consensus.{L1Cell, L1Edge, ProposalResponse}
+import org.tessellation.metrics.Metrics
 import org.tessellation.schema.CellError
 
+import java.io.{StringWriter, Writer}
 import scala.concurrent.ExecutionContext.Implicits.global
 
-class HttpServer(node: Node, httpClient: HttpClient) {
+class HttpServer(node: Node, httpClient: HttpClient, metrics: Metrics) {
   implicit val cs: ContextShift[IO] = IO.contextShift(global)
   implicit val timer: Timer[IO] = IO.timer(global)
   private val logger = Slf4jLogger.getLogger[IO]
@@ -30,7 +33,6 @@ class HttpServer(node: Node, httpClient: HttpClient) {
           peers <- node.getPeers
           res <- Ok(peers.asJson)
         } yield res
-
       case req @ POST -> Root / "join" =>
         implicit val decoder = jsonOf[IO, Peer]
         for {
@@ -69,18 +71,30 @@ class HttpServer(node: Node, httpClient: HttpClient) {
       case _ => NotFound()
     }
 
-  private val httpApp = Router("/" -> service).orNotFound
+  private val metricsService = HttpRoutes.of[IO] {
+    case GET -> Root / "micrometer-metrics" =>
+      IO.delay {
+        val writer: Writer = new StringWriter()
+        TextFormat.write004(writer, metrics.collectorRegistry.metricFamilySamples())
+        writer.toString
+      }.flatMap(Ok(_))
+  }
 
-  private val serverBuilder = BlazeServerBuilder[IO](global)
+  private val publicAPI = BlazeServerBuilder[IO](global)
     .bindHttp(9001, "0.0.0.0")
-    .withHttpApp(httpApp)
+    .withHttpApp(Router("/" -> service).orNotFound)
 
-  def run() = serverBuilder.serve
+  private val metricsAPI = BlazeServerBuilder[IO](global)
+    .bindHttp(9000, "0.0.0.0")
+    .withHttpApp(Router("/" -> metricsService).orNotFound)
+
+  def run() = publicAPI.serve.merge(metricsAPI.serve)
 }
 
 object HttpServer {
 
   implicit val contextShift = IO.contextShift(scala.concurrent.ExecutionContext.global)
 
-  def apply(node: Node, httpClient: HttpClient): HttpServer = new HttpServer(node, httpClient)
+  def apply(node: Node, httpClient: HttpClient, metrics: Metrics): HttpServer =
+    new HttpServer(node, httpClient, metrics)
 }
