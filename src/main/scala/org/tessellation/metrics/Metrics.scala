@@ -1,6 +1,5 @@
 package org.tessellation.metrics
 
-import java.util.concurrent.atomic.AtomicLong
 import cats.effect.{IO, Sync}
 import cats.syntax.all._
 import com.google.common.util.concurrent.AtomicDouble
@@ -13,10 +12,10 @@ import io.micrometer.prometheus.{PrometheusConfig, PrometheusMeterRegistry}
 import io.prometheus.client.CollectorRegistry
 import io.prometheus.client.cache.caffeine.CacheMetricsCollector
 import org.joda.time.DateTime
-import org.tessellation.Node
-import org.tessellation.metrics.Metric.Metric
-import org.tessellation.metrics.Metric._
-import scala.collection.JavaConverters._
+import org.tessellation.metrics.Metric.{Metric, _}
+
+import java.util.concurrent.atomic.AtomicLong
+import scala.jdk.CollectionConverters._
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration._
@@ -85,8 +84,10 @@ class Metrics(
 
   def startTimer: Timer.Sample = Timer.start()
 
-  def stopTimer(key: Metric, timer: Timer.Sample): Unit =
+  def stopTimer(key: Metric, timer: Timer.Sample): Unit = {
     timer.stop(Timer.builder(key).register(registry))
+    ()
+  }
 
   def updateMetricAsync[F[_]: Sync](key: Metric, value: Double): F[Unit] =
     updateMetricAsync(key, value, Seq.empty)
@@ -125,6 +126,7 @@ class Metrics(
   def incrementMetric(key: Metric, tags: TagSeq): Unit = {
     registry.counter(s"dag_$key", tags.toMicrometer(key)).increment()
     longMetrics.getOrElseUpdate((key, tags), new AtomicLong(0)).incrementAndGet()
+    ()
   }
 
   /**

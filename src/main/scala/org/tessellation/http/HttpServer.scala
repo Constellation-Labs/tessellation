@@ -7,15 +7,14 @@ import io.circe.syntax._
 import io.prometheus.client.exporter.common.TextFormat
 import org.http4s._
 import org.http4s.circe._
-import org.http4s.client.Client
 import org.http4s.dsl.io._
 import org.http4s.implicits._
 import org.http4s.server.Router
 import org.http4s.server.blaze.BlazeServerBuilder
-import org.tessellation.{Node, Peer}
 import org.tessellation.consensus.L1ConsensusStep.{BroadcastProposalPayload, BroadcastProposalResponse}
-import org.tessellation.consensus.{L1Cell, L1Edge, ProposalResponse}
+import org.tessellation.consensus.{L1Edge, ProposalResponse}
 import org.tessellation.metrics.Metrics
+import org.tessellation.node.{Node, Peer}
 import org.tessellation.schema.CellError
 
 import java.io.{StringWriter, Writer}
@@ -61,7 +60,8 @@ class HttpServer(node: Node, httpClient: HttpClient, metrics: Metrics) {
           res <- consensus match {
             case Right(ProposalResponse(txs)) =>
               Ok(BroadcastProposalResponse(request.roundId, request.proposal, txs).asJson)
-            case Left(CellError(reason)) => InternalServerError()
+            case Left(CellError(reason)) => InternalServerError(reason)
+            case _                       => InternalServerError()
           }
         } yield res
       // TODO: Implement after turning off random tx generator

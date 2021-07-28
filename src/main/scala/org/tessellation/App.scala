@@ -15,6 +15,7 @@ import org.tessellation.metrics.Metric._
 import org.http4s.metrics.prometheus.Prometheus
 import org.tessellation.consensus.L1Pipeline
 import org.tessellation.metrics.{Metric, Metrics}
+import org.tessellation.node.Node
 import org.tessellation.snapshot.L0Pipeline
 
 import scala.concurrent.duration._

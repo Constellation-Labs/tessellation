@@ -9,7 +9,7 @@
 //import org.scalatest.BeforeAndAfter
 //import org.scalatest.freespec.AnyFreeSpec
 //import org.scalatest.matchers.should.Matchers
-//import org.tessellation.Node
+//import org.tessellation.node.Node
 //import org.tessellation.consensus.transaction.RandomTransactionGenerator
 //
 //import scala.collection.immutable.Set

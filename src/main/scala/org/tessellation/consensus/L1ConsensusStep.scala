@@ -15,11 +15,12 @@ import monocle.macros.syntax.lens._
 import org.http4s.client.Client
 import org.tessellation.consensus.transaction.RandomTransactionGenerator
 import org.tessellation.schema.{CellError, Ω}
-import org.tessellation.{Log, Node, Peer}
+import org.tessellation.Log
 import org.http4s.dsl.io._
 import org.http4s.client.dsl.io._
 import org.tessellation.consensus.L1ConsensusStep.StateM
 import org.tessellation.http.HttpClient
+import org.tessellation.node.Peer
 
 import scala.util.Random
 
