@@ -83,7 +83,7 @@ class L0PipelineTest extends AnyFreeSpec with GivenWhenThen with Matchers {
     val edges = L0Pipeline.edges(blocks, tips, tipInterval, tipDelay)
 
     When("executing L0 pipeline")
-    val result = L0Pipeline.pipeline(edges)
+    val result = L0Pipeline.runPipeline(edges)
 
     Then(s"it returns snapshots using given edges")
     result.compile.toList.unsafeRunSync().map(_.right.get) shouldBe
