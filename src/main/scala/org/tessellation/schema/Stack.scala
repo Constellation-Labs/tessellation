@@ -4,7 +4,7 @@ import cats.syntax.all._
 import cats.{Applicative, Traverse}
 import higherkindness.droste.util.DefaultTraverse
 
-case class CellError(reason: String) extends Throwable(reason)
+case class CellError(reason: String) extends Throwable(reason) with Ω
 
 trait StackF[A]
 

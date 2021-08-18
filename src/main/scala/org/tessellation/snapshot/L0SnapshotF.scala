@@ -6,7 +6,7 @@ import higherkindness.droste.util.DefaultTraverse
 import org.tessellation.consensus.L1Block
 import org.tessellation.schema.{Hom, Ω}
 
-case class L0Edge(blocks: Set[L1Block]) extends Ω
+case class L0Edge(blocks: Set[Ω]) extends Ω // TODO: It should allow L1Block, ETHBlock etc
 
 case class Snapshot(blocks: Set[L1Block]) extends Ω
 

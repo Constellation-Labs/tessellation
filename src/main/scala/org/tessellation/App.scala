@@ -1,30 +1,26 @@
 package org.tessellation
 
 import cats.effect.{ExitCode, IO, IOApp}
-import fs2.Stream
+import cats.implicits._
+import fs2.{Pipe, Stream}
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import org.http4s.client.blaze.BlazeClientBuilder
+import org.http4s.metrics.prometheus.Prometheus
 import org.tessellation.config.Config
 import org.tessellation.consensus.transaction.RandomTransactionGenerator
-import org.tessellation.http.HttpServer
-import org.tessellation.http.HttpClient
-import org.tessellation.implicits._
-import cats.syntax._
-import cats.implicits._
+import org.tessellation.consensus.{DAGStateChannel, L1Block}
+import org.tessellation.eth.ETHStateChannel
+import org.tessellation.http.{HttpClient, HttpServer}
 import org.tessellation.metrics.Metric._
-import org.http4s.metrics.prometheus.Prometheus
-import org.tessellation.consensus.L1Pipeline
 import org.tessellation.metrics.{Metric, Metrics}
 import org.tessellation.node.Node
-import org.tessellation.snapshot.L0Pipeline
+import org.tessellation.snapshot.{L0Pipeline, Snapshot}
+import org.tessellation.implicits.PipeArrow._
 
 import scala.concurrent.duration._
-import scala.util.Random
 
 object App extends IOApp {
   override def run(args: List[String]): IO[ExitCode] = {
-    val generateTxEvery = 2.seconds
-    val maxTxs = 1000
     val logger = Slf4jLogger.getLogger[IO]
 
     val app = for {
@@ -51,27 +47,18 @@ object App extends IOApp {
 
       _ <- Stream.eval(logger.debug(s"Created http server and client"))
 
-      l1Pipeline = new L1Pipeline(node, httpClient, metrics).pipeline
-      l0Pipeline = new L0Pipeline(metrics).pipeline
+      stateChannels = {
+        val DAG = new DAGStateChannel(node, httpClient, metrics)
+        val ETH = new ETHStateChannel()
+        val L0: Pipe[IO, L1Block, Snapshot] = new L0Pipeline(metrics).pipeline
 
-      _ <- if (config.startOwnConsensusRounds) {
-        httpServer
-          .run()
-          .merge(
-            Stream
-              .repeatEval(node.enoughPeersForConsensus)
-              .map(hasFacilitatorsForConsensus => hasFacilitatorsForConsensus)
-              .dropWhile(!_)
-              .evalMap(_ => node.txGenerator.generateRandomTransaction())
-              .evalTap(tx => logger.debug(s"$tx"))
-              .metered(generateTxEvery)
-              .through { txs =>
-                l0Pipeline.compose(l1Pipeline)(txs)
-              }
-          )
-      } else {
-        httpServer.run()
+        val dag = (DAG.L1 >>> L0)(DAG.l1Input)
+        val eth = (ETH.L1 >>> L0)(ETH.l1Input)
+
+        dag.merge(eth)
       }
+
+      _ <- httpServer.run().merge(stateChannels)
     } yield ()
 
     app.handleErrorWith(e => Stream.eval(logger.error(e)("ERROR!"))).compile.drain.as(ExitCode.Success)

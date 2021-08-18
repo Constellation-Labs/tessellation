@@ -40,7 +40,7 @@ class L0Pipeline(metrics: Metrics) {
                     )
                     .unsafeRunSync()
 
-                  Pull.output1(L0Edge(blocks)) >> go(
+                  Pull.output1(L0Edge(blocks.asInstanceOf[Set[Ω]])) >> go(
                     tail,
                     (heights.removedAll(range), tip, lastEmitted + tipInterval)
                   )
@@ -85,7 +85,10 @@ object L0Pipeline {
                 val range = ((lastEmitted + 1) to (lastEmitted + tipInterval))
                 val blocks = range.flatMap(heights.get).flatten.toSet
 
-                Pull.output1(L0Edge(blocks)) >> go(tail, (heights.removedAll(range), tip, lastEmitted + tipInterval))
+                Pull.output1(L0Edge(blocks.asInstanceOf[Set[Ω]])) >> go(
+                  tail,
+                  (heights.removedAll(range), tip, lastEmitted + tipInterval)
+                )
               case Some((Left(tip), tail)) => go(tail, (heights, tip, lastEmitted))
               case Some((Right(block), tail)) =>
                 go(

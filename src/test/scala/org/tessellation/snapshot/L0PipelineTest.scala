@@ -87,6 +87,6 @@ class L0PipelineTest extends AnyFreeSpec with GivenWhenThen with Matchers {
 
     Then(s"it returns snapshots using given edges")
     result.compile.toList.unsafeRunSync().map(_.right.get) shouldBe
-      edges.compile.toList.unsafeRunSync().map(edge => Snapshot(edge.blocks))
+      edges.compile.toList.unsafeRunSync().map(edge => Snapshot(edge.blocks.asInstanceOf[Set[L1Block]]))
   }
 }
