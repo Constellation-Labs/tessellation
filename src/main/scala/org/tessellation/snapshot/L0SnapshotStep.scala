@@ -3,6 +3,7 @@ package org.tessellation.snapshot
 import cats.effect.IO
 import cats.syntax.all._
 import higherkindness.droste.{AlgebraM, CoalgebraM}
+import org.tessellation.consensus.L1Block
 import org.tessellation.schema.{CellError, Ω}
 
 object L0SnapshotStep {
@@ -29,11 +30,16 @@ object L0SnapshotStep {
   19. remove offline peers
    */
 
+  /**
+    * Coalgebra should get input from any state channel because all the data types inherit from Ω
+    * Ω types should be then pattern matched to decide what to do with specific types of block.
+    * We can eventually create intermediate types like ΩBlock to make L0 more type-strict but we pattern match anyway.
+    */
   val coalgebra: CoalgebraM[IO, L0SnapshotF, Ω] = CoalgebraM {
     case CreateSnapshot(edge) =>
       for {
         _ <- IO.pure(1)
-      } yield SnapshotEnd(edge.blocks)
+      } yield SnapshotEnd(edge.blocks.asInstanceOf[Set[L1Block]]) // TODO: Get rid of casting
   }
 
   val algebra: AlgebraM[IO, L0SnapshotF, Either[CellError, Ω]] = AlgebraM {

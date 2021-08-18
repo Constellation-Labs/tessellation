@@ -11,7 +11,7 @@ case class L1Transaction(
   src: String,
   dst: String,
   parentHash: String = "",
-  ordinal: Int
+  ordinal: Int = 0
 ) extends Ω {
   val hash = s"$a$src$dst$ordinal$parentHash"
 
@@ -24,7 +24,9 @@ object L1Transaction {}
 case class L1Edge(txs: Set[L1Transaction]) extends Ω
 
 case class L1Block(txs: Set[L1Transaction]) extends Ω {
-  def height: Int = txs.maxBy(_.a).a // TODO: height should be based on block parents (parents + 1)
+
+  def height: Int =
+    txs.maxByOption(_.a).map(_.a).getOrElse(0) // TODO: height should be based on block parents (parents + 1)
 }
 
 sealed trait L1ConsensusF[A] extends Hom[Ω, A]

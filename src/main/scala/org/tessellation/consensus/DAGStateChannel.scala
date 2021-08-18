@@ -1,6 +1,6 @@
 package org.tessellation.consensus
 
-import cats.effect.{ContextShift, IO}
+import cats.effect.{ContextShift, IO, Timer}
 import cats.effect.concurrent.Semaphore
 import fs2.{Pipe, Stream}
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
@@ -10,10 +10,23 @@ import org.tessellation.metrics.{Metric, Metrics}
 import org.tessellation.node.Node
 import org.tessellation.schema.CellError
 
-class L1Pipeline(node: Node, httpClient: HttpClient, metrics: Metrics) {
-  private implicit val contextShift: ContextShift[IO] = IO.contextShift(scala.concurrent.ExecutionContext.global)
+import scala.concurrent.duration.DurationInt
 
-  val pipeline: Pipe[IO, L1Transaction, L1Block] = (in: Stream[IO, L1Transaction]) =>
+class DAGStateChannel(node: Node, httpClient: HttpClient, metrics: Metrics) {
+  implicit val contextShift: ContextShift[IO] = IO.contextShift(scala.concurrent.ExecutionContext.global)
+  implicit val timer: Timer[IO] = IO.timer(scala.concurrent.ExecutionContext.global)
+  val generateTxEvery = 2.seconds
+  val maxTxs = 1000
+
+  val l1Input: Stream[IO, L1Transaction] = Stream
+    .repeatEval(node.enoughPeersForConsensus)
+    .map(hasFacilitatorsForConsensus => hasFacilitatorsForConsensus)
+    .dropWhile(!_)
+    .evalMap(_ => node.txGenerator.generateRandomTransaction())
+    .evalTap(tx => logger.debug(s"$tx"))
+    .metered(generateTxEvery)
+
+  val L1: Pipe[IO, L1Transaction, L1Block] = (in: Stream[IO, L1Transaction]) =>
     for {
       _ <- Stream.eval(logger.debug("Start L1 Consensus Pipeline"))
       _ <- Stream.eval(metrics.incrementMetricAsync[IO](Metric.L1StartPipeline))
