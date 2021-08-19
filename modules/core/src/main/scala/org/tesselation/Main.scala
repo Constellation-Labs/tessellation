@@ -6,6 +6,7 @@ import cats.effect.{IO, IOApp}
 import org.tesselation.config.Config
 import org.tesselation.modules.{HttpApi, Services}
 import org.tesselation.resources.MkHttpServer
+import org.tesselation.resources.MkHttpServer.ServerName
 
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -22,7 +23,7 @@ object Main extends IOApp.Simple {
           val services = Services.make[IO]()
           val api = HttpApi.make[IO](services)
 
-          MkHttpServer[IO].newEmber(cfg.httpServerConfig, api.httpApp).useForever
+          MkHttpServer[IO].newEmber(ServerName("public"), cfg.publicHttpPort, api.httpApp).useForever
         }
     }
 

@@ -26,4 +26,4 @@ jobs:
         uses: coursier/cache-action@v4.1
 
       - name: "Run with ${{ matrix.java }} 🚀"
-        run: sbt 'scalafixAll --check;scalafmtCheckAll;test;it:test'
+        run: sbt 'scalafixAll --check --rules OrganizeImports;scalafmtCheckAll;test;it:test'
