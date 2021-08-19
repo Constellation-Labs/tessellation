@@ -7,6 +7,7 @@ import com.comcast.ip4s.{Host, Port}
 object types {
 
   case class AppConfig(
+    environment: AppEnvironment,
     httpClientConfig: HttpClientConfig,
     httpServerConfig: HttpServerConfig
   )

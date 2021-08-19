@@ -11,6 +11,7 @@ ThisBuild / scalafixDependencies += Libraries.organizeImports
 resolvers += Resolver.sonatypeRepo("snapshots")
 
 val scalafixCommonSettings = inConfig(IntegrationTest)(scalafixConfigSettings(IntegrationTest))
+
 lazy val root = (project in file("."))
   .settings(
     name := "tesselation"
@@ -46,6 +47,7 @@ lazy val core = (project in file("modules/core"))
     name := "tesselation-core",
     scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info"),
     scalafmtOnCompile := true,
+    scalafixOnCompile := true,
     resolvers += Resolver.sonatypeRepo("snapshots"),
     Defaults.itSettings,
     scalafixCommonSettings,

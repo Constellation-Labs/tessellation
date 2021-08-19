@@ -15,17 +15,18 @@ object Config {
 
   def load[F[_]: Async]: F[AppConfig] =
     env("CL_APP_ENV")
-      .default("testnet")
+//      .default("testnet")
       .as[AppEnvironment]
       .flatMap {
-        case Testnet => default[F]()
-        case Mainnet => default[F]()
+        case Testnet => default[F](Testnet)
+        case Mainnet => default[F](Mainnet)
       }
       .load[F]
 
-  def default[F[_]](): ConfigValue[F, AppConfig] =
+  def default[F[_]](environment: AppEnvironment): ConfigValue[F, AppConfig] =
     env("CL_DUMMY_SECRET").default("foo").secret.map { _ =>
       AppConfig(
+        environment,
         HttpClientConfig(
           timeout = 60.seconds,
           idleTimeInPool = 30.seconds
