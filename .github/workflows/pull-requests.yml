@@ -12,18 +12,23 @@ jobs:
     runs-on: ubuntu-18.04
     strategy:
       matrix:
-        scala: [ 2.12.10 ]
-        java: [ adopt@1.8 ]
+        java:
+          - graalvm8-ce
+          - graalvm11-ce
     steps:
       - uses: actions/checkout@v2.3.2
-
-      - name: Setup Java and Scala
-        uses: olafurpg/setup-scala@v13
-        with:
-          java-version: ${{ matrix.java }}
 
       - name: "Cache for sbt & coursier ♨️"
         uses: coursier/cache-action@v4.1
 
+      - name: "Install Nix ❄️"
+        uses: cachix/install-nix-action@v13
+
+      - name: "Install Cachix ❄️"
+        uses: cachix/cachix-action@v10
+        with:
+          name: tesselation
+          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+
       - name: "Run with ${{ matrix.java }} 🚀"
-        run: sbt 'scalafixAll --check --rules OrganizeImports;scalafmtCheckAll;test;it:test'
+        run: nix-shell --argstr jdk "${{ matrix.java }}" --run "sbt 'scalafixAll --rules OrganizeImports --check;scalafmtCheckAll;test;it:test'"

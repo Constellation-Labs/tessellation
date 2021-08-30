@@ -2,16 +2,16 @@ package org.tesselation.modules
 
 import cats.effect.kernel.Temporal
 
-import org.tesselation.services.HealthCheck
+import org.tesselation.infrastructure.healthcheck.{Services => HealthCheckServices}
 
 object Services {
 
   def make[F[_]: Temporal](): Services[F] =
     new Services[F](
-      healthCheck = HealthCheck.make[F]()
+      healthcheck = HealthCheckServices.make[F]
     ) {}
 }
 
 sealed abstract class Services[F[_]] private (
-  val healthCheck: HealthCheck[F]
+  val healthcheck: HealthCheckServices[F]
 )

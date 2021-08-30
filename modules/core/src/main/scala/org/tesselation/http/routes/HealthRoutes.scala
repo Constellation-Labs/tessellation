@@ -2,7 +2,7 @@ package org.tesselation.http.routes
 
 import cats.Monad
 
-import org.tesselation.services.HealthCheck
+import org.tesselation.domain.healthcheck.services.HealthCheck
 
 import org.http4s._
 import org.http4s.circe.CirceEntityEncoder._

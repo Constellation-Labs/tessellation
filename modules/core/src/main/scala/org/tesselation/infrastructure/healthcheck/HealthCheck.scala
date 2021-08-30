@@ -1,13 +1,9 @@
-package org.tesselation.services
+package org.tesselation.infrastructure.healthcheck
 
 import cats.effect.Temporal
 
-import org.tesselation.domain.healthcheck.Status.Okay
-import org.tesselation.domain.healthcheck.{AppStatus, FooStatus}
-
-trait HealthCheck[F[_]] {
-  def status: F[AppStatus]
-}
+import org.tesselation.domain.healthcheck.Status.{AppStatus, FooStatus, Okay}
+import org.tesselation.domain.healthcheck.services.HealthCheck
 
 object HealthCheck {
 

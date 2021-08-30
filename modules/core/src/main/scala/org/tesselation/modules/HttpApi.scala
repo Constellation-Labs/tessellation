@@ -19,7 +19,7 @@ object HttpApi {
 sealed abstract class HttpApi[F[_]: Async] private (
   services: Services[F]
 ) {
-  private val healthRoutes = HealthRoutes[F](services.healthCheck).routes
+  private val healthRoutes = HealthRoutes[F](services.healthcheck.healthCheck).routes
 
   private val openRoutes: HttpRoutes[F] =
     healthRoutes
