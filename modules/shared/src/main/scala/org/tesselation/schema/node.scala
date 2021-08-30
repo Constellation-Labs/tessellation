@@ -1,4 +1,4 @@
-package org.tesselation.domain
+package org.tesselation.schema
 
 import derevo.cats.eqv
 import derevo.derive

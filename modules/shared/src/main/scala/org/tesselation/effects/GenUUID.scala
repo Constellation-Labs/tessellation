@@ -3,7 +3,7 @@ package org.tesselation.effects
 import java.util.UUID
 
 import cats.ApplicativeThrow
-import cats.effect.Sync
+import cats.effect.kernel.Sync
 
 trait GenUUID[F[_]] {
   def make: F[UUID]

@@ -1,6 +1,6 @@
-package org.tesselation.domain
+package org.tesselation.schema
 
-import org.tesselation.domain.address.Address
+import org.tesselation.schema.address.Address
 
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}

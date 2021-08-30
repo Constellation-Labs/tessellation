@@ -2,7 +2,7 @@ package org.tesselation.infrastructure.healthcheck
 
 import cats.effect.kernel.Temporal
 
-import org.tesselation.domain.healthcheck.services.HealthCheck
+import org.tesselation.domain.healthcheck.HealthCheck
 
 object Services {
 

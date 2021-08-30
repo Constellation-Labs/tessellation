@@ -1,7 +1,7 @@
-package org.tesselation.domain
+package org.tesselation.schema
 
 import cats.Functor
-import cats.syntax.all._
+import cats.syntax.functor._
 
 import org.tesselation.effects.GenUUID
 import org.tesselation.optics.IsUUID

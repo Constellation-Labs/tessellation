@@ -3,8 +3,9 @@ package org.tesselation.http.routes
 import cats.effect._
 import cats.syntax.all._
 
-import org.tesselation.domain.healthcheck.Status.{AppStatus, FooStatus, Okay}
-import org.tesselation.domain.healthcheck.services.HealthCheck
+import org.tesselation.domain.healthcheck.HealthCheck
+import org.tesselation.schema.healthcheck.Status.Okay
+import org.tesselation.schema.healthcheck.{AppStatus, FooStatus}
 
 import org.http4s.Method._
 import org.http4s._

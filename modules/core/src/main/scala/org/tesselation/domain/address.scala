@@ -1,12 +1,10 @@
 package org.tesselation.domain
 
-import scala.util.control.NoStackTrace
-
 import org.tesselation.ext.http4s.queryParam
 import org.tesselation.ext.http4s.refined._
+import org.tesselation.schema.address.Address
 
-import derevo.cats._
-import derevo.circe.magnolia._
+import derevo.cats.show
 import derevo.derive
 import eu.timepit.refined.auto._
 import eu.timepit.refined.cats._
@@ -16,10 +14,6 @@ import io.circe.{Decoder, Encoder}
 import io.estatico.newtype.macros.newtype
 
 object address {
-
-  @derive(decoder, encoder, eqv, show)
-  @newtype
-  case class Address(value: String)
 
   @derive(queryParam, show)
   @newtype
@@ -34,8 +28,4 @@ object address {
     implicit val jsonDecoder: Decoder[AddressParam] =
       Decoder.forProduct1("address")(AddressParam.apply)
   }
-
-  @derive(decoder, encoder)
-  case class InvalidAddress(value: String) extends NoStackTrace
-
 }

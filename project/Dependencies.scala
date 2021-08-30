@@ -8,6 +8,7 @@ object Dependencies {
     val catsRetry = "2.1.0" // not published for CE3 yet
     val circe = "0.14.1"
     val ciris = "2.1.1"
+    val comcast = "3.0.3"
     val derevo = "0.12.6"
     val doobie = "0.12.1"
     val droste = "0.8.0"
@@ -46,6 +47,7 @@ object Dependencies {
     val catsRetry = "com.github.cb372" %% "cats-retry" % V.catsRetry
     val squants = "org.typelevel" %% "squants" % V.squants
     val fs2 = "co.fs2" %% "fs2-core" % V.fs2
+    val comcast = "com.comcast" %% "ip4s-core" % V.comcast
 
     val circeCore = circe("core")
     val circeGeneric = circe("generic")
