@@ -1,16 +1,22 @@
 package org.tesselation.schema
 
-import cats.Functor
-import cats.syntax.functor._
-
-import org.tesselation.effects.GenUUID
-import org.tesselation.optics.IsUUID
+import derevo.cats.{eqv, order, show}
+import derevo.derive
+import io.estatico.newtype.macros.newtype
 
 object ID {
 
-  def make[F[_]: Functor: GenUUID, A: IsUUID]: F[A] =
-    GenUUID[F].make.map(IsUUID[A]._UUID.get)
+  @derive(eqv, show, order)
+  @newtype
+  case class Id(hex: String)
+}
 
-  def read[F[_]: Functor: GenUUID, A: IsUUID](str: String): F[A] =
-    GenUUID[F].read(str).map(IsUUID[A]._UUID.get)
+object foo {
+
+//  val peerId: PeerID = PeerID("foo")
+//  val id: Id = Id("bar")
+
+//  val id2: PeerID = PeerID.fromId(Id("aa"))
+//  val id2: PeerID = Id("baz")
+
 }

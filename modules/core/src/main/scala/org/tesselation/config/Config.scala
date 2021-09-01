@@ -1,7 +1,7 @@
 package org.tesselation.config
 
 import cats.effect.Async
-import cats.syntax.all._
+import cats.syntax.parallel._
 
 import scala.concurrent.duration._
 
@@ -29,9 +29,8 @@ object Config {
 //      env("CL_DUMMY_SECRET").default("foo").secret,
       env("CL_PUBLIC_HTTP_PORT").default("9000"),
       env("CL_P2P_HTTP_PORT").default("9001"),
-      env("CL_OWNER_HTTP_PORT").default("9002"),
-      env("CL_HEALTHCHECK_HTTP_PORT").default("9003")
-    ).parMapN { (publicHttpPort, p2pHttpPort, ownerHttpPort, healthcheckHttpPort) =>
+      env("CL_CLI_HTTP_PORT").default("9002")
+    ).parMapN { (publicHttpPort, p2pHttpPort, cliHttpPort) =>
       AppConfig(
         environment,
         HttpClientConfig(
@@ -40,8 +39,7 @@ object Config {
         ),
         publicHttp = HttpServerConfig(host"0.0.0.0", Port.fromString(publicHttpPort).get),
         p2pHttp = HttpServerConfig(host"0.0.0.0", Port.fromString(p2pHttpPort).get),
-        ownerHttp = HttpServerConfig(host"127.0.0.1", Port.fromString(ownerHttpPort).get),
-        healthcheckHttp = HttpServerConfig(host"0.0.0.0", Port.fromString(healthcheckHttpPort).get)
+        cliHttp = HttpServerConfig(host"127.0.0.1", Port.fromString(cliHttpPort).get)
       )
     }
 

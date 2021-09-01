@@ -11,8 +11,7 @@ object types {
     httpClientConfig: HttpClientConfig,
     publicHttp: HttpServerConfig,
     p2pHttp: HttpServerConfig,
-    ownerHttp: HttpServerConfig,
-    healthcheckHttp: HttpServerConfig
+    cliHttp: HttpServerConfig
   )
 
   case class HttpClientConfig(

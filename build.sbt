@@ -16,7 +16,7 @@ lazy val root = (project in file("."))
   .settings(
     name := "tesselation"
   )
-  .aggregate(core, tests)
+  .aggregate(shared, core, tests)
 
 lazy val shared = (project in file("modules/shared"))
   .enablePlugins(AshScriptPlugin)

@@ -1,11 +1,14 @@
 package org.tesselation.ext.http4s
 
 import cats.MonadThrow
-import cats.syntax.all._
+import cats.syntax.applicativeError._
+import cats.syntax.either._
+import cats.syntax.flatMap._
 
 import eu.timepit.refined.api.{Refined, Validate}
 import eu.timepit.refined.refineV
 import io.circe.Decoder
+import io.circe.syntax.EncoderOps
 import org.http4s._
 import org.http4s.circe._
 import org.http4s.dsl.Http4sDsl
@@ -22,8 +25,8 @@ object refined {
       req.asJsonDecode[A].attempt.flatMap {
         case Left(e) =>
           Option(e.getCause) match {
-            case Some(c) if c.getMessage.startsWith("Predicate") => BadRequest(c.getMessage)
-            case _                                               => UnprocessableEntity()
+            case Some(c) => BadRequest(c.getMessage.asJson)
+            case _       => UnprocessableEntity()
           }
         case Right(a) => f(a)
       }

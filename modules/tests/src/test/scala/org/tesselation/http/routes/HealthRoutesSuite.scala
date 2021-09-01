@@ -1,7 +1,7 @@
 package org.tesselation.http.routes
 
 import cats.effect._
-import cats.syntax.all._
+import cats.syntax.applicative._
 
 import org.tesselation.domain.healthcheck.HealthCheck
 import org.tesselation.schema.healthcheck.Status.Okay

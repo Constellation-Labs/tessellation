@@ -2,7 +2,8 @@ package org.tesselation.effects
 
 import cats.effect.Temporal
 import cats.effect.std.Supervisor
-import cats.syntax.all._
+import cats.syntax.apply._
+import cats.syntax.functor._
 
 import scala.concurrent.duration.FiniteDuration
 

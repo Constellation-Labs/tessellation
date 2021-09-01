@@ -1,7 +1,7 @@
 package org.tesselation.resources
 
 import cats.effect.kernel.{Async, Resource}
-import cats.syntax.all._
+import cats.syntax.show._
 
 import org.tesselation.config.types.HttpServerConfig
 import org.tesselation.resources.MkHttpServer.ServerName

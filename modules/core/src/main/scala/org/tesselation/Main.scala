@@ -1,7 +1,7 @@
 package org.tesselation
 
+import cats.effect._
 import cats.effect.std.Supervisor
-import cats.effect.{ExitCode, IO, IOApp}
 
 import org.tesselation.config.Config
 import org.tesselation.modules.{HttpApi, Services}
@@ -23,14 +23,12 @@ object Main extends IOApp {
       Logger[IO].info(s"Config loaded") >>
         Logger[IO].info(s"App environment: ${cfg.environment}") >>
         Supervisor[IO].use { _ =>
-          val services = Services.make[IO]()
-          val api = HttpApi.make[IO](services)
-
           (for {
-            _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.publicHttp, api.httpApp)
-            _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.p2pHttp, api.httpApp)
-            _ <- MkHttpServer[IO].newEmber(ServerName("owner"), cfg.ownerHttp, api.httpApp)
-            _ <- MkHttpServer[IO].newEmber(ServerName("healthcheck"), cfg.healthcheckHttp, api.httpApp)
+            services <- Resource.eval { Services.make[IO]() }
+            api = HttpApi.make[IO](services)
+            _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.publicHttp, api.publicApp)
+            _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.p2pHttp, api.p2pApp)
+            _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.cliHttp, api.cliApp)
           } yield ()).useForever
 
         }
