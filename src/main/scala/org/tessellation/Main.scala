@@ -1,42 +1,8 @@
 package org.tessellation
-
-import cats.Functor
-import cats.effect.concurrent.Ref
-import cats.effect.{ContextShift, ExitCase, ExitCode, IO, IOApp, Sync}
-import org.tessellation.schema.{
-  Cell,
-  //  Cell0,
-  //  Cell2,
-  //  Cocell,
-  //  Context,
-  Hom,
-  Topos,
-  Ω
-}
 //import org.tessellation.schema.Hom._
-import fs2.{Pipe, Stream}
 import cats.syntax.all._
-import higherkindness.droste.{
-  Algebra,
-  CVAlgebra,
-  Coalgebra,
-  CoalgebraM,
-  GAlgebra,
-  GAlgebraM,
-  GCoalgebra,
-  Gather,
-  RAlgebra,
-  RCoalgebra,
-  RCoalgebraM,
-  Scatter,
-  scheme
-}
-import higherkindness.droste.data.{:<, Attr, Fix}
 //import org.tessellation.ConsensusExample.{intGather, intScatter}
 //import org.tessellation.StreamExample.pipeline
-import org.tessellation.hypergraph.EdgePartitioner
-import org.tessellation.hypergraph.EdgePartitioner.EdgePartitioner
-import org.tessellation.consensus.L1ConsensusStep.{L1ConsensusContext, L1ConsensusMetadata, algebra, coalgebra}
 import org.tessellation.serialization.{Kryo, KryoRegistrar, SerDe}
 
 object Main extends App {
@@ -121,10 +87,10 @@ block1
 snapshot
  */
 
-object FinalStreamExample extends App {
-  val tx$ = Stream.emit()
-
-}
+//object FinalStreamExample extends App {
+//  val tx$ = Stream.emit()
+//
+//}
 
 //object StreamExample extends App {
 //
@@ -140,9 +106,6 @@ object FinalStreamExample extends App {
 //
 //  def intCell(i: Int): Hom[Int, Int] = Cell[Int, Int](i)
 //}
-
-import higherkindness.droste.data.{:<, Coattr}
-import higherkindness.droste.syntax.compose._
 
 //object ConsensusExample extends App {
 //  import fs2.Stream
@@ -327,12 +290,10 @@ object SerializationExample extends App {
 
 object TryDoobie extends App {
 
-  import doobie._
-  import doobie.implicits._
-  import cats._
-  import cats.data._
   import cats.effect.IO
   import cats.syntax.all._
+  import doobie._
+  import doobie.implicits._
 
   implicit val cs = IO.contextShift(doobie.ExecutionContexts.synchronous)
 

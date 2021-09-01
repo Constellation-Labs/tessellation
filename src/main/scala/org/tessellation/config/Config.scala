@@ -7,7 +7,8 @@ import pureconfig.generic.auto._
 case class Config(
   startOwnConsensusRounds: Boolean,
   ip: String,
-  generatorSrc: String
+  generatorSrc: String,
+  ethereumBlockchainUrl: String // TODO: Each state channel should have separated config so it shouldn't be there!
 )
 
 object Config {
@@ -19,8 +20,9 @@ object Config {
         .getOrElse(
           Config(
             startOwnConsensusRounds = false,
-            ip = "",
-            generatorSrc = ""
+            ip = "0.0.0.0",
+            generatorSrc = "",
+            ethereumBlockchainUrl = ""
           )
         )
     }

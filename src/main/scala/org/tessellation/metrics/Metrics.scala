@@ -3,6 +3,7 @@ package org.tessellation.metrics
 import cats.effect.{IO, Sync}
 import cats.syntax.all._
 import com.google.common.util.concurrent.AtomicDouble
+import fs2.Stream
 import io.micrometer.core.instrument.Metrics.globalRegistry
 import io.micrometer.core.instrument.binder.jvm._
 import io.micrometer.core.instrument.binder.logging.LogbackMetrics
@@ -11,16 +12,38 @@ import io.micrometer.core.instrument.{Clock, Tag, Timer}
 import io.micrometer.prometheus.{PrometheusConfig, PrometheusMeterRegistry}
 import io.prometheus.client.CollectorRegistry
 import io.prometheus.client.cache.caffeine.CacheMetricsCollector
+import org.http4s.metrics.prometheus.Prometheus
 import org.joda.time.DateTime
 import org.tessellation.metrics.Metric.{Metric, _}
 
 import java.util.concurrent.atomic.AtomicLong
-import scala.jdk.CollectionConverters._
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration._
+import scala.jdk.CollectionConverters._
 
 object Metrics {
+
+  def init(nodeId: String): Stream[IO, Metrics] =
+    Stream
+      .resource(Prometheus.collectorRegistry[IO])
+      .map(
+        registry =>
+          Metrics(
+            registry,
+            1,
+            scala.concurrent.ExecutionContext.global,
+            nodeId
+          )
+      )
+
+  def apply(
+    collectorRegistry: CollectorRegistry,
+    periodSeconds: Int = 1,
+    unboundedExecutionContext: ExecutionContext,
+    nodeID: String
+  ): Metrics = new Metrics(collectorRegistry, periodSeconds, unboundedExecutionContext, nodeID)
+
   val cacheMetrics = new CacheMetricsCollector()
   var isCacheRegistered = false
 
