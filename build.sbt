@@ -20,7 +20,7 @@ lazy val fs2Dependencies = Seq(
   "co.fs2" %% "fs2-core",
   "co.fs2" %% "fs2-io",
   "co.fs2" %% "fs2-reactive-streams"
-).map(_ % "2.4.4")
+).map(_ % "2.5.9")
 
 lazy val doobieDependencies = Seq(
   "org.xerial" % "sqlite-jdbc" % "3.32.3.2",
@@ -72,7 +72,10 @@ lazy val dependencies = Seq(
   "com.github.pureconfig" %% "pureconfig" % "0.16.0",
   ("com.github.blemale" %% "scaffeine" % "4.0.1").withSources().withJavadoc(),
   "joda-time" % "joda-time" % "1.6",
-  "com.google.guava" % "guava" % "30.1.1-jre"
+  "com.google.guava" % "guava" % "30.1.1-jre",
+  "org.web3j" % "core" % "4.8.7",
+  "org.web3j.eth2" % "beacon-node-api" % "1.0.0",
+  "io.monix" %% "monix-catnap" % "3.4.0"
 ) ++ drosteDependencies ++ kryoDependencies ++ fs2Dependencies ++ doobieDependencies ++ monocleDependencies ++ http4sDependencies ++ prometheusDependencies
 val http4sVersion = "0.21.22"
 

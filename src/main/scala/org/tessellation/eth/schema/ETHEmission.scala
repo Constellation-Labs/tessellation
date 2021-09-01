@@ -1,6 +1,8 @@
 package org.tessellation.eth.schema
 
+import io.circe.{Decoder, Encoder}
 import org.tessellation.schema.Ω
+import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 
 import scala.util.Random
 
@@ -23,4 +25,9 @@ object NativeETHTransaction {
   )
 }
 
-case class ETHEmission(nativeETHTransaction: NativeETHTransaction, dagAddress: String) extends Ω {}
+case class ETHEmission(ethTransactionHex: String, dagAddress: String) extends Ω {}
+
+object ETHEmission {
+  implicit val decoder: Decoder[ETHEmission] = deriveDecoder
+  implicit val encoder: Encoder[ETHEmission] = deriveEncoder
+}
