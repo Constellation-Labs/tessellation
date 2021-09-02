@@ -1,0 +1,6 @@
+address = DAG3k3VihUWMjse9LE93jRqZLEuwGd6a5Ypk4zYS
+cell-class = org.example.EmptyCell
+input-class = org.example.EmptyInput
+kryo-registrar = {
+    "org.example.EmptyInput" = 101
+}

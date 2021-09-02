@@ -64,11 +64,6 @@ class DAGStateChannel(node: Node, httpClient: HttpClient, metrics: Metrics) {
             case _                       => InternalServerError()
           }
         } yield res
-      // TODO: Implement after turning off random tx generator
-      //      case req @ POST -> Root / "transaction" => {
-      //        tx <- req.as[L1Transaction]
-      //      } yield ()
-      case _ => NotFound()
     }
 
   val l1Input: Stream[IO, L1Transaction] = Stream
