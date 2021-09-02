@@ -43,7 +43,6 @@ class ETHStateChannel(
       .map(emission => ReceivedETHEmission[Ω](emission))
       .evalTap(x => logger.debug(x.toString))
 
-  val l1Input: Stream[IO, Ω] = blocksInput.merge(emissionInput)
   private val blocksInput: Stream[IO, ReceivedETHBlock[Ω]] = blockchainClient.blocks.map { block =>
     val lpTxs = block.getBlock.getTransactions.asScala.toList
       .asInstanceOf[List[Transaction]]
@@ -51,6 +50,8 @@ class ETHStateChannel(
       .toSet
     ETHBlock(lpTxs)
   }.filter(_.transactions.nonEmpty).map(block => ReceivedETHBlock[Ω](block)).evalTap(x => logger.debug(x.toString))
+
+  val l1Input: Stream[IO, Ω] = blocksInput.merge(emissionInput)
 
   val routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     case req @ POST -> Root / "swap" / "eth" / "dag" =>
