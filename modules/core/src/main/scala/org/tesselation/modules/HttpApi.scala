@@ -14,18 +14,20 @@ import org.http4s.{HttpApp, HttpRoutes}
 object HttpApi {
 
   def make[F[_]: Async](
+    storages: Storages[F],
     services: Services[F],
     environment: AppEnvironment
   ): HttpApi[F] =
-    new HttpApi[F](services, environment) {}
+    new HttpApi[F](storages, services, environment) {}
 }
 
 sealed abstract class HttpApi[F[_]: Async] private (
+  storages: Storages[F],
   services: Services[F],
   environment: AppEnvironment
 ) {
-  private val healthRoutes = HealthRoutes[F](services.healthcheck.healthCheck).routes
-  private val clusterRoutes = ClusterRoutes[F](services.clusterStorage, services.cluster)
+  private val healthRoutes = HealthRoutes[F](services.healthcheck).routes
+  private val clusterRoutes = ClusterRoutes[F](storages.cluster, services.cluster)
   private val debugRoutes = DebugRoutes[F](services).routes
 
   private val openRoutes: HttpRoutes[F] =

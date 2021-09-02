@@ -6,7 +6,7 @@ import cats.syntax.flatMap._
 
 import org.tesselation.domain.cluster.{Cluster, ClusterStorage}
 import org.tesselation.ext.http4s.refined._
-import org.tesselation.schema.cluster.{PeerHostPortInUse, PeerIdInUse, PeerToJoin}
+import org.tesselation.schema.cluster._
 
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
@@ -33,6 +33,8 @@ final case class ClusterRoutes[F[_]: Async](
           .join(peerToJoin)
           .flatMap(_ => Ok())
           .recoverWith {
+            case NodeStateDoesNotAllowForJoining(nodeState) =>
+              Conflict(s"Node state=${nodeState} does not allow for joining the cluster.")
             case PeerIdInUse(id) => Conflict(s"Peer id=${id} already in use.")
             case PeerHostPortInUse(host, port) =>
               Conflict(s"Peer host=${host.toString} port=${port.value} already in use.")

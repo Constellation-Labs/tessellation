@@ -1,6 +1,7 @@
 package org.tesselation.infrastructure.cluster
 
-import cats.effect.{Async, Ref}
+import cats.Monad
+import cats.effect.Ref
 import cats.syntax.functor._
 
 import org.tesselation.domain.cluster.ClusterStorage
@@ -10,22 +11,23 @@ import com.comcast.ip4s.{Host, Port}
 
 object ClusterStorage {
 
-  def make[F[_]: Async: Ref.Make]: F[ClusterStorage[F]] =
-    Ref[F].of[Set[Peer]](Set.empty).map { peers =>
-      new ClusterStorage[F] {
+  def make[F[_]: Monad: Ref.Make]: F[ClusterStorage[F]] =
+    Ref[F].of[Set[Peer]](Set.empty).map(make(_))
 
-        def getPeers: F[Set[Peer]] =
-          peers.get
+  def make[F[_]: Monad](peers: Ref[F, Set[Peer]]): ClusterStorage[F] =
+    new ClusterStorage[F] {
 
-        def addPeer(peer: Peer): F[Unit] =
-          peers.update(_ + peer)
+      def getPeers: F[Set[Peer]] =
+        peers.get
 
-        def hasPeerId(id: PeerId): F[Boolean] =
-          peers.get.map(_.exists(_.id == id))
+      def addPeer(peer: Peer): F[Unit] =
+        peers.update(_ + peer)
 
-        def hasPeerHostPort(host: Host, p2pPort: Port): F[Boolean] =
-          peers.get.map(_.exists(peer => peer.ip == host && peer.p2pPort == p2pPort))
-      }
+      def hasPeerId(id: PeerId): F[Boolean] =
+        peers.get.map(_.exists(_.id == id))
+
+      def hasPeerHostPort(host: Host, p2pPort: Port): F[Boolean] =
+        peers.get.map(_.exists(peer => peer.ip == host && peer.p2pPort == p2pPort))
     }
 
 }

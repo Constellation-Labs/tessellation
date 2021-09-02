@@ -1,18 +1,18 @@
 package org.tesselation.schema
 
-import derevo.cats.eqv
+import derevo.cats.{eqv, show}
 import derevo.derive
 
 object node {
 
-  @derive(eqv)
-  sealed trait Status
+  @derive(eqv, show)
+  sealed trait NodeState
 
   // TODO: FSM
-  object Status {
-    case object Initial extends Status
-    case object Ready extends Status
-    case object Offline extends Status
+  object NodeState {
+    case object Initial extends NodeState
+    case object Ready extends NodeState
+    case object Offline extends NodeState
   }
 
 }

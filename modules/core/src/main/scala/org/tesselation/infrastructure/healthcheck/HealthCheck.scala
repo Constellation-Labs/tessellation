@@ -8,8 +8,7 @@ import org.tesselation.schema.healthcheck.{AppStatus, FooStatus}
 
 object HealthCheck {
 
-  def make[F[_]: Temporal](
-    ): HealthCheck[F] =
+  def make[F[_]: Temporal]: HealthCheck[F] =
     new HealthCheck[F] {
 
       def status: F[AppStatus] =

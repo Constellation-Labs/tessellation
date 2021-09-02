@@ -2,10 +2,11 @@ package org.tesselation.http.routes
 
 import cats.effect.IO
 
-import org.tesselation.domain.cluster.{Cluster, ClusterStorage}
+import org.tesselation.domain.cluster.{Cluster, ClusterStorage, NodeStorage}
 import org.tesselation.generators.peersGen
 import org.tesselation.infrastructure.cluster.Cluster
 import org.tesselation.schema.cluster.PeerToJoin
+import org.tesselation.schema.node.NodeState
 import org.tesselation.schema.peer.{Peer, PeerId}
 
 import com.comcast.ip4s.{Host, Port}
@@ -43,7 +44,10 @@ object ClusterRoutesSuite extends HttpSuite {
         val clusterStorage = new TestClusterStorage {
           override def hasPeerId(id: PeerId): IO[Boolean] = IO.pure(true)
         }
-        val cluster = Cluster.make[F](clusterStorage)
+        val nodeStorage = new TestNodeStorage {
+          override def canJoinCluster: IO[Boolean] = IO.pure(true)
+        }
+        val cluster = Cluster.make[F](clusterStorage, nodeStorage)
 
         val req = POST(uri"/cluster/join").withEntity(peers.head)
         val routes = ClusterRoutes(clusterStorage, cluster).cliRoutes
@@ -60,7 +64,11 @@ object ClusterRoutesSuite extends HttpSuite {
         val clusterStorage = new TestClusterStorage {
           override def hasPeerHostPort(host: Host, p2pPort: Port): IO[Boolean] = IO.pure(true)
         }
-        val cluster = Cluster.make[F](clusterStorage)
+
+        val nodeStorage = new TestNodeStorage {
+          override def canJoinCluster: IO[Boolean] = IO.pure(true)
+        }
+        val cluster = Cluster.make[F](clusterStorage, nodeStorage)
 
         val req = POST(uri"/cluster/join").withEntity(peers.head)
         val routes = ClusterRoutes(clusterStorage, cluster).cliRoutes
@@ -68,6 +76,31 @@ object ClusterRoutesSuite extends HttpSuite {
         expectHttpStatus(routes, req)(Status.Conflict)
     }
   }
+
+  test("POST join fails when node cannot perform join") {
+    val peers = peersGen()
+
+    forall(peers) {
+      case peers =>
+        val clusterStorage = new TestClusterStorage {
+          override def hasPeerHostPort(host: Host, p2pPort: Port): IO[Boolean] = IO.pure(true)
+        }
+
+        val nodeStorage = new TestNodeStorage
+        val cluster = Cluster.make[F](clusterStorage, nodeStorage)
+
+        val req = POST(uri"/cluster/join").withEntity(peers.head)
+        val routes = ClusterRoutes(clusterStorage, cluster).cliRoutes
+
+        expectHttpStatus(routes, req)(Status.Conflict)
+    }
+  }
+}
+
+protected class TestNodeStorage extends NodeStorage[IO] {
+  override def getNodeState: IO[NodeState] = IO.pure(NodeState.Initial)
+
+  override def canJoinCluster: IO[Boolean] = IO.pure(false)
 }
 
 protected class TestClusterStorage extends ClusterStorage[IO] {
