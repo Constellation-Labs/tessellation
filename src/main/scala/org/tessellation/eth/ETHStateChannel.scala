@@ -3,25 +3,23 @@ package org.tessellation.eth
 import cats.effect.{ContextShift, IO, Timer}
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
 import org.web3j.protocol.core.methods.response.EthBlock.TransactionObject
-
 import io.circe.syntax._
 import org.http4s.circe._
 import org.http4s.dsl.io._
 import fs2._
 import fs2.concurrent.Queue
-
 import org.http4s.{EntityDecoder, HttpRoutes}
 import org.tessellation.consensus.L1Block
 import org.tessellation.eth.hylo.{ReceivedETHBlock, ReceivedETHEmission}
 import org.tessellation.eth.schema.{ETHBlock, ETHEmission}
 import org.tessellation.eth.web3j.ETHBlockchainClient
-import org.tessellation.schema.{CellError, Ω}
+import org.tessellation.schema.{CellError, DAG, ETH, LiquidityPool, Ω}
 
 import scala.jdk.CollectionConverters._
 
 class ETHStateChannel(
   emissionQueue: Queue[IO, ETHEmission],
-  liquidityPool: ETHDAGLiquidityPool,
+  liquidityPool: LiquidityPool[ETH, DAG],
   blockchainClient: ETHBlockchainClient
 ) {
   implicit val contextShift: ContextShift[IO] = IO.contextShift(scala.concurrent.ExecutionContext.global)
@@ -71,7 +69,7 @@ object ETHStateChannel {
 
   def apply(
     emissionQueue: Queue[IO, ETHEmission],
-    liquidityPool: ETHDAGLiquidityPool,
+    liquidityPool: LiquidityPool[ETH, DAG],
     blockchainClient: ETHBlockchainClient
   ): ETHStateChannel = new ETHStateChannel(emissionQueue, liquidityPool, blockchainClient)
 
@@ -79,7 +77,7 @@ object ETHStateChannel {
     Stream.eval {
       for {
         emissionQueue <- Queue.unbounded[IO, ETHEmission]
-        liquidityPool = ETHDAGLiquidityPool(0, 0, "", "") // TODO: Pass here proper values
+        liquidityPool = LiquidityPool[ETH, DAG](1, 100, "", "") // TODO: It should be provided by liquidity provider
         blockchainClient = ETHBlockchainClient(blockchainUrl)
         stateChannel = new ETHStateChannel(emissionQueue, liquidityPool, blockchainClient)
       } yield stateChannel

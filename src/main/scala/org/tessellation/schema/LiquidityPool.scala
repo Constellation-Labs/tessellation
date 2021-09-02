@@ -3,27 +3,26 @@ package org.tessellation.schema
 import cats.effect.IO
 import cats.effect.concurrent.Ref
 
-abstract class LiquidityPool[A <: Currency, B <: Currency](
-  balanceA: Long,
-  balanceB: Long,
-  addressA: String,
-  addressB: String
+/**
+  * Based on Constant Product Market Maker Algorithm (Automated Market Maker)
+  * https://ethereum.stackexchange.com/questions/103163/xy-k-constant-product-market-maker
+  */
+case class LiquidityPool[X <: Currency, Y <: Currency](
+  xInitialQuantity: Long,
+  yInitialQuantity: Long,
+  xAddress: String,
+  yAddress: String
 ) {
-  protected val poolBalances: Ref[IO, (Long, Long)] = Ref.unsafe((balanceA, balanceB))
+  private val kConstant: Long = xInitialQuantity * yInitialQuantity
+  private val poolQuantity: Ref[IO, (Long, Long)] = Ref.unsafe[IO, (Long, Long)]((xInitialQuantity, yInitialQuantity))
 
-  protected def getBalanceA: IO[Long] = poolBalances.get.map { case (a, _) => a }
-
-  protected def getBalanceB: IO[Long] = poolBalances.get.map { case (_, b) => b }
-
-  protected def exchangeAForB(amount: Long): IO[Long] = poolBalances.modify {
-    case (a, b) =>
-      val amountOfBToReturn = (amount * balanceB) / balanceA
-      ((a + amount, b - amountOfBToReturn), amountOfBToReturn)
+  def updatePoolByOffer(xOffer: Long): IO[Long] = poolQuantity.modify {
+    case (xQuantity, yQuantity) =>
+      val yOffer = howManyYForX(xOffer, xQuantity, yQuantity)
+      val adjustedPoolQuantity = (xQuantity + xOffer, yQuantity)
+      (adjustedPoolQuantity, yOffer)
   }
 
-  protected def exchangeBForA(amount: Long): IO[Long] = poolBalances.modify {
-    case (a, b) =>
-      val amountOfAToReturn = (amount * balanceA) / balanceB
-      ((a - amountOfAToReturn, b + amount), amountOfAToReturn)
-  }
+  def howManyYForX(xToSwap: Long, xQuantity: Long, yQuantity: Long): Long =
+    yQuantity - kConstant / (xQuantity + xToSwap)
 }
