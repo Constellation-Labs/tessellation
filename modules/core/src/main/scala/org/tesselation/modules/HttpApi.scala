@@ -3,7 +3,9 @@ package org.tesselation.modules
 import cats.effect.Async
 import cats.syntax.semigroupk._
 
-import org.tesselation.http.routes.{ClusterRoutes, HealthRoutes}
+import org.tesselation.config.AppEnvironment
+import org.tesselation.config.AppEnvironment.Testnet
+import org.tesselation.http.routes.{ClusterRoutes, DebugRoutes, HealthRoutes}
 
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
 import org.http4s.server.middleware.{RequestLogger, ResponseLogger}
@@ -12,19 +14,23 @@ import org.http4s.{HttpApp, HttpRoutes}
 object HttpApi {
 
   def make[F[_]: Async](
-    services: Services[F]
+    services: Services[F],
+    environment: AppEnvironment
   ): HttpApi[F] =
-    new HttpApi[F](services) {}
+    new HttpApi[F](services, environment) {}
 }
 
 sealed abstract class HttpApi[F[_]: Async] private (
-  services: Services[F]
+  services: Services[F],
+  environment: AppEnvironment
 ) {
   private val healthRoutes = HealthRoutes[F](services.healthcheck.healthCheck).routes
   private val clusterRoutes = ClusterRoutes[F](services.clusterStorage, services.cluster)
+  private val debugRoutes = DebugRoutes[F](services).routes
 
   private val openRoutes: HttpRoutes[F] =
-    healthRoutes
+    (if (environment == Testnet) debugRoutes else HttpRoutes.empty) <+>
+      healthRoutes
 
   private val p2pRoutes: HttpRoutes[F] =
     healthRoutes

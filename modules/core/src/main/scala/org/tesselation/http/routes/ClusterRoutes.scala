@@ -24,7 +24,7 @@ final case class ClusterRoutes[F[_]: Async](
   private[routes] val prefixPath = "/cluster"
 
   private val httpRoutes: HttpRoutes[F] = HttpRoutes.of[F] {
-    case GET -> Root =>
+    case GET -> Root / "peers" =>
       Ok(clusterStorage.getPeers)
 
     case req @ POST -> Root / "join" =>

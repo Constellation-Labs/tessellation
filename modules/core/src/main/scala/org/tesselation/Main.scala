@@ -25,7 +25,7 @@ object Main extends IOApp {
         Supervisor[IO].use { _ =>
           (for {
             services <- Resource.eval { Services.make[IO]() }
-            api = HttpApi.make[IO](services)
+            api = HttpApi.make[IO](services, cfg.environment)
             _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.publicHttp, api.publicApp)
             _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.p2pHttp, api.p2pApp)
             _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.cliHttp, api.cliApp)
