@@ -1,48 +1,51 @@
 package org.tessellation.http
 
+import java.io.{StringWriter, Writer}
+
 import cats.effect._
-import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
+import cats.syntax.all._
 import io.prometheus.client.exporter.common.TextFormat
-import org.http4s._
-import org.http4s.dsl.io._
+import org.http4s.HttpRoutes
+import org.http4s.dsl.Http4sDsl
 import org.http4s.implicits._
 import org.http4s.server.Router
 import org.http4s.server.blaze.BlazeServerBuilder
 import org.tessellation.metrics.Metrics
 
-import java.io.{StringWriter, Writer}
 import scala.concurrent.ExecutionContext.Implicits.global
 
-class HttpServer(
-  publicRoutes: HttpRoutes[IO],
-  peerRoutes: HttpRoutes[IO],
+class HttpServer[F[_]: Concurrent: ConcurrentEffect: Timer: ContextShift](
+  publicRoutes: HttpRoutes[F],
+  peerRoutes: HttpRoutes[F],
   metrics: Metrics
-) {
-  implicit val cs: ContextShift[IO] = IO.contextShift(global)
-  implicit val timer: Timer[IO] = IO.timer(global)
+) extends Http4sDsl[F] {
 
-  private val metricsService: HttpRoutes[IO] = HttpRoutes.of[IO] {
+  private val metricsService: HttpRoutes[F] = HttpRoutes.of[F] {
     case GET -> Root / "micrometer-metrics" =>
-      IO.delay {
+      Sync[F].delay {
         val writer: Writer = new StringWriter()
         TextFormat.write004(writer, metrics.collectorRegistry.metricFamilySamples())
         writer.toString
-      }.flatMap(Ok(_))
+      }.flatMap(a => Ok(a))
   }
 
-  private val publicAPI = BlazeServerBuilder[IO](global)
-    .bindHttp(9001, "0.0.0.0")
-    .withHttpApp(Router("/" -> publicRoutes).orNotFound)
+  private val publicAPI = BlazeServerBuilder[F](global)
+    .bindHttp(9000)
+    .withHttpApp(Router("/" -> publicRoutes.combineK(metricsService)).orNotFound)
 
-  private val metricsAPI = BlazeServerBuilder[IO](global)
-    .bindHttp(9000, "0.0.0.0")
-    .withHttpApp(Router("/" -> metricsService).orNotFound)
+  private val peerAPI = BlazeServerBuilder[F](global)
+    .bindHttp(9001)
+    .withHttpApp(Router("/" -> peerRoutes).orNotFound)
 
-  def run() = publicAPI.serve.merge(metricsAPI.serve)
+  def run(): fs2.Stream[F, ExitCode] = publicAPI.serve.merge(peerAPI.serve)
 }
 
 object HttpServer {
 
-  def apply(publicRoutes: HttpRoutes[IO], peerRoutes: HttpRoutes[IO], metrics: Metrics): HttpServer =
+  def apply[F[_]: Concurrent: ConcurrentEffect: Timer: ContextShift](
+    publicRoutes: HttpRoutes[F],
+    peerRoutes: HttpRoutes[F],
+    metrics: Metrics
+  ): HttpServer[F] =
     new HttpServer(publicRoutes, peerRoutes, metrics)
 }

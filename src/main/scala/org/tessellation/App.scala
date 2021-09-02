@@ -4,7 +4,8 @@ import cats.effect.{ExitCode, IO, IOApp}
 import cats.syntax.all._
 import fs2.Stream
 import io.chrisdavenport.log4cats.slf4j.Slf4jLogger
-import org.http4s.HttpRoutes
+import org.tessellation.aci.endpoint.StateChannelHandler
+import org.tessellation.aci.{ClasspathScanner, RuntimeLoader}
 import org.tessellation.config.Config
 import org.tessellation.consensus.DAGStateChannel
 import org.tessellation.consensus.transaction.RandomTransactionGenerator
@@ -15,10 +16,12 @@ import org.tessellation.metrics.Metric._
 import org.tessellation.metrics.{Metric, Metrics}
 import org.tessellation.node.Node
 import org.tessellation.snapshot.L0Pipeline
+import org.tessellation.utils.streamLiftK
 
 object App extends IOApp {
+
   override def run(args: List[String]): IO[ExitCode] = {
-    val logger = Slf4jLogger.getLogger[IO]
+    val logger = Slf4jLogger.getLogger[IO].mapK(streamLiftK)
 
     val app = for {
       config <- Stream.eval(Config.load())
@@ -28,8 +31,16 @@ object App extends IOApp {
 
       _ <- Stream.eval(metrics.incrementMetricAsync[IO](Metric.LoadConfig.success))
 
+      runtimeLoader = new RuntimeLoader[IO]()
+      classpathScanner = new ClasspathScanner[IO](runtimeLoader)
+      runtimeCache <- classpathScanner.scanClasspath
+
       // L0
       l0 = new L0Pipeline(metrics).pipeline
+
+      // L1 (any)
+      handler <- StateChannelHandler.init[IO](runtimeCache)
+      handlerPipeline = (handler.l1 >>> l0)(handler.l1Input)
 
       // L1 (DAG)
       dag <- DAGStateChannel.init(node, metrics)
@@ -40,13 +51,13 @@ object App extends IOApp {
       ethPipeline = (eth.l1 >>> l0)(eth.l1Input)
 
       // Adding L1 (DAG) and L1 (ETH) together
-      pipelines = ethPipeline.merge(dagPipeline)
-      routes = eth.routes <+> dag.routes
+      pipelines = ethPipeline.merge(dagPipeline).merge(handlerPipeline)
+      routes = eth.routes <+> dag.routes <+> handler.routes
 
-      httpServer = HttpServer(routes, HttpRoutes.empty, metrics)
+      httpServer = HttpServer(routes, handler.routes, metrics)
       _ <- httpServer.run().merge(pipelines)
     } yield ()
 
-    app.handleErrorWith(e => Stream.eval(logger.error(e)("ERROR!"))).compile.drain.as(ExitCode.Success)
+    app.handleErrorWith(e => logger.error(e)("ERROR!")).compile.drain.as(ExitCode.Success)
   }
 }
