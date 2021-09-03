@@ -58,7 +58,7 @@ class ETHStateChannel(
   private val blocksInput: Stream[IO, ReceivedETHBlock[Ω]] = blockchainClient.blocks.map { block =>
     val lpTxs = block.getBlock.getTransactions.asScala.toList
       .asInstanceOf[List[TransactionObject]]
-      //      .filter(_.getTo == liquidityPool.ethAddress) // TODO: Enable to get only blocks affecting lp address
+      .filter(_.getTo == liquidityPool.xAddress) // TODO: Enable to get only blocks affecting ETH lp address
       .toSet
     ETHBlock(lpTxs)
   }.filter(_.transactions.nonEmpty).map(block => ReceivedETHBlock[Ω](block)).evalTap(x => logger.debug(x.toString))
@@ -77,7 +77,12 @@ object ETHStateChannel {
     Stream.eval {
       for {
         emissionQueue <- Queue.unbounded[IO, ETHEmission]
-        liquidityPool = LiquidityPool[ETH, DAG](1, 100, "", "") // TODO: It should be provided by liquidity provider
+        liquidityPool = LiquidityPool[ETH, DAG](
+          1,
+          100,
+          "0xETHLIQUIDITYPOOLADDRESS",
+          "DAGLIQUIDITYPOOLADDRESS" // TODO: We do not support DAG -> ETH yet so just a placeholder
+        ) // TODO: It should be provided by liquidity provider
         blockchainClient = ETHBlockchainClient(blockchainUrl)
         stateChannel = new ETHStateChannel(emissionQueue, liquidityPool, blockchainClient)
       } yield stateChannel
