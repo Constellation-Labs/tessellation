@@ -7,7 +7,7 @@ import org.tessellation.consensus.L1ConsensusStep.{BroadcastProposalResponse, Ro
 import org.tessellation.schema.{Hom, Ω}
 
 case class L1Transaction(
-  a: Int,
+  a: Long,
   src: String,
   dst: String,
   parentHash: String = "",
@@ -25,8 +25,8 @@ case class L1Edge(txs: Set[L1Transaction]) extends Ω
 
 case class L1Block(txs: Set[L1Transaction]) extends Ω {
 
-  def height: Int =
-    txs.maxByOption(_.a).map(_.a).getOrElse(0) // TODO: height should be based on block parents (parents + 1)
+  def height: Long =
+    txs.maxByOption(_.a).map(_.a.toLong).getOrElse(0L) // TODO: height should be based on block parents (parents + 1)
 }
 
 sealed trait L1ConsensusF[A] extends Hom[Ω, A]

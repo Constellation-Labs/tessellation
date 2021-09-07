@@ -16,11 +16,13 @@ case class ReceivedETHBlock[A](block: ETHBlock) extends ETHConsensusF[A]
 
 case class WaitForCorrespondingBlockTimeout[A]() extends ETHConsensusF[A]
 
-case class ETHEmissionError[A]() extends ETHConsensusF[A]
+case class ETHEmissionError[A](hex: String) extends ETHConsensusF[A]
 
 case class ETHSwapEnd[A](block: L1Block) extends ETHConsensusF[A]
 
-case class ETHEmissionEnd[A](tx: Transaction) extends ETHConsensusF[A]
+case class ETHSwapError[A](block: ETHBlock) extends ETHConsensusF[A]
+
+case class ETHEmissionEnd[A](hash: String) extends ETHConsensusF[A]
 
 object ETHConsensusF {
   implicit val traverse: Traverse[ETHConsensusF] = new DefaultTraverse[ETHConsensusF] {

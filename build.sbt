@@ -6,6 +6,8 @@ scalaVersion := "2.13.1"
 
 mainClass in assembly := Some("org.tessellation.App")
 
+addCompilerPlugin("com.olegpy" %% "better-monadic-for" % "0.3.1")
+
 lazy val drosteDependencies = Seq(
   "io.higherkindness" %% "droste-core",
   "io.higherkindness" %% "droste-laws",
