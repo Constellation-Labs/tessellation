@@ -49,7 +49,7 @@ class L0Pipeline(metrics: Metrics) {
                   go(
                     tail,
                     (
-                      heights.updatedWith(block.height)(_.map(_ ++ Set(block)).orElse(Set(block).some)),
+                      heights.updatedWith(block.height.toInt)(_.map(_ ++ Set(block)).orElse(Set(block).some)),
                       lastTip,
                       lastEmitted
                     )
@@ -94,7 +94,7 @@ object L0Pipeline {
                 go(
                   tail,
                   (
-                    heights.updatedWith(block.height)(_.map(_ ++ Set(block)).orElse(Set(block).some)),
+                    heights.updatedWith(block.height.toInt)(_.map(_ ++ Set(block)).orElse(Set(block).some)),
                     lastTip,
                     lastEmitted
                   )
