@@ -1,20 +1,19 @@
 package org.tesselation.http.routes
 
 import cats.effect.IO
-
-import org.tesselation.domain.cluster.{Cluster, ClusterStorage, NodeStorage}
+import org.tesselation.domain.cluster.{Cluster, ClusterStorage, NodeStorage, Session}
 import org.tesselation.generators.peersGen
 import org.tesselation.infrastructure.cluster.Cluster
-import org.tesselation.schema.cluster.PeerToJoin
+import org.tesselation.schema.cluster.{PeerToJoin, SessionToken, TokenVerificationResult}
 import org.tesselation.schema.node.NodeState
 import org.tesselation.schema.peer.{Peer, PeerId}
-
 import com.comcast.ip4s.{Host, Port}
 import org.http4s.Method._
 import org.http4s._
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.client.dsl.io._
 import org.http4s.syntax.literals._
+import org.tesselation.schema.cluster
 import suite.HttpSuite
 
 object ClusterRoutesSuite extends HttpSuite {
@@ -47,7 +46,7 @@ object ClusterRoutesSuite extends HttpSuite {
         val nodeStorage = new TestNodeStorage {
           override def canJoinCluster: IO[Boolean] = IO.pure(true)
         }
-        val cluster = Cluster.make[F](clusterStorage, nodeStorage)
+        val cluster = Cluster.make[F](clusterStorage, nodeStorage, new TestSession)
 
         val req = POST(uri"/cluster/join").withEntity(peers.head)
         val routes = ClusterRoutes(clusterStorage, cluster).cliRoutes
@@ -68,7 +67,7 @@ object ClusterRoutesSuite extends HttpSuite {
         val nodeStorage = new TestNodeStorage {
           override def canJoinCluster: IO[Boolean] = IO.pure(true)
         }
-        val cluster = Cluster.make[F](clusterStorage, nodeStorage)
+        val cluster = Cluster.make[F](clusterStorage, nodeStorage, new TestSession)
 
         val req = POST(uri"/cluster/join").withEntity(peers.head)
         val routes = ClusterRoutes(clusterStorage, cluster).cliRoutes
@@ -87,7 +86,7 @@ object ClusterRoutesSuite extends HttpSuite {
         }
 
         val nodeStorage = new TestNodeStorage
-        val cluster = Cluster.make[F](clusterStorage, nodeStorage)
+        val cluster = Cluster.make[F](clusterStorage, nodeStorage, new TestSession)
 
         val req = POST(uri"/cluster/join").withEntity(peers.head)
         val routes = ClusterRoutes(clusterStorage, cluster).cliRoutes
@@ -111,6 +110,12 @@ protected class TestClusterStorage extends ClusterStorage[IO] {
   override def hasPeerId(id: PeerId): IO[Boolean] = IO.pure(false)
 
   override def hasPeerHostPort(host: Host, p2pPort: Port): IO[Boolean] = IO.pure(false)
+}
+
+protected class TestSession extends Session[IO] {
+  override def createSession: IO[SessionToken] = ???
+
+  override def verifyToken(peer: PeerId, headerToken: Option[SessionToken]): IO[TokenVerificationResult] = ???
 }
 
 protected class TestCluster extends Cluster[IO] {

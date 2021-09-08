@@ -1,4 +1,4 @@
-import Dependencies._
+import Dependencies.{Libraries, _}
 
 ThisBuild / scalaVersion := "2.13.5"
 ThisBuild / version := "2.0.0"
@@ -16,7 +16,47 @@ lazy val root = (project in file("."))
   .settings(
     name := "tesselation"
   )
-  .aggregate(shared, core, tests)
+  .aggregate(keytool, shared, core, tests)
+
+lazy val keytool = (project in file("modules/keytool"))
+  .enablePlugins(AshScriptPlugin)
+  .settings(
+    name := "tesselation-keytool",
+    scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info"),
+    scalafmtOnCompile := true,
+    scalafixOnCompile := true,
+    resolvers += Resolver.sonatypeRepo("snapshots"),
+    Defaults.itSettings,
+    scalafixCommonSettings,
+    makeBatScripts := Seq(),
+    libraryDependencies ++= Seq(
+      CompilerPlugin.kindProjector,
+      CompilerPlugin.betterMonadicFor,
+      CompilerPlugin.semanticDB,
+      Libraries.bouncyCastle,
+      Libraries.cats,
+      Libraries.circeCore,
+      Libraries.circeGeneric,
+      Libraries.circeParser,
+      Libraries.circeRefined,
+      Libraries.cirisCore,
+      Libraries.cirisEnum,
+      Libraries.cirisRefined,
+      Libraries.comcast,
+      Libraries.derevoCore,
+      Libraries.derevoCats,
+      Libraries.derevoCirce,
+      Libraries.monocleCore,
+      Libraries.newtype,
+      Libraries.scCore,
+      Libraries.scProv,
+      Libraries.scBcpkix,
+      Libraries.scBcpg,
+      Libraries.scBctls,
+      Libraries.refinedCore,
+      Libraries.refinedCats
+    )
+  )
 
 lazy val shared = (project in file("modules/shared"))
   .enablePlugins(AshScriptPlugin)
@@ -77,7 +117,7 @@ lazy val tests = (project in file("modules/tests"))
 
 lazy val core = (project in file("modules/core"))
   .enablePlugins(AshScriptPlugin)
-  .dependsOn(shared)
+  .dependsOn(keytool, shared)
   .settings(
     name := "tesselation-core",
     scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info"),

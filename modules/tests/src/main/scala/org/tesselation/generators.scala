@@ -1,9 +1,9 @@
 package org.tesselation
 
 import org.tesselation.schema.peer.{Peer, PeerId}
-
 import com.comcast.ip4s.{Host, Port}
 import org.scalacheck.Gen
+import org.tesselation.keytool.Base58
 
 object generators {
 
@@ -40,6 +40,13 @@ object generators {
   def peersGen(n: Option[Int] = None): Gen[Set[Peer]] =
     n.map(Gen.const).getOrElse(Gen.chooseNum(1, 20)).flatMap { n =>
       Gen.sequence[Set[Peer], Peer](Array.tabulate(n)(_ => peerGen))
+    }
+
+  val base58CharGen: Gen[Char] = Gen.oneOf(Base58.alphabet)
+
+  val base58StringGen: Gen[String] =
+    Gen.chooseNum(21, 40).flatMap { n =>
+      Gen.buildableOfN[String, Char](n, base58CharGen)
     }
 
 }

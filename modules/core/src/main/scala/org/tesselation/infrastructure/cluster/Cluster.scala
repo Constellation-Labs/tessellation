@@ -6,14 +6,22 @@ import cats.syntax.applicativeError._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tesselation.domain.cluster.{Cluster, ClusterStorage, NodeStorage}
+import org.tesselation.domain.cluster._
 import org.tesselation.schema.cluster._
 import org.tesselation.schema.peer.Peer
 
+import org.typelevel.log4cats.slf4j.Slf4jLogger
+
 object Cluster {
 
-  def make[F[_]: Async](clusterStorage: ClusterStorage[F], nodeStorage: NodeStorage[F]): Cluster[F] =
+  def make[F[_]: Async](
+    clusterStorage: ClusterStorage[F],
+    nodeStorage: NodeStorage[F],
+    session: Session[F]
+  ): Cluster[F] =
     new Cluster[F] {
+
+      implicit val logger = Slf4jLogger.getLogger[F]
 
       /**
         * Join process:
@@ -33,6 +41,7 @@ object Cluster {
       def join(toPeer: PeerToJoin): F[Unit] =
         for {
           _ <- validateJoinConditions(toPeer: PeerToJoin)
+          sessionToken <- session.createSession
 
           _ <- clusterStorage.addPeer(Peer(toPeer.id, toPeer.ip, toPeer.p2pPort, toPeer.p2pPort))
         } yield ()

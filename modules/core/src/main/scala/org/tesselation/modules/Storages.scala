@@ -4,8 +4,8 @@ import cats.effect.kernel.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tesselation.domain.cluster.{ClusterStorage, NodeStorage}
-import org.tesselation.infrastructure.cluster.ClusterStorage
+import org.tesselation.domain.cluster.{ClusterStorage, NodeStorage, SessionStorage}
+import org.tesselation.infrastructure.cluster.{ClusterStorage, SessionStorage}
 import org.tesselation.infrastructure.node.NodeStorage
 
 object Storages {
@@ -14,14 +14,17 @@ object Storages {
     for {
       clusterStorage <- ClusterStorage.make[F]
       nodeStorage <- NodeStorage.make[F]
+      sessionStorage <- SessionStorage.make[F]
     } yield
       new Storages[F](
         cluster = clusterStorage,
-        node = nodeStorage
+        node = nodeStorage,
+        session = sessionStorage
       ) {}
 }
 
 sealed abstract class Storages[F[_]] private (
   val cluster: ClusterStorage[F],
-  val node: NodeStorage[F]
+  val node: NodeStorage[F],
+  val session: SessionStorage[F]
 )

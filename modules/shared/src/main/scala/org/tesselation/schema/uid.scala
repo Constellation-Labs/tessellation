@@ -6,7 +6,7 @@ import cats.syntax.functor._
 import org.tesselation.effects.GenUUID
 import org.tesselation.optics.IsUUID
 
-object uuid {
+object uid {
 
   def make[F[_]: Functor: GenUUID, A: IsUUID]: F[A] =
     GenUUID[F].make.map(IsUUID[A]._UUID.get)

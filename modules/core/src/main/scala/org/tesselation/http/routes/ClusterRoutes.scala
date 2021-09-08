@@ -38,6 +38,8 @@ final case class ClusterRoutes[F[_]: Async](
             case PeerIdInUse(id) => Conflict(s"Peer id=${id} already in use.")
             case PeerHostPortInUse(host, port) =>
               Conflict(s"Peer host=${host.toString} port=${port.value} already in use.")
+            case SessionAlreadyExists =>
+              Conflict(s"Session already exists.")
           }
       }
   }

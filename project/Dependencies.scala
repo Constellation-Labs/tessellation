@@ -3,6 +3,7 @@ import sbt._
 object Dependencies {
 
   object V {
+    val bouncyCastle = "1.65"
     val cats = "2.6.1"
     val catsEffect = "3.2.3"
     val catsRetry = "2.1.0" // not published for CE3 yet
@@ -22,6 +23,7 @@ object Dependencies {
     val refined = "0.9.27"
     val redis4cats = "1.0.0"
     val skunk = "0.2.1"
+    val spongyCastle = "1.58.0.0"
     val squants = "1.8.2"
     val twitterChill = "0.10.0"
 
@@ -41,10 +43,12 @@ object Dependencies {
     def doobie(artifact: String): ModuleID = "org.tpolecat" %% s"doobie-$artifact" % V.doobie
     def droste(artifact: String): ModuleID = "io.higherkindness" %% s"droste-$artifact" % V.droste
     def http4s(artifact: String): ModuleID = "org.http4s" %% s"http4s-$artifact" % V.http4s
+    def spongyCastle(artifact: String): ModuleID = "com.madgag.spongycastle" % artifact % V.spongyCastle
 
     val cats = "org.typelevel" %% "cats-core" % V.cats
     val catsEffect = "org.typelevel" %% "cats-effect" % V.catsEffect
     val catsRetry = "com.github.cb372" %% "cats-retry" % V.catsRetry
+
     val squants = "org.typelevel" %% "squants" % V.squants
     val fs2 = "co.fs2" %% "fs2-core" % V.fs2
     val comcast = "com.comcast" %% "ip4s-core" % V.comcast
@@ -73,6 +77,13 @@ object Dependencies {
     val http4sServer = http4s("ember-server")
     val http4sClient = http4s("ember-client")
     val http4sCirce = http4s("circe")
+
+    val scCore = spongyCastle("core")
+    val scProv = spongyCastle("prov")
+    val scBcpkix = spongyCastle("bcpkix-jdk15on")
+    val scBcpg = spongyCastle("bcpg-jdk15on")
+    val scBctls = spongyCastle("bctls-jdk15on")
+    val bouncyCastle = "org.bouncycastle" % "bcprov-jdk15on" % V.bouncyCastle
 
     val http4sJwtAuth = "dev.profunktor" %% "http4s-jwt-auth" % V.http4sJwtAuth
 
