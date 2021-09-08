@@ -1,7 +1,8 @@
 package org.tesselation.keytool.config
 
-import ciris.Secret
 import org.tesselation.keytool.cert.DistinguishedName
+
+import ciris.Secret
 
 object types {
 

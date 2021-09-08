@@ -46,6 +46,8 @@ lazy val keytool = (project in file("modules/keytool"))
       Libraries.derevoCore,
       Libraries.derevoCats,
       Libraries.derevoCirce,
+      Libraries.log4cats,
+      Libraries.logback % Runtime,
       Libraries.monocleCore,
       Libraries.newtype,
       Libraries.scCore,

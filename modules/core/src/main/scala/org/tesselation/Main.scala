@@ -15,9 +15,6 @@ object Main extends IOApp {
 
   implicit val logger = Slf4jLogger.getLogger[IO]
 
-  def logThread(name: String): Unit =
-    println(s"$name: ${Thread.currentThread().getName}")
-
   override def run(args: List[String]): IO[ExitCode] =
     Config.load[IO].flatMap { cfg =>
       Logger[IO].info(s"Config loaded") >>

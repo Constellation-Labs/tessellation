@@ -1,12 +1,11 @@
 package org.tesselation.keytool.security
 
-import cats.effect.Async
-import cats.syntax.functor._
-import cats.syntax.flatMap._
-import org.bouncycastle.jce.provider.BouncyCastleProvider
-
 import java.security.spec.ECGenParameterSpec
 import java.security.{KeyPair, KeyPairGenerator}
+
+import cats.effect.Async
+import cats.syntax.flatMap._
+import cats.syntax.functor._
 
 /**
   * Need to compare this to:
@@ -32,17 +31,18 @@ object KeyProvider {
   private val ECDSA = "ECDsA"
   private val secp256k = "secp256k1"
 
-  def getKeyPairGenerator[F[_]: Async](securityProvider: BouncyCastleProvider): F[KeyPairGenerator] =
+  private def getKeyPairGenerator[F[_]: Async: SecurityProvider]: F[KeyPairGenerator] =
     for {
       ecSpec <- Async[F].delay { new ECGenParameterSpec(secp256k) }
-      keyGen <- Async[F].delay { KeyPairGenerator.getInstance(ECDSA, securityProvider) }
+      bcProvider = SecurityProvider[F].provider
+      keyGen <- Async[F].delay { KeyPairGenerator.getInstance(ECDSA, bcProvider) }
       secureRandom <- SecureRandom.get[F]
       _ <- Async[F].delay { keyGen.initialize(ecSpec, secureRandom) }
     } yield keyGen
 
-  def makeKeyPair[F[_]: Async](securityProvider: BouncyCastleProvider): F[KeyPair] =
+  def makeKeyPair[F[_]: Async: SecurityProvider]: F[KeyPair] =
     for {
-      keyGen <- getKeyPairGenerator[F](securityProvider)
+      keyGen <- getKeyPairGenerator[F]
       keyPair <- Async[F].delay { keyGen.generateKeyPair() }
     } yield keyPair
 }

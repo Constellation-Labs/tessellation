@@ -2,7 +2,9 @@ package org.tesselation.keytool
 
 import cats.effect.IO
 import cats.syntax.applicative._
+
 import org.tesselation.generators.{base58StringGen, nonEmptyStringGen}
+
 import weaver.SimpleIOSuite
 import weaver.scalacheck.Checkers
 

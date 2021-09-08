@@ -1,19 +1,20 @@
 package org.tesselation.http.routes
 
 import cats.effect.IO
-import org.tesselation.domain.cluster.{Cluster, ClusterStorage, NodeStorage, Session}
+
+import org.tesselation.domain.cluster._
 import org.tesselation.generators.peersGen
 import org.tesselation.infrastructure.cluster.Cluster
 import org.tesselation.schema.cluster.{PeerToJoin, SessionToken, TokenVerificationResult}
 import org.tesselation.schema.node.NodeState
 import org.tesselation.schema.peer.{Peer, PeerId}
+
 import com.comcast.ip4s.{Host, Port}
 import org.http4s.Method._
 import org.http4s._
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.client.dsl.io._
 import org.http4s.syntax.literals._
-import org.tesselation.schema.cluster
 import suite.HttpSuite
 
 object ClusterRoutesSuite extends HttpSuite {

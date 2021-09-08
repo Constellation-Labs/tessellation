@@ -1,8 +1,8 @@
 package org.tesselation.keytool.security
 
-import cats.effect.Async
-
 import java.security.{SecureRandom => jSecureRandom}
+
+import cats.effect.Async
 
 object SecureRandom {
   val secureRandomInstance = "NativePRNGNonBlocking"

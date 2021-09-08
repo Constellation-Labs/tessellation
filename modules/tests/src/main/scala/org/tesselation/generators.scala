@@ -1,9 +1,10 @@
 package org.tesselation
 
+import org.tesselation.keytool.Base58
 import org.tesselation.schema.peer.{Peer, PeerId}
+
 import com.comcast.ip4s.{Host, Port}
 import org.scalacheck.Gen
-import org.tesselation.keytool.Base58
 
 object generators {
 
