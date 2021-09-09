@@ -6,13 +6,14 @@ import org.scalatest.GivenWhenThen
 import org.scalatest.freespec.AnyFreeSpec
 import org.scalatest.matchers.should.Matchers
 import org.tessellation.schema.{DAG, ETH, LiquidityPool}
+import org.web3j.utils.Convert
 
 class LiquidityPoolTest extends AnyFreeSpec with GivenWhenThen with Matchers {
   private implicit val contextShift: ContextShift[IO] = IO.contextShift(scala.concurrent.ExecutionContext.global)
 
   Given("LiquidityPool with 1 ETH and 100 DAG")
-  val ethQ = 1
-  val dagQ = 100
+  val ethQ = Convert.toWei("1.0", Convert.Unit.ETHER)
+  val dagQ = 100.00000000
   val s = Semaphore[IO](1).unsafeRunSync()
   val lp = new LiquidityPool[ETH, DAG](ethQ, dagQ, "", "")(s)
 

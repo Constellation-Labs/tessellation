@@ -47,7 +47,7 @@ object App extends IOApp {
       dagPipeline = (dag.l1 >>> l0)(dag.l1Input)
 
       // L1 (ETH)
-      eth <- ETHStateChannel.init(config.ethereumBlockchainUrl)
+      eth <- ETHStateChannel.init(config.ethereumBlockchainUrl, config.ethereumLiquidityPoolAddress)
       ethPipeline = (eth.l1 >>> l0)(eth.l1Input)
 
       // Adding L1 (DAG) and L1 (ETH) together

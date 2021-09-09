@@ -5,6 +5,8 @@ import fs2._
 import fs2.interop.reactivestreams._
 import monix.catnap.FutureLift
 import org.web3j.protocol.Web3j
+import org.web3j.protocol.core.DefaultBlockParameterNumber
+import org.web3j.protocol.core.methods.response.EthBlock.Block
 import org.web3j.protocol.core.methods.response.{EthBlock, Transaction}
 import org.web3j.protocol.http.HttpService
 
@@ -29,6 +31,11 @@ class ETHBlockchainClient(blockchainUrl: String) {
     FutureLift.from {
       IO(client.ethGetTransactionByHash(hash).sendAsync())
     }.map(_.getTransaction).map(o => toScala(o))
+
+  def getByNumber(number: BigInt): IO[Block] =
+    FutureLift.from {
+      IO(client.ethGetBlockByNumber(new DefaultBlockParameterNumber(number.bigInteger), true).sendAsync())
+    }.map(_.getBlock)
 
   def blocks: Stream[IO, EthBlock] =
     client

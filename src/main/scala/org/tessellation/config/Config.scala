@@ -8,7 +8,8 @@ case class Config(
   startOwnConsensusRounds: Boolean,
   ip: String,
   generatorSrc: String,
-  ethereumBlockchainUrl: String // TODO: Each state channel should have separated config so it shouldn't be there!
+  ethereumBlockchainUrl: String, // TODO: Each state channel should have separated config so it shouldn't be there!
+  ethereumLiquidityPoolAddress: String
 )
 
 object Config {
@@ -22,7 +23,8 @@ object Config {
             startOwnConsensusRounds = false,
             ip = "0.0.0.0",
             generatorSrc = "",
-            ethereumBlockchainUrl = ""
+            ethereumBlockchainUrl = "",
+            ethereumLiquidityPoolAddress = ""
           )
         )
     }
