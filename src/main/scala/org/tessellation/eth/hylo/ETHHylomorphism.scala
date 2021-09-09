@@ -45,6 +45,10 @@ object ETHHylomorphism {
       IO {
         CellError(s"ETH emission failed for block: $block").asLeft[Ω]
       }
+    case result @ ETHEmissionEnd(hash) =>
+      IO {
+        result.asRight[CellError]
+      }
 
     case a @ _ =>
       IO {

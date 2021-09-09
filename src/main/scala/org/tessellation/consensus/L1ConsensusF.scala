@@ -16,7 +16,7 @@ case class L1Transaction(
   val hash = s"$a$src$dst$ordinal$parentHash"
 
   override def toString: String =
-    s"L1Transaction($hash)"
+    s"L1Transaction(value=$a,src=$src,dst=$dst)"
 }
 
 object L1Transaction {}

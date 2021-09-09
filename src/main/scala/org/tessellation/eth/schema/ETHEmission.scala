@@ -25,7 +25,7 @@ object NativeETHTransaction {
   )
 }
 
-case class ETHEmission(ethTransactionHex: String, dagAddress: String) extends Ω {}
+case class ETHEmission(ethTransactionHex: String) extends Ω {}
 
 object ETHEmission {
   implicit val decoder: Decoder[ETHEmission] = deriveDecoder
