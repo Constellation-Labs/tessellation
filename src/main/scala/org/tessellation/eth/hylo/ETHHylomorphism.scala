@@ -88,7 +88,7 @@ object ETHHylomorphism {
       _ <- EitherT.liftF(logger.debug(s"[${tx.getHash}] Swapping $ethOffer ETH for DAG address $dagAddress"))
       dagTransaction <- liquidityPool
         .swap(ethOffer) { dagOffer =>
-          L1Transaction((dagOffer / 1e8).toLong, liquidityPool.yAddress, dagAddress).pure[IO]
+          L1Transaction(dagOffer, liquidityPool.yAddress, dagAddress).pure[IO]
         }
         .attemptT
         .leftMap(_ => SwapFailed(tx))
