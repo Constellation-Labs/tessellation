@@ -10,6 +10,8 @@ import org.tessellation.schema._
 object ETHStackHylomorphism {
 
   val coalgebra: CoalgebraM[IO, StackF, Ω] = CoalgebraM {
+    case block @ L1Block(_) => IO(Done(ETHSwapEnd(block).asRight[CellError]))
+
     case ETHEmissionEnd(hash) => IO(Done(ETHEmissionEnd(hash).asRight[CellError]))
 
     case input @ ETHCellInput(cmd, _) =>

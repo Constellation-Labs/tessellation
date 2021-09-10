@@ -9,7 +9,8 @@ case class Config(
   ip: String,
   generatorSrc: String,
   ethereumBlockchainUrl: String, // TODO: Each state channel should have separated config so it shouldn't be there!
-  ethereumLiquidityPoolAddress: String
+  ethereumLiquidityPoolAddress: String,
+  ethereumGeneratorPrivateKey: String
 )
 
 object Config {
@@ -24,7 +25,8 @@ object Config {
             ip = "0.0.0.0",
             generatorSrc = "",
             ethereumBlockchainUrl = "",
-            ethereumLiquidityPoolAddress = ""
+            ethereumLiquidityPoolAddress = "",
+            ethereumGeneratorPrivateKey = ""
           )
         )
     }

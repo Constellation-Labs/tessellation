@@ -7,7 +7,7 @@ import org.tessellation.consensus.L1ConsensusStep.{BroadcastProposalResponse, Ro
 import org.tessellation.schema.{Hom, Ω}
 
 case class L1Transaction(
-  a: Long,
+  a: BigDecimal,
   src: String,
   dst: String,
   parentHash: String = "",

@@ -10,7 +10,7 @@ import fs2._
 import fs2.concurrent.Queue
 import org.http4s.{EntityDecoder, HttpRoutes}
 import org.tessellation.consensus.{L1Block, L1Transaction}
-import org.tessellation.eth.hylo.{ETHEmissionEnd, ReceivedETHBlock, ReceivedETHEmission}
+import org.tessellation.eth.hylo.{ETHEmissionEnd, ETHSwapEnd, ReceivedETHBlock, ReceivedETHEmission}
 import org.tessellation.eth.schema.{ETHBlock, ETHEmission}
 import org.tessellation.eth.web3j.ETHBlockchainClient
 import org.tessellation.schema.{CellError, DAG, ETH, LiquidityPool, Ω}
@@ -26,21 +26,7 @@ class ETHStateChannel(
   implicit val contextShift: ContextShift[IO] = IO.contextShift(scala.concurrent.ExecutionContext.global)
   implicit val timer: Timer[IO] = IO.timer(scala.concurrent.ExecutionContext.global)
   private val logger = Slf4jLogger.getLogger[IO]
-  val l1Input: Stream[IO, Ω] = blocksInput.merge(emissionInput)
 
-  val l1: Pipe[IO, Ω, L1Block] = (in: Stream[IO, Ω]) =>
-    in.map(cmd => ETHCell(cmd, ETHContext(liquidityPool, blockchainClient)))
-      .evalMap(_.run())
-      .flatMap {
-        case Left(error)           => Stream.eval(logger.error(error)("ETHCell failed!")) >> Stream.raiseError[IO](error)
-        case Right(block: L1Block) => Stream.eval(logger.debug(s"ETHCell produced block: $block")).as(block)
-        case Right(eth: ETHEmissionEnd[Ω]) =>
-          Stream.eval(logger.debug(s"Emission succeeded: ${eth.hash}")).as(L1Block(Set.empty[L1Transaction]))
-        case _ => {
-          val err = CellError("Invalid Ω type")
-          Stream.eval(logger.error(err)("ETHCell failed!")) >> Stream.raiseError[IO](err)
-        }
-      }
   private val emissionInput: Stream[IO, ReceivedETHEmission[Ω]] =
     emissionQueue.dequeue
       .map(emission => ReceivedETHEmission[Ω](emission))
@@ -54,6 +40,23 @@ class ETHStateChannel(
   }.filter(_.transactions.nonEmpty)
     .map(block => ReceivedETHBlock[Ω](block))
     .evalTap(x => logger.debug(x.toString))
+
+  val l1Input: Stream[IO, Ω] = blocksInput.merge(emissionInput)
+
+  val l1: Pipe[IO, Ω, L1Block] = (in: Stream[IO, Ω]) =>
+    in.map(cmd => ETHCell(cmd, ETHContext(liquidityPool, blockchainClient)))
+      .evalMap(_.run())
+      .flatMap {
+        case Left(error) => Stream.eval(logger.error(error)("ETHCell failed!")) >> Stream.raiseError[IO](error)
+        case Right(eth: ETHSwapEnd[Ω]) =>
+          Stream.eval(logger.debug(s"ETHCell produced block: ${eth.block}")).as(eth.block)
+        case Right(eth: ETHEmissionEnd[Ω]) =>
+          Stream.eval(logger.debug(s"Emission succeeded: ${eth.hash}")).as(L1Block(Set.empty[L1Transaction]))
+        case a @ _ => {
+          val err = CellError(s"Invalid Ω type: ${a}")
+          Stream.eval(logger.error(err)("ETHCell failed!")) >> Stream.raiseError[IO](err)
+        }
+      }
 
   val routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     case req @ POST -> Root / "swap" / "eth" / "dag" =>
@@ -80,8 +83,8 @@ object ETHStateChannel {
       for {
         emissionQueue <- Queue.unbounded[IO, ETHEmission]
         liquidityPool <- LiquidityPool.init[ETH, DAG](
-          1, // TODO: It should be provided by liquidity provider
           100, // TODO: It should be provided by liquidity provider
+          1245330.01245, // TODO: It should be provided by liquidity provider
           ethereumLiquidityPoolAddress,
           "DAGLIQUIDITYPOOLADDRESS" // TODO: We do not support DAG -> ETH yet so just a placeholder
         )

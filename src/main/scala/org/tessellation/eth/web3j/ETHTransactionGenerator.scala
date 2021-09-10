@@ -17,21 +17,22 @@ import java.math.BigInteger
   * Just for testing purposes!
   */
 class ETHTransactionGenerator(
-  blockchainUrl: String = "",
-  liquidityPoolAddress: String = ""
+  blockchainUrl: String,
+  liquidityPoolAddress: String,
+  privateKey: String
 ) {
-  private val credentials = Credentials.create("")
+  private val credentials = Credentials.create(privateKey)
   private val client: Web3j = Web3j.build(new HttpService(blockchainUrl))
   private val rawTransactionManager: RawTransactionManager = new RawTransactionManager(client, credentials)
 
-  def create1WeiRawTransaction: IO[String] =
+  def createSampleRawTransaction(destinationDAGAddress: String): IO[String] =
     for {
       nonce <- getNonce
-      value = Convert.toWei("1", Convert.Unit.WEI).toBigInteger
+      value = Convert.toWei("0.0001", Convert.Unit.ETHER).toBigInteger
       to = liquidityPoolAddress
       gasPrice = DefaultGasProvider.GAS_PRICE
       gasLimit = DefaultGasProvider.GAS_LIMIT
-      data = asciiToHex("DAG1XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX")
+      data = asciiToHex(destinationDAGAddress)
       tx = RawTransaction
         .createTransaction(nonce, gasPrice, gasLimit, to, value, data)
       signedTx = rawTransactionManager.sign(tx)
@@ -45,6 +46,6 @@ class ETHTransactionGenerator(
 
 object ETHTransactionGenerator {
 
-  def apply(blockchainUrl: String, liquidityPoolAddress: String): ETHTransactionGenerator =
-    new ETHTransactionGenerator(blockchainUrl, liquidityPoolAddress)
+  def apply(blockchainUrl: String, liquidityPoolAddress: String, privateKey: String): ETHTransactionGenerator =
+    new ETHTransactionGenerator(blockchainUrl, liquidityPoolAddress, privateKey)
 }
