@@ -55,6 +55,7 @@ lazy val keytool = (project in file("modules/keytool"))
       Libraries.scBcpkix,
       Libraries.scBcpg,
       Libraries.scBctls,
+      Libraries.scopt,
       Libraries.refinedCore,
       Libraries.refinedCats
     )

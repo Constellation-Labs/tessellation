@@ -7,8 +7,10 @@ import ciris.Secret
 object types {
 
   case class AppConfig(
+    keystore: String,
     storepass: Secret[String],
     keypass: Secret[String],
+    keyalias: Secret[String],
     distinguishedName: DistinguishedName = DistinguishedName(
       commonName = "constellationnetwork.io",
       organization = "Constellation Labs"

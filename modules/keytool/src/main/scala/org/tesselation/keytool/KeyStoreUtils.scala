@@ -1,6 +1,7 @@
 package org.tesselation.keytool
 
 import java.io._
+import java.nio.charset.Charset
 import java.nio.file.FileAlreadyExistsException
 import java.security._
 import java.security.cert.Certificate
@@ -12,6 +13,9 @@ import cats.syntax.applicativeError._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
+import org.tesselation.keytool.cert.{DistinguishedName, SelfSignedCertificate}
+import org.tesselation.keytool.security.{KeyProvider, SecurityProvider, Signing}
+
 import org.bouncycastle.util.io.pem.{PemObject, PemWriter}
 
 object KeyStoreUtils {
@@ -21,7 +25,7 @@ object KeyStoreUtils {
   private val singlePasswordKeyStoreSuffix: String = "_v2"
   private val privateKeyHexName: String = "id_ecdsa.hex"
 
-  def readFromFileStream[F[_]: Async, T](
+  private[keytool] def readFromFileStream[F[_]: Async, T](
     dataPath: String,
     streamParser: FileInputStream => F[T]
   ): EitherT[F, Throwable, T] =
@@ -29,7 +33,7 @@ object KeyStoreUtils {
       .use(streamParser)
       .attemptT
 
-  def storeWithFileStream[F[_]: Async](
+  private[keytool] def storeWithFileStream[F[_]: Async](
     path: String,
     bufferedWriter: OutputStream => F[Unit]
   ): EitherT[F, Throwable, Unit] =
@@ -37,14 +41,18 @@ object KeyStoreUtils {
       .use(bufferedWriter)
       .attemptT
 
-  def parseFileOfTypeOp[F[_]: Async, T](parser: String => Option[T])(stream: FileInputStream): F[Option[T]] =
+  private[keytool] def parseFileOfTypeOp[F[_]: Async, T](
+    parser: String => Option[T]
+  )(stream: FileInputStream): F[Option[T]] =
     Resource
       .fromAutoCloseable(Async[F].delay {
         new BufferedReader(new InputStreamReader(stream))
       })
       .use(inStream => Option(inStream.readLine()).flatMap(parser).pure[F])
 
-  def writeTypeToFileStream[F[_]: Async, T](serializer: T => String)(obj: T)(stream: OutputStream): F[Unit] =
+  private[keytool] def writeTypeToFileStream[F[_]: Async, T](
+    serializer: T => String
+  )(obj: T)(stream: OutputStream): F[Unit] =
     Resource
       .fromAutoCloseable(Async[F].delay {
         new BufferedWriter(new OutputStreamWriter(stream))
@@ -56,7 +64,7 @@ object KeyStoreUtils {
           }
       )
 
-  def storeKeyPemDecrypted[F[_]: Async](key: Key)(stream: FileOutputStream): F[Unit] =
+  private[keytool] def storeKeyPemDecrypted[F[_]: Async](key: Key)(stream: FileOutputStream): F[Unit] =
     Resource
       .fromAutoCloseable(Async[F].delay {
         new PemWriter(new OutputStreamWriter(stream))
@@ -68,104 +76,101 @@ object KeyStoreUtils {
         }
       }
 
-//  def exportPrivateKeyAsHex[F[_]: Async](
-//    path: String,
-//    alias: String,
-//    storePassword: Array[Char],
-//    keyPassword: Array[Char]
-//  ): EitherT[F, Throwable, String] =
-//    for {
-//      keyPair <- keyPairFromStorePath(path, alias, storePassword, keyPassword)
-//      hex = KeyUtils.privateKeyToHex(keyPair.getPrivate)
-//      _ <- writer(pathDir(path) + privateKeyHexName)
-//        .use(
-//          os =>
-//            Async[F].delay {
-//              os.write(hex.getBytes(Charset.forName("UTF-8")))
-//            }
-//        )
-//        .attemptT
-//    } yield hex
+  private[keytool] def exportPrivateKeyAsHex[F[_]: Async](
+    path: String,
+    alias: String,
+    storePassword: Array[Char],
+    keyPassword: Array[Char]
+  ): F[String] =
+    for {
+      keyPair <- keyPairFromStorePath(path, alias, storePassword, keyPassword)
+      hex = KeyProvider.privateKeyToHex(keyPair.getPrivate)
+      _ <- writer(pathDir(path) + privateKeyHexName)
+        .use(
+          os =>
+            Async[F].delay {
+              os.write(hex.getBytes(Charset.forName("UTF-8")))
+            }
+        )
+    } yield hex
 
-//  def migrateKeyStoreToSinglePassword[F[_]: Async](
-//    path: String,
-//    alias: String,
-//    storePassword: Array[Char],
-//    keyPassword: Array[Char]
-//  ): EitherT[F, Throwable, KeyStore] =
-//    for {
-//      keyPair <- keyPairFromStorePath(path, alias, storePassword, keyPassword)
-//      newKeyStore <- putKeyPairToStorePath(keyPair, withSinglePasswordSuffix(path), alias, storePassword, storePassword)
-//    } yield newKeyStore
+  private[keytool] def migrateKeyStoreToSinglePassword[F[_]: Async](
+    path: String,
+    alias: String,
+    storePassword: Array[Char],
+    keyPassword: Array[Char],
+    distinguishedName: DistinguishedName,
+    certificateValidity: Int
+  ): F[KeyStore] =
+    for {
+      keyPair <- keyPairFromStorePath(path, alias, storePassword, keyPassword)
+      newKeyStore <- putKeyPairToStorePath(
+        keyPair,
+        withSinglePasswordSuffix(path),
+        alias,
+        storePassword,
+        storePassword,
+        distinguishedName,
+        certificateValidity
+      )
+    } yield newKeyStore
 
   /**
     * Generates new keypair and puts it to new keyStore at path
     */
-//  def generateKeyPairToStorePath[F[_]: Async](
-//    path: String,
-//    alias: String,
-//    storePassword: Array[Char],
-//    keyPassword: Array[Char]
-//  ): EitherT[F, Throwable, KeyStore] =
-//    writer(withExtension(path))
-//      .use(
-//        stream =>
-//          for {
-//            keyStore <- createEmptyKeyStore(storePassword)
-//            keyPair <- KeyUtils.makeKeyPair().pure[F]
-//            chain <- generateCertificateChain(keyPair)
-//            _ <- setKeyEntry(alias, keyPair, keyPassword, chain)(keyStore)
-//            _ <- store(stream, storePassword)(keyStore)
-//          } yield keyStore
-//      )
-//      .attemptT
+  private[keytool] def generateKeyPairToStorePath[F[_]: Async: SecurityProvider](
+    path: String,
+    alias: String,
+    storePassword: Array[Char],
+    keyPassword: Array[Char],
+    distinguishedName: DistinguishedName,
+    certificateValidity: Int
+  ): F[KeyStore] =
+    writer(withExtension(path))
+      .use(
+        stream =>
+          for {
+            keyStore <- createEmptyKeyStore(storePassword)
+            keyPair <- KeyProvider.makeKeyPair[F]
+            chain <- generateCertificateChain(distinguishedName, certificateValidity, keyPair)
+            _ <- setKeyEntry(alias, keyPair, keyPassword, chain)(keyStore)
+            _ <- store(stream, storePassword)(keyStore)
+          } yield keyStore
+      )
 
   /**
     * Puts existing to new keyStore at path
     */
-//  def putKeyPairToStorePath[F[_]: Async](
-//    keyPair: KeyPair,
-//    path: String,
-//    alias: String,
-//    storePassword: Array[Char],
-//    keyPassword: Array[Char]
-//  ): EitherT[F, Throwable, KeyStore] =
-//    writer(withExtension(path))
-//      .use(
-//        stream =>
-//          for {
-//            keyStore <- createEmptyKeyStore(storePassword)
-//            chain <- generateCertificateChain(keyPair)
-//            _ <- setKeyEntry(alias, keyPair, keyPassword, chain)(keyStore)
-//            _ <- store(stream, storePassword)(keyStore)
-//          } yield keyStore
-//      )
-//      .attemptT
+  private[keytool] def putKeyPairToStorePath[F[_]: Async](
+    keyPair: KeyPair,
+    path: String,
+    alias: String,
+    storePassword: Array[Char],
+    keyPassword: Array[Char],
+    distinguishedName: DistinguishedName,
+    certificateValidity: Int
+  ): F[KeyStore] =
+    writer(withExtension(path))
+      .use(
+        stream =>
+          for {
+            keyStore <- createEmptyKeyStore(storePassword)
+            chain <- generateCertificateChain(distinguishedName, certificateValidity, keyPair)
+            _ <- setKeyEntry(alias, keyPair, keyPassword, chain)(keyStore)
+            _ <- store(stream, storePassword)(keyStore)
+          } yield keyStore
+      )
 
-//  def keyPairFromStorePath[F[_]: Async](
-//    path: String,
-//    alias: String
-//  ): EitherT[F, Throwable, KeyPair] =
-//    for {
-//      env <- loadEnvPasswords
-//      keyPair <- reader(path)
-//        .evalMap(unlockKeyStore[F](env.storepass))
-//        .evalMap(unlockKeyPair[F](alias, env.keypass))
-//        .use(_.pure[F])
-//        .attemptT
-//    } yield keyPair
-
-  def keyPairFromStorePath[F[_]: Async](
+  private[keytool] def keyPairFromStorePath[F[_]: Async](
     path: String,
     alias: String,
     storepass: Array[Char],
     keypass: Array[Char]
-  ): EitherT[F, Throwable, KeyPair] =
+  ): F[KeyPair] =
     reader(path)
       .evalMap(unlockKeyStore[F](storepass))
       .evalMap(unlockKeyPair[F](alias, keypass))
       .use(_.pure[F])
-      .attemptT
 
   private def reader[F[_]: Async](path: String): Resource[F, FileInputStream] =
     Resource.fromAutoCloseable(Async[F].delay {
@@ -181,19 +186,14 @@ object KeyStoreUtils {
       new FileOutputStream(file, false)
     })
 
-//  private def generateCertificateChain[F[_]: Async](keyPair: KeyPair): F[Array[Certificate]] =
-//    Async[F].delay {
-//      // TODO: Maybe move to config
-//      val dn = DistinguishedName(
-//        commonName = "constellationnetwork.io",
-//        organization = "Constellation Labs"
-//      )
-//
-//      val validity = 365 * 1000 // // 1000 years of validity should be enough I guess
-//
-//      val certificate = SelfSignedCertificate.generate(dn.toString, keyPair, validity, KeyUtils.DefaultSignFunc)
-//      Array(certificate)
-//    }
+  private def generateCertificateChain[F[_]: Async](
+    distinguishedName: DistinguishedName,
+    certificateValidity: Int,
+    keyPair: KeyPair
+  ): F[Array[Certificate]] =
+    SelfSignedCertificate
+      .generate(distinguishedName.toString, keyPair, certificateValidity, Signing.defaultSignFunc)
+      .map(Array(_))
 
   private def unlockKeyStore[F[_]: Async](
     password: Array[Char]
@@ -230,14 +230,6 @@ object KeyStoreUtils {
     keyStore.store(stream, storePassword)
     keyStore
   }
-
-//  def loadEnvPasswords[F[_]: Async]: EitherT[F, Throwable, Passwords] =
-//    EitherT.fromEither[F] {
-//      for {
-//        storepass <- sys.env.get("CL_STOREPASS").toRight(new RuntimeException("CL_STOREPASS is missing in environment"))
-//        keypass <- sys.env.get("CL_KEYPASS").toRight(new RuntimeException("CL_KEYPASS is missing in environment"))
-//      } yield Passwords(storepass = storepass.toCharArray, keypass = keypass.toCharArray)
-//    }
 
   private def pathDir(path: String): String = {
     val slashIndex = path.lastIndexOf("/")

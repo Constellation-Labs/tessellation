@@ -22,6 +22,7 @@ object Dependencies {
     val newtype = "0.4.4"
     val refined = "0.9.27"
     val redis4cats = "1.0.0"
+    val scopt = "4.0.1"
     val skunk = "0.2.1"
     val spongyCastle = "1.58.0.0"
     val squants = "1.8.2"
@@ -99,6 +100,8 @@ object Dependencies {
 
     val redis4catsEffects = "dev.profunktor" %% "redis4cats-effects" % V.redis4cats
     val redis4catsLog4cats = "dev.profunktor" %% "redis4cats-log4cats" % V.redis4cats
+
+    val scopt = "com.github.scopt" %% "scopt" % V.scopt
 
     val skunkCore = "org.tpolecat" %% "skunk-core" % V.skunk
     val skunkCirce = "org.tpolecat" %% "skunk-circe" % V.skunk

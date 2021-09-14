@@ -1,7 +1,7 @@
 package org.tesselation.keytool.security
 
 import java.security.spec.ECGenParameterSpec
-import java.security.{KeyPair, KeyPairGenerator}
+import java.security.{KeyPair, KeyPairGenerator, PrivateKey}
 
 import cats.effect.Async
 import cats.syntax.flatMap._
@@ -45,4 +45,32 @@ object KeyProvider {
       keyGen <- getKeyPairGenerator[F]
       keyPair <- Async[F].delay { keyGen.generateKeyPair() }
     } yield keyPair
+
+  private val PublicKeyHexPrefix: String = "3056301006072a8648ce3d020106052b8104000a03420004"
+  private val PublicKeyHexPrefixLength: Int = PublicKeyHexPrefix.length
+  private val PrivateKeyHexPrefix: String =
+    "30818d020100301006072a8648ce3d020106052b8104000a047630740201010420"
+  private val PrivateKeyHexPrefixLength: Int = PrivateKeyHexPrefix.length
+  private val secp256kHexIdentifier: String = "a00706052b8104000aa144034200"
+
+  def bytes2hex(bytes: Array[Byte], sep: Option[String] = None): String =
+    sep match {
+      case None => bytes.map("%02x".format(_)).mkString
+      case _    => bytes.map("%02x".format(_)).mkString(sep.get)
+    }
+
+  /**
+    * Full hex has following format:
+    * PRIVATEKEYHEXa00706052b8104000aa144034200PUBLICKEYHEX where a00706052b8104000aa144034200 stands for secp256k identifier
+    */
+  def privateKeyToFullHex(privateKey: PrivateKey): String = {
+    val hex = bytes2hex(privateKey.getEncoded)
+    hex.slice(PrivateKeyHexPrefixLength, hex.length)
+  }
+
+  def privateKeyToHex(privateKey: PrivateKey): String = {
+    val fullHex = privateKeyToFullHex(privateKey)
+    val privateHex = fullHex.split(secp256kHexIdentifier).head
+    privateHex
+  }
 }
