@@ -11,12 +11,16 @@ object KeytoolConfig {
 
   def load[F[_]: Async]: F[AppConfig] =
     (
+      env("CL_KEYSTORE"),
       env("CL_STOREPASS").secret,
-      env("CL_KEYPASS").secret
-    ).parMapN { (storepass, keypass) =>
+      env("CL_KEYPASS").secret,
+      env("CL_KEYALIAS").secret
+    ).parMapN { (keystore, storepass, keypass, keyalias) =>
       AppConfig(
+        keystore = keystore,
         storepass = storepass,
-        keypass = keypass
+        keypass = keypass,
+        keyalias = keyalias
       )
     }.load[F]
 
