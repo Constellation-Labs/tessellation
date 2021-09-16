@@ -91,7 +91,8 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.monocleCore,
       Libraries.newtype,
       Libraries.refinedCore,
-      Libraries.refinedCats
+      Libraries.refinedCats,
+      Libraries.chill
     )
   )
 
