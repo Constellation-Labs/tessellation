@@ -161,7 +161,7 @@ object KeyStoreUtils {
           } yield keyStore
       )
 
-  private[keytool] def keyPairFromStorePath[F[_]: Async](
+  def keyPairFromStorePath[F[_]: Async](
     path: String,
     alias: String,
     storepass: Array[Char],
