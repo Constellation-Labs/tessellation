@@ -7,6 +7,7 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tesselation.domain.cluster._
+import org.tesselation.http.p2p.P2PClient
 import org.tesselation.schema.cluster._
 import org.tesselation.schema.peer.Peer
 
@@ -17,7 +18,8 @@ object Cluster {
   def make[F[_]: Async](
     clusterStorage: ClusterStorage[F],
     nodeStorage: NodeStorage[F],
-    session: Session[F]
+    session: Session[F],
+    p2pClient: P2PClient[F]
   ): Cluster[F] =
     new Cluster[F] {
 
@@ -43,6 +45,8 @@ object Cluster {
           _ <- validateJoinConditions(toPeer: PeerToJoin)
           sessionToken <- session.createSession
 
+          _ <- twoWayHandshake(toPeer)
+
           _ <- clusterStorage.addPeer(Peer(toPeer.id, toPeer.ip, toPeer.p2pPort, toPeer.p2pPort))
         } yield ()
 
@@ -62,5 +66,14 @@ object Cluster {
           else Applicative[F].unit
         } yield ()
 
+      private def twoWayHandshake(withPeer: PeerToJoin): F[Unit] =
+        for {
+          _ <- Async[F].unit
+          registraionRequest <- p2pClient.sign.getRegistrationRequest.run(withPeer)
+//          _ <- validate
+//          _ <- handshake
+//          _ <- storePeer
+        } yield ()
     }
+
 }

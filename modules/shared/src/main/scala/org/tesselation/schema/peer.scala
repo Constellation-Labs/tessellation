@@ -1,6 +1,7 @@
 package org.tesselation.schema
 
 import org.tesselation.schema.ID.Id
+import org.tesselation.schema.cluster.SessionToken
 
 import com.comcast.ip4s.{Host, Port}
 import derevo.cats.{eqv, show}
@@ -29,6 +30,15 @@ object peer {
   @derive(eqv, show)
   case class FullPeer(
     data: Peer
+  )
+
+  @derive(eqv, decoder, encoder, show)
+  case class RegistrationRequest(
+    id: PeerId,
+    ip: Host,
+    publicPort: Port,
+    p2pPort: Port,
+    session: SessionToken
   )
 
 }
