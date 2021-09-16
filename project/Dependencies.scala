@@ -24,9 +24,11 @@ object Dependencies {
     val redis4cats = "1.0.0"
     val scopt = "4.0.1"
     val skunk = "0.2.1"
+    val chill = "0.9.5"
     val spongyCastle = "1.58.0.0"
     val squants = "1.8.2"
     val twitterChill = "0.10.0"
+    val shapeless = "2.3.3"
 
     val betterMonadicFor = "0.3.1"
     val kindProjector = "0.13.0"
@@ -105,6 +107,9 @@ object Dependencies {
 
     val skunkCore = "org.tpolecat" %% "skunk-core" % V.skunk
     val skunkCirce = "org.tpolecat" %% "skunk-circe" % V.skunk
+
+    val chill = "com.twitter" %% "chill" % V.twitterChill
+    val shapeless = "com.chuusai" %% "shapeless" % V.shapeless
 
     // Runtime
     val logback = "ch.qos.logback" % "logback-classic" % V.logback
