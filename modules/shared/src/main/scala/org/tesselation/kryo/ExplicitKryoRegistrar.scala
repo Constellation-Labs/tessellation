@@ -5,7 +5,7 @@ import com.twitter.chill.{IKryoRegistrar, Kryo, ObjectSerializer}
 
 case class ExplicitKryoRegistrar(registrar: Map[Class[_], Int]) extends IKryoRegistrar {
 
-  val objectSerializer = new ObjectSerializer[AnyRef]
+  private val objectSerializer = new ObjectSerializer[AnyRef]
 
   def apply(k: Kryo): Unit =
     registrar.toList.foreach {
@@ -17,9 +17,11 @@ case class ExplicitKryoRegistrar(registrar: Map[Class[_], Int]) extends IKryoReg
           fs.setIgnoreSyntheticFields(false)
           fs
         }
+
         k.register(klass, ser, id)
         ()
     }
 
-  def isScalaObject(klass: Class[_]): Boolean = klass.getName.last == '$' && objectSerializer.accepts(klass)
+  def isScalaObject(klass: Class[_]): Boolean =
+    klass.getName.last == '$' && objectSerializer.accepts(klass)
 }

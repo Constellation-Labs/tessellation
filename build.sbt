@@ -22,7 +22,7 @@ lazy val keytool = (project in file("modules/keytool"))
   .enablePlugins(AshScriptPlugin)
   .settings(
     name := "tesselation-keytool",
-    scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info"),
+    scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info", "-language:reflectiveCalls"),
     scalafmtOnCompile := true,
     scalafixOnCompile := true,
     resolvers += Resolver.sonatypeRepo("snapshots"),
@@ -65,7 +65,7 @@ lazy val shared = (project in file("modules/shared"))
   .enablePlugins(AshScriptPlugin)
   .settings(
     name := "tesselation-shared",
-    scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info"),
+    scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info", "-language:reflectiveCalls"),
     scalafmtOnCompile := true,
     scalafixOnCompile := true,
     resolvers += Resolver.sonatypeRepo("snapshots"),
@@ -100,7 +100,7 @@ lazy val tests = (project in file("modules/tests"))
   .configs(IntegrationTest)
   .settings(
     name := "tesselation-test-suite",
-    scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info"),
+    scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info", "-language:reflectiveCalls"),
     testFrameworks += new TestFramework("weaver.framework.CatsEffect"),
     Defaults.itSettings,
     scalafixCommonSettings,
@@ -124,7 +124,7 @@ lazy val core = (project in file("modules/core"))
   .dependsOn(keytool, shared)
   .settings(
     name := "tesselation-core",
-    scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info"),
+    scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info", "-language:reflectiveCalls"),
     scalafmtOnCompile := true,
     scalafixOnCompile := true,
     resolvers += Resolver.sonatypeRepo("snapshots"),

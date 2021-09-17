@@ -6,10 +6,10 @@ import cats.effect._
 import cats.effect.std.Supervisor
 
 import org.tesselation.config.Config
-import org.tesselation.kryo.{KryoSerializer, coreKryoRegistrar}
 import org.tesselation.config.types.KeyConfig
 import org.tesselation.http.p2p.P2PClient
 import org.tesselation.keytool.KeyStoreUtils
+import org.tesselation.kryo.{KryoSerializer, coreKryoRegistrar}
 import org.tesselation.modules.{HttpApi, Services, Storages}
 import org.tesselation.resources.MkHttpServer.ServerName
 import org.tesselation.resources.{AppResources, MkHttpServer}
