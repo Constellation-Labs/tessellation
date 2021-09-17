@@ -1,3 +1,6 @@
 package org.tessellation.node
 
-case class Peer(host: String, port: Int, id: String = "")
+import cats.data.NonEmptyList
+import org.tessellation.majority.SnapshotStorage.MajorityHeight
+
+case class Peer(host: String, port: Int, id: String = "", majorityHeight: NonEmptyList[MajorityHeight])

@@ -138,7 +138,7 @@ restart() {
         echo "Skipping self join for $host"
      else
         echo "Joining $host -> $facilitator"
-        ssh admin@$host -o StrictHostKeyChecking=no -n "curl -s -X POST http://127.0.0.1:9001/join -H 'Content-type: application/json' -d '{ \"host\": \"$facilitator\", \"port\": 9001, \"id\": \"$facilitator\" }'"
+        ssh admin@$host -o StrictHostKeyChecking=no -n "curl -s -X POST http://127.0.0.1:9001/join -H 'Content-type: application/json' -d '{ \"host\": \"$facilitator\", \"port\": 9001, \"id\": \"$facilitator\", \"majorityHeight\":[{\"joined\":0,\"left\":null}]}'"
      fi
    done
   done

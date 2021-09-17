@@ -1,15 +1,15 @@
 package org.tessellation.http
 
 import cats.effect.{ContextShift, IO, Timer}
-import io.circe.Json
+import io.circe.syntax._
+import org.http4s.Uri
+import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder}
 import org.http4s.client._
 import org.http4s.client.dsl.io._
-import io.circe.syntax._
-import org.http4s.circe.{jsonEncoderOf, jsonOf}
 import org.http4s.dsl.io._
-import org.http4s.{Method, Request, Uri}
 import org.tessellation.consensus.L1ConsensusStep.{BroadcastProposalPayload, BroadcastProposalResponse, RoundId}
 import org.tessellation.consensus.L1Transaction
+import org.tessellation.majority.{SendProposalResponse, SignedSnapshotProposal}
 import org.tessellation.node.{Node, Peer}
 
 import scala.concurrent.ExecutionContext.global
@@ -35,16 +35,23 @@ class HttpClient(node: Node, client: Client[IO]) {
     facilitators: Set[Peer]
   )(
     to: Peer
-  ): IO[BroadcastProposalResponse] = {
-    implicit val encoder = jsonEncoderOf[IO, Json]
-    implicit val decoder = jsonOf[IO, BroadcastProposalResponse]
+  ): IO[BroadcastProposalResponse] =
     for {
       payload <- IO.pure(BroadcastProposalPayload(node.id, consensusOwnerId, roundId, proposal, facilitators))
       res <- client.expect[BroadcastProposalResponse](
         POST(payload.asJson, Uri.unsafeFromString(s"http://${to.host}:${to.port}/proposal"))
       )
     } yield res
-  }
+
+  def sendSnapshotProposal(
+    proposal: SignedSnapshotProposal
+  )(to: Peer): IO[Unit] =
+    for {
+      payload <- IO.pure(proposal)
+      res <- client.expect[SendProposalResponse](
+        POST(payload.asJson, Uri.unsafeFromString(s"http://${to.host}:${to.port}/snapshot/proposal"))
+      )
+    } yield res
 }
 
 object HttpClient {
