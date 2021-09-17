@@ -8,9 +8,9 @@ import com.twitter.chill._
 
 trait KryoSerializer[F[_]] {
 
-  def serializeAnyRef(anyRef: AnyRef): Either[Throwable, Array[Byte]]
+  def serialize(anyRef: AnyRef): Either[Throwable, Array[Byte]]
 
-  def deserializeCast[T](bytes: Array[Byte]): Either[Throwable, T]
+  def deserialize[T](bytes: Array[Byte]): Either[Throwable, T]
 }
 
 object KryoSerializer {
@@ -34,12 +34,12 @@ object KryoSerializer {
   def forAsync[F[_]: Async](registrar: Map[Class[_], Int]): Resource[F, KryoSerializer[F]] = make[F](registrar).map {
     kryoPool =>
       new KryoSerializer[F] {
-        override def serializeAnyRef(anyRef: AnyRef): Either[Throwable, Array[Byte]] =
+        def serialize(anyRef: AnyRef): Either[Throwable, Array[Byte]] =
           Either.catchNonFatal {
             kryoPool.toBytesWithClass(anyRef)
           }
 
-        override def deserializeCast[T](bytes: Array[Byte]): Either[Throwable, T] =
+        def deserialize[T](bytes: Array[Byte]): Either[Throwable, T] =
           Either.catchNonFatal {
             kryoPool.fromBytes(bytes).asInstanceOf[T]
           }
