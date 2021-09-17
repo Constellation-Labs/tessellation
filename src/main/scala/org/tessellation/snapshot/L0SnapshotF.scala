@@ -8,7 +8,7 @@ import org.tessellation.schema.{Hom, Ω}
 
 case class L0Edge(blocks: Set[Ω]) extends Ω // TODO: It should allow L1Block, ETHBlock etc
 
-case class Snapshot(blocks: Set[L1Block]) extends Ω
+case class Snapshot(blocks: Set[L1Block]) extends Ω { val hash: String = blocks.hash.toString }
 
 trait L0SnapshotF[A] extends Hom[Ω, A]
 

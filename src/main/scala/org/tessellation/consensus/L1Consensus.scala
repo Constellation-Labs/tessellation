@@ -48,12 +48,10 @@ object L1Consensus {
             )
         case _ =>
           scheme.hyloM(L1ConsensusStep.algebra, L1ConsensusStep.coalgebra).apply(cmd).run(metadata).map {
-            case (m, cmd) =>
-              if (cmd.isLeft) {
-                Done(CellError(cmd.left.get.reason).asLeft[Ω]) // TODO: Get rid of `get`
-              } else {
-                More(L1CoalgebraStruct(m, cmd.right.get)) // TODO: Get rid of `get`
-              }
+            case (m, Left(value)) =>
+              Done(CellError(value.reason).asLeft[Ω])
+            case (m, Right(value)) =>
+              More(L1CoalgebraStruct(m, value))
           }
       }
   }

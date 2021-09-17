@@ -1,5 +1,6 @@
 package org.tessellation.consensus
 
+import cats.data.NonEmptyList
 import cats.effect.concurrent.Semaphore
 import cats.effect.{ContextShift, IO, Timer}
 import cats.implicits._
@@ -13,17 +14,21 @@ import org.http4s.client.blaze.BlazeClientBuilder
 import org.http4s.dsl.io._
 import org.tessellation.consensus.L1ConsensusStep.{BroadcastProposalPayload, BroadcastProposalResponse}
 import org.tessellation.http.HttpClient
+import org.tessellation.majority.SnapshotStorage
+import org.tessellation.majority.SnapshotStorage.MajorityHeight
 import org.tessellation.metrics.{Metric, Metrics}
 import org.tessellation.node.{Node, Peer}
 import org.tessellation.schema.CellError
 
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
 
-class DAGStateChannel(node: Node, httpClient: HttpClient, metrics: Metrics) {
+class DAGStateChannel(node: Node, snapshotStorage: SnapshotStorage, httpClient: HttpClient, metrics: Metrics) {
   implicit val contextShift: ContextShift[IO] = IO.contextShift(scala.concurrent.ExecutionContext.global)
   implicit val timer: Timer[IO] = IO.timer(scala.concurrent.ExecutionContext.global)
   val generateTxEvery: FiniteDuration = 2.seconds
   val maxTxs = 1000
+
+  val channelErrorMessage = "DAGStateChannel failed!"
 
   val routes: HttpRoutes[IO] = HttpRoutes
     .of[IO] {
@@ -37,7 +42,8 @@ class DAGStateChannel(node: Node, httpClient: HttpClient, metrics: Metrics) {
         for {
           joiningPeer <- req.as[Peer]
           _ <- node.updatePeers(joiningPeer)
-          selfPeer = Peer(node.ip, node.port, node.id)
+          activeBetweenHeights <- snapshotStorage.activeBetweenHeights.get.map(_.getOrElse(MajorityHeight(None, None)))
+          selfPeer = Peer(node.ip, node.port, node.id, NonEmptyList.one(activeBetweenHeights))
           _ <- logger.info(s"$joiningPeer joined to $selfPeer")
           res <- Ok(selfPeer.asJson)
         } yield res
@@ -110,32 +116,24 @@ class DAGStateChannel(node: Node, httpClient: HttpClient, metrics: Metrics) {
           )
         )
         .parJoin(3)
-        .map {
-          case Left(error)           => Left(error)
-          case Right(block: L1Block) => Right(block)
-          case _                     => Left(CellError("Invalid Ω type"))
+        .flatMap {
+          case Left(error)           =>
+            // TODO: raiseError will stop the stream, we may just emit an empty stream, or return an either e.g.
+            Stream.eval(logger.error(error)(channelErrorMessage)) >> Stream.raiseError[IO](error)
+
+          case Right(block: L1Block) =>
+            Stream.eval(logger.debug(s"Block created! block=$block")).as(block)
+
+          case _                     =>
+            val error = CellError("Invalid Ω type")
+            Stream.eval(logger.error(error)(channelErrorMessage)) >> Stream.raiseError[IO](error)
         }
-        .map(_.right.get) // TODO: Get rid of get
     } yield block
   private val logger = Slf4jLogger.getLogger[IO]
 }
 
 object DAGStateChannel {
 
-  def init(node: Node, metrics: Metrics): Stream[IO, DAGStateChannel] = {
-    implicit val contextShift: ContextShift[IO] = IO.contextShift(scala.concurrent.ExecutionContext.global)
-    for {
-      blazeClient <- Stream.resource {
-        BlazeClientBuilder[IO](scala.concurrent.ExecutionContext.global) // TODO: Use unbounded
-          .withConnectTimeout(30.seconds)
-          .withMaxTotalConnections(1024)
-          .withMaxWaitQueueLimit(512)
-          .resource
-      }
-      httpClient = HttpClient(node, blazeClient)
-    } yield DAGStateChannel(node, httpClient, metrics)
-  }
-
-  def apply(node: Node, httpClient: HttpClient, metrics: Metrics): DAGStateChannel =
-    new DAGStateChannel(node, httpClient, metrics)
+  def apply(node: Node, snapshotStorage: SnapshotStorage, httpClient: HttpClient, metrics: Metrics): DAGStateChannel =
+    new DAGStateChannel(node, snapshotStorage, httpClient, metrics)
 }
