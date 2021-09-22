@@ -3,21 +3,21 @@ package org.tesselation.http.p2p
 import cats.data.Kleisli
 import cats.syntax.option._
 
-import org.tesselation.schema.peer.Peer
+import org.tesselation.schema.peer.P2PContext
 
 import org.http4s.Uri.{Authority, RegName, Scheme}
 import org.http4s._
 import org.http4s.client.Client
 
 object PeerResponse {
-  type PeerResponse[F[_], A] = Kleisli[F, Peer, A]
+  type PeerResponse[F[_], A] = Kleisli[F, P2PContext, A]
 
-  def getUri(peer: Peer, path: String): Uri =
+  def getUri(peer: P2PContext, path: String): Uri =
     Uri(
       scheme = Scheme.http.some,
       authority = Authority(
         host = RegName(peer.ip.toString),
-        port = peer.p2pPort.value.some
+        port = peer.port.value.some
       ).some
     ).addPath(path)
 

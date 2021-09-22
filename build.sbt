@@ -88,6 +88,7 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.derevoCore,
       Libraries.derevoCats,
       Libraries.derevoCirce,
+      Libraries.guava,
       Libraries.monocleCore,
       Libraries.newtype,
       Libraries.refinedCore,

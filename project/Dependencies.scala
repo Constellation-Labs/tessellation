@@ -15,6 +15,7 @@ object Dependencies {
     val droste = "0.8.0"
     val javaxCrypto = "1.0.1"
     val fs2 = "3.1.0"
+    val guava = "30.1.1-jre"
     val http4s = "0.23.1"
     val http4sJwtAuth = "1.0.0"
     val log4cats = "2.1.1"
@@ -87,6 +88,8 @@ object Dependencies {
     val scBcpg = spongyCastle("bcpg-jdk15on")
     val scBctls = spongyCastle("bctls-jdk15on")
     val bouncyCastle = "org.bouncycastle" % "bcprov-jdk15on" % V.bouncyCastle
+
+    val guava = "com.google.guava" % "guava" % V.guava
 
     val http4sJwtAuth = "dev.profunktor" %% "http4s-jwt-auth" % V.http4sJwtAuth
 
