@@ -12,6 +12,8 @@ import monocle.Iso
 
 object peer {
 
+  case class P2PContext(ip: Host, port: Port, id: PeerId)
+
   @derive(eqv, show, decoder, encoder, keyEncoder, keyDecoder)
   @newtype
   case class PeerId(value: String)
@@ -26,6 +28,11 @@ object peer {
 
   @derive(eqv, encoder, show)
   case class Peer(id: PeerId, ip: Host, publicPort: Port, p2pPort: Port)
+
+  object Peer {
+    implicit def toP2PContext(peer: Peer): P2PContext =
+      P2PContext(peer.ip, peer.p2pPort, peer.id)
+  }
 
   @derive(eqv, show)
   case class FullPeer(

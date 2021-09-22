@@ -6,7 +6,7 @@ import scala.util.control.NoStackTrace
 
 import org.tesselation.optics.uuid
 import org.tesselation.schema.node.NodeState
-import org.tesselation.schema.peer.{Peer, PeerId}
+import org.tesselation.schema.peer.{P2PContext, PeerId}
 
 import com.comcast.ip4s.{Host, Port}
 import derevo.cats.{eqv, show}
@@ -20,8 +20,8 @@ object cluster {
   case class PeerToJoin(id: PeerId, ip: Host, p2pPort: Port)
 
   object PeerToJoin {
-    implicit def toPeer(peer: PeerToJoin): Peer =
-      Peer(peer.id, peer.ip, peer.p2pPort, peer.p2pPort)
+    implicit def toP2PContext(peer: PeerToJoin): P2PContext =
+      P2PContext(peer.ip, peer.p2pPort, peer.id)
   }
 
   case class NodeStateDoesNotAllowForJoining(nodeState: NodeState) extends NoStackTrace
