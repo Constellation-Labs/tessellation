@@ -7,6 +7,7 @@ import cats.syntax.flatMap._
 import org.tesselation.domain.cluster.{Cluster, ClusterStorage}
 import org.tesselation.ext.http4s.refined._
 import org.tesselation.schema.cluster._
+import org.tesselation.schema.peer.JoinRequest
 
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
@@ -23,10 +24,7 @@ final case class ClusterRoutes[F[_]: Async](
 
   private[routes] val prefixPath = "/cluster"
 
-  private val httpRoutes: HttpRoutes[F] = HttpRoutes.of[F] {
-    case GET -> Root / "peers" =>
-      Ok(clusterStorage.getPeers)
-
+  private val cli: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "join" =>
       req.decodeR[PeerToJoin] { peerToJoin =>
         cluster
@@ -44,7 +42,20 @@ final case class ClusterRoutes[F[_]: Async](
       }
   }
 
+  private val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
+    case req @ POST -> Root / "join" =>
+      req.decodeR[JoinRequest] { joinRequest =>
+        cluster
+          .joinRequest(joinRequest)
+          .flatMap(_ => Ok())
+      }
+  }
+
+  val p2pRoutes: HttpRoutes[F] = Router(
+    prefixPath -> p2p
+  )
+
   val cliRoutes: HttpRoutes[F] = Router(
-    prefixPath -> httpRoutes
+    prefixPath -> cli
   )
 }

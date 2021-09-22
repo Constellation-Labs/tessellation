@@ -26,7 +26,7 @@ object Config {
 
   def default[F[_]](environment: AppEnvironment): ConfigValue[F, AppConfig] =
     (
-//      env("CL_DUMMY_SECRET").default("foo").secret,
+      env("CL_EXTERNAL_IP").default("127.0.0.1"),
       env("CL_PUBLIC_HTTP_PORT").default("9000"),
       env("CL_P2P_HTTP_PORT").default("9001"),
       env("CL_CLI_HTTP_PORT").default("9002"),
@@ -34,7 +34,7 @@ object Config {
       env("CL_STOREPASS").secret,
       env("CL_KEYPASS").secret,
       env("CL_KEYALIAS").secret
-    ).parMapN { (publicHttpPort, p2pHttpPort, cliHttpPort, keystore, storepass, keypass, keyalias) =>
+    ).parMapN { (externalIp, publicHttpPort, p2pHttpPort, cliHttpPort, keystore, storepass, keypass, keyalias) =>
       AppConfig(
         environment,
         KeyConfig(keystore = keystore, storepass = storepass, keypass = keypass, keyalias = keyalias),
@@ -42,6 +42,7 @@ object Config {
           timeout = 60.seconds,
           idleTimeInPool = 30.seconds
         ),
+        externalIp = Host.fromString(externalIp).get,
         publicHttp = HttpServerConfig(host"0.0.0.0", Port.fromString(publicHttpPort).get),
         p2pHttp = HttpServerConfig(host"0.0.0.0", Port.fromString(p2pHttpPort).get),
         cliHttp = HttpServerConfig(host"127.0.0.1", Port.fromString(cliHttpPort).get)

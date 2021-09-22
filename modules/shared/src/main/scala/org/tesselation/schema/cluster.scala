@@ -32,6 +32,7 @@ object cluster {
   @newtype
   case class SessionToken(value: UUID)
 
+  case object SessionDoesNotExist extends NoStackTrace
   case object SessionAlreadyExists extends NoStackTrace
 
   trait TokenVerificationResult
