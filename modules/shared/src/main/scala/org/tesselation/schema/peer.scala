@@ -1,5 +1,8 @@
 package org.tesselation.schema
 
+import java.security.PublicKey
+
+import org.tesselation.keytool.security.KeyProvider.publicKeyToHex
 import org.tesselation.schema.ID.Id
 import org.tesselation.schema.cluster.SessionToken
 
@@ -24,6 +27,9 @@ object peer {
       Iso[PeerId, Id](peerId => Id(peerId.value))(id => PeerId(id.hex))
 
     val fromId: Id => PeerId = _Id.reverseGet
+
+    def fromPublic(publicKey: PublicKey): PeerId =
+      PeerId(publicKeyToHex(publicKey))
   }
 
   @derive(eqv, encoder, show)
@@ -46,6 +52,11 @@ object peer {
     publicPort: Port,
     p2pPort: Port,
     session: SessionToken
+  )
+
+  @derive(eqv, decoder, encoder, show)
+  case class JoinRequest(
+    registrationRequest: RegistrationRequest
   )
 
 }

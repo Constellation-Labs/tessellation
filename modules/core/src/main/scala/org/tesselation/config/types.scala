@@ -11,6 +11,7 @@ object types {
     environment: AppEnvironment,
     keyConfig: KeyConfig,
     httpClientConfig: HttpClientConfig,
+    externalIp: Host,
     publicHttp: HttpServerConfig,
     p2pHttp: HttpServerConfig,
     cliHttp: HttpServerConfig

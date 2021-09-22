@@ -12,6 +12,18 @@ resolvers += Resolver.sonatypeRepo("snapshots")
 
 val scalafixCommonSettings = inConfig(IntegrationTest)(scalafixConfigSettings(IntegrationTest))
 
+ThisBuild / assemblyMergeStrategy := {
+  case "logback.xml"                                       => MergeStrategy.first
+  case x if x.contains("io.netty.versions.properties")     => MergeStrategy.discard
+  case PathList(xs @ _*) if xs.last == "module-info.class" => MergeStrategy.first
+  case x =>
+    val oldStrategy = (assemblyMergeStrategy in assembly).value
+    oldStrategy(x)
+}
+
+fork in Global := true
+cancelable in Global := true
+
 lazy val root = (project in file("."))
   .settings(
     name := "tesselation"
@@ -63,6 +75,7 @@ lazy val keytool = (project in file("modules/keytool"))
 
 lazy val shared = (project in file("modules/shared"))
   .enablePlugins(AshScriptPlugin)
+  .dependsOn(keytool)
   .settings(
     name := "tesselation-shared",
     scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info", "-language:reflectiveCalls"),
@@ -77,6 +90,7 @@ lazy val shared = (project in file("modules/shared"))
       CompilerPlugin.betterMonadicFor,
       CompilerPlugin.semanticDB,
       Libraries.cats,
+      Libraries.chill,
       Libraries.circeCore,
       Libraries.circeGeneric,
       Libraries.circeParser,
@@ -92,8 +106,7 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.monocleCore,
       Libraries.newtype,
       Libraries.refinedCore,
-      Libraries.refinedCats,
-      Libraries.chill
+      Libraries.refinedCats
     )
   )
 
