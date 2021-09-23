@@ -1,4 +1,4 @@
-package org.tesselation.infrastructure.cluster
+package org.tesselation.infrastructure.cluster.storage
 
 import cats.effect.Ref
 import cats.effect.kernel.Async
@@ -8,7 +8,7 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
 
-import org.tesselation.domain.cluster.SessionStorage
+import org.tesselation.domain.cluster.storage.SessionStorage
 import org.tesselation.effects.GenUUID
 import org.tesselation.schema.cluster.{SessionAlreadyExists, SessionToken}
 import org.tesselation.schema.uid

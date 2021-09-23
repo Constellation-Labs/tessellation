@@ -4,7 +4,7 @@ import cats.effect.Async
 import cats.syntax.applicativeError._
 import cats.syntax.flatMap._
 
-import org.tesselation.domain.cluster.{Cluster, ClusterStorage}
+import org.tesselation.domain.cluster.programs.Joining
 import org.tesselation.ext.http4s.refined._
 import org.tesselation.schema.cluster._
 import org.tesselation.schema.peer.JoinRequest
@@ -16,8 +16,7 @@ import org.http4s.server.Router
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 final case class ClusterRoutes[F[_]: Async](
-  clusterStorage: ClusterStorage[F],
-  cluster: Cluster[F]
+  joining: Joining[F]
 ) extends Http4sDsl[F] {
 
   implicit val logger = Slf4jLogger.getLogger[F]
@@ -27,7 +26,7 @@ final case class ClusterRoutes[F[_]: Async](
   private val cli: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "join" =>
       req.decodeR[PeerToJoin] { peerToJoin =>
-        cluster
+        joining
           .join(peerToJoin)
           .flatMap(_ => Ok())
           .recoverWith {
@@ -45,7 +44,7 @@ final case class ClusterRoutes[F[_]: Async](
   private val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "join" =>
       req.decodeR[JoinRequest] { joinRequest =>
-        cluster
+        joining
           .joinRequest(joinRequest)
           .flatMap(_ => Ok())
       }

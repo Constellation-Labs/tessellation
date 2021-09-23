@@ -1,10 +1,10 @@
-package org.tesselation.infrastructure.cluster
+package org.tesselation.infrastructure.cluster.storage
 
 import cats.Monad
 import cats.effect.Ref
 import cats.syntax.functor._
 
-import org.tesselation.domain.cluster.ClusterStorage
+import org.tesselation.domain.cluster.storage.ClusterStorage
 import org.tesselation.schema.peer.{Peer, PeerId}
 
 import com.comcast.ip4s.{Host, Port}

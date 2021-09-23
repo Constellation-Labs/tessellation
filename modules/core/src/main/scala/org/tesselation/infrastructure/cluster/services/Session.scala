@@ -1,8 +1,9 @@
-package org.tesselation.infrastructure.cluster
+package org.tesselation.infrastructure.cluster.services
 
 import cats.effect.kernel.Async
 
-import org.tesselation.domain.cluster.{ClusterStorage, Session, SessionStorage}
+import org.tesselation.domain.cluster.services.Session
+import org.tesselation.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tesselation.schema.cluster.{SessionToken, TokenVerificationResult}
 import org.tesselation.schema.peer.PeerId
 

@@ -4,7 +4,7 @@ import cats.Monad
 import cats.effect.Ref
 import cats.syntax.functor._
 
-import org.tesselation.domain.cluster.NodeStorage
+import org.tesselation.domain.cluster.storage.NodeStorage
 import org.tesselation.schema.node.NodeState
 
 object NodeStorage {

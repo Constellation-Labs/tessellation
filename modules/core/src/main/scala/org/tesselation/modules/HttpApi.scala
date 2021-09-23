@@ -16,19 +16,22 @@ object HttpApi {
   def make[F[_]: Async](
     storages: Storages[F],
     services: Services[F],
+    programs: Programs[F],
     environment: AppEnvironment
   ): HttpApi[F] =
-    new HttpApi[F](storages, services, environment) {}
+    new HttpApi[F](storages, services, programs, environment) {}
 }
 
 sealed abstract class HttpApi[F[_]: Async] private (
   storages: Storages[F],
   services: Services[F],
+  programs: Programs[F],
   environment: AppEnvironment
 ) {
   private val healthRoutes = HealthRoutes[F](services.healthcheck).routes
-  private val clusterRoutes = ClusterRoutes[F](storages.cluster, services.cluster)
+  private val clusterRoutes = ClusterRoutes[F](programs.joining)
   private val registrationRoutes = RegistrationRoutes[F](services.cluster)
+
   private val debugRoutes = DebugRoutes[F](storages, services).routes
 
   private val openRoutes: HttpRoutes[F] =

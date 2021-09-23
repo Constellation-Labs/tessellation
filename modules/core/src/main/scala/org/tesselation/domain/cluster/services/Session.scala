@@ -1,4 +1,4 @@
-package org.tesselation.domain.cluster
+package org.tesselation.domain.cluster.services
 
 import org.tesselation.schema.cluster.{SessionToken, TokenVerificationResult}
 import org.tesselation.schema.peer.PeerId
