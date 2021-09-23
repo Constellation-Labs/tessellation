@@ -5,7 +5,8 @@ object Dependencies {
   object V {
     val bouncyCastle = "1.65"
     val cats = "2.6.1"
-    val catsEffect = "3.2.3"
+    val catsEffect = "3.1.0"
+    val catsEffectTesting = "1.3.0"
     val catsRetry = "2.1.0" // not published for CE3 yet
     val circe = "0.14.1"
     val ciris = "2.1.1"
@@ -29,6 +30,8 @@ object Dependencies {
     val squants = "1.8.2"
     val twitterChill = "0.10.0"
     val shapeless = "2.3.3"
+    val scalatest = "3.2.10"
+    val scalacheck = "1.15.4"
 
     val betterMonadicFor = "0.3.1"
     val kindProjector = "0.13.0"
@@ -115,6 +118,9 @@ object Dependencies {
     val logback = "ch.qos.logback" % "logback-classic" % V.logback
 
     // Test
+    val scalatest = "org.scalatest" %% "scalatest" % V.scalatest % Test
+    val scalacheck = "org.scalacheck" %% "scalacheck" % V.scalacheck % Test
+    val catsEffectTesting = "org.typelevel" %% "cats-effect-testing-scalatest" % V.catsEffectTesting % Test
     val catsLaws = "org.typelevel" %% "cats-laws" % V.cats
     val log4catsNoOp = "org.typelevel" %% "log4cats-noop" % V.log4cats
     val monocleLaw = "dev.optics" %% "monocle-law" % V.monocle

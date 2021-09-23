@@ -92,7 +92,10 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.newtype,
       Libraries.refinedCore,
       Libraries.refinedCats,
-      Libraries.chill
+      Libraries.chill,
+      Libraries.scalatest,
+      Libraries.scalacheck,
+      Libraries.catsEffectTesting
     )
   )
 
