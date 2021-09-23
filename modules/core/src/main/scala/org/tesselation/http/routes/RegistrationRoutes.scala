@@ -4,7 +4,7 @@ import cats.effect.Async
 import cats.syntax.applicativeError._
 import cats.syntax.flatMap._
 
-import org.tesselation.domain.cluster.Cluster
+import org.tesselation.domain.cluster.services.Cluster
 import org.tesselation.schema.cluster.SessionDoesNotExist
 
 import org.http4s.HttpRoutes

@@ -1,4 +1,4 @@
-package org.tesselation.domain.cluster
+package org.tesselation.domain.cluster.storage
 
 import org.tesselation.schema.peer.{Peer, PeerId}
 

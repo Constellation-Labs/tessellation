@@ -4,8 +4,8 @@ import cats.effect.kernel.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tesselation.domain.cluster.{ClusterStorage, NodeStorage, SessionStorage}
-import org.tesselation.infrastructure.cluster.{ClusterStorage, SessionStorage}
+import org.tesselation.domain.cluster.storage.{ClusterStorage, NodeStorage, SessionStorage}
+import org.tesselation.infrastructure.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tesselation.infrastructure.node.NodeStorage
 
 object Storages {

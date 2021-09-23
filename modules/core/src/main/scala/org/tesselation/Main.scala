@@ -11,7 +11,7 @@ import org.tesselation.http.p2p.P2PClient
 import org.tesselation.keytool.KeyStoreUtils
 import org.tesselation.keytool.security.SecurityProvider
 import org.tesselation.kryo.{KryoSerializer, coreKryoRegistrar}
-import org.tesselation.modules.{HttpApi, Services, Storages}
+import org.tesselation.modules._
 import org.tesselation.resources.MkHttpServer.ServerName
 import org.tesselation.resources.{AppResources, MkHttpServer}
 import org.tesselation.schema.peer.PeerId
@@ -39,9 +39,10 @@ object Main extends IOApp {
                     Storages.make[IO]
                   }
                   services <- Resource.eval {
-                    Services.make[IO](cfg, nodeId, storages, p2pClient)
+                    Services.make[IO](cfg, nodeId, storages)
                   }
-                  api = HttpApi.make[IO](storages, services, cfg.environment)
+                  programs = Programs.make[IO](storages, services, p2pClient)
+                  api = HttpApi.make[IO](storages, services, programs, cfg.environment)
                   _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.publicHttp, api.publicApp)
                   _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.p2pHttp, api.p2pApp)
                   _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.cliHttp, api.cliApp)
