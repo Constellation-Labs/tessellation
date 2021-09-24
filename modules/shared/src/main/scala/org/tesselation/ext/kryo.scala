@@ -3,6 +3,8 @@ package org.tesselation.ext
 import cats.MonadThrow
 import cats.syntax.either._
 
+import scala.reflect.ClassTag
+
 import org.tesselation.kryo.KryoSerializer
 
 object kryo {
@@ -21,13 +23,13 @@ object kryo {
 
   implicit class RefinedDeserializer[F[_]: KryoSerializer](bytes: Array[Byte]) {
 
-    def fromBinary[A]: Either[Throwable, A] =
+    def fromBinary[A](implicit A: ClassTag[A]): Either[Throwable, A] =
       KryoSerializer[F].deserialize[A](bytes)
   }
 
   implicit class RefinedDeserializerF[F[_]: MonadThrow: KryoSerializer](bytes: Array[Byte]) {
 
-    def fromBinaryF[A]: F[A] =
+    def fromBinaryF[A](implicit A: ClassTag[A]): F[A] =
       KryoSerializer[F].deserialize[A](bytes).liftTo[F]
   }
 
