@@ -79,6 +79,7 @@ lazy val shared = (project in file("modules/shared"))
   .settings(
     name := "tesselation-shared",
     scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info", "-language:reflectiveCalls"),
+    testFrameworks += new TestFramework("weaver.framework.CatsEffect"),
     scalafmtOnCompile := true,
     scalafixOnCompile := true,
     resolvers += Resolver.sonatypeRepo("snapshots"),
@@ -106,7 +107,10 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.monocleCore,
       Libraries.newtype,
       Libraries.refinedCore,
-      Libraries.refinedCats
+      Libraries.refinedCats,
+      Libraries.weaverCats,
+      Libraries.weaverDiscipline,
+      Libraries.weaverScalaCheck
     )
   )
 
