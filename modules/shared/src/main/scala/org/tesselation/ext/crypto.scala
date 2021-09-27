@@ -1,10 +1,14 @@
 package org.tesselation.ext
 
+import java.security.KeyPair
+
 import cats.MonadThrow
+import cats.effect.kernel.Async
 import cats.syntax.either._
 
 import org.tesselation.crypto.hash.Hash
 import org.tesselation.crypto.{Hashable, Signed}
+import org.tesselation.keytool.security.SecurityProvider
 import org.tesselation.kryo.KryoSerializer
 
 object crypto {
@@ -18,13 +22,8 @@ object crypto {
     def hashF: F[Hash] = Hashable.forKryo[F].hash(anyRef).liftTo[F]
   }
 
-  implicit class RefinedSigned[F[_]: KryoSerializer, A <: AnyRef](data: A) {
+  implicit class RefinedSignedF[F[_]: Async: KryoSerializer: SecurityProvider, A <: AnyRef](data: A) {
 
-    def sign(): Either[Throwable, Signed[A]] = Signed.forKryo[F, A](data)
-  }
-
-  implicit class RefinedSignedF[F[_]: KryoSerializer, A <: AnyRef](data: A) {
-
-    def signF[M[_]: MonadThrow](): M[Signed[A]] = Signed.forKryo[F, A](data).liftTo[M]
+    def sign(keyPair: KeyPair): F[Signed[A]] = Signed.forAsyncKryo[F, A](data, keyPair)
   }
 }

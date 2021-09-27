@@ -4,7 +4,7 @@ import java.security.{SecureRandom => jSecureRandom}
 
 import cats.effect.Async
 
-object SecureRandom {
+object WithSecureRandom {
   val secureRandomInstance = "NativePRNGNonBlocking"
 
   def get[F[_]: Async]: F[jSecureRandom] =

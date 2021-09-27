@@ -1,8 +1,9 @@
 package org.tesselation.schema
 
 import java.security.PublicKey
+import java.util.UUID
 
-import org.tesselation.keytool.security.KeyProvider.publicKeyToHex
+import org.tesselation.keytool.security.publicKeyToHex
 import org.tesselation.schema.ID.Id
 import org.tesselation.schema.cluster.SessionToken
 
@@ -33,7 +34,13 @@ object peer {
   }
 
   @derive(eqv, encoder, show)
-  case class Peer(id: PeerId, ip: Host, publicPort: Port, p2pPort: Port)
+  case class Peer(
+    id: PeerId,
+    ip: Host,
+    publicPort: Port,
+    p2pPort: Port,
+    session: SessionToken
+  )
 
   object Peer {
     implicit def toP2PContext(peer: Peer): P2PContext =
@@ -53,6 +60,11 @@ object peer {
     p2pPort: Port,
     session: SessionToken
   )
+
+  @derive(eqv, decoder, encoder, show)
+  case class SignRequest(value: UUID)
+
+  object SignRequest
 
   @derive(eqv, decoder, encoder, show)
   case class JoinRequest(
