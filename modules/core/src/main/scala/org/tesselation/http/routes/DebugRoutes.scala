@@ -1,7 +1,8 @@
 package org.tesselation.http.routes
 
 import cats.effect.kernel.Async
-import cats.syntax.all._
+import cats.syntax.applicativeError._
+import cats.syntax.flatMap._
 
 import org.tesselation.modules.{Services, Storages}
 import org.tesselation.schema.cluster.SessionAlreadyExists

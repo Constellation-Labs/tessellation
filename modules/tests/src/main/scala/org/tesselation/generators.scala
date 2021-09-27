@@ -1,6 +1,7 @@
 package org.tesselation
 
 import org.tesselation.keytool.Base58
+import org.tesselation.schema.cluster.SessionToken
 import org.tesselation.schema.peer.{Peer, PeerId}
 
 import com.comcast.ip4s.{Host, Port}
@@ -36,7 +37,8 @@ object generators {
       h <- hostGen
       p <- portGen
       p2 <- portGen
-    } yield Peer(i, h, p, p2)
+      s <- Gen.uuid.map(SessionToken.apply)
+    } yield Peer(i, h, p, p2, s)
 
   def peersGen(n: Option[Int] = None): Gen[Set[Peer]] =
     n.map(Gen.const).getOrElse(Gen.chooseNum(1, 20)).flatMap { n =>

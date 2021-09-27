@@ -5,7 +5,9 @@ import cats.syntax.applicativeError._
 import cats.syntax.flatMap._
 
 import org.tesselation.domain.cluster.services.Cluster
+import org.tesselation.ext.http4s.refined._
 import org.tesselation.schema.cluster.SessionDoesNotExist
+import org.tesselation.schema.peer.SignRequest
 
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
@@ -27,6 +29,14 @@ final case class RegistrationRoutes[F[_]: Async](cluster: Cluster[F]) extends Ht
           case SessionDoesNotExist =>
             Conflict("Peer does not have an active session.")
         }
+
+    case req @ POST -> Root / "sign" =>
+      req.decodeR[SignRequest] { signRequest =>
+        cluster
+          .signRequest(signRequest)
+          .flatMap(Ok(_))
+          .handleErrorWith(e => logger.error(e)(s"An error occured!") >> BadRequest())
+      }
   }
 
   val p2pRoutes: HttpRoutes[F] = Router(

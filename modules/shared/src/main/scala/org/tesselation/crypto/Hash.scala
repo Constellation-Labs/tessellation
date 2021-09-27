@@ -5,12 +5,13 @@ import org.tesselation.kryo.KryoSerializer
 
 import com.google.common.hash.Hashing
 import derevo.cats.{eqv, show}
+import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import io.estatico.newtype.macros.newtype
 
 object hash {
 
-  @derive(show, eqv)
+  @derive(encoder, decoder, show, eqv)
   @newtype
   case class Hash(value: String)
 

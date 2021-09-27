@@ -1,19 +1,20 @@
 package org.tesselation.http.p2p.clients
 
 import cats.effect.Concurrent
+import cats.syntax.functor._
 
+import org.tesselation.crypto.Signed
 import org.tesselation.http.p2p.PeerResponse
 import org.tesselation.http.p2p.PeerResponse.PeerResponse
-import org.tesselation.schema.peer.{JoinRequest, RegistrationRequest}
+import org.tesselation.schema.peer.{JoinRequest, RegistrationRequest, SignRequest}
 
 import org.http4s.Method._
-import org.http4s.circe.CirceEntityDecoder._
-import org.http4s.circe.CirceEntityEncoder._
+import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder}
 import org.http4s.client._
 import org.http4s.client.dsl.Http4sClientDsl
 
 trait SignClient[F[_]] {
-  def sign: PeerResponse[F, Unit]
+  def sign(signRequest: SignRequest): PeerResponse[F, Signed[SignRequest]]
   def joinRequest(jr: JoinRequest): PeerResponse[F, Unit]
   def getRegistrationRequest: PeerResponse[F, RegistrationRequest]
 }
@@ -28,12 +29,12 @@ object SignClient {
 
       def joinRequest(jr: JoinRequest): PeerResponse[F, Unit] =
         PeerResponse[F, Unit]("cluster/join", POST)(client) { (req, c) =>
-          c.expect[Unit](req.withEntity(jr))
+          c.successful(req.withEntity(jr)).void
         }
 
-      def sign: PeerResponse[F, Unit] =
-        PeerResponse[F, Unit]("sign", POST)(client) { (req, c) =>
-          c.expect[Unit](req.withEntity(""))
+      def sign(signRequest: SignRequest): PeerResponse[F, Signed[SignRequest]] =
+        PeerResponse[F, Signed[SignRequest]]("registration/sign", POST)(client) { (req, c) =>
+          c.expect[Signed[SignRequest]](req.withEntity(signRequest))
         }
     }
 }

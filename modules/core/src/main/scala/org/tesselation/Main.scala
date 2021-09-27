@@ -39,7 +39,7 @@ object Main extends IOApp {
                     Storages.make[IO]
                   }
                   services <- Resource.eval {
-                    Services.make[IO](cfg, nodeId, storages)
+                    Services.make[IO](cfg, nodeId, keyPair, storages)
                   }
                   programs = Programs.make[IO](storages, services, p2pClient)
                   api = HttpApi.make[IO](storages, services, programs, cfg.environment)

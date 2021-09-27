@@ -14,7 +14,7 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tesselation.keytool.cert.{DistinguishedName, SelfSignedCertificate}
-import org.tesselation.keytool.security.{KeyProvider, SecurityProvider, Signing}
+import org.tesselation.keytool.security._
 
 import org.bouncycastle.util.io.pem.{PemObject, PemWriter}
 
@@ -84,7 +84,7 @@ object KeyStoreUtils {
   ): F[String] =
     for {
       keyPair <- keyPairFromStorePath(path, alias, storePassword, keyPassword)
-      hex = KeyProvider.privateKeyToHex(keyPair.getPrivate)
+      hex = privateKeyToHex(keyPair.getPrivate)
       _ <- writer(pathDir(path) + privateKeyHexName)
         .use(
           os =>
