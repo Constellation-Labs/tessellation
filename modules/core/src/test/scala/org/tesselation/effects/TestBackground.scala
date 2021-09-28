@@ -1,4 +1,5 @@
 package org.tesselation.effects
+
 import cats.effect.{IO, Ref}
 
 import scala.concurrent.duration.FiniteDuration

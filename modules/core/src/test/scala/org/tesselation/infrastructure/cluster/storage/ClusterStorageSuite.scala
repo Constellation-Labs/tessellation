@@ -2,7 +2,7 @@ package org.tesselation.infrastructure.cluster.storage
 
 import cats.effect.{IO, Ref}
 
-import org.tesselation.generators.{peerGen, peersGen}
+import org.tesselation.schema.generators._
 import org.tesselation.schema.peer.{Peer, PeerId}
 
 import com.comcast.ip4s.IpLiteralSyntax

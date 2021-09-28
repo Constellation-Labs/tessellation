@@ -3,7 +3,6 @@ package org.tesselation.keytool
 import java.security.KeyStore
 
 import cats.effect._
-import cats.syntax.flatMap._
 
 import org.tesselation.keytool.cli.config.CliMethod
 import org.tesselation.keytool.cli.parser
