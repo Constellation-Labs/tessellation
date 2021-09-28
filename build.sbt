@@ -33,7 +33,7 @@ ThisBuild / assemblyMergeStrategy := {
   case x if x.contains("io.netty.versions.properties")     => MergeStrategy.discard
   case PathList(xs @ _*) if xs.last == "module-info.class" => MergeStrategy.first
   case x =>
-    val oldStrategy = (assemblyMergeStrategy in assembly).value
+    val oldStrategy = (assembly / assemblyMergeStrategy).value
     oldStrategy(x)
 }
 
@@ -44,7 +44,25 @@ lazy val root = (project in file("."))
   .settings(
     name := "tesselation"
   )
-  .aggregate(keytool, shared, core, testShared)
+  .aggregate(keytool, kernel, shared, core, testShared)
+
+lazy val kernel = (project in file("modules/kernel"))
+  .enablePlugins(AshScriptPlugin)
+  .dependsOn(testShared % Test)
+  .settings(
+    name := "tesselation-kernel",
+    Defaults.itSettings,
+    scalafixCommonSettings,
+    commonSettings,
+    commonTestSettings,
+    makeBatScripts := Seq(),
+    libraryDependencies ++= Seq(
+      CompilerPlugin.kindProjector,
+      CompilerPlugin.semanticDB,
+      Libraries.drosteCore,
+      Libraries.fs2
+    )
+  )
 
 lazy val keytool = (project in file("modules/keytool"))
   .enablePlugins(AshScriptPlugin)
@@ -157,7 +175,7 @@ lazy val testShared = (project in file("modules/test-shared"))
 
 lazy val core = (project in file("modules/core"))
   .enablePlugins(AshScriptPlugin)
-  .dependsOn(keytool, shared % "compile->compile;test->test", testShared % Test)
+  .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test)
   .settings(
     name := "tesselation-core",
     Defaults.itSettings,
