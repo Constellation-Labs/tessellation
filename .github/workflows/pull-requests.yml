@@ -4,7 +4,7 @@ on:
   pull_request: {}
   push:
     branches:
-      - feature/node2.0
+      - develop
 
 jobs:
   build:
