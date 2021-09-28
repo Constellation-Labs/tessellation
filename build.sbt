@@ -12,6 +12,22 @@ resolvers += Resolver.sonatypeRepo("snapshots")
 
 val scalafixCommonSettings = inConfig(IntegrationTest)(scalafixConfigSettings(IntegrationTest))
 
+lazy val commonSettings = Seq(
+  scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info", "-language:reflectiveCalls"),
+  scalafmtOnCompile := true,
+  scalafixOnCompile := true,
+  resolvers += Resolver.sonatypeRepo("snapshots")
+)
+
+lazy val commonTestSettings = Seq(
+  testFrameworks += new TestFramework("weaver.framework.CatsEffect"),
+  libraryDependencies ++= Seq(
+    Libraries.weaverCats,
+    Libraries.weaverDiscipline,
+    Libraries.weaverScalaCheck
+  )
+)
+
 ThisBuild / assemblyMergeStrategy := {
   case "logback.xml"                                       => MergeStrategy.first
   case x if x.contains("io.netty.versions.properties")     => MergeStrategy.discard
@@ -28,18 +44,17 @@ lazy val root = (project in file("."))
   .settings(
     name := "tesselation"
   )
-  .aggregate(keytool, shared, core, tests)
+  .aggregate(keytool, shared, core, testShared)
 
 lazy val keytool = (project in file("modules/keytool"))
   .enablePlugins(AshScriptPlugin)
+  .dependsOn(testShared % Test)
   .settings(
     name := "tesselation-keytool",
-    scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info", "-language:reflectiveCalls"),
-    scalafmtOnCompile := true,
-    scalafixOnCompile := true,
-    resolvers += Resolver.sonatypeRepo("snapshots"),
     Defaults.itSettings,
     scalafixCommonSettings,
+    commonSettings,
+    commonTestSettings,
     makeBatScripts := Seq(),
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
@@ -47,6 +62,7 @@ lazy val keytool = (project in file("modules/keytool"))
       CompilerPlugin.semanticDB,
       Libraries.bouncyCastle,
       Libraries.cats,
+      Libraries.catsEffect,
       Libraries.circeCore,
       Libraries.circeGeneric,
       Libraries.circeParser,
@@ -75,16 +91,13 @@ lazy val keytool = (project in file("modules/keytool"))
 
 lazy val shared = (project in file("modules/shared"))
   .enablePlugins(AshScriptPlugin)
-  .dependsOn(keytool)
+  .dependsOn(keytool, testShared % Test)
   .settings(
     name := "tesselation-shared",
-    scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info", "-language:reflectiveCalls"),
-    testFrameworks += new TestFramework("weaver.framework.CatsEffect"),
-    scalafmtOnCompile := true,
-    scalafixOnCompile := true,
-    resolvers += Resolver.sonatypeRepo("snapshots"),
     Defaults.itSettings,
     scalafixCommonSettings,
+    commonSettings,
+    commonTestSettings,
     makeBatScripts := Seq(),
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
@@ -107,21 +120,18 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.monocleCore,
       Libraries.newtype,
       Libraries.refinedCore,
-      Libraries.refinedCats,
-      Libraries.weaverCats,
-      Libraries.weaverDiscipline,
-      Libraries.weaverScalaCheck
+      Libraries.refinedCats
     )
   )
 
-lazy val tests = (project in file("modules/tests"))
+lazy val testShared = (project in file("modules/test-shared"))
   .configs(IntegrationTest)
   .settings(
-    name := "tesselation-test-suite",
-    scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info", "-language:reflectiveCalls"),
-    testFrameworks += new TestFramework("weaver.framework.CatsEffect"),
+    name := "tesselation-test-shared",
     Defaults.itSettings,
     scalafixCommonSettings,
+    commonSettings,
+    commonTestSettings,
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
       CompilerPlugin.betterMonadicFor,
@@ -130,24 +140,30 @@ lazy val tests = (project in file("modules/tests"))
       Libraries.log4catsNoOp,
       Libraries.monocleLaw,
       Libraries.refinedScalacheck,
-      Libraries.weaverCats,
-      Libraries.weaverDiscipline,
-      Libraries.weaverScalaCheck
+      Libraries.cats,
+      Libraries.catsEffect,
+      Libraries.circeCore,
+      Libraries.circeGeneric,
+      Libraries.circeParser,
+      Libraries.circeRefined,
+      Libraries.fs2,
+      Libraries.http4sDsl,
+      Libraries.http4sServer,
+      Libraries.http4sClient,
+      Libraries.http4sCirce,
+      Libraries.http4sJwtAuth
     )
   )
-  .dependsOn(core)
 
 lazy val core = (project in file("modules/core"))
   .enablePlugins(AshScriptPlugin)
-  .dependsOn(keytool, shared)
+  .dependsOn(keytool, shared % "compile->compile;test->test", testShared % Test)
   .settings(
     name := "tesselation-core",
-    scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info", "-language:reflectiveCalls"),
-    scalafmtOnCompile := true,
-    scalafixOnCompile := true,
-    resolvers += Resolver.sonatypeRepo("snapshots"),
     Defaults.itSettings,
     scalafixCommonSettings,
+    commonSettings,
+    commonTestSettings,
     makeBatScripts := Seq(),
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
@@ -155,7 +171,6 @@ lazy val core = (project in file("modules/core"))
       CompilerPlugin.semanticDB,
       Libraries.cats,
       Libraries.catsEffect,
-      //Libraries.catsRetry,
       Libraries.circeCore,
       Libraries.circeGeneric,
       Libraries.circeParser,
