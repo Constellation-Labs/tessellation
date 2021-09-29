@@ -29,7 +29,8 @@ sealed abstract class HttpApi[F[_]: Async] private (
   environment: AppEnvironment
 ) {
   private val healthRoutes = HealthRoutes[F](services.healthcheck).routes
-  private val clusterRoutes = ClusterRoutes[F](programs.joining)
+  private val clusterRoutes =
+    ClusterRoutes[F](programs.joining, programs.peerDiscovery, storages.cluster)
   private val registrationRoutes = RegistrationRoutes[F](services.cluster)
 
   private val debugRoutes = DebugRoutes[F](storages, services).routes

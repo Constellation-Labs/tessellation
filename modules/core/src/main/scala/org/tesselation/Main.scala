@@ -16,7 +16,6 @@ import org.tesselation.resources.MkHttpServer.ServerName
 import org.tesselation.resources.{AppResources, MkHttpServer}
 import org.tesselation.schema.peer.PeerId
 
-import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object Main extends IOApp {
@@ -25,8 +24,8 @@ object Main extends IOApp {
 
   override def run(args: List[String]): IO[ExitCode] =
     Config.load[IO].flatMap { cfg =>
-      Logger[IO].info(s"Config loaded") >>
-        Logger[IO].info(s"App environment: ${cfg.environment}") >>
+      logger.info(s"Config loaded") >>
+        logger.info(s"App environment: ${cfg.environment}") >>
         SecurityProvider.forAsync[IO].use { implicit securityProvider =>
           loadKeyPair(cfg.keyConfig).flatMap { keyPair =>
             KryoSerializer.forAsync[IO](coreKryoRegistrar).use { implicit kryoPool =>
@@ -41,7 +40,7 @@ object Main extends IOApp {
                   services <- Resource.eval {
                     Services.make[IO](cfg, nodeId, keyPair, storages)
                   }
-                  programs = Programs.make[IO](storages, services, p2pClient)
+                  programs <- Resource.eval { Programs.make[IO](storages, services, p2pClient, nodeId) }
                   api = HttpApi.make[IO](storages, services, programs, cfg.environment)
                   _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.publicHttp, api.publicApp)
                   _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.p2pHttp, api.p2pApp)

@@ -16,6 +16,7 @@ import monocle.Iso
 
 object peer {
 
+  @derive(eqv, show, decoder, encoder)
   case class P2PContext(ip: Host, port: Port, id: PeerId)
 
   @derive(eqv, show, decoder, encoder, keyEncoder, keyDecoder)
@@ -33,7 +34,7 @@ object peer {
       PeerId(publicKeyToHex(publicKey))
   }
 
-  @derive(eqv, encoder, show)
+  @derive(eqv, encoder, decoder, show)
   case class Peer(
     id: PeerId,
     ip: Host,

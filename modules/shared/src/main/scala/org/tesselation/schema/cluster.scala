@@ -20,6 +20,10 @@ object cluster {
   case class PeerToJoin(id: PeerId, ip: Host, p2pPort: Port)
 
   object PeerToJoin {
+
+    implicit def apply(p2PContext: P2PContext): PeerToJoin =
+      PeerToJoin(p2PContext.id, p2PContext.ip, p2PContext.port)
+
     implicit def toP2PContext(peer: PeerToJoin): P2PContext =
       P2PContext(peer.ip, peer.p2pPort, peer.id)
   }
@@ -40,4 +44,10 @@ object cluster {
   case object EmptyHeaderToken extends TokenVerificationResult
   case object TokenDontMatch extends TokenVerificationResult
   case object TokenValid extends TokenVerificationResult
+
+  trait RegistrationRequestVerification extends NoStackTrace
+  case object LocalHostNotPermitted extends RegistrationRequestVerification
+  case object HostDifferentThanRemoteAddress extends RegistrationRequestVerification
+
+  trait SignedRequestVerification
 }
