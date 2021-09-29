@@ -3,11 +3,14 @@ package org.tesselation.http.routes
 import cats.effect.Async
 import cats.syntax.applicativeError._
 import cats.syntax.flatMap._
+import cats.syntax.functor._
 
-import org.tesselation.domain.cluster.programs.Joining
+import org.tesselation.domain.cluster.programs.{Joining, PeerDiscovery}
+import org.tesselation.domain.cluster.storage.ClusterStorage
 import org.tesselation.ext.http4s.refined._
 import org.tesselation.schema.cluster._
 import org.tesselation.schema.peer.JoinRequest
+import org.tesselation.schema.peer.Peer.toP2PContext
 
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
@@ -16,7 +19,9 @@ import org.http4s.server.Router
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 final case class ClusterRoutes[F[_]: Async](
-  joining: Joining[F]
+  joining: Joining[F],
+  peerDiscovery: PeerDiscovery[F],
+  clusterStorage: ClusterStorage[F]
 ) extends Http4sDsl[F] {
 
   implicit val logger = Slf4jLogger.getLogger[F]
@@ -48,6 +53,18 @@ final case class ClusterRoutes[F[_]: Async](
           .joinRequest(joinRequest)
           .flatMap(_ => Ok())
       }
+    case GET -> Root / "peers" =>
+      Ok(clusterStorage.getPeers)
+    case GET -> Root / "discovery" =>
+      Ok(
+        clusterStorage.getPeers
+          .map(_.map(toP2PContext))
+          .flatMap { knownPeers =>
+            peerDiscovery.getPeers.map { discoveredPeers =>
+              knownPeers ++ discoveredPeers
+            }
+          }
+      )
   }
 
   val p2pRoutes: HttpRoutes[F] = Router(

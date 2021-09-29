@@ -5,7 +5,7 @@ object Dependencies {
   object V {
     val bouncyCastle = "1.65"
     val cats = "2.6.1"
-    val catsEffect = "3.2.3"
+    val catsEffect = "3.2.9"
     val catsRetry = "2.1.0" // not published for CE3 yet
     val circe = "0.14.1"
     val ciris = "2.1.1"
@@ -14,7 +14,7 @@ object Dependencies {
     val doobie = "0.12.1"
     val droste = "0.8.0"
     val javaxCrypto = "1.0.1"
-    val fs2 = "3.1.0"
+    val fs2 = "3.1.1"
     val guava = "30.1.1-jre"
     val http4s = "0.23.1"
     val http4sJwtAuth = "1.0.0"
