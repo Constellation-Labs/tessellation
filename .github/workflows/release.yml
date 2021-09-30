@@ -1,0 +1,56 @@
+on:
+  push:
+    tags:
+      - 'v*'
+
+name: Create Release
+
+jobs:
+  build:
+    if: startsWith(github.ref, 'refs/tags/')
+    name: Create Release
+    runs-on: ubuntu-18.04
+    steps:
+      - uses: actions/checkout@v2.3.2
+
+      - name: "Build Changelog"
+        id: build_changelog
+        uses: mikepenz/release-changelog-builder-action@v2.4.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: little-core-labs/get-git-tag@v3.0.1
+        id: tagName
+        with:
+          tagRegex: "v(.*)"
+          tagRegexGroup: 1
+
+      - name: Setup Java and Scala
+        uses: olafurpg/setup-scala@v13
+        with:
+          java-version: adopt@1.8
+
+      - name: "Cache for sbt & coursier ♨️"
+        uses: coursier/cache-action@v4.1
+
+      - name: "Test and assembly 🚀"
+        run: sbt 'scalafixAll --check --rules OrganizeImports;scalafmtCheckAll;test;it:test;keytool/assembly;core/assembly'
+
+      - name: Copy dependencies
+        run: |
+          cp ./modules/keytool/target/scala-2.13/tesselation-keytool-assembly-${{ steps.tagName.outputs.tag }}.jar ./cl-keytool.jar
+          cp ./modules/core/target/scala-2.13/tesselation-core-assembly-${{ steps.tagName.outputs.tag }}.jar ./cl-node.jar
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v1
+        with:
+          name: ${{ github.ref }}
+          tag_name: ${{ github.ref }}
+          draft: true
+          prerelease: false
+          body: ${{ steps.build_changelog.outputs.changelog }}
+          files: |
+            ./cl-keytool.jar
+            ./cl-node.jar
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
