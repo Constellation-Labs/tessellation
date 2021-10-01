@@ -11,6 +11,7 @@ object node {
   // TODO: FSM
   object NodeState {
     case object Initial extends NodeState
+    case object SessionStarted extends NodeState
     case object Ready extends NodeState
     case object Offline extends NodeState
   }
