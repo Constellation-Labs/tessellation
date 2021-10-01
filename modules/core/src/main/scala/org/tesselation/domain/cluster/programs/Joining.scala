@@ -5,6 +5,7 @@ import java.security.PublicKey
 import cats.Applicative
 import cats.data.ValidatedNel
 import cats.effect.Async
+import cats.effect.std.Queue
 import cats.syntax.applicativeError._
 import cats.syntax.either._
 import cats.syntax.flatMap._
@@ -21,10 +22,10 @@ import org.tesselation.keytool.security.Signing.verifySignature
 import org.tesselation.keytool.security.{SecurityProvider, hex2bytes}
 import org.tesselation.kryo.KryoSerializer
 import org.tesselation.schema.cluster._
+import org.tesselation.schema.node.NodeState
 import org.tesselation.schema.peer._
 
-import fs2.Pipe
-import fs2.concurrent.Topic
+import fs2.{Pipe, Stream}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 /**
@@ -52,12 +53,12 @@ object Joining {
     session: Session[F],
     peerDiscovery: PeerDiscovery[F]
   ): F[Joining[F]] =
-    Topic
-      .apply[F, P2PContext]
+    Queue
+      .unbounded[F, P2PContext]
       .flatMap(make(_, nodeStorage, clusterStorage, p2pClient, cluster, session, peerDiscovery))
 
   def make[F[_]: Async: GenUUID: SecurityProvider: KryoSerializer](
-    joiningTopic: Topic[F, P2PContext],
+    joiningQueue: Queue[F, P2PContext],
     nodeStorage: NodeStorage[F],
     clusterStorage: ClusterStorage[F],
     p2pClient: P2PClient[F],
@@ -71,7 +72,7 @@ object Joining {
       p2pClient,
       cluster,
       session,
-      joiningTopic
+      joiningQueue
     ) {}
 
     def join: Pipe[F, P2PContext, Unit] =
@@ -80,11 +81,11 @@ object Joining {
           joining.twoWayHandshake(peer) >>
             peerDiscovery
               .discoverFrom(peer)
-              .flatMap { _.toList.traverse(joiningTopic.publish1(_).void) }
+              .flatMap { _.toList.traverse(joiningQueue.offer(_).void) }
               .void
         }
 
-    val process = joiningTopic.subscribe(1).through(join).compile.drain
+    val process = Stream.fromQueueUnterminated(joiningQueue).through(join).compile.drain
 
     Async[F].start(process).as(joining)
   }
@@ -96,7 +97,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
   p2pClient: P2PClient[F],
   cluster: Cluster[F],
   session: Session[F],
-  joiningTopic: Topic[F, P2PContext]
+  joiningQueue: Queue[F, P2PContext]
 ) {
 
   val logger = Slf4jLogger.getLogger[F]
@@ -105,8 +106,9 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
     for {
       _ <- validateJoinConditions(toPeer)
       _ <- session.createSession
+      _ <- nodeStorage.setNodeState(NodeState.SessionStarted)
 
-      _ <- joiningTopic.publish1(toPeer)
+      _ <- joiningQueue.offer(toPeer)
     } yield ()
 
   private def validateJoinConditions(toPeer: PeerToJoin): F[Unit] =

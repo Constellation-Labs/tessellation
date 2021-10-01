@@ -15,6 +15,9 @@ object NodeStorage {
   def make[F[_]: Monad](nodeState: Ref[F, NodeState]): NodeStorage[F] = new NodeStorage[F] {
     def getNodeState: F[NodeState] = nodeState.get
 
+    def setNodeState(state: NodeState): F[Unit] =
+      nodeState.set(state)
+
     def canJoinCluster: F[Boolean] = nodeState.get.map(_ == NodeState.Initial)
   }
 }
