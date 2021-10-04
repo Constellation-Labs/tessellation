@@ -12,6 +12,7 @@ import org.tesselation.schema.cluster._
 import org.tesselation.schema.peer.JoinRequest
 import org.tesselation.schema.peer.Peer.toP2PContext
 
+import com.comcast.ip4s.Host
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.dsl.Http4sDsl
@@ -42,6 +43,8 @@ final case class ClusterRoutes[F[_]: Async](
               Conflict(s"Peer host=${host.toString} port=${port.value} already in use.")
             case SessionAlreadyExists =>
               Conflict(s"Session already exists.")
+            case _ =>
+              InternalServerError("Unknown error.")
           }
       }
   }
@@ -49,9 +52,17 @@ final case class ClusterRoutes[F[_]: Async](
   private val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "join" =>
       req.decodeR[JoinRequest] { joinRequest =>
-        joining
-          .joinRequest(joinRequest)
-          .flatMap(_ => Ok())
+        req.remoteAddr
+          .flatMap(_.asIpv4)
+          .map(_.toString)
+          .flatMap(Host.fromString)
+          .fold(BadRequest())(
+            host =>
+              joining
+                .joinRequest(joinRequest, host)
+                .flatMap(_ => Ok())
+          )
+
       }
     case GET -> Root / "peers" =>
       Ok(clusterStorage.getPeers)

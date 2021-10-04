@@ -27,6 +27,8 @@ object Programs {
         p2pClient,
         services.cluster,
         services.session,
+        storages.session,
+        nodeId,
         pd
       )
     } yield new Programs[F](pd, joining) {}
