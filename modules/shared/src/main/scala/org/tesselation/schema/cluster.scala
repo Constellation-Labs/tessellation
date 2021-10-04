@@ -45,9 +45,10 @@ object cluster {
   case object TokenDontMatch extends TokenVerificationResult
   case object TokenValid extends TokenVerificationResult
 
-  trait RegistrationRequestVerification extends NoStackTrace
-  case object LocalHostNotPermitted extends RegistrationRequestVerification
-  case object HostDifferentThanRemoteAddress extends RegistrationRequestVerification
+  case object HandshakeSignatureNotValid extends NoStackTrace
 
-  trait SignedRequestVerification
+  trait RegistrationRequestValidation extends NoStackTrace
+  case object LocalHostNotPermitted extends RegistrationRequestValidation
+  case object InvalidRemoteAddress extends RegistrationRequestValidation
+  case object IdDuplicationFound extends RegistrationRequestValidation
 }

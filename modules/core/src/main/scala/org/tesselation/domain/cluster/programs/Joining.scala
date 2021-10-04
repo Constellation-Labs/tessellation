@@ -3,18 +3,19 @@ package org.tesselation.domain.cluster.programs
 import java.security.PublicKey
 
 import cats.Applicative
-import cats.data.ValidatedNel
 import cats.effect.Async
 import cats.effect.std.Queue
+import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+import cats.syntax.option._
 import cats.syntax.traverse._
 
 import org.tesselation.crypto.Signed
 import org.tesselation.domain.cluster.services.{Cluster, Session}
-import org.tesselation.domain.cluster.storage.{ClusterStorage, NodeStorage}
+import org.tesselation.domain.cluster.storage.{ClusterStorage, NodeStorage, SessionStorage}
 import org.tesselation.effects.GenUUID
 import org.tesselation.ext.crypto._
 import org.tesselation.http.p2p.P2PClient
@@ -25,23 +26,9 @@ import org.tesselation.schema.cluster._
 import org.tesselation.schema.node.NodeState
 import org.tesselation.schema.peer._
 
+import com.comcast.ip4s.{Host, IpLiteralSyntax}
 import fs2.{Pipe, Stream}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
-
-/**
-  * Join process:
-  * 1. Node state allows to join
-  * 2. Register peer
-  * 3. Fetch data
-  * 4. Joining height ???
-  *
-  * Register peer:
-  * 1. Create session token
-  * 2. Check whitelisting
-  * 3. Get peer registration request, validate and save it locally
-  * 3. Send own registration request to the peer
-  * 4. Check registration two-way
-  */
 
 object Joining {
 
@@ -51,11 +38,13 @@ object Joining {
     p2pClient: P2PClient[F],
     cluster: Cluster[F],
     session: Session[F],
+    sessionStorage: SessionStorage[F],
+    selfId: PeerId,
     peerDiscovery: PeerDiscovery[F]
   ): F[Joining[F]] =
     Queue
       .unbounded[F, P2PContext]
-      .flatMap(make(_, nodeStorage, clusterStorage, p2pClient, cluster, session, peerDiscovery))
+      .flatMap(make(_, nodeStorage, clusterStorage, p2pClient, cluster, session, sessionStorage, selfId, peerDiscovery))
 
   def make[F[_]: Async: GenUUID: SecurityProvider: KryoSerializer](
     joiningQueue: Queue[F, P2PContext],
@@ -64,6 +53,8 @@ object Joining {
     p2pClient: P2PClient[F],
     cluster: Cluster[F],
     session: Session[F],
+    sessionStorage: SessionStorage[F],
+    selfId: PeerId,
     peerDiscovery: PeerDiscovery[F]
   ): F[Joining[F]] = {
     val joining = new Joining(
@@ -72,13 +63,15 @@ object Joining {
       p2pClient,
       cluster,
       session,
+      sessionStorage,
+      selfId,
       joiningQueue
     ) {}
 
     def join: Pipe[F, P2PContext, Unit] =
       in =>
         in.evalMap { peer =>
-          joining.twoWayHandshake(peer) >>
+          joining.twoWayHandshake(peer, none) >>
             peerDiscovery
               .discoverFrom(peer)
               .flatMap { _.toList.traverse(joiningQueue.offer(_).void) }
@@ -97,6 +90,8 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
   p2pClient: P2PClient[F],
   cluster: Cluster[F],
   session: Session[F],
+  sessionStorage: SessionStorage[F],
+  selfId: PeerId,
   joiningQueue: Queue[F, P2PContext]
 ) {
 
@@ -127,26 +122,22 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
       else Applicative[F].unit
     } yield ()
 
-  private def twoWayHandshake(withPeer: PeerToJoin): F[Peer] =
+  private def twoWayHandshake(
+    withPeer: PeerToJoin,
+    remoteAddress: Option[Host],
+    skipJoinRequest: Boolean = false
+  ): F[Peer] =
     for {
-      _ <- logger.info(s"Handshake for peer: $withPeer")
       registrationRequest <- p2pClient.sign.getRegistrationRequest.run(withPeer)
 
-      _ <- validateHandshake(registrationRequest)
+      _ <- validateHandshake(registrationRequest, remoteAddress)
 
       signRequest <- GenUUID[F].make.map(SignRequest.apply)
       signedSignRequest <- p2pClient.sign.sign(signRequest).run(withPeer)
 
       publicKey <- withPeer.id.toPublic
-      isSignatureValid <- verifySignRequest(signRequest, signedSignRequest, publicKey)
-
-      _ <- logger.info(s"Is signature valid: ${isSignatureValid}")
-
-      // auth sign request (random nextLong)
-      // ask for signing
-      // validate response
-
-      //          _ <- handshake
+      _ <- verifySignRequest(signRequest, signedSignRequest, publicKey)
+        .ifM(Applicative[F].unit, HandshakeSignatureNotValid.raiseError[F, Unit])
 
       peer = Peer(
         registrationRequest.id,
@@ -158,20 +149,29 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
 
       _ <- clusterStorage.addPeer(peer)
 
-      ownRegistrationRequest <- cluster.getRegistrationRequest
-      joinRequest = JoinRequest(registrationRequest = ownRegistrationRequest)
-      _ <- p2pClient.sign.joinRequest(joinRequest).run(withPeer)
+      _ <- if (skipJoinRequest) {
+        Applicative[F].unit
+      } else {
+        cluster.getRegistrationRequest
+          .map(JoinRequest.apply)
+          .flatMap(p2pClient.sign.joinRequest(_).run(withPeer))
+      }
+
     } yield peer
 
-  private def validateHandshake(registrationRequest: RegistrationRequest): F[Unit] =
+  private def validateHandshake(registrationRequest: RegistrationRequest, remoteAddress: Option[Host]): F[Unit] =
     for {
-      _ <- Applicative[F].unit
-//      _ <- JoiningValidator.verifyRegistrationRequest(registrationRequest).liftTo[F]
-      // prevent localhost
-      // validate external host
-      // check status
-      // is correct ip and port
-      // is self
+      ip <- registrationRequest.ip.pure[F]
+
+      _ <- if (ip.toString != host"127.0.0.1".toString && ip.toString != host"localhost".toString)
+        Applicative[F].unit
+      else LocalHostNotPermitted.raiseError[F, Unit]
+
+      _ <- remoteAddress.fold(Applicative[F].unit)(
+        ra => if (ip.compare(ra) == 0) Applicative[F].unit else InvalidRemoteAddress.raiseError[F, Unit]
+      )
+
+      _ <- if (registrationRequest.id != selfId) Applicative[F].unit else IdDuplicationFound.raiseError[F, Unit]
     } yield ()
 
   private def verifySignRequest[A <: AnyRef](data: A, signed: Signed[SignRequest], publicKey: PublicKey): F[Boolean] =
@@ -184,24 +184,17 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
         }
       }
 
-  def joinRequest(joinRequest: JoinRequest): F[Unit] =
+  def joinRequest(joinRequest: JoinRequest, remoteAddress: Host): F[Unit] =
     for {
-      _ <- Applicative[F].unit
-      // validate
-      // finish handshake
-      registrationRequest = joinRequest.registrationRequest
-      _ <- clusterStorage.addPeer(
-        Peer(
-          registrationRequest.id,
-          registrationRequest.ip,
-          registrationRequest.publicPort,
-          registrationRequest.p2pPort,
-          registrationRequest.session
-        )
-      )
-    } yield ()
+      _ <- sessionStorage.getToken.flatMap(_.fold(SessionDoesNotExist.raiseError[F, Unit])(_ => Applicative[F].unit))
 
-  private def isSignedRequestValid(
-    signed: Signed[SignRequest]
-  ): ValidatedNel[SignedRequestVerification, Signed[SignRequest]] = ???
+      registrationRequest = joinRequest.registrationRequest
+
+      withPeer = PeerToJoin(
+        registrationRequest.id,
+        registrationRequest.ip,
+        registrationRequest.p2pPort
+      )
+      _ <- twoWayHandshake(withPeer, remoteAddress.some, skipJoinRequest = true)
+    } yield ()
 }
