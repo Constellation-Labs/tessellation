@@ -1,4 +1,5 @@
 tesselation
 ===========
 
-![CI Status](https://github.com/Constellation-Labs/tessellation/actions/workflows/pull-requests.yml/badge.svg?branch=develop)
+![build](https://img.shields.io/github/workflow/status/Constellation-Labs/tessellation/Create%20Release?label=build)
+![version](https://img.shields.io/github/v/release/Constellation-Labs/tessellation?sort=semver)
