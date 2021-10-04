@@ -44,8 +44,7 @@ jobs:
       - name: Upload release assets
         uses: softprops/action-gh-release@v1
         with:
-          name: ${{ github.ref }}
-          tag_name: ${{ github.ref }}
+          name: Release ${{ steps.tagName.outputs.tag }}
           draft: true
           prerelease: false
           body: ${{ steps.build_changelog.outputs.changelog }}
