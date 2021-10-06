@@ -11,7 +11,7 @@ object Dependencies {
     val ciris = "2.1.1"
     val comcast = "3.0.3"
     val derevo = "0.12.6"
-    val doobie = "0.12.1"
+    val doobie = "1.0.0-RC1"
     val droste = "0.8.0"
     val javaxCrypto = "1.0.1"
     val fs2 = "3.1.1"
@@ -71,6 +71,7 @@ object Dependencies {
     val derevoCirce = derevo("circe-magnolia")
 
     val doobieCore = doobie("core")
+    val doobieHikari = doobie("hikari")
     val doobieQuill = doobie("quill")
 
     val drosteCore = droste("core")

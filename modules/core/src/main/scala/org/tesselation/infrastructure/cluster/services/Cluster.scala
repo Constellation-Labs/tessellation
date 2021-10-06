@@ -33,7 +33,14 @@ object Cluster {
             case Some(s) => Applicative[F].pure(s)
             case None    => MonadThrow[F].raiseError[SessionToken](SessionDoesNotExist)
           }
-        } yield RegistrationRequest(nodeId, cfg.externalIp, cfg.publicHttp.port, cfg.p2pHttp.port, session)
+        } yield
+          RegistrationRequest(
+            nodeId,
+            cfg.httpConfig.externalIp,
+            cfg.httpConfig.publicHttp.port,
+            cfg.httpConfig.p2pHttp.port,
+            session
+          )
 
       def signRequest(signRequest: SignRequest): F[Signed[SignRequest]] =
         signRequest.sign(keyPair)
