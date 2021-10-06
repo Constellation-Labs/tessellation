@@ -4,17 +4,22 @@ import scala.concurrent.duration.FiniteDuration
 
 import ciris.Secret
 import com.comcast.ip4s.{Host, Port}
+import eu.timepit.refined.types.string.NonEmptyString
 
 object types {
 
   case class AppConfig(
     environment: AppEnvironment,
     keyConfig: KeyConfig,
-    httpClientConfig: HttpClientConfig,
-    externalIp: Host,
-    publicHttp: HttpServerConfig,
-    p2pHttp: HttpServerConfig,
-    cliHttp: HttpServerConfig
+    httpConfig: HttpConfig,
+    dbConfig: DBConfig
+  )
+
+  case class DBConfig(
+    driver: NonEmptyString,
+    url: NonEmptyString,
+    user: NonEmptyString,
+    password: Secret[String]
   )
 
   case class KeyConfig(
@@ -32,6 +37,14 @@ object types {
   case class HttpServerConfig(
     host: Host,
     port: Port
+  )
+
+  case class HttpConfig(
+    externalIp: Host,
+    client: HttpClientConfig,
+    publicHttp: HttpServerConfig,
+    p2pHttp: HttpServerConfig,
+    cliHttp: HttpServerConfig
   )
 
 }

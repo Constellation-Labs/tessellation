@@ -14,6 +14,6 @@ object AppResources {
 
   def make[F[_]: MkHttpClient](cfg: AppConfig): Resource[F, AppResources[F]] =
     (MkHttpClient[F]
-      .newEmber(cfg.httpClientConfig))
+      .newEmber(cfg.httpConfig.client))
       .map(new AppResources[F](_) {})
 }

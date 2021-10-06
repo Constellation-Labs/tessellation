@@ -8,6 +8,7 @@ import cats.effect.std.Supervisor
 import org.tesselation.config.Config
 import org.tesselation.config.types.KeyConfig
 import org.tesselation.http.p2p.P2PClient
+import org.tesselation.infrastructure.db.DoobieTransactor
 import org.tesselation.keytool.KeyStoreUtils
 import org.tesselation.keytool.security.SecurityProvider
 import org.tesselation.kryo.{KryoSerializer, coreKryoRegistrar}
@@ -29,23 +30,25 @@ object Main extends IOApp {
         SecurityProvider.forAsync[IO].use { implicit securityProvider =>
           loadKeyPair(cfg.keyConfig).flatMap { keyPair =>
             KryoSerializer.forAsync[IO](coreKryoRegistrar).use { implicit kryoPool =>
-              Supervisor[IO].use { _ =>
-                (for {
-                  res <- AppResources.make[IO](cfg)
-                  nodeId = PeerId.fromPublic(keyPair.getPublic)
-                  p2pClient = P2PClient.make[IO](res.client)
-                  storages <- Resource.eval {
-                    Storages.make[IO]
-                  }
-                  services <- Resource.eval {
-                    Services.make[IO](cfg, nodeId, keyPair, storages)
-                  }
-                  programs <- Resource.eval { Programs.make[IO](storages, services, p2pClient, nodeId) }
-                  api = HttpApi.make[IO](storages, services, programs, cfg.environment)
-                  _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.publicHttp, api.publicApp)
-                  _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.p2pHttp, api.p2pApp)
-                  _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.cliHttp, api.cliApp)
-                } yield ()).useForever
+              DoobieTransactor.forAsync[IO](cfg.dbConfig).use { implicit doobieTransactor =>
+                Supervisor[IO].use { _ =>
+                  (for {
+                    res <- AppResources.make[IO](cfg)
+                    nodeId = PeerId.fromPublic(keyPair.getPublic)
+                    p2pClient = P2PClient.make[IO](res.client)
+                    storages <- Resource.eval {
+                      Storages.make[IO]
+                    }
+                    services <- Resource.eval {
+                      Services.make[IO](cfg, nodeId, keyPair, storages)
+                    }
+                    programs <- Resource.eval { Programs.make[IO](storages, services, p2pClient, nodeId) }
+                    api = HttpApi.make[IO](storages, services, programs, cfg.environment)
+                    _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.httpConfig.publicHttp, api.publicApp)
+                    _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.httpConfig.p2pHttp, api.p2pApp)
+                    _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.httpConfig.cliHttp, api.cliApp)
+                  } yield ()).useForever
+                }
               }
             }
 
