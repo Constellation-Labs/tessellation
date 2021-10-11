@@ -15,6 +15,7 @@ object Dependencies {
     val droste = "0.8.0"
     val javaxCrypto = "1.0.1"
     val fs2 = "3.1.1"
+    val fs2Data = "1.1.0"
     val guava = "30.1.1-jre"
     val http4s = "0.23.1"
     val http4sJwtAuth = "1.0.0"
@@ -46,6 +47,7 @@ object Dependencies {
     def derevo(artifact: String): ModuleID = "tf.tofu" %% s"derevo-$artifact" % V.derevo
     def doobie(artifact: String): ModuleID = "org.tpolecat" %% s"doobie-$artifact" % V.doobie
     def droste(artifact: String): ModuleID = "io.higherkindness" %% s"droste-$artifact" % V.droste
+    def fs2Data(artifact: String): ModuleID = "org.gnieh" %% s"fs2-data-$artifact" % V.fs2Data
     def http4s(artifact: String): ModuleID = "org.http4s" %% s"http4s-$artifact" % V.http4s
     def spongyCastle(artifact: String): ModuleID = "com.madgag.spongycastle" % artifact % V.spongyCastle
 
@@ -54,8 +56,11 @@ object Dependencies {
     val catsRetry = "com.github.cb372" %% "cats-retry" % V.catsRetry
 
     val squants = "org.typelevel" %% "squants" % V.squants
-    val fs2 = "co.fs2" %% "fs2-core" % V.fs2
     val comcast = "com.comcast" %% "ip4s-core" % V.comcast
+
+    val fs2 = "co.fs2" %% "fs2-core" % V.fs2
+    val fs2DataCsv = fs2Data("csv")
+    val fs2DataCsvGeneric = fs2Data("csv-generic")
 
     val circeCore = circe("core")
     val circeGeneric = circe("generic")
