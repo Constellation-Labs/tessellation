@@ -207,6 +207,8 @@ lazy val core = (project in file("modules/core"))
       Libraries.drosteLaws,
       Libraries.drosteMacros,
       Libraries.fs2,
+      Libraries.fs2DataCsv,
+      Libraries.fs2DataCsvGeneric,
       Libraries.http4sDsl,
       Libraries.http4sServer,
       Libraries.http4sClient,
@@ -221,6 +223,7 @@ lazy val core = (project in file("modules/core"))
       Libraries.redis4catsLog4cats,
       Libraries.refinedCore,
       Libraries.refinedCats,
+      Libraries.scopt,
       Libraries.skunkCore,
       Libraries.skunkCirce,
       Libraries.squants
