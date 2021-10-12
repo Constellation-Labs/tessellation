@@ -10,17 +10,8 @@ import io.getquill.idiom.Idiom
 trait AddressDBContext[I <: Idiom, N <: NamingStrategy] {
   this: Context[I, N] =>
 
-  // It may be not needed if MappedEncoding is implemented for types
-  //  val getAddresses = quote {
-  //    querySchema[schema.StoredAddress](
-  //      "address",
-  //      _.address.value -> "address",
-  //      _.balance.value -> "balance"
-  //    )
-  //  }
-
   val getAddresses = quote {
-    query[StoredAddress]
+    querySchema[StoredAddress]("address")
   }
 
   val getAddressBalance = quote { (address: Address) =>

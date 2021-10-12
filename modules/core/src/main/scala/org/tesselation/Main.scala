@@ -11,7 +11,8 @@ import org.tesselation.cli.parser
 import org.tesselation.config.Config
 import org.tesselation.config.types.KeyConfig
 import org.tesselation.http.p2p.P2PClient
-import org.tesselation.infrastructure.db.DoobieTransactor
+import org.tesselation.infrastructure.db.Migrations
+import org.tesselation.infrastructure.db.doobie.{DoobieDataSource, DoobieTransactor}
 import org.tesselation.infrastructure.genesis.{Loader => GenesisLoader}
 import org.tesselation.keytool.KeyStoreUtils
 import org.tesselation.keytool.security.SecurityProvider
@@ -35,34 +36,39 @@ object Main extends IOApp {
           SecurityProvider.forAsync[IO].use { implicit securityProvider =>
             loadKeyPair(cfg.keyConfig).flatMap { keyPair =>
               KryoSerializer.forAsync[IO](coreKryoRegistrar).use { implicit kryoPool =>
-                DoobieTransactor.forAsync[IO](cfg.dbConfig).use { implicit doobieTransactor =>
-                  Supervisor[IO].use { _ =>
-                    (for {
-                      res <- AppResources.make[IO](cfg)
-                      nodeId = PeerId.fromPublic(keyPair.getPublic)
-                      p2pClient = P2PClient.make[IO](res.client)
-                      storages <- Resource.eval(Storages.make[IO])
-                      services <- Resource.eval(Services.make[IO](cfg, nodeId, keyPair, storages))
-                      programs <- Resource.eval(Programs.make[IO](storages, services, p2pClient, nodeId))
-                      _ <- Resource.eval {
-                        cli.method match {
-                          case CliMethod.RunValidator => IO.unit
-                          case CliMethod.RunGenesis =>
-                            GenesisLoader.make[IO].load(cli.genesisPath).flatMap { accounts =>
-                              logger.info(s"Genesis accounts: ${accounts.show}")
-                            }
-                          case _ => IO.raiseError(new RuntimeException("Wrong CLI method"))
+                DoobieDataSource.forAsync[IO](cfg.dbConfig).use { implicit dataSource =>
+                  DoobieTransactor.forAsync[IO].use { implicit doobieTransactor =>
+                    Supervisor[IO].use { _ =>
+                      (for {
+                        res <- AppResources.make[IO](cfg)
+                        nodeId = PeerId.fromPublic(keyPair.getPublic)
+                        p2pClient = P2PClient.make[IO](res.client)
+                        migrations = Migrations.make[IO]
+
+                        _ <- Resource.eval(migrations.migrate)
+                        storages <- Resource.eval(Storages.make[IO])
+                        services <- Resource.eval(Services.make[IO](cfg, nodeId, keyPair, storages))
+                        programs <- Resource.eval(Programs.make[IO](storages, services, p2pClient, nodeId))
+                        _ <- Resource.eval {
+                          cli.method match {
+                            case CliMethod.RunValidator => IO.unit
+                            case CliMethod.RunGenesis =>
+                              GenesisLoader.make[IO].load(cli.genesisPath).flatMap { accounts =>
+                                logger.info(s"Genesis accounts: ${accounts.show}")
+                              }
+                            case _ => IO.raiseError(new RuntimeException("Wrong CLI method"))
+                          }
                         }
-                      }
-                      api = HttpApi.make[IO](storages, services, programs, cfg.environment)
-                      _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.httpConfig.publicHttp, api.publicApp)
-                      _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.httpConfig.p2pHttp, api.p2pApp)
-                      _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.httpConfig.cliHttp, api.cliApp)
-                    } yield ()).useForever
+
+                        api = HttpApi.make[IO](storages, services, programs, cfg.environment)
+                        _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.httpConfig.publicHttp, api.publicApp)
+                        _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.httpConfig.p2pHttp, api.p2pApp)
+                        _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.httpConfig.cliHttp, api.cliApp)
+                      } yield ()).useForever
+                    }
                   }
                 }
               }
-
             }
           }
         }
