@@ -21,11 +21,7 @@ trait AddressDBContext[I <: Idiom, N <: NamingStrategy] {
   val insertAddressBalance = quote { (address: Address, balance: Balance) =>
     getAddresses
       .insert(_.address -> address, _.balance -> balance)
-  }
-
-  val insertOrUpdateAddressBalance = quote { (address: Address, balance: Balance) =>
-    insertAddressBalance(address, balance)
-      .onConflictUpdate(_.address)((existing, conflicted) => existing.balance -> conflicted.balance)
+      .onConflictIgnore
   }
 
   val updateAddressBalance = quote { (address: Address, balance: Balance) =>
