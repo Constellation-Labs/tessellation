@@ -6,6 +6,7 @@ import cats.syntax.flatMap._
 
 import org.tesselation.modules.{Services, Storages}
 import org.tesselation.schema.cluster.SessionAlreadyExists
+import org.tesselation.schema.node.InvalidNodeStateTransition
 
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
@@ -25,7 +26,8 @@ final case class DebugRoutes[F[_]: Async](
     case GET -> Root / "peers"                    => Ok(storages.cluster.getPeers)
     case POST -> Root / "create-session" =>
       services.session.createSession.flatMap(Ok(_)).recoverWith {
-        case SessionAlreadyExists => Conflict(s"Session already exists.")
+        case e: InvalidNodeStateTransition => Conflict(e.getMessage)
+        case SessionAlreadyExists          => Conflict(s"Session already exists.")
       }
   }
 
