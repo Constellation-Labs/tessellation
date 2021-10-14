@@ -13,6 +13,7 @@ object Dependencies {
     val derevo = "0.12.6"
     val doobie = "1.0.0-RC1"
     val droste = "0.8.0"
+    val h2 = "1.4.200"
     val javaxCrypto = "1.0.1"
     val flyway = "8.0.0"
     val fs2 = "3.1.1"
@@ -78,7 +79,7 @@ object Dependencies {
 
     val doobieCore = doobie("core")
     val doobieHikari = doobie("hikari")
-    val doobiePostgres = doobie("postgres")
+    val doobieH2 = doobie("h2")
     val doobieQuill = doobie("quill")
 
     val drosteCore = droste("core")
@@ -86,6 +87,8 @@ object Dependencies {
     val drosteMacros = droste("macros")
 
     val flyway = "org.flywaydb" % "flyway-core" % V.flyway
+
+    val h2 = "com.h2database" % "h2" % V.h2
 
     val http4sDsl = http4s("dsl")
     val http4sServer = http4s("ember-server")
