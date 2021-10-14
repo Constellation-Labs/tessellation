@@ -46,6 +46,7 @@ object Main extends IOApp {
                         migrations = Migrations.make[IO]
 
                         _ <- Resource.eval(migrations.migrate)
+
                         storages <- Resource.eval(Storages.make[IO])
                         services <- Resource.eval(Services.make[IO](cfg, nodeId, keyPair, storages))
                         programs <- Resource.eval(Programs.make[IO](storages, services, p2pClient, nodeId))

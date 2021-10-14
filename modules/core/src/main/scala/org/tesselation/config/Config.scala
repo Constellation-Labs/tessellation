@@ -16,10 +16,10 @@ import eu.timepit.refined.types.string.NonEmptyString
 object Config {
 
   val dbConfig = (
-    env("CL_DB_DRIVER").as[NonEmptyString],
-    env("CL_DB_URL").as[NonEmptyString],
-    env("CL_DB_USER").as[NonEmptyString],
-    env("CL_DB_PASSWORD").secret
+    env("CL_DB_DRIVER").default("org.h2.Driver").as[NonEmptyString],
+    env("CL_DB_URL").default("jdbc:h2:mem:nodedb").as[NonEmptyString],
+    env("CL_DB_USER").default("sa").as[NonEmptyString],
+    env("CL_DB_PASSWORD").default("").secret
   ).parMapN(DBConfig)
 
   val keyConfig = (
