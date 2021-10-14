@@ -1,5 +1,7 @@
 package org.tesselation.schema
 
+import cats.syntax.show._
+
 import derevo.cats.{eqv, show}
 import derevo.derive
 
@@ -8,12 +10,29 @@ object node {
   @derive(eqv, show)
   sealed trait NodeState
 
-  // TODO: FSM
   object NodeState {
     case object Initial extends NodeState
+    case object ReadyToJoin extends NodeState
+
+    case object LoadingGenesis extends NodeState
+    case object GenesisReady extends NodeState
+
+    case object StartingSession extends NodeState
     case object SessionStarted extends NodeState
+
     case object Ready extends NodeState
     case object Offline extends NodeState
   }
+
+  @derive(eqv, show)
+  sealed trait NodeStateTransition
+
+  object NodeStateTransition {
+    case object Success extends NodeStateTransition
+    case object Failure extends NodeStateTransition
+  }
+
+  case class InvalidNodeStateTransition(current: NodeState, from: Set[NodeState], to: NodeState)
+      extends Throwable(s"Invalid node state transition from ${from.show} to ${to.show} but current is ${current.show}")
 
 }

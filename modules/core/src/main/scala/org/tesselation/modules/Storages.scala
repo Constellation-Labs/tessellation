@@ -4,7 +4,8 @@ import cats.effect.kernel.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tesselation.domain.cluster.storage._
+import org.tesselation.domain.cluster.storage.{AddressStorage, ClusterStorage, SessionStorage}
+import org.tesselation.domain.node.NodeStorage
 import org.tesselation.infrastructure.cluster.storage.{AddressStorage, ClusterStorage, SessionStorage}
 import org.tesselation.infrastructure.db.doobie.DoobieTransactor
 import org.tesselation.infrastructure.node.NodeStorage

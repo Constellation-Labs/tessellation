@@ -20,6 +20,7 @@ import org.tesselation.kryo.{KryoSerializer, coreKryoRegistrar}
 import org.tesselation.modules._
 import org.tesselation.resources.MkHttpServer.ServerName
 import org.tesselation.resources.{AppResources, MkHttpServer}
+import org.tesselation.schema.node.NodeState
 import org.tesselation.schema.peer.PeerId
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -50,21 +51,29 @@ object Main extends IOApp {
                         storages <- Resource.eval(Storages.make[IO])
                         services <- Resource.eval(Services.make[IO](cfg, nodeId, keyPair, storages))
                         programs <- Resource.eval(Programs.make[IO](storages, services, p2pClient, nodeId))
-                        _ <- Resource.eval {
-                          cli.method match {
-                            case CliMethod.RunValidator => IO.unit
-                            case CliMethod.RunGenesis =>
-                              GenesisLoader.make[IO].load(cli.genesisPath).flatMap { accounts =>
-                                logger.info(s"Genesis accounts: ${accounts.show}")
-                              }
-                            case _ => IO.raiseError(new RuntimeException("Wrong CLI method"))
-                          }
-                        }
 
                         api = HttpApi.make[IO](storages, services, programs, cfg.environment)
                         _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.httpConfig.publicHttp, api.publicApp)
                         _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.httpConfig.p2pHttp, api.p2pApp)
                         _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.httpConfig.cliHttp, api.cliApp)
+
+                        _ <- Resource.eval {
+                          cli.method match {
+                            case CliMethod.RunValidator =>
+                              storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
+                            case CliMethod.RunGenesis =>
+                              storages.node.tryModifyState(
+                                NodeState.Initial,
+                                NodeState.LoadingGenesis,
+                                NodeState.GenesisReady
+                              ) {
+                                GenesisLoader.make[IO].load(cli.genesisPath).flatMap { accounts =>
+                                  logger.info(s"Genesis accounts: ${accounts.show}")
+                                }
+                              } >> services.session.createSession
+                            case _ => IO.raiseError(new RuntimeException("Wrong CLI method"))
+                          }
+                        }
                       } yield ()).useForever
                     }
                   }

@@ -25,7 +25,7 @@ object Services {
     for {
       _ <- Async[F].unit
       healthcheck = HealthCheck.make[F]
-      session = Session.make[F](storages.session, storages.cluster)
+      session = Session.make[F](storages.session, storages.cluster, storages.node)
       cluster = Cluster
         .make[F](cfg, nodeId, keyPair, storages.session)
     } yield

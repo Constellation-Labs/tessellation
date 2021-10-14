@@ -15,7 +15,8 @@ import cats.syntax.traverse._
 
 import org.tesselation.crypto.Signed
 import org.tesselation.domain.cluster.services.{Cluster, Session}
-import org.tesselation.domain.cluster.storage.{ClusterStorage, NodeStorage, SessionStorage}
+import org.tesselation.domain.cluster.storage.{ClusterStorage, SessionStorage}
+import org.tesselation.domain.node.NodeStorage
 import org.tesselation.effects.GenUUID
 import org.tesselation.ext.crypto._
 import org.tesselation.http.p2p.P2PClient
