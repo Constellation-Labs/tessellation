@@ -47,7 +47,9 @@ object Dependencies {
     def circe(artifact: String): ModuleID = "io.circe" %% s"circe-$artifact" % V.circe
     def ciris(artifact: String): ModuleID = "is.cir" %% artifact % V.ciris
     def derevo(artifact: String): ModuleID = "tf.tofu" %% s"derevo-$artifact" % V.derevo
-    def doobie(artifact: String): ModuleID = "org.tpolecat" %% s"doobie-$artifact" % V.doobie
+
+    def doobie(artifact: String): ModuleID =
+      ("org.tpolecat" %% s"doobie-$artifact" % V.doobie).exclude("org.slf4j", "slf4j-api")
     def droste(artifact: String): ModuleID = "io.higherkindness" %% s"droste-$artifact" % V.droste
     def fs2Data(artifact: String): ModuleID = "org.gnieh" %% s"fs2-data-$artifact" % V.fs2Data
     def http4s(artifact: String): ModuleID = "org.http4s" %% s"http4s-$artifact" % V.http4s
