@@ -12,7 +12,8 @@ object types {
     environment: AppEnvironment,
     keyConfig: KeyConfig,
     httpConfig: HttpConfig,
-    dbConfig: DBConfig
+    dbConfig: DBConfig,
+    gossipConfig: GossipConfig
   )
 
   case class DBConfig(
@@ -32,6 +33,22 @@ object types {
   case class HttpClientConfig(
     timeout: FiniteDuration,
     idleTimeInPool: FiniteDuration
+  )
+
+  case class RumorStorageConfig(
+    activeRetention: FiniteDuration,
+    seenRetention: FiniteDuration
+  )
+
+  case class GossipDaemonConfig(
+    fanOut: Int,
+    interval: FiniteDuration,
+    maxConcurrentHandlers: Int
+  )
+
+  case class GossipConfig(
+    storage: RumorStorageConfig,
+    daemon: GossipDaemonConfig
   )
 
   case class HttpServerConfig(

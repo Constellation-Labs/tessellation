@@ -3,6 +3,7 @@ package org.tesselation.http.routes
 import cats.effect.kernel.Async
 import cats.syntax.applicativeError._
 import cats.syntax.flatMap._
+import cats.syntax.option._
 
 import org.tesselation.modules.{Services, Storages}
 import org.tesselation.schema.cluster.SessionAlreadyExists
@@ -29,6 +30,10 @@ final case class DebugRoutes[F[_]: Async](
         case e: InvalidNodeStateTransition => Conflict(e.getMessage)
         case SessionAlreadyExists          => Conflict(s"Session already exists.")
       }
+    case POST -> Root / "gossip" / "spread" / IntVar(intContent) =>
+      services.gossip.spread(intContent.some) >> Ok()
+    case POST -> Root / "gossip" / "spread" / strContent =>
+      services.gossip.spread(strContent) >> Ok()
   }
 
   val routes: HttpRoutes[F] = Router(

@@ -47,6 +47,20 @@ object Config {
     )
   }
 
+  val gossipConfig = ConfigValue.default(
+    GossipConfig(
+      storage = RumorStorageConfig(
+        activeRetention = 2.seconds,
+        seenRetention = 2.minutes
+      ),
+      daemon = GossipDaemonConfig(
+        fanOut = 2,
+        interval = 0.2.seconds,
+        maxConcurrentHandlers = 20
+      )
+    )
+  )
+
   def load[F[_]: Async]: F[AppConfig] =
     env("CL_APP_ENV")
       .default("testnet")
@@ -58,8 +72,8 @@ object Config {
       .load[F]
 
   def default[F[_]](environment: AppEnvironment): ConfigValue[F, AppConfig] =
-    (keyConfig, httpConfig, dbConfig).parMapN { (key, http, db) =>
-      AppConfig(environment, key, http, db)
+    (keyConfig, httpConfig, dbConfig, gossipConfig).parMapN { (key, http, db, gossip) =>
+      AppConfig(environment, key, http, db, gossip)
     }
 
 }
