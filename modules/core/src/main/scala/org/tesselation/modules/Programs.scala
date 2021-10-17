@@ -5,7 +5,6 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tesselation.domain.cluster.programs.{Joining, PeerDiscovery}
-import org.tesselation.effects.GenUUID
 import org.tesselation.http.p2p.P2PClient
 import org.tesselation.keytool.security.SecurityProvider
 import org.tesselation.kryo.KryoSerializer
@@ -34,7 +33,7 @@ object Programs {
     } yield new Programs[F](pd, joining) {}
 }
 
-sealed abstract class Programs[F[_]: Async: GenUUID: SecurityProvider: KryoSerializer] private (
+sealed abstract class Programs[F[_]: Async: SecurityProvider: KryoSerializer] private (
   val peerDiscovery: PeerDiscovery[F],
   val joining: Joining[F]
 ) {}

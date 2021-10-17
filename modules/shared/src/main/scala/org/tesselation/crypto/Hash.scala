@@ -15,6 +15,12 @@ object hash {
   @newtype
   case class Hash(value: String)
 
+  object Hash {
+
+    def fromBytes(bytes: Array[Byte]): Hash =
+      Hash(Hashing.sha256().hashBytes(bytes).toString)
+  }
+
 }
 
 trait Hashable[F[_]] {
@@ -25,12 +31,9 @@ object Hashable {
 
   def forKryo[F[_]: KryoSerializer]: Hashable[F] = new Hashable[F] {
 
-    def sha256(bytes: Array[Byte]): String = Hashing.sha256().hashBytes(bytes).toString
-
     def hash[A <: AnyRef](data: A): Either[Throwable, Hash] =
       KryoSerializer[F]
         .serialize(data)
-        .map(sha256)
-        .map(Hash.apply)
+        .map(Hash.fromBytes)
   }
 }

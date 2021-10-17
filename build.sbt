@@ -140,7 +140,8 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.monocleCore,
       Libraries.newtype,
       Libraries.refinedCore,
-      Libraries.refinedCats
+      Libraries.refinedCats,
+      Libraries.http4sCore
     )
   )
 
@@ -222,6 +223,7 @@ lazy val core = (project in file("modules/core"))
       Libraries.log4cats,
       Libraries.logback % Runtime,
       Libraries.monocleCore,
+      Libraries.mapref,
       Libraries.newtype,
       Libraries.redis4catsEffects,
       Libraries.redis4catsLog4cats,
