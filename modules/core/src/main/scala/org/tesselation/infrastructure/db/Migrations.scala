@@ -1,8 +1,8 @@
 package org.tesselation.infrastructure.db
 
-import cats.effect.Async
+import javax.sql.DataSource
 
-import org.tesselation.infrastructure.db.doobie.DoobieDataSource
+import cats.effect.Async
 
 import org.flywaydb.core.Flyway
 import org.flywaydb.core.api.output.MigrateResult
@@ -13,10 +13,10 @@ trait Migrations[F[_]] {
 
 object Migrations {
 
-  def make[F[_]: Async: DoobieDataSource]: Migrations[F] = new Migrations[F] {
+  def make[F[_]: Async](dataSource: DataSource): Migrations[F] = new Migrations[F] {
     private val flyway = Flyway
       .configure()
-      .dataSource(DoobieDataSource[F].ds)
+      .dataSource(dataSource)
       .load()
 
     override def migrate: F[MigrateResult] = Async[F].delay(flyway.migrate())

@@ -7,12 +7,12 @@ import cats.syntax.functor._
 import org.tesselation.domain.cluster.storage.{AddressStorage, ClusterStorage, SessionStorage}
 import org.tesselation.domain.node.NodeStorage
 import org.tesselation.infrastructure.cluster.storage.{AddressStorage, ClusterStorage, SessionStorage}
-import org.tesselation.infrastructure.db.doobie.DoobieTransactor
+import org.tesselation.infrastructure.db.Database
 import org.tesselation.infrastructure.node.NodeStorage
 
 object Storages {
 
-  def make[F[_]: Async: DoobieTransactor]: F[Storages[F]] =
+  def make[F[_]: Async: Database]: F[Storages[F]] =
     for {
       addressStorage <- AddressStorage.make[F]
       clusterStorage <- ClusterStorage.make[F]
