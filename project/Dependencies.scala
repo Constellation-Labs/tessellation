@@ -22,6 +22,7 @@ object Dependencies {
     val http4s = "0.23.1"
     val http4sJwtAuth = "1.0.0"
     val log4cats = "2.1.1"
+    val micrometer = "1.7.4"
     val monocle = "3.0.0"
     val newtype = "0.4.4"
     val refined = "0.9.27"
@@ -109,6 +110,7 @@ object Dependencies {
     val http4sJwtAuth = "dev.profunktor" %% "http4s-jwt-auth" % V.http4sJwtAuth
 
     val monocleCore = "dev.optics" %% "monocle-core" % V.monocle
+    val micrometerPrometheusRegistry = "io.micrometer" % "micrometer-registry-prometheus" % V.micrometer
 
     val refinedCore = "eu.timepit" %% "refined" % V.refined
     val refinedCats = "eu.timepit" %% "refined-cats" % V.refined
