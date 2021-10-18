@@ -35,9 +35,11 @@ sealed abstract class HttpApi[F[_]: Async] private (
 
   private val debugRoutes = DebugRoutes[F](storages, services).routes
 
+  private val metricRoutes = MetricRoutes[F](services).routes
+
   private val openRoutes: HttpRoutes[F] =
     (if (environment == Testnet) debugRoutes else HttpRoutes.empty) <+>
-      healthRoutes
+      healthRoutes <+> metricRoutes
 
   private val p2pRoutes: HttpRoutes[F] =
     healthRoutes <+>
