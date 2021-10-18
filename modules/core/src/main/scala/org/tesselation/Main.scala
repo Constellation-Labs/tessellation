@@ -11,8 +11,7 @@ import org.tesselation.cli.parser
 import org.tesselation.config.Config
 import org.tesselation.config.types.KeyConfig
 import org.tesselation.http.p2p.P2PClient
-import org.tesselation.infrastructure.db.Migrations
-import org.tesselation.infrastructure.db.doobie.{DoobieDataSource, DoobieTransactor}
+import org.tesselation.infrastructure.db.Database
 import org.tesselation.infrastructure.genesis.{Loader => GenesisLoader}
 import org.tesselation.keytool.KeyStoreUtils
 import org.tesselation.keytool.security.SecurityProvider
@@ -37,45 +36,40 @@ object Main extends IOApp {
           SecurityProvider.forAsync[IO].use { implicit securityProvider =>
             loadKeyPair(cfg.keyConfig).flatMap { keyPair =>
               KryoSerializer.forAsync[IO](coreKryoRegistrar).use { implicit kryoPool =>
-                DoobieDataSource.forAsync[IO](cfg.dbConfig).use { implicit dataSource =>
-                  DoobieTransactor.forAsync[IO].use { implicit doobieTransactor =>
-                    Supervisor[IO].use { _ =>
-                      (for {
-                        res <- AppResources.make[IO](cfg)
-                        nodeId = PeerId.fromPublic(keyPair.getPublic)
-                        p2pClient = P2PClient.make[IO](res.client)
-                        migrations = Migrations.make[IO]
+                Database.forAsync[IO](cfg.dbConfig).use { implicit database =>
+                  Supervisor[IO].use { _ =>
+                    (for {
+                      res <- AppResources.make[IO](cfg)
+                      nodeId = PeerId.fromPublic(keyPair.getPublic)
+                      p2pClient = P2PClient.make[IO](res.client)
 
-                        _ <- Resource.eval(migrations.migrate)
+                      storages <- Resource.eval(Storages.make[IO])
+                      services <- Resource.eval(Services.make[IO](cfg, nodeId, keyPair, storages))
+                      programs <- Resource.eval(Programs.make[IO](storages, services, p2pClient, nodeId))
 
-                        storages <- Resource.eval(Storages.make[IO])
-                        services <- Resource.eval(Services.make[IO](cfg, nodeId, keyPair, storages))
-                        programs <- Resource.eval(Programs.make[IO](storages, services, p2pClient, nodeId))
+                      api = HttpApi.make[IO](storages, services, programs, cfg.environment)
+                      _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.httpConfig.publicHttp, api.publicApp)
+                      _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.httpConfig.p2pHttp, api.p2pApp)
+                      _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.httpConfig.cliHttp, api.cliApp)
 
-                        api = HttpApi.make[IO](storages, services, programs, cfg.environment)
-                        _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.httpConfig.publicHttp, api.publicApp)
-                        _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.httpConfig.p2pHttp, api.p2pApp)
-                        _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.httpConfig.cliHttp, api.cliApp)
-
-                        _ <- Resource.eval {
-                          cli.method match {
-                            case CliMethod.RunValidator =>
-                              storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
-                            case CliMethod.RunGenesis =>
-                              storages.node.tryModifyState(
-                                NodeState.Initial,
-                                NodeState.LoadingGenesis,
-                                NodeState.GenesisReady
-                              ) {
-                                GenesisLoader.make[IO].load(cli.genesisPath).flatMap { accounts =>
-                                  logger.info(s"Genesis accounts: ${accounts.show}")
-                                }
-                              } >> services.session.createSession
-                            case _ => IO.raiseError(new RuntimeException("Wrong CLI method"))
-                          }
+                      _ <- Resource.eval {
+                        cli.method match {
+                          case CliMethod.RunValidator =>
+                            storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
+                          case CliMethod.RunGenesis =>
+                            storages.node.tryModifyState(
+                              NodeState.Initial,
+                              NodeState.LoadingGenesis,
+                              NodeState.GenesisReady
+                            ) {
+                              GenesisLoader.make[IO].load(cli.genesisPath).flatMap { accounts =>
+                                logger.info(s"Genesis accounts: ${accounts.show}")
+                              }
+                            } >> services.session.createSession
+                          case _ => IO.raiseError(new RuntimeException("Wrong CLI method"))
                         }
-                      } yield ()).useForever
-                    }
+                      }
+                    } yield ()).useForever
                   }
                 }
               }
