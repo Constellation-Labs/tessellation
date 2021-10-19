@@ -3,11 +3,12 @@ package org.tesselation.schema
 import cats.syntax.show._
 
 import derevo.cats.{eqv, show}
+import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 
 object node {
 
-  @derive(eqv, show)
+  @derive(encoder, decoder, eqv, show)
   sealed trait NodeState
 
   object NodeState {
@@ -22,6 +23,11 @@ object node {
 
     case object Ready extends NodeState
     case object Offline extends NodeState
+
+    case object Unknown extends NodeState
+
+    val all: Set[NodeState] =
+      Set(Initial, ReadyToJoin, LoadingGenesis, GenesisReady, StartingSession, SessionStarted, Ready, Offline, Unknown)
   }
 
   @derive(eqv, show)

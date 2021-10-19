@@ -4,6 +4,8 @@ import cats.Applicative
 
 import org.tesselation.schema.node.NodeState
 
+import fs2.Stream
+
 trait NodeStorage[F[_]] {
   def getNodeState: F[NodeState]
 
@@ -21,4 +23,6 @@ trait NodeStorage[F[_]] {
     tryModifyState(Set(from), to)
 
   def canJoinCluster: F[Boolean]
+
+  def nodeState$ : Stream[F, NodeState]
 }

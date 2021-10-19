@@ -12,6 +12,7 @@ import cats.{Applicative, Parallel}
 
 import org.tesselation.config.types.GossipDaemonConfig
 import org.tesselation.crypto.hash.Hash
+import org.tesselation.domain.Daemon
 import org.tesselation.domain.cluster.storage.ClusterStorage
 import org.tesselation.domain.gossip.RumorStorage
 import org.tesselation.ext.crypto._
@@ -23,9 +24,7 @@ import org.tesselation.schema.peer.Peer
 import fs2._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-trait GossipDaemon[F[_]] {
-  def startDaemon: F[Unit]
-}
+trait GossipDaemon[F[_]] extends Daemon[F]
 
 object GossipDaemon {
 
@@ -40,7 +39,7 @@ object GossipDaemon {
 
     private val logger = Slf4jLogger.getLogger[F]
 
-    def startDaemon: F[Unit] =
+    def start: F[Unit] =
       for {
         _ <- Spawn[F].start(spreadActiveRumors.foreverM).void
         _ <- Spawn[F].start(consumeRumors)

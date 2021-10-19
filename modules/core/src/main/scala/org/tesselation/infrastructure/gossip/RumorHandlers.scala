@@ -5,17 +5,24 @@ import cats.effect.Async
 import cats.syntax.semigroupk._
 import cats.syntax.show._
 
+import org.tesselation.domain.cluster.storage.ClusterStorage
+import org.tesselation.infrastructure.cluster.rumour.handler.nodeStateHandler
 import org.tesselation.kryo.KryoSerializer
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object RumorHandlers {
 
-  def combine[F[_]: Async: KryoSerializer]: RumorHandler[F] =
-    debugHandlers[F]
+  def make[F[_]: Async: KryoSerializer](clusterStorage: ClusterStorage[F]): RumorHandlers[F] =
+    new RumorHandlers[F](clusterStorage) {}
+}
 
-  private def debugHandlers[F[_]: Async: KryoSerializer]: RumorHandler[F] = {
+sealed abstract class RumorHandlers[F[_]: Async: KryoSerializer] private (clusterStorage: ClusterStorage[F]) {
+  private val nodeState = nodeStateHandler(clusterStorage)
+
+  private val debug: RumorHandler[F] = {
     val logger = Slf4jLogger.getLogger[F]
+
     val strHandler = RumorHandler.fromFn[F, String] { s =>
       logger.info(s"String rumor received $s")
     }
@@ -27,6 +34,9 @@ object RumorHandlers {
           MonadThrow[F].raiseError(new RuntimeException(s"Int rumor error ${o.show}, origin ${id.show}"))
       }
     }
+
     strHandler <+> optIntHandler
   }
+
+  val handlers: RumorHandler[F] = nodeState <+> debug
 }

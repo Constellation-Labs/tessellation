@@ -3,6 +3,7 @@ package org.tesselation.schema
 import org.tesselation.crypto.Signed
 import org.tesselation.schema.address.AddressCache
 import org.tesselation.schema.gossip._
+import org.tesselation.schema.node.NodeState
 import org.tesselation.schema.peer.SignRequest
 
 package object kryo {
@@ -15,6 +16,15 @@ package object kryo {
     classOf[StartGossipRoundRequest] -> 203,
     classOf[StartGossipRoundResponse] -> 204,
     classOf[EndGossipRoundRequest] -> 205,
-    classOf[EndGossipRoundResponse] -> 206
+    classOf[EndGossipRoundResponse] -> 206,
+    NodeState.Initial.getClass -> 207,
+    NodeState.ReadyToJoin.getClass -> 208,
+    NodeState.GenesisReady.getClass -> 209,
+    NodeState.LoadingGenesis.getClass -> 210,
+    NodeState.Ready.getClass -> 211,
+    NodeState.SessionStarted.getClass -> 212,
+    NodeState.Offline.getClass -> 213,
+    NodeState.StartingSession.getClass -> 214,
+    NodeState.Unknown.getClass -> 215
   )
 }

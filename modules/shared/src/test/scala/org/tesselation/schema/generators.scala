@@ -2,6 +2,7 @@ package org.tesselation.schema
 
 import org.tesselation.generators._
 import org.tesselation.schema.cluster.SessionToken
+import org.tesselation.schema.node.NodeState
 import org.tesselation.schema.peer.{Peer, PeerId}
 
 import com.comcast.ip4s.{Host, Port}
@@ -23,6 +24,9 @@ object generators {
   val portGen: Gen[Port] =
     Gen.chooseNum(1, 65535).map(Port.fromInt(_).get)
 
+  val nodeStateGen: Gen[NodeState] =
+    Gen.oneOf(NodeState.all)
+
   val peerGen: Gen[Peer] =
     for {
       i <- peerIdGen
@@ -30,7 +34,8 @@ object generators {
       p <- portGen
       p2 <- portGen
       s <- Gen.uuid.map(SessionToken.apply)
-    } yield Peer(i, h, p, p2, s)
+      st <- nodeStateGen
+    } yield Peer(i, h, p, p2, s, st)
 
   def peersGen(n: Option[Int] = None): Gen[Set[Peer]] =
     n.map(Gen.const).getOrElse(Gen.chooseNum(1, 20)).flatMap { n =>

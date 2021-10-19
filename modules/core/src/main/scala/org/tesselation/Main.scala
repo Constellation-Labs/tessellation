@@ -29,6 +29,10 @@ object Main extends IOApp {
 
   implicit val logger = Slf4jLogger.getLogger[IO]
 
+  implicit class ResourceIO[A](value: IO[A]) {
+    def asResource: Resource[IO, A] = Resource.eval { value }
+  }
+
   override def run(args: List[String]): IO[ExitCode] =
     Config.load[IO].flatMap { cfg =>
       logger.info(s"Config loaded") >>
@@ -43,49 +47,36 @@ object Main extends IOApp {
                       (for {
                         res <- AppResources.make[IO](cfg)
                         nodeId = PeerId.fromPublic(keyPair.getPublic)
-                        _ <- Resource.eval {
-                          logger.info(s"This peerId ${nodeId.show}")
-                        }
+                        _ <- logger.info(s"This peerId ${nodeId.show}").asResource
                         p2pClient = P2PClient.make[IO](res.client)
-                        queues <- Resource.eval {
-                          Queues.make[IO]
-                        }
-                        storages <- Resource.eval {
-                          Storages.make[IO](cfg)
-                        }
-                        services <- Resource.eval {
-                          Services.make[IO](cfg, nodeId, keyPair, storages, queues)
-                        }
-                        programs <- Resource.eval {
-                          Programs.make[IO](storages, services, p2pClient, nodeId)
-                        }
-                        rumorHandler = RumorHandlers.combine[IO]
-                        _ <- Resource.eval {
-                          Daemons.make(storages, queues, p2pClient, rumorHandler, cfg)
-                        }
+                        queues <- Queues.make[IO].asResource
+                        storages <- Storages.make[IO](cfg).asResource
+                        services <- Services.make[IO](cfg, nodeId, keyPair, storages, queues).asResource
+                        programs <- Programs.make[IO](storages, services, p2pClient, nodeId).asResource
+
+                        rumorHandler = RumorHandlers.make[IO](storages.cluster).handlers
+                        _ <- Daemons.start(storages, services, queues, p2pClient, rumorHandler, cfg).asResource
 
                         api = HttpApi.make[IO](storages, queues, services, programs, cfg.environment)
                         _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.httpConfig.publicHttp, api.publicApp)
                         _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.httpConfig.p2pHttp, api.p2pApp)
                         _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.httpConfig.cliHttp, api.cliApp)
 
-                        _ <- Resource.eval {
-                          cli.method match {
-                            case CliMethod.RunValidator =>
-                              storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
-                            case CliMethod.RunGenesis =>
-                              storages.node.tryModifyState(
-                                NodeState.Initial,
-                                NodeState.LoadingGenesis,
-                                NodeState.GenesisReady
-                              ) {
-                                GenesisLoader.make[IO].load(cli.genesisPath).flatMap { accounts =>
-                                  logger.info(s"Genesis accounts: ${accounts.show}")
-                                }
-                              } >> services.session.createSession
-                            case _ => IO.raiseError(new RuntimeException("Wrong CLI method"))
-                          }
-                        }
+                        _ <- (cli.method match {
+                          case CliMethod.RunValidator =>
+                            storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
+                          case CliMethod.RunGenesis =>
+                            storages.node.tryModifyState(
+                              NodeState.Initial,
+                              NodeState.LoadingGenesis,
+                              NodeState.GenesisReady
+                            ) {
+                              GenesisLoader.make[IO].load(cli.genesisPath).flatMap { accounts =>
+                                logger.info(s"Genesis accounts: ${accounts.show}")
+                              }
+                            } >> services.session.createSession
+                          case _ => IO.raiseError(new RuntimeException("Wrong CLI method"))
+                        }).asResource
                       } yield ()).useForever
                     }
                   }

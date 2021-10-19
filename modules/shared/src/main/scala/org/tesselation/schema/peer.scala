@@ -6,13 +6,15 @@ import java.util.UUID
 import org.tesselation.keytool.security.publicKeyToHex
 import org.tesselation.schema.ID.Id
 import org.tesselation.schema.cluster.SessionToken
+import org.tesselation.schema.node.NodeState
 
 import com.comcast.ip4s.{Host, Port}
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia._
 import derevo.derive
 import io.estatico.newtype.macros.newtype
-import monocle.Iso
+import monocle.macros.GenLens
+import monocle.{Iso, Lens}
 
 object peer {
 
@@ -40,12 +42,15 @@ object peer {
     ip: Host,
     publicPort: Port,
     p2pPort: Port,
-    session: SessionToken
+    session: SessionToken,
+    state: NodeState
   )
 
   object Peer {
     implicit def toP2PContext(peer: Peer): P2PContext =
       P2PContext(peer.ip, peer.p2pPort, peer.id)
+
+    val _State: Lens[Peer, NodeState] = GenLens[Peer](_.state)
   }
 
   @derive(eqv, show)

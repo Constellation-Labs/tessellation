@@ -96,6 +96,7 @@ lazy val keytool = (project in file("modules/keytool"))
       Libraries.logback % Runtime,
       Libraries.micrometerPrometheusRegistry,
       Libraries.monocleCore,
+      Libraries.monocleMacro,
       Libraries.newtype,
       Libraries.scCore,
       Libraries.scProv,

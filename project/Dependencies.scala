@@ -112,6 +112,8 @@ object Dependencies {
     val http4sJwtAuth = "dev.profunktor" %% "http4s-jwt-auth" % V.http4sJwtAuth
 
     val monocleCore = "dev.optics" %% "monocle-core" % V.monocle
+    val monocleMacro = "dev.optics" %% "monocle-macro" % V.monocle
+
     val micrometerPrometheusRegistry = "io.micrometer" % "micrometer-registry-prometheus" % V.micrometer
 
     val refinedCore = "eu.timepit" %% "refined" % V.refined

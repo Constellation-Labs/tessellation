@@ -1,0 +1,33 @@
+package org.tesselation.infrastructure.cluster.daemon
+
+import cats.effect.{Async, Spawn}
+import cats.syntax.applicativeError._
+import cats.syntax.flatMap._
+import cats.syntax.functor._
+import cats.syntax.show._
+
+import org.tesselation.domain.Daemon
+import org.tesselation.domain.gossip.Gossip
+import org.tesselation.domain.node.NodeStorage
+
+import org.typelevel.log4cats.slf4j.Slf4jLogger
+
+trait NodeStateDaemon[F[_]] extends Daemon[F] {}
+
+object NodeStateDaemon {
+
+  def make[F[_]: Async](nodeStorage: NodeStorage[F], gossip: Gossip[F]): NodeStateDaemon[F] = new NodeStateDaemon[F] {
+    private val logger = Slf4jLogger.getLogger[F]
+
+    def start: F[Unit] =
+      Spawn[F].start(spreadNodeState).void
+
+    private def spreadNodeState: F[Unit] =
+      nodeStorage.nodeState$.evalTap { nodeState =>
+        logger.info(s"Node state changed to=${nodeState.show}") >>
+          gossip.spread(nodeState).handleErrorWith { error =>
+            logger.error(error)(s"NodeState spread error=${error.getMessage}")
+          }
+      }.compile.drain
+  }
+}
