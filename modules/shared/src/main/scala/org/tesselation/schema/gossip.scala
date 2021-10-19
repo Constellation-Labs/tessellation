@@ -6,6 +6,7 @@ import org.tesselation.crypto.Signed
 import org.tesselation.crypto.hash.Hash
 import org.tesselation.ext.codecs.BinaryCodec
 import org.tesselation.kryo.KryoSerializer
+import org.tesselation.schema.ID.Id
 
 import org.http4s.{EntityDecoder, EntityEncoder}
 
@@ -14,7 +15,7 @@ object gossip {
   type RumorEntry = (Hash, Signed[Rumor])
   type RumorBatch = List[RumorEntry]
 
-  case class Unregistered(str: String)
+  case class ReceivedRumor[A](origin: Id, content: A)
 
   case class Rumor(
     tpe: String,
@@ -22,8 +23,7 @@ object gossip {
   )
 
   case class StartGossipRoundRequest(
-    offer: List[Hash],
-    unregistered: Unregistered = Unregistered("not registered class")
+    offer: List[Hash]
   )
 
   object StartGossipRoundRequest {

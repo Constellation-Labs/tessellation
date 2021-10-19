@@ -59,9 +59,9 @@ object Main extends IOApp {
                         programs <- Resource.eval {
                           Programs.make[IO](storages, services, p2pClient, nodeId)
                         }
-                        handler = RumorHandlers.combine[IO]
+                        rumorHandler = RumorHandlers.combine[IO]
                         _ <- Resource.eval {
-                          Daemons.make(storages, queues, p2pClient, handler, cfg)
+                          Daemons.make(storages, queues, p2pClient, rumorHandler, cfg)
                         }
 
                         api = HttpApi.make[IO](storages, queues, services, programs, cfg.environment)
