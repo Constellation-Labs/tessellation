@@ -20,10 +20,12 @@ object RumorHandlers {
       logger.info(s"String rumor received $s")
     }
 
-    val optIntHandler = RumorHandler.fromFn[F, Option[Int]] {
-      case Some(i) if i > 0 => logger.info(s"Int rumor received ${i.show}")
-      case o =>
-        MonadThrow[F].raiseError(new RuntimeException(s"Int rumor error ${o.show}"))
+    val optIntHandler = RumorHandler.fromBiFn[F, Option[Int]] { (id, optInt) =>
+      optInt match {
+        case Some(i) if i > 0 => logger.info(s"Int rumor received ${i.show}, origin ${id.show}")
+        case o =>
+          MonadThrow[F].raiseError(new RuntimeException(s"Int rumor error ${o.show}, origin ${id.show}"))
+      }
     }
     strHandler <+> optIntHandler
   }

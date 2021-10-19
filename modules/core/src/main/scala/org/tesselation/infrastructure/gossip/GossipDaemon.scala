@@ -67,21 +67,20 @@ object GossipDaemon {
         }
         .evalMap { batch =>
           // TODO: filter out invalid signatures
-          Async[F].pure(batch)
+          Applicative[F].pure(batch)
         }
         .evalMap(rumorStorage.addRumors)
         .flatMap(batch => Stream.iterable(batch))
         .parEvalMapUnordered(cfg.maxConcurrentHandlers) {
           case (hash, signedRumor) =>
-            val rumor = signedRumor.value
             rumorHandler
-              .run(signedRumor.value)
+              .run(signedRumor)
               .getOrElseF {
-                logger.warn(s"Unhandled rumor of type ${rumor.tpe} with hash ${hash.show}.")
+                logger.warn(s"Unhandled rumor of type ${signedRumor.value.tpe} with hash ${hash.show}.")
               }
               .handleErrorWith { err =>
                 logger.error(err)(
-                  s"Error handling rumor of type ${rumor.tpe} with hash ${hash.show}."
+                  s"Error handling rumor of type ${signedRumor.value.tpe} with hash ${hash.show}."
                 )
               }
         }
@@ -101,10 +100,14 @@ object GossipDaemon {
         seenHashes <- rumorStorage.getSeenHashes
         peers <- clusterStorage.getPeers
         selectedPeers <- Random[F].shuffleList(peers.toList).map(_.take(cfg.fanOut))
-        _ <- selectedPeers.parTraverse(runGossipRound(activeHashes, seenHashes))
+        _ <- selectedPeers.parTraverse { peer =>
+          runGossipRound(activeHashes, seenHashes, peer).handleErrorWith { err =>
+            logger.error(err)(s"Error running gossip round with peer ${peer.show}")
+          }
+        }
       } yield ()
 
-    private def runGossipRound(activeHashes: List[Hash], seenHashes: List[Hash])(peer: Peer): F[Unit] =
+    private def runGossipRound(activeHashes: List[Hash], seenHashes: List[Hash], peer: Peer): F[Unit] =
       for {
         _ <- Applicative[F].unit
         startRequest = StartGossipRoundRequest(activeHashes)
