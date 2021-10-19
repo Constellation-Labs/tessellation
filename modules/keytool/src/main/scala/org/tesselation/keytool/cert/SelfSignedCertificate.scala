@@ -2,14 +2,16 @@ package org.tesselation.keytool.cert
 
 import java.math.BigInteger
 import java.security.cert.X509Certificate
-import java.security.{KeyPair, SecureRandom, Security}
+import java.security.{KeyPair, SecureRandom}
 import java.util.{Calendar, Date}
 
+import cats.Applicative
 import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.bouncycastle.jce.provider.BouncyCastleProvider
+import org.tesselation.keytool.security.SecurityProvider
+
 import org.spongycastle.asn1.x500.X500Name
 import org.spongycastle.asn1.x509.SubjectPublicKeyInfo
 import org.spongycastle.cert.X509v3CertificateBuilder
@@ -18,16 +20,15 @@ import org.spongycastle.operator.jcajce.JcaContentSignerBuilder
 
 object SelfSignedCertificate {
 
-  def makeBouncyCastleProvider[F[_]: Async]: F[BouncyCastleProvider] =
-    Async[F].delay {
-      new BouncyCastleProvider()
-    }.flatTap { provider =>
-      Async[F].delay { Security.addProvider(provider) }
-    }
-
-  def generate[F[_]: Async](dn: String, pair: KeyPair, days: Int, algorithm: String): F[X509Certificate] =
+  def generate[F[_]: Async: SecurityProvider](
+    dn: String,
+    pair: KeyPair,
+    days: Int,
+    algorithm: String
+  ): F[X509Certificate] =
     for {
-      provider <- makeBouncyCastleProvider[F]
+      _ <- Applicative[F].unit
+      provider = SecurityProvider[F].provider
       owner = new X500Name(dn)
       rnd <- Async[F].delay { new SecureRandom() }
       serial = new BigInteger(64, rnd)

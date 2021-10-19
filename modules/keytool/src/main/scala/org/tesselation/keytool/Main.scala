@@ -54,7 +54,7 @@ object Main extends IOApp {
         certificateValidity = cfg.certificateValidity
       )
 
-  private def migrateKeyStoreToSinglePassword[F[_]: Async](cfg: AppConfig): F[KeyStore] =
+  private def migrateKeyStoreToSinglePassword[F[_]: Async: SecurityProvider](cfg: AppConfig): F[KeyStore] =
     KeyStoreUtils.migrateKeyStoreToSinglePassword(
       path = cfg.keystore,
       alias = cfg.keyalias.value,

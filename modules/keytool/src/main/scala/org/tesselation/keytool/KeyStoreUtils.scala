@@ -94,7 +94,7 @@ object KeyStoreUtils {
         )
     } yield hex
 
-  private[keytool] def migrateKeyStoreToSinglePassword[F[_]: Async](
+  private[keytool] def migrateKeyStoreToSinglePassword[F[_]: Async: SecurityProvider](
     path: String,
     alias: String,
     storePassword: Array[Char],
@@ -141,7 +141,7 @@ object KeyStoreUtils {
   /**
     * Puts existing to new keyStore at path
     */
-  private[keytool] def putKeyPairToStorePath[F[_]: Async](
+  private[keytool] def putKeyPairToStorePath[F[_]: Async: SecurityProvider](
     keyPair: KeyPair,
     path: String,
     alias: String,
@@ -186,7 +186,7 @@ object KeyStoreUtils {
       new FileOutputStream(file, false)
     })
 
-  private def generateCertificateChain[F[_]: Async](
+  private def generateCertificateChain[F[_]: Async: SecurityProvider](
     distinguishedName: DistinguishedName,
     certificateValidity: Int,
     keyPair: KeyPair
