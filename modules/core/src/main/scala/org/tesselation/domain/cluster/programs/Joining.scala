@@ -3,8 +3,8 @@ package org.tesselation.domain.cluster.programs
 import java.security.PublicKey
 
 import cats.Applicative
-import cats.effect.Async
 import cats.effect.std.Queue
+import cats.effect.{Async, Spawn, Temporal}
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.either._
@@ -12,6 +12,8 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
 import cats.syntax.traverse._
+
+import scala.concurrent.duration.DurationInt
 
 import org.tesselation.crypto.Signed
 import org.tesselation.domain.cluster.services.{Cluster, Session}
@@ -105,6 +107,10 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
       _ <- nodeStorage.setNodeState(NodeState.SessionStarted)
 
       _ <- joiningQueue.offer(toPeer)
+
+      _ <- Spawn[F].start {
+        Temporal[F].sleep(15.seconds) >> nodeStorage.setNodeState(NodeState.Ready)
+      } // @mwadon: visualization, just for demo purpose
     } yield ()
 
   private def validateJoinConditions(toPeer: PeerToJoin): F[Unit] =
@@ -145,7 +151,8 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
         registrationRequest.ip,
         registrationRequest.publicPort,
         registrationRequest.p2pPort,
-        registrationRequest.session
+        registrationRequest.session,
+        NodeState.Unknown
       )
 
       _ <- clusterStorage.addPeer(peer)
