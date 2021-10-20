@@ -55,7 +55,10 @@ object Dependencies {
     def droste(artifact: String): ModuleID = "io.higherkindness" %% s"droste-$artifact" % V.droste
     def fs2Data(artifact: String): ModuleID = "org.gnieh" %% s"fs2-data-$artifact" % V.fs2Data
     def http4s(artifact: String): ModuleID = "org.http4s" %% s"http4s-$artifact" % V.http4s
-    def spongyCastle(artifact: String): ModuleID = "com.madgag.spongycastle" % artifact % V.spongyCastle
+    def bouncyCastle(artifact: String): ModuleID = "org.bouncycastle" % artifact % V.bouncyCastle
+
+    val bc = bouncyCastle("bcprov-jdk15on")
+    val bcExtensions = bouncyCastle("bcpkix-jdk15on")
 
     val cats = "org.typelevel" %% "cats-core" % V.cats
     val catsEffect = "org.typelevel" %% "cats-effect" % V.catsEffect
@@ -99,13 +102,6 @@ object Dependencies {
     val http4sServer = http4s("ember-server")
     val http4sClient = http4s("ember-client")
     val http4sCirce = http4s("circe")
-
-    val scCore = spongyCastle("core")
-    val scProv = spongyCastle("prov")
-    val scBcpkix = spongyCastle("bcpkix-jdk15on")
-    val scBcpg = spongyCastle("bcpg-jdk15on")
-    val scBctls = spongyCastle("bctls-jdk15on")
-    val bouncyCastle = "org.bouncycastle" % "bcprov-jdk15on" % V.bouncyCastle
 
     val guava = "com.google.guava" % "guava" % V.guava
 
