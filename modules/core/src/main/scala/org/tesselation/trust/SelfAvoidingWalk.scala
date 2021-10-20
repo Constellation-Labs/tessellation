@@ -1,8 +1,9 @@
 package org.tesselation.trust
 
+import scala.util.Random
+
 import com.typesafe.scalalogging.StrictLogging
 
-import scala.util.Random
 
 /**
   * https://en.wikipedia.org/wiki/Node_influence_metric
