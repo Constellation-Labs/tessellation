@@ -19,6 +19,20 @@ object cluster {
   @derive(decoder, encoder, show)
   case class PeerToJoin(id: PeerId, ip: Host, p2pPort: Port)
 
+  @derive(decoder, encoder, show)
+  case class InternalTrustUpdate(id: PeerId, trust: Double)
+
+  @derive(decoder, encoder, show)
+  case class InternalTrustUpdateBatch(updates: Seq[InternalTrustUpdate])
+
+  @derive(decoder, encoder, show)
+  case class TrustInfo(
+                        trustLabel: Option[Double] = None,
+                        predictedTrust: Option[Double] = None,
+                        observationAdjustmentTrust: Option[Double] = None,
+                        peerLabels: Map[PeerId, Double] = Map.empty
+                      )
+
   object PeerToJoin {
 
     implicit def apply(p2PContext: P2PContext): PeerToJoin =

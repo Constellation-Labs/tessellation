@@ -44,6 +44,17 @@ final case class ClusterRoutes[F[_]: Async](
               Conflict(s"Session already exists.")
           }
       }
+    case req @ POST -> Root / "trust" =>
+      req.decodeR[InternalTrustUpdateBatch] { trustUpdates =>
+        clusterStorage
+          .updateTrust(trustUpdates)
+          .flatMap(_ => Ok())
+          .recoverWith {
+            case _ =>
+              Conflict(s"Internal trust update failure")
+          }
+      }
+
   }
 
   private val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
