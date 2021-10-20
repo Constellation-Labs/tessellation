@@ -1,10 +1,7 @@
 package org.tesselation.keytool.security
 
-import java.security.Security
-
 import cats.Applicative
 import cats.effect.{Async, Resource}
-import cats.syntax.flatMap._
 
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 
@@ -17,9 +14,7 @@ object SecurityProvider {
 
   private def make[F[_]: Async]: Resource[F, BouncyCastleProvider] =
     Resource.make {
-      Async[F].delay { new BouncyCastleProvider() }.flatTap { provider =>
-        Async[F].delay { Security.insertProviderAt(provider, 1) }
-      }
+      Async[F].delay { new BouncyCastleProvider() }
     }(_ => Applicative[F].unit)
 
   def forAsync[F[_]: Async]: Resource[F, SecurityProvider[F]] = make[F].map { bcProvider =>

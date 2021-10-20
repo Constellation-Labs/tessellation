@@ -64,7 +64,7 @@ object Main extends IOApp {
       certificateValidity = cfg.certificateValidity
     )
 
-  private def exportPrivateKeyAsHex[F[_]: Async](cfg: AppConfig): F[String] =
+  private def exportPrivateKeyAsHex[F[_]: Async: SecurityProvider](cfg: AppConfig): F[String] =
     KeyStoreUtils.exportPrivateKeyAsHex(
       path = cfg.keystore,
       alias = cfg.keyalias.value,

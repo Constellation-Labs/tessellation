@@ -3,7 +3,7 @@ import sbt._
 object Dependencies {
 
   object V {
-    val bouncyCastle = "1.65"
+    val bouncyCastle = "1.69"
     val cats = "2.6.1"
     val catsEffect = "3.2.9"
     val catsRetry = "2.1.0" // not published for CE3 yet

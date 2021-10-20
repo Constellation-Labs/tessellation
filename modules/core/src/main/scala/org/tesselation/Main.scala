@@ -36,7 +36,7 @@ object Main extends IOApp {
         parser.parse[IO](args).flatMap { cli =>
           Random.scalaUtilRandom[IO].flatMap { implicit random =>
             SecurityProvider.forAsync[IO].use { implicit securityProvider =>
-              loadKeyPair(cfg.keyConfig).flatMap { keyPair =>
+              loadKeyPair[IO](cfg.keyConfig).flatMap { keyPair =>
                 KryoSerializer.forAsync[IO](coreKryoRegistrar).use { implicit kryoPool =>
                   Database.forAsync[IO](cfg.dbConfig).use { implicit database =>
                     Supervisor[IO].use { _ =>
@@ -96,9 +96,9 @@ object Main extends IOApp {
         }
     }
 
-  private def loadKeyPair(cfg: KeyConfig): IO[KeyPair] =
+  private def loadKeyPair[F[_]: Async: SecurityProvider](cfg: KeyConfig): F[KeyPair] =
     KeyStoreUtils
-      .keyPairFromStorePath[IO](
+      .keyPairFromStorePath[F](
         cfg.keystore,
         cfg.keyalias.value,
         cfg.storepass.value.toCharArray,
