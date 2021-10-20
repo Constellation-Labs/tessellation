@@ -39,11 +39,10 @@ object SelfAvoidingWalk extends StrictLogging {
     // (i.e. discard information from distant nodes if they distrust nearby nodes that you trust in general)
 
     // This doesn't need to be recalculated
-    val ignoredNodes = nodeMap
-      .filter{case (_, trustNode) =>
+    val ignoredNodes = nodeMap.filter {
+      case (_, trustNode) =>
         trustNode.edges.exists(edge => edge.trust < 0 && edge.dst == selfId)
-      }.keySet
-
+    }.keySet
 
     var currentId: Int = selfId
     var currentPathLength: Int = 0
@@ -92,9 +91,8 @@ object SelfAvoidingWalk extends StrictLogging {
 
     val maxPathLength = nodes.size - 1
 
-    def walkFromOrigin() = {
+    def walkFromOrigin() =
       walk_iterative(selfId, nodeMap)
-    }
     val numNodes = nodes.maxBy(_.id).id
     val walkScores = Array.fill(numNodes + 1)(0d)
 //    logger.debug(s"walkFromOrigin for walkScores ${walkScores.toString()}")
