@@ -1,4 +1,4 @@
-package org.tesselation.trust
+package org.tesselation.infrastructure.trust
 
 import scala.util.Random
 

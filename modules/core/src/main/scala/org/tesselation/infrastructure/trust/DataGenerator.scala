@@ -1,4 +1,4 @@
-package org.tesselation.trust
+package org.tesselation.infrastructure.trust
 
 case class TrustEdge(src: Int, dst: Int, trust: Double, isLabel: Boolean = false) {
   def other(id: Int): Int = Seq(src, dst).filterNot(_ == id).head
