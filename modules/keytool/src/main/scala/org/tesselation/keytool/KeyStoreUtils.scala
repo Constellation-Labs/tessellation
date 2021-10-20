@@ -6,17 +6,13 @@ import java.nio.file.FileAlreadyExistsException
 import java.security._
 import java.security.cert.Certificate
 
-import cats.data.EitherT
 import cats.effect.{Async, Resource}
 import cats.syntax.applicative._
-import cats.syntax.applicativeError._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tesselation.keytool.cert.{DistinguishedName, SelfSignedCertificate}
 import org.tesselation.keytool.security._
-
-import org.bouncycastle.util.io.pem.{PemObject, PemWriter}
 
 object KeyStoreUtils {
 
@@ -25,57 +21,6 @@ object KeyStoreUtils {
   private val singlePasswordKeyStoreSuffix: String = "_v2"
   private val privateKeyHexName: String = "id_ecdsa.hex"
 
-  private[keytool] def readFromFileStream[F[_]: Async, T](
-    dataPath: String,
-    streamParser: FileInputStream => F[T]
-  ): EitherT[F, Throwable, T] =
-    reader(dataPath)
-      .use(streamParser)
-      .attemptT
-
-  private[keytool] def storeWithFileStream[F[_]: Async](
-    path: String,
-    bufferedWriter: OutputStream => F[Unit]
-  ): EitherT[F, Throwable, Unit] =
-    writer(path)
-      .use(bufferedWriter)
-      .attemptT
-
-  private[keytool] def parseFileOfTypeOp[F[_]: Async, T](
-    parser: String => Option[T]
-  )(stream: FileInputStream): F[Option[T]] =
-    Resource
-      .fromAutoCloseable(Async[F].delay {
-        new BufferedReader(new InputStreamReader(stream))
-      })
-      .use(inStream => Option(inStream.readLine()).flatMap(parser).pure[F])
-
-  private[keytool] def writeTypeToFileStream[F[_]: Async, T](
-    serializer: T => String
-  )(obj: T)(stream: OutputStream): F[Unit] =
-    Resource
-      .fromAutoCloseable(Async[F].delay {
-        new BufferedWriter(new OutputStreamWriter(stream))
-      })
-      .use(
-        outStream =>
-          Async[F].delay {
-            outStream.write(serializer(obj))
-          }
-      )
-
-  private[keytool] def storeKeyPemDecrypted[F[_]: Async](key: Key)(stream: FileOutputStream): F[Unit] =
-    Resource
-      .fromAutoCloseable(Async[F].delay {
-        new PemWriter(new OutputStreamWriter(stream))
-      })
-      .use { pemWriter =>
-        val pemObj = new PemObject("EC KEY", key.getEncoded)
-        Async[F].delay {
-          pemWriter.writeObject(pemObj)
-        }
-      }
-
   private[keytool] def exportPrivateKeyAsHex[F[_]: Async: SecurityProvider](
     path: String,
     alias: String,
@@ -83,7 +28,7 @@ object KeyStoreUtils {
     keyPassword: Array[Char]
   ): F[String] =
     for {
-      keyPair <- keyPairFromStorePath(path, alias, storePassword, keyPassword)
+      keyPair <- readKeyPairFromStore(path, alias, storePassword, keyPassword)
       hex = privateKeyToHex(keyPair.getPrivate)
       _ <- writer(pathDir(path) + privateKeyHexName)
         .use(
@@ -103,50 +48,36 @@ object KeyStoreUtils {
     certificateValidity: Int
   ): F[KeyStore] =
     for {
-      keyPair <- keyPairFromStorePath(path, alias, storePassword, keyPassword)
-      newKeyStore <- putKeyPairToStorePath(
+      keyPair <- readKeyPairFromStore(path, alias, storePassword, keyPassword)
+      newKeyStore <- writeKeyPairToStore(
         keyPair,
         withSinglePasswordSuffix(path),
         alias,
-        storePassword,
         storePassword,
         distinguishedName,
         certificateValidity
       )
     } yield newKeyStore
 
-  /**
-    * Generates new keypair and puts it to new keyStore at path
-    */
-  private[keytool] def generateKeyPairToStorePath[F[_]: Async: SecurityProvider](
+  private[keytool] def generateKeyPairToStore[F[_]: Async: SecurityProvider](
     path: String,
     alias: String,
-    storePassword: Array[Char],
-    keyPassword: Array[Char],
+    password: Array[Char],
     distinguishedName: DistinguishedName,
     certificateValidity: Int
   ): F[KeyStore] =
-    writer(withExtension(path))
-      .use(
-        stream =>
-          for {
-            keyStore <- createEmptyKeyStore(storePassword)
-            keyPair <- KeyProvider.makeKeyPair[F]
-            chain <- generateCertificateChain(distinguishedName, certificateValidity, keyPair)
-            _ <- setKeyEntry(alias, keyPair, keyPassword, chain)(keyStore)
-            _ <- store(stream, storePassword)(keyStore)
-          } yield keyStore
-      )
+    KeyProvider
+      .makeKeyPair[F]
+      .flatMap(writeKeyPairToStore(_, path, alias, password, distinguishedName, certificateValidity))
 
   /**
     * Puts existing to new keyStore at path
     */
-  private[keytool] def putKeyPairToStorePath[F[_]: Async: SecurityProvider](
+  private[keytool] def writeKeyPairToStore[F[_]: Async: SecurityProvider](
     keyPair: KeyPair,
     path: String,
     alias: String,
-    storePassword: Array[Char],
-    keyPassword: Array[Char],
+    password: Array[Char],
     distinguishedName: DistinguishedName,
     certificateValidity: Int
   ): F[KeyStore] =
@@ -154,14 +85,14 @@ object KeyStoreUtils {
       .use(
         stream =>
           for {
-            keyStore <- createEmptyKeyStore(storePassword)
+            keyStore <- createEmptyKeyStore(password)
             chain <- generateCertificateChain(distinguishedName, certificateValidity, keyPair)
-            _ <- setKeyEntry(alias, keyPair, keyPassword, chain)(keyStore)
-            _ <- store(stream, storePassword)(keyStore)
+            _ <- setKeyEntry(alias, keyPair, password, chain)(keyStore)
+            _ <- store(stream, password)(keyStore)
           } yield keyStore
       )
 
-  def keyPairFromStorePath[F[_]: Async: SecurityProvider](
+  def readKeyPairFromStore[F[_]: Async: SecurityProvider](
     path: String,
     alias: String,
     storepass: Array[Char],
