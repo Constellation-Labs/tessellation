@@ -23,15 +23,15 @@ object cluster {
   case class InternalTrustUpdate(id: PeerId, trust: Double)
 
   @derive(decoder, encoder, show)
-  case class InternalTrustUpdateBatch(updates: Seq[InternalTrustUpdate])
+  case class InternalTrustUpdateBatch(updates: List[InternalTrustUpdate])
 
   @derive(decoder, encoder, show)
   case class TrustInfo(
-                        trustLabel: Option[Double] = None,
-                        predictedTrust: Option[Double] = None,
-                        observationAdjustmentTrust: Option[Double] = None,
-                        peerLabels: Map[PeerId, Double] = Map.empty
-                      )
+    trustLabel: Option[Double] = None,
+    predictedTrust: Option[Double] = None,
+    observationAdjustmentTrust: Option[Double] = None,
+    peerLabels: Map[PeerId, Double] = Map.empty
+  )
 
   object PeerToJoin {
 

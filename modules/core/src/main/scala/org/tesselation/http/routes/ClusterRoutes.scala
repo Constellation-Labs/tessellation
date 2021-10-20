@@ -7,6 +7,7 @@ import cats.syntax.functor._
 
 import org.tesselation.domain.cluster.programs.{Joining, PeerDiscovery}
 import org.tesselation.domain.cluster.storage.ClusterStorage
+import org.tesselation.domain.trust.storage.TrustStorage
 import org.tesselation.ext.http4s.refined._
 import org.tesselation.schema.cluster._
 import org.tesselation.schema.peer.JoinRequest
@@ -21,7 +22,8 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 final case class ClusterRoutes[F[_]: Async](
   joining: Joining[F],
   peerDiscovery: PeerDiscovery[F],
-  clusterStorage: ClusterStorage[F]
+  clusterStorage: ClusterStorage[F],
+  trustStorage: TrustStorage[F]
 ) extends Http4sDsl[F] {
 
   implicit val logger = Slf4jLogger.getLogger[F]
@@ -46,7 +48,7 @@ final case class ClusterRoutes[F[_]: Async](
       }
     case req @ POST -> Root / "trust" =>
       req.decodeR[InternalTrustUpdateBatch] { trustUpdates =>
-        clusterStorage
+        trustStorage
           .updateTrust(trustUpdates)
           .flatMap(_ => Ok())
           .recoverWith {
