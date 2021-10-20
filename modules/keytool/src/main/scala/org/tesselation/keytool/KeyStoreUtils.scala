@@ -76,7 +76,7 @@ object KeyStoreUtils {
         }
       }
 
-  private[keytool] def exportPrivateKeyAsHex[F[_]: Async](
+  private[keytool] def exportPrivateKeyAsHex[F[_]: Async: SecurityProvider](
     path: String,
     alias: String,
     storePassword: Array[Char],
@@ -161,14 +161,19 @@ object KeyStoreUtils {
           } yield keyStore
       )
 
-  def keyPairFromStorePath[F[_]: Async](
+  def keyPairFromStorePath[F[_]: Async: SecurityProvider](
     path: String,
     alias: String,
     storepass: Array[Char],
     keypass: Array[Char]
   ): F[KeyPair] =
     reader(path)
-      .evalMap(unlockKeyStore[F](storepass))
+      .evalMap(
+        if (storepass.sameElements(keypass))
+          unlockKeyStore[F](storepass)
+        else
+          unlockLegacyKeyStore[F](storepass)
+      )
       .evalMap(unlockKeyPair[F](alias, keypass))
       .use(_.pure[F])
 
@@ -195,15 +200,25 @@ object KeyStoreUtils {
       .generate(distinguishedName.toString, keyPair, certificateValidity, Signing.defaultSignFunc)
       .map(Array(_))
 
-  private def unlockKeyStore[F[_]: Async](
+  private def unlockKeyStore[F[_]: Async: SecurityProvider](
     password: Array[Char]
   )(stream: FileInputStream): F[KeyStore] =
+    Async[F].delay { KeyStore.getInstance(storeType, SecurityProvider[F].provider) }.flatTap { keyStore =>
+      Async[F].delay { keyStore.load(stream, password) }
+    }
+
+  /**
+    * Just for backward compatibility. Uses regular Security provider order instead of explicit one
+    */
+  private def unlockLegacyKeyStore[F[_]: Async](password: Array[Char])(
+    stream: FileInputStream
+  ): F[KeyStore] =
     Async[F].delay { KeyStore.getInstance(storeType) }.flatTap { keyStore =>
       Async[F].delay { keyStore.load(stream, password) }
     }
 
-  private def createEmptyKeyStore[F[_]: Async](password: Array[Char]): F[KeyStore] =
-    Async[F].delay { KeyStore.getInstance(storeType) }.flatTap { keyStore =>
+  private def createEmptyKeyStore[F[_]: Async: SecurityProvider](password: Array[Char]): F[KeyStore] =
+    Async[F].delay { KeyStore.getInstance(storeType, SecurityProvider[F].provider) }.flatTap { keyStore =>
       Async[F].delay { keyStore.load(null, password) }
     }
 
