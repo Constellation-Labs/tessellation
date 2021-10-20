@@ -1,9 +1,10 @@
 package org.tesselation.domain.cluster.storage
 
-import com.comcast.ip4s.{Host, Port}
 import org.tesselation.schema.cluster
 import org.tesselation.schema.cluster.TrustInfo
 import org.tesselation.schema.peer.{Peer, PeerId}
+
+import com.comcast.ip4s.{Host, Port}
 
 trait ClusterStorage[F[_]] {
   def updateTrust(trustUpdates: cluster.InternalTrustUpdateBatch): F[Unit]

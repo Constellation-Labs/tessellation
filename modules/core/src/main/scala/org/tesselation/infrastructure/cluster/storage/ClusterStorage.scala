@@ -1,15 +1,16 @@
 package org.tesselation.infrastructure.cluster.storage
 
-import com.comcast.ip4s.{Host, Port}
+import cats.Monad
+import cats.effect.Ref
+import cats.syntax.flatMap._
+import cats.syntax.functor._
+
 import org.tesselation.domain.cluster.storage.ClusterStorage
 import org.tesselation.schema.cluster
 import org.tesselation.schema.cluster.TrustInfo
 import org.tesselation.schema.peer.{Peer, PeerId}
 
-import cats.Monad
-import cats.effect.Ref
-import cats.syntax.flatMap._
-import cats.syntax.functor._
+import com.comcast.ip4s.{Host, Port}
 
 object ClusterStorage {
 
