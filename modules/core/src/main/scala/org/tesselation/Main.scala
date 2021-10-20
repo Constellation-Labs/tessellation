@@ -89,7 +89,7 @@ object Main extends IOApp {
 
   private def loadKeyPair[F[_]: Async: SecurityProvider](cfg: KeyConfig): F[KeyPair] =
     KeyStoreUtils
-      .keyPairFromStorePath[F](
+      .readKeyPairFromStore[F](
         cfg.keystore,
         cfg.keyalias.value,
         cfg.storepass.value.toCharArray,

@@ -45,11 +45,10 @@ object Main extends IOApp {
 
   private def generateKeyStoreWithKeyPair[F[_]: Async: SecurityProvider](cfg: AppConfig): F[KeyStore] =
     KeyStoreUtils
-      .generateKeyPairToStorePath(
+      .generateKeyPairToStore(
         path = cfg.keystore,
         alias = cfg.keyalias.value,
-        storePassword = cfg.storepass.value.toCharArray,
-        keyPassword = cfg.keypass.value.toCharArray,
+        password = cfg.storepass.value.toCharArray,
         distinguishedName = cfg.distinguishedName,
         certificateValidity = cfg.certificateValidity
       )
