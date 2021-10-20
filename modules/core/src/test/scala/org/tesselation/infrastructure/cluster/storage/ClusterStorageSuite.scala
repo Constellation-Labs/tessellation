@@ -1,12 +1,13 @@
 package org.tesselation.infrastructure.cluster.storage
 
-import cats.effect.{IO, Ref}
-import org.tesselation.schema.generators._
-import org.tesselation.schema.peer.{Peer, PeerId}
 import com.comcast.ip4s.IpLiteralSyntax
 import org.tesselation.schema.cluster.{InternalTrustUpdate, InternalTrustUpdateBatch, TrustInfo}
+import org.tesselation.schema.generators._
+import org.tesselation.schema.peer.{Peer, PeerId}
 import weaver.SimpleIOSuite
 import weaver.scalacheck.Checkers
+
+import cats.effect.{IO, Ref}
 
 object ClusterStorageSuite extends SimpleIOSuite with Checkers {
   test("getPeers returns an empty Set") {
