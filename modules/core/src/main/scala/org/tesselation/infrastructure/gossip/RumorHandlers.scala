@@ -27,11 +27,11 @@ sealed abstract class RumorHandlers[F[_]: Async: KryoSerializer] private (cluste
       logger.info(s"String rumor received $s")
     }
 
-    val optIntHandler = RumorHandler.fromBiFn[F, Option[Int]] { (id, optInt) =>
+    val optIntHandler = RumorHandler.fromBiFn[F, Option[Int]] { (peerId, optInt) =>
       optInt match {
-        case Some(i) if i > 0 => logger.info(s"Int rumor received ${i.show}, origin ${id.show}")
+        case Some(i) if i > 0 => logger.info(s"Int rumor received ${i.show}, origin ${peerId.show}")
         case o =>
-          MonadThrow[F].raiseError(new RuntimeException(s"Int rumor error ${o.show}, origin ${id.show}"))
+          MonadThrow[F].raiseError(new RuntimeException(s"Int rumor error ${o.show}, origin ${peerId.show}"))
       }
     }
 

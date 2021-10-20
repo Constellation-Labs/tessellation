@@ -3,6 +3,7 @@ package org.tesselation.infrastructure.gossip
 import cats.effect.std.{Queue, Random}
 import cats.effect.{Async, Spawn, Temporal}
 import cats.syntax.applicativeError._
+import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.parallel._
@@ -17,23 +18,25 @@ import org.tesselation.domain.cluster.storage.ClusterStorage
 import org.tesselation.domain.gossip.RumorStorage
 import org.tesselation.ext.crypto._
 import org.tesselation.http.p2p.clients.GossipClient
+import org.tesselation.keytool.security.SecurityProvider
 import org.tesselation.kryo.KryoSerializer
-import org.tesselation.schema.gossip.{EndGossipRoundRequest, RumorBatch, StartGossipRoundRequest}
-import org.tesselation.schema.peer.Peer
+import org.tesselation.schema.gossip._
+import org.tesselation.schema.peer.{Peer, PeerId}
 
-import fs2._
+import fs2.Stream
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait GossipDaemon[F[_]] extends Daemon[F]
 
 object GossipDaemon {
 
-  def make[F[_]: Async: KryoSerializer: Random: Parallel](
+  def make[F[_]: Async: SecurityProvider: KryoSerializer: Random: Parallel](
     rumorStorage: RumorStorage[F],
     rumorQueue: Queue[F, RumorBatch],
     clusterStorage: ClusterStorage[F],
     gossipClient: GossipClient[F],
     rumorHandler: RumorHandler[F],
+    nodeId: PeerId,
     cfg: GossipDaemonConfig
   ): GossipDaemon[F] = new GossipDaemon[F] {
 
@@ -48,43 +51,54 @@ object GossipDaemon {
     private def consumeRumors: F[Unit] =
       Stream
         .fromQueueUnterminated(rumorQueue)
-        .evalMap { batch =>
-          batch.filterA {
-            case (hash, signedRumor) =>
-              for {
-                computedHash <- signedRumor.value.hashF
-                valid = computedHash == hash
-                _ <- if (valid) Applicative[F].unit
-                else
-                  logger.warn(
-                    s"Discarding rumor of type ${signedRumor.value.tpe} with invalid hash. " +
-                      s"Received hash ${hash.show}, actual hash ${computedHash.show}."
-                  )
-              } yield valid
-
-          }
-        }
-        .evalMap { batch =>
-          // TODO: filter out invalid signatures
-          Applicative[F].pure(batch)
-        }
+        .evalMap(validateHash)
+        .evalMap(validateSignature)
         .evalMap(rumorStorage.addRumors)
         .flatMap(batch => Stream.iterable(batch))
-        .parEvalMapUnordered(cfg.maxConcurrentHandlers) {
-          case (hash, signedRumor) =>
-            rumorHandler
-              .run(signedRumor)
-              .getOrElseF {
-                logger.warn(s"Unhandled rumor of type ${signedRumor.value.tpe} with hash ${hash.show}.")
-              }
-              .handleErrorWith { err =>
-                logger.error(err)(
-                  s"Error handling rumor of type ${signedRumor.value.tpe} with hash ${hash.show}."
-                )
-              }
-        }
+        .filter { case (_, signedRumor) => signedRumor.value.origin =!= nodeId }
+        .parEvalMapUnordered(cfg.maxConcurrentHandlers)(handleRumor)
         .compile
         .drain
+
+    private def validateHash(batch: RumorBatch): F[RumorBatch] =
+      batch.filterA {
+        case (hash, signedRumor) =>
+          signedRumor.value.hashF
+            .map(_ === hash)
+            .flatTap { valid =>
+              if (valid) Applicative[F].unit
+              else
+                logger.warn(
+                  s"Discarding rumor of type ${signedRumor.value.tpe} with hash ${hash.show} due to invalid hash."
+                )
+            }
+      }
+
+    private def validateSignature(batch: RumorBatch): F[RumorBatch] =
+      batch.filterA {
+        case (hash, signedRumor) =>
+          signedRumor.hasValidSignature.flatTap { valid =>
+            if (valid) Applicative[F].unit
+            else
+              logger.warn(
+                s"Discarding rumor of type ${signedRumor.value.tpe} with hash ${hash.show} due to invalid hash signature."
+              )
+          }
+      }
+
+    private def handleRumor(har: HashAndRumor): F[Unit] = har match {
+      case (hash, signedRumor) =>
+        rumorHandler
+          .run(signedRumor.value)
+          .getOrElseF {
+            logger.warn(s"Unhandled rumor of type ${signedRumor.value.tpe} with hash ${hash.show}.")
+          }
+          .handleErrorWith { err =>
+            logger.error(err)(
+              s"Error handling rumor of type ${signedRumor.value.tpe} with hash ${hash.show}."
+            )
+          }
+    }
 
     private def spreadActiveRumors: F[Unit] =
       for {

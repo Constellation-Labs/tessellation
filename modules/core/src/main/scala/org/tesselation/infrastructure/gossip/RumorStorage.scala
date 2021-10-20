@@ -11,7 +11,7 @@ import org.tesselation.config.types.RumorStorageConfig
 import org.tesselation.crypto.Signed
 import org.tesselation.crypto.hash.Hash
 import org.tesselation.domain.gossip.RumorStorage
-import org.tesselation.schema.gossip.{Rumor, RumorBatch, RumorEntry}
+import org.tesselation.schema.gossip.{HashAndRumor, Rumor, RumorBatch}
 
 import io.chrisdavenport.mapref.MapRef
 
@@ -38,7 +38,7 @@ object RumorStorage {
 
       def getRumors(hashes: List[Hash]): F[RumorBatch] =
         hashes.flatTraverse { hash =>
-          active(hash).get.map(opt => opt.map(r => List(hash -> r)).getOrElse(List.empty[RumorEntry]))
+          active(hash).get.map(opt => opt.map(r => List(hash -> r)).getOrElse(List.empty[HashAndRumor]))
         }
 
       def getActiveHashes: F[List[Hash]] = active.keys
@@ -50,7 +50,7 @@ object RumorStorage {
           unseen <- rumors.traverseFilter {
             case p @ (hash, _) =>
               seen(hash).getAndSet(().some).map {
-                case Some(_) => none[RumorEntry]
+                case Some(_) => none[HashAndRumor]
                 case None    => p.some
               }
           }
