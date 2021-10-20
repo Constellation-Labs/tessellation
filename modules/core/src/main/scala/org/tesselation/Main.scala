@@ -55,7 +55,7 @@ object Main extends IOApp {
                         programs <- Programs.make[IO](storages, services, p2pClient, nodeId).asResource
 
                         rumorHandler = RumorHandlers.make[IO](storages.cluster).handlers
-                        _ <- Daemons.start(storages, services, queues, p2pClient, rumorHandler, cfg).asResource
+                        _ <- Daemons.start(storages, services, queues, p2pClient, rumorHandler, nodeId, cfg).asResource
 
                         api = HttpApi.make[IO](storages, queues, services, programs, cfg.environment)
                         _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.httpConfig.publicHttp, api.publicApp)

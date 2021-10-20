@@ -6,19 +6,20 @@ import org.tesselation.crypto.Signed
 import org.tesselation.crypto.hash.Hash
 import org.tesselation.ext.codecs.BinaryCodec
 import org.tesselation.kryo.KryoSerializer
-import org.tesselation.schema.ID.Id
+import org.tesselation.schema.peer.PeerId
 
 import org.http4s.{EntityDecoder, EntityEncoder}
 
 object gossip {
 
-  type RumorEntry = (Hash, Signed[Rumor])
-  type RumorBatch = List[RumorEntry]
+  type HashAndRumor = (Hash, Signed[Rumor])
+  type RumorBatch = List[HashAndRumor]
 
-  case class ReceivedRumor[A](origin: Id, content: A)
+  case class ReceivedRumor[A](origin: PeerId, content: A)
 
   case class Rumor(
     tpe: String,
+    origin: PeerId,
     content: Array[Byte]
   )
 

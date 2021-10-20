@@ -9,7 +9,6 @@ import org.tesselation.infrastructure.gossip.RumorHandler
 import org.tesselation.kryo.KryoSerializer
 import org.tesselation.schema.gossip.ReceivedRumor
 import org.tesselation.schema.node.NodeState
-import org.tesselation.schema.peer.PeerId
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -21,7 +20,7 @@ object handler {
     RumorHandler.fromReceivedRumorFn[F, NodeState] {
       case ReceivedRumor(origin, state) =>
         logger.info(s"Received state=${state.show} from id=${origin.show}") >>
-          clusterStorage.setPeerState(PeerId.fromId(origin), state)
+          clusterStorage.setPeerState(origin, state)
     }
   }
 }
