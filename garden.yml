@@ -1,0 +1,46 @@
+kind: Project
+name: constellation
+
+environments:
+  - name: local
+
+providers:
+  - name: local-kubernetes
+    environments: [local]
+
+---
+kind: Module
+description: node
+type: container
+name: node
+services:
+  - name: node
+    cpu:
+      min: 1
+    env:
+      CL_MIN_CPU_COUNT: 1
+      CL_KEYSTORE: keystore.p12
+      CL_PASSWORD: 1234
+      CL_KEYPASS: 1234
+      CL_STOREPASS: 1234
+      CL_KEYALIAS: alias
+    command:
+      - java
+      - -Dcom.sun.management.jmxremote
+      - -Dcom.sun.management.jmxremote.port=9010
+      - -Dcom.sun.management.jmxremote.rmi.port=9011
+      - -Dcom.sun.management.jmxremote.local.only=false
+      - -Dcom.sun.management.jmxremote.authenticate=false
+      - -Dcom.sun.management.jmxremote.ssl=false
+      - -XX:+HeapDumpOnOutOfMemoryError
+      - -XX:+UnlockExperimentalVMOptions
+      - -XX:+UseCGroupMemoryLimitForHeap
+      - -Xms1024M
+      - -Xmx8G
+      - -Xss256K
+      - -Djava.rmi.server.hostname=127.0.0.1
+      - -agentlib:jdwp=transport=dt_socket,server=y,address=8000,suspend=n
+      - -jar
+      - cl-node.jar
+    args:
+      - run-validator
