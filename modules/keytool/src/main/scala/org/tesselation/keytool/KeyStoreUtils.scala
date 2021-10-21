@@ -45,7 +45,7 @@ object KeyStoreUtils {
     storePassword: Array[Char],
     keyPassword: Array[Char],
     distinguishedName: DistinguishedName,
-    certificateValidity: Int
+    certificateValidityDays: Long
   ): F[KeyStore] =
     for {
       keyPair <- readKeyPairFromStore(path, alias, storePassword, keyPassword)
@@ -55,7 +55,7 @@ object KeyStoreUtils {
         alias,
         storePassword,
         distinguishedName,
-        certificateValidity
+        certificateValidityDays
       )
     } yield newKeyStore
 
@@ -64,11 +64,11 @@ object KeyStoreUtils {
     alias: String,
     password: Array[Char],
     distinguishedName: DistinguishedName,
-    certificateValidity: Int
+    certificateValidityDays: Long
   ): F[KeyStore] =
     KeyProvider
       .makeKeyPair[F]
-      .flatMap(writeKeyPairToStore(_, path, alias, password, distinguishedName, certificateValidity))
+      .flatMap(writeKeyPairToStore(_, path, alias, password, distinguishedName, certificateValidityDays))
 
   /**
     * Puts existing to new keyStore at path
@@ -79,14 +79,14 @@ object KeyStoreUtils {
     alias: String,
     password: Array[Char],
     distinguishedName: DistinguishedName,
-    certificateValidity: Int
+    certificateValidityDays: Long
   ): F[KeyStore] =
     writer(withExtension(path))
       .use(
         stream =>
           for {
             keyStore <- createEmptyKeyStore(password)
-            chain <- generateCertificateChain(distinguishedName, certificateValidity, keyPair)
+            chain <- generateCertificateChain(distinguishedName, certificateValidityDays, keyPair)
             _ <- setKeyEntry(alias, keyPair, password, chain)(keyStore)
             _ <- store(stream, password)(keyStore)
           } yield keyStore
@@ -124,11 +124,11 @@ object KeyStoreUtils {
 
   private def generateCertificateChain[F[_]: Async: SecurityProvider](
     distinguishedName: DistinguishedName,
-    certificateValidity: Int,
+    certificateValidityDays: Long,
     keyPair: KeyPair
   ): F[Array[Certificate]] =
     SelfSignedCertificate
-      .generate(distinguishedName.toString, keyPair, certificateValidity, Signing.defaultSignFunc)
+      .generate(distinguishedName, keyPair, certificateValidityDays, Signing.defaultSignFunc)
       .map(Array(_))
 
   private def unlockKeyStore[F[_]: Async: SecurityProvider](

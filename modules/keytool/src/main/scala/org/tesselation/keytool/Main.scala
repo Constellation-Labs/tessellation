@@ -50,7 +50,7 @@ object Main extends IOApp {
         alias = cfg.keyalias.value,
         password = cfg.storepass.value.toCharArray,
         distinguishedName = cfg.distinguishedName,
-        certificateValidity = cfg.certificateValidity
+        certificateValidityDays = cfg.certificateValidityDays
       )
 
   private def migrateKeyStoreToSinglePassword[F[_]: Async: SecurityProvider](cfg: AppConfig): F[KeyStore] =
@@ -60,7 +60,7 @@ object Main extends IOApp {
       storePassword = cfg.storepass.value.toCharArray,
       keyPassword = cfg.keypass.value.toCharArray,
       distinguishedName = cfg.distinguishedName,
-      certificateValidity = cfg.certificateValidity
+      certificateValidityDays = cfg.certificateValidityDays
     )
 
   private def exportPrivateKeyAsHex[F[_]: Async: SecurityProvider](cfg: AppConfig): F[String] =

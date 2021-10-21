@@ -1,16 +1,17 @@
 package org.tesselation.keytool.cert
 
 import java.math.BigInteger
+import java.security.KeyPair
 import java.security.cert.X509Certificate
-import java.security.{KeyPair, SecureRandom}
-import java.util.{Calendar, Date}
+import java.time.Instant
+import java.time.temporal.ChronoUnit
+import java.util.Date
 
-import cats.Applicative
 import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tesselation.keytool.security.SecurityProvider
+import org.tesselation.keytool.security.{SecurityProvider, WithSecureRandom}
 
 import org.bouncycastle.asn1.x500.X500Name
 import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo
@@ -21,34 +22,36 @@ import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder
 object SelfSignedCertificate {
 
   def generate[F[_]: Async: SecurityProvider](
-    dn: String,
+    dn: DistinguishedName,
     pair: KeyPair,
-    days: Int,
+    days: Long,
     algorithm: String
   ): F[X509Certificate] =
     for {
-      _ <- Applicative[F].unit
+      rnd <- WithSecureRandom.get[F]
       provider = SecurityProvider[F].provider
-      owner = new X500Name(dn)
-      rnd <- Async[F].delay { new SecureRandom() }
+      owner = new X500Name(dn.toX509DirName)
       serial = new BigInteger(64, rnd)
       (notBefore, notAfter) = periodFromDays(days)
-      publicKeyInfo <- Async[F].delay { SubjectPublicKeyInfo.getInstance(pair.getPublic.getEncoded) }
+      publicKeyInfo <- Async[F].delay {
+        SubjectPublicKeyInfo.getInstance(pair.getPublic.getEncoded)
+      }
       builder <- Async[F].delay {
         new X509v3CertificateBuilder(owner, serial, notBefore, notAfter, owner, publicKeyInfo)
       }
-      signer <- Async[F].delay { new JcaContentSignerBuilder(algorithm).setProvider(provider).build(pair.getPrivate) }
+      signer <- Async[F].delay {
+        new JcaContentSignerBuilder(algorithm).setProvider(provider).build(pair.getPrivate)
+      }
       certificateHolder <- Async[F].delay { builder.build(signer) }
-      selfSignedCertificate <- Async[F].delay { new JcaX509CertificateConverter().getCertificate(certificateHolder) }
+      selfSignedCertificate <- Async[F].delay {
+        new JcaX509CertificateConverter().setProvider(provider).getCertificate(certificateHolder)
+      }
     } yield selfSignedCertificate
 
-  private def periodFromDays(days: Int): (Date, Date) = {
-    val notBefore = new Date()
-    val calendar = Calendar.getInstance
-    calendar.setTime(notBefore)
-    calendar.add(Calendar.DAY_OF_MONTH, days)
-    val notAfter = calendar.getTime
-    (notBefore, notAfter)
+  private def periodFromDays(days: Long): (Date, Date) = {
+    val notBefore = Instant.now()
+    val notAfter = notBefore.plus(days, ChronoUnit.DAYS)
+    (Date.from(notBefore), Date.from(notAfter))
   }
 
 }
