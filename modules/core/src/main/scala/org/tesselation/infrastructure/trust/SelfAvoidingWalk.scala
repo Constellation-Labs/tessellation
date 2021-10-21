@@ -4,7 +4,6 @@ import scala.util.Random
 
 import com.typesafe.scalalogging.StrictLogging
 
-
 /**
   * https://en.wikipedia.org/wiki/Node_influence_metric
   * https://en.wikipedia.org/wiki/Self-avoiding_walk
