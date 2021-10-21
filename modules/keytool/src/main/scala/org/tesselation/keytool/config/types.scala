@@ -15,7 +15,7 @@ object types {
       commonName = "constellationnetwork.io",
       organization = "Constellation Labs"
     ),
-    certificateValidity: Int = 365 * 1000 // 1000 years of validity should be enough I guess
+    certificateValidityDays: Long = 365 * 1000 // 1000 years of validity should be enough I guess
   )
 
 }

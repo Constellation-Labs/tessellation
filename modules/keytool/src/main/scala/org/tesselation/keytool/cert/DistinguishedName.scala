@@ -8,20 +8,22 @@ case class DistinguishedName(
   stateOrProvince: Option[String],
   country: Option[String]
 ) {
-  private val dnMap = Map[String, Option[String]](
-    "CN" -> commonName,
-    "OU" -> organizationalUnit,
-    "O" -> organization,
-    "L" -> locality,
-    "ST" -> stateOrProvince,
-    "C" -> country
-  )
 
-  override def toString: String =
-    dnMap
+  def toX509DirName: String = {
+    val mapping = Map[String, Option[String]](
+      "CN" -> commonName,
+      "OU" -> organizationalUnit,
+      "O" -> organization,
+      "L" -> locality,
+      "ST" -> stateOrProvince,
+      "C" -> country
+    )
+
+    mapping
       .filter({ case (_, v) => v.isDefined })
       .map({ case (k, v) => s"$k=${v.get}" })
       .mkString(",")
+  }
 }
 
 object DistinguishedName {
