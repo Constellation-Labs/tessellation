@@ -1,7 +1,8 @@
 package org.tesselation.infrastructure.db.context
 
 import org.tesselation.infrastructure.db.schema.StoredAddress
-import org.tesselation.schema.address.{Address, Balance}
+import org.tesselation.schema.address.Address
+import org.tesselation.schema.balance.Balance
 
 import io.getquill.NamingStrategy
 import io.getquill.context.Context
