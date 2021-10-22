@@ -25,7 +25,7 @@ lazy val commonTestSettings = Seq(
     Libraries.weaverCats,
     Libraries.weaverDiscipline,
     Libraries.weaverScalaCheck
-  )
+  ).map(_ % Test)
 )
 
 ThisBuild / assemblyMergeStrategy := {
@@ -95,7 +95,6 @@ lazy val keytool = (project in file("modules/keytool"))
       Libraries.derevoCirce,
       Libraries.log4cats,
       Libraries.logback % Runtime,
-      Libraries.micrometerPrometheusRegistry,
       Libraries.monocleCore,
       Libraries.monocleMacro,
       Libraries.newtype,
@@ -169,7 +168,10 @@ lazy val testShared = (project in file("modules/test-shared"))
       Libraries.http4sServer,
       Libraries.http4sClient,
       Libraries.http4sCirce,
-      Libraries.http4sJwtAuth
+      Libraries.http4sJwtAuth,
+      Libraries.weaverCats,
+      Libraries.weaverDiscipline,
+      Libraries.weaverScalaCheck
     )
   )
 
@@ -219,8 +221,9 @@ lazy val core = (project in file("modules/core"))
       Libraries.javaxCrypto,
       Libraries.log4cats,
       Libraries.logback % Runtime,
-      Libraries.monocleCore,
       Libraries.mapref,
+      Libraries.monocleCore,
+      Libraries.micrometerPrometheusRegistry,
       Libraries.newtype,
       Libraries.redis4catsEffects,
       Libraries.redis4catsLog4cats,
