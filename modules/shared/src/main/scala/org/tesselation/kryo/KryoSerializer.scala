@@ -18,26 +18,28 @@ trait KryoSerializer[F[_]] {
 
 object KryoSerializer {
 
-  private val kryoInstantiator: KryoInstantiator = new ScalaKryoInstantiator()
-    .setRegistrationRequired(true)
-    .setReferences(false)
+  private def kryoInstantiator(setReferences: Boolean): KryoInstantiator =
+    new ScalaKryoInstantiator()
+      .setRegistrationRequired(true)
+      .setReferences(setReferences)
 
   def apply[F[_]: KryoSerializer]: KryoSerializer[F] = implicitly
 
-  def make[F[_]: Async](registrar: Map[Class[_], Int]): Resource[F, KryoPool] =
+  def make[F[_]: Async](registrar: Map[Class[_], Int], setReferences: Boolean): Resource[F, KryoPool] =
     Resource.make {
       Async[F].delay {
         KryoPool.withByteArrayOutputStream(
           10,
-          kryoInstantiator.withRegistrar(ExplicitKryoRegistrar(registrar))
+          kryoInstantiator(setReferences).withRegistrar(ExplicitKryoRegistrar(registrar))
         )
       }
     }(_ => Applicative[F].unit)
 
   def forAsync[F[_]: Async](
     registrar: Map[Class[_], Int],
-    migrations: List[Migration[AnyRef, AnyRef]] = List.empty
-  ): Resource[F, KryoSerializer[F]] = make[F](registrar).map { kryoPool =>
+    migrations: List[Migration[AnyRef, AnyRef]] = List.empty,
+    setReferences: Boolean = false
+  ): Resource[F, KryoSerializer[F]] = make[F](registrar, setReferences).map { kryoPool =>
     val migrationsMap = migrations.map(_.toPair).toMap
     new KryoSerializer[F] {
       def serialize(anyRef: AnyRef): Either[Throwable, Array[Byte]] =

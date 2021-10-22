@@ -1,13 +1,10 @@
 package org.tesselation.domain.cluster.programs
 
-import java.security.PublicKey
-
 import cats.Applicative
 import cats.effect.std.Queue
 import cats.effect.{Async, Spawn, Temporal}
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
-import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
@@ -20,11 +17,10 @@ import org.tesselation.domain.cluster.services.{Cluster, Session}
 import org.tesselation.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tesselation.domain.node.NodeStorage
 import org.tesselation.effects.GenUUID
-import org.tesselation.ext.crypto._
 import org.tesselation.http.p2p.P2PClient
-import org.tesselation.keytool.security.Signing.verifySignature
-import org.tesselation.keytool.security.{SecurityProvider, hex2bytes}
+import org.tesselation.keytool.security.SecurityProvider
 import org.tesselation.kryo.KryoSerializer
+import org.tesselation.schema.ID.Id
 import org.tesselation.schema.cluster._
 import org.tesselation.schema.node.NodeState
 import org.tesselation.schema.peer._
@@ -142,8 +138,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
       signRequest <- GenUUID[F].make.map(SignRequest.apply)
       signedSignRequest <- p2pClient.sign.sign(signRequest).run(withPeer)
 
-      publicKey <- withPeer.id.toPublic
-      _ <- verifySignRequest(signRequest, signedSignRequest, publicKey)
+      _ <- verifySignRequest(signRequest, signedSignRequest, PeerId._Id.get(withPeer.id))
         .ifM(Applicative[F].unit, HandshakeSignatureNotValid.raiseError[F, Unit])
 
       peer = Peer(
@@ -182,15 +177,12 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
       _ <- if (registrationRequest.id != selfId) Applicative[F].unit else IdDuplicationFound.raiseError[F, Unit]
     } yield ()
 
-  private def verifySignRequest[A <: AnyRef](data: A, signed: Signed[SignRequest], publicKey: PublicKey): F[Boolean] =
-    Either
-      .catchOnly[NumberFormatException](hex2bytes(signed.hashSignature.value))
-      .liftTo[F]
-      .flatMap { signatureBytes =>
-        data.hashF.flatMap { hash =>
-          verifySignature(hash.value.getBytes, signatureBytes)(publicKey)
-        }
-      }
+  private def verifySignRequest(signRequest: SignRequest, signed: Signed[SignRequest], id: Id): F[Boolean] =
+    for {
+      isSignedRequestConsistent <- (signRequest == signed.value).pure[F]
+      isSignerCorrect = signed.proofs.forall(_.id == id)
+      hasValidSignature <- signed.hasValidSignature
+    } yield isSignedRequestConsistent && isSignerCorrect && hasValidSignature
 
   def joinRequest(joinRequest: JoinRequest, remoteAddress: Host): F[Unit] =
     for {

@@ -1,6 +1,7 @@
 package org.tesselation.infrastructure.genesis
 
 import cats.effect.kernel.Async
+import cats.syntax.either._
 import cats.syntax.functor._
 
 import org.tesselation.infrastructure.genesis.types.{GenesisAccount, GenesisCSVAccount}
@@ -24,6 +25,8 @@ object Loader {
           decodeWithoutHeaders[GenesisCSVAccount]()
         )
         .map(_.toGenesisAccount)
+        .map(_.bimap(e => new RuntimeException(e), identity))
+        .rethrow
         .compile
         .toList
         .map(_.toSet)

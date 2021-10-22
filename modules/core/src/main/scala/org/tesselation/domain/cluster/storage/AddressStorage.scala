@@ -1,6 +1,7 @@
 package org.tesselation.domain.cluster.storage
 
-import org.tesselation.schema.address.{Address, Balance}
+import org.tesselation.schema.address.Address
+import org.tesselation.schema.balance.Balance
 
 trait AddressStorage[F[_]] {
   def getBalance(address: Address): F[Balance]

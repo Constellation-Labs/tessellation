@@ -33,7 +33,10 @@ object Hashable {
 
     def hash[A <: AnyRef](data: A): Either[Throwable, Hash] =
       KryoSerializer[F]
-        .serialize(data)
+        .serialize(data match {
+          case d: Encodable => d.toEncode
+          case _            => data
+        })
         .map(Hash.fromBytes)
   }
 }

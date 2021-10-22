@@ -1,6 +1,14 @@
 package org.tesselation
 
+import cats.syntax.semigroup._
+import cats.{Eq, Semigroup, Show}
+
+import org.tesselation.ext.refined._
+
 import com.comcast.ip4s.{Host, Port}
+import eu.timepit.refined.numeric.{NonNegative, Positive}
+import eu.timepit.refined.refineV
+import eu.timepit.refined.types.numeric.{NonNegBigInt, PosBigInt}
 import io.circe.{Decoder, Encoder}
 
 package object schema extends OrphanInstances
@@ -19,4 +27,31 @@ trait OrphanInstances {
 
   implicit val portEncoder: Encoder[Port] =
     Encoder[Int].contramap(_.value)
+
+  implicit val nonNegBigIntDecoder: Decoder[NonNegBigInt] =
+    decoderOf[BigInt, NonNegative]
+
+  implicit val nonNegBigIntEncoder: Encoder[NonNegBigInt] =
+    encoderOf[BigInt, NonNegative]
+
+  implicit val nonNegBigIntEq: Eq[NonNegBigInt] =
+    eqOf[BigInt, NonNegative]
+
+  implicit val nonNegBigIntShow: Show[NonNegBigInt] =
+    showOf[BigInt, NonNegative]
+
+  implicit val semigroupNonNegBigInt: Semigroup[NonNegBigInt] =
+    Semigroup.instance((x, y) => refineV.unsafeFrom(x.value |+| y.value))
+
+  implicit val posBigIntDecoder: Decoder[PosBigInt] =
+    decoderOf[BigInt, Positive]
+
+  implicit val posBigIntEncoder: Encoder[PosBigInt] =
+    encoderOf[BigInt, Positive]
+
+  implicit val posBigIntEq: Eq[PosBigInt] =
+    eqOf[BigInt, Positive]
+
+  implicit val posBigIntShow: Show[PosBigInt] =
+    showOf[BigInt, Positive]
 }

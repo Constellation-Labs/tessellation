@@ -7,10 +7,12 @@ import cats.syntax.functor._
 import org.tesselation.domain.cluster.storage.AddressStorage
 import org.tesselation.infrastructure.db.Database
 import org.tesselation.infrastructure.db.context.AddressDBContext
-import org.tesselation.schema.address.{Address, Balance}
+import org.tesselation.schema.address.Address
+import org.tesselation.schema.balance.Balance
 
 import doobie.implicits._
 import doobie.quill.DoobieContext
+import eu.timepit.refined.auto._
 import io.getquill.{H2Dialect, Literal}
 
 object AddressStorage {
@@ -27,7 +29,7 @@ object AddressStorage {
       import ctx._
 
       override def getBalance(address: Address): F[Balance] =
-        run(getAddressBalance(lift(address))).map(_.headOption.getOrElse(Balance(0))).transact(xa)
+        run(getAddressBalance(lift(address))).map(_.headOption.getOrElse(Balance(BigInt(0)))).transact(xa)
 
       override def updateBalance(address: Address, balance: Balance): F[(Address, Balance)] =
         run(getAddressBalance(lift(address)))
