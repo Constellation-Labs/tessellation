@@ -3,11 +3,11 @@ package org.tesselation.infrastructure.trust.storage
 import cats.Monad
 import cats.effect.Ref
 import cats.syntax.functor._
+import cats.syntax.functorFilter._
 
 import org.tesselation.domain.trust.storage.TrustStorage
-import org.tesselation.schema.cluster
-import org.tesselation.schema.cluster.TrustInfo
 import org.tesselation.schema.peer.PeerId
+import org.tesselation.schema.trust.{InternalTrustUpdateBatch, PublicTrust, TrustInfo}
 
 object TrustStorage {
 
@@ -19,7 +19,7 @@ object TrustStorage {
   def make[F[_]: Monad](trust: Ref[F, Map[PeerId, TrustInfo]]): TrustStorage[F] =
     new TrustStorage[F] {
 
-      def updateTrust(trustUpdates: cluster.InternalTrustUpdateBatch): F[Unit] =
+      def updateTrust(trustUpdates: InternalTrustUpdateBatch): F[Unit] =
         trust.update { t =>
           t ++ trustUpdates.updates.map { trustUpdate =>
             val capped = Math.max(Math.min(trustUpdate.trust, 1), -1)
@@ -28,8 +28,11 @@ object TrustStorage {
           }.toMap
         }
 
-      def getTrust(): F[Map[PeerId, TrustInfo]] = trust.get
+      def getTrust: F[Map[PeerId, TrustInfo]] = trust.get
 
+      def getPublicTrust: F[PublicTrust] = getTrust.map { trust =>
+        PublicTrust(trust.mapFilter { _.publicTrust })
+      }
     }
 
 }

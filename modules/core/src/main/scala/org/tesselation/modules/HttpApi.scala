@@ -37,6 +37,7 @@ sealed abstract class HttpApi[F[_]: Async: KryoSerializer] private (
     ClusterRoutes[F](programs.joining, programs.peerDiscovery, storages.cluster, storages.trust)
   private val registrationRoutes = RegistrationRoutes[F](services.cluster)
   private val gossipRoutes = routes.GossipRoutes[F](storages.rumor, queues.rumor, services.gossip)
+  private val trustRoutes = routes.TrustRoutes[F](storages.trust)
 
   private val debugRoutes = DebugRoutes[F](storages, services).routes
 
@@ -50,7 +51,8 @@ sealed abstract class HttpApi[F[_]: Async: KryoSerializer] private (
     healthRoutes <+>
       clusterRoutes.p2pRoutes <+>
       registrationRoutes.p2pRoutes <+>
-      gossipRoutes.p2pRoutes
+      gossipRoutes.p2pRoutes <+>
+      trustRoutes.p2pRoutes
 
   private val cliRoutes: HttpRoutes[F] =
     healthRoutes <+>
