@@ -12,6 +12,7 @@ import org.tesselation.ext.http4s.refined._
 import org.tesselation.schema.cluster._
 import org.tesselation.schema.peer.JoinRequest
 import org.tesselation.schema.peer.Peer.toP2PContext
+import org.tesselation.schema.trust.InternalTrustUpdateBatch
 
 import com.comcast.ip4s.Host
 import org.http4s.HttpRoutes
