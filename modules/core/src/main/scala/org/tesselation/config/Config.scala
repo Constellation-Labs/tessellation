@@ -61,6 +61,14 @@ object Config {
     )
   )
 
+  val trustConfig = ConfigValue.default(
+    TrustConfig(
+      TrustDaemonConfig(
+        10.minutes
+      )
+    )
+  )
+
   def load[F[_]: Async]: F[AppConfig] =
     env("CL_APP_ENV")
       .default("testnet")
@@ -72,8 +80,8 @@ object Config {
       .load[F]
 
   def default[F[_]](environment: AppEnvironment): ConfigValue[F, AppConfig] =
-    (keyConfig, httpConfig, dbConfig, gossipConfig).parMapN { (key, http, db, gossip) =>
-      AppConfig(environment, key, http, db, gossip)
+    (keyConfig, httpConfig, dbConfig, gossipConfig, trustConfig).parMapN { (key, http, db, gossip, trust) =>
+      AppConfig(environment, key, http, db, gossip, trust)
     }
 
 }

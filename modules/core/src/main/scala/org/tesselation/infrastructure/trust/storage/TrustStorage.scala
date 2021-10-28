@@ -33,6 +33,21 @@ object TrustStorage {
       def getPublicTrust: F[PublicTrust] = getTrust.map { trust =>
         PublicTrust(trust.mapFilter { _.publicTrust })
       }
+
+      def updatePeerPublicTrustInfo(peerId: PeerId, publicTrust: PublicTrust): F[Unit] = trust.update { t =>
+        t.updatedWith(peerId) { trustInfo =>
+          trustInfo
+            .orElse(Some(TrustInfo()))
+            .map(_.copy(peerLabels = publicTrust.labels))
+        }
+      }
+
+      override def updatePredictedTrust(trustUpdates: Map[PeerId, Double]): F[Unit] = trust.update { t =>
+        t ++ trustUpdates.map {
+          case (k, v) =>
+            k -> t.getOrElse(k, TrustInfo()).copy(predictedTrust = Some(v))
+        }
+      }
     }
 
 }
