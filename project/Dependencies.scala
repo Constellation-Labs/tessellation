@@ -10,6 +10,7 @@ object Dependencies {
     val circe = "0.14.1"
     val ciris = "2.1.1"
     val comcast = "3.0.3"
+    val decline = "2.2.0"
     val derevo = "0.12.6"
     val doobie = "1.0.0-RC1"
     val droste = "0.8.0"
@@ -50,9 +51,13 @@ object Dependencies {
     def ciris(artifact: String): ModuleID = "is.cir" %% artifact % V.ciris
     def derevo(artifact: String): ModuleID = "tf.tofu" %% s"derevo-$artifact" % V.derevo
 
+    def decline(artifact: String = ""): ModuleID =
+      "com.monovore" %% { if (artifact.isEmpty) "decline" else s"decline-$artifact" } % V.decline
+
     def doobie(artifact: String): ModuleID =
       ("org.tpolecat" %% s"doobie-$artifact" % V.doobie).exclude("org.slf4j", "slf4j-api")
     def droste(artifact: String): ModuleID = "io.higherkindness" %% s"droste-$artifact" % V.droste
+    def fs2(artifact: String): ModuleID = "co.fs2" %% s"fs2-$artifact" % V.fs2
     def fs2Data(artifact: String): ModuleID = "org.gnieh" %% s"fs2-data-$artifact" % V.fs2Data
     def http4s(artifact: String): ModuleID = "org.http4s" %% s"http4s-$artifact" % V.http4s
     def bouncyCastle(artifact: String): ModuleID = "org.bouncycastle" % artifact % V.bouncyCastle
@@ -67,9 +72,10 @@ object Dependencies {
     val squants = "org.typelevel" %% "squants" % V.squants
     val comcast = "com.comcast" %% "ip4s-core" % V.comcast
 
-    val fs2 = "co.fs2" %% "fs2-core" % V.fs2
+    val fs2Core = fs2("core")
     val fs2DataCsv = fs2Data("csv")
     val fs2DataCsvGeneric = fs2Data("csv-generic")
+    val fs2IO = fs2("io")
 
     val circeCore = circe("core")
     val circeGeneric = circe("generic")
@@ -79,6 +85,10 @@ object Dependencies {
     val cirisCore = ciris("ciris")
     val cirisEnum = ciris("ciris-enumeratum")
     val cirisRefined = ciris("ciris-refined")
+
+    val declineCore = decline()
+    val declineEffect = decline("effect")
+    val declineRefined = decline("refined")
 
     val derevoCore = derevo("core")
     val derevoCats = derevo("cats")
@@ -114,6 +124,7 @@ object Dependencies {
 
     val refinedCore = "eu.timepit" %% "refined" % V.refined
     val refinedCats = "eu.timepit" %% "refined-cats" % V.refined
+    val refinedScopt = "eu.timepit" %% "refined-scopt" % V.refined
 
     val log4cats = "org.typelevel" %% "log4cats-slf4j" % V.log4cats
     val newtype = "io.estatico" %% "newtype" % V.newtype
