@@ -10,12 +10,11 @@ import cats.syntax.functor._
 import org.tesselation.keytool.security.KeyProvider.ECDSA
 
 package object security {
-  private val PublicKeyHexPrefix: String = "3056301006072a8648ce3d020106052b8104000a03420004"
-  private val PublicKeyHexPrefixLength: Int = PublicKeyHexPrefix.length
-  private val PrivateKeyHexPrefix: String =
+  val PublicKeyHexPrefix: String = "3056301006072a8648ce3d020106052b8104000a03420004"
+
+  val PrivateKeyHexPrefix: String =
     "30818d020100301006072a8648ce3d020106052b8104000a047630740201010420"
-  private val PrivateKeyHexPrefixLength: Int = PrivateKeyHexPrefix.length
-  private val secp256kHexIdentifier: String = "a00706052b8104000aa144034200"
+  val secp256kHexIdentifier: String = "a00706052b8104000aa144034200"
 
   def hex2bytes(hex: String): Array[Byte] =
     if (hex.contains(" ")) {
@@ -38,7 +37,7 @@ package object security {
     */
   def privateKeyToFullHex(privateKey: PrivateKey): String = {
     val hex = bytes2hex(privateKey.getEncoded)
-    hex.slice(PrivateKeyHexPrefixLength, hex.length)
+    hex.stripPrefix(PrivateKeyHexPrefix)
   }
 
   def privateKeyToHex(privateKey: PrivateKey): String = {
@@ -49,7 +48,7 @@ package object security {
 
   def publicKeyToHex(publicKey: PublicKey): String = {
     val hex = bytes2hex(publicKey.getEncoded)
-    hex.slice(PublicKeyHexPrefixLength, hex.length)
+    hex.stripPrefix(PublicKeyHexPrefix)
   }
 
   def bytesToPublicKey[F[_]: Async: SecurityProvider](encodedBytes: Array[Byte]): F[PublicKey] =

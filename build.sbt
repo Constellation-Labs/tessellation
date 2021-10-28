@@ -37,14 +37,15 @@ ThisBuild / assemblyMergeStrategy := {
     oldStrategy(x)
 }
 
-fork in Global := true
-cancelable in Global := true
+Global / fork := true
+Global / cancelable := true
+Global / onChangedBuildSource := ReloadOnSourceChanges
 
 lazy val root = (project in file("."))
   .settings(
     name := "tesselation"
   )
-  .aggregate(keytool, kernel, shared, core, testShared)
+  .aggregate(keytool, kernel, shared, core, testShared, wallet)
 
 lazy val kernel = (project in file("modules/kernel"))
   .enablePlugins(AshScriptPlugin)
@@ -60,7 +61,35 @@ lazy val kernel = (project in file("modules/kernel"))
       CompilerPlugin.kindProjector,
       CompilerPlugin.semanticDB,
       Libraries.drosteCore,
-      Libraries.fs2
+      Libraries.fs2Core
+    )
+  )
+
+lazy val wallet = (project in file("modules/wallet"))
+  .enablePlugins(AshScriptPlugin)
+  .dependsOn(keytool, shared, testShared % Test)
+  .settings(
+    name := "tesselation-wallet",
+    Defaults.itSettings,
+    scalafixCommonSettings,
+    commonSettings,
+    commonTestSettings,
+    makeBatScripts := Seq(),
+    libraryDependencies ++= Seq(
+      CompilerPlugin.kindProjector,
+      CompilerPlugin.betterMonadicFor,
+      CompilerPlugin.semanticDB,
+      Libraries.cats,
+      Libraries.catsEffect,
+      Libraries.cirisCore,
+      Libraries.declineCore,
+      Libraries.declineEffect,
+      Libraries.declineRefined,
+      Libraries.fs2IO,
+      Libraries.refinedCore,
+      Libraries.refinedCats,
+      Libraries.log4cats,
+      Libraries.logback % Runtime
     )
   )
 
@@ -128,6 +157,9 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.cirisEnum,
       Libraries.cirisRefined,
       Libraries.comcast,
+      Libraries.declineCore,
+      Libraries.declineEffect,
+      Libraries.declineRefined,
       Libraries.derevoCore,
       Libraries.derevoCats,
       Libraries.derevoCirce,
@@ -163,7 +195,7 @@ lazy val testShared = (project in file("modules/test-shared"))
       Libraries.circeGeneric,
       Libraries.circeParser,
       Libraries.circeRefined,
-      Libraries.fs2,
+      Libraries.fs2Core,
       Libraries.http4sDsl,
       Libraries.http4sServer,
       Libraries.http4sClient,
@@ -208,7 +240,7 @@ lazy val core = (project in file("modules/core"))
       Libraries.drosteCore,
       Libraries.drosteLaws,
       Libraries.drosteMacros,
-      Libraries.fs2,
+      Libraries.fs2Core,
       Libraries.flyway,
       Libraries.fs2DataCsv,
       Libraries.fs2DataCsvGeneric,
