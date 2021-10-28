@@ -54,7 +54,7 @@ object Config {
         seenRetention = 2.minutes
       ),
       daemon = GossipDaemonConfig(
-        fanOut = 2,
+        fanout = 2,
         interval = 0.2.seconds,
         maxConcurrentHandlers = 20
       )

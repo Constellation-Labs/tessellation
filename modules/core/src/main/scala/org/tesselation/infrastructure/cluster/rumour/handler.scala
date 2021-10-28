@@ -14,10 +14,12 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object handler {
 
-  def nodeStateHandler[F[_]: Async: KryoSerializer](clusterStorage: ClusterStorage[F]): RumorHandler[F] = {
+  def nodeStateHandler[F[_]: Async: KryoSerializer](
+    clusterStorage: ClusterStorage[F]
+  ): RumorHandler[F] = {
     val logger = Slf4jLogger.getLogger[F]
 
-    RumorHandler.fromReceivedRumorFn[F, NodeState] {
+    RumorHandler.fromReceivedRumorFn[F, NodeState](latestOnly = true) {
       case ReceivedRumor(origin, state) =>
         logger.info(s"Received state=${state.show} from id=${origin.show}") >>
           clusterStorage.setPeerState(origin, state)

@@ -1,7 +1,10 @@
 package org.tesselation.domain.gossip
 
-import org.tesselation.schema.gossip.RumorBatch
+import org.tesselation.schema.gossip.{Rumor, RumorBatch}
+import org.tesselation.schema.peer.PeerId
 import org.tesselation.security.hash.Hash
+
+import eu.timepit.refined.types.numeric.PosLong
 
 trait RumorStorage[F[_]] {
 
@@ -12,5 +15,9 @@ trait RumorStorage[F[_]] {
   def getActiveHashes: F[List[Hash]]
 
   def getSeenHashes: F[List[Hash]]
+
+  def tryGetAndUpdateCounter(rumor: Rumor): F[Option[PosLong]]
+
+  def resetCounter(peer: PeerId): F[Unit]
 
 }

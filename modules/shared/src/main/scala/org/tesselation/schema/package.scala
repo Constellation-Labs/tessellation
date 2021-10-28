@@ -1,13 +1,13 @@
 package org.tesselation
 
+import cats._
 import cats.syntax.semigroup._
-import cats.{Eq, Semigroup, Show}
 
 import org.tesselation.ext.refined._
 
 import com.comcast.ip4s.{Host, Port}
 import eu.timepit.refined.numeric.{NonNegative, Positive}
-import eu.timepit.refined.types.numeric.{NonNegBigInt, PosBigInt}
+import eu.timepit.refined.types.numeric.{NonNegBigInt, PosBigInt, PosLong}
 import io.circe.{Decoder, Encoder}
 
 package object schema extends OrphanInstances
@@ -53,4 +53,10 @@ trait OrphanInstances {
 
   implicit val posBigIntShow: Show[PosBigInt] =
     showOf[BigInt, Positive]
+
+  implicit val posLongShow: Show[PosLong] =
+    showOf[Long, Positive]
+
+  implicit val posLongOrder: Order[PosLong] =
+    orderOf[Long, Positive]
 }

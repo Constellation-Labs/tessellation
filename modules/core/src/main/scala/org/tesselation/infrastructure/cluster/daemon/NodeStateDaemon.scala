@@ -9,6 +9,7 @@ import cats.syntax.show._
 import org.tesselation.domain.Daemon
 import org.tesselation.domain.gossip.Gossip
 import org.tesselation.domain.node.NodeStorage
+import org.tesselation.schema.node.NodeState
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -23,11 +24,15 @@ object NodeStateDaemon {
       Spawn[F].start(spreadNodeState).void
 
     private def spreadNodeState: F[Unit] =
-      nodeStorage.nodeState$.evalTap { nodeState =>
-        logger.info(s"Node state changed to=${nodeState.show}") >>
-          gossip.spread(nodeState).handleErrorWith { error =>
-            logger.error(error)(s"NodeState spread error=${error.getMessage}")
-          }
-      }.compile.drain
+      nodeStorage.nodeState$
+        .filter(NodeState.toBroadcast.contains)
+        .evalTap { nodeState =>
+          logger.info(s"Node state changed to=${nodeState.show}") >>
+            gossip.spread(nodeState).handleErrorWith { error =>
+              logger.error(error)(s"NodeState spread error=${error.getMessage}")
+            }
+        }
+        .compile
+        .drain
   }
 }

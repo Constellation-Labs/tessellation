@@ -2,6 +2,7 @@ package org.tesselation.infrastructure.gossip
 
 import cats.effect.std.{Queue, Random}
 import cats.effect.{Async, Spawn, Temporal}
+import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.eq._
 import cats.syntax.flatMap._
@@ -22,6 +23,7 @@ import org.tesselation.schema.gossip._
 import org.tesselation.schema.peer.{Peer, PeerId}
 import org.tesselation.security.SecurityProvider
 import org.tesselation.security.hash.Hash
+import org.tesselation.security.signature.Signed
 
 import fs2.Stream
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -42,6 +44,8 @@ object GossipDaemon {
 
     private val logger = Slf4jLogger.getLogger[F]
 
+    implicit private val signedRumorOrdering: Ordering[Signed[Rumor]] = Signed.order[Rumor].toOrdering
+
     def start: F[Unit] =
       for {
         _ <- Spawn[F].start(spreadActiveRumors.foreverM).void
@@ -53,10 +57,12 @@ object GossipDaemon {
         .fromQueueUnterminated(rumorQueue)
         .evalMap(validateHash)
         .evalMap(validateSignature)
+        .evalMap(validateSession)
         .evalMap(rumorStorage.addRumors)
-        .flatMap(batch => Stream.iterable(batch))
+        .map(_.sortBy(_._2))
+        .flatMap(Stream.iterable)
         .filter { case (_, signedRumor) => signedRumor.value.origin =!= nodeId }
-        .parEvalMapUnordered(cfg.maxConcurrentHandlers)(handleRumor)
+        .evalMap(handleRumor)
         .compile
         .drain
 
@@ -86,10 +92,29 @@ object GossipDaemon {
           }
       }
 
+    private def validateSession(batch: RumorBatch): F[RumorBatch] =
+      batch.filterA {
+        case (hash, signedRumor) =>
+          signedRumor.value.origin match {
+            case ownId if ownId === nodeId => true.pure[F]
+            case peerId =>
+              clusterStorage
+                .getPeer(peerId)
+                .map { _.forall(_.session === signedRumor.value.session) }
+                .flatTap { valid =>
+                  if (valid) Applicative[F].unit
+                  else
+                    logger.warn(
+                      s"Discarding rumor of type ${signedRumor.value.tpe} with hash ${hash.show} due to invalid session."
+                    )
+                }
+          }
+      }
+
     private def handleRumor(har: HashAndRumor): F[Unit] = har match {
       case (hash, signedRumor) =>
         rumorHandler
-          .run(signedRumor.value)
+          .run((signedRumor.value, rumorStorage))
           .getOrElseF {
             logger.warn(s"Unhandled rumor of type ${signedRumor.value.tpe} with hash ${hash.show}.")
           }
@@ -112,7 +137,7 @@ object GossipDaemon {
       for {
         seenHashes <- rumorStorage.getSeenHashes
         peers <- clusterStorage.getPeers
-        selectedPeers <- Random[F].shuffleList(peers.toList).map(_.take(cfg.fanOut))
+        selectedPeers <- Random[F].shuffleList(peers.toList).map(_.take(cfg.fanout))
         _ <- selectedPeers.parTraverse { peer =>
           runGossipRound(activeHashes, seenHashes, peer).handleErrorWith { err =>
             logger.error(err)(s"Error running gossip round with peer ${peer.show}")

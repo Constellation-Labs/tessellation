@@ -2,11 +2,12 @@ package org.tesselation.security.signature
 
 import java.security.KeyPair
 
-import cats.Semigroup
 import cats.data.NonEmptyList
 import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+import cats.syntax.order._
+import cats.{Order, Semigroup}
 
 import org.tesselation.ext.crypto._
 import org.tesselation.kryo.KryoSerializer
@@ -21,6 +22,8 @@ import derevo.derive
 case class Signed[A](value: A, proofs: NonEmptyList[SignatureProof])
 
 object Signed {
+
+  implicit def order[A: Order]: Order[Signed[A]] = (x: Signed[A], y: Signed[A]) => x.value.compare(y.value)
 
   def forAsyncKryo[F[_]: Async: SecurityProvider: KryoSerializer, A <: AnyRef](
     data: A,

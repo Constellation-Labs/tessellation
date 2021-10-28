@@ -3,6 +3,7 @@ package org.tesselation.modules
 import java.security.KeyPair
 
 import cats.effect.kernel.Async
+import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tesselation.config.types.AppConfig
@@ -32,7 +33,7 @@ object Services {
       session = Session.make[F](storages.session, storages.cluster, storages.node)
       cluster = Cluster
         .make[F](cfg, nodeId, keyPair, storages.session)
-      gossip = Gossip.make[F](queues.rumor, nodeId, keyPair)
+      gossip <- Gossip.make[F](queues.rumor, storages.session, nodeId, keyPair)
     } yield
       new Services[F](
         healthcheck = healthcheck,
