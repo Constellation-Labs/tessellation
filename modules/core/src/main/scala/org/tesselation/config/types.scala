@@ -13,7 +13,8 @@ object types {
     keyConfig: KeyConfig,
     httpConfig: HttpConfig,
     dbConfig: DBConfig,
-    gossipConfig: GossipConfig
+    gossipConfig: GossipConfig,
+    trustConfig: TrustConfig
   )
 
   case class DBConfig(
@@ -49,6 +50,14 @@ object types {
   case class GossipConfig(
     storage: RumorStorageConfig,
     daemon: GossipDaemonConfig
+  )
+
+  case class TrustDaemonConfig(
+    interval: FiniteDuration
+  )
+
+  case class TrustConfig(
+    daemon: TrustDaemonConfig
   )
 
   case class HttpServerConfig(

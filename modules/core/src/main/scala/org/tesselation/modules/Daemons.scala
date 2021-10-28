@@ -11,6 +11,7 @@ import org.tesselation.domain.Daemon
 import org.tesselation.http.p2p.P2PClient
 import org.tesselation.infrastructure.cluster.daemon.NodeStateDaemon
 import org.tesselation.infrastructure.gossip.{GossipDaemon, RumorHandler}
+import org.tesselation.infrastructure.trust.TrustDaemon
 import org.tesselation.kryo.KryoSerializer
 import org.tesselation.schema.peer.PeerId
 import org.tesselation.security.SecurityProvider
@@ -37,7 +38,8 @@ object Daemons {
           nodeId,
           cfg.gossipConfig.daemon
         ),
-      NodeStateDaemon.make(storages.node, services.gossip)
+      NodeStateDaemon.make(storages.node, services.gossip),
+      TrustDaemon.make(cfg.trustConfig.daemon, storages.trust, nodeId)
     ).traverse(_.start).void
 
 }
