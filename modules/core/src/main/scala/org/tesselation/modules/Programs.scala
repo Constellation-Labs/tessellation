@@ -27,6 +27,7 @@ object Programs {
         services.cluster,
         services.session,
         storages.session,
+        storages.rumor,
         nodeId,
         pd
       )

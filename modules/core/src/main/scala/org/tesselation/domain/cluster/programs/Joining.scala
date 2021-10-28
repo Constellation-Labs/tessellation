@@ -14,6 +14,7 @@ import scala.concurrent.duration.DurationInt
 
 import org.tesselation.domain.cluster.services.{Cluster, Session}
 import org.tesselation.domain.cluster.storage.{ClusterStorage, SessionStorage}
+import org.tesselation.domain.gossip.RumorStorage
 import org.tesselation.domain.node.NodeStorage
 import org.tesselation.effects.GenUUID
 import org.tesselation.http.p2p.P2PClient
@@ -38,12 +39,26 @@ object Joining {
     cluster: Cluster[F],
     session: Session[F],
     sessionStorage: SessionStorage[F],
+    rumorStorage: RumorStorage[F],
     selfId: PeerId,
     peerDiscovery: PeerDiscovery[F]
   ): F[Joining[F]] =
     Queue
       .unbounded[F, P2PContext]
-      .flatMap(make(_, nodeStorage, clusterStorage, p2pClient, cluster, session, sessionStorage, selfId, peerDiscovery))
+      .flatMap(
+        make(
+          _,
+          nodeStorage,
+          clusterStorage,
+          p2pClient,
+          cluster,
+          session,
+          sessionStorage,
+          rumorStorage,
+          selfId,
+          peerDiscovery
+        )
+      )
 
   def make[F[_]: Async: GenUUID: SecurityProvider: KryoSerializer](
     joiningQueue: Queue[F, P2PContext],
@@ -53,6 +68,7 @@ object Joining {
     cluster: Cluster[F],
     session: Session[F],
     sessionStorage: SessionStorage[F],
+    rumorStorage: RumorStorage[F],
     selfId: PeerId,
     peerDiscovery: PeerDiscovery[F]
   ): F[Joining[F]] = {
@@ -63,6 +79,7 @@ object Joining {
       cluster,
       session,
       sessionStorage,
+      rumorStorage,
       selfId,
       joiningQueue
     ) {}
@@ -90,6 +107,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
   cluster: Cluster[F],
   session: Session[F],
   sessionStorage: SessionStorage[F],
+  rumorStorage: RumorStorage[F],
   selfId: PeerId,
   joiningQueue: Queue[F, P2PContext]
 ) {
@@ -151,6 +169,8 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
       )
 
       _ <- clusterStorage.addPeer(peer)
+
+      _ <- rumorStorage.resetCounter(peer.id)
 
       _ <- if (skipJoinRequest) {
         Applicative[F].unit

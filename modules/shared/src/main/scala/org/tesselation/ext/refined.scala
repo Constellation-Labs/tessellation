@@ -1,6 +1,7 @@
 package org.tesselation.ext
 
-import cats.{Eq, Show}
+import cats.syntax.order._
+import cats.{Eq, Order, Show}
 
 import eu.timepit.refined.api.{Refined, Validate}
 import eu.timepit.refined.refineV
@@ -21,5 +22,8 @@ object refined {
 
   def showOf[T, P](implicit showT: Show[T]): Show[T Refined P] =
     Show.show(r => showT.show(r.value))
+
+  def orderOf[T, P](implicit orderT: Order[T]): Order[T Refined P] =
+    (x: T Refined P, y: T Refined P) => x.value.compare(y.value)
 
 }

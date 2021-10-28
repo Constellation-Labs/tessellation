@@ -1,13 +1,18 @@
 package org.tesselation.schema
 
 import cats.effect.Concurrent
+import cats.syntax.order._
+import cats.syntax.show._
+import cats.{Order, Show}
 
 import org.tesselation.ext.codecs.BinaryCodec
 import org.tesselation.kryo.KryoSerializer
+import org.tesselation.schema.cluster.SessionToken
 import org.tesselation.schema.peer.PeerId
 import org.tesselation.security.hash.Hash
 import org.tesselation.security.signature.Signed
 
+import eu.timepit.refined.types.numeric.PosLong
 import org.http4s.{EntityDecoder, EntityEncoder}
 
 object gossip {
@@ -20,8 +25,17 @@ object gossip {
   case class Rumor(
     tpe: String,
     origin: PeerId,
+    counter: PosLong,
+    session: SessionToken,
     content: Array[Byte]
   )
+
+  object Rumor {
+    implicit val orderInstances: Order[Rumor] = (x: Rumor, y: Rumor) => x.counter.compare(y.counter)
+
+    implicit val showInstances: Show[Rumor] = (t: Rumor) =>
+      s"Rumor(tpe=${t.tpe.show}, origin=${t.origin.show}, counter=${t.counter.show}, session=${t.session.show})"
+  }
 
   case class StartGossipRoundRequest(
     offer: List[Hash]

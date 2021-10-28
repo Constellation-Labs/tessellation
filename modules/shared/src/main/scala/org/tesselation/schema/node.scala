@@ -28,6 +28,9 @@ object node {
 
     val all: Set[NodeState] =
       Set(Initial, ReadyToJoin, LoadingGenesis, GenesisReady, StartingSession, SessionStarted, Ready, Offline, Unknown)
+
+    val toBroadcast: Set[NodeState] =
+      Set(Ready, Offline)
   }
 
   @derive(eqv, show)

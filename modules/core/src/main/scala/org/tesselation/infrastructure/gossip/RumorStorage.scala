@@ -1,18 +1,24 @@
 package org.tesselation.infrastructure.gossip
 
+import cats.Eq
 import cats.effect.{Async, Spawn, Temporal}
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
+import cats.syntax.order._
 import cats.syntax.traverse._
 import cats.syntax.traverseFilter._
 
 import org.tesselation.config.types.RumorStorageConfig
 import org.tesselation.domain.gossip.RumorStorage
+import org.tesselation.schema._
 import org.tesselation.schema.gossip.{HashAndRumor, Rumor, RumorBatch}
+import org.tesselation.schema.peer.PeerId
 import org.tesselation.security.hash.Hash
 import org.tesselation.security.signature.Signed
 
+import eu.timepit.refined.auto.autoUnwrap
+import eu.timepit.refined.types.numeric.PosLong
 import io.chrisdavenport.mapref.MapRef
 
 object RumorStorage {
@@ -21,11 +27,13 @@ object RumorStorage {
     for {
       active <- MapRef.ofConcurrentHashMap[F, Hash, Signed[Rumor]]()
       seen <- MapRef.ofConcurrentHashMap[F, Hash, Unit]()
-    } yield make(active, seen, cfg)
+      seenCounter <- MapRef.ofConcurrentHashMap[F, (PeerId, String), PosLong]()
+    } yield make(active, seen, seenCounter, cfg)
 
   def make[F[_]: Async](
     active: MapRef[F, Hash, Option[Signed[Rumor]]],
     seen: MapRef[F, Hash, Option[Unit]],
+    seenCounter: MapRef[F, (PeerId, String), Option[PosLong]],
     cfg: RumorStorageConfig
   ): RumorStorage[F] =
     new RumorStorage[F] {
@@ -44,6 +52,19 @@ object RumorStorage {
       def getActiveHashes: F[List[Hash]] = active.keys
 
       def getSeenHashes: F[List[Hash]] = seen.keys
+
+      def tryGetAndUpdateCounter(rumor: Rumor): F[Option[PosLong]] =
+        seenCounter((rumor.origin, rumor.tpe)).getAndUpdate {
+          _.fold(rumor.counter)(_.max(rumor.counter)).some
+        }
+
+      def resetCounter(peer: PeerId): F[Unit] =
+        seenCounter.keys
+          .map(_.filter {
+            case (id, _) => Eq[PeerId].eqv(id, peer)
+          })
+          .flatMap(_.traverse(seenCounter(_).set(none)))
+          .void
 
       private def setRumorsSeenAndGetUnseen(rumors: RumorBatch): F[RumorBatch] =
         for {

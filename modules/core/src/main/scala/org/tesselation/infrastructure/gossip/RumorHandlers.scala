@@ -13,11 +13,15 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object RumorHandlers {
 
-  def make[F[_]: Async: KryoSerializer](clusterStorage: ClusterStorage[F]): RumorHandlers[F] =
+  def make[F[_]: Async: KryoSerializer](
+    clusterStorage: ClusterStorage[F]
+  ): RumorHandlers[F] =
     new RumorHandlers[F](clusterStorage) {}
 }
 
-sealed abstract class RumorHandlers[F[_]: Async: KryoSerializer] private (clusterStorage: ClusterStorage[F]) {
+sealed abstract class RumorHandlers[F[_]: Async: KryoSerializer] private (
+  clusterStorage: ClusterStorage[F]
+) {
   private val nodeState = nodeStateHandler(clusterStorage)
 
   private val debug: RumorHandler[F] = {

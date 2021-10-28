@@ -1,16 +1,27 @@
 package org.tesselation.schema
+
+import java.security.Signature
+import java.util.UUID
+
+import cats.data.NonEmptyList
+
 import org.tesselation.schema.address.AddressCache
 import org.tesselation.schema.gossip._
 import org.tesselation.schema.node.NodeState
 import org.tesselation.schema.peer.SignRequest
 import org.tesselation.security.signature.Signed
+import org.tesselation.security.signature.signature.SignatureProof
 
 package object kryo {
 
   val schemaKryoRegistrar: Map[Class[_], Int] = Map(
-    classOf[AddressCache] -> 101,
-    classOf[SignRequest] -> 102,
-    classOf[Signed[_]] -> 201,
+    classOf[UUID] -> 101,
+    classOf[SignatureProof] -> 102,
+    classOf[Signature] -> 103,
+    classOf[SignRequest] -> 104,
+    classOf[NonEmptyList[_]] -> 105,
+    classOf[Signed[_]] -> 106,
+    classOf[AddressCache] -> 201,
     classOf[Rumor] -> 202,
     classOf[StartGossipRoundRequest] -> 203,
     classOf[StartGossipRoundResponse] -> 204,
