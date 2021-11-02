@@ -7,9 +7,11 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tesselation.config.types.AppConfig
+import org.tesselation.domain.aci.StateChannelRouter
 import org.tesselation.domain.cluster.services.{Cluster, Session}
 import org.tesselation.domain.gossip.Gossip
 import org.tesselation.domain.healthcheck.HealthCheck
+import org.tesselation.infrastructure.aci.StateChannelRouter
 import org.tesselation.infrastructure.cluster.services.{Cluster, Session}
 import org.tesselation.infrastructure.gossip.Gossip
 import org.tesselation.infrastructure.healthcheck.HealthCheck
@@ -34,13 +36,15 @@ object Services {
       cluster = Cluster
         .make[F](cfg, nodeId, keyPair, storages.session)
       gossip <- Gossip.make[F](queues.rumor, storages.session, nodeId, keyPair)
+      stateChannelRouter <- StateChannelRouter.make[F]
     } yield
       new Services[F](
         healthcheck = healthcheck,
         cluster = cluster,
         session = session,
         metrics = metrics,
-        gossip = gossip
+        gossip = gossip,
+        stateChannelRouter = stateChannelRouter
       ) {}
 }
 
@@ -49,5 +53,6 @@ sealed abstract class Services[F[_]] private (
   val cluster: Cluster[F],
   val session: Session[F],
   val metrics: Metrics[F],
-  val gossip: Gossip[F]
+  val gossip: Gossip[F],
+  val stateChannelRouter: StateChannelRouter[F]
 )

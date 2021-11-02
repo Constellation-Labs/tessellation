@@ -23,6 +23,8 @@ object address {
   case class Address(value: DAGAddress)
 
   object Address {
+    def unapply(str: String): Option[Address] = refineV[DAGAddressRefined](str).toOption.map(Address(_))
+
     implicit val quillEncode: MappedEncoding[Address, String] = MappedEncoding[Address, String](_.coerce.value)
     implicit val quillDecode: MappedEncoding[String, Address] =
       MappedEncoding[String, Address](
