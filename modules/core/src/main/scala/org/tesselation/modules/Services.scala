@@ -13,9 +13,9 @@ import org.tesselation.infrastructure.cluster.services.{Cluster, Session}
 import org.tesselation.infrastructure.gossip.Gossip
 import org.tesselation.infrastructure.healthcheck.HealthCheck
 import org.tesselation.infrastructure.metrics.Metrics
-import org.tesselation.keytool.security.SecurityProvider
 import org.tesselation.kryo.KryoSerializer
 import org.tesselation.schema.peer.PeerId
+import org.tesselation.security.SecurityProvider
 
 object Services {
 

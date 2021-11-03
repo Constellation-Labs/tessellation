@@ -3,10 +3,10 @@ package org.tesselation.schema
 import java.security.PublicKey
 import java.util.UUID
 
-import org.tesselation.keytool.security.publicKeyToHex
 import org.tesselation.schema.ID.Id
 import org.tesselation.schema.cluster.SessionToken
 import org.tesselation.schema.node.NodeState
+import org.tesselation.security.publicKeyToHex
 
 import com.comcast.ip4s.{Host, Port}
 import derevo.cats.{eqv, show}

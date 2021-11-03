@@ -96,7 +96,7 @@ lazy val wallet = (project in file("modules/wallet"))
 
 lazy val keytool = (project in file("modules/keytool"))
   .enablePlugins(AshScriptPlugin)
-  .dependsOn(testShared % Test)
+  .dependsOn(shared, testShared % Test)
   .settings(
     name := "tesselation-keytool",
     Defaults.itSettings,
@@ -123,12 +123,16 @@ lazy val keytool = (project in file("modules/keytool"))
       Libraries.derevoCore,
       Libraries.derevoCats,
       Libraries.derevoCirce,
+      Libraries.fs2IO,
       Libraries.log4cats,
       Libraries.logback % Runtime,
       Libraries.monocleCore,
       Libraries.monocleMacro,
       Libraries.newtype,
       Libraries.scopt,
+      Libraries.declineCore,
+      Libraries.declineEffect,
+      Libraries.declineRefined,
       Libraries.refinedCore,
       Libraries.refinedCats
     )
@@ -136,7 +140,7 @@ lazy val keytool = (project in file("modules/keytool"))
 
 lazy val shared = (project in file("modules/shared"))
   .enablePlugins(AshScriptPlugin)
-  .dependsOn(keytool, testShared % Test)
+  .dependsOn(testShared % Test)
   .settings(
     name := "tesselation-shared",
     Defaults.itSettings,
@@ -148,7 +152,10 @@ lazy val shared = (project in file("modules/shared"))
       CompilerPlugin.kindProjector,
       CompilerPlugin.betterMonadicFor,
       CompilerPlugin.semanticDB,
+      Libraries.bc,
+      Libraries.bcExtensions,
       Libraries.cats,
+      Libraries.catsEffect,
       Libraries.chill,
       Libraries.circeCore,
       Libraries.circeGeneric,
@@ -166,7 +173,10 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.derevoCirce,
       Libraries.doobieQuill,
       Libraries.guava,
+      Libraries.log4cats,
+      Libraries.logback % Runtime,
       Libraries.monocleCore,
+      Libraries.monocleMacro,
       Libraries.newtype,
       Libraries.refinedCore,
       Libraries.refinedCats,

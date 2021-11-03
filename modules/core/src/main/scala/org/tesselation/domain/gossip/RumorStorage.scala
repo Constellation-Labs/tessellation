@@ -1,7 +1,7 @@
 package org.tesselation.domain.gossip
 
-import org.tesselation.crypto.hash.Hash
 import org.tesselation.schema.gossip.RumorBatch
+import org.tesselation.security.hash.Hash
 
 trait RumorStorage[F[_]] {
 

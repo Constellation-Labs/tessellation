@@ -8,10 +8,10 @@ import cats.syntax.traverse._
 import cats.syntax.traverseFilter._
 
 import org.tesselation.config.types.RumorStorageConfig
-import org.tesselation.crypto.Signed
-import org.tesselation.crypto.hash.Hash
 import org.tesselation.domain.gossip.RumorStorage
 import org.tesselation.schema.gossip.{HashAndRumor, Rumor, RumorBatch}
+import org.tesselation.security.hash.Hash
+import org.tesselation.security.signature.Signed
 
 import io.chrisdavenport.mapref.MapRef
 

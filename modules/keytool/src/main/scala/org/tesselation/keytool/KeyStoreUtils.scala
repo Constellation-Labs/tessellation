@@ -3,8 +3,8 @@ package org.tesselation.keytool
 import java.io._
 import java.nio.charset.Charset
 import java.nio.file.FileAlreadyExistsException
-import java.security._
 import java.security.cert.Certificate
+import java.security.{KeyPair, KeyStore, PrivateKey}
 
 import cats.effect.{Async, Resource}
 import cats.syntax.applicative._
@@ -12,7 +12,8 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tesselation.keytool.cert.{DistinguishedName, SelfSignedCertificate}
-import org.tesselation.keytool.security._
+import org.tesselation.security._
+import org.tesselation.security.signature.Signing
 
 object KeyStoreUtils {
 
@@ -66,7 +67,7 @@ object KeyStoreUtils {
     distinguishedName: DistinguishedName,
     certificateValidityDays: Long
   ): F[KeyStore] =
-    KeyProvider
+    KeyPairGenerator
       .makeKeyPair[F]
       .flatMap(writeKeyPairToStore(_, path, alias, password, distinguishedName, certificateValidityDays))
 

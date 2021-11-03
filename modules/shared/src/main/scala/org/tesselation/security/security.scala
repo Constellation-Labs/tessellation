@@ -1,4 +1,4 @@
-package org.tesselation.keytool
+package org.tesselation
 
 import java.security.spec.X509EncodedKeySpec
 import java.security.{KeyFactory, PrivateKey, PublicKey}
@@ -7,7 +7,7 @@ import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tesselation.keytool.security.KeyProvider.ECDSA
+import org.tesselation.security.key.ECDSA
 
 package object security {
   val PublicKeyHexPrefix: String = "3056301006072a8648ce3d020106052b8104000a03420004"

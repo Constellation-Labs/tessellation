@@ -1,19 +1,18 @@
-package org.tesselation.crypto
+package org.tesselation.security.key
 
 import java.security.{PrivateKey, PublicKey}
 
-import org.tesselation.crypto.hash.Hash
-import org.tesselation.crypto.hex.Hex
-import org.tesselation.keytool.Base58
-import org.tesselation.keytool.security._
 import org.tesselation.schema.ID.Id
 import org.tesselation.schema.address._
+import org.tesselation.security._
+import org.tesselation.security.hash.Hash
+import org.tesselation.security.hex.Hex
 
 import com.google.common.hash.HashCode
 import eu.timepit.refined.refineV
 import io.estatico.newtype.ops._
 
-package object ops {
+object ops {
 
   implicit class PrivateKeyOps(privateKey: PrivateKey) {
 

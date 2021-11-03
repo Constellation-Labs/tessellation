@@ -1,7 +1,7 @@
-package org.tesselation.crypto
+package org.tesselation.security
 
-import org.tesselation.crypto.hash.Hash
 import org.tesselation.kryo.KryoSerializer
+import org.tesselation.security.hash.Hash
 
 import com.google.common.hash.Hashing
 import derevo.cats.{eqv, show}

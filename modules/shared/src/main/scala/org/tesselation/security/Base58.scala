@@ -1,5 +1,4 @@
-package org.tesselation.keytool
-
+package org.tesselation.security
 import java.math.BigInteger
 
 import scala.annotation.tailrec

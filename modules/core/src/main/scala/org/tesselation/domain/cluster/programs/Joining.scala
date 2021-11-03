@@ -12,18 +12,18 @@ import cats.syntax.traverse._
 
 import scala.concurrent.duration.DurationInt
 
-import org.tesselation.crypto.Signed
 import org.tesselation.domain.cluster.services.{Cluster, Session}
 import org.tesselation.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tesselation.domain.node.NodeStorage
 import org.tesselation.effects.GenUUID
 import org.tesselation.http.p2p.P2PClient
-import org.tesselation.keytool.security.SecurityProvider
 import org.tesselation.kryo.KryoSerializer
 import org.tesselation.schema.ID.Id
 import org.tesselation.schema.cluster._
 import org.tesselation.schema.node.NodeState
 import org.tesselation.schema.peer._
+import org.tesselation.security.SecurityProvider
+import org.tesselation.security.signature.Signed
 
 import com.comcast.ip4s.{Host, IpLiteralSyntax}
 import fs2.{Pipe, Stream}

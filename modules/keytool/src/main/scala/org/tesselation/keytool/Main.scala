@@ -8,7 +8,7 @@ import org.tesselation.keytool.cli.config.CliMethod
 import org.tesselation.keytool.cli.parser
 import org.tesselation.keytool.config.KeytoolConfig
 import org.tesselation.keytool.config.types.AppConfig
-import org.tesselation.keytool.security.SecurityProvider
+import org.tesselation.security.SecurityProvider
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 

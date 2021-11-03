@@ -4,8 +4,8 @@ import java.security.PublicKey
 
 import cats.effect.Async
 
-import org.tesselation.keytool.security.{SecurityProvider, hexToPublicKey}
 import org.tesselation.schema.peer.PeerId
+import org.tesselation.security.{SecurityProvider, hexToPublicKey}
 
 package object tesselation {
 

@@ -8,14 +8,14 @@ import cats.syntax.functor._
 import cats.{Applicative, MonadThrow}
 
 import org.tesselation.config.types.AppConfig
-import org.tesselation.crypto.Signed
 import org.tesselation.domain.cluster.services.Cluster
 import org.tesselation.domain.cluster.storage.SessionStorage
 import org.tesselation.ext.crypto._
-import org.tesselation.keytool.security.SecurityProvider
 import org.tesselation.kryo.KryoSerializer
 import org.tesselation.schema.cluster._
 import org.tesselation.schema.peer.{PeerId, RegistrationRequest, SignRequest}
+import org.tesselation.security.SecurityProvider
+import org.tesselation.security.signature.Signed
 
 object Cluster {
 
