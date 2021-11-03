@@ -47,7 +47,7 @@ object Dependencies {
   }
 
   object Libraries {
-    def circe(artifact: String): ModuleID = "io.circe" %% s"circe-$artifact" % V.circe
+    def circe(artifact: String, version: String = V.circe): ModuleID = "io.circe" %% s"circe-$artifact" % version
     def ciris(artifact: String): ModuleID = "is.cir" %% artifact % V.ciris
     def derevo(artifact: String): ModuleID = "tf.tofu" %% s"derevo-$artifact" % V.derevo
 
@@ -81,6 +81,7 @@ object Dependencies {
     val circeGeneric = circe("generic")
     val circeParser = circe("parser")
     val circeRefined = circe("refined")
+    val circeFs2 = circe("fs2", "0.14.0")
 
     val cirisCore = ciris("ciris")
     val cirisEnum = ciris("ciris-enumeratum")

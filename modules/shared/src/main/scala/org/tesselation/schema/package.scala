@@ -7,7 +7,6 @@ import org.tesselation.ext.refined._
 
 import com.comcast.ip4s.{Host, Port}
 import eu.timepit.refined.numeric.{NonNegative, Positive}
-import eu.timepit.refined.refineV
 import eu.timepit.refined.types.numeric.{NonNegBigInt, PosBigInt}
 import io.circe.{Decoder, Encoder}
 
@@ -40,8 +39,8 @@ trait OrphanInstances {
   implicit val nonNegBigIntShow: Show[NonNegBigInt] =
     showOf[BigInt, NonNegative]
 
-  implicit val semigroupNonNegBigInt: Semigroup[NonNegBigInt] =
-    Semigroup.instance((x, y) => refineV.unsafeFrom(x.value |+| y.value))
+  implicit val nonNegBigIntSemigroup: Semigroup[NonNegBigInt] =
+    (x: NonNegBigInt, y: NonNegBigInt) => NonNegBigInt.unsafeFrom(x.value |+| y.value)
 
   implicit val posBigIntDecoder: Decoder[PosBigInt] =
     decoderOf[BigInt, Positive]
