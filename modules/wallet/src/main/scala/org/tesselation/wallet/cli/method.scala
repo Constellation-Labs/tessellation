@@ -3,7 +3,7 @@ import cats.syntax.contravariantSemigroupal._
 import cats.syntax.either._
 import cats.syntax.validated._
 
-import org.tesselation.ext.decline.CliMethodOpts
+import org.tesselation.ext.decline.WithOpts
 import org.tesselation.ext.decline.decline._
 import org.tesselation.schema.address.Address
 import org.tesselation.schema.transaction.{TransactionAmount, TransactionFee}
@@ -21,7 +21,7 @@ object method {
 
   case class ShowAddress() extends CliMethod
 
-  object ShowAddress extends CliMethodOpts[ShowAddress] {
+  object ShowAddress extends WithOpts[ShowAddress] {
 
     val opts = Opts.subcommand("show-address", "Shows address") {
       Opts(ShowAddress())
@@ -30,7 +30,7 @@ object method {
 
   case class ShowId() extends CliMethod
 
-  object ShowId extends CliMethodOpts[ShowId] {
+  object ShowId extends WithOpts[ShowId] {
 
     val opts =
       Opts.subcommand("show-id", "Shows address") {
@@ -40,7 +40,7 @@ object method {
 
   case class ShowPublicKey() extends CliMethod
 
-  object ShowPublicKey extends CliMethodOpts[ShowPublicKey] {
+  object ShowPublicKey extends WithOpts[ShowPublicKey] {
 
     val opts = Opts.subcommand("show-public-key", "Shows public key") {
       Opts(ShowPublicKey())
@@ -55,7 +55,7 @@ object method {
     nextTxPath: Path
   ) extends CliMethod
 
-  object CreateTransaction extends CliMethodOpts[CreateTransaction] {
+  object CreateTransaction extends WithOpts[CreateTransaction] {
 
     val opts: Opts[CreateTransaction] = Opts.subcommand("create-transaction", "Creates transaction") {
       (
