@@ -13,6 +13,9 @@ import io.estatico.newtype.ops._
 object env {
 
   @newtype
+  case class Password(value: Secret[String])
+
+  @newtype
   case class StorePass(value: Secret[String])
 
   @newtype
@@ -20,9 +23,6 @@ object env {
 
   @newtype
   case class KeyAlias(value: Secret[String])
-
-  @newtype
-  case class Password(value: Secret[String])
 
   case class EnvConfig(
     keystore: Path,

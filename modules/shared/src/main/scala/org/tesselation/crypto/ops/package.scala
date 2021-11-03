@@ -7,10 +7,10 @@ import org.tesselation.crypto.hex.Hex
 import org.tesselation.keytool.Base58
 import org.tesselation.keytool.security._
 import org.tesselation.schema.ID.Id
-import org.tesselation.schema.address.{Address, DAGAddress}
+import org.tesselation.schema.address._
 
 import com.google.common.hash.HashCode
-import eu.timepit.refined.auto._
+import eu.timepit.refined.refineV
 import io.estatico.newtype.ops._
 
 package object ops {
@@ -44,7 +44,7 @@ package object ops {
       val ints = validInt.map { _.toString.toInt }
       val sum = ints.sum
       val par = sum % 9
-      val res2 = s"DAG$par$end".asInstanceOf[DAGAddress] // We already know that it is valid so we can cast
+      val res2: DAGAddress = refineV[DAGAddressRefined].unsafeFrom(s"DAG$par$end")
       Address(res2)
     }
 

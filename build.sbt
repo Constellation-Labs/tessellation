@@ -79,6 +79,7 @@ lazy val wallet = (project in file("modules/wallet"))
       CompilerPlugin.kindProjector,
       CompilerPlugin.betterMonadicFor,
       CompilerPlugin.semanticDB,
+      Libraries.circeFs2,
       Libraries.cats,
       Libraries.catsEffect,
       Libraries.cirisCore,

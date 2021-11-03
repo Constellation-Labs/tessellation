@@ -5,15 +5,14 @@ import cats.syntax.validated._
 
 import org.tesselation.ext.decline.CliMethodOpts
 import org.tesselation.ext.decline.decline._
-import org.tesselation.schema.address.DAGAddress
-import org.tesselation.wallet.cli.method.CreateTransaction.{Amount, Fee}
+import org.tesselation.schema.address.Address
+import org.tesselation.schema.transaction.{TransactionAmount, TransactionFee}
 
 import com.monovore.decline.Opts
 import com.monovore.decline.refined._
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
+import eu.timepit.refined.types.numeric.{NonNegBigInt, PosBigInt}
 import fs2.io.file.Path
-import io.estatico.newtype.macros.newtype
 import io.estatico.newtype.ops._
 
 object method {
@@ -49,35 +48,29 @@ object method {
   }
 
   case class CreateTransaction(
-    destination: DAGAddress,
-    prevTxPath: Path,
-    nextTxPath: Path,
-    fee: Fee,
-    amount: Amount
+    destination: Address,
+    fee: TransactionFee,
+    amount: TransactionAmount,
+    prevTxPath: Option[Path],
+    nextTxPath: Path
   ) extends CliMethod
 
   object CreateTransaction extends CliMethodOpts[CreateTransaction] {
 
-    @newtype
-    case class Fee(value: NonNegLong)
-
-    @newtype
-    case class Amount(value: PosLong)
-
     val opts: Opts[CreateTransaction] = Opts.subcommand("create-transaction", "Creates transaction") {
       (
-        Opts.option[DAGAddress]("destination", "Destination DAG address", "d"),
-        Opts.option[Path]("prevTxPath", "Path to previously created transaction file", "p"),
-        Opts.option[Path]("nextTxPath", "Path where next transaction should be created", "f"),
-        Opts.option[Fee]("fee", "Transaction fee").withDefault(Fee(0L)),
+        Opts.option[Address]("destination", "Destination DAG address", "d"),
+        Opts.option[TransactionFee]("fee", "Transaction fee").withDefault(TransactionFee(NonNegBigInt(BigInt(0L)))),
         (
-          Opts.option[Amount]("amount", "Transaction DAG amount", "a"),
+          Opts.option[TransactionAmount]("amount", "Transaction DAG amount", "a"),
           Opts.flag("normalized", "Use to mark that amount is already normalized", "n").orFalse
         ).tupled.mapValidated {
           case (amount, normalized) =>
             if (normalized) amount.validNel
-            else PosLong.from(amount.coerce * 1e8.toLong).map(_.coerce[Amount]).toValidatedNel
-        }
+            else PosBigInt.from(amount.coerce * 1e8.toLong).map(_.coerce[TransactionAmount]).toValidatedNel
+        },
+        Opts.option[Path]("prevTxPath", "Path to previously created transaction file", "p").orNone,
+        Opts.option[Path]("nextTxPath", "Path where next transaction should be created", "f")
       ).mapN(CreateTransaction.apply)
     }
   }
