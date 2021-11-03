@@ -5,6 +5,7 @@ import cats.data.NonEmptyList
 import cats.kernel.laws.discipline.SemigroupTests
 
 import org.tesselation.schema.ID.Id
+import org.tesselation.security.hex.Hex
 import org.tesselation.security.signature.Signed
 import org.tesselation.security.signature.signature.{Signature, SignatureProof}
 
@@ -13,11 +14,11 @@ import weaver.FunSuite
 import weaver.discipline.Discipline
 
 object SignedSuite extends FunSuite with Discipline {
-  implicit val eq: Eq[Signed[String]] = _ == _
+  implicit val eq: Eq[Signed[Hex]] = _ == _
 
-  implicit val arbitrarySigned: Arbitrary[Signed[String]] = Arbitrary(
-    Gen.alphaLowerStr.map(str => Signed(str, NonEmptyList.one(SignatureProof(Id(str), Signature(str)))))
+  implicit val arbitrarySigned: Arbitrary[Signed[Hex]] = Arbitrary(
+    Gen.alphaLowerStr.map(Hex(_)).map(str => Signed(str, NonEmptyList.one(SignatureProof(Id(str), Signature(str)))))
   )
 
-  checkAll("CellMonoidLaw", SemigroupTests[Signed[String]].semigroup)
+  checkAll("CellMonoidLaw", SemigroupTests[Signed[Hex]].semigroup)
 }

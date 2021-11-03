@@ -47,7 +47,7 @@ object ops {
       Address(res2)
     }
 
-    def toId: Id = Id(toHex.coerce)
+    def toId: Id = Id(toHex)
 
     def toHex: Hex = {
       val hex = Hex.fromBytes(publicKey.getEncoded).coerce

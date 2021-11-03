@@ -6,13 +6,15 @@ import java.util.UUID
 import org.tesselation.schema.ID.Id
 import org.tesselation.schema.cluster.SessionToken
 import org.tesselation.schema.node.NodeState
-import org.tesselation.security.publicKeyToHex
+import org.tesselation.security.hex.Hex
+import org.tesselation.security.key.ops._
 
 import com.comcast.ip4s.{Host, Port}
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia._
 import derevo.derive
 import io.estatico.newtype.macros.newtype
+import io.estatico.newtype.ops._
 import monocle.macros.GenLens
 import monocle.{Iso, Lens}
 
@@ -23,17 +25,17 @@ object peer {
 
   @derive(eqv, show, decoder, encoder, keyEncoder, keyDecoder)
   @newtype
-  case class PeerId(value: String)
+  case class PeerId(value: Hex)
 
   object PeerId {
 
     val _Id: Iso[PeerId, Id] =
-      Iso[PeerId, Id](peerId => Id(peerId.value))(id => PeerId(id.hex))
+      Iso[PeerId, Id](peerId => Id(peerId.coerce))(id => PeerId(id.hex))
 
     val fromId: Id => PeerId = _Id.reverseGet
 
     def fromPublic(publicKey: PublicKey): PeerId =
-      PeerId(publicKeyToHex(publicKey))
+      PeerId(publicKey.toHex)
   }
 
   @derive(eqv, encoder, decoder, show)
