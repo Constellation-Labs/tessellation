@@ -1,7 +1,5 @@
 package org.tesselation.cli
 
-import cats.syntax.contravariantSemigroupal._
-
 import org.tesselation.ext.decline.decline._
 
 import ciris.Secret
@@ -12,46 +10,51 @@ import io.estatico.newtype.ops._
 
 object env {
 
+  sealed trait EnvOpt
+
   @newtype
   case class Password(value: Secret[String])
+
+  object Password {
+
+    val opts: Opts[Password] = Opts
+      .env[Password]("CL_PASSWORD", help = "Password")
+  }
 
   @newtype
   case class StorePass(value: Secret[String])
 
+  object StorePass {
+
+    val opts: Opts[StorePass] = Opts
+      .env[StorePass]("CL_STOREPASS", help = "Keystore password")
+  }
+
   @newtype
   case class KeyPass(value: Secret[String])
+
+  object KeyPass {
+
+    val opts: Opts[KeyPass] = Opts
+      .env[KeyPass]("CL_KEYPASS", help = "Key password")
+  }
 
   @newtype
   case class KeyAlias(value: Secret[String])
 
-  case class EnvConfig(
-    keystore: Path,
-    storepass: StorePass,
-    keypass: KeyPass,
-    keyalias: KeyAlias
-  )
+  object KeyAlias {
 
-  private val passwordOpts: Opts[Password] = Opts
-    .env[Password]("CL_PASSWORD", help = "Password")
+    val opts: Opts[KeyAlias] = Opts
+      .env[KeyAlias]("CL_KEYALIAS", help = "Alias of key in keystore")
+  }
 
-  private val keystoreOpts: Opts[Path] = Opts
-    .env[Path]("CL_KEYSTORE", help = "Keystore path")
+  @newtype
+  case class StorePath(value: Path)
 
-  private val storepassOpts: Opts[StorePass] = Opts
-    .env[StorePass]("CL_STOREPASS", help = "Keystore password")
-    .orElse(passwordOpts.map(p => StorePass(p.coerce)))
+  object StorePath {
 
-  private val keypassOots: Opts[KeyPass] = Opts
-    .env[KeyPass]("CL_KEYPASS", help = "Key password")
-    .orElse(passwordOpts.map(p => KeyPass(p.coerce)))
-
-  private val aliasOpts: Opts[KeyAlias] = Opts
-    .env[KeyAlias]("CL_KEYALIAS", help = "Alias of key in keystore")
-
-  val opts = (
-    keystoreOpts,
-    storepassOpts,
-    keypassOots,
-    aliasOpts
-  ).mapN(EnvConfig)
+    val opts: Opts[StorePath] = Opts
+      .env[Path]("CL_KEYSTORE", help = "Keystore path")
+      .map(_.coerce)
+  }
 }

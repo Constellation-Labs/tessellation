@@ -2,72 +2,102 @@ package org.tesselation.keytool
 
 import java.security.KeyStore
 
-import cats.effect._
+import cats.effect.{Async, ExitCode, IO}
 
-import org.tesselation.keytool.cli.config.CliMethod
-import org.tesselation.keytool.cli.parser
-import org.tesselation.keytool.config.KeytoolConfig
-import org.tesselation.keytool.config.types.AppConfig
+import org.tesselation.cli.env._
+import org.tesselation.keytool.cert.DistinguishedName
+import org.tesselation.keytool.cli.method.{ExportPrivateKeyHex, GenerateWallet, MigrateExistingKeyStoreToStorePassOnly}
 import org.tesselation.security.SecurityProvider
 
+import com.monovore.decline.Opts
+import com.monovore.decline.effect.CommandIOApp
+import io.estatico.newtype.ops._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-object Main extends IOApp {
+object Main
+    extends CommandIOApp(
+      name = "",
+      header = "Constellation Keytool",
+      version = "0.0.x"
+    ) {
   implicit val logger = Slf4jLogger.getLogger[IO]
 
-  override def run(args: List[String]): IO[ExitCode] =
-    KeytoolConfig
-      .load[IO]
-      .flatMap { cfg =>
-        parser
-          .parse[IO](args)
-          .flatMap { cli =>
-            SecurityProvider.forAsync[IO].use { implicit securityProvider =>
-              cli.method match {
-                case CliMethod.GenerateWallet =>
-                  generateKeyStoreWithKeyPair[IO](cfg).flatTap { _ =>
-                    logger.info(s"KeyPair has been created at: ${cfg.keystore}")
-                  }.handleErrorWith(err => logger.error(err)(s"Error while creating a keystore.")).as(ExitCode.Success)
-                case CliMethod.MigrateExistingKeyStoreToStorePassOnly =>
-                  migrateKeyStoreToSinglePassword[IO](cfg).flatTap { _ =>
-                    logger.info(s"KeyPair has been migrated at: ${cfg.keystore}")
-                  }.handleErrorWith(err => logger.error(err)(s"Error while creating a keystore.")).as(ExitCode.Success)
-                case CliMethod.ExportPrivateKeyHex =>
-                  exportPrivateKeyAsHex[IO](cfg).flatTap { hex =>
-                    logger.info(s"PrivateKey in hex: ${hex}")
-                  }.handleErrorWith(err => logger.error(err)(s"Error while creating a keystore.")).as(ExitCode.Success)
-                case _ => IO(ExitCode.Error)
-              }
-            }
-          }
-          .handleErrorWith(_ => IO(ExitCode.Error))
+  override def main: Opts[IO[ExitCode]] =
+    cli.method.opts.map { method =>
+      SecurityProvider.forAsync[IO].use { implicit sp =>
+        method match {
+          case GenerateWallet(keyStore, alias, password, distinguishedName, certificateValidityDays) =>
+            generateKeyStoreWithKeyPair[IO](keyStore, alias, password, distinguishedName, certificateValidityDays)
+              .handleErrorWith(err => logger.error(err)(s"Error while generating a keystore."))
+              .as(ExitCode.Success)
+          case MigrateExistingKeyStoreToStorePassOnly(
+              keyStore,
+              alias,
+              storepass,
+              keypass,
+              distinguishedName,
+              certificateValidityDays
+              ) =>
+            migrateKeyStoreToSinglePassword[IO](
+              keyStore,
+              alias,
+              storepass,
+              keypass,
+              distinguishedName,
+              certificateValidityDays
+            ).handleErrorWith(err => logger.error(err)(s"Error while migrating the keystore."))
+              .as(ExitCode.Success)
+          case ExportPrivateKeyHex(keyStore, alias, storepass, keypass) =>
+            exportPrivateKeyAsHex[IO](keyStore, alias, storepass, keypass)
+              .handleErrorWith(err => logger.error(err)(s"Error while exporting private key as hex."))
+              .as(ExitCode.Success)
+        }
       }
+    }
 
-  private def generateKeyStoreWithKeyPair[F[_]: Async: SecurityProvider](cfg: AppConfig): F[KeyStore] =
+  private def generateKeyStoreWithKeyPair[F[_]: Async: SecurityProvider](
+    keyStore: StorePath,
+    alias: KeyAlias,
+    password: Password,
+    distinguishedName: DistinguishedName,
+    certificateValidityDays: Long
+  ): F[KeyStore] =
     KeyStoreUtils
       .generateKeyPairToStore(
-        path = cfg.keystore,
-        alias = cfg.keyalias.value,
-        password = cfg.storepass.value.toCharArray,
-        distinguishedName = cfg.distinguishedName,
-        certificateValidityDays = cfg.certificateValidityDays
+        path = keyStore.coerce.toString,
+        alias = alias.coerce.value,
+        password = password.coerce.value.toCharArray,
+        distinguishedName = distinguishedName,
+        certificateValidityDays = certificateValidityDays
       )
 
-  private def migrateKeyStoreToSinglePassword[F[_]: Async: SecurityProvider](cfg: AppConfig): F[KeyStore] =
+  private def migrateKeyStoreToSinglePassword[F[_]: Async: SecurityProvider](
+    keyStore: StorePath,
+    alias: KeyAlias,
+    storePass: StorePass,
+    keyPass: KeyPass,
+    distinguishedName: DistinguishedName,
+    certificateValidityDays: Long
+  ): F[KeyStore] =
     KeyStoreUtils.migrateKeyStoreToSinglePassword(
-      path = cfg.keystore,
-      alias = cfg.keyalias.value,
-      storePassword = cfg.storepass.value.toCharArray,
-      keyPassword = cfg.keypass.value.toCharArray,
-      distinguishedName = cfg.distinguishedName,
-      certificateValidityDays = cfg.certificateValidityDays
+      path = keyStore.coerce.toString,
+      alias = alias.coerce.value,
+      storePassword = storePass.coerce.value.toCharArray,
+      keyPassword = keyPass.coerce.value.toCharArray,
+      distinguishedName = distinguishedName,
+      certificateValidityDays = certificateValidityDays
     )
 
-  private def exportPrivateKeyAsHex[F[_]: Async: SecurityProvider](cfg: AppConfig): F[String] =
+  private def exportPrivateKeyAsHex[F[_]: Async: SecurityProvider](
+    keyStore: StorePath,
+    alias: KeyAlias,
+    storePass: StorePass,
+    keyPass: KeyPass
+  ): F[String] =
     KeyStoreUtils.exportPrivateKeyAsHex(
-      path = cfg.keystore,
-      alias = cfg.keyalias.value,
-      storePassword = cfg.storepass.value.toCharArray,
-      keyPassword = cfg.keypass.value.toCharArray
+      path = keyStore.coerce.toString,
+      alias = alias.coerce.value,
+      storePassword = storePass.coerce.value.toCharArray,
+      keyPassword = keyPass.coerce.value.toCharArray
     )
 }

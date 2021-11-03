@@ -2,6 +2,6 @@ package org.tesselation.ext.decline
 
 import com.monovore.decline.Opts
 
-trait CliMethodOpts[A] {
+trait WithOpts[A] {
   val opts: Opts[A]
 }
