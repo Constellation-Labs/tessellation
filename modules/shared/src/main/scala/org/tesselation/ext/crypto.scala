@@ -6,10 +6,10 @@ import cats.MonadThrow
 import cats.effect.kernel.Async
 import cats.syntax.either._
 
-import org.tesselation.crypto.hash.Hash
-import org.tesselation.crypto.{Hashable, Signed}
-import org.tesselation.keytool.security.SecurityProvider
 import org.tesselation.kryo.KryoSerializer
+import org.tesselation.security.hash.Hash
+import org.tesselation.security.signature.Signed
+import org.tesselation.security.{Hashable, SecurityProvider}
 
 object crypto {
   implicit class RefinedHashable[F[_]: KryoSerializer](anyRef: AnyRef) {

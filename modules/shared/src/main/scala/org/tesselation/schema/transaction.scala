@@ -1,8 +1,7 @@
 package org.tesselation.schema
-
-import org.tesselation.crypto.Encodable
-import org.tesselation.crypto.hash.Hash
 import org.tesselation.schema.address.Address
+import org.tesselation.security.Encodable
+import org.tesselation.security.hash.Hash
 
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}

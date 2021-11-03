@@ -8,14 +8,14 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.semigroup._
 
-import org.tesselation.crypto.Signed
-import org.tesselation.crypto.ops._
 import org.tesselation.ext.crypto._
-import org.tesselation.keytool.security.{SecurityProvider, WithSecureRandom}
 import org.tesselation.kryo.KryoSerializer
 import org.tesselation.schema._
 import org.tesselation.schema.address.Address
 import org.tesselation.schema.transaction._
+import org.tesselation.security.key.ops._
+import org.tesselation.security.signature.Signed
+import org.tesselation.security.{SecureRandom, SecurityProvider}
 
 import eu.timepit.refined.auto._
 import io.estatico.newtype.ops._
@@ -43,7 +43,10 @@ package object transaction {
         .map(tx => tx.hashF.map(TransactionReference(_, tx.parent.ordinal.next)))
         .getOrElse(TransactionReference.empty.pure[F])
 
-      salt <- WithSecureRandom.get[F].map(_.nextLong()).map(TransactionSalt.apply)
+      salt <- SecureRandom
+        .get[F]
+        .map(_.nextLong())
+        .map(TransactionSalt.apply)
 
       tx = Transaction(source, destination, amount, fee, parent, salt)
       signedTx <- tx.sign(keyPair)

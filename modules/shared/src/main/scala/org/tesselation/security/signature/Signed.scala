@@ -1,4 +1,4 @@
-package org.tesselation.crypto
+package org.tesselation.security.signature
 
 import java.security.KeyPair
 
@@ -8,10 +8,10 @@ import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tesselation.crypto.signature.{SignatureProof, signatureProofFromData}
 import org.tesselation.ext.crypto._
-import org.tesselation.keytool.security.SecurityProvider
 import org.tesselation.kryo.KryoSerializer
+import org.tesselation.security.SecurityProvider
+import org.tesselation.security.signature.signature.{SignatureProof, signatureProofFromData}
 
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}

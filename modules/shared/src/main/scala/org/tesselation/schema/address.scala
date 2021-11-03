@@ -3,8 +3,8 @@ package org.tesselation.schema
 import cats.{Eq, Show}
 
 import org.tesselation.ext.refined._
-import org.tesselation.keytool.Base58
 import org.tesselation.schema.balance.Balance
+import org.tesselation.security.Base58
 
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}

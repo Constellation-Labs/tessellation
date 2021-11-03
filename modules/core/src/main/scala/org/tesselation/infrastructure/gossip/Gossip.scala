@@ -12,10 +12,10 @@ import scala.reflect.runtime.universe._
 import org.tesselation.domain.gossip.Gossip
 import org.tesselation.ext.crypto._
 import org.tesselation.ext.kryo._
-import org.tesselation.keytool.security.SecurityProvider
 import org.tesselation.kryo.KryoSerializer
 import org.tesselation.schema.gossip.{Rumor, RumorBatch}
 import org.tesselation.schema.peer.PeerId
+import org.tesselation.security.SecurityProvider
 
 object Gossip {
 

@@ -11,7 +11,7 @@ import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tesselation.keytool.security.{SecurityProvider, WithSecureRandom}
+import org.tesselation.security.{SecureRandom, SecurityProvider}
 
 import org.bouncycastle.asn1.x500.X500Name
 import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo
@@ -28,7 +28,7 @@ object SelfSignedCertificate {
     algorithm: String
   ): F[X509Certificate] =
     for {
-      rnd <- WithSecureRandom.get[F]
+      rnd <- SecureRandom.get[F]
       provider = SecurityProvider[F].provider
       owner = new X500Name(dn.toX509DirName)
       serial = new BigInteger(64, rnd)

@@ -10,15 +10,16 @@ import cats.syntax.contravariantSemigroupal._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tesselation.crypto.Signed
-import org.tesselation.crypto.ops._
+import org.tesselation.cli.env
+import org.tesselation.cli.env.EnvConfig
 import org.tesselation.keytool.KeyStoreUtils
-import org.tesselation.keytool.security.SecurityProvider
 import org.tesselation.kryo.KryoSerializer
 import org.tesselation.schema.address.Address
 import org.tesselation.schema.kryo.schemaKryoRegistrar
 import org.tesselation.schema.transaction.{Transaction, TransactionAmount, TransactionFee}
-import org.tesselation.wallet.cli.env.EnvConfig
+import org.tesselation.security.SecurityProvider
+import org.tesselation.security.key.ops._
+import org.tesselation.security.signature.Signed
 import org.tesselation.wallet.cli.method._
 import org.tesselation.wallet.transaction.createTransaction
 import org.tesselation.wallet.transaction.io.{readFromJsonFile, writeToJsonFile}
@@ -38,7 +39,7 @@ object Main
   implicit val logger = Slf4jLogger.getLogger[IO]
 
   override def main: Opts[IO[ExitCode]] =
-    (cli.method.opts, cli.env.opts).mapN {
+    (cli.method.opts, env.opts).mapN {
       case (method, envs) =>
         SecurityProvider.forAsync[IO].use { implicit sp =>
           KryoSerializer.forAsync[IO](schemaKryoRegistrar).use { implicit kryo =>

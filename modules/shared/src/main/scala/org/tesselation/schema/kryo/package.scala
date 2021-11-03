@@ -1,10 +1,9 @@
 package org.tesselation.schema
-
-import org.tesselation.crypto.Signed
 import org.tesselation.schema.address.AddressCache
 import org.tesselation.schema.gossip._
 import org.tesselation.schema.node.NodeState
 import org.tesselation.schema.peer.SignRequest
+import org.tesselation.security.signature.Signed
 
 package object kryo {
 

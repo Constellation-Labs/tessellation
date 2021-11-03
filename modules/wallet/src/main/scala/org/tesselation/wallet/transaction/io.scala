@@ -1,8 +1,8 @@
 package org.tesselation.wallet.transaction
 import cats.effect.Async
 
-import org.tesselation.crypto.Signed
 import org.tesselation.schema.transaction.Transaction
+import org.tesselation.security.signature.Signed
 
 import _root_.io.circe.fs2._
 import _root_.io.circe.syntax._

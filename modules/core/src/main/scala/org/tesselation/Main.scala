@@ -15,13 +15,13 @@ import org.tesselation.infrastructure.db.Database
 import org.tesselation.infrastructure.genesis.{Loader => GenesisLoader}
 import org.tesselation.infrastructure.gossip.RumorHandlers
 import org.tesselation.keytool.KeyStoreUtils
-import org.tesselation.keytool.security.SecurityProvider
 import org.tesselation.kryo.{KryoSerializer, coreKryoRegistrar}
 import org.tesselation.modules._
 import org.tesselation.resources.MkHttpServer.ServerName
 import org.tesselation.resources.{AppResources, MkHttpServer}
 import org.tesselation.schema.node.NodeState
 import org.tesselation.schema.peer.PeerId
+import org.tesselation.security.SecurityProvider
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 

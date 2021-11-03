@@ -4,8 +4,9 @@ import cats.Eq
 import cats.data.NonEmptyList
 import cats.kernel.laws.discipline.SemigroupTests
 
-import org.tesselation.crypto.signature.{Signature, SignatureProof}
 import org.tesselation.schema.ID.Id
+import org.tesselation.security.signature.Signed
+import org.tesselation.security.signature.signature.{Signature, SignatureProof}
 
 import org.scalacheck.{Arbitrary, Gen}
 import weaver.FunSuite

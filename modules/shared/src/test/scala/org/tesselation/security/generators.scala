@@ -1,4 +1,4 @@
-package org.tesselation.keytool
+package org.tesselation.security
 
 import org.scalacheck.Gen
 

@@ -2,12 +2,12 @@ package org.tesselation.schema
 
 import cats.effect.{IO, Resource}
 
-import org.tesselation.crypto.hash.Hash
 import org.tesselation.ext.crypto._
 import org.tesselation.kryo.KryoSerializer
 import org.tesselation.schema.address.Address
 import org.tesselation.schema.kryo.schemaKryoRegistrar
 import org.tesselation.schema.transaction._
+import org.tesselation.security.hash.Hash
 
 import eu.timepit.refined.auto._
 import suite.ResourceSuite

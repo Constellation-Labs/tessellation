@@ -1,4 +1,4 @@
-package org.tesselation.crypto
+package org.tesselation.security
 
 import java.nio.charset.Charset
 import java.security.spec.X509EncodedKeySpec
@@ -8,8 +8,7 @@ import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tesselation.keytool.security.KeyProvider.ECDSA
-import org.tesselation.keytool.security.{PublicKeyHexPrefix, SecurityProvider}
+import org.tesselation.security.key.ECDSA
 
 import io.estatico.newtype.macros.newtype
 import io.estatico.newtype.ops._

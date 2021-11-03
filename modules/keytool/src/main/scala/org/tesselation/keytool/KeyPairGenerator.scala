@@ -1,11 +1,14 @@
-package org.tesselation.keytool.security
+package org.tesselation.keytool
 
 import java.security.spec.ECGenParameterSpec
-import java.security.{KeyPair, KeyPairGenerator}
+import java.security.{KeyPair, KeyPairGenerator => JKeyPairGenerator}
 
 import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+
+import org.tesselation.security.key.{ECDSA, secp256k}
+import org.tesselation.security.{SecureRandom, SecurityProvider}
 
 /**
   * Need to compare this to:
@@ -27,16 +30,14 @@ import cats.syntax.functor._
   *
   */
 
-object KeyProvider {
-  val ECDSA = "ECDsA"
-  val secp256k = "secp256k1"
+object KeyPairGenerator {
 
-  private def getKeyPairGenerator[F[_]: Async: SecurityProvider]: F[KeyPairGenerator] =
+  private def getKeyPairGenerator[F[_]: Async: SecurityProvider]: F[JKeyPairGenerator] =
     for {
       ecSpec <- Async[F].delay { new ECGenParameterSpec(secp256k) }
       bcProvider = SecurityProvider[F].provider
-      keyGen <- Async[F].delay { KeyPairGenerator.getInstance(ECDSA, bcProvider) }
-      secureRandom <- WithSecureRandom.get[F]
+      keyGen <- Async[F].delay { JKeyPairGenerator.getInstance(ECDSA, bcProvider) }
+      secureRandom <- SecureRandom.get[F]
       _ <- Async[F].delay { keyGen.initialize(ecSpec, secureRandom) }
     } yield keyGen
 

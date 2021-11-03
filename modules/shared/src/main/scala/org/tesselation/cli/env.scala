@@ -1,4 +1,4 @@
-package org.tesselation.wallet.cli
+package org.tesselation.cli
 
 import cats.syntax.contravariantSemigroupal._
 

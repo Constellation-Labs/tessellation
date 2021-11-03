@@ -2,11 +2,11 @@ package org.tesselation.schema
 
 import cats.effect.Concurrent
 
-import org.tesselation.crypto.Signed
-import org.tesselation.crypto.hash.Hash
 import org.tesselation.ext.codecs.BinaryCodec
 import org.tesselation.kryo.KryoSerializer
 import org.tesselation.schema.peer.PeerId
+import org.tesselation.security.hash.Hash
+import org.tesselation.security.signature.Signed
 
 import org.http4s.{EntityDecoder, EntityEncoder}
 

@@ -1,4 +1,4 @@
-package org.tesselation.keytool.security
+package org.tesselation.security
 
 import cats.Applicative
 import cats.effect.{Async, Resource}

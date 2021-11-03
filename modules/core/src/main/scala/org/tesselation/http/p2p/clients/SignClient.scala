@@ -3,10 +3,10 @@ package org.tesselation.http.p2p.clients
 import cats.effect.Concurrent
 import cats.syntax.functor._
 
-import org.tesselation.crypto.Signed
 import org.tesselation.http.p2p.PeerResponse
 import org.tesselation.http.p2p.PeerResponse.PeerResponse
 import org.tesselation.schema.peer.{JoinRequest, RegistrationRequest, SignRequest}
+import org.tesselation.security.signature.Signed
 
 import org.http4s.Method._
 import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder}

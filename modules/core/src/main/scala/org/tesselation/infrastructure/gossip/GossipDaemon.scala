@@ -12,16 +12,16 @@ import cats.syntax.traverseFilter._
 import cats.{Applicative, Parallel}
 
 import org.tesselation.config.types.GossipDaemonConfig
-import org.tesselation.crypto.hash.Hash
 import org.tesselation.domain.Daemon
 import org.tesselation.domain.cluster.storage.ClusterStorage
 import org.tesselation.domain.gossip.RumorStorage
 import org.tesselation.ext.crypto._
 import org.tesselation.http.p2p.clients.GossipClient
-import org.tesselation.keytool.security.SecurityProvider
 import org.tesselation.kryo.KryoSerializer
 import org.tesselation.schema.gossip._
 import org.tesselation.schema.peer.{Peer, PeerId}
+import org.tesselation.security.SecurityProvider
+import org.tesselation.security.hash.Hash
 
 import fs2.Stream
 import org.typelevel.log4cats.slf4j.Slf4jLogger

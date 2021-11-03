@@ -11,9 +11,9 @@ import org.tesselation.domain.Daemon
 import org.tesselation.http.p2p.P2PClient
 import org.tesselation.infrastructure.cluster.daemon.NodeStateDaemon
 import org.tesselation.infrastructure.gossip.{GossipDaemon, RumorHandler}
-import org.tesselation.keytool.security.SecurityProvider
 import org.tesselation.kryo.KryoSerializer
 import org.tesselation.schema.peer.PeerId
+import org.tesselation.security.SecurityProvider
 
 object Daemons {
 

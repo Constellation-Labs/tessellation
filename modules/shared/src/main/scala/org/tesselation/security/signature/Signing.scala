@@ -1,10 +1,12 @@
-package org.tesselation.keytool.security
+package org.tesselation.security.signature
 
 import java.security.{PrivateKey, PublicKey, Signature}
 
 import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+
+import org.tesselation.security.{SecureRandom, SecurityProvider}
 
 object Signing {
   val defaultSignFunc = "SHA512withECDSA"
@@ -17,9 +19,11 @@ object Signing {
       s <- Async[F].delay {
         Signature.getInstance(signFunc, SecurityProvider[F].provider)
       }
-      _ <- WithSecureRandom.get[F].flatMap { secureRandom =>
-        Async[F].delay { s.initSign(privateKey, secureRandom) }
-      }
+      _ <- SecureRandom
+        .get[F]
+        .flatMap { secureRandom =>
+          Async[F].delay { s.initSign(privateKey, secureRandom) }
+        }
       _ <- Async[F].delay { s.update(bytes) }
       signed <- Async[F].delay { s.sign() }
     } yield signed

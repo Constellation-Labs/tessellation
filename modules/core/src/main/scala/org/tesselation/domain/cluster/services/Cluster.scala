@@ -1,7 +1,6 @@
 package org.tesselation.domain.cluster.services
-
-import org.tesselation.crypto.Signed
 import org.tesselation.schema.peer.{RegistrationRequest, SignRequest}
+import org.tesselation.security.signature.Signed
 
 trait Cluster[F[_]] {
   def getRegistrationRequest: F[RegistrationRequest]
