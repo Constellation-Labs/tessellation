@@ -17,11 +17,13 @@ import org.tesselation.schema.ID.Id
 import org.tesselation.schema.peer.PeerId
 import org.tesselation.security._
 import org.tesselation.security.hash.Hash
+import org.tesselation.security.hex.Hex
 
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import io.estatico.newtype.macros.newtype
+import io.estatico.newtype.ops._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 import Signing.{signData, verifySignature}
@@ -30,7 +32,7 @@ object signature {
 
   @derive(decoder, encoder, show, eqv)
   @newtype
-  case class Signature(value: String)
+  case class Signature(value: Hex)
 
   @derive(decoder, encoder, show, eqv)
   case class SignatureProof(id: Id, signature: Signature)
@@ -44,7 +46,7 @@ object signature {
       signature <- data.hashF
         .map(_.value.getBytes)
         .flatMap(signData(_)(keyPair.getPrivate))
-        .map(bytes2hex(_))
+        .map(Hex.fromBytes(_))
         .map(Signature(_))
     } yield SignatureProof(id, signature)
 
@@ -53,8 +55,8 @@ object signature {
     signatureProof: SignatureProof
   ): F[Boolean] = {
     val verifyResult = for {
-      signatureBytes <- Async[F].delay { hex2bytes(signatureProof.signature.value) }
-      publicKey <- hexToPublicKey(signatureProof.id.hex)
+      signatureBytes <- Async[F].delay { signatureProof.signature.coerce.toBytes }
+      publicKey <- signatureProof.id.hex.toPublicKey
       result <- verifySignature(hash.value.getBytes(StandardCharsets.UTF_8), signatureBytes)(publicKey)
     } yield result
 

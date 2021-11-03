@@ -5,6 +5,7 @@ import cats.syntax.option._
 
 import org.tesselation.schema.generators._
 import org.tesselation.schema.peer.{Peer, PeerId}
+import org.tesselation.security.hex.Hex
 
 import com.comcast.ip4s.IpLiteralSyntax
 import io.chrisdavenport.mapref.MapRef
@@ -56,7 +57,7 @@ object ClusterStorageSuite extends SimpleIOSuite with Checkers {
       for {
         ref <- MapRef.ofSingleImmutableMap[F, PeerId, Peer](Map(peer.id -> peer))
         cs = ClusterStorage.make[IO](ref)
-        hasPeerId <- cs.hasPeerId(PeerId("unknown"))
+        hasPeerId <- cs.hasPeerId(PeerId(Hex("unknown")))
       } yield expect(!hasPeerId)
     }
   }

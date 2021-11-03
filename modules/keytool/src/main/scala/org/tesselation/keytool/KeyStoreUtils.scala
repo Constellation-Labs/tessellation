@@ -13,7 +13,11 @@ import cats.syntax.functor._
 
 import org.tesselation.keytool.cert.{DistinguishedName, SelfSignedCertificate}
 import org.tesselation.security._
+import org.tesselation.security.hex.Hex
+import org.tesselation.security.key.ops._
 import org.tesselation.security.signature.Signing
+
+import io.estatico.newtype.ops._
 
 object KeyStoreUtils {
 
@@ -27,15 +31,15 @@ object KeyStoreUtils {
     alias: String,
     storePassword: Array[Char],
     keyPassword: Array[Char]
-  ): F[String] =
+  ): F[Hex] =
     for {
       keyPair <- readKeyPairFromStore(path, alias, storePassword, keyPassword)
-      hex = privateKeyToHex(keyPair.getPrivate)
+      hex = keyPair.getPrivate.toHex
       _ <- writer(pathDir(path) + privateKeyHexName)
         .use(
           os =>
             Async[F].delay {
-              os.write(hex.getBytes(Charset.forName("UTF-8")))
+              os.write(hex.coerce.getBytes(Charset.forName("UTF-8")))
             }
         )
     } yield hex

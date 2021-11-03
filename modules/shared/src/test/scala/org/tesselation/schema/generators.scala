@@ -4,6 +4,7 @@ import org.tesselation.generators._
 import org.tesselation.schema.cluster.SessionToken
 import org.tesselation.schema.node.NodeState
 import org.tesselation.schema.peer.{Peer, PeerId}
+import org.tesselation.security.hex.Hex
 
 import com.comcast.ip4s.{Host, Port}
 import org.scalacheck.Gen
@@ -11,7 +12,7 @@ import org.scalacheck.Gen
 object generators {
 
   val peerIdGen: Gen[PeerId] =
-    nesGen(PeerId.apply)
+    nesGen(str => PeerId(Hex(str)))
 
   val hostGen: Gen[Host] =
     for {

@@ -8,13 +8,17 @@ import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tesselation.security.key.ECDSA
+import org.tesselation.security.key.{ECDSA, PublicKeyHexPrefix}
 
+import derevo.cats.{eqv, order, show}
+import derevo.circe.magnolia._
+import derevo.derive
 import io.estatico.newtype.macros.newtype
 import io.estatico.newtype.ops._
 
 object hex {
 
+  @derive(decoder, encoder, eqv, show, order, keyEncoder, keyDecoder)
   @newtype
   case class Hex(value: String) {
 
