@@ -5,7 +5,7 @@ import cats.syntax.applicativeError._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tesselation.domain.cluster.programs.{Joining, PeerDiscovery}
+import org.tesselation.domain.cluster.programs.{Joining, PeerDiscovery, TrustPush}
 import org.tesselation.domain.cluster.storage.ClusterStorage
 import org.tesselation.domain.trust.storage.TrustStorage
 import org.tesselation.ext.http4s.refined._
@@ -24,6 +24,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 final case class ClusterRoutes[F[_]: Async](
   joining: Joining[F],
   peerDiscovery: PeerDiscovery[F],
+  trustPush: TrustPush[F],
   clusterStorage: ClusterStorage[F],
   trustStorage: TrustStorage[F]
 ) extends Http4sDsl[F] {
@@ -54,6 +55,7 @@ final case class ClusterRoutes[F[_]: Async](
       req.decodeR[InternalTrustUpdateBatch] { trustUpdates =>
         trustStorage
           .updateTrust(trustUpdates)
+          .flatMap(_ => trustPush.publishUpdated())
           .flatMap(_ => Ok())
           .recoverWith {
             case _ =>

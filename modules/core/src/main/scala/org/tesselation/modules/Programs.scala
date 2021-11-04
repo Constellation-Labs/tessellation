@@ -4,7 +4,7 @@ import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tesselation.domain.cluster.programs.{Joining, PeerDiscovery}
+import org.tesselation.domain.cluster.programs.{Joining, PeerDiscovery, TrustPush}
 import org.tesselation.http.p2p.P2PClient
 import org.tesselation.kryo.KryoSerializer
 import org.tesselation.schema.peer.PeerId
@@ -31,10 +31,12 @@ object Programs {
         nodeId,
         pd
       )
-    } yield new Programs[F](pd, joining) {}
+      trustPush = TrustPush.make(storages.trust, services.gossip)
+    } yield new Programs[F](pd, joining, trustPush) {}
 }
 
 sealed abstract class Programs[F[_]: Async: SecurityProvider: KryoSerializer] private (
   val peerDiscovery: PeerDiscovery[F],
-  val joining: Joining[F]
-) {}
+  val joining: Joining[F],
+  val trustPush: TrustPush[F]
+)

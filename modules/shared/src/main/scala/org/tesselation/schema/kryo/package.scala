@@ -9,6 +9,7 @@ import org.tesselation.schema.address.AddressCache
 import org.tesselation.schema.gossip._
 import org.tesselation.schema.node.NodeState
 import org.tesselation.schema.peer.SignRequest
+import org.tesselation.schema.trust.PublicTrust
 import org.tesselation.security.signature.Signed
 import org.tesselation.security.signature.signature.SignatureProof
 
@@ -35,6 +36,7 @@ package object kryo {
     NodeState.SessionStarted.getClass -> 212,
     NodeState.Offline.getClass -> 213,
     NodeState.StartingSession.getClass -> 214,
-    NodeState.Unknown.getClass -> 215
+    NodeState.Unknown.getClass -> 215,
+    classOf[PublicTrust] -> 216
   )
 }
