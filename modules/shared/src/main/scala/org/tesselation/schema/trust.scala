@@ -5,7 +5,6 @@ import org.tesselation.schema.peer.PeerId
 import derevo.cats.show
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
-import io.estatico.newtype.macros.newtype
 
 object trust {
 
@@ -30,7 +29,8 @@ object trust {
   }
 
   @derive(decoder, encoder, show)
-  @newtype
-  case class PublicTrust(labels: Map[PeerId, Double])
+  case class PublicTrust(
+    labels: Map[PeerId, Double]
+  )
 
 }
