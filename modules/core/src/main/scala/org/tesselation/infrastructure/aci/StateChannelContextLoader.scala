@@ -43,7 +43,7 @@ class StateChannelContextLoader[F[_]: Async] {
             .flatMap(createContext(classLoader, _))
         }
       }
-      _ <- logger.info(s"${contexts.size} state channels loaded")
+      _ <- logger.info(s"${contexts.size} state channel(s) loaded")
     } yield contexts.map(ctx => ctx.address -> ctx).toMap
 
   private def readManifest(url: URL): Resource[F, String] =
