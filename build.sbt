@@ -1,4 +1,4 @@
-import Dependencies.{Libraries, _}
+import Dependencies._
 
 ThisBuild / scalaVersion := "2.13.5"
 ThisBuild / version := "0.0.2"
@@ -45,7 +45,7 @@ lazy val root = (project in file("."))
   .settings(
     name := "tessellation"
   )
-  .aggregate(keytool, kernel, shared, core, testShared, wallet)
+  .aggregate(keytool, kernel, shared, core, dag, testShared, wallet)
 
 lazy val kernel = (project in file("modules/kernel"))
   .enablePlugins(AshScriptPlugin)
@@ -276,6 +276,17 @@ lazy val core = (project in file("modules/core"))
       Libraries.skunkCirce,
       Libraries.squants
     )
+  )
+
+lazy val dag = (project in file("modules/dag"))
+  .dependsOn(core)
+  .settings(
+    name := "tesselation-dag",
+    Defaults.itSettings,
+    scalafixCommonSettings,
+    commonSettings,
+    commonTestSettings,
+    makeBatScripts := Seq()
   )
 
 addCommandAlias("runLinter", ";scalafixAll --rules OrganizeImports")

@@ -1,4 +1,6 @@
 package org.tessellation.schema
+import cats.implicits.catsSyntaxSemigroup
+
 import org.tessellation.schema.address.Address
 import org.tessellation.security.Encodable
 import org.tessellation.security.hash.Hash
@@ -23,7 +25,9 @@ object transaction {
 
   @derive(decoder, encoder, eqv, show)
   @newtype
-  case class TransactionOrdinal(value: NonNegBigInt)
+  case class TransactionOrdinal(value: NonNegBigInt) {
+    def next: TransactionOrdinal = TransactionOrdinal(value |+| BigInt(1))
+  }
 
   @derive(decoder, encoder, eqv, show)
   case class TransactionReference(hash: Hash, ordinal: TransactionOrdinal)
@@ -59,6 +63,9 @@ object transaction {
             salt.coerce.toHexString
           )
         )
+
+    // TODO: do we want this, or would we rather use parent.ordinal.next everywhere we need this tx's ordinal
+    def ordinal: TransactionOrdinal = parent.ordinal.next
   }
 
   object Transaction {

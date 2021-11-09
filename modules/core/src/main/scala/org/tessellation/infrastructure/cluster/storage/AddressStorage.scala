@@ -4,9 +4,10 @@ import cats.effect.MonadCancelThrow
 import cats.syntax.applicative._
 import cats.syntax.functor._
 
-import org.tessellation.domain.cluster.storage.AddressStorage
+import org.tessellation.domain.cluster.storage._
 import org.tessellation.infrastructure.db.Database
 import org.tessellation.infrastructure.db.context.AddressDBContext
+import org.tessellation.infrastructure.db.schema.StoredAddress
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 
@@ -31,6 +32,9 @@ object AddressStorage {
       override def getBalance(address: Address): F[Balance] =
         run(getAddressBalance(lift(address))).map(_.headOption.getOrElse(Balance(BigInt(0)))).transact(xa)
 
+      override def getMaybeBalance(address: Address): F[Option[Balance]] =
+        run(getAddressBalance(lift(address))).map(_.headOption).transact(xa)
+
       override def updateBalance(address: Address, balance: Balance): F[(Address, Balance)] =
         run(getAddressBalance(lift(address)))
           .map(_.headOption)
@@ -43,5 +47,26 @@ object AddressStorage {
 
       override def clearBalance(address: Address): F[Unit] =
         run(deleteAddressBalance(lift(address))).map(_ => ()).transact(xa)
+
+//      override def updateBatchBalances(addressBalances: Seq[DBUpsertAction[StoredAddress]]): F[Unit] =
+//        run(
+//          liftQuery(addressBalances).foreach {
+//            case Insert(StoredAddress(address, balance)) =>
+//              insertAddressBalance(address, balance)
+//            case Update(StoredAddress(address, balance)) =>
+//              updateAddressBalance(address, balance)
+//          }
+//        ).transact(xa)
+//          .as(())
+
+      override def updateBatchBalances(addressBalances: Seq[DBUpsertAction[StoredAddress]]): F[Unit] = {
+        val inserts = addressBalances.collect { case Insert(value) => value }
+        val updates = addressBalances.collect { case Update(value) => value }
+
+        for {
+          _ <- run(liftQuery(inserts).foreach(sa => insertAddressBalance(sa.address, sa.balance)))
+          _ <- run(liftQuery(updates).foreach(sa => updateAddressBalance(sa.address, sa.balance)))
+        } yield ()
+      }.transact(xa)
     }
 }
