@@ -2,6 +2,7 @@ package org.tesselation.kernel
 
 import cats.syntax.either._
 import cats.syntax.parallel._
+import cats.syntax.semigroup._
 import cats.{Id, Monoid}
 
 import org.tesselation.kernel.Cell.NullTerminal
@@ -68,17 +69,15 @@ object CellMonoidManualTestSuite extends FunSuite {
   }
 
   test("combine different types") {
-    val intToStringCell = LongToStringCell(TestLongInput(1L))
-    val stringToIntCell = StringToLongCell(TestStringInput("2"))
+    val intToStringCell: Cell[Id, StackF, Ω, Either[CellError, Ω], Ω] = LongToStringCell(TestLongInput(1L))
+    val stringToIntCell: Cell[Id, StackF, Ω, Either[CellError, Ω], Ω] = StringToLongCell(TestStringInput("2"))
 
     val expected = (intToStringCell.run(), stringToIntCell.run()).parMapN {
       case (intToStringResult, stringToIntResult) =>
         intToStringResult.flatMap(a => stringToIntResult.map(b => a :: b))
     }
 
-    // TODO: Investigate why syntax doesn't work
-    //      val combined  = l1Cell |+| l0Cell
-    val combined = M.combine(intToStringCell, stringToIntCell)
+    val combined = intToStringCell |+| stringToIntCell
 
     expect.same(expected, combined.run())
   }
@@ -88,7 +87,7 @@ object CellMonoidManualTestSuite extends FunSuite {
     case class TestLongInput(value: Long) extends Ω
     case class TestStringOutput(value: String) extends Ω
 
-    case class LongToStringCell(input: TestLongInput)
+    class LongToStringCell(input: TestLongInput)
         extends Cell[Id, StackF, Ω, Either[CellError, Ω], Ω](
           input,
           scheme.hyloM(
@@ -106,11 +105,15 @@ object CellMonoidManualTestSuite extends FunSuite {
           _ => InputLongF(input.value)
         ) {}
 
+    object LongToStringCell {
+      def apply(input: TestLongInput): LongToStringCell = new LongToStringCell(input)
+    }
+
     case class InputStringF(input: String) extends Ω
     case class TestStringInput(value: String) extends Ω
     case class TestLongOutput(value: Long) extends Ω
 
-    case class StringToLongCell(input: TestStringInput)
+    class StringToLongCell(input: TestStringInput)
         extends Cell[Id, StackF, Ω, Either[CellError, Ω], Ω](
           input,
           scheme.hyloM(
@@ -127,5 +130,9 @@ object CellMonoidManualTestSuite extends FunSuite {
           ),
           _ => InputStringF(input.value)
         ) {}
+  }
+
+  object StringToLongCell {
+    def apply(input: TestStringInput): StringToLongCell = new StringToLongCell(input)
   }
 }
