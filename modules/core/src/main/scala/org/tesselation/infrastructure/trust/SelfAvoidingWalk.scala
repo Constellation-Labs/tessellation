@@ -337,16 +337,15 @@ object SelfAvoidingWalk extends StrictLogging {
   ): TrustNode = {
 
     var nodesCycle = nodes
-    // TODO: Fix stack overflow issue
-    //    if (nodesCycle.size > 2) { //note, need min of 3 nodes
-    //      println(s"runWalkFeedbackUpdateSingleNode nodes ${nodes.toList} for node $selfId")
-    //      (0 until feedbackCycles).foreach { cycle =>
-    //        println(s"feedback cycle $cycle for node $selfId")
-    //        nodesCycle = runWalkBatchesFeedback(selfId, nodes, batchIterationSize, epsilon, maxIterations)
-    //      }
-    //    }
+    if (nodesCycle.size > 2) { //note, need min of 3 nodes
+      //          println(s"runWalkFeedbackUpdateSingleNode nodes ${nodes.toList} for node $selfId")
+      (0 until feedbackCycles).foreach { cycle =>
+        //            println(s"feedback cycle $cycle for node $selfId")
+        nodesCycle = runWalkBatchesFeedback(selfId, nodes, batchIterationSize, epsilon, maxIterations)
+      }
+    }
     val res: TrustNode = nodesCycle.filter(_.id == selfId).head
-    println(s"runWalkFeedbackUpdateSingleNode res: TrustNode ${res} for node $selfId")
+//    println(s"runWalkFeedbackUpdateSingleNode res: TrustNode ${res} for node $selfId")
 
     res
   }
