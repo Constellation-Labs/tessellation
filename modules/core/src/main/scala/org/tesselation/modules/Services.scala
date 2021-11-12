@@ -35,7 +35,7 @@ object Services {
       session = Session.make[F](storages.session, storages.cluster, storages.node)
       cluster = Cluster
         .make[F](cfg, nodeId, keyPair, storages.session)
-      gossip <- Gossip.make[F](queues.rumor, storages.session, nodeId, keyPair)
+      gossip <- Gossip.make[F](queues.rumor, nodeId, keyPair)
       stateChannelRouter <- StateChannelRouter.make[F]
     } yield
       new Services[F](

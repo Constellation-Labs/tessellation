@@ -1,40 +1,57 @@
 package org.tesselation.schema
 
 import cats.effect.Concurrent
-import cats.syntax.order._
+import cats.syntax.contravariant._
 import cats.syntax.show._
 import cats.{Order, Show}
 
+import scala.reflect.runtime.universe.{TypeTag, typeOf}
+
 import org.tesselation.ext.codecs.BinaryCodec
 import org.tesselation.kryo.KryoSerializer
-import org.tesselation.schema.cluster.SessionToken
 import org.tesselation.schema.peer.PeerId
 import org.tesselation.security.hash.Hash
 import org.tesselation.security.signature.Signed
 
+import derevo.cats.{eqv, order, show}
+import derevo.derive
+import derevo.scalacheck.arbitrary
+import eu.timepit.refined.scalacheck.numeric._
 import eu.timepit.refined.types.numeric.PosLong
+import io.estatico.newtype.macros.newtype
 import org.http4s.{EntityDecoder, EntityEncoder}
 
 object gossip {
+
+  @derive(arbitrary, eqv, show)
+  @newtype
+  case class ContentType(value: String)
+
+  @derive(arbitrary, eqv, show, order)
+  case class Ordinal(generation: PosLong, counter: PosLong)
+
+  object ContentType {
+    def of[A: TypeTag]: ContentType = ContentType(typeOf[A].toString)
+  }
 
   type HashAndRumor = (Hash, Signed[Rumor])
   type RumorBatch = List[HashAndRumor]
 
   case class ReceivedRumor[A](origin: PeerId, content: A)
 
+  @derive(arbitrary)
   case class Rumor(
-    tpe: String,
     origin: PeerId,
-    counter: PosLong,
-    session: SessionToken,
-    content: Array[Byte]
+    ordinal: Ordinal,
+    content: Array[Byte],
+    contentType: ContentType
   )
 
   object Rumor {
-    implicit val orderInstances: Order[Rumor] = (x: Rumor, y: Rumor) => x.counter.compare(y.counter)
+    implicit val orderInstances: Order[Rumor] = Order[Ordinal].contramap[Rumor](_.ordinal)
 
     implicit val showInstances: Show[Rumor] = (t: Rumor) =>
-      s"Rumor(tpe=${t.tpe.show}, origin=${t.origin.show}, counter=${t.counter.show}, session=${t.session.show})"
+      s"Rumor(origin=${t.origin.show}, ordinal=${t.ordinal.show}, contentType=${t.contentType.show}, "
   }
 
   case class StartGossipRoundRequest(

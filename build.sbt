@@ -168,6 +168,7 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.derevoCore,
       Libraries.derevoCats,
       Libraries.derevoCirce,
+      Libraries.derevoScalacheck,
       Libraries.doobieQuill,
       Libraries.guava,
       Libraries.log4cats,
@@ -177,6 +178,7 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.newtype,
       Libraries.refinedCore,
       Libraries.refinedCats,
+      Libraries.refinedScalacheck,
       Libraries.http4sCore
     )
   )

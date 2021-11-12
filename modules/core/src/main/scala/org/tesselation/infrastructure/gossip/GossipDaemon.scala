@@ -2,7 +2,6 @@ package org.tesselation.infrastructure.gossip
 
 import cats.effect.std.{Queue, Random}
 import cats.effect.{Async, Spawn, Temporal}
-import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.eq._
 import cats.syntax.flatMap._
@@ -57,7 +56,6 @@ object GossipDaemon {
         .fromQueueUnterminated(rumorQueue)
         .evalMap(validateHash)
         .evalMap(validateSignature)
-        .evalMap(validateSession)
         .evalMap(rumorStorage.addRumors)
         .map(_.sortBy(_._2))
         .flatMap(Stream.iterable)
@@ -75,7 +73,7 @@ object GossipDaemon {
               if (valid) Applicative[F].unit
               else
                 logger.warn(
-                  s"Discarding rumor of type ${signedRumor.value.tpe} with hash ${hash.show} due to invalid hash."
+                  s"Discarding rumor ${signedRumor.value.show} with hash ${hash.show} due to invalid hash."
                 )
             }
       }
@@ -87,27 +85,8 @@ object GossipDaemon {
             if (valid) Applicative[F].unit
             else
               logger.warn(
-                s"Discarding rumor of type ${signedRumor.value.tpe} with hash ${hash.show} due to invalid hash signature."
+                s"Discarding rumor ${signedRumor.value.show} with hash ${hash.show} due to invalid hash signature."
               )
-          }
-      }
-
-    private def validateSession(batch: RumorBatch): F[RumorBatch] =
-      batch.filterA {
-        case (hash, signedRumor) =>
-          signedRumor.value.origin match {
-            case ownId if ownId === nodeId => true.pure[F]
-            case peerId =>
-              clusterStorage
-                .getPeer(peerId)
-                .map { _.forall(_.session === signedRumor.value.session) }
-                .flatTap { valid =>
-                  if (valid) Applicative[F].unit
-                  else
-                    logger.warn(
-                      s"Discarding rumor of type ${signedRumor.value.tpe} with hash ${hash.show} due to invalid session."
-                    )
-                }
           }
       }
 
@@ -116,11 +95,11 @@ object GossipDaemon {
         rumorHandler
           .run((signedRumor.value, rumorStorage))
           .getOrElseF {
-            logger.warn(s"Unhandled rumor of type ${signedRumor.value.tpe} with hash ${hash.show}.")
+            logger.warn(s"Unhandled rumor ${signedRumor.value.show} with hash ${hash.show}.")
           }
           .handleErrorWith { err =>
             logger.error(err)(
-              s"Error handling rumor of type ${signedRumor.value.tpe} with hash ${hash.show}."
+              s"Error handling rumor ${signedRumor.value.show} with hash ${hash.show}."
             )
           }
     }

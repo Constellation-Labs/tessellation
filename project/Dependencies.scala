@@ -93,6 +93,7 @@ object Dependencies {
 
     val derevoCore = derevo("core")
     val derevoCats = derevo("cats")
+    val derevoScalacheck = derevo("scalacheck")
     val derevoCirce = derevo("circe-magnolia")
 
     val doobieCore = doobie("core")

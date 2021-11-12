@@ -13,6 +13,7 @@ import com.comcast.ip4s.{Host, Port}
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia._
 import derevo.derive
+import derevo.scalacheck.arbitrary
 import io.estatico.newtype.macros.newtype
 import io.estatico.newtype.ops._
 import monocle.macros.GenLens
@@ -23,7 +24,7 @@ object peer {
   @derive(eqv, show, decoder, encoder)
   case class P2PContext(ip: Host, port: Port, id: PeerId)
 
-  @derive(eqv, show, decoder, encoder, keyEncoder, keyDecoder)
+  @derive(arbitrary, eqv, show, decoder, encoder, keyEncoder, keyDecoder)
   @newtype
   case class PeerId(value: Hex)
 

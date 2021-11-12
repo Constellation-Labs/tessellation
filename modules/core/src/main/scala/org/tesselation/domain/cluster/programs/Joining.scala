@@ -12,9 +12,10 @@ import cats.syntax.traverse._
 
 import scala.concurrent.duration.DurationInt
 
+import org.tesselation.config.AppEnvironment
+import org.tesselation.config.AppEnvironment.Testnet
 import org.tesselation.domain.cluster.services.{Cluster, Session}
 import org.tesselation.domain.cluster.storage.{ClusterStorage, SessionStorage}
-import org.tesselation.domain.gossip.RumorStorage
 import org.tesselation.domain.node.NodeStorage
 import org.tesselation.effects.GenUUID
 import org.tesselation.http.p2p.P2PClient
@@ -33,13 +34,13 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 object Joining {
 
   def make[F[_]: Async: GenUUID: SecurityProvider: KryoSerializer](
+    environment: AppEnvironment,
     nodeStorage: NodeStorage[F],
     clusterStorage: ClusterStorage[F],
     p2pClient: P2PClient[F],
     cluster: Cluster[F],
     session: Session[F],
     sessionStorage: SessionStorage[F],
-    rumorStorage: RumorStorage[F],
     selfId: PeerId,
     peerDiscovery: PeerDiscovery[F]
   ): F[Joining[F]] =
@@ -48,13 +49,13 @@ object Joining {
       .flatMap(
         make(
           _,
+          environment,
           nodeStorage,
           clusterStorage,
           p2pClient,
           cluster,
           session,
           sessionStorage,
-          rumorStorage,
           selfId,
           peerDiscovery
         )
@@ -62,24 +63,24 @@ object Joining {
 
   def make[F[_]: Async: GenUUID: SecurityProvider: KryoSerializer](
     joiningQueue: Queue[F, P2PContext],
+    environment: AppEnvironment,
     nodeStorage: NodeStorage[F],
     clusterStorage: ClusterStorage[F],
     p2pClient: P2PClient[F],
     cluster: Cluster[F],
     session: Session[F],
     sessionStorage: SessionStorage[F],
-    rumorStorage: RumorStorage[F],
     selfId: PeerId,
     peerDiscovery: PeerDiscovery[F]
   ): F[Joining[F]] = {
     val joining = new Joining(
+      environment,
       nodeStorage,
       clusterStorage,
       p2pClient,
       cluster,
       session,
       sessionStorage,
-      rumorStorage,
       selfId,
       joiningQueue
     ) {}
@@ -101,13 +102,13 @@ object Joining {
 }
 
 sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerializer] private (
+  environment: AppEnvironment,
   nodeStorage: NodeStorage[F],
   clusterStorage: ClusterStorage[F],
   p2pClient: P2PClient[F],
   cluster: Cluster[F],
   session: Session[F],
   sessionStorage: SessionStorage[F],
-  rumorStorage: RumorStorage[F],
   selfId: PeerId,
   joiningQueue: Queue[F, P2PContext]
 ) {
@@ -170,8 +171,6 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
 
       _ <- clusterStorage.addPeer(peer)
 
-      _ <- rumorStorage.resetCounter(peer.id)
-
       _ <- if (skipJoinRequest) {
         Applicative[F].unit
       } else {
@@ -186,7 +185,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
     for {
       ip <- registrationRequest.ip.pure[F]
 
-      _ <- if (ip.toString != host"127.0.0.1".toString && ip.toString != host"localhost".toString)
+      _ <- if (environment == Testnet || ip.toString != host"127.0.0.1".toString && ip.toString != host"localhost".toString)
         Applicative[F].unit
       else LocalHostNotPermitted.raiseError[F, Unit]
 
