@@ -5,7 +5,7 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.domain.aci.{StateChannelInput, StateChannelRouter}
-import org.tessellation.schema.address.Address
+import org.tessellation.ext.http4s.vars.AddressVar
 
 import org.http4s.dsl.Http4sDsl
 import org.http4s.server.Router
@@ -20,7 +20,7 @@ final case class StateChannelRoutes[F[_]: Async](
   implicit val decoder: EntityDecoder[F, Array[Byte]] = EntityDecoder.byteArrayDecoder[F]
 
   private val httpRoutes: HttpRoutes[F] = HttpRoutes.of[F] {
-    case req @ POST -> Root / Address(address) / "input" =>
+    case req @ POST -> Root / AddressVar(address) / "input" =>
       for {
         payload <- req.as[Array[Byte]]
         input = StateChannelInput(address, payload)
