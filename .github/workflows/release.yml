@@ -38,8 +38,8 @@ jobs:
 
       - name: Copy dependencies
         run: |
-          cp ./modules/keytool/target/scala-2.13/tesselation-keytool-assembly-${{ steps.tagName.outputs.tag }}.jar ./cl-keytool.jar
-          cp ./modules/core/target/scala-2.13/tesselation-core-assembly-${{ steps.tagName.outputs.tag }}.jar ./cl-node.jar
+          cp ./modules/keytool/target/scala-2.13/tessellation-keytool-assembly-${{ steps.tagName.outputs.tag }}.jar ./cl-keytool.jar
+          cp ./modules/core/target/scala-2.13/tessellation-core-assembly-${{ steps.tagName.outputs.tag }}.jar ./cl-node.jar
 
       - name: Upload release assets
         uses: softprops/action-gh-release@v1

@@ -4,8 +4,8 @@ import cats.effect.IO
 import cats.syntax.all._
 import cats.{Applicative, Monad}
 import higherkindness.droste._
-import org.tesselation.kernel.Cell.NullTerminal
-import org.tesselation.kernel.{Cell, CellError, StackF, Ω}
+import org.tessellation.kernel.Cell.NullTerminal
+import org.tessellation.kernel.{Cell, CellError, StackF, Ω}
 
 case class EmptyInput(amount: Int = 0) extends Ω
 

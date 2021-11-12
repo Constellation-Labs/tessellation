@@ -1,4 +1,4 @@
-tesselation
+tessellation
 ===========
 
 ![build](https://img.shields.io/github/workflow/status/Constellation-Labs/tessellation/Create%20Release?label=build)
