@@ -3,7 +3,7 @@ import Dependencies.{Libraries, _}
 ThisBuild / scalaVersion := "2.13.5"
 ThisBuild / version := "0.0.2"
 ThisBuild / organization := "org.constellation"
-ThisBuild / organizationName := "tesselation"
+ThisBuild / organizationName := "tessellation"
 
 ThisBuild / evictionErrorLevel := Level.Warn
 ThisBuild / scalafixDependencies += Libraries.organizeImports
@@ -43,7 +43,7 @@ Global / onChangedBuildSource := ReloadOnSourceChanges
 
 lazy val root = (project in file("."))
   .settings(
-    name := "tesselation"
+    name := "tessellation"
   )
   .aggregate(keytool, kernel, shared, core, testShared, wallet)
 
@@ -51,7 +51,7 @@ lazy val kernel = (project in file("modules/kernel"))
   .enablePlugins(AshScriptPlugin)
   .dependsOn(testShared % Test)
   .settings(
-    name := "tesselation-kernel",
+    name := "tessellation-kernel",
     Defaults.itSettings,
     scalafixCommonSettings,
     commonSettings,
@@ -69,7 +69,7 @@ lazy val wallet = (project in file("modules/wallet"))
   .enablePlugins(AshScriptPlugin)
   .dependsOn(keytool, shared, testShared % Test)
   .settings(
-    name := "tesselation-wallet",
+    name := "tessellation-wallet",
     Defaults.itSettings,
     scalafixCommonSettings,
     commonSettings,
@@ -98,7 +98,7 @@ lazy val keytool = (project in file("modules/keytool"))
   .enablePlugins(AshScriptPlugin)
   .dependsOn(shared, testShared % Test)
   .settings(
-    name := "tesselation-keytool",
+    name := "tessellation-keytool",
     Defaults.itSettings,
     scalafixCommonSettings,
     commonSettings,
@@ -139,7 +139,7 @@ lazy val shared = (project in file("modules/shared"))
   .enablePlugins(AshScriptPlugin)
   .dependsOn(testShared % Test)
   .settings(
-    name := "tesselation-shared",
+    name := "tessellation-shared",
     Defaults.itSettings,
     scalafixCommonSettings,
     commonSettings,
@@ -186,7 +186,7 @@ lazy val shared = (project in file("modules/shared"))
 lazy val testShared = (project in file("modules/test-shared"))
   .configs(IntegrationTest)
   .settings(
-    name := "tesselation-test-shared",
+    name := "tessellation-test-shared",
     Defaults.itSettings,
     scalafixCommonSettings,
     commonSettings,
@@ -221,7 +221,7 @@ lazy val core = (project in file("modules/core"))
   .enablePlugins(AshScriptPlugin)
   .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test)
   .settings(
-    name := "tesselation-core",
+    name := "tessellation-core",
     Defaults.itSettings,
     scalafixCommonSettings,
     commonSettings,

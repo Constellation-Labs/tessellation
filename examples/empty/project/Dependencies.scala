@@ -15,6 +15,6 @@ object Dependencies {
   ).map(_ % "0.8.0")
 
   lazy val tessellationKernel = Seq(
-    "org.constellation" %% "tesselation-kernel" % "0.0.1"
+    "org.constellation" %% "tessellation-kernel" % "0.0.1"
   )
 }
