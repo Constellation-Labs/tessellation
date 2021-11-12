@@ -52,7 +52,7 @@ object Main extends IOApp {
                         queues <- Queues.make[IO].asResource
                         storages <- Storages.make[IO](cfg).asResource
                         services <- Services.make[IO](cfg, nodeId, keyPair, storages, queues).asResource
-                        programs <- Programs.make[IO](storages, services, p2pClient, nodeId).asResource
+                        programs <- Programs.make[IO](cfg, storages, services, p2pClient, nodeId).asResource
 
                         rumorHandler = RumorHandlers.make[IO](storages.cluster, storages.trust).handlers
                         _ <- Daemons.start(storages, services, queues, p2pClient, rumorHandler, nodeId, cfg).asResource

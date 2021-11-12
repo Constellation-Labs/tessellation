@@ -4,6 +4,7 @@ import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
+import org.tesselation.config.types.AppConfig
 import org.tesselation.domain.cluster.programs.{Joining, PeerDiscovery, TrustPush}
 import org.tesselation.http.p2p.P2PClient
 import org.tesselation.kryo.KryoSerializer
@@ -13,6 +14,7 @@ import org.tesselation.security.SecurityProvider
 object Programs {
 
   def make[F[_]: Async: SecurityProvider: KryoSerializer](
+    cfg: AppConfig,
     storages: Storages[F],
     services: Services[F],
     p2pClient: P2PClient[F],
@@ -21,13 +23,13 @@ object Programs {
     for {
       pd <- PeerDiscovery.make(p2pClient, storages.cluster, nodeId)
       joining <- Joining.make(
+        cfg.environment,
         storages.node,
         storages.cluster,
         p2pClient,
         services.cluster,
         services.session,
         storages.session,
-        storages.rumor,
         nodeId,
         pd
       )
