@@ -4,22 +4,24 @@ import java.lang.reflect.Constructor
 import java.net.URL
 import java.util
 
-import cats.Applicative
 import cats.effect.{Async, Resource}
 import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+import cats.syntax.option._
 import cats.syntax.traverse._
 
 import scala.io.Source
 import scala.reflect.ClassTag
 
-import org.tessellation.domain.aci.{StateChannelContext, StateChannelManifest, StdCell}
+import org.tessellation.domain.aci.{StateChannelManifest, StdCell}
 import org.tessellation.ext.kryo._
-import org.tessellation.kernel.Ω
+import org.tessellation.kernel.{HypergraphContext, StateChannelContext, Ω}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
+import org.tessellation.schema.balance.Balance
 
+import io.chrisdavenport.mapref.MapRef
 import io.circe.parser._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -61,9 +63,9 @@ class StateChannelContextLoader[F[_]: Async] {
 
       val cellCtor: Constructor[_] = {
         try {
-          cellClass.getConstructor(inputClass)
+          cellClass.getConstructor(inputClass, classOf[HypergraphContext[F]])
         } catch {
-          case e: NoSuchMethodException => cellClass.getConstructor(classOf[Ω])
+          case _: NoSuchMethodException => cellClass.getConstructor(classOf[Ω], classOf[HypergraphContext[F]])
         }
       }
 
@@ -73,14 +75,20 @@ class StateChannelContextLoader[F[_]: Async] {
       }
 
       KryoSerializer.forAsync[F](kryoRegistrar).use { implicit serializer =>
-        Applicative[F].pure(new StateChannelContext[F] {
-          override val address: Address = manifest.address
+        MapRef.ofConcurrentHashMap[F, Address, Balance]().map { balances =>
+          new StateChannelContext[F] {
+            override val address: Address = manifest.address
 
-          override def createCell(inputBytes: Array[Byte]): F[StdCell[F]] =
-            inputBytes.fromBinaryF[Ω](inputClassTag).map { input =>
-              cellCtor.newInstance(input).asInstanceOf[StdCell[F]]
-            }
-        })
+            override def createCell(inputBytes: Array[Byte], hypergraphContext: HypergraphContext[F]): F[StdCell[F]] =
+              inputBytes.fromBinaryF[Ω](inputClassTag).map { input =>
+                cellCtor.newInstance(input, hypergraphContext).asInstanceOf[StdCell[F]]
+              }
+
+            override def getBalance(address: Address): F[Balance] =
+              balances(address).get.map(_.getOrElse(Balance.empty))
+            override def setBalance(address: Address, balance: Balance): F[Unit] = balances(address).set(balance.some)
+          }
+        }
       }
     }
 

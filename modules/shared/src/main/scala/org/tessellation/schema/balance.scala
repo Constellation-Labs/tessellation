@@ -21,6 +21,8 @@ object balance {
   case class Balance(value: NonNegBigInt)
 
   object Balance {
+    val empty: Balance = Balance(NonNegBigInt.unsafeFrom(BigInt(0)))
+
     implicit val quillEncode: MappedEncoding[Balance, String] =
       MappedEncoding[Balance, String](_.coerce.value.toString())
     implicit val quillDecode: MappedEncoding[String, Balance] = MappedEncoding[String, Balance](
