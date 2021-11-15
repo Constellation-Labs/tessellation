@@ -49,7 +49,7 @@ lazy val root = (project in file("."))
 
 lazy val kernel = (project in file("modules/kernel"))
   .enablePlugins(AshScriptPlugin)
-  .dependsOn(testShared % Test)
+  .dependsOn(shared, testShared % Test)
   .settings(
     name := "tessellation-kernel",
     Defaults.itSettings,

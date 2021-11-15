@@ -13,6 +13,7 @@ import weaver.SimpleIOSuite
 import weaver.scalacheck.Checkers
 
 object ClusterStorageSuite extends SimpleIOSuite with Checkers {
+
   test("getPeers returns an empty Set") {
     for {
       peers <- MapRef.ofSingleImmutableMap[F, PeerId, Peer](Map.empty)
