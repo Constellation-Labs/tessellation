@@ -5,11 +5,19 @@
         </encoder>
     </appender>
 
-    <root level="DEBUG">
+    <root level="INFO">
         <appender-ref ref="STDOUT" />
     </root>
 
-    <logger name="http4s">
+    <logger name="org.tesselation" level="DEBUG">
         <appender-ref ref="STDOUT" />
     </logger>
+
+    <logger name="org.http4s.server.middleware.RequestLogger" level="ERROR">
+        <appender-ref ref="STDOUT" />
+    </logger>
+    <logger name="org.http4s.server.middleware.ResponseLogger" level="ERROR">
+        <appender-ref ref="STDOUT" />
+    </logger>
+
 </configuration>
