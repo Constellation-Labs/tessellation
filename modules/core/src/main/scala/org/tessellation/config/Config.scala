@@ -5,7 +5,7 @@ import cats.syntax.parallel._
 
 import scala.concurrent.duration._
 
-import org.tessellation.config.AppEnvironment.{Mainnet, Testnet}
+import org.tessellation.config.AppEnvironment.{Dev, Mainnet, Testnet}
 import org.tessellation.config.types._
 
 import ciris._
@@ -74,6 +74,7 @@ object Config {
       .default("testnet")
       .as[AppEnvironment]
       .flatMap {
+        case Dev     => default[F](Dev)
         case Testnet => default[F](Testnet)
         case Mainnet => default[F](Mainnet)
       }
