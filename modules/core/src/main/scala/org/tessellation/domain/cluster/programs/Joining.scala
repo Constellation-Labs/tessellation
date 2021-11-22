@@ -13,7 +13,7 @@ import cats.syntax.traverse._
 import scala.concurrent.duration.DurationInt
 
 import org.tessellation.config.AppEnvironment
-import org.tessellation.config.AppEnvironment.Testnet
+import org.tessellation.config.AppEnvironment.Dev
 import org.tessellation.domain.cluster.services.{Cluster, Session}
 import org.tessellation.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tessellation.domain.node.NodeStorage
@@ -185,7 +185,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
     for {
       ip <- registrationRequest.ip.pure[F]
 
-      _ <- if (environment == Testnet || ip.toString != host"127.0.0.1".toString && ip.toString != host"localhost".toString)
+      _ <- if (environment == Dev || ip.toString != host"127.0.0.1".toString && ip.toString != host"localhost".toString)
         Applicative[F].unit
       else LocalHostNotPermitted.raiseError[F, Unit]
 

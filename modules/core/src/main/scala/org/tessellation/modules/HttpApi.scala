@@ -4,7 +4,7 @@ import cats.effect.Async
 import cats.syntax.semigroupk._
 
 import org.tessellation.config.AppEnvironment
-import org.tessellation.config.AppEnvironment.Testnet
+import org.tessellation.config.AppEnvironment.{Dev, Testnet}
 import org.tessellation.http.routes
 import org.tessellation.http.routes._
 import org.tessellation.kryo.KryoSerializer
@@ -45,7 +45,7 @@ sealed abstract class HttpApi[F[_]: Async: KryoSerializer] private (
   private val metricRoutes = MetricRoutes[F](services).routes
 
   private val openRoutes: HttpRoutes[F] =
-    (if (environment == Testnet) debugRoutes else HttpRoutes.empty) <+>
+    (if (environment == Testnet || environment == Dev) debugRoutes else HttpRoutes.empty) <+>
       healthRoutes <+> metricRoutes <+> stateChannelRoutes.publicRoutes
 
   private val p2pRoutes: HttpRoutes[F] =
@@ -61,9 +61,9 @@ sealed abstract class HttpApi[F[_]: Async: KryoSerializer] private (
 
   private val loggers: HttpApp[F] => HttpApp[F] = {
     { http: HttpApp[F] =>
-      RequestLogger.httpApp(true, true)(http)
+      RequestLogger.httpApp(logHeaders = true, logBody = false)(http)
     }.andThen { http: HttpApp[F] =>
-      ResponseLogger.httpApp(true, true)(http)
+      ResponseLogger.httpApp(logHeaders = true, logBody = false)(http)
     }
   }
 

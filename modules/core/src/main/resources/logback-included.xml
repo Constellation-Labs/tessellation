@@ -1,0 +1,67 @@
+<included>
+
+    <property name="APP_LOG" value="logs/app.log"/>
+    <property name="APP_ROLLING_LOG" value="logs/archived/app.%d{yyyy-MM-dd}.%i.log.gz"/>
+    <property name="HTTP_LOG" value="logs/http.log"/>
+    <property name="HTTP_ROLLING_LOG" value="logs/archived/http.%d{yyyy-MM-dd}.%i.log.gz"/>
+    <property name="JSON_LOG" value="logs/json_logs/json.log"/>
+    <property name="JSON_ROLLING_LOG" value="logs/json_logs/json.%d{yyyy-MM-dd_HH}.%i.log"/>
+
+    <appender name="APP" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${APP_LOG}</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${APP_ROLLING_LOG}</fileNamePattern>
+            <maxFileSize>200MB</maxFileSize>
+            <totalSizeCap>2GB</totalSizeCap>
+            <maxHistory>10</maxHistory>
+        </rollingPolicy>
+        <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+            <pattern>%date [%thread] [%X{node_id}] %highlight(%-5level) %cyan(%logger{15}) - %msg%n</pattern>
+        </encoder>
+    </appender>
+    <appender name="HTTP" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${HTTP_LOG}</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${HTTP_ROLLING_LOG}</fileNamePattern>
+            <maxFileSize>200MB</maxFileSize>
+            <totalSizeCap>2GB</totalSizeCap>
+            <maxHistory>10</maxHistory>
+        </rollingPolicy>
+        <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+            <pattern>%date [%thread] [%X{node_id}] %highlight(%-5level) %cyan(%logger{15}) - %msg %n</pattern>
+        </encoder>
+    </appender>
+    <appender name="JSON" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <filter class="ch.qos.logback.classic.filter.ThresholdFilter">
+            <level>DEBUG</level>
+        </filter>
+        <file>${JSON_LOG}</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${JSON_ROLLING_LOG}</fileNamePattern>
+            <maxFileSize>200MB</maxFileSize>
+            <totalSizeCap>2GB</totalSizeCap>
+            <maxHistory>10</maxHistory>
+        </rollingPolicy>
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+            <includeCallerData>true</includeCallerData>
+        </encoder>
+    </appender>
+
+    <root level="INFO">
+        <appender-ref ref="APP" />
+        <appender-ref ref="JSON" />
+    </root>
+
+    <logger name="org.tessellation" level="DEBUG" />
+    <logger name="org.http4s.server.middleware.RequestLogger" level="OFF" />
+    <logger name="org.http4s.server.middleware.ResponseLogger" level="OFF" />
+    <logger name="org.http4s.server.middleware.RequestLogger" level="INFO" additivity="false">
+        <appender-ref ref="HTTP" />
+        <appender-ref ref="JSON" />
+    </logger>
+    <logger name="org.http4s.server.middleware.ResponseLogger" level="INFO" additivity="false">
+        <appender-ref ref="HTTP" />
+        <appender-ref ref="JSON" />
+    </logger>
+
+</included>

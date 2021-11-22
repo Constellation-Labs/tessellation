@@ -14,6 +14,7 @@ import org.tessellation.http.p2p.P2PClient
 import org.tessellation.infrastructure.db.Database
 import org.tessellation.infrastructure.genesis.{Loader => GenesisLoader}
 import org.tessellation.infrastructure.gossip.RumorHandlers
+import org.tessellation.infrastructure.logs.LoggerConfigurator
 import org.tessellation.keytool.KeyStoreUtils
 import org.tessellation.kryo.{KryoSerializer, coreKryoRegistrar}
 import org.tessellation.modules._
@@ -35,7 +36,8 @@ object Main extends IOApp {
 
   override def run(args: List[String]): IO[ExitCode] =
     Config.load[IO].flatMap { cfg =>
-      logger.info(s"Config loaded") >>
+      LoggerConfigurator.configureLogger[IO](cfg) >>
+        logger.info(s"Config loaded") >>
         logger.info(s"App environment: ${cfg.environment}") >>
         parser.parse[IO](args).flatMap { cli =>
           Random.scalaUtilRandom[IO].flatMap { implicit random =>

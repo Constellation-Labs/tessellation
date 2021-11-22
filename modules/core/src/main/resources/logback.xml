@@ -1,7 +1,7 @@
 <configuration>
     <appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
         <encoder>
-            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n</pattern>
+            <pattern>%d{HH:mm:ss.SSS} [%thread] %highlight(%-5level) %cyan(%logger{15}) - %msg%n</pattern>
         </encoder>
     </appender>
 
@@ -9,15 +9,7 @@
         <appender-ref ref="STDOUT" />
     </root>
 
-    <logger name="org.tesselation" level="DEBUG">
-        <appender-ref ref="STDOUT" />
-    </logger>
-
-    <logger name="org.http4s.server.middleware.RequestLogger" level="ERROR">
-        <appender-ref ref="STDOUT" />
-    </logger>
-    <logger name="org.http4s.server.middleware.ResponseLogger" level="ERROR">
-        <appender-ref ref="STDOUT" />
-    </logger>
-
+    <logger name="org.tessellation" level="DEBUG" />
+    <logger name="org.http4s.server.middleware.RequestLogger" level="OFF" />
+    <logger name="org.http4s.server.middleware.ResponseLogger" level="OFF" />
 </configuration>
