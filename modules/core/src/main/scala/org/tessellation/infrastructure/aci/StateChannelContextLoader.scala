@@ -5,6 +5,8 @@ import java.net.URL
 import java.util
 
 import cats.effect.{Async, Resource}
+import cats.syntax.applicative._
+import cats.syntax.applicativeError._
 import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
@@ -13,13 +15,17 @@ import cats.syntax.traverse._
 
 import scala.io.Source
 import scala.reflect.ClassTag
+import scala.util.control.NoStackTrace
 
 import org.tessellation.domain.aci.{StateChannelManifest, StdCell}
 import org.tessellation.ext.kryo._
+import org.tessellation.infrastructure.aci.StateChannelContextLoader.KryoRegistrarIdNotPermitted
+import org.tessellation.kernel.kryo.kernelKryoRegistrar
 import org.tessellation.kernel.{HypergraphContext, StateChannelContext, Ω}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
+import org.tessellation.schema.kryo.schemaKryoRegistrar
 
 import io.chrisdavenport.mapref.MapRef
 import io.circe.parser._
@@ -28,6 +34,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 class StateChannelContextLoader[F[_]: Async] {
 
   val MANIFEST_FILE = "state-channel-manifest.json"
+  val kryoIdPermittedAbove: Int = 1000
   val classLoader: ClassLoader = this.getClass.getClassLoader
 
   private val logger = Slf4jLogger.getLogger[F]
@@ -42,6 +49,12 @@ class StateChannelContextLoader[F[_]: Async] {
           parse(manifestStr)
             .flatMap(_.as[StateChannelManifest])
             .liftTo[F]
+            .flatMap { manifest =>
+              val valid = manifest.kryoRegistrar.forall {
+                case (_, id) => id > kryoIdPermittedAbove
+              }
+              if (valid) manifest.pure[F] else KryoRegistrarIdNotPermitted.raiseError[F, StateChannelManifest]
+            }
             .flatMap(createContext(classLoader, _))
         }
       }
@@ -72,7 +85,7 @@ class StateChannelContextLoader[F[_]: Async] {
       val kryoRegistrar: Map[Class[_], Int] = manifest.kryoRegistrar.map {
         case (className, kryoId) =>
           (loader.loadClass(className), kryoId)
-      }
+      } ++ schemaKryoRegistrar ++ kernelKryoRegistrar
 
       KryoSerializer.forAsync[F](kryoRegistrar).use { implicit serializer =>
         MapRef.ofConcurrentHashMap[F, Address, Balance]().map { balances =>
@@ -102,5 +115,11 @@ class StateChannelContextLoader[F[_]: Async] {
 
     def toList: List[T] = toIterator.toList
   }
+
+}
+
+object StateChannelContextLoader {
+
+  case object KryoRegistrarIdNotPermitted extends NoStackTrace
 
 }
