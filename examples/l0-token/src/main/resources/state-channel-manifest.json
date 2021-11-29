@@ -3,8 +3,7 @@
   "cellClass": "org.example.L0TokenCell",
   "inputClass": "org.example.L0TokenBlock",
   "kryoRegistrar": {
-    "org.example.L0TokenTransaction": 101,
-    "org.example.L0TokenBlock": 102,
-    "org.tessellation.kernel.ProcessSnapshot": 103
+    "org.example.L0TokenTransaction": 1001,
+    "org.example.L0TokenBlock": 1002
   }
 }
