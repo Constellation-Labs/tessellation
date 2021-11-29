@@ -3,6 +3,6 @@
   "cellClass": "org.example.EmptyCell",
   "inputClass": "org.example.EmptyInput",
   "kryoRegistrar": {
-    "org.example.EmptyInput": 101
+    "org.example.EmptyInput": 1001
   }
 }
