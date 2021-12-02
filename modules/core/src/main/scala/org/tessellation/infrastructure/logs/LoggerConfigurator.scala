@@ -5,8 +5,8 @@ import cats.syntax.flatMap._
 
 import scala.io.Source
 
+import org.tessellation.config.AppEnvironment
 import org.tessellation.config.AppEnvironment.{Dev, Mainnet, Testnet}
-import org.tessellation.config.types.AppConfig
 
 import ch.qos.logback.classic.LoggerContext
 import ch.qos.logback.classic.joran.JoranConfigurator
@@ -15,12 +15,12 @@ import org.xml.sax.InputSource
 
 object LoggerConfigurator {
 
-  def configureLogger[F[_]: Async](cfg: AppConfig): F[Unit] = {
+  def configureLogger[F[_]: Async](environment: AppEnvironment): F[Unit] = {
     val loggerContext = LoggerFactory.getILoggerFactory.asInstanceOf[LoggerContext]
     loggerContext.reset()
     val configurator = new JoranConfigurator()
 
-    val logbackConfigSource = cfg.environment match {
+    val logbackConfigSource = environment match {
       case Dev     => "logback.xml"
       case Testnet => "logback-testnet.xml"
       case Mainnet => "logback-mainnet.xml"

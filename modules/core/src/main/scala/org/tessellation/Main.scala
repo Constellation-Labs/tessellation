@@ -4,12 +4,10 @@ import java.security.KeyPair
 
 import cats.effect._
 import cats.effect.std.{Random, Supervisor}
+import cats.syntax.applicative._
 import cats.syntax.show._
 
-import org.tessellation.cli.config.CliMethod
-import org.tessellation.cli.parser
-import org.tessellation.config.Config
-import org.tessellation.config.types.KeyConfig
+import org.tessellation.cli.method.{Run, RunGenesis, RunValidator}
 import org.tessellation.http.p2p.P2PClient
 import org.tessellation.infrastructure.db.Database
 import org.tessellation.infrastructure.genesis.{Loader => GenesisLoader}
@@ -24,9 +22,16 @@ import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.security.SecurityProvider
 
+import com.monovore.decline.Opts
+import com.monovore.decline.effect.CommandIOApp
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-object Main extends IOApp {
+object Main
+    extends CommandIOApp(
+      name = "",
+      header = "Constellation Node",
+      version = "0.0.x"
+    ) {
 
   implicit val logger = Slf4jLogger.getLogger[IO]
 
@@ -34,68 +39,73 @@ object Main extends IOApp {
     def asResource: Resource[IO, A] = Resource.eval { value }
   }
 
-  override def run(args: List[String]): IO[ExitCode] =
-    Config.load[IO].flatMap { cfg =>
-      LoggerConfigurator.configureLogger[IO](cfg) >>
-        logger.info(s"Config loaded") >>
-        logger.info(s"App environment: ${cfg.environment}") >>
-        parser.parse[IO](args).flatMap { cli =>
-          Random.scalaUtilRandom[IO].flatMap { implicit random =>
-            SecurityProvider.forAsync[IO].use { implicit securityProvider =>
-              loadKeyPair[IO](cfg.keyConfig).flatMap { keyPair =>
-                KryoSerializer.forAsync[IO](coreKryoRegistrar).use { implicit kryoPool =>
-                  Database.forAsync[IO](cfg.dbConfig).use { implicit database =>
-                    Supervisor[IO].use { _ =>
-                      (for {
-                        res <- AppResources.make[IO](cfg)
-                        nodeId = PeerId.fromPublic(keyPair.getPublic)
-                        _ <- logger.info(s"This peerId ${nodeId.show}").asResource
-                        p2pClient = P2PClient.make[IO](res.client)
-                        queues <- Queues.make[IO].asResource
-                        storages <- Storages.make[IO](cfg).asResource
-                        services <- Services.make[IO](cfg, nodeId, keyPair, storages, queues).asResource
-                        programs <- Programs.make[IO](cfg, storages, services, p2pClient, nodeId).asResource
+  override def main: Opts[IO[ExitCode]] =
+    cli.method.opts.map { method =>
+      method match {
+        case cliCfg: Run =>
+          val cfg = cliCfg.appConfig
 
-                        rumorHandler = RumorHandlers.make[IO](storages.cluster, storages.trust).handlers
-                        _ <- Daemons.start(storages, services, queues, p2pClient, rumorHandler, nodeId, cfg).asResource
+          LoggerConfigurator.configureLogger[IO](cfg.environment) >>
+            logger.info(s"App environment: ${cfg.environment}") >>
+            Random.scalaUtilRandom[IO].flatMap { implicit random =>
+              SecurityProvider.forAsync[IO].use { implicit securityProvider =>
+                loadKeyPair[IO](cliCfg).flatMap { keyPair =>
+                  KryoSerializer.forAsync[IO](coreKryoRegistrar).use { implicit kryoPool =>
+                    Database.forAsync[IO](cfg.dbConfig).use { implicit database =>
+                      Supervisor[IO].use { _ =>
+                        (for {
+                          res <- AppResources.make[IO](cfg)
+                          nodeId = PeerId.fromPublic(keyPair.getPublic)
+                          _ <- logger.info(s"This peerId ${nodeId.show}").asResource
+                          p2pClient = P2PClient.make[IO](res.client)
+                          queues <- Queues.make[IO].asResource
+                          storages <- Storages.make[IO](cfg).asResource
+                          services <- Services.make[IO](cfg, nodeId, keyPair, storages, queues).asResource
+                          programs <- Programs.make[IO](cfg, storages, services, p2pClient, nodeId).asResource
 
-                        api = HttpApi.make[IO](storages, queues, services, programs, cfg.environment)
-                        _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.httpConfig.publicHttp, api.publicApp)
-                        _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.httpConfig.p2pHttp, api.p2pApp)
-                        _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.httpConfig.cliHttp, api.cliApp)
+                          rumorHandler = RumorHandlers.make[IO](storages.cluster, storages.trust).handlers
+                          _ <- Daemons
+                            .start(storages, services, queues, p2pClient, rumorHandler, nodeId, cfg)
+                            .asResource
 
-                        _ <- (cli.method match {
-                          case CliMethod.RunValidator =>
-                            storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
-                          case CliMethod.RunGenesis =>
-                            storages.node.tryModifyState(
-                              NodeState.Initial,
-                              NodeState.LoadingGenesis,
-                              NodeState.GenesisReady
-                            ) {
-                              GenesisLoader.make[IO].load(cli.genesisPath).flatMap { accounts =>
-                                logger.info(s"Genesis accounts: ${accounts.show}")
-                              }
-                            } >> services.session.createSession
-                          case _ => IO.raiseError(new RuntimeException("Wrong CLI method"))
-                        }).asResource
-                      } yield ()).useForever
+                          api = HttpApi.make[IO](storages, queues, services, programs, cfg.environment)
+                          _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.httpConfig.publicHttp, api.publicApp)
+                          _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.httpConfig.p2pHttp, api.p2pApp)
+                          _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.httpConfig.cliHttp, api.cliApp)
+
+                          _ <- (method match {
+                            case _: RunValidator =>
+                              storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
+                            case m: RunGenesis =>
+                              storages.node.tryModifyState(
+                                NodeState.Initial,
+                                NodeState.LoadingGenesis,
+                                NodeState.GenesisReady
+                              ) {
+                                GenesisLoader.make[IO].load(m.genesisPath).flatMap { accounts =>
+                                  logger.info(s"Genesis accounts: ${accounts.show}")
+                                }
+                              } >> services.session.createSession
+
+                          }).asResource
+                        } yield ()).useForever
+                      }
                     }
                   }
                 }
               }
             }
-          }
-        }
+        case _ => ExitCode.Error.pure[IO]
+      }
+
     }
 
-  private def loadKeyPair[F[_]: Async: SecurityProvider](cfg: KeyConfig): F[KeyPair] =
+  private def loadKeyPair[F[_]: Async: SecurityProvider](cfg: Run): F[KeyPair] =
     KeyStoreUtils
       .readKeyPairFromStore[F](
-        cfg.keystore,
-        cfg.keyalias.value,
-        cfg.storepass.value.toCharArray,
-        cfg.keypass.value.toCharArray
+        cfg.keyStore.value.toString,
+        cfg.alias.value.value,
+        cfg.password.value.value.toCharArray,
+        cfg.password.value.value.toCharArray
       )
-
 }
