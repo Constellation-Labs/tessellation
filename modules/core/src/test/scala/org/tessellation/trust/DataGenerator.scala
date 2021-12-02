@@ -26,6 +26,18 @@ class DataGenerator[F[_]: Monad: Random] {
       } else None
     }
 
+  def randomPositiveEdge(
+    logic: Double => F[Boolean] = randomEdgeLogic
+  )(n: TrustNode, n2: TrustNode): F[Option[TrustEdge]] =
+    for {
+      result <- logic(n.id.toDouble)
+      trustZeroToOne <- Random[F].nextDouble
+    } yield {
+      if (result) {
+        Some(TrustEdge(n.id, n2.id, trustZeroToOne, isLabel = true))
+      } else None
+    }
+
   def seedCliqueLogic(maxSeedNodeIdx: Int = 1)(id: Double): F[Boolean] =
     Applicative[F].pure(id <= maxSeedNodeIdx)
 
