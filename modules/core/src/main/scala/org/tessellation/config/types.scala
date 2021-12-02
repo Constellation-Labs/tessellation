@@ -10,7 +10,6 @@ object types {
 
   case class AppConfig(
     environment: AppEnvironment,
-    keyConfig: KeyConfig,
     httpConfig: HttpConfig,
     dbConfig: DBConfig,
     gossipConfig: GossipConfig,
@@ -22,13 +21,6 @@ object types {
     url: NonEmptyString,
     user: NonEmptyString,
     password: Secret[String]
-  )
-
-  case class KeyConfig(
-    keystore: String,
-    storepass: Secret[String],
-    keypass: Secret[String],
-    keyalias: Secret[String]
   )
 
   case class HttpClientConfig(

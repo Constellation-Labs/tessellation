@@ -271,7 +271,6 @@ lazy val core = (project in file("modules/core"))
       Libraries.redis4catsLog4cats,
       Libraries.refinedCore,
       Libraries.refinedCats,
-      Libraries.scopt,
       Libraries.skunkCore,
       Libraries.skunkCirce,
       Libraries.squants
