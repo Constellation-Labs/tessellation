@@ -241,7 +241,7 @@ lazy val sdk = (project in file("modules/sdk"))
       Libraries.http4sJwtAuth,
       Libraries.declineCore,
       Libraries.declineEffect,
-      Libraries.declineRefined,
+      Libraries.declineRefined
     )
   )
 
