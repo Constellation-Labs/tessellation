@@ -36,7 +36,7 @@ object Services {
       cluster = Cluster
         .make[F](cfg, nodeId, keyPair, storages.session)
       gossip <- Gossip.make[F](queues.rumor, nodeId, keyPair)
-      stateChannelRouter <- StateChannelRouter.make[F]
+      stateChannelRouter <- StateChannelRouter.make[F](queues.stateChannelOutput)
     } yield
       new Services[F](
         healthcheck = healthcheck,
