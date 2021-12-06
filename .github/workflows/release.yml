@@ -39,7 +39,7 @@ jobs:
       - name: Copy dependencies
         run: |
           cp ./modules/keytool/target/scala-2.13/tessellation-keytool-assembly-${{ steps.tagName.outputs.tag }}.jar ./cl-keytool.jar
-          cp ./modules/keytool/target/scala-2.13/tessellation-wallet-assembly-${{ steps.tagName.outputs.tag }}.jar ./cl-wallet.jar
+          cp ./modules/wallet/target/scala-2.13/tessellation-wallet-assembly-${{ steps.tagName.outputs.tag }}.jar ./cl-wallet.jar
           cp ./modules/core/target/scala-2.13/tessellation-core-assembly-${{ steps.tagName.outputs.tag }}.jar ./cl-node.jar
 
       - name: Upload release assets
@@ -51,6 +51,7 @@ jobs:
           body: ${{ steps.build_changelog.outputs.changelog }}
           files: |
             ./cl-keytool.jar
+            ./cl-wallet.jar
             ./cl-node.jar
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
