@@ -4,12 +4,8 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 
 trait StateChannelContext[F[_]] {
-  val address: Address
 
-  def createCell(
-    input: Array[Byte],
-    hypergraphContext: HypergraphContext[F]
-  ): F[Cell[F, StackF, Ω, Either[CellError, Ω], Ω]]
+  val address: Address
 
   def getBalance(address: Address): F[Balance]
 

@@ -1,8 +1,0 @@
-{
-  "address": "DAG3k3VihUWMjse9LE93jRqZLEuwGd6a5Ypk4zYS",
-  "cellClass": "org.example.EmptyCell",
-  "inputClass": "org.example.EmptyInput",
-  "kryoRegistrar": {
-    "org.example.EmptyInput": 1001
-  }
-}
