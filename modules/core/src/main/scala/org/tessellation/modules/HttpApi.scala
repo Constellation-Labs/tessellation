@@ -20,9 +20,10 @@ object HttpApi {
     queues: Queues[F],
     services: Services[F],
     programs: Programs[F],
-    environment: AppEnvironment
+    environment: AppEnvironment,
+    stateChannelp2pRoutes: HttpRoutes[F]
   ): HttpApi[F] =
-    new HttpApi[F](storages, queues, services, programs, environment) {}
+    new HttpApi[F](storages, queues, services, programs, environment, stateChannelp2pRoutes) {}
 }
 
 sealed abstract class HttpApi[F[_]: Async: KryoSerializer] private (
@@ -30,7 +31,8 @@ sealed abstract class HttpApi[F[_]: Async: KryoSerializer] private (
   queues: Queues[F],
   services: Services[F],
   programs: Programs[F],
-  environment: AppEnvironment
+  environment: AppEnvironment,
+  stateChannelp2pRoutes: HttpRoutes[F]
 ) {
   private val healthRoutes = HealthRoutes[F](services.healthcheck).routes
   private val clusterRoutes =
@@ -53,7 +55,8 @@ sealed abstract class HttpApi[F[_]: Async: KryoSerializer] private (
       clusterRoutes.p2pRoutes <+>
       registrationRoutes.p2pRoutes <+>
       gossipRoutes.p2pRoutes <+>
-      trustRoutes.p2pRoutes
+      trustRoutes.p2pRoutes <+>
+      stateChannelp2pRoutes
 
   private val cliRoutes: HttpRoutes[F] =
     healthRoutes <+>

@@ -59,7 +59,7 @@ object AddressStorage {
 //        ).transact(xa)
 //          .as(())
 
-      override def updateBatchBalances(addressBalances: Seq[DBUpsertAction[StoredAddress]]): F[Unit] = {
+      override def updateBatchBalances(addressBalances: Seq[UpsertAction[StoredAddress]]): F[Unit] = {
         val inserts = addressBalances.collect { case Insert(value) => value }
         val updates = addressBalances.collect { case Update(value) => value }
 

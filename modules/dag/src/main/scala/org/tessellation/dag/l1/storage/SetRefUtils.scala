@@ -1,4 +1,4 @@
-package org.tesselation.dag.l1.storage
+package org.tessellation.dag.l1.storage
 
 import cats.effect.{Ref, Sync}
 import cats.syntax.functor._

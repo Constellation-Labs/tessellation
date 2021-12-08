@@ -14,6 +14,7 @@ import scala.util.control.NoStackTrace
 
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.ID.Id
 import org.tessellation.security.signature.signature.{SignatureProof, signatureProofFromData}
 import org.tessellation.security.{Hashed, SecurityProvider}
 
@@ -43,6 +44,9 @@ object Signed {
 
   implicit class SignedOps[A <: AnyRef](signed: Signed[A]) {
 
+    def isSignedBy(signers: Set[Id]): Boolean =
+      signed.proofs.map(_.id).toList.toSet == signers
+
     def hasValidSignature[F[_]: Async: SecurityProvider: KryoSerializer]: F[Boolean] =
       for {
         hash <- signed.value.hashF
@@ -55,10 +59,13 @@ object Signed {
       : F[Either[InvalidSignatureForHash[A], Hashed[A]]] =
       for {
         hash <- signed.value.hashF
+        // TODO: could become ProofHash/SignatureHash instead of Hash - we won't mix them up
+        // TODO: maybe we can avoid sorting by using a NES insted of NEL
+        proofsHash <- signed.proofs.sortBy(_.signature.value.value).hashF // I guess that's the SOE
         isValid <- signed.proofs
           .traverse(signature.verifySignatureProof(hash, _))
           .map(_.forall(identity))
-        result = if (isValid) Hashed(signed, hash).asRight[InvalidSignatureForHash[A]]
+        result = if (isValid) Hashed(signed, hash, proofsHash).asRight[InvalidSignatureForHash[A]]
         else
           InvalidSignatureForHash(signed).asLeft[Hashed[A]]
       } yield result

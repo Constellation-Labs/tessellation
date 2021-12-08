@@ -1,4 +1,4 @@
-package org.tesselation.dag.l1
+package org.tessellation.dag.l1
 
 import cats.data.ValidatedNel
 import cats.effect.Async
@@ -11,19 +11,20 @@ import cats.syntax.validated._
 
 import scala.util.control.NoStackTrace
 
-import org.tesselation.dag.l1.TransactionValidator._
-import org.tesselation.dag.l1.storage.TransactionStorage
-import org.tesselation.domain.cluster.storage.AddressStorage
-import org.tesselation.kryo.KryoSerializer
-import org.tesselation.schema.address.Address
-import org.tesselation.schema.transaction.{Transaction, TransactionReference}
-import org.tesselation.security.SecurityProvider
-import org.tesselation.security.key.ops.PublicKeyOps
-import org.tesselation.security.signature.Signed
-import org.tesselation.security.signature.signature.SignatureProof
+import org.tessellation.dag.l1.storage.TransactionStorage
+import org.tessellation.domain.cluster.storage.AddressStorage
+import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.address.Address
+import org.tessellation.schema.transaction.{Transaction, TransactionReference}
+import org.tessellation.security.SecurityProvider
+import org.tessellation.security.key.ops.PublicKeyOps
+import org.tessellation.security.signature.Signed
+import org.tessellation.security.signature.signature.SignatureProof
 
 import eu.timepit.refined.auto._
 import io.estatico.newtype.ops._
+
+import TransactionValidator._
 
 class TransactionValidator[F[_]: Async: KryoSerializer: SecurityProvider](
   transactionStorage: TransactionStorage[F],
@@ -80,15 +81,10 @@ class TransactionValidator[F[_]: Async: KryoSerializer: SecurityProvider](
       .getLastAcceptedTransactionRef(tx.source)
       .map { lastTxRef =>
         lazy val comparedOrdinals = tx.parent.ordinal.coerce.compare(lastTxRef.ordinal.coerce)
-        // NOT NEEDED WE DON'T DUPLICATE THE LAST TX REF FOR THE TX IN TESSELLATION
-        //lazy val lastTxRefNotEqual = tx.lastTxRef != tx.edge.data.lastTxRef
         lazy val nonZeroOrdinalHasEmptyHash = tx.parent.ordinal.coerce > 0L && tx.parent.hash.coerce.isEmpty
         lazy val ordinalIsLower = comparedOrdinals < 0L
         lazy val hashIsNotEqual = comparedOrdinals == 0L && tx.parent != lastTxRef
 
-        /* if (lastTxRefNotEqual)
-          InconsistentLastTxRef(tx).invalidNel
-        else */
         if (nonZeroOrdinalHasEmptyHash)
           NonZeroOrdinalButEmptyHash(tx).invalidNel
         else if (ordinalIsLower)
@@ -174,10 +170,6 @@ object TransactionValidator {
 
   case class InconsistentParentReference(parentReference: TransactionReference) extends IncorrectParentReference
 
-//  case class HashDuplicateFound(txHash: Hash) extends TransactionValidationError {
-//    val errorMessage: String = s"Transaction tx=$txHash already exists"
-//  }
-
   case class LastTxRefOrdinalLowerThenStoredLastTxRef(parentReference: TransactionReference)
       extends IncorrectParentReference
 
@@ -202,10 +194,6 @@ object TransactionValidator {
     def apply(tx: Transaction) = new SourceAddressAndSignerIdsDontMatch(tx.source)
   }
 
-//  object InvalidSourceSignature {
-//    def apply(signedTx: Signed[Transaction]) = new InvalidSourceSignature()
-//  }
-
   object SourceAndDestinationAddressAreEqual {
 
     def apply(tx: Transaction) =
@@ -214,10 +202,6 @@ object TransactionValidator {
         tx.destination
       )
   }
-
-//  object HashDuplicateFound {
-//    def apply(tx: Transaction) = new HashDuplicateFound(tx.hash)
-//  }
 
   object InconsistentParentReference {
     def apply(tx: Transaction) = new InconsistentParentReference(tx.parent)

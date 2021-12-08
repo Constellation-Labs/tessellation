@@ -166,6 +166,10 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
         registrationRequest.publicPort,
         registrationRequest.p2pPort,
         registrationRequest.session,
+        //TODO: Needs to be fixed:
+        // A) Genesis node is not setting it's state to Ready by broadcasting.
+        // B) Nodes connecting later don't get the state of the nodes already in the cluster (they broadcasted their state earlier).
+        // For L1 tests change to Ready
         NodeState.Unknown
       )
 

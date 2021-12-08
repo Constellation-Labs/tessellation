@@ -281,12 +281,15 @@ lazy val core = (project in file("modules/core"))
 lazy val dag = (project in file("modules/dag"))
   .dependsOn(core)
   .settings(
-    name := "tesselation-dag",
+    name := "tessellation-dag",
     Defaults.itSettings,
     scalafixCommonSettings,
     commonSettings,
     commonTestSettings,
-    makeBatScripts := Seq()
+    makeBatScripts := Seq(),
+    libraryDependencies := Seq(
+      Libraries.logback % Runtime
+    )
   )
 
 addCommandAlias("runLinter", ";scalafixAll --rules OrganizeImports")

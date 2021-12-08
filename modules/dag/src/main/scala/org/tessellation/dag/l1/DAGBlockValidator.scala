@@ -1,4 +1,4 @@
-package org.tesselation.dag.l1
+package org.tessellation.dag.l1
 
 import cats.effect.Async
 import cats.syntax.applicativeError._
@@ -10,20 +10,22 @@ import cats.syntax.traverse._
 
 import scala.annotation.tailrec
 
-import org.tesselation.dag.l1.storage.{BlockStorage, TransactionStorage}
-import org.tesselation.domain.cluster.storage._
-import org.tesselation.infrastructure.db.schema.StoredAddress
-import org.tesselation.kryo.KryoSerializer
-import org.tesselation.schema.balance.Balance
-import org.tesselation.schema.transaction.{Transaction, TransactionReference}
-import org.tesselation.schema.{BlockValidator, nonNegBigIntSemigroup}
-import org.tesselation.security.signature.Signed
-import org.tesselation.security.{Hashed, SecurityProvider}
+import org.tessellation.dag.l1.storage.{BlockStorage, TransactionStorage}
+import org.tessellation.domain.cluster.storage._
+import org.tessellation.infrastructure.db.schema.StoredAddress
+import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.balance.Balance
+import org.tessellation.schema.transaction.{Transaction, TransactionReference}
+import org.tessellation.schema.{BlockValidator, nonNegBigIntSemigroup}
+import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hashed, SecurityProvider}
 
 import eu.timepit.refined.auto.autoInfer
 import eu.timepit.refined.numeric.NonNegative
 import eu.timepit.refined.refineV
 import io.estatico.newtype.ops.toCoercibleIdOps
+
+import DAGBlockValidator.takeConsecutiveTransactions
 
 class DAGBlockValidator[F[_]: Async: KryoSerializer: SecurityProvider](
   transactionStorage: TransactionStorage[F],
@@ -44,10 +46,13 @@ class DAGBlockValidator[F[_]: Async: KryoSerializer: SecurityProvider](
       )
       hashedBlock <- signedBlock.hashWithSignatureCheck.flatMap(_.liftTo[F])
 
-      hashedTransactions <- signedBlock.value.transactions.traverse(_.hashWithSignatureCheck.flatMap(_.liftTo[F]))
+      hashedTransactions <- signedBlock.value.transactions.toList
+        .traverse(_.hashWithSignatureCheck.flatMap(_.liftTo[F]))
 
       _ <- acceptTransactions(hashedTransactions)
       _ <- blockStorage.acceptBlock(hashedBlock)
+      // TODO: could happen outside of acceptance flow???
+      _ <- blockStorage.handleTipsUpdate(hashedBlock)
     } yield ()
 
   def validateBlockSignatures(signedBlock: Signed[DAGBlock]): F[Boolean] =
@@ -59,7 +64,7 @@ class DAGBlockValidator[F[_]: Async: KryoSerializer: SecurityProvider](
   def validateBlock(block: DAGBlock): F[Boolean] =
     for {
       areParentsAccepted <- areParentsAccepted(block)
-      areTxsValid <- areTransactionsValid(block.transactions)
+      areTxsValid <- areTransactionsValid(block.transactions.toList)
     } yield areParentsAccepted && areTxsValid
 
   private def areParentsAccepted(block: DAGBlock): F[Boolean] =
@@ -85,7 +90,7 @@ class DAGBlockValidator[F[_]: Async: KryoSerializer: SecurityProvider](
   private def areTransactionsValid(signedTransactions: Seq[Signed[Transaction]]): F[Boolean] =
     for {
       arePassingValidation <- areTransactionsPassingValidation(signedTransactions)
-      areChainedCorrectly <- areAllTransactionsFormingCorrectChain(signedTransactions.map(_.value))
+      areChainedCorrectly <- areAllTransactionsFormingCorrectChain(signedTransactions)
     } yield arePassingValidation && areChainedCorrectly
 
   private def areTransactionsPassingValidation(signedTransactions: Seq[Signed[Transaction]]): F[Boolean] =
@@ -94,15 +99,15 @@ class DAGBlockValidator[F[_]: Async: KryoSerializer: SecurityProvider](
       .map(_.isValid)
       .handleError(_ => false)
 
-  private def areAllTransactionsFormingCorrectChain(transactions: Seq[Transaction]): F[Boolean] =
+  private def areAllTransactionsFormingCorrectChain(transactions: Seq[Signed[Transaction]]): F[Boolean] =
     transactions
-      .groupBy(_.source)
+      .groupBy(_.value.source)
       .toList
       .traverse {
         case (address, txs) =>
           for {
             lastAccepted <- transactionStorage.getLastAcceptedTransactionRef(address)
-            sorted = txs.sortBy(_.parent.ordinal.coerce.value)
+            sorted = txs.sortBy(_.value.parent.ordinal.coerce.value)
             // TODO: do we also need to validate if the first lastRef isn't referencing itself?
             //  I guess it makes no sense given that ordinal and hash of the current tx isnt specified so it's impossible to self-reference
             chainableTransactions = takeConsecutiveTransactions(lastAccepted, txs)
@@ -111,26 +116,7 @@ class DAGBlockValidator[F[_]: Async: KryoSerializer: SecurityProvider](
       }
       .map(_.forall(identity))
 
-  private def takeConsecutiveTransactions(
-    lastAcceptedTxRef: TransactionReference,
-    txs: Seq[Transaction]
-  ): Seq[Transaction] = {
-    @tailrec
-    def loop(
-      acc: Seq[Transaction],
-      prevTxRef: TransactionReference,
-      txs: Seq[Transaction]
-    ): Seq[Transaction] =
-      txs.find(_.parent == prevTxRef) match {
-        case Some(tx) =>
-          loop(tx +: acc, tx.parent, txs.diff(Seq(tx)))
-        case None => acc.reverse //to preserve order of the chain
-      }
-
-    loop(Seq.empty, lastAcceptedTxRef, txs)
-  }
-
-  private def prepareBalances(transactions: Seq[Transaction]): F[Seq[DBUpsertAction[StoredAddress]]] =
+  private def prepareBalances(transactions: Seq[Transaction]): F[Seq[UpsertAction[StoredAddress]]] =
     transactions.traverse { tx =>
       for {
         sourceBalance <- addressStorage.getBalance(tx.source)
@@ -167,4 +153,26 @@ class DAGBlockValidator[F[_]: Async: KryoSerializer: SecurityProvider](
 //      newDestinationBalance = Balance(destinationBalance.coerce |+| transaction.amount.coerce)
 //      _ <- addressStorage.updateBalance(transaction.destination, newDestinationBalance)
 //    } yield ()
+}
+
+object DAGBlockValidator {
+
+  def takeConsecutiveTransactions(
+    lastAcceptedTxRef: TransactionReference,
+    txs: Seq[Signed[Transaction]]
+  ): Seq[Signed[Transaction]] = {
+    @tailrec
+    def loop(
+      acc: Seq[Signed[Transaction]],
+      prevTxRef: TransactionReference,
+      txs: Seq[Signed[Transaction]]
+    ): Seq[Signed[Transaction]] =
+      txs.find(_.value.parent == prevTxRef) match {
+        case Some(tx) =>
+          loop(tx +: acc, tx.value.parent, txs.diff(Seq(tx)))
+        case None => acc.reverse //to preserve order of the chain
+      }
+
+    loop(Seq.empty, lastAcceptedTxRef, txs)
+  }
 }
