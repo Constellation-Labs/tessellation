@@ -1,9 +1,0 @@
-{
-  "address": "DAG2rMPHX4w1cMMjowmewRMjD1in53yRURt6Eijh",
-  "cellClass": "org.example.L0TokenCell",
-  "inputClass": "org.example.L0TokenBlock",
-  "kryoRegistrar": {
-    "org.example.L0TokenTransaction": 1001,
-    "org.example.L0TokenBlock": 1002
-  }
-}

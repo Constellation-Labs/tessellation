@@ -62,11 +62,14 @@ class StateChannelInstanceLoader[F[_]: Async] {
     KryoSerializer.forAsync[F](kryoRegistrar).use { implicit serializer =>
       Applicative[F].pure(
         new StateChannelInstance[F] {
-          val address: Address = stateChannelDef.address
-          val kryoSerializer: KryoSerializer[F] = serializer
+          val address = stateChannelDef.address
+          val kryoSerializer = serializer
 
           def makeCell(input: Ω, hgContext: HypergraphContext[F]): Cell[F, StackF, Ω, Either[CellError, Ω], Ω] =
             stateChannelDef.makeCell(input, hgContext)
+
+          def inputPipe = stateChannelDef.inputPipe
+          def outputPipe = stateChannelDef.outputPipe
         }
       )
     }
