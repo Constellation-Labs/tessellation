@@ -4,7 +4,7 @@ import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.domain.aci.{StateChannelInput, StateChannelRouter}
+import org.tessellation.domain.aci.{StateChannelInput, StateChannelRunner}
 import org.tessellation.ext.http4s.vars.AddressVar
 
 import org.http4s.dsl.Http4sDsl
@@ -13,7 +13,7 @@ import org.http4s.{EntityDecoder, HttpRoutes}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 final case class StateChannelRoutes[F[_]: Async](
-  stateChannelRouter: StateChannelRouter[F]
+  stateChannelRunner: StateChannelRunner[F]
 ) extends Http4sDsl[F] {
   private val logger = Slf4jLogger.getLogger[F]
   private val prefixPath = "/state-channel"
@@ -24,7 +24,7 @@ final case class StateChannelRoutes[F[_]: Async](
       for {
         payload <- req.as[Array[Byte]]
         input = StateChannelInput(address, payload)
-        result <- stateChannelRouter
+        result <- stateChannelRunner
           .routeInput(input)
           .semiflatMap { output =>
             logger.debug(s"State channel output is $output") >> Ok()

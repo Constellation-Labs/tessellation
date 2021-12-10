@@ -16,6 +16,6 @@ trait StateChannelDef[A <: Ω, B <: Ω, S <: Ω] {
     hgContext: HypergraphContext[F]
   ): Cell[F, StackF, A, Either[CellError, B], S]
 
-  def inputPipe[F[_]: Async, In <: A]: Pipe[F, In, A] = identity
-  def outputPipe[F[_]: Async, Out >: B]: Pipe[F, B, Out] = identity
+  def inputPipe[F[_]: Async]: Pipe[F, A, A] = identity
+  def outputPipe[F[_]: Async]: Pipe[F, B, B] = identity
 }
