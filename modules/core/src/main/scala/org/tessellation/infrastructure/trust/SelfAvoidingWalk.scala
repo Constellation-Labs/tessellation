@@ -214,7 +214,7 @@ object SelfAvoidingWalk extends StrictLogging {
     val negativeScores = merged.zipWithIndex.filterNot { _._2 == selfId }.flatMap {
       case (score, id) =>
         val negativeEdges = others.get(id).map(_.negativeEdges).getOrElse(Seq())
-        logger.debug(s"runWalkBatchesFeedback - negativeScores - selfId: $selfId - negativeEdges: $negativeEdges")
+//        logger.debug(s"runWalkBatchesFeedback - negativeScores - selfId: $selfId - negativeEdges: $negativeEdges")
         negativeEdges.filterNot { _.dst == selfId }.map { ne =>
           val nanTest = (ne.trust * score / negativeEdges.size)
 //          println("nanTest =>" + nanTest)

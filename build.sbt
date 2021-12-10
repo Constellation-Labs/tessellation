@@ -16,7 +16,9 @@ lazy val commonSettings = Seq(
   scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info", "-language:reflectiveCalls"),
   scalafmtOnCompile := true,
   scalafixOnCompile := true,
-  resolvers += Resolver.sonatypeRepo("snapshots")
+  resolvers ++= List(
+    Resolver.sonatypeRepo("snapshots")
+  )
 )
 
 lazy val commonTestSettings = Seq(
