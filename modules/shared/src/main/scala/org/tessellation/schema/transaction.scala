@@ -1,7 +1,11 @@
 package org.tessellation.schema
+import cats.Order
+import cats.syntax.semigroup._
+
 import org.tessellation.schema.address.Address
 import org.tessellation.security.Encodable
 import org.tessellation.security.hash.Hash
+import org.tessellation.security.signature.Signed
 
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
@@ -23,7 +27,9 @@ object transaction {
 
   @derive(decoder, encoder, eqv, show)
   @newtype
-  case class TransactionOrdinal(value: NonNegBigInt)
+  case class TransactionOrdinal(value: NonNegBigInt) {
+    def next: TransactionOrdinal = TransactionOrdinal(value |+| BigInt(1))
+  }
 
   @derive(decoder, encoder, eqv, show)
   case class TransactionReference(hash: Hash, ordinal: TransactionOrdinal)
@@ -59,7 +65,14 @@ object transaction {
             salt.coerce.toHexString
           )
         )
+
+    val ordinal: TransactionOrdinal = parent.ordinal.next
   }
+
+  implicit val signedTransactionOrder: Order[Signed[Transaction]] = (x: Signed[Transaction], y: Signed[Transaction]) =>
+    implicitly[Order[BigInt]].compare(x.value.ordinal.coerce, y.value.ordinal.coerce)
+
+  implicit val signedTransactionOrdering: Ordering[Signed[Transaction]] = signedTransactionOrder.toOrdering
 
   object Transaction {
     def runLengthEncoding(hashes: Seq[String]): String = hashes.fold("")((acc, hash) => s"$acc${hash.length}$hash")
