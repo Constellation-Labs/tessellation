@@ -18,7 +18,9 @@ class DataGenerator[F[_]: Monad: Random] {
 
   def randomEdge(logic: Double => F[Boolean] = randomEdgeLogic)(n: TrustNode, n2: TrustNode) =
     for {
-      result <- logic(n.id.toDouble)
+      result <- logic(
+        Math.sqrt(Math.pow(n.xCoordinate - n2.xCoordinate, 2) + Math.pow(n.yCoordinate - n2.yCoordinate, 2))
+      )
       trustZeroToOne <- Random[F].nextDouble
     } yield {
       if (result) {
@@ -30,7 +32,9 @@ class DataGenerator[F[_]: Monad: Random] {
     logic: Double => F[Boolean] = randomEdgeLogic
   )(n: TrustNode, n2: TrustNode): F[Option[TrustEdge]] =
     for {
-      result <- logic(n.id.toDouble)
+      result <- logic(
+        Math.sqrt(Math.pow(n.xCoordinate - n2.xCoordinate, 2) + Math.pow(n.yCoordinate - n2.yCoordinate, 2))
+      )
       trustZeroToOne <- Random[F].nextDouble
     } yield {
       if (result) {
@@ -48,25 +52,30 @@ class DataGenerator[F[_]: Monad: Random] {
     } yield
       if (result) Some(TrustEdge(n.id, n2.id, 1.0, isLabel = true))
       else {
-        Some(TrustEdge(n.id, n2.id, 2 * (trustZeroToOne - 0.5)))
+        Some(TrustEdge(n.id, n2.id, 2 * (trustZeroToOne - 0.4)))
       }
 
-  def generateData(
-    numNodes: Int = 30,
-    edgeLogic: (TrustNode, TrustNode) => F[Option[TrustEdge]] = randomEdge()
-  ): F[List[TrustNode]] =
+  def randomTrustNode(id: Int): F[TrustNode] =
     for {
       x <- Random[F].nextDouble
       y <- Random[F].nextDouble
-      nodes = (0 until numNodes).toList.map(id => TrustNode(id, x, y))
-      nodesWithEdges = nodes.traverse { n =>
-        val edges = nodes.filterNot(_.id == n.id).traverse { n2 =>
-          edgeLogic(n, n2)
-        }
-        edges.map(e => n.copy(edges = e.flatten))
+    } yield TrustNode(id, x, y)
+
+  def generateData(
+    numNodes: Int = 30,
+    edgeLogic: (TrustNode, TrustNode) => F[Option[TrustEdge]] = randomEdge(),
+    minimumEdgeCount: Int = 3
+  ): F[List[TrustNode]] = {
+    val nodes =
+      (0 until numNodes).toList.map(id => TrustNode(id, scala.util.Random.nextDouble(), scala.util.Random.nextDouble()))
+    val nodesWithEdges = nodes.traverse { n =>
+      val edges = nodes.filterNot(_.id == n.id).traverse { n2 =>
+        edgeLogic(n, n2)
       }
-      res <- nodesWithEdges
-    } yield res
+      edges.map(e => n.copy(edges = e.flatten))
+    }
+    nodesWithEdges
+  }
 
   def bipartiteEdge(logic: Double => F[Boolean] = seedCliqueLogic())(n: TrustNode, n2: TrustNode) =
     for {
