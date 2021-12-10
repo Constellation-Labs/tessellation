@@ -21,6 +21,10 @@ object hash {
       Hash(Hashing.sha256().hashBytes(bytes).toString)
   }
 
+  @derive(encoder, decoder, show, eqv)
+  @newtype
+  case class ProofsHash(value: String)
+
 }
 
 trait Hashable[F[_]] {
