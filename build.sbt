@@ -45,7 +45,7 @@ lazy val root = (project in file("."))
   .settings(
     name := "tessellation"
   )
-  .aggregate(keytool, kernel, shared, core, testShared, wallet, dagShared)
+  .aggregate(keytool, kernel, shared, core, testShared, wallet, dagShared, sdk, dagL1)
 
 lazy val kernel = (project in file("modules/kernel"))
   .enablePlugins(AshScriptPlugin)
@@ -182,7 +182,6 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.http4sCore
     )
   )
-
 lazy val testShared = (project in file("modules/test-shared"))
   .configs(IntegrationTest)
   .settings(
@@ -217,9 +216,57 @@ lazy val testShared = (project in file("modules/test-shared"))
     )
   )
 
+lazy val sdk = (project in file("modules/sdk"))
+  .dependsOn(shared)
+  .configs(IntegrationTest)
+  .settings(
+    name := "tessellation-sdk",
+    Defaults.itSettings,
+    scalafixCommonSettings,
+    commonSettings,
+    commonTestSettings,
+    libraryDependencies ++= Seq(
+      CompilerPlugin.kindProjector,
+      CompilerPlugin.betterMonadicFor,
+      CompilerPlugin.semanticDB
+    )
+  )
+
+lazy val dagShared = (project in file("modules/dag-shared"))
+  .dependsOn(shared)
+  .settings(
+    name := "tessellation-dag-shared",
+    Defaults.itSettings,
+    scalafixCommonSettings,
+    commonSettings,
+    commonTestSettings,
+    makeBatScripts := Seq(),
+    libraryDependencies := Seq(
+      CompilerPlugin.kindProjector,
+      CompilerPlugin.betterMonadicFor,
+      CompilerPlugin.semanticDB,
+      Libraries.logback % Runtime
+    )
+  )
+
+lazy val dagL1 = (project in file("modules/dag-l1"))
+  .dependsOn(shared, dagShared, sdk)
+  .configs(IntegrationTest)
+  .settings(
+    name := "tessellation-dag-l1",
+    Defaults.itSettings,
+    scalafixCommonSettings,
+    commonSettings,
+    commonTestSettings,
+    libraryDependencies ++= Seq(
+      CompilerPlugin.kindProjector,
+      CompilerPlugin.betterMonadicFor,
+      CompilerPlugin.semanticDB
+    )
+  )
 lazy val core = (project in file("modules/core"))
   .enablePlugins(AshScriptPlugin)
-  .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test)
+  .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test, dagShared, sdk)
   .settings(
     name := "tessellation-core",
     Defaults.itSettings,
@@ -274,23 +321,6 @@ lazy val core = (project in file("modules/core"))
       Libraries.skunkCore,
       Libraries.skunkCirce,
       Libraries.squants
-    )
-  )
-
-lazy val dagShared = (project in file("modules/dag-shared"))
-  .dependsOn(shared)
-  .settings(
-    name := "tessellation-dag-shared",
-    Defaults.itSettings,
-    scalafixCommonSettings,
-    commonSettings,
-    commonTestSettings,
-    makeBatScripts := Seq(),
-    libraryDependencies := Seq(
-      CompilerPlugin.kindProjector,
-      CompilerPlugin.betterMonadicFor,
-      CompilerPlugin.semanticDB,
-      Libraries.logback % Runtime
     )
   )
 
