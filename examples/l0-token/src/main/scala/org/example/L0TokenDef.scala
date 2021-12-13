@@ -49,7 +49,7 @@ object L0TokenDef extends StateChannelDef[L0TokenStep, Ω, L0TokenStep] {
 
             case CreateStateChannelSnapshot() =>
               logger.info(s"Create state-channel snapshot") >>
-                Applicative[F].pure(Done(NullTerminal.asRight[CellError]))
+                Applicative[F].pure(Done(L0TokenStateChannelSnapshot().asRight[CellError]))
 
             case _ => Applicative[F].pure(Done(CellError("Unhandled coalgebra case").asLeft[Ω]))
           }
