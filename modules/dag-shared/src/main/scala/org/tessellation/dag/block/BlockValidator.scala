@@ -25,14 +25,17 @@ import org.tessellation.schema.transaction.{Transaction, TransactionReference}
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 
+import eu.timepit.refined.auto._
+import eu.timepit.refined.types.numeric.PosInt
+
 abstract class BlockValidator[F[_]: Async: KryoSerializer: SecurityProvider](
   transactionValidator: TransactionValidator[F],
-  requiredUniqueBlockSigners: Int
+  requiredUniqueBlockSigners: PosInt
 ) {
 
-  def areParentsAccepted(block: DAGBlock): F[Map[BlockReference, Boolean]]
+  protected def areParentsAccepted(block: DAGBlock): F[Map[BlockReference, Boolean]]
 
-  def getLastAcceptedTransactionRef(address: Address): F[TransactionReference]
+  protected def getLastAcceptedTransactionRef(address: Address): F[TransactionReference]
 
   def validate(signedBlock: Signed[DAGBlock]): F[ValidationResult[Signed[DAGBlock]]] =
     for {
@@ -129,7 +132,7 @@ object BlockValidator {
     override val errorMessage: String = "Block has invalid signatures!"
   }
 
-  case class InvalidBlockSignaturesCount(actual: Int, shouldBe: Int) extends BlockValidationError {
+  case class InvalidBlockSignaturesCount(actual: Int, shouldBe: PosInt) extends BlockValidationError {
     override val errorMessage: String = s"Block has invalid signatures number: $actual is less than $shouldBe!"
   }
 
