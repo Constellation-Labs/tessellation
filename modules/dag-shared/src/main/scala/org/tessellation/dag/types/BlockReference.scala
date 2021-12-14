@@ -5,11 +5,12 @@ import cats.Order
 import org.tessellation.schema.height.Height
 import org.tessellation.security.hash.ProofsHash
 
+import derevo.cats.show
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import io.estatico.newtype.ops._
 
-@derive(encoder, decoder)
+@derive(encoder, decoder, show)
 case class BlockReference(hash: ProofsHash, height: Height)
 
 object BlockReference {
