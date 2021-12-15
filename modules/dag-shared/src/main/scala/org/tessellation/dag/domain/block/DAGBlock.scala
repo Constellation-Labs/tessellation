@@ -1,5 +1,6 @@
 package org.tessellation.dag.domain.block
 
+import cats.Order
 import cats.data.NonEmptyList
 import cats.syntax.reducible._
 
@@ -14,4 +15,9 @@ import io.estatico.newtype.ops._
 @derive(encoder, decoder)
 case class DAGBlock(transactions: Set[Signed[Transaction]], parent: NonEmptyList[BlockReference]) {
   val height: Height = Height(parent.minimum.height.coerce + 1L)
+}
+
+object DAGBlock {
+  implicit def order(implicit O: Order[Height]): Order[DAGBlock] =
+    (x: DAGBlock, y: DAGBlock) => O.compare(x.height, y.height)
 }
