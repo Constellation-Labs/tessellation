@@ -175,6 +175,7 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.guava,
       Libraries.log4cats,
       Libraries.logback % Runtime,
+      Libraries.mapref,
       Libraries.monocleCore,
       Libraries.monocleMacro,
       Libraries.newtype,
