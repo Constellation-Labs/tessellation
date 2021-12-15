@@ -7,7 +7,6 @@ import cats.effect.Async
 import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
-import cats.syntax.order._
 import cats.{Order, Semigroup}
 
 import scala.util.control.NoStackTrace
@@ -29,7 +28,11 @@ case class Signed[A](value: A, proofs: NonEmptyList[SignatureProof])
 object Signed {
   case class InvalidSignatureForHash[A <: AnyRef](signed: Signed[A]) extends NoStackTrace
 
-  implicit def order[A: Order]: Order[Signed[A]] = (x: Signed[A], y: Signed[A]) => x.value.compare(y.value)
+  implicit def autoUnwrap[T](t: Signed[T]): T = t.value
+
+  implicit def order[A: Order]: Order[Signed[A]] = (x: Signed[A], y: Signed[A]) => Order[A].compare(x, y)
+
+  implicit def ordering[A: Order]: Ordering[Signed[A]] = order.toOrdering
 
   def forAsyncKryo[F[_]: Async: SecurityProvider: KryoSerializer, A <: AnyRef](
     data: A,
