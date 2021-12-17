@@ -1,4 +1,4 @@
-package org.tessellation.infrastructure.cluster.storage
+package org.tessellation.sdk.infrastructure.cluster.storage
 
 import cats.effect.Ref
 import cats.effect.kernel.Async
@@ -8,10 +8,10 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
 
-import org.tessellation.domain.cluster.storage.SessionStorage
 import org.tessellation.effects.GenUUID
 import org.tessellation.schema.cluster.{SessionAlreadyExists, SessionToken}
 import org.tessellation.schema.uid
+import org.tessellation.sdk.domain.cluster.storage.SessionStorage
 
 object SessionStorage {
 

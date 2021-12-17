@@ -1,4 +1,4 @@
-package org.tessellation.infrastructure.cluster.storage
+package org.tessellation.sdk.infrastructure.cluster.storage
 
 import cats.Monad
 import cats.effect.Async
@@ -7,9 +7,9 @@ import cats.syntax.functor._
 import cats.syntax.option._
 import cats.syntax.traverse._
 
-import org.tessellation.domain.cluster.storage.ClusterStorage
 import org.tessellation.schema.node
 import org.tessellation.schema.peer.{Peer, PeerId}
+import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 
 import com.comcast.ip4s.{Host, Port}
 import io.chrisdavenport.mapref.MapRef

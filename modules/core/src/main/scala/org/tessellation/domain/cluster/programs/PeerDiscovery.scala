@@ -5,9 +5,9 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.traverse._
 
-import org.tessellation.domain.cluster.storage.ClusterStorage
 import org.tessellation.http.p2p.P2PClient
 import org.tessellation.schema.peer.{P2PContext, Peer, PeerId}
+import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 
 object PeerDiscovery {
 

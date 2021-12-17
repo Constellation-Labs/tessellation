@@ -1,4 +1,4 @@
-package org.tessellation.infrastructure.cluster.storage
+package org.tessellation.sdk.infrastructure.cluster.storage
 
 import cats.effect.IO
 import cats.syntax.option._
