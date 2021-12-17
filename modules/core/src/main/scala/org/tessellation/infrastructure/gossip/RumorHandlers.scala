@@ -5,11 +5,11 @@ import cats.effect.Async
 import cats.syntax.semigroupk._
 import cats.syntax.show._
 
-import org.tessellation.domain.cluster.storage.ClusterStorage
 import org.tessellation.domain.trust.storage.TrustStorage
 import org.tessellation.infrastructure.cluster.rumour.handler.nodeStateHandler
 import org.tessellation.infrastructure.trust.handler.trustHandler
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 

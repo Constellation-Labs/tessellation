@@ -1,4 +1,4 @@
-package org.tessellation.domain.cluster.storage
+package org.tessellation.sdk.domain.cluster.storage
 
 import org.tessellation.schema.cluster.SessionToken
 

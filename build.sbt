@@ -220,7 +220,7 @@ lazy val testShared = (project in file("modules/test-shared"))
   )
 
 lazy val sdk = (project in file("modules/sdk"))
-  .dependsOn(shared)
+  .dependsOn(shared % "compile->compile;test->test", testShared % Test)
   .configs(IntegrationTest)
   .settings(
     name := "tessellation-sdk",
@@ -231,7 +231,8 @@ lazy val sdk = (project in file("modules/sdk"))
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
       CompilerPlugin.betterMonadicFor,
-      CompilerPlugin.semanticDB
+      CompilerPlugin.semanticDB,
+
     )
   )
 

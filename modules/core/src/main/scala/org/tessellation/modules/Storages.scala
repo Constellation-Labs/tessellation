@@ -5,15 +5,17 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.config.types.AppConfig
-import org.tessellation.domain.cluster.storage.{AddressStorage, ClusterStorage, SessionStorage}
+import org.tessellation.domain.cluster.storage.AddressStorage
 import org.tessellation.domain.gossip.RumorStorage
 import org.tessellation.domain.node.NodeStorage
 import org.tessellation.domain.trust.storage.TrustStorage
-import org.tessellation.infrastructure.cluster.storage.{AddressStorage, ClusterStorage, SessionStorage}
+import org.tessellation.infrastructure.cluster.storage.AddressStorage
 import org.tessellation.infrastructure.db.Database
 import org.tessellation.infrastructure.gossip.RumorStorage
 import org.tessellation.infrastructure.node.NodeStorage
 import org.tessellation.infrastructure.trust.storage.TrustStorage
+import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
+import org.tessellation.sdk.infrastructure.cluster.storage.{ClusterStorage, SessionStorage}
 
 object Storages {
 

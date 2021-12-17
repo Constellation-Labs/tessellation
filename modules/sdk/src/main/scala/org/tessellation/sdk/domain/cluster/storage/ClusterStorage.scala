@@ -1,4 +1,4 @@
-package org.tessellation.domain.cluster.storage
+package org.tessellation.sdk.domain.cluster.storage
 
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.{Peer, PeerId}

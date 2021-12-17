@@ -32,7 +32,7 @@ object Services {
     for {
       metrics <- Metrics.make[F]
       healthcheck = HealthCheck.make[F]
-      session = Session.make[F](storages.session, storages.cluster, storages.node)
+      session = Session.make[F](storages.session, storages.node)
       cluster = Cluster
         .make[F](cfg, nodeId, keyPair, storages.session)
       gossip <- Gossip.make[F](queues.rumor, nodeId, keyPair)

@@ -9,11 +9,11 @@ import cats.{Applicative, MonadThrow}
 
 import org.tessellation.config.types.AppConfig
 import org.tessellation.domain.cluster.services.Cluster
-import org.tessellation.domain.cluster.storage.SessionStorage
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.cluster._
 import org.tessellation.schema.peer.{PeerId, RegistrationRequest, SignRequest}
+import org.tessellation.sdk.domain.cluster.storage.SessionStorage
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 

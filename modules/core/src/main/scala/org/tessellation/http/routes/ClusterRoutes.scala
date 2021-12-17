@@ -6,13 +6,13 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.domain.cluster.programs.{Joining, PeerDiscovery, TrustPush}
-import org.tessellation.domain.cluster.storage.ClusterStorage
 import org.tessellation.domain.trust.storage.TrustStorage
 import org.tessellation.ext.http4s.refined._
 import org.tessellation.schema.cluster._
 import org.tessellation.schema.peer.JoinRequest
 import org.tessellation.schema.peer.Peer.toP2PContext
 import org.tessellation.schema.trust.InternalTrustUpdateBatch
+import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 
 import com.comcast.ip4s.Host
 import org.http4s.HttpRoutes

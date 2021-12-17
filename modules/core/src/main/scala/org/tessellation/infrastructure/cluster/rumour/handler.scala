@@ -4,11 +4,11 @@ import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.show._
 
-import org.tessellation.domain.cluster.storage.ClusterStorage
 import org.tessellation.infrastructure.gossip.RumorHandler
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.gossip.ReceivedRumor
 import org.tessellation.schema.node.NodeState
+import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
