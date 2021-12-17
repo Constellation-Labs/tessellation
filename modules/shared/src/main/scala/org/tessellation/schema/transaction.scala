@@ -31,6 +31,10 @@ object transaction {
     def next: TransactionOrdinal = TransactionOrdinal(value |+| BigInt(1))
   }
 
+  object TransactionOrdinal {
+    val first: TransactionOrdinal = TransactionOrdinal(BigInt(1))
+  }
+
   @derive(decoder, encoder, eqv, show)
   case class TransactionReference(hash: Hash, ordinal: TransactionOrdinal)
 
