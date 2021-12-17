@@ -264,7 +264,17 @@ lazy val dagL1 = (project in file("modules/dag-l1"))
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
       CompilerPlugin.betterMonadicFor,
-      CompilerPlugin.semanticDB
+      CompilerPlugin.semanticDB,
+      Libraries.cats,
+      Libraries.catsEffect,
+      Libraries.derevoCats,
+      Libraries.derevoCirce,
+      Libraries.derevoCore,
+      Libraries.mapref,
+      Libraries.monocleCore,
+      Libraries.monocleMacro,
+      Libraries.newtype,
+      Libraries.refinedCore
     )
   )
 lazy val core = (project in file("modules/core"))

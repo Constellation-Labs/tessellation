@@ -1,4 +1,4 @@
-package org.tessellation.dag.types
+package org.tessellation.dag.domain.block
 
 import cats.Order
 

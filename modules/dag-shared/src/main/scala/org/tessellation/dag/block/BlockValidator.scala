@@ -15,10 +15,10 @@ import cats.syntax.validated._
 import scala.util.control.NoStackTrace
 
 import org.tessellation.dag.block.BlockValidator._
+import org.tessellation.dag.domain.block.{BlockReference, DAGBlock}
 import org.tessellation.dag.transaction.TransactionValidator
 import org.tessellation.dag.transaction.TransactionValidator.TransactionValidationError
 import org.tessellation.dag.transaction.filter.Consecutive
-import org.tessellation.dag.types.{BlockReference, DAGBlock}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction.{Transaction, TransactionReference}
