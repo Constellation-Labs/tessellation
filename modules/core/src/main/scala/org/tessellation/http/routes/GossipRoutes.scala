@@ -5,10 +5,10 @@ import cats.effect.std.Queue
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.domain.gossip.{Gossip, RumorStorage}
 import org.tessellation.ext.codecs.BinaryCodec._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.gossip._
+import org.tessellation.sdk.domain.gossip.{Gossip, RumorStorage}
 
 import org.http4s.HttpRoutes
 import org.http4s.dsl.Http4sDsl

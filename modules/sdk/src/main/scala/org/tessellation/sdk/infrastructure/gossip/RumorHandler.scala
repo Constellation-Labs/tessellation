@@ -1,4 +1,4 @@
-package org.tessellation.infrastructure.gossip
+package org.tessellation.sdk.infrastructure.gossip
 
 import cats.Applicative
 import cats.data.{Kleisli, OptionT}
@@ -11,11 +11,11 @@ import cats.syntax.traverse._
 import scala.reflect.ClassTag
 import scala.reflect.runtime.universe.TypeTag
 
-import org.tessellation.domain.gossip.RumorStorage
 import org.tessellation.ext.kryo._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.gossip.{ContentType, ReceivedRumor, Rumor}
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.sdk.domain.gossip.RumorStorage
 
 object RumorHandler {
 

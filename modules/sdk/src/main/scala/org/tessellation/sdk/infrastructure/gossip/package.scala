@@ -1,9 +1,9 @@
-package org.tessellation.infrastructure
+package org.tessellation.sdk.infrastructure
 
 import cats.data.{Kleisli, OptionT}
 
-import org.tessellation.domain.gossip.RumorStorage
 import org.tessellation.schema.gossip.Rumor
+import org.tessellation.sdk.domain.gossip.RumorStorage
 
 package object gossip {
 

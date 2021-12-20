@@ -2,6 +2,8 @@ package org.tessellation.config
 
 import scala.concurrent.duration.FiniteDuration
 
+import org.tessellation.sdk.config.types.GossipConfig
+
 import ciris.Secret
 import com.comcast.ip4s.{Host, Port}
 import eu.timepit.refined.types.string.NonEmptyString
@@ -26,22 +28,6 @@ object types {
   case class HttpClientConfig(
     timeout: FiniteDuration,
     idleTimeInPool: FiniteDuration
-  )
-
-  case class RumorStorageConfig(
-    activeRetention: FiniteDuration,
-    seenRetention: FiniteDuration
-  )
-
-  case class GossipDaemonConfig(
-    fanout: Int,
-    interval: FiniteDuration,
-    maxConcurrentHandlers: Int
-  )
-
-  case class GossipConfig(
-    storage: RumorStorageConfig,
-    daemon: GossipDaemonConfig
   )
 
   case class TrustDaemonConfig(

@@ -3,9 +3,9 @@ package org.tessellation.http.p2p.clients
 import cats.effect.Concurrent
 import cats.syntax.functor._
 
-import org.tessellation.http.p2p.PeerResponse
-import org.tessellation.http.p2p.PeerResponse.PeerResponse
 import org.tessellation.schema.peer.{JoinRequest, RegistrationRequest, SignRequest}
+import org.tessellation.sdk.http.p2p.PeerResponse
+import org.tessellation.sdk.http.p2p.PeerResponse.PeerResponse
 import org.tessellation.security.signature.Signed
 
 import org.http4s.Method._

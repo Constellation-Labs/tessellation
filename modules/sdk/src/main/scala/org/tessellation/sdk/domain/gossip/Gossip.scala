@@ -1,4 +1,4 @@
-package org.tessellation.domain.gossip
+package org.tessellation.sdk.domain.gossip
 
 import scala.reflect.runtime.universe.TypeTag
 

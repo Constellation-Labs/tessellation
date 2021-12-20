@@ -1,4 +1,4 @@
-package org.tessellation.infrastructure.gossip
+package org.tessellation.sdk.infrastructure.gossip
 
 import cats.effect.{Async, Spawn, Temporal}
 import cats.syntax.flatMap._
@@ -8,10 +8,10 @@ import cats.syntax.order._
 import cats.syntax.traverse._
 import cats.syntax.traverseFilter._
 
-import org.tessellation.config.types.RumorStorageConfig
-import org.tessellation.domain.gossip.RumorStorage
 import org.tessellation.schema.gossip._
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.sdk.config.types.RumorStorageConfig
+import org.tessellation.sdk.domain.gossip.RumorStorage
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 

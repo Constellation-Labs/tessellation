@@ -1,4 +1,4 @@
-package org.tessellation.http.p2p
+package org.tessellation.sdk.http.p2p
 
 import cats.data.Kleisli
 import cats.syntax.option._

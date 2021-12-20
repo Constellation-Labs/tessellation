@@ -10,6 +10,7 @@ import org.tessellation.config.AppEnvironment
 import org.tessellation.config.types._
 import org.tessellation.ext.decline.WithOpts
 import org.tessellation.ext.decline.decline._
+import org.tessellation.sdk.config.types._
 
 import com.monovore.decline.Opts
 import fs2.io.file.Path

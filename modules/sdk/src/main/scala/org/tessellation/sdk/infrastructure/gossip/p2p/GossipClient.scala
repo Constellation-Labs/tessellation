@@ -1,4 +1,4 @@
-package org.tessellation.http.p2p.clients
+package org.tessellation.sdk.infrastructure.gossip.p2p
 
 import cats.effect.Concurrent
 
