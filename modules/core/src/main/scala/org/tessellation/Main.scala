@@ -5,14 +5,15 @@ import java.security.KeyPair
 import cats.effect._
 import cats.effect.std.{Random, Supervisor}
 import cats.syntax.applicative._
+import cats.syntax.semigroupk._
 import cats.syntax.show._
 
 import org.tessellation.cli.method.{Run, RunGenesis, RunValidator}
 import org.tessellation.http.p2p.P2PClient
 import org.tessellation.infrastructure.db.Database
 import org.tessellation.infrastructure.genesis.{Loader => GenesisLoader}
-import org.tessellation.infrastructure.gossip.RumorHandlers
 import org.tessellation.infrastructure.logs.LoggerConfigurator
+import org.tessellation.infrastructure.trust.handler.trustHandler
 import org.tessellation.keytool.KeyStoreUtils
 import org.tessellation.kryo.{KryoSerializer, coreKryoRegistrar}
 import org.tessellation.modules._
@@ -20,6 +21,7 @@ import org.tessellation.resources.MkHttpServer.ServerName
 import org.tessellation.resources.{AppResources, MkHttpServer}
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.sdk.infrastructure.gossip.RumorHandlers
 import org.tessellation.security.SecurityProvider
 
 import com.monovore.decline.Opts
@@ -65,7 +67,9 @@ object Main
 
                           _ <- services.stateChannelRunner.initializeKnownCells.asResource
 
-                          rumorHandler = RumorHandlers.make[IO](storages.cluster, storages.trust).handlers
+                          rumorHandler = RumorHandlers.make[IO](storages.cluster).handlers <+> trustHandler(
+                            storages.trust
+                          )
                           _ <- Daemons
                             .start(storages, services, queues, p2pClient, rumorHandler, nodeId, cfg)
                             .asResource

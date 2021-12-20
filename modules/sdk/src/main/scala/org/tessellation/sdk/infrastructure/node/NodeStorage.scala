@@ -1,4 +1,4 @@
-package org.tessellation.infrastructure.node
+package org.tessellation.sdk.infrastructure.node
 
 import cats.effect.std.Queue
 import cats.effect.{Concurrent, Ref}
@@ -7,8 +7,8 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.{Applicative, MonadThrow}
 
-import org.tessellation.domain.node.NodeStorage
 import org.tessellation.schema.node.{InvalidNodeStateTransition, NodeState, NodeStateTransition}
+import org.tessellation.sdk.domain.node.NodeStorage
 
 import fs2._
 

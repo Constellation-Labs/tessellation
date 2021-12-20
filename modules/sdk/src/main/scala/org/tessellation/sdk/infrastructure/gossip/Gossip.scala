@@ -1,4 +1,4 @@
-package org.tessellation.infrastructure.gossip
+package org.tessellation.sdk.infrastructure.gossip
 
 import java.security.KeyPair
 
@@ -11,12 +11,12 @@ import cats.syntax.semigroup._
 
 import scala.reflect.runtime.universe.TypeTag
 
-import org.tessellation.domain.gossip.Gossip
 import org.tessellation.ext.crypto._
 import org.tessellation.ext.kryo._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.gossip._
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.security.SecurityProvider
 
 import eu.timepit.refined.cats._

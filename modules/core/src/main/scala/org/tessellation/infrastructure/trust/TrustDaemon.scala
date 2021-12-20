@@ -7,11 +7,11 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.config.types.TrustDaemonConfig
-import org.tessellation.domain.Daemon
 import org.tessellation.domain.trust.storage.TrustStorage
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.trust.TrustInfo
+import org.tessellation.sdk.domain.Daemon
 import org.tessellation.security.SecurityProvider
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger

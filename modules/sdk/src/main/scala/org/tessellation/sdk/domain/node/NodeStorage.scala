@@ -1,4 +1,4 @@
-package org.tessellation.domain.node
+package org.tessellation.sdk.domain.node
 
 import cats.Applicative
 

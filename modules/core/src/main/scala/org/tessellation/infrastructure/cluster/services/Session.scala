@@ -3,11 +3,11 @@ package org.tessellation.infrastructure.cluster.services
 import cats.effect.Async
 
 import org.tessellation.domain.cluster.services.Session
-import org.tessellation.domain.node.NodeStorage
 import org.tessellation.schema.cluster.{SessionToken, TokenVerificationResult}
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.cluster.storage.SessionStorage
+import org.tessellation.sdk.domain.node.NodeStorage
 
 object Session {
 

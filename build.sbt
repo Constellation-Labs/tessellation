@@ -232,7 +232,13 @@ lazy val sdk = (project in file("modules/sdk"))
       CompilerPlugin.kindProjector,
       CompilerPlugin.betterMonadicFor,
       CompilerPlugin.semanticDB,
-
+      Libraries.cats,
+      Libraries.catsEffect,
+      Libraries.http4sDsl,
+      Libraries.http4sServer,
+      Libraries.http4sClient,
+      Libraries.http4sCirce,
+      Libraries.http4sJwtAuth,
     )
   )
 

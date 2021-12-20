@@ -4,6 +4,7 @@ import cats.effect.Concurrent
 
 import org.tessellation.http.p2p.clients._
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.sdk.infrastructure.gossip.p2p.GossipClient
 
 import org.http4s.client._
 

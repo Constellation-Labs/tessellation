@@ -1,4 +1,4 @@
-package org.tessellation.domain.gossip
+package org.tessellation.sdk.domain.gossip
 
 import org.tessellation.schema.gossip.{Rumor, RumorBatch}
 import org.tessellation.security.hash.Hash

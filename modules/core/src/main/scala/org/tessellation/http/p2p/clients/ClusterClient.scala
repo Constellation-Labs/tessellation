@@ -2,9 +2,9 @@ package org.tessellation.http.p2p.clients
 
 import cats.effect.kernel.Concurrent
 
-import org.tessellation.http.p2p.PeerResponse
-import org.tessellation.http.p2p.PeerResponse.PeerResponse
 import org.tessellation.schema.peer.{P2PContext, Peer}
+import org.tessellation.sdk.http.p2p.PeerResponse
+import org.tessellation.sdk.http.p2p.PeerResponse.PeerResponse
 
 import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
 import org.http4s.client.Client

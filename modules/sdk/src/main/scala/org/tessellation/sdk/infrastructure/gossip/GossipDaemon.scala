@@ -1,4 +1,4 @@
-package org.tessellation.infrastructure.gossip
+package org.tessellation.sdk.infrastructure.gossip
 
 import cats.effect.std.{Queue, Random}
 import cats.effect.{Async, Spawn, Temporal}
@@ -11,15 +11,15 @@ import cats.syntax.show._
 import cats.syntax.traverseFilter._
 import cats.{Applicative, Parallel}
 
-import org.tessellation.config.types.GossipDaemonConfig
-import org.tessellation.domain.Daemon
-import org.tessellation.domain.gossip.RumorStorage
 import org.tessellation.ext.crypto._
-import org.tessellation.http.p2p.clients.GossipClient
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.gossip._
 import org.tessellation.schema.peer.{Peer, PeerId}
+import org.tessellation.sdk.config.types.GossipDaemonConfig
+import org.tessellation.sdk.domain.Daemon
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
+import org.tessellation.sdk.domain.gossip.RumorStorage
+import org.tessellation.sdk.infrastructure.gossip.p2p.GossipClient
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed

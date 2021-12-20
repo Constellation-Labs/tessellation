@@ -1,34 +1,28 @@
-package org.tessellation.infrastructure.gossip
+package org.tessellation.sdk.infrastructure.gossip
 
 import cats.MonadThrow
 import cats.effect.Async
 import cats.syntax.semigroupk._
 import cats.syntax.show._
 
-import org.tessellation.domain.trust.storage.TrustStorage
-import org.tessellation.infrastructure.cluster.rumour.handler.nodeStateHandler
-import org.tessellation.infrastructure.trust.handler.trustHandler
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
+import org.tessellation.sdk.infrastructure.cluster.rumour.handler.nodeStateHandler
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object RumorHandlers {
 
   def make[F[_]: Async: KryoSerializer](
-    clusterStorage: ClusterStorage[F],
-    trustStorage: TrustStorage[F]
+    clusterStorage: ClusterStorage[F]
   ): RumorHandlers[F] =
-    new RumorHandlers[F](clusterStorage, trustStorage) {}
+    new RumorHandlers[F](clusterStorage) {}
 }
 
 sealed abstract class RumorHandlers[F[_]: Async: KryoSerializer] private (
-  clusterStorage: ClusterStorage[F],
-  trustStorage: TrustStorage[F]
+  clusterStorage: ClusterStorage[F]
 ) {
   private val nodeState = nodeStateHandler(clusterStorage)
-
-  private val trust = trustHandler(trustStorage)
 
   private val debug: RumorHandler[F] = {
     val logger = Slf4jLogger.getLogger[F]
@@ -48,5 +42,5 @@ sealed abstract class RumorHandlers[F[_]: Async: KryoSerializer] private (
     strHandler <+> optIntHandler
   }
 
-  val handlers: RumorHandler[F] = nodeState <+> debug <+> trust
+  val handlers: RumorHandler[F] = nodeState <+> debug
 }
