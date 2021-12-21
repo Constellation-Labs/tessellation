@@ -13,7 +13,7 @@ class DataGenerator[F[_]: Monad: Random] {
       value1 <- Random[F].nextDouble
       value2 <- Random[F].nextDouble
     } yield {
-      value1 > distance && value2 < 0.5
+      value1 > distance && value2 < 0.2
     }
 
   def randomEdge(logic: Double => F[Boolean] = randomEdgeLogic)(n: TrustNode, n2: TrustNode) =
