@@ -8,17 +8,15 @@ import cats.syntax.functor._
 
 import org.tessellation.config.types.AppConfig
 import org.tessellation.domain.aci.StateChannelRunner
-import org.tessellation.domain.cluster.services.Cluster
 import org.tessellation.domain.healthcheck.HealthCheck
 import org.tessellation.infrastructure.aci.StateChannelRunner
-import org.tessellation.infrastructure.cluster.services.Cluster
 import org.tessellation.infrastructure.healthcheck.HealthCheck
 import org.tessellation.infrastructure.metrics.Metrics
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.sdk.domain.cluster.services.Session
+import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.gossip.Gossip
-import org.tessellation.sdk.infrastructure.cluster.services.Session
+import org.tessellation.sdk.infrastructure.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.infrastructure.gossip.Gossip
 import org.tessellation.security.SecurityProvider
 
@@ -36,7 +34,7 @@ object Services {
       healthcheck = HealthCheck.make[F]
       session = Session.make[F](storages.session, storages.node)
       cluster = Cluster
-        .make[F](cfg, nodeId, keyPair, storages.session)
+        .make[F](cfg.httpConfig, nodeId, keyPair, storages.session)
       gossip <- Gossip.make[F](queues.rumor, nodeId, keyPair)
       stateChannelRunner <- StateChannelRunner.make[F](queues.stateChannelOutput)
     } yield

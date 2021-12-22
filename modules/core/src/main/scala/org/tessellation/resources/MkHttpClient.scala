@@ -2,7 +2,7 @@ package org.tessellation.resources
 
 import cats.effect.{Async, Resource}
 
-import org.tessellation.config.types.HttpClientConfig
+import org.tessellation.sdk.config.types.HttpClientConfig
 
 import org.http4s.client.Client
 import org.http4s.ember.client.EmberClientBuilder

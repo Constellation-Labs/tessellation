@@ -3,8 +3,8 @@ package org.tessellation.resources
 import cats.effect.kernel.{Async, Resource}
 import cats.syntax.show._
 
-import org.tessellation.config.types.HttpServerConfig
 import org.tessellation.resources.MkHttpServer.ServerName
+import org.tessellation.sdk.config.types.HttpServerConfig
 
 import derevo.cats.show
 import derevo.derive

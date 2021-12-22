@@ -1,4 +1,4 @@
-package org.tessellation.infrastructure.cluster.services
+package org.tessellation.sdk.infrastructure.cluster.services
 
 import java.security.KeyPair
 
@@ -7,12 +7,12 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.{Applicative, MonadThrow}
 
-import org.tessellation.config.types.AppConfig
-import org.tessellation.domain.cluster.services.Cluster
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.cluster._
 import org.tessellation.schema.peer.{PeerId, RegistrationRequest, SignRequest}
+import org.tessellation.sdk.config.types.HttpConfig
+import org.tessellation.sdk.domain.cluster.services.Cluster
 import org.tessellation.sdk.domain.cluster.storage.SessionStorage
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
@@ -20,7 +20,7 @@ import org.tessellation.security.signature.Signed
 object Cluster {
 
   def make[F[_]: Async: KryoSerializer: SecurityProvider](
-    cfg: AppConfig,
+    httpConfig: HttpConfig,
     nodeId: PeerId,
     keyPair: KeyPair,
     sessionStorage: SessionStorage[F]
@@ -36,9 +36,9 @@ object Cluster {
         } yield
           RegistrationRequest(
             nodeId,
-            cfg.httpConfig.externalIp,
-            cfg.httpConfig.publicHttp.port,
-            cfg.httpConfig.p2pHttp.port,
+            httpConfig.externalIp,
+            httpConfig.publicHttp.port,
+            httpConfig.p2pHttp.port,
             session
           )
 
