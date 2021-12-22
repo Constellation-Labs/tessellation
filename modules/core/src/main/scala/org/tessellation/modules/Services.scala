@@ -8,15 +8,17 @@ import cats.syntax.functor._
 
 import org.tessellation.config.types.AppConfig
 import org.tessellation.domain.aci.StateChannelRunner
-import org.tessellation.domain.cluster.services.{Cluster, Session}
+import org.tessellation.domain.cluster.services.Cluster
 import org.tessellation.domain.healthcheck.HealthCheck
 import org.tessellation.infrastructure.aci.StateChannelRunner
-import org.tessellation.infrastructure.cluster.services.{Cluster, Session}
+import org.tessellation.infrastructure.cluster.services.Cluster
 import org.tessellation.infrastructure.healthcheck.HealthCheck
 import org.tessellation.infrastructure.metrics.Metrics
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.domain.gossip.Gossip
+import org.tessellation.sdk.infrastructure.cluster.services.Session
 import org.tessellation.sdk.infrastructure.gossip.Gossip
 import org.tessellation.security.SecurityProvider
 
