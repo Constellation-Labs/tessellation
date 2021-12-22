@@ -4,10 +4,10 @@ import cats.effect.Async
 import cats.syntax.applicativeError._
 import cats.syntax.flatMap._
 
-import org.tessellation.domain.cluster.services.Cluster
 import org.tessellation.ext.http4s.refined._
 import org.tessellation.schema.cluster.SessionDoesNotExist
 import org.tessellation.schema.peer.SignRequest
+import org.tessellation.sdk.domain.cluster.services.Cluster
 
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder

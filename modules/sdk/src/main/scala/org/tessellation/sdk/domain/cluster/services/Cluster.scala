@@ -1,4 +1,5 @@
-package org.tessellation.domain.cluster.services
+package org.tessellation.sdk.domain.cluster.services
+
 import org.tessellation.schema.peer.{RegistrationRequest, SignRequest}
 import org.tessellation.security.signature.Signed
 

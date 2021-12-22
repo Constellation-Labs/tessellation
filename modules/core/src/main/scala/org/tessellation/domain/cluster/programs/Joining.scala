@@ -14,7 +14,6 @@ import scala.concurrent.duration.DurationInt
 
 import org.tessellation.config.AppEnvironment
 import org.tessellation.config.AppEnvironment.Dev
-import org.tessellation.domain.cluster.services.Cluster
 import org.tessellation.effects.GenUUID
 import org.tessellation.http.p2p.P2PClient
 import org.tessellation.kryo.KryoSerializer
@@ -22,7 +21,7 @@ import org.tessellation.schema.ID.Id
 import org.tessellation.schema.cluster._
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer._
-import org.tessellation.sdk.domain.cluster.services.Session
+import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.security.SecurityProvider

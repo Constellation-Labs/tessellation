@@ -2,10 +2,9 @@ package org.tessellation.config
 
 import scala.concurrent.duration.FiniteDuration
 
-import org.tessellation.sdk.config.types.GossipConfig
+import org.tessellation.sdk.config.types.{GossipConfig, HttpConfig}
 
 import ciris.Secret
-import com.comcast.ip4s.{Host, Port}
 import eu.timepit.refined.types.string.NonEmptyString
 
 object types {
@@ -25,30 +24,12 @@ object types {
     password: Secret[String]
   )
 
-  case class HttpClientConfig(
-    timeout: FiniteDuration,
-    idleTimeInPool: FiniteDuration
-  )
-
   case class TrustDaemonConfig(
     interval: FiniteDuration
   )
 
   case class TrustConfig(
     daemon: TrustDaemonConfig
-  )
-
-  case class HttpServerConfig(
-    host: Host,
-    port: Port
-  )
-
-  case class HttpConfig(
-    externalIp: Host,
-    client: HttpClientConfig,
-    publicHttp: HttpServerConfig,
-    p2pHttp: HttpServerConfig,
-    cliHttp: HttpServerConfig
   )
 
 }
