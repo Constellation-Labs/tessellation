@@ -15,7 +15,7 @@ import scala.concurrent.duration.DurationInt
 import org.tessellation.config.AppEnvironment
 import org.tessellation.config.AppEnvironment.Dev
 import org.tessellation.effects.GenUUID
-import org.tessellation.http.p2p.P2PClient
+import org.tessellation.http.p2p.clients.SignClient
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.cluster._
@@ -37,7 +37,7 @@ object Joining {
     environment: AppEnvironment,
     nodeStorage: NodeStorage[F],
     clusterStorage: ClusterStorage[F],
-    p2pClient: P2PClient[F],
+    signClient: SignClient[F],
     cluster: Cluster[F],
     session: Session[F],
     sessionStorage: SessionStorage[F],
@@ -52,7 +52,7 @@ object Joining {
           environment,
           nodeStorage,
           clusterStorage,
-          p2pClient,
+          signClient,
           cluster,
           session,
           sessionStorage,
@@ -66,7 +66,7 @@ object Joining {
     environment: AppEnvironment,
     nodeStorage: NodeStorage[F],
     clusterStorage: ClusterStorage[F],
-    p2pClient: P2PClient[F],
+    signClient: SignClient[F],
     cluster: Cluster[F],
     session: Session[F],
     sessionStorage: SessionStorage[F],
@@ -77,7 +77,7 @@ object Joining {
       environment,
       nodeStorage,
       clusterStorage,
-      p2pClient,
+      signClient,
       cluster,
       session,
       sessionStorage,
@@ -105,7 +105,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
   environment: AppEnvironment,
   nodeStorage: NodeStorage[F],
   clusterStorage: ClusterStorage[F],
-  p2pClient: P2PClient[F],
+  signClient: SignClient[F],
   cluster: Cluster[F],
   session: Session[F],
   sessionStorage: SessionStorage[F],
@@ -150,12 +150,12 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
     skipJoinRequest: Boolean = false
   ): F[Peer] =
     for {
-      registrationRequest <- p2pClient.sign.getRegistrationRequest.run(withPeer)
+      registrationRequest <- signClient.getRegistrationRequest.run(withPeer)
 
       _ <- validateHandshake(registrationRequest, remoteAddress)
 
       signRequest <- GenUUID[F].make.map(SignRequest.apply)
-      signedSignRequest <- p2pClient.sign.sign(signRequest).run(withPeer)
+      signedSignRequest <- signClient.sign(signRequest).run(withPeer)
 
       _ <- verifySignRequest(signRequest, signedSignRequest, PeerId._Id.get(withPeer.id))
         .ifM(Applicative[F].unit, HandshakeSignatureNotValid.raiseError[F, Unit])
@@ -176,7 +176,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
       } else {
         cluster.getRegistrationRequest
           .map(JoinRequest.apply)
-          .flatMap(p2pClient.sign.joinRequest(_).run(withPeer))
+          .flatMap(signClient.joinRequest(_).run(withPeer))
       }
 
     } yield peer

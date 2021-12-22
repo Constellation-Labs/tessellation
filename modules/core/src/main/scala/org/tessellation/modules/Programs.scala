@@ -26,7 +26,7 @@ object Programs {
         cfg.environment,
         storages.node,
         storages.cluster,
-        p2pClient,
+        p2pClient.sign,
         services.cluster,
         services.session,
         storages.session,
