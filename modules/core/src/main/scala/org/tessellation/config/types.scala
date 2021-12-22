@@ -2,6 +2,7 @@ package org.tessellation.config
 
 import scala.concurrent.duration.FiniteDuration
 
+import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types.{GossipConfig, HttpConfig}
 
 import ciris.Secret

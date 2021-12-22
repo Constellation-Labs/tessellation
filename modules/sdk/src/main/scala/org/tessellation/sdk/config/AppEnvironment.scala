@@ -1,4 +1,4 @@
-package org.tessellation.config
+package org.tessellation.sdk.config
 
 import enumeratum.EnumEntry._
 import enumeratum._

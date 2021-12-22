@@ -6,10 +6,10 @@ import scala.concurrent.duration._
 
 import org.tessellation.cli.db
 import org.tessellation.cli.env.{KeyAlias, Password, StorePath}
-import org.tessellation.config.AppEnvironment
 import org.tessellation.config.types._
 import org.tessellation.ext.decline.WithOpts
 import org.tessellation.ext.decline.decline._
+import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types._
 
 import com.monovore.decline.Opts
