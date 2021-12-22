@@ -5,10 +5,11 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.config.types.AppConfig
-import org.tessellation.domain.cluster.programs.{Joining, PeerDiscovery, TrustPush}
+import org.tessellation.domain.cluster.programs.TrustPush
 import org.tessellation.http.p2p.P2PClient
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.sdk.domain.cluster.programs.{Joining, PeerDiscovery}
 import org.tessellation.security.SecurityProvider
 
 object Programs {
@@ -21,7 +22,7 @@ object Programs {
     nodeId: PeerId
   ): F[Programs[F]] =
     for {
-      pd <- PeerDiscovery.make(p2pClient, storages.cluster, nodeId)
+      pd <- PeerDiscovery.make(p2pClient.cluster, storages.cluster, nodeId)
       joining <- Joining.make(
         cfg.environment,
         storages.node,

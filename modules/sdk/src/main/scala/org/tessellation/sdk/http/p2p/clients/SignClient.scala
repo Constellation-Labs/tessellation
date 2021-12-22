@@ -1,4 +1,4 @@
-package org.tessellation.http.p2p.clients
+package org.tessellation.sdk.http.p2p.clients
 
 import cats.effect.Concurrent
 import cats.syntax.functor._

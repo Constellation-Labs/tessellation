@@ -1,31 +1,31 @@
-package org.tessellation.domain.cluster.programs
+package org.tessellation.sdk.domain.cluster.programs
 
 import cats.effect.{Async, Ref}
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.traverse._
 
-import org.tessellation.http.p2p.P2PClient
 import org.tessellation.schema.peer.{P2PContext, Peer, PeerId}
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
+import org.tessellation.sdk.http.p2p.clients.ClusterClient
 
 object PeerDiscovery {
 
   def make[F[_]: Async: Ref.Make](
-    p2pClient: P2PClient[F],
+    clusterClient: ClusterClient[F],
     clusterStorage: ClusterStorage[F],
     nodeId: PeerId
   ): F[PeerDiscovery[F]] =
     Ref
       .of[F, Set[P2PContext]](Set.empty)
-      .map(make(_, p2pClient, clusterStorage, nodeId))
+      .map(make(_, clusterClient, clusterStorage, nodeId))
 
   def make[F[_]: Async](
     cache: Ref[F, Set[P2PContext]],
-    p2pClient: P2PClient[F],
+    clusterClient: ClusterClient[F],
     clusterStorage: ClusterStorage[F],
     nodeId: PeerId
-  ): PeerDiscovery[F] = new PeerDiscovery[F](cache, p2pClient, clusterStorage, nodeId) {}
+  ): PeerDiscovery[F] = new PeerDiscovery[F](cache, clusterClient, clusterStorage, nodeId) {}
 
   trait PeerDiscoveryEnqueue[F[_]] {
     def enqueuePeer(peer: Peer): F[Unit]
@@ -34,7 +34,7 @@ object PeerDiscovery {
 
 sealed abstract class PeerDiscovery[F[_]: Async] private (
   cache: Ref[F, Set[P2PContext]],
-  p2pClient: P2PClient[F],
+  clusterClient: ClusterClient[F],
   clusterStorage: ClusterStorage[F],
   nodeId: PeerId
 ) {
@@ -44,7 +44,7 @@ sealed abstract class PeerDiscovery[F[_]: Async] private (
   def discoverFrom(peer: P2PContext): F[Set[P2PContext]] =
     for {
       _ <- removePeer(peer)
-      peers <- p2pClient.cluster.getDiscoveryPeers.run(peer)
+      peers <- clusterClient.getDiscoveryPeers.run(peer)
       knownPeers <- clusterStorage.getPeers
       unknownPeers = peers.filterNot { p =>
         p.id == nodeId || knownPeers.map(_.id).contains(p.id)

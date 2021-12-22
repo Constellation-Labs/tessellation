@@ -3,11 +3,11 @@ package org.tessellation.modules
 import cats.effect.Async
 import cats.syntax.semigroupk._
 
-import org.tessellation.config.AppEnvironment
-import org.tessellation.config.AppEnvironment.{Dev, Testnet}
 import org.tessellation.http.routes
 import org.tessellation.http.routes._
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.sdk.config.AppEnvironment
+import org.tessellation.sdk.config.AppEnvironment.{Dev, Testnet}
 
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
 import org.http4s.server.middleware.{RequestLogger, ResponseLogger}
