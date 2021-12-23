@@ -1,13 +1,13 @@
-package org.tessellation.infrastructure.trust.storage
+package org.tessellation.trust.infrastructure.storage
 
 import cats.Monad
 import cats.effect.Ref
 import cats.syntax.functor._
 import cats.syntax.functorFilter._
 
-import org.tessellation.domain.trust.storage.TrustStorage
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.trust.{InternalTrustUpdateBatch, PublicTrust, TrustInfo}
+import org.tessellation.trust.domain.storage.TrustStorage
 
 object TrustStorage {
 

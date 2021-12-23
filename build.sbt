@@ -284,9 +284,32 @@ lazy val dagL1 = (project in file("modules/dag-l1"))
       Libraries.refinedCore
     )
   )
+
+
+lazy val trust = (project in file("modules/trust"))
+  .dependsOn(shared, sdk)
+  .settings(
+    name := "tessellation-trust",
+    Defaults.itSettings,
+    scalafixCommonSettings,
+    commonSettings,
+    commonTestSettings,
+    makeBatScripts := Seq(),
+    libraryDependencies ++= Seq(
+      CompilerPlugin.kindProjector,
+      CompilerPlugin.betterMonadicFor,
+      CompilerPlugin.semanticDB,
+      Libraries.cats,
+      Libraries.catsEffect,
+      Libraries.refinedCats,
+      Libraries.log4cats,
+      Libraries.logback % Runtime
+    )
+  )
+
 lazy val core = (project in file("modules/core"))
   .enablePlugins(AshScriptPlugin)
-  .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test, dagShared, sdk)
+  .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test, dagShared, sdk, trust)
   .settings(
     name := "tessellation-core",
     Defaults.itSettings,

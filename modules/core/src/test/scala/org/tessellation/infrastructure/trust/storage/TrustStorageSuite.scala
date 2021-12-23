@@ -5,6 +5,7 @@ import cats.effect.{IO, Ref}
 import org.tessellation.schema.generators._
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.trust.{InternalTrustUpdate, InternalTrustUpdateBatch, TrustInfo}
+import org.tessellation.trust.infrastructure.storage.TrustStorage
 
 import weaver.SimpleIOSuite
 import weaver.scalacheck.Checkers

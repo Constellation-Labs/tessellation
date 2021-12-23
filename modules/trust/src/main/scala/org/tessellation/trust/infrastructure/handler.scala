@@ -1,15 +1,15 @@
-package org.tessellation.infrastructure.trust
+package org.tessellation.trust.infrastructure
 
 import cats.Applicative
 import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.show._
 
-import org.tessellation.domain.trust.storage.TrustStorage
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.gossip.ReceivedRumor
 import org.tessellation.schema.trust.PublicTrust
 import org.tessellation.sdk.infrastructure.gossip.RumorHandler
+import org.tessellation.trust.domain.storage.TrustStorage
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 

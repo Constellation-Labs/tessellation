@@ -3,11 +3,11 @@ package org.tessellation.http.routes
 import cats.effect._
 import cats.effect.unsafe.implicits.global
 
-import org.tessellation.infrastructure.trust.storage.TrustStorage
 import org.tessellation.kryo.{KryoSerializer, coreKryoRegistrar}
 import org.tessellation.schema.generators._
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.trust.{InternalTrustUpdate, InternalTrustUpdateBatch, TrustInfo}
+import org.tessellation.trust.infrastructure.storage.TrustStorage
 
 import org.http4s.Method._
 import org.http4s._

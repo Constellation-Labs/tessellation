@@ -1,11 +1,10 @@
-package org.tessellation.domain.cluster.programs
+package org.tessellation.trust.programs
 
 import cats.effect.Async
-import cats.syntax.flatMap._
-import cats.syntax.functor._
+import cats.implicits._
 
-import org.tessellation.domain.trust.storage.TrustStorage
 import org.tessellation.sdk.domain.gossip.Gossip
+import org.tessellation.trust.domain.storage.TrustStorage
 
 object TrustPush {
 

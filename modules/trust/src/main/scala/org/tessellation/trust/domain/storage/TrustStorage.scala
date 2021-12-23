@@ -1,4 +1,4 @@
-package org.tessellation.domain.trust.storage
+package org.tessellation.trust.domain.storage
 
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.trust.{InternalTrustUpdateBatch, PublicTrust, TrustInfo}

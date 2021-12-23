@@ -3,9 +3,9 @@ package org.tessellation.http.routes
 import cats.effect.Async
 import cats.syntax.flatMap._
 
-import org.tessellation.domain.trust.storage.TrustStorage
 import org.tessellation.ext.codecs.BinaryCodec._
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.trust.domain.storage.TrustStorage
 
 import org.http4s._
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder

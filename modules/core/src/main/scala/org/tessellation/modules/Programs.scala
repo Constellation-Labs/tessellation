@@ -5,12 +5,12 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.config.types.AppConfig
-import org.tessellation.domain.cluster.programs.TrustPush
 import org.tessellation.http.p2p.P2PClient
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.cluster.programs.{Joining, PeerDiscovery}
 import org.tessellation.security.SecurityProvider
+import org.tessellation.trust.programs.TrustPush
 
 object Programs {
 
