@@ -1,12 +1,11 @@
 package org.tessellation.ext
 
-import cats.effect.Concurrent
-import cats.syntax.option._
-
 import scala.reflect.ClassTag
 
 import org.tessellation.kryo.KryoSerializer
 
+import _root_.cats.effect.Concurrent
+import _root_.cats.syntax.option._
 import org.http4s.DecodeResult.{failureT, successT}
 import org.http4s.{EntityDecoder, EntityEncoder, MalformedMessageBodyFailure}
 

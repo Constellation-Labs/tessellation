@@ -1,11 +1,11 @@
 package org.tessellation.ext
 
-import cats.MonadThrow
-import cats.syntax.either._
-
 import scala.reflect.ClassTag
 
 import org.tessellation.kryo.KryoSerializer
+
+import _root_.cats.MonadThrow
+import _root_.cats.syntax.either._
 
 object kryo {
 
