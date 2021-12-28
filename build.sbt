@@ -260,7 +260,7 @@ lazy val dagShared = (project in file("modules/dag-shared"))
   )
 
 lazy val dagL1 = (project in file("modules/dag-l1"))
-  .dependsOn(shared, dagShared, sdk)
+  .dependsOn(kernel, shared, dagShared, sdk)
   .configs(IntegrationTest)
   .settings(
     name := "tessellation-dag-l1",
@@ -277,6 +277,7 @@ lazy val dagL1 = (project in file("modules/dag-l1"))
       Libraries.derevoCats,
       Libraries.derevoCirce,
       Libraries.derevoCore,
+      Libraries.drosteCore,
       Libraries.mapref,
       Libraries.monocleCore,
       Libraries.monocleMacro,
