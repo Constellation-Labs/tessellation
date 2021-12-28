@@ -9,6 +9,7 @@ import cats.syntax.semigroupk._
 import cats.syntax.show._
 
 import org.tessellation.cli.method.{Run, RunGenesis, RunValidator}
+import org.tessellation.ext.cats.effect._
 import org.tessellation.http.p2p.P2PClient
 import org.tessellation.infrastructure.db.Database
 import org.tessellation.infrastructure.genesis.{Loader => GenesisLoader}
@@ -36,10 +37,6 @@ object Main
     ) {
 
   implicit val logger = Slf4jLogger.getLogger[IO]
-
-  implicit class ResourceIO[A](value: IO[A]) {
-    def asResource: Resource[IO, A] = Resource.eval { value }
-  }
 
   override def main: Opts[IO[ExitCode]] =
     cli.method.opts.map { method =>

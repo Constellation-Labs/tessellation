@@ -2,14 +2,14 @@ package org.tessellation.ext
 
 import java.security.KeyPair
 
-import cats.MonadThrow
-import cats.effect.kernel.Async
-import cats.syntax.either._
-
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hashable, SecurityProvider}
+
+import _root_.cats.MonadThrow
+import _root_.cats.effect.kernel.Async
+import _root_.cats.syntax.either._
 
 object crypto {
   implicit class RefinedHashable[F[_]: KryoSerializer](anyRef: AnyRef) {

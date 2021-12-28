@@ -1,8 +1,7 @@
 package org.tessellation.ext
 
-import cats.syntax.order._
-import cats.{Eq, Order, Show}
-
+import _root_.cats.syntax.order._
+import _root_.cats.{Eq, Order, Show}
 import eu.timepit.refined.api.{Refined, Validate}
 import eu.timepit.refined.refineV
 import io.circe.{Decoder, Encoder}
