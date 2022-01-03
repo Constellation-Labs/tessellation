@@ -1,6 +1,6 @@
-package org.tessellation.infrastructure.logs
+package org.tessellation.sdk.infrastructure.logs
 
-import cats.effect.{Async, Resource}
+import cats.effect.{Resource, Sync}
 import cats.syntax.flatMap._
 
 import scala.io.Source
@@ -15,7 +15,7 @@ import org.xml.sax.InputSource
 
 object LoggerConfigurator {
 
-  def configureLogger[F[_]: Async](environment: AppEnvironment): F[Unit] = {
+  def configureLogger[F[_]: Sync](environment: AppEnvironment): F[Unit] = {
     val loggerContext = LoggerFactory.getILoggerFactory.asInstanceOf[LoggerContext]
     loggerContext.reset()
     val configurator = new JoranConfigurator()
@@ -27,12 +27,12 @@ object LoggerConfigurator {
     }
 
     Resource
-      .fromAutoCloseable(Async[F].delay {
+      .fromAutoCloseable(Sync[F].delay {
         Source.fromResource(logbackConfigSource).bufferedReader()
       })
       .use { reader =>
-        Async[F].delay(configurator.setContext(loggerContext)) >>
-          Async[F].delay(configurator.doConfigure(new InputSource(reader)))
+        Sync[F].delay(configurator.setContext(loggerContext)) >>
+          Sync[F].delay(configurator.doConfigure(new InputSource(reader)))
       }
   }
 

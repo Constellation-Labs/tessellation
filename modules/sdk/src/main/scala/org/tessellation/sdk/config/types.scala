@@ -6,6 +6,11 @@ import com.comcast.ip4s.{Host, Port}
 
 object types {
 
+  case class SdkConfig(
+    environment: AppEnvironment,
+    gossipConfig: GossipConfig
+  )
+
   case class RumorStorageConfig(
     activeRetention: FiniteDuration,
     seenRetention: FiniteDuration
