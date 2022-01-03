@@ -13,7 +13,6 @@ import org.tessellation.ext.cats.effect._
 import org.tessellation.http.p2p.P2PClient
 import org.tessellation.infrastructure.db.Database
 import org.tessellation.infrastructure.genesis.{Loader => GenesisLoader}
-import org.tessellation.infrastructure.logs.LoggerConfigurator
 import org.tessellation.infrastructure.trust.handler.trustHandler
 import org.tessellation.keytool.KeyStoreUtils
 import org.tessellation.kryo.{KryoSerializer, coreKryoRegistrar}
@@ -23,6 +22,7 @@ import org.tessellation.resources.{AppResources, MkHttpServer}
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.infrastructure.gossip.RumorHandlers
+import org.tessellation.sdk.infrastructure.logs.LoggerConfigurator
 import org.tessellation.security.SecurityProvider
 
 import com.monovore.decline.Opts

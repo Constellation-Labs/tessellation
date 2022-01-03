@@ -220,7 +220,7 @@ lazy val testShared = (project in file("modules/test-shared"))
   )
 
 lazy val sdk = (project in file("modules/sdk"))
-  .dependsOn(shared % "compile->compile;test->test", testShared % Test)
+  .dependsOn(shared % "compile->compile;test->test", testShared % Test, keytool, kernel)
   .configs(IntegrationTest)
   .settings(
     name := "tessellation-sdk",
@@ -241,7 +241,9 @@ lazy val sdk = (project in file("modules/sdk"))
       Libraries.http4sJwtAuth,
       Libraries.declineCore,
       Libraries.declineEffect,
-      Libraries.declineRefined
+      Libraries.declineRefined,
+      Libraries.logback,
+      Libraries.log4cats,
     )
   )
 

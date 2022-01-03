@@ -32,7 +32,7 @@ import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed._
 
-import eu.timepit.refined.auto._
+import eu.timepit.refined.auto.autoUnwrap
 import higherkindness.droste.{AlgebraM, CoalgebraM, scheme}
 import org.typelevel.log4cats.Logger
 
