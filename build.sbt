@@ -282,6 +282,8 @@ lazy val dagL1 = (project in file("modules/dag-l1"))
       Libraries.derevoCats,
       Libraries.derevoCirce,
       Libraries.derevoCore,
+      Libraries.doobieCore,
+      Libraries.doobieQuill,
       Libraries.drosteCore,
       Libraries.mapref,
       Libraries.monocleCore,
