@@ -33,7 +33,7 @@ class BlockStorage[F[_]: Sync](blocks: MapRef[F, ProofsHash, Option[StoredBlock]
       isBlockAccepted(ref).map(ref -> _)
     }.map(_.toNem.toSortedMap)
 
-  def accept(hashedBlock: Hashed[DAGBlock]): F[Unit] =
+  private[block] def accept(hashedBlock: Hashed[DAGBlock]): F[Unit] =
     blocks(hashedBlock.proofsHash)
       .modify[Either[BlockAcceptanceError, Unit]] {
         case Some(storedBlock) =>
