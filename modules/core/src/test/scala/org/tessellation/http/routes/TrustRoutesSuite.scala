@@ -8,6 +8,7 @@ import org.tessellation.kryo.{KryoSerializer, coreKryoRegistrar}
 import org.tessellation.schema.generators._
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.trust.{InternalTrustUpdate, InternalTrustUpdateBatch, TrustInfo}
+import org.tessellation.sdk.kryo.sdkKryoRegistrar
 
 import org.http4s.Method._
 import org.http4s._
@@ -23,7 +24,7 @@ object TrustRoutesSuite extends HttpSuite {
     } yield peers.head).sample.get
 
     KryoSerializer
-      .forAsync[IO](coreKryoRegistrar)
+      .forAsync[IO](sdkKryoRegistrar ++ coreKryoRegistrar)
       .use { implicit kryoPool =>
         for {
           trust <- Ref[IO].of(Map.empty[PeerId, TrustInfo])
