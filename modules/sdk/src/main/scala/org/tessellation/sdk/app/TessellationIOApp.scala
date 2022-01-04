@@ -20,7 +20,7 @@ import com.monovore.decline.Opts
 import com.monovore.decline.effect.CommandIOApp
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-abstract class TessellationIOApp(
+abstract class TessellationIOApp[A <: CliMethod](
   name: String,
   header: String,
   helpFlag: Boolean = true,
@@ -35,7 +35,7 @@ abstract class TessellationIOApp(
   /**
     * Command-line opts
     */
-  val opts: Opts[CliMethod]
+  def opts: Opts[A]
 
   /**
     * Kryo registration is required for (de)serialization.
@@ -44,7 +44,7 @@ abstract class TessellationIOApp(
 
   protected implicit val logger = Slf4jLogger.getLogger[IO]
 
-  def run(
+  def run(cfg: A)(
     implicit random: Random[IO],
     securityProvider: SecurityProvider[IO],
     keyPair: KeyPair,
@@ -71,7 +71,7 @@ abstract class TessellationIOApp(
                 (for {
                   _ <- logger.info(s"Self peerId: ${nodeId.show}").asResource
 
-                  _ <- run
+                  _ <- run(method)
                 } yield ()).useForever
               }
             }

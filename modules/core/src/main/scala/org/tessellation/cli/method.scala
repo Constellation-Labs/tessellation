@@ -9,6 +9,7 @@ import org.tessellation.cli.env.{KeyAlias, Password, StorePath}
 import org.tessellation.config.types._
 import org.tessellation.ext.decline.WithOpts
 import org.tessellation.ext.decline.decline._
+import org.tessellation.sdk.cli.CliMethod
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types._
 
@@ -16,8 +17,6 @@ import com.monovore.decline.Opts
 import fs2.io.file.Path
 
 object method {
-
-  sealed trait CliMethod
 
   sealed trait Run extends CliMethod {
     val keyStore: StorePath
@@ -92,6 +91,6 @@ object method {
     }
   }
 
-  val opts: Opts[CliMethod] =
+  val opts: Opts[Run] =
     RunGenesis.opts.orElse(RunValidator.opts)
 }
