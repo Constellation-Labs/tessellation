@@ -5,7 +5,7 @@ import cats.syntax.applicativeError._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.domain.cluster.programs.TrustPush
+import org.tessellation.infrastructure.trust.programs.TrustPush
 import org.tessellation.domain.trust.storage.TrustStorage
 import org.tessellation.ext.http4s.refined._
 import org.tessellation.schema.cluster._

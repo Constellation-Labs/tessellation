@@ -1,4 +1,4 @@
-package org.tessellation.domain.cluster.programs
+package org.tessellation.infrastructure.trust.programs
 
 import cats.effect.Async
 import cats.syntax.flatMap._

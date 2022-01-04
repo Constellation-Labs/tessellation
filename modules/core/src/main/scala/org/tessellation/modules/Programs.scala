@@ -5,7 +5,7 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.config.types.AppConfig
-import org.tessellation.domain.cluster.programs.TrustPush
+import org.tessellation.infrastructure.trust.programs.TrustPush
 import org.tessellation.http.p2p.P2PClient
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
