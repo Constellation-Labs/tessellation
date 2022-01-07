@@ -20,6 +20,13 @@ import com.monovore.decline.Opts
 import com.monovore.decline.effect.CommandIOApp
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
+trait SDK[F[_]] {
+  implicit val random: Random[F]
+  implicit val securityProvider: SecurityProvider[F]
+  implicit val keyPair: KeyPair
+  implicit val kryoPool: KryoSerializer[F]
+}
+
 abstract class TessellationIOApp[A <: CliMethod](
   name: String,
   header: String,
@@ -44,12 +51,7 @@ abstract class TessellationIOApp[A <: CliMethod](
 
   protected implicit val logger = Slf4jLogger.getLogger[IO]
 
-  def run(cfg: A)(
-    implicit random: Random[IO],
-    securityProvider: SecurityProvider[IO],
-    keyPair: KeyPair,
-    kryoPool: KryoSerializer[IO]
-  ): Resource[IO, Unit]
+  def run(cfg: A, sdk: SDK[IO]): Resource[IO, Unit]
 
   override final def main: Opts[IO[ExitCode]] =
     opts.map { method =>
@@ -63,15 +65,22 @@ abstract class TessellationIOApp[A <: CliMethod](
 
       LoggerConfigurator.configureLogger[IO](cfg.environment) >>
         logger.info(s"App environment: ${cfg.environment}") >>
-        Random.scalaUtilRandom[IO].flatMap { implicit random =>
-          SecurityProvider.forAsync[IO].use { implicit securityProvider =>
-            loadKeyPair[IO](keyStore, alias, password).flatMap { implicit keyPair =>
-              KryoSerializer.forAsync[IO](registrar).use { implicit kryoPool =>
-                val nodeId = PeerId.fromPublic(keyPair.getPublic)
+        Random.scalaUtilRandom[IO].flatMap { _random =>
+          SecurityProvider.forAsync[IO].use { implicit _securityProvider =>
+            loadKeyPair[IO](keyStore, alias, password).flatMap { _keyPair =>
+              KryoSerializer.forAsync[IO](registrar).use { _kryoPool =>
+                val nodeId = PeerId.fromPublic(_keyPair.getPublic)
                 (for {
                   _ <- logger.info(s"Self peerId: ${nodeId.show}").asResource
 
-                  _ <- run(method)
+                  sdk = new SDK[IO] {
+                    val random = _random
+                    val securityProvider = _securityProvider
+                    val keyPair = _keyPair
+                    val kryoPool = _kryoPool
+                  }
+
+                  _ <- run(method, sdk)
                 } yield ()).useForever
               }
             }

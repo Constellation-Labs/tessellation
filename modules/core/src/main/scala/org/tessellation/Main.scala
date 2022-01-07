@@ -1,9 +1,6 @@
 package org.tessellation
 
-import java.security.KeyPair
-
 import cats.effect._
-import cats.effect.std.Random
 import cats.syntax.semigroupk._
 import cats.syntax.show._
 
@@ -13,15 +10,14 @@ import org.tessellation.http.p2p.P2PClient
 import org.tessellation.infrastructure.db.Database
 import org.tessellation.infrastructure.genesis.{Loader => GenesisLoader}
 import org.tessellation.infrastructure.trust.handler.trustHandler
-import org.tessellation.kryo.{KryoSerializer, coreKryoRegistrar}
+import org.tessellation.kryo.coreKryoRegistrar
 import org.tessellation.modules._
 import org.tessellation.resources.MkHttpServer.ServerName
 import org.tessellation.resources.{AppResources, MkHttpServer}
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.sdk.app.TessellationIOApp
+import org.tessellation.sdk.app.{SDK, TessellationIOApp}
 import org.tessellation.sdk.infrastructure.gossip.RumorHandlers
-import org.tessellation.security.SecurityProvider
 
 import com.monovore.decline.Opts
 
@@ -36,19 +32,15 @@ object Main
 
   val kryoRegistrar: Map[Class[_], Int] = coreKryoRegistrar
 
-  def run(method: Run)(
-    implicit random: Random[IO],
-    securityProvider: SecurityProvider[IO],
-    keyPair: KeyPair,
-    kryoPool: KryoSerializer[IO]
-  ): Resource[IO, Unit] = {
+  def run(method: Run, sdk: SDK[IO]): Resource[IO, Unit] = {
+    import sdk._
+
     val cfg = method.appConfig
 
     Database.forAsync[IO](cfg.dbConfig).flatMap { implicit database =>
       for {
         res <- AppResources.make[IO](cfg)
         nodeId = PeerId.fromPublic(keyPair.getPublic)
-        _ <- logger.info(s"This peerId ${nodeId.show}").asResource
         p2pClient = P2PClient.make[IO](res.client)
         queues <- Queues.make[IO].asResource
         storages <- Storages.make[IO](cfg).asResource
