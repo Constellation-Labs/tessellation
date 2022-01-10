@@ -5,7 +5,6 @@ import cats.syntax.semigroup._
 import org.tessellation.schema.address.Address
 import org.tessellation.security.Encodable
 import org.tessellation.security.hash.Hash
-import org.tessellation.security.signature.Signed
 
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
@@ -73,10 +72,10 @@ object transaction {
     val ordinal: TransactionOrdinal = parent.ordinal.next
   }
 
-  implicit val signedTransactionOrder: Order[Signed[Transaction]] = (x: Signed[Transaction], y: Signed[Transaction]) =>
-    implicitly[Order[BigInt]].compare(x.value.ordinal.coerce, y.value.ordinal.coerce)
+  implicit val transactionOrder: Order[Transaction] = (x: Transaction, y: Transaction) =>
+    implicitly[Order[BigInt]].compare(x.ordinal.coerce, y.ordinal.coerce)
 
-  implicit val signedTransactionOrdering: Ordering[Signed[Transaction]] = signedTransactionOrder.toOrdering
+  implicit val transactionOrdering: Ordering[Transaction] = transactionOrder.toOrdering
 
   object Transaction {
     def runLengthEncoding(hashes: Seq[String]): String = hashes.fold("")((acc, hash) => s"$acc${hash.length}$hash")
