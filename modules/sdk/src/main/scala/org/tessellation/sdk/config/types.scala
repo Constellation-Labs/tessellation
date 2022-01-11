@@ -8,7 +8,8 @@ object types {
 
   case class SdkConfig(
     environment: AppEnvironment,
-    gossipConfig: GossipConfig
+    gossipConfig: GossipConfig,
+    httpConfig: HttpConfig
   )
 
   case class RumorStorageConfig(
