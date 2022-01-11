@@ -12,10 +12,9 @@ import org.tessellation.infrastructure.genesis.{Loader => GenesisLoader}
 import org.tessellation.infrastructure.trust.handler.trustHandler
 import org.tessellation.kryo.coreKryoRegistrar
 import org.tessellation.modules._
+import org.tessellation.resources.MkHttpServer
 import org.tessellation.resources.MkHttpServer.ServerName
-import org.tessellation.resources.{AppResources, MkHttpServer}
 import org.tessellation.schema.node.NodeState
-import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.app.{SDK, TessellationIOApp}
 import org.tessellation.sdk.infrastructure.gossip.RumorHandlers
 
@@ -39,9 +38,8 @@ object Main
 
     Database.forAsync[IO](cfg.dbConfig).flatMap { implicit database =>
       for {
-        res <- AppResources.make[IO](cfg)
-        nodeId = PeerId.fromPublic(keyPair.getPublic)
-        p2pClient = P2PClient.make[IO](res.client)
+        _ <- IO.unit.asResource
+        p2pClient = P2PClient.make[IO](sdkResources.client)
         queues <- Queues.make[IO].asResource
         storages <- Storages.make[IO](cfg).asResource
         services <- Services.make[IO](cfg, nodeId, keyPair, storages, queues).asResource

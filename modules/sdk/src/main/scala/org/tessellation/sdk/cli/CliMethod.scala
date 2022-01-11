@@ -14,6 +14,8 @@ trait CliMethod {
 
   val environment: AppEnvironment
 
+  val httpConfig: HttpConfig
+
   val gossipConfig: GossipConfig = GossipConfig(
     storage = RumorStorageConfig(
       activeRetention = 2.seconds,
@@ -28,7 +30,8 @@ trait CliMethod {
 
   val sdkConfig: SdkConfig = SdkConfig(
     environment,
-    gossipConfig
+    gossipConfig,
+    httpConfig
   )
 
 }

@@ -1,4 +1,4 @@
-package org.tessellation.resources
+package org.tessellation.sdk.resources
 
 import cats.effect.{Async, Resource}
 
