@@ -15,7 +15,7 @@ import cats.syntax.traverse._
 import scala.collection.immutable.SortedSet
 import scala.util.control.NoStackTrace
 
-import org.tessellation.dag.l1.domain.transaction.TransactionService.{ParentNotAccepted, TransactionAcceptanceError}
+import org.tessellation.dag.l1.domain.transaction.TransactionStorage.{ParentNotAccepted, TransactionAcceptanceError}
 import org.tessellation.dag.transaction.filter.Consecutive
 import org.tessellation.ext.collection.MapRefUtils._
 import org.tessellation.schema.address.Address
@@ -26,7 +26,7 @@ import org.tessellation.security.signature.Signed
 import io.chrisdavenport.mapref.MapRef
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-class TransactionService[F[_]: Sync](
+class TransactionStorage[F[_]: Sync](
   lastAccepted: MapRef[F, Address, Option[TransactionReference]],
   waitingTransactions: MapRef[F, Address, Option[NonEmptySet[Signed[Transaction]]]]
 ) {
@@ -104,13 +104,13 @@ class TransactionService[F[_]: Sync](
 
 }
 
-object TransactionService {
+object TransactionStorage {
 
-  def make[F[_]: Sync]: F[TransactionService[F]] =
+  def make[F[_]: Sync]: F[TransactionStorage[F]] =
     for {
       lastAccepted <- MapRef.ofConcurrentHashMap[F, Address, TransactionReference]()
       waitingTransactions <- MapRef.ofConcurrentHashMap[F, Address, NonEmptySet[Signed[Transaction]]]()
-      transactionStorage = new TransactionService[F](lastAccepted, waitingTransactions)
+      transactionStorage = new TransactionStorage[F](lastAccepted, waitingTransactions)
     } yield transactionStorage
 
   sealed trait TransactionAcceptanceError extends NoStackTrace

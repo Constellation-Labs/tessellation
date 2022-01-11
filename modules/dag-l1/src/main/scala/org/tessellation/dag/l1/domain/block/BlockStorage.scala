@@ -14,7 +14,7 @@ import scala.util.control.NoStackTrace
 import org.tessellation.dag.domain.block.{BlockReference, DAGBlock}
 import org.tessellation.dag.l1.config.TipsConfig
 import org.tessellation.dag.l1.domain.block
-import org.tessellation.dag.l1.domain.block.BlockService._
+import org.tessellation.dag.l1.domain.block.BlockStorage._
 import org.tessellation.ext.collection.MapRefUtils.MapRefOps
 import org.tessellation.security.Hashed
 import org.tessellation.security.hash.ProofsHash
@@ -26,7 +26,7 @@ import io.chrisdavenport.mapref.MapRef
 import io.estatico.newtype.ops._
 import monocle.macros.syntax.lens._
 
-class BlockService[F[_]: Sync](blocks: MapRef[F, ProofsHash, Option[StoredBlock]], tipsConfig: TipsConfig) {
+class BlockStorage[F[_]: Sync](blocks: MapRef[F, ProofsHash, Option[StoredBlock]], tipsConfig: TipsConfig) {
 
   def areParentsAccepted(block: DAGBlock): F[Map[BlockReference, Boolean]] =
     block.parent.traverse { ref =>
@@ -168,10 +168,10 @@ class BlockService[F[_]: Sync](blocks: MapRef[F, ProofsHash, Option[StoredBlock]
   }.void
 }
 
-object BlockService {
+object BlockStorage {
 
-  def make[F[_]: Sync](tipsConfig: TipsConfig): F[BlockService[F]] =
-    MapRef.ofConcurrentHashMap[F, ProofsHash, StoredBlock]().map(new BlockService[F](_, tipsConfig))
+  def make[F[_]: Sync](tipsConfig: TipsConfig): F[BlockStorage[F]] =
+    MapRef.ofConcurrentHashMap[F, ProofsHash, StoredBlock]().map(new BlockStorage[F](_, tipsConfig))
 
   sealed trait AcceptedBlockState
   case object Accepted extends AcceptedBlockState
@@ -190,8 +190,8 @@ object BlockService {
     def unsetAsTip: AcceptedBlock = this.focus(_.isTip).replace(false)
   }
 
-  sealed trait BlockServiceError extends NoStackTrace
-  sealed trait TipsUpdateError extends BlockServiceError
+  sealed trait BlockStorageError extends NoStackTrace
+  sealed trait TipsUpdateError extends BlockStorageError
   case class TipBlockToRemoveAsTipNotFound(hash: ProofsHash, got: Option[StoredBlock]) extends TipsUpdateError {
     override def getMessage: String = s"Tip block to remove as tip with hash=$hash not found! But got: $got"
   }
@@ -201,7 +201,7 @@ object BlockService {
   case class NoTipAcceptedBlockNotFound(hash: ProofsHash, got: Option[StoredBlock]) extends TipsUpdateError {
     override def getMessage: String = s"Accepted block that's not a tip with hash=$hash not found! But got: $got"
   }
-  sealed trait BlockAcceptanceError extends BlockServiceError
+  sealed trait BlockAcceptanceError extends BlockStorageError
   case class BlockAlreadyAccepted(hash: ProofsHash) extends BlockAcceptanceError {
     override def getMessage: String = s"Block with hash=$hash is already accepted!"
   }
@@ -211,7 +211,7 @@ object BlockService {
   case class BlockDoesNotExist(hash: ProofsHash) extends BlockAcceptanceError {
     override def getMessage: String = s"Block with hash=$hash doesn't exist so it can't be accepted!"
   }
-  sealed trait BlockStoringError extends BlockServiceError
+  sealed trait BlockStoringError extends BlockStorageError
   case class BlockAlreadyStoredAndWaiting(hash: ProofsHash) extends BlockStoringError {
     override def getMessage: String = s"Block with hash=$hash is already stored and waiting."
   }

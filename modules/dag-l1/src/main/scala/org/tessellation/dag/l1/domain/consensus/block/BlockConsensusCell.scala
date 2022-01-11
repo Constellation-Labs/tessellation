@@ -20,7 +20,7 @@ import org.tessellation.dag.l1.domain.consensus.block.CancellationReason._
 import org.tessellation.dag.l1.domain.consensus.block.CoalgebraCommand._
 import org.tessellation.dag.l1.domain.consensus.block.http.p2p.clients.BlockConsensusClient
 import org.tessellation.dag.l1.domain.consensus.round.RoundId
-import org.tessellation.dag.l1.domain.transaction.TransactionService
+import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.effects.GenUUID
 import org.tessellation.kernel.Cell.NullTerminal
 import org.tessellation.kernel._
@@ -97,8 +97,8 @@ object BlockConsensusCell {
   private def deriveConsensusPeerIds(proposal: Proposal, selfId: PeerId): Set[PeerId] =
     proposal.facilitators + proposal.senderId + proposal.owner - selfId
 
-  private def returnTransactions[F[_]](ownProposal: Proposal, transactionService: TransactionService[F]): F[Unit] =
-    transactionService.put(ownProposal.transactions)
+  private def returnTransactions[F[_]](ownProposal: Proposal, transactionStorage: TransactionStorage[F]): F[Unit] =
+    transactionStorage.put(ownProposal.transactions)
 
   private def cleanUpRoundData[F[_]: Async](
     ownProposal: Proposal,
@@ -119,7 +119,7 @@ object BlockConsensusCell {
 
   private def cancelRound[F[_]: Async](ownProposal: Proposal, ctx: BlockConsensusContext[F]): F[Unit] =
     for {
-      _ <- returnTransactions(ownProposal, ctx.transactionService)
+      _ <- returnTransactions(ownProposal, ctx.transactionStorage)
       _ <- cleanUpRoundData(ownProposal, ctx)
     } yield ()
 
@@ -160,7 +160,7 @@ object BlockConsensusCell {
             sendOwnProposal(ownProposal, peers, ctx)
               .map(_ => NullTerminal.asRight[CellError].widen[Ω])
           case None =>
-            returnTransactions(roundData.ownProposal, ctx.transactionService)
+            returnTransactions(roundData.ownProposal, ctx.transactionStorage)
               .map(_ => CellError("Another own round already in progress! Transactions returned.").asLeft[Ω])
         }
 
@@ -181,7 +181,7 @@ object BlockConsensusCell {
                 .debug(
                   s"Round with roundId=${roundData.roundId} already exists! Returning transactions and processing proposal!"
                 )
-              _ <- returnTransactions(roundData.ownProposal, ctx.transactionService)
+              _ <- returnTransactions(roundData.ownProposal, ctx.transactionStorage)
             } yield ()
         } >> persistProposal(peerProposal, ctx)
 
@@ -448,8 +448,8 @@ object BlockConsensusCell {
           case _                                                           => None
         })
 
-    private def pullTransactions[F[_]: Async](transactionService: TransactionService[F]): F[Set[Signed[Transaction]]] =
-      transactionService
+    private def pullTransactions[F[_]: Async](transactionStorage: TransactionStorage[F]): F[Set[Signed[Transaction]]] =
+      transactionStorage
         .pull()
         .map(_.map(_.toList.toSet).getOrElse(Set.empty))
 
@@ -457,11 +457,11 @@ object BlockConsensusCell {
       for {
         roundId <- GenUUID.forSync[F].make.map(RoundId(_))
         maybePeers <- pullNewConsensusPeers(ctx)
-        maybeTips <- ctx.blockService.pullTips(ctx.consensusConfig.tipsCount)
+        maybeTips <- ctx.blockStorage.pullTips(ctx.consensusConfig.tipsCount)
         algebraCommand <- (maybePeers, maybeTips) match {
           case (Some(peers), Some(tips)) =>
             for {
-              transactions <- pullTransactions(ctx.transactionService)
+              transactions <- pullTransactions(ctx.transactionStorage)
               proposal = Proposal(
                 roundId,
                 senderId = ctx.selfId,
@@ -512,7 +512,7 @@ object BlockConsensusCell {
             InformAboutInabilityToParticipate(proposal, ReceivedProposalForNonExistentOwnRound).pure[F]
           case (None, Some(peers)) =>
             for {
-              transactions <- pullTransactions(ctx.transactionService)
+              transactions <- pullTransactions(ctx.transactionStorage)
               ownProposal = Proposal(
                 proposal.roundId,
                 senderId = ctx.selfId,
