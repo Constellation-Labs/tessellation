@@ -10,9 +10,12 @@ import org.tessellation.cli.env.{KeyAlias, Password, StorePath}
 import org.tessellation.ext.cats.effect._
 import org.tessellation.keytool.KeyStoreUtils
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.cli.CliMethod
+import org.tessellation.sdk.http.p2p.SdkP2PClient
 import org.tessellation.sdk.infrastructure.logs.LoggerConfigurator
 import org.tessellation.sdk.kryo.sdkKryoRegistrar
+import org.tessellation.sdk.modules._
 import org.tessellation.sdk.resources.SdkResources
 import org.tessellation.security.SecurityProvider
 
@@ -61,10 +64,19 @@ abstract class TessellationIOApp[A <: CliMethod](
         Random.scalaUtilRandom[IO].flatMap { _random =>
           SecurityProvider.forAsync[IO].use { implicit _securityProvider =>
             loadKeyPair[IO](keyStore, alias, password).flatMap { _keyPair =>
-              KryoSerializer.forAsync[IO](registrar).use { _kryoPool =>
-                (for {
+              KryoSerializer.forAsync[IO](registrar).use { implicit _kryoPool =>
+                val nodeId = PeerId.fromPublic(_keyPair.getPublic)
 
+                (for {
                   res <- SdkResources.make[IO](cfg)
+                  p2pClient = SdkP2PClient.make[IO](res.client)
+                  queues <- SdkQueues.make[IO].asResource
+                  storages <- SdkStorages.make[IO](cfg).asResource
+                  services <- SdkServices.make[IO](cfg, nodeId, _keyPair, storages, queues).asResource
+
+                  programs <- SdkPrograms
+                    .make[IO](cfg, storages, services, p2pClient.cluster, p2pClient.sign, nodeId)
+                    .asResource
 
                   sdk = new SDK[IO] {
                     val random = _random
@@ -74,9 +86,14 @@ abstract class TessellationIOApp[A <: CliMethod](
                     val keyPair = _keyPair
 
                     val sdkResources = res
+                    val sdkP2PClient = p2pClient
+                    val sdkQueues = queues
+                    val sdkStorages = storages
+                    val sdkServices = services
+                    val sdkPrograms = programs
                   }
 
-                  _ <- logger.info(s"Self peerId: ${sdk.nodeId.show}").asResource
+                  _ <- logger.info(s"Self peerId: ${nodeId.show}").asResource
 
                   _ <- run(method, sdk)
                 } yield ()).useForever

@@ -2,21 +2,20 @@ package org.tessellation.modules
 
 import cats.effect.Concurrent
 import cats.effect.std.Queue
-import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.domain.aci.StateChannelOutput
 import org.tessellation.schema.gossip.RumorBatch
+import org.tessellation.sdk.modules.SdkQueues
 
 object Queues {
 
-  def make[F[_]: Concurrent]: F[Queues[F]] =
+  def make[F[_]: Concurrent](sdkQueues: SdkQueues[F]): F[Queues[F]] =
     for {
-      rumorQueue <- Queue.unbounded[F, RumorBatch]
       stateChannelOutputQueue <- Queue.unbounded[F, StateChannelOutput]
     } yield
       new Queues[F] {
-        val rumor = rumorQueue
+        val rumor = sdkQueues.rumor
         val stateChannelOutput = stateChannelOutputQueue
       }
 }

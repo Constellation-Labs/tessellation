@@ -4,7 +4,6 @@ import cats.effect.kernel.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.config.types.AppConfig
 import org.tessellation.domain.cluster.storage.AddressStorage
 import org.tessellation.domain.trust.storage.TrustStorage
 import org.tessellation.infrastructure.cluster.storage.AddressStorage
@@ -13,29 +12,23 @@ import org.tessellation.infrastructure.trust.storage.TrustStorage
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tessellation.sdk.domain.gossip.RumorStorage
 import org.tessellation.sdk.domain.node.NodeStorage
-import org.tessellation.sdk.infrastructure.cluster.storage.{ClusterStorage, SessionStorage}
-import org.tessellation.sdk.infrastructure.gossip.RumorStorage
-import org.tessellation.sdk.infrastructure.node.NodeStorage
+import org.tessellation.sdk.modules.SdkStorages
 
 object Storages {
 
   def make[F[_]: Async: Database](
-    cfg: AppConfig
+    sdkStorages: SdkStorages[F]
   ): F[Storages[F]] =
     for {
       addressStorage <- AddressStorage.make[F]
-      clusterStorage <- ClusterStorage.make[F]
-      nodeStorage <- NodeStorage.make[F]
-      sessionStorage <- SessionStorage.make[F]
-      rumorStorage <- RumorStorage.make[F](cfg.gossipConfig.storage)
       trustStorage <- TrustStorage.make[F]
     } yield
       new Storages[F](
         address = addressStorage,
-        cluster = clusterStorage,
-        node = nodeStorage,
-        session = sessionStorage,
-        rumor = rumorStorage,
+        cluster = sdkStorages.cluster,
+        node = sdkStorages.node,
+        session = sdkStorages.session,
+        rumor = sdkStorages.rumor,
         trust = trustStorage
       ) {}
 }

@@ -39,11 +39,11 @@ object Main
     Database.forAsync[IO](cfg.dbConfig).flatMap { implicit database =>
       for {
         _ <- IO.unit.asResource
-        p2pClient = P2PClient.make[IO](sdkResources.client)
-        queues <- Queues.make[IO].asResource
-        storages <- Storages.make[IO](cfg).asResource
-        services <- Services.make[IO](cfg, nodeId, keyPair, storages, queues).asResource
-        programs <- Programs.make[IO](cfg, storages, services, p2pClient, nodeId).asResource
+        p2pClient = P2PClient.make[IO](sdkP2PClient, sdkResources.client)
+        queues <- Queues.make[IO](sdkQueues).asResource
+        storages <- Storages.make[IO](sdkStorages).asResource
+        services <- Services.make[IO](sdkServices, queues).asResource
+        programs = Programs.make[IO](sdkPrograms, storages, services)
 
         _ <- services.stateChannelRunner.initializeKnownCells.asResource
 
