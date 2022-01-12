@@ -1,49 +1,35 @@
 package org.tessellation.modules
 
-import java.security.KeyPair
-
 import cats.effect.kernel.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.config.types.AppConfig
 import org.tessellation.domain.aci.StateChannelRunner
 import org.tessellation.domain.healthcheck.HealthCheck
 import org.tessellation.infrastructure.aci.StateChannelRunner
 import org.tessellation.infrastructure.healthcheck.HealthCheck
 import org.tessellation.infrastructure.metrics.Metrics
-import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.gossip.Gossip
-import org.tessellation.sdk.infrastructure.cluster.services.{Cluster, Session}
-import org.tessellation.sdk.infrastructure.gossip.Gossip
-import org.tessellation.security.SecurityProvider
+import org.tessellation.sdk.modules.SdkServices
 
 object Services {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider](
-    cfg: AppConfig,
-    nodeId: PeerId,
-    keyPair: KeyPair,
-    storages: Storages[F],
+  def make[F[_]: Async](
+    sdkServices: SdkServices[F],
     queues: Queues[F]
   ): F[Services[F]] =
     for {
       metrics <- Metrics.make[F]
       healthcheck = HealthCheck.make[F]
-      session = Session.make[F](storages.session, storages.node)
-      cluster = Cluster
-        .make[F](cfg.httpConfig, nodeId, keyPair, storages.session)
-      gossip <- Gossip.make[F](queues.rumor, nodeId, keyPair)
       stateChannelRunner <- StateChannelRunner.make[F](queues.stateChannelOutput)
     } yield
       new Services[F](
         healthcheck = healthcheck,
-        cluster = cluster,
-        session = session,
+        cluster = sdkServices.cluster,
+        session = sdkServices.session,
         metrics = metrics,
-        gossip = gossip,
+        gossip = sdkServices.gossip,
         stateChannelRunner = stateChannelRunner
       ) {}
 }
