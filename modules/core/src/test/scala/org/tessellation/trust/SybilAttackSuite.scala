@@ -97,8 +97,12 @@ object SybilAttackSuite extends SimpleIOSuite with Checkers {
             }
         }
       ser = networkData.flatMap { _.map { _.asJson.noSpaces } }
-      _ <- IO.delay(Files
-        .write(Paths.get("./src/test/resources/trust_100x10.json"), ser.mkString("\n").getBytes(StandardCharsets.UTF_8))
+      _ <- IO.delay(
+        Files
+          .write(
+            Paths.get("./src/test/resources/trust_100x10.json"),
+            ser.mkString("\n").getBytes(StandardCharsets.UTF_8)
+          )
       )
     } yield {
       val res = decode[TrustNode](ser.head)
