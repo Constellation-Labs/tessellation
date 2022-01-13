@@ -25,6 +25,7 @@ import org.tessellation.effects.GenUUID
 import org.tessellation.kernel.Cell.NullTerminal
 import org.tessellation.kernel._
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.node.NodeState.Ready
 import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.schema.transaction.Transaction
@@ -93,6 +94,8 @@ class BlockConsensusCell[F[_]: Async: SecurityProvider: KryoSerializer: Random: 
     )
 
 object BlockConsensusCell {
+
+  def isReadyForBlockConsensus(state: NodeState): Boolean = state == Ready
 
   private def deriveConsensusPeerIds(proposal: Proposal, selfId: PeerId): Set[PeerId] =
     proposal.facilitators + proposal.senderId + proposal.owner - selfId
@@ -441,7 +444,7 @@ object BlockConsensusCell {
 
     private def pullNewConsensusPeers[F[_]: Async: Random](ctx: BlockConsensusContext[F]): F[Option[Set[Peer]]] =
       ctx.clusterStorage.getPeers
-        .map(_.filter(_.state == Ready))
+        .map(_.filter(p => isReadyForBlockConsensus(p.state)))
         .flatMap(peers => Random[F].shuffleList(peers.toList))
         .map(_.take(ctx.consensusConfig.peersCount).toSet match {
           case peers if peers.size == ctx.consensusConfig.peersCount.value => peers.some
