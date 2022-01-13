@@ -58,6 +58,8 @@ class TransactionStorage[F[_]: Sync](
       .flatMap(_.liftTo[F])
   }
 
+  def put(transaction: Signed[Transaction]): F[Unit] = put(Set(transaction))
+
   def put(transactions: Set[Signed[Transaction]]): F[Unit] =
     transactions
       .groupBy(_.value.source)
