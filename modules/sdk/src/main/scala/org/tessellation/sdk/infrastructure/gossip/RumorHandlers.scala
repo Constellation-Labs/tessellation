@@ -7,7 +7,7 @@ import cats.syntax.show._
 
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
-import org.tessellation.sdk.infrastructure.cluster.rumour.handler.nodeStateHandler
+import org.tessellation.sdk.infrastructure.cluster.rumor.handler.nodeStateHandler
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 

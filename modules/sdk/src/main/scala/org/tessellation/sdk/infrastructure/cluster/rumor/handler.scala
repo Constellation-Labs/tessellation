@@ -1,4 +1,4 @@
-package org.tessellation.sdk.infrastructure.cluster.rumour
+package org.tessellation.sdk.infrastructure.cluster.rumor
 
 import cats.effect.Async
 import cats.syntax.flatMap._
