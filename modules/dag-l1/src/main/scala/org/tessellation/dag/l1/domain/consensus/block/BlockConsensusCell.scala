@@ -18,6 +18,7 @@ import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput._
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusOutput.FinalBlock
 import org.tessellation.dag.l1.domain.consensus.block.CancellationReason._
 import org.tessellation.dag.l1.domain.consensus.block.CoalgebraCommand._
+import org.tessellation.dag.l1.domain.consensus.block.Validator.isReadyForBlockConsensus
 import org.tessellation.dag.l1.domain.consensus.block.http.p2p.clients.BlockConsensusClient
 import org.tessellation.dag.l1.domain.consensus.round.RoundId
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
@@ -25,8 +26,6 @@ import org.tessellation.effects.GenUUID
 import org.tessellation.kernel.Cell.NullTerminal
 import org.tessellation.kernel._
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.node.NodeState
-import org.tessellation.schema.node.NodeState.Ready
 import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.schema.transaction.Transaction
 import org.tessellation.security.SecurityProvider
@@ -94,8 +93,6 @@ class BlockConsensusCell[F[_]: Async: SecurityProvider: KryoSerializer: Random: 
     )
 
 object BlockConsensusCell {
-
-  def isReadyForBlockConsensus(state: NodeState): Boolean = state == Ready
 
   private def deriveConsensusPeerIds(proposal: Proposal, selfId: PeerId): Set[PeerId] =
     proposal.facilitators + proposal.senderId + proposal.owner - selfId
