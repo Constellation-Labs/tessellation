@@ -10,7 +10,7 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.config.types.SdkConfig
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.gossip.Gossip
-import org.tessellation.sdk.infrastructure.cluster.services.{Cluster, Session}
+import org.tessellation.sdk.infrastructure.cluster.services.Cluster
 import org.tessellation.sdk.infrastructure.gossip.Gossip
 import org.tessellation.security.SecurityProvider
 
@@ -21,9 +21,9 @@ object SdkServices {
     nodeId: PeerId,
     keyPair: KeyPair,
     storages: SdkStorages[F],
-    queues: SdkQueues[F]
+    queues: SdkQueues[F],
+    session: Session[F]
   ): F[SdkServices[F]] = {
-    val session = Session.make[F](storages.session, storages.node)
     val cluster = Cluster
       .make[F](cfg.httpConfig, nodeId, keyPair, storages.session, storages.node)
 

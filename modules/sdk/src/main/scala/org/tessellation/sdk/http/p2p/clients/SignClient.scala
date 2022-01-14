@@ -1,11 +1,12 @@
 package org.tessellation.sdk.http.p2p.clients
 
-import cats.effect.Concurrent
+import cats.effect.Async
 import cats.syntax.functor._
 
 import org.tessellation.schema.peer.{JoinRequest, RegistrationRequest, SignRequest}
 import org.tessellation.sdk.http.p2p.PeerResponse
 import org.tessellation.sdk.http.p2p.PeerResponse.PeerResponse
+import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 
 import org.http4s.Method._
@@ -21,7 +22,7 @@ trait SignClient[F[_]] {
 
 object SignClient {
 
-  def make[F[_]: Concurrent](client: Client[F]): SignClient[F] =
+  def make[F[_]: Async: SecurityProvider](client: Client[F]): SignClient[F] =
     new SignClient[F] with Http4sClientDsl[F] {
 
       def getRegistrationRequest: PeerResponse[F, RegistrationRequest] =

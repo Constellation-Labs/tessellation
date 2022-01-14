@@ -17,7 +17,8 @@ lazy val commonSettings = Seq(
   scalafmtOnCompile := true,
   scalafixOnCompile := true,
   resolvers ++= List(
-    Resolver.sonatypeRepo("snapshots")
+    Resolver.sonatypeRepo("snapshots"),
+    Resolver.githubPackages("abankowski", "http-request-signer")
   )
 )
 
@@ -242,6 +243,8 @@ lazy val sdk = (project in file("modules/sdk"))
       Libraries.http4sClient,
       Libraries.http4sCirce,
       Libraries.http4sJwtAuth,
+      Libraries.httpSignerCore,
+      Libraries.httpSignerHttp4s,
       Libraries.declineCore,
       Libraries.declineEffect,
       Libraries.declineRefined,
@@ -338,6 +341,8 @@ lazy val core = (project in file("modules/core"))
       Libraries.http4sClient,
       Libraries.http4sCirce,
       Libraries.http4sJwtAuth,
+      Libraries.httpSignerCore,
+      Libraries.httpSignerHttp4s,
       Libraries.javaxCrypto,
       Libraries.log4cats,
       Libraries.logback,

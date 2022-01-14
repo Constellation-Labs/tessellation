@@ -22,6 +22,7 @@ object Dependencies {
     val guava = "30.1.1-jre"
     val http4s = "0.23.1"
     val http4sJwtAuth = "1.0.0"
+    val httpSigner = "0.4.3"
     val log4cats = "2.1.1"
     val micrometer = "1.7.4"
     val monocle = "3.0.0"
@@ -113,6 +114,9 @@ object Dependencies {
     val http4sServer = http4s("ember-server")
     val http4sClient = http4s("ember-client")
     val http4sCirce = http4s("circe")
+
+    val httpSignerCore = "pl.abankowski" %% "http-request-signer-core" % V.httpSigner
+    val httpSignerHttp4s = "pl.abankowski" %% "http4s-request-signer" % V.httpSigner
 
     val guava = "com.google.guava" % "guava" % V.guava
 

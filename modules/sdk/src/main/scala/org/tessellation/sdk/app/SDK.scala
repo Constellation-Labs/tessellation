@@ -17,7 +17,7 @@ trait SDK[F[_]] {
   implicit val kryoPool: KryoSerializer[F]
 
   val keyPair: KeyPair
-  val nodeId = PeerId.fromPublic(keyPair.getPublic)
+  lazy val nodeId = PeerId.fromPublic(keyPair.getPublic)
 
   val sdkResources: SdkResources[F]
   val sdkP2PClient: SdkP2PClient[F]

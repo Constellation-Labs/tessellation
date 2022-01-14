@@ -39,7 +39,7 @@ object Main
     Database.forAsync[IO](cfg.dbConfig).flatMap { implicit database =>
       for {
         _ <- IO.unit.asResource
-        p2pClient = P2PClient.make[IO](sdkP2PClient, sdkResources.client)
+        p2pClient = P2PClient.make[IO](sdkP2PClient, sdkResources.client, sdkServices.session)
         queues <- Queues.make[IO](sdkQueues).asResource
         storages <- Storages.make[IO](sdkStorages).asResource
         services <- Services.make[IO](sdkServices, queues).asResource
@@ -54,7 +54,7 @@ object Main
           .start(storages, services, queues, p2pClient, rumorHandler, nodeId, cfg)
           .asResource
 
-        api = HttpApi.make[IO](storages, queues, services, programs, cfg.environment)
+        api = HttpApi.make[IO](storages, queues, services, programs, keyPair.getPrivate, cfg.environment)
         _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.httpConfig.publicHttp, api.publicApp)
         _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.httpConfig.p2pHttp, api.p2pApp)
         _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.httpConfig.cliHttp, api.cliApp)

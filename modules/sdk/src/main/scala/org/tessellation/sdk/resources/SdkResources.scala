@@ -1,8 +1,14 @@
 package org.tessellation.sdk.resources
 
-import cats.effect.Resource
+import java.security.PrivateKey
 
+import cats.effect.{Async, Resource}
+
+import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.config.types.SdkConfig
+import org.tessellation.sdk.domain.cluster.storage.SessionStorage
+import org.tessellation.sdk.http.p2p.middleware.PeerAuthMiddleware
+import org.tessellation.security.SecurityProvider
 
 import org.http4s.client.Client
 
@@ -12,6 +18,16 @@ sealed abstract class SdkResources[F[_]](
 
 object SdkResources {
 
-  def make[F[_]: MkHttpClient](cfg: SdkConfig): Resource[F, SdkResources[F]] =
-    (MkHttpClient[F].newEmber(cfg.httpConfig.client)).map(new SdkResources[F](_) {})
+  def make[F[_]: MkHttpClient: Async: SecurityProvider](
+    cfg: SdkConfig,
+    privateKey: PrivateKey,
+    sessionStorage: SessionStorage[F],
+    selfId: PeerId
+  ): Resource[F, SdkResources[F]] =
+    (MkHttpClient[F]
+      .newEmber(cfg.httpConfig.client))
+      .map(
+        PeerAuthMiddleware.requestSignerMiddleware[F](_, privateKey, sessionStorage, selfId)
+      )
+      .map(new SdkResources[F](_) {})
 }

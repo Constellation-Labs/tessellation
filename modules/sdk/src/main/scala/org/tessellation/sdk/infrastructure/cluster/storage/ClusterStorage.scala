@@ -27,6 +27,9 @@ object ClusterStorage {
       def getPeers: F[Set[Peer]] =
         peers.keys.flatMap(_.map(peers(_).get).sequence).map(_.flatten.toSet)
 
+      def getPeers(host: Host): F[Set[Peer]] =
+        getPeers.map(_.filter(peer => peer.ip == host))
+
       def getPeer(id: PeerId): F[Option[Peer]] =
         peers(id).get
 

@@ -27,3 +27,5 @@ jobs:
 
       - name: "Run with ${{ matrix.java }} 🚀"
         run: sbt 'scalafixAll --check --rules OrganizeImports;scalafmtCheckAll;test;it:test'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

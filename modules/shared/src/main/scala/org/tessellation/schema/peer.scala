@@ -36,7 +36,7 @@ object peer {
     val fromId: Id => PeerId = _Id.reverseGet
 
     def fromPublic(publicKey: PublicKey): PeerId =
-      PeerId(publicKey.toHex)
+      fromId(publicKey.toId)
   }
 
   @derive(eqv, encoder, decoder, show)
