@@ -13,6 +13,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.cli.CliMethod
 import org.tessellation.sdk.http.p2p.SdkP2PClient
+import org.tessellation.sdk.infrastructure.cluster.services.Session
 import org.tessellation.sdk.infrastructure.logs.LoggerConfigurator
 import org.tessellation.sdk.kryo.sdkKryoRegistrar
 import org.tessellation.sdk.modules._
@@ -65,17 +66,18 @@ abstract class TessellationIOApp[A <: CliMethod](
           SecurityProvider.forAsync[IO].use { implicit _securityProvider =>
             loadKeyPair[IO](keyStore, alias, password).flatMap { _keyPair =>
               KryoSerializer.forAsync[IO](registrar).use { implicit _kryoPool =>
-                val nodeId = PeerId.fromPublic(_keyPair.getPublic)
+                val selfId = PeerId.fromPublic(_keyPair.getPublic)
 
                 (for {
-                  res <- SdkResources.make[IO](cfg)
-                  p2pClient = SdkP2PClient.make[IO](res.client)
-                  queues <- SdkQueues.make[IO].asResource
                   storages <- SdkStorages.make[IO](cfg).asResource
-                  services <- SdkServices.make[IO](cfg, nodeId, _keyPair, storages, queues).asResource
+                  res <- SdkResources.make[IO](cfg, _keyPair.getPrivate(), storages.session, selfId)
+                  session = Session.make[IO](storages.session, storages.node, storages.cluster)
+                  p2pClient = SdkP2PClient.make[IO](res.client, session)
+                  queues <- SdkQueues.make[IO].asResource
+                  services <- SdkServices.make[IO](cfg, selfId, _keyPair, storages, queues, session).asResource
 
                   programs <- SdkPrograms
-                    .make[IO](cfg, storages, services, p2pClient.cluster, p2pClient.sign, nodeId)
+                    .make[IO](cfg, storages, services, p2pClient.cluster, p2pClient.sign, selfId)
                     .asResource
 
                   sdk = new SDK[IO] {
@@ -93,7 +95,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                     val sdkPrograms = programs
                   }
 
-                  _ <- logger.info(s"Self peerId: ${nodeId.show}").asResource
+                  _ <- logger.info(s"Self peerId: ${selfId.show}").asResource
 
                   _ <- run(method, sdk)
                 } yield ()).useForever

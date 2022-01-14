@@ -66,7 +66,7 @@ final case class ClusterRoutes[F[_]: Async](
 
   }
 
-  private val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
+  private val p2pPublic: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "join" =>
       req.decodeR[JoinRequest] { joinRequest =>
         req.remoteAddr
@@ -79,8 +79,10 @@ final case class ClusterRoutes[F[_]: Async](
                 .joinRequest(joinRequest, host)
                 .flatMap(_ => Ok())
           )
-
       }
+  }
+
+  private val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
     case GET -> Root / "peers" =>
       Ok(clusterStorage.getPeers)
     case GET -> Root / "discovery" =>
@@ -94,6 +96,10 @@ final case class ClusterRoutes[F[_]: Async](
           }
       )
   }
+
+  val p2pPublicRoutes: HttpRoutes[F] = Router(
+    prefixPath -> p2pPublic
+  )
 
   val p2pRoutes: HttpRoutes[F] = Router(
     prefixPath -> p2p

@@ -40,9 +40,8 @@ object cluster {
   case object SessionAlreadyExists extends NoStackTrace
 
   trait TokenVerificationResult
-  case object EmptyPeerToken extends TokenVerificationResult
   case object EmptyHeaderToken extends TokenVerificationResult
-  case object TokenDontMatch extends TokenVerificationResult
+  case object TokenDoesntMatch extends TokenVerificationResult
   case object TokenValid extends TokenVerificationResult
 
   case object HandshakeSignatureNotValid extends NoStackTrace

@@ -37,6 +37,8 @@ jobs:
 
       - name: "Test and assembly 🚀"
         run: sbt 'scalafixAll --check --rules OrganizeImports;scalafmtCheckAll;test;it:test;keytool/assembly;wallet/assembly;core/assembly'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Copy dependencies
         run: |

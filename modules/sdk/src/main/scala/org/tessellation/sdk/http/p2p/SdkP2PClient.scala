@@ -1,20 +1,22 @@
 package org.tessellation.sdk.http.p2p
 
-import cats.effect.Concurrent
+import cats.effect.Async
 
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.http.p2p.clients.{ClusterClient, SignClient}
 import org.tessellation.sdk.infrastructure.gossip.p2p.GossipClient
+import org.tessellation.security.SecurityProvider
 
 import org.http4s.client._
 
 object SdkP2PClient {
 
-  def make[F[_]: Concurrent: KryoSerializer](client: Client[F]): SdkP2PClient[F] =
+  def make[F[_]: Async: SecurityProvider: KryoSerializer](client: Client[F], session: Session[F]): SdkP2PClient[F] =
     new SdkP2PClient[F](
       SignClient.make[F](client),
-      ClusterClient.make[F](client),
-      GossipClient.make[F](client)
+      ClusterClient.make[F](client, session),
+      GossipClient.make[F](client, session)
     ) {}
 
 }

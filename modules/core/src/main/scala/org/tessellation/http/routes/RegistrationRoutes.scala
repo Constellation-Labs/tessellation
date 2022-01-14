@@ -39,7 +39,7 @@ final case class RegistrationRoutes[F[_]: Async](cluster: Cluster[F]) extends Ht
       }
   }
 
-  val p2pRoutes: HttpRoutes[F] = Router(
+  val p2pPublicRoutes: HttpRoutes[F] = Router(
     prefixPath -> httpRoutes
   )
 }
