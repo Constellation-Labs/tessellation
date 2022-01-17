@@ -25,7 +25,7 @@ will be aggregated by Layer 0 and proposed to the Global snapshot.
 
 ### Global snapshots
 
-Global snapshots are being created on Layer 0. They contains both DAG blocks and
+Global snapshots are being created on Layer 0. They may contain both DAG blocks and
 StateChannel snapshots. Trigger for the global snapshot will be described by its
 own ADR. Global snapshots that passed majority algorithm can be considered final
 and immutable aka. source of truth.

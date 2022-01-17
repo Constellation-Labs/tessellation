@@ -20,7 +20,7 @@ snapshot.
 Cross-chain swaps will take place on the Layer 0, so then Layer 0 can create
 additional DAG transactions and blocks.
 
-DAG Layer 1 will subscribe to Layer 0, to pull Global snapshots. If there is a
+DAG Layer 1 will subscribe to Layer 0, to pull Global snapshots and other data like selected facilitators. If there is a
 difference between accepted DAG blocks and DAG blocks from Global snapshot, DAG
 Layer 1 will apply missing blocks. In the case of conflicting transactions,
 redownload algorithm will be triggered, to reapply data and converge with the Global snapshot.
