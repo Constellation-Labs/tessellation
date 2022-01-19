@@ -248,7 +248,7 @@ lazy val sdk = (project in file("modules/sdk"))
   )
 
 lazy val dagShared = (project in file("modules/dag-shared"))
-  .dependsOn(shared)
+  .dependsOn(shared, testShared % Test, keytool % Test)
   .settings(
     name := "tessellation-dag-shared",
     Defaults.itSettings,
