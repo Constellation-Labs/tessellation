@@ -4,10 +4,12 @@ import java.security.KeyPair
 
 import cats.data.NonEmptyList
 import cats.data.Validated.{Invalid, Valid}
-import cats.effect.{Async, IO}
+import cats.effect.{IO, Resource}
 import cats.syntax.applicative._
+import cats.syntax.contravariantSemigroupal._
 
 import org.tessellation.dag.transaction.TransactionValidator._
+import org.tessellation.ext.cats.effect._
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
@@ -19,147 +21,171 @@ import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed.forAsyncKryo
 
+import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegBigInt, PosBigInt}
-import weaver.SimpleIOSuite
+import suite.ResourceSuite
 import weaver.scalacheck.Checkers
 
-object TransactionValidatorSuite extends SimpleIOSuite with Checkers {
+object TransactionValidatorSuite extends ResourceSuite with Checkers {
+  override type Res = (
+    (Address => Balance, Address => TransactionReference) => TransactionValidator[IO],
+    KeyPair,
+    KeyPair,
+    Address,
+    Address,
+    Transaction,
+    (Transaction, KeyPair) => IO[Signed[Transaction]]
+  )
+
+  override def sharedResource: Resource[IO, Res] =
+    SecurityProvider.forAsync[IO].flatMap { implicit sp =>
+      KryoSerializer.forAsync[IO](Map.empty).flatMap { implicit kp =>
+        def txValidator(
+          balancesFn: Address => Balance,
+          lastAcceptedTxFn: Address => TransactionReference
+        ) = new TransactionValidator[IO] {
+          val F = effect
+          val securityProvider = sp
+          val kryoSerializer = kp
+
+          def getBalance(address: Address): IO[Balance] = balancesFn(address).pure[IO]
+          def getLastAcceptedTransactionRef(address: Address): IO[TransactionReference] =
+            lastAcceptedTxFn(address).pure[IO]
+        }
+
+        def signTx(tx: Transaction, keyPair: KeyPair) = forAsyncKryo(tx, keyPair)
+
+        (KeyPairGenerator.makeKeyPair[IO], KeyPairGenerator.makeKeyPair[IO]).mapN {
+          case (srcKey, dstKey) =>
+            val src = srcKey.getPublic.toAddress
+            val dst = dstKey.getPublic.toAddress
+
+            val tx = Transaction(
+              src,
+              dst,
+              TransactionAmount(PosBigInt(BigInt(1))),
+              TransactionFee(NonNegBigInt(BigInt(0))),
+              TransactionReference.empty,
+              TransactionSalt(0L)
+            )
+
+            (srcKey, dstKey, src, dst, tx)
+        }.asResource.map {
+          case (srcKey, dstKey, src, dst, tx) =>
+            (txValidator, srcKey, dstKey, src, dst, tx, signTx)
+        }
+      }
+    }
+
+  val initialBalance: Address => Balance = _ => Balance(NonNegBigInt(BigInt(1)))
+  val initialReference: Address => TransactionReference = _ => TransactionReference.empty
+
+  def setReference(hash: Hash) =
+    Transaction._ParentHash.replace(hash).andThen(Transaction._ParentOrdinal.replace(TransactionOrdinal(BigInt(1))))
 
   test("should succeed when all values are correct") {
-    for {
-      infrastructure <- prepareTestInfrastructure()
-      (txValidator, srcKey, _, _, _, tx) = infrastructure
-      signedTx <- signTx(tx, srcKey)
-      validationResult <- txValidator.validate(signedTx)
-    } yield expect.same(Valid(signedTx), validationResult)
+    case (txValidator, srcKey, _, _, _, tx, signTx) =>
+      val validator = txValidator(initialBalance, initialReference)
+
+      for {
+        signedTx <- signTx(tx, srcKey)
+        result <- validator.validate(signedTx)
+      } yield expect.same(result, Valid(signedTx))
   }
 
   test("should succeed when lastTxRef is greater than lastTxRef stored on the node") {
-    for {
-      infrastructure <- prepareTestInfrastructure()
-      (txValidator, srcKey, _, _, _, baseTx) = infrastructure
-      tx = baseTx.copy(parent = TransactionReference(Hash("someHash"), TransactionOrdinal(NonNegBigInt(BigInt(1)))))
-      signedTx <- signTx(tx, srcKey)
-      validationResult <- txValidator.validate(signedTx)
-    } yield expect.same(Valid(signedTx), validationResult)
+    case (txValidator, srcKey, _, _, _, baseTx, signTx) =>
+      val validator = txValidator(initialBalance, initialReference)
+
+      val tx = setReference(Hash("someHash"))(baseTx)
+
+      for {
+        signedTx <- signTx(tx, srcKey)
+        validationResult <- validator.validate(signedTx)
+      } yield expect.same(Valid(signedTx), validationResult)
   }
 
   test("should fail when lastTxRef with greater ordinal has an empty hash") {
-    for {
-      infrastructure <- prepareTestInfrastructure()
-      (txValidator, srcKey, _, _, _, baseTx) = infrastructure
-      tx = baseTx.copy(parent = TransactionReference(Hash(""), TransactionOrdinal(NonNegBigInt(BigInt(1)))))
-      signedTx <- signTx(tx, srcKey)
-      validationResult <- txValidator.validate(signedTx)
-    } yield expect.same(Invalid(NonEmptyList.one(NonZeroOrdinalButEmptyHash(tx))), validationResult)
+    case (txValidator, srcKey, _, _, _, baseTx, signTx) =>
+      val validator = txValidator(initialBalance, initialReference)
+
+      val tx = setReference(Hash(""))(baseTx)
+
+      for {
+        signedTx <- signTx(tx, srcKey)
+        validationResult <- validator.validate(signedTx)
+      } yield expect.same(Invalid(NonEmptyList.one(NonZeroOrdinalButEmptyHash(tx))), validationResult)
   }
 
   test("should fail when lastTxRef's ordinal is lower than one stored on the node") {
-    for {
-      infrastructure <- prepareTestInfrastructure(
-        lastAcceptedTxFn = _ => TransactionReference(Hash("someHash"), TransactionOrdinal(NonNegBigInt(BigInt(1))))
-      )
-      (txValidator, srcKey, _, _, _, tx) = infrastructure
-      signedTx <- signTx(tx, srcKey)
-      validationResult <- txValidator.validate(signedTx)
-    } yield expect.same(Invalid(NonEmptyList.one(ParentTxRefOrdinalLowerThenStoredLastTxRef(tx))), validationResult)
+    case (txValidator, srcKey, _, _, _, tx, signTx) =>
+      val reference =
+        (_: Address) => TransactionReference(Hash("someHash"), TransactionOrdinal(NonNegBigInt(BigInt(1))))
+      val validator = txValidator(initialBalance, reference)
+
+      for {
+        signedTx <- signTx(tx, srcKey)
+        validationResult <- validator.validate(signedTx)
+      } yield expect.same(Invalid(NonEmptyList.one(ParentTxRefOrdinalLowerThenStoredLastTxRef(tx))), validationResult)
   }
 
   test("should fail when lastTxRef's ordinal matches but the hash is different") {
-    for {
-      infrastructure <- prepareTestInfrastructure(
-        lastAcceptedTxFn = _ => TransactionReference(Hash("someHash"), TransactionOrdinal(NonNegBigInt(BigInt(1))))
-      )
-      (txValidator, srcKey, _, _, _, baseTx) = infrastructure
-      tx = baseTx.copy(
-        parent = TransactionReference(Hash("someOtherHash"), TransactionOrdinal(NonNegBigInt(BigInt(1))))
-      )
-      signedTx <- signTx(tx, srcKey)
-      validationResult <- txValidator.validate(signedTx)
-    } yield expect.same(Invalid(NonEmptyList.one(SameOrdinalButDifferentHashForLastTxRef(tx))), validationResult)
+    case (txValidator, srcKey, _, _, _, baseTx, signTx) =>
+      val reference =
+        (_: Address) => TransactionReference(Hash("someHash"), TransactionOrdinal(NonNegBigInt(BigInt(1))))
+      val validator = txValidator(initialBalance, reference)
+
+      val tx = setReference(Hash("someOtherHash"))(baseTx)
+
+      for {
+        signedTx <- signTx(tx, srcKey)
+        validationResult <- validator.validate(signedTx)
+      } yield expect.same(Invalid(NonEmptyList.one(SameOrdinalButDifferentHashForLastTxRef(tx))), validationResult)
   }
 
   test("should fail when source address doesn't match signer id") {
-    for {
-      infrastructure <- prepareTestInfrastructure()
-      (txValidator, _, dstKey, _, _, tx) = infrastructure
-      signedTx <- signTx(tx, dstKey)
-      validationResult <- txValidator.validate(signedTx)
-    } yield expect.same(Invalid(NonEmptyList.one(SourceAddressAndSignerIdsDontMatch(tx))), validationResult)
+    case (txValidator, _, dstKey, _, _, tx, signTx) =>
+      val validator = txValidator(initialBalance, initialReference)
+
+      for {
+        signedTx <- signTx(tx, dstKey)
+        validationResult <- validator.validate(signedTx)
+      } yield expect.same(Invalid(NonEmptyList.one(SourceAddressAndSignerIdsDontMatch(tx))), validationResult)
   }
 
   test("should fail when the signature is wrong") {
-    for {
-      infrastructure <- prepareTestInfrastructure()
-      (txValidator, srcKey, dstKey, _, _, tx) = infrastructure
-      signedTx <- signTx(tx, dstKey).map(
-        signed => signed.copy(proofs = signed.proofs.map(_.copy(id = srcKey.getPublic.toId)))
-      )
-      validationResult <- txValidator.validate(signedTx)
-    } yield expect.same(Invalid(NonEmptyList.one(InvalidSourceSignature)), validationResult)
+    case (txValidator, srcKey, dstKey, _, _, tx, signTx) =>
+      val validator = txValidator(initialBalance, initialReference)
+
+      for {
+        signedTx <- signTx(tx, dstKey).map(
+          signed => signed.copy(proofs = signed.proofs.map(_.copy(id = srcKey.getPublic.toId)))
+        )
+        validationResult <- validator.validate(signedTx)
+      } yield expect.same(Invalid(NonEmptyList.one(InvalidSourceSignature)), validationResult)
   }
 
   test("should fail when source address doesn't have sufficient balance") {
-    for {
-      infrastructure <- prepareTestInfrastructure()
-      (txValidator, srcKey, _, srcAddress, _, baseTx) = infrastructure
-      tx = baseTx.copy(amount = TransactionAmount(PosBigInt(BigInt(2))))
-      signedTx <- signTx(tx, srcKey)
-      validationResult <- txValidator.validate(signedTx)
-    } yield expect.same(Invalid(NonEmptyList.one(InsufficientSourceBalance(srcAddress))), validationResult)
+    case (txValidator, srcKey, _, srcAddress, _, baseTx, signTx) =>
+      val validator = txValidator(initialBalance, initialReference)
+
+      val tx = Transaction._Amount.replace(TransactionAmount(PosBigInt(BigInt(2))))(baseTx)
+
+      for {
+        signedTx <- signTx(tx, srcKey)
+        validationResult <- validator.validate(signedTx)
+      } yield expect.same(Invalid(NonEmptyList.one(InsufficientSourceBalance(srcAddress))), validationResult)
   }
 
   test("should fail when source address is the same as destination address") {
-    for {
-      infrastructure <- prepareTestInfrastructure()
-      (txValidator, srcKey, _, srcAddress, _, baseTx) = infrastructure
-      tx = baseTx.copy(destination = srcAddress)
-      signedTx <- signTx(tx, srcKey)
-      validationResult <- txValidator.validate(signedTx)
-    } yield expect.same(Invalid(NonEmptyList.one(SourceAndDestinationAddressAreEqual(tx))), validationResult)
+    case (txValidator, srcKey, _, srcAddress, _, baseTx, signTx) =>
+      val validator = txValidator(initialBalance, initialReference)
+
+      val tx = Transaction._Destination.replace(srcAddress)(baseTx)
+
+      for {
+        signedTx <- signTx(tx, srcKey)
+        validationResult <- validator.validate(signedTx)
+      } yield expect.same(Invalid(NonEmptyList.one(SourceAndDestinationAddressAreEqual(tx))), validationResult)
   }
-
-  val securityProvider = SecurityProvider.forAsync[IO]
-  val kryo = KryoSerializer.forAsync[IO](Map.empty)
-
-  def prepareTestInfrastructure(
-    balancesFn: Address => Balance = _ => Balance(NonNegBigInt(BigInt(1))),
-    lastAcceptedTxFn: Address => TransactionReference = _ => TransactionReference.empty
-  ): IO[(TransactionValidator[IO], KeyPair, KeyPair, Address, Address, Transaction)] =
-    securityProvider.use { implicit sc =>
-      kryo.use { implicit kp =>
-        for {
-          txValidator <- new TransactionValidator[IO] {
-            override implicit val F: Async[IO] = effect
-            override implicit val securityProvider: SecurityProvider[IO] = sc
-            override implicit val kryoSerializer: KryoSerializer[IO] = kp
-
-            override def getBalance(address: Address): IO[Balance] =
-              balancesFn(address).pure[IO](F)
-
-            override def getLastAcceptedTransactionRef(address: Address): IO[TransactionReference] =
-              lastAcceptedTxFn(address).pure[IO](F)
-          }.pure[IO]
-          srcKey <- KeyPairGenerator.makeKeyPair
-          dstKey <- KeyPairGenerator.makeKeyPair
-          srcAddress = srcKey.getPublic.toAddress
-          dstAddress = dstKey.getPublic.toAddress
-          tx = Transaction(
-            srcAddress,
-            dstAddress,
-            TransactionAmount(PosBigInt(BigInt(1))),
-            TransactionFee(NonNegBigInt(BigInt(0))),
-            TransactionReference.empty,
-            TransactionSalt(0L)
-          )
-        } yield (txValidator, srcKey, dstKey, srcAddress, dstAddress, tx)
-      }
-    }
-
-  def signTx(tx: Transaction, keyPair: KeyPair): IO[Signed[Transaction]] =
-    securityProvider.use { implicit securityProvider =>
-      kryo.use { implicit kryoPool =>
-        forAsyncKryo(tx, keyPair)
-      }
-    }
 }
