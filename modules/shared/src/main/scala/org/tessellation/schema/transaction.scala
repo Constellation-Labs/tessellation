@@ -13,6 +13,8 @@ import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegBigInt, PosBigInt}
 import io.estatico.newtype.macros.newtype
 import io.estatico.newtype.ops._
+import monocle.Lens
+import monocle.macros.GenLens
 
 object transaction {
 
@@ -36,6 +38,13 @@ object transaction {
 
   @derive(decoder, encoder, eqv, show)
   case class TransactionReference(hash: Hash, ordinal: TransactionOrdinal)
+
+  object TransactionReference {
+    val empty: TransactionReference = TransactionReference(Hash(""), TransactionOrdinal(BigInt(0L)))
+
+    val _Hash: Lens[TransactionReference, Hash] = GenLens[TransactionReference](_.hash)
+    val _Ordinal: Lens[TransactionReference, TransactionOrdinal] = GenLens[TransactionReference](_.ordinal)
+  }
 
   @derive(decoder, encoder, eqv, show)
   @newtype
@@ -69,19 +78,25 @@ object transaction {
           )
         )
 
-    val ordinal: TransactionOrdinal = parent.ordinal.next
+    val ordinal: TransactionOrdinal = _ParentOrdinal.get(this).next
   }
-
-  implicit val transactionOrder: Order[Transaction] = (x: Transaction, y: Transaction) =>
-    implicitly[Order[BigInt]].compare(x.ordinal.coerce, y.ordinal.coerce)
-
-  implicit val transactionOrdering: Ordering[Transaction] = transactionOrder.toOrdering
 
   object Transaction {
     def runLengthEncoding(hashes: Seq[String]): String = hashes.fold("")((acc, hash) => s"$acc${hash.length}$hash")
-  }
 
-  object TransactionReference {
-    val empty: TransactionReference = TransactionReference(Hash(""), TransactionOrdinal(BigInt(0L)))
+    val _Source: Lens[Transaction, Address] = GenLens[Transaction](_.source)
+    val _Destination: Lens[Transaction, Address] = GenLens[Transaction](_.destination)
+
+    val _Amount: Lens[Transaction, TransactionAmount] = GenLens[Transaction](_.amount)
+    val _Fee: Lens[Transaction, TransactionFee] = GenLens[Transaction](_.fee)
+    val _Parent: Lens[Transaction, TransactionReference] = GenLens[Transaction](_.parent)
+
+    val _ParentHash: Lens[Transaction, Hash] = _Parent.andThen(TransactionReference._Hash)
+    val _ParentOrdinal: Lens[Transaction, TransactionOrdinal] = _Parent.andThen(TransactionReference._Ordinal)
+
+    implicit val transactionOrder: Order[Transaction] = (x: Transaction, y: Transaction) =>
+      implicitly[Order[BigInt]].compare(x.ordinal.coerce, y.ordinal.coerce)
+
+    implicit val transactionOrdering: Ordering[Transaction] = transactionOrder.toOrdering
   }
 }
