@@ -4,6 +4,7 @@ import java.security.KeyStore
 
 import cats.effect.{Async, ExitCode, IO}
 
+import org.tessellation.BuildInfo
 import org.tessellation.cli.env._
 import org.tessellation.keytool.cert.DistinguishedName
 import org.tessellation.keytool.cli.method.{ExportPrivateKeyHex, GenerateWallet, MigrateExistingKeyStoreToStorePassOnly}
@@ -19,7 +20,7 @@ object Main
     extends CommandIOApp(
       name = "",
       header = "Constellation Keytool",
-      version = "0.0.x"
+      version = BuildInfo.version
     ) {
   implicit val logger = Slf4jLogger.getLogger[IO]
 

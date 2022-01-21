@@ -10,6 +10,7 @@ import cats.syntax.contravariantSemigroupal._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
+import org.tessellation.BuildInfo
 import org.tessellation.keytool.KeyStoreUtils
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
@@ -33,7 +34,7 @@ object Main
     extends CommandIOApp(
       name = "",
       header = "Constellation Wallet",
-      version = "0.0.x"
+      version = BuildInfo.version
     ) {
   implicit val logger = Slf4jLogger.getLogger[IO]
 

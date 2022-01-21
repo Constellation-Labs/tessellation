@@ -24,7 +24,7 @@ object Main
     extends TessellationIOApp[Run](
       name = "",
       header = "Tessellation Node",
-      version = "0.0.x"
+      version = BuildInfo.version
     ) {
 
   val opts: Opts[Run] = cli.method.opts
