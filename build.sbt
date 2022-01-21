@@ -18,9 +18,7 @@ lazy val commonSettings = Seq(
   scalafixOnCompile := true,
   resolvers ++= List(
     Resolver.sonatypeRepo("snapshots")
-  ),
-  buildInfoKeys := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion),
-  buildInfoPackage := "org.tessellation"
+  )
 )
 
 lazy val commonTestSettings = Seq(
@@ -53,7 +51,6 @@ lazy val root = (project in file("."))
 
 lazy val kernel = (project in file("modules/kernel"))
   .enablePlugins(AshScriptPlugin)
-  .enablePlugins(BuildInfoPlugin)
   .dependsOn(shared, testShared % Test)
   .settings(
     name := "tessellation-kernel",
@@ -72,7 +69,6 @@ lazy val kernel = (project in file("modules/kernel"))
 
 lazy val wallet = (project in file("modules/wallet"))
   .enablePlugins(AshScriptPlugin)
-  .enablePlugins(BuildInfoPlugin)
   .dependsOn(keytool, shared, testShared % Test)
   .settings(
     name := "tessellation-wallet",
@@ -102,7 +98,6 @@ lazy val wallet = (project in file("modules/wallet"))
 
 lazy val keytool = (project in file("modules/keytool"))
   .enablePlugins(AshScriptPlugin)
-  .enablePlugins(BuildInfoPlugin)
   .dependsOn(shared, testShared % Test)
   .settings(
     name := "tessellation-keytool",
@@ -144,9 +139,12 @@ lazy val keytool = (project in file("modules/keytool"))
 
 lazy val shared = (project in file("modules/shared"))
   .enablePlugins(AshScriptPlugin)
+  .enablePlugins(BuildInfoPlugin)
   .dependsOn(testShared % Test)
   .settings(
     name := "tessellation-shared",
+    buildInfoKeys := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion),
+    buildInfoPackage := "org.tessellation",
     Defaults.itSettings,
     scalafixCommonSettings,
     commonSettings,
@@ -227,7 +225,6 @@ lazy val testShared = (project in file("modules/test-shared"))
 lazy val sdk = (project in file("modules/sdk"))
   .dependsOn(shared % "compile->compile;test->test", testShared % Test, keytool, kernel)
   .configs(IntegrationTest)
-  .enablePlugins(BuildInfoPlugin)
   .settings(
     name := "tessellation-sdk",
     Defaults.itSettings,
@@ -273,7 +270,6 @@ lazy val dagShared = (project in file("modules/dag-shared"))
 lazy val dagL1 = (project in file("modules/dag-l1"))
   .dependsOn(kernel, shared, dagShared, sdk)
   .configs(IntegrationTest)
-  .enablePlugins(BuildInfoPlugin)
   .settings(
     name := "tessellation-dag-l1",
     Defaults.itSettings,
@@ -301,7 +297,6 @@ lazy val dagL1 = (project in file("modules/dag-l1"))
   )
 lazy val core = (project in file("modules/core"))
   .enablePlugins(AshScriptPlugin)
-  .enablePlugins(BuildInfoPlugin)
   .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test, dagShared, sdk)
   .settings(
     name := "tessellation-core",
