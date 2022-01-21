@@ -41,7 +41,14 @@ object transaction {
   @newtype
   case class TransactionSalt(value: Long)
 
-  // TODO: figure out the Fiber usage for transaction
+  @derive(decoder, encoder, eqv, show)
+  case class TransactionData(
+    source: Address,
+    destination: Address,
+    amount: TransactionAmount,
+    fee: TransactionFee
+  )
+
   @derive(decoder, encoder, eqv, show)
   case class Transaction(
     source: Address,
@@ -51,8 +58,12 @@ object transaction {
     parent: TransactionReference,
     //TODO: check if we can remove the salt and still have hash compatible with bolos app (Ledger)
     salt: TransactionSalt
-  ) extends Encodable {
+  ) extends Fiber[TransactionReference, TransactionData]
+      with Encodable {
     import Transaction._
+
+    def reference = parent
+    def data = TransactionData(source, destination, amount, fee)
 
     // WARN: Transactions hash needs to be calculated with Kryo instance having setReferences=true, to be backward compatible
     override def toEncode: String =
