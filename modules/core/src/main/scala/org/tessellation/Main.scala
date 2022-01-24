@@ -72,7 +72,6 @@ object Main
                 logger.info(s"Genesis accounts: ${accounts.show}")
               }
             } >> services.session.createSession
-
         }).asResource
       } yield ()
     }

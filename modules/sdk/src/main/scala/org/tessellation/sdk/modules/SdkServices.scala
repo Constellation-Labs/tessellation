@@ -25,7 +25,7 @@ object SdkServices {
   ): F[SdkServices[F]] = {
     val session = Session.make[F](storages.session, storages.node)
     val cluster = Cluster
-      .make[F](cfg.httpConfig, nodeId, keyPair, storages.session)
+      .make[F](cfg.httpConfig, nodeId, keyPair, storages.session, storages.node)
 
     for {
       gossip <- Gossip.make[F](queues.rumor, nodeId, keyPair)
