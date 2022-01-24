@@ -1,16 +1,14 @@
 package org.tessellation.sdk.domain.cluster.programs
 
 import cats.Applicative
+import cats.effect.Async
 import cats.effect.std.Queue
-import cats.effect.{Async, Spawn, Temporal}
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
 import cats.syntax.traverse._
-
-import scala.concurrent.duration.DurationInt
 
 import org.tessellation.effects.GenUUID
 import org.tessellation.kryo.KryoSerializer
@@ -122,10 +120,6 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
       _ <- nodeStorage.setNodeState(NodeState.SessionStarted)
 
       _ <- joiningQueue.offer(toPeer)
-
-      _ <- Spawn[F].start {
-        Temporal[F].sleep(15.seconds) >> nodeStorage.setNodeState(NodeState.Ready)
-      } // @mwadon: visualization, just for demo purpose
     } yield ()
 
   private def validateJoinConditions(toPeer: PeerToJoin): F[Unit] =
@@ -166,7 +160,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
         registrationRequest.publicPort,
         registrationRequest.p2pPort,
         registrationRequest.session,
-        NodeState.Unknown
+        registrationRequest.state
       )
 
       _ <- clusterStorage.addPeer(peer)
@@ -179,6 +173,8 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
           .flatMap(signClient.joinRequest(_).run(withPeer))
       }
 
+      // Note: Changing state from ReadyToJoin to Ready state will execute once for first peer, then all consecutive joins should be ignored
+      _ <- nodeStorage.tryModifyState(NodeState.ReadyToJoin, NodeState.Ready).handleError(_ => ())
     } yield peer
 
   private def validateHandshake(registrationRequest: RegistrationRequest, remoteAddress: Option[Host]): F[Unit] =

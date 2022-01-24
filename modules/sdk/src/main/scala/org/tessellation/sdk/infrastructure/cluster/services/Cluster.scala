@@ -14,6 +14,7 @@ import org.tessellation.schema.peer.{PeerId, RegistrationRequest, SignRequest}
 import org.tessellation.sdk.config.types.HttpConfig
 import org.tessellation.sdk.domain.cluster.services.Cluster
 import org.tessellation.sdk.domain.cluster.storage.SessionStorage
+import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 
@@ -23,7 +24,8 @@ object Cluster {
     httpConfig: HttpConfig,
     nodeId: PeerId,
     keyPair: KeyPair,
-    sessionStorage: SessionStorage[F]
+    sessionStorage: SessionStorage[F],
+    nodeStorage: NodeStorage[F]
   ): Cluster[F] =
     new Cluster[F] {
 
@@ -33,13 +35,15 @@ object Cluster {
             case Some(s) => Applicative[F].pure(s)
             case None    => MonadThrow[F].raiseError[SessionToken](SessionDoesNotExist)
           }
+          state <- nodeStorage.getNodeState
         } yield
           RegistrationRequest(
             nodeId,
             httpConfig.externalIp,
             httpConfig.publicHttp.port,
             httpConfig.p2pHttp.port,
-            session
+            session,
+            state
           )
 
       def signRequest(signRequest: SignRequest): F[Signed[SignRequest]] =

@@ -67,7 +67,8 @@ object peer {
     ip: Host,
     publicPort: Port,
     p2pPort: Port,
-    session: SessionToken
+    session: SessionToken,
+    state: NodeState
   )
 
   @derive(eqv, decoder, encoder, show)
