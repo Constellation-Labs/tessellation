@@ -7,7 +7,6 @@ import org.tessellation.sdk.config.types.{GossipConfig, HttpConfig}
 
 import ciris.Secret
 import eu.timepit.refined.types.string.NonEmptyString
-import fs2.io.file.Path
 
 object types {
 
@@ -32,10 +31,6 @@ object types {
 
   case class TrustConfig(
     daemon: TrustDaemonConfig
-  )
-
-  case class SnapshotConfig(
-    storedSnapshotPath: Path
   )
 
 }

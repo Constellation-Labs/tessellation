@@ -1,60 +1,79 @@
 package org.tessellation.l0.infrastructure.snapshot
 
 import cats.data.NonEmptySet
-import cats.effect.kernel.Async
+import cats.effect.Async
+import cats.effect.std.Queue
+import cats.syntax.flatMap._
 import cats.syntax.functor._
+import cats.syntax.semigroup._
 
 import scala.util.control.NoStackTrace
+
 import org.tessellation.dag.domain.block.DAGBlock
-import org.tessellation.kernel.StateChannelSnapshot
-import org.tessellation.l0.domain.snapshot.{GlobalSnapshot, GlobalSnapshotOrdinal, SnapshotService, SnapshotStorage}
+import org.tessellation.ext.fs2.switchRepeat
+import org.tessellation.l0.config.SnapshotConfig
+import org.tessellation.l0.domain.snapshot._
+import org.tessellation.l0.schema.snapshot.{GlobalSnapshot, GlobalSnapshotOrdinal}
 import org.tessellation.schema.height.Height
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.security.Hashed
-import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
-import io.estatico.newtype.ops._
 import org.tessellation.security.signature.Signed
+
+import eu.timepit.refined.cats.nonNegLongMonoid
+import eu.timepit.refined.types.numeric.NonNegLong
+import fs2.Stream
+import io.estatico.newtype.ops._
 
 object SnapshotService {
 
-  private val heightInterval = PosLong(2L)
-
   def make[F[_]: Async](
-    snapshotStorage: SnapshotStorage[F]
+    snapshotStorage: SnapshotStorage[F],
+    blocksQueue: Queue[F, Set[Signed[DAGBlock]]],
+    config: SnapshotConfig
   ): SnapshotService[F] =
     new SnapshotService[F] {
 
-      def createEmptySnapshot(
-        prev: GlobalSnapshot,
-        snapshots: Set[StateChannelSnapshot],
-        nextFacilitators: NonEmptySet[PeerId]
-      ): GlobalSnapshot =
-        GlobalSnapshot(
-          ordinal = GlobalSnapshotOrdinal(prev.ordinal.coerce + NonNegLong(1)),
-          height = prev.height,
-          subHeight = Height(prev.subHeight.coerce + NonNegLong(1)),
-          blocks = Set.empty[Signed[DAGBlock]],
-          snapshots = snapshots,
-          nextFacilitators = nextFacilitators
-        )
+      val snapshotCreation: Stream[F, GlobalSnapshot] =
+        Stream
+          .fromQueueUnterminated(blocksQueue)
+          .evalMap(createSnapshot)
+          .through(switchRepeat(config.fallbackTriggerTimeout, Stream.eval(createSnapshot())))
+
+      def createSnapshot(): F[GlobalSnapshot] =
+        for {
+          prevHeight <- snapshotStorage.getLastSnapshotHeight
+          prevSubHeight <- snapshotStorage.getLastSnapshotSubHeight
+          prevOrdinal <- snapshotStorage.getLastSnapshotOrdinal
+          nextFacilitators <- selectNextFacilitators
+          snapshots <- snapshotStorage.getStateChannelSnapshots
+        } yield
+          GlobalSnapshot(
+            ordinal = GlobalSnapshotOrdinal(prevOrdinal.value |+| NonNegLong(1L)),
+            height = prevHeight,
+            subHeight = Height(prevSubHeight.coerce[Long] + 1L),
+            blocks = Set.empty[Signed[DAGBlock]],
+            snapshots = snapshots,
+            nextFacilitators = nextFacilitators
+          )
 
       def createSnapshot(
-        blocks: Set[Hashed[DAGBlock]],
-        snapshots: Set[StateChannelSnapshot],
-        nextFacilitators: NonEmptySet[PeerId]
+        blocks: Set[Signed[DAGBlock]]
       ): F[GlobalSnapshot] =
         for {
-          previousSnapshotHeight <- snapshotStorage.getLastSnapshotHeight
-          nextSnapshotHeight = Height(previousSnapshotHeight.coerce + heightInterval)
+          prevHeight <- snapshotStorage.getLastSnapshotHeight
+          prevOrdinal <- snapshotStorage.getLastSnapshotOrdinal
+          nextFacilitators <- selectNextFacilitators
+          snapshots <- snapshotStorage.getStateChannelSnapshots
+        } yield
+          GlobalSnapshot(
+            ordinal = GlobalSnapshotOrdinal(prevOrdinal.value |+| NonNegLong(1L)),
+            height = Height(prevHeight.coerce + 1L),
+            subHeight = Height(0L),
+            blocks = blocks,
+            snapshots = snapshots,
+            nextFacilitators = nextFacilitators
+          )
 
-          blocksForNextSnapshot = blocks.filter { block =>
-            val blockHeight = block.signed.height.coerce
-            blockHeight > previousSnapshotHeight.coerce && blockHeight <= nextSnapshotHeight.coerce
-          }.map(_.signed)
-
-          snapshot = GlobalSnapshot(blocksForNextSnapshot, snapshots, nextFacilitators)
-        } yield snapshot
+      def selectNextFacilitators: F[NonEmptySet[PeerId]] = ???
     }
 
   sealed trait SnapshotCreationError extends NoStackTrace {
