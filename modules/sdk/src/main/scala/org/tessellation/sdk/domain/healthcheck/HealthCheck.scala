@@ -1,4 +1,4 @@
-package org.tessellation.domain.healthcheck
+package org.tessellation.sdk.domain.healthcheck
 
 import org.tessellation.schema.healthcheck.AppStatus
 

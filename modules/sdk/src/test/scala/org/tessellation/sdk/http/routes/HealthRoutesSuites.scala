@@ -1,11 +1,11 @@
-package org.tessellation.http.routes
+package org.tessellation.sdk.http.routes
 
 import cats.effect._
 import cats.syntax.applicative._
 
-import org.tessellation.domain.healthcheck.HealthCheck
 import org.tessellation.schema.healthcheck.Status.Okay
 import org.tessellation.schema.healthcheck.{AppStatus, FooStatus}
+import org.tessellation.sdk.domain.healthcheck.HealthCheck
 
 import org.http4s.Method._
 import org.http4s._

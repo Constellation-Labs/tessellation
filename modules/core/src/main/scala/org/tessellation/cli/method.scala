@@ -19,12 +19,7 @@ import fs2.io.file.Path
 object method {
 
   sealed trait Run extends CliMethod {
-    val keyStore: StorePath
-    val alias: KeyAlias
-    val password: Password
     val dbConfig: DBConfig
-    val httpConfig: HttpConfig
-    val environment: AppEnvironment
 
     val appConfig: AppConfig = AppConfig(
       environment = environment,
@@ -49,11 +44,6 @@ object method {
     )
   }
 
-  val appEnvOpts: Opts[AppEnvironment] = Opts
-    .option[AppEnvironment]("env", help = "Environment", short = "e")
-    .orElse(Opts.env[AppEnvironment]("CL_APP_ENV", help = "Environment"))
-    .withDefault(AppEnvironment.Testnet)
-
   case class RunGenesis(
     keyStore: StorePath,
     alias: KeyAlias,
@@ -69,7 +59,7 @@ object method {
     val genesisPathOpts: Opts[Path] = Opts.argument[Path]("genesis")
 
     val opts = Opts.subcommand("run-genesis", "Run genesis mode") {
-      (StorePath.opts, KeyAlias.opts, Password.opts, db.opts, http.opts, appEnvOpts, genesisPathOpts)
+      (StorePath.opts, KeyAlias.opts, Password.opts, db.opts, http.opts, AppEnvironment.opts, genesisPathOpts)
         .mapN(RunGenesis.apply(_, _, _, _, _, _, _))
     }
   }
@@ -86,7 +76,7 @@ object method {
   object RunValidator extends WithOpts[RunValidator] {
 
     val opts = Opts.subcommand("run-validator", "Run validator mode") {
-      (StorePath.opts, KeyAlias.opts, Password.opts, db.opts, http.opts, appEnvOpts)
+      (StorePath.opts, KeyAlias.opts, Password.opts, db.opts, http.opts, AppEnvironment.opts)
         .mapN(RunValidator.apply(_, _, _, _, _, _))
     }
   }

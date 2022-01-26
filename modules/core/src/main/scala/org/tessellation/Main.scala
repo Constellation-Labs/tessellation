@@ -12,11 +12,11 @@ import org.tessellation.infrastructure.genesis.{Loader => GenesisLoader}
 import org.tessellation.infrastructure.trust.handler.trustHandler
 import org.tessellation.kryo.coreKryoRegistrar
 import org.tessellation.modules._
-import org.tessellation.resources.MkHttpServer
-import org.tessellation.resources.MkHttpServer.ServerName
 import org.tessellation.schema.node.NodeState
 import org.tessellation.sdk.app.{SDK, TessellationIOApp}
 import org.tessellation.sdk.infrastructure.gossip.RumorHandlers
+import org.tessellation.sdk.resources.MkHttpServer
+import org.tessellation.sdk.resources.MkHttpServer.ServerName
 
 import com.monovore.decline.Opts
 

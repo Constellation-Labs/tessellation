@@ -1,13 +1,13 @@
-package org.tessellation.http.routes
+package org.tessellation.sdk.http.routes
 
 import cats.effect.Async
 import cats.syntax.applicativeError._
 import cats.syntax.flatMap._
 
-import org.tessellation.ext.http4s.refined._
 import org.tessellation.schema.cluster.SessionDoesNotExist
 import org.tessellation.schema.peer.SignRequest
 import org.tessellation.sdk.domain.cluster.services.Cluster
+import org.tessellation.sdk.ext.http4s.refined.RefinedRequestDecoder
 
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder

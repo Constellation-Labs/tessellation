@@ -1,4 +1,4 @@
-package org.tessellation.infrastructure.cluster.daemon
+package org.tessellation.sdk.infrastructure.cluster.daemon
 
 import cats.effect.{Async, Spawn}
 import cats.syntax.applicativeError._

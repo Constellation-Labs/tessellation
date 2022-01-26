@@ -1,10 +1,10 @@
-package org.tessellation.resources
+package org.tessellation.sdk.resources
 
 import cats.effect.kernel.{Async, Resource}
 import cats.syntax.show._
 
-import org.tessellation.resources.MkHttpServer.ServerName
 import org.tessellation.sdk.config.types.HttpServerConfig
+import org.tessellation.sdk.resources.MkHttpServer.ServerName
 
 import derevo.cats.show
 import derevo.derive

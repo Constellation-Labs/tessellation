@@ -1,8 +1,8 @@
 package org.tessellation.domain
 
 import org.tessellation.ext.http4s.queryParam
-import org.tessellation.ext.http4s.refined._
 import org.tessellation.schema.address.{Address, DAGAddress}
+import org.tessellation.sdk.ext.http4s.refined._
 
 import derevo.cats.show
 import derevo.derive
