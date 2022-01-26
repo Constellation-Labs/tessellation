@@ -1,4 +1,4 @@
-package org.tessellation.ext.http4s
+package org.tessellation.sdk.ext.http4s
 
 import cats.MonadThrow
 import cats.syntax.applicativeError._

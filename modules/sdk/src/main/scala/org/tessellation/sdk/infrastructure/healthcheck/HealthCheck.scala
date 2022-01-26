@@ -1,10 +1,10 @@
-package org.tessellation.infrastructure.healthcheck
+package org.tessellation.sdk.infrastructure.healthcheck
 
 import cats.effect.Temporal
 
-import org.tessellation.domain.healthcheck.HealthCheck
 import org.tessellation.schema.healthcheck.Status.Okay
 import org.tessellation.schema.healthcheck.{AppStatus, FooStatus}
+import org.tessellation.sdk.domain.healthcheck.HealthCheck
 
 object HealthCheck {
 

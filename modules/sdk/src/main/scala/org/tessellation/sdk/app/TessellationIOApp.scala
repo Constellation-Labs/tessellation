@@ -48,7 +48,7 @@ abstract class TessellationIOApp[A <: CliMethod](
 
   protected implicit val logger = Slf4jLogger.getLogger[IO]
 
-  def run(cfg: A, sdk: SDK[IO]): Resource[IO, Unit]
+  def run(method: A, sdk: SDK[IO]): Resource[IO, Unit]
 
   override final def main: Opts[IO[ExitCode]] =
     opts.map { method =>

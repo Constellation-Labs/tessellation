@@ -8,11 +8,11 @@ import cats.syntax.traverse._
 
 import org.tessellation.config.types.AppConfig
 import org.tessellation.http.p2p.P2PClient
-import org.tessellation.infrastructure.cluster.daemon.NodeStateDaemon
 import org.tessellation.infrastructure.trust.TrustDaemon
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.Daemon
+import org.tessellation.sdk.infrastructure.cluster.daemon.NodeStateDaemon
 import org.tessellation.sdk.infrastructure.gossip.{GossipDaemon, RumorHandler}
 import org.tessellation.security.SecurityProvider
 

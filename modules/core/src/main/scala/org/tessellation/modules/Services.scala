@@ -5,12 +5,11 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.domain.aci.StateChannelRunner
-import org.tessellation.domain.healthcheck.HealthCheck
 import org.tessellation.infrastructure.aci.StateChannelRunner
-import org.tessellation.infrastructure.healthcheck.HealthCheck
 import org.tessellation.infrastructure.metrics.Metrics
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.gossip.Gossip
+import org.tessellation.sdk.domain.healthcheck.HealthCheck
 import org.tessellation.sdk.modules.SdkServices
 
 object Services {
@@ -21,11 +20,10 @@ object Services {
   ): F[Services[F]] =
     for {
       metrics <- Metrics.make[F]
-      healthcheck = HealthCheck.make[F]
       stateChannelRunner <- StateChannelRunner.make[F](queues.stateChannelOutput)
     } yield
       new Services[F](
-        healthcheck = healthcheck,
+        healthcheck = sdkServices.healthCheck,
         cluster = sdkServices.cluster,
         session = sdkServices.session,
         metrics = metrics,

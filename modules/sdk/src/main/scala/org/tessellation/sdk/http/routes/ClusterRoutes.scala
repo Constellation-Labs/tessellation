@@ -1,19 +1,16 @@
-package org.tessellation.http.routes
+package org.tessellation.sdk.http.routes
 
 import cats.effect.Async
 import cats.syntax.applicativeError._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.domain.cluster.programs.TrustPush
-import org.tessellation.domain.trust.storage.TrustStorage
-import org.tessellation.ext.http4s.refined._
 import org.tessellation.schema.cluster._
 import org.tessellation.schema.peer.JoinRequest
 import org.tessellation.schema.peer.Peer.toP2PContext
-import org.tessellation.schema.trust.InternalTrustUpdateBatch
 import org.tessellation.sdk.domain.cluster.programs.{Joining, PeerDiscovery}
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
+import org.tessellation.sdk.ext.http4s.refined.RefinedRequestDecoder
 
 import com.comcast.ip4s.Host
 import org.http4s.HttpRoutes
@@ -25,9 +22,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 final case class ClusterRoutes[F[_]: Async](
   joining: Joining[F],
   peerDiscovery: PeerDiscovery[F],
-  trustPush: TrustPush[F],
-  clusterStorage: ClusterStorage[F],
-  trustStorage: TrustStorage[F]
+  clusterStorage: ClusterStorage[F]
 ) extends Http4sDsl[F] {
 
   implicit val logger = Slf4jLogger.getLogger[F]
@@ -52,18 +47,6 @@ final case class ClusterRoutes[F[_]: Async](
               InternalServerError("Unknown error.")
           }
       }
-    case req @ POST -> Root / "trust" =>
-      req.decodeR[InternalTrustUpdateBatch] { trustUpdates =>
-        trustStorage
-          .updateTrust(trustUpdates)
-          .flatMap(_ => trustPush.publishUpdated())
-          .flatMap(_ => Ok())
-          .recoverWith {
-            case _ =>
-              Conflict(s"Internal trust update failure")
-          }
-      }
-
   }
 
   private val p2pPublic: HttpRoutes[F] = HttpRoutes.of[F] {

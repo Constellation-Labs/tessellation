@@ -3,11 +3,15 @@ package org.tessellation.http.routes
 import cats.effect._
 import cats.effect.unsafe.implicits.global
 
+import scala.reflect.runtime.universe.TypeTag
+
+import org.tessellation.domain.cluster.programs.TrustPush
 import org.tessellation.infrastructure.trust.storage.TrustStorage
 import org.tessellation.kryo.{KryoSerializer, coreKryoRegistrar}
 import org.tessellation.schema.generators._
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.trust.{InternalTrustUpdate, InternalTrustUpdateBatch, TrustInfo}
+import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.kryo.sdkKryoRegistrar
 
 import org.http4s.Method._
@@ -29,10 +33,14 @@ object TrustRoutesSuite extends HttpSuite {
         for {
           trust <- Ref[IO].of(Map.empty[PeerId, TrustInfo])
           ts = TrustStorage.make[IO](trust)
+          gossip = new Gossip[IO] {
+            override def spread[A <: AnyRef: TypeTag](rumorContent: A): IO[Unit] = IO.unit
+          }
+          tp = TrustPush.make[IO](ts, gossip)
           _ <- ts.updateTrust(
             InternalTrustUpdateBatch(List(InternalTrustUpdate(peer.id, 0.5)))
           )
-          routes = TrustRoutes[IO](ts).p2pRoutes
+          routes = TrustRoutes[IO](ts, tp).p2pRoutes
         } yield expectHttpStatus(routes, req)(Status.Ok)
       }
       .unsafeRunSync()

@@ -1,8 +1,8 @@
-package org.tessellation.http.routes
+package org.tessellation.sdk.http.routes
 
 import cats.Monad
 
-import org.tessellation.domain.healthcheck.HealthCheck
+import org.tessellation.sdk.domain.healthcheck.HealthCheck
 
 import org.http4s._
 import org.http4s.circe.CirceEntityEncoder._
