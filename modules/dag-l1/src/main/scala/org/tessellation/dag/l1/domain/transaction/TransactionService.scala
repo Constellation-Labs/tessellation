@@ -16,18 +16,25 @@ import org.tessellation.schema.transaction.Transaction
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
-class TransactionService[F[_]: Sync: KryoSerializer](
-  transactionStorage: TransactionStorage[F],
-  transactionValidator: TransactionValidator[F]
-) {
+trait TransactionService[F[_]] {
+  def offer(signedTransaction: Signed[Transaction]): F[Either[NonEmptyList[TransactionValidationError], Hash]]
+}
 
-  def offer(signedTransaction: Signed[Transaction]): F[Either[NonEmptyList[TransactionValidationError], Hash]] =
-    transactionValidator.validate(signedTransaction).flatMap {
-      case Valid(_) =>
-        for {
-          hash <- signedTransaction.value.hashF
-          _ <- transactionStorage.put(signedTransaction)
-        } yield hash.asRight[NonEmptyList[TransactionValidationError]]
-      case Invalid(e) => e.asLeft[Hash].pure[F]
-    }
+object TransactionService {
+
+  def make[F[_]: Sync: KryoSerializer](
+    transactionStorage: TransactionStorage[F],
+    transactionValidator: TransactionValidator[F]
+  ): TransactionService[F] = new TransactionService[F] {
+
+    def offer(signedTransaction: Signed[Transaction]): F[Either[NonEmptyList[TransactionValidationError], Hash]] =
+      transactionValidator.validate(signedTransaction).flatMap {
+        case Valid(_) =>
+          for {
+            hash <- signedTransaction.value.hashF
+            _ <- transactionStorage.put(signedTransaction)
+          } yield hash.asRight[NonEmptyList[TransactionValidationError]]
+        case Invalid(e) => e.asLeft[Hash].pure[F]
+      }
+  }
 }
