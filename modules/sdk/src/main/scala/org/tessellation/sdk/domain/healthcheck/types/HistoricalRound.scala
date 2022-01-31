@@ -1,3 +1,3 @@
 package org.tessellation.sdk.domain.healthcheck.types
 
-final case class HistoricalRound()
+final case class HistoricalRound(key: HealthCheckKey)
