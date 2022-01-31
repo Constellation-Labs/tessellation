@@ -12,4 +12,5 @@ object ConsensusRounds {
   private type Rounds[F[_]] = Map[HealthCheckKey, HealthCheckRound[F]]
   type InProgress[F[_]] = Rounds[F]
   type Finished[F[_]] = Rounds[F]
+  type Outcome[F[_]] = Map[HealthCheckKey, (HealthCheckConsensusDecision, HealthCheckRound[F])]
 }
