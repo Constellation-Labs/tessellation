@@ -15,6 +15,7 @@ import cats.syntax.validated._
 import scala.util.control.NoStackTrace
 
 import org.tessellation.dag.block.BlockValidator._
+import org.tessellation.dag.block.config.BlockValidatorConfig
 import org.tessellation.dag.domain.block.{BlockReference, DAGBlock}
 import org.tessellation.dag.transaction.TransactionValidator
 import org.tessellation.dag.transaction.TransactionValidator.TransactionValidationError
@@ -30,17 +31,20 @@ import eu.timepit.refined.types.numeric.PosInt
 
 abstract class BlockValidator[F[_]: Async: KryoSerializer: SecurityProvider](
   transactionValidator: TransactionValidator[F],
-  requiredUniqueBlockSigners: PosInt
+  config: BlockValidatorConfig
 ) {
 
   protected def areParentsAccepted(block: DAGBlock): F[Map[BlockReference, Boolean]]
 
   protected def getLastAcceptedTransactionRef(address: Address): F[TransactionReference]
 
-  def validate(signedBlock: Signed[DAGBlock]): F[ValidationResult[Signed[DAGBlock]]] =
+  def validate(
+    signedBlock: Signed[DAGBlock],
+    requiredUniqueSigners: PosInt = config.requiredUniqueSigners
+  ): F[ValidationResult[Signed[DAGBlock]]] =
     for {
       signaturesValidation <- validateSignatures(signedBlock)
-      signaturesCountValidation = validateSignaturesCount(signedBlock)
+      signaturesCountValidation = validateSignaturesCount(signedBlock, requiredUniqueSigners)
       parentsValidation <- validateParents(signedBlock)
       transactionsValidation <- validateTransactions(signedBlock)
     } yield
@@ -57,13 +61,16 @@ abstract class BlockValidator[F[_]: Async: KryoSerializer: SecurityProvider](
         Applicative[F].pure(InvalidBlockSignatures.invalidNel)
       )
 
-  private def validateSignaturesCount(signedBlock: Signed[DAGBlock]): ValidationResult[Signed[DAGBlock]] = {
+  private def validateSignaturesCount(
+    signedBlock: Signed[DAGBlock],
+    requiredUniqueSigners: PosInt
+  ): ValidationResult[Signed[DAGBlock]] = {
     val uniqueSignersCount = signedBlock.proofs.map(_.id).toList.toSet.size
 
-    if (uniqueSignersCount >= requiredUniqueBlockSigners)
+    if (uniqueSignersCount >= requiredUniqueSigners)
       signedBlock.validNel[BlockValidationError]
     else
-      InvalidBlockSignaturesCount(uniqueSignersCount, requiredUniqueBlockSigners).invalidNel
+      InvalidBlockSignaturesCount(uniqueSignersCount, requiredUniqueSigners).invalidNel
   }
 
   private def validateParents(signedBlock: Signed[DAGBlock]): F[ValidationResult[Signed[DAGBlock]]] =
