@@ -25,12 +25,8 @@ import org.tessellation.security.signature.signature.SignatureProof
 import eu.timepit.refined.auto._
 import io.estatico.newtype.ops._
 
-trait TransactionValidator[F[_]] {
+abstract class TransactionValidator[F[_]: Async: KryoSerializer: SecurityProvider] {
   import TransactionValidator._
-
-  implicit val F: Async[F]
-  implicit val kryoSerializer: KryoSerializer[F]
-  implicit val securityProvider: SecurityProvider[F]
 
   protected def getBalance(address: Address): F[Balance]
 

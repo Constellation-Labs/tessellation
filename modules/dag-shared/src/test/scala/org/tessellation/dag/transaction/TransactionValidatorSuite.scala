@@ -44,10 +44,6 @@ object TransactionValidatorSuite extends ResourceSuite with Checkers {
           balancesFn: Address => Balance,
           lastAcceptedTxFn: Address => TransactionReference
         ) = new TransactionValidator[IO] {
-          val F = effect
-          val securityProvider = sp
-          val kryoSerializer = kp
-
           def getBalance(address: Address): IO[Balance] = balancesFn(address).pure[IO]
           def getLastAcceptedTransactionRef(address: Address): IO[TransactionReference] =
             lastAcceptedTxFn(address).pure[IO]
