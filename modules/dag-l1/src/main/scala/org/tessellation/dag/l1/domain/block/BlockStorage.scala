@@ -31,7 +31,7 @@ class BlockStorage[F[_]: Sync](blocks: MapRef[F, ProofsHash, Option[StoredBlock]
   def areParentsAccepted(block: DAGBlock): F[Map[BlockReference, Boolean]] =
     block.parent.traverse { ref =>
       isBlockAccepted(ref).map(ref -> _)
-    }.map(_.toNem.toSortedMap)
+    }.map(_.toList.toMap)
 
   private[block] def accept(hashedBlock: Hashed[DAGBlock]): F[Unit] =
     blocks(hashedBlock.proofsHash)
