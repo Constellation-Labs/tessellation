@@ -32,7 +32,7 @@ import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed._
 
-import eu.timepit.refined.auto.autoUnwrap
+import eu.timepit.refined.auto.{autoRefineV, autoUnwrap}
 import higherkindness.droste.{AlgebraM, CoalgebraM, scheme}
 import org.typelevel.log4cats.Logger
 
@@ -266,7 +266,7 @@ object BlockConsensusCell {
               block = roundData.formBlock()
               signedBlock <- Signed.forAsyncKryo(block, ctx.keyPair)
               result <- ctx.blockValidator
-                .validate(signedBlock)
+                .validate(signedBlock, requiredUniqueSigners = 1)
                 .flatTap { validationResult =>
                   if (validationResult.isInvalid) Logger[F].debug(s"Created block is invalid: $validationResult")
                   else Applicative[F].unit
