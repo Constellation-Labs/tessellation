@@ -1,5 +1,6 @@
 package org.tessellation.sdk.infrastructure.cluster.rumor
 
+import cats.Applicative
 import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.show._
@@ -22,7 +23,12 @@ object handler {
     RumorHandler.fromReceivedRumorFn[F, NodeState](latestOnly = true) {
       case ReceivedRumor(origin, state) =>
         logger.info(s"Received state=${state.show} from id=${origin.show}") >>
-          clusterStorage.setPeerState(origin, state)
+          clusterStorage.setPeerState(origin, state) >> {
+          if (Set[NodeState](NodeState.Leaving, NodeState.Offline).contains(state))
+            clusterStorage.removePeer(origin)
+          else
+            Applicative[F].unit
+        }
     }
   }
 }
