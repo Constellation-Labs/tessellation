@@ -22,6 +22,8 @@ import org.tessellation.security.SecurityProvider
 
 import com.monovore.decline.Opts
 import com.monovore.decline.effect.CommandIOApp
+import fs2.Stream
+import fs2.concurrent.SignallingRef
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 abstract class TessellationIOApp[A <: CliMethod](
@@ -68,37 +70,49 @@ abstract class TessellationIOApp[A <: CliMethod](
               KryoSerializer.forAsync[IO](registrar).use { implicit _kryoPool =>
                 val selfId = PeerId.fromPublic(_keyPair.getPublic)
 
-                (for {
-                  storages <- SdkStorages.make[IO](cfg).asResource
-                  res <- SdkResources.make[IO](cfg, _keyPair.getPrivate(), storages.session, selfId)
-                  session = Session.make[IO](storages.session, storages.node, storages.cluster)
-                  p2pClient = SdkP2PClient.make[IO](res.client, session)
-                  queues <- SdkQueues.make[IO].asResource
-                  services <- SdkServices.make[IO](cfg, selfId, _keyPair, storages, queues, session).asResource
+                SignallingRef.of[IO, Unit](()).flatMap { _restartSignal =>
+                  def startup: Resource[IO, Unit] =
+                    (for {
+                      storages <- SdkStorages.make[IO](cfg).asResource
+                      res <- SdkResources.make[IO](cfg, _keyPair.getPrivate(), storages.session, selfId)
+                      session = Session.make[IO](storages.session, storages.node, storages.cluster)
+                      p2pClient = SdkP2PClient.make[IO](res.client, session)
+                      queues <- SdkQueues.make[IO].asResource
+                      services <- SdkServices
+                        .make[IO](cfg, selfId, _keyPair, storages, queues, session, _restartSignal)
+                        .asResource
 
-                  programs <- SdkPrograms
-                    .make[IO](cfg, storages, services, p2pClient.cluster, p2pClient.sign, selfId)
-                    .asResource
+                      programs <- SdkPrograms
+                        .make[IO](cfg, storages, services, p2pClient.cluster, p2pClient.sign, selfId)
+                        .asResource
 
-                  sdk = new SDK[IO] {
-                    val random = _random
-                    val securityProvider = _securityProvider
-                    val kryoPool = _kryoPool
+                      sdk = new SDK[IO] {
+                        val random = _random
+                        val securityProvider = _securityProvider
+                        val kryoPool = _kryoPool
 
-                    val keyPair = _keyPair
+                        val keyPair = _keyPair
 
-                    val sdkResources = res
-                    val sdkP2PClient = p2pClient
-                    val sdkQueues = queues
-                    val sdkStorages = storages
-                    val sdkServices = services
-                    val sdkPrograms = programs
-                  }
+                        val sdkResources = res
+                        val sdkP2PClient = p2pClient
+                        val sdkQueues = queues
+                        val sdkStorages = storages
+                        val sdkServices = services
+                        val sdkPrograms = programs
 
-                  _ <- logger.info(s"Self peerId: ${selfId.show}").asResource
+                        def restartSignal = _restartSignal
+                      }
 
-                  _ <- run(method, sdk)
-                } yield ()).useForever
+                      _ <- logger.info(s"Self peerId: ${selfId.show}").asResource
+
+                      _ <- run(method, sdk)
+                    } yield ())
+
+                  _restartSignal.discrete.switchMap { _ =>
+                    Stream.eval(startup.useForever)
+                  }.compile.drain.as(ExitCode.Success)
+                }
+
               }
             }
           }

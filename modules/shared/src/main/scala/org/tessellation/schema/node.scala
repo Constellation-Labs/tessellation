@@ -22,6 +22,7 @@ object node {
     case object SessionStarted extends NodeState
 
     case object Ready extends NodeState
+    case object Leaving extends NodeState
     case object Offline extends NodeState
 
     case object Unknown extends NodeState
@@ -30,7 +31,7 @@ object node {
       Set(Initial, ReadyToJoin, LoadingGenesis, GenesisReady, StartingSession, SessionStarted, Ready, Offline, Unknown)
 
     val toBroadcast: Set[NodeState] =
-      Set(Ready, Offline)
+      Set(Ready, Leaving, Offline)
   }
 
   @derive(eqv, show)
