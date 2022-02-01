@@ -9,6 +9,7 @@ import org.tessellation.schema.cluster._
 import org.tessellation.schema.peer.JoinRequest
 import org.tessellation.schema.peer.Peer.toP2PContext
 import org.tessellation.sdk.domain.cluster.programs.{Joining, PeerDiscovery}
+import org.tessellation.sdk.domain.cluster.services.Cluster
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.ext.http4s.refined.RefinedRequestDecoder
 
@@ -22,7 +23,8 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 final case class ClusterRoutes[F[_]: Async](
   joining: Joining[F],
   peerDiscovery: PeerDiscovery[F],
-  clusterStorage: ClusterStorage[F]
+  clusterStorage: ClusterStorage[F],
+  cluster: Cluster[F]
 ) extends Http4sDsl[F] {
 
   implicit val logger = Slf4jLogger.getLogger[F]
@@ -47,6 +49,8 @@ final case class ClusterRoutes[F[_]: Async](
               InternalServerError("Unknown error.")
           }
       }
+    case POST -> Root / "leave" =>
+      cluster.leave() >> Ok()
   }
 
   private val p2pPublic: HttpRoutes[F] = HttpRoutes.of[F] {

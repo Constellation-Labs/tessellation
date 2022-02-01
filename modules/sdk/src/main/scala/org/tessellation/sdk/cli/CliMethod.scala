@@ -28,10 +28,13 @@ trait CliMethod {
     )
   )
 
+  val leavingDelay = 30.seconds
+
   val sdkConfig: SdkConfig = SdkConfig(
     environment,
     gossipConfig,
-    httpConfig
+    httpConfig,
+    leavingDelay
   )
 
 }

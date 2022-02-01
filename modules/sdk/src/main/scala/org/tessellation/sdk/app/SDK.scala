@@ -11,6 +11,8 @@ import org.tessellation.sdk.modules._
 import org.tessellation.sdk.resources.SdkResources
 import org.tessellation.security.SecurityProvider
 
+import fs2.concurrent.SignallingRef
+
 trait SDK[F[_]] {
   implicit val random: Random[F]
   implicit val securityProvider: SecurityProvider[F]
@@ -25,4 +27,6 @@ trait SDK[F[_]] {
   val sdkStorages: SdkStorages[F]
   val sdkServices: SdkServices[F]
   val sdkPrograms: SdkPrograms[F]
+
+  def restartSignal: SignallingRef[F, Unit]
 }

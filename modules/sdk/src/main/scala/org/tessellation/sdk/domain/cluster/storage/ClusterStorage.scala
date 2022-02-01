@@ -13,4 +13,5 @@ trait ClusterStorage[F[_]] {
   def hasPeerId(id: PeerId): F[Boolean]
   def hasPeerHostPort(host: Host, p2pPort: Port): F[Boolean]
   def setPeerState(id: PeerId, state: NodeState): F[Unit]
+  def removePeer(id: PeerId): F[Unit]
 }

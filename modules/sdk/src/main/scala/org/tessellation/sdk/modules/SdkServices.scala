@@ -16,6 +16,8 @@ import org.tessellation.sdk.infrastructure.gossip.Gossip
 import org.tessellation.sdk.infrastructure.healthcheck.HealthCheck
 import org.tessellation.security.SecurityProvider
 
+import fs2.concurrent.SignallingRef
+
 object SdkServices {
 
   def make[F[_]: Async: KryoSerializer: SecurityProvider](
@@ -24,10 +26,11 @@ object SdkServices {
     keyPair: KeyPair,
     storages: SdkStorages[F],
     queues: SdkQueues[F],
-    session: Session[F]
+    session: Session[F],
+    restartSignal: SignallingRef[F, Unit]
   ): F[SdkServices[F]] = {
     val cluster = Cluster
-      .make[F](cfg.httpConfig, nodeId, keyPair, storages.session, storages.node)
+      .make[F](cfg.leavingDelay, cfg.httpConfig, nodeId, keyPair, storages.session, storages.node, restartSignal)
     val healthCheck = HealthCheck.make[F]
 
     for {
