@@ -127,7 +127,9 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
     }
 
   private val storeBlock: Pipe[F, FinalBlock, Unit] =
-    _.evalMap(fb => blockStorage.store(fb.hashedBlock))
+    _.evalMap { fb =>
+      blockStorage.store(fb.hashedBlock).handleErrorWith(e => logger.debug(e)("Error storing block!"))
+    }
 
   private val blockAcceptance: Stream[F, Unit] = Stream
     .awakeEvery(1.seconds)
