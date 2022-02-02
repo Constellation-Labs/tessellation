@@ -3,7 +3,7 @@ package org.tessellation.dag.l1
 import java.security.KeyPair
 
 import cats.effect.Async
-import cats.effect.std.{Queue, Random}
+import cats.effect.std.Random
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.either._
@@ -13,9 +13,7 @@ import cats.syntax.traverse._
 
 import scala.concurrent.duration.DurationInt
 
-import org.tessellation.dag.block.BlockValidator
-import org.tessellation.dag.domain.block.DAGBlock
-import org.tessellation.dag.l1.domain.block.{BlockService, BlockStorage}
+import org.tessellation.dag.l1.config.types.AppConfig
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.{
   OwnRoundTrigger,
   OwnerBlockConsensusInput,
@@ -23,63 +21,53 @@ import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.{
 }
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusOutput.FinalBlock
 import org.tessellation.dag.l1.domain.consensus.block.Validator.{canStartOwnConsensus, isPeerInputValid}
-import org.tessellation.dag.l1.domain.consensus.block.config.ConsensusConfig
-import org.tessellation.dag.l1.domain.consensus.block.http.p2p.clients.BlockConsensusClient
-import org.tessellation.dag.l1.domain.consensus.block.storage.ConsensusStorage
 import org.tessellation.dag.l1.domain.consensus.block.{BlockConsensusCell, BlockConsensusContext, BlockConsensusInput}
-import org.tessellation.dag.l1.domain.transaction.TransactionStorage
+import org.tessellation.dag.l1.http.p2p.P2PClient
+import org.tessellation.dag.l1.modules._
 import org.tessellation.kernel.Cell.NullTerminal
 import org.tessellation.kernel.{CellError, Ω}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
-import org.tessellation.sdk.domain.gossip.Gossip
-import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.security.SecurityProvider
-import org.tessellation.security.signature.Signed
 
 import fs2.{Pipe, Stream}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
-  blockConsensusClient: BlockConsensusClient[F],
-  blockService: BlockService[F],
-  blockStorage: BlockStorage[F],
-  blockValidator: BlockValidator[F],
-  clusterStorage: ClusterStorage[F],
-  consensusConfig: ConsensusConfig,
-  consensusStorage: ConsensusStorage[F],
-  gossip: Gossip[F],
+  appConfig: AppConfig,
   keyPair: KeyPair,
-  myId: PeerId,
-  nodeStorage: NodeStorage[F],
-  peerBlockConsensusInputQueue: Queue[F, Signed[PeerBlockConsensusInput]],
-  peerBlockQueue: Queue[F, Signed[DAGBlock]],
-  transactionStorage: TransactionStorage[F]
+  p2PClient: P2PClient[F],
+  queues: Queues[F],
+  selfId: PeerId,
+  services: Services[F],
+  storages: Storages[F],
+  validators: Validators[F]
 ) {
 
   private implicit val logger = Slf4jLogger.getLogger[F]
 
   private val blockConsensusContext =
     BlockConsensusContext[F](
-      blockConsensusClient,
-      blockStorage,
-      blockValidator,
-      clusterStorage,
-      consensusConfig,
-      consensusStorage,
+      p2PClient.blockConsensus,
+      storages.block,
+      validators.block,
+      storages.cluster,
+      appConfig.consensus,
+      storages.consensus,
       keyPair,
-      myId,
-      transactionStorage
+      selfId,
+      storages.transaction
     )
 
   private val ownerBlockConsensusInputs: Stream[F, OwnerBlockConsensusInput] = Stream
     .awakeEvery(5.seconds)
-    .evalFilter(_ => canStartOwnConsensus(consensusStorage, nodeStorage, clusterStorage, consensusConfig.peersCount))
+    .evalFilter { _ =>
+      canStartOwnConsensus(storages.consensus, storages.node, storages.cluster, appConfig.consensus.peersCount)
+    }
     .as(OwnRoundTrigger)
 
   private val peerBlockConsensusInputs: Stream[F, PeerBlockConsensusInput] = Stream
-    .fromQueueUnterminated(peerBlockConsensusInputQueue)
+    .fromQueueUnterminated(queues.peerBlockConsensusInput)
     .evalFilter(isPeerInputValid(_))
     .map(_.value)
 
@@ -112,11 +100,11 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
 
   private val gossipBlock: Pipe[F, FinalBlock, FinalBlock] =
     _.evalTap { fb =>
-      gossip.spread(fb.hashedBlock.signed).handleErrorWith(e => logger.warn(e)("Block gossip spread failed!"))
+      services.gossip.spread(fb.hashedBlock.signed).handleErrorWith(e => logger.warn(e)("Block gossip spread failed!"))
     }
 
   private val peerBlocks: Stream[F, FinalBlock] = Stream
-    .fromQueueUnterminated(peerBlockQueue)
+    .fromQueueUnterminated(queues.peerBlock)
     .evalMap(_.hashWithSignatureCheck)
     .evalTap {
       case Left(e)  => logger.warn(e)(s"Received an invalidly signed peer block!")
@@ -128,12 +116,12 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
 
   private val storeBlock: Pipe[F, FinalBlock, Unit] =
     _.evalMap { fb =>
-      blockStorage.store(fb.hashedBlock).handleErrorWith(e => logger.debug(e)("Error storing block!"))
+      storages.block.store(fb.hashedBlock).handleErrorWith(e => logger.debug(e)("Block storing failed."))
     }
 
   private val blockAcceptance: Stream[F, Unit] = Stream
     .awakeEvery(1.seconds)
-    .evalMap(_ => blockStorage.getWaiting)
+    .evalMap(_ => storages.block.getWaiting)
     .evalTap(awaiting => logger.debug(s"Pulled following blocks for acceptance ${awaiting.keySet}"))
     .evalMap(
       _.toList
@@ -141,7 +129,7 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
         .traverse {
           case (hash, signedBlock) =>
             logger.debug(s"Acceptance of a block $hash starts!") >>
-              blockService
+              services.block
                 .accept(signedBlock)
                 .handleErrorWith(logger.warn(_)(s"Failed acceptance of a block with hash=$hash"))
 

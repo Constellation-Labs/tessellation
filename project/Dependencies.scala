@@ -31,6 +31,7 @@ object Dependencies {
     val refined = "0.9.27"
     val redis4cats = "1.0.0"
     val skunk = "0.2.1"
+    val sqlite = "3.36.0.3"
     val chill = "0.9.5"
     val spongyCastle = "1.58.0.0"
     val squants = "1.8.2"
@@ -140,6 +141,8 @@ object Dependencies {
 
     val skunkCore = "org.tpolecat" %% "skunk-core" % V.skunk
     val skunkCirce = "org.tpolecat" %% "skunk-circe" % V.skunk
+
+    val sqlite = "org.xerial" % "sqlite-jdbc" % V.sqlite
 
     val chill = "com.twitter" %% "chill" % V.twitterChill
     val shapeless = "com.chuusai" %% "shapeless" % V.shapeless
