@@ -5,12 +5,12 @@ import cats.syntax.functor._
 import cats.syntax.traverse._
 
 import org.tessellation.dag.l1.domain.address.storage.AddressStorage
+import org.tessellation.dag.l1.infrastructure.db.Database
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 
 import doobie.implicits._
 import doobie.quill.DoobieContext
-import doobie.util.transactor.Transactor
 import eu.timepit.refined.auto._
 import io.getquill.context.Context
 import io.getquill.{Literal, SqliteDialect}
@@ -20,11 +20,13 @@ object AddressStorage {
 
   type Ctx = DoobieContext.SQLite[Literal] with Context[SqliteDialect, Literal]
 
-  def make[F[_]: MonadCancelThrow](xa: Transactor[F]): AddressStorage[F] =
-    make[F](new DoobieContext.SQLite[Literal](Literal), xa)
+  def make[F[_]: MonadCancelThrow: Database]: AddressStorage[F] =
+    make[F](new DoobieContext.SQLite[Literal](Literal))
 
-  def make[F[_]: MonadCancelThrow](ctx: Ctx, xa: Transactor[F]): AddressStorage[F] =
+  def make[F[_]: MonadCancelThrow](ctx: Ctx)(implicit db: Database[F]): AddressStorage[F] =
     new AddressStorage[F] {
+      val xa = db.xa
+
       import ctx._
 
       val getAddresses = quote {

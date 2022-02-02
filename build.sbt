@@ -289,13 +289,16 @@ lazy val dagL1 = (project in file("modules/dag-l1"))
       Libraries.derevoCirce,
       Libraries.derevoCore,
       Libraries.doobieCore,
+      Libraries.doobieHikari,
       Libraries.doobieQuill,
       Libraries.drosteCore,
+      Libraries.flyway,
       Libraries.mapref,
       Libraries.monocleCore,
       Libraries.monocleMacro,
       Libraries.newtype,
-      Libraries.refinedCore
+      Libraries.refinedCore,
+      Libraries.sqlite
     )
   )
 lazy val core = (project in file("modules/core"))
