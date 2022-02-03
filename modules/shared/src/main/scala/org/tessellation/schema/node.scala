@@ -2,6 +2,8 @@ package org.tessellation.schema
 
 import cats.syntax.show._
 
+import org.tessellation.schema.peer.Peer
+
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
@@ -32,6 +34,11 @@ object node {
 
     val toBroadcast: Set[NodeState] =
       Set(Ready, Leaving, Offline)
+
+    def absent: Set[NodeState] =
+      Set(Leaving, Offline)
+
+    def absent(peers: Set[Peer]): Set[Peer] = peers.filter(peer => absent.contains(peer.state))
   }
 
   @derive(eqv, show)

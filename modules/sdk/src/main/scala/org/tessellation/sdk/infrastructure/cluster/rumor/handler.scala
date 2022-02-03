@@ -24,7 +24,7 @@ object handler {
       case ReceivedRumor(origin, state) =>
         logger.info(s"Received state=${state.show} from id=${origin.show}") >>
           clusterStorage.setPeerState(origin, state) >> {
-          if (Set[NodeState](NodeState.Leaving, NodeState.Offline).contains(state))
+          if (NodeState.absent.contains(state))
             clusterStorage.removePeer(origin)
           else
             Applicative[F].unit
