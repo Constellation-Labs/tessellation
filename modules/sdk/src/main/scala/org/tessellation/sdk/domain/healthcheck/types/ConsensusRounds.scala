@@ -9,8 +9,11 @@ final case class ConsensusRounds[F[_], A <: HealthCheckStatus, B <: ConsensusHea
 )
 
 object ConsensusRounds {
-  private type Rounds[F[_], A <: HealthCheckStatus, B <: ConsensusHealthStatus[A]] = Map[HealthCheckKey, HealthCheckRound[F, A, B]]
+  private type Rounds[F[_], A <: HealthCheckStatus, B <: ConsensusHealthStatus[A]] =
+    Map[HealthCheckKey, HealthCheckRound[F, A, B]]
   type InProgress[F[_], A <: HealthCheckStatus, B <: ConsensusHealthStatus[A]] = Rounds[F, A, B]
   type Finished[F[_], A <: HealthCheckStatus, B <: ConsensusHealthStatus[A]] = Rounds[F, A, B]
-  type Outcome[F[_], A <: HealthCheckStatus, B <: ConsensusHealthStatus[A]] = Map[HealthCheckKey, (HealthCheckConsensusDecision, HealthCheckRound[F, A, B])]
+
+  type Outcome[F[_], A <: HealthCheckStatus, B <: ConsensusHealthStatus[A]] =
+    Map[HealthCheckKey, (HealthCheckConsensusDecision, HealthCheckRound[F, A, B])]
 }

@@ -30,7 +30,16 @@ object SdkServices {
     restartSignal: SignallingRef[F, Unit]
   ): F[SdkServices[F]] = {
     val cluster = Cluster
-      .make[F](cfg.leavingDelay, cfg.httpConfig, nodeId, keyPair, storages.session, storages.node, restartSignal)
+      .make[F](
+        cfg.leavingDelay,
+        cfg.httpConfig,
+        nodeId,
+        keyPair,
+        storages.cluster,
+        storages.session,
+        storages.node,
+        restartSignal
+      )
     val healthCheck = HealthCheck.make[F]
 
     for {

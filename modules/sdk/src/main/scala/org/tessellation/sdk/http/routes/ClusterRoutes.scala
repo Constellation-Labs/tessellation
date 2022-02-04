@@ -84,6 +84,11 @@ final case class ClusterRoutes[F[_]: Async](
       )
   }
 
+  private val public: HttpRoutes[F] = HttpRoutes.of[F] {
+    case GET -> Root / "info" =>
+      Ok(cluster.info)
+  }
+
   val p2pPublicRoutes: HttpRoutes[F] = Router(
     prefixPath -> p2pPublic
   )
@@ -94,5 +99,9 @@ final case class ClusterRoutes[F[_]: Async](
 
   val cliRoutes: HttpRoutes[F] = Router(
     prefixPath -> cli
+  )
+
+  val publicRoutes: HttpRoutes[F] = Router(
+    prefixPath -> public
   )
 }

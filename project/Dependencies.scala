@@ -14,6 +14,7 @@ object Dependencies {
     val derevo = "0.12.6"
     val doobie = "1.0.0-RC1"
     val droste = "0.8.0"
+    val enumeratum = "1.7.0"
     val h2 = "1.4.200"
     val javaxCrypto = "1.0.1"
     val flyway = "8.0.0"
@@ -51,6 +52,9 @@ object Dependencies {
     def circe(artifact: String, version: String = V.circe): ModuleID = "io.circe" %% s"circe-$artifact" % version
     def ciris(artifact: String): ModuleID = "is.cir" %% artifact % V.ciris
     def derevo(artifact: String): ModuleID = "tf.tofu" %% s"derevo-$artifact" % V.derevo
+
+    def enumeratum(artifact: String): ModuleID =
+      "com.beachape" %% { if (artifact.isEmpty) "enumeratum" else s"enumeratum-$artifact" } % V.enumeratum
 
     def decline(artifact: String = ""): ModuleID =
       "com.monovore" %% { if (artifact.isEmpty) "decline" else s"decline-$artifact" } % V.decline
@@ -105,6 +109,9 @@ object Dependencies {
     val drosteCore = droste("core")
     val drosteLaws = droste("laws")
     val drosteMacros = droste("macros")
+
+    val enumeratumCore = enumeratum("")
+    val enumeratumCirce = enumeratum("circe")
 
     val flyway = "org.flywaydb" % "flyway-core" % V.flyway
 

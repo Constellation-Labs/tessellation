@@ -2,18 +2,23 @@ package org.tessellation.schema
 
 import cats.syntax.show._
 
+import scala.util.Try
+
 import org.tessellation.schema.peer.Peer
 
 import derevo.cats.{eqv, show}
-import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
+import enumeratum._
+import io.circe._
 
 object node {
 
-  @derive(encoder, decoder, eqv, show)
-  sealed trait NodeState
+  @derive(eqv, show)
+  sealed trait NodeState extends EnumEntry
 
-  object NodeState {
+  object NodeState extends Enum[NodeState] with NodeStateCodecs {
+    val values = findValues
+
     case object Initial extends NodeState
     case object ReadyToJoin extends NodeState
 
@@ -39,6 +44,11 @@ object node {
       Set(Leaving, Offline)
 
     def absent(peers: Set[Peer]): Set[Peer] = peers.filter(peer => absent.contains(peer.state))
+  }
+
+  trait NodeStateCodecs {
+    implicit val encode: Encoder[NodeState] = Encoder.encodeString.contramap[NodeState](_.entryName)
+    implicit val decode: Decoder[NodeState] = Decoder.decodeString.emapTry(s => Try(NodeState.withName(s)))
   }
 
   @derive(eqv, show)
