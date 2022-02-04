@@ -1,11 +1,13 @@
 package org.tessellation.sdk.domain.healthcheck.services
 
 import cats.Applicative
-import cats.effect.{Ref, Spawn}
+import cats.effect.{Clock, Ref, Spawn}
 import cats.syntax.applicative._
+import cats.syntax.applicativeError._
 import cats.syntax.bifunctor._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+import cats.syntax.option._
 import cats.syntax.traverse._
 
 import org.tessellation.effects.GenUUID
@@ -17,7 +19,7 @@ import org.tessellation.sdk.domain.healthcheck.types._
 import org.tessellation.sdk.domain.healthcheck.types.types.RoundId
 
 abstract class HealthCheckConsensus[
-  F[_]: GenUUID: Spawn,
+  F[_]: Clock: GenUUID: Spawn: Ref.Make,
   A <: HealthCheckStatus,
   B <: ConsensusHealthStatus[A]
 ](
@@ -91,12 +93,12 @@ abstract class HealthCheckConsensus[
 
   def startOwnRound(key: HealthCheckKey) =
     clusterStorage.getPeers.flatMap { peers =>
-      createRoundId.flatMap {
+      createRoundId.map(HealthCheckRoundId(_, selfId)).flatMap {
         startRound(key, peers, _, OwnRound)
       }
     }
 
-  def participateInRound(key: HealthCheckKey, roundId: RoundId): F[Unit] =
+  def participateInRound(key: HealthCheckKey, roundId: HealthCheckRoundId): F[Unit] =
     clusterStorage.getPeers.flatMap { peers =>
       startRound(key, peers, roundId, PeerRound)
     }
@@ -104,24 +106,73 @@ abstract class HealthCheckConsensus[
   def startRound(
     key: HealthCheckKey,
     peers: Set[Peer],
-    roundId: RoundId,
+    roundId: HealthCheckRoundId,
     roundType: HealthCheckRoundType
-  ): F[Unit] = ???
+  ): F[Unit] =
+    Clock[F].monotonic
+      .map(_.toSeconds)
+      .flatMap { startedAt =>
+        allRounds.get.map {
+          case ConsensusRounds(historical, inProgress) =>
+            def inProgressRound = inProgress.get(key)
+            def historicalRound = historical.find(_.roundId == roundId)
 
-  def handleProposal(proposal: B): F[Unit] =
+            historicalRound.orElse(inProgressRound).map(_ => none).getOrElse {
+              HealthCheckRound.make[F, A, B]().some
+            }
+        }
+      }
+      .flatMap {
+        case Some(mkRound) =>
+          mkRound.flatMap { round =>
+            allRounds.modify {
+              case ConsensusRounds(historical, inProgress) =>
+                (ConsensusRounds(historical, inProgress + (key -> round)), round.some)
+            }
+          }
+        case None => none[HealthCheckRound[F, A, B]].pure[F]
+      }
+      .flatTap {
+        _.fold(Applicative[F].unit) { round =>
+          roundsInProgress
+            .map(_.view.filterKeys(_ != key))
+            .flatMap { parallelRounds =>
+              parallelRounds.toList.traverse {
+                case (key, parallelRound) =>
+                  parallelRound.getRoundIds
+                    .flatMap(round.addParallelRounds(key))
+                    .flatMap { _ =>
+                      parallelRound.addParallelRounds(key)(Set(roundId))
+                    }
+              }.void
+            }
+        }
+      }
+      .flatMap {
+        case Some(round) =>
+          round.start
+        case _ => Applicative[F].unit
+      }
+
+  def handleProposal(proposal: B, depth: Int = 1): F[Unit] =
     allRounds.get.flatMap {
       case ConsensusRounds(historical, inProgress) =>
         def inProgressRound = inProgress.get(proposal.key)
         def historicalRound = historical.find(_.roundId == proposal.roundId)
 
-        def participate = participateInRound(proposal.key, proposal.roundId.roundId) // Note: and pass proposal
+        def participate = participateInRound(proposal.key, proposal.roundId)
 
         inProgressRound
           .map(_.processProposal(proposal))
           .orElse {
             historicalRound.map(handleProposalForHistoricalRound(proposal))
           }
-          .getOrElse(participate)
+          .getOrElse {
+            if (depth > 0)
+              participate.flatMap(_ => handleProposal(proposal, depth - 1))
+            else
+              (new Throwable("Unexpected recursion!")).raiseError[F, Unit] // Note: custom error type
+          }
     }
 
   def handleProposalForHistoricalRound(proposal: B)(round: HistoricalRound): F[Unit] =
