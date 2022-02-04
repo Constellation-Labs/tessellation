@@ -11,7 +11,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.AppEnvironment.{Dev, Testnet}
-import org.tessellation.sdk.http.p2p.middleware.PeerAuthMiddleware
+import org.tessellation.sdk.http.p2p.middleware.{PeerAuthMiddleware, `X-Id-Middleware`}
 import org.tessellation.sdk.http.routes._
 import org.tessellation.security.SecurityProvider
 
@@ -28,9 +28,10 @@ object HttpApi {
     services: Services[F],
     programs: Programs[F],
     privateKey: PrivateKey,
-    environment: AppEnvironment
+    environment: AppEnvironment,
+    selfId: PeerId
   ): HttpApi[F] =
-    new HttpApi[F](storages, queues, services, programs, privateKey, environment) {}
+    new HttpApi[F](storages, queues, services, programs, privateKey, environment, selfId) {}
 }
 
 sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer] private (
@@ -39,7 +40,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer] pri
   services: Services[F],
   programs: Programs[F],
   privateKey: PrivateKey,
-  environment: AppEnvironment
+  environment: AppEnvironment,
+  selfId: PeerId
 ) {
 
   private val healthRoutes = HealthRoutes[F](services.healthcheck).routes
@@ -55,8 +57,10 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer] pri
   private val metricRoutes = MetricRoutes[F](services).routes
 
   private val openRoutes: HttpRoutes[F] =
-    (if (environment == Testnet || environment == Dev) debugRoutes else HttpRoutes.empty) <+>
-      healthRoutes <+> metricRoutes <+> stateChannelRoutes.publicRoutes
+    `X-Id-Middleware`.responseMiddleware(selfId) {
+      (if (environment == Testnet || environment == Dev) debugRoutes else HttpRoutes.empty) <+>
+        healthRoutes <+> metricRoutes <+> stateChannelRoutes.publicRoutes <+> clusterRoutes.publicRoutes
+    }
 
   private val getKnownPeersId: Host => F[Set[PeerId]] = { (host: Host) =>
     storages.cluster.getPeers(host).map(_.map(_.id))

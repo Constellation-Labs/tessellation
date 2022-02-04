@@ -13,10 +13,10 @@ import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.cluster._
 import org.tessellation.schema.node.NodeState
-import org.tessellation.schema.peer.{PeerId, RegistrationRequest, SignRequest}
+import org.tessellation.schema.peer._
 import org.tessellation.sdk.config.types.HttpConfig
 import org.tessellation.sdk.domain.cluster.services.Cluster
-import org.tessellation.sdk.domain.cluster.storage.SessionStorage
+import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
@@ -28,8 +28,9 @@ object Cluster {
   def make[F[_]: Async: KryoSerializer: SecurityProvider](
     leavingDelay: FiniteDuration,
     httpConfig: HttpConfig,
-    nodeId: PeerId,
+    selfId: PeerId,
     keyPair: KeyPair,
+    clusterStorage: ClusterStorage[F],
     sessionStorage: SessionStorage[F],
     nodeStorage: NodeStorage[F],
     restartSignal: SignallingRef[F, Unit]
@@ -45,7 +46,7 @@ object Cluster {
           state <- nodeStorage.getNodeState
         } yield
           RegistrationRequest(
-            nodeId,
+            selfId,
             httpConfig.externalIp,
             httpConfig.publicHttp.port,
             httpConfig.p2pHttp.port,
@@ -66,6 +67,21 @@ object Cluster {
 
         Temporal[F].start(process).void
       }
+
+      def info: F[Set[Peer]] =
+        getRegistrationRequest.flatMap { req =>
+          def self = Peer(
+            req.id,
+            req.ip,
+            req.publicPort,
+            req.p2pPort,
+            req.session,
+            req.state
+          )
+
+          clusterStorage.getPeers.map(_ + self)
+        }
+
     }
 
 }

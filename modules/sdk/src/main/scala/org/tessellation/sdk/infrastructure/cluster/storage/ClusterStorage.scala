@@ -50,7 +50,6 @@ object ClusterStorage {
 
       def removePeer(id: PeerId): F[Unit] =
         peers(id).set(none)
-
     }
 
 }

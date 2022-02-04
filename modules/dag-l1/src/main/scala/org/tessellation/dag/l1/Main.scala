@@ -44,7 +44,7 @@ object Main extends TessellationIOApp[Run]("", "DAG L1 node", version = BuildInf
           .start(storages, services, queues, p2pClient, rumorHandler, nodeId, cfg)
           .asResource
 
-        api = HttpApi.make[IO](storages, queues, keyPair.getPrivate, services, sdkPrograms)
+        api = HttpApi.make[IO](storages, queues, keyPair.getPrivate, services, sdkPrograms, sdk.nodeId)
         _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
         _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)
         _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.http.cliHttp, api.cliApp)

@@ -9,7 +9,7 @@ import cats.syntax.semigroupk._
 import org.tessellation.dag.l1.http.Routes
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.sdk.http.p2p.middleware.PeerAuthMiddleware
+import org.tessellation.sdk.http.p2p.middleware.{PeerAuthMiddleware, `X-Id-Middleware`}
 import org.tessellation.sdk.http.routes._
 import org.tessellation.sdk.modules.SdkPrograms
 import org.tessellation.security.SecurityProvider
@@ -26,9 +26,10 @@ object HttpApi {
     queues: Queues[F],
     privateKey: PrivateKey,
     services: Services[F],
-    sdkPrograms: SdkPrograms[F]
+    sdkPrograms: SdkPrograms[F],
+    selfId: PeerId
   ): HttpApi[F] =
-    new HttpApi[F](storages, queues, privateKey, services, sdkPrograms) {}
+    new HttpApi[F](storages, queues, privateKey, services, sdkPrograms, selfId) {}
 }
 
 sealed abstract class HttpApi[F[_]: Async: KryoSerializer: SecurityProvider] private (
@@ -36,7 +37,8 @@ sealed abstract class HttpApi[F[_]: Async: KryoSerializer: SecurityProvider] pri
   queues: Queues[F],
   privateKey: PrivateKey,
   services: Services[F],
-  sdkPrograms: SdkPrograms[F]
+  sdkPrograms: SdkPrograms[F],
+  selfId: PeerId
 ) {
   private val healthRoutes = HealthRoutes[F](services.healthCheck).routes
   private val clusterRoutes =
@@ -46,8 +48,11 @@ sealed abstract class HttpApi[F[_]: Async: KryoSerializer: SecurityProvider] pri
   private val dagRoutes = Routes[F](services.transaction, queues.peerBlockConsensusInput)
 
   private val openRoutes: HttpRoutes[F] =
-    healthRoutes <+>
-      dagRoutes.publicRoutes
+    `X-Id-Middleware`.responseMiddleware(selfId) {
+      healthRoutes <+>
+        dagRoutes.publicRoutes <+>
+        clusterRoutes.publicRoutes
+    }
 
   private val getKnownPeersId: Host => F[Set[PeerId]] = { (host: Host) =>
     storages.cluster.getPeers(host).map(_.map(_.id))
