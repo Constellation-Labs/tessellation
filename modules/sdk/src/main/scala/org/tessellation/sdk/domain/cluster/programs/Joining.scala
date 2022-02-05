@@ -117,7 +117,6 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
     for {
       _ <- validateJoinConditions(toPeer)
       _ <- session.createSession
-      _ <- nodeStorage.setNodeState(NodeState.SessionStarted)
 
       _ <- joiningQueue.offer(toPeer)
     } yield ()
@@ -173,8 +172,8 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
           .flatMap(signClient.joinRequest(_).run(withPeer))
       }
 
-      // Note: Changing state from ReadyToJoin to Ready state will execute once for first peer, then all consecutive joins should be ignored
-      _ <- nodeStorage.tryModifyState(NodeState.ReadyToJoin, NodeState.Ready).handleError(_ => ())
+      // Note: Changing state from SessionStarted to Ready state will execute once for first peer, then all consecutive joins should be ignored
+      _ <- nodeStorage.tryModifyState(NodeState.SessionStarted, NodeState.Ready).handleError(_ => ())
     } yield peer
 
   private def validateHandshake(registrationRequest: RegistrationRequest, remoteAddress: Option[Host]): F[Unit] =

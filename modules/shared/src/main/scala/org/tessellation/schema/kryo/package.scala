@@ -36,9 +36,8 @@ package object kryo {
     NodeState.SessionStarted.getClass -> 212,
     NodeState.Offline.getClass -> 213,
     NodeState.StartingSession.getClass -> 214,
-    NodeState.Unknown.getClass -> 215,
-    NodeState.Leaving.getClass -> 216,
-    classOf[PublicTrust] -> 217,
-    classOf[Ordinal] -> 218
+    NodeState.Leaving.getClass -> 215,
+    classOf[PublicTrust] -> 216,
+    classOf[Ordinal] -> 217
   )
 }

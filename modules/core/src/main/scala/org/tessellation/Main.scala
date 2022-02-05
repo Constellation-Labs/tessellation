@@ -71,7 +71,7 @@ object Main
               GenesisLoader.make[IO].load(m.genesisPath).flatMap { accounts =>
                 logger.info(s"Genesis accounts: ${accounts.show}")
               }
-            } >> services.session.createSession
+            } >> services.session.createSession >> storages.node.setNodeState(NodeState.Ready)
         }).asResource
       } yield ()
     }
