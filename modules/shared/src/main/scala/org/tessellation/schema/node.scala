@@ -32,10 +32,8 @@ object node {
     case object Leaving extends NodeState
     case object Offline extends NodeState
 
-    case object Unknown extends NodeState
-
     val all: Set[NodeState] =
-      Set(Initial, ReadyToJoin, LoadingGenesis, GenesisReady, StartingSession, SessionStarted, Ready, Offline, Unknown)
+      Set(Initial, ReadyToJoin, LoadingGenesis, GenesisReady, StartingSession, SessionStarted, Ready, Offline)
 
     val toBroadcast: Set[NodeState] =
       Set(Ready, Leaving, Offline)
