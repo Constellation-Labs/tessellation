@@ -1,8 +1,8 @@
 package org.tessellation.dag.l1.domain.consensus.block
 
 import cats.Applicative
-import cats.effect.Async
 import cats.effect.std.Random
+import cats.effect.{Async, Clock}
 import cats.syntax.applicative._
 import cats.syntax.either._
 import cats.syntax.flatMap._
@@ -11,11 +11,13 @@ import cats.syntax.option._
 import cats.syntax.semigroup._
 import cats.syntax.traverse._
 
+import scala.concurrent.duration.FiniteDuration
+
 import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.dag.l1.domain.consensus.block.AlgebraCommand._
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusCell.{Algebra, Coalgebra}
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput._
-import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusOutput.FinalBlock
+import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusOutput.{CleanedConsensuses, FinalBlock}
 import org.tessellation.dag.l1.domain.consensus.block.CancellationReason._
 import org.tessellation.dag.l1.domain.consensus.block.CoalgebraCommand._
 import org.tessellation.dag.l1.domain.consensus.block.Validator.isReadyForBlockConsensus
@@ -23,6 +25,7 @@ import org.tessellation.dag.l1.domain.consensus.block.http.p2p.clients.BlockCons
 import org.tessellation.dag.l1.domain.consensus.round.RoundId
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.effects.GenUUID
+import org.tessellation.ext.collection.MapRefUtils.MapRefOps
 import org.tessellation.kernel.Cell.NullTerminal
 import org.tessellation.kernel._
 import org.tessellation.kryo.KryoSerializer
@@ -66,6 +69,12 @@ class BlockConsensusCell[F[_]: Async: SecurityProvider: KryoSerializer: Random: 
 
                 case InformAboutRoundStartFailure(message) =>
                   CellError(message).asLeft[Ω].pure[F]
+
+                case CancelTimedOutRounds(toCancel) =>
+                  Algebra.cancelTimedOutRounds(toCancel, ctx)
+
+                case NoAction =>
+                  NullTerminal.asRight[CellError].widen[Ω].pure[F]
               }
 
             case Done(other) => other.pure[F]
@@ -73,6 +82,9 @@ class BlockConsensusCell[F[_]: Async: SecurityProvider: KryoSerializer: Random: 
           CoalgebraM[F, StackF, CoalgebraCommand] {
             case StartOwnRound =>
               Coalgebra.startOwnRound(ctx)
+
+            case InspectConsensuses =>
+              Coalgebra.inspectConsensuses(ctx)
 
             case ProcessProposal(proposal) =>
               Coalgebra.processProposal(proposal, ctx)
@@ -86,6 +98,7 @@ class BlockConsensusCell[F[_]: Async: SecurityProvider: KryoSerializer: Random: 
         )
       }, {
         case OwnRoundTrigger                           => StartOwnRound
+        case InspectionTrigger                         => InspectConsensuses
         case proposal: Proposal                        => ProcessProposal(proposal)
         case blockProposal: BlockProposal              => ProcessBlockProposal(blockProposal)
         case cancellation: CancelledBlockCreationRound => ProcessCancellation(cancellation)
@@ -93,6 +106,8 @@ class BlockConsensusCell[F[_]: Async: SecurityProvider: KryoSerializer: Random: 
     )
 
 object BlockConsensusCell {
+
+  private def getTime[F[_]: Clock](): F[FiniteDuration] = Clock[F].monotonic
 
   private def deriveConsensusPeerIds(proposal: Proposal, selfId: PeerId): Set[PeerId] =
     proposal.facilitators + proposal.senderId + proposal.owner - selfId
@@ -156,7 +171,7 @@ object BlockConsensusCell {
       ctx.consensusStorage.ownConsensus
         .modify(tryPersistRoundData(roundData))
         .flatMap {
-          case Some(RoundData(_, peers, _, ownProposal, _, _, _, _, _, _)) =>
+          case Some(RoundData(_, _, peers, _, ownProposal, _, _, _, _, _, _)) =>
             sendOwnProposal(ownProposal, peers, ctx)
               .map(_ => NullTerminal.asRight[CellError].widen[Ω])
           case None =>
@@ -173,7 +188,7 @@ object BlockConsensusCell {
         .peerConsensuses(roundData.roundId)
         .modify(tryPersistRoundData(roundData))
         .flatMap {
-          case Some(RoundData(_, peers, _, ownProposal, _, _, _, _, _, _)) =>
+          case Some(RoundData(_, _, peers, _, ownProposal, _, _, _, _, _, _)) =>
             sendOwnProposal(ownProposal, peers, ctx)
           case None =>
             for {
@@ -318,7 +333,7 @@ object BlockConsensusCell {
           ctx.consensusStorage.peerConsensuses(blockProposal.roundId).modify(tryPersistBlockProposal(blockProposal))
         )
         .flatMap {
-          case Some(roundData @ RoundData(_, _, _, _, Some(ownBlock), _, _, _, _, _))
+          case Some(roundData @ RoundData(_, _, _, _, _, Some(ownBlock), _, _, _, _, _))
               if gotAllBlockProposals(roundData) =>
             for {
               _ <- Applicative[F].unit
@@ -374,18 +389,18 @@ object BlockConsensusCell {
     ): Option[RoundData] => (Option[RoundData], Option[(RoundData, Option[CancelledBlockCreationRound])]) = {
       case Some(roundData) if canPersistCancellation(roundData, cancellation, selfId) =>
         (roundData, cancellation.senderId) match {
-          case (roundData @ RoundData(_, _, _, _, _, Some(_), _, _, _, _), `selfId`) =>
+          case (roundData @ RoundData(_, _, _, _, _, _, Some(_), _, _, _, _), `selfId`) =>
             (roundData.some, None)
 
-          case (roundData @ RoundData(_, _, _, _, _, None, _, _, _, _), `selfId`) =>
+          case (roundData @ RoundData(_, _, _, _, _, _, None, _, _, _, _), `selfId`) =>
             val updated = roundData.setOwnCancellation(cancellation.reason)
             (updated.some, (updated, cancellation.some).some)
 
-          case (roundData @ RoundData(_, _, _, _, _, Some(_), _, _, _, _), _) =>
+          case (roundData @ RoundData(_, _, _, _, _, _, Some(_), _, _, _, _), _) =>
             val updated = roundData.addPeerCancellation(cancellation)
             (updated.some, (updated, None).some)
 
-          case (roundData @ RoundData(_, _, _, _, _, None, _, _, _, _), _) =>
+          case (roundData @ RoundData(_, _, _, _, _, _, None, _, _, _, _), _) =>
             val myCancellation = CancelledBlockCreationRound(roundData.roundId, selfId, roundData.owner, PeerCancelled)
             val updated = roundData.setOwnCancellation(myCancellation.reason).addPeerCancellation(cancellation)
             (updated.some, (updated, myCancellation.some).some)
@@ -435,6 +450,14 @@ object BlockConsensusCell {
           case None => NullTerminal.asRight[CellError].widen[Ω].pure[F]
         }
       } yield result
+
+    def cancelTimedOutRounds[F[_]: Async](
+      toCancel: Set[Proposal],
+      ctx: BlockConsensusContext[F]
+    ): F[Either[CellError, Ω]] =
+      toCancel.toList
+        .traverse(cancelRound(_, ctx))
+        .map(_ => CleanedConsensuses(toCancel.map(_.roundId)).asRight[CellError])
   }
 
   object Coalgebra {
@@ -462,6 +485,7 @@ object BlockConsensusCell {
           case (Some(peers), Some(tips)) =>
             for {
               transactions <- pullTransactions(ctx.transactionStorage)
+              startedAt <- getTime()
               proposal = Proposal(
                 roundId,
                 senderId = ctx.selfId,
@@ -470,13 +494,24 @@ object BlockConsensusCell {
                 transactions,
                 tips
               )
-              roundData = RoundData(roundId, peers, ctx.selfId, proposal, tips = tips)
+              roundData = RoundData(roundId, startedAt, peers, ctx.selfId, proposal, tips = tips)
             } yield PersistInitialOwnRoundData(roundData)
 
           case (Some(_), None) => InformAboutRoundStartFailure("Missing tips!").pure[F]
           case (None, Some(_)) => InformAboutRoundStartFailure("Missing peers!").pure[F]
           case (None, None)    => InformAboutRoundStartFailure("Missing both peers and tips!").pure[F]
         }
+      } yield Done(algebraCommand.asRight[CellError])
+
+    def inspectConsensuses[F[_]: Async](ctx: BlockConsensusContext[F]): F[StackF[CoalgebraCommand]] =
+      for {
+        ownConsensus <- ctx.consensusStorage.ownConsensus.get.map(_.toSet)
+        peerConsensuses <- ctx.consensusStorage.peerConsensuses.toMap.map(_.values.toSet)
+        current <- getTime()
+        toCancel = (peerConsensuses ++ ownConsensus)
+          .filter(_.startedAt + ctx.consensusConfig.timeout < current)
+          .map(_.ownProposal)
+        algebraCommand = if (toCancel.nonEmpty) CancelTimedOutRounds(toCancel) else NoAction
       } yield Done(algebraCommand.asRight[CellError])
 
     private def fetchConsensusPeers[F[_]: Async](
@@ -513,6 +548,7 @@ object BlockConsensusCell {
           case (None, Some(peers)) =>
             for {
               transactions <- pullTransactions(ctx.transactionStorage)
+              startedAt <- getTime()
               ownProposal = Proposal(
                 proposal.roundId,
                 senderId = ctx.selfId,
@@ -521,7 +557,14 @@ object BlockConsensusCell {
                 transactions,
                 proposal.tips
               )
-              roundData = RoundData(proposal.roundId, peers, owner = proposal.owner, ownProposal, tips = proposal.tips)
+              roundData = RoundData(
+                proposal.roundId,
+                startedAt,
+                peers,
+                owner = proposal.owner,
+                ownProposal,
+                tips = proposal.tips
+              )
             } yield PersistInitialPeerRoundData(roundData, proposal)
           case (None, None) => InformAboutInabilityToParticipate(proposal, MissingRoundPeers).pure[F]
         }

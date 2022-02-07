@@ -22,6 +22,7 @@ object BlockConsensusInput {
     val owner: PeerId
   }
   case object OwnRoundTrigger extends OwnerBlockConsensusInput
+  case object InspectionTrigger extends OwnerBlockConsensusInput
   case class Proposal(
     roundId: RoundId,
     senderId: PeerId,

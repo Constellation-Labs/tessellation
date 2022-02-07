@@ -14,12 +14,8 @@ import cats.syntax.traverse._
 import scala.concurrent.duration.DurationInt
 
 import org.tessellation.dag.l1.config.types.AppConfig
-import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.{
-  OwnRoundTrigger,
-  OwnerBlockConsensusInput,
-  PeerBlockConsensusInput
-}
-import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusOutput.FinalBlock
+import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput._
+import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusOutput.{CleanedConsensuses, FinalBlock}
 import org.tessellation.dag.l1.domain.consensus.block.Validator.{canStartOwnConsensus, isPeerInputValid}
 import org.tessellation.dag.l1.domain.consensus.block.{BlockConsensusCell, BlockConsensusContext, BlockConsensusInput}
 import org.tessellation.dag.l1.http.p2p.P2PClient
@@ -59,12 +55,19 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
       storages.transaction
     )
 
-  private val ownerBlockConsensusInputs: Stream[F, OwnerBlockConsensusInput] = Stream
+  private val inspectionTriggerInput: Stream[F, OwnerBlockConsensusInput] = Stream
+    .awakeEvery(5.seconds)
+    .as(InspectionTrigger)
+
+  private val ownRoundTriggerInput: Stream[F, OwnerBlockConsensusInput] = Stream
     .awakeEvery(5.seconds)
     .evalFilter { _ =>
       canStartOwnConsensus(storages.consensus, storages.node, storages.cluster, appConfig.consensus.peersCount)
     }
     .as(OwnRoundTrigger)
+
+  private val ownerBlockConsensusInputs: Stream[F, OwnerBlockConsensusInput] =
+    inspectionTriggerInput.merge(ownRoundTriggerInput)
 
   private val peerBlockConsensusInputs: Stream[F, PeerBlockConsensusInput] = Stream
     .fromQueueUnterminated(queues.peerBlockConsensusInput)
@@ -91,6 +94,9 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
               Stream
                 .eval(logger.debug(s"Block created! Hash=${hashedBlock.hash} ProofsHash=${hashedBlock.proofsHash}"))
                 .as(fb)
+            case CleanedConsensuses(ids) =>
+              Stream.eval(logger.warn(s"Cleaned following timed-out consensuses: $ids")) >>
+                Stream.empty
             case NullTerminal => Stream.empty
             case other =>
               Stream.eval(logger.warn(s"Unexpected ohm in block consensus occurred: $other")) >>
@@ -122,7 +128,10 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
   private val blockAcceptance: Stream[F, Unit] = Stream
     .awakeEvery(1.seconds)
     .evalMap(_ => storages.block.getWaiting)
-    .evalTap(awaiting => logger.debug(s"Pulled following blocks for acceptance ${awaiting.keySet}"))
+    .evalTap { awaiting =>
+      if (awaiting.nonEmpty) logger.debug(s"Pulled following blocks for acceptance ${awaiting.keySet}")
+      else Async[F].unit
+    }
     .evalMap(
       _.toList
         .sortBy(_._2.value.height.value)

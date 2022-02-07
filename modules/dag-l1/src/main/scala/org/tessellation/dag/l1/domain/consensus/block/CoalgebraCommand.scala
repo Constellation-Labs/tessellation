@@ -10,6 +10,7 @@ sealed trait CoalgebraCommand
 
 object CoalgebraCommand {
   case object StartOwnRound extends CoalgebraCommand
+  case object InspectConsensuses extends CoalgebraCommand
   case class ProcessProposal(proposal: Proposal) extends CoalgebraCommand
   case class ProcessBlockProposal(blockProposal: BlockProposal) extends CoalgebraCommand
   case class ProcessCancellation(cancellation: CancelledBlockCreationRound) extends CoalgebraCommand
