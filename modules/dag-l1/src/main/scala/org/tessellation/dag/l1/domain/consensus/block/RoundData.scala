@@ -2,6 +2,8 @@ package org.tessellation.dag.l1.domain.consensus.block
 
 import cats.syntax.option._
 
+import scala.concurrent.duration.FiniteDuration
+
 import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.dag.l1.domain.block.Tips
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.{
@@ -17,6 +19,7 @@ import monocle.macros.syntax.lens._
 
 case class RoundData(
   roundId: RoundId,
+  startedAt: FiniteDuration,
   peers: Set[Peer],
   owner: PeerId,
   ownProposal: Proposal,

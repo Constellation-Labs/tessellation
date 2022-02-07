@@ -41,7 +41,8 @@ object method {
       ),
       consensus = ConsensusConfig(
         peersCount = 2,
-        tipsCount = 2
+        tipsCount = 2,
+        timeout = 5.seconds
       ),
       tips = TipsConfig(
         minimumTipsCount = 2,

@@ -17,4 +17,6 @@ object AlgebraCommand {
   case class InformAboutInabilityToParticipate(proposal: Proposal, reason: CancellationReason) extends AlgebraCommand
   case class PersistCancellationResult(cancellation: CancelledBlockCreationRound) extends AlgebraCommand
   case class InformAboutRoundStartFailure(message: String) extends AlgebraCommand
+  case class CancelTimedOutRounds(toCancel: Set[Proposal]) extends AlgebraCommand
+  case object NoAction extends AlgebraCommand
 }
