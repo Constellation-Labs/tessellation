@@ -44,6 +44,7 @@ object Main
         storages <- Storages.make[IO](sdkStorages).asResource
         services <- Services.make[IO](sdkServices, queues).asResource
         programs = Programs.make[IO](sdkPrograms, storages, services)
+        healthChecks <- HealthChecks.make[IO](storages, services, sdk.nodeId).asResource
 
         _ <- services.stateChannelRunner.initializeKnownCells.asResource
 
@@ -51,7 +52,7 @@ object Main
           storages.trust
         )
         _ <- Daemons
-          .start(storages, services, queues, p2pClient, rumorHandler, nodeId, cfg)
+          .start(storages, services, queues, healthChecks, p2pClient, rumorHandler, nodeId, cfg)
           .asResource
 
         api = HttpApi.make[IO](storages, queues, services, programs, keyPair.getPrivate, cfg.environment, sdk.nodeId)

@@ -44,7 +44,6 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer] pri
   selfId: PeerId
 ) {
 
-  private val healthRoutes = HealthRoutes[F](services.healthcheck).routes
   private val clusterRoutes =
     ClusterRoutes[F](programs.joining, programs.peerDiscovery, storages.cluster, services.cluster)
   private val registrationRoutes = RegistrationRoutes[F](services.cluster)
@@ -59,7 +58,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer] pri
   private val openRoutes: HttpRoutes[F] =
     `X-Id-Middleware`.responseMiddleware(selfId) {
       (if (environment == Testnet || environment == Dev) debugRoutes else HttpRoutes.empty) <+>
-        healthRoutes <+> metricRoutes <+> stateChannelRoutes.publicRoutes <+> clusterRoutes.publicRoutes
+        metricRoutes <+> stateChannelRoutes.publicRoutes <+> clusterRoutes.publicRoutes
     }
 
   private val getKnownPeersId: Host => F[Set[PeerId]] = { (host: Host) =>
@@ -72,8 +71,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer] pri
         clusterRoutes.p2pPublicRoutes <+>
         PeerAuthMiddleware.requestVerifierMiddleware(getKnownPeersId)(
           PeerAuthMiddleware.requestTokenVerifierMiddleware(services.session)(
-            healthRoutes <+>
-              clusterRoutes.p2pRoutes <+>
+            clusterRoutes.p2pRoutes <+>
               gossipRoutes.p2pRoutes <+>
               trustRoutes.p2pRoutes
           )
@@ -81,8 +79,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer] pri
     )
 
   private val cliRoutes: HttpRoutes[F] =
-    healthRoutes <+>
-      clusterRoutes.cliRoutes <+>
+    clusterRoutes.cliRoutes <+>
       trustRoutes.cliRoutes
 
   private val loggers: HttpApp[F] => HttpApp[F] = {

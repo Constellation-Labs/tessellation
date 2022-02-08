@@ -9,7 +9,6 @@ import org.tessellation.infrastructure.aci.StateChannelRunner
 import org.tessellation.infrastructure.metrics.Metrics
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.gossip.Gossip
-import org.tessellation.sdk.domain.healthcheck.HealthCheck
 import org.tessellation.sdk.modules.SdkServices
 
 object Services {
@@ -23,7 +22,6 @@ object Services {
       stateChannelRunner <- StateChannelRunner.make[F](queues.stateChannelOutput)
     } yield
       new Services[F](
-        healthcheck = sdkServices.healthCheck,
         cluster = sdkServices.cluster,
         session = sdkServices.session,
         metrics = metrics,
@@ -33,7 +31,6 @@ object Services {
 }
 
 sealed abstract class Services[F[_]] private (
-  val healthcheck: HealthCheck[F],
   val cluster: Cluster[F],
   val session: Session[F],
   val metrics: Metrics[F],
