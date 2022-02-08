@@ -1,4 +1,4 @@
-package org.tessellation.sdk.domain.healthcheck.services
+package org.tessellation.sdk.domain.healthcheck.consensus
 
 import cats.Applicative
 import cats.effect.{Clock, Ref, Spawn}
@@ -11,12 +11,13 @@ import cats.syntax.option._
 import cats.syntax.traverse._
 
 import org.tessellation.effects.GenUUID
-import org.tessellation.schema.node.NodeState
-import org.tessellation.schema.peer.{Peer, PeerId}
+import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
-import org.tessellation.sdk.domain.healthcheck.HealthCheckRound
-import org.tessellation.sdk.domain.healthcheck.types._
-import org.tessellation.sdk.domain.healthcheck.types.types.RoundId
+import org.tessellation.sdk.domain.gossip.Gossip
+import org.tessellation.sdk.domain.healthcheck.consensus.HealthCheckConsensusRound
+import org.tessellation.sdk.domain.healthcheck.consensus.types._
+import org.tessellation.sdk.domain.healthcheck.consensus.types.types.RoundId
+import org.tessellation.sdk.domain.healthcheck.services.HealthCheck
 
 abstract class HealthCheckConsensus[
   F[_]: Clock: GenUUID: Spawn: Ref.Make,
@@ -24,8 +25,11 @@ abstract class HealthCheckConsensus[
   B <: ConsensusHealthStatus[A]
 ](
   clusterStorage: ClusterStorage[F],
-  selfId: PeerId
+  selfId: PeerId,
+  driver: HealthCheckConsensusDriver[A, B],
+  gossip: Gossip[F]
 ) extends HealthCheck[F] {
+
   def allRounds: Ref[F, ConsensusRounds[F, A, B]]
   def roundsInProgress = allRounds.get.map(_.inProgress)
   def historicalRounds = allRounds.get.map(_.historical)
@@ -44,13 +48,8 @@ abstract class HealthCheckConsensus[
   private def manageRounds(rounds: ConsensusRounds.InProgress[F, A, B]): F[Unit] = {
     def checkRounds(inProgress: ConsensusRounds.InProgress[F, A, B]): F[ConsensusRounds.Finished[F, A, B]] =
       clusterStorage.getPeers.flatTap { peers =>
-        def absentPeers = NodeState.absent(peers).map(_.id)
-
         rounds.values.toList.traverse { round =>
-          round.getPeers
-            .map(_.map(_.id).intersect(absentPeers))
-            .flatMap(round.manageAbsent)
-            .void
+          round.managePeers(peers)
         }
       }.flatMap { _ =>
         partition(inProgress).map { case (finished, _) => finished }
@@ -79,12 +78,12 @@ abstract class HealthCheckConsensus[
         case (decision, round) => round.generateHistoricalData(decision)
       }
     }.flatMap { finishedRounds =>
-      allRounds.modify {
+      allRounds.update {
         case ConsensusRounds(historical, inProgress) =>
           def updatedHistorical = historical ++ finishedRounds
           def updatedInProgress = inProgress -- finishedRounds.map(_.key).toSet
 
-          (ConsensusRounds(updatedHistorical, updatedInProgress), ())
+          ConsensusRounds(updatedHistorical, updatedInProgress)
       }
     }
   }
@@ -92,45 +91,36 @@ abstract class HealthCheckConsensus[
   private def createRoundId: F[RoundId] = GenUUID[F].make.map(RoundId.apply)
 
   def startOwnRound(key: HealthCheckKey) =
-    clusterStorage.getPeers.flatMap { peers =>
-      createRoundId.map(HealthCheckRoundId(_, selfId)).flatMap {
-        startRound(key, peers, _, OwnRound)
-      }
+    createRoundId.map(HealthCheckRoundId(_, selfId)).flatMap {
+      startRound(key, _)
     }
 
   def participateInRound(key: HealthCheckKey, roundId: HealthCheckRoundId): F[Unit] =
-    clusterStorage.getPeers.flatMap { peers =>
-      startRound(key, peers, roundId, PeerRound)
-    }
+    startRound(key, roundId)
 
   def startRound(
     key: HealthCheckKey,
-    peers: Set[Peer],
-    roundId: HealthCheckRoundId,
-    roundType: HealthCheckRoundType
+    roundId: HealthCheckRoundId
   ): F[Unit] =
-    Clock[F].monotonic
-      .map(_.toSeconds)
-      .flatMap { startedAt =>
-        allRounds.get.map {
+    clusterStorage.getPeers
+      .map(_.map(_.id))
+      .flatMap { initialPeers =>
+        HealthCheckConsensusRound.make[F, A, B](key, roundId, initialPeers, driver, gossip, selfId)
+      }
+      .flatMap { round =>
+        allRounds.modify {
           case ConsensusRounds(historical, inProgress) =>
             def inProgressRound = inProgress.get(key)
             def historicalRound = historical.find(_.roundId == roundId)
 
-            historicalRound.orElse(inProgressRound).map(_ => none).getOrElse {
-              HealthCheckRound.make[F, A, B]().some
-            }
-        }
-      }
-      .flatMap {
-        case Some(mkRound) =>
-          mkRound.flatMap { round =>
-            allRounds.modify {
-              case ConsensusRounds(historical, inProgress) =>
+            historicalRound
+              .orElse(inProgressRound)
+              .fold {
                 (ConsensusRounds(historical, inProgress + (key -> round)), round.some)
-            }
-          }
-        case None => none[HealthCheckRound[F, A, B]].pure[F]
+              } { _ =>
+                (ConsensusRounds(historical, inProgress), none)
+              }
+        }
       }
       .flatTap {
         _.fold(Applicative[F].unit) { round =>
@@ -149,9 +139,7 @@ abstract class HealthCheckConsensus[
         }
       }
       .flatMap {
-        case Some(round) =>
-          round.start
-        case _ => Applicative[F].unit
+        _.fold(Applicative[F].unit)(_.start)
       }
 
   def handleProposal(proposal: B, depth: Int = 1): F[Unit] =
@@ -191,7 +179,7 @@ abstract class HealthCheckConsensus[
 
   private def calculateOutcome(rounds: ConsensusRounds.Finished[F, A, B]): F[ConsensusRounds.Outcome[F, A, B]] =
     if (rounds.isEmpty)
-      Map.empty[HealthCheckKey, (HealthCheckConsensusDecision, HealthCheckRound[F, A, B])].pure[F]
+      Map.empty[HealthCheckKey, (HealthCheckConsensusDecision, HealthCheckConsensusRound[F, A, B])].pure[F]
     else
       rounds.toList.traverse {
         case (key, round) =>

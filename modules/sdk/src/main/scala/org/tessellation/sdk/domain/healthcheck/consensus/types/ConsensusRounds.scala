@@ -1,7 +1,7 @@
-package org.tessellation.sdk.domain.healthcheck.types
+package org.tessellation.sdk.domain.healthcheck.consensus.types
 
-import org.tessellation.sdk.domain.healthcheck.HealthCheckRound
-import org.tessellation.sdk.domain.healthcheck.types.ConsensusRounds.InProgress
+import org.tessellation.sdk.domain.healthcheck.consensus.HealthCheckConsensusRound
+import org.tessellation.sdk.domain.healthcheck.consensus.types.ConsensusRounds.InProgress
 
 final case class ConsensusRounds[F[_], A <: HealthCheckStatus, B <: ConsensusHealthStatus[A]](
   historical: List[HistoricalRound],
@@ -10,10 +10,10 @@ final case class ConsensusRounds[F[_], A <: HealthCheckStatus, B <: ConsensusHea
 
 object ConsensusRounds {
   private type Rounds[F[_], A <: HealthCheckStatus, B <: ConsensusHealthStatus[A]] =
-    Map[HealthCheckKey, HealthCheckRound[F, A, B]]
+    Map[HealthCheckKey, HealthCheckConsensusRound[F, A, B]]
   type InProgress[F[_], A <: HealthCheckStatus, B <: ConsensusHealthStatus[A]] = Rounds[F, A, B]
   type Finished[F[_], A <: HealthCheckStatus, B <: ConsensusHealthStatus[A]] = Rounds[F, A, B]
 
   type Outcome[F[_], A <: HealthCheckStatus, B <: ConsensusHealthStatus[A]] =
-    Map[HealthCheckKey, (HealthCheckConsensusDecision, HealthCheckRound[F, A, B])]
+    Map[HealthCheckKey, (HealthCheckConsensusDecision, HealthCheckConsensusRound[F, A, B])]
 }
