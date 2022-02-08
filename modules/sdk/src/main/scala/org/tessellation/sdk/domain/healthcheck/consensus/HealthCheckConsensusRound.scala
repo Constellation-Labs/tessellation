@@ -1,7 +1,8 @@
 package org.tessellation.sdk.domain.healthcheck.consensus
 
 import cats.Applicative
-import cats.effect.{Clock, Ref, Spawn}
+import cats.effect._
+import cats.syntax.applicative._
 import cats.syntax.contravariantSemigroupal._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
@@ -14,11 +15,16 @@ import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.healthcheck.consensus.types._
 
-class HealthCheckConsensusRound[F[_]: Spawn: Clock, A <: HealthCheckStatus, B <: ConsensusHealthStatus[A]](
-  key: HealthCheckKey,
+class HealthCheckConsensusRound[F[_]: Spawn: Clock, K <: HealthCheckKey, A <: HealthCheckStatus, B <: ConsensusHealthStatus[
+  K,
+  A
+]](
+  key: K,
   roundId: HealthCheckRoundId,
-  driver: HealthCheckConsensusDriver[A, B],
+  driver: HealthCheckConsensusDriver[K, A, B],
   startedAt: FiniteDuration,
+  ownStatus: Fiber[F, Throwable, A],
+  statusOnError: A,
   peers: Ref[F, Set[PeerId]],
   roundIds: Ref[F, Set[HealthCheckRoundId]],
   proposals: Ref[F, Map[PeerId, B]],
@@ -68,29 +74,35 @@ class HealthCheckConsensusRound[F[_]: Spawn: Clock, A <: HealthCheckStatus, B <:
 
   def getRoundIds: F[Set[HealthCheckRoundId]] = roundIds.get
 
-  def addParallelRounds(key: HealthCheckKey)(roundIds: Set[HealthCheckRoundId]): F[Unit] = ???
+  def addParallelRounds(key: K)(roundIds: Set[HealthCheckRoundId]): F[Unit] = ???
 
-  def calculateOutcome: F[HealthCheckConsensusDecision] = {
-    def status: A = ???
+  def calculateOutcome: F[HealthCheckConsensusDecision] =
+    status.flatMap { _status =>
+      (proposals.get, peers.get).mapN { (_proposals, _peers) =>
+        def received = _proposals.view.filterKeys(_peers.contains).values.toList
 
-    (proposals.get, peers.get).mapN { (_proposals, _peers) =>
-      def received = _proposals.view.filterKeys(_peers.contains).values.toList
-
-      driver.calculateConsensusOutcome(key, status, selfId, received)
+        driver.calculateConsensusOutcome(key, _status, selfId, received)
+      }
     }
-  }
 
   def manage: F[Unit] =
     Clock[F].monotonic.flatMap { currentTime =>
       sendProposal // Note: check elapsed time and execute additional tasks
     }
 
-  def generateHistoricalData(decision: HealthCheckConsensusDecision): F[HistoricalRound] = ???
+  def generateHistoricalData(decision: HealthCheckConsensusDecision): F[HistoricalRound[K]] = ???
 
-  def ownConsensusHealthStatus: F[B] = {
-    def status: A = ???
-    Applicative[F].pure(driver.consensusHealthStatus(key, status, roundId, selfId))
-  }
+  def ownConsensusHealthStatus: F[B] =
+    status.map {
+      driver.consensusHealthStatus(key, _, roundId, selfId)
+    }
+
+  private def status =
+    ownStatus.join.flatMap {
+      case Outcome.Succeeded(fa) => fa
+      case Outcome.Errored(_)    => statusOnError.pure[F]
+      case Outcome.Canceled()    => statusOnError.pure[F]
+    }
 
   private def sendProposal: F[Unit] =
     ownConsensusHealthStatus.flatMap(gossip.spread)
@@ -103,14 +115,16 @@ class HealthCheckConsensusRound[F[_]: Spawn: Clock, A <: HealthCheckStatus, B <:
 
 object HealthCheckConsensusRound {
 
-  def make[F[_]: Ref.Make: Spawn: Clock, A <: HealthCheckStatus, B <: ConsensusHealthStatus[A]](
-    key: HealthCheckKey,
+  def make[F[_]: Spawn: Clock: Ref.Make, K <: HealthCheckKey, A <: HealthCheckStatus, B <: ConsensusHealthStatus[K, A]](
+    key: K,
     roundId: HealthCheckRoundId,
     initialPeers: Set[PeerId],
-    driver: HealthCheckConsensusDriver[A, B],
+    ownStatus: Fiber[F, Throwable, A],
+    statusOnError: A,
+    driver: HealthCheckConsensusDriver[K, A, B],
     gossip: Gossip[F],
     selfId: PeerId
-  ): F[HealthCheckConsensusRound[F, A, B]] = {
+  ): F[HealthCheckConsensusRound[F, K, A, B]] = {
 
     def mkStartedAt = Clock[F].monotonic
     def mkPeers = Ref.of[F, Set[PeerId]](initialPeers)
@@ -118,11 +132,13 @@ object HealthCheckConsensusRound {
     def mkProposals = Ref.of[F, Map[PeerId, B]](Map.empty)
 
     (mkStartedAt, mkPeers, mkRoundIds, mkProposals).mapN { (startedAt, peers, roundIds, proposals) =>
-      new HealthCheckConsensusRound[F, A, B](
+      new HealthCheckConsensusRound[F, K, A, B](
         key,
         roundId,
         driver,
         startedAt,
+        ownStatus,
+        statusOnError,
         peers,
         roundIds,
         proposals,

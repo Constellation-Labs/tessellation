@@ -40,7 +40,6 @@ sealed abstract class HttpApi[F[_]: Async: KryoSerializer: SecurityProvider] pri
   sdkPrograms: SdkPrograms[F],
   selfId: PeerId
 ) {
-  private val healthRoutes = HealthRoutes[F](services.healthCheck).routes
   private val clusterRoutes =
     ClusterRoutes[F](sdkPrograms.joining, sdkPrograms.peerDiscovery, storages.cluster, services.cluster)
   private val registrationRoutes = RegistrationRoutes[F](services.cluster)
@@ -49,8 +48,7 @@ sealed abstract class HttpApi[F[_]: Async: KryoSerializer: SecurityProvider] pri
 
   private val openRoutes: HttpRoutes[F] =
     `X-Id-Middleware`.responseMiddleware(selfId) {
-      healthRoutes <+>
-        dagRoutes.publicRoutes <+>
+      dagRoutes.publicRoutes <+>
         clusterRoutes.publicRoutes
     }
 
@@ -64,8 +62,7 @@ sealed abstract class HttpApi[F[_]: Async: KryoSerializer: SecurityProvider] pri
         clusterRoutes.p2pPublicRoutes <+>
         PeerAuthMiddleware.requestVerifierMiddleware(getKnownPeersId)(
           PeerAuthMiddleware.requestTokenVerifierMiddleware(services.session)(
-            healthRoutes <+>
-              clusterRoutes.p2pRoutes <+>
+            clusterRoutes.p2pRoutes <+>
               gossipRoutes.p2pRoutes <+>
               dagRoutes.p2pRoutes
           )
@@ -73,8 +70,7 @@ sealed abstract class HttpApi[F[_]: Async: KryoSerializer: SecurityProvider] pri
     )
 
   private val cliRoutes: HttpRoutes[F] =
-    healthRoutes <+>
-      clusterRoutes.cliRoutes
+    clusterRoutes.cliRoutes
 
   private val loggers: HttpApp[F] => HttpApp[F] = {
     { http: HttpApp[F] =>
