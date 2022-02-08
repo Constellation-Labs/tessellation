@@ -1,4 +1,4 @@
-package org.tessellation.sdk.domain.healthcheck.types
+package org.tessellation.sdk.domain.healthcheck.consensus.types
 
 import java.util.UUID
 
