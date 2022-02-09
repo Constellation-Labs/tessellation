@@ -6,6 +6,7 @@ import cats.syntax.applicativeError._
 import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+import cats.syntax.functorFilter._
 import cats.syntax.parallel._
 import cats.syntax.show._
 import cats.syntax.traverseFilter._
@@ -26,6 +27,7 @@ import org.tessellation.security.signature.Signed
 
 import fs2.Stream
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+import shapeless._
 
 trait GossipDaemon[F[_]] extends Daemon[F]
 
@@ -43,7 +45,8 @@ object GossipDaemon {
 
     private val logger = Slf4jLogger.getLogger[F]
 
-    implicit private val signedRumorOrdering: Ordering[Signed[Rumor]] = Signed.order[Rumor].toOrdering
+    implicit private val signedRumorOrdering: Ordering[Signed[PeerRumorBinary]] =
+      Signed.order[PeerRumorBinary].toOrdering
 
     def start: F[Unit] =
       for {
@@ -57,9 +60,8 @@ object GossipDaemon {
         .evalMap(validateHash)
         .evalMap(validateSignature)
         .evalMap(rumorStorage.addRumors)
-        .map(_.sortBy(_._2))
+        .map(sortRumors)
         .flatMap(Stream.iterable)
-        .filter { case (_, signedRumor) => signedRumor.value.origin =!= nodeId }
         .evalMap(handleRumor)
         .compile
         .drain
@@ -90,12 +92,19 @@ object GossipDaemon {
           }
       }
 
+    private val commonTypable = Typeable[Signed[CommonRumorBinary]]
+    private val peerTypable = Typeable[Signed[PeerRumorBinary]]
+
+    private def sortRumors(batch: RumorBatch): RumorBatch =
+      batch.mapFilter { case (h, r) => commonTypable.cast(r).map(h -> _) } ++
+        batch.mapFilter { case (h, r) => peerTypable.cast(r).map(h -> _) }.sortBy(_._2.ordinal)
+
     private def handleRumor(har: HashAndRumor): F[Unit] = har match {
       case (hash, signedRumor) =>
         rumorHandler
-          .run((signedRumor.value, rumorStorage))
+          .run((signedRumor.value, nodeId))
           .getOrElseF {
-            logger.warn(s"Unhandled rumor ${signedRumor.value.show} with hash ${hash.show}.")
+            logger.info(s"Unhandled rumor ${signedRumor.value.show} with hash ${hash.show}.")
           }
           .handleErrorWith { err =>
             logger.error(err)(

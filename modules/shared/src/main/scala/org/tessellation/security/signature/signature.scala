@@ -1,7 +1,7 @@
 package org.tessellation.security.signature
 
 import java.nio.charset.StandardCharsets
-import java.security.KeyPair
+import java.security.{KeyPair, PrivateKey}
 
 import cats.Applicative
 import cats.effect.Async
@@ -34,21 +34,29 @@ object signature {
   @newtype
   case class Signature(value: Hex)
 
+  object Signature {
+
+    def fromHash[F[_]: Async: SecurityProvider](privateKey: PrivateKey, hash: Hash): F[Signature] =
+      signData(hash.value.getBytes(StandardCharsets.UTF_8))(privateKey).map(raw => Signature(Hex.fromBytes(raw)))
+
+  }
+
   @derive(decoder, encoder, show, eqv)
   case class SignatureProof(id: Id, signature: Signature)
 
-  private[security] def signatureProofFromData[F[_]: Async: SecurityProvider: KryoSerializer, A <: AnyRef](
-    data: A,
-    keyPair: KeyPair
-  ): F[SignatureProof] =
-    for {
-      id <- PeerId._Id.get(PeerId.fromPublic(keyPair.getPublic)).pure[F]
-      signature <- data.hashF
-        .map(_.value.getBytes)
-        .flatMap(signData(_)(keyPair.getPrivate))
-        .map(Hex.fromBytes(_))
-        .map(Signature(_))
-    } yield SignatureProof(id, signature)
+  object SignatureProof {
+
+    def fromHash[F[_]: Async: SecurityProvider](keyPair: KeyPair, hash: Hash): F[SignatureProof] =
+      for {
+        id <- PeerId._Id.get(PeerId.fromPublic(keyPair.getPublic)).pure[F]
+        signature <- Signature.fromHash(keyPair.getPrivate, hash)
+      } yield SignatureProof(id, signature)
+
+    def fromData[F[_]: Async: SecurityProvider: KryoSerializer, A <: AnyRef](
+      keyPair: KeyPair
+    )(data: A): F[SignatureProof] = data.hashF.flatMap(SignatureProof.fromHash(keyPair, _))
+
+  }
 
   private[security] def verifySignatureProof[F[_]: Async: SecurityProvider](
     hash: Hash,

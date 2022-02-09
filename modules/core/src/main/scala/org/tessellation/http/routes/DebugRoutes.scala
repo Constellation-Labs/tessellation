@@ -33,7 +33,7 @@ final case class DebugRoutes[F[_]: Async](
     case POST -> Root / "gossip" / "spread" / IntVar(intContent) =>
       services.gossip.spread(intContent.some) >> Ok()
     case POST -> Root / "gossip" / "spread" / strContent =>
-      services.gossip.spread(strContent) >> Ok()
+      services.gossip.spreadCommon(strContent) >> Ok()
   }
 
   val routes: HttpRoutes[F] = Router(

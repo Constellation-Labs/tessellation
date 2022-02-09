@@ -1,11 +1,13 @@
 package org.tessellation.schema
 
 import cats.effect.Concurrent
+import cats.kernel.Monoid
 import cats.syntax.contravariant._
 import cats.syntax.show._
 import cats.{Order, Show}
 
 import scala.reflect.runtime.universe.{TypeTag, typeOf}
+import scala.util.control.NoStackTrace
 
 import org.tessellation.ext.codecs.BinaryCodec
 import org.tessellation.kryo.KryoSerializer
@@ -30,29 +32,67 @@ object gossip {
   @derive(arbitrary, eqv, show, order)
   case class Ordinal(generation: PosLong, counter: PosLong)
 
+  object Ordinal {
+
+    val MinValue = Ordinal(PosLong.MinValue, PosLong.MinValue)
+
+    implicit val maxMonoid: Monoid[Ordinal] = Monoid.instance(MinValue, (a, b) => Order[Ordinal].max(a, b))
+
+    implicit def ordering: Ordering[Ordinal] = Order[Ordinal].toOrdering
+
+  }
+
   object ContentType {
     def of[A: TypeTag]: ContentType = ContentType(typeOf[A].toString)
   }
 
-  type HashAndRumor = (Hash, Signed[Rumor])
+  type HashAndRumor = (Hash, Signed[RumorBinary])
   type RumorBatch = List[HashAndRumor]
 
-  case class ReceivedRumor[A](origin: PeerId, content: A)
+  @derive(eqv, show)
+  case class PeerRumor[A](origin: PeerId, ordinal: Ordinal, content: A)
+
+  @derive(eqv, show)
+  case class CommonRumor[A](content: A)
+
+  sealed trait RumorBinary {
+    val content: Array[Byte]
+    val contentType: ContentType
+  }
+
+  object RumorBinary {
+    implicit val show: Show[RumorBinary] = {
+      case r: CommonRumorBinary => Show[CommonRumorBinary].show(r)
+      case r: PeerRumorBinary   => Show[PeerRumorBinary].show(r)
+    }
+  }
+
+  final case class CommonRumorBinary(
+    content: Array[Byte],
+    contentType: ContentType
+  ) extends RumorBinary
+
+  object CommonRumorBinary {
+    implicit val show: Show[CommonRumorBinary] = (t: CommonRumorBinary) =>
+      s"CommonRumorBinary(contentType=${t.contentType.show})"
+  }
 
   @derive(arbitrary)
-  case class Rumor(
+  final case class PeerRumorBinary(
     origin: PeerId,
     ordinal: Ordinal,
     content: Array[Byte],
     contentType: ContentType
-  )
+  ) extends RumorBinary
 
-  object Rumor {
-    implicit val orderInstances: Order[Rumor] = Order[Ordinal].contramap[Rumor](_.ordinal)
+  object PeerRumorBinary {
+    implicit val order: Order[PeerRumorBinary] = Order[Ordinal].contramap[PeerRumorBinary](_.ordinal)
 
-    implicit val showInstances: Show[Rumor] = (t: Rumor) =>
-      s"Rumor(origin=${t.origin.show}, ordinal=${t.ordinal.show}, contentType=${t.contentType.show}, "
+    implicit val show: Show[PeerRumorBinary] = (t: PeerRumorBinary) =>
+      s"PeerRumorBinary(origin=${t.origin.show}, ordinal=${t.ordinal.show}, contentType=${t.contentType.show})"
   }
+
+  case class UnexpectedRumorClass(rumor: RumorBinary) extends NoStackTrace
 
   case class StartGossipRoundRequest(
     offer: List[Hash]

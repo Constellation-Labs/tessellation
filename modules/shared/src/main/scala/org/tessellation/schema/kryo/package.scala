@@ -23,7 +23,7 @@ package object kryo {
     classOf[NonEmptyList[_]] -> 105,
     classOf[Signed[_]] -> 106,
     classOf[AddressCache] -> 201,
-    classOf[Rumor] -> 202,
+    classOf[PeerRumorBinary] -> 202,
     classOf[StartGossipRoundRequest] -> 203,
     classOf[StartGossipRoundResponse] -> 204,
     classOf[EndGossipRoundRequest] -> 205,
@@ -38,6 +38,7 @@ package object kryo {
     NodeState.StartingSession.getClass -> 214,
     NodeState.Leaving.getClass -> 215,
     classOf[PublicTrust] -> 216,
-    classOf[Ordinal] -> 217
+    classOf[Ordinal] -> 217,
+    classOf[CommonRumorBinary] -> 218
   )
 }

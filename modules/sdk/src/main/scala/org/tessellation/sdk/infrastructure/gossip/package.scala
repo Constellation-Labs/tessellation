@@ -2,11 +2,11 @@ package org.tessellation.sdk.infrastructure
 
 import cats.data.{Kleisli, OptionT}
 
-import org.tessellation.schema.gossip.Rumor
-import org.tessellation.sdk.domain.gossip.RumorStorage
+import org.tessellation.schema.gossip.RumorBinary
+import org.tessellation.schema.peer.PeerId
 
 package object gossip {
 
-  type RumorHandler[F[_]] = Kleisli[OptionT[F, *], (Rumor, RumorStorage[F]), Unit]
+  type RumorHandler[F[_]] = Kleisli[OptionT[F, *], (RumorBinary, PeerId), Unit]
 
 }

@@ -35,6 +35,7 @@ object TrustRoutesSuite extends HttpSuite {
           ts = TrustStorage.make[IO](trust)
           gossip = new Gossip[IO] {
             override def spread[A <: AnyRef: TypeTag](rumorContent: A): IO[Unit] = IO.unit
+            override def spreadCommon[A <: AnyRef: TypeTag](rumorContent: A): IO[Unit] = IO.unit
           }
           tp = TrustPush.make[IO](ts, gossip)
           _ <- ts.updateTrust(
