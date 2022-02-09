@@ -39,7 +39,7 @@ object Gossip {
     counter: Ref[F, PosLong],
     generation: PosLong,
     rumorQueue: Queue[F, RumorBatch],
-    nodeId: PeerId,
+    selfId: PeerId,
     keyPair: KeyPair
   ): Gossip[F] =
     new Gossip[F] {
@@ -48,7 +48,19 @@ object Gossip {
         for {
           contentBinary <- rumorContent.toBinaryF
           count <- counter.getAndUpdate(_ |+| PosLong(1L))
-          rumor = Rumor(nodeId, Ordinal(generation, count), contentBinary, ContentType.of[A])
+          rumor = PeerRumorBinary(selfId, Ordinal(generation, count), contentBinary, ContentType.of[A])
+          _ <- signAndOffer(rumor)
+        } yield ()
+
+      def spreadCommon[A <: AnyRef: TypeTag](rumorContent: A): F[Unit] =
+        for {
+          contentBinary <- rumorContent.toBinaryF
+          rumor = CommonRumorBinary(contentBinary, ContentType.of[A])
+          _ <- signAndOffer(rumor)
+        } yield ()
+
+      private def signAndOffer(rumor: RumorBinary): F[Unit] =
+        for {
           signedRumor <- rumor.sign(keyPair)
           hash <- rumor.hashF
           _ <- rumorQueue.offer(List(hash -> signedRumor))

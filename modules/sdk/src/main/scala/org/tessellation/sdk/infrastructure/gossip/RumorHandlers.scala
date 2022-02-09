@@ -27,15 +27,15 @@ sealed abstract class RumorHandlers[F[_]: Async: KryoSerializer] private (
   private val debug: RumorHandler[F] = {
     val logger = Slf4jLogger.getLogger[F]
 
-    val strHandler = RumorHandler.fromFn[F, String] { s =>
-      logger.info(s"String rumor received $s")
+    val strHandler = RumorHandler.fromCommonRumorConsumer[F, String] { rumor =>
+      logger.info(s"String rumor received ${rumor.content}")
     }
 
-    val optIntHandler = RumorHandler.fromBiFn[F, Option[Int]] { (peerId, optInt) =>
-      optInt match {
-        case Some(i) if i > 0 => logger.info(s"Int rumor received ${i.show}, origin ${peerId.show}")
+    val optIntHandler = RumorHandler.fromPeerRumorConsumer[F, Option[Int]](selfOrigin = true) { rumor =>
+      rumor.content match {
+        case Some(i) if i > 0 => logger.info(s"Int rumor received ${i.show}, origin ${rumor.origin.show}")
         case o =>
-          MonadThrow[F].raiseError(new RuntimeException(s"Int rumor error ${o.show}, origin ${peerId.show}"))
+          MonadThrow[F].raiseError(new RuntimeException(s"Int rumor error ${o.show}, origin ${rumor.origin.show}"))
       }
     }
 

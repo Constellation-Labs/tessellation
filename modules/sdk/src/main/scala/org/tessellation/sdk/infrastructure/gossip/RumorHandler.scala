@@ -1,8 +1,8 @@
 package org.tessellation.sdk.infrastructure.gossip
 
-import cats.Applicative
 import cats.data.{Kleisli, OptionT}
 import cats.effect.Async
+import cats.syntax.applicativeError._
 import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
@@ -13,52 +13,69 @@ import scala.reflect.runtime.universe.TypeTag
 
 import org.tessellation.ext.kryo._
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.gossip.{ContentType, ReceivedRumor, Rumor}
+import org.tessellation.schema.gossip._
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.sdk.domain.gossip.RumorStorage
+import org.tessellation.syntax.boolean._
 
 object RumorHandler {
 
-  def fromReceivedRumorFn[F[_]: Async: KryoSerializer, A <: AnyRef: TypeTag: ClassTag](
-    latestOnly: Boolean = false
-  )(f: ReceivedRumor[A] => F[Unit]): RumorHandler[F] = {
+  def fromCommonRumorConsumer[F[_]: Async: KryoSerializer, A <: AnyRef: TypeTag: ClassTag](
+    f: CommonRumor[A] => F[Unit]
+  ): RumorHandler[F] = {
     val handlerContentType = ContentType.of[A]
-    val pf = new PartialFunction[(Rumor, RumorStorage[F]), F[Unit]] {
-      def isDefinedAt(v: (Rumor, RumorStorage[F])): Boolean = v match {
-        case (rumor, _) => rumor.contentType === handlerContentType
+    val pf = new PartialFunction[(RumorBinary, PeerId), F[Unit]] {
+      def isDefinedAt(v: (RumorBinary, PeerId)): Boolean = v match {
+        case (rumor, _) =>
+          rumor.isInstanceOf[CommonRumorBinary] &&
+            rumor.contentType === handlerContentType
       }
 
-      def apply(v: (Rumor, RumorStorage[F])): F[Unit] = v match {
-        case (rumor, rumorStorage) =>
+      def apply(v: (RumorBinary, PeerId)): F[Unit] = v match {
+        case (rumor: CommonRumorBinary, _) =>
           for {
             content <- rumor.content.fromBinaryF[A]
-            fn = f(ReceivedRumor(rumor.origin, content))
-            _ <- if (latestOnly)
-              rumorStorage
-                .tryUpdateOrdinal(rumor)
-                .ifM(fn, Applicative[F].unit)
-            else
-              fn
+            fn = f(CommonRumor(content))
+            _ <- fn
           } yield ()
+        case (r, _) => UnexpectedRumorClass(r).raiseError[F, Unit]
       }
     }
 
-    Kleisli.apply[OptionT[F, *], (Rumor, RumorStorage[F]), Unit] {
-      case (rumor, rumorStorage) =>
-        OptionT(pf.lift((rumor, rumorStorage)).sequence)
+    pfToKleisli(pf)
+  }
+
+  def fromPeerRumorConsumer[F[_]: Async: KryoSerializer, A <: AnyRef: TypeTag: ClassTag](
+    selfOrigin: Boolean = false
+  )(f: PeerRumor[A] => F[Unit]): RumorHandler[F] = {
+    val handlerContentType = ContentType.of[A]
+    val pf = new PartialFunction[(RumorBinary, PeerId), F[Unit]] {
+      def isDefinedAt(v: (RumorBinary, PeerId)): Boolean = v match {
+        case (rumor, selfId) =>
+          rumor.isInstanceOf[PeerRumorBinary] &&
+            rumor.contentType === handlerContentType &&
+            ((rumor.asInstanceOf[PeerRumorBinary].origin === selfId) ==> selfOrigin)
+      }
+
+      def apply(v: (RumorBinary, PeerId)): F[Unit] = v match {
+        case (rumor: PeerRumorBinary, _) =>
+          for {
+            content <- rumor.content.fromBinaryF[A]
+            fn = f(PeerRumor(rumor.origin, rumor.ordinal, content))
+            _ <- fn
+          } yield ()
+        case (r, _) => UnexpectedRumorClass(r).raiseError[F, Unit]
+      }
     }
+
+    pfToKleisli(pf)
   }
 
-  def fromBiFn[F[_]: Async: KryoSerializer, A <: AnyRef: TypeTag: ClassTag](
-    f: (PeerId, A) => F[Unit]
-  ): RumorHandler[F] = fromReceivedRumorFn() { r: ReceivedRumor[A] =>
-    f(r.origin, r.content)
-  }
-
-  def fromFn[F[_]: Async: KryoSerializer, A <: AnyRef: TypeTag: ClassTag](
-    f: A => F[Unit]
-  ): RumorHandler[F] = fromBiFn { (_: PeerId, a: A) =>
-    f(a)
-  }
+  private def pfToKleisli[A <: AnyRef: TypeTag: ClassTag, F[_]: Async: KryoSerializer](
+    pf: PartialFunction[(RumorBinary, PeerId), F[Unit]]
+  ): Kleisli[OptionT[F, *], (RumorBinary, PeerId), Unit] =
+    Kleisli.apply[OptionT[F, *], (RumorBinary, PeerId), Unit] {
+      case (rumor, selfId) =>
+        OptionT(pf.lift((rumor, selfId)).sequence)
+    }
 
 }
