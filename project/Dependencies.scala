@@ -34,17 +34,15 @@ object Dependencies {
     val skunk = "0.2.1"
     val sqlite = "3.36.0.3"
     val chill = "0.9.5"
+    val shapeless = "2.3.7"
     val spongyCastle = "1.58.0.0"
     val squants = "1.8.2"
     val twitterChill = "0.10.0"
-    val shapeless = "2.3.3"
-
     val betterMonadicFor = "0.3.1"
     val kindProjector = "0.13.0"
     val logback = "1.2.5"
     val organizeImports = "0.5.0"
     val semanticDB = "4.4.26"
-
     val weaver = "0.7.4"
   }
 
