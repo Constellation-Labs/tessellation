@@ -29,7 +29,7 @@ object Dependencies {
     val monocle = "3.0.0"
     val mapref = "0.2.0-M2"
     val newtype = "0.4.4"
-    val refined = "0.9.27"
+    val refined = "0.9.28"
     val redis4cats = "1.0.0"
     val skunk = "0.2.1"
     val sqlite = "3.36.0.3"
@@ -39,10 +39,10 @@ object Dependencies {
     val squants = "1.8.2"
     val twitterChill = "0.10.0"
     val betterMonadicFor = "0.3.1"
-    val kindProjector = "0.13.0"
+    val kindProjector = "0.13.2"
     val logback = "1.2.5"
     val organizeImports = "0.5.0"
-    val semanticDB = "4.4.26"
+    val semanticDB = "4.4.34"
     val weaver = "0.7.4"
   }
 

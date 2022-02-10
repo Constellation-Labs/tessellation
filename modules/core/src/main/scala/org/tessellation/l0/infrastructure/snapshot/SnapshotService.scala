@@ -18,7 +18,7 @@ import org.tessellation.schema.height.Height
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.security.signature.Signed
 
-import eu.timepit.refined.cats.nonNegLongMonoid
+import eu.timepit.refined.cats.nonNegLongCommutativeMonoid
 import eu.timepit.refined.types.numeric.NonNegLong
 import fs2.Stream
 import io.estatico.newtype.ops._

@@ -49,10 +49,8 @@ object gossip {
   type HashAndRumor = (Hash, Signed[RumorBinary])
   type RumorBatch = List[HashAndRumor]
 
-  @derive(eqv, show)
   case class PeerRumor[A](origin: PeerId, ordinal: Ordinal, content: A)
 
-  @derive(eqv, show)
   case class CommonRumor[A](content: A)
 
   sealed trait RumorBinary {

@@ -45,9 +45,6 @@ object GossipDaemon {
 
     private val logger = Slf4jLogger.getLogger[F]
 
-    implicit private val signedRumorOrdering: Ordering[Signed[PeerRumorBinary]] =
-      Signed.order[PeerRumorBinary].toOrdering
-
     def start: F[Unit] =
       for {
         _ <- Spawn[F].start(spreadActiveRumors.foreverM).void

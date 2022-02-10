@@ -49,11 +49,11 @@ package object decline {
       case many       => s"Invalid value $missing, expected ${many.init.mkString(", ")} or ${many.last}"
     }
 
-  implicit def enumEntryArgument[A <: EnumEntry](implicit enum: Enum[A]): Argument[A] = new Argument[A] {
+  implicit def enumEntryArgument[A <: EnumEntry](implicit `enum`: Enum[A]): Argument[A] = new Argument[A] {
     override def read(string: String): ValidatedNel[String, A] =
-      enum.withNameOption(string) match {
+      `enum`.withNameOption(string) match {
         case Some(v) => v.validNel
-        case None    => invalidChoice(string, enum.values.map(_.entryName)).invalidNel
+        case None    => invalidChoice(string, `enum`.values.map(_.entryName)).invalidNel
       }
     override def defaultMetavar: String = "value"
   }
