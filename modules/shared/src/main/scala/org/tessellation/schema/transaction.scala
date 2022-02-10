@@ -1,4 +1,5 @@
 package org.tessellation.schema
+
 import cats.Order
 import cats.syntax.semigroup._
 
@@ -9,7 +10,7 @@ import org.tessellation.security.hash.Hash
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
-import eu.timepit.refined.auto._
+import eu.timepit.refined.auto.{autoRefineV, autoUnwrap}
 import eu.timepit.refined.types.numeric.{NonNegBigInt, PosBigInt}
 import io.estatico.newtype.macros.newtype
 import io.estatico.newtype.ops._

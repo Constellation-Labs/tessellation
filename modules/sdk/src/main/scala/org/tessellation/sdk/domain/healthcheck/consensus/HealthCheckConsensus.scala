@@ -190,7 +190,7 @@ abstract class HealthCheckConsensus[
   private def partition(
     rounds: ConsensusRounds.InProgress[F, A, B]
   ): F[(ConsensusRounds.Finished[F, A, B], ConsensusRounds.InProgress[F, A, B])] = {
-    def ignoreTupleRight[X, Y, _](m: Map[X, (Y, _)]): Map[X, Y] = m.view.mapValues(_._1).toMap
+    def ignoreTupleRight[X, Y, Z](m: Map[X, (Y, Z)]): Map[X, Y] = m.view.mapValues(_._1).toMap
 
     rounds.toList.traverse {
       case (key, consensus) => consensus.isFinished.map(finished => (key, (consensus, finished)))

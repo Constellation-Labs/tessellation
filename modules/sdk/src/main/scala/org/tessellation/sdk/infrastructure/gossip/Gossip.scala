@@ -24,7 +24,7 @@ import eu.timepit.refined.types.numeric.PosLong
 
 object Gossip {
 
-  def make[F[_]: Async: Clock: SecurityProvider: KryoSerializer](
+  def make[F[_]: Async: SecurityProvider: KryoSerializer](
     rumorQueue: Queue[F, RumorBatch],
     nodeId: PeerId,
     keyPair: KeyPair
@@ -35,7 +35,7 @@ object Gossip {
       generation <- PosLong.from(time.toMillis).leftMap(new RuntimeException(_)).liftTo[F]
     } yield make(counter, generation, rumorQueue, nodeId, keyPair)
 
-  def make[F[_]: Async: Clock: SecurityProvider: KryoSerializer](
+  def make[F[_]: Async: SecurityProvider: KryoSerializer](
     counter: Ref[F, PosLong],
     generation: PosLong,
     rumorQueue: Queue[F, RumorBatch],
