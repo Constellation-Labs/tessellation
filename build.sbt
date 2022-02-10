@@ -252,6 +252,7 @@ lazy val sdk = (project in file("modules/sdk"))
       Libraries.declineRefined,
       Libraries.logback,
       Libraries.log4cats,
+      Libraries.shapeless
     )
   )
 
