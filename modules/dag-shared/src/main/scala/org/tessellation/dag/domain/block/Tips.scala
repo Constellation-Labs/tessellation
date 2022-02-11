@@ -1,8 +1,6 @@
-package org.tessellation.dag.l1.domain.block
+package org.tessellation.dag.domain.block
 
 import cats.data.NonEmptyList
-
-import org.tessellation.dag.domain.block.BlockReference
 
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive

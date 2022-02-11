@@ -1,9 +1,9 @@
-package org.tessellation.l0.cli
+package org.tessellation.cli
 
 import scala.concurrent.duration.DurationInt
 
+import org.tessellation.config.types.SnapshotConfig
 import org.tessellation.ext.decline.decline._
-import org.tessellation.l0.config.SnapshotConfig
 
 import com.monovore.decline._
 import fs2.io.file.Path

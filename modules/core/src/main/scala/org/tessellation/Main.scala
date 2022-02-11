@@ -10,6 +10,7 @@ import org.tessellation.ext.cats.effect._
 import org.tessellation.http.p2p.P2PClient
 import org.tessellation.infrastructure.db.Database
 import org.tessellation.infrastructure.genesis.{Loader => GenesisLoader}
+import org.tessellation.infrastructure.snapshot.SnapshotTriggerPipeline
 import org.tessellation.infrastructure.trust.handler.trustHandler
 import org.tessellation.modules._
 import org.tessellation.schema.node.NodeState
@@ -44,11 +45,19 @@ object Main
         storages <- Storages.make[IO](sdkStorages).asResource
         services <- Services.make[IO](sdkServices, queues).asResource
         programs = Programs.make[IO](sdkPrograms, storages, services)
+        validators = Validators.make[IO](cfg.snapshot)
         healthChecks <- HealthChecks
           .make[IO](storages, services, p2pClient, cfg.healthCheck, sdk.nodeId)
           .asResource
 
         _ <- services.stateChannelRunner.initializeKnownCells.asResource
+
+        snapshotTriggerStream = SnapshotTriggerPipeline.stream(
+          storages.globalSnapshot,
+          validators.snapshotPreconditions,
+          queues.l1Output,
+          cfg.snapshot
+        )
 
         rumorHandler = RumorHandlers.make[IO](storages.cluster, healthChecks.ping).handlers <+>
           trustHandler(storages.trust)

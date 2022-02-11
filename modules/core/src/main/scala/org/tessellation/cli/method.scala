@@ -21,6 +21,8 @@ object method {
   sealed trait Run extends CliMethod {
     val dbConfig: DBConfig
 
+    val snapshotConfig: SnapshotConfig
+
     val appConfig: AppConfig = AppConfig(
       environment = environment,
       http = httpConfig,
@@ -41,8 +43,10 @@ object method {
           10.minutes
         )
       ),
-      healthCheck = healthCheckConfig
+      healthCheck = healthCheckConfig,
+      snapshot = snapshotConfig
     )
+
   }
 
   case class RunGenesis(
@@ -52,6 +56,7 @@ object method {
     dbConfig: DBConfig,
     httpConfig: HttpConfig,
     environment: AppEnvironment,
+    snapshotConfig: SnapshotConfig,
     genesisPath: Path
   ) extends Run
 
@@ -60,8 +65,16 @@ object method {
     val genesisPathOpts: Opts[Path] = Opts.argument[Path]("genesis")
 
     val opts = Opts.subcommand("run-genesis", "Run genesis mode") {
-      (StorePath.opts, KeyAlias.opts, Password.opts, db.opts, http.opts, AppEnvironment.opts, genesisPathOpts)
-        .mapN(RunGenesis.apply(_, _, _, _, _, _, _))
+      (
+        StorePath.opts,
+        KeyAlias.opts,
+        Password.opts,
+        db.opts,
+        http.opts,
+        AppEnvironment.opts,
+        snapshot.opts,
+        genesisPathOpts
+      ).mapN(RunGenesis.apply(_, _, _, _, _, _, _, _))
     }
   }
 
@@ -71,14 +84,15 @@ object method {
     password: Password,
     dbConfig: DBConfig,
     httpConfig: HttpConfig,
-    environment: AppEnvironment
+    environment: AppEnvironment,
+    snapshotConfig: SnapshotConfig
   ) extends Run
 
   object RunValidator extends WithOpts[RunValidator] {
 
     val opts = Opts.subcommand("run-validator", "Run validator mode") {
-      (StorePath.opts, KeyAlias.opts, Password.opts, db.opts, http.opts, AppEnvironment.opts)
-        .mapN(RunValidator.apply(_, _, _, _, _, _))
+      (StorePath.opts, KeyAlias.opts, Password.opts, db.opts, http.opts, AppEnvironment.opts, snapshot.opts)
+        .mapN(RunValidator.apply(_, _, _, _, _, _, _))
     }
   }
 
