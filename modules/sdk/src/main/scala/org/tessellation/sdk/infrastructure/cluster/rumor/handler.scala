@@ -9,7 +9,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.gossip.PeerRumor
 import org.tessellation.schema.node.NodeState
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
-import org.tessellation.sdk.infrastructure.gossip.RumorHandler
+import org.tessellation.sdk.infrastructure.gossip.{IgnoreSelfOrigin, RumorHandler}
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -20,7 +20,7 @@ object handler {
   ): RumorHandler[F] = {
     val logger = Slf4jLogger.getLogger[F]
 
-    RumorHandler.fromPeerRumorConsumer[F, NodeState]() {
+    RumorHandler.fromPeerRumorConsumer[F, NodeState](IgnoreSelfOrigin) {
       case PeerRumor(origin, _, state) =>
         logger.info(s"Received state=${state.show} from id=${origin.show}") >>
           clusterStorage.setPeerState(origin, state) >> {
