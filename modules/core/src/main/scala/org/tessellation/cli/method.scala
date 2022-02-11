@@ -40,7 +40,8 @@ object method {
         TrustDaemonConfig(
           10.minutes
         )
-      )
+      ),
+      healthCheckConfig = healthCheckConfig
     )
   }
 

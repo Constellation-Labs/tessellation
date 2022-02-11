@@ -10,8 +10,11 @@ import cats.syntax.functor._
 import cats.syntax.option._
 import cats.syntax.traverse._
 
+import scala.reflect.runtime.universe.TypeTag
+
 import org.tessellation.effects.GenUUID
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.sdk.config.types.HealthCheckConfig
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.healthcheck.consensus.HealthCheckConsensusRound
@@ -19,22 +22,29 @@ import org.tessellation.sdk.domain.healthcheck.consensus.types._
 import org.tessellation.sdk.domain.healthcheck.consensus.types.types.RoundId
 import org.tessellation.sdk.domain.healthcheck.services.HealthCheck
 
+import org.typelevel.log4cats.slf4j.Slf4jLogger
+
 abstract class HealthCheckConsensus[
-  F[_]: Async: GenUUID: Ref.Make,
+  F[_]: Async: GenUUID,
   K <: HealthCheckKey,
   A <: HealthCheckStatus,
-  B <: ConsensusHealthStatus[K, A]
+  B <: ConsensusHealthStatus[K, A]: TypeTag
 ](
   clusterStorage: ClusterStorage[F],
   selfId: PeerId,
   driver: HealthCheckConsensusDriver[K, A, B],
-  gossip: Gossip[F]
+  gossip: Gossip[F],
+  config: HealthCheckConfig
 ) extends HealthCheck[F] {
+  def logger = Slf4jLogger.getLogger[F]
+
   def allRounds: Ref[F, ConsensusRounds[F, K, A, B]]
 
   def ownStatus(key: K): F[Fiber[F, Throwable, A]]
 
   def statusOnError(key: K): A
+
+  def periodic: F[Unit]
 
   def roundsInProgress = allRounds.get.map(_.inProgress)
   def historicalRounds = allRounds.get.map(_.historical)
@@ -43,7 +53,7 @@ abstract class HealthCheckConsensus[
     roundsInProgress.map(_.keySet.map(_.id))
 
   final override def trigger(): F[Unit] =
-    triggerRound()
+    triggerRound().flatMap(_ => periodic)
 
   private def triggerRound(): F[Unit] =
     roundsInProgress.flatMap { inProgress =>
@@ -77,7 +87,7 @@ abstract class HealthCheckConsensus[
 
       def run = onNegativeOutcome(negative) >> onNonNegativeOutcome(nonNegative)
 
-      Spawn[F].start(run)
+      run.handleErrorWith(e => logger.error(e)("Unhandled error on outcome action. Check implementation."))
     }.flatMap {
       _.values.toList.traverse {
         case (decision, round) => round.generateHistoricalData(decision)
@@ -109,6 +119,7 @@ abstract class HealthCheckConsensus[
   ): F[Unit] =
     clusterStorage.getPeers
       .map(_.map(_.id))
+      .map(_ - key.id)
       .flatMap { initialPeers =>
         ownStatus(key).flatMap { status =>
           HealthCheckConsensusRound.make[F, K, A, B](
@@ -118,6 +129,7 @@ abstract class HealthCheckConsensus[
             status,
             statusOnError(key),
             driver,
+            config,
             gossip,
             selfId
           )
@@ -160,25 +172,28 @@ abstract class HealthCheckConsensus[
       }
 
   def handleProposal(proposal: B, depth: Int = 1): F[Unit] =
-    allRounds.get.flatMap {
-      case ConsensusRounds(historical, inProgress) =>
-        def inProgressRound = inProgress.get(proposal.key)
-        def historicalRound = historical.find(_.roundId == proposal.roundId)
+    if (proposal.owner == selfId)
+      Applicative[F].unit
+    else
+      allRounds.get.flatMap {
+        case ConsensusRounds(historical, inProgress) =>
+          def inProgressRound = inProgress.get(proposal.key)
+          def historicalRound = historical.find(_.roundId == proposal.roundId)
 
-        def participate = participateInRound(proposal.key, proposal.roundId)
+          def participate = participateInRound(proposal.key, proposal.roundId)
 
-        inProgressRound
-          .map(_.processProposal(proposal))
-          .orElse {
-            historicalRound.map(handleProposalForHistoricalRound(proposal))
-          }
-          .getOrElse {
-            if (depth > 0)
-              participate.flatMap(_ => handleProposal(proposal, depth - 1))
-            else
-              (new Throwable("Unexpected recursion!")).raiseError[F, Unit] // Note: custom error type
-          }
-    }
+          inProgressRound
+            .map(_.processProposal(proposal))
+            .orElse {
+              historicalRound.map(handleProposalForHistoricalRound(proposal))
+            }
+            .getOrElse {
+              if (depth > 0)
+                participate.flatMap(_ => handleProposal(proposal, depth - 1))
+              else
+                (new Throwable("Unexpected recursion!")).raiseError[F, Unit]
+            }
+      }
 
   def handleProposalForHistoricalRound(proposal: B)(round: HistoricalRound[K]): F[Unit] =
     Applicative[F].unit
@@ -187,7 +202,9 @@ abstract class HealthCheckConsensus[
     peers: ConsensusRounds.Outcome[F, K, A, B]
   ): F[Unit] =
     peers.keys.toList.traverse { key =>
-      clusterStorage.removePeer(key.id)
+      clusterStorage.removePeer(key.id).flatTap { _ =>
+        logger.info(s"Negative outcome for peer: ${key.id}")
+      }
     }.void
 
   protected def onNonNegativeOutcome(

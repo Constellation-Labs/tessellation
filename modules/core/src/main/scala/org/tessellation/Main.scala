@@ -45,16 +45,15 @@ object Main
         storages <- Storages.make[IO](sdkStorages).asResource
         services <- Services.make[IO](sdkServices, queues).asResource
         programs = Programs.make[IO](sdkPrograms, storages, services)
-        healthChecks <- HealthChecks.make[IO](storages, services, sdk.nodeId).asResource
+        healthChecks <- HealthChecks
+          .make[IO](storages, services, p2pClient, cfg.healthCheckConfig, sdk.nodeId)
+          .asResource
 
         _ <- services.stateChannelRunner.initializeKnownCells.asResource
 
-        rumorHandler = RumorHandlers.make[IO](storages.cluster).handlers <+> trustHandler(
-          storages.trust
-        )
-        _ <- Daemons
-          .start(storages, services, queues, healthChecks, p2pClient, rumorHandler, nodeId, cfg)
-          .asResource
+        rumorHandler = RumorHandlers.make[IO](storages.cluster, healthChecks.ping).handlers <+>
+          trustHandler(storages.trust)
+        _ <- Daemons.start(storages, services, queues, healthChecks, p2pClient, rumorHandler, nodeId, cfg).asResource
 
         api = HttpApi.make[IO](storages, queues, services, programs, keyPair.getPrivate, cfg.environment, sdk.nodeId)
         _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.httpConfig.publicHttp, api.publicApp)

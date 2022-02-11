@@ -6,6 +6,8 @@ import org.tessellation.cli.env._
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types._
 
+import eu.timepit.refined.auto.autoRefineV
+
 trait CliMethod {
 
   val keyStore: StorePath
@@ -30,11 +32,22 @@ trait CliMethod {
 
   val leavingDelay = 30.seconds
 
+  val healthCheckConfig = HealthCheckConfig(
+    removeUnresponsiveParallelPeersAfter = 10.seconds,
+    ping = PingHealthCheckConfig(
+      concurrentChecks = 3,
+      defaultCheckTimeout = 10.seconds,
+      defaultCheckAttempts = 3,
+      ensureCheckInterval = 10.seconds
+    )
+  )
+
   val sdkConfig: SdkConfig = SdkConfig(
     environment,
     gossipConfig,
     httpConfig,
-    leavingDelay
+    leavingDelay,
+    healthCheckConfig
   )
 
 }

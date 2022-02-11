@@ -6,7 +6,7 @@ import org.tessellation.http.p2p.clients._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.http.p2p.SdkP2PClient
-import org.tessellation.sdk.http.p2p.clients.{ClusterClient, SignClient}
+import org.tessellation.sdk.http.p2p.clients.{ClusterClient, NodeClient, SignClient}
 import org.tessellation.sdk.infrastructure.gossip.p2p.GossipClient
 import org.tessellation.security.SecurityProvider
 
@@ -23,6 +23,7 @@ object P2PClient {
       sdkP2PClient.sign,
       sdkP2PClient.cluster,
       sdkP2PClient.gossip,
+      sdkP2PClient.node,
       TrustClient.make[F](client, session)
     ) {}
 }
@@ -31,5 +32,6 @@ sealed abstract class P2PClient[F[_]] private (
   val sign: SignClient[F],
   val cluster: ClusterClient[F],
   val gossip: GossipClient[F],
+  val node: NodeClient[F],
   val trust: TrustClient[F]
 )

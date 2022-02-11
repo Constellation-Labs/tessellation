@@ -9,6 +9,8 @@ import org.tessellation.sdk.domain.healthcheck.consensus.types._
 class PingHealthCheckConsensusDriver()
     extends HealthCheckConsensusDriver[PingHealthCheckKey, PingHealthCheckStatus, PingConsensusHealthStatus] {
 
+  def removePeersWithParallelRound: Boolean = true
+
   def calculateConsensusOutcome(
     key: PingHealthCheckKey,
     ownStatus: PingHealthCheckStatus,

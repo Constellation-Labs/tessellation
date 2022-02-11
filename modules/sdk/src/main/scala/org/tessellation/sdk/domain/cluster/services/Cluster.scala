@@ -1,6 +1,6 @@
 package org.tessellation.sdk.domain.cluster.services
 
-import org.tessellation.schema.peer.{Peer, RegistrationRequest, SignRequest}
+import org.tessellation.schema.peer._
 import org.tessellation.security.signature.Signed
 
 trait Cluster[F[_]] {

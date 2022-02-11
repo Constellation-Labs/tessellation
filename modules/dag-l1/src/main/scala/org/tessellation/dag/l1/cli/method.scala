@@ -48,6 +48,15 @@ object method {
         minimumTipsCount = 2,
         maximumTipsCount = 10,
         maximumTipUsages = 2
+      ),
+      healthCheck = HealthCheckConfig(
+        removeUnresponsiveParallelPeersAfter = 10.seconds,
+        ping = PingHealthCheckConfig(
+          concurrentChecks = 3,
+          defaultCheckTimeout = 10.seconds,
+          defaultCheckAttempts = 3,
+          ensureCheckInterval = 10.seconds
+        )
       )
     )
   }
