@@ -14,7 +14,7 @@ import fs2._
 
 object NodeStorage {
 
-  def make[F[_]: Concurrent: MonadThrow: Ref.Make]: F[NodeStorage[F]] =
+  def make[F[_]: Concurrent: Ref.Make]: F[NodeStorage[F]] =
     Ref.of[F, NodeState](NodeState.Initial) >>= { ref =>
       Queue.unbounded[F, NodeState] >>= { queue =>
         queue.offer(NodeState.Initial).map { _ =>
@@ -46,6 +46,14 @@ object NodeStorage {
               }.handleErrorWith { error =>
                 modify(Set(onStart), initial) >> error.raiseError[F, A]
               }
+          }
+        }
+
+      def tryModifyState(from: Set[NodeState], to: NodeState): F[Unit] =
+        getNodeState.flatMap { initial =>
+          modify(from, to).flatMap {
+            case NodeStateTransition.Failure => InvalidNodeStateTransition(initial, from, to).raiseError[F, Unit]
+            case NodeStateTransition.Success => Applicative[F].unit
           }
         }
 
