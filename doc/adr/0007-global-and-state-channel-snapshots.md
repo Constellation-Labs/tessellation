@@ -1,10 +1,10 @@
-# 2. Global and StateChannel snapshots
+# 7. Global and StateChannel snapshots
 
 Date: 2022-01-05
 
 ## Status
 
-Proposed
+Accepted
 
 ## Context
 

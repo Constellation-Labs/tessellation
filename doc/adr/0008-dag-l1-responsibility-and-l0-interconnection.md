@@ -1,10 +1,10 @@
-# 3. DAG L1 responsibility and L0 interconnection
+# 8. DAG L1 responsibility and L0 interconnection
 
 Date: 2022-01-05
 
 ## Status
 
-Proposed
+Accepted
 
 ## Context
 
@@ -26,5 +26,4 @@ Layer 1 will apply missing blocks. In the case of conflicting transactions,
 redownload algorithm will be triggered, to reapply data and converge with the Global snapshot.
 
 ## Consequences
-
-tbd
+Communication between L1 and L0 will be bi-directional in a Push/Pull way.
