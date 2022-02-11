@@ -8,6 +8,7 @@ import cats.syntax.semigroupk._
 
 import org.tessellation.http.routes._
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.routes.BlockRoutes
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.AppEnvironment.{Dev, Testnet}
@@ -51,6 +52,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer] pri
   private val gossipRoutes = GossipRoutes[F](storages.rumor, queues.rumor, services.gossip)
   private val trustRoutes = TrustRoutes[F](storages.trust, programs.trustPush)
   private val stateChannelRoutes = StateChannelRoutes[F](services.stateChannelRunner)
+  private val blockRoutes = BlockRoutes[F](queues.l1Output)
 
   private val debugRoutes = DebugRoutes[F](storages, services).routes
 
@@ -78,7 +80,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer] pri
             clusterRoutes.p2pRoutes <+>
               nodeRoutes.p2pRoutes <+>
               gossipRoutes.p2pRoutes <+>
-              trustRoutes.p2pRoutes
+              trustRoutes.p2pRoutes <+>
+              blockRoutes.p2pRoutes
           )
         )
     )

@@ -4,8 +4,7 @@ import cats.syntax.option._
 
 import scala.concurrent.duration.FiniteDuration
 
-import org.tessellation.dag.domain.block.DAGBlock
-import org.tessellation.dag.l1.domain.block.Tips
+import org.tessellation.dag.domain.block.{DAGBlock, Tips}
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.{
   BlockProposal,
   CancelledBlockCreationRound,

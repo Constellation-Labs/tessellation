@@ -1,7 +1,6 @@
 package org.tessellation.dag.l1.domain.consensus.block
 
-import org.tessellation.dag.domain.block.DAGBlock
-import org.tessellation.dag.l1.domain.block.Tips
+import org.tessellation.dag.domain.block.{DAGBlock, Tips}
 import org.tessellation.dag.l1.domain.consensus.round.RoundId
 import org.tessellation.kernel.Ω
 import org.tessellation.schema.peer.PeerId

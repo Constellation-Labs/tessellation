@@ -1,6 +1,6 @@
 package org.tessellation.dag
 
-import org.tessellation.dag.l1.domain.block.Tips
+import org.tessellation.dag.domain.block.Tips
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput._
 import org.tessellation.dag.l1.domain.consensus.block.CancellationReason
 import org.tessellation.dag.l1.domain.consensus.block.CancellationReason._

@@ -11,9 +11,8 @@ import cats.syntax.traverse._
 
 import scala.util.control.NoStackTrace
 
-import org.tessellation.dag.domain.block.{BlockReference, DAGBlock}
+import org.tessellation.dag.domain.block.{BlockReference, DAGBlock, Tips}
 import org.tessellation.dag.l1.config.TipsConfig
-import org.tessellation.dag.l1.domain.block
 import org.tessellation.dag.l1.domain.block.BlockStorage._
 import org.tessellation.ext.collection.MapRefUtils.MapRefOps
 import org.tessellation.security.Hashed
@@ -100,7 +99,7 @@ class BlockStorage[F[_]: Sync](blocks: MapRef[F, ProofsHash, Option[StoredBlock]
         case tips if tips.size >= tipsCount =>
           NonEmptyList
             .fromList(tips.take(tipsCount))
-            .map(parents => block.Tips(parents.map(p => BlockReference(p.proofsHash, p.signed.value.height))))
+            .map(parents => Tips(parents.map(p => BlockReference(p.proofsHash, p.signed.value.height))))
         case _ => None
       }
     } yield pulledTips
