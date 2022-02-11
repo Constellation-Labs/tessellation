@@ -36,8 +36,9 @@ object Main extends TessellationIOApp[Run]("", "DAG L1 node", version = BuildInf
         validators = Validators.make[IO](storages, cfg.blockValidator)
         services = Services.make[IO](storages, validators, sdkServices)
         p2pClient = P2PClient.make(sdkP2PClient, sdkResources.client)
+        healthChecks <- HealthChecks.make[IO](storages, services, p2pClient, cfg.healthCheck, sdk.nodeId).asResource
 
-        rumorHandler = RumorHandlers.make[IO](storages.cluster).handlers <+>
+        rumorHandler = RumorHandlers.make[IO](storages.cluster, healthChecks.ping).handlers <+>
           blockRumorHandler(queues.peerBlock)
 
         _ <- Daemons

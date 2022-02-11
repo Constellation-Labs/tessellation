@@ -5,6 +5,8 @@ import org.tessellation.sdk.domain.healthcheck.consensus.types._
 
 trait HealthCheckConsensusDriver[K <: HealthCheckKey, A <: HealthCheckStatus, B <: ConsensusHealthStatus[K, A]] {
 
+  def removePeersWithParallelRound: Boolean
+
   def calculateConsensusOutcome(
     key: K,
     ownStatus: A,

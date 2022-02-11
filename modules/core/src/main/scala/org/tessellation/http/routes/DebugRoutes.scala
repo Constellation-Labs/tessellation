@@ -22,9 +22,8 @@ final case class DebugRoutes[F[_]: Async](
   private[routes] val prefixPath = "/debug"
 
   private val httpRoutes: HttpRoutes[F] = HttpRoutes.of[F] {
-    case GET -> Root                              => Ok()
-    case GET -> Root / "registration" / "request" => Ok(services.cluster.getRegistrationRequest)
-    case GET -> Root / "peers"                    => Ok(storages.cluster.getPeers)
+    case GET -> Root           => Ok()
+    case GET -> Root / "peers" => Ok(storages.cluster.getPeers)
     case POST -> Root / "create-session" =>
       services.session.createSession.flatMap(Ok(_)).recoverWith {
         case e: InvalidNodeStateTransition => Conflict(e.getMessage)

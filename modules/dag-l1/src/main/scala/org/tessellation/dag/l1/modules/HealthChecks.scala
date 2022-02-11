@@ -1,11 +1,11 @@
-package org.tessellation.modules
+package org.tessellation.dag.l1.modules
 
 import cats.effect.Async
 import cats.effect.std.Random
 import cats.syntax.functor._
 
+import org.tessellation.dag.l1.http.p2p.P2PClient
 import org.tessellation.effects.GenUUID
-import org.tessellation.http.p2p.P2PClient
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.config.types.HealthCheckConfig
 import org.tessellation.sdk.infrastructure.healthcheck.ping.{PingHealthCheckConsensus, PingHealthCheckConsensusDriver}
