@@ -31,7 +31,7 @@ sealed abstract class RumorHandlers[F[_]: Async: KryoSerializer] private (
       logger.info(s"String rumor received ${rumor.content}")
     }
 
-    val optIntHandler = RumorHandler.fromPeerRumorConsumer[F, Option[Int]](selfOrigin = true) { rumor =>
+    val optIntHandler = RumorHandler.fromPeerRumorConsumer[F, Option[Int]]() { rumor =>
       rumor.content match {
         case Some(i) if i > 0 => logger.info(s"Int rumor received ${i.show}, origin ${rumor.origin.show}")
         case o =>

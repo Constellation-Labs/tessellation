@@ -101,7 +101,7 @@ object GossipDaemon {
         rumorHandler
           .run((signedRumor.value, nodeId))
           .getOrElseF {
-            logger.info(s"Unhandled rumor ${signedRumor.value.show} with hash ${hash.show}.")
+            logger.debug(s"Unhandled rumor ${signedRumor.value.show} with hash ${hash.show}.")
           }
           .handleErrorWith { err =>
             logger.error(err)(

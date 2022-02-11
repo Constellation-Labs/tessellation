@@ -9,7 +9,7 @@ import org.tessellation.domain.trust.storage.TrustStorage
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.gossip.PeerRumor
 import org.tessellation.schema.trust.PublicTrust
-import org.tessellation.sdk.infrastructure.gossip.RumorHandler
+import org.tessellation.sdk.infrastructure.gossip.{IgnoreSelfOrigin, RumorHandler}
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -20,7 +20,7 @@ object handler {
   ): RumorHandler[F] = {
     val logger = Slf4jLogger.getLogger[F]
 
-    RumorHandler.fromPeerRumorConsumer[F, PublicTrust]() {
+    RumorHandler.fromPeerRumorConsumer[F, PublicTrust](IgnoreSelfOrigin) {
       case PeerRumor(origin, _, trust) =>
         logger.info(s"Received trust=${trust} from id=${origin.show}") >> {
           // Placeholder for updating trust scores

@@ -1,5 +1,6 @@
 package org.tessellation.sdk.infrastructure.gossip
 
+import cats.Applicative
 import cats.data.{Kleisli, OptionT}
 import cats.effect.Async
 import cats.syntax.applicativeError._
@@ -45,7 +46,7 @@ object RumorHandler {
   }
 
   def fromPeerRumorConsumer[F[_]: Async: KryoSerializer, A <: AnyRef: TypeTag: ClassTag](
-    selfOrigin: Boolean = false
+    selfOriginPolicy: OriginPolicy = IncludeSelfOrigin
   )(f: PeerRumor[A] => F[Unit]): RumorHandler[F] = {
     val handlerContentType = ContentType.of[A]
     val pf = new PartialFunction[(RumorBinary, PeerId), F[Unit]] {
@@ -53,15 +54,18 @@ object RumorHandler {
         case (rumor, selfId) =>
           rumor.isInstanceOf[PeerRumorBinary] &&
             rumor.contentType === handlerContentType &&
-            ((rumor.asInstanceOf[PeerRumorBinary].origin === selfId) ==> selfOrigin)
+            ((rumor.asInstanceOf[PeerRumorBinary].origin === selfId) ==> (selfOriginPolicy =!= ExcludeSelfOrigin))
       }
 
       def apply(v: (RumorBinary, PeerId)): F[Unit] = v match {
-        case (rumor: PeerRumorBinary, _) =>
+        case (rumor: PeerRumorBinary, selfId) =>
           for {
             content <- rumor.content.fromBinaryF[A]
             fn = f(PeerRumor(rumor.origin, rumor.ordinal, content))
-            _ <- fn
+            _ <- if (rumor.origin === selfId && selfOriginPolicy === IgnoreSelfOrigin)
+              Applicative[F].unit
+            else
+              fn
           } yield ()
         case (r, _) => UnexpectedRumorClass(r).raiseError[F, Unit]
       }
