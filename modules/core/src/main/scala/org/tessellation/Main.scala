@@ -5,6 +5,7 @@ import cats.syntax.semigroupk._
 import cats.syntax.show._
 
 import org.tessellation.cli.method.{Run, RunGenesis, RunValidator}
+import org.tessellation.dag.dagSharedKryoRegistrar
 import org.tessellation.ext.cats.effect._
 import org.tessellation.http.p2p.P2PClient
 import org.tessellation.infrastructure.db.Database
@@ -29,7 +30,7 @@ object Main
 
   val opts: Opts[Run] = cli.method.opts
 
-  val kryoRegistrar: Map[Class[_], Int] = coreKryoRegistrar
+  val kryoRegistrar: Map[Class[_], Int] = coreKryoRegistrar ++ dagSharedKryoRegistrar
 
   def run(method: Run, sdk: SDK[IO]): Resource[IO, Unit] = {
     import sdk._

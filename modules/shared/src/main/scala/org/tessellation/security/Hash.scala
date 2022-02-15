@@ -4,14 +4,14 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.security.hash.Hash
 
 import com.google.common.hash.Hashing
-import derevo.cats.{eqv, show}
+import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import io.estatico.newtype.macros.newtype
 
 object hash {
 
-  @derive(encoder, decoder, show, eqv)
+  @derive(encoder, decoder, show, eqv, order)
   @newtype
   case class Hash(value: String)
 

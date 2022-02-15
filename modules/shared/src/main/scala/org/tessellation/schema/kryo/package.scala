@@ -7,8 +7,10 @@ import cats.data.NonEmptyList
 
 import org.tessellation.schema.address.AddressCache
 import org.tessellation.schema.gossip._
+import org.tessellation.schema.height.SubHeight
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.SignRequest
+import org.tessellation.schema.transaction.{Transaction, TransactionReference}
 import org.tessellation.schema.trust.PublicTrust
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.SignatureProof
@@ -39,6 +41,9 @@ package object kryo {
     NodeState.Leaving.getClass -> 215,
     classOf[PublicTrust] -> 216,
     classOf[Ordinal] -> 217,
-    classOf[CommonRumorBinary] -> 218
+    classOf[CommonRumorBinary] -> 218,
+    classOf[Transaction] -> 219,
+    classOf[TransactionReference] -> 219,
+    classOf[SubHeight] -> 219
   )
 }
