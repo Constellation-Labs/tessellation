@@ -1,4 +1,4 @@
-package org.tessellation.ext.cats
+package org.tessellation.ext.cats.syntax
 
 import org.tessellation.ext.cats.kernel._
 

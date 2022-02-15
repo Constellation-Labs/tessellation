@@ -3,6 +3,8 @@ package org.tessellation.schema
 import java.security.PublicKey
 import java.util.UUID
 
+import cats.kernel.Order
+
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.cluster.SessionToken
 import org.tessellation.schema.node.NodeState
@@ -10,7 +12,7 @@ import org.tessellation.security.hex.Hex
 import org.tessellation.security.key.ops._
 
 import com.comcast.ip4s.{Host, Port}
-import derevo.cats.{eqv, show}
+import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia._
 import derevo.derive
 import derevo.scalacheck.arbitrary
@@ -24,7 +26,7 @@ object peer {
   @derive(eqv, show, decoder, encoder)
   case class P2PContext(ip: Host, port: Port, id: PeerId)
 
-  @derive(arbitrary, eqv, show, decoder, encoder, keyEncoder, keyDecoder)
+  @derive(arbitrary, eqv, show, order, decoder, encoder, keyEncoder, keyDecoder)
   @newtype
   case class PeerId(value: Hex)
 
@@ -32,6 +34,8 @@ object peer {
 
     val _Id: Iso[PeerId, Id] =
       Iso[PeerId, Id](peerId => Id(peerId.coerce))(id => PeerId(id.hex))
+
+    implicit def ordering: Ordering[PeerId] = Order[PeerId].toOrdering
 
     val fromId: Id => PeerId = _Id.reverseGet
 
