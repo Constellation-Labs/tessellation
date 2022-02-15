@@ -12,11 +12,11 @@ object types {
 
   case class AppConfig(
     environment: AppEnvironment,
-    httpConfig: HttpConfig,
-    dbConfig: DBConfig,
-    gossipConfig: GossipConfig,
-    trustConfig: TrustConfig,
-    healthCheckConfig: HealthCheckConfig
+    http: HttpConfig,
+    db: DBConfig,
+    gossip: GossipConfig,
+    trust: TrustConfig,
+    healthCheck: HealthCheckConfig
   )
 
   case class DBConfig(

@@ -23,9 +23,9 @@ object method {
 
     val appConfig: AppConfig = AppConfig(
       environment = environment,
-      httpConfig = httpConfig,
-      dbConfig = dbConfig,
-      gossipConfig = GossipConfig(
+      http = httpConfig,
+      db = dbConfig,
+      gossip = GossipConfig(
         storage = RumorStorageConfig(
           activeRetention = 2.seconds,
           seenRetention = 2.minutes
@@ -36,12 +36,12 @@ object method {
           maxConcurrentHandlers = 20
         )
       ),
-      trustConfig = TrustConfig(
+      trust = TrustConfig(
         TrustDaemonConfig(
           10.minutes
         )
       ),
-      healthCheckConfig = healthCheckConfig
+      healthCheck = healthCheckConfig
     )
   }
 

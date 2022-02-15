@@ -37,7 +37,7 @@ object Main
 
     val cfg = method.appConfig
 
-    Database.forAsync[IO](cfg.dbConfig).flatMap { implicit database =>
+    Database.forAsync[IO](cfg.db).flatMap { implicit database =>
       for {
         _ <- IO.unit.asResource
         p2pClient = P2PClient.make[IO](sdkP2PClient, sdkResources.client, sdkServices.session)
@@ -46,7 +46,7 @@ object Main
         services <- Services.make[IO](sdkServices, queues).asResource
         programs = Programs.make[IO](sdkPrograms, storages, services)
         healthChecks <- HealthChecks
-          .make[IO](storages, services, p2pClient, cfg.healthCheckConfig, sdk.nodeId)
+          .make[IO](storages, services, p2pClient, cfg.healthCheck, sdk.nodeId)
           .asResource
 
         _ <- services.stateChannelRunner.initializeKnownCells.asResource
@@ -56,9 +56,9 @@ object Main
         _ <- Daemons.start(storages, services, queues, healthChecks, p2pClient, rumorHandler, nodeId, cfg).asResource
 
         api = HttpApi.make[IO](storages, queues, services, programs, keyPair.getPrivate, cfg.environment, sdk.nodeId)
-        _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.httpConfig.publicHttp, api.publicApp)
-        _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.httpConfig.p2pHttp, api.p2pApp)
-        _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.httpConfig.cliHttp, api.cliApp)
+        _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
+        _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)
+        _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.http.cliHttp, api.cliApp)
 
         _ <- (method match {
           case _: RunValidator =>
