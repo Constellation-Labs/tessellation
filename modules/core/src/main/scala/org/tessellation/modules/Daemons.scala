@@ -38,10 +38,10 @@ object Daemons {
           p2pClient.gossip,
           handler,
           nodeId,
-          cfg.gossipConfig.daemon
+          cfg.gossip.daemon
         ),
       NodeStateDaemon.make(storages.node, services.gossip),
-      TrustDaemon.make(cfg.trustConfig.daemon, storages.trust, nodeId),
+      TrustDaemon.make(cfg.trust.daemon, storages.trust, nodeId),
       HealthCheckDaemon.make(healthChecks)
     ).traverse(_.start).void
 
