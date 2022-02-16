@@ -25,9 +25,8 @@ import org.tessellation.sdk.http.p2p.clients.SignClient
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 
-import com.comcast.ip4s.{Host, IpLiteralSyntax}
+import com.comcast.ip4s.{Host, IpLiteralSyntax, Port}
 import fs2.{Pipe, Stream}
-import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object Joining {
 
@@ -111,8 +110,6 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
   joiningQueue: Queue[F, P2PContext]
 ) {
 
-  val logger = Slf4jLogger.getLogger[F]
-
   def join(toPeer: PeerToJoin): F[Unit] =
     for {
       _ <- validateJoinConditions(toPeer)
@@ -129,13 +126,21 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
       _ <- if (!canJoinCluster) NodeStateDoesNotAllowForJoining(nodeState).raiseError[F, Unit]
       else Applicative[F].unit
 
-      hasPeerId <- clusterStorage.hasPeerId(toPeer.id)
-      _ <- if (hasPeerId) PeerIdInUse(toPeer.id).raiseError[F, Unit] else Applicative[F].unit
-
-      hasPeerHostPort <- clusterStorage.hasPeerHostPort(toPeer.ip, toPeer.p2pPort)
-      _ <- if (hasPeerHostPort) PeerHostPortInUse(toPeer.ip, toPeer.p2pPort).raiseError[F, Unit]
-      else Applicative[F].unit
+      _ <- validateHandshakeConditions(toPeer)
     } yield ()
+
+  private def validateHandshakeConditions(toPeer: PeerToJoin): F[Unit] =
+    validateHandshakeConditions(toPeer.id, toPeer.ip, toPeer.p2pPort)
+
+  private def validateHandshakeConditions(req: RegistrationRequest): F[Unit] =
+    validateHandshakeConditions(req.id, req.ip, req.p2pPort)
+
+  private def validateHandshakeConditions(id: PeerId, ip: Host, p2pPort: Port): F[Unit] =
+    clusterStorage.hasPeerId(id).ifM(PeerIdInUse(id).raiseError[F, Unit], Applicative[F].unit).flatMap { _ =>
+      clusterStorage
+        .hasPeerHostPort(ip, p2pPort)
+        .ifM(PeerHostPortInUse(ip, p2pPort).raiseError[F, Unit], Applicative[F].unit)
+    }
 
   private def twoWayHandshake(
     withPeer: PeerToJoin,
@@ -153,6 +158,18 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
       _ <- verifySignRequest(signRequest, signedSignRequest, PeerId._Id.get(withPeer.id))
         .ifM(Applicative[F].unit, HandshakeSignatureNotValid.raiseError[F, Unit])
 
+      _ <- if (skipJoinRequest) {
+        Applicative[F].unit
+      } else {
+        cluster.getRegistrationRequest
+          .map(JoinRequest.apply)
+          .flatMap(signClient.joinRequest(_).run(withPeer))
+          .ifM(
+            Applicative[F].unit,
+            new Throwable(s"Unexpected error occured when joining with peer=${withPeer.id}.").raiseError[F, Unit]
+          )
+      }
+
       peer = Peer(
         registrationRequest.id,
         registrationRequest.ip,
@@ -163,14 +180,6 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
       )
 
       _ <- clusterStorage.addPeer(peer)
-
-      _ <- if (skipJoinRequest) {
-        Applicative[F].unit
-      } else {
-        cluster.getRegistrationRequest
-          .map(JoinRequest.apply)
-          .flatMap(signClient.joinRequest(_).run(withPeer))
-      }
 
       // Note: Changing state from SessionStarted to Ready state will execute once for first peer, then all consecutive joins should be ignored
       _ <- nodeStorage.tryModifyState(NodeState.SessionStarted, NodeState.Ready).handleError(_ => ())
@@ -203,6 +212,8 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
       _ <- sessionStorage.getToken.flatMap(_.fold(SessionDoesNotExist.raiseError[F, Unit])(_ => Applicative[F].unit))
 
       registrationRequest = joinRequest.registrationRequest
+
+      _ <- validateHandshakeConditions(joinRequest.registrationRequest)
 
       withPeer = PeerToJoin(
         registrationRequest.id,
