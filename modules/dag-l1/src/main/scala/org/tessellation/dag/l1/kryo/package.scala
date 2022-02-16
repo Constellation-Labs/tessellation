@@ -12,11 +12,11 @@ package object kryo {
     classOf[Proposal] -> 1002,
     classOf[BlockProposal] -> 1003,
     classOf[CancelledBlockCreationRound] -> 1004,
-    classOf[Tips] -> 1006,
-    classOf[CancellationReason] -> 1009,
-    ReceivedProposalForNonExistentOwnRound.getClass -> 1010,
-    MissingRoundPeers.getClass -> 1011,
-    CreatedInvalidBlock.getClass -> 1012,
-    PeerCancelled.getClass -> 1013
+    classOf[Tips] -> 1005,
+    classOf[CancellationReason] -> 1006,
+    ReceivedProposalForNonExistentOwnRound.getClass -> 1007,
+    MissingRoundPeers.getClass -> 1008,
+    CreatedInvalidBlock.getClass -> 1009,
+    PeerCancelled.getClass -> 1010
   )
 }
