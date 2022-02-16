@@ -37,6 +37,7 @@ object Dependencies {
     val shapeless = "2.3.7"
     val spongyCastle = "1.58.0.0"
     val squants = "1.8.2"
+    val swayDb = "0.16.2"
     val twitterChill = "0.10.0"
     val betterMonadicFor = "0.3.1"
     val kindProjector = "0.13.2"
@@ -153,6 +154,9 @@ object Dependencies {
     val shapeless = "com.chuusai" %% "shapeless" % V.shapeless
 
     val mapref = "io.chrisdavenport" %% "mapref" % V.mapref
+
+    val swayDb = "io.swaydb" %% "swaydb" % V.swayDb
+    val swayDbCatsEffect = "io.swaydb" %% "cats-effect" % V.swayDb
 
     // Runtime
     val logback = "ch.qos.logback" % "logback-classic" % V.logback

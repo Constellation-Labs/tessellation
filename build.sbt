@@ -188,7 +188,9 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.refinedCore,
       Libraries.refinedCats,
       Libraries.refinedScalacheck,
-      Libraries.http4sCore
+      Libraries.http4sCore,
+      Libraries.swayDb,
+      Libraries.swayDbCatsEffect
     )
   )
 lazy val testShared = (project in file("modules/test-shared"))
@@ -362,7 +364,9 @@ lazy val core = (project in file("modules/core"))
       Libraries.refinedCats,
       Libraries.skunkCore,
       Libraries.skunkCirce,
-      Libraries.squants
+      Libraries.squants,
+      Libraries.swayDb,
+      Libraries.swayDbCatsEffect
     )
   )
 
