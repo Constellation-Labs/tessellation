@@ -1,7 +1,6 @@
 package org.tessellation.sdk.http.p2p.clients
 
 import cats.effect.Async
-import cats.syntax.functor._
 
 import org.tessellation.schema.peer.{JoinRequest, RegistrationRequest, SignRequest}
 import org.tessellation.sdk.http.p2p.PeerResponse
@@ -16,7 +15,7 @@ import org.http4s.client.dsl.Http4sClientDsl
 
 trait SignClient[F[_]] {
   def sign(signRequest: SignRequest): PeerResponse[F, Signed[SignRequest]]
-  def joinRequest(jr: JoinRequest): PeerResponse[F, Unit]
+  def joinRequest(jr: JoinRequest): PeerResponse[F, Boolean]
   def getRegistrationRequest: PeerResponse[F, RegistrationRequest]
 }
 
@@ -28,9 +27,9 @@ object SignClient {
       def getRegistrationRequest: PeerResponse[F, RegistrationRequest] =
         PeerResponse[F, RegistrationRequest]("registration/request")(client)
 
-      def joinRequest(jr: JoinRequest): PeerResponse[F, Unit] =
-        PeerResponse[F, Unit]("cluster/join", POST)(client) { (req, c) =>
-          c.successful(req.withEntity(jr)).void
+      def joinRequest(jr: JoinRequest): PeerResponse[F, Boolean] =
+        PeerResponse[F, Boolean]("cluster/join", POST)(client) { (req, c) =>
+          c.successful(req.withEntity(jr))
         }
 
       def sign(signRequest: SignRequest): PeerResponse[F, Signed[SignRequest]] =
