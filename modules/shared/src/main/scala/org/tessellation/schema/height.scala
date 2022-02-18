@@ -7,6 +7,7 @@ import cats.{Order, PartialOrder}
 import derevo.cats.{order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
+import eu.timepit.refined.cats.refTypeShow
 import eu.timepit.refined.types.numeric.NonNegLong
 import io.estatico.newtype.macros.newtype
 
@@ -25,6 +26,7 @@ object height {
     }
   }
 
+  @derive(show)
   case class SubHeight(value: NonNegLong)
 
   object SubHeight {

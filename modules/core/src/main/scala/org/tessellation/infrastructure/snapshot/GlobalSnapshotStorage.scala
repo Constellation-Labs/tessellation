@@ -10,7 +10,7 @@ import cats.syntax.order._
 
 import scala.util.control.NoStackTrace
 
-import org.tessellation.dag.snapshot.{GlobalSnapshot, SnapshotOrdinal, StateChannelSnapshotWrapper}
+import org.tessellation.dag.snapshot.{GlobalSnapshot, SnapshotOrdinal, StateChannelSnapshotBinary}
 import org.tessellation.domain.snapshot.GlobalSnapshotStorage
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
@@ -50,7 +50,7 @@ object GlobalSnapshotStorage {
 
     def getStateChannelSnapshotUntilOrdinal(
       ordinal: SnapshotOrdinal
-    )(address: Address): F[Option[StateChannelSnapshotWrapper]] =
+    )(address: Address): F[Option[StateChannelSnapshotBinary]] =
       snapshotsRef.get.map { snapshots =>
         snapshots.find { snapshot =>
           snapshot.ordinal <= ordinal && snapshot.stateChannelSnapshots.contains(address)

@@ -5,12 +5,15 @@ import cats.kernel.{Next, PartialOrder, PartialPrevious}
 import cats.syntax.contravariant._
 import cats.syntax.semigroup._
 
+import derevo.cats.show
+import derevo.derive
 import eu.timepit.refined.auto._
 import eu.timepit.refined.cats._
 import eu.timepit.refined.numeric.NonNegative
 import eu.timepit.refined.refineV
 import eu.timepit.refined.types.numeric.NonNegLong
 
+@derive(show)
 case class SnapshotOrdinal(value: NonNegLong)
 
 object SnapshotOrdinal {
