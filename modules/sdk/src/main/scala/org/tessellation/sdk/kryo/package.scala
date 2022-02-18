@@ -8,12 +8,12 @@ import org.tessellation.sdk.infrastructure.healthcheck.ping._
 package object kryo {
 
   val sdkKryoRegistrar: Map[Class[_], Int] = Map[Class[_], Int](
-    classOf[PingConsensusHealthStatus] -> 600,
-    classOf[PingHealthCheckKey] -> 601,
-    classOf[HealthCheckRoundId] -> 602,
-    classOf[PeerAvailable] -> 603,
-    classOf[PeerUnavailable] -> 604,
-    classOf[PeerUnknown] -> 605
+    classOf[PingConsensusHealthStatus] -> 400,
+    classOf[PingHealthCheckKey] -> 401,
+    classOf[HealthCheckRoundId] -> 402,
+    classOf[PeerAvailable] -> 403,
+    classOf[PeerUnavailable] -> 404,
+    classOf[PeerUnknown] -> 405
   ) ++ schemaKryoRegistrar ++ kernelKryoRegistrar
 
 }

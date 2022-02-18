@@ -43,7 +43,7 @@ package object kryo {
     classOf[Ordinal] -> 217,
     classOf[CommonRumorBinary] -> 218,
     classOf[Transaction] -> 219,
-    classOf[TransactionReference] -> 219,
-    classOf[SubHeight] -> 219
+    classOf[TransactionReference] -> 220,
+    classOf[SubHeight] -> 221
   )
 }
