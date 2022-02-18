@@ -57,10 +57,13 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer] pri
   private val metricRoutes = MetricRoutes[F](services).routes
 
   private val openRoutes: HttpRoutes[F] =
-    `X-Id-Middleware`.responseMiddleware(selfId) {
-      (if (environment == Testnet || environment == Dev) debugRoutes else HttpRoutes.empty) <+>
-        metricRoutes <+> stateChannelRoutes.publicRoutes <+> clusterRoutes.publicRoutes
-    }
+    PeerAuthMiddleware
+      .responseSignerMiddleware(privateKey, storages.session) {
+        `X-Id-Middleware`.responseMiddleware(selfId) {
+          (if (environment == Testnet || environment == Dev) debugRoutes else HttpRoutes.empty) <+>
+            metricRoutes <+> stateChannelRoutes.publicRoutes <+> clusterRoutes.publicRoutes
+        }
+      }
 
   private val getKnownPeersId: Host => F[Set[PeerId]] = { (host: Host) =>
     storages.cluster.getPeers(host).map(_.map(_.id))

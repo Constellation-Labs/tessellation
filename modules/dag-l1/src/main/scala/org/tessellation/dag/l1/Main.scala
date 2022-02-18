@@ -13,6 +13,7 @@ import org.tessellation.dag.l1.kryo.stateChannelKryoRegistrar
 import org.tessellation.dag.l1.modules._
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.schema.node.NodeState
+import org.tessellation.schema.node.NodeState.SessionStarted
 import org.tessellation.sdk.app.{SDK, TessellationIOApp}
 import org.tessellation.sdk.infrastructure.gossip.RumorHandlers
 import org.tessellation.sdk.resources.MkHttpServer
@@ -33,11 +34,12 @@ object Main extends TessellationIOApp[Run]("", "DAG L1 node", version = BuildInf
     Database.forAsync[IO](cfg.db).flatMap { implicit database =>
       for {
         queues <- Queues.make[IO](sdkQueues).asResource
-        storages <- Storages.make[IO](cfg.tips, sdkStorages).asResource
+        storages <- Storages.make[IO](cfg.tips, sdkStorages, method.l0Peer).asResource
         validators = Validators.make[IO](storages, cfg.blockValidator)
         services = Services.make[IO](storages, validators, sdkServices)
         p2pClient = P2PClient.make(sdkP2PClient, sdkResources.client)
         healthChecks <- HealthChecks.make[IO](storages, services, p2pClient, cfg.healthCheck, sdk.nodeId).asResource
+        programs = Programs.make(sdkPrograms, p2pClient, storages)
 
         rumorHandler = RumorHandlers.make[IO](storages.cluster, healthChecks.ping).handlers <+>
           blockRumorHandler(queues.peerBlock)
@@ -46,19 +48,22 @@ object Main extends TessellationIOApp[Run]("", "DAG L1 node", version = BuildInf
           .start(storages, services, queues, p2pClient, rumorHandler, nodeId, cfg)
           .asResource
 
-        api = HttpApi.make[IO](storages, queues, keyPair.getPrivate, services, sdkPrograms, sdk.nodeId)
+        api = HttpApi.make[IO](storages, queues, keyPair.getPrivate, services, programs, sdk.nodeId)
         _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
         _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)
         _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.http.cliHttp, api.cliApp)
         stateChannel = new StateChannel(cfg, keyPair, p2pClient, queues, nodeId, services, storages, validators)
         _ <- {
           method match {
-            case _: RunInitialValidator =>
-              storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
-                services.session.createSession
+            case cfg: RunInitialValidator =>
+              programs.l0PeerDiscovery.discoverFrom(cfg.l0Peer) >>
+                storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
+                services.session.createSession >>
+                storages.node.tryModifyState(SessionStarted, NodeState.Ready)
 
-            case _: RunValidator =>
-              storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
+            case cfg: RunValidator =>
+              programs.l0PeerDiscovery.discoverFrom(cfg.l0Peer) >>
+                storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
           }
         }.asResource
         _ <- stateChannel.runtime.compile.drain.asResource
