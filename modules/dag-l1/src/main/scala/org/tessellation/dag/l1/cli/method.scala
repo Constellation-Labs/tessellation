@@ -9,7 +9,8 @@ import org.tessellation.dag.block.config.BlockValidatorConfig
 import org.tessellation.dag.l1.config.TipsConfig
 import org.tessellation.dag.l1.config.types.{AppConfig, DBConfig}
 import org.tessellation.dag.l1.domain.consensus.block.config.ConsensusConfig
-import org.tessellation.sdk.cli.CliMethod
+import org.tessellation.schema.peer.L0Peer
+import org.tessellation.sdk.cli.{CliMethod, L0PeerOpts}
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types._
 
@@ -20,6 +21,7 @@ object method {
 
   sealed trait Run extends CliMethod {
     val dbConfig: DBConfig
+    val l0Peer: L0Peer
 
     val appConfig: AppConfig = AppConfig(
       environment = environment,
@@ -67,14 +69,15 @@ object method {
     password: Password,
     environment: AppEnvironment,
     httpConfig: HttpConfig,
-    dbConfig: DBConfig
+    dbConfig: DBConfig,
+    l0Peer: L0Peer
   ) extends Run
 
   object RunInitialValidator {
 
     val opts = Opts.subcommand("run-initial-validator", "Run initial validator mode") {
-      (StorePath.opts, KeyAlias.opts, Password.opts, AppEnvironment.opts, http.opts, db.opts)
-        .mapN(RunInitialValidator(_, _, _, _, _, _))
+      (StorePath.opts, KeyAlias.opts, Password.opts, AppEnvironment.opts, http.opts, db.opts, L0PeerOpts.opts)
+        .mapN(RunInitialValidator(_, _, _, _, _, _, _))
     }
   }
 
@@ -84,14 +87,15 @@ object method {
     password: Password,
     environment: AppEnvironment,
     httpConfig: HttpConfig,
-    dbConfig: DBConfig
+    dbConfig: DBConfig,
+    l0Peer: L0Peer
   ) extends Run
 
   object RunValidator {
 
     val opts = Opts.subcommand("run-validator", "Run validator mode") {
-      (StorePath.opts, KeyAlias.opts, Password.opts, AppEnvironment.opts, http.opts, db.opts)
-        .mapN(RunValidator(_, _, _, _, _, _))
+      (StorePath.opts, KeyAlias.opts, Password.opts, AppEnvironment.opts, http.opts, db.opts, L0PeerOpts.opts)
+        .mapN(RunValidator(_, _, _, _, _, _, _))
     }
   }
 
