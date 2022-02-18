@@ -7,6 +7,7 @@ package object kernel {
   type StateChannelKryoRegistrationId = Int Refined GreaterEqual[1000]
 
   val kernelKryoRegistrar: Map[Class[_], Int] = Map(
-    classOf[ProcessSnapshot] -> 400
+    classOf[ProcessSnapshot] -> 400,
+    classOf[StateChannelSnapshotGist] -> 401
   )
 }

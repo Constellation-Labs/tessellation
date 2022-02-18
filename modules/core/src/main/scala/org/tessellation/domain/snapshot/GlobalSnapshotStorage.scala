@@ -1,6 +1,6 @@
 package org.tessellation.domain.snapshot
 
-import org.tessellation.dag.snapshot.{GlobalSnapshot, SnapshotOrdinal, StateChannelSnapshotWrapper}
+import org.tessellation.dag.snapshot.{GlobalSnapshot, SnapshotOrdinal, StateChannelSnapshotBinary}
 import org.tessellation.schema.address.Address
 
 trait GlobalSnapshotStorage[F[_]] {
@@ -13,6 +13,6 @@ trait GlobalSnapshotStorage[F[_]] {
 
   def getStateChannelSnapshotUntilOrdinal(
     ordinal: SnapshotOrdinal
-  )(address: Address): F[Option[StateChannelSnapshotWrapper]]
+  )(address: Address): F[Option[StateChannelSnapshotBinary]]
 
 }
