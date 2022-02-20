@@ -6,10 +6,10 @@ import org.tessellation.dag.snapshot.{GlobalSnapshot, SnapshotOrdinal, StateChan
 package object dag {
 
   val dagSharedKryoRegistrar: Map[Class[_], Int] = Map(
-    classOf[GlobalSnapshot] -> 600,
-    classOf[StateChannelSnapshotWrapper] -> 601,
-    classOf[SnapshotOrdinal] -> 602,
-    classOf[DAGBlock] -> 603,
-    classOf[BlockReference] -> 604
+    classOf[GlobalSnapshot] -> 500,
+    classOf[StateChannelSnapshotWrapper] -> 501,
+    classOf[SnapshotOrdinal] -> 502,
+    classOf[DAGBlock] -> 503,
+    classOf[BlockReference] -> 504
   )
 }

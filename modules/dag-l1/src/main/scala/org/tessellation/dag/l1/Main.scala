@@ -9,7 +9,6 @@ import org.tessellation.dag.l1.cli.method.{Run, RunInitialValidator, RunValidato
 import org.tessellation.dag.l1.http.p2p.P2PClient
 import org.tessellation.dag.l1.infrastructure.block.rumor.handler.blockRumorHandler
 import org.tessellation.dag.l1.infrastructure.db.Database
-import org.tessellation.dag.l1.kryo.stateChannelKryoRegistrar
 import org.tessellation.dag.l1.modules._
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.schema.node.NodeState
@@ -23,7 +22,7 @@ import com.monovore.decline.Opts
 object Main extends TessellationIOApp[Run]("", "DAG L1 node", version = BuildInfo.version) {
   val opts: Opts[Run] = cli.method.opts
 
-  val kryoRegistrar: Map[Class[_], Int] = stateChannelKryoRegistrar ++ dagSharedKryoRegistrar
+  val kryoRegistrar: Map[Class[_], Int] = dagL1KryoRegistrar ++ dagSharedKryoRegistrar
 
   def run(method: Run, sdk: SDK[IO]): Resource[IO, Unit] = {
     import sdk._

@@ -11,7 +11,6 @@ import org.tessellation.http.p2p.P2PClient
 import org.tessellation.infrastructure.db.Database
 import org.tessellation.infrastructure.genesis.{Loader => GenesisLoader}
 import org.tessellation.infrastructure.trust.handler.trustHandler
-import org.tessellation.kryo.coreKryoRegistrar
 import org.tessellation.modules._
 import org.tessellation.schema.node.NodeState
 import org.tessellation.sdk.app.{SDK, TessellationIOApp}

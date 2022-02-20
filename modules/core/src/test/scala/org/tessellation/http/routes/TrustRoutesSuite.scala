@@ -5,14 +5,15 @@ import cats.effect.unsafe.implicits.global
 
 import scala.reflect.runtime.universe.TypeTag
 
+import org.tessellation.coreKryoRegistrar
 import org.tessellation.domain.cluster.programs.TrustPush
 import org.tessellation.infrastructure.trust.storage.TrustStorage
-import org.tessellation.kryo.{KryoSerializer, coreKryoRegistrar}
+import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.generators._
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.trust.{InternalTrustUpdate, InternalTrustUpdateBatch, TrustInfo}
 import org.tessellation.sdk.domain.gossip.Gossip
-import org.tessellation.sdk.kryo.sdkKryoRegistrar
+import org.tessellation.sdk.sdkKryoRegistrar
 
 import org.http4s.Method._
 import org.http4s._
