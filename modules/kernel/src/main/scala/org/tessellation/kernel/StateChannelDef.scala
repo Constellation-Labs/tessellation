@@ -9,7 +9,7 @@ import fs2.Pipe
 trait StateChannelDef[A <: Ω, B <: Ω, S <: Ω] {
 
   val address: Address
-  val kryoRegistrar: Map[Class[_], KryoRegistrationId]
+  val kryoRegistrar: Map[Class[_], StateChannelKryoRegistrationId]
 
   def makeCell[F[_]: Async](
     input: A,

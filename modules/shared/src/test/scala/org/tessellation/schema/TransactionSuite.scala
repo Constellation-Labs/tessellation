@@ -5,9 +5,9 @@ import cats.effect.{IO, Resource}
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.kryo.schemaKryoRegistrar
 import org.tessellation.schema.transaction._
 import org.tessellation.security.hash.Hash
+import org.tessellation.shared.sharedKryoRegistrar
 
 import eu.timepit.refined.auto._
 import suite.ResourceSuite
@@ -18,10 +18,10 @@ object TransactionSuite extends ResourceSuite with Checkers {
   override type Res = KryoSerializer[IO]
 
   override def sharedResource: Resource[IO, Res] =
-    KryoSerializer.forAsync[IO](schemaKryoRegistrar, List.empty, setReferences = true)
+    KryoSerializer.forAsync[IO](sharedKryoRegistrar, List.empty, setReferences = true)
 
   def hashWithKryo(toHash: AnyRef): IO[Hash] =
-    KryoSerializer.forAsync[IO](schemaKryoRegistrar, List.empty, setReferences = true).use { kryo =>
+    KryoSerializer.forAsync[IO](sharedKryoRegistrar, List.empty, setReferences = true).use { kryo =>
       implicit val k = kryo
       toHash.hashF
     }

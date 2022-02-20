@@ -9,7 +9,7 @@ import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
 import org.tessellation.infrastructure.snapshot.GlobalSnapshotStorage.InvalidGlobalSnapshotChain
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.sdk.kryo.sdkKryoRegistrar
+import org.tessellation.sdk.sdkKryoRegistrar
 
 import monocle.syntax.all._
 import weaver.MutableIOSuite

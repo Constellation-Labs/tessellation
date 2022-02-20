@@ -22,9 +22,9 @@ object L0TokenDef extends StateChannelDef[L0TokenStep, Ω, L0TokenStep] {
 
   override val kryoRegistrar =
     Map(
-      classOf[L0TokenTransaction] -> 1001,
-      classOf[L0TokenBlock] -> 1002,
-      classOf[CreateStateChannelSnapshot] -> 1003
+      classOf[L0TokenTransaction] -> 1000,
+      classOf[L0TokenBlock] -> 1001,
+      classOf[CreateStateChannelSnapshot] -> 1002
     )
 
   override def makeCell[F[_]: Async](
