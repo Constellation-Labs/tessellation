@@ -4,8 +4,8 @@ object Dependencies {
 
   object V {
     val bouncyCastle = "1.69"
-    val cats = "2.6.1"
-    val catsEffect = "3.2.9"
+    val cats = "2.7.0"
+    val catsEffect = "3.3.5"
     val catsRetry = "2.1.0" // not published for CE3 yet
     val circe = "0.14.1"
     val ciris = "2.1.1"
