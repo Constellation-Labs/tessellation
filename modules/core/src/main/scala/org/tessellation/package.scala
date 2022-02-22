@@ -12,7 +12,7 @@ import io.estatico.newtype.ops._
 package object tessellation {
 
   val coreKryoRegistrar: Map[Class[_], Int] = Map(
-    // classOf[T] -> 123
+    // classOf[T] -> 700
   )
 
   implicit class PeerIdToPublicKey(id: PeerId) {
