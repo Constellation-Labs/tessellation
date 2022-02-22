@@ -5,7 +5,10 @@ import cats.kernel.{Next, PartialOrder, PartialPrevious}
 import cats.syntax.contravariant._
 import cats.syntax.semigroup._
 
+import org.tessellation.schema.{nonNegLongDecoder, nonNegLongEncoder}
+
 import derevo.cats.show
+import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import eu.timepit.refined.auto._
 import eu.timepit.refined.cats._
@@ -13,7 +16,7 @@ import eu.timepit.refined.numeric.NonNegative
 import eu.timepit.refined.refineV
 import eu.timepit.refined.types.numeric.NonNegLong
 
-@derive(show)
+@derive(encoder, decoder, show)
 case class SnapshotOrdinal(value: NonNegLong)
 
 object SnapshotOrdinal {

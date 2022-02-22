@@ -28,7 +28,7 @@ object height {
     }
   }
 
-  @derive(show)
+  @derive(encoder, decoder, show)
   case class SubHeight(value: NonNegLong)
 
   object SubHeight {

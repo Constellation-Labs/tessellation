@@ -7,18 +7,18 @@ import org.tessellation.schema.balance.Balance
 import org.tessellation.security.Base58
 
 import derevo.cats.{eqv, show}
-import derevo.circe.magnolia.{decoder, encoder}
+import derevo.circe.magnolia._
 import derevo.derive
 import eu.timepit.refined.api.{Refined, Validate}
 import eu.timepit.refined.refineV
-import io.circe.{Decoder, Encoder}
+import io.circe._
 import io.estatico.newtype.macros.newtype
 import io.estatico.newtype.ops._
 import io.getquill.MappedEncoding
 
 object address {
 
-  @derive(decoder, encoder, eqv, show)
+  @derive(decoder, encoder, keyDecoder, keyEncoder, eqv, show)
   @newtype
   case class Address(value: DAGAddress)
 
@@ -39,6 +39,14 @@ object address {
 
     implicit val encodeDAGAddress: Encoder[DAGAddress] =
       encoderOf[String, DAGAddressRefined]
+
+    implicit val keyDecodeDAGAddress: KeyDecoder[DAGAddress] = new KeyDecoder[DAGAddress] {
+      def apply(key: String): Option[DAGAddress] = refineV[DAGAddressRefined](key).toOption
+    }
+
+    implicit val keyEncodeDAGAddress: KeyEncoder[DAGAddress] = new KeyEncoder[DAGAddress] {
+      def apply(key: DAGAddress): String = key.value
+    }
 
     implicit val eqDAGAddress: Eq[DAGAddress] =
       eqOf[String, DAGAddressRefined]

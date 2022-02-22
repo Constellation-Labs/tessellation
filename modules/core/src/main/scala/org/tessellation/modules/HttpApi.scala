@@ -53,6 +53,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer] pri
   private val trustRoutes = TrustRoutes[F](storages.trust, programs.trustPush)
   private val stateChannelRoutes = StateChannelRoutes[F](services.stateChannelRunner)
   private val blockRoutes = BlockRoutes[F](queues.l1Output)
+  private val globalSnapshotRoutes = GlobalSnapshotRoutes[F](storages.globalSnapshot)
 
   private val debugRoutes = DebugRoutes[F](storages, services).routes
 
@@ -63,7 +64,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer] pri
       .responseSignerMiddleware(privateKey, storages.session) {
         `X-Id-Middleware`.responseMiddleware(selfId) {
           (if (environment == Testnet || environment == Dev) debugRoutes else HttpRoutes.empty) <+>
-            metricRoutes <+> stateChannelRoutes.publicRoutes <+> clusterRoutes.publicRoutes
+            metricRoutes <+> stateChannelRoutes.publicRoutes <+> clusterRoutes.publicRoutes <+> globalSnapshotRoutes.publicRoutes
         }
       }
 
