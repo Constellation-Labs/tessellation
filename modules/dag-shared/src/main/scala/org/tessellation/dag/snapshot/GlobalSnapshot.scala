@@ -9,9 +9,10 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.security.hash.Hash
 
 import derevo.cats.show
+import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 
-@derive(show)
+@derive(encoder, decoder, show)
 case class GlobalSnapshot(
   ordinal: SnapshotOrdinal,
   height: Height,
