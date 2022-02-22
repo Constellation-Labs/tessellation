@@ -8,15 +8,15 @@ import org.tessellation.dag.l1.domain.consensus.block.CancellationReason._
 package object l1 {
 
   val dagL1KryoRegistrar: Map[Class[_], Int] = Map(
-    classOf[PeerBlockConsensusInput] -> 700,
-    classOf[Proposal] -> 701,
-    classOf[BlockProposal] -> 702,
-    classOf[CancelledBlockCreationRound] -> 703,
-    classOf[Tips] -> 704,
-    classOf[CancellationReason] -> 705,
-    ReceivedProposalForNonExistentOwnRound.getClass -> 706,
-    MissingRoundPeers.getClass -> 707,
-    CreatedInvalidBlock.getClass -> 708,
-    PeerCancelled.getClass -> 709
+    classOf[PeerBlockConsensusInput] -> 800,
+    classOf[Proposal] -> 801,
+    classOf[BlockProposal] -> 802,
+    classOf[CancelledBlockCreationRound] -> 803,
+    classOf[Tips] -> 804,
+    classOf[CancellationReason] -> 805,
+    ReceivedProposalForNonExistentOwnRound.getClass -> 806,
+    MissingRoundPeers.getClass -> 807,
+    CreatedInvalidBlock.getClass -> 808,
+    PeerCancelled.getClass -> 809
   )
 }

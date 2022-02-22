@@ -8,11 +8,11 @@ import org.tessellation.shared.sharedKryoRegistrar
 package object sdk {
 
   val sdkKryoRegistrar: Map[Class[_], Int] = Map[Class[_], Int](
-    classOf[PingConsensusHealthStatus] -> 400,
-    classOf[PingHealthCheckKey] -> 401,
-    classOf[HealthCheckRoundId] -> 402,
-    classOf[PeerAvailable] -> 403,
-    classOf[PeerUnavailable] -> 404,
-    classOf[PeerUnknown] -> 405
+    classOf[PingConsensusHealthStatus] -> 500,
+    classOf[PingHealthCheckKey] -> 501,
+    classOf[HealthCheckRoundId] -> 502,
+    classOf[PeerAvailable] -> 503,
+    classOf[PeerUnavailable] -> 504,
+    classOf[PeerUnknown] -> 505
   ) ++ sharedKryoRegistrar ++ kernelKryoRegistrar
 }
