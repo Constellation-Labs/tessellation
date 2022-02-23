@@ -1,13 +1,17 @@
 package org.tessellation.http.routes
 
-import cats.effect.kernel.Async
+import cats.effect.Async
 import cats.syntax.applicativeError._
 import cats.syntax.flatMap._
 import cats.syntax.option._
 
+import org.tessellation.domain.snapshot.{TimeSnapshotTrigger, TipSnapshotTrigger}
+import org.tessellation.infrastructure.snapshot.toEvent
 import org.tessellation.modules.{Services, Storages}
 import org.tessellation.schema.cluster.SessionAlreadyExists
+import org.tessellation.schema.height.Height
 import org.tessellation.schema.node.InvalidNodeStateTransition
+import org.tessellation.sdk.infrastructure.consensus.message.ConsensusEvent
 
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
@@ -33,6 +37,10 @@ final case class DebugRoutes[F[_]: Async](
       services.gossip.spread(intContent.some) >> Ok()
     case POST -> Root / "gossip" / "spread" / strContent =>
       services.gossip.spreadCommon(strContent) >> Ok()
+    case POST -> Root / "consensus" / "trigger" =>
+      services.gossip.spread(ConsensusEvent(toEvent(TimeSnapshotTrigger()))) >> Ok()
+    case POST -> Root / "consensus" / "trigger" / LongVar(height) =>
+      services.gossip.spread(ConsensusEvent(toEvent(TipSnapshotTrigger(Height(height))))) >> Ok()
   }
 
   val routes: HttpRoutes[F] = Router(

@@ -1,13 +1,14 @@
 package org.tessellation.domain.snapshot
 
 import org.tessellation.dag.snapshot.{GlobalSnapshot, SnapshotOrdinal}
+import org.tessellation.security.signature.Signed
 
 trait GlobalSnapshotStorage[F[_]] {
 
-  def prepend(snapshot: GlobalSnapshot): F[Boolean]
+  def prepend(snapshot: Signed[GlobalSnapshot]): F[Boolean]
 
-  def head: F[GlobalSnapshot]
+  def head: F[Option[Signed[GlobalSnapshot]]]
 
-  def get(ordinal: SnapshotOrdinal): F[Option[GlobalSnapshot]]
+  def get(ordinal: SnapshotOrdinal): F[Option[Signed[GlobalSnapshot]]]
 
 }

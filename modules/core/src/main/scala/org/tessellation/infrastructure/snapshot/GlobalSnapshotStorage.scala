@@ -10,6 +10,7 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
 import cats.syntax.show._
+import cats.syntax.traverse._
 import cats.{Applicative, MonadThrow}
 
 import org.tessellation.dag.snapshot.{GlobalSnapshot, SnapshotOrdinal}
@@ -18,6 +19,7 @@ import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.cats.syntax.partialPrevious._
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto.autoUnwrap
 import eu.timepit.refined.types.numeric.NonNegLong
@@ -30,11 +32,11 @@ object GlobalSnapshotStorage {
 
   def make[F[_]: Async: KryoSerializer](
     globalSnapshotLocalFileSystemStorage: GlobalSnapshotLocalFileSystemStorage[F],
-    genesis: GlobalSnapshot,
+    genesis: Signed[GlobalSnapshot],
     inMemoryCapacity: NonNegLong
   ): F[GlobalSnapshotStorage[F]] = {
-    def mkHeadRef = Ref.of[F, GlobalSnapshot](genesis)
-    def mkCache = MapRef.ofSingleImmutableMap[F, SnapshotOrdinal, GlobalSnapshot](Map.empty)
+    def mkHeadRef = Ref.of[F, Option[Signed[GlobalSnapshot]]](genesis.some)
+    def mkCache = MapRef.ofSingleImmutableMap[F, SnapshotOrdinal, Signed[GlobalSnapshot]](Map.empty)
     def mkOffloadQueue = Queue.unbounded[F, SnapshotOrdinal]
 
     def mkLogger = Slf4jLogger.create[F]
@@ -47,8 +49,8 @@ object GlobalSnapshotStorage {
   }
 
   def make[F[_]: Async: Logger: KryoSerializer](
-    headRef: Ref[F, GlobalSnapshot],
-    cache: MapRef[F, SnapshotOrdinal, Option[GlobalSnapshot]],
+    headRef: Ref[F, Option[Signed[GlobalSnapshot]]],
+    cache: MapRef[F, SnapshotOrdinal, Option[Signed[GlobalSnapshot]]],
     offloadQueue: Queue[F, SnapshotOrdinal],
     globalSnapshotLocalFileSystemStorage: GlobalSnapshotLocalFileSystemStorage[F],
     inMemoryCapacity: NonNegLong
@@ -70,39 +72,46 @@ object GlobalSnapshotStorage {
         .drain
 
     Spawn[F].start { offloadProcess }.flatMap { _ =>
-      headRef.get.flatMap { h =>
-        cache(h.ordinal).set(h.some)
+      headRef.get.flatMap {
+        _.traverse { h =>
+          cache(h.ordinal).set(h.some)
+        }
       }
     }.map { _ =>
       new GlobalSnapshotStorage[F] {
-        def prepend(snapshot: GlobalSnapshot) =
-          headRef.modify { current =>
-            isNextSnapshot(current, snapshot) match {
-              case Left(e) =>
-                (current, e.raiseError[F, Boolean])
-              case Right(isNext) if isNext =>
-                def run =
-                  cache(snapshot.ordinal).set(snapshot.some) >>
-                    snapshot.ordinal
-                      .partialPreviousN(inMemoryCapacity)
-                      .fold(Applicative[F].unit)(offloadQueue.offer(_))
+        def prepend(snapshot: Signed[GlobalSnapshot]): F[Boolean] =
+          headRef.modify { maybeCurrent =>
+            maybeCurrent.fold((snapshot.some, true.pure[F])) { current =>
+              isNextSnapshot(current, snapshot) match {
+                case Left(e) =>
+                  (current.some, e.raiseError[F, Boolean])
+                case Right(isNext) if isNext =>
+                  def run =
+                    cache(snapshot.ordinal).set(snapshot.some) >>
+                      snapshot.ordinal
+                        .partialPreviousN(inMemoryCapacity)
+                        .fold(Applicative[F].unit)(offloadQueue.offer)
 
-                (snapshot, run.map(_ => true))
+                  (snapshot.some, run.map(_ => true))
 
-              case _ => (current, false.pure[F])
+                case _ => (current.some, false.pure[F])
+              }
             }
           }.flatten
 
-        def head = headRef.get
+        def head: F[Option[Signed[GlobalSnapshotArtifact]]] = headRef.get
 
-        def get(ordinal: SnapshotOrdinal) = cache(ordinal).get.flatMap {
+        def get(ordinal: SnapshotOrdinal): F[Option[Signed[GlobalSnapshotArtifact]]] = cache(ordinal).get.flatMap {
           case Some(s) => s.some.pure[F]
-          case None    => globalSnapshotLocalFileSystemStorage.read(ordinal).value.map(_.toOption)
+          case None    => globalSnapshotLocalFileSystemStorage.read(ordinal).rethrowT.map(_.some)
         }
 
-        private def isNextSnapshot(current: GlobalSnapshot, snapshot: GlobalSnapshot): Either[Throwable, Boolean] =
-          current.hash.map { hash =>
-            hash === snapshot.lastSnapshotHash && current.ordinal.next === snapshot.ordinal
+        private def isNextSnapshot(
+          current: Signed[GlobalSnapshot],
+          snapshot: Signed[GlobalSnapshot]
+        ): Either[Throwable, Boolean] =
+          current.value.hash.map { hash =>
+            hash === snapshot.value.lastSnapshotHash && current.value.ordinal.next === snapshot.value.ordinal
           }
 
       }

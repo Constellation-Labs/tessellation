@@ -1,7 +1,8 @@
 package org.tessellation.dag.snapshot
 
-import cats.Show
+import cats.syntax.eq._
 import cats.syntax.show._
+import cats.{Eq, Show}
 
 import org.tessellation.security.hash.Hash
 
@@ -17,4 +18,9 @@ case class StateChannelSnapshotBinary(
 object StateChannelSnapshotBinary {
   implicit val show: Show[StateChannelSnapshotBinary] = s =>
     s"StateChannelSnapshotBinary(lastSnapshotHash=${s.lastSnapshotHash.show})"
+
+  implicit val eq: Eq[StateChannelSnapshotBinary] = (x, y) => {
+    implicit val arrayEq: Eq[Array[Byte]] = Eq.fromUniversalEquals[Array[Byte]]
+    x.lastSnapshotHash === y.lastSnapshotHash && x.content === y.content
+  }
 }

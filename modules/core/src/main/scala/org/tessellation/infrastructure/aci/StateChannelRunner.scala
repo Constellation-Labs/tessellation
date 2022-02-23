@@ -1,8 +1,8 @@
 package org.tessellation.infrastructure.aci
 
 import cats.data.OptionT
-import cats.effect.Async
 import cats.effect.std.Queue
+import cats.effect.{Async, Spawn}
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.either._
@@ -84,21 +84,30 @@ object StateChannelRunner {
     def initializeCell(address: Address): F[Unit] =
       getContextAndInstance(address).map {
         case (context, instance) =>
-          context.inputs
-            .through(instance.inputPipe)
-            .evalMap { input =>
-              val cell = instance.makeCell(input, hypergraphContext)
+          def runCell(input: Ω): F[Ω] =
+            instance
+              .makeCell(input, hypergraphContext)
+              .run()
+              .flatMap(_.liftTo[F])
 
-              cell.run().flatMap(_.liftTo[F])
-            }
-            .through(instance.outputPipe)
-            .evalTap { output =>
-              instance.kryoSerializer.serialize(output).liftTo[F].flatMap { outputBytes =>
-                stateChannelOutputQueue.offer(StateChannelOutput(instance.address, output, outputBytes))
+          def publishOutput(output: Ω): F[Unit] =
+            instance.kryoSerializer
+              .serialize(output)
+              .liftTo[F]
+              .flatMap { outputBytes =>
+                val scOutput = StateChannelOutput(instance.address, output, outputBytes)
+                stateChannelOutputQueue.offer(scOutput)
               }
-            }
+
+          val pipeline = context.inputs
+            .through(instance.inputPipe)
+            .evalMap(runCell)
+            .through(instance.outputPipe)
+            .evalTap(publishOutput)
             .compile
             .drain
+
+          Spawn[F].start(pipeline).void
       }.getOrElse(StateChannelDoesNotExist(address).raiseError[F, Unit])
 
     def routeInput(input: StateChannelInput): OptionT[F, Unit] =

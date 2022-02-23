@@ -7,18 +7,19 @@ import cats.syntax.flatMap._
 
 import org.tessellation.dag.snapshot.{GlobalSnapshot, SnapshotOrdinal}
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.security.signature.Signed
 import org.tessellation.storage.LocalFileSystemStorage
 
 import fs2.io.file.Path
 
 final class GlobalSnapshotLocalFileSystemStorage[F[_]: Async: KryoSerializer] private (path: Path)
-    extends LocalFileSystemStorage[F, GlobalSnapshot](path) {
+    extends LocalFileSystemStorage[F, Signed[GlobalSnapshot]](path) {
 
-  def write(snapshot: GlobalSnapshot): EitherT[F, Throwable, Unit] =
-    write(snapshot.ordinal.value.value.toString(), snapshot)
+  def write(snapshot: Signed[GlobalSnapshot]): EitherT[F, Throwable, Unit] =
+    write(snapshot.value.ordinal.value.value.toString, snapshot)
 
-  def read(ordinal: SnapshotOrdinal): EitherT[F, Throwable, GlobalSnapshot] =
-    read(ordinal.value.value.toString())
+  def read(ordinal: SnapshotOrdinal): EitherT[F, Throwable, Signed[GlobalSnapshot]] =
+    read(ordinal.value.value.toString)
 
 }
 
