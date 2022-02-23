@@ -2,6 +2,7 @@ package org.tessellation.infrastructure.snapshot
 
 import cats.data.{Validated, ValidatedNel}
 import cats.kernel.Next
+import cats.syntax.order._
 import cats.syntax.show._
 
 import scala.util.control.NoStackTrace
@@ -14,7 +15,6 @@ import org.tessellation.schema.height.Height
 import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto._
-import io.estatico.newtype.ops._
 
 class SnapshotPreconditionsValidator[F[_]](config: SnapshotConfig) {
 
@@ -31,7 +31,7 @@ class SnapshotPreconditionsValidator[F[_]](config: SnapshotConfig) {
     val nextHeight = previousSnapshotHeight.next
 
     Validated.condNel(
-      minTipHeight.coerce > nextHeight.coerce,
+      minTipHeight > nextHeight,
       minTipHeight,
       TipsNotHighEnough(minTipHeight, nextHeight)
     )
