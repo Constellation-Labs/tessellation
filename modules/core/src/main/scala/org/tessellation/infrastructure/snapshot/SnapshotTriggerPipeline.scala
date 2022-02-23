@@ -23,7 +23,7 @@ object SnapshotTriggerPipeline {
   def stream[F[_]: Async](
     globalSnapshotStorage: GlobalSnapshotStorage[F],
     snapshotPreconditionsValidator: SnapshotPreconditionsValidator[F],
-    l1OutputQueue: Queue[F, L1Output],
+    l1OutputQueue: Queue[F, Signed[L1Output]],
     config: SnapshotConfig
   )(implicit N: Next[Height]): Stream[F, Either[Signed[DAGBlock], SnapshotTrigger]] = {
 
