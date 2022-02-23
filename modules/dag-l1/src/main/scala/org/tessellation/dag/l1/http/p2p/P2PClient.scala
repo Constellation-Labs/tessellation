@@ -21,6 +21,7 @@ object P2PClient {
       sdkP2PClient.node,
       sdkP2PClient.cluster,
       L0ClusterClient.make(client),
+      L0DAGClusterClient.make(client),
       sdkP2PClient.gossip,
       BlockConsensusClient.make(client)
     ) {}
@@ -31,6 +32,7 @@ sealed abstract class P2PClient[F[_]] private (
   val node: NodeClient[F],
   val cluster: ClusterClient[F],
   val l0Cluster: L0ClusterClient[F],
+  val l0DAGCluster: L0DAGClusterClient[F],
   val gossip: GossipClient[F],
   val blockConsensus: BlockConsensusClient[F]
 )

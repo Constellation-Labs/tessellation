@@ -11,20 +11,23 @@ import org.tessellation.dag.domain.block.{L1Output, Tips}
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.infrastructure.snapshot.SnapshotPreconditionsValidator.{TipsNotHighEnough, ValidationResult}
 import org.tessellation.schema.height.Height
+import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto._
 import io.estatico.newtype.ops._
 
 class SnapshotPreconditionsValidator[F[_]](config: SnapshotConfig) {
 
-  def validate(previousSnapshotHeight: Height, data: L1Output)(implicit N: Next[Height]): ValidationResult[Height] =
+  def validate(previousSnapshotHeight: Height, data: Signed[L1Output])(
+    implicit N: Next[Height]
+  ): ValidationResult[Height] =
     validateMinTipHeight(previousSnapshotHeight, data.tips)
 
   def validateMinTipHeight(
     previousSnapshotHeight: Height,
-    tips: Tips
+    tips: Option[Tips]
   )(implicit N: Next[Height]): ValidationResult[Height] = {
-    val minTipHeight = tips.value.toList.minBy(_.height).height
+    val minTipHeight = tips.map(_.value.toList.minBy(_.height).height).getOrElse(Height.MinValue)
     val nextHeight = previousSnapshotHeight.next
 
     Validated.condNel(

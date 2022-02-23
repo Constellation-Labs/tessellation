@@ -7,4 +7,4 @@ import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 
 @derive(decoder, encoder)
-case class L1Output(block: Signed[DAGBlock], tips: Tips)
+case class L1Output(block: Signed[DAGBlock], tips: Option[Tips])

@@ -9,13 +9,14 @@ import org.tessellation.dag.domain.block.L1Output
 import org.tessellation.domain.aci.StateChannelOutput
 import org.tessellation.schema.gossip.RumorBatch
 import org.tessellation.sdk.modules.SdkQueues
+import org.tessellation.security.signature.Signed
 
 object Queues {
 
   def make[F[_]: Concurrent](sdkQueues: SdkQueues[F]): F[Queues[F]] =
     for {
       stateChannelOutputQueue <- Queue.unbounded[F, StateChannelOutput]
-      l1OutputQueue <- Queue.unbounded[F, L1Output]
+      l1OutputQueue <- Queue.unbounded[F, Signed[L1Output]]
     } yield
       new Queues[F] {
         val rumor = sdkQueues.rumor
@@ -27,5 +28,5 @@ object Queues {
 sealed abstract class Queues[F[_]] private {
   val rumor: Queue[F, RumorBatch]
   val stateChannelOutput: Queue[F, StateChannelOutput]
-  val l1Output: Queue[F, L1Output]
+  val l1Output: Queue[F, Signed[L1Output]]
 }
