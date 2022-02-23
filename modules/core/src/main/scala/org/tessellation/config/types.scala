@@ -38,6 +38,7 @@ object types {
   )
 
   case class SnapshotConfig(
+    heightInterval: NonNegLong,
     globalSnapshotPath: Path,
     fallbackTriggerTimeout: FiniteDuration,
     inMemoryCapacity: NonNegLong

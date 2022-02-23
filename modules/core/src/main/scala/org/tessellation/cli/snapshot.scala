@@ -6,7 +6,7 @@ import org.tessellation.config.types.SnapshotConfig
 import org.tessellation.ext.decline.decline._
 
 import com.monovore.decline._
-import eu.timepit.refined.types.numeric.NonNegLong
+import eu.timepit.refined.auto._
 import fs2.io.file.Path
 
 object snapshot {
@@ -15,5 +15,5 @@ object snapshot {
     .env[Path]("CL_SNAPSHOT_STORED_PATH", help = "Path to store created snapshot")
     .withDefault(Path("tmp/snapshot"))
 
-  val opts = globalSnapshotPath.map(SnapshotConfig(_, 10.seconds, NonNegLong(100)))
+  val opts = globalSnapshotPath.map(SnapshotConfig(2L, _, 10.seconds, 100L))
 }

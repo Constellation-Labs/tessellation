@@ -2,8 +2,6 @@ package org.tessellation.domain.aci
 
 import cats.syntax.option._
 
-import scala.reflect.runtime.universe.TypeTag
-
 import org.tessellation.kernel.{Gistable, Ω}
 import org.tessellation.schema.address.Address
 
@@ -15,11 +13,11 @@ case class StateChannelOutput(
   outputBytes: Array[Byte]
 ) {
 
-  def takeGistedOutputOf[T <: Ω: TypeTag: Typeable]: Option[StateChannelGistedOutput[T]] =
+  def takeGistedOutputOf[A <: Ω](implicit T: Typeable[A]): Option[StateChannelGistedOutput[A]] =
     output match {
       case value: Gistable[_] =>
-        Typeable[T].cast(value.gist).map(StateChannelGistedOutput(address, _, outputBytes))
+        T.cast(value.gist).map(StateChannelGistedOutput(address, _, outputBytes))
       case _ =>
-        none[StateChannelGistedOutput[T]]
+        none[StateChannelGistedOutput[A]]
     }
 }

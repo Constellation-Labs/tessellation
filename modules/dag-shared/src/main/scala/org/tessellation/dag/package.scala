@@ -1,7 +1,7 @@
 package org.tessellation
 
 import org.tessellation.dag.domain.block.{BlockReference, DAGBlock}
-import org.tessellation.dag.snapshot.{GlobalSnapshot, SnapshotOrdinal, StateChannelSnapshotBinary}
+import org.tessellation.dag.snapshot._
 
 package object dag {
 
@@ -10,6 +10,7 @@ package object dag {
     classOf[StateChannelSnapshotBinary] -> 601,
     classOf[SnapshotOrdinal] -> 602,
     classOf[DAGBlock] -> 603,
-    classOf[BlockReference] -> 604
+    classOf[BlockReference] -> 604,
+    classOf[GlobalSnapshotInfo] -> 605
   )
 }

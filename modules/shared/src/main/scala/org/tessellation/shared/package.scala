@@ -7,13 +7,14 @@ import cats.data.NonEmptyList
 
 import org.tessellation.schema.address.AddressCache
 import org.tessellation.schema.gossip._
-import org.tessellation.schema.height.SubHeight
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.SignRequest
 import org.tessellation.schema.transaction.{Transaction, TransactionReference}
 import org.tessellation.schema.trust.PublicTrust
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.SignatureProof
+
+import eu.timepit.refined.api.Refined
 
 package object shared {
 
@@ -44,7 +45,7 @@ package object shared {
     classOf[CommonRumorBinary] -> 323,
     classOf[Transaction] -> 324,
     classOf[TransactionReference] -> 325,
-    classOf[SubHeight] -> 326
+    classOf[Refined[_, _]] -> 326
   )
 
 }

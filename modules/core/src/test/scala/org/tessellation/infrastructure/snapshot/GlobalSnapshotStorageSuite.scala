@@ -10,9 +10,10 @@ import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.sdk.sdkKryoRegistrar
+import org.tessellation.security.signature.Signed
 
 import better.files._
-import eu.timepit.refined.types.numeric.NonNegLong
+import eu.timepit.refined.auto._
 import fs2.io.file.Path
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
@@ -26,25 +27,29 @@ object GlobalSnapshotStorageSuite extends MutableIOSuite with Checkers {
 
   def mkStorage(tmpDir: File)(implicit K: KryoSerializer[IO]) =
     GlobalSnapshotLocalFileSystemStorage.make[IO](Path(tmpDir.pathAsString)).flatMap {
-      GlobalSnapshotStorage.make[IO](_, genesis, NonNegLong(5))
+      GlobalSnapshotStorage.make[IO](_, signedGenesis, 5L)
     }
 
-  def snapshot(implicit K: KryoSerializer[IO]): GlobalSnapshot =
-    GlobalSnapshot(
-      genesis.ordinal.next,
-      Height.MinValue,
-      SubHeight.MinValue,
-      genesis.hash.toOption.get,
-      Set.empty,
-      Map.empty,
-      genesisNextFacilitators
+  def snapshot(implicit K: KryoSerializer[IO]): Signed[GlobalSnapshot] =
+    Signed(
+      GlobalSnapshot(
+        genesis.ordinal.next,
+        Height.MinValue,
+        SubHeight.MinValue,
+        genesis.hash.toOption.get,
+        Set.empty,
+        Map.empty,
+        genesisNextFacilitators,
+        genesis.info
+      ),
+      signedGenesis.proofs
     )
 
   test("head - returns genesis for empty storage") { implicit kryo =>
     File.temporaryDirectory() { tmpDir =>
       mkStorage(tmpDir).flatMap { storage =>
         storage.head.map {
-          expect.same(_, genesis)
+          expect.same(_, signedGenesis.some)
         }
       }
     }
@@ -55,7 +60,7 @@ object GlobalSnapshotStorageSuite extends MutableIOSuite with Checkers {
       mkStorage(tmpDir).flatMap { storage =>
         storage.prepend(snapshot) >>
           storage.head.map {
-            expect.same(_, snapshot)
+            expect.same(_, snapshot.some)
           }
       }
     }
@@ -72,7 +77,7 @@ object GlobalSnapshotStorageSuite extends MutableIOSuite with Checkers {
   test("prepend - should return false if snapshot does not create a chain") { implicit kryo =>
     File.temporaryDirectory() { tmpDir =>
       mkStorage(tmpDir).flatMap { storage =>
-        storage.prepend(genesis).map { expect.same(_, false) }
+        storage.prepend(signedGenesis).map { expect.same(_, false) }
       }
     }
   }
@@ -80,7 +85,7 @@ object GlobalSnapshotStorageSuite extends MutableIOSuite with Checkers {
   test("get - should return genesis snapshot by ordinal") { implicit kryo =>
     File.temporaryDirectory() { tmpDir =>
       mkStorage(tmpDir).flatMap { storage =>
-        storage.get(SnapshotOrdinal.MinValue).map { expect.same(_, genesis.some) }
+        storage.get(SnapshotOrdinal.MinValue).map { expect.same(_, signedGenesis.some) }
       }
     }
   }

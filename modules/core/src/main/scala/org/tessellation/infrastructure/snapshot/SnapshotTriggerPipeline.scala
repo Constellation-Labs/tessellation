@@ -27,11 +27,11 @@ object SnapshotTriggerPipeline {
     config: SnapshotConfig
   )(implicit N: Next[Height]): Stream[F, Either[Signed[DAGBlock], SnapshotTrigger]] = {
 
-    def getLastSnapshotHeight: F[Height] = globalSnapshotStorage.head.map(_.height)
+    def getLastSnapshotHeight: F[Option[Height]] = globalSnapshotStorage.head.map(_.map(_.height))
 
     Stream
       .fromQueueUnterminated(l1OutputQueue)
-      .zip(Stream.eval(getLastSnapshotHeight))
+      .zip(Stream.eval(getLastSnapshotHeight).flatMap(_.map(Stream.emit).getOrElse(Stream.empty)))
       .flatMap {
         case (data, lastSnapshotHeight) =>
           snapshotPreconditionsValidator.validate(lastSnapshotHeight, data) match {
