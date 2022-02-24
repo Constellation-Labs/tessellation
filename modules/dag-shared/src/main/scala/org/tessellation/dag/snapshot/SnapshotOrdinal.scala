@@ -1,7 +1,7 @@
 package org.tessellation.dag.snapshot
 
 import cats.Order
-import cats.kernel.{Next, PartialOrder, PartialPrevious}
+import cats.kernel._
 import cats.syntax.contravariant._
 import cats.syntax.semigroup._
 
@@ -23,6 +23,8 @@ object SnapshotOrdinal {
   val MinValue: SnapshotOrdinal = SnapshotOrdinal(NonNegLong.MinValue)
 
   implicit val order: Order[SnapshotOrdinal] = Order[NonNegLong].contramap(_.value)
+
+  implicit val eqv: Eq[SnapshotOrdinal] = Eq[NonNegLong].contramap(_.value)
 
   implicit val next: Next[SnapshotOrdinal] = new Next[SnapshotOrdinal] {
     def next(a: SnapshotOrdinal): SnapshotOrdinal = SnapshotOrdinal(a.value |+| NonNegLong(1L))

@@ -6,6 +6,7 @@ import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types.{GossipConfig, HealthCheckConfig, HttpConfig}
 
 import ciris.Secret
+import eu.timepit.refined.types.numeric.NonNegLong
 import eu.timepit.refined.types.string.NonEmptyString
 import fs2.io.file.Path
 
@@ -37,8 +38,9 @@ object types {
   )
 
   case class SnapshotConfig(
-    storedSnapshotPath: Path,
-    fallbackTriggerTimeout: FiniteDuration
+    globalSnapshotPath: Path,
+    fallbackTriggerTimeout: FiniteDuration,
+    inMemoryCapacity: NonNegLong
   )
 
 }

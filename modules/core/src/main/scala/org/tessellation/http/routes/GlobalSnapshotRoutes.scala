@@ -15,8 +15,8 @@ final case class GlobalSnapshotRoutes[F[_]: Monad](globalSnapshotStorage: Global
   private val prefixPath = "/global-snapshot"
 
   private val httpRoutes: HttpRoutes[F] = HttpRoutes.of[F] {
-    case GET -> Root / "last" =>
-      Ok(globalSnapshotStorage.getLast)
+    case GET -> Root / "latest" =>
+      Ok(globalSnapshotStorage.head)
 
     case GET -> Root / SnapshotOrdinalVar(ordinal) =>
       Ok(globalSnapshotStorage.get(ordinal))
