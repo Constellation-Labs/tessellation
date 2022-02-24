@@ -27,7 +27,7 @@ object SnapshotTriggerPipeline {
     config: SnapshotConfig
   )(implicit N: Next[Height]): Stream[F, Either[Signed[DAGBlock], SnapshotTrigger]] = {
 
-    def getLastSnapshotHeight: F[Height] = globalSnapshotStorage.getLast.map(_.height)
+    def getLastSnapshotHeight: F[Height] = globalSnapshotStorage.head.map(_.height)
 
     Stream
       .fromQueueUnterminated(l1OutputQueue)

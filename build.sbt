@@ -157,6 +157,7 @@ lazy val shared = (project in file("modules/shared"))
       CompilerPlugin.semanticDB,
       Libraries.bc,
       Libraries.bcExtensions,
+      Libraries.betterFiles,
       Libraries.cats,
       Libraries.catsEffect,
       Libraries.chill,

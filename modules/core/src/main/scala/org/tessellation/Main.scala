@@ -42,7 +42,7 @@ object Main
         _ <- IO.unit.asResource
         p2pClient = P2PClient.make[IO](sdkP2PClient, sdkResources.client, sdkServices.session)
         queues <- Queues.make[IO](sdkQueues).asResource
-        storages <- Storages.make[IO](sdkStorages).asResource
+        storages <- Storages.make[IO](sdkStorages, cfg.snapshot).asResource
         services <- Services.make[IO](sdkServices, queues).asResource
         programs = Programs.make[IO](sdkPrograms, storages, services)
         validators = Validators.make[IO](cfg.snapshot)
