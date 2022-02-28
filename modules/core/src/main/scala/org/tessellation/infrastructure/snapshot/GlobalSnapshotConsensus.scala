@@ -30,7 +30,7 @@ object GlobalSnapshotConsensus {
       selfId,
       keyPair,
       clusterStorage,
-      (genesis.ordinal -> genesis).some
+      none
     )
 
 }

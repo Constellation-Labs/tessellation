@@ -9,7 +9,7 @@ import cats.syntax.list._
 import cats.syntax.option._
 import cats.syntax.order._
 import cats.syntax.traverse._
-import cats.{Applicative, Eval, MonadThrow}
+import cats.{Applicative, Eval}
 
 import org.tessellation.dag.snapshot.{GlobalSnapshot, GlobalSnapshotInfo, StateChannelSnapshotBinary}
 import org.tessellation.domain.snapshot.{GlobalSnapshotStorage, TimeSnapshotTrigger, TipSnapshotTrigger}
@@ -18,8 +18,10 @@ import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.height.SubHeight
+import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
 import org.tessellation.security.hash.Hash
+import org.tessellation.security.hex.Hex
 import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.types.numeric.NonNegLong
@@ -31,7 +33,7 @@ trait GlobalSnapshotConsensusFunctions[F[_]]
 
 object GlobalSnapshotConsensusFunctions {
 
-  def make[F[_]: Async: KryoSerializer: MonadThrow](
+  def make[F[_]: Async: KryoSerializer](
     globalSnapshotStorage: GlobalSnapshotStorage[F],
     heightInterval: NonNegLong
   ): GlobalSnapshotConsensusFunctions[F] = new GlobalSnapshotConsensusFunctions[F] {
@@ -95,8 +97,9 @@ object GlobalSnapshotConsensusFunctions {
           maybeTipTrigger.fold(lastGS.subHeight.next)(_ => SubHeight.MinValue),
           lastGSHash,
           blocksInRange,
+          lastGS.balances, // TODO
           scSnapshots,
-          genesisNextFacilitators,
+          NonEmptyList.of(PeerId(Hex("peer1"))), // TODO
           GlobalSnapshotInfo(lastGS.info.lastStateChannelSnapshotHashes ++ sCSnapshotHashes)
         )
         returnedEvents = returnedSCEvents.union(returnedDAGEvents)

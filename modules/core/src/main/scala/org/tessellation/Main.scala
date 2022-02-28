@@ -6,6 +6,7 @@ import cats.syntax.show._
 
 import org.tessellation.cli.method.{Run, RunGenesis, RunValidator}
 import org.tessellation.dag.dagSharedKryoRegistrar
+import org.tessellation.dag.snapshot.GlobalSnapshot
 import org.tessellation.ext.cats.effect._
 import org.tessellation.http.p2p.P2PClient
 import org.tessellation.infrastructure.db.Database
@@ -17,6 +18,7 @@ import org.tessellation.sdk.app.{SDK, TessellationIOApp}
 import org.tessellation.sdk.infrastructure.gossip.RumorHandlers
 import org.tessellation.sdk.resources.MkHttpServer
 import org.tessellation.sdk.resources.MkHttpServer.ServerName
+import org.tessellation.security.signature.Signed
 
 import com.monovore.decline.Opts
 
@@ -73,7 +75,12 @@ object Main
               NodeState.GenesisReady
             ) {
               GenesisLoader.make[IO].load(m.genesisPath).flatMap { accounts =>
-                logger.info(s"Genesis accounts: ${accounts.show}")
+                def genesis = GlobalSnapshot.mkGenesis(accounts.map(a => (a.address, a.balance)).toMap)
+
+                logger.info(s"Genesis accounts: ${accounts.show}") >>
+                  Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair).flatMap { signedGenesis =>
+                    storages.globalSnapshot.prepend(signedGenesis)
+                  }
               }
             } >> services.session.createSession >> storages.node.setNodeState(NodeState.Ready)
         }).asResource
