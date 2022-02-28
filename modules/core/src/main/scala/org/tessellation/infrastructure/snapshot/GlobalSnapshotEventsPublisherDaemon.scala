@@ -28,7 +28,7 @@ object GlobalSnapshotEventsPublisherDaemon {
           .map(_.asRight[StateChannelEvent])
       )
       .map(ConsensusEvent(_))
-      .evalMap(gossip.spread)
+      .evalMap(gossip.spread[ConsensusEvent[GlobalSnapshotEvent]])
       .compile
       .drain
   }
