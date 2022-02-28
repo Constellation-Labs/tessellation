@@ -19,6 +19,8 @@ object hash {
 
     def fromBytes(bytes: Array[Byte]): Hash =
       Hash(Hashing.sha256().hashBytes(bytes).toString)
+
+    def empty: Hash = Hash("")
   }
 
   @derive(encoder, decoder, show, eqv)

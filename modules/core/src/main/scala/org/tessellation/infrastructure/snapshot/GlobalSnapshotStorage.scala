@@ -1,5 +1,7 @@
 package org.tessellation.infrastructure.snapshot
 
+import java.nio.file.NoSuchFileException
+
 import cats.effect.std.Queue
 import cats.effect.{Async, Ref, Spawn}
 import cats.syntax.applicative._
@@ -10,7 +12,6 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
 import cats.syntax.show._
-import cats.syntax.traverse._
 import cats.{Applicative, MonadThrow}
 
 import org.tessellation.dag.snapshot.{GlobalSnapshot, SnapshotOrdinal}
@@ -19,6 +20,7 @@ import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.cats.syntax.partialPrevious._
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto.autoUnwrap
@@ -32,10 +34,9 @@ object GlobalSnapshotStorage {
 
   def make[F[_]: Async: KryoSerializer](
     globalSnapshotLocalFileSystemStorage: GlobalSnapshotLocalFileSystemStorage[F],
-    genesis: Signed[GlobalSnapshot],
     inMemoryCapacity: NonNegLong
   ): F[GlobalSnapshotStorage[F]] = {
-    def mkHeadRef = Ref.of[F, Option[Signed[GlobalSnapshot]]](genesis.some)
+    def mkHeadRef = Ref.of[F, Option[Signed[GlobalSnapshot]]](none)
     def mkCache = MapRef.ofSingleImmutableMap[F, SnapshotOrdinal, Signed[GlobalSnapshot]](Map.empty)
     def mkOffloadQueue = Queue.unbounded[F, SnapshotOrdinal]
 
@@ -71,39 +72,43 @@ object GlobalSnapshotStorage {
         .compile
         .drain
 
-    Spawn[F].start { offloadProcess }.flatMap { _ =>
-      headRef.get.flatMap {
-        _.traverse { h =>
-          cache(h.ordinal).set(h.some)
-        }
-      }
-    }.map { _ =>
+    def enqueue(snapshot: Signed[GlobalSnapshot]) =
+      cache(snapshot.ordinal).set(snapshot.some) >> snapshot.ordinal
+        .partialPreviousN(inMemoryCapacity)
+        .fold(Applicative[F].unit)(offloadQueue.offer(_))
+
+    Spawn[F].start { offloadProcess }.map { _ =>
       new GlobalSnapshotStorage[F] {
         def prepend(snapshot: Signed[GlobalSnapshot]): F[Boolean] =
-          headRef.modify { maybeCurrent =>
-            maybeCurrent.fold((snapshot.some, true.pure[F])) { current =>
+          headRef.modify {
+            case None =>
+              if (isGenesis(snapshot))
+                (snapshot.some, enqueue(snapshot).map(_ => true))
+              else
+                (none, false.pure[F])
+            case Some(current) =>
               isNextSnapshot(current, snapshot) match {
                 case Left(e) =>
                   (current.some, e.raiseError[F, Boolean])
                 case Right(isNext) if isNext =>
-                  def run =
-                    cache(snapshot.ordinal).set(snapshot.some) >>
-                      snapshot.ordinal
-                        .partialPreviousN(inMemoryCapacity)
-                        .fold(Applicative[F].unit)(offloadQueue.offer)
-
-                  (snapshot.some, run.map(_ => true))
+                  (snapshot.some, enqueue(snapshot).map(_ => true))
 
                 case _ => (current.some, false.pure[F])
               }
-            }
           }.flatten
 
         def head: F[Option[Signed[GlobalSnapshotArtifact]]] = headRef.get
 
         def get(ordinal: SnapshotOrdinal): F[Option[Signed[GlobalSnapshotArtifact]]] = cache(ordinal).get.flatMap {
           case Some(s) => s.some.pure[F]
-          case None    => globalSnapshotLocalFileSystemStorage.read(ordinal).rethrowT.map(_.some)
+          case None =>
+            globalSnapshotLocalFileSystemStorage
+              .read(ordinal)
+              .rethrowT
+              .map(_.some)
+              .recover {
+                case _: NoSuchFileException => none[Signed[GlobalSnapshot]]
+              }
         }
 
         private def isNextSnapshot(
@@ -113,6 +118,9 @@ object GlobalSnapshotStorage {
           current.value.hash.map { hash =>
             hash === snapshot.value.lastSnapshotHash && current.value.ordinal.next === snapshot.value.ordinal
           }
+
+        private def isGenesis(snapshot: GlobalSnapshot): Boolean =
+          snapshot.ordinal === SnapshotOrdinal.MinValue && snapshot.lastSnapshotHash === Hash.empty
 
       }
     }
