@@ -2,6 +2,7 @@ package org.tessellation.dag.l1
 
 import java.security.KeyPair
 
+import cats.Applicative
 import cats.effect.Async
 import cats.effect.std.Random
 import cats.syntax.applicative._
@@ -13,6 +14,7 @@ import cats.syntax.traverse._
 
 import scala.concurrent.duration.DurationInt
 
+import org.tessellation.dag.domain.block.L1Output
 import org.tessellation.dag.l1.config.types.AppConfig
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput._
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusOutput.{CleanedConsensuses, FinalBlock}
@@ -25,6 +27,7 @@ import org.tessellation.kernel.{CellError, Ω}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.security.SecurityProvider
+import org.tessellation.security.signature.Signed
 
 import fs2.{Pipe, Stream}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -125,6 +128,25 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
       storages.block.store(fb.hashedBlock).handleErrorWith(e => logger.debug(e)("Block storing failed."))
     }
 
+  private val sendBlockToL0: Pipe[F, FinalBlock, Unit] =
+    _.evalMap { fb =>
+      for {
+        tips <- storages.block
+          .pullTips(appConfig.tips.minimumTipsCount)
+
+        l0Peer <- storages.l0Cluster.getPeers
+          .flatMap(peers => Random[F].shuffleList(peers.toNonEmptyList.toList))
+          .map(peers => peers.head)
+
+        signedOutput <- Signed.forAsyncKryo[F, L1Output](L1Output(fb.hashedBlock.signed, tips), keyPair)
+
+        _ <- p2PClient.l0DAGCluster
+          .sendL1Output(signedOutput)(l0Peer)
+          .ifM(Applicative[F].unit, logger.warn("Sending block to L0 failed."))
+
+      } yield ()
+    }
+
   private val blockAcceptance: Stream[F, Unit] = Stream
     .awakeEvery(1.seconds)
     .evalMap(_ => storages.block.getWaiting)
@@ -151,7 +173,7 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
       .through(runConsensus)
       .through(gossipBlock)
       .merge(peerBlocks)
-      .through(storeBlock)
+      .through(fb => storeBlock(fb).merge(sendBlockToL0(fb)))
 
   val runtime: Stream[F, Unit] =
     blockConsensus

@@ -74,7 +74,7 @@ object RumorHandler {
     pfToKleisli(pf)
   }
 
-  private def pfToKleisli[A <: AnyRef: TypeTag: ClassTag, F[_]: Async: KryoSerializer](
+  private def pfToKleisli[A, F[_]: Applicative](
     pf: PartialFunction[(RumorBinary, PeerId), F[Unit]]
   ): Kleisli[OptionT[F, *], (RumorBinary, PeerId), Unit] =
     Kleisli.apply[OptionT[F, *], (RumorBinary, PeerId), Unit] {

@@ -1,7 +1,7 @@
 import Dependencies._
 
 ThisBuild / scalaVersion := "2.13.8"
-ThisBuild / version := "0.4.1"
+ThisBuild / version := "0.5.0"
 ThisBuild / organization := "org.constellation"
 ThisBuild / organizationName := "tessellation"
 
@@ -157,6 +157,7 @@ lazy val shared = (project in file("modules/shared"))
       CompilerPlugin.semanticDB,
       Libraries.bc,
       Libraries.bcExtensions,
+      Libraries.betterFiles,
       Libraries.cats,
       Libraries.catsEffect,
       Libraries.chill,

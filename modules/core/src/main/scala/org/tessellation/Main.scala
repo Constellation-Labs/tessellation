@@ -6,18 +6,19 @@ import cats.syntax.show._
 
 import org.tessellation.cli.method.{Run, RunGenesis, RunValidator}
 import org.tessellation.dag.dagSharedKryoRegistrar
+import org.tessellation.dag.snapshot.GlobalSnapshot
 import org.tessellation.ext.cats.effect._
 import org.tessellation.http.p2p.P2PClient
 import org.tessellation.infrastructure.db.Database
 import org.tessellation.infrastructure.genesis.{Loader => GenesisLoader}
 import org.tessellation.infrastructure.trust.handler.trustHandler
-import org.tessellation.kryo.coreKryoRegistrar
 import org.tessellation.modules._
 import org.tessellation.schema.node.NodeState
 import org.tessellation.sdk.app.{SDK, TessellationIOApp}
 import org.tessellation.sdk.infrastructure.gossip.RumorHandlers
 import org.tessellation.sdk.resources.MkHttpServer
 import org.tessellation.sdk.resources.MkHttpServer.ServerName
+import org.tessellation.security.signature.Signed
 
 import com.monovore.decline.Opts
 
@@ -42,9 +43,10 @@ object Main
         _ <- IO.unit.asResource
         p2pClient = P2PClient.make[IO](sdkP2PClient, sdkResources.client, sdkServices.session)
         queues <- Queues.make[IO](sdkQueues).asResource
-        storages <- Storages.make[IO](sdkStorages).asResource
-        services <- Services.make[IO](sdkServices, queues).asResource
+        storages <- Storages.make[IO](sdkStorages, cfg.snapshot).asResource
+        services <- Services.make[IO](sdkServices, queues, storages, sdk.nodeId, keyPair, cfg).asResource
         programs = Programs.make[IO](sdkPrograms, storages, services)
+        validators = Validators.make[IO](cfg.snapshot)
         healthChecks <- HealthChecks
           .make[IO](storages, services, p2pClient, cfg.healthCheck, sdk.nodeId)
           .asResource
@@ -52,8 +54,11 @@ object Main
         _ <- services.stateChannelRunner.initializeKnownCells.asResource
 
         rumorHandler = RumorHandlers.make[IO](storages.cluster, healthChecks.ping).handlers <+>
-          trustHandler(storages.trust)
-        _ <- Daemons.start(storages, services, queues, healthChecks, p2pClient, rumorHandler, nodeId, cfg).asResource
+          trustHandler(storages.trust) <+> services.consensus.handler
+
+        _ <- Daemons
+          .start(storages, services, queues, healthChecks, validators, p2pClient, rumorHandler, nodeId, cfg)
+          .asResource
 
         api = HttpApi.make[IO](storages, queues, services, programs, keyPair.getPrivate, cfg.environment, sdk.nodeId)
         _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
@@ -70,7 +75,12 @@ object Main
               NodeState.GenesisReady
             ) {
               GenesisLoader.make[IO].load(m.genesisPath).flatMap { accounts =>
-                logger.info(s"Genesis accounts: ${accounts.show}")
+                def genesis = GlobalSnapshot.mkGenesis(accounts.map(a => (a.address, a.balance)).toMap)
+
+                logger.info(s"Genesis accounts: ${accounts.show}") >>
+                  Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair).flatMap { signedGenesis =>
+                    storages.globalSnapshot.prepend(signedGenesis)
+                  }
               }
             } >> services.session.createSession >> storages.node.setNodeState(NodeState.Ready)
         }).asResource

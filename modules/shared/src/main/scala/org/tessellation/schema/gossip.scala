@@ -7,7 +7,6 @@ import cats.syntax.show._
 import cats.{Order, Show}
 
 import scala.reflect.runtime.universe.{TypeTag, typeOf}
-import scala.util.control.NoStackTrace
 
 import org.tessellation.ext.codecs.BinaryCodec
 import org.tessellation.kryo.KryoSerializer
@@ -25,16 +24,12 @@ import org.http4s.{EntityDecoder, EntityEncoder}
 
 object gossip {
 
-  @derive(arbitrary, eqv, show)
-  @newtype
-  case class ContentType(value: String)
-
   @derive(arbitrary, eqv, show, order)
   case class Ordinal(generation: PosLong, counter: PosLong)
 
   object Ordinal {
 
-    val MinValue = Ordinal(PosLong.MinValue, PosLong.MinValue)
+    val MinValue: Ordinal = Ordinal(PosLong.MinValue, PosLong.MinValue)
 
     implicit val maxMonoid: Monoid[Ordinal] = Monoid.instance(MinValue, (a, b) => Order[Ordinal].max(a, b))
 
@@ -42,8 +37,12 @@ object gossip {
 
   }
 
+  @derive(arbitrary, eqv, show)
+  @newtype
+  case class ContentType(value: String)
+
   object ContentType {
-    def of[A: TypeTag]: ContentType = ContentType(typeOf[A].toString)
+    def of[A: TypeTag]: ContentType = ContentType(typeOf[A].dealias.toString)
   }
 
   type HashAndRumor = (Hash, Signed[RumorBinary])
@@ -90,7 +89,7 @@ object gossip {
       s"PeerRumorBinary(origin=${t.origin.show}, ordinal=${t.ordinal.show}, contentType=${t.contentType.show})"
   }
 
-  case class UnexpectedRumorClass(rumor: RumorBinary) extends NoStackTrace
+  case class UnexpectedRumorClass(rumor: RumorBinary) extends Throwable(s"Unexpected rumor class ${rumor.show}")
 
   case class StartGossipRoundRequest(
     offer: List[Hash]

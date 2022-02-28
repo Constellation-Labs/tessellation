@@ -1,18 +1,14 @@
 package org.tessellation.domain.snapshot
 
-import org.tessellation.dag.snapshot.{GlobalSnapshot, SnapshotOrdinal, StateChannelSnapshotWrapper}
-import org.tessellation.schema.address.Address
+import org.tessellation.dag.snapshot.{GlobalSnapshot, SnapshotOrdinal}
+import org.tessellation.security.signature.Signed
 
 trait GlobalSnapshotStorage[F[_]] {
 
-  def save(globalSnapshot: GlobalSnapshot): F[Unit]
+  def prepend(snapshot: Signed[GlobalSnapshot]): F[Boolean]
 
-  def getLast: F[GlobalSnapshot]
+  def head: F[Option[Signed[GlobalSnapshot]]]
 
-  def get(ordinal: SnapshotOrdinal): F[Option[GlobalSnapshot]]
-
-  def getStateChannelSnapshotUntilOrdinal(
-    ordinal: SnapshotOrdinal
-  )(address: Address): F[Option[StateChannelSnapshotWrapper]]
+  def get(ordinal: SnapshotOrdinal): F[Option[Signed[GlobalSnapshot]]]
 
 }

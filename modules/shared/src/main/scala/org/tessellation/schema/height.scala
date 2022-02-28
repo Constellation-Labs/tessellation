@@ -1,18 +1,22 @@
 package org.tessellation.schema
 
 import cats.kernel.Next
+import cats.syntax.contravariant._
 import cats.syntax.semigroup._
 import cats.{Order, PartialOrder}
 
-import derevo.cats.{order, show}
+import org.tessellation.ext.derevo.ordering
+
+import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
+import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.NonNegLong
 import io.estatico.newtype.macros.newtype
 
 object height {
 
-  @derive(encoder, decoder, order, show)
+  @derive(encoder, decoder, order, ordering, show, eqv)
   @newtype
   case class Height(value: Long)
 
@@ -25,10 +29,17 @@ object height {
     }
   }
 
+  @derive(encoder, decoder, show, eqv)
+  @newtype
   case class SubHeight(value: NonNegLong)
 
   object SubHeight {
     val MinValue: SubHeight = SubHeight(NonNegLong.MinValue)
+
+    implicit val next: Next[SubHeight] = new Next[SubHeight] {
+      def next(a: SubHeight): SubHeight = SubHeight(a.value |+| NonNegLong(1L))
+      def partialOrder: PartialOrder[SubHeight] = Order[NonNegLong].contramap(_.value)
+    }
   }
 
 }

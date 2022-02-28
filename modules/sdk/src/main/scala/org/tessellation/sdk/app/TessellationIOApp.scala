@@ -15,9 +15,9 @@ import org.tessellation.sdk.cli.CliMethod
 import org.tessellation.sdk.http.p2p.SdkP2PClient
 import org.tessellation.sdk.infrastructure.cluster.services.Session
 import org.tessellation.sdk.infrastructure.logs.LoggerConfigurator
-import org.tessellation.sdk.kryo.sdkKryoRegistrar
 import org.tessellation.sdk.modules._
 import org.tessellation.sdk.resources.SdkResources
+import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.SecurityProvider
 
 import com.monovore.decline.Opts

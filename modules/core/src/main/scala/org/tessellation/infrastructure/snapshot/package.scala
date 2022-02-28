@@ -1,31 +1,29 @@
 package org.tessellation.infrastructure
 
-import cats.data.NonEmptyList
+import cats.syntax.either._
 
-import org.tessellation.dag.snapshot.{GlobalSnapshot, SnapshotOrdinal}
-import org.tessellation.schema.height.{Height, SubHeight}
-import org.tessellation.schema.peer.PeerId
-import org.tessellation.security.hash.Hash
-import org.tessellation.security.hex.Hex
+import org.tessellation.dag.domain.block.DAGBlock
+import org.tessellation.dag.snapshot._
+import org.tessellation.domain.aci.StateChannelGistedOutput
+import org.tessellation.domain.snapshot.SnapshotTrigger
+import org.tessellation.kernel.StateChannelSnapshot
+import org.tessellation.security.signature.Signed
+
+import eu.timepit.refined.auto._
 
 package object snapshot {
 
-  val genesisNextFacilitators: NonEmptyList[PeerId] = NonEmptyList
-    .of(
-      PeerId(Hex("peer1")),
-      PeerId(Hex("peer2")),
-      PeerId(Hex("peer3"))
-    )
+  type DAGEvent = Either[Signed[DAGBlock], SnapshotTrigger]
 
-  val genesis: GlobalSnapshot =
-    GlobalSnapshot(
-      SnapshotOrdinal.MinValue,
-      Height.MinValue,
-      SubHeight.MinValue,
-      Hash("0"),
-      Set.empty,
-      Map.empty,
-      genesisNextFacilitators
-    )
+  type StateChannelEvent = StateChannelGistedOutput[StateChannelSnapshot]
+
+  type GlobalSnapshotEvent = Either[StateChannelEvent, DAGEvent]
+
+  type GlobalSnapshotKey = SnapshotOrdinal
+
+  type GlobalSnapshotArtifact = GlobalSnapshot
+
+  def toEvent(trigger: SnapshotTrigger): GlobalSnapshotEvent =
+    trigger.asRight[Signed[DAGBlock]].asRight[StateChannelEvent]
 
 }

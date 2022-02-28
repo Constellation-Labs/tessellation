@@ -7,7 +7,7 @@ import org.tessellation.ext.refined._
 
 import com.comcast.ip4s.{Host, Port}
 import eu.timepit.refined.numeric.{NonNegative, Positive}
-import eu.timepit.refined.types.numeric.{NonNegBigInt, PosBigInt, PosLong}
+import eu.timepit.refined.types.numeric._
 import io.circe.{Decoder, Encoder}
 
 package object schema extends OrphanInstances
@@ -59,4 +59,10 @@ trait OrphanInstances {
 
   implicit val posLongOrder: Order[PosLong] =
     orderOf[Long, Positive]
+
+  implicit val nonNegLongEncoder: Encoder[NonNegLong] =
+    encoderOf[Long, NonNegative]
+
+  implicit val nonNegLongDecoder: Decoder[NonNegLong] =
+    decoderOf[Long, NonNegative]
 }

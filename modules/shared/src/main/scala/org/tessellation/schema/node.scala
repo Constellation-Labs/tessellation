@@ -42,6 +42,11 @@ object node {
       Set(Leaving, Offline)
 
     def absent(peers: Set[Peer]): Set[Peer] = peers.filter(peer => absent.contains(peer.state))
+
+    def ready: Set[NodeState] =
+      Set(Ready)
+
+    def ready(peers: Set[Peer]): Set[Peer] = peers.filter(peer => ready.contains(peer.state))
   }
 
   trait NodeStateCodecs {

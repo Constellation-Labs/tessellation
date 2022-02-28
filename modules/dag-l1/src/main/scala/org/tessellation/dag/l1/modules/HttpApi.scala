@@ -11,7 +11,6 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.http.p2p.middleware.{PeerAuthMiddleware, `X-Id-Middleware`}
 import org.tessellation.sdk.http.routes._
-import org.tessellation.sdk.modules.SdkPrograms
 import org.tessellation.security.SecurityProvider
 
 import com.comcast.ip4s.Host
@@ -26,10 +25,10 @@ object HttpApi {
     queues: Queues[F],
     privateKey: PrivateKey,
     services: Services[F],
-    sdkPrograms: SdkPrograms[F],
+    programs: Programs[F],
     selfId: PeerId
   ): HttpApi[F] =
-    new HttpApi[F](storages, queues, privateKey, services, sdkPrograms, selfId) {}
+    new HttpApi[F](storages, queues, privateKey, services, programs, selfId) {}
 }
 
 sealed abstract class HttpApi[F[_]: Async: KryoSerializer: SecurityProvider] private (
@@ -37,11 +36,11 @@ sealed abstract class HttpApi[F[_]: Async: KryoSerializer: SecurityProvider] pri
   queues: Queues[F],
   privateKey: PrivateKey,
   services: Services[F],
-  sdkPrograms: SdkPrograms[F],
+  programs: Programs[F],
   selfId: PeerId
 ) {
   private val clusterRoutes =
-    ClusterRoutes[F](sdkPrograms.joining, sdkPrograms.peerDiscovery, storages.cluster, services.cluster)
+    ClusterRoutes[F](programs.joining, programs.peerDiscovery, storages.cluster, services.cluster)
   private val registrationRoutes = RegistrationRoutes[F](services.cluster)
   private val gossipRoutes = GossipRoutes[F](storages.rumor, queues.rumor, services.gossip)
   private val dagRoutes = Routes[F](services.transaction, queues.peerBlockConsensusInput)

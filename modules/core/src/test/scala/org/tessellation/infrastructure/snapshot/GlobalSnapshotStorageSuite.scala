@@ -1,65 +1,132 @@
 package org.tessellation.infrastructure.snapshot
 
+import cats.data.NonEmptyList
 import cats.effect.{IO, Resource}
-import cats.syntax.either._
 import cats.syntax.option._
 
 import org.tessellation.dag.dagSharedKryoRegistrar
+import org.tessellation.dag.snapshot.GlobalSnapshot
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
-import org.tessellation.infrastructure.snapshot.GlobalSnapshotStorage.InvalidGlobalSnapshotChain
+import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.sdk.kryo.sdkKryoRegistrar
+import org.tessellation.schema.height.{Height, SubHeight}
+import org.tessellation.schema.peer.PeerId
+import org.tessellation.sdk.sdkKryoRegistrar
+import org.tessellation.security.SecurityProvider
+import org.tessellation.security.hex.Hex
+import org.tessellation.security.signature.Signed
 
-import monocle.syntax.all._
+import better.files._
+import eu.timepit.refined.auto._
+import fs2.io.file.Path
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
 
 object GlobalSnapshotStorageSuite extends MutableIOSuite with Checkers {
 
-  type Res = KryoSerializer[IO]
+  type Res = (KryoSerializer[IO], SecurityProvider[IO])
 
   override def sharedResource: Resource[IO, GlobalSnapshotStorageSuite.Res] =
-    KryoSerializer.forAsync[IO](dagSharedKryoRegistrar ++ sdkKryoRegistrar)
+    KryoSerializer.forAsync[IO](dagSharedKryoRegistrar ++ sdkKryoRegistrar).flatMap { ks =>
+      SecurityProvider.forAsync[IO].map((ks, _))
+    }
 
-  test("should accept valid snapshot") { implicit kryo =>
-    for {
-      storage <- GlobalSnapshotStorage.make(genesis)
-      genesisHash <- genesis.hash.liftTo[IO]
-      nextSnapshot = genesis
-        .focus(_.ordinal)
-        .modify(_.next)
-        .focus(_.lastSnapshotHash)
-        .replace(genesisHash)
-      _ <- storage.save(nextSnapshot)
-    } yield success
+  def mkStorage(tmpDir: File)(implicit K: KryoSerializer[IO]) =
+    GlobalSnapshotLocalFileSystemStorage.make[IO](Path(tmpDir.pathAsString)).flatMap {
+      GlobalSnapshotStorage.make[IO](_, 5L)
+    }
+
+  def mkSnapshots(
+    implicit K: KryoSerializer[IO],
+    S: SecurityProvider[IO]
+  ): IO[(Signed[GlobalSnapshot], Signed[GlobalSnapshot])] =
+    KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>
+      Signed.forAsyncKryo[IO, GlobalSnapshot](GlobalSnapshot.mkGenesis(Map.empty), keyPair).flatMap { genesis =>
+        def snapshot =
+          GlobalSnapshot(
+            genesis.value.ordinal.next,
+            Height.MinValue,
+            SubHeight.MinValue,
+            genesis.value.hash.toOption.get,
+            Set.empty,
+            genesis.value.balances,
+            Map.empty,
+            NonEmptyList.of(PeerId(Hex("peer1"))),
+            genesis.info
+          )
+
+        Signed.forAsyncKryo[IO, GlobalSnapshot](snapshot, keyPair).map((genesis, _))
+      }
+    }
+
+  test("head - returns none for empty storage") { res =>
+    implicit val (kryo, _) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      mkStorage(tmpDir).flatMap { storage =>
+        storage.head.map {
+          expect.same(_, none)
+        }
+      }
+    }
   }
 
-  test("should not accept snapshot with invalid `lastSnapshotHash`") { implicit kryo =>
-    for {
-      storage <- GlobalSnapshotStorage.make(genesis)
-      nextSnapshot = genesis
-        .focus(_.ordinal)
-        .modify(_.next)
-      maybeError <- storage
-        .save(nextSnapshot)
-        .map(_ => none[Throwable])
-        .handleError(_.some)
-    } yield verify(maybeError.exists(_.isInstanceOf[InvalidGlobalSnapshotChain]))
+  test("head - returns latest snapshot if not empty") { res =>
+    implicit val (kryo, sp) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      mkStorage(tmpDir).flatMap { storage =>
+        mkSnapshots.flatMap {
+          case (genesis, snapshot) =>
+            storage.prepend(genesis) >>
+              storage.prepend(snapshot) >>
+              storage.head.map {
+                expect.same(_, snapshot.some)
+              }
+        }
+      }
+    }
   }
 
-  test("should not accept snapshot with invalid `ordinal`") { implicit kryo =>
-    for {
-      storage <- GlobalSnapshotStorage.make(genesis)
-      genesisHash <- genesis.hash.liftTo[IO]
-      nextSnapshot = genesis
-        .focus(_.lastSnapshotHash)
-        .replace(genesisHash)
-      maybeError <- storage
-        .save(nextSnapshot)
-        .map(_ => none[Throwable])
-        .handleError(_.some)
-    } yield verify(maybeError.exists(_.isInstanceOf[InvalidGlobalSnapshotChain]))
+  test("prepend - should return true if next snapshot creates a chain") { res =>
+    implicit val (kryo, sp) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      mkStorage(tmpDir).flatMap { storage =>
+        mkSnapshots.flatMap {
+          case (genesis, snapshot) =>
+            storage.prepend(genesis) >>
+              storage.prepend(snapshot).map { expect.same(_, true) }
+        }
+      }
+    }
   }
 
+  test("prepend - should return false if snapshot does not create a chain") { res =>
+    implicit val (kryo, sp) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      mkStorage(tmpDir).flatMap { storage =>
+        mkSnapshots.flatMap {
+          case (_, snapshot) =>
+            storage.prepend(snapshot).map { expect.same(_, false) }
+        }
+      }
+    }
+  }
+
+  test("get - should return snapshot by ordinal") { res =>
+    implicit val (kryo, sp) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      mkStorage(tmpDir).flatMap { storage =>
+        mkSnapshots.flatMap {
+          case (genesis, _) =>
+            storage.prepend(genesis) >>
+              storage.get(genesis.ordinal).map { expect.same(_, genesis.some) }
+        }
+      }
+    }
+  }
 }
