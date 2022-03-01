@@ -36,6 +36,7 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
   appConfig: AppConfig,
   keyPair: KeyPair,
   p2PClient: P2PClient[F],
+  programs: Programs[F],
   queues: Queues[F],
   selfId: PeerId,
   services: Services[F],
@@ -168,6 +169,12 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
         .void
     )
 
+  private val globalSnapshotProcessing: Stream[F, Unit] = Stream
+    .awakeEvery(10.seconds)
+    .evalMap(_ => services.l0.pullGlobalSnapshots)
+    .flatMap(snapshots => Stream.fromIterator(snapshots.iterator, 1))
+    .evalMap(snapshot => logger.info(s"Pulled following global snapshot: $snapshot"))
+
   private val blockConsensus: Stream[F, Unit] =
     blockConsensusInputs
       .through(runConsensus)
@@ -178,5 +185,6 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
   val runtime: Stream[F, Unit] =
     blockConsensus
       .merge(blockAcceptance)
+      .merge(globalSnapshotProcessing)
 
 }
