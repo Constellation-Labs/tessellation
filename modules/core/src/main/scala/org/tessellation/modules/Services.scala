@@ -10,7 +10,7 @@ import org.tessellation.config.types.AppConfig
 import org.tessellation.domain.aci.StateChannelRunner
 import org.tessellation.infrastructure.aci.StateChannelRunner
 import org.tessellation.infrastructure.metrics.Metrics
-import org.tessellation.infrastructure.snapshot.GlobalSnapshotConsensus
+import org.tessellation.infrastructure.snapshot._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
@@ -51,5 +51,5 @@ sealed abstract class Services[F[_]] private (
   val metrics: Metrics[F],
   val gossip: Gossip[F],
   val stateChannelRunner: StateChannelRunner[F],
-  val consensus: Consensus[F]
+  val consensus: Consensus[F, GlobalSnapshotKey, GlobalSnapshotArtifact]
 )

@@ -23,7 +23,7 @@ object GlobalSnapshotConsensus {
     clusterStorage: ClusterStorage[F],
     globalSnapshotStorage: GlobalSnapshotStorage[F],
     snapshotConfig: SnapshotConfig
-  ): F[Consensus[F]] =
+  ): F[Consensus[F, GlobalSnapshotKey, GlobalSnapshotArtifact]] =
     Consensus.make[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact](
       GlobalSnapshotConsensusFunctions.make[F](globalSnapshotStorage, snapshotConfig.heightInterval),
       gossip,
