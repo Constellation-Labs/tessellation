@@ -1,5 +1,6 @@
 package org.tessellation
 
+import java.math.BigInteger
 import java.security.Signature
 import java.util.UUID
 
@@ -46,7 +47,8 @@ package object shared {
     classOf[Transaction] -> 324,
     classOf[TransactionReference] -> 325,
     classOf[Refined[_, _]] -> 326,
-    classOf[BigInt] -> 327
+    classOf[BigInt] -> 327,
+    classOf[BigInteger] -> 328
   )
 
 }
