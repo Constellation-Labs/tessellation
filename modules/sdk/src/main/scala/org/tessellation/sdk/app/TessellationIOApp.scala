@@ -105,7 +105,9 @@ abstract class TessellationIOApp[A <: CliMethod](
 
                       _ <- logger.info(s"Self peerId: ${selfId.show}").asResource
 
-                      _ <- run(method, sdk)
+                      _ <- run(method, sdk).handleErrorWith { (e: Throwable) =>
+                        (logger.error(e)(s"Unhandled exception during runtime.") >> IO.raiseError[Unit](e)).asResource
+                      }
                     } yield ())
 
                   _restartSignal.discrete.switchMap { _ =>
