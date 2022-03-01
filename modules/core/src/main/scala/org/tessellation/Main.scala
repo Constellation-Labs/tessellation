@@ -1,6 +1,7 @@
 package org.tessellation
 
 import cats.effect._
+import cats.syntax.option._
 import cats.syntax.semigroupk._
 import cats.syntax.show._
 
@@ -79,7 +80,8 @@ object Main
 
                 logger.info(s"Genesis accounts: ${accounts.show}") >>
                   Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair).flatMap { signedGenesis =>
-                    storages.globalSnapshot.prepend(signedGenesis)
+                    storages.globalSnapshot.prepend(signedGenesis) >>
+                      services.consensus.setLastKeyAndArtifact((genesis.ordinal, genesis).some)
                   }
               }
             } >> services.session.createSession >> storages.node.setNodeState(NodeState.Ready)

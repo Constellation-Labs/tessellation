@@ -21,14 +21,19 @@ import org.tessellation.security.SecurityProvider
 
 object Consensus {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider, Event <: AnyRef: TypeTag: ClassTag, Key: Show: Order: Next: Eq: TypeTag: ClassTag, Artifact <: AnyRef: Show: Eq: TypeTag](
+  def make[
+    F[_]: Async: KryoSerializer: SecurityProvider,
+    Event <: AnyRef: TypeTag: ClassTag,
+    Key: Show: Order: Next: TypeTag: ClassTag,
+    Artifact <: AnyRef: Show: Eq: TypeTag
+  ](
     consensusFns: ConsensusFunctions[F, Event, Key, Artifact],
     gossip: Gossip[F],
     selfId: PeerId,
     keyPair: KeyPair,
     clusterStorage: ClusterStorage[F],
     initKeyAndArtifact: Option[(Key, Artifact)] = none
-  ): F[Consensus[F]] =
+  ): F[Consensus[F, Key, Artifact]] =
     ConsensusStorage.make[F, Event, Key, Artifact](initKeyAndArtifact).map { storage =>
       val stateUpdater = ConsensusStateUpdater.make[F, Event, Key, Artifact](
         consensusFns,
@@ -45,10 +50,13 @@ object Consensus {
       )
       val handler = ConsensusHandler.make[F, Event, Key, Artifact](storage, manager)
 
-      new Consensus(handler)
+      new Consensus(handler, storage)
     }
 }
 
-sealed class Consensus[F[_]] private (
-  val handler: RumorHandler[F]
-)
+sealed class Consensus[F[_], K, A] private (
+  val handler: RumorHandler[F],
+  storage: ConsensusStorage[F, _, K, A]
+) {
+  def setLastKeyAndArtifact = storage.setLastKeyAndArtifact(_)
+}
