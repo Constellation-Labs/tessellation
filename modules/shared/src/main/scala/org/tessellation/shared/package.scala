@@ -45,7 +45,8 @@ package object shared {
     classOf[CommonRumorBinary] -> 323,
     classOf[Transaction] -> 324,
     classOf[TransactionReference] -> 325,
-    classOf[Refined[_, _]] -> 326
+    classOf[Refined[_, _]] -> 326,
+    classOf[BigInt] -> 327
   )
 
 }
