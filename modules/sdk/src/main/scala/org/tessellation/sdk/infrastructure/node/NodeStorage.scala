@@ -1,6 +1,5 @@
 package org.tessellation.sdk.infrastructure.node
 
-import cats.effect.std.Queue
 import cats.effect.{Concurrent, Ref}
 import cats.syntax.applicativeError._
 import cats.syntax.flatMap._
@@ -11,24 +10,25 @@ import org.tessellation.schema.node.{InvalidNodeStateTransition, NodeState, Node
 import org.tessellation.sdk.domain.node.NodeStorage
 
 import fs2._
+import fs2.concurrent.Topic
 
 object NodeStorage {
 
   def make[F[_]: Concurrent: Ref.Make]: F[NodeStorage[F]] =
     Ref.of[F, NodeState](NodeState.Initial) >>= { ref =>
-      Queue.unbounded[F, NodeState] >>= { queue =>
-        queue.offer(NodeState.Initial).map { _ =>
-          make(ref, queue)
+      Topic[F, NodeState] >>= { topic =>
+        topic.publish1(NodeState.Initial).map { _ =>
+          make(ref, topic)
         }
       }
     }
 
-  def make[F[_]: MonadThrow](nodeState: Ref[F, NodeState], nodeStateQueue: Queue[F, NodeState]): NodeStorage[F] =
+  def make[F[_]: MonadThrow](nodeState: Ref[F, NodeState], nodeStateTopic: Topic[F, NodeState]): NodeStorage[F] =
     new NodeStorage[F] {
       def getNodeState: F[NodeState] = nodeState.get
 
       def setNodeState(state: NodeState): F[Unit] =
-        nodeState.set(state) >> nodeStateQueue.offer(state)
+        nodeState.set(state) >> nodeStateTopic.publish1(state).void
 
       def canJoinCluster: F[Boolean] = nodeState.get.map(_ == NodeState.ReadyToJoin)
 
@@ -57,8 +57,8 @@ object NodeStorage {
           }
         }
 
-      def nodeState$ : Stream[F, NodeState] =
-        Stream.fromQueueUnterminated(nodeStateQueue)
+      def nodeStates: Stream[F, NodeState] =
+        nodeStateTopic.subscribe(1)
 
       private def modify(from: Set[NodeState], to: NodeState): F[NodeStateTransition] =
         nodeState
@@ -67,7 +67,7 @@ object NodeStorage {
             case state                         => (state, NodeStateTransition.Failure)
           }
           .flatTap {
-            case NodeStateTransition.Success => nodeStateQueue.offer(to)
+            case NodeStateTransition.Success => nodeStateTopic.publish1(to).void
             case _                           => Applicative[F].unit
           }
     }

@@ -24,7 +24,7 @@ object NodeStateDaemon {
       Spawn[F].start(spreadNodeState).void
 
     private def spreadNodeState: F[Unit] =
-      nodeStorage.nodeState$
+      nodeStorage.nodeStates
         .filter(NodeState.toBroadcast.contains)
         .evalTap { nodeState =>
           logger.info(s"Node state changed to=${nodeState.show}") >>
@@ -35,4 +35,5 @@ object NodeStateDaemon {
         .compile
         .drain
   }
+
 }

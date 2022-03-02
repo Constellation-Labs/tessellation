@@ -1,8 +1,11 @@
 package org.tessellation.dag.snapshot
 
 import cats.data.NonEmptyList
+import cats.effect.Concurrent
 
 import org.tessellation.dag.domain.block.DAGBlock
+import org.tessellation.ext.codecs.BinaryCodec
+import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.height.{Height, SubHeight}
@@ -12,10 +15,10 @@ import org.tessellation.security.hex.Hex
 import org.tessellation.security.signature.Signed
 
 import derevo.cats.{eqv, show}
-import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
+import org.http4s.{EntityDecoder, EntityEncoder}
 
-@derive(encoder, decoder, eqv, show)
+@derive(eqv, show)
 case class GlobalSnapshot(
   ordinal: SnapshotOrdinal,
   height: Height,
@@ -29,6 +32,12 @@ case class GlobalSnapshot(
 )
 
 object GlobalSnapshot {
+
+  implicit def encoder[G[_]: KryoSerializer]: EntityEncoder[G, GlobalSnapshot] =
+    BinaryCodec.encoder[G, GlobalSnapshot]
+
+  implicit def decoder[G[_]: Concurrent: KryoSerializer]: EntityDecoder[G, GlobalSnapshot] =
+    BinaryCodec.decoder[G, GlobalSnapshot]
 
   def mkGenesis(balances: Map[Address, Balance]) =
     GlobalSnapshot(

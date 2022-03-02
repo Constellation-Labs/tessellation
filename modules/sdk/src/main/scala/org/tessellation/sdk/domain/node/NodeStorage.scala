@@ -21,5 +21,5 @@ trait NodeStorage[F[_]] {
 
   def canJoinCluster: F[Boolean]
 
-  def nodeState$ : Stream[F, NodeState]
+  def nodeStates: Stream[F, NodeState]
 }

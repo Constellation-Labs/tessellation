@@ -46,7 +46,7 @@ object Main
         queues <- Queues.make[IO](sdkQueues).asResource
         storages <- Storages.make[IO](sdkStorages, cfg.snapshot).asResource
         services <- Services.make[IO](sdkServices, queues, storages, sdk.nodeId, keyPair, cfg).asResource
-        programs = Programs.make[IO](sdkPrograms, storages, services)
+        programs = Programs.make[IO](sdkPrograms, storages, services, p2pClient)
         validators = Validators.make[IO](cfg.snapshot)
         healthChecks <- HealthChecks
           .make[IO](storages, services, p2pClient, cfg.healthCheck, sdk.nodeId)
@@ -58,7 +58,7 @@ object Main
           trustHandler(storages.trust) <+> services.consensus.handler
 
         _ <- Daemons
-          .start(storages, services, queues, healthChecks, validators, p2pClient, rumorHandler, nodeId, cfg)
+          .start(storages, services, programs, queues, healthChecks, validators, p2pClient, rumorHandler, nodeId, cfg)
           .asResource
 
         api = HttpApi.make[IO](storages, queues, services, programs, keyPair.getPrivate, cfg.environment, sdk.nodeId)

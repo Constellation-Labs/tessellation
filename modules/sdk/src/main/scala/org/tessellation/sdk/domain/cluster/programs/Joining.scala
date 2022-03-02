@@ -182,7 +182,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
       _ <- clusterStorage.addPeer(peer)
 
       // Note: Changing state from SessionStarted to Ready state will execute once for first peer, then all consecutive joins should be ignored
-      _ <- nodeStorage.tryModifyState(NodeState.SessionStarted, NodeState.Ready).handleError(_ => ())
+      _ <- nodeStorage.tryModifyState(NodeState.SessionStarted, NodeState.WaitingForDownload).handleError(_ => ())
     } yield peer
 
   private def validateHandshake(registrationRequest: RegistrationRequest, remoteAddress: Option[Host]): F[Unit] =
