@@ -28,15 +28,17 @@ object node {
     case object StartingSession extends NodeState
     case object SessionStarted extends NodeState
 
+    case object WaitingForDownload extends NodeState
+    case object DownloadInProgress extends NodeState
+
     case object Ready extends NodeState
     case object Leaving extends NodeState
     case object Offline extends NodeState
 
-    val all: Set[NodeState] =
-      Set(Initial, ReadyToJoin, LoadingGenesis, GenesisReady, StartingSession, SessionStarted, Ready, Offline)
+    val all: Set[NodeState] = NodeState.values.toSet
 
     val toBroadcast: Set[NodeState] =
-      Set(Ready, Leaving, Offline)
+      Set(WaitingForDownload, DownloadInProgress, Ready, Leaving, Offline)
 
     def absent: Set[NodeState] =
       Set(Leaving, Offline)

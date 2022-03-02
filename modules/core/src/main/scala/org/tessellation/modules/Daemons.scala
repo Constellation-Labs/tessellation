@@ -9,6 +9,7 @@ import cats.syntax.traverse._
 import org.tessellation.config.types.AppConfig
 import org.tessellation.http.p2p.P2PClient
 import org.tessellation.infrastructure.healthcheck.HealthCheckDaemon
+import org.tessellation.infrastructure.snapshot.daemon.DownloadDaemon
 import org.tessellation.infrastructure.snapshot.{GlobalSnapshotEventsPublisherDaemon, SnapshotTriggerPipeline}
 import org.tessellation.infrastructure.trust.TrustDaemon
 import org.tessellation.kryo.KryoSerializer
@@ -23,6 +24,7 @@ object Daemons {
   def start[F[_]: Async: SecurityProvider: KryoSerializer: Random: Parallel](
     storages: Storages[F],
     services: Services[F],
+    programs: Programs[F],
     queues: Queues[F],
     healthChecks: HealthChecks[F],
     validators: Validators[F],
@@ -50,6 +52,7 @@ object Daemons {
           cfg.gossip.daemon
         ),
       NodeStateDaemon.make(storages.node, services.gossip),
+      DownloadDaemon.make(storages.node, programs.download),
       TrustDaemon.make(cfg.trust.daemon, storages.trust, nodeId),
       HealthCheckDaemon.make(healthChecks),
       GlobalSnapshotEventsPublisherDaemon.make(queues.stateChannelOutput, dagEvents, services.gossip)
