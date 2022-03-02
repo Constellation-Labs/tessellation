@@ -74,8 +74,8 @@ object ConsensusManager {
                   consensusStorage
                     .tryUpdateLastKeyAndArtifactWithCleanup(state.lastKeyAndArtifact, keyAndArtifact)
                     .ifM(
-                      logger.info(s"Consensus for key ${key.show} finished") >> checkAllForTrigger(keyAndArtifact),
-                      logger.info(s"Consensus for key ${key.show} finished, skip trying to trigger another")
+                      checkAllForTrigger(keyAndArtifact),
+                      logger.info("Skip triggering another consensus")
                     )
                 case _ =>
                   internalCheckForStateUpdate(key, state, resources)
