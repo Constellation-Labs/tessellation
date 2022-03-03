@@ -41,7 +41,8 @@ object method {
       trust = TrustConfig(
         TrustDaemonConfig(
           10.minutes
-        )
+        ),
+        Path("tmp/trust")
       ),
       healthCheck = healthCheckConfig,
       snapshot = snapshotConfig
@@ -85,14 +86,15 @@ object method {
     dbConfig: DBConfig,
     httpConfig: HttpConfig,
     environment: AppEnvironment,
-    snapshotConfig: SnapshotConfig
+    snapshotConfig: SnapshotConfig,
+    trustConfig: TrustConfig
   ) extends Run
 
   object RunValidator extends WithOpts[RunValidator] {
 
     val opts = Opts.subcommand("run-validator", "Run validator mode") {
-      (StorePath.opts, KeyAlias.opts, Password.opts, db.opts, http.opts, AppEnvironment.opts, snapshot.opts)
-        .mapN(RunValidator.apply(_, _, _, _, _, _, _))
+      (StorePath.opts, KeyAlias.opts, Password.opts, db.opts, http.opts, AppEnvironment.opts, snapshot.opts, trust.opts)
+        .mapN(RunValidator.apply(_, _, _, _, _, _, _, _))
     }
   }
 

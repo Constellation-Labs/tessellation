@@ -33,4 +33,9 @@ object trust {
     labels: Map[PeerId, Double]
   )
 
+  @derive(decoder, encoder, show)
+  case class TrustStorageData(
+    trustInfo: Map[PeerId, TrustInfo]
+  )
+
 }

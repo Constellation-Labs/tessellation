@@ -10,7 +10,7 @@ import org.tessellation.schema.gossip._
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.SignRequest
 import org.tessellation.schema.transaction.{Transaction, TransactionReference}
-import org.tessellation.schema.trust.PublicTrust
+import org.tessellation.schema.trust.{PublicTrust, TrustInfo, TrustStorageData}
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.SignatureProof
 
@@ -46,7 +46,9 @@ package object shared {
     classOf[Transaction] -> 324,
     classOf[TransactionReference] -> 325,
     classOf[Refined[_, _]] -> 326,
-    classOf[BigInt] -> 327
+    classOf[BigInt] -> 327,
+    classOf[TrustStorageData] -> 328,
+    classOf[TrustInfo] -> 329
   )
 
 }

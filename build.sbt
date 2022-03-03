@@ -8,6 +8,8 @@ ThisBuild / organizationName := "tessellation"
 ThisBuild / evictionErrorLevel := Level.Warn
 ThisBuild / scalafixDependencies += Libraries.organizeImports
 
+ThisBuild  / envFileName := ".sbtenv"
+
 resolvers += Resolver.sonatypeRepo("snapshots")
 
 val scalafixCommonSettings = inConfig(IntegrationTest)(scalafixConfigSettings(IntegrationTest))

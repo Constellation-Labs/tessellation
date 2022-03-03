@@ -4,10 +4,10 @@ import cats.effect.kernel.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.config.types.SnapshotConfig
+import org.tessellation.config.types.{SnapshotConfig, TrustConfig}
 import org.tessellation.domain.cluster.storage.AddressStorage
 import org.tessellation.domain.snapshot.GlobalSnapshotStorage
-import org.tessellation.domain.trust.storage.TrustStorage
+import org.tessellation.domain.trust.storage.{TrustStorage => TrustStorageDomain}
 import org.tessellation.infrastructure.cluster.storage.AddressStorage
 import org.tessellation.infrastructure.db.Database
 import org.tessellation.infrastructure.snapshot.{GlobalSnapshotLocalFileSystemStorage, GlobalSnapshotStorage}
@@ -22,11 +22,12 @@ object Storages {
 
   def make[F[_]: Async: Database: KryoSerializer](
     sdkStorages: SdkStorages[F],
-    snapshotConfig: SnapshotConfig
+    snapshotConfig: SnapshotConfig,
+    trustConfig: TrustConfig
   ): F[Storages[F]] =
     for {
       addressStorage <- AddressStorage.make[F]
-      trustStorage <- TrustStorage.make[F]
+      trustStorage <- TrustStorage.make[F](trustConfig.trustStorePath)
       globalSnapshotLocalFileSystemStorage <- GlobalSnapshotLocalFileSystemStorage.make(
         snapshotConfig.globalSnapshotPath
       )
@@ -50,6 +51,6 @@ sealed abstract class Storages[F[_]] private (
   val node: NodeStorage[F],
   val session: SessionStorage[F],
   val rumor: RumorStorage[F],
-  val trust: TrustStorage[F],
+  val trust: TrustStorageDomain[F],
   val globalSnapshot: GlobalSnapshotStorage[F]
 )

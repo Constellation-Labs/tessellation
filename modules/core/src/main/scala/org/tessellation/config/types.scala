@@ -34,7 +34,8 @@ object types {
   )
 
   case class TrustConfig(
-    daemon: TrustDaemonConfig
+    daemon: TrustDaemonConfig,
+    trustStorePath: Path
   )
 
   case class SnapshotConfig(

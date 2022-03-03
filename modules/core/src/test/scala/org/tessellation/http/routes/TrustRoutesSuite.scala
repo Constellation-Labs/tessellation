@@ -10,11 +10,11 @@ import org.tessellation.domain.cluster.programs.TrustPush
 import org.tessellation.infrastructure.trust.storage.TrustStorage
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.generators._
-import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.trust.{InternalTrustUpdate, InternalTrustUpdateBatch, TrustInfo}
+import org.tessellation.schema.trust.{InternalTrustUpdate, InternalTrustUpdateBatch}
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.sdkKryoRegistrar
 
+import fs2.io.file.Path
 import org.http4s.Method._
 import org.http4s._
 import org.http4s.client.dsl.io._
@@ -32,8 +32,7 @@ object TrustRoutesSuite extends HttpSuite {
       .forAsync[IO](sdkKryoRegistrar ++ coreKryoRegistrar)
       .use { implicit kryoPool =>
         for {
-          trust <- Ref[IO].of(Map.empty[PeerId, TrustInfo])
-          ts = TrustStorage.make[IO](trust)
+          ts <- TrustStorage.make[IO](Path("tmp/test"), diskEnabled = false)
           gossip = new Gossip[IO] {
             override def spread[A <: AnyRef: TypeTag](rumorContent: A): IO[Unit] = IO.unit
             override def spreadCommon[A <: AnyRef: TypeTag](rumorContent: A): IO[Unit] = IO.unit
