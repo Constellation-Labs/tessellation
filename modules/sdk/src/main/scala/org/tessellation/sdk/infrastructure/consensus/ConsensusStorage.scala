@@ -3,15 +3,16 @@ package org.tessellation.sdk.infrastructure.consensus
 import cats.effect.kernel.{Async, Ref}
 import cats.effect.std.Semaphore
 import cats.kernel.Next
+import cats.syntax.applicative._
+import cats.syntax.applicativeError._
 import cats.syntax.flatMap._
 import cats.syntax.foldable._
 import cats.syntax.functor._
 import cats.syntax.option._
 import cats.syntax.order._
-import cats.syntax.show._
 import cats.syntax.traverse._
 import cats.syntax.traverseFilter._
-import cats.{Applicative, Eq, Show}
+import cats.{Eq, Show}
 
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
@@ -22,21 +23,15 @@ import org.tessellation.security.signature.signature.Signature
 
 import io.chrisdavenport.mapref.MapRef
 import monocle.syntax.all._
-import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait ConsensusStorage[F[_], Event, Key, Artifact] {
 
-  trait StateUpdateFn
-      extends (
-        (
-          Option[ConsensusState[Key, Artifact]],
-          Option[ConsensusState[Key, Artifact]] => F[Boolean]
-        ) => F[Option[(Boolean, ConsensusState[Key, Artifact])]]
-      )
+  trait ModifyStateFn[B]
+      extends (Option[ConsensusState[Key, Artifact]] => F[Option[(Option[ConsensusState[Key, Artifact]], B)]])
 
   def getState(key: Key): F[Option[ConsensusState[Key, Artifact]]]
 
-  def updateState(key: Key)(stateUpdateFn: StateUpdateFn): F[Option[ConsensusState[Key, Artifact]]]
+  def condModifyState[B](key: Key)(modifyStateFn: ModifyStateFn[B]): F[Option[B]]
 
   def findEvent(predicate: Event => Boolean): F[Option[Event]]
 
@@ -88,29 +83,29 @@ object ConsensusStorage {
   ): ConsensusStorage[F, Event, Key, Artifact] =
     new ConsensusStorage[F, Event, Key, Artifact] {
 
-      private val logger = Slf4jLogger.getLogger[F]
-
       def getState(key: Key): F[Option[ConsensusState[Key, Artifact]]] =
         statesR(key).get
 
       def getResources(key: Key): F[Option[ConsensusResources[Artifact]]] =
         resourcesR(key).get
 
-      def updateState(key: Key)(stateUpdateFn: StateUpdateFn): F[Option[ConsensusState[Key, Artifact]]] =
+      def condModifyState[B](key: Key)(modifyStateFn: ModifyStateFn[B]): F[Option[B]] =
         stateUpdateSemaphore.permit.use { _ =>
           for {
             (maybeState, setter) <- statesR(key).access
-            result <- stateUpdateFn(maybeState, setter)
-            maybeNewState <- result.flatTraverse {
-              case (true, newState) =>
-                logger.trace(s"Consensus state for key ${key.show} transitioned to ${newState.show}") >>
-                  Applicative[F].pure(newState.some)
-              case (false, newState) =>
-                /** This should never occur as the access to the `ConsensusState` is protected by the semaphore */
-                logger.error(s"Consensus state for key ${key.show} failed to transition to ${newState.show}") >>
-                  Applicative[F].pure(none[ConsensusState[Key, Artifact]])
+            maybeResult <- modifyStateFn(maybeState)
+
+            maybeB <- maybeResult.traverse {
+              case (maybeState, b) =>
+                setter(maybeState)
+                  .ifM(
+                    b.pure[F],
+                    new Throwable(
+                      "Failed consensus state update, all consensus state updates should be sequenced with a semaphore"
+                    ).raiseError[F, B]
+                  )
             }
-          } yield maybeNewState
+          } yield maybeB
         }
 
       def setLastKeyAndArtifact(value: Option[(Key, Artifact)]): F[Unit] = lastKeyAndArtifactR.set(value)
@@ -126,14 +121,16 @@ object ConsensusStorage {
         }.flatTap(_ => cleanupStateAndResource(oldValue._1))
 
       private def cleanupStateAndResource(key: Key): F[Unit] =
-        statesR(key).set(none) >> resourcesR(key).set(none)
+        condModifyState[Unit](key) { _ =>
+          (none[ConsensusState[Key, Artifact]], ()).some.pure[F]
+        }.void
 
       def findEvent(predicate: Event => Boolean): F[Option[Event]] =
         for {
           peerIds <- eventsR.keys
           maybeFoundEvent <- peerIds.foldM(none[Event]) { (acc, peerId) =>
             acc match {
-              case Some(foundEvent) => Applicative[F].pure(foundEvent.some)
+              case Some(foundEvent) => foundEvent.some.pure[F]
               case None =>
                 eventsR(peerId).get.map {
                   _.flatMap(events => events.map(_._2).find(predicate))
