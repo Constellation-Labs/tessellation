@@ -1,18 +1,18 @@
 package org.tessellation.sdk.infrastructure.consensus
 
 import cats.effect.kernel.{Async, Ref}
-import cats.effect.std.Semaphore
 import cats.kernel.Next
+import cats.syntax.applicative._
 import cats.syntax.flatMap._
 import cats.syntax.foldable._
 import cats.syntax.functor._
 import cats.syntax.option._
 import cats.syntax.order._
-import cats.syntax.show._
 import cats.syntax.traverse._
 import cats.syntax.traverseFilter._
 import cats.{Applicative, Eq, Show}
 
+import org.tessellation.ext.cats.effect._
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.gossip.Ordinal
@@ -22,21 +22,17 @@ import org.tessellation.security.signature.signature.Signature
 
 import io.chrisdavenport.mapref.MapRef
 import monocle.syntax.all._
-import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait ConsensusStorage[F[_], Event, Key, Artifact] {
 
-  trait StateUpdateFn
+  trait ModifyStateFn[B]
       extends (
-        (
-          Option[ConsensusState[Key, Artifact]],
-          Option[ConsensusState[Key, Artifact]] => F[Boolean]
-        ) => F[Option[(Boolean, ConsensusState[Key, Artifact])]]
+        Option[ConsensusState[Key, Artifact]] => F[Option[(Option[ConsensusState[Key, Artifact]], B)]]
       )
 
   def getState(key: Key): F[Option[ConsensusState[Key, Artifact]]]
 
-  def updateState(key: Key)(stateUpdateFn: StateUpdateFn): F[Option[ConsensusState[Key, Artifact]]]
+  def condTryModifyState[B](key: Key)(stateUpdateFn: ModifyStateFn[B]): F[Option[B]]
 
   def findEvent(predicate: Event => Boolean): F[Option[Event]]
 
@@ -72,46 +68,28 @@ object ConsensusStorage {
     lastKeyAndArtifact: Option[(Key, Artifact)] = none[(Key, Artifact)]
   ): F[ConsensusStorage[F, Event, Key, Artifact]] =
     for {
-      stateUpdateSemaphore <- Semaphore[F](1)
       lastKeyAndArtifactR <- Ref.of(lastKeyAndArtifact)
       eventsR <- MapRef.ofConcurrentHashMap[F, PeerId, List[(Ordinal, Event)]]()
-      statesR <- MapRef.ofConcurrentHashMap[F, Key, ConsensusState[Key, Artifact]]()
+      statesR <- MapRef.ofConcurrentHashMap[F, Key, OptionLock[ConsensusState[Key, Artifact]]]()
       resourcesR <- MapRef.ofConcurrentHashMap[F, Key, ConsensusResources[Artifact]]()
-    } yield make(stateUpdateSemaphore, lastKeyAndArtifactR, eventsR, statesR, resourcesR)
+    } yield make(lastKeyAndArtifactR, eventsR, statesR, resourcesR)
 
   def make[F[_]: Async: KryoSerializer, Event, Key: Show: Next: Eq, Artifact <: AnyRef: Show: Eq](
-    stateUpdateSemaphore: Semaphore[F],
     lastKeyAndArtifactR: Ref[F, Option[(Key, Artifact)]],
     eventsR: MapRef[F, PeerId, Option[List[(Ordinal, Event)]]],
-    statesR: MapRef[F, Key, Option[ConsensusState[Key, Artifact]]],
+    statesR: MapRef[F, Key, Option[OptionLock[ConsensusState[Key, Artifact]]]],
     resourcesR: MapRef[F, Key, Option[ConsensusResources[Artifact]]]
   ): ConsensusStorage[F, Event, Key, Artifact] =
     new ConsensusStorage[F, Event, Key, Artifact] {
 
-      private val logger = Slf4jLogger.getLogger[F]
-
       def getState(key: Key): F[Option[ConsensusState[Key, Artifact]]] =
-        statesR(key).get
+        statesR(key).getL
 
       def getResources(key: Key): F[Option[ConsensusResources[Artifact]]] =
         resourcesR(key).get
 
-      def updateState(key: Key)(stateUpdateFn: StateUpdateFn): F[Option[ConsensusState[Key, Artifact]]] =
-        stateUpdateSemaphore.permit.use { _ =>
-          for {
-            (maybeState, setter) <- statesR(key).access
-            result <- stateUpdateFn(maybeState, setter)
-            maybeNewState <- result.flatTraverse {
-              case (true, newState) =>
-                logger.trace(s"Consensus state for key ${key.show} transitioned to ${newState.show}") >>
-                  Applicative[F].pure(newState.some)
-              case (false, newState) =>
-                /** This should never occur as the access to the `ConsensusState` is protected by the semaphore */
-                logger.error(s"Consensus state for key ${key.show} failed to transition to ${newState.show}") >>
-                  Applicative[F].pure(none[ConsensusState[Key, Artifact]])
-            }
-          } yield maybeNewState
-        }
+      def condTryModifyState[B](key: Key)(stateUpdateFn: ModifyStateFn[B]): F[Option[B]] =
+        statesR(key).condTryModifyL(stateUpdateFn)
 
       def setLastKeyAndArtifact(value: Option[(Key, Artifact)]): F[Unit] = lastKeyAndArtifactR.set(value)
 
@@ -126,7 +104,9 @@ object ConsensusStorage {
         }.flatTap(_ => cleanupStateAndResource(oldValue._1))
 
       private def cleanupStateAndResource(key: Key): F[Unit] =
-        statesR(key).set(none) >> resourcesR(key).set(none)
+        statesR(key).tryModifyL { _ =>
+          (none[ConsensusState[Key, Artifact]], ()).pure[F]
+        }.map(_.isDefined).ifM(resourcesR(key).set(none), Applicative[F].unit)
 
       def findEvent(predicate: Event => Boolean): F[Option[Event]] =
         for {
