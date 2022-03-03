@@ -5,7 +5,7 @@ import java.security.KeyPair
 import cats.data.NonEmptyList
 import cats.effect.Async
 import cats.kernel.Next
-import cats.syntax.all.none
+import cats.syntax.applicative._
 import cats.syntax.flatMap._
 import cats.syntax.foldable._
 import cats.syntax.functor._
@@ -58,52 +58,67 @@ object ConsensusStateUpdater {
 
     private val logger = Slf4jLogger.getLoggerFromClass(ConsensusStateUpdater.getClass)
 
+    /** Pair of (maybeUpdatedState, effect) */
+    type ModifyStateResult = (Option[ConsensusState[Key, Artifact]], F[Unit])
+
     def tryFacilitateConsensus(
       key: Key,
       lastKeyAndArtifact: (Key, Artifact)
     ): F[Option[ConsensusState[Key, Artifact]]] =
       consensusStorage
-        .updateState(key)(logStatusIfUpdated(internalTryFacilitateConsensus(key, lastKeyAndArtifact)))
+        .condModifyState(key)(toModifyStateFn(internalTryFacilitateConsensus(key, lastKeyAndArtifact)))
+        .flatMap(evalEffect)
+        .flatTap(logIfModified(key))
 
     def tryAdvanceConsensus(
       key: Key,
       resources: ConsensusResources[Artifact]
     ): F[Option[ConsensusState[Key, Artifact]]] =
       consensusStorage
-        .updateState(key)(logStatusIfUpdated(internalTryAdvanceConsensus(key, resources)))
+        .condModifyState(key)(toModifyStateFn(internalTryAdvanceConsensus(key, resources)))
+        .flatMap(evalEffect)
+        .flatTap(logIfModified(key))
 
-    import consensusStorage.StateUpdateFn
+    import consensusStorage.ModifyStateFn
 
-    private def logStatusIfUpdated(fn: StateUpdateFn): StateUpdateFn =
-      fn(_, _).flatTap {
-        case Some((true, newState)) =>
-          logger.debug(s"Consensus status for key ${newState.key.show} transitioned to ${newState.status.show}")
-        case _ => Applicative[F].unit
+    private def toModifyStateFn(
+      fn: Option[ConsensusState[Key, Artifact]] => F[Option[(ConsensusState[Key, Artifact], F[Unit])]]
+    ): ModifyStateFn[ModifyStateResult] =
+      maybeState =>
+        fn(maybeState).map(_.map {
+          case (state, effect) => (state.some, (state.some, effect))
+        })
+
+    private def evalEffect(result: Option[ModifyStateResult]): F[Option[ConsensusState[Key, Artifact]]] =
+      result.flatTraverse {
+        case (maybeState, effect) => effect.map(_ => maybeState)
       }
 
+    private def logIfModified(key: Key)(maybeState: Option[ConsensusState[Key, Artifact]]): F[Unit] =
+      maybeState.traverse { state =>
+        logger.debug(s"Consensus status for key ${key.show} transitioned to ${state.status.show}")
+      }.void
+
     private def internalTryFacilitateConsensus(key: Key, lastKeyAndArtifact: (Key, Artifact))(
-      maybeState: Option[ConsensusState[Key, Artifact]],
-      setter: Option[ConsensusState[Key, Artifact]] => F[Boolean]
-    ): F[Option[(Boolean, ConsensusState[Key, Artifact])]] =
+      maybeState: Option[ConsensusState[Key, Artifact]]
+    ): F[Option[(ConsensusState[Key, Artifact], F[Unit])]] =
       maybeState match {
         case None =>
           for {
             peers <- clusterStorage.getPeers
             facilitators = selfId :: NodeState.ready(peers).map(_.id).toList
             state = ConsensusState(key, facilitators, lastKeyAndArtifact, Facilitated[Artifact]())
-            result <- setter(state.some)
             bound <- consensusStorage.getUpperBound
-            _ <- gossip.spread(ConsensusFacility(key, bound))
-          } yield (result, state).some
+            effect = gossip.spread(ConsensusFacility(key, bound))
+          } yield (state, effect).some
         case Some(consensusState) =>
           logger.debug(s"Consensus state for key ${key.show} already exists ${consensusState.show}") >>
-            Applicative[F].pure(none[(Boolean, ConsensusState[Key, Artifact])])
+            none.pure[F]
       }
 
     private def internalTryAdvanceConsensus(key: Key, resources: ConsensusResources[Artifact])(
-      maybeState: Option[ConsensusState[Key, Artifact]],
-      setter: Option[ConsensusState[Key, Artifact]] => F[Boolean]
-    ): F[Option[(Boolean, ConsensusState[Key, Artifact])]] =
+      maybeState: Option[ConsensusState[Key, Artifact]]
+    ): F[Option[(ConsensusState[Key, Artifact], F[Unit])]] =
       maybeState.flatTraverse { state =>
         state.status match {
           case Facilitated() =>
@@ -124,9 +139,8 @@ object ConsensusStateUpdater {
                 _ <- consensusStorage.addEvents(returnedPeerEvents)
                 hash <- artifact.hashF
                 newState = state.copy(status = ProposalMade[Artifact](hash, artifact))
-                result <- setter(newState.some)
-                _ <- gossip.spread(ConsensusProposal(key, hash))
-              } yield (result, newState)
+                effect = gossip.spread(ConsensusProposal(key, hash))
+              } yield (newState, effect)
             }
           case ProposalMade(proposalHash, proposalArtifact) =>
             val maybeMajority = state.facilitators
@@ -137,15 +151,14 @@ object ConsensusStateUpdater {
             maybeMajority.traverse { majorityHash =>
               val newState = state.copy(status = MajoritySelected[Artifact](majorityHash))
               for {
-                result <- setter(newState.some)
                 signature <- Signature.fromHash(keyPair.getPrivate, majorityHash)
-                _ <- gossip.spread(MajoritySignature(key, signature))
-                _ <- if (majorityHash == proposalHash)
-                  gossip.spreadCommon(ConsensusArtifact(key, proposalArtifact))
-                else
-                  Applicative[F].unit
-              } yield (result, newState)
-
+                effect = gossip.spread(MajoritySignature(key, signature)) >> {
+                  if (majorityHash == proposalHash)
+                    gossip.spreadCommon(ConsensusArtifact(key, proposalArtifact))
+                  else
+                    Applicative[F].unit
+                }
+              } yield (newState, effect)
             }
           case MajoritySelected(majorityHash) =>
             val maybeAllSignatures =
@@ -163,19 +176,13 @@ object ConsensusStateUpdater {
 
             maybeSignedArtifact.traverse { signedArtifact =>
               val newState = state.copy(status = MajoritySigned(signedArtifact))
-              for {
-                result <- setter(newState.some)
-                _ <- consensusFns.consumeSignedMajorityArtifact(signedArtifact)
-                _ <- gossip.spreadCommon(ConsensusArtifact(key, signedArtifact))
-                _ <- if (result)
-                  logger.info(s"Consensus for key ${key.show} finished. Majority artifact hash is ${majorityHash.show}")
-                else
-                  Applicative[F].unit
-              } yield (result, newState)
+              consensusFns.consumeSignedMajorityArtifact(signedArtifact).map { _ =>
+                val effect = gossip.spreadCommon(ConsensusArtifact(key, signedArtifact))
+                (newState, effect)
+              }
             }
-
           case MajoritySigned(_) =>
-            Applicative[F].pure(none)
+            none[(ConsensusState[Key, Artifact], F[Unit])].pure[F]
         }
       }
 
