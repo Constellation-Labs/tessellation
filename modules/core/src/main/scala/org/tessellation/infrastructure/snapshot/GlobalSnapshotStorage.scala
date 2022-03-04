@@ -20,7 +20,6 @@ import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.cats.syntax.partialPrevious._
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto.autoUnwrap
@@ -82,10 +81,7 @@ object GlobalSnapshotStorage {
         def prepend(snapshot: Signed[GlobalSnapshot]): F[Boolean] =
           headRef.modify {
             case None =>
-              if (isGenesis(snapshot))
-                (snapshot.some, enqueue(snapshot).map(_ => true))
-              else
-                (none, false.pure[F])
+              (snapshot.some, enqueue(snapshot).map(_ => true))
             case Some(current) =>
               isNextSnapshot(current, snapshot) match {
                 case Left(e) =>
@@ -118,10 +114,6 @@ object GlobalSnapshotStorage {
           current.value.hash.map { hash =>
             hash === snapshot.value.lastSnapshotHash && current.value.ordinal.next === snapshot.value.ordinal
           }
-
-        private def isGenesis(snapshot: GlobalSnapshot): Boolean =
-          snapshot.ordinal === SnapshotOrdinal.MinValue && snapshot.lastSnapshotHash === Hash.empty
-
       }
     }
   }
