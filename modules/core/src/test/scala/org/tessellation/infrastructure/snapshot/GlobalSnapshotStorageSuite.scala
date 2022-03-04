@@ -103,14 +103,14 @@ object GlobalSnapshotStorageSuite extends MutableIOSuite with Checkers {
     }
   }
 
-  test("prepend - should return false if snapshot does not create a chain") { res =>
+  test("prepend - should allow to start from any arbitrary snapshot") { res =>
     implicit val (kryo, sp) = res
 
     File.temporaryDirectory() { tmpDir =>
       mkStorage(tmpDir).flatMap { storage =>
         mkSnapshots.flatMap {
           case (_, snapshot) =>
-            storage.prepend(snapshot).map { expect.same(_, false) }
+            storage.prepend(snapshot).map { expect.same(_, true) }
         }
       }
     }
