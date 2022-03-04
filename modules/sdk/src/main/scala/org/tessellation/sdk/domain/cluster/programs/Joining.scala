@@ -120,7 +120,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
 
   private def validateJoinConditions(toPeer: PeerToJoin): F[Unit] =
     for {
-      nodeState <- nodeStorage.getNodeState
+      nodeState <- nodeStorage.state
 
       canJoinCluster <- nodeStorage.canJoinCluster
       _ <- if (!canJoinCluster) NodeStateDoesNotAllowForJoining(nodeState).raiseError[F, Unit]
@@ -182,7 +182,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
       _ <- clusterStorage.addPeer(peer)
 
       // Note: Changing state from SessionStarted to Ready state will execute once for first peer, then all consecutive joins should be ignored
-      _ <- nodeStorage.tryModifyState(NodeState.SessionStarted, NodeState.WaitingForDownload).handleError(_ => ())
+      _ <- nodeStorage.tryModify(NodeState.SessionStarted, NodeState.WaitingForDownload).handleError(_ => ())
     } yield peer
 
   private def validateHandshake(registrationRequest: RegistrationRequest, remoteAddress: Option[Host]): F[Unit] =

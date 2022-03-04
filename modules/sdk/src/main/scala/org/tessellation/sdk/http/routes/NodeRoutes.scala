@@ -16,7 +16,7 @@ final case class NodeRoutes[F[_]: Async](
 
   private val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
     case GET -> Root / "state" =>
-      Ok(nodeStorage.getNodeState)
+      Ok(nodeStorage.state)
 
     case GET -> Root / "health" =>
       Ok()

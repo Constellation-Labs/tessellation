@@ -56,13 +56,13 @@ object Main extends TessellationIOApp[Run]("", "DAG L1 node", version = BuildInf
           method match {
             case cfg: RunInitialValidator =>
               programs.l0PeerDiscovery.discoverFrom(cfg.l0Peer) >>
-                storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
+                storages.node.tryModify(NodeState.Initial, NodeState.ReadyToJoin) >>
                 services.session.createSession >>
-                storages.node.tryModifyState(SessionStarted, NodeState.Ready)
+                storages.node.tryModify(SessionStarted, NodeState.Ready)
 
             case cfg: RunValidator =>
               programs.l0PeerDiscovery.discoverFrom(cfg.l0Peer) >>
-                storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
+                storages.node.tryModify(NodeState.Initial, NodeState.ReadyToJoin)
           }
         }.asResource
         _ <- stateChannel.runtime.compile.drain.asResource

@@ -37,7 +37,7 @@ sealed abstract class Download[F[_]: Async] private (
   private def logger = Slf4jLogger.getLogger[F]
 
   def download(): F[Unit] =
-    nodeStorage.tryModifyState(NodeState.WaitingForDownload, NodeState.DownloadInProgress, NodeState.Ready) {
+    nodeStorage.tryModify(NodeState.WaitingForDownload, NodeState.DownloadInProgress, NodeState.Ready) {
       clusterStorage.getPeers
         .map(_.headOption)
         .flatMap {

@@ -43,7 +43,7 @@ object Cluster {
             case Some(s) => Applicative[F].pure(s)
             case None    => MonadThrow[F].raiseError[SessionToken](SessionDoesNotExist)
           }
-          state <- nodeStorage.getNodeState
+          state <- nodeStorage.state
         } yield
           RegistrationRequest(
             selfId,
@@ -59,9 +59,9 @@ object Cluster {
 
       def leave(): F[Unit] = {
         def process =
-          nodeStorage.setNodeState(NodeState.Leaving) >>
+          nodeStorage.set(NodeState.Leaving) >>
             Temporal[F].sleep(leavingDelay) >>
-            nodeStorage.setNodeState(NodeState.Offline) >>
+            nodeStorage.set(NodeState.Offline) >>
             Temporal[F].sleep(5.seconds) >>
             restartSignal.set(())
 

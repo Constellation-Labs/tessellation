@@ -68,9 +68,9 @@ object Main
 
         _ <- (method match {
           case _: RunValidator =>
-            storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
+            storages.node.tryModify(NodeState.Initial, NodeState.ReadyToJoin)
           case m: RunGenesis =>
-            storages.node.tryModifyState(
+            storages.node.tryModify(
               NodeState.Initial,
               NodeState.LoadingGenesis,
               NodeState.GenesisReady
@@ -84,7 +84,7 @@ object Main
                       services.consensus.setLastKeyAndArtifact((genesis.ordinal, genesis).some)
                   }
               }
-            } >> services.session.createSession >> storages.node.setNodeState(NodeState.Ready)
+            } >> services.session.createSession >> storages.node.set(NodeState.Ready)
         }).asResource
       } yield ()
     }

@@ -39,7 +39,7 @@ object Validator {
   ): F[Boolean] =
     for {
       noOwnRoundInProgress <- consensusStorage.ownConsensus.get.map(_.isEmpty)
-      stateReadyForConsensus <- nodeStorage.getNodeState.map(isReadyForBlockConsensus)
+      stateReadyForConsensus <- nodeStorage.state.map(isReadyForBlockConsensus)
       enoughPeers <- enoughPeersForConsensus(clusterStorage, peersCount)
     } yield noOwnRoundInProgress && stateReadyForConsensus && enoughPeers
 

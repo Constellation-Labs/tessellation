@@ -26,7 +26,7 @@ object Session {
 
       def createSession: F[SessionToken] =
         nodeStorage
-          .tryModifyState(
+          .tryModify(
             validNodeStatesForSessionCreation,
             NodeState.StartingSession,
             NodeState.SessionStarted
