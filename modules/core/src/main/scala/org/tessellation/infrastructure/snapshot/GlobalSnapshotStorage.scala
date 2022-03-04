@@ -1,7 +1,5 @@
 package org.tessellation.infrastructure.snapshot
 
-import java.nio.file.NoSuchFileException
-
 import cats.effect.std.Queue
 import cats.effect.{Async, Ref, Spawn}
 import cats.syntax.applicative._
@@ -63,7 +61,7 @@ object GlobalSnapshotStorage {
         .evalTap { ordinal =>
           cache(ordinal).get.flatMap {
             case Some(snapshot) =>
-              globalSnapshotLocalFileSystemStorage.write(snapshot).rethrowT.handleErrorWith { e =>
+              globalSnapshotLocalFileSystemStorage.write(snapshot).handleErrorWith { e =>
                 Logger[F].error(e)(s"Failed writing global snapshot to disk! Snapshot ordinal=${snapshot.ordinal.show}")
               } >> cache(ordinal).set(none)
             case None => MonadThrow[F].raiseError[Unit](new Throwable("Unexpected state!"))
@@ -101,14 +99,7 @@ object GlobalSnapshotStorage {
 
         def get(ordinal: SnapshotOrdinal): F[Option[Signed[GlobalSnapshotArtifact]]] = cache(ordinal).get.flatMap {
           case Some(s) => s.some.pure[F]
-          case None =>
-            globalSnapshotLocalFileSystemStorage
-              .read(ordinal)
-              .rethrowT
-              .map(_.some)
-              .recover {
-                case _: NoSuchFileException => none[Signed[GlobalSnapshot]]
-              }
+          case None    => globalSnapshotLocalFileSystemStorage.read(ordinal)
         }
 
         private def isNextSnapshot(
