@@ -1,22 +1,27 @@
 package org.tessellation.storage
 
 import java.io.{File => JFile}
+import java.nio.file.NoSuchFileException
 
 import cats.data.EitherT
 import cats.effect.Async
 import cats.syntax.applicativeError._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+import cats.syntax.option._
+import cats.syntax.traverse._
 
 import scala.reflect.ClassTag
 
+import org.tessellation.ext.kryo._
 import org.tessellation.kryo.KryoSerializer
 
 import better.files._
 import fs2.io.file.Path
 
-abstract class LocalFileSystemStorage[F[_]: KryoSerializer, A <: AnyRef: ClassTag](baseDir: Path)(implicit F: Async[F])
-    extends FileSystemStorage[F, A]
+abstract class LocalFileSystemStorage[F[_]: KryoSerializer, A <: AnyRef: ClassTag](baseDir: Path)(
+  implicit F: Async[F]
+) extends FileSystemStorage[F, A]
     with DiskSpace[F] {
 
   private lazy val dir: F[File] = F.delay {
@@ -36,38 +41,38 @@ abstract class LocalFileSystemStorage[F[_]: KryoSerializer, A <: AnyRef: ClassTa
     F.delay { (a / fileName).exists }
   }
 
-  def read(fileName: String): EitherT[F, Throwable, A] = readBytes(fileName).flatMap { bytes =>
-    EitherT.fromEither { KryoSerializer[F].deserialize[A](bytes) }
-  }
+  def read(fileName: String): F[Option[A]] =
+    readBytes(fileName)
+      .flatMap(_.traverse(_.fromBinaryF))
 
-  def readBytes(fileName: String): EitherT[F, Throwable, Array[Byte]] =
+  def readBytes(fileName: String): F[Option[Array[Byte]]] =
     dir
       .map(_ / fileName)
       .flatMap { a =>
-        F.delay { a.loadBytes }
+        F.delay { a.loadBytes }.map(_.some)
       }
-      .attemptT
+      .recover {
+        case _: NoSuchFileException => none[Array[Byte]]
+      }
 
-  def write(fileName: String, a: A): EitherT[F, Throwable, Unit] =
-    EitherT.fromEither { KryoSerializer[F].serialize(a) }.flatMap { write(fileName, _) }
+  def write(fileName: String, a: A): F[Unit] =
+    a.toBinaryF.flatMap { write(fileName, _) }
 
-  def write(fileName: String, bytes: Array[Byte]): EitherT[F, Throwable, Unit] =
+  def write(fileName: String, bytes: Array[Byte]): F[Unit] =
     dir
       .map(_ / fileName)
       .flatMap { a =>
         F.delay { a.writeByteArray(bytes) }
       }
       .void
-      .attemptT
 
-  def delete(fileName: String): EitherT[F, Throwable, Unit] =
+  def delete(fileName: String): F[Unit] =
     dir
       .map(_ / fileName)
       .flatMap { a =>
         F.delay { a.delete() }
       }
       .void
-      .attemptT
 
   def getUsableSpace: F[Long] = jDir.flatMap { a =>
     F.delay { a.getUsableSpace() }
