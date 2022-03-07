@@ -29,7 +29,7 @@ object AddressStorage {
       import ctx._
 
       override def getBalance(address: Address): F[Balance] =
-        run(getAddressBalance(lift(address))).map(_.headOption.getOrElse(Balance(BigInt(0)))).transact(xa)
+        run(getAddressBalance(lift(address))).map(_.headOption.getOrElse(Balance.empty)).transact(xa)
 
       override def updateBalance(address: Address, balance: Balance): F[(Address, Balance)] =
         run(getAddressBalance(lift(address)))

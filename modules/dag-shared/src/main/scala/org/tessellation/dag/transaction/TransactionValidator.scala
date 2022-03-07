@@ -7,6 +7,8 @@ import cats.syntax.applicative._
 import cats.syntax.flatMap._
 import cats.syntax.foldable._
 import cats.syntax.functor._
+import cats.syntax.option._
+import cats.syntax.order._
 import cats.syntax.show._
 import cats.syntax.traverse._
 import cats.syntax.validated._
@@ -63,7 +65,7 @@ abstract class TransactionValidator[F[_]: Async: KryoSerializer: SecurityProvide
 
   private def validateLastTransactionRef(tx: Transaction): F[ValidationResult[Transaction]] =
     getLastAcceptedTransactionRef(tx.source).map { lastTxRef =>
-      lazy val comparedOrdinals = tx.parent.ordinal.coerce.compare(lastTxRef.ordinal.coerce)
+      lazy val comparedOrdinals = tx.parent.ordinal.compare(lastTxRef.ordinal)
       lazy val nonZeroOrdinalHasEmptyHash = tx.parent.ordinal.coerce > 0L && tx.parent.hash.coerce.isEmpty
       lazy val ordinalIsLower = comparedOrdinals < 0L
       lazy val hashIsNotEqual = comparedOrdinals == 0L && tx.parent != lastTxRef
@@ -101,10 +103,11 @@ abstract class TransactionValidator[F[_]: Async: KryoSerializer: SecurityProvide
   ): F[ValidationResult[NonEmptyList[Transaction]]] = {
     def validate(source: Address, txs: Seq[Transaction]): F[ValidationResult[Seq[Transaction]]] =
       getBalance(source).map { balance =>
-        val totalAmount = txs.map(tx => tx.amount.coerce + tx.fee.coerce).sum
-        val remaining = balance.coerce - totalAmount
-
-        remaining >= BigInt(0)
+        txs
+          .foldLeft(balance.some) {
+            case (b, tx) => b.flatMap(_.minus(tx.amount).toOption).flatMap(_.minus(tx.fee).toOption)
+          }
+          .isDefined
       }.ifM(
         txs.validNel.pure[F],
         Applicative[F].pure(InsufficientSourceBalance(source).invalidNel)

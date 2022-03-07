@@ -15,13 +15,13 @@ object types {
   @derive(eqv, show)
   case class GenesisAccount(address: Address, balance: Balance)
 
-  case class GenesisCSVAccount(address: String, balance: BigInt) {
+  case class GenesisCSVAccount(address: String, balance: Long) {
 
     def toGenesisAccount: Either[String, GenesisAccount] =
       for {
         dagAddress <- refineV[DAGAddressRefined](address)
-        nonNegBigInt <- refineV[NonNegative](balance)
-      } yield GenesisAccount(Address(dagAddress), Balance(nonNegBigInt))
+        nonNegLong <- refineV[NonNegative](balance)
+      } yield GenesisAccount(Address(dagAddress), Balance(nonNegLong))
   }
 
   object GenesisCSVAccount {

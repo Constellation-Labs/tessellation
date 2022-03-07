@@ -9,16 +9,19 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.security.signature.Signed
 import org.tessellation.storage.LocalFileSystemStorage
 
+import eu.timepit.refined.auto._
 import fs2.io.file.Path
 
 final class GlobalSnapshotLocalFileSystemStorage[F[_]: Async: KryoSerializer] private (path: Path)
     extends LocalFileSystemStorage[F, Signed[GlobalSnapshot]](path) {
 
   def write(snapshot: Signed[GlobalSnapshot]): F[Unit] =
-    write(snapshot.value.ordinal.value.value.toString, snapshot)
+    write(toFileName(snapshot.value.ordinal), snapshot)
 
   def read(ordinal: SnapshotOrdinal): F[Option[Signed[GlobalSnapshot]]] =
-    read(ordinal.value.value.toString)
+    read(toFileName(ordinal))
+
+  private def toFileName(ordinal: SnapshotOrdinal) = ordinal.value.value.toString
 
 }
 

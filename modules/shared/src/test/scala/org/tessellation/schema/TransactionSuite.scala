@@ -32,11 +32,11 @@ object TransactionSuite extends ResourceSuite with Checkers {
     val transaction = Transaction(
       Address("DAG2EUdecqFwEGcgAcH1ac2wrsg8acrgGwrQabcd"),
       Address("DAG2EUdecqFwEGcgAcH1ac2wrsg8acrgGwrQefgh"),
-      TransactionAmount(BigInt(10)),
-      TransactionFee(BigInt(3)),
+      TransactionAmount(10L),
+      TransactionFee(3L),
       TransactionReference(
         Hash("someHash"),
-        TransactionOrdinal(BigInt(2))
+        TransactionOrdinal(2L)
       ),
       TransactionSalt(1234L)
     )
@@ -67,11 +67,11 @@ object TransactionSuite extends ResourceSuite with Checkers {
     val transaction = Transaction(
       Address("DAG53ho9ssY8KYQdjxsWPYgNbDJ1YqM2RaPDZebU"),
       Address("DAG53ho9ssY8KYQdjxsWPYgNbDJ1YqM2RaPDZebU"),
-      TransactionAmount(BigInt(100000000L)),
-      TransactionFee(BigInt(0L)),
+      TransactionAmount(100000000L),
+      TransactionFee(0L),
       TransactionReference(
         Hash("d5149e2339ced3b285062dc403ba0c89642792a462476dc35f63e0328b3cac52"),
-        TransactionOrdinal(BigInt(1L))
+        TransactionOrdinal(1L)
       ),
       TransactionSalt(-6326757804706870905L)
     )

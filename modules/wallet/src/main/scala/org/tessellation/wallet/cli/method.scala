@@ -11,7 +11,7 @@ import org.tessellation.schema.transaction.{TransactionAmount, TransactionFee}
 import com.monovore.decline.Opts
 import com.monovore.decline.refined._
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.{NonNegBigInt, PosBigInt}
+import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 import fs2.io.file.Path
 import io.estatico.newtype.ops._
 
@@ -60,14 +60,14 @@ object method {
     val opts: Opts[CreateTransaction] = Opts.subcommand("create-transaction", "Creates transaction") {
       (
         Opts.option[Address]("destination", "Destination DAG address", "d"),
-        Opts.option[TransactionFee]("fee", "Transaction fee").withDefault(TransactionFee(NonNegBigInt(BigInt(0L)))),
+        Opts.option[TransactionFee]("fee", "Transaction fee").withDefault(TransactionFee(NonNegLong(0L))),
         (
           Opts.option[TransactionAmount]("amount", "Transaction DAG amount", "a"),
           Opts.flag("normalized", "Use to mark that amount is already normalized", "n").orFalse
         ).tupled.mapValidated {
           case (amount, normalized) =>
             if (normalized) amount.validNel
-            else PosBigInt.from(amount.coerce * 1e8.toLong).map(_.coerce[TransactionAmount]).toValidatedNel
+            else PosLong.from(amount.coerce * 1e8.toLong).map(_.coerce[TransactionAmount]).toValidatedNel
         },
         Opts.option[Path]("prevTxPath", "Path to previously created transaction file", "p").orNone,
         Opts.option[Path]("nextTxPath", "Path where next transaction should be created", "f")

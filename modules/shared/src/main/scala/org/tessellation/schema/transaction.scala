@@ -4,14 +4,16 @@ import cats.Order
 import cats.syntax.semigroup._
 
 import org.tessellation.schema.address.Address
+import org.tessellation.schema.balance.Amount
 import org.tessellation.security.Encodable
 import org.tessellation.security.hash.Hash
 
-import derevo.cats.{eqv, show}
+import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
-import eu.timepit.refined.auto.{autoRefineV, autoUnwrap}
-import eu.timepit.refined.types.numeric.{NonNegBigInt, PosBigInt}
+import eu.timepit.refined.auto.{autoInfer, autoRefineV, autoUnwrap}
+import eu.timepit.refined.cats.nonNegLongCommutativeMonoid
+import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 import io.estatico.newtype.macros.newtype
 import io.estatico.newtype.ops._
 import monocle.Lens
@@ -21,27 +23,35 @@ object transaction {
 
   @derive(decoder, encoder, eqv, show)
   @newtype
-  case class TransactionAmount(value: PosBigInt)
+  case class TransactionAmount(value: PosLong)
+
+  object TransactionAmount {
+    implicit def toAmount(amount: TransactionAmount): Amount = Amount(amount.value)
+  }
 
   @derive(decoder, encoder, eqv, show)
   @newtype
-  case class TransactionFee(value: NonNegBigInt)
+  case class TransactionFee(value: NonNegLong)
 
-  @derive(decoder, encoder, eqv, show)
+  object TransactionFee {
+    implicit def toAmount(fee: TransactionFee): Amount = Amount(fee.value)
+  }
+
+  @derive(decoder, encoder, order, show)
   @newtype
-  case class TransactionOrdinal(value: NonNegBigInt) {
-    def next: TransactionOrdinal = TransactionOrdinal(value |+| BigInt(1))
+  case class TransactionOrdinal(value: NonNegLong) {
+    def next: TransactionOrdinal = TransactionOrdinal(value |+| 1L)
   }
 
   object TransactionOrdinal {
-    val first: TransactionOrdinal = TransactionOrdinal(BigInt(1))
+    val first: TransactionOrdinal = TransactionOrdinal(1L)
   }
 
   @derive(decoder, encoder, eqv, show)
   case class TransactionReference(hash: Hash, ordinal: TransactionOrdinal)
 
   object TransactionReference {
-    val empty: TransactionReference = TransactionReference(Hash(""), TransactionOrdinal(BigInt(0L)))
+    val empty: TransactionReference = TransactionReference(Hash(""), TransactionOrdinal(0L))
 
     val _Hash: Lens[TransactionReference, Hash] = GenLens[TransactionReference](_.hash)
     val _Ordinal: Lens[TransactionReference, TransactionOrdinal] = GenLens[TransactionReference](_.ordinal)
@@ -82,7 +92,7 @@ object transaction {
           Seq(
             source.coerce,
             destination.coerce,
-            amount.coerce.value.toString(16),
+            amount.coerce.value.toHexString,
             parent.hash.coerce,
             parent.ordinal.coerce.value.toString(),
             fee.coerce.value.toString(),
@@ -107,7 +117,7 @@ object transaction {
     val _ParentOrdinal: Lens[Transaction, TransactionOrdinal] = _Parent.andThen(TransactionReference._Ordinal)
 
     implicit val transactionOrder: Order[Transaction] = (x: Transaction, y: Transaction) =>
-      implicitly[Order[BigInt]].compare(x.ordinal.coerce, y.ordinal.coerce)
+      implicitly[Order[Long]].compare(x.ordinal.coerce, y.ordinal.coerce)
 
     implicit val transactionOrdering: Ordering[Transaction] = transactionOrder.toOrdering
   }
