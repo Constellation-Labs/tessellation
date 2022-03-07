@@ -34,15 +34,17 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait ConsensusStateUpdater[F[_], Key, Artifact] {
 
+  type MaybeState = Option[ConsensusState[Key, Artifact]]
+
   def tryAdvanceConsensus(
     key: Key,
     resources: ConsensusResources[Artifact]
-  ): F[Option[ConsensusState[Key, Artifact]]]
+  ): F[MaybeState]
 
   def tryFacilitateConsensus(
     key: Key,
     lastKeyAndArtifact: (Key, Artifact)
-  ): F[Option[ConsensusState[Key, Artifact]]]
+  ): F[MaybeState]
 }
 
 object ConsensusStateUpdater {
@@ -58,13 +60,10 @@ object ConsensusStateUpdater {
 
     private val logger = Slf4jLogger.getLoggerFromClass(ConsensusStateUpdater.getClass)
 
-    /** Pair of (maybeUpdatedState, effect) */
-    type ModifyStateResult = (Option[ConsensusState[Key, Artifact]], F[Unit])
-
     def tryFacilitateConsensus(
       key: Key,
       lastKeyAndArtifact: (Key, Artifact)
-    ): F[Option[ConsensusState[Key, Artifact]]] =
+    ): F[MaybeState] =
       consensusStorage
         .condModifyState(key)(toModifyStateFn(internalTryFacilitateConsensus(key, lastKeyAndArtifact)))
         .flatMap(evalEffect)
@@ -73,7 +72,7 @@ object ConsensusStateUpdater {
     def tryAdvanceConsensus(
       key: Key,
       resources: ConsensusResources[Artifact]
-    ): F[Option[ConsensusState[Key, Artifact]]] =
+    ): F[MaybeState] =
       consensusStorage
         .condModifyState(key)(toModifyStateFn(internalTryAdvanceConsensus(key, resources)))
         .flatMap(evalEffect)
@@ -82,25 +81,25 @@ object ConsensusStateUpdater {
     import consensusStorage.ModifyStateFn
 
     private def toModifyStateFn(
-      fn: Option[ConsensusState[Key, Artifact]] => F[Option[(ConsensusState[Key, Artifact], F[Unit])]]
-    ): ModifyStateFn[ModifyStateResult] =
+      fn: MaybeState => F[Option[(ConsensusState[Key, Artifact], F[Unit])]]
+    ): ModifyStateFn[(MaybeState, F[Unit])] =
       maybeState =>
         fn(maybeState).map(_.map {
           case (state, effect) => (state.some, (state.some, effect))
         })
 
-    private def evalEffect(result: Option[ModifyStateResult]): F[Option[ConsensusState[Key, Artifact]]] =
+    private def evalEffect(result: Option[(MaybeState, F[Unit])]): F[MaybeState] =
       result.flatTraverse {
         case (maybeState, effect) => effect.map(_ => maybeState)
       }
 
-    private def logIfModified(key: Key)(maybeState: Option[ConsensusState[Key, Artifact]]): F[Unit] =
+    private def logIfModified(key: Key)(maybeState: MaybeState): F[Unit] =
       maybeState.traverse { state =>
         logger.debug(s"Consensus status for key ${key.show} transitioned to ${state.status.show}")
       }.void
 
     private def internalTryFacilitateConsensus(key: Key, lastKeyAndArtifact: (Key, Artifact))(
-      maybeState: Option[ConsensusState[Key, Artifact]]
+      maybeState: MaybeState
     ): F[Option[(ConsensusState[Key, Artifact], F[Unit])]] =
       maybeState match {
         case None =>
@@ -117,7 +116,7 @@ object ConsensusStateUpdater {
       }
 
     private def internalTryAdvanceConsensus(key: Key, resources: ConsensusResources[Artifact])(
-      maybeState: Option[ConsensusState[Key, Artifact]]
+      maybeState: MaybeState
     ): F[Option[(ConsensusState[Key, Artifact], F[Unit])]] =
       maybeState.flatTraverse { state =>
         state.status match {
