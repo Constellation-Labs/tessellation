@@ -1,10 +1,13 @@
 package org.tessellation.kryo
 
-import cats.Applicative
 import cats.effect.{Async, Resource}
+import cats.syntax.applicativeError._
 import cats.syntax.either._
+import cats.{Applicative, MonadThrow}
 
 import scala.reflect.ClassTag
+
+import org.tessellation.ext.kryo.KryoRegistrationId
 
 import com.twitter.chill._
 
@@ -36,23 +39,32 @@ object KryoSerializer {
     }(_ => Applicative[F].unit)
 
   def forAsync[F[_]: Async](
-    registrar: Map[Class[_], Int],
+    registrar: Map[Class[_], KryoRegistrationId[_]],
     migrations: List[Migration[AnyRef, AnyRef]] = List.empty,
     setReferences: Boolean = false
-  ): Resource[F, KryoSerializer[F]] = make[F](registrar, setReferences).map { kryoPool =>
-    val migrationsMap = migrations.map(_.toPair).toMap
-    new KryoSerializer[F] {
-      def serialize(anyRef: AnyRef): Either[Throwable, Array[Byte]] =
-        Either.catchNonFatal {
-          kryoPool.toBytesWithClass(anyRef)
-        }
+  ): Resource[F, KryoSerializer[F]] =
+    Resource.eval(validateRegistrarIdsAreUnique(registrar)).flatMap { _ =>
+      make[F](registrar.view.mapValues(_.value).toMap, setReferences).map { kryoPool =>
+        val migrationsMap = migrations.map(_.toPair).toMap
+        new KryoSerializer[F] {
+          def serialize(anyRef: AnyRef): Either[Throwable, Array[Byte]] =
+            Either.catchNonFatal {
+              kryoPool.toBytesWithClass(anyRef)
+            }
 
-      def deserialize[T](bytes: Array[Byte])(implicit T: ClassTag[T]): Either[Throwable, T] =
-        Either.catchNonFatal {
-          val obj: AnyRef = kryoPool.fromBytes(bytes)
-          val migration = migrationsMap.getOrElse((obj.getClass, T.runtimeClass), identity[AnyRef](_))
-          migration(obj).asInstanceOf[T]
+          def deserialize[T](bytes: Array[Byte])(implicit T: ClassTag[T]): Either[Throwable, T] =
+            Either.catchNonFatal {
+              val obj: AnyRef = kryoPool.fromBytes(bytes)
+              val migration = migrationsMap.getOrElse((obj.getClass, T.runtimeClass), identity[AnyRef](_))
+              migration(obj).asInstanceOf[T]
+            }
         }
+      }
     }
+
+  def validateRegistrarIdsAreUnique[F[_]: MonadThrow](registrar: Map[Class[_], KryoRegistrationId[_]]) = {
+    val ids = registrar.view.values.toList
+    if (ids.distinct.size != ids.size) new Throwable("Ids provided by registar are not unique.").raiseError[F, Unit]
+    else Applicative[F].unit
   }
 }

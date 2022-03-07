@@ -5,6 +5,7 @@ import java.util.UUID
 
 import cats.data.NonEmptyList
 
+import org.tessellation.ext.kryo._
 import org.tessellation.schema.address.AddressCache
 import org.tessellation.schema.gossip._
 import org.tessellation.schema.node.NodeState
@@ -15,10 +16,16 @@ import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.SignatureProof
 
 import eu.timepit.refined.api.Refined
+import eu.timepit.refined.auto._
+import eu.timepit.refined.numeric.Interval
 
 package object shared {
 
-  val sharedKryoRegistrar: Map[Class[_], Int] = Map(
+  type SharedKryoRegistrationIdRange = Interval.Closed[300, 399]
+
+  type SharedKryoRegistrationId = KryoRegistrationId[SharedKryoRegistrationIdRange]
+
+  val sharedKryoRegistrar: Map[Class[_], SharedKryoRegistrationId] = Map(
     classOf[UUID] -> 300,
     classOf[SignatureProof] -> 301,
     classOf[Signature] -> 302,

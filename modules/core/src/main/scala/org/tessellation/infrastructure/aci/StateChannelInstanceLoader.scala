@@ -13,6 +13,7 @@ import scala.io.Source
 import scala.reflect.runtime.universe
 
 import org.tessellation.domain.aci.StateChannelInstance
+import org.tessellation.ext.kryo._
 import org.tessellation.kernel._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
@@ -54,9 +55,7 @@ class StateChannelInstanceLoader[F[_]: Async] {
     }
 
   private def createInstance(stateChannelDef: StateChannelDef[Ω, Ω, Ω]): F[StateChannelInstance[F]] = {
-    val kryoRegistrar: Map[Class[_], Int] = stateChannelDef.kryoRegistrar.view
-      .mapValues(_.value)
-      .toMap ++ sharedKryoRegistrar ++ kernelKryoRegistrar
+    val kryoRegistrar = stateChannelDef.kryoRegistrar.union(sharedKryoRegistrar).union(kernelKryoRegistrar)
 
     KryoSerializer.forAsync[F](kryoRegistrar).use { implicit serializer =>
       Applicative[F].pure(

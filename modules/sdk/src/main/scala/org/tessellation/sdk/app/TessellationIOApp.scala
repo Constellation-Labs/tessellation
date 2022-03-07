@@ -8,6 +8,7 @@ import cats.syntax.show._
 
 import org.tessellation.cli.env.{KeyAlias, Password, StorePath}
 import org.tessellation.ext.cats.effect._
+import org.tessellation.ext.kryo._
 import org.tessellation.keytool.KeyStoreUtils
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
@@ -17,11 +18,13 @@ import org.tessellation.sdk.infrastructure.cluster.services.Session
 import org.tessellation.sdk.infrastructure.logs.LoggerConfigurator
 import org.tessellation.sdk.modules._
 import org.tessellation.sdk.resources.SdkResources
-import org.tessellation.sdk.sdkKryoRegistrar
+import org.tessellation.sdk.{sdkKryoRegistrar, _}
 import org.tessellation.security.SecurityProvider
 
 import com.monovore.decline.Opts
 import com.monovore.decline.effect.CommandIOApp
+import eu.timepit.refined.api.Refined
+import eu.timepit.refined.boolean.Or
 import fs2.Stream
 import fs2.concurrent.SignallingRef
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -43,10 +46,12 @@ abstract class TessellationIOApp[A <: CliMethod](
     */
   def opts: Opts[A]
 
+  type KryoRegistrationIdRange
+
   /**
     * Kryo registration is required for (de)serialization.
     */
-  val kryoRegistrar: Map[Class[_], Int]
+  val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]]
 
   protected implicit val logger = Slf4jLogger.getLogger[IO]
 
@@ -60,7 +65,8 @@ abstract class TessellationIOApp[A <: CliMethod](
       val alias = method.alias
       val password = method.password
 
-      val registrar = kryoRegistrar ++ sdkKryoRegistrar
+      val registrar: Map[Class[_], Int Refined Or[KryoRegistrationIdRange, SdkOrSharedOrKernelRegistrationIdRange]] =
+        kryoRegistrar.union(sdkKryoRegistrar)
 
       LoggerConfigurator.configureLogger[IO](cfg.environment) >>
         logger.info(s"App environment: ${cfg.environment}") >>
