@@ -6,6 +6,9 @@ import org.tessellation.kryo.KryoSerializer
 
 import _root_.cats.MonadThrow
 import _root_.cats.syntax.either._
+import eu.timepit.refined.api.Refined
+import eu.timepit.refined.auto._
+import eu.timepit.refined.boolean.Or
 
 object kryo {
 
@@ -33,4 +36,12 @@ object kryo {
       KryoSerializer[F].deserialize[A](bytes).liftTo[F]
   }
 
+  type KryoRegistrationId[C] = Int Refined C
+
+  implicit class MapRegistrationId[C1](mapa: Map[Class[_], KryoRegistrationId[C1]]) {
+
+    def union[C2](mapb: Map[Class[_], KryoRegistrationId[C2]]) =
+      mapa.view.mapValues[KryoRegistrationId[C1 Or C2]](identity).toMap ++
+        mapb.view.mapValues[KryoRegistrationId[C1 Or C2]](identity).toMap
+  }
 }

@@ -3,10 +3,15 @@ package org.tessellation.kryo
 import cats.effect.IO
 import cats.syntax.all._
 
+import org.tessellation.ext.kryo.KryoRegistrationId
+
+import eu.timepit.refined.auto._
+import eu.timepit.refined.numeric.Interval
 import weaver.SimpleIOSuite
 import weaver.scalacheck.Checkers
 
 object KryoSerializerSuite extends SimpleIOSuite with Checkers {
+  type KryoSerializerSuiteRegistrationIdRange = Interval.Closed[100, 199]
 
   test("v1 bytes should deserialize successfully by v2 serializer") {
     val v1 = NoChangesV1(amount = 15, address = "anyAddress")
@@ -14,10 +19,19 @@ object KryoSerializerSuite extends SimpleIOSuite with Checkers {
       BreakingChangesClassV2(in.amount, "anyRemark")
     }
 
-    val serializerV1 = KryoSerializer.forAsync[IO](Map(classOf[NoChangesV1] -> 100))
+    val serializerV1 =
+      KryoSerializer.forAsync[IO](
+        Map[Class[_], KryoRegistrationId[KryoSerializerSuiteRegistrationIdRange]](classOf[NoChangesV1] -> 100)
+      )
     val serializerV2 =
       KryoSerializer
-        .forAsync[IO](Map(classOf[NoChangesV1] -> 100, classOf[BreakingChangesClassV2] -> 101), List(migration))
+        .forAsync[IO](
+          Map[Class[_], KryoRegistrationId[KryoSerializerSuiteRegistrationIdRange]](
+            classOf[NoChangesV1] -> 100,
+            classOf[BreakingChangesClassV2] -> 101
+          ),
+          List(migration)
+        )
 
     for {
       bytes <- serializerV1.use { implicit kryo =>
@@ -33,8 +47,13 @@ object KryoSerializerSuite extends SimpleIOSuite with Checkers {
   test("v2 bytes should deserialize successfully by v1 serializer") {
     val v2 = NonBreakingChangesV2(amount = 15, address = "anyAddress", remark = "remark")
 
-    val serializerV1 = KryoSerializer.forAsync[IO](Map(classOf[NoChangesV1] -> 100))
-    val serializerV2 = KryoSerializer.forAsync[IO](Map(classOf[NonBreakingChangesV2] -> 100))
+    val serializerV1 =
+      KryoSerializer.forAsync[IO](
+        Map[Class[_], KryoRegistrationId[KryoSerializerSuiteRegistrationIdRange]](classOf[NoChangesV1] -> 100)
+      )
+    val serializerV2 = KryoSerializer.forAsync[IO](
+      Map[Class[_], KryoRegistrationId[KryoSerializerSuiteRegistrationIdRange]](classOf[NonBreakingChangesV2] -> 100)
+    )
 
     for {
       bytes <- serializerV2.use { implicit kryo =>

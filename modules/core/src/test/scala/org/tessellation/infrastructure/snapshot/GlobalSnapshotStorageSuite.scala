@@ -8,6 +8,7 @@ import org.tessellation.dag.dagSharedKryoRegistrar
 import org.tessellation.dag.snapshot.GlobalSnapshot
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
+import org.tessellation.ext.kryo._
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.height.{Height, SubHeight}
@@ -28,7 +29,7 @@ object GlobalSnapshotStorageSuite extends MutableIOSuite with Checkers {
   type Res = (KryoSerializer[IO], SecurityProvider[IO])
 
   override def sharedResource: Resource[IO, GlobalSnapshotStorageSuite.Res] =
-    KryoSerializer.forAsync[IO](dagSharedKryoRegistrar ++ sdkKryoRegistrar).flatMap { ks =>
+    KryoSerializer.forAsync[IO](dagSharedKryoRegistrar.union(sdkKryoRegistrar)).flatMap { ks =>
       SecurityProvider.forAsync[IO].map((ks, _))
     }
 

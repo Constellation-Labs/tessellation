@@ -7,6 +7,7 @@ import scala.reflect.runtime.universe.TypeTag
 
 import org.tessellation.coreKryoRegistrar
 import org.tessellation.domain.cluster.programs.TrustPush
+import org.tessellation.ext.kryo._
 import org.tessellation.infrastructure.trust.storage.TrustStorage
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.generators._
@@ -29,7 +30,7 @@ object TrustRoutesSuite extends HttpSuite {
     } yield peers.head).sample.get
 
     KryoSerializer
-      .forAsync[IO](sdkKryoRegistrar ++ coreKryoRegistrar)
+      .forAsync[IO](sdkKryoRegistrar.union(coreKryoRegistrar))
       .use { implicit kryoPool =>
         for {
           trust <- Ref[IO].of(Map.empty[PeerId, TrustInfo])

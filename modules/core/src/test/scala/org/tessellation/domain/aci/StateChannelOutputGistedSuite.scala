@@ -19,7 +19,7 @@ object StateChannelOutputGistedSuite extends MutableIOSuite with Checkers {
   case class NonSerializableSnapshot(lastSnapshotHash: Hash = Hash("0")) extends StateChannelSnapshot {}
 
   override def sharedResource: Resource[IO, StateChannelOutputGistedSuite.Res] =
-    KryoSerializer.forAsync[IO](coreKryoRegistrar ++ kernelKryoRegistrar)
+    KryoSerializer.forAsync[IO](coreKryoRegistrar.union(kernelKryoRegistrar))
 
   test("raw snapshot should not be serializable") { implicit kryo =>
     val nonSerializableSnapshot = NonSerializableSnapshot()

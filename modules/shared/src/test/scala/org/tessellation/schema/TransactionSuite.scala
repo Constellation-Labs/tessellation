@@ -21,10 +21,12 @@ object TransactionSuite extends ResourceSuite with Checkers {
     KryoSerializer.forAsync[IO](sharedKryoRegistrar, List.empty, setReferences = true)
 
   def hashWithKryo(toHash: AnyRef): IO[Hash] =
-    KryoSerializer.forAsync[IO](sharedKryoRegistrar, List.empty, setReferences = true).use { kryo =>
-      implicit val k = kryo
-      toHash.hashF
-    }
+    KryoSerializer
+      .forAsync[IO](sharedKryoRegistrar, List.empty, setReferences = true)
+      .use { kryo =>
+        implicit val k = kryo
+        toHash.hashF
+      }
 
   test("Transaction's representation used for hashing should follow expected format") {
     val transaction = Transaction(

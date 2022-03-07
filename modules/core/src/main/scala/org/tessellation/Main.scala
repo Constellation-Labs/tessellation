@@ -6,9 +6,10 @@ import cats.syntax.semigroupk._
 import cats.syntax.show._
 
 import org.tessellation.cli.method.{Run, RunGenesis, RunValidator}
-import org.tessellation.dag.dagSharedKryoRegistrar
 import org.tessellation.dag.snapshot.GlobalSnapshot
+import org.tessellation.dag.{dagSharedKryoRegistrar, _}
 import org.tessellation.ext.cats.effect._
+import org.tessellation.ext.kryo._
 import org.tessellation.http.p2p.P2PClient
 import org.tessellation.infrastructure.db.Database
 import org.tessellation.infrastructure.genesis.{Loader => GenesisLoader}
@@ -22,6 +23,7 @@ import org.tessellation.sdk.resources.MkHttpServer.ServerName
 import org.tessellation.security.signature.Signed
 
 import com.monovore.decline.Opts
+import eu.timepit.refined.boolean.Or
 
 object Main
     extends TessellationIOApp[Run](
@@ -32,7 +34,10 @@ object Main
 
   val opts: Opts[Run] = cli.method.opts
 
-  val kryoRegistrar: Map[Class[_], Int] = coreKryoRegistrar ++ dagSharedKryoRegistrar
+  type KryoRegistrationIdRange = CoreKryoRegistrationIdRange Or DagSharedKryoRegistrationIdRange
+
+  val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
+    coreKryoRegistrar.union(dagSharedKryoRegistrar)
 
   def run(method: Run, sdk: SDK[IO]): Resource[IO, Unit] = {
     import sdk._

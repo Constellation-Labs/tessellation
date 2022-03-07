@@ -48,7 +48,7 @@ object GenerateInputApp
   override def main: Opts[IO[ExitCode]] =
     (pathOpts, countOpts, initHashOpt).mapN(GenerateInputArgs).map { args =>
       KryoSerializer
-        .forAsync[IO](kryoRegistrar.view.mapValues(_.value).toMap)
+        .forAsync[IO](kryoRegistrar)
         .use { implicit kryo =>
           val initAcc = (SimpleSnapshot(args.initHash), List.empty[(Int, EmitSimpleSnapshot)])
           List
