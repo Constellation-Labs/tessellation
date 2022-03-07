@@ -22,7 +22,7 @@ import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed.forAsyncKryo
 
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.{NonNegBigInt, PosBigInt}
+import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 import suite.ResourceSuite
 import weaver.scalacheck.Checkers
 
@@ -59,8 +59,8 @@ object TransactionValidatorSuite extends ResourceSuite with Checkers {
             val tx = Transaction(
               src,
               dst,
-              TransactionAmount(PosBigInt(BigInt(1))),
-              TransactionFee(NonNegBigInt(BigInt(0))),
+              TransactionAmount(PosLong(1L)),
+              TransactionFee(NonNegLong(0L)),
               TransactionReference.empty,
               TransactionSalt(0L)
             )
@@ -73,11 +73,11 @@ object TransactionValidatorSuite extends ResourceSuite with Checkers {
       }
     }
 
-  val initialBalance: Address => Balance = _ => Balance(NonNegBigInt(BigInt(1)))
+  val initialBalance: Address => Balance = _ => Balance(NonNegLong(1L))
   val initialReference: Address => TransactionReference = _ => TransactionReference.empty
 
   def setReference(hash: Hash) =
-    Transaction._ParentHash.replace(hash).andThen(Transaction._ParentOrdinal.replace(TransactionOrdinal(BigInt(1))))
+    Transaction._ParentHash.replace(hash).andThen(Transaction._ParentOrdinal.replace(TransactionOrdinal(1L)))
 
   test("should succeed when all values are correct") {
     case (txValidator, srcKey, _, _, _, tx, signTx) =>
@@ -116,7 +116,7 @@ object TransactionValidatorSuite extends ResourceSuite with Checkers {
   test("should fail when lastTxRef's ordinal is lower than one stored on the node") {
     case (txValidator, srcKey, _, _, _, tx, signTx) =>
       val reference =
-        (_: Address) => TransactionReference(Hash("someHash"), TransactionOrdinal(NonNegBigInt(BigInt(1))))
+        (_: Address) => TransactionReference(Hash("someHash"), TransactionOrdinal(NonNegLong(1L)))
       val validator = txValidator(initialBalance, reference)
 
       for {
@@ -128,7 +128,7 @@ object TransactionValidatorSuite extends ResourceSuite with Checkers {
   test("should fail when lastTxRef's ordinal matches but the hash is different") {
     case (txValidator, srcKey, _, _, _, baseTx, signTx) =>
       val reference =
-        (_: Address) => TransactionReference(Hash("someHash"), TransactionOrdinal(NonNegBigInt(BigInt(1))))
+        (_: Address) => TransactionReference(Hash("someHash"), TransactionOrdinal(NonNegLong(1L)))
       val validator = txValidator(initialBalance, reference)
 
       val tx = setReference(Hash("someOtherHash"))(baseTx)
@@ -165,7 +165,7 @@ object TransactionValidatorSuite extends ResourceSuite with Checkers {
     case (txValidator, srcKey, _, srcAddress, _, baseTx, signTx) =>
       val validator = txValidator(initialBalance, initialReference)
 
-      val tx = Transaction._Amount.replace(TransactionAmount(PosBigInt(BigInt(2))))(baseTx)
+      val tx = Transaction._Amount.replace(TransactionAmount(PosLong(2L)))(baseTx)
 
       for {
         signedTx <- signTx(tx, srcKey)

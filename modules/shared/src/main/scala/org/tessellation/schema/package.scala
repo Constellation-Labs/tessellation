@@ -1,7 +1,6 @@
 package org.tessellation
 
 import cats._
-import cats.syntax.semigroup._
 
 import org.tessellation.ext.refined._
 
@@ -27,32 +26,8 @@ trait OrphanInstances {
   implicit val portEncoder: Encoder[Port] =
     Encoder[Int].contramap(_.value)
 
-  implicit val nonNegBigIntDecoder: Decoder[NonNegBigInt] =
-    decoderOf[BigInt, NonNegative]
-
-  implicit val nonNegBigIntEncoder: Encoder[NonNegBigInt] =
-    encoderOf[BigInt, NonNegative]
-
-  implicit val nonNegBigIntEq: Eq[NonNegBigInt] =
-    eqOf[BigInt, NonNegative]
-
-  implicit val nonNegBigIntShow: Show[NonNegBigInt] =
-    showOf[BigInt, NonNegative]
-
-  implicit val nonNegBigIntSemigroup: Semigroup[NonNegBigInt] =
-    (x: NonNegBigInt, y: NonNegBigInt) => NonNegBigInt.unsafeFrom(x.value |+| y.value)
-
-  implicit val posBigIntDecoder: Decoder[PosBigInt] =
-    decoderOf[BigInt, Positive]
-
-  implicit val posBigIntEncoder: Encoder[PosBigInt] =
-    encoderOf[BigInt, Positive]
-
-  implicit val posBigIntEq: Eq[PosBigInt] =
-    eqOf[BigInt, Positive]
-
-  implicit val posBigIntShow: Show[PosBigInt] =
-    showOf[BigInt, Positive]
+  implicit val posLongEq: Eq[PosLong] =
+    eqOf[Long, Positive]
 
   implicit val posLongShow: Show[PosLong] =
     showOf[Long, Positive]
@@ -60,9 +35,24 @@ trait OrphanInstances {
   implicit val posLongOrder: Order[PosLong] =
     orderOf[Long, Positive]
 
+  implicit val posLongEncoder: Encoder[PosLong] =
+    encoderOf[Long, Positive]
+
+  implicit val posLongDecoder: Decoder[PosLong] =
+    decoderOf[Long, Positive]
+
   implicit val nonNegLongEncoder: Encoder[NonNegLong] =
     encoderOf[Long, NonNegative]
 
   implicit val nonNegLongDecoder: Decoder[NonNegLong] =
     decoderOf[Long, NonNegative]
+
+  implicit val nonNegLongEq: Eq[NonNegLong] =
+    eqOf[Long, NonNegative]
+
+  implicit val nonNegLongShow: Show[NonNegLong] =
+    showOf[Long, NonNegative]
+
+  implicit val nonNegLongOrder: Order[NonNegLong] =
+    orderOf[Long, NonNegative]
 }

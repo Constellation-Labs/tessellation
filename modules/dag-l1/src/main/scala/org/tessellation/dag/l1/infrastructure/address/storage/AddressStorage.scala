@@ -49,7 +49,7 @@ object AddressStorage {
       }
 
       def getBalance(address: Address): F[Balance] =
-        run(getAddressBalance(lift(address))).map(_.headOption.getOrElse(Balance(BigInt(0)))).transact(xa)
+        run(getAddressBalance(lift(address))).map(_.headOption.getOrElse(Balance.empty)).transact(xa)
 
       def updateBalances(addressBalances: Map[Address, Balance]): F[Unit] =
         addressBalances.toList.traverse {
