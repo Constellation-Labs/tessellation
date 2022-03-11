@@ -18,8 +18,7 @@ import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.dag.l1.domain.address.storage.AddressStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.address.Address
-import org.tessellation.schema.balance.{Balance, BalanceOutOfRange}
+import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.transaction.Transaction
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hashed, SecurityProvider}
@@ -57,38 +56,10 @@ object BlockService {
           _ <- blockStorage.handleTipsUpdate(hashedBlock)
         } yield ()
 
-      private def prepareBalances(transactions: Set[Transaction]): F[Map[Address, Balance]] = {
-        val sources = transactions.groupBy(_.source)
-        val destinations = transactions.groupBy(_.destination)
-
-        val addresses = sources ++ destinations
-
-        def applyTransactions(
-          balance: Balance,
-          address: Address,
-          txs: Set[Transaction]
-        ): Either[BalanceOutOfRange, Balance] =
-          txs.foldLeft(balance.asRight[BalanceOutOfRange]) { (acc, tx) =>
-            tx match {
-              case Transaction(`address`, _, amount, fee, _, _) => acc.flatMap(_.minus(amount)).flatMap(_.minus(fee))
-              case Transaction(_, `address`, amount, _, _, _)   => acc.flatMap(_.plus(amount))
-              case _                                            => acc
-            }
-          }
-
-        addresses.toList.traverse {
-          case (address, txs) =>
-            addressStorage
-              .getBalance(address)
-              .flatMap { balance =>
-                applyTransactions(balance, address, txs).liftTo[F]
-              }
-              .map((address, _))
-        }.map(_.toMap)
-      }
       private def acceptTransactions(hashedTransactions: Set[Hashed[Transaction]]): F[Unit] =
         for {
-          preparedBalances <- prepareBalances(hashedTransactions.map(_.signed.value))
+          preparedBalances <- Balance
+            .applyTransactions(hashedTransactions.map(_.signed.value), addressStorage.getBalance)
           _ <- addressStorage.updateBalances(preparedBalances)
           _ <- hashedTransactions.toList.sorted.traverse(transactionStorage.accept)
         } yield ()

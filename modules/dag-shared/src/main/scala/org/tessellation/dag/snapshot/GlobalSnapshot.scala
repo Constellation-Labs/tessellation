@@ -25,7 +25,6 @@ case class GlobalSnapshot(
   subHeight: SubHeight,
   lastSnapshotHash: Hash,
   blocks: Set[Signed[DAGBlock]],
-  balances: Map[Address, Balance],
   stateChannelSnapshots: Map[Address, NonEmptyList[StateChannelSnapshotBinary]],
   nextFacilitators: NonEmptyList[PeerId],
   info: GlobalSnapshotInfo
@@ -46,9 +45,8 @@ object GlobalSnapshot {
       SubHeight.MinValue,
       Hash.empty,
       Set.empty,
-      balances,
       Map.empty,
       NonEmptyList.of(PeerId(Hex("peer1"))), // TODO
-      GlobalSnapshotInfo(Map.empty)
+      GlobalSnapshotInfo(Map.empty, Map.empty, balances)
     )
 }
