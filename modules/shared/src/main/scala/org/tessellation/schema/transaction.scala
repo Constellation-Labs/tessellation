@@ -1,14 +1,20 @@
 package org.tessellation.schema
 
 import cats.Order
+import cats.effect.Async
+import cats.syntax.either._
+import cats.syntax.flatMap._
+import cats.syntax.functor._
 import cats.syntax.semigroup._
 
+import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
-import org.tessellation.security.Encodable
 import org.tessellation.security.hash.Hash
+import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Encodable, SecurityProvider}
 
-import derevo.cats.{eqv, order, show}
+import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import eu.timepit.refined.auto.{autoInfer, autoRefineV, autoUnwrap}
@@ -37,7 +43,7 @@ object transaction {
     implicit def toAmount(fee: TransactionFee): Amount = Amount(fee.value)
   }
 
-  @derive(decoder, encoder, order, show)
+  @derive(decoder, encoder, show)
   @newtype
   case class TransactionOrdinal(value: NonNegLong) {
     def next: TransactionOrdinal = TransactionOrdinal(value |+| 1L)
@@ -45,6 +51,12 @@ object transaction {
 
   object TransactionOrdinal {
     val first: TransactionOrdinal = TransactionOrdinal(1L)
+
+    implicit val order: Order[TransactionOrdinal] = (x: TransactionOrdinal, y: TransactionOrdinal) =>
+      implicitly[Order[Long]].compare(x.coerce, y.coerce)
+
+    implicit val ordering: Ordering[TransactionOrdinal] = order.toOrdering
+
   }
 
   @derive(decoder, encoder, eqv, show)
@@ -55,6 +67,12 @@ object transaction {
 
     val _Hash: Lens[TransactionReference, Hash] = GenLens[TransactionReference](_.hash)
     val _Ordinal: Lens[TransactionReference, TransactionOrdinal] = GenLens[TransactionReference](_.ordinal)
+
+    def of[F[_]: Async: SecurityProvider: KryoSerializer](transaction: Signed[Transaction]): F[TransactionReference] =
+      transaction.hashWithSignatureCheck.flatMap(_.liftTo[F]).map { hashed =>
+        TransactionReference(hashed.hash, hashed.ordinal)
+      }
+
   }
 
   @derive(decoder, encoder, eqv, show)
@@ -117,7 +135,7 @@ object transaction {
     val _ParentOrdinal: Lens[Transaction, TransactionOrdinal] = _Parent.andThen(TransactionReference._Ordinal)
 
     implicit val transactionOrder: Order[Transaction] = (x: Transaction, y: Transaction) =>
-      implicitly[Order[Long]].compare(x.ordinal.coerce, y.ordinal.coerce)
+      implicitly[Order[TransactionOrdinal]].compare(x.ordinal, y.ordinal)
 
     implicit val transactionOrdering: Ordering[Transaction] = transactionOrder.toOrdering
   }
