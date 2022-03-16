@@ -130,4 +130,20 @@ object GlobalSnapshotStorageSuite extends MutableIOSuite with Checkers {
       }
     }
   }
+
+  test("get - should return snapshot by hash") { res =>
+    implicit val (kryo, sp) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      mkStorage(tmpDir).flatMap { storage =>
+        mkSnapshots.flatMap {
+          case (genesis, _) =>
+            storage.prepend(genesis) >>
+              genesis.value.hashF.flatMap { hash =>
+                storage.get(hash).map { expect.same(_, genesis.some) }
+              }
+        }
+      }
+    }
+  }
 }

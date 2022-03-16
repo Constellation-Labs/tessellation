@@ -1,6 +1,7 @@
 package org.tessellation.domain.snapshot
 
 import org.tessellation.dag.snapshot.{GlobalSnapshot, SnapshotOrdinal}
+import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
 trait GlobalSnapshotStorage[F[_]] {
@@ -10,5 +11,7 @@ trait GlobalSnapshotStorage[F[_]] {
   def head: F[Option[Signed[GlobalSnapshot]]]
 
   def get(ordinal: SnapshotOrdinal): F[Option[Signed[GlobalSnapshot]]]
+
+  def get(hash: Hash): F[Option[Signed[GlobalSnapshot]]]
 
 }

@@ -6,6 +6,7 @@ import java.nio.file.NoSuchFileException
 import cats.data.EitherT
 import cats.effect.Async
 import cats.syntax.applicativeError._
+import cats.syntax.contravariantSemigroupal._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
@@ -65,6 +66,11 @@ abstract class LocalFileSystemStorage[F[_]: KryoSerializer, A <: AnyRef: ClassTa
         F.delay { a.writeByteArray(bytes) }
       }
       .void
+
+  def link(fileName: String, to: String): F[Unit] =
+    (dir.map(_ / fileName), dir.map(_ / to)).mapN {
+      case (src, dst) => F.delay { dst.linkTo(src) }.void
+    }.flatten
 
   def delete(fileName: String): F[Unit] =
     dir
