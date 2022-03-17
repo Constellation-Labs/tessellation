@@ -1,17 +1,17 @@
-package org.tessellation.infrastructure.genesis
+package org.tessellation.sdk.infrastructure.whitelisting
 
 import cats.effect.Async
-import cats.syntax.either._
 import cats.syntax.functor._
 
-import org.tessellation.infrastructure.genesis.types.{GenesisAccount, GenesisCSVAccount}
+import org.tessellation.schema.peer.PeerId
+import org.tessellation.sdk.infrastructure.whitelisting.types.WhitelistingCSVEntry
 
 import fs2.data.csv._
 import fs2.io.file.{Files, Path}
 import fs2.text
 
 trait Loader[F[_]] {
-  def load(path: Path): F[Set[GenesisAccount]]
+  def load(path: Path): F[Set[PeerId]]
 }
 
 object Loader {
@@ -22,11 +22,9 @@ object Loader {
         .readAll(path)
         .through(text.utf8.decode)
         .through(
-          decodeWithoutHeaders[GenesisCSVAccount]()
+          decodeWithoutHeaders[WhitelistingCSVEntry]()
         )
-        .map(_.toGenesisAccount)
-        .map(_.bimap(e => new RuntimeException(e), identity))
-        .rethrow
+        .map(_.toPeerId)
         .compile
         .toList
         .map(_.toSet)

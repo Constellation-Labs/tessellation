@@ -19,6 +19,7 @@ object SdkPrograms {
     services: SdkServices[F],
     clusterClient: ClusterClient[F],
     signClient: SignClient[F],
+    whitelisting: Option[Set[PeerId]],
     nodeId: PeerId
   ): F[SdkPrograms[F]] =
     for {
@@ -31,6 +32,7 @@ object SdkPrograms {
         services.cluster,
         services.session,
         storages.session,
+        whitelisting,
         nodeId,
         pd
       )

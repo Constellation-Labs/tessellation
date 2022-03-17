@@ -4,6 +4,8 @@ import java.security.KeyPair
 
 import cats.effect._
 import cats.effect.std.Random
+import cats.syntax.applicative._
+import cats.syntax.option._
 import cats.syntax.show._
 
 import org.tessellation.cli.env.{KeyAlias, Password, StorePath}
@@ -16,6 +18,7 @@ import org.tessellation.sdk.cli.CliMethod
 import org.tessellation.sdk.http.p2p.SdkP2PClient
 import org.tessellation.sdk.infrastructure.cluster.services.Session
 import org.tessellation.sdk.infrastructure.logs.LoggerConfigurator
+import org.tessellation.sdk.infrastructure.whitelisting.{Loader => WhitelistingLoader}
 import org.tessellation.sdk.modules._
 import org.tessellation.sdk.resources.SdkResources
 import org.tessellation.sdk.{sdkKryoRegistrar, _}
@@ -77,19 +80,28 @@ abstract class TessellationIOApp[A <: CliMethod](
                 val selfId = PeerId.fromPublic(_keyPair.getPublic)
 
                 SignallingRef.of[IO, Unit](()).flatMap { _restartSignal =>
-                  def startup: Resource[IO, Unit] =
-                    (for {
+                  def mkSDK =
+                    for {
+                      whitelisting <- method.whitelistingPath
+                        .fold(none[Set[PeerId]].pure[IO])(WhitelistingLoader.make[IO].load(_).map(_.some))
+                        .asResource
+                      _ <- whitelisting
+                        .map(_.size)
+                        .fold(logger.info(s"Whitelisting disabled.")) { size =>
+                          logger.info(s"Whitelisting enabled. Allowed nodes: $size")
+                        }
+                        .asResource
                       storages <- SdkStorages.make[IO](cfg).asResource
                       res <- SdkResources.make[IO](cfg, _keyPair.getPrivate(), storages.session, selfId)
                       session = Session.make[IO](storages.session, storages.node, storages.cluster)
                       p2pClient = SdkP2PClient.make[IO](res.client, session)
                       queues <- SdkQueues.make[IO].asResource
                       services <- SdkServices
-                        .make[IO](cfg, selfId, _keyPair, storages, queues, session, _restartSignal)
+                        .make[IO](cfg, selfId, _keyPair, storages, queues, session, whitelisting, _restartSignal)
                         .asResource
 
                       programs <- SdkPrograms
-                        .make[IO](cfg, storages, services, p2pClient.cluster, p2pClient.sign, selfId)
+                        .make[IO](cfg, storages, services, p2pClient.cluster, p2pClient.sign, whitelisting, selfId)
                         .asResource
 
                       sdk = new SDK[IO] {
@@ -110,17 +122,23 @@ abstract class TessellationIOApp[A <: CliMethod](
                       }
 
                       _ <- logger.info(s"Self peerId: ${selfId.show}").asResource
+                    } yield sdk
 
-                      _ <- run(method, sdk).handleErrorWith { (e: Throwable) =>
+                  def startup: Resource[IO, Unit] =
+                    mkSDK.handleErrorWith { (e: Throwable) =>
+                      (logger.error(e)(s"Unhandled exception during initialization.") >> IO
+                        .raiseError[SDK[IO]](e)).asResource
+                    }.flatMap { sdk =>
+                      run(method, sdk).handleErrorWith { (e: Throwable) =>
                         (logger.error(e)(s"Unhandled exception during runtime.") >> IO.raiseError[Unit](e)).asResource
                       }
-                    } yield ())
+                    }
 
                   _restartSignal.discrete.switchMap { _ =>
                     Stream.eval(startup.useForever)
                   }.compile.drain.as(ExitCode.Success)
-                }
 
+                }
               }
             }
           }

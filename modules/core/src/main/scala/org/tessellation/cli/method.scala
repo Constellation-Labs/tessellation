@@ -57,12 +57,15 @@ object method {
     httpConfig: HttpConfig,
     environment: AppEnvironment,
     snapshotConfig: SnapshotConfig,
-    genesisPath: Path
+    genesisPath: Path,
+    whitelistingPath: Option[Path]
   ) extends Run
 
   object RunGenesis extends WithOpts[RunGenesis] {
 
     val genesisPathOpts: Opts[Path] = Opts.argument[Path]("genesis")
+
+    val whitelistingPathOpts: Opts[Option[Path]] = Opts.option[Path]("whitelisting", "").orNone
 
     val opts = Opts.subcommand("run-genesis", "Run genesis mode") {
       (
@@ -73,8 +76,9 @@ object method {
         http.opts,
         AppEnvironment.opts,
         snapshot.opts,
-        genesisPathOpts
-      ).mapN(RunGenesis.apply(_, _, _, _, _, _, _, _))
+        genesisPathOpts,
+        whitelistingPathOpts
+      ).mapN(RunGenesis.apply(_, _, _, _, _, _, _, _, _))
     }
   }
 
@@ -85,14 +89,25 @@ object method {
     dbConfig: DBConfig,
     httpConfig: HttpConfig,
     environment: AppEnvironment,
-    snapshotConfig: SnapshotConfig
+    snapshotConfig: SnapshotConfig,
+    whitelistingPath: Option[Path]
   ) extends Run
 
   object RunValidator extends WithOpts[RunValidator] {
 
+    val whitelistingPathOpts: Opts[Option[Path]] = Opts.option[Path]("whitelisting", "").orNone
+
     val opts = Opts.subcommand("run-validator", "Run validator mode") {
-      (StorePath.opts, KeyAlias.opts, Password.opts, db.opts, http.opts, AppEnvironment.opts, snapshot.opts)
-        .mapN(RunValidator.apply(_, _, _, _, _, _, _))
+      (
+        StorePath.opts,
+        KeyAlias.opts,
+        Password.opts,
+        db.opts,
+        http.opts,
+        AppEnvironment.opts,
+        snapshot.opts,
+        whitelistingPathOpts
+      ).mapN(RunValidator.apply(_, _, _, _, _, _, _, _))
     }
   }
 

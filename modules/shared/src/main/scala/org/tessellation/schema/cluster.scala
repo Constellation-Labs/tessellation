@@ -31,6 +31,7 @@ object cluster {
   case class NodeStateDoesNotAllowForJoining(nodeState: NodeState) extends NoStackTrace
   case class PeerIdInUse(id: PeerId) extends NoStackTrace
   case class PeerHostPortInUse(host: Host, p2pPort: Port) extends NoStackTrace
+  case class PeerNotWhitelisted(id: PeerId) extends NoStackTrace
 
   @derive(decoder, encoder, eqv, show, uuid)
   @newtype
@@ -50,4 +51,5 @@ object cluster {
   case object LocalHostNotPermitted extends RegistrationRequestValidation
   case object InvalidRemoteAddress extends RegistrationRequestValidation
   case object IdDuplicationFound extends RegistrationRequestValidation
+  case object WhitelistingDoesNotMatch extends RegistrationRequestValidation
 }

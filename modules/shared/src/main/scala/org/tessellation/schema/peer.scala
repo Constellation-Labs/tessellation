@@ -8,6 +8,7 @@ import cats.kernel.Order
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.cluster.SessionToken
 import org.tessellation.schema.node.NodeState
+import org.tessellation.security.hash.Hash
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.key.ops._
 
@@ -83,7 +84,8 @@ object peer {
     publicPort: Port,
     p2pPort: Port,
     session: SessionToken,
-    state: NodeState
+    state: NodeState,
+    whitelisting: Hash
   )
 
   @derive(eqv, decoder, encoder, show)
