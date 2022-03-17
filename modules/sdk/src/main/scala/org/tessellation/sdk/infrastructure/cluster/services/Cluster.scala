@@ -33,6 +33,7 @@ object Cluster {
     clusterStorage: ClusterStorage[F],
     sessionStorage: SessionStorage[F],
     nodeStorage: NodeStorage[F],
+    whitelisting: Option[Set[PeerId]],
     restartSignal: SignallingRef[F, Unit]
   ): Cluster[F] =
     new Cluster[F] {
@@ -44,6 +45,7 @@ object Cluster {
             case None    => MonadThrow[F].raiseError[SessionToken](SessionDoesNotExist)
           }
           state <- nodeStorage.getNodeState
+          whitelistingHash <- whitelisting.hashF
         } yield
           RegistrationRequest(
             selfId,
@@ -51,7 +53,8 @@ object Cluster {
             httpConfig.publicHttp.port,
             httpConfig.p2pHttp.port,
             session,
-            state
+            state,
+            whitelistingHash
           )
 
       def signRequest(signRequest: SignRequest): F[Signed[SignRequest]] =

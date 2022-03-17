@@ -7,6 +7,7 @@ import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types._
 
 import eu.timepit.refined.auto.autoRefineV
+import fs2.io.file.Path
 
 trait CliMethod {
 
@@ -15,6 +16,8 @@ trait CliMethod {
   val password: Password
 
   val environment: AppEnvironment
+
+  val whitelistingPath: Option[Path]
 
   val httpConfig: HttpConfig
 

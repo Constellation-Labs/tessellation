@@ -9,6 +9,7 @@ import org.tessellation.dag.block.config.BlockValidatorConfig
 import org.tessellation.dag.l1.config.TipsConfig
 import org.tessellation.dag.l1.config.types.{AppConfig, DBConfig}
 import org.tessellation.dag.l1.domain.consensus.block.config.ConsensusConfig
+import org.tessellation.ext.decline.decline._
 import org.tessellation.schema.peer.L0Peer
 import org.tessellation.sdk.cli.{CliMethod, L0PeerOpts}
 import org.tessellation.sdk.config.AppEnvironment
@@ -16,6 +17,7 @@ import org.tessellation.sdk.config.types._
 
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto.autoRefineV
+import fs2.io.file.Path
 
 object method {
 
@@ -70,14 +72,24 @@ object method {
     environment: AppEnvironment,
     httpConfig: HttpConfig,
     dbConfig: DBConfig,
-    l0Peer: L0Peer
+    l0Peer: L0Peer,
+    whitelistingPath: Option[Path]
   ) extends Run
 
   object RunInitialValidator {
+    val whitelistingPathOpts: Opts[Option[Path]] = Opts.option[Path]("whitelisting", "").orNone
 
     val opts = Opts.subcommand("run-initial-validator", "Run initial validator mode") {
-      (StorePath.opts, KeyAlias.opts, Password.opts, AppEnvironment.opts, http.opts, db.opts, L0PeerOpts.opts)
-        .mapN(RunInitialValidator(_, _, _, _, _, _, _))
+      (
+        StorePath.opts,
+        KeyAlias.opts,
+        Password.opts,
+        AppEnvironment.opts,
+        http.opts,
+        db.opts,
+        L0PeerOpts.opts,
+        whitelistingPathOpts
+      ).mapN(RunInitialValidator(_, _, _, _, _, _, _, _))
     }
   }
 
@@ -88,14 +100,24 @@ object method {
     environment: AppEnvironment,
     httpConfig: HttpConfig,
     dbConfig: DBConfig,
-    l0Peer: L0Peer
+    l0Peer: L0Peer,
+    whitelistingPath: Option[Path]
   ) extends Run
 
   object RunValidator {
+    val whitelistingPathOpts: Opts[Option[Path]] = Opts.option[Path]("whitelisting", "").orNone
 
     val opts = Opts.subcommand("run-validator", "Run validator mode") {
-      (StorePath.opts, KeyAlias.opts, Password.opts, AppEnvironment.opts, http.opts, db.opts, L0PeerOpts.opts)
-        .mapN(RunValidator(_, _, _, _, _, _, _))
+      (
+        StorePath.opts,
+        KeyAlias.opts,
+        Password.opts,
+        AppEnvironment.opts,
+        http.opts,
+        db.opts,
+        L0PeerOpts.opts,
+        whitelistingPathOpts
+      ).mapN(RunValidator(_, _, _, _, _, _, _, _))
     }
   }
 

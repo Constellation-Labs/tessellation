@@ -5,12 +5,14 @@ import cats.effect.Async
 import cats.effect.std.Queue
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
+import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
 import cats.syntax.traverse._
 
 import org.tessellation.effects.GenUUID
+import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.cluster._
@@ -38,6 +40,7 @@ object Joining {
     cluster: Cluster[F],
     session: Session[F],
     sessionStorage: SessionStorage[F],
+    whitelisting: Option[Set[PeerId]],
     selfId: PeerId,
     peerDiscovery: PeerDiscovery[F]
   ): F[Joining[F]] =
@@ -53,6 +56,7 @@ object Joining {
           cluster,
           session,
           sessionStorage,
+          whitelisting,
           selfId,
           peerDiscovery
         )
@@ -67,6 +71,7 @@ object Joining {
     cluster: Cluster[F],
     session: Session[F],
     sessionStorage: SessionStorage[F],
+    whitelisting: Option[Set[PeerId]],
     selfId: PeerId,
     peerDiscovery: PeerDiscovery[F]
   ): F[Joining[F]] = {
@@ -78,6 +83,7 @@ object Joining {
       cluster,
       session,
       sessionStorage,
+      whitelisting,
       selfId,
       joiningQueue
     ) {}
@@ -106,6 +112,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
   cluster: Cluster[F],
   session: Session[F],
   sessionStorage: SessionStorage[F],
+  whitelisting: Option[Set[PeerId]],
   selfId: PeerId,
   joiningQueue: Queue[F, P2PContext]
 ) {
@@ -142,12 +149,21 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
         .ifM(PeerHostPortInUse(ip, p2pPort).raiseError[F, Unit], Applicative[F].unit)
     }
 
+  private def validateWhitelisting(peer: PeerToJoin): F[Unit] =
+    whitelisting match {
+      case None => Applicative[F].unit
+      case Some(entries) =>
+        if (entries.contains(peer.id)) Applicative[F].unit else PeerNotWhitelisted(peer.id).raiseError[F, Unit]
+    }
+
   private def twoWayHandshake(
     withPeer: PeerToJoin,
     remoteAddress: Option[Host],
     skipJoinRequest: Boolean = false
   ): F[Peer] =
     for {
+      _ <- validateWhitelisting(withPeer)
+
       registrationRequest <- signClient.getRegistrationRequest.run(withPeer)
 
       _ <- validateHandshake(registrationRequest, remoteAddress)
@@ -198,6 +214,11 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
       )
 
       _ <- if (registrationRequest.id != selfId) Applicative[F].unit else IdDuplicationFound.raiseError[F, Unit]
+
+      whitelistingHash <- whitelisting.hashF
+
+      _ <- if (registrationRequest.whitelisting === whitelistingHash) Applicative[F].unit
+      else WhitelistingDoesNotMatch.raiseError[F, Unit]
     } yield ()
 
   private def verifySignRequest(signRequest: SignRequest, signed: Signed[SignRequest], id: Id): F[Boolean] =
