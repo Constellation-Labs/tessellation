@@ -46,6 +46,7 @@ class StateChannelInstanceLoader[F[_]: Async] {
         Source.fromURL(url)
       })
       .map(_.mkString)
+      .map(_.trim())
 
   private def loadDef(defName: String): F[StateChannelDef[Ω, Ω, Ω]] =
     Async[F].delay {

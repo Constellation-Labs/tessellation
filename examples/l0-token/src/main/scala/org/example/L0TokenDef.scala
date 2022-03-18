@@ -4,23 +4,26 @@ import cats.effect.{Async, Concurrent, Temporal}
 import cats.syntax.all._
 import cats.{Applicative, Monad}
 
+import scala.concurrent.duration._
+
 import org.example.types._
 
+import eu.timepit.refined.api._
 import eu.timepit.refined.auto._
+import eu.timepit.refined.numeric
+import fs2.{Pipe, Stream}
 import higherkindness.droste._
+import org.tessellation.ext.kryo._
 import org.tessellation.kernel.Cell.NullTerminal
 import org.tessellation.kernel._
 import org.tessellation.schema.address.Address
 import org.typelevel.log4cats.slf4j.Slf4jLogger
-import fs2.{Pipe, Stream}
-
-import scala.concurrent.duration._
 
 object L0TokenDef extends StateChannelDef[L0TokenStep, Ω, L0TokenStep] {
 
   override val address = Address("DAG3k3VihUWMjse9LE93jRqZLEuwGd6a5Ypk4zYS")
 
-  override val kryoRegistrar =
+  override val kryoRegistrar: Map[Class[_], StateChannelKryoRegistrationId] =
     Map(
       classOf[L0TokenTransaction] -> 1000,
       classOf[L0TokenBlock] -> 1001,
@@ -67,11 +70,9 @@ object L0TokenDef extends StateChannelDef[L0TokenStep, Ω, L0TokenStep] {
     *
     * override def inputPipe[F[_]: Async]: Pipe[F, L0TokenStep, L0TokenStep] = _.merge(trigger$[F])
     */
-
-
-  /** 
-   * This will watch input stream and start emitting CreateStateChannelSnapshot() only if there is no new input for n seconds.
-   */
+  /**
+    * This will watch input stream and start emitting CreateStateChannelSnapshot() only if there is no new input for n seconds.
+    */
   override def inputPipe[F[_]: Async]: Pipe[F, L0TokenStep, L0TokenStep] = _.switchMap { input =>
     val n = 10.seconds
 
