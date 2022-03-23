@@ -18,7 +18,7 @@ object SdkStorages {
     cfg: SdkConfig
   ): F[SdkStorages[F]] =
     for {
-      clusterStorage <- ClusterStorage.make[F]
+      clusterStorage <- ClusterStorage.make[F]()
       nodeStorage <- NodeStorage.make[F]
       sessionStorage <- SessionStorage.make[F]
       rumorStorage <- RumorStorage.make[F](cfg.gossipConfig.storage)

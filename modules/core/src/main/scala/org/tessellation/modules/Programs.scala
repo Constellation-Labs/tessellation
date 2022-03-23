@@ -18,7 +18,13 @@ object Programs {
   ): Programs[F] = {
     val trustPush = TrustPush.make(storages.trust, services.gossip)
     val download = Download
-      .make(storages.node, storages.cluster, p2pClient.globalSnapshot, storages.globalSnapshot, services.consensus)
+      .make(
+        storages.node,
+        storages.cluster,
+        p2pClient.globalSnapshot,
+        storages.globalSnapshot,
+        services.consensus.storage
+      )
 
     new Programs[F](sdkPrograms.peerDiscovery, sdkPrograms.joining, trustPush, download) {}
   }

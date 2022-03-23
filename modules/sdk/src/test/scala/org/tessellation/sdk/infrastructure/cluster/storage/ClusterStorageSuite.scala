@@ -8,7 +8,6 @@ import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.security.hex.Hex
 
 import com.comcast.ip4s.IpLiteralSyntax
-import io.chrisdavenport.mapref.MapRef
 import weaver.SimpleIOSuite
 import weaver.scalacheck.Checkers
 
@@ -16,8 +15,7 @@ object ClusterStorageSuite extends SimpleIOSuite with Checkers {
 
   test("getPeers returns an empty Set") {
     for {
-      peers <- MapRef.ofSingleImmutableMap[F, PeerId, Peer](Map.empty)
-      cs = ClusterStorage.make[IO](peers)
+      cs <- ClusterStorage.make[IO]()
       get <- cs.getPeers
     } yield expect.same(get, Set.empty[Peer])
   }
@@ -25,20 +23,18 @@ object ClusterStorageSuite extends SimpleIOSuite with Checkers {
   test("getPeers returns provided peers") {
     forall(peersGen()) { peers =>
       for {
-        ref <- MapRef.ofSingleImmutableMap[F, PeerId, Peer](peers.toList.map(p => p.id -> p).toMap)
-        cs = ClusterStorage.make[IO](ref)
+        cs <- ClusterStorage.make[IO](peers.toList.map(p => p.id -> p).toMap)
         p <- cs.getPeers
       } yield expect.same(p, peers)
     }
   }
 
-  test("addPeer updates provided ref") {
+  test("getPeer follows addPeer") {
     forall(peerGen) { peer =>
       for {
-        ref <- MapRef.ofSingleImmutableMap[F, PeerId, Peer](Map.empty)
-        cs = ClusterStorage.make[IO](ref)
+        cs <- ClusterStorage.make[IO]()
         _ <- cs.addPeer(peer)
-        result <- ref(peer.id).get
+        result <- cs.getPeer(peer.id)
       } yield expect.same(result, peer.some)
     }
   }
@@ -46,8 +42,7 @@ object ClusterStorageSuite extends SimpleIOSuite with Checkers {
   test("hasPeerId returns true if peer with provided Id exists") {
     forall(peerGen) { peer =>
       for {
-        ref <- MapRef.ofSingleImmutableMap[F, PeerId, Peer](Map(peer.id -> peer))
-        cs = ClusterStorage.make[IO](ref)
+        cs <- ClusterStorage.make[IO](Map(peer.id -> peer))
         hasPeerId <- cs.hasPeerId(peer.id)
       } yield expect(hasPeerId)
     }
@@ -56,8 +51,7 @@ object ClusterStorageSuite extends SimpleIOSuite with Checkers {
   test("hasPeerId returns false if peer with provided Id does not exist") {
     forall(peerGen) { peer =>
       for {
-        ref <- MapRef.ofSingleImmutableMap[F, PeerId, Peer](Map(peer.id -> peer))
-        cs = ClusterStorage.make[IO](ref)
+        cs <- ClusterStorage.make[IO](Map(peer.id -> peer))
         hasPeerId <- cs.hasPeerId(PeerId(Hex("unknown")))
       } yield expect(!hasPeerId)
     }
@@ -66,8 +60,7 @@ object ClusterStorageSuite extends SimpleIOSuite with Checkers {
   test("hasPeerHostPort returns true if peer with provided host and port exists") {
     forall(peerGen) { peer =>
       for {
-        ref <- MapRef.ofSingleImmutableMap[F, PeerId, Peer](Map(peer.id -> peer))
-        cs = ClusterStorage.make[IO](ref)
+        cs <- ClusterStorage.make[IO](Map(peer.id -> peer))
         hasPeerId <- cs.hasPeerHostPort(peer.ip, peer.p2pPort)
       } yield expect(hasPeerId)
     }
@@ -76,8 +69,7 @@ object ClusterStorageSuite extends SimpleIOSuite with Checkers {
   test("hasPeerHostPort returns false if peer with provided host and port does not exist") {
     forall(peerGen) { peer =>
       for {
-        ref <- MapRef.ofSingleImmutableMap[F, PeerId, Peer](Map(peer.id -> peer))
-        cs = ClusterStorage.make[IO](ref)
+        cs <- ClusterStorage.make[IO](Map(peer.id -> peer))
         hasPeerHostPort <- cs.hasPeerHostPort(host"0.0.0.1", port"1")
       } yield expect(!hasPeerHostPort)
     }

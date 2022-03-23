@@ -7,6 +7,7 @@ import org.tessellation.dag.snapshot._
 import org.tessellation.domain.aci.StateChannelGistedOutput
 import org.tessellation.domain.snapshot.SnapshotTrigger
 import org.tessellation.kernel.StateChannelSnapshot
+import org.tessellation.sdk.infrastructure.consensus.ConsensusStorage
 import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto._
@@ -22,6 +23,9 @@ package object snapshot {
   type GlobalSnapshotKey = SnapshotOrdinal
 
   type GlobalSnapshotArtifact = GlobalSnapshot
+
+  type GlobalSnapshotConsensusStorage[F[_]] =
+    ConsensusStorage[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact]
 
   def toEvent(trigger: SnapshotTrigger): GlobalSnapshotEvent =
     trigger.asRight[Signed[DAGBlock]].asRight[StateChannelEvent]

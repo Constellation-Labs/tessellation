@@ -1,6 +1,6 @@
 package org.tessellation.sdk.domain
 
-import cats.effect.kernel.Spawn
+import cats.effect.Spawn
 import cats.syntax.functor._
 
 trait Daemon[F[_]] {

@@ -12,7 +12,6 @@ import org.tessellation.infrastructure.snapshot._
 import org.tessellation.schema.node.NodeState
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.node.NodeStorage
-import org.tessellation.sdk.infrastructure.consensus.Consensus
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -23,8 +22,9 @@ object Download {
     clusterStorage: ClusterStorage[F],
     globalSnapshotClient: GlobalSnapshotClient[F],
     globalSnapshotStorage: GlobalSnapshotStorage[F],
-    consensus: Consensus[F, GlobalSnapshotKey, GlobalSnapshotArtifact]
-  ): Download[F] = new Download(nodeStorage, clusterStorage, globalSnapshotClient, globalSnapshotStorage, consensus) {}
+    consensusStorage: GlobalSnapshotConsensusStorage[F]
+  ): Download[F] =
+    new Download(nodeStorage, clusterStorage, globalSnapshotClient, globalSnapshotStorage, consensusStorage) {}
 }
 
 sealed abstract class Download[F[_]: Async] private (
@@ -32,7 +32,7 @@ sealed abstract class Download[F[_]: Async] private (
   clusterStorage: ClusterStorage[F],
   globalSnapshotClient: GlobalSnapshotClient[F],
   globalSnapshotStorage: GlobalSnapshotStorage[F],
-  consensus: Consensus[F, GlobalSnapshotKey, GlobalSnapshotArtifact]
+  consensusStorage: GlobalSnapshotConsensusStorage[F]
 ) {
   private def logger = Slf4jLogger.getLogger[F]
 
@@ -49,7 +49,7 @@ sealed abstract class Download[F[_]: Async] private (
               .run(peer)
               .flatMap { snapshot =>
                 globalSnapshotStorage.prepend(snapshot) >>
-                  consensus.setLastKeyAndArtifact((snapshot.value.ordinal, snapshot.value).some)
+                  consensusStorage.setLastKeyAndArtifact((snapshot.value.ordinal, snapshot.value).some)
               }
         }
         .handleErrorWith { err =>

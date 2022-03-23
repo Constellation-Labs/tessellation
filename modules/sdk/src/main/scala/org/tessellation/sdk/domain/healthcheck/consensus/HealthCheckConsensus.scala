@@ -18,6 +18,7 @@ import org.tessellation.sdk.config.types.HealthCheckConfig
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.healthcheck.consensus.HealthCheckConsensusRound
+import org.tessellation.sdk.domain.healthcheck.consensus.types.ConsensusRounds.InProgress
 import org.tessellation.sdk.domain.healthcheck.consensus.types._
 import org.tessellation.sdk.domain.healthcheck.consensus.types.types.RoundId
 import org.tessellation.sdk.domain.healthcheck.services.HealthCheck
@@ -46,8 +47,8 @@ abstract class HealthCheckConsensus[
 
   def periodic: F[Unit]
 
-  def roundsInProgress = allRounds.get.map(_.inProgress)
-  def historicalRounds = allRounds.get.map(_.historical)
+  def roundsInProgress: F[InProgress[F, K, A, B]] = allRounds.get.map(_.inProgress)
+  def historicalRounds: F[List[HistoricalRound[K]]] = allRounds.get.map(_.historical)
 
   def peersUnderConsensus: F[Set[PeerId]] =
     roundsInProgress.map(_.keySet.map(_.id))

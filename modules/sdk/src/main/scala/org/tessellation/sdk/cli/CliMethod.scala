@@ -42,6 +42,10 @@ trait CliMethod {
       defaultCheckTimeout = 10.seconds,
       defaultCheckAttempts = 3,
       ensureCheckInterval = 10.seconds
+    ),
+    peerDeclaration = PeerDeclarationHealthCheckConfig(
+      receiveTimeout = 20.seconds,
+      triggerInterval = 10.seconds
     )
   )
 

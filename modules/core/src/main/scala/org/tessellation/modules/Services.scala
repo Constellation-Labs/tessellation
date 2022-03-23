@@ -3,6 +3,7 @@ package org.tessellation.modules
 import java.security.KeyPair
 
 import cats.effect.kernel.Async
+import cats.effect.std.Random
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
@@ -21,7 +22,7 @@ import org.tessellation.security.SecurityProvider
 
 object Services {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider](
+  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider](
     sdkServices: SdkServices[F],
     queues: Queues[F],
     storages: Storages[F],
@@ -33,7 +34,15 @@ object Services {
       metrics <- Metrics.make[F]
       stateChannelRunner <- StateChannelRunner.make[F](queues.stateChannelOutput)
       consensus <- GlobalSnapshotConsensus
-        .make[F](sdkServices.gossip, selfId, keyPair, storages.cluster, storages.globalSnapshot, cfg.snapshot)
+        .make[F](
+          sdkServices.gossip,
+          selfId,
+          keyPair,
+          storages.cluster,
+          storages.globalSnapshot,
+          cfg.healthCheck,
+          cfg.snapshot
+        )
     } yield
       new Services[F](
         cluster = sdkServices.cluster,
@@ -51,5 +60,5 @@ sealed abstract class Services[F[_]] private (
   val metrics: Metrics[F],
   val gossip: Gossip[F],
   val stateChannelRunner: StateChannelRunner[F],
-  val consensus: Consensus[F, GlobalSnapshotKey, GlobalSnapshotArtifact]
+  val consensus: Consensus[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact]
 )
