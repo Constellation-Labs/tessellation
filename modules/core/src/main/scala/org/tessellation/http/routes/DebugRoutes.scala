@@ -41,6 +41,8 @@ final case class DebugRoutes[F[_]: Async](
       services.gossip.spread(ConsensusEvent(toEvent(TimeSnapshotTrigger()))) >> Ok()
     case POST -> Root / "consensus" / "trigger" / LongVar(height) =>
       services.gossip.spread(ConsensusEvent(toEvent(TipSnapshotTrigger(Height(height))))) >> Ok()
+    case POST -> Root / "consensus" / "stop" =>
+      services.consensus.storage.setLastKeyAndArtifact(none) >> Ok()
   }
 
   val routes: HttpRoutes[F] = Router(

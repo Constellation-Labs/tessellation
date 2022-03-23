@@ -26,38 +26,45 @@ import monocle.syntax.all._
 
 trait ConsensusStorage[F[_], Event, Key, Artifact] {
 
-  trait ModifyStateFn[B]
+  private[consensus] trait ModifyStateFn[B]
       extends (Option[ConsensusState[Key, Artifact]] => F[Option[(Option[ConsensusState[Key, Artifact]], B)]])
 
-  def getState(key: Key): F[Option[ConsensusState[Key, Artifact]]]
+  private[sdk] def getState(key: Key): F[Option[ConsensusState[Key, Artifact]]]
 
-  def condModifyState[B](key: Key)(modifyStateFn: ModifyStateFn[B]): F[Option[B]]
+  private[sdk] def getStates: F[List[ConsensusState[Key, Artifact]]]
 
-  def findEvent(predicate: Event => Boolean): F[Option[Event]]
+  private[consensus] def condModifyState[B](key: Key)(modifyStateFn: ModifyStateFn[B]): F[Option[B]]
 
-  def addEvent(peerId: PeerId, peerEvent: (Ordinal, Event)): F[Unit]
+  private[consensus] def findEvent(predicate: Event => Boolean): F[Option[Event]]
 
-  def addEvents(events: Map[PeerId, List[(Ordinal, Event)]]): F[Unit]
+  private[consensus] def addEvent(peerId: PeerId, peerEvent: (Ordinal, Event)): F[Unit]
 
-  def pullEvents(upperBound: Bound): F[Map[PeerId, List[(Ordinal, Event)]]]
+  private[consensus] def addEvents(events: Map[PeerId, List[(Ordinal, Event)]]): F[Unit]
 
-  def getUpperBound: F[Bound]
+  private[consensus] def pullEvents(upperBound: Bound): F[Map[PeerId, List[(Ordinal, Event)]]]
 
-  def getResources(key: Key): F[Option[ConsensusResources[Artifact]]]
+  private[consensus] def getUpperBound: F[Bound]
 
-  def addArtifact(key: Key, artifact: Artifact): F[ConsensusResources[Artifact]]
+  private[consensus] def getResources(key: Key): F[Option[ConsensusResources[Artifact]]]
 
-  def addFacility(peerId: PeerId, key: Key, bound: Bound): F[ConsensusResources[Artifact]]
+  private[sdk] def getPeerDeclarations(key: Key): F[Map[PeerId, PeerDeclaration]]
 
-  def addProposal(peerId: PeerId, key: Key, hash: Hash): F[ConsensusResources[Artifact]]
+  private[consensus] def addArtifact(key: Key, artifact: Artifact): F[ConsensusResources[Artifact]]
 
-  def addSignature(peerId: PeerId, key: Key, signature: Signature): F[ConsensusResources[Artifact]]
+  private[consensus] def addFacility(peerId: PeerId, key: Key, bound: Bound): F[ConsensusResources[Artifact]]
+
+  private[consensus] def addProposal(peerId: PeerId, key: Key, hash: Hash): F[ConsensusResources[Artifact]]
+
+  private[consensus] def addSignature(peerId: PeerId, key: Key, signature: Signature): F[ConsensusResources[Artifact]]
 
   def setLastKeyAndArtifact(value: Option[(Key, Artifact)]): F[Unit]
 
   def getLastKeyAndArtifact: F[Option[(Key, Artifact)]]
 
-  def tryUpdateLastKeyAndArtifactWithCleanup(oldValue: (Key, Artifact), newValue: (Key, Artifact)): F[Boolean]
+  private[consensus] def tryUpdateLastKeyAndArtifactWithCleanup(
+    oldValue: (Key, Artifact),
+    newValue: (Key, Artifact)
+  ): F[Boolean]
 
 }
 
@@ -86,8 +93,14 @@ object ConsensusStorage {
       def getState(key: Key): F[Option[ConsensusState[Key, Artifact]]] =
         statesR(key).get
 
+      def getStates: F[List[ConsensusState[Key, Artifact]]] =
+        statesR.keys.flatMap(_.traverseFilter(key => statesR(key).get))
+
       def getResources(key: Key): F[Option[ConsensusResources[Artifact]]] =
         resourcesR(key).get
+
+      def getPeerDeclarations(key: Key): F[Map[PeerId, PeerDeclaration]] =
+        resourcesR(key).get.map(_.map(_.peerDeclarations).getOrElse(Map.empty))
 
       def condModifyState[B](key: Key)(modifyStateFn: ModifyStateFn[B]): F[Option[B]] =
         stateUpdateSemaphore.permit.use { _ =>

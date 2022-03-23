@@ -4,6 +4,7 @@ import org.tessellation.ext.kryo._
 import org.tessellation.kernel.{kernelKryoRegistrar, _}
 import org.tessellation.sdk.domain.healthcheck.consensus.types.HealthCheckRoundId
 import org.tessellation.sdk.infrastructure.consensus.message._
+import org.tessellation.sdk.infrastructure.healthcheck.declaration._
 import org.tessellation.sdk.infrastructure.healthcheck.ping._
 import org.tessellation.shared.{sharedKryoRegistrar, _}
 
@@ -32,6 +33,15 @@ package object sdk {
       classOf[ConsensusFacility[_]] -> 507,
       classOf[ConsensusProposal[_]] -> 508,
       classOf[MajoritySignature[_]] -> 509,
-      classOf[ConsensusArtifact[_, _]] -> 510
+      classOf[ConsensusArtifact[_, _]] -> 510,
+      classOf[PeerDeclarationHealthCheckKey[_]] -> 511,
+      classOf[PeerDeclarationConsensusHealthStatus[_]] -> 512,
+      Facility.getClass -> 513,
+      Proposal.getClass -> 514,
+      Signature.getClass -> 515,
+      NotRequired.getClass -> 516,
+      Received.getClass -> 517,
+      Awaiting.getClass -> 518,
+      TimedOut.getClass -> 519
     ).union(sharedKryoRegistrar).union(kernelKryoRegistrar)
 }

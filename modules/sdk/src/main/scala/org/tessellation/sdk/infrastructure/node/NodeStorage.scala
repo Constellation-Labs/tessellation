@@ -58,7 +58,7 @@ object NodeStorage {
         }
 
       def nodeStates: Stream[F, NodeState] =
-        nodeStateTopic.subscribe(1)
+        nodeStateTopic.subscribe(100)
 
       private def modify(from: Set[NodeState], to: NodeState): F[NodeStateTransition] =
         nodeState

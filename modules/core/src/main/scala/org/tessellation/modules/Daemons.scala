@@ -55,7 +55,8 @@ object Daemons {
       DownloadDaemon.make(storages.node, programs.download),
       TrustDaemon.make(cfg.trust.daemon, storages.trust, nodeId),
       HealthCheckDaemon.make(healthChecks),
-      GlobalSnapshotEventsPublisherDaemon.make(queues.stateChannelOutput, dagEvents, services.gossip)
+      GlobalSnapshotEventsPublisherDaemon.make(queues.stateChannelOutput, dagEvents, services.gossip),
+      services.consensus.daemon
     ).traverse(_.start).void
   }
 

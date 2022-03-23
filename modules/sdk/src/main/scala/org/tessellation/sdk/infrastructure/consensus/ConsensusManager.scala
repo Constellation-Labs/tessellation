@@ -1,9 +1,11 @@
 package org.tessellation.sdk.infrastructure.consensus
 
-import cats.effect.Async
+import cats.effect.{Async, Spawn}
 import cats.kernel.Next
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+import cats.syntax.functorFilter._
+import cats.syntax.option._
 import cats.syntax.show._
 import cats.syntax.traverse._
 import cats.{Applicative, Order, Show}
@@ -12,6 +14,9 @@ import scala.reflect.ClassTag
 import scala.reflect.runtime.universe.TypeTag
 
 import org.tessellation.ext.cats.syntax.next._
+import org.tessellation.schema.node.NodeState
+import org.tessellation.schema.peer.PeerId
+import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -20,24 +25,50 @@ trait ConsensusManager[F[_], Event, Key, Artifact] {
 
   def checkForTrigger(event: Event): F[Unit]
   def checkForStateUpdate(key: Key)(resources: ConsensusResources[Artifact]): F[Unit]
+  def removeFacilitator(facilitator: PeerId): F[Unit]
 }
 
 object ConsensusManager {
 
   def make[F[_]: Async, Event, Key: Show: Order: Next: TypeTag: ClassTag, Artifact <: AnyRef: Show: TypeTag](
+    clusterStorage: ClusterStorage[F],
     consensusFns: ConsensusFunctions[F, Event, Key, Artifact],
     consensusStorage: ConsensusStorage[F, Event, Key, Artifact],
     consensusStateUpdater: ConsensusStateUpdater[F, Key, Artifact]
-  ): ConsensusManager[F, Event, Key, Artifact] =
-    new ConsensusManager[F, Event, Key, Artifact] {
+  ): F[ConsensusManager[F, Event, Key, Artifact]] = {
+    val manager = new ConsensusManager[F, Event, Key, Artifact] {
 
       private val logger = Slf4jLogger.getLoggerFromClass[F](ConsensusManager.getClass)
 
       def checkForTrigger(event: Event): F[Unit] =
-        consensusStorage.getLastKeyAndArtifact.flatMap(_.traverse(internalCheckForTrigger(_, event)).void)
+        consensusStorage.getLastKeyAndArtifact
+          .flatMap(
+            _.traverse(internalCheckForTrigger(_, event)).void
+          )
 
       def checkForStateUpdate(key: Key)(resources: ConsensusResources[Artifact]): F[Unit] =
-        consensusStorage.getState(key).flatMap(_.traverse(internalCheckForStateUpdate(key, _, resources)).void)
+        consensusStorage
+          .getState(key)
+          .flatMap(
+            _.traverse(internalCheckForStateUpdate(key, _, resources)).void
+          )
+
+      def removeFacilitator(facilitator: PeerId): F[Unit] =
+        consensusStorage.getStates
+          .flatMap(
+            _.map(_.key)
+              .traverse(internalRemoveFacilitator(facilitator))
+              .void
+          )
+
+      private def internalRemoveFacilitator(facilitator: PeerId)(key: Key) =
+        for {
+          maybeState <- consensusStateUpdater.tryRemoveFacilitator(key, facilitator)
+          maybeResources <- consensusStorage.getResources(key)
+          _ <- maybeState.flatTraverse { state =>
+            maybeResources.traverse(internalCheckForStateUpdate(key, state, _))
+          }
+        } yield ()
 
       private def internalCheckForTrigger(lastKeyAndArtifact: (Key, Artifact), event: Event): F[Unit] =
         if (consensusFns.triggerPredicate(lastKeyAndArtifact, event)) {
@@ -69,7 +100,7 @@ object ConsensusManager {
           consensusStateUpdater.tryAdvanceConsensus(key, resources).flatMap {
             case Some(state) =>
               state.status match {
-                case MajoritySigned(signedArtifact) =>
+                case Finished(signedArtifact) =>
                   val keyAndArtifact = state.key -> signedArtifact.value
                   consensusStorage
                     .tryUpdateLastKeyAndArtifactWithCleanup(state.lastKeyAndArtifact, keyAndArtifact)
@@ -97,11 +128,20 @@ object ConsensusManager {
         def allDeclarations[A](getter: PeerDeclaration => Option[A]): Boolean =
           state.facilitators.traverse(resources.peerDeclarations.get).flatMap(_.traverse(getter)).isDefined
         state.status match {
-          case _: Facilitated[Artifact]      => allDeclarations(_.upperBound)
-          case _: ProposalMade[Artifact]     => allDeclarations(_.proposal)
-          case _: MajoritySelected[Artifact] => allDeclarations(_.signature)
-          case _: MajoritySigned[Artifact]   => false /** terminal state */
+          case _: Facilitated[Artifact]    => allDeclarations(_.upperBound)
+          case _: ProposalMade[Artifact]   => allDeclarations(_.proposal)
+          case _: MajoritySigned[Artifact] => allDeclarations(_.signature)
+          case _: Finished[Artifact]       => false /** terminal state */
         }
       }
     }
+
+    Spawn[F].start {
+      clusterStorage.peerChanges.mapFilter {
+        case (id, None)                                                => id.some
+        case (id, Some(peer)) if NodeState.absent.contains(peer.state) => id.some
+        case _                                                         => none
+      }.evalMap(manager.removeFacilitator).compile.drain
+    }.as(manager)
+  }
 }
