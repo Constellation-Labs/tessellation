@@ -69,7 +69,7 @@ abstract class LocalFileSystemStorage[F[_]: KryoSerializer, A <: AnyRef: ClassTa
 
   def link(fileName: String, to: String): F[Unit] =
     (dir.map(_ / fileName), dir.map(_ / to)).mapN {
-      case (src, dst) => F.delay { dst.linkTo(src) }.void
+      case (src, dst) => F.delay { src.linkTo(dst) }.void
     }.flatten
 
   def delete(fileName: String): F[Unit] =
