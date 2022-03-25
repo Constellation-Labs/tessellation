@@ -10,6 +10,7 @@ import cats.syntax.applicativeError._
 import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+import cats.syntax.show._
 import cats.syntax.traverse._
 
 import scala.concurrent.duration.DurationInt
@@ -22,6 +23,7 @@ import org.tessellation.dag.l1.domain.consensus.block.Validator.{canStartOwnCons
 import org.tessellation.dag.l1.domain.consensus.block.{BlockConsensusCell, BlockConsensusContext, BlockConsensusInput}
 import org.tessellation.dag.l1.http.p2p.P2PClient
 import org.tessellation.dag.l1.modules._
+import org.tessellation.ext.crypto._
 import org.tessellation.kernel.Cell.NullTerminal
 import org.tessellation.kernel.{CellError, Ω}
 import org.tessellation.kryo.KryoSerializer
@@ -66,7 +68,14 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
   private val ownRoundTriggerInput: Stream[F, OwnerBlockConsensusInput] = Stream
     .awakeEvery(5.seconds)
     .evalFilter { _ =>
-      canStartOwnConsensus(storages.consensus, storages.node, storages.cluster, appConfig.consensus.peersCount)
+      canStartOwnConsensus(
+        storages.consensus,
+        storages.node,
+        storages.cluster,
+        storages.block,
+        appConfig.consensus.peersCount,
+        appConfig.consensus.tipsCount
+      )
     }
     .as(OwnRoundTrigger)
 
@@ -133,7 +142,7 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
     _.evalMap { fb =>
       for {
         tips <- storages.block
-          .pullTips(appConfig.tips.minimumTipsCount)
+          .getTips(appConfig.tips.minimumTipsCount)
 
         l0Peer <- storages.l0Cluster.getPeers
           .flatMap(peers => Random[F].shuffleList(peers.toNonEmptyList.toList))
@@ -163,7 +172,7 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
             logger.debug(s"Acceptance of a block $hash starts!") >>
               services.block
                 .accept(signedBlock)
-                .handleErrorWith(logger.warn(_)(s"Failed acceptance of a block with hash=$hash"))
+                .handleErrorWith(logger.warn(_)(s"Failed acceptance of a block with ${hash.show}"))
 
         }
         .void
@@ -173,7 +182,11 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
     .awakeEvery(10.seconds)
     .evalMap(_ => services.l0.pullGlobalSnapshots)
     .flatMap(snapshots => Stream.fromIterator(snapshots.iterator, 1))
-    .evalMap(snapshot => logger.info(s"Pulled following global snapshot: $snapshot"))
+    .evalMap { snapshot =>
+      snapshot.hashF.flatMap { hash =>
+        logger.info(s"Pulled following global snapshot: ${snapshot.ordinal.show} ${hash.show}")
+      }
+    }
 
   private val blockConsensus: Stream[F, Unit] =
     blockConsensusInputs

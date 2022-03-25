@@ -90,7 +90,7 @@ class BlockStorage[F[_]: Sync](blocks: MapRef[F, ProofsHash, Option[StoredBlock]
       _ <- tryAddAsATip(addAsTipCondition, hashedBlock)
     } yield ()
 
-  def pullTips(tipsCount: PosInt): F[Option[Tips]] =
+  def getTips(tipsCount: PosInt): F[Option[Tips]] =
     for {
       allBlocks <- blocks.toMap
       allTips = allBlocks.collect { case (_, AcceptedBlock(block, _, _, true)) => block }.toList
