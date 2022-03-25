@@ -2,7 +2,6 @@ package org.tessellation.sdk.infrastructure.healthcheck.declaration
 
 import cats.effect._
 import cats.effect.kernel.Clock
-import cats.effect.std.Random
 import cats.syntax.applicative._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
@@ -23,7 +22,7 @@ import org.tessellation.sdk.infrastructure.consensus._
 
 object PeerDeclarationHealthCheck {
 
-  def make[F[_]: Async: GenUUID: Random: Clock, K: TypeTag](
+  def make[F[_]: Async: GenUUID, K: TypeTag](
     clusterStorage: ClusterStorage[F],
     selfId: PeerId,
     gossip: Gossip[F],

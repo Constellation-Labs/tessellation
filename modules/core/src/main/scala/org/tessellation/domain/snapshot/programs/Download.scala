@@ -24,7 +24,7 @@ object Download {
     globalSnapshotStorage: GlobalSnapshotStorage[F],
     consensusStorage: GlobalSnapshotConsensusStorage[F]
   ): Download[F] =
-    new Download(nodeStorage, clusterStorage, globalSnapshotClient, globalSnapshotStorage, consensusStorage) {}
+    new Download[F](nodeStorage, clusterStorage, globalSnapshotClient, globalSnapshotStorage, consensusStorage) {}
 }
 
 sealed abstract class Download[F[_]: Async] private (
