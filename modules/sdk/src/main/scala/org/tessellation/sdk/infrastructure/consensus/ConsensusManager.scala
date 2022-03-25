@@ -131,7 +131,7 @@ object ConsensusManager {
           case _: Facilitated[Artifact]    => allDeclarations(_.upperBound)
           case _: ProposalMade[Artifact]   => allDeclarations(_.proposal)
           case _: MajoritySigned[Artifact] => allDeclarations(_.signature)
-          case _: Finished[Artifact]       => false /** terminal state */
+          case _: Finished[Artifact]       => false /* terminal state */
         }
       }
     }

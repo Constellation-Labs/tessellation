@@ -43,6 +43,12 @@ Global / fork := true
 Global / cancelable := true
 Global / onChangedBuildSource := ReloadOnSourceChanges
 
+lazy val dockerSettings = Seq(
+  Docker / packageName := "tessellation",
+  dockerBaseImage := "openjdk:jre-alpine"
+)
+
+
 lazy val root = (project in file("."))
   .settings(
     name := "tessellation"
@@ -277,6 +283,8 @@ lazy val dagShared = (project in file("modules/dag-shared"))
   )
 
 lazy val dagL1 = (project in file("modules/dag-l1"))
+  .enablePlugins(AshScriptPlugin)
+  .enablePlugins(JavaAppPackaging)
   .dependsOn(kernel, shared, dagShared, sdk)
   .configs(IntegrationTest)
   .settings(
@@ -285,6 +293,7 @@ lazy val dagL1 = (project in file("modules/dag-l1"))
     scalafixCommonSettings,
     commonSettings,
     commonTestSettings,
+    dockerSettings,
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
       CompilerPlugin.betterMonadicFor,
@@ -312,6 +321,7 @@ lazy val dagL1 = (project in file("modules/dag-l1"))
   )
 lazy val core = (project in file("modules/core"))
   .enablePlugins(AshScriptPlugin)
+  .enablePlugins(JavaAppPackaging)
   .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test, dagShared, sdk)
   .settings(
     name := "tessellation-core",
@@ -319,6 +329,7 @@ lazy val core = (project in file("modules/core"))
     scalafixCommonSettings,
     commonSettings,
     commonTestSettings,
+    dockerSettings,
     makeBatScripts := Seq(),
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
