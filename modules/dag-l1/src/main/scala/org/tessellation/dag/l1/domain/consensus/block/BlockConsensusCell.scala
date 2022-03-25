@@ -480,7 +480,7 @@ object BlockConsensusCell {
       for {
         roundId <- GenUUID.forSync[F].make.map(RoundId(_))
         maybePeers <- pullNewConsensusPeers(ctx)
-        maybeTips <- ctx.blockStorage.pullTips(ctx.consensusConfig.tipsCount)
+        maybeTips <- ctx.blockStorage.getTips(ctx.consensusConfig.tipsCount)
         algebraCommand <- (maybePeers, maybeTips) match {
           case (Some(peers), Some(tips)) =>
             for {
