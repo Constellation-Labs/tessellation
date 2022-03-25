@@ -19,6 +19,8 @@ import io.chrisdavenport.mapref.MapRef
 
 object ClusterStorage {
 
+  private val maxQueuedPeerChanges = 1000
+
   def make[F[_]: Async](initialPeers: Map[PeerId, Peer] = Map.empty): F[ClusterStorage[F]] =
     for {
       topic <- Topic[F, (PeerId, Option[Peer])]
@@ -59,7 +61,7 @@ object ClusterStorage {
         setPeer(id)(none)
 
       def peerChanges: Stream[F, (PeerId, Option[Peer])] =
-        topic.subscribe(100)
+        topic.subscribe(maxQueuedPeerChanges)
 
       private def setPeer(id: PeerId)(value: Option[Peer]): F[Unit] = updatePeer(id)(_ => value)
 

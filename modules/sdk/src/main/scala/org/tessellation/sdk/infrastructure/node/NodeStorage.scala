@@ -14,6 +14,8 @@ import fs2.concurrent.Topic
 
 object NodeStorage {
 
+  private val maxQueuedNodeStates = 1000
+
   def make[F[_]: Concurrent: Ref.Make]: F[NodeStorage[F]] =
     Ref.of[F, NodeState](NodeState.Initial) >>= { ref =>
       Topic[F, NodeState] >>= { topic =>
@@ -58,7 +60,7 @@ object NodeStorage {
         }
 
       def nodeStates: Stream[F, NodeState] =
-        nodeStateTopic.subscribe(100)
+        nodeStateTopic.subscribe(maxQueuedNodeStates)
 
       private def modify(from: Set[NodeState], to: NodeState): F[NodeStateTransition] =
         nodeState
