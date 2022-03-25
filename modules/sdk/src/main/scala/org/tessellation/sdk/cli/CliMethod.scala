@@ -3,6 +3,7 @@ package org.tessellation.sdk.cli
 import scala.concurrent.duration._
 
 import org.tessellation.cli.env._
+import org.tessellation.schema.node.NodeState
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types._
 
@@ -20,6 +21,8 @@ trait CliMethod {
   val whitelistingPath: Option[Path]
 
   val httpConfig: HttpConfig
+
+  val stateAfterJoining: NodeState
 
   val gossipConfig: GossipConfig = GossipConfig(
     storage = RumorStorageConfig(
@@ -49,11 +52,12 @@ trait CliMethod {
     )
   )
 
-  val sdkConfig: SdkConfig = SdkConfig(
+  lazy val sdkConfig: SdkConfig = SdkConfig(
     environment,
     gossipConfig,
     httpConfig,
     leavingDelay,
+    stateAfterJoining,
     healthCheckConfig
   )
 

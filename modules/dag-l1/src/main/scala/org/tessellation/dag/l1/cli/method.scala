@@ -10,6 +10,7 @@ import org.tessellation.dag.l1.config.TipsConfig
 import org.tessellation.dag.l1.config.types.{AppConfig, DBConfig}
 import org.tessellation.dag.l1.domain.consensus.block.config.ConsensusConfig
 import org.tessellation.ext.decline.decline._
+import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.L0Peer
 import org.tessellation.sdk.cli.{CliMethod, L0PeerOpts}
 import org.tessellation.sdk.config.AppEnvironment
@@ -24,6 +25,8 @@ object method {
   sealed trait Run extends CliMethod {
     val dbConfig: DBConfig
     val l0Peer: L0Peer
+
+    val stateAfterJoining: NodeState = NodeState.Ready
 
     val appConfig: AppConfig = AppConfig(
       environment = environment,

@@ -2,6 +2,8 @@ package org.tessellation.sdk.config
 
 import scala.concurrent.duration.FiniteDuration
 
+import org.tessellation.schema.node.NodeState
+
 import com.comcast.ip4s.{Host, Port}
 import eu.timepit.refined.types.numeric.PosInt
 
@@ -12,6 +14,7 @@ object types {
     gossipConfig: GossipConfig,
     httpConfig: HttpConfig,
     leavingDelay: FiniteDuration,
+    stateAfterJoining: NodeState,
     healthCheck: HealthCheckConfig
   )
 
