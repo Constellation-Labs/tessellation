@@ -8,7 +8,6 @@ import cats.syntax.semigroupk._
 
 import org.tessellation.http.routes._
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.routes.BlockRoutes
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.AppEnvironment.{Dev, Testnet}
@@ -54,6 +53,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer] pri
   private val stateChannelRoutes = StateChannelRoutes[F](services.stateChannelRunner)
   private val blockRoutes = BlockRoutes[F](queues.l1Output)
   private val globalSnapshotRoutes = GlobalSnapshotRoutes[F](storages.globalSnapshot)
+  private val dagRoutes = DagRoutes[F](services.dag)
 
   private val debugRoutes = DebugRoutes[F](storages, services).routes
 
@@ -64,7 +64,11 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer] pri
       .responseSignerMiddleware(privateKey, storages.session) {
         `X-Id-Middleware`.responseMiddleware(selfId) {
           (if (environment == Testnet || environment == Dev) debugRoutes else HttpRoutes.empty) <+>
-            metricRoutes <+> stateChannelRoutes.publicRoutes <+> clusterRoutes.publicRoutes <+> globalSnapshotRoutes.publicRoutes
+            metricRoutes <+>
+            stateChannelRoutes.publicRoutes <+>
+            clusterRoutes.publicRoutes <+>
+            globalSnapshotRoutes.publicRoutes <+>
+            dagRoutes.publicRoutes
         }
       }
 
