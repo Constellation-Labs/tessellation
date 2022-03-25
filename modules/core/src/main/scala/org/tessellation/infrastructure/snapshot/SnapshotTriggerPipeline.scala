@@ -29,6 +29,11 @@ object SnapshotTriggerPipeline {
 
     def getLastSnapshotHeight: F[Option[Height]] = globalSnapshotStorage.head.map(_.map(_.height))
 
+    def timed: Stream[F, Either[Signed[DAGBlock], TimeSnapshotTrigger]] =
+      Stream
+        .awakeEvery(config.fallbackTriggerTimeout)
+        .as(TimeSnapshotTrigger().asRight[Signed[DAGBlock]])
+
     Stream
       .fromQueueUnterminated(l1OutputQueue)
       .zip(Stream.eval(getLastSnapshotHeight).flatMap(_.map(Stream.emit).getOrElse(Stream.empty)))
@@ -46,7 +51,7 @@ object SnapshotTriggerPipeline {
       .through(
         switchRepeat(
           config.fallbackTriggerTimeout,
-          Stream(TimeSnapshotTrigger().asRight[Signed[DAGBlock]])
+          timed
         )
       )
 
