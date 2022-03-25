@@ -34,6 +34,7 @@ object SdkPrograms {
         storages.session,
         whitelisting,
         nodeId,
+        cfg.stateAfterJoining,
         pd
       )
     } yield new SdkPrograms[F](pd, joining) {}

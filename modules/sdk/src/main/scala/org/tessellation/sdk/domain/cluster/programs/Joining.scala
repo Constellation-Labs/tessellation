@@ -42,6 +42,7 @@ object Joining {
     sessionStorage: SessionStorage[F],
     whitelisting: Option[Set[PeerId]],
     selfId: PeerId,
+    stateAfterJoining: NodeState,
     peerDiscovery: PeerDiscovery[F]
   ): F[Joining[F]] =
     Queue
@@ -58,6 +59,7 @@ object Joining {
           sessionStorage,
           whitelisting,
           selfId,
+          stateAfterJoining,
           peerDiscovery
         )
       )
@@ -73,6 +75,7 @@ object Joining {
     sessionStorage: SessionStorage[F],
     whitelisting: Option[Set[PeerId]],
     selfId: PeerId,
+    stateAfterJoining: NodeState,
     peerDiscovery: PeerDiscovery[F]
   ): F[Joining[F]] = {
     val joining = new Joining(
@@ -85,6 +88,7 @@ object Joining {
       sessionStorage,
       whitelisting,
       selfId,
+      stateAfterJoining,
       joiningQueue
     ) {}
 
@@ -114,6 +118,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
   sessionStorage: SessionStorage[F],
   whitelisting: Option[Set[PeerId]],
   selfId: PeerId,
+  stateAfterJoining: NodeState,
   joiningQueue: Queue[F, P2PContext]
 ) {
 
@@ -198,7 +203,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
       _ <- clusterStorage.addPeer(peer)
 
       // Note: Changing state from SessionStarted to Ready state will execute once for first peer, then all consecutive joins should be ignored
-      _ <- nodeStorage.tryModifyState(NodeState.SessionStarted, NodeState.WaitingForDownload).handleError(_ => ())
+      _ <- nodeStorage.tryModifyState(NodeState.SessionStarted, stateAfterJoining).handleError(_ => ())
     } yield peer
 
   private def validateHandshake(registrationRequest: RegistrationRequest, remoteAddress: Option[Host]): F[Unit] =
