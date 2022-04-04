@@ -5,6 +5,7 @@ import cats.effect.std.Semaphore
 import cats.kernel.Next
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
+import cats.syntax.contravariant._
 import cats.syntax.flatMap._
 import cats.syntax.foldable._
 import cats.syntax.functor._
@@ -19,6 +20,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.gossip.Ordinal
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.security.hash.Hash
+import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.Signature
 
 import io.chrisdavenport.mapref.MapRef
@@ -57,13 +59,13 @@ trait ConsensusStorage[F[_], Event, Key, Artifact] {
 
   private[consensus] def addSignature(peerId: PeerId, key: Key, signature: Signature): F[ConsensusResources[Artifact]]
 
-  def setLastKeyAndArtifact(value: Option[(Key, Artifact)]): F[Unit]
+  def setLastKeyAndArtifact(value: Option[(Key, Signed[Artifact])]): F[Unit]
 
-  def getLastKeyAndArtifact: F[Option[(Key, Artifact)]]
+  def getLastKeyAndArtifact: F[Option[(Key, Signed[Artifact])]]
 
   private[consensus] def tryUpdateLastKeyAndArtifactWithCleanup(
-    oldValue: (Key, Artifact),
-    newValue: (Key, Artifact)
+    oldValue: (Key, Signed[Artifact]),
+    newValue: (Key, Signed[Artifact])
   ): F[Boolean]
 
 }
@@ -71,7 +73,7 @@ trait ConsensusStorage[F[_], Event, Key, Artifact] {
 object ConsensusStorage {
 
   def make[F[_]: Async: KryoSerializer, Event, Key: Show: Next: Eq, Artifact <: AnyRef: Show: Eq](
-    lastKeyAndArtifact: Option[(Key, Artifact)] = none[(Key, Artifact)]
+    lastKeyAndArtifact: Option[(Key, Signed[Artifact])] = none[(Key, Signed[Artifact])]
   ): F[ConsensusStorage[F, Event, Key, Artifact]] =
     for {
       stateUpdateSemaphore <- Semaphore[F](1)
@@ -83,7 +85,7 @@ object ConsensusStorage {
 
   def make[F[_]: Async: KryoSerializer, Event, Key: Show: Next: Eq, Artifact <: AnyRef: Show: Eq](
     stateUpdateSemaphore: Semaphore[F],
-    lastKeyAndArtifactR: Ref[F, Option[(Key, Artifact)]],
+    lastKeyAndArtifactR: Ref[F, Option[(Key, Signed[Artifact])]],
     eventsR: MapRef[F, PeerId, Option[List[(Ordinal, Event)]]],
     statesR: MapRef[F, Key, Option[ConsensusState[Key, Artifact]]],
     resourcesR: MapRef[F, Key, Option[ConsensusResources[Artifact]]]
@@ -121,12 +123,17 @@ object ConsensusStorage {
           } yield maybeB
         }
 
-      def setLastKeyAndArtifact(value: Option[(Key, Artifact)]): F[Unit] = lastKeyAndArtifactR.set(value)
+      def setLastKeyAndArtifact(value: Option[(Key, Signed[Artifact])]): F[Unit] = lastKeyAndArtifactR.set(value)
 
-      def getLastKeyAndArtifact: F[Option[(Key, Artifact)]] = lastKeyAndArtifactR.get
+      def getLastKeyAndArtifact: F[Option[(Key, Signed[Artifact])]] = lastKeyAndArtifactR.get
 
-      def tryUpdateLastKeyAndArtifactWithCleanup(oldValue: (Key, Artifact), newValue: (Key, Artifact)): F[Boolean] =
+      def tryUpdateLastKeyAndArtifactWithCleanup(
+        oldValue: (Key, Signed[Artifact]),
+        newValue: (Key, Signed[Artifact])
+      ): F[Boolean] =
         lastKeyAndArtifactR.modify { maybeValue =>
+          implicit def eqSigned[A]: Eq[Signed[Artifact]] = Eq[Artifact].contramap(_.value)
+
           if (maybeValue === oldValue.some)
             (newValue.some, true)
           else

@@ -13,7 +13,7 @@ import derevo.derive
 case class ConsensusState[Key, Artifact](
   key: Key,
   facilitators: List[PeerId],
-  lastKeyAndArtifact: (Key, Artifact),
+  lastKeyAndArtifact: (Key, Signed[Artifact]),
   status: ConsensusStatus[Artifact],
   statusUpdatedAt: FiniteDuration
 )

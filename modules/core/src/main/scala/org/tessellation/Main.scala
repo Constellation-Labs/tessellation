@@ -86,7 +86,7 @@ object Main
                 logger.info(s"Genesis accounts: ${accounts.show}") >>
                   Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair).flatMap { signedGenesis =>
                     storages.globalSnapshot.prepend(signedGenesis) >>
-                      services.consensus.storage.setLastKeyAndArtifact((genesis.ordinal, genesis).some)
+                      services.consensus.storage.setLastKeyAndArtifact((genesis.ordinal, signedGenesis).some)
                   }
               }
             } >> services.session.createSession >> storages.node.setNodeState(NodeState.Ready)

@@ -28,6 +28,7 @@ import org.tessellation.sdk.infrastructure.healthcheck.declaration.{
   PeerDeclarationProposalHandler
 }
 import org.tessellation.security.SecurityProvider
+import org.tessellation.security.signature.Signed
 
 object Consensus {
 
@@ -43,7 +44,7 @@ object Consensus {
     keyPair: KeyPair,
     clusterStorage: ClusterStorage[F],
     healthCheckConfig: HealthCheckConfig,
-    initKeyAndArtifact: Option[(Key, Artifact)] = none
+    initKeyAndArtifact: Option[(Key, Signed[Artifact])] = none
   ): F[Consensus[F, Event, Key, Artifact]] =
     for {
       storage <- ConsensusStorage.make[F, Event, Key, Artifact](initKeyAndArtifact)

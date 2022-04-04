@@ -49,7 +49,7 @@ sealed abstract class Download[F[_]: Async] private (
               .run(peer)
               .flatMap { snapshot =>
                 globalSnapshotStorage.prepend(snapshot) >>
-                  consensusStorage.setLastKeyAndArtifact((snapshot.value.ordinal, snapshot.value).some)
+                  consensusStorage.setLastKeyAndArtifact((snapshot.value.ordinal, snapshot).some)
               }
         }
         .handleErrorWith { err =>

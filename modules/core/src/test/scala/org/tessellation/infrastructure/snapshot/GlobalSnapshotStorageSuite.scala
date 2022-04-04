@@ -52,6 +52,7 @@ object GlobalSnapshotStorageSuite extends MutableIOSuite with Checkers {
             genesis.value.hash.toOption.get,
             Set.empty,
             Map.empty,
+            Set.empty,
             NonEmptyList.of(PeerId(Hex("peer1"))),
             genesis.info
           )

@@ -10,6 +10,7 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.transaction.RewardTransaction
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.signature.Signed
@@ -26,6 +27,7 @@ case class GlobalSnapshot(
   lastSnapshotHash: Hash,
   blocks: Set[Signed[DAGBlock]],
   stateChannelSnapshots: Map[Address, NonEmptyList[StateChannelSnapshotBinary]],
+  rewards: Set[RewardTransaction],
   nextFacilitators: NonEmptyList[PeerId],
   info: GlobalSnapshotInfo
 )
@@ -46,6 +48,7 @@ object GlobalSnapshot {
       Hash.empty,
       Set.empty,
       Map.empty,
+      Set.empty,
       NonEmptyList.of(PeerId(Hex("peer1"))), // TODO
       GlobalSnapshotInfo(Map.empty, Map.empty, balances)
     )

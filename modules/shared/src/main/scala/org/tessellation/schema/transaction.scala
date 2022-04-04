@@ -139,4 +139,10 @@ object transaction {
 
     implicit val transactionOrdering: Ordering[Transaction] = transactionOrder.toOrdering
   }
+
+  @derive(decoder, encoder, eqv, show)
+  case class RewardTransaction(
+    destination: Address,
+    amount: TransactionAmount
+  )
 }
