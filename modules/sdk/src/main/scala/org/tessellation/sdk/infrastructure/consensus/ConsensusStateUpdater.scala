@@ -39,7 +39,7 @@ trait ConsensusStateUpdater[F[_], Key, Artifact] {
 
   def tryAdvanceConsensus(key: Key, resources: ConsensusResources[Artifact]): F[MaybeState]
 
-  def tryFacilitateConsensus(key: Key, lastKeyAndArtifact: (Key, Artifact)): F[MaybeState]
+  def tryFacilitateConsensus(key: Key, lastKeyAndArtifact: (Key, Signed[Artifact])): F[MaybeState]
 
   def tryRemoveFacilitator(key: Key, facilitator: PeerId): F[MaybeState]
 }
@@ -57,7 +57,7 @@ object ConsensusStateUpdater {
 
     private val logger = Slf4jLogger.getLoggerFromClass(ConsensusStateUpdater.getClass)
 
-    def tryFacilitateConsensus(key: Key, lastKeyAndArtifact: (Key, Artifact)): F[MaybeState] =
+    def tryFacilitateConsensus(key: Key, lastKeyAndArtifact: (Key, Signed[Artifact])): F[MaybeState] =
       tryModifyConsensus(key, internalTryFacilitateConsensus(key, lastKeyAndArtifact))
         .flatTap(logStatusIfModified(key))
 
@@ -117,7 +117,7 @@ object ConsensusStateUpdater {
         (state.copy(facilitators = state.facilitators.filter(_ != facilitator)), Applicative[F].unit)
       }.pure[F]
 
-    private def internalTryFacilitateConsensus(key: Key, lastKeyAndArtifact: (Key, Artifact))(
+    private def internalTryFacilitateConsensus(key: Key, lastKeyAndArtifact: (Key, Signed[Artifact]))(
       maybeState: MaybeState
     ): F[Option[(ConsensusState[Key, Artifact], F[Unit])]] =
       maybeState match {

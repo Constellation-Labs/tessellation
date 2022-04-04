@@ -22,6 +22,7 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.height.SubHeight
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.transaction
 import org.tessellation.schema.transaction.{Transaction, TransactionReference}
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
 import org.tessellation.security.SecurityProvider
@@ -53,15 +54,15 @@ object GlobalSnapshotConsensusFunctions {
         .ifM(Applicative[F].unit, logger.error("Cannot save GlobalSnapshot into the storage"))
 
     def triggerPredicate(
-      last: (GlobalSnapshotKey, GlobalSnapshotArtifact),
+      last: (GlobalSnapshotKey, Signed[GlobalSnapshotArtifact]),
       event: GlobalSnapshotEvent
     ): Boolean = event.toOption.flatMap(_.toOption).fold(false) {
-      case TipSnapshotTrigger(height) => last._2.height.nextN(heightInterval) === height
+      case TipSnapshotTrigger(height) => last._2.value.height.nextN(heightInterval) === height
       case TimeSnapshotTrigger()      => true
     }
 
     def createProposalArtifact(
-      last: (GlobalSnapshotKey, GlobalSnapshotArtifact),
+      last: (GlobalSnapshotKey, Signed[GlobalSnapshotArtifact]),
       events: Set[GlobalSnapshotEvent]
     ): F[(GlobalSnapshotArtifact, Set[GlobalSnapshotEvent])] = {
       val (_, lastGS) = last
@@ -116,6 +117,8 @@ object GlobalSnapshotConsensusFunctions {
           )
           .map(_.toMap)
 
+        rewards = Set.empty[transaction.RewardTransaction] // TODO: @mwadon as a next step
+
         globalSnapshot = GlobalSnapshot(
           ordinal,
           maybeTipTrigger.fold(lastGS.height)(_.height),
@@ -123,6 +126,7 @@ object GlobalSnapshotConsensusFunctions {
           lastGSHash,
           blocksInRange,
           scSnapshots,
+          rewards,
           NonEmptyList.of(PeerId(Hex("peer1"))), // TODO
           GlobalSnapshotInfo(
             lastGS.info.lastStateChannelSnapshotHashes ++ sCSnapshotHashes,

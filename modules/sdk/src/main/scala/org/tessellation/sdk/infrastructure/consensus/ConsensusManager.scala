@@ -18,6 +18,7 @@ import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
+import org.tessellation.security.signature.Signed
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -70,7 +71,7 @@ object ConsensusManager {
           }
         } yield ()
 
-      private def internalCheckForTrigger(lastKeyAndArtifact: (Key, Artifact), event: Event): F[Unit] =
+      private def internalCheckForTrigger(lastKeyAndArtifact: (Key, Signed[Artifact]), event: Event): F[Unit] =
         if (consensusFns.triggerPredicate(lastKeyAndArtifact, event)) {
           val nextKey = lastKeyAndArtifact._1.next
           consensusStorage
@@ -101,7 +102,7 @@ object ConsensusManager {
             case Some(state) =>
               state.status match {
                 case Finished(signedArtifact) =>
-                  val keyAndArtifact = state.key -> signedArtifact.value
+                  val keyAndArtifact = state.key -> signedArtifact
                   consensusStorage
                     .tryUpdateLastKeyAndArtifactWithCleanup(state.lastKeyAndArtifact, keyAndArtifact)
                     .ifM(
@@ -115,7 +116,7 @@ object ConsensusManager {
           } else
           Applicative[F].unit
 
-      private def checkAllForTrigger(lastKeyAndArtifact: (Key, Artifact)): F[Unit] =
+      private def checkAllForTrigger(lastKeyAndArtifact: (Key, Signed[Artifact])): F[Unit] =
         for {
           maybeEvent <- consensusStorage.findEvent { consensusFns.triggerPredicate(lastKeyAndArtifact, _) }
           _ <- maybeEvent.traverse(internalCheckForTrigger(lastKeyAndArtifact, _))
