@@ -71,37 +71,38 @@ abstract class HealthCheckConsensus[
         partition(inProgress).map { case (finished, _) => finished }
       }
 
-    partition(rounds).flatMap {
-      case (finished, inProgress) => checkRounds(inProgress).map(r => (finished ++ r, inProgress -- r.keySet))
-    }.flatMap {
-      case (ready, toManage) =>
-        toManage.values.toList
-          .map(_.manage)
-          .map(Spawn[F].start)
-          .sequence
-          .as(ready)
-    }.flatMap {
-      calculateOutcome
-    }.flatTap { outcome =>
-      def negative = outcome.filter { case (_, (decision, _)) => decision.isInstanceOf[NegativeOutcome] }
-      def nonNegative = outcome -- negative.keySet
+    logger.info(s"Healthcheck rounds in progress: ${rounds.keySet}") >>
+      partition(rounds).flatMap {
+        case (finished, inProgress) => checkRounds(inProgress).map(r => (finished ++ r, inProgress -- r.keySet))
+      }.flatMap {
+        case (ready, toManage) =>
+          toManage.values.toList
+            .map(_.manage)
+            .map(Spawn[F].start)
+            .sequence
+            .as(ready)
+      }.flatMap {
+        calculateOutcome
+      }.flatTap { outcome =>
+        def negative = outcome.filter { case (_, (decision, _)) => decision.isInstanceOf[NegativeOutcome] }
+        def nonNegative = outcome -- negative.keySet
 
-      def run = onNegativeOutcome(negative) >> onNonNegativeOutcome(nonNegative)
+        def run = onNegativeOutcome(negative) >> onNonNegativeOutcome(nonNegative)
 
-      run.handleErrorWith(e => logger.error(e)("Unhandled error on outcome action. Check implementation."))
-    }.flatMap {
-      _.values.toList.traverse {
-        case (decision, round) => round.generateHistoricalData(decision)
+        run.handleErrorWith(e => logger.error(e)("Unhandled error on outcome action. Check implementation."))
+      }.flatMap {
+        _.values.toList.traverse {
+          case (decision, round) => round.generateHistoricalData(decision)
+        }
+      }.flatMap { finishedRounds =>
+        allRounds.update {
+          case ConsensusRounds(historical, inProgress) =>
+            def updatedHistorical = historical ++ finishedRounds
+            def updatedInProgress = inProgress -- finishedRounds.map(_.key).toSet
+
+            ConsensusRounds(updatedHistorical, updatedInProgress)
+        }
       }
-    }.flatMap { finishedRounds =>
-      allRounds.update {
-        case ConsensusRounds(historical, inProgress) =>
-          def updatedHistorical = historical ++ finishedRounds
-          def updatedInProgress = inProgress -- finishedRounds.map(_.key).toSet
-
-          ConsensusRounds(updatedHistorical, updatedInProgress)
-      }
-    }
   }
 
   private def createRoundId: F[RoundId] = GenUUID[F].make.map(RoundId.apply)
@@ -210,7 +211,16 @@ abstract class HealthCheckConsensus[
 
   protected def onNonNegativeOutcome(
     peers: ConsensusRounds.Outcome[F, K, A, B]
-  ): F[Unit] = Applicative[F].unit
+  ): F[Unit] =
+    peers.keys.toList.traverse { key =>
+      clusterStorage
+        .getPeer(key.id)
+        .map(_.isDefined)
+        .ifM(
+          logger.info(s"Positive outcome for peer: ${key.id}. Peer is already known."),
+          logger.info(s"Positive outcome for peer: ${key.id}. Peer is already unknown.")
+        )
+    }.void
 
   private def calculateOutcome(rounds: ConsensusRounds.Finished[F, K, A, B]): F[ConsensusRounds.Outcome[F, K, A, B]] =
     if (rounds.isEmpty)
