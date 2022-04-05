@@ -88,6 +88,7 @@ object Dependencies {
     val circeParser = circe("parser")
     val circeRefined = circe("refined")
     val circeFs2 = circe("fs2", "0.14.0")
+    val circeShapes = circe("shapes")
 
     val cirisCore = ciris("ciris")
     val cirisEnum = ciris("ciris-enumeratum")
