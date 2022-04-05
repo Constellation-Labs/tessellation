@@ -14,6 +14,7 @@ import cats.{Applicative, Eval}
 
 import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.dag.snapshot._
+import org.tessellation.domain.snapshot.rewards.Rewards
 import org.tessellation.domain.snapshot.{GlobalSnapshotStorage, TimeSnapshotTrigger, TipSnapshotTrigger}
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
@@ -22,7 +23,6 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.height.SubHeight
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.transaction
 import org.tessellation.schema.transaction.{Transaction, TransactionReference}
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
 import org.tessellation.security.SecurityProvider
@@ -117,7 +117,7 @@ object GlobalSnapshotConsensusFunctions {
           )
           .map(_.toMap)
 
-        rewards = Set.empty[transaction.RewardTransaction] // TODO: @mwadon as a next step
+        rewards = Rewards.calculateRewards(lastGS.proofs.map(_.id))
 
         globalSnapshot = GlobalSnapshot(
           ordinal,
