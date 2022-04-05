@@ -341,6 +341,7 @@ lazy val core = (project in file("modules/core"))
       Libraries.circeGeneric,
       Libraries.circeParser,
       Libraries.circeRefined,
+      Libraries.circeShapes,
       Libraries.cirisCore,
       Libraries.cirisEnum,
       Libraries.cirisRefined,
