@@ -9,6 +9,7 @@ import cats.{Applicative, MonadThrow}
 
 import scala.concurrent.duration._
 
+import org.tessellation.effects.GenUUID
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.cluster._
@@ -25,7 +26,7 @@ import fs2.concurrent.SignallingRef
 
 object Cluster {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider](
+  def make[F[_]: Async: KryoSerializer: SecurityProvider: GenUUID](
     leavingDelay: FiniteDuration,
     httpConfig: HttpConfig,
     selfId: PeerId,
@@ -44,6 +45,11 @@ object Cluster {
             case Some(s) => Applicative[F].pure(s)
             case None    => MonadThrow[F].raiseError[SessionToken](SessionDoesNotExist)
           }
+          clusterSession <- clusterStorage.getClusterSession.flatMap {
+            case Some(s) => Applicative[F].pure(s)
+            case None    => MonadThrow[F].raiseError[ClusterSessionToken](ClusterSessionDoesNotExist)
+          }
+          clusterId = clusterStorage.getClusterId
           state <- nodeStorage.getNodeState
           whitelistingHash <- whitelisting.hashF
         } yield
@@ -53,6 +59,8 @@ object Cluster {
             httpConfig.publicHttp.port,
             httpConfig.p2pHttp.port,
             session,
+            clusterSession,
+            clusterId,
             state,
             whitelistingHash
           )
@@ -85,6 +93,10 @@ object Cluster {
           clusterStorage.getPeers.map(_ + self)
         }
 
+      def createSession: F[ClusterSessionToken] =
+        GenUUID[F].make.map(ClusterSessionToken(_)).flatTap { session =>
+          clusterStorage.setClusterSession(session)
+        }
     }
 
 }

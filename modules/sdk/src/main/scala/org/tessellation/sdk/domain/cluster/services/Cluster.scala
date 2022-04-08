@@ -1,5 +1,6 @@
 package org.tessellation.sdk.domain.cluster.services
 
+import org.tessellation.schema.cluster.ClusterSessionToken
 import org.tessellation.schema.peer._
 import org.tessellation.security.signature.Signed
 
@@ -9,4 +10,6 @@ trait Cluster[F[_]] {
   def leave(): F[Unit]
 
   def info: F[Set[Peer]]
+
+  def createSession: F[ClusterSessionToken]
 }

@@ -4,6 +4,7 @@ import cats.effect.kernel.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
+import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.sdk.config.types.SdkConfig
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tessellation.sdk.domain.gossip.RumorStorage
@@ -15,10 +16,11 @@ import org.tessellation.sdk.infrastructure.node.NodeStorage
 object SdkStorages {
 
   def make[F[_]: Async](
+    clusterId: ClusterId,
     cfg: SdkConfig
   ): F[SdkStorages[F]] =
     for {
-      clusterStorage <- ClusterStorage.make[F]()
+      clusterStorage <- ClusterStorage.make[F](clusterId)
       nodeStorage <- NodeStorage.make[F]
       sessionStorage <- SessionStorage.make[F]
       rumorStorage <- RumorStorage.make[F](cfg.gossipConfig.storage)

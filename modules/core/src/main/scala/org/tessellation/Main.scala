@@ -6,8 +6,8 @@ import cats.syntax.semigroupk._
 import cats.syntax.show._
 
 import org.tessellation.cli.method.{Run, RunGenesis, RunValidator}
+import org.tessellation.dag._
 import org.tessellation.dag.snapshot.GlobalSnapshot
-import org.tessellation.dag.{dagSharedKryoRegistrar, _}
 import org.tessellation.ext.cats.effect._
 import org.tessellation.ext.kryo._
 import org.tessellation.http.p2p.P2PClient
@@ -15,6 +15,7 @@ import org.tessellation.infrastructure.db.Database
 import org.tessellation.infrastructure.genesis.{Loader => GenesisLoader}
 import org.tessellation.infrastructure.trust.handler.trustHandler
 import org.tessellation.modules._
+import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.node.NodeState
 import org.tessellation.sdk.app.{SDK, TessellationIOApp}
 import org.tessellation.sdk.infrastructure.gossip.RumorHandlers
@@ -23,13 +24,15 @@ import org.tessellation.sdk.resources.MkHttpServer.ServerName
 import org.tessellation.security.signature.Signed
 
 import com.monovore.decline.Opts
+import eu.timepit.refined.auto._
 import eu.timepit.refined.boolean.Or
 
 object Main
     extends TessellationIOApp[Run](
       name = "",
       header = "Tessellation Node",
-      version = BuildInfo.version
+      version = BuildInfo.version,
+      clusterId = ClusterId("6d7f1d6a-213a-4148-9d45-d7200f555ecf")
     ) {
 
   val opts: Opts[Run] = cli.method.opts
@@ -80,16 +83,20 @@ object Main
               NodeState.LoadingGenesis,
               NodeState.GenesisReady
             ) {
-              GenesisLoader.make[IO].load(m.genesisPath).flatMap { accounts =>
-                def genesis = GlobalSnapshot.mkGenesis(accounts.map(a => (a.address, a.balance)).toMap)
+              for {
+                accounts <- GenesisLoader.make[IO].load(m.genesisPath)
+                _ <- logger.info(s"Genesis accounts: ${accounts.show}")
 
-                logger.info(s"Genesis accounts: ${accounts.show}") >>
-                  Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair).flatMap { signedGenesis =>
-                    storages.globalSnapshot.prepend(signedGenesis) >>
-                      services.consensus.storage.setLastKeyAndArtifact((genesis.ordinal, signedGenesis).some)
-                  }
-              }
-            } >> services.session.createSession >> storages.node.setNodeState(NodeState.Ready)
+                genesis = GlobalSnapshot.mkGenesis(accounts.map(a => (a.address, a.balance)).toMap)
+                signedGenesis <- Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair)
+
+                _ <- storages.globalSnapshot.prepend(signedGenesis)
+                _ <- services.consensus.storage.setLastKeyAndArtifact((genesis.ordinal, signedGenesis).some)
+                _ <- services.cluster.createSession
+                _ <- services.session.createSession
+                _ <- storages.node.setNodeState(NodeState.Ready)
+              } yield ()
+            }
         }).asResource
       } yield ()
     }
