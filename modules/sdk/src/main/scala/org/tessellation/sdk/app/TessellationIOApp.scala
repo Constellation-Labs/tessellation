@@ -13,6 +13,7 @@ import org.tessellation.ext.cats.effect._
 import org.tessellation.ext.kryo._
 import org.tessellation.keytool.KeyStoreUtils
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.cli.CliMethod
 import org.tessellation.sdk.http.p2p.SdkP2PClient
@@ -35,6 +36,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 abstract class TessellationIOApp[A <: CliMethod](
   name: String,
   header: String,
+  clusterId: ClusterId,
   helpFlag: Boolean = true,
   version: String = ""
 ) extends CommandIOApp(
@@ -91,7 +93,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                           logger.info(s"Whitelisting enabled. Allowed nodes: $size")
                         }
                         .asResource
-                      storages <- SdkStorages.make[IO](cfg).asResource
+                      storages <- SdkStorages.make[IO](clusterId, cfg).asResource
                       res <- SdkResources.make[IO](cfg, _keyPair.getPrivate(), storages.session, selfId)
                       session = Session.make[IO](storages.session, storages.node, storages.cluster)
                       p2pClient = SdkP2PClient.make[IO](res.client, session)

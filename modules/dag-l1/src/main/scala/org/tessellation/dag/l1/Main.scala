@@ -4,15 +4,16 @@ import cats.effect.{IO, Resource}
 import cats.syntax.semigroupk._
 
 import org.tessellation.BuildInfo
+import org.tessellation.dag._
 import org.tessellation.dag.l1.cli.method.{Run, RunInitialValidator, RunValidator}
 import org.tessellation.dag.l1.http.p2p.P2PClient
 import org.tessellation.dag.l1.infrastructure.block.rumor.handler.blockRumorHandler
 import org.tessellation.dag.l1.infrastructure.db.Database
 import org.tessellation.dag.l1.modules._
 import org.tessellation.dag.snapshot.SnapshotOrdinal
-import org.tessellation.dag.{dagSharedKryoRegistrar, _}
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.kryo._
+import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.node.NodeState.SessionStarted
 import org.tessellation.sdk.app.{SDK, TessellationIOApp}
@@ -21,9 +22,16 @@ import org.tessellation.sdk.resources.MkHttpServer
 import org.tessellation.sdk.resources.MkHttpServer.ServerName
 
 import com.monovore.decline.Opts
+import eu.timepit.refined.auto._
 import eu.timepit.refined.boolean.Or
 
-object Main extends TessellationIOApp[Run]("", "DAG L1 node", version = BuildInfo.version) {
+object Main
+    extends TessellationIOApp[Run](
+      "",
+      "DAG L1 node",
+      ClusterId("17e78993-37ea-4539-a4f3-039068ea1e92"),
+      version = BuildInfo.version
+    ) {
   val opts: Opts[Run] = cli.method.opts
 
   type KryoRegistrationIdRange = DagL1KryoRegistrationIdRange Or DagSharedKryoRegistrationIdRange
@@ -73,6 +81,7 @@ object Main extends TessellationIOApp[Run]("", "DAG L1 node", version = BuildInf
             case cfg: RunInitialValidator =>
               programs.l0PeerDiscovery.discoverFrom(cfg.l0Peer) >>
                 storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
+                services.cluster.createSession >>
                 services.session.createSession >>
                 storages.node.tryModifyState(SessionStarted, NodeState.Ready)
 

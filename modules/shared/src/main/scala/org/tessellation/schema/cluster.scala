@@ -12,9 +12,24 @@ import com.comcast.ip4s.{Host, Port}
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
+import eu.timepit.refined.api.Refined
+import eu.timepit.refined.auto._
+import eu.timepit.refined.string.Uuid
 import io.estatico.newtype.macros.newtype
 
 object cluster {
+
+  @derive(encoder, decoder, eqv, show, uuid)
+  @newtype
+  final case class ClusterId(value: UUID)
+
+  object ClusterId {
+    def apply(uuidString: String Refined Uuid): ClusterId = ClusterId.apply(UUID.fromString(uuidString))
+  }
+
+  @derive(encoder, decoder, eqv, show, uuid)
+  @newtype
+  final case class ClusterSessionToken(value: UUID)
 
   @derive(decoder, encoder, show)
   case class PeerToJoin(id: PeerId, ip: Host, p2pPort: Port)
@@ -52,4 +67,9 @@ object cluster {
   case object InvalidRemoteAddress extends RegistrationRequestValidation
   case object IdDuplicationFound extends RegistrationRequestValidation
   case object WhitelistingDoesNotMatch extends RegistrationRequestValidation
+
+  trait ClusterVerificationResult extends NoStackTrace
+  case object ClusterIdDoesNotMatch extends ClusterVerificationResult
+  case object ClusterSessionDoesNotExist extends ClusterVerificationResult
+  case object ClusterSessionDoesNotMatch extends ClusterVerificationResult
 }

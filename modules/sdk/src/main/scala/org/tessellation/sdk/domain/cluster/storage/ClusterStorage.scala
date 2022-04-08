@@ -1,5 +1,6 @@
 package org.tessellation.sdk.domain.cluster.storage
 
+import org.tessellation.schema.cluster.{ClusterId, ClusterSessionToken}
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.{Peer, PeerId}
 
@@ -16,4 +17,7 @@ trait ClusterStorage[F[_]] {
   def setPeerState(id: PeerId, state: NodeState): F[Unit]
   def removePeer(id: PeerId): F[Unit]
   def peerChanges: Stream[F, (PeerId, Option[Peer])]
+  def setClusterSession(token: ClusterSessionToken): F[Unit]
+  def getClusterSession: F[Option[ClusterSessionToken]]
+  def getClusterId: ClusterId
 }

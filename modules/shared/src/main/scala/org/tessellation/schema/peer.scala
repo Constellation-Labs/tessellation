@@ -6,7 +6,7 @@ import java.util.UUID
 import cats.kernel.Order
 
 import org.tessellation.schema.ID.Id
-import org.tessellation.schema.cluster.SessionToken
+import org.tessellation.schema.cluster.{ClusterId, ClusterSessionToken, SessionToken}
 import org.tessellation.schema.node.NodeState
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.hex.Hex
@@ -84,6 +84,8 @@ object peer {
     publicPort: Port,
     p2pPort: Port,
     session: SessionToken,
+    clusterSession: ClusterSessionToken,
+    clusterId: ClusterId,
     state: NodeState,
     whitelisting: Hash
   )

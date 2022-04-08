@@ -1,13 +1,14 @@
 package org.tessellation.sdk.infrastructure.cluster.storage
 
 import cats.Monad
-import cats.effect.Async
+import cats.effect.{Async, Ref}
 import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
 import cats.syntax.traverse._
 
+import org.tessellation.schema.cluster.{ClusterId, ClusterSessionToken}
 import org.tessellation.schema.node
 import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
@@ -21,17 +22,28 @@ object ClusterStorage {
 
   private val maxQueuedPeerChanges = 1000
 
-  def make[F[_]: Async](initialPeers: Map[PeerId, Peer] = Map.empty): F[ClusterStorage[F]] =
+  def make[F[_]: Async](clusterId: ClusterId, initialPeers: Map[PeerId, Peer] = Map.empty): F[ClusterStorage[F]] =
     for {
       topic <- Topic[F, (PeerId, Option[Peer])]
       peers <- MapRef.ofSingleImmutableMap[F, PeerId, Peer](initialPeers)
-    } yield make(topic, peers)
+      session <- Ref.of[F, Option[ClusterSessionToken]](None)
+    } yield make(clusterId, topic, peers, session)
 
   def make[F[_]: Monad](
+    clusterId: ClusterId,
     topic: Topic[F, (PeerId, Option[Peer])],
-    peers: MapRef[F, PeerId, Option[Peer]]
+    peers: MapRef[F, PeerId, Option[Peer]],
+    session: Ref[F, Option[ClusterSessionToken]]
   ): ClusterStorage[F] =
     new ClusterStorage[F] {
+
+      def getClusterSession: F[Option[ClusterSessionToken]] =
+        session.get
+
+      def setClusterSession(clusterSession: ClusterSessionToken): F[Unit] =
+        session.set(clusterSession.some)
+
+      def getClusterId: ClusterId = clusterId
 
       def getPeers: F[Set[Peer]] =
         peers.keys.flatMap(_.map(peers(_).get).sequence).map(_.flatten.toSet)
@@ -52,10 +64,7 @@ object ClusterStorage {
         getPeers.map(_.exists(peer => peer.ip == host && peer.p2pPort == p2pPort))
 
       def setPeerState(id: PeerId, state: node.NodeState): F[Unit] =
-        updatePeer(id) {
-          case Some(peer) => Peer._State.replace(state)(peer).some
-          case None       => none
-        }
+        updatePeer(id)(_.map(Peer._State.replace(state)(_)))
 
       def removePeer(id: PeerId): F[Unit] =
         setPeer(id)(none)

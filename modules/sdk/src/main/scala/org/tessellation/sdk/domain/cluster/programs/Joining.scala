@@ -144,6 +144,22 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
   private def validateHandshakeConditions(toPeer: PeerToJoin): F[Unit] =
     validateHandshakeConditions(toPeer.id, toPeer.ip, toPeer.p2pPort)
 
+  def joinRequest(joinRequest: JoinRequest, remoteAddress: Host): F[Unit] =
+    for {
+      _ <- sessionStorage.getToken.flatMap(_.fold(SessionDoesNotExist.raiseError[F, Unit])(_ => Applicative[F].unit))
+
+      registrationRequest = joinRequest.registrationRequest
+
+      _ <- validateHandshakeConditions(joinRequest.registrationRequest)
+
+      withPeer = PeerToJoin(
+        registrationRequest.id,
+        registrationRequest.ip,
+        registrationRequest.p2pPort
+      )
+      _ <- twoWayHandshake(withPeer, remoteAddress.some, skipJoinRequest = true)
+    } yield ()
+
   private def validateHandshakeConditions(req: RegistrationRequest): F[Unit] =
     validateHandshakeConditions(req.id, req.ip, req.p2pPort)
 
@@ -152,13 +168,6 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
       clusterStorage
         .hasPeerHostPort(ip, p2pPort)
         .ifM(PeerHostPortInUse(ip, p2pPort).raiseError[F, Unit], Applicative[F].unit)
-    }
-
-  private def validateWhitelisting(peer: PeerToJoin): F[Unit] =
-    whitelisting match {
-      case None => Applicative[F].unit
-      case Some(entries) =>
-        if (entries.contains(peer.id)) Applicative[F].unit else PeerNotWhitelisted(peer.id).raiseError[F, Unit]
     }
 
   private def twoWayHandshake(
@@ -182,7 +191,9 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
       _ <- if (skipJoinRequest) {
         Applicative[F].unit
       } else {
-        cluster.getRegistrationRequest
+        clusterStorage
+          .setClusterSession(registrationRequest.clusterSession)
+          .flatMap(_ => cluster.getRegistrationRequest)
           .map(JoinRequest.apply)
           .flatMap(signClient.joinRequest(_).run(withPeer))
           .ifM(
@@ -206,9 +217,30 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
       _ <- nodeStorage.tryModifyState(NodeState.SessionStarted, stateAfterJoining).handleError(_ => ())
     } yield peer
 
+  private def validateWhitelisting(peer: PeerToJoin): F[Unit] =
+    whitelisting match {
+      case None => Applicative[F].unit
+      case Some(entries) =>
+        if (entries.contains(peer.id)) Applicative[F].unit else PeerNotWhitelisted(peer.id).raiseError[F, Unit]
+    }
+
   private def validateHandshake(registrationRequest: RegistrationRequest, remoteAddress: Option[Host]): F[Unit] =
     for {
       ip <- registrationRequest.ip.pure[F]
+
+      ownClusterId = clusterStorage.getClusterId
+
+      _ <- if (registrationRequest.clusterId == ownClusterId)
+        Applicative[F].unit
+      else ClusterIdDoesNotMatch.raiseError[F, Unit]
+
+      ownClusterSession <- clusterStorage.getClusterSession
+
+      _ <- ownClusterSession match {
+        case Some(session) if session === registrationRequest.clusterSession => Applicative[F].unit
+        case None                                                            => Applicative[F].unit
+        case _                                                               => ClusterSessionDoesNotMatch.raiseError[F, Unit]
+      }
 
       _ <- if (environment == Dev || ip.toString != host"127.0.0.1".toString && ip.toString != host"localhost".toString)
         Applicative[F].unit
@@ -224,6 +256,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
 
       _ <- if (registrationRequest.whitelisting === whitelistingHash) Applicative[F].unit
       else WhitelistingDoesNotMatch.raiseError[F, Unit]
+
     } yield ()
 
   private def verifySignRequest(signRequest: SignRequest, signed: Signed[SignRequest], id: Id): F[Boolean] =
@@ -232,20 +265,4 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
       isSignerCorrect = signed.proofs.forall(_.id == id)
       hasValidSignature <- signed.hasValidSignature
     } yield isSignedRequestConsistent && isSignerCorrect && hasValidSignature
-
-  def joinRequest(joinRequest: JoinRequest, remoteAddress: Host): F[Unit] =
-    for {
-      _ <- sessionStorage.getToken.flatMap(_.fold(SessionDoesNotExist.raiseError[F, Unit])(_ => Applicative[F].unit))
-
-      registrationRequest = joinRequest.registrationRequest
-
-      _ <- validateHandshakeConditions(joinRequest.registrationRequest)
-
-      withPeer = PeerToJoin(
-        registrationRequest.id,
-        registrationRequest.ip,
-        registrationRequest.p2pPort
-      )
-      _ <- twoWayHandshake(withPeer, remoteAddress.some, skipJoinRequest = true)
-    } yield ()
 }
