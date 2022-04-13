@@ -3,7 +3,6 @@ package org.tessellation.dag.snapshot
 import cats.data.NonEmptyList
 import cats.effect.Concurrent
 
-import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.ext.codecs.BinaryCodec
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
@@ -13,7 +12,6 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.RewardTransaction
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.hex.Hex
-import org.tessellation.security.signature.Signed
 
 import derevo.cats.{eqv, show}
 import derevo.derive
@@ -25,11 +23,12 @@ case class GlobalSnapshot(
   height: Height,
   subHeight: SubHeight,
   lastSnapshotHash: Hash,
-  blocks: Set[Signed[DAGBlock]],
+  blocks: Set[BlockAsActiveTip],
   stateChannelSnapshots: Map[Address, NonEmptyList[StateChannelSnapshotBinary]],
   rewards: Set[RewardTransaction],
   nextFacilitators: NonEmptyList[PeerId],
-  info: GlobalSnapshotInfo
+  info: GlobalSnapshotInfo,
+  tips: GlobalSnapshotTips
 )
 
 object GlobalSnapshot {
@@ -50,6 +49,7 @@ object GlobalSnapshot {
       Map.empty,
       Set.empty,
       NonEmptyList.of(PeerId(Hex("peer1"))), // TODO
-      GlobalSnapshotInfo(Map.empty, Map.empty, balances)
+      GlobalSnapshotInfo(Map.empty, Map.empty, balances),
+      GlobalSnapshotTips(Set.empty[DeprecatedTip], Set.empty[ActiveTip])
     )
 }

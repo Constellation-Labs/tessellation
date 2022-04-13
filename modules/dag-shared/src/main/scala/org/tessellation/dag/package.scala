@@ -19,6 +19,10 @@ package object dag {
     classOf[SnapshotOrdinal] -> 602,
     classOf[DAGBlock] -> 603,
     classOf[BlockReference] -> 604,
-    classOf[GlobalSnapshotInfo] -> 605
+    classOf[GlobalSnapshotInfo] -> 605,
+    classOf[GlobalSnapshotTips] -> 606,
+    classOf[ActiveTip] -> 607,
+    classOf[BlockAsActiveTip] -> 608,
+    classOf[DeprecatedTip] -> 609
   )
 }

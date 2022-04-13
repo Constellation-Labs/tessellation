@@ -54,7 +54,8 @@ object GlobalSnapshotStorageSuite extends MutableIOSuite with Checkers {
             Map.empty,
             Set.empty,
             NonEmptyList.of(PeerId(Hex("peer1"))),
-            genesis.info
+            genesis.info,
+            genesis.tips
           )
 
         Signed.forAsyncKryo[IO, GlobalSnapshot](snapshot, keyPair).map((genesis, _))
