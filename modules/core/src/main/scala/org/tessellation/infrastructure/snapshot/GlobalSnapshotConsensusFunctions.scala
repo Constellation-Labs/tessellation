@@ -124,7 +124,7 @@ object GlobalSnapshotConsensusFunctions {
           maybeTipTrigger.fold(lastGS.height)(_.height),
           maybeTipTrigger.fold(lastGS.subHeight.next)(_ => SubHeight.MinValue),
           lastGSHash,
-          blocksInRange,
+          blocksInRange.map(BlockAsActiveTip(_, 0L)),
           scSnapshots,
           rewards,
           NonEmptyList.of(PeerId(Hex("peer1"))), // TODO
@@ -132,7 +132,8 @@ object GlobalSnapshotConsensusFunctions {
             lastGS.info.lastStateChannelSnapshotHashes ++ sCSnapshotHashes,
             (lastGS.info.lastTxRefs ++ lastTxRefs).groupMapReduce(_._1)(_._2) { case (_, updated) => updated },
             (lastGS.info.balances ++ balances).groupMapReduce(_._1)(_._2) { case (_, updated)     => updated }
-          )
+          ),
+          lastGS.tips
         )
         returnedEvents = returnedSCEvents.union(returnedDAGEvents)
       } yield (globalSnapshot, returnedEvents)
