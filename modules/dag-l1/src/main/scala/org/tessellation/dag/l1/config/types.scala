@@ -17,7 +17,6 @@ object types {
     gossip: GossipConfig,
     blockValidator: BlockValidatorConfig,
     consensus: ConsensusConfig,
-    tips: TipsConfig,
     healthCheck: HealthCheckConfig
   )
 

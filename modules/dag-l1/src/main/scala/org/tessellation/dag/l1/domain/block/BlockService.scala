@@ -53,7 +53,6 @@ object BlockService {
 
           _ <- acceptTransactions(hashedTransactions)
           _ <- blockStorage.accept(hashedBlock)
-          _ <- blockStorage.handleTipsUpdate(hashedBlock)
         } yield ()
 
       private def acceptTransactions(hashedTransactions: Set[Hashed[Transaction]]): F[Unit] =
