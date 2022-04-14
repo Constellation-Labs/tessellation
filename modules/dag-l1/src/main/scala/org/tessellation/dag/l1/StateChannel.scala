@@ -142,7 +142,7 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
     _.evalMap { fb =>
       for {
         tips <- storages.block
-          .getTips(appConfig.tips.minimumTipsCount)
+          .getTips(appConfig.consensus.tipsCount)
 
         l0Peer <- storages.l0Cluster.getPeers
           .flatMap(peers => Random[F].shuffleList(peers.toNonEmptyList.toList))

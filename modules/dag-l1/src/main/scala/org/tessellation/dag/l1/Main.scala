@@ -39,7 +39,7 @@ object Main extends TessellationIOApp[Run]("", "DAG L1 node", version = BuildInf
     Database.forAsync[IO](cfg.db).flatMap { implicit database =>
       for {
         queues <- Queues.make[IO](sdkQueues).asResource
-        storages <- Storages.make[IO](cfg.tips, sdkStorages, method.l0Peer, SnapshotOrdinal.MinValue).asResource
+        storages <- Storages.make[IO](sdkStorages, method.l0Peer, SnapshotOrdinal.MinValue).asResource
         validators = Validators.make[IO](storages, cfg.blockValidator)
         p2pClient = P2PClient.make(sdkP2PClient, sdkResources.client)
         services = Services.make[IO](storages, validators, sdkServices, p2pClient)

@@ -5,7 +5,6 @@ import cats.effect.std.Random
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.dag.l1.config.TipsConfig
 import org.tessellation.dag.l1.domain.address.storage.AddressStorage
 import org.tessellation.dag.l1.domain.block.BlockStorage
 import org.tessellation.dag.l1.domain.consensus.block.storage.ConsensusStorage
@@ -24,13 +23,12 @@ import org.tessellation.sdk.modules.SdkStorages
 object Storages {
 
   def make[F[_]: Async: Database: Random](
-    tipsConfig: TipsConfig,
     sdkStorages: SdkStorages[F],
     l0Peer: L0Peer,
     snapshotOrdinal: SnapshotOrdinal
   ): F[Storages[F]] =
     for {
-      blockStorage <- BlockStorage.make[F](tipsConfig)
+      blockStorage <- BlockStorage.make[F]
       consensusStorage <- ConsensusStorage.make[F]
       l0ClusterStorage <- L0ClusterStorage.make[F](l0Peer)
       lastGlobalSnapshotOrdinalStorage <- LastGlobalSnapshotOrdinalStorage.make[F](snapshotOrdinal)

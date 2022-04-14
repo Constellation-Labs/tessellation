@@ -6,7 +6,6 @@ import scala.concurrent.duration.{DurationDouble, DurationInt}
 
 import org.tessellation.cli.env.{KeyAlias, Password, StorePath}
 import org.tessellation.dag.block.config.BlockValidatorConfig
-import org.tessellation.dag.l1.config.TipsConfig
 import org.tessellation.dag.l1.config.types.{AppConfig, DBConfig}
 import org.tessellation.dag.l1.domain.consensus.block.config.ConsensusConfig
 import org.tessellation.ext.decline.decline._
@@ -50,11 +49,6 @@ object method {
         peersCount = 2,
         tipsCount = 2,
         timeout = 5.seconds
-      ),
-      tips = TipsConfig(
-        minimumTipsCount = 2,
-        maximumTipsCount = 10,
-        maximumTipUsages = 2
       ),
       healthCheck = HealthCheckConfig(
         removeUnresponsiveParallelPeersAfter = 10.seconds,
