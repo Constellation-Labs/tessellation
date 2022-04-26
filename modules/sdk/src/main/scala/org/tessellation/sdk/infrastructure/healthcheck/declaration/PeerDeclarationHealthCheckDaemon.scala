@@ -11,7 +11,7 @@ import org.tessellation.sdk.domain.healthcheck.consensus.HealthCheckConsensus
 object PeerDeclarationHealthCheckDaemon {
 
   def make[F[_]: Async, K](
-    healthCheck: HealthCheckConsensus[F, Key[K], Health, Status[K]],
+    healthCheck: HealthCheckConsensus[F, Key[K], Health, Status[K], Decision],
     config: HealthCheckConfig
   ): Daemon[F] =
     Daemon.spawn((healthCheck.trigger() >> Temporal[F].sleep(config.peerDeclaration.triggerInterval)).foreverM)

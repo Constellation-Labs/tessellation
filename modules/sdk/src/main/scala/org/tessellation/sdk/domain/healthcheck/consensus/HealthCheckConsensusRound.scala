@@ -22,10 +22,10 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey, A <: HealthCheckStatus, B <: ConsensusHealthStatus[
   K,
   A
-]: TypeTag](
+]: TypeTag, C <: HealthCheckConsensusDecision](
   key: K,
   roundId: HealthCheckRoundId,
-  driver: HealthCheckConsensusDriver[K, A, B],
+  driver: HealthCheckConsensusDriver[K, A, B, C],
   config: HealthCheckConfig,
   startedAt: FiniteDuration,
   ownStatus: Fiber[F, Throwable, A],
@@ -100,7 +100,7 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey, A <: HealthChe
       } else Applicative[F].unit
     }.flatten
 
-  def calculateOutcome: F[HealthCheckConsensusDecision] =
+  def calculateOutcome: F[C] =
     status.flatMap { _status =>
       (proposals.get, peers.get).mapN { (_proposals, _peers) =>
         def received = _proposals.view.filterKeys(_peers.contains).values.toList
@@ -118,7 +118,7 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey, A <: HealthChe
       }
     }
 
-  def generateHistoricalData(decision: HealthCheckConsensusDecision): F[HistoricalRound[K]] =
+  def generateHistoricalData(decision: C): F[HistoricalRound[K]] =
     HistoricalRound(key, roundId, decision).pure[F]
 
   def ownConsensusHealthStatus: F[B] =
@@ -126,7 +126,7 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey, A <: HealthChe
       driver.consensusHealthStatus(key, _, roundId, selfId)
     }
 
-  private def status =
+  private def status: F[A] =
     ownStatus.join.flatMap {
       case Outcome.Succeeded(fa) => fa
       case Outcome.Errored(_)    => statusOnError.pure[F]
@@ -144,17 +144,17 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey, A <: HealthChe
 
 object HealthCheckConsensusRound {
 
-  def make[F[_]: Async, K <: HealthCheckKey, A <: HealthCheckStatus, B <: ConsensusHealthStatus[K, A]: TypeTag](
+  def make[F[_]: Async, K <: HealthCheckKey, A <: HealthCheckStatus, B <: ConsensusHealthStatus[K, A]: TypeTag, C <: HealthCheckConsensusDecision](
     key: K,
     roundId: HealthCheckRoundId,
     initialPeers: Set[PeerId],
     ownStatus: Fiber[F, Throwable, A],
     statusOnError: A,
-    driver: HealthCheckConsensusDriver[K, A, B],
+    driver: HealthCheckConsensusDriver[K, A, B, C],
     config: HealthCheckConfig,
     gossip: Gossip[F],
     selfId: PeerId
-  ): F[HealthCheckConsensusRound[F, K, A, B]] = {
+  ): F[HealthCheckConsensusRound[F, K, A, B, C]] = {
 
     def mkStartedAt = Clock[F].monotonic
     def mkPeers = Ref.of[F, Set[PeerId]](initialPeers)
@@ -164,7 +164,7 @@ object HealthCheckConsensusRound {
 
     (mkStartedAt, mkPeers, mkRoundIds, mkProposals, mkParallelRounds).mapN {
       (startedAt, peers, roundIds, proposals, parallelRounds) =>
-        new HealthCheckConsensusRound[F, K, A, B](
+        new HealthCheckConsensusRound[F, K, A, B, C](
           key,
           roundId,
           driver,

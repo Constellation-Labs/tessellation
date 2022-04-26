@@ -42,6 +42,9 @@ package object sdk {
       NotRequired.getClass -> 516,
       Received.getClass -> 517,
       Awaiting.getClass -> 518,
-      TimedOut.getClass -> 519
+      TimedOut.getClass -> 519,
+      classOf[PeerMismatch] -> 520,
+      classOf[PeerCheckTimeouted] -> 521,
+      classOf[PeerCheckUnexpectedError] -> 522
     ).union(sharedKryoRegistrar).union(kernelKryoRegistrar)
 }

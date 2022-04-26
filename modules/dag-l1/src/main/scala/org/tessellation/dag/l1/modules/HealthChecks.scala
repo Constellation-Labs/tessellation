@@ -15,12 +15,14 @@ object HealthChecks {
   def make[F[_]: Async: GenUUID: Random](
     storages: Storages[F],
     services: Services[F],
+    programs: Programs[F],
     p2pClient: P2PClient[F],
     config: HealthCheckConfig,
     selfId: PeerId
   ): F[HealthChecks[F]] = {
     def ping = PingHealthCheckConsensus.make(
       storages.cluster,
+      programs.joining,
       selfId,
       new PingHealthCheckConsensusDriver(),
       config,

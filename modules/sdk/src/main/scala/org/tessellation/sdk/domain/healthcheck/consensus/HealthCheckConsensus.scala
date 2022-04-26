@@ -29,17 +29,18 @@ abstract class HealthCheckConsensus[
   F[_]: Async: GenUUID,
   K <: HealthCheckKey,
   A <: HealthCheckStatus,
-  B <: ConsensusHealthStatus[K, A]: TypeTag
+  B <: ConsensusHealthStatus[K, A]: TypeTag,
+  C <: HealthCheckConsensusDecision
 ](
   clusterStorage: ClusterStorage[F],
   selfId: PeerId,
-  driver: HealthCheckConsensusDriver[K, A, B],
+  driver: HealthCheckConsensusDriver[K, A, B, C],
   gossip: Gossip[F],
   config: HealthCheckConfig
 ) extends HealthCheck[F] {
   def logger = Slf4jLogger.getLogger[F]
 
-  def allRounds: Ref[F, ConsensusRounds[F, K, A, B]]
+  def allRounds: Ref[F, ConsensusRounds[F, K, A, B, C]]
 
   def ownStatus(key: K): F[Fiber[F, Throwable, A]]
 
@@ -47,7 +48,9 @@ abstract class HealthCheckConsensus[
 
   def periodic: F[Unit]
 
-  def roundsInProgress: F[InProgress[F, K, A, B]] = allRounds.get.map(_.inProgress)
+  def onOutcome(outcomes: ConsensusRounds.Outcome[F, K, A, B, C]): F[Unit]
+
+  def roundsInProgress: F[InProgress[F, K, A, B, C]] = allRounds.get.map(_.inProgress)
   def historicalRounds: F[List[HistoricalRound[K]]] = allRounds.get.map(_.historical)
 
   def peersUnderConsensus: F[Set[PeerId]] =
@@ -61,8 +64,8 @@ abstract class HealthCheckConsensus[
       if (inProgress.nonEmpty) manageRounds(inProgress) else Applicative[F].unit
     }
 
-  private def manageRounds(rounds: ConsensusRounds.InProgress[F, K, A, B]): F[Unit] = {
-    def checkRounds(inProgress: ConsensusRounds.InProgress[F, K, A, B]): F[ConsensusRounds.Finished[F, K, A, B]] =
+  private def manageRounds(rounds: ConsensusRounds.InProgress[F, K, A, B, C]): F[Unit] = {
+    def checkRounds(inProgress: ConsensusRounds.InProgress[F, K, A, B, C]): F[ConsensusRounds.Finished[F, K, A, B, C]] =
       clusterStorage.getPeers.flatTap { peers =>
         rounds.values.toList.traverse { round =>
           round.managePeers(peers)
@@ -84,12 +87,9 @@ abstract class HealthCheckConsensus[
       }.flatMap {
         calculateOutcome
       }.flatTap { outcome =>
-        def negative = outcome.filter { case (_, (decision, _)) => decision.isInstanceOf[NegativeOutcome] }
-        def nonNegative = outcome -- negative.keySet
-
-        def run = onNegativeOutcome(negative) >> onNonNegativeOutcome(nonNegative)
-
-        run.handleErrorWith(e => logger.error(e)("Unhandled error on outcome action. Check implementation."))
+        onOutcome(outcome).handleErrorWith(
+          e => logger.error(e)("Unhandled error on outcome action. Check implementation.")
+        )
       }.flatMap {
         _.values.toList.traverse {
           case (decision, round) => round.generateHistoricalData(decision)
@@ -124,7 +124,7 @@ abstract class HealthCheckConsensus[
       .map(_ - key.id)
       .flatMap { initialPeers =>
         ownStatus(key).flatMap { status =>
-          HealthCheckConsensusRound.make[F, K, A, B](
+          HealthCheckConsensusRound.make[F, K, A, B, C](
             key,
             roundId,
             initialPeers,
@@ -200,29 +200,9 @@ abstract class HealthCheckConsensus[
   def handleProposalForHistoricalRound(proposal: B)(round: HistoricalRound[K]): F[Unit] =
     Applicative[F].unit
 
-  protected def onNegativeOutcome(
-    peers: ConsensusRounds.Outcome[F, K, A, B]
-  ): F[Unit] =
-    peers.keys.toList.traverse { key =>
-      clusterStorage.removePeer(key.id).flatTap { _ =>
-        logger.info(s"Negative outcome for peer: ${key.id}")
-      }
-    }.void
-
-  protected def onNonNegativeOutcome(
-    peers: ConsensusRounds.Outcome[F, K, A, B]
-  ): F[Unit] =
-    peers.keys.toList.traverse { key =>
-      clusterStorage
-        .getPeer(key.id)
-        .map(_.isDefined)
-        .ifM(
-          logger.info(s"Positive outcome for peer: ${key.id}. Peer is already known."),
-          logger.info(s"Positive outcome for peer: ${key.id}. Peer is already unknown.")
-        )
-    }.void
-
-  private def calculateOutcome(rounds: ConsensusRounds.Finished[F, K, A, B]): F[ConsensusRounds.Outcome[F, K, A, B]] =
+  private def calculateOutcome(
+    rounds: ConsensusRounds.Finished[F, K, A, B, C]
+  ): F[ConsensusRounds.Outcome[F, K, A, B, C]] =
     if (rounds.isEmpty)
       Map.empty.pure[F]
     else
@@ -233,8 +213,8 @@ abstract class HealthCheckConsensus[
       }.map(_.toMap)
 
   private def partition(
-    rounds: ConsensusRounds.InProgress[F, K, A, B]
-  ): F[(ConsensusRounds.Finished[F, K, A, B], ConsensusRounds.InProgress[F, K, A, B])] = {
+    rounds: ConsensusRounds.InProgress[F, K, A, B, C]
+  ): F[(ConsensusRounds.Finished[F, K, A, B, C], ConsensusRounds.InProgress[F, K, A, B, C])] = {
     def ignoreTupleRight[X, Y, Z](m: Map[X, (Y, Z)]): Map[X, Y] = m.view.mapValues(_._1).toMap
 
     rounds.toList.traverse {
