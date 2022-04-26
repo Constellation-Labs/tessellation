@@ -57,7 +57,7 @@ object Main
         programs = Programs.make[IO](sdkPrograms, storages, services, p2pClient)
         validators = Validators.make[IO](cfg.snapshot)
         healthChecks <- HealthChecks
-          .make[IO](storages, services, p2pClient, cfg.healthCheck, sdk.nodeId)
+          .make[IO](storages, services, programs, p2pClient, cfg.healthCheck, sdk.nodeId)
           .asResource
 
         _ <- services.stateChannelRunner.initializeKnownCells.asResource

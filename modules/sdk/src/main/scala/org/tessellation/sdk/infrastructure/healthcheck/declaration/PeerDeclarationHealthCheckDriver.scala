@@ -6,7 +6,7 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.healthcheck.consensus.HealthCheckConsensusDriver
 import org.tessellation.sdk.domain.healthcheck.consensus.types._
 
-class PeerDeclarationHealthCheckDriver[K] extends HealthCheckConsensusDriver[Key[K], Health, Status[K]] {
+class PeerDeclarationHealthCheckDriver[K] extends HealthCheckConsensusDriver[Key[K], Health, Status[K], Decision] {
 
   def removePeersWithParallelRound: Boolean = true
 
@@ -15,16 +15,16 @@ class PeerDeclarationHealthCheckDriver[K] extends HealthCheckConsensusDriver[Key
     ownStatus: Health,
     selfId: PeerId,
     receivedStatuses: List[Status[K]]
-  ): HealthCheckConsensusDecision = {
+  ): Decision = {
     val statuses = ownStatus :: receivedStatuses.map(_.status)
 
     val threshold = statuses.size / 2
     val negativeCount = statuses.count(_ === TimedOut)
 
     if (negativeCount > threshold)
-      NegativeOutcome(key.id)
+      NegativeOutcome
     else
-      PositiveOutcome(key.id)
+      PositiveOutcome
   }
 
   def consensusHealthStatus(key: Key[K], ownStatus: Health, roundId: HealthCheckRoundId, selfId: PeerId): Status[K] =
