@@ -10,7 +10,6 @@ import org.tessellation.dag.l1.http.p2p.P2PClient
 import org.tessellation.dag.l1.infrastructure.block.rumor.handler.blockRumorHandler
 import org.tessellation.dag.l1.infrastructure.db.Database
 import org.tessellation.dag.l1.modules._
-import org.tessellation.dag.snapshot.SnapshotOrdinal
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.kryo._
 import org.tessellation.schema.cluster.ClusterId
@@ -47,7 +46,7 @@ object Main
     Database.forAsync[IO](cfg.db).flatMap { implicit database =>
       for {
         queues <- Queues.make[IO](sdkQueues).asResource
-        storages <- Storages.make[IO](sdkStorages, method.l0Peer, SnapshotOrdinal.MinValue).asResource
+        storages <- Storages.make[IO](sdkStorages, method.l0Peer).asResource
         validators = Validators.make[IO](storages, cfg.blockValidator)
         p2pClient = P2PClient.make(sdkP2PClient, sdkResources.client)
         services = Services.make[IO](storages, validators, sdkServices, p2pClient)
@@ -67,17 +66,19 @@ object Main
         _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
         _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)
         _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.http.cliHttp, api.cliApp)
-        stateChannel = new StateChannel(
-          cfg,
-          keyPair,
-          p2pClient,
-          programs,
-          queues,
-          nodeId,
-          services,
-          storages,
-          validators
-        )
+        stateChannel <- StateChannel
+          .make[IO](
+            cfg,
+            keyPair,
+            p2pClient,
+            programs,
+            queues,
+            nodeId,
+            services,
+            storages,
+            validators
+          )
+          .asResource
         _ <- {
           method match {
             case cfg: RunInitialValidator =>

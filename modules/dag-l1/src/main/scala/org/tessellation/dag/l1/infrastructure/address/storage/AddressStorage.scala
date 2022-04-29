@@ -61,5 +61,7 @@ object AddressStorage {
                 case None    => run(insertAddressBalance(lift(address), lift(balance)))
               }
         }.transact(xa).as(())
+
+      def clean: F[Unit] = run(getAddresses.delete).transact(xa).as(())
     }
 }

@@ -6,4 +6,5 @@ import org.tessellation.schema.balance.Balance
 trait AddressStorage[F[_]] {
   def getBalance(address: Address): F[Balance]
   def updateBalances(addressBalances: Map[Address, Balance]): F[Unit]
+  def clean: F[Unit]
 }
