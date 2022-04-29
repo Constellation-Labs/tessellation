@@ -2,9 +2,13 @@ package org.tessellation.ext
 
 import scala.concurrent.duration.FiniteDuration
 
-import _root_.cats.effect.Async
+import _root_.cats.data.NonEmptyList
+import _root_.cats.effect.std.Semaphore
+import _root_.cats.effect.syntax.monadCancel._
+import _root_.cats.effect.{Async, Sync}
 import _root_.cats.syntax.applicative._
 import _root_.cats.syntax.flatMap._
+import _root_.cats.syntax.functor._
 import _root_.fs2.concurrent.{Signal, SignallingRef}
 import _root_.fs2.{Pipe, Pull, Stream}
 
@@ -54,4 +58,15 @@ object fs2 {
     }
   }
 
+  implicit class StreamOps[F[_]: Sync, A](s: Stream[F, A]) {
+
+    def evalMapLocked[B](semaphore: Semaphore[F])(fn: A => F[B]): Stream[F, B] =
+      evalMapLocked(NonEmptyList.one(semaphore))(fn)
+
+    def evalMapLocked[B](semaphores: NonEmptyList[Semaphore[F]])(fn: A => F[B]): Stream[F, B] =
+      s.evalMap {
+        semaphores.traverse(_.acquire) >>
+          fn(_).guarantee(semaphores.reverse.traverse(_.release).void)
+      }
+  }
 }

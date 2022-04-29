@@ -1,0 +1,25 @@
+package org.tessellation.dag.snapshot
+
+import org.tessellation.schema.height.{Height, SubHeight}
+import org.tessellation.security.Hashed
+import org.tessellation.security.hash.{Hash, ProofsHash}
+
+case class GlobalSnapshotReference(
+  height: Height,
+  subHeight: SubHeight,
+  ordinal: SnapshotOrdinal,
+  hash: Hash,
+  proofsHash: ProofsHash
+)
+
+object GlobalSnapshotReference {
+
+  def fromHashedGlobalSnapshot(snapshot: Hashed[GlobalSnapshot]): GlobalSnapshotReference =
+    GlobalSnapshotReference(
+      snapshot.height,
+      snapshot.subHeight,
+      snapshot.ordinal,
+      snapshot.hash,
+      snapshot.proofsHash
+    )
+}

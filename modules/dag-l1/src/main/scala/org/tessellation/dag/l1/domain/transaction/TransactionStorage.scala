@@ -31,7 +31,7 @@ class TransactionStorage[F[_]: Sync](
   waitingTransactions: MapRef[F, Address, Option[NonEmptySet[Signed[Transaction]]]]
 ) {
 
-  implicit val logger = Slf4jLogger.getLogger[F]
+  private val logger = Slf4jLogger.getLogger[F]
 
   def isParentAccepted(transaction: Transaction): F[Boolean] =
     (transaction.parent != TransactionReference.empty)
@@ -42,6 +42,12 @@ class TransactionStorage[F[_]: Sync](
 
   def getLastAcceptedReference(source: Address): F[TransactionReference] =
     lastAccepted(source).get.map(_.getOrElse(TransactionReference.empty))
+
+  def setLastAccepted(lastTxRefs: Map[Address, TransactionReference]): F[Unit] =
+    lastAccepted.clear >>
+      lastTxRefs.toList.traverse {
+        case (address, reference) => lastAccepted(address).set(reference.some)
+      }.void
 
   def accept(hashedTx: Hashed[Transaction]): F[Unit] = {
     val parent = hashedTx.signed.value.parent

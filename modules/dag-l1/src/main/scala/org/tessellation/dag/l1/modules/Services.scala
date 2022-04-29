@@ -25,7 +25,7 @@ object Services {
       cluster = sdkServices.cluster,
       gossip = sdkServices.gossip,
       l0 = L0Service
-        .make[F](p2PClient.l0GlobalSnapshotClient, storages.l0Cluster, storages.lastGlobalSnapshotOrdinalStorage),
+        .make[F](p2PClient.l0GlobalSnapshotClient, storages.l0Cluster, storages.lastGlobalSnapshotStorage),
       session = sdkServices.session,
       transaction = TransactionService.make[F](storages.transaction, validators.transaction)
     ) {}

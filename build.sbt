@@ -285,7 +285,7 @@ lazy val dagShared = (project in file("modules/dag-shared"))
 lazy val dagL1 = (project in file("modules/dag-l1"))
   .enablePlugins(AshScriptPlugin)
   .enablePlugins(JavaAppPackaging)
-  .dependsOn(kernel, shared, dagShared, sdk)
+  .dependsOn(kernel, shared, dagShared, sdk, testShared % Test)
   .configs(IntegrationTest)
   .settings(
     name := "tessellation-dag-l1",
