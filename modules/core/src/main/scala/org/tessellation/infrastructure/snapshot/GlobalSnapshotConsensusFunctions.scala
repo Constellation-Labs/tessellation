@@ -144,14 +144,14 @@ object GlobalSnapshotConsensusFunctions {
       events: List[StateChannelEvent]
     ): (Map[Address, NonEmptyList[StateChannelSnapshotBinary]], Set[GlobalSnapshotEvent]) = {
       val lshToSnapshot: Map[(Address, Hash), StateChannelEvent] = events.map { e =>
-        (e.address, e.outputGist.lastSnapshotHash) -> e
+        (e.address, e.snapshot.value.lastSnapshotHash) -> e
       }.foldLeft(Map.empty[(Address, Hash), StateChannelEvent]) { (acc, entry) =>
         entry match {
           case (k, newEvent) =>
             acc.updatedWith(k) { maybeEvent =>
               maybeEvent
                 .fold(newEvent) { event =>
-                  if (Hash.fromBytes(event.outputBinary) < Hash.fromBytes(newEvent.outputBinary))
+                  if (Hash.fromBytes(event.snapshot.content) < Hash.fromBytes(newEvent.snapshot.content))
                     event
                   else
                     newEvent
@@ -177,7 +177,7 @@ object GlobalSnapshotConsensusFunctions {
                 .map { go =>
                   for {
                     head <- Eval.now(go)
-                    tail <- unfold(Hash.fromBytes(go.outputBinary))
+                    tail <- unfold(Hash.fromBytes(go.snapshot.content))
                   } yield head :: tail
                 }
                 .getOrElse(Eval.now(List.empty))
@@ -185,7 +185,7 @@ object GlobalSnapshotConsensusFunctions {
             unfold(initLsh).value.toNel.map(
               nel =>
                 address -> nel
-                  .map(event => StateChannelSnapshotBinary(event.outputGist.lastSnapshotHash, event.outputBinary))
+                  .map(event => StateChannelSnapshotBinary(event.snapshot.value.lastSnapshotHash, event.snapshot.content))
                   .reverse
             )
         }
