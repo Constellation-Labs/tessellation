@@ -4,9 +4,8 @@ import cats.syntax.either._
 
 import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.dag.snapshot._
-import org.tessellation.domain.aci.StateChannelGistedOutput
+import org.tessellation.domain.aci.StateChannelOutput
 import org.tessellation.domain.snapshot.SnapshotTrigger
-import org.tessellation.kernel.StateChannelSnapshot
 import org.tessellation.sdk.infrastructure.consensus.ConsensusStorage
 import org.tessellation.security.signature.Signed
 
@@ -16,7 +15,7 @@ package object snapshot {
 
   type DAGEvent = Either[Signed[DAGBlock], SnapshotTrigger]
 
-  type StateChannelEvent = StateChannelGistedOutput[StateChannelSnapshot]
+  type StateChannelEvent = StateChannelOutput
 
   type GlobalSnapshotEvent = Either[StateChannelEvent, DAGEvent]
 

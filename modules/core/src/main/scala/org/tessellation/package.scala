@@ -4,7 +4,7 @@ import java.security.PublicKey
 
 import cats.effect.Async
 
-import org.tessellation.domain.aci.StateChannelGistedOutput
+import org.tessellation.domain.aci.StateChannelOutput
 import org.tessellation.domain.snapshot.{TimeSnapshotTrigger, TipSnapshotTrigger}
 import org.tessellation.ext.kryo._
 import org.tessellation.schema.peer.PeerId
@@ -20,7 +20,7 @@ package object tessellation {
   type CoreKryoRegistrationId = KryoRegistrationId[CoreKryoRegistrationIdRange]
 
   val coreKryoRegistrar: Map[Class[_], CoreKryoRegistrationId] = Map(
-    classOf[StateChannelGistedOutput[_]] -> 700,
+    classOf[StateChannelOutput] -> 700,
     classOf[TipSnapshotTrigger] -> 701,
     classOf[TimeSnapshotTrigger] -> 702
   )

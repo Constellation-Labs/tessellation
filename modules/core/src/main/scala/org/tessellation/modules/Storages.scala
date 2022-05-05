@@ -5,11 +5,8 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.config.types.SnapshotConfig
-import org.tessellation.domain.cluster.storage.AddressStorage
 import org.tessellation.domain.snapshot.GlobalSnapshotStorage
 import org.tessellation.domain.trust.storage.TrustStorage
-import org.tessellation.infrastructure.cluster.storage.AddressStorage
-import org.tessellation.infrastructure.db.Database
 import org.tessellation.infrastructure.snapshot.{GlobalSnapshotLocalFileSystemStorage, GlobalSnapshotStorage}
 import org.tessellation.infrastructure.trust.storage.TrustStorage
 import org.tessellation.kryo.KryoSerializer
@@ -20,12 +17,11 @@ import org.tessellation.sdk.modules.SdkStorages
 
 object Storages {
 
-  def make[F[_]: Async: Database: KryoSerializer](
+  def make[F[_]: Async: KryoSerializer](
     sdkStorages: SdkStorages[F],
     snapshotConfig: SnapshotConfig
   ): F[Storages[F]] =
     for {
-      addressStorage <- AddressStorage.make[F]
       trustStorage <- TrustStorage.make[F]
       globalSnapshotLocalFileSystemStorage <- GlobalSnapshotLocalFileSystemStorage.make(
         snapshotConfig.globalSnapshotPath
@@ -34,7 +30,6 @@ object Storages {
         .make[F](globalSnapshotLocalFileSystemStorage, snapshotConfig.inMemoryCapacity)
     } yield
       new Storages[F](
-        address = addressStorage,
         cluster = sdkStorages.cluster,
         node = sdkStorages.node,
         session = sdkStorages.session,
@@ -45,7 +40,6 @@ object Storages {
 }
 
 sealed abstract class Storages[F[_]] private (
-  val address: AddressStorage[F],
   val cluster: ClusterStorage[F],
   val node: NodeStorage[F],
   val session: SessionStorage[F],
