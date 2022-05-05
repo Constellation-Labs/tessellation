@@ -10,7 +10,7 @@ import org.tessellation.schema.address.AddressCache
 import org.tessellation.schema.gossip._
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.SignRequest
-import org.tessellation.schema.transaction.{Transaction, TransactionReference}
+import org.tessellation.schema.transaction.{RewardTransaction, Transaction, TransactionReference}
 import org.tessellation.schema.trust.PublicTrust
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.SignatureProof
@@ -54,7 +54,8 @@ package object shared {
     classOf[CommonRumorBinary] -> 325,
     classOf[Transaction] -> 326,
     classOf[TransactionReference] -> 327,
-    classOf[Refined[_, _]] -> 328
+    classOf[Refined[_, _]] -> 328,
+    classOf[RewardTransaction] -> 329
   )
 
 }
