@@ -3,7 +3,6 @@ package org.tessellation
 import cats.effect._
 import cats.syntax.option._
 import cats.syntax.semigroupk._
-import cats.syntax.show._
 
 import org.tessellation.cli.method.{Run, RunGenesis, RunValidator}
 import org.tessellation.dag._
@@ -83,20 +82,18 @@ object Main
               NodeState.LoadingGenesis,
               NodeState.GenesisReady
             ) {
-              for {
-                accounts <- GenesisLoader.make[IO].load(m.genesisPath)
-                _ <- logger.info(s"Genesis accounts: ${accounts.show}")
+              GenesisLoader.make[IO].load(m.genesisPath).flatMap { accounts =>
+                val genesis = GlobalSnapshot.mkGenesis(accounts.map(a => (a.address, a.balance)).toMap)
 
-                genesis = GlobalSnapshot.mkGenesis(accounts.map(a => (a.address, a.balance)).toMap)
-                signedGenesis <- Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair)
-
-                _ <- storages.globalSnapshot.prepend(signedGenesis)
-                _ <- services.consensus.storage.setLastKeyAndArtifact((genesis.ordinal, signedGenesis).some)
-                _ <- services.cluster.createSession
-                _ <- services.session.createSession
-                _ <- storages.node.setNodeState(NodeState.Ready)
-              } yield ()
-            }
+                Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair).flatMap { signedGenesis =>
+                  storages.globalSnapshot.prepend(signedGenesis) >>
+                    services.consensus.storage.setLastKeyAndArtifact((genesis.ordinal, signedGenesis).some)
+                }
+              }
+            } >>
+              services.cluster.createSession >>
+              services.session.createSession >>
+              storages.node.setNodeState(NodeState.Ready)
         }).asResource
       } yield ()
     }
