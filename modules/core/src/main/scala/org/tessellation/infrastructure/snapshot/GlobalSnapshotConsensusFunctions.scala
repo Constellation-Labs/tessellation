@@ -91,7 +91,7 @@ object GlobalSnapshotConsensusFunctions {
           .toSet
 
       for {
-        lastGSHash <- lastGS.hashF
+        lastGSHash <- lastGS.value.hashF
         (scSnapshots, returnedSCEvents) = processStateChannelEvents(lastGS.info, scEvents)
 
         sCSnapshotHashes <- scSnapshots.toList.traverse { case (address, nel) => nel.head.hashF.map(address -> _) }
