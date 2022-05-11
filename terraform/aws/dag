@@ -1,0 +1,336 @@
+#!/usr/bin/env bash
+
+#set -e
+
+red='\033[1;31m'
+grn='\033[1;32m'
+yel='\033[1;33m'
+blu='\033[1;36m'
+pnk='\033[1;35m'
+clr='\033[0m'
+
+# TODO: Check for pssh
+
+READLINK=`readlink $0`
+if [[ "$READLINK" == "" ]]; then DIR="$PWD"; else DIR="$(dirname $READLINK)"; fi
+
+BATCH=0
+CONFIRMED=0
+
+### Functions
+
+checkTag() {
+  pushd $DIR > /dev/null
+  TAG=$(terraform workspace show)
+  popd > /dev/null
+}
+
+checkHosts() {
+  if [ -z "${HOSTS_FILE:-}" ]; then
+    echo -e "${red}HOSTS_FILE was not set${clr}"
+    exit 1
+  fi
+
+  if [ $BATCH -eq 0 ] && [ $CONFIRMED -eq 0 ]; then
+    name=$(basename $HOSTS_FILE)
+
+    read -p "$(echo -e "Do you want to continue using hosts: ${grn}$name${clr} (y/n)? ")" choice
+    case "$choice" in
+      y|Y ) CONFIRMED=1 ;;
+      n|N ) exit 1 ;;
+      * ) exit 1;;
+    esac
+  fi
+}
+
+setHosts() {
+  HOSTS_FILE=$DIR/hosts-$(terraform workspace show)
+}
+
+assemble() {
+  echo -e "${blu} Assembling${clr}"
+
+  pushd $DIR/../../ > /dev/null
+  sbt core/assembly
+  sbt dagL1/assembly
+  popd > /dev/null
+}
+
+upload() {
+  checkTag
+
+  pushd $DIR/../../ > /dev/null
+  version=$(cat version.sbt | grep 'version := ".*"' | cut -d'"' -f2)
+  popd > /dev/null
+
+  jarPath="$DIR/../../modules/core/target/scala-2.13/tessellation-core-assembly-$version.jar"
+  jarPathL1="$DIR/../../modules/dag-l1/target/scala-2.13/tessellation-dag-l1-assembly-$version.jar"
+
+  echo -e "${blu} Uploading ${yel}$jarPath${blu} to S3 bucket${clr} as ${yel}dag-$TAG.jar${clr}"
+  aws s3 cp "$jarPath" s3://constellationlabs-dag/cluster/dag-$TAG.jar --acl public-read-write
+  echo -e "dag-$TAG.jar has been sent to s3://constellationlabs-dag/cluster/dag-$TAG.jar"
+  echo -e "${blu} Uploading ${yel}$jarPathL1${blu} to S3 bucket${clr} as ${yel}dagl1-$TAG.jar${clr}"
+  aws s3 cp "$jarPathL1" s3://constellationlabs-dag/cluster/dagl1-$TAG.jar --acl public-read-write
+  echo -e "dagl1-$TAG.jar has been sent to s3://constellationlabs-dag/cluster/dagl1-$TAG.jar"
+}
+
+updateJar() {
+  checkHosts
+  checkTag
+  echo -e "${blu} Updating jar${clr}"
+
+  pssh -p 20 -l admin -h $HOSTS_FILE -O StrictHostKeyChecking=no -i "sudo wget https://constellationlabs-dag.s3.amazonaws.com/cluster/dag-$TAG.jar -q -O /home/admin/constellation/dag.jar" && \
+  pssh -p 20 -l admin -h $HOSTS_FILE -O StrictHostKeyChecking=no -i "sudo chown -R admin:admin /home/admin/constellation"
+  pssh -p 20 -l admin -h $HOSTS_FILE -O StrictHostKeyChecking=no -i "sudo wget https://constellationlabs-dag.s3.amazonaws.com/cluster/dagl1-$TAG.jar -q -O /home/admin/constellation/dagl1.jar" && \
+  pssh -p 20 -l admin -h $HOSTS_FILE -O StrictHostKeyChecking=no -i "sudo chown -R admin:admin /home/admin/constellation"
+}
+
+start() {
+  checkHosts
+  echo -e "${blu} Starting a cluster${clr}"
+
+  ip=`head -1 $HOSTS_FILE`
+
+  echo -e "${blu} Using: ${grn}$ip${blu} as a genesis node.${clr}"
+
+  pssh -p 20 -l admin -h $HOSTS_FILE -O StrictHostKeyChecking=no -i 'sudo cp /home/admin/constellation/start_node /home/admin/constellation/start'
+
+  ssh admin@$ip -o StrictHostKeyChecking=no 'sudo cp /home/admin/constellation/start_genesis /home/admin/constellation/start'
+
+  restart
+}
+
+rollback() {
+  stop
+  echo -e "${blu} Performing the rollback${clr}"
+
+  ip=`head -1 $HOSTS_FILE`
+
+  echo -e "${blu} Using: ${grn}$ip${blu} as a rollback node.${clr}"
+
+  pssh -p 20 -l admin -h $HOSTS_FILE -O StrictHostKeyChecking=no -i 'sudo cp /home/admin/constellation/start_node /home/admin/constellation/start'
+
+  ssh admin@$ip -o StrictHostKeyChecking=no 'sudo cp /home/admin/constellation/start_rollback /home/admin/constellation/start'
+
+  restart
+
+  ip=`head -1 $HOSTS_FILE`
+  echo -e "${blu} Used: ${grn}$ip${blu} as a rollback node.${clr}"
+}
+
+restart() {
+  checkTag
+  checkHosts
+  echo -e "${blu} Restarting${clr}"
+
+  pssh -p 20 -l admin -h $HOSTS_FILE -O StrictHostKeyChecking=no -i 'sudo rm -rf /home/admin/constellation/tmp && sudo rm -f /home/admin/constellation/logs/app.log && sudo systemctl restart constellation && sudo service filebeat restart'
+
+  sleep 15
+
+  headIP=`head -1 $HOSTS_FILE`
+  headNode=`head -1 whitelisting-$TAG`
+  headId=$(echo $headNode | cut -d "," -f 1)
+  echo "headId: $headId"
+  while read ip; do
+    if [ "$ip" == "$headIP" ]; then
+      echo "Skipping genesis node"
+    else
+      echo "Joining node: $ip"
+      ssh admin@$ip -o StrictHostKeyChecking=no -n "curl -s -X POST http://127.0.0.1:9002/cluster/join -H 'Content-type: application/json' -d '{ \"ip\": \"$headIP\", \"p2pPort\": \"9001\", \"id\": \"$headId\" }'"
+
+    fi
+  done <$HOSTS_FILE
+}
+
+stop() {
+  checkHosts
+  echo -e "${blu} Stopping nodes${clr}"
+
+  pssh -p 20 -l admin -h $HOSTS_FILE -O StrictHostKeyChecking=no -i 'sudo systemctl stop constellation'
+}
+
+exportIPs() {
+  checkTag
+
+  pushd $DIR > /dev/null
+  terraform output -json instance_ips | jq ".[]" -r > hosts-$TAG
+  popd > /dev/null
+
+  echo "$DIR/hosts-$TAG"
+}
+
+redeploy() {
+  echo -e "${blu} Re-deploying${clr}"
+
+  assemble
+  upload
+  setHosts
+  updateJar
+  restart
+}
+
+autostart() {
+  assemble
+  upload
+
+  pushd $DIR > /dev/null
+  terraform apply -auto-approve -var "instance_count=$2"
+  popd > /dev/null
+
+  exportIPs
+  setHosts
+  whitelist
+
+  start
+}
+
+clearLogs() {
+  checkHosts
+  echo -e "${blu} Clear all logs${clr}"
+
+  pssh -p 20 -l admin -h $HOSTS_FILE -O StrictHostKeyChecking=no -i 'sudo rm -rf /home/admin/constellation/logs'
+}
+
+output() {
+  pushd $DIR > /dev/null
+  terraform output
+  popd > /dev/null
+}
+
+workspace() {
+  pushd $DIR > /dev/null
+  terraform workspace $2 $3
+  popd > /dev/null
+}
+
+grafana() {
+  pushd $DIR > /dev/null
+  open "http://$(terraform output grafana_ip):3000/d/9DCwiDQiz/constellationnode-jvm"
+  popd > /dev/null
+}
+
+whitelist() {
+  checkTag
+  checkHosts
+
+  i=0
+  while read ip; do
+    line=$((i+1))
+    id=$(awk "NR==$line {print; exit}" ids)
+    if [ $i -eq 0 ]; then
+      echo "$id,alias" > whitelisting-$TAG
+    else
+      echo "$id,alias" >> whitelisting-$TAG
+    fi
+
+    ((i++))
+  done <$HOSTS_FILE
+
+  pscp -l admin -h $HOSTS_FILE -O StrictHostKeyChecking=no whitelisting-$TAG /home/admin/constellation/whitelisting
+}
+
+############
+
+usage=$(cat <<-EOF
+Usage: $(basename $0) <command> [args]
+
+Common commands:
+    autostart ${grn}n${clr} \t Start cluster with ${grn}n${clr} nodes
+    restart \t\t Restart nodes with genesis flow
+    exportIPs \t\t Return path to the hosts file (use as ${grn}export HOSTS_FILE=\$(dag exportIPs)${clr})
+    redeploy \t\t Redeploy the cluster (assemble -> upload -> updateJar -> restart)
+    whitelist \t\t Creates whitelisting files on nodes for current env
+
+Diagnostic commands:
+    assemble \t\t Assemble the jar file
+    upload \t\t Upload the jar file to s3
+    updateJar \t\t Update jar file on all nodes
+    start \t\t Start nodes using genesis flow
+    stop \t\t Stop constellation.service on all nodes
+    clearLogs \t\t Remove logs directory on all nodes
+
+Terraform commands:
+    output \t\t\t Display output from terraform
+    workspace ${grn}select|new ${red}name${clr} \t Manage workspace
+    grafana \t\t\t Open grafana
+
+Options:
+    -b, --batch \t Use batch or non-interactive mode
+EOF)
+
+POSITIONAL=()
+while [[ $# -gt 0 ]]
+do
+arg="$1"
+
+case $arg in
+    -b|--batch)
+    BATCH=1
+    shift
+    ;;
+    *)
+    POSITIONAL+=("$1")
+    shift
+    ;;
+esac
+done
+
+set -- "${POSITIONAL[@]}"
+
+if [[ $1 == "" ]]; then
+  echo -e "$usage"
+  exit 1
+fi
+
+case "$1" in
+  assemble)
+    assemble
+    ;;
+  upload)
+    upload
+    ;;
+  updateJar)
+    updateJar
+    ;;
+  start)
+    start
+    ;;
+  rollback)
+    rollback
+    ;;
+  restart)
+    restart
+    ;;
+  stop)
+    stop
+    ;;
+  redeploy)
+    redeploy
+    ;;
+  exportIPs)
+    exportIPs
+    ;;
+  autostart)
+    autostart "$@"
+    ;;
+  clearLogs)
+    clearLogs
+    ;;
+  output)
+    output
+    ;;
+  workspace)
+    workspace "$@"
+    ;;
+  grafana)
+    grafana
+    ;;
+  whitelist)
+    whitelist
+    ;;
+  *)
+    echo -e "$usage"
+    exit 1
+esac
+
+exit 0
