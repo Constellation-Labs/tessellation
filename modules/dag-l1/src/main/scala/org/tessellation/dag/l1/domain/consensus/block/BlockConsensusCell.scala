@@ -13,6 +13,7 @@ import cats.syntax.traverse._
 
 import scala.concurrent.duration.FiniteDuration
 
+import org.tessellation.dag.block.BlockValidator.BlockValidationParams
 import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.dag.l1.domain.consensus.block.AlgebraCommand._
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusCell.{Algebra, Coalgebra}
@@ -264,6 +265,8 @@ object BlockConsensusCell {
     private def gotAllProposals(roundData: RoundData): Boolean =
       roundData.peers.map(_.id) == roundData.peerProposals.keySet
 
+    private val validationParams: BlockValidationParams = BlockValidationParams.default.copy(minSignatureCount = 1)
+
     def persistProposal[F[_]: Async: SecurityProvider: KryoSerializer: Logger](
       proposal: Proposal,
       ctx: BlockConsensusContext[F]
@@ -281,7 +284,7 @@ object BlockConsensusCell {
               block = roundData.formBlock()
               signedBlock <- Signed.forAsyncKryo(block, ctx.keyPair)
               result <- ctx.blockValidator
-                .validate(signedBlock, requiredUniqueSigners = 1)
+                .validate(signedBlock, validationParams)
                 .flatTap { validationResult =>
                   if (validationResult.isInvalid) Logger[F].debug(s"Created block is invalid: $validationResult")
                   else Applicative[F].unit
@@ -338,7 +341,7 @@ object BlockConsensusCell {
             for {
               _ <- Applicative[F].unit
               finalBlock = roundData.peerBlocks.values.fold(ownBlock)(_ |+| _)
-              result <- finalBlock.hashWithSignatureCheck.flatMap {
+              result <- finalBlock.toHashedWithSignatureCheck.flatMap {
                 case Left(_) =>
                   cancelRound(roundData.ownProposal, ctx)
                     .map(_ => CellError("Round cancelled after final block turned out to be invalid!").asLeft[Ω])

@@ -1,8 +1,11 @@
 package org.tessellation.dag.snapshot
 
 import cats.data.NonEmptyList
-import cats.effect.Concurrent
+import cats.effect.{Async, Concurrent}
+import cats.syntax.functor._
+import cats.syntax.traverse._
 
+import org.tessellation.dag.domain.block.BlockReference
 import org.tessellation.ext.codecs.BinaryCodec
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
@@ -10,11 +13,12 @@ import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.RewardTransaction
-import org.tessellation.security.hash.Hash
+import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.hex.Hex
 
 import derevo.cats.{eqv, show}
 import derevo.derive
+import eu.timepit.refined.auto._
 import org.http4s.{EntityDecoder, EntityEncoder}
 
 @derive(eqv, show)
@@ -29,7 +33,16 @@ case class GlobalSnapshot(
   nextFacilitators: NonEmptyList[PeerId],
   info: GlobalSnapshotInfo,
   tips: GlobalSnapshotTips
-)
+) {
+
+  def activeTips[F[_]: Async: KryoSerializer]: F[Set[ActiveTip]] =
+    blocks.toList.traverse { blockAsActiveTip =>
+      BlockReference
+        .of(blockAsActiveTip.block)
+        .map(blockRef => ActiveTip(blockRef, blockAsActiveTip.usageCount, ordinal))
+    }.map(_.toSet.union(tips.remainedActive))
+
+}
 
 object GlobalSnapshot {
 
@@ -50,6 +63,17 @@ object GlobalSnapshot {
       Set.empty,
       NonEmptyList.of(PeerId(Hex("peer1"))), // TODO
       GlobalSnapshotInfo(Map.empty, Map.empty, balances),
-      GlobalSnapshotTips(Set.empty[DeprecatedTip], Set.empty[ActiveTip])
+      GlobalSnapshotTips(
+        Set.empty[DeprecatedTip],
+        mkActiveTips(16)
+      )
     )
+
+  private def mkActiveTips(n: Int): Set[ActiveTip] =
+    List
+      .range(0, n)
+      .map { i =>
+        ActiveTip(BlockReference(Height.MinValue, ProofsHash(s"%064d".format(i))), 0L, SnapshotOrdinal.MinValue)
+      }
+      .toSet
 }

@@ -19,7 +19,7 @@ import org.tessellation.security._
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.hex.Hex
 
-import derevo.cats.{eqv, show}
+import derevo.cats.{order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import io.estatico.newtype.macros.newtype
@@ -30,7 +30,7 @@ import Signing.{signData, verifySignature}
 
 object signature {
 
-  @derive(decoder, encoder, show, eqv)
+  @derive(decoder, encoder, show, order)
   @newtype
   case class Signature(value: Hex)
 
@@ -41,7 +41,7 @@ object signature {
 
   }
 
-  @derive(decoder, encoder, show, eqv)
+  @derive(decoder, encoder, show, order)
   case class SignatureProof(id: Id, signature: Signature)
 
   object SignatureProof {

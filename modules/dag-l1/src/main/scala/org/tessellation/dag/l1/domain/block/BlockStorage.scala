@@ -63,7 +63,7 @@ class BlockStorage[F[_]: Sync: Random](blocks: MapRef[F, ProofsHash, Option[Stor
     def addMajorityBlocks: F[Unit] =
       toAdd.toList.traverse {
         case (block, initialUsages) =>
-          val reference = BlockReference(block.proofsHash, block.height)
+          val reference = BlockReference(block.height, block.proofsHash)
           blocks(block.proofsHash).modify {
             case Some(WaitingBlock(_)) | None => (MajorityBlock(reference, initialUsages, Active).some, block.asRight)
             case other                        => (other, UnexpectedBlockStateWhenAddingMajorityBlock(block.proofsHash, other).asLeft)
@@ -76,7 +76,7 @@ class BlockStorage[F[_]: Sync: Random](blocks: MapRef[F, ProofsHash, Option[Stor
         case (hash, initialUsages) =>
           blocks(hash).modify {
             case Some(AcceptedBlock(block)) =>
-              val reference = BlockReference(block.proofsHash, block.height)
+              val reference = BlockReference(block.height, block.proofsHash)
               (MajorityBlock(reference, initialUsages, Active).some, ().asRight)
             case other =>
               (other, UnexpectedBlockStateWhenMarkingAsMajority(hash, other).asLeft)
@@ -161,6 +161,12 @@ class BlockStorage[F[_]: Sync: Random](blocks: MapRef[F, ProofsHash, Option[Stor
 
   def getWaiting: F[Map[ProofsHash, Signed[DAGBlock]]] =
     blocks.toMap.map(_.collect { case (hash, WaitingBlock(block)) => hash -> block })
+
+  def getUsages(hash: ProofsHash): F[Option[NonNegLong]] =
+    blocks(hash).get.map {
+      case Some(block: MajorityBlock) => block.usages.some
+      case _                          => none[NonNegLong]
+    }
 
   def getBlocksForMajorityReconciliation(lastHeight: Height, currentHeight: Height): F[MajorityReconciliationData] =
     for {

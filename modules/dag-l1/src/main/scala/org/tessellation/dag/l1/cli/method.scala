@@ -5,7 +5,6 @@ import cats.syntax.contravariantSemigroupal._
 import scala.concurrent.duration.{DurationDouble, DurationInt}
 
 import org.tessellation.cli.env.{KeyAlias, Password, StorePath}
-import org.tessellation.dag.block.config.BlockValidatorConfig
 import org.tessellation.dag.l1.config.types.{AppConfig, DBConfig}
 import org.tessellation.dag.l1.domain.consensus.block.config.ConsensusConfig
 import org.tessellation.ext.decline.decline._
@@ -41,9 +40,6 @@ object method {
           interval = 0.2.seconds,
           maxConcurrentHandlers = 20
         )
-      ),
-      blockValidator = BlockValidatorConfig(
-        requiredUniqueSigners = 3
       ),
       consensus = ConsensusConfig(
         peersCount = 2,

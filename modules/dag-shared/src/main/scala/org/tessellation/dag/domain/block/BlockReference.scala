@@ -1,19 +1,24 @@
 package org.tessellation.dag.domain.block
 
-import cats.Order
+import cats.effect.Async
+import cats.syntax.functor._
 
+import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.height.Height
 import org.tessellation.security.hash.ProofsHash
+import org.tessellation.security.signature.Signed
 
-import derevo.cats.show
+import derevo.cats.{order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
-import io.estatico.newtype.ops._
+import derevo.scalacheck.arbitrary
 
-@derive(encoder, decoder, show)
-case class BlockReference(hash: ProofsHash, height: Height)
+@derive(arbitrary, encoder, decoder, order, show)
+case class BlockReference(height: Height, hash: ProofsHash)
 
 object BlockReference {
-  implicit val blockReferenceOrder: Order[BlockReference] = (x: BlockReference, y: BlockReference) =>
-    implicitly[Order[Long]].compare(x.height.coerce, y.height.coerce)
+
+  def of[F[_]: Async: KryoSerializer](block: Signed[DAGBlock]): F[BlockReference] =
+    block.proofsHash.map(BlockReference(block.height, _))
+
 }

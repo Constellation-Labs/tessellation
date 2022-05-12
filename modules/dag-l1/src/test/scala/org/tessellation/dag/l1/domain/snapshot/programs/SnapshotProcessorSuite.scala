@@ -104,7 +104,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
   def generateSnapshotBalances(address: Address) = Map(address -> Balance(50L))
 
   def generateSnapshotLastAccTxRefs(address: Address) =
-    Map(address -> TransactionReference(Hash("lastTx"), TransactionOrdinal(2L)))
+    Map(address -> TransactionReference(TransactionOrdinal(2L), Hash("lastTx")))
 
   def generateSnapshot(peerId: PeerId): GlobalSnapshot =
     GlobalSnapshot(
@@ -126,12 +126,12 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
         implicit val securityProvider = sp
         implicit val kryoPool = kp
 
-        val parent1 = BlockReference(ProofsHash("parent1"), Height(4L))
-        val parent2 = BlockReference(ProofsHash("parent2"), Height(5L))
-        val block = DAGBlock(Set.empty, NonEmptyList.one(parent2))
+        val parent1 = BlockReference(Height(4L), ProofsHash("parent1"))
+        val parent2 = BlockReference(Height(5L), ProofsHash("parent2"))
+        val block = DAGBlock(NonEmptyList.one(parent2), Set.empty)
 
         for {
-          hashedBlock <- forAsyncKryo(block, key).flatMap(_.hashWithSignatureCheck.map(_.toOption.get))
+          hashedBlock <- forAsyncKryo(block, key).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           snapshotBalances = generateSnapshotBalances(address)
           snapshotTxRefs = generateSnapshotLastAccTxRefs(address)
           hashedSnapshot <- forAsyncKryo(
@@ -145,7 +145,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
                 )
               ),
             key
-          ).flatMap(_.hashWithSignatureCheck.map(_.toOption.get))
+          ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           balancesBefore <- balancesR.get
           blocksBefore <- blocksR.toMap
           lastGlobalSnapshotBefore <- lastSnapR.get
@@ -188,7 +188,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
                 Map.empty,
                 Map(
                   hashedBlock.proofsHash -> MajorityBlock(
-                    BlockReference(hashedBlock.proofsHash, hashedBlock.height),
+                    BlockReference(hashedBlock.height, hashedBlock.proofsHash),
                     NonNegLong.MinValue,
                     Active
                   ),
@@ -210,16 +210,16 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
         implicit val securityProvider = sp
         implicit val kryoPool = kp
 
-        val parent1 = BlockReference(ProofsHash("parent1"), Height(8L))
-        val parent2 = BlockReference(ProofsHash("parent2"), Height(2L))
-        val parent3 = BlockReference(ProofsHash("parent3"), Height(6L))
-        val parent4 = BlockReference(ProofsHash("parent4"), Height(5L))
-        val aboveRangeBlock = DAGBlock(Set.empty, NonEmptyList.one(parent1))
-        val nonMajorityInRangeBlock = DAGBlock(Set.empty, NonEmptyList.one(parent2))
-        val majorityInRangeBlock = DAGBlock(Set.empty, NonEmptyList.one(parent3))
-        val majorityAboveRangeActiveTipBlock = DAGBlock(Set.empty, NonEmptyList.one(parent3))
-        val majorityInRangeDeprecatedTipBlock = DAGBlock(Set.empty, NonEmptyList.one(parent4))
-        val majorityInRangeActiveTipBlock = DAGBlock(Set.empty, NonEmptyList.one(parent4))
+        val parent1 = BlockReference(Height(8L), ProofsHash("parent1"))
+        val parent2 = BlockReference(Height(2L), ProofsHash("parent2"))
+        val parent3 = BlockReference(Height(6L), ProofsHash("parent3"))
+        val parent4 = BlockReference(Height(5L), ProofsHash("parent4"))
+        val aboveRangeBlock = DAGBlock(NonEmptyList.one(parent1), Set.empty)
+        val nonMajorityInRangeBlock = DAGBlock(NonEmptyList.one(parent2), Set.empty)
+        val majorityInRangeBlock = DAGBlock(NonEmptyList.one(parent3), Set.empty)
+        val majorityAboveRangeActiveTipBlock = DAGBlock(NonEmptyList.one(parent3), Set.empty)
+        val majorityInRangeDeprecatedTipBlock = DAGBlock(NonEmptyList.one(parent4), Set.empty)
+        val majorityInRangeActiveTipBlock = DAGBlock(NonEmptyList.one(parent4), Set.empty)
 
         val blocks = List(
           aboveRangeBlock,
@@ -232,7 +232,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
 
         for {
           hashedBlocks <- blocks.traverse(
-            forAsyncKryo(_, key).flatMap(_.hashWithSignatureCheck.map(_.toOption.get))
+            forAsyncKryo(_, key).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           )
           hashedSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
@@ -240,17 +240,17 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
               tips = GlobalSnapshotTips(
                 Set(
                   DeprecatedTip(parent3, snapshotOrdinal9),
-                  DeprecatedTip(BlockReference(hashedBlocks(4).proofsHash, hashedBlocks(4).height), snapshotOrdinal9)
+                  DeprecatedTip(BlockReference(hashedBlocks(4).height, hashedBlocks(4).proofsHash), snapshotOrdinal9)
                 ),
                 Set(
                   ActiveTip(parent1, 1L, snapshotOrdinal8),
-                  ActiveTip(BlockReference(hashedBlocks(3).proofsHash, hashedBlocks(3).height), 1L, snapshotOrdinal9),
-                  ActiveTip(BlockReference(hashedBlocks(5).proofsHash, hashedBlocks(5).height), 2L, snapshotOrdinal9)
+                  ActiveTip(BlockReference(hashedBlocks(3).height, hashedBlocks(3).proofsHash), 1L, snapshotOrdinal9),
+                  ActiveTip(BlockReference(hashedBlocks(5).height, hashedBlocks(5).proofsHash), 2L, snapshotOrdinal9)
                 )
               )
             ),
             key
-          ).flatMap(_.hashWithSignatureCheck.map(_.toOption.get))
+          ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
 
           // Inserting blocks in required state
           _ <- blocksR(hashedBlocks.head.proofsHash).set(WaitingBlock(hashedBlocks.head.signed).some)
@@ -281,22 +281,22 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
               Map(
                 hashedBlocks.head.proofsHash -> WaitingBlock(hashedBlocks.head.signed),
                 hashedBlocks(2).proofsHash -> MajorityBlock(
-                  BlockReference(hashedBlocks(2).proofsHash, hashedBlocks(2).height),
+                  BlockReference(hashedBlocks(2).height, hashedBlocks(2).proofsHash),
                   NonNegLong(1L),
                   Active
                 ),
                 hashedBlocks(3).proofsHash -> MajorityBlock(
-                  BlockReference(hashedBlocks(3).proofsHash, hashedBlocks(3).height),
+                  BlockReference(hashedBlocks(3).height, hashedBlocks(3).proofsHash),
                   NonNegLong(1L),
                   Active
                 ),
                 hashedBlocks(4).proofsHash -> MajorityBlock(
-                  BlockReference(hashedBlocks(4).proofsHash, hashedBlocks(4).height),
+                  BlockReference(hashedBlocks(4).height, hashedBlocks(4).proofsHash),
                   0L,
                   Deprecated
                 ),
                 hashedBlocks(5).proofsHash -> MajorityBlock(
-                  BlockReference(hashedBlocks(5).proofsHash, hashedBlocks(5).height),
+                  BlockReference(hashedBlocks(5).height, hashedBlocks(5).proofsHash),
                   2L,
                   Active
                 ),
@@ -318,7 +318,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
           hashedLastSnapshot <- forAsyncKryo(
             generateSnapshot(peerId),
             key
-          ).flatMap(_.hashWithSignatureCheck.map(_.toOption.get))
+          ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           hashedNextSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
               ordinal = snapshotOrdinal11,
@@ -326,7 +326,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
               lastSnapshotHash = hashedLastSnapshot.hash
             ),
             key
-          ).flatMap(_.hashWithSignatureCheck.map(_.toOption.get))
+          ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           _ <- lastSnapR.set(hashedLastSnapshot.some)
 
           processingResult <- snapshotProcessor.process(hashedNextSnapshot)
@@ -358,16 +358,16 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
         implicit val securityProvider = sp
         implicit val kryoPool = kp
 
-        val parent1 = BlockReference(ProofsHash("parent1"), Height(6L))
-        val parent2 = BlockReference(ProofsHash("parent2"), Height(7L))
-        val parent3 = BlockReference(ProofsHash("parent3"), Height(8L))
-        val parent4 = BlockReference(ProofsHash("parent4"), Height(9L))
+        val parent1 = BlockReference(Height(6L), ProofsHash("parent1"))
+        val parent2 = BlockReference(Height(7L), ProofsHash("parent2"))
+        val parent3 = BlockReference(Height(8L), ProofsHash("parent3"))
+        val parent4 = BlockReference(Height(9L), ProofsHash("parent4"))
 
-        val waitingInRangeBlock = DAGBlock(Set.empty, NonEmptyList.one(parent1))
-        val majorityInRangeBlock = DAGBlock(Set.empty, NonEmptyList.one(parent2))
-        val aboveRangeAcceptedBlock = DAGBlock(Set.empty, NonEmptyList.one(parent3))
-        val aboveRangeMajorityBlock = DAGBlock(Set.empty, NonEmptyList.one(parent3))
-        val waitingAboveRangeBlock = DAGBlock(Set.empty, NonEmptyList.one(parent4))
+        val waitingInRangeBlock = DAGBlock(NonEmptyList.one(parent1), Set.empty)
+        val majorityInRangeBlock = DAGBlock(NonEmptyList.one(parent2), Set.empty)
+        val aboveRangeAcceptedBlock = DAGBlock(NonEmptyList.one(parent3), Set.empty)
+        val aboveRangeMajorityBlock = DAGBlock(NonEmptyList.one(parent3), Set.empty)
+        val waitingAboveRangeBlock = DAGBlock(NonEmptyList.one(parent4), Set.empty)
 
         val blocks =
           List(
@@ -380,7 +380,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
 
         for {
           hashedBlocks <- blocks.traverse(
-            forAsyncKryo(_, key).flatMap(_.hashWithSignatureCheck.map(_.toOption.get))
+            forAsyncKryo(_, key).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           )
           hashedLastSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
@@ -396,7 +396,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
               )
             ),
             key
-          ).flatMap(_.hashWithSignatureCheck.map(_.toOption.get))
+          ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           hashedNextSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
               ordinal = snapshotOrdinal11,
@@ -413,7 +413,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
               )
             ),
             key
-          ).flatMap(_.hashWithSignatureCheck.map(_.toOption.get))
+          ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           _ <- lastSnapR.set(hashedLastSnapshot.some)
           // Inserting tips
           _ <- blocksR(parent1.hash).set(MajorityBlock(parent1, 2L, Deprecated).some)
@@ -448,13 +448,13 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
                 parent3.hash -> MajorityBlock(parent3, 1L, Deprecated),
                 parent4.hash -> MajorityBlock(parent4, 1L, Active),
                 hashedBlocks(1).proofsHash -> MajorityBlock(
-                  BlockReference(hashedBlocks(1).proofsHash, hashedBlocks(1).height),
+                  BlockReference(hashedBlocks(1).height, hashedBlocks(1).proofsHash),
                   1L,
                   Active
                 ),
                 hashedBlocks(2).proofsHash -> AcceptedBlock(hashedBlocks(2)),
                 hashedBlocks(3).proofsHash -> MajorityBlock(
-                  BlockReference(hashedBlocks(3).proofsHash, hashedBlocks(3).height),
+                  BlockReference(hashedBlocks(3).height, hashedBlocks(3).proofsHash),
                   2L,
                   Active
                 ),
@@ -471,20 +471,20 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
         implicit val securityProvider = sp
         implicit val kryoPool = kp
 
-        val parent1 = BlockReference(ProofsHash("parent1"), Height(6L))
-        val parent2 = BlockReference(ProofsHash("parent2"), Height(7L))
-        val parent3 = BlockReference(ProofsHash("parent3"), Height(8L))
-        val parent4 = BlockReference(ProofsHash("parent4"), Height(9L))
+        val parent1 = BlockReference(Height(6L), ProofsHash("parent1"))
+        val parent2 = BlockReference(Height(7L), ProofsHash("parent2"))
+        val parent3 = BlockReference(Height(8L), ProofsHash("parent3"))
+        val parent4 = BlockReference(Height(9L), ProofsHash("parent4"))
 
-        val waitingInRangeBlock = DAGBlock(Set.empty, NonEmptyList.one(parent1))
-        val waitingMajorityInRangeBlock = DAGBlock(Set.empty, NonEmptyList.one(parent1))
-        val acceptedMajorityInRangeBlock = DAGBlock(Set.empty, NonEmptyList.one(parent2))
-        val majorityUnknownBlock = DAGBlock(Set.empty, NonEmptyList.one(parent2))
-        val acceptedNonMajorityInRangeBlock = DAGBlock(Set.empty, NonEmptyList.one(parent2))
-        val aboveRangeAcceptedBlock = DAGBlock(Set.empty, NonEmptyList.one(parent3))
-        val aboveRangeAcceptedMajorityBlock = DAGBlock(Set.empty, NonEmptyList.one(parent3))
-        val aboveRangeUnknownMajorityBlock = DAGBlock(Set.empty, NonEmptyList.one(parent3))
-        val waitingAboveRangeBlock = DAGBlock(Set.empty, NonEmptyList.one(parent4))
+        val waitingInRangeBlock = DAGBlock(NonEmptyList.one(parent1), Set.empty)
+        val waitingMajorityInRangeBlock = DAGBlock(NonEmptyList.one(parent1), Set.empty)
+        val acceptedMajorityInRangeBlock = DAGBlock(NonEmptyList.one(parent2), Set.empty)
+        val majorityUnknownBlock = DAGBlock(NonEmptyList.one(parent2), Set.empty)
+        val acceptedNonMajorityInRangeBlock = DAGBlock(NonEmptyList.one(parent2), Set.empty)
+        val aboveRangeAcceptedBlock = DAGBlock(NonEmptyList.one(parent3), Set.empty)
+        val aboveRangeAcceptedMajorityBlock = DAGBlock(NonEmptyList.one(parent3), Set.empty)
+        val aboveRangeUnknownMajorityBlock = DAGBlock(NonEmptyList.one(parent3), Set.empty)
+        val waitingAboveRangeBlock = DAGBlock(NonEmptyList.one(parent4), Set.empty)
 
         val blocks =
           List(
@@ -501,7 +501,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
 
         for {
           hashedBlocks <- blocks.traverse(
-            forAsyncKryo(_, key).flatMap(_.hashWithSignatureCheck.map(_.toOption.get))
+            forAsyncKryo(_, key).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           )
           hashedLastSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
@@ -517,7 +517,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
               )
             ),
             key
-          ).flatMap(_.hashWithSignatureCheck.map(_.toOption.get))
+          ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           hashedNextSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
               ordinal = snapshotOrdinal11,
@@ -540,7 +540,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
               )
             ),
             key
-          ).flatMap(_.hashWithSignatureCheck.map(_.toOption.get))
+          ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           _ <- lastSnapR.set(hashedLastSnapshot.some)
           // Inserting tips
           _ <- blocksR(parent1.hash).set(MajorityBlock(parent1, 2L, Deprecated).some)
@@ -579,28 +579,28 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
                 parent3.hash -> MajorityBlock(parent3, 2L, Deprecated),
                 parent4.hash -> MajorityBlock(parent4, 1L, Active),
                 hashedBlocks(1).proofsHash -> MajorityBlock(
-                  BlockReference(hashedBlocks(1).proofsHash, hashedBlocks(1).height),
+                  BlockReference(hashedBlocks(1).height, hashedBlocks(1).proofsHash),
                   1L,
                   Active
                 ),
                 hashedBlocks(2).proofsHash -> MajorityBlock(
-                  BlockReference(hashedBlocks(2).proofsHash, hashedBlocks(2).height),
+                  BlockReference(hashedBlocks(2).height, hashedBlocks(2).proofsHash),
                   2L,
                   Active
                 ),
                 hashedBlocks(3).proofsHash -> MajorityBlock(
-                  BlockReference(hashedBlocks(3).proofsHash, hashedBlocks(3).height),
+                  BlockReference(hashedBlocks(3).height, hashedBlocks(3).proofsHash),
                   1L,
                   Active
                 ),
                 hashedBlocks(5).proofsHash -> WaitingBlock(hashedBlocks(5).signed),
                 hashedBlocks(6).proofsHash -> MajorityBlock(
-                  BlockReference(hashedBlocks(6).proofsHash, hashedBlocks(6).height),
+                  BlockReference(hashedBlocks(6).height, hashedBlocks(6).proofsHash),
                   0L,
                   Active
                 ),
                 hashedBlocks(7).proofsHash -> MajorityBlock(
-                  BlockReference(hashedBlocks(7).proofsHash, hashedBlocks(7).height),
+                  BlockReference(hashedBlocks(7).height, hashedBlocks(7).proofsHash),
                   0L,
                   Active
                 ),
@@ -621,14 +621,14 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
           hashedLastSnapshot <- forAsyncKryo(
             generateSnapshot(peerId),
             key
-          ).flatMap(_.hashWithSignatureCheck.map(_.toOption.get))
+          ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           hashedNextSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
               ordinal = snapshotOrdinal12,
               lastSnapshotHash = hashedLastSnapshot.hash
             ),
             key
-          ).flatMap(_.hashWithSignatureCheck.map(_.toOption.get))
+          ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           _ <- lastSnapR.set(hashedLastSnapshot.some)
           processingResult <- snapshotProcessor
             .process(hashedNextSnapshot)
@@ -661,14 +661,14 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
         implicit val securityProvider = sp
         implicit val kryoPool = kp
 
-        val parent1 = BlockReference(ProofsHash("parent1"), Height(8L))
-        val parent2 = BlockReference(ProofsHash("parent2"), Height(9L))
+        val parent1 = BlockReference(Height(8L), ProofsHash("parent1"))
+        val parent2 = BlockReference(Height(9L), ProofsHash("parent2"))
 
         for {
           hashedLastSnapshot <- forAsyncKryo(
             generateSnapshot(peerId),
             key
-          ).flatMap(_.hashWithSignatureCheck.map(_.toOption.get))
+          ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           hashedNextSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
               ordinal = snapshotOrdinal11,
@@ -684,7 +684,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
               )
             ),
             key
-          ).flatMap(_.hashWithSignatureCheck.map(_.toOption.get))
+          ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           _ <- lastSnapR.set(hashedLastSnapshot.some)
           // Inserting tips
           _ <- blocksR(parent2.hash).set(MajorityBlock(parent2, 1L, Active).some)

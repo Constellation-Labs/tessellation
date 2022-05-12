@@ -50,9 +50,9 @@ object Main
       p2pClient = P2PClient.make[IO](sdkP2PClient, sdkResources.client, sdkServices.session)
       queues <- Queues.make[IO](sdkQueues).asResource
       storages <- Storages.make[IO](sdkStorages, cfg.snapshot).asResource
-      services <- Services.make[IO](sdkServices, queues, storages, sdk.nodeId, keyPair, cfg).asResource
-      programs = Programs.make[IO](sdkPrograms, storages, services, p2pClient)
       validators = Validators.make[IO](cfg.snapshot)
+      services <- Services.make[IO](sdkServices, queues, storages, validators, sdk.nodeId, keyPair, cfg).asResource
+      programs = Programs.make[IO](sdkPrograms, storages, services, p2pClient)
       healthChecks <- HealthChecks
         .make[IO](storages, services, programs, p2pClient, cfg.healthCheck, sdk.nodeId)
         .asResource

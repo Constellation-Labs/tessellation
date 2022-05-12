@@ -7,6 +7,8 @@ import cats.effect.std.Random
 import cats.syntax.option._
 
 import org.tessellation.config.types.SnapshotConfig
+import org.tessellation.dag.block.BlockValidator
+import org.tessellation.dag.block.processing.{BlockAcceptanceLogic, BlockAcceptanceManager}
 import org.tessellation.domain.snapshot.GlobalSnapshotStorage
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
@@ -24,11 +26,20 @@ object GlobalSnapshotConsensus {
     keyPair: KeyPair,
     clusterStorage: ClusterStorage[F],
     globalSnapshotStorage: GlobalSnapshotStorage[F],
+    blockValidator: BlockValidator[F],
     healthCheckConfig: HealthCheckConfig,
     snapshotConfig: SnapshotConfig
   ): F[Consensus[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact]] =
     Consensus.make[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact](
-      GlobalSnapshotConsensusFunctions.make[F](globalSnapshotStorage, snapshotConfig.heightInterval),
+      GlobalSnapshotConsensusFunctions.make[F](
+        globalSnapshotStorage,
+        snapshotConfig.heightInterval,
+        BlockAcceptanceManager.make[F](
+          BlockAcceptanceLogic.make[F](
+            blockValidator
+          )
+        )
+      ),
       gossip,
       selfId,
       keyPair,

@@ -51,7 +51,7 @@ object L0Service {
                 case (ordinal :: nextOrdinals, snapshots) =>
                   l0GlobalSnapshotClient
                     .get(ordinal)(l0Peer)
-                    .flatMap(_.hashWithSignatureCheck)
+                    .flatMap(_.toHashedWithSignatureCheck)
                     .flatMap(_.liftTo[F])
                     .map(s => (nextOrdinals, snapshots :+ s).asLeft[List[Hashed[GlobalSnapshot]]])
                     .handleErrorWith { e =>
