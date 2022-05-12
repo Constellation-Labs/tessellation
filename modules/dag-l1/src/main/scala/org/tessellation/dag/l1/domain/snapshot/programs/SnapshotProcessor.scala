@@ -217,7 +217,7 @@ sealed abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityPro
     for {
       acceptedInMajority <- globalSnapshot.blocks.toList.traverse {
         case BlockAsActiveTip(block, usageCount) =>
-          block.hashWithSignatureCheck.flatMap(_.liftTo[F]).map(b => b.proofsHash -> (b, usageCount))
+          block.toHashedWithSignatureCheck.flatMap(_.liftTo[F]).map(b => b.proofsHash -> (b, usageCount))
       }.map(_.toMap)
 
       GlobalSnapshotTips(gsDeprecatedTips, gsRemainedActive) = globalSnapshot.tips

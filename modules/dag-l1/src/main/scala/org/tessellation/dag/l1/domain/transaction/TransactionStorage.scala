@@ -1,14 +1,16 @@
 package org.tessellation.dag.l1.domain.transaction
 
 import cats.data.{NonEmptyList, NonEmptySet}
-import cats.effect.Sync
+import cats.effect.Async
 import cats.syntax.alternative._
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.either._
 import cats.syntax.flatMap._
+import cats.syntax.foldable._
 import cats.syntax.functor._
 import cats.syntax.option._
+import cats.syntax.set._
 import cats.syntax.show._
 import cats.syntax.traverse._
 
@@ -18,6 +20,7 @@ import scala.util.control.NoStackTrace
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage.{ParentNotAccepted, TransactionAcceptanceError}
 import org.tessellation.dag.transaction.filter.Consecutive
 import org.tessellation.ext.collection.MapRefUtils._
+import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction.{Transaction, TransactionOrdinal, TransactionReference}
 import org.tessellation.security.Hashed
@@ -26,7 +29,7 @@ import org.tessellation.security.signature.Signed
 import io.chrisdavenport.mapref.MapRef
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-class TransactionStorage[F[_]: Sync](
+class TransactionStorage[F[_]: Async: KryoSerializer](
   lastAccepted: MapRef[F, Address, Option[TransactionReference]],
   waitingTransactions: MapRef[F, Address, Option[NonEmptySet[Signed[Transaction]]]]
 ) {
@@ -52,7 +55,7 @@ class TransactionStorage[F[_]: Sync](
   def accept(hashedTx: Hashed[Transaction]): F[Unit] = {
     val parent = hashedTx.signed.value.parent
     val source = hashedTx.signed.value.source
-    val reference = TransactionReference(hashedTx.hash, hashedTx.signed.value.ordinal)
+    val reference = TransactionReference(hashedTx.signed.value.ordinal, hashedTx.hash)
 
     lastAccepted(source)
       .modify[Either[TransactionAcceptanceError, Unit]] { lastAccepted =>
@@ -104,32 +107,42 @@ class TransactionStorage[F[_]: Sync](
     for {
       lastAccepted <- lastAccepted.toMap
       addresses <- waitingTransactions.keys
-      pulled <- addresses.traverse { address =>
-        waitingTransactions(address).modify {
-          case Some(waiting) =>
+      allPulled <- addresses.traverse { address =>
+        val pulledM = for {
+          (maybeWaiting, setter) <- waitingTransactions(address).access
+
+          maybePulled <- maybeWaiting.traverse { waiting =>
             val lastTx = lastAccepted.getOrElse(address, TransactionReference.empty)
-            val pulledForAddress = Consecutive.take(lastTx, waiting.toNonEmptyList.toList)
-            val updatedStillWaiting =
-              NonEmptySet.fromSet(SortedSet.from(pulledForAddress)) match {
-                case Some(pulledTxs) => NonEmptySet.fromSet(waiting.diff(pulledTxs))
-                case None            => waiting.some
+            Consecutive
+              .take[F](waiting.toList, lastTx)
+              .map { pulled =>
+                (SortedSet.from(waiting.toList.diff(pulled)).toNes, pulled)
               }
-            (updatedStillWaiting, pulledForAddress)
-          case None =>
-            (None, Seq.empty)
-        }.handleErrorWith {
-          logger
-            .warn(_)(s"Error while pulling transactions for address=${address.show} from waiting pool.")
-            .map(_ => Seq.empty)
+              .flatMap {
+                case (maybeStillWaiting, pulled) =>
+                  setter(maybeStillWaiting)
+                    .ifM(
+                      pulled.pure[F],
+                      logger.debug("Concurrent update occurred while trying to pull transactions") >>
+                        List.empty[Signed[Transaction]].pure[F]
+                    )
+              }
+          }
+          pulled = maybePulled.getOrElse(List.empty)
+        } yield pulled
+
+        pulledM.handleErrorWith {
+          logger.warn(_)(s"Error while pulling transactions for address=${address.show} from waiting pool.") >>
+            List.empty.pure[F]
         }
       }.map(_.flatten)
-    } yield NonEmptyList.fromList(pulled)
+    } yield NonEmptyList.fromList(allPulled)
 
 }
 
 object TransactionStorage {
 
-  def make[F[_]: Sync]: F[TransactionStorage[F]] =
+  def make[F[_]: Async: KryoSerializer]: F[TransactionStorage[F]] =
     for {
       lastAccepted <- MapRef.ofConcurrentHashMap[F, Address, TransactionReference]()
       waitingTransactions <- MapRef.ofConcurrentHashMap[F, Address, NonEmptySet[Signed[Transaction]]]()

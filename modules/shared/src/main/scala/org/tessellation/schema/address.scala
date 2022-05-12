@@ -1,12 +1,12 @@
 package org.tessellation.schema
 
-import cats.{Eq, Show}
+import cats.{Eq, Order, Show}
 
 import org.tessellation.ext.refined._
 import org.tessellation.schema.balance.Balance
 import org.tessellation.security.Base58
 
-import derevo.cats.{eqv, show}
+import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia._
 import derevo.derive
 import eu.timepit.refined.api.{Refined, Validate}
@@ -18,7 +18,7 @@ import io.getquill.MappedEncoding
 
 object address {
 
-  @derive(decoder, encoder, keyDecoder, keyEncoder, eqv, show)
+  @derive(decoder, encoder, keyDecoder, keyEncoder, eqv, show, order)
   @newtype
   case class Address(value: DAGAddress)
 
@@ -53,6 +53,9 @@ object address {
 
     implicit val showDAGAddress: Show[DAGAddress] =
       showOf[String, DAGAddressRefined]
+
+    implicit val orderDAGAddress: Order[DAGAddress] =
+      orderOf[String, DAGAddressRefined]
   }
 
   case class AddressCache(balance: Balance)

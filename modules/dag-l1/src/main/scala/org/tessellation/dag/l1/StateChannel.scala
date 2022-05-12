@@ -134,7 +134,7 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
 
   private val peerBlocks: Stream[F, FinalBlock] = Stream
     .fromQueueUnterminated(queues.peerBlock)
-    .evalMap(_.hashWithSignatureCheck)
+    .evalMap(_.toHashedWithSignatureCheck)
     .evalTap {
       case Left(e)  => logger.warn(e)(s"Received an invalidly signed peer block!")
       case Right(_) => Async[F].unit

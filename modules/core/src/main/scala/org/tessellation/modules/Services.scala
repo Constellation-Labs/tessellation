@@ -26,6 +26,7 @@ object Services {
     sdkServices: SdkServices[F],
     queues: Queues[F],
     storages: Storages[F],
+    validators: Validators[F],
     selfId: PeerId,
     keyPair: KeyPair,
     cfg: AppConfig
@@ -39,6 +40,7 @@ object Services {
           keyPair,
           storages.cluster,
           storages.globalSnapshot,
+          validators.blockValidator,
           cfg.healthCheck,
           cfg.snapshot
         )

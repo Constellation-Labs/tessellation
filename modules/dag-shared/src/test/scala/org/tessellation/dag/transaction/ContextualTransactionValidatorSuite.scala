@@ -2,33 +2,39 @@ package org.tessellation.dag.transaction
 
 import java.security.KeyPair
 
-import cats.data.NonEmptyList
-import cats.data.Validated.{Invalid, Valid}
+import cats.data.Validated.Valid
 import cats.effect.{IO, Resource}
 import cats.syntax.applicative._
 import cats.syntax.contravariantSemigroupal._
+import cats.syntax.validated._
 
-import org.tessellation.dag.transaction.TransactionValidator._
+import org.tessellation.dag.transaction.ContextualTransactionValidator._
+import org.tessellation.dag.transaction.TransactionValidator.{
+  InvalidSigned,
+  NotSignedBySourceAddressOwner,
+  SameSourceAndDestinationAddress
+}
 import org.tessellation.ext.cats.effect._
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.balance.Balance
+import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.transaction._
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.key.ops.PublicKeyOps
-import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed.forAsyncKryo
+import org.tessellation.security.signature.SignedValidator.InvalidSignatures
+import org.tessellation.security.signature.{Signed, SignedValidator}
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 import suite.ResourceSuite
 import weaver.scalacheck.Checkers
 
-object TransactionValidatorSuite extends ResourceSuite with Checkers {
+object ContextualTransactionValidatorSuite extends ResourceSuite with Checkers {
   override type Res = (
-    (Address => Balance, Address => TransactionReference) => TransactionValidator[IO],
+    (Address => Balance, Address => TransactionReference) => ContextualTransactionValidator[IO],
     KeyPair,
     KeyPair,
     Address,
@@ -43,10 +49,19 @@ object TransactionValidatorSuite extends ResourceSuite with Checkers {
         def txValidator(
           balancesFn: Address => Balance,
           lastAcceptedTxFn: Address => TransactionReference
-        ) = new TransactionValidator[IO] {
-          def getBalance(address: Address): IO[Balance] = balancesFn(address).pure[IO]
-          def getLastAcceptedTransactionRef(address: Address): IO[TransactionReference] =
-            lastAcceptedTxFn(address).pure[IO]
+        ): ContextualTransactionValidator[IO] = {
+          val signedValidator = SignedValidator.make
+          val txValidator = TransactionValidator.make(signedValidator)
+
+          ContextualTransactionValidator.make[IO](
+            txValidator,
+            new TransactionValidationContext[IO] {
+              override def getBalance(address: Address): IO[Balance] = balancesFn(address).pure[IO]
+
+              override def getLastTransactionRef(address: Address): IO[TransactionReference] =
+                lastAcceptedTxFn(address).pure[IO]
+            }
+          )
         }
 
         def signTx(tx: Transaction, keyPair: KeyPair) = forAsyncKryo(tx, keyPair)
@@ -101,34 +116,26 @@ object TransactionValidatorSuite extends ResourceSuite with Checkers {
       } yield expect.same(Valid(signedTx), validationResult)
   }
 
-  test("should fail when lastTxRef with greater ordinal has an empty hash") {
-    case (txValidator, srcKey, _, _, _, baseTx, signTx) =>
-      val validator = txValidator(initialBalance, initialReference)
-
-      val tx = setReference(Hash(""))(baseTx)
-
-      for {
-        signedTx <- signTx(tx, srcKey)
-        validationResult <- validator.validate(signedTx)
-      } yield expect.same(Invalid(NonEmptyList.one(NonZeroOrdinalButEmptyHash(tx))), validationResult)
-  }
-
   test("should fail when lastTxRef's ordinal is lower than one stored on the node") {
     case (txValidator, srcKey, _, _, _, tx, signTx) =>
       val reference =
-        (_: Address) => TransactionReference(Hash("someHash"), TransactionOrdinal(NonNegLong(1L)))
+        (_: Address) => TransactionReference(TransactionOrdinal(NonNegLong(1L)), Hash("someHash"))
       val validator = txValidator(initialBalance, reference)
 
       for {
         signedTx <- signTx(tx, srcKey)
         validationResult <- validator.validate(signedTx)
-      } yield expect.same(Invalid(NonEmptyList.one(ParentTxRefOrdinalLowerThenStoredLastTxRef(tx))), validationResult)
+      } yield
+        expect.same(
+          ParentOrdinalLowerThenLastTxOrdinal(TransactionOrdinal(0L), TransactionOrdinal(1L)).invalidNec,
+          validationResult
+        )
   }
 
   test("should fail when lastTxRef's ordinal matches but the hash is different") {
     case (txValidator, srcKey, _, _, _, baseTx, signTx) =>
       val reference =
-        (_: Address) => TransactionReference(Hash("someHash"), TransactionOrdinal(NonNegLong(1L)))
+        (_: Address) => TransactionReference(TransactionOrdinal(NonNegLong(1L)), Hash("someHash"))
       val validator = txValidator(initialBalance, reference)
 
       val tx = setReference(Hash("someOtherHash"))(baseTx)
@@ -136,7 +143,11 @@ object TransactionValidatorSuite extends ResourceSuite with Checkers {
       for {
         signedTx <- signTx(tx, srcKey)
         validationResult <- validator.validate(signedTx)
-      } yield expect.same(Invalid(NonEmptyList.one(SameOrdinalButDifferentHashForLastTxRef(tx))), validationResult)
+      } yield
+        expect.same(
+          ParentHashDifferentThanLastTxHash(Hash("someOtherHash"), Hash("someHash")).invalidNec,
+          validationResult
+        )
   }
 
   test("should fail when source address doesn't match signer id") {
@@ -146,7 +157,11 @@ object TransactionValidatorSuite extends ResourceSuite with Checkers {
       for {
         signedTx <- signTx(tx, dstKey)
         validationResult <- validator.validate(signedTx)
-      } yield expect.same(Invalid(NonEmptyList.one(SourceAddressAndSignerIdsDontMatch(tx))), validationResult)
+      } yield
+        expect.same(
+          NonContextualValidationError(NotSignedBySourceAddressOwner).invalidNec,
+          validationResult
+        )
   }
 
   test("should fail when the signature is wrong") {
@@ -158,7 +173,11 @@ object TransactionValidatorSuite extends ResourceSuite with Checkers {
           signed => signed.copy(proofs = signed.proofs.map(_.copy(id = srcKey.getPublic.toId)))
         )
         validationResult <- validator.validate(signedTx)
-      } yield expect.same(Invalid(NonEmptyList.one(InvalidSourceSignature)), validationResult)
+      } yield
+        expect.same(
+          NonContextualValidationError(InvalidSigned(InvalidSignatures(signedTx.proofs))).invalidNec,
+          validationResult
+        )
   }
 
   test("should fail when source address doesn't have sufficient balance") {
@@ -170,7 +189,9 @@ object TransactionValidatorSuite extends ResourceSuite with Checkers {
       for {
         signedTx <- signTx(tx, srcKey)
         validationResult <- validator.validate(signedTx)
-      } yield expect.same(Invalid(NonEmptyList.one(InsufficientSourceBalance(srcAddress))), validationResult)
+      } yield
+        expect
+          .same(InsufficientBalance(Balance(1L), Amount(2L), Amount(0L)).invalidNec, validationResult)
   }
 
   test("should fail when source address is the same as destination address") {
@@ -182,6 +203,11 @@ object TransactionValidatorSuite extends ResourceSuite with Checkers {
       for {
         signedTx <- signTx(tx, srcKey)
         validationResult <- validator.validate(signedTx)
-      } yield expect.same(Invalid(NonEmptyList.one(SourceAndDestinationAddressAreEqual(tx))), validationResult)
+      } yield
+        expect.same(
+          NonContextualValidationError(SameSourceAndDestinationAddress(srcAddress)).invalidNec,
+          validationResult
+        )
   }
+
 }

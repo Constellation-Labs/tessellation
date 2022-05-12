@@ -1,18 +1,11 @@
 package org.tessellation.schema
 
-import cats.Applicative
-import cats.effect.MonadCancelThrow
-import cats.kernel.Order
 import cats.syntax.either._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
+import cats.syntax.order._
 import cats.syntax.semigroup._
-import cats.syntax.traverse._
 
 import scala.util.Try
-
-import org.tessellation.schema.address.Address
-import org.tessellation.schema.transaction.Transaction
+import scala.util.control.NoStackTrace
 
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
@@ -34,16 +27,18 @@ object balance {
   @newtype
   case class Balance(value: NonNegLong) {
 
-    def plus(that: Amount): Either[BalanceOutOfRange, Balance] = {
+    def plus(that: Amount): Either[BalanceArithmeticError, Balance] = {
       val sum = value |+| that.value
 
-      if (Order[NonNegLong].gteqv(sum, value) && Order[NonNegLong].gteqv(sum, that.value)) {
-        Balance(sum).asRight[BalanceOutOfRange]
-      } else BalanceOutOfRange("Reached Long.MaxValue when adding balances!").asLeft[Balance]
+      if (sum >= value && sum >= that.value) {
+        Balance(sum).asRight[BalanceArithmeticError]
+      } else BalanceOverflow.asLeft[Balance]
     }
 
-    def minus(that: Amount): Either[BalanceOutOfRange, Balance] =
-      NonNegLong.from(value.value - that.value.value).bimap(BalanceOutOfRange, Balance(_))
+    def minus(that: Amount): Either[BalanceArithmeticError, Balance] =
+      NonNegLong
+        .from(value.value - that.value.value)
+        .bimap(_ => BalanceUnderflow, Balance(_))
   }
 
   object Balance {
@@ -65,37 +60,10 @@ object balance {
         }
     )
 
-    def applyTransactions[F[_]: Applicative: MonadCancelThrow](
-      transactions: Set[Transaction],
-      getBalanceFn: Address => F[Balance]
-    ): F[Map[Address, Balance]] = {
-      val sources = transactions.groupBy(_.source)
-      val destinations = transactions.groupBy(_.destination)
-      val addresses = sources ++ destinations
-
-      def applyTransactions(
-        balance: Balance,
-        address: Address,
-        txs: Set[Transaction]
-      ) =
-        txs.foldLeft(balance.asRight[BalanceOutOfRange]) { (acc, tx) =>
-          tx match {
-            case Transaction(`address`, _, amount, fee, _, _) =>
-              acc.flatMap(_.minus(amount)).flatMap(_.minus(fee))
-            case Transaction(_, `address`, amount, _, _, _) => acc.flatMap(_.plus(amount))
-            case _                                          => acc
-          }
-        }
-
-      addresses.toList.traverse {
-        case (address, txs) =>
-          getBalanceFn(address).flatMap { balance =>
-            applyTransactions(balance, address, txs).liftTo[F]
-          }.map((address, _))
-      }.map(_.toMap)
-    }
-
   }
 
-  case class BalanceOutOfRange(msg: String) extends Throwable(msg)
+  @derive(eqv, show)
+  sealed trait BalanceArithmeticError extends NoStackTrace
+  case object BalanceOverflow extends BalanceArithmeticError
+  case object BalanceUnderflow extends BalanceArithmeticError
 }

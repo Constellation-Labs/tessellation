@@ -1,6 +1,5 @@
 package org.tessellation.dag.l1.config
 
-import org.tessellation.dag.block.config.BlockValidatorConfig
 import org.tessellation.dag.l1.domain.consensus.block.config.ConsensusConfig
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types.{GossipConfig, HealthCheckConfig, HttpConfig}
@@ -15,7 +14,6 @@ object types {
     http: HttpConfig,
     db: DBConfig,
     gossip: GossipConfig,
-    blockValidator: BlockValidatorConfig,
     consensus: ConsensusConfig,
     healthCheck: HealthCheckConfig
   )

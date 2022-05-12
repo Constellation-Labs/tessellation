@@ -1,24 +1,22 @@
 package org.tessellation.schema
 
-import cats.Order
 import cats.effect.Async
-import cats.syntax.either._
-import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.semigroup._
 
+import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
+import org.tessellation.security.Encodable
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Encodable, SecurityProvider}
 
-import derevo.cats.{eqv, show}
+import derevo.cats.{order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import eu.timepit.refined.auto.{autoInfer, autoRefineV, autoUnwrap}
-import eu.timepit.refined.cats.nonNegLongCommutativeMonoid
+import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 import io.estatico.newtype.macros.newtype
 import io.estatico.newtype.ops._
@@ -27,7 +25,7 @@ import monocle.macros.GenLens
 
 object transaction {
 
-  @derive(decoder, encoder, eqv, show)
+  @derive(decoder, encoder, order, show)
   @newtype
   case class TransactionAmount(value: PosLong)
 
@@ -35,7 +33,7 @@ object transaction {
     implicit def toAmount(amount: TransactionAmount): Amount = Amount(amount.value)
   }
 
-  @derive(decoder, encoder, eqv, show)
+  @derive(decoder, encoder, order, show)
   @newtype
   case class TransactionFee(value: NonNegLong)
 
@@ -43,7 +41,7 @@ object transaction {
     implicit def toAmount(fee: TransactionFee): Amount = Amount(fee.value)
   }
 
-  @derive(decoder, encoder, show)
+  @derive(decoder, encoder, order, show)
   @newtype
   case class TransactionOrdinal(value: NonNegLong) {
     def next: TransactionOrdinal = TransactionOrdinal(value |+| 1L)
@@ -51,35 +49,27 @@ object transaction {
 
   object TransactionOrdinal {
     val first: TransactionOrdinal = TransactionOrdinal(1L)
-
-    implicit val order: Order[TransactionOrdinal] = (x: TransactionOrdinal, y: TransactionOrdinal) =>
-      implicitly[Order[Long]].compare(x.coerce, y.coerce)
-
-    implicit val ordering: Ordering[TransactionOrdinal] = order.toOrdering
-
   }
 
-  @derive(decoder, encoder, eqv, show)
-  case class TransactionReference(hash: Hash, ordinal: TransactionOrdinal)
+  @derive(decoder, encoder, order, show)
+  case class TransactionReference(ordinal: TransactionOrdinal, hash: Hash)
 
   object TransactionReference {
-    val empty: TransactionReference = TransactionReference(Hash(""), TransactionOrdinal(0L))
+    val empty: TransactionReference = TransactionReference(TransactionOrdinal(0L), Hash("".padTo(64, '0')))
 
     val _Hash: Lens[TransactionReference, Hash] = GenLens[TransactionReference](_.hash)
     val _Ordinal: Lens[TransactionReference, TransactionOrdinal] = GenLens[TransactionReference](_.ordinal)
 
-    def of[F[_]: Async: SecurityProvider: KryoSerializer](transaction: Signed[Transaction]): F[TransactionReference] =
-      transaction.hashWithSignatureCheck.flatMap(_.liftTo[F]).map { hashed =>
-        TransactionReference(hashed.hash, hashed.ordinal)
-      }
+    def of[F[_]: Async: KryoSerializer](signedTransaction: Signed[Transaction]): F[TransactionReference] =
+      signedTransaction.value.hashF.map(TransactionReference(signedTransaction.ordinal, _))
 
   }
 
-  @derive(decoder, encoder, eqv, show)
+  @derive(decoder, encoder, order, show)
   @newtype
   case class TransactionSalt(value: Long)
 
-  @derive(decoder, encoder, eqv, show)
+  @derive(decoder, encoder, order, show)
   case class TransactionData(
     source: Address,
     destination: Address,
@@ -87,14 +77,13 @@ object transaction {
     fee: TransactionFee
   )
 
-  @derive(decoder, encoder, eqv, show)
+  @derive(decoder, encoder, order, show)
   case class Transaction(
     source: Address,
     destination: Address,
     amount: TransactionAmount,
     fee: TransactionFee,
     parent: TransactionReference,
-    //TODO: check if we can remove the salt and still have hash compatible with bolos app (Ledger)
     salt: TransactionSalt
   ) extends Fiber[TransactionReference, TransactionData]
       with Encodable {
@@ -133,14 +122,9 @@ object transaction {
 
     val _ParentHash: Lens[Transaction, Hash] = _Parent.andThen(TransactionReference._Hash)
     val _ParentOrdinal: Lens[Transaction, TransactionOrdinal] = _Parent.andThen(TransactionReference._Ordinal)
-
-    implicit val transactionOrder: Order[Transaction] = (x: Transaction, y: Transaction) =>
-      implicitly[Order[TransactionOrdinal]].compare(x.ordinal, y.ordinal)
-
-    implicit val transactionOrdering: Ordering[Transaction] = transactionOrder.toOrdering
   }
 
-  @derive(decoder, encoder, eqv, show)
+  @derive(decoder, encoder, order, show)
   case class RewardTransaction(
     destination: Address,
     amount: TransactionAmount

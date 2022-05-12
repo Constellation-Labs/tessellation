@@ -29,7 +29,7 @@ package object transaction {
 
       parent <- prevTx
         .map(_.value)
-        .map(tx => tx.hashF.map(TransactionReference(_, tx.ordinal)))
+        .map(tx => tx.hashF.map(TransactionReference(tx.ordinal, _)))
         .getOrElse(TransactionReference.empty.pure[F])
 
       salt <- SecureRandom

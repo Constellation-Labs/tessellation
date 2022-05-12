@@ -8,8 +8,10 @@ import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hashable, SecurityProvider}
 
 import _root_.cats.MonadThrow
+import _root_.cats.data.NonEmptyList
 import _root_.cats.effect.kernel.Async
 import _root_.cats.syntax.either._
+import _root_.cats.syntax.flatMap._
 
 object crypto {
   implicit class RefinedHashable[F[_]: KryoSerializer](anyRef: AnyRef) {
@@ -25,5 +27,10 @@ object crypto {
   implicit class RefinedSignedF[F[_]: Async: KryoSerializer: SecurityProvider, A <: AnyRef](data: A) {
 
     def sign(keyPair: KeyPair): F[Signed[A]] = Signed.forAsyncKryo[F, A](data, keyPair)
+
+    def sign(keyPairs: NonEmptyList[KeyPair]): F[Signed[A]] =
+      keyPairs.tail.foldLeft(sign(keyPairs.head)) { (acc, keyPair) =>
+        acc.flatMap(_.signAlsoWith(keyPair))
+      }
   }
 }

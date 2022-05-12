@@ -34,10 +34,7 @@ object TransactionSuite extends ResourceSuite with Checkers {
       Address("DAG2EUdecqFwEGcgAcH1ac2wrsg8acrgGwrQefgh"),
       TransactionAmount(10L),
       TransactionFee(3L),
-      TransactionReference(
-        Hash("someHash"),
-        TransactionOrdinal(2L)
-      ),
+      TransactionReference(TransactionOrdinal(2L), Hash("someHash")),
       TransactionSalt(1234L)
     )
 
@@ -70,8 +67,8 @@ object TransactionSuite extends ResourceSuite with Checkers {
       TransactionAmount(100000000L),
       TransactionFee(0L),
       TransactionReference(
-        Hash("d5149e2339ced3b285062dc403ba0c89642792a462476dc35f63e0328b3cac52"),
-        TransactionOrdinal(1L)
+        TransactionOrdinal(1L),
+        Hash("d5149e2339ced3b285062dc403ba0c89642792a462476dc35f63e0328b3cac52")
       ),
       TransactionSalt(-6326757804706870905L)
     )

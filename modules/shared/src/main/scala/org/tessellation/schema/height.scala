@@ -10,13 +10,14 @@ import org.tessellation.ext.derevo.ordering
 import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
+import derevo.scalacheck.arbitrary
 import eu.timepit.refined.cats.nonNegLongCommutativeMonoid
 import eu.timepit.refined.types.numeric.NonNegLong
 import io.estatico.newtype.macros.newtype
 
 object height {
 
-  @derive(encoder, decoder, order, ordering, show, eqv)
+  @derive(arbitrary, encoder, decoder, order, ordering, show, eqv)
   @newtype
   case class Height(value: Long)
 

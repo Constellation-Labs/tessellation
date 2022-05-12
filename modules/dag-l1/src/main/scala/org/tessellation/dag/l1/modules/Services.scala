@@ -2,6 +2,7 @@ package org.tessellation.dag.l1.modules
 
 import cats.effect.kernel.Async
 
+import org.tessellation.dag.block.processing.BlockAcceptanceLogic
 import org.tessellation.dag.l1.domain.block.BlockService
 import org.tessellation.dag.l1.domain.snapshot.services.L0Service
 import org.tessellation.dag.l1.domain.transaction.TransactionService
@@ -21,13 +22,18 @@ object Services {
     p2PClient: P2PClient[F]
   ): Services[F] =
     new Services[F](
-      block = BlockService.make[F](storages.address, storages.block, validators.block, storages.transaction),
+      block = BlockService.make[F](
+        BlockAcceptanceLogic.make[F](validators.block),
+        storages.address,
+        storages.block,
+        storages.transaction
+      ),
       cluster = sdkServices.cluster,
       gossip = sdkServices.gossip,
       l0 = L0Service
         .make[F](p2PClient.l0GlobalSnapshotClient, storages.l0Cluster, storages.lastGlobalSnapshotStorage),
       session = sdkServices.session,
-      transaction = TransactionService.make[F](storages.transaction, validators.transaction)
+      transaction = TransactionService.make[F](storages.transaction, validators.transactionContextual)
     ) {}
 }
 

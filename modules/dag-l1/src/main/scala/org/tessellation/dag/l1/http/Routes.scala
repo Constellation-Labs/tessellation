@@ -26,7 +26,7 @@ final case class Routes[F[_]: Async](
       for {
         transaction <- req.as[Signed[Transaction]]
         response <- transactionService.offer(transaction).flatMap {
-          case Left(e)     => BadRequest(e.toString.asJson)
+          case Left(e)     => BadRequest(e.show.asJson)
           case Right(hash) => Ok(hash.asJson)
         }
       } yield response

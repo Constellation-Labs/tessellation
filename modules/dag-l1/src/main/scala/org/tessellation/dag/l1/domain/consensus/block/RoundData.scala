@@ -43,8 +43,6 @@ case class RoundData(
   def addPeerCancellation(cancellation: CancelledBlockCreationRound): RoundData =
     this.focus(_.peerCancellations).modify(_ + (cancellation.senderId -> cancellation.reason))
 
-  def formBlock(): DAGBlock = DAGBlock(
-    ownProposal.transactions ++ peerProposals.values.flatMap(_.transactions).toSet,
-    tips.value
-  )
+  def formBlock(): DAGBlock =
+    DAGBlock(tips.value, ownProposal.transactions ++ peerProposals.values.flatMap(_.transactions).toSet)
 }
