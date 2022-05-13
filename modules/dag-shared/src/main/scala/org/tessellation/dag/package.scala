@@ -1,6 +1,6 @@
 package org.tessellation
 
-import org.tessellation.dag.domain.block.{BlockReference, DAGBlock}
+import org.tessellation.dag.domain.block._
 import org.tessellation.dag.snapshot._
 import org.tessellation.ext.kryo._
 
@@ -23,6 +23,8 @@ package object dag {
     classOf[GlobalSnapshotTips] -> 606,
     classOf[ActiveTip] -> 607,
     classOf[BlockAsActiveTip] -> 608,
-    classOf[DeprecatedTip] -> 609
+    classOf[DeprecatedTip] -> 609,
+    classOf[L1Output] -> 610,
+    classOf[Tips] -> 611
   )
 }

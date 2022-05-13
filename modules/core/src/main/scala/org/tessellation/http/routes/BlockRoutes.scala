@@ -17,7 +17,7 @@ final case class BlockRoutes[F[_]: Async](mkDagCell: L0Cell.Mk[F]) extends Http4
 
   private[routes] val prefixPath = "/l1-output"
 
-  private val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
+  private val httpRoutes: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root =>
       req
         .as[Signed[L1Output]]
@@ -27,8 +27,8 @@ final case class BlockRoutes[F[_]: Async](mkDagCell: L0Cell.Mk[F]) extends Http4
         .flatMap(_ => Ok())
   }
 
-  val p2pRoutes: HttpRoutes[F] = Router(
-    prefixPath -> p2p
+  val publicRoutes: HttpRoutes[F] = Router(
+    prefixPath -> httpRoutes
   )
 
 }
