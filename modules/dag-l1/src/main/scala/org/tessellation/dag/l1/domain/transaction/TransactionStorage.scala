@@ -85,6 +85,21 @@ class TransactionStorage[F[_]: Sync](
       }
       .void
 
+  def countAllowedForConsensus: F[Int] =
+    for {
+      lastAccepted <- lastAccepted.toMap
+      addresses <- waitingTransactions.keys
+      txs <- addresses.traverse { address =>
+        waitingTransactions(address).get.map {
+          case Some(waiting) =>
+            val lastTx = lastAccepted.getOrElse(address, TransactionReference.empty)
+            Consecutive.take(lastTx, waiting.toNonEmptyList.toList)
+          case None =>
+            Seq.empty
+        }
+      }.map(_.flatten)
+    } yield txs.size
+
   def pull(): F[Option[NonEmptyList[Signed[Transaction]]]] =
     for {
       lastAccepted <- lastAccepted.toMap
