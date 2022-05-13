@@ -184,9 +184,9 @@ object GlobalSnapshotConsensusFunctions {
 
             unfold(initLsh).value.toNel.map(
               nel =>
-                address -> nel
-                  .map(event => StateChannelSnapshotBinary(event.snapshot.value.lastSnapshotHash, event.snapshot.content))
-                  .reverse
+                address -> nel.map { event =>
+                  StateChannelSnapshotBinary(event.snapshot.value.lastSnapshotHash, event.snapshot.content)
+                }.reverse
             )
         }
         .toMap

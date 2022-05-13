@@ -71,7 +71,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer] pri
             stateChannelRoutes.publicRoutes <+>
             clusterRoutes.publicRoutes <+>
             globalSnapshotRoutes.publicRoutes <+>
-            dagRoutes.publicRoutes
+            dagRoutes.publicRoutes <+>
+            blockRoutes.publicRoutes
         }
       }
 
@@ -89,7 +90,6 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer] pri
               nodeRoutes.p2pRoutes <+>
               gossipRoutes.p2pRoutes <+>
               trustRoutes.p2pRoutes <+>
-              blockRoutes.p2pRoutes <+>
               globalSnapshotRoutes.p2pRoutes
           )
         )
