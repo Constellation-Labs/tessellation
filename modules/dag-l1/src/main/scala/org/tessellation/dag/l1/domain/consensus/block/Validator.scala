@@ -8,6 +8,7 @@ import cats.{Applicative, Monad}
 import org.tessellation.dag.l1.domain.block.BlockStorage
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.PeerBlockConsensusInput
 import org.tessellation.dag.l1.domain.consensus.block.storage.ConsensusStorage
+import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.node.NodeState.Ready
@@ -39,11 +40,17 @@ object Validator {
   ): F[Boolean] =
     blockStorage.getTips(tipsCount).map(_.isDefined)
 
+  private def atLeastOneTransaction[F[_]: Monad](
+    transactionStorage: TransactionStorage[F]
+  ): F[Boolean] =
+    transactionStorage.countAllowedForConsensus.map(_ >= 1)
+
   def canStartOwnConsensus[F[_]: Monad: Logger](
     consensusStorage: ConsensusStorage[F],
     nodeStorage: NodeStorage[F],
     clusterStorage: ClusterStorage[F],
     blockStorage: BlockStorage[F],
+    transactionStorage: TransactionStorage[F],
     peersCount: PosInt,
     tipsCount: PosInt
   ): F[Boolean] =
@@ -52,15 +59,17 @@ object Validator {
       stateReadyForConsensus <- nodeStorage.getNodeState.map(isReadyForBlockConsensus)
       enoughPeers <- enoughPeersForConsensus(clusterStorage, peersCount)
       enoughTips <- enoughTipsForConsensus(blockStorage, tipsCount)
+      enoughTxs <- atLeastOneTransaction(transactionStorage)
 
-      res = noOwnRoundInProgress && stateReadyForConsensus && enoughPeers && enoughTips
+      res = noOwnRoundInProgress && stateReadyForConsensus && enoughPeers && enoughTips && enoughTxs
 
       _ <- if (!res) {
         val reason = Seq(
           (if (!noOwnRoundInProgress) "Own round in progress" else ""),
           (if (!stateReadyForConsensus) "State not ready for consensus" else ""),
           (if (!enoughPeers) "Not enough peers" else ""),
-          (if (!enoughTips) "Not enough tips" else "")
+          (if (!enoughTips) "Not enough tips" else ""),
+          (if (!enoughTxs) "No transactions" else "")
         ).filter(_.nonEmpty).mkString(", ")
         Logger[F].debug(s"Cannot start own consensus: ${reason}")
       } else Applicative[F].unit

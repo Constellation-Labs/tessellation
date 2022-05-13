@@ -79,6 +79,7 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
         storages.node,
         storages.cluster,
         storages.block,
+        storages.transaction,
         appConfig.consensus.peersCount,
         appConfig.consensus.tipsCount
       ).handleErrorWith { e =>
