@@ -36,7 +36,9 @@ object SnapshotTriggerPipeline {
 
     Stream
       .fromQueueUnterminated(l1OutputQueue)
-      .zip(Stream.eval(getLastSnapshotHeight).flatMap(_.map(Stream.emit).getOrElse(Stream.empty)))
+      .evalMapFilter { l1Output =>
+        getLastSnapshotHeight.map(_.map((l1Output, _)))
+      }
       .flatMap {
         case (data, lastSnapshotHeight) =>
           snapshotPreconditionsValidator.validate(lastSnapshotHeight, data) match {
