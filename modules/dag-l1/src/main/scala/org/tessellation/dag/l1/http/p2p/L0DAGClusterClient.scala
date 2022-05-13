@@ -22,7 +22,7 @@ object L0DAGClusterClient {
     new L0DAGClusterClient[F] {
 
       def sendL1Output(output: Signed[L1Output]): PeerResponse[F, Boolean] =
-        PeerResponse[F, Boolean]("l1-output", POST)(client) { (req, c) =>
+        PeerResponse[F, Boolean]("dag/l1-output", POST)(client) { (req, c) =>
           c.successful(req.withEntity(output))
         }
     }
