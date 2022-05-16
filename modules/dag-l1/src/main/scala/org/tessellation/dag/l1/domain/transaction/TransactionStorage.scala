@@ -93,12 +93,12 @@ class TransactionStorage[F[_]: Async: KryoSerializer](
       lastAccepted <- lastAccepted.toMap
       addresses <- waitingTransactions.keys
       txs <- addresses.traverse { address =>
-        waitingTransactions(address).get.map {
+        waitingTransactions(address).get.flatMap {
           case Some(waiting) =>
             val lastTx = lastAccepted.getOrElse(address, TransactionReference.empty)
-            Consecutive.take(lastTx, waiting.toNonEmptyList.toList)
+            Consecutive.take[F](waiting.toNonEmptyList.toList, lastTx)
           case None =>
-            Seq.empty
+            List.empty[Signed[Transaction]].pure[F]
         }
       }.map(_.flatten)
     } yield txs.size
@@ -122,7 +122,7 @@ class TransactionStorage[F[_]: Async: KryoSerializer](
                 case (maybeStillWaiting, pulled) =>
                   setter(maybeStillWaiting)
                     .ifM(
-                      pulled.pure[F],
+                      logger.debug(s"Pulled ${pulled.size} transaction(s) for consensus").as(pulled),
                       logger.debug("Concurrent update occurred while trying to pull transactions") >>
                         List.empty[Signed[Transaction]].pure[F]
                     )
