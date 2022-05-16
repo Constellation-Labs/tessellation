@@ -319,6 +319,51 @@ lazy val dagL1 = (project in file("modules/dag-l1"))
       Libraries.sqlite
     )
   )
+lazy val tools = (project in file("modules/tools"))
+  .enablePlugins(AshScriptPlugin)
+  .enablePlugins(JavaAppPackaging)
+  .dependsOn(core, dagL1)
+  .settings(
+    name := "tessellation-tools",
+    Defaults.itSettings,
+    scalafixCommonSettings,
+    commonSettings,
+    commonTestSettings,
+    connectInput in run := true,
+    libraryDependencies ++= Seq(
+      CompilerPlugin.kindProjector,
+      CompilerPlugin.betterMonadicFor,
+      CompilerPlugin.semanticDB,
+      Libraries.cats,
+      Libraries.catsEffect,
+      Libraries.circeCore,
+      Libraries.circeGeneric,
+      Libraries.circeParser,
+      Libraries.circeRefined,
+      Libraries.circeShapes,
+      Libraries.cirisCore,
+      Libraries.cirisEnum,
+      Libraries.cirisRefined,
+      Libraries.derevoCore,
+      Libraries.derevoCats,
+      Libraries.derevoCirce,
+      Libraries.fs2Core,
+      Libraries.fs2DataCsv,
+      Libraries.fs2DataCsvGeneric,
+      Libraries.http4sDsl,
+      Libraries.http4sClient,
+      Libraries.http4sCirce,
+      Libraries.log4cats,
+      Libraries.logback,
+      Libraries.mapref,
+      Libraries.monocleCore,
+      Libraries.newtype,
+      Libraries.refinedCore,
+      Libraries.refinedCats,
+      Libraries.skunkCore,
+      Libraries.skunkCirce,
+    )
+  )
 lazy val core = (project in file("modules/core"))
   .enablePlugins(AshScriptPlugin)
   .enablePlugins(JavaAppPackaging)
