@@ -6,18 +6,20 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.PeerBlockConsensusInput
-import org.tessellation.dag.l1.domain.transaction.TransactionService
+import org.tessellation.dag.l1.domain.transaction.{TransactionService, TransactionStorage}
+import org.tessellation.ext.http4s.AddressVar
 import org.tessellation.schema.transaction.Transaction
 import org.tessellation.security.signature.Signed
 
 import io.circe.syntax.EncoderOps
 import org.http4s.HttpRoutes
-import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
+import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder}
 import org.http4s.circe._
 import org.http4s.dsl.Http4sDsl
 
 final case class Routes[F[_]: Async](
   transactionService: TransactionService[F],
+  transactionStorage: TransactionStorage[F],
   peerBlockConsensusInputQueue: Queue[F, Signed[PeerBlockConsensusInput]]
 ) extends Http4sDsl[F] {
 
@@ -30,6 +32,10 @@ final case class Routes[F[_]: Async](
           case Right(hash) => Ok(hash.asJson)
         }
       } yield response
+
+    case GET -> Root / "transaction" / "last-reference" / AddressVar(address) =>
+      transactionStorage.getLastAcceptedReference(address)
+        .flatMap(Ok(_))
   }
 
   private val p2p: HttpRoutes[F] = HttpRoutes.of[F] {

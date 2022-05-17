@@ -5,7 +5,7 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.domain.snapshot.GlobalSnapshotStorage
-import org.tessellation.ext.http4s.vars.SnapshotOrdinalVar
+import org.tessellation.ext.http4s.SnapshotOrdinalVar
 import org.tessellation.kryo.KryoSerializer
 
 import org.http4s.HttpRoutes

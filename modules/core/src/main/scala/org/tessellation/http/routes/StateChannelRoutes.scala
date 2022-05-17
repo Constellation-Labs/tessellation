@@ -7,7 +7,7 @@ import cats.syntax.functor._
 import org.tessellation.dag.snapshot.StateChannelSnapshotBinary
 import org.tessellation.domain.aci.StateChannelOutput
 import org.tessellation.domain.cell.{L0Cell, L0CellInput}
-import org.tessellation.ext.http4s.vars.AddressVar
+import org.tessellation.ext.http4s.AddressVar
 import org.tessellation.security.signature.Signed
 
 import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
@@ -22,7 +22,7 @@ final case class StateChannelRoutes[F[_]: Async](
   implicit val decoder: EntityDecoder[F, Array[Byte]] = EntityDecoder.byteArrayDecoder[F]
 
   private val httpRoutes: HttpRoutes[F] = HttpRoutes.of[F] {
-    case req @ POST -> Root / AddressVar(address) / "input" =>
+    case req @ POST -> Root / AddressVar(address) / "snapshot" =>
       req
         .as[Signed[StateChannelSnapshotBinary]]
         .map(StateChannelOutput(address, _))
