@@ -7,7 +7,7 @@ object Dependencies {
     val cats = "2.6.1"
     val catsEffect = "3.2.9"
     val droste = "0.8.0"
-    val tessellation = "0.6.0"
+    val tessellation = "0.7.0-SNAPSHOT"
   }
 
   object Libraries {
