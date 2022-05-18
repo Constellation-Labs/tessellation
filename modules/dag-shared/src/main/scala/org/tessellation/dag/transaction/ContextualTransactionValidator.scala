@@ -3,7 +3,6 @@ package org.tessellation.dag.transaction
 import cats.data.ValidatedNec
 import cats.effect.Async
 import cats.syntax.apply._
-import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.order._
@@ -13,7 +12,6 @@ import org.tessellation.dag.transaction.TransactionValidator.TransactionValidati
 import org.tessellation.ext.cats.syntax.validated._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.transaction.{Transaction, TransactionOrdinal, TransactionReference}
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
@@ -36,8 +34,6 @@ object ContextualTransactionValidator {
 
   trait TransactionValidationContext[F[_]] {
 
-    def getBalance(address: Address): F[Balance]
-
     def getLastTransactionRef(address: Address): F[TransactionReference]
 
   }
@@ -54,11 +50,9 @@ object ContextualTransactionValidator {
         for {
           nonContextuallyV <- validateNonContextually(signedTransaction)
           lastTxRefV <- validateLastTransactionRef(signedTransaction)
-          balanceV <- validateSourceBalance(signedTransaction)
         } yield
           nonContextuallyV
             .productR(lastTxRefV)
-            .productR(balanceV)
 
       private def validateNonContextually(
         signedTx: Signed[Transaction]
@@ -82,18 +76,6 @@ object ContextualTransactionValidator {
               signedTx.validNec[ContextualTransactionValidationError]
           }
         }
-
-      private def validateSourceBalance(
-        signedTx: Signed[Transaction]
-      ): F[ContextualTransactionValidationErrorOr[Signed[Transaction]]] =
-        context.getBalance(signedTx.source).map { balance =>
-          balance
-            .minus(signedTx.amount)
-            .map(_.minus(signedTx.fee))
-            .leftMap(_ => InsufficientBalance(balance, signedTx.amount, signedTx.fee))
-            .toValidatedNec
-            .map(_ => signedTx)
-        }
     }
 
   @derive(eqv, show)
@@ -101,10 +83,6 @@ object ContextualTransactionValidator {
   case class ParentOrdinalLowerThenLastTxOrdinal(parentOrdinal: TransactionOrdinal, lastTxOrdinal: TransactionOrdinal)
       extends ContextualTransactionValidationError
   case class ParentHashDifferentThanLastTxHash(parentHash: Hash, lastTxHash: Hash)
-      extends ContextualTransactionValidationError
-  case class NonZeroOrdinalButInitHash(parentReference: TransactionReference)
-      extends ContextualTransactionValidationError
-  case class InsufficientBalance(balance: Balance, amount: Amount, fee: Amount)
       extends ContextualTransactionValidationError
   case class NonContextualValidationError(error: TransactionValidationError)
       extends ContextualTransactionValidationError
