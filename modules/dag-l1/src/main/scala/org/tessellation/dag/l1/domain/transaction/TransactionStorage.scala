@@ -10,6 +10,7 @@ import cats.syntax.flatMap._
 import cats.syntax.foldable._
 import cats.syntax.functor._
 import cats.syntax.option._
+import cats.syntax.order._
 import cats.syntax.set._
 import cats.syntax.show._
 import cats.syntax.traverse._
@@ -119,7 +120,10 @@ class TransactionStorage[F[_]: Async: KryoSerializer](
                 (SortedSet.from(waiting.toList.diff(pulled)).toNes, pulled)
               }
               .flatMap {
-                case (maybeStillWaiting, pulled) =>
+                case (maybeNotPulled, pulled) =>
+                  val maybeStillWaiting = maybeNotPulled
+                    .flatMap(_.filter(_.ordinal > lastTx.ordinal).toNes)
+
                   setter(maybeStillWaiting)
                     .ifM(
                       logger.debug(s"Pulled ${pulled.size} transaction(s) for consensus").as(pulled),

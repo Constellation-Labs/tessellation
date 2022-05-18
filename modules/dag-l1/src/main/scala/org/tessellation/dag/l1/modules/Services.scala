@@ -33,7 +33,7 @@ object Services {
       l0 = L0Service
         .make[F](p2PClient.l0GlobalSnapshotClient, storages.l0Cluster, storages.lastGlobalSnapshotStorage),
       session = sdkServices.session,
-      transaction = TransactionService.make[F](storages.transaction, validators.transactionContextual)
+      transaction = TransactionService.make[F](storages.transaction, validators.transaction)
     ) {}
 }
 
