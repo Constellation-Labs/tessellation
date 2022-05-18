@@ -9,7 +9,9 @@ import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
+import cats.syntax.partialOrder.catsSyntaxPartialOrder
 import cats.syntax.show._
+import cats.syntax.traverse._
 import cats.{Applicative, MonadThrow}
 
 import org.tessellation.dag.snapshot.{GlobalSnapshot, SnapshotOrdinal}
@@ -57,26 +59,38 @@ object GlobalSnapshotStorage {
     inMemoryCapacity: NonNegLong
   ): F[GlobalSnapshotStorage[F]] = {
 
-    def offloadProcess =
+    def offloadProcess: F[Unit] =
       Stream
         .fromQueueUnterminated(offloadQueue)
-        .evalTap { ordinal =>
-          ordinalCache(ordinal).get.flatMap {
-            case Some(hash) =>
-              hashCache(hash).get.flatMap {
-                case Some(snapshot) =>
-                  globalSnapshotLocalFileSystemStorage.write(snapshot).handleErrorWith { e =>
-                    Logger[F]
-                      .error(e)(s"Failed writing global snapshot to disk! Snapshot ordinal=${snapshot.ordinal.show}")
-                  } >> ordinalCache(ordinal).set(none) >> hashCache(hash).set(none)
-                case None =>
-                  MonadThrow[F].raiseError[Unit](
-                    new Throwable("Unexpected state: ordinal and hash found but snapshot not found")
-                  )
+        .evalMap { cutOffOrdinal =>
+          ordinalCache.keys
+            .map(_.filter(_ <= cutOffOrdinal).sorted)
+            .flatMap {
+              _.traverse { ordinal =>
+                def offload: F[Unit] =
+                  ordinalCache(ordinal).get.flatMap {
+                    case Some(hash) =>
+                      hashCache(hash).get.flatMap {
+                        case Some(snapshot) =>
+                          globalSnapshotLocalFileSystemStorage.write(snapshot) >>
+                            ordinalCache(ordinal).set(none) >>
+                            hashCache(hash).set(none)
+                        case None =>
+                          MonadThrow[F].raiseError[Unit](
+                            new Throwable("Unexpected state: ordinal and hash found but snapshot not found")
+                          )
+                      }
+                    case None =>
+                      MonadThrow[F].raiseError[Unit](
+                        new Throwable("Unexpected state: hash not found but ordinal exists")
+                      )
+                  }
+
+                offload.handleErrorWith { e =>
+                  Logger[F].error(e)(s"Failed offloading global snapshot to disk! Snapshot ordinal=${ordinal.show}")
+                }
               }
-            case None =>
-              MonadThrow[F].raiseError[Unit](new Throwable("Unexpected state: hash not found but ordinal exists"))
-          }
+            }
         }
         .compile
         .drain
