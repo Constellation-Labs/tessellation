@@ -23,6 +23,7 @@ object SnapshotOrdinal {
   val MinValue: SnapshotOrdinal = SnapshotOrdinal(NonNegLong.MinValue)
 
   implicit val order: Order[SnapshotOrdinal] = Order[NonNegLong].contramap(_.value)
+  implicit val ordering: Ordering[SnapshotOrdinal] = order.toOrdering
 
   implicit val eqv: Eq[SnapshotOrdinal] = Eq[NonNegLong].contramap(_.value)
 
