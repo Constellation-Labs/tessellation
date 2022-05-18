@@ -34,7 +34,8 @@ final case class Routes[F[_]: Async](
       } yield response
 
     case GET -> Root / "transaction" / "last-reference" / AddressVar(address) =>
-      transactionStorage.getLastAcceptedReference(address)
+      transactionStorage
+        .getLastAcceptedReference(address)
         .flatMap(Ok(_))
   }
 
