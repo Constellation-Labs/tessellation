@@ -1,5 +1,7 @@
 package org.tessellation.sdk.infrastructure.consensus
 
+import cats.Show
+
 import scala.concurrent.duration.FiniteDuration
 
 import org.tessellation.schema.peer.PeerId
@@ -18,8 +20,19 @@ case class ConsensusState[Key, Artifact](
   statusUpdatedAt: FiniteDuration
 )
 
-@derive(eqv, show)
+@derive(eqv)
 sealed trait ConsensusStatus[Artifact]
+
+object ConsensusStatus {
+  implicit def showInstance[A]: Show[ConsensusStatus[A]] =
+    (status: ConsensusStatus[A]) =>
+      status match {
+        case Facilitated()                 => s"Facilitated{}"
+        case ProposalMade(proposalHash, _) => s"ProposalMade{proposalHash=$proposalHash, proposalArtifact=***}"
+        case MajoritySigned(majorityHash)  => s"MajoritySigned{majorityHash=$majorityHash}"
+        case Finished(_)                   => s"Finished{signedMajorityArtifact=***}"
+      }
+}
 
 final case class Facilitated[A]() extends ConsensusStatus[A]
 final case class ProposalMade[A](proposalHash: Hash, proposalArtifact: A) extends ConsensusStatus[A]

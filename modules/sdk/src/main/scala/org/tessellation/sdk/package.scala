@@ -8,6 +8,7 @@ import org.tessellation.sdk.infrastructure.healthcheck.declaration._
 import org.tessellation.sdk.infrastructure.healthcheck.ping._
 import org.tessellation.shared.{sharedKryoRegistrar, _}
 
+import com.comcast.ip4s._
 import eu.timepit.refined.auto._
 import eu.timepit.refined.boolean.Or
 import eu.timepit.refined.numeric.Interval
@@ -45,6 +46,12 @@ package object sdk {
       TimedOut.getClass -> 519,
       classOf[PeerMismatch] -> 520,
       classOf[PeerCheckTimeouted] -> 521,
-      classOf[PeerCheckUnexpectedError] -> 522
+      classOf[PeerCheckUnexpectedError] -> 522,
+      classOf[Host] -> 523,
+      classOf[Port] -> 524,
+      classOf[Ipv4Address] -> 525,
+      classOf[Ipv6Address] -> 526,
+      classOf[Hostname] -> 527,
+      classOf[IDN] -> 528
     ).union(sharedKryoRegistrar).union(kernelKryoRegistrar)
 }

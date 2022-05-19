@@ -71,12 +71,23 @@ abstract class HealthCheckConsensus[
           round.managePeers(peers)
         }
       }.flatMap { _ =>
-        partition(inProgress).map { case (finished, _) => finished }
+        partition(inProgress).flatTap {
+          case (_, inProgress) =>
+            inProgress.toList.traverse {
+              case (key, round) =>
+                round.missingProposals >>= { peers =>
+                  round.getRoundIds >>= { roundIds =>
+                    logger.debug(s"Missing proposals for round ids: ${roundIds} for key: ${key} are from peers: ${peers}")
+                  }
+                }
+            }
+        }.map { case (finished, _) => finished }
       }
 
     logger.info(s"Healthcheck rounds in progress: ${rounds.keySet}") >>
       partition(rounds).flatMap {
-        case (finished, inProgress) => checkRounds(inProgress).map(r => (finished ++ r, inProgress -- r.keySet))
+        case (finished, inProgress) =>
+          checkRounds(inProgress).map(r => (finished ++ r, inProgress -- r.keySet))
       }.flatMap {
         case (ready, toManage) =>
           toManage.values.toList
@@ -108,9 +119,11 @@ abstract class HealthCheckConsensus[
   private def createRoundId: F[RoundId] = GenUUID[F].make.map(RoundId.apply)
 
   def startOwnRound(key: K) =
-    createRoundId.map(HealthCheckRoundId(_, selfId)).flatMap {
-      startRound(key, _)
-    }
+    createRoundId
+      .map(HealthCheckRoundId(_, selfId))
+      .flatMap {
+        startRound(key, _)
+      }
 
   def participateInRound(key: K, roundId: HealthCheckRoundId): F[Unit] =
     startRound(key, roundId)
@@ -122,6 +135,9 @@ abstract class HealthCheckConsensus[
     clusterStorage.getPeers
       .map(_.map(_.id))
       .map(_ - key.id)
+      .flatMap { peers =>
+        roundsInProgress.map(_.keySet.map(_.id)).map(peers -- _)
+      }
       .flatMap { initialPeers =>
         ownStatus(key).flatMap { status =>
           HealthCheckConsensusRound.make[F, K, A, B, C](
