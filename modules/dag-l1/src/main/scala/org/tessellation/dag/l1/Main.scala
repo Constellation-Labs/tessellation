@@ -59,7 +59,7 @@ object Main
           blockRumorHandler(queues.peerBlock)
 
         _ <- Daemons
-          .start(storages, services, queues, p2pClient, rumorHandler, nodeId, cfg)
+          .start(storages, services, queues, healthChecks, p2pClient, rumorHandler, nodeId, cfg)
           .asResource
 
         api = HttpApi.make[IO](storages, queues, keyPair.getPrivate, services, programs, sdk.nodeId)

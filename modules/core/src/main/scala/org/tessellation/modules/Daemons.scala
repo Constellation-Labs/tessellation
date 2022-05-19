@@ -49,7 +49,8 @@ object Daemons {
           p2pClient.gossip,
           handler,
           nodeId,
-          cfg.gossip.daemon
+          cfg.gossip.daemon,
+          healthChecks.ping
         ),
       NodeStateDaemon.make(storages.node, services.gossip),
       DownloadDaemon.make(storages.node, programs.download),

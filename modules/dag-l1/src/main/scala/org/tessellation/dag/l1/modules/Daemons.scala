@@ -21,6 +21,7 @@ object Daemons {
     storages: Storages[F],
     services: Services[F],
     queues: Queues[F],
+    healthChecks: HealthChecks[F],
     p2pClient: P2PClient[F],
     handler: RumorHandler[F],
     nodeId: PeerId,
@@ -35,7 +36,8 @@ object Daemons {
           p2pClient.gossip,
           handler,
           nodeId,
-          cfg.gossip.daemon
+          cfg.gossip.daemon,
+          healthChecks.ping
         ),
       NodeStateDaemon.make(storages.node, services.gossip)
     ).traverse(_.start).void

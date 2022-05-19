@@ -3,10 +3,12 @@ package org.tessellation.sdk.domain.healthcheck.consensus
 import cats.Applicative
 import cats.effect._
 import cats.syntax.applicative._
+import cats.syntax.applicativeError._
 import cats.syntax.contravariantSemigroupal._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
+import cats.syntax.show._
 
 import scala.concurrent.duration._
 import scala.reflect.runtime.universe.TypeTag
@@ -42,9 +44,11 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey, A <: HealthChe
 
   def start: F[Unit] =
     Spawn[F].start {
-      sendProposal.flatTap { _ =>
-        logger.info(s"HealthCheck round started with roundId=$roundId for peer=${key.id}")
-      }
+      sendProposal
+        .handleErrorWith(err => logger.error(err)(s"An error occurred while sending the healthcheck proposal"))
+        .flatTap { _ =>
+          logger.info(s"HealthCheck round started with roundId=$roundId for peer=${key.id}")
+        }
     }.void
 
   def getPeers: F[Set[PeerId]] = peers.get
@@ -96,9 +100,17 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey, A <: HealthChe
       if (!_parallelRounds.isEmpty) {
         def missing = _parallelRounds.keySet.map(_.id).intersect(_peers -- _proposals)
 
-        peers.update(_ -- missing)
+        peers.update(_ -- missing) >>
+          logger.debug(s"Removed unresponsive parallel peers: ${missing.show} for round: ${roundId.show}")
       } else Applicative[F].unit
     }.flatten
+
+  def missingProposals: F[Set[PeerId]] =
+    proposals.get.flatMap { _proposals =>
+      peers.get.map { _peers =>
+        _peers -- _proposals.keySet
+      }
+    }
 
   def calculateOutcome: F[C] =
     status.flatMap { _status =>
@@ -134,7 +146,10 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey, A <: HealthChe
     }
 
   private def sendProposal: F[Unit] =
-    ownConsensusHealthStatus.flatMap(status => gossip.spreadCommon(status))
+    ownConsensusHealthStatus.flatMap(
+      status =>
+        gossip.spreadCommon(status).flatTap(_ => logger.debug(s"Own status for round ${roundId.show} is ${status}"))
+    )
 
   private def allProposalsReceived: F[Boolean] =
     (peers.get, proposals.get.map(_.keySet))
