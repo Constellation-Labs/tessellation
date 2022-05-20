@@ -3,7 +3,6 @@ package org.tessellation.dag.l1.modules
 import cats.effect.Async
 
 import org.tessellation.dag.block.BlockValidator
-import org.tessellation.dag.transaction.ContextualTransactionValidator.TransactionValidationContext
 import org.tessellation.dag.transaction.{
   ContextualTransactionValidator,
   TransactionChainValidator,
@@ -11,8 +10,6 @@ import org.tessellation.dag.transaction.{
 }
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.balance.Balance
-import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.SignedValidator
 
@@ -26,13 +23,7 @@ object Validators {
       BlockValidator.make[F](signedValidator, transactionChainValidator, transactionValidator)
     val contextualTransactionValidator = ContextualTransactionValidator.make[F](
       transactionValidator,
-      new TransactionValidationContext[F] {
-        def getBalance(address: Address): F[Balance] =
-          storages.address.getBalance(address)
-
-        def getLastTransactionRef(address: Address): F[TransactionReference] =
-          storages.transaction.getLastAcceptedReference(address)
-      }
+      (address: Address) => storages.transaction.getLastAcceptedReference(address)
     )
 
     new Validators[F](signedValidator, blockValidator, transactionValidator, contextualTransactionValidator) {}

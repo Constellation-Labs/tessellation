@@ -1,5 +1,6 @@
 package org.tessellation.sdk.infrastructure.healthcheck.ping
 
+import cats.Applicative
 import cats.effect._
 import cats.effect.std.Random
 import cats.syntax.applicative._
@@ -128,6 +129,14 @@ class PingHealthCheckConsensus[F[_]: Async: GenUUID: Random](
         startOwnRound(PingHealthCheckKey(peer.id, peer.ip, peer.p2pPort))
       })
       .void
+
+  def triggerCheckForPeer(peer: Peer): F[Unit] =
+    peersUnderConsensus
+      .map(_.contains(peer.id))
+      .ifM(
+        Applicative[F].unit,
+        startOwnRound(PingHealthCheckKey(peer.id, peer.ip, peer.p2pPort))
+      )
 
   private def checkPeer(
     peer: PeerId,

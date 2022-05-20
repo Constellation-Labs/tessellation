@@ -2,6 +2,7 @@ package org.tessellation.sdk.infrastructure.gossip
 
 import cats.effect.std.{Queue, Random}
 import cats.effect.{Async, Spawn, Temporal}
+import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.eq._
 import cats.syntax.flatMap._
@@ -21,6 +22,7 @@ import org.tessellation.sdk.domain.Daemon
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.gossip.RumorStorage
 import org.tessellation.sdk.infrastructure.gossip.p2p.GossipClient
+import org.tessellation.sdk.infrastructure.healthcheck.ping.PingHealthCheckConsensus
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
@@ -40,7 +42,8 @@ object GossipDaemon {
     gossipClient: GossipClient[F],
     rumorHandler: RumorHandler[F],
     nodeId: PeerId,
-    cfg: GossipDaemonConfig
+    cfg: GossipDaemonConfig,
+    healthcheck: PingHealthCheckConsensus[F]
   ): GossipDaemon[F] = new GossipDaemon[F] {
 
     private val logger = Slf4jLogger.getLogger[F]
@@ -125,15 +128,15 @@ object GossipDaemon {
         selectedPeers <- Random[F].shuffleList(peers.toList).map(_.take(cfg.fanout))
         _ <- selectedPeers.parTraverse { peer =>
           runGossipRound(activeHashes, seenHashes, peer).handleErrorWith { err =>
-            logger.error(err)(s"Error running gossip round with peer ${peer.show}")
+            logger.error(err)(s"Error running gossip round with peer ${peer.show}") >>
+              Spawn[F].start { healthcheck.triggerCheckForPeer(peer) }.void
           }
         }
       } yield ()
 
     private def runGossipRound(activeHashes: List[Hash], seenHashes: List[Hash], peer: Peer): F[Unit] =
       for {
-        _ <- Applicative[F].unit
-        startRequest = StartGossipRoundRequest(activeHashes)
+        startRequest <- StartGossipRoundRequest(activeHashes).pure[F]
         startResponse <- gossipClient.startGossiping(startRequest).run(peer)
         inquiry = startResponse.offer.diff(seenHashes)
         answer <- rumorStorage.getRumors(startResponse.inquiry)

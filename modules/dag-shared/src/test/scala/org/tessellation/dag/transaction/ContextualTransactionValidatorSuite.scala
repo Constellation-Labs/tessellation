@@ -18,7 +18,6 @@ import org.tessellation.ext.cats.effect._
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.transaction._
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
@@ -34,7 +33,7 @@ import weaver.scalacheck.Checkers
 
 object ContextualTransactionValidatorSuite extends ResourceSuite with Checkers {
   override type Res = (
-    (Address => Balance, Address => TransactionReference) => ContextualTransactionValidator[IO],
+    (Address => TransactionReference) => ContextualTransactionValidator[IO],
     KeyPair,
     KeyPair,
     Address,
@@ -47,7 +46,6 @@ object ContextualTransactionValidatorSuite extends ResourceSuite with Checkers {
     SecurityProvider.forAsync[IO].flatMap { implicit sp =>
       KryoSerializer.forAsync[IO](Map.empty).flatMap { implicit kp =>
         def txValidator(
-          balancesFn: Address => Balance,
           lastAcceptedTxFn: Address => TransactionReference
         ): ContextualTransactionValidator[IO] = {
           val signedValidator = SignedValidator.make
@@ -55,12 +53,7 @@ object ContextualTransactionValidatorSuite extends ResourceSuite with Checkers {
 
           ContextualTransactionValidator.make[IO](
             txValidator,
-            new TransactionValidationContext[IO] {
-              override def getBalance(address: Address): IO[Balance] = balancesFn(address).pure[IO]
-
-              override def getLastTransactionRef(address: Address): IO[TransactionReference] =
-                lastAcceptedTxFn(address).pure[IO]
-            }
+            (address: Address) => lastAcceptedTxFn(address).pure[IO]
           )
         }
 
@@ -88,7 +81,6 @@ object ContextualTransactionValidatorSuite extends ResourceSuite with Checkers {
       }
     }
 
-  val initialBalance: Address => Balance = _ => Balance(NonNegLong(1L))
   val initialReference: Address => TransactionReference = _ => TransactionReference.empty
 
   def setReference(hash: Hash) =
@@ -96,7 +88,7 @@ object ContextualTransactionValidatorSuite extends ResourceSuite with Checkers {
 
   test("should succeed when all values are correct") {
     case (txValidator, srcKey, _, _, _, tx, signTx) =>
-      val validator = txValidator(initialBalance, initialReference)
+      val validator = txValidator(initialReference)
 
       for {
         signedTx <- signTx(tx, srcKey)
@@ -106,7 +98,7 @@ object ContextualTransactionValidatorSuite extends ResourceSuite with Checkers {
 
   test("should succeed when lastTxRef is greater than lastTxRef stored on the node") {
     case (txValidator, srcKey, _, _, _, baseTx, signTx) =>
-      val validator = txValidator(initialBalance, initialReference)
+      val validator = txValidator(initialReference)
 
       val tx = setReference(Hash("someHash"))(baseTx)
 
@@ -120,7 +112,7 @@ object ContextualTransactionValidatorSuite extends ResourceSuite with Checkers {
     case (txValidator, srcKey, _, _, _, tx, signTx) =>
       val reference =
         (_: Address) => TransactionReference(TransactionOrdinal(NonNegLong(1L)), Hash("someHash"))
-      val validator = txValidator(initialBalance, reference)
+      val validator = txValidator(reference)
 
       for {
         signedTx <- signTx(tx, srcKey)
@@ -136,7 +128,7 @@ object ContextualTransactionValidatorSuite extends ResourceSuite with Checkers {
     case (txValidator, srcKey, _, _, _, baseTx, signTx) =>
       val reference =
         (_: Address) => TransactionReference(TransactionOrdinal(NonNegLong(1L)), Hash("someHash"))
-      val validator = txValidator(initialBalance, reference)
+      val validator = txValidator(reference)
 
       val tx = setReference(Hash("someOtherHash"))(baseTx)
 
@@ -152,7 +144,7 @@ object ContextualTransactionValidatorSuite extends ResourceSuite with Checkers {
 
   test("should fail when source address doesn't match signer id") {
     case (txValidator, _, dstKey, _, _, tx, signTx) =>
-      val validator = txValidator(initialBalance, initialReference)
+      val validator = txValidator(initialReference)
 
       for {
         signedTx <- signTx(tx, dstKey)
@@ -166,7 +158,7 @@ object ContextualTransactionValidatorSuite extends ResourceSuite with Checkers {
 
   test("should fail when the signature is wrong") {
     case (txValidator, srcKey, dstKey, _, _, tx, signTx) =>
-      val validator = txValidator(initialBalance, initialReference)
+      val validator = txValidator(initialReference)
 
       for {
         signedTx <- signTx(tx, dstKey).map(
@@ -180,23 +172,9 @@ object ContextualTransactionValidatorSuite extends ResourceSuite with Checkers {
         )
   }
 
-  test("should fail when source address doesn't have sufficient balance") {
-    case (txValidator, srcKey, _, srcAddress, _, baseTx, signTx) =>
-      val validator = txValidator(initialBalance, initialReference)
-
-      val tx = Transaction._Amount.replace(TransactionAmount(PosLong(2L)))(baseTx)
-
-      for {
-        signedTx <- signTx(tx, srcKey)
-        validationResult <- validator.validate(signedTx)
-      } yield
-        expect
-          .same(InsufficientBalance(Balance(1L), Amount(2L), Amount(0L)).invalidNec, validationResult)
-  }
-
   test("should fail when source address is the same as destination address") {
     case (txValidator, srcKey, _, srcAddress, _, baseTx, signTx) =>
-      val validator = txValidator(initialBalance, initialReference)
+      val validator = txValidator(initialReference)
 
       val tx = Transaction._Destination.replace(srcAddress)(baseTx)
 
