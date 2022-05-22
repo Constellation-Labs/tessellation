@@ -70,7 +70,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer] pri
             stateChannelRoutes.publicRoutes <+>
             clusterRoutes.publicRoutes <+>
             globalSnapshotRoutes.publicRoutes <+>
-            dagRoutes.publicRoutes
+            dagRoutes.publicRoutes <+>
+            nodeRoutes.publicRoutes
         }
       }
 

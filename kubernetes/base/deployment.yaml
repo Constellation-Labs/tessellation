@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: validator-deployment
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: validator
+          image: validator
+          ports:
+            - containerPort: 9000
+            - containerPort: 9001
+            - containerPort: 9002
+          livenessProbe:
+            httpGet:
+              path: /node/health
+              port: 9000
+            initialDelaySeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /node/health
+              port: 9000
+            initialDelaySeconds: 5
+          envFrom:
+            - configMapRef:
+                name: validator-config
+          env:
+            - name: CL_EXTERNAL_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: initial-validator-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      node: initial-validator
+  template:
+    metadata:
+      labels:
+        node: initial-validator
+    spec:
+      containers:
+        - name: initial-validator
+          image: validator
+          ports:
+            - containerPort: 9000
+            - containerPort: 9001
+            - containerPort: 9002
+          livenessProbe:
+            httpGet:
+              path: /node/health
+              port: 9000
+            initialDelaySeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /node/health
+              port: 9000
+            initialDelaySeconds: 5
+          envFrom:
+            - configMapRef:
+                name: validator-config
+          env:
+            - name: CL_EXTERNAL_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: INITIAL_VALIDATOR
+              value: "1"

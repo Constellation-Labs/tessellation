@@ -44,11 +44,13 @@ sealed abstract class HttpApi[F[_]: Async: KryoSerializer: SecurityProvider] pri
   private val registrationRoutes = RegistrationRoutes[F](services.cluster)
   private val gossipRoutes = GossipRoutes[F](storages.rumor, queues.rumor, services.gossip)
   private val dagRoutes = Routes[F](services.transaction, storages.transaction, queues.peerBlockConsensusInput)
+  private val nodeRoutes = NodeRoutes[F](storages.node)
 
   private val openRoutes: HttpRoutes[F] =
     `X-Id-Middleware`.responseMiddleware(selfId) {
       dagRoutes.publicRoutes <+>
-        clusterRoutes.publicRoutes
+        clusterRoutes.publicRoutes <+>
+        nodeRoutes.publicRoutes
     }
 
   private val getKnownPeersId: Host => F[Set[PeerId]] = { (host: Host) =>

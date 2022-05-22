@@ -22,7 +22,16 @@ final case class NodeRoutes[F[_]: Async](
       Ok()
   }
 
+  private val public: HttpRoutes[F] = HttpRoutes.of[F] {
+    case GET -> Root / "health" =>
+      Ok()
+  }
+
   val p2pRoutes: HttpRoutes[F] = Router(
     prefixPath -> p2p
+  )
+
+  val publicRoutes: HttpRoutes[F] = Router(
+    prefixPath -> public
   )
 }
