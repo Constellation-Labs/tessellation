@@ -1,0 +1,44 @@
+apiVersion: skaffold/v2beta28
+kind: Config
+build:
+  artifacts:
+    - image: l0-validator
+      custom:
+        buildCommand: |
+          sbt core/assembly dagL1/assembly keytool/assembly && \
+            docker build $BUILD_CONTEXT --file kubernetes/l0.Dockerfile --tag $IMAGE
+        dependencies:
+          paths:
+            - modules/**/src/main/**/*.scala
+    - image: l1-validator
+      custom:
+        buildCommand: |
+          docker build $BUILD_CONTEXT --file kubernetes/l1.Dockerfile --tag $IMAGE
+        dependencies:
+          paths:
+            - modules/**/src/main/**/*.scala
+      requires:
+        - image: l0-validator
+          alias: L0_VALIDATOR
+
+deploy:
+  kustomize:
+    paths:
+      - kubernetes/l0-cluster
+      - kubernetes/l1-cluster
+
+portForward:
+  - resourceType: service
+    resourceName: l0-initial-validator
+    port: 9000
+    localPort: 9000
+  - resourceType: service
+    resourceName: l1-initial-validator
+    port: 9000
+    localPort: 9100
+
+profiles:
+  - name: logPods
+    deploy:
+      logs:
+        prefix: podAndContainer

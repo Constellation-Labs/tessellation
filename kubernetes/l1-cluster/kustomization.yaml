@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../base/
+namePrefix: l1-
+commonLabels:
+  cluster: l1
+images:
+  - name: validator
+    newName: l1-validator
+configMapGenerator:
+  - name: validator-config
+    literals:
+      - L0_INITIAL_VALIDATOR_ID=00b8a56a20fc2e2a0196b8b8f4593ea4f736555506950103eb6fbbe435c0eeb71b32abfe21ae63bb3de8b9afdfa604bfd5837ef61e261611b8a0e5efd92ef1ea
+      - L1_INITIAL_VALIDATOR_ID=fbf91bc197ece694ae41c84903d2b965b06736cf5cc86dd78cc46107a9d9ac0ca6775d8e663b60aa015dc1ea690ed229390c0b75608521b1285f3e4775ffb8b5
+replicas:
+  - name: validator-deployment
+    count: 2
