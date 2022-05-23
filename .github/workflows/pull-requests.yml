@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - develop
+      - hotfix/*
+      - release/*
 
 jobs:
   build:
