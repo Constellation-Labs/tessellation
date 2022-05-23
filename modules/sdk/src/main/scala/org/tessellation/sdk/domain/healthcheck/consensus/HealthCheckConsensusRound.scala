@@ -122,13 +122,12 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey, A <: HealthChe
     }
 
   def manage: F[Unit] =
-    Clock[F].monotonic.map(_ - startedAt).flatMap { elapsed =>
-      sendProposal.flatMap { _ =>
+    sendProposal >>
+      Clock[F].monotonic.map(_ - startedAt).flatMap { elapsed =>
         if (driver.removePeersWithParallelRound && elapsed >= config.removeUnresponsiveParallelPeersAfter) {
           removeUnresponsiveParallelPeers()
         } else Applicative[F].unit
       }
-    }
 
   def generateHistoricalData(decision: C): F[HistoricalRound[K]] =
     HistoricalRound(key, roundId, decision).pure[F]
@@ -146,10 +145,9 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey, A <: HealthChe
     }
 
   private def sendProposal: F[Unit] =
-    ownConsensusHealthStatus.flatMap(
-      status =>
-        gossip.spreadCommon(status).flatTap(_ => logger.debug(s"Own status for round ${roundId.show} is ${status}"))
-    )
+    ownConsensusHealthStatus.flatMap { status =>
+      gossip.spread(status)
+    }
 
   private def allProposalsReceived: F[Boolean] =
     (peers.get, proposals.get.map(_.keySet))
