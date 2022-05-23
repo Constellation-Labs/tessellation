@@ -13,7 +13,7 @@ object PeerDeclarationProposalHandler {
   def make[F[_]: Async: KryoSerializer, K: TypeTag](
     healthCheck: HealthCheckConsensus[F, Key[K], Health, Status[K], Decision]
   ): RumorHandler[F] =
-    RumorHandler.fromCommonRumorConsumer[F, Status[K]] { rumor =>
+    RumorHandler.fromPeerRumorConsumer[F, Status[K]]() { rumor =>
       healthCheck.handleProposal(rumor.content)
     }
 
