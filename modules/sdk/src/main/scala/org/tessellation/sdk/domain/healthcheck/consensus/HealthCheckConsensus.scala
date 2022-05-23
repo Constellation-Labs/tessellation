@@ -77,7 +77,9 @@ abstract class HealthCheckConsensus[
               case (key, round) =>
                 round.missingProposals >>= { peers =>
                   round.getRoundIds >>= { roundIds =>
-                    logger.debug(s"Missing proposals for round ids: ${roundIds} for key: ${key} are from peers: ${peers}")
+                    logger.debug(
+                      s"Missing proposals for round ids: ${roundIds} for key: ${key} are from peers: ${peers}"
+                    )
                   }
                 }
             }
