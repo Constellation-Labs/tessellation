@@ -97,15 +97,23 @@ class PingHealthCheckConsensus[F[_]: Async: GenUUID: Random](
         t match {
           case (DecisionKeepPeer, round) =>
             round.ownConsensusHealthStatus.map(_.status).flatMap {
-              case _: PeerAvailable => logger.info(s"Outcome for peer ${key.id}: available - no action required")
-              case own              => logger.info(s"Outcome for peer ${key.id}: available, own: ${own} - rejoining") >> rejoin
+              case PeerAvailable(_) | PeerUnavailable(_) | PeerCheckTimeouted(_) | PeerCheckUnexpectedError(_) =>
+                logger.info(s"Outcome for peer ${key.id}: available - no action required")
+              case _: PeerMismatch =>
+                logger.info(s"Outcome for peer ${key.id}: available, own: mismatch - removing and rejoining") >>
+                  clusterStorage.removePeer(key.id) >>
+                  rejoin
+              case _: PeerUnknown =>
+                logger.info(s"Outcome for peer ${key.id}: available, own: unknown - rejoining") >>
+                  rejoin
             }
           case (DecisionPeerMismatch, round) =>
             round.ownConsensusHealthStatus.map(_.status).flatMap {
               case _: PeerMismatch =>
-                logger.info(s"Outcome for peer ${key.id}: mismatch - no action required")
-              case own =>
-                logger.info(s"Outcome for peer ${key.id}: mismatch, own: ${own} - removing peer") >>
+                logger.info(s"Outcome for peer ${key.id}: mismatch - ignoring healthcheck round")
+              case PeerAvailable(_) | PeerUnavailable(_) | PeerUnknown(_) | PeerCheckTimeouted(_) |
+                  PeerCheckUnexpectedError(_) =>
+                logger.info(s"Outcome for peer ${key.id}: mismatch - removing peer") >>
                   clusterStorage.removePeer(key.id)
             }
           case (DecisionDropPeer, _) =>

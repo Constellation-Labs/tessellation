@@ -6,14 +6,14 @@ import scala.reflect.runtime.universe.TypeTag
 
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.sdk.domain.healthcheck.consensus.HealthCheckConsensus
-import org.tessellation.sdk.infrastructure.gossip.RumorHandler
+import org.tessellation.sdk.infrastructure.gossip.{IgnoreSelfOrigin, RumorHandler}
 
 object PeerDeclarationProposalHandler {
 
   def make[F[_]: Async: KryoSerializer, K: TypeTag](
     healthCheck: HealthCheckConsensus[F, Key[K], Health, Status[K], Decision]
   ): RumorHandler[F] =
-    RumorHandler.fromPeerRumorConsumer[F, Status[K]]() { rumor =>
+    RumorHandler.fromPeerRumorConsumer[F, Status[K]](IgnoreSelfOrigin) { rumor =>
       healthCheck.handleProposal(rumor.content)
     }
 

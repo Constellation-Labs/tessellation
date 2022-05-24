@@ -1,6 +1,6 @@
 package org.tessellation.sdk.infrastructure.healthcheck.declaration
 
-import cats.syntax.order._
+import cats.syntax.eq._
 
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.healthcheck.consensus.HealthCheckConsensusDriver
@@ -27,6 +27,12 @@ class PeerDeclarationHealthCheckDriver[K] extends HealthCheckConsensusDriver[Key
       PositiveOutcome
   }
 
-  def consensusHealthStatus(key: Key[K], ownStatus: Health, roundId: HealthCheckRoundId, selfId: PeerId): Status[K] =
-    PeerDeclarationConsensusHealthStatus(key, roundId, selfId, ownStatus)
+  def consensusHealthStatus(
+    key: Key[K],
+    ownStatus: Health,
+    roundId: HealthCheckRoundId,
+    selfId: PeerId,
+    clusterState: Set[PeerId]
+  ): Status[K] =
+    PeerDeclarationConsensusHealthStatus(key, roundId, selfId, ownStatus, clusterState)
 }

@@ -7,5 +7,6 @@ case class PeerDeclarationConsensusHealthStatus[K](
   key: PeerDeclarationHealthCheckKey[K],
   roundId: HealthCheckRoundId,
   owner: PeerId,
-  status: PeerDeclarationHealth
+  status: PeerDeclarationHealth,
+  clusterState: Set[PeerId]
 ) extends ConsensusHealthStatus[PeerDeclarationHealthCheckKey[K], PeerDeclarationHealth]

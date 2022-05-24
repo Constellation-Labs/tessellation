@@ -5,6 +5,7 @@ import cats.effect._
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.bifunctor._
+import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
@@ -57,7 +58,7 @@ abstract class HealthCheckConsensus[
     roundsInProgress.map(_.keySet.map(_.id))
 
   final override def trigger(): F[Unit] =
-    triggerRound().flatMap(_ => periodic)
+    periodic >> triggerRound()
 
   private def triggerRound(): F[Unit] =
     roundsInProgress.flatMap { inProgress =>
@@ -121,11 +122,12 @@ abstract class HealthCheckConsensus[
   private def createRoundId: F[RoundId] = GenUUID[F].make.map(RoundId.apply)
 
   def startOwnRound(key: K) =
-    createRoundId
-      .map(HealthCheckRoundId(_, selfId))
-      .flatMap {
-        startRound(key, _)
-      }
+    clusterStorage
+      .hasPeerId(key.id)
+      .ifM(
+        createRoundId.map(HealthCheckRoundId(_, selfId)).flatMap(startRound(key, _)),
+        logger.warn(s"Trying to start own round for peer ${key.id}, but peer is unknown")
+      )
 
   def participateInRound(key: K, roundId: HealthCheckRoundId): F[Unit] =
     startRound(key, roundId)
@@ -137,9 +139,6 @@ abstract class HealthCheckConsensus[
     clusterStorage.getPeers
       .map(_.map(_.id))
       .map(_ - key.id)
-      .flatMap { peers =>
-        roundsInProgress.map(_.keySet.map(_.id)).map(peers -- _)
-      }
       .flatMap { initialPeers =>
         ownStatus(key).flatMap { status =>
           HealthCheckConsensusRound.make[F, K, A, B, C](
@@ -151,6 +150,7 @@ abstract class HealthCheckConsensus[
             driver,
             config,
             gossip,
+            clusterStorage,
             selfId
           )
         }
@@ -159,7 +159,7 @@ abstract class HealthCheckConsensus[
         allRounds.modify {
           case ConsensusRounds(historical, inProgress) =>
             def inProgressRound = inProgress.get(key)
-            def historicalRound = historical.find(_.roundId == roundId)
+            def historicalRound = historical.find(_.roundIds.contains(roundId))
 
             historicalRound
               .orElse(inProgressRound)
@@ -168,7 +168,6 @@ abstract class HealthCheckConsensus[
               } { _ =>
                 (ConsensusRounds(historical, inProgress), none)
               }
-
         }
       }
       .flatTap {
@@ -192,28 +191,31 @@ abstract class HealthCheckConsensus[
       }
 
   def handleProposal(proposal: B, depth: Int = 1): F[Unit] =
-    if (proposal.owner == selfId)
-      Applicative[F].unit
-    else
-      allRounds.get.flatMap {
-        case ConsensusRounds(historical, inProgress) =>
-          def inProgressRound = inProgress.get(proposal.key)
-          def historicalRound = historical.find(_.roundId == proposal.roundId)
+    logger.info(
+      s"Received proposal for roundIds: ${proposal.roundId} for peer: ${proposal.key.id} with status: ${proposal.status}"
+    ) >>
+      (if (proposal.owner === selfId || proposal.key.id === selfId)
+         Applicative[F].unit
+       else
+         allRounds.get.flatMap {
+           case ConsensusRounds(historical, inProgress) =>
+             def inProgressRound = inProgress.get(proposal.key)
+             def historicalRound = historical.find(_.roundIds.contains(proposal.roundId))
 
-          def participate = participateInRound(proposal.key, proposal.roundId)
+             def participate = participateInRound(proposal.key, proposal.roundId)
 
-          inProgressRound
-            .map(_.processProposal(proposal))
-            .orElse {
-              historicalRound.map(handleProposalForHistoricalRound(proposal))
-            }
-            .getOrElse {
-              if (depth > 0)
-                participate.flatMap(_ => handleProposal(proposal, depth - 1))
-              else
-                (new Throwable("Unexpected recursion!")).raiseError[F, Unit]
-            }
-      }
+             inProgressRound
+               .map(_.processProposal(proposal))
+               .orElse {
+                 historicalRound.map(handleProposalForHistoricalRound(proposal))
+               }
+               .getOrElse {
+                 if (depth > 0)
+                   participate.flatMap(_ => handleProposal(proposal, depth - 1))
+                 else
+                   (new Throwable("Unexpected recursion!")).raiseError[F, Unit]
+               }
+         })
 
   def handleProposalForHistoricalRound(proposal: B)(round: HistoricalRound[K]): F[Unit] =
     Applicative[F].unit

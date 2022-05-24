@@ -1,3 +1,3 @@
 package org.tessellation.sdk.domain.healthcheck.consensus.types
 
-trait HealthCheckStatus {}
+trait HealthCheckStatus
