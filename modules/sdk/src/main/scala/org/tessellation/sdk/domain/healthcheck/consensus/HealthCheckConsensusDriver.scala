@@ -14,5 +14,11 @@ trait HealthCheckConsensusDriver[K <: HealthCheckKey, A <: HealthCheckStatus, B 
     receivedStatuses: List[B]
   ): C
 
-  def consensusHealthStatus(key: K, ownStatus: A, roundId: HealthCheckRoundId, selfId: PeerId): B
+  def consensusHealthStatus(
+    key: K,
+    ownStatus: A,
+    roundId: HealthCheckRoundId,
+    selfId: PeerId,
+    clusterState: Set[PeerId]
+  ): B
 }

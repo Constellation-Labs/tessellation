@@ -7,5 +7,6 @@ case class PingConsensusHealthStatus(
   key: PingHealthCheckKey,
   roundId: HealthCheckRoundId,
   owner: PeerId,
-  status: PingHealthCheckStatus
+  status: PingHealthCheckStatus,
+  clusterState: Set[PeerId]
 ) extends ConsensusHealthStatus[PingHealthCheckKey, PingHealthCheckStatus]

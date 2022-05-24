@@ -113,8 +113,7 @@ object ConsensusManager {
                   internalCheckForStateUpdate(key, state, resources)
               }
             case None => Applicative[F].unit
-          } else
-          Applicative[F].unit
+          } else Applicative[F].unit
 
       private def checkAllForTrigger(lastKeyAndArtifact: (Key, Signed[Artifact])): F[Unit] =
         for {

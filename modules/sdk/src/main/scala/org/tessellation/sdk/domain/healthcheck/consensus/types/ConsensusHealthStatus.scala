@@ -7,4 +7,5 @@ trait ConsensusHealthStatus[K <: HealthCheckKey, A <: HealthCheckStatus] {
   def roundId: HealthCheckRoundId
   def owner: PeerId
   def status: A
+  def clusterState: Set[PeerId]
 }

@@ -5,6 +5,7 @@ import cats.effect._
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.contravariantSemigroupal._
+import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
@@ -16,6 +17,7 @@ import scala.reflect.runtime.universe.TypeTag
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.sdk.config.types.HealthCheckConfig
+import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.healthcheck.consensus.types._
 
@@ -36,7 +38,9 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey, A <: HealthChe
   roundIds: Ref[F, Set[HealthCheckRoundId]],
   proposals: Ref[F, Map[PeerId, B]],
   parallelRounds: Ref[F, Map[K, Set[HealthCheckRoundId]]],
+  sentProposal: Ref[F, Boolean],
   gossip: Gossip[F],
+  clusterStorage: ClusterStorage[F],
   selfId: PeerId
 ) {
 
@@ -66,7 +70,9 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey, A <: HealthChe
     }
   }
 
-  def isFinished: F[Boolean] = allProposalsReceived
+  def isFinished: F[Boolean] = allProposalsReceived.flatMap { received =>
+    sentProposal.get.map(_ && received)
+  }
 
   def processProposal(proposal: B): F[Unit] =
     if (proposal.key == key) {
@@ -79,9 +85,8 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey, A <: HealthChe
           }
       }.flatMap {
         _.fold { Applicative[F].unit } { proposal =>
-          roundIds.update(_ + proposal.roundId).flatMap { _ =>
-            peers.update(_ + proposal.owner)
-          }
+          roundIds.update(_ + proposal.roundId) >>
+            peers.update(_ ++ proposal.clusterState.filterNot(p => p === selfId || p === key.id))
         }
       }
     } else Applicative[F].unit
@@ -130,11 +135,13 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey, A <: HealthChe
       }
 
   def generateHistoricalData(decision: C): F[HistoricalRound[K]] =
-    HistoricalRound(key, roundId, decision).pure[F]
+    roundIds.get.map(HistoricalRound(key, _, decision))
 
   def ownConsensusHealthStatus: F[B] =
-    status.map {
-      driver.consensusHealthStatus(key, _, roundId, selfId)
+    clusterStorage.getPeers.map(_.map(_.id)).flatMap { clusterState =>
+      status.map {
+        driver.consensusHealthStatus(key, _, roundId, selfId, clusterState)
+      }
     }
 
   private def status: F[A] =
@@ -147,6 +154,8 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey, A <: HealthChe
   private def sendProposal: F[Unit] =
     ownConsensusHealthStatus.flatMap { status =>
       gossip.spread(status)
+    }.flatTap { _ =>
+      sentProposal.set(true)
     }
 
   private def allProposalsReceived: F[Boolean] =
@@ -166,6 +175,7 @@ object HealthCheckConsensusRound {
     driver: HealthCheckConsensusDriver[K, A, B, C],
     config: HealthCheckConfig,
     gossip: Gossip[F],
+    clusterStorage: ClusterStorage[F],
     selfId: PeerId
   ): F[HealthCheckConsensusRound[F, K, A, B, C]] = {
 
@@ -174,9 +184,10 @@ object HealthCheckConsensusRound {
     def mkRoundIds = Ref.of[F, Set[HealthCheckRoundId]](Set(roundId))
     def mkProposals = Ref.of[F, Map[PeerId, B]](Map.empty)
     def mkParallelRounds = Ref.of[F, Map[K, Set[HealthCheckRoundId]]](Map.empty)
+    def mkSentProposal = Ref.of[F, Boolean](false)
 
-    (mkStartedAt, mkPeers, mkRoundIds, mkProposals, mkParallelRounds).mapN {
-      (startedAt, peers, roundIds, proposals, parallelRounds) =>
+    (mkStartedAt, mkPeers, mkRoundIds, mkProposals, mkParallelRounds, mkSentProposal).mapN {
+      (startedAt, peers, roundIds, proposals, parallelRounds, sentProposal) =>
         new HealthCheckConsensusRound[F, K, A, B, C](
           key,
           roundId,
@@ -189,7 +200,9 @@ object HealthCheckConsensusRound {
           roundIds,
           proposals,
           parallelRounds,
+          sentProposal,
           gossip,
+          clusterStorage,
           selfId
         )
     }

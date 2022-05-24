@@ -71,11 +71,15 @@ object PeerDeclarationHealthCheck {
             outcomes.toList.traverse {
               case (key, t) =>
                 t match {
-                  case (PositiveOutcome, _) =>
-                    logger.info(s"Outcome for peer ${key.id}: positive - no action required")
-                  case (NegativeOutcome, _) =>
-                    logger.info(s"Outcome for peer ${key.id}: negative - removing peer") >>
-                      clusterStorage.removePeer(key.id)
+                  case (PositiveOutcome, round) =>
+                    round.getRoundIds.flatMap { roundIds =>
+                      logger.info(s"Outcome for ${roundIds} for peer ${key.id}: positive - no action required")
+                    }
+                  case (NegativeOutcome, round) =>
+                    round.getRoundIds.flatMap { roundIds =>
+                      logger.info(s"Outcome for ${roundIds} for peer ${key.id}: negative - removing peer") >>
+                        clusterStorage.removePeer(key.id)
+                    }
                 }
             }.void
 
