@@ -48,13 +48,6 @@ object Consensus {
   ): F[Consensus[F, Event, Key, Artifact]] =
     for {
       storage <- ConsensusStorage.make[F, Event, Key, Artifact](initKeyAndArtifact)
-      healthCheck <- PeerDeclarationHealthCheck.make[F, Key](
-        clusterStorage,
-        selfId,
-        gossip,
-        healthCheckConfig,
-        storage
-      )
       stateUpdater = ConsensusStateUpdater.make[F, Event, Key, Artifact](
         consensusFns,
         storage,
@@ -63,11 +56,18 @@ object Consensus {
         keyPair,
         selfId
       )
-      manager <- ConsensusManager.make[F, Event, Key, Artifact](
-        clusterStorage,
+      manager = ConsensusManager.make[F, Event, Key, Artifact](
         consensusFns,
         storage,
         stateUpdater
+      )
+      healthCheck <- PeerDeclarationHealthCheck.make[F, Key](
+        clusterStorage,
+        selfId,
+        gossip,
+        healthCheckConfig,
+        storage,
+        manager
       )
       handler = ConsensusHandler.make[F, Event, Key, Artifact](storage, manager) <+>
         PeerDeclarationProposalHandler.make[F, Key](healthCheck)

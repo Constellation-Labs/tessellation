@@ -15,23 +15,32 @@ import derevo.derive
 case class ConsensusState[Key, Artifact](
   key: Key,
   facilitators: List[PeerId],
+  removedFacilitators: Set[PeerId],
   lastKeyAndArtifact: (Key, Signed[Artifact]),
   status: ConsensusStatus[Artifact],
   statusUpdatedAt: FiniteDuration
-)
+) {
+
+  def isNotRemovedFacilitator(facilitator: PeerId): Boolean =
+    !removedFacilitators.contains(facilitator)
+
+  def containsNotAddedFacilitator(otherFacilitators: Set[PeerId]): Boolean = {
+    val notRemoved = otherFacilitators.diff(removedFacilitators)
+    notRemoved.diff(facilitators.toSet).nonEmpty
+  }
+
+}
 
 @derive(eqv)
 sealed trait ConsensusStatus[Artifact]
 
 object ConsensusStatus {
-  implicit def showInstance[A]: Show[ConsensusStatus[A]] =
-    (status: ConsensusStatus[A]) =>
-      status match {
-        case Facilitated()                 => s"Facilitated{}"
-        case ProposalMade(proposalHash, _) => s"ProposalMade{proposalHash=$proposalHash, proposalArtifact=***}"
-        case MajoritySigned(majorityHash)  => s"MajoritySigned{majorityHash=$majorityHash}"
-        case Finished(_)                   => s"Finished{signedMajorityArtifact=***}"
-      }
+  implicit def showInstance[A]: Show[ConsensusStatus[A]] = {
+    case Facilitated()                 => s"Facilitated{}"
+    case ProposalMade(proposalHash, _) => s"ProposalMade{proposalHash=$proposalHash, proposalArtifact=***}"
+    case MajoritySigned(majorityHash)  => s"MajoritySigned{majorityHash=$majorityHash}"
+    case Finished(_)                   => s"Finished{signedMajorityArtifact=***}"
+  }
 }
 
 final case class Facilitated[A]() extends ConsensusStatus[A]

@@ -42,6 +42,8 @@ trait ConsensusStateUpdater[F[_], Key, Artifact] {
   def tryFacilitateConsensus(key: Key, lastKeyAndArtifact: (Key, Signed[Artifact])): F[MaybeState]
 
   def tryRemoveFacilitator(key: Key, facilitator: PeerId): F[MaybeState]
+
+  def tryAddFacilitators(key: Key, facilitators: Set[PeerId]): F[MaybeState]
 }
 
 object ConsensusStateUpdater {
@@ -67,7 +69,11 @@ object ConsensusStateUpdater {
 
     def tryRemoveFacilitator(key: Key, facilitator: PeerId): F[MaybeState] =
       tryModifyConsensus(key, internalTryRemoveFacilitator(facilitator))
-        .flatTap(logFacilitatorIfModified(key, facilitator))
+        .flatTap(logFacilitatorsIfModified(key))
+
+    def tryAddFacilitators(key: Key, facilitators: Set[PeerId]): F[MaybeState] =
+      tryModifyConsensus(key, internalTryAddFacilitators(facilitators))
+        .flatTap(logFacilitatorsIfModified(key))
 
     import consensusStorage.ModifyStateFn
 
@@ -97,11 +103,12 @@ object ConsensusStateUpdater {
         logger.debug(s"Consensus status for key ${key.show} transitioned to ${state.status.show}")
       }.void
 
-    private def logFacilitatorIfModified(key: Key, facilitator: PeerId)(maybeState: MaybeState): F[Unit] =
+    private def logFacilitatorsIfModified(key: Key)(maybeState: MaybeState): F[Unit] =
       maybeState.traverse { state =>
         logger.debug(
-          s"Consensus facilitators for key ${key.show} updated. ${facilitator.show} removed, " +
-            s"${state.facilitators.size.show} facilitators remaining"
+          s"Consensus facilitators for key ${key.show} updated. " +
+            s"There are ${state.facilitators.size.show} facilitators and" +
+            s"${state.removedFacilitators.size.show} removed facilitators."
         )
       }.void
 
@@ -111,10 +118,34 @@ object ConsensusStateUpdater {
       maybeState.filter { state =>
         state.status match {
           case _: Finished[Artifact] => false
-          case _                     => state.facilitators.contains(facilitator)
+          case _                     => state.isNotRemovedFacilitator(facilitator)
         }
       }.map { state =>
-        (state.copy(facilitators = state.facilitators.filter(_ != facilitator)), Applicative[F].unit)
+        (
+          state.copy(
+            facilitators = state.facilitators.filter(_ != facilitator),
+            removedFacilitators = state.removedFacilitators + facilitator
+          ),
+          Applicative[F].unit
+        )
+      }.pure[F]
+
+    private def internalTryAddFacilitators(facilitators: Set[PeerId])(
+      maybeState: MaybeState
+    ): F[Option[(ConsensusState[Key, Artifact], F[Unit])]] =
+      maybeState.filter { state =>
+        state.status match {
+          case _: Finished[Artifact] => false
+          case _                     => state.containsNotAddedFacilitator(facilitators)
+        }
+      }.map { state =>
+        val notRemoved = facilitators.diff(state.removedFacilitators)
+        (
+          state.copy(
+            facilitators = state.facilitators.toSet.union(notRemoved).toList.sorted
+          ),
+          Applicative[F].unit
+        )
       }.pure[F]
 
     private def internalTryFacilitateConsensus(key: Key, lastKeyAndArtifact: (Key, Signed[Artifact]))(
@@ -124,11 +155,18 @@ object ConsensusStateUpdater {
         case None =>
           for {
             peers <- clusterStorage.getPeers
-            facilitators = selfId :: NodeState.ready(peers).map(_.id).toList
+            facilitators = NodeState.ready(peers).map(_.id) + selfId
             time <- Clock[F].realTime
-            state = ConsensusState(key, facilitators, lastKeyAndArtifact, Facilitated[Artifact](), time)
+            state = ConsensusState(
+              key,
+              facilitators.toList.sorted,
+              Set.empty,
+              lastKeyAndArtifact,
+              Facilitated[Artifact](),
+              time
+            )
             bound <- consensusStorage.getUpperBound
-            effect = gossip.spread(ConsensusFacility(key, bound))
+            effect = gossip.spread(ConsensusFacility(key, bound, facilitators))
           } yield (state, effect).some
         case Some(consensusState) =>
           logger.debug(s"Consensus state for key ${key.show} already exists ${consensusState.show}") >>

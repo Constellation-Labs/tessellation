@@ -27,7 +27,8 @@ object PeerDeclarationHealthCheck {
     selfId: PeerId,
     gossip: Gossip[F],
     config: HealthCheckConfig,
-    consensusStorage: ConsensusStorage[F, _, K, _]
+    consensusStorage: ConsensusStorage[F, _, K, _],
+    consensusManager: ConsensusManager[F, _, K, _]
   ): F[HealthCheckConsensus[F, Key[K], Health, Status[K], Decision]] =
     Ref.of[F, ConsensusRounds[F, Key[K], Health, Status[K], Decision]](ConsensusRounds(List.empty, Map.empty)).map {
       rounds =>
@@ -73,12 +74,14 @@ object PeerDeclarationHealthCheck {
                 t match {
                   case (PositiveOutcome, round) =>
                     round.getRoundIds.flatMap { roundIds =>
-                      logger.info(s"Outcome for ${roundIds} for peer ${key.id}: positive - no action required")
+                      logger.info(s"Outcome for $roundIds for peer ${key.id}: positive - no action required")
                     }
                   case (NegativeOutcome, round) =>
                     round.getRoundIds.flatMap { roundIds =>
-                      logger.info(s"Outcome for ${roundIds} for peer ${key.id}: negative - removing peer") >>
-                        clusterStorage.removePeer(key.id)
+                      logger
+                        .info(
+                          s"Outcome for $roundIds for peer ${key.id}: negative - removing facilitator"
+                        ) >> consensusManager.removeFacilitator(key.consensusKey, key.id)
                     }
                 }
             }.void

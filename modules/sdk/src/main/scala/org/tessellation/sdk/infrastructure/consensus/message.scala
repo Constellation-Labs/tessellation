@@ -1,5 +1,6 @@
 package org.tessellation.sdk.infrastructure.consensus
 
+import org.tessellation.schema.peer.PeerId
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.signature.Signature
 
@@ -12,7 +13,7 @@ object message {
   case class ConsensusEvent[E](value: E)
 
   @derive(eqv, show)
-  case class ConsensusFacility[K](key: K, bound: Bound)
+  case class ConsensusFacility[K](key: K, bound: Bound, facilitators: Set[PeerId])
 
   @derive(eqv, show)
   case class ConsensusProposal[K](key: K, hash: Hash)

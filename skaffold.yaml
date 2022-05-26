@@ -42,3 +42,11 @@ profiles:
     deploy:
       logs:
         prefix: podAndContainer
+  - name: onlyL0
+    patches:
+      - op: remove
+        path: /build/artifacts/1
+      - op: remove
+        path: /deploy/kustomize/paths/1
+      - op: remove
+        path: /portForward/1

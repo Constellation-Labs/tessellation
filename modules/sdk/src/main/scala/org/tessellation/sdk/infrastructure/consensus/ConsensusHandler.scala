@@ -32,8 +32,9 @@ object ConsensusHandler {
     }
 
     val facilityHandler = RumorHandler.fromPeerRumorConsumer[F, ConsensusFacility[Key]]() { rumor =>
-      storage.addFacility(rumor.origin, rumor.content.key, rumor.content.bound) >>= manager
-        .checkForStateUpdate(
+      manager.addFacilitators(rumor.content.key, rumor.content.facilitators) >>
+        storage.addFacility(rumor.origin, rumor.content.key, rumor.content.bound) >>=
+        manager.checkForStateUpdate(
           rumor.content.key
         )
     }
