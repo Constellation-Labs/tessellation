@@ -39,4 +39,10 @@ This scales the L0 cluster to 3 validators total: 1 initial and 2 regular.
 
 ### Profiles:
 
-* `--profile logPods` prefix log entries with a pod name
+* `logPods` prefix log entries with a pod name
+* `onlyL0` starts only L0 cluster
+
+Activate profiles using `-p` parameter.
+```
+skaffold dev -p logPods,onlyL0
+```
