@@ -329,7 +329,7 @@ lazy val tools = (project in file("modules/tools"))
     scalafixCommonSettings,
     commonSettings,
     commonTestSettings,
-    connectInput in run := true,
+    run / connectInput := true,
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
       CompilerPlugin.betterMonadicFor,
