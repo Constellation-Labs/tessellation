@@ -30,7 +30,7 @@
       5. Click on the **Apply & Restart** button.
 6. Do the post-install steps for Docker, [link](https://docs.docker.com/engine/install/linux-postinstall/).
    1. Enable the docker services and restart the machine: `sudo systemctl enable docker.service containerd.service`
-   2. Add your user to the _docker_ group and restart the machine: `sudo usermod -a -G docker < username >`
+   2. Add your user to the _docker_ group and restart the machine: `sudo usermod -a -G docker <username>`
 7. Setup Skaffold
    1. Download the standalone library, [link](https://skaffold.dev/docs/install/#standalone-binary).
    2. Allow the binary to be executed: `chmod a+x skaffold-<version>-<arch>`
