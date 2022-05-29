@@ -83,10 +83,10 @@ githubTokenSource := TokenSource.GitConfig("github.token")
 11. Clone this repository, [link](https://github.com/Constellation-Labs/tessellation).
 12. Open IntelliJ and import the Tessellation repository.
     1. _File -> New -> Project from Existing Sources_
-    2. Ensure that the SDK used is Correto Java 8.
+    2. Ensure that the SDK used is **Correto Java 8**.
        1. _File -> Project Structure -> Project Settings -> Project_
        2. _SDK -> Detected SDKs -> Corretto 8_
-    3. Set the language level to 8 as well.
+    3. Set the **language level** to 8 as well.
 13. Install the Scala SBT plugin.
     1. _File -> Settings -> Plugins -> Scala -> Install_
        ![Install Scala](./images/install_scala.png)
@@ -94,5 +94,5 @@ githubTokenSource := TokenSource.GitConfig("github.token")
 14. Reload the SBT project.
     1. Go to the SBT Window.
        ![Reload the SBT project](./images/reload_project.png)
-    2. Right-click on the project -> reload project
+    2. **Right-click** on the project -> _reload project_.
 15. Build the project: _Build -> Build Project_
