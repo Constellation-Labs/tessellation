@@ -19,16 +19,17 @@ import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.healthcheck.consensus.HealthCheckConsensus
 import org.tessellation.sdk.domain.healthcheck.consensus.types.ConsensusRounds
 import org.tessellation.sdk.infrastructure.consensus._
+import org.tessellation.sdk.infrastructure.consensus.declaration.PeerDeclaration
 
 object PeerDeclarationHealthCheck {
 
-  def make[F[_]: Async: GenUUID, K: TypeTag](
+  def make[F[_]: Async: GenUUID, K: TypeTag, A](
     clusterStorage: ClusterStorage[F],
     selfId: PeerId,
     gossip: Gossip[F],
     config: HealthCheckConfig,
-    consensusStorage: ConsensusStorage[F, _, K, _],
-    consensusManager: ConsensusManager[F, _, K, _]
+    consensusStorage: ConsensusStorage[F, _, K, A],
+    consensusManager: ConsensusManager[F, _, K, A]
   ): F[HealthCheckConsensus[F, Key[K], Health, Status[K], Decision]] =
     Ref.of[F, ConsensusRounds[F, Key[K], Health, Status[K], Decision]](ConsensusRounds(List.empty, Map.empty)).map {
       rounds =>
@@ -48,16 +49,21 @@ object PeerDeclarationHealthCheck {
               roundKeys <- states.flatTraverse { state =>
                 if (isTimedOut(state, time)) {
                   consensusStorage.getPeerDeclarations(state.key).map { peerDeclarations =>
-                    def peersMissingDeclaration[A](getter: PeerDeclaration => Option[A]): List[PeerId] =
+                    def peersMissingDeclaration[B <: PeerDeclaration](
+                      getter: PeerDeclarations => Option[B]
+                    ): List[PeerId] =
                       state.facilitators.filter(peerId => peerDeclarations.get(peerId).flatMap(getter).isEmpty)
 
                     state.status match {
                       case _: Facilitated[_] =>
-                        peersMissingDeclaration(_.upperBound).map(PeerDeclarationHealthCheckKey(_, state.key, Facility))
+                        peersMissingDeclaration(_.facility)
+                          .map(PeerDeclarationHealthCheckKey(_, state.key, kind.Facility))
                       case _: ProposalMade[_] =>
-                        peersMissingDeclaration(_.proposal).map(PeerDeclarationHealthCheckKey(_, state.key, Proposal))
+                        peersMissingDeclaration(_.proposal)
+                          .map(PeerDeclarationHealthCheckKey(_, state.key, kind.Proposal))
                       case _: MajoritySigned[_] =>
-                        peersMissingDeclaration(_.signature).map(PeerDeclarationHealthCheckKey(_, state.key, Signature))
+                        peersMissingDeclaration(_.signature)
+                          .map(PeerDeclarationHealthCheckKey(_, state.key, kind.Signature))
                       case _: Finished[_] => List.empty[Key[K]]
                     }
                   }
@@ -78,10 +84,9 @@ object PeerDeclarationHealthCheck {
                     }
                   case (NegativeOutcome, round) =>
                     round.getRoundIds.flatMap { roundIds =>
-                      logger
-                        .info(
-                          s"Outcome for $roundIds for peer ${key.id}: negative - removing facilitator"
-                        ) >> consensusManager.removeFacilitator(key.consensusKey, key.id)
+                      logger.info(s"Outcome for $roundIds for peer ${key.id}: negative - removing facilitator") >>
+                        (consensusStorage.addRemovedFacilitator(key.consensusKey, key.id) >>=
+                          consensusManager.checkForStateUpdateSync(key.consensusKey))
                     }
                 }
             }.void
@@ -93,19 +98,19 @@ object PeerDeclarationHealthCheck {
               maybePeerDeclaration <- consensusStorage.getPeerDeclarations(key.consensusKey).map(_.get(key.id))
               health = maybePeerDeclaration.flatMap { pd =>
                 key.kind match {
-                  case Facility  => pd.upperBound
-                  case Proposal  => pd.proposal
-                  case Signature => pd.signature
+                  case kind.Facility  => pd.facility
+                  case kind.Proposal  => pd.proposal
+                  case kind.Signature => pd.signature
                 }
               }.map(_ => Received).getOrElse {
                 maybeState
                   .filter(_.facilitators.contains(key.id))
                   .filter { state =>
                     (key.kind, state.status) match {
-                      case (Facility, _: Facilitated[_])     => true
-                      case (Proposal, _: ProposalMade[_])    => true
-                      case (Signature, _: MajoritySigned[_]) => true
-                      case _                                 => false
+                      case (kind.Facility, _: Facilitated[_])     => true
+                      case (kind.Proposal, _: ProposalMade[_])    => true
+                      case (kind.Signature, _: MajoritySigned[_]) => true
+                      case _                                      => false
                     }
                   }
                   .map { state =>
