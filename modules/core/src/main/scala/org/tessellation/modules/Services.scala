@@ -27,6 +27,7 @@ object Services {
     queues: Queues[F],
     storages: Storages[F],
     validators: Validators[F],
+    whitelisting: Option[Set[PeerId]],
     selfId: PeerId,
     keyPair: KeyPair,
     cfg: AppConfig
@@ -38,6 +39,7 @@ object Services {
           sdkServices.gossip,
           selfId,
           keyPair,
+          whitelisting,
           storages.cluster,
           storages.globalSnapshot,
           validators.blockValidator,

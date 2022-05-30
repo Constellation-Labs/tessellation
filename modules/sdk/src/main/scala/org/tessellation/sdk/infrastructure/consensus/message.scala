@@ -1,8 +1,6 @@
 package org.tessellation.sdk.infrastructure.consensus
 
-import org.tessellation.schema.peer.PeerId
-import org.tessellation.security.hash.Hash
-import org.tessellation.security.signature.signature.Signature
+import org.tessellation.sdk.infrastructure.consensus.declaration.PeerDeclaration
 
 import derevo.cats.{eqv, show}
 import derevo.derive
@@ -13,13 +11,7 @@ object message {
   case class ConsensusEvent[E](value: E)
 
   @derive(eqv, show)
-  case class ConsensusFacility[K](key: K, bound: Bound, facilitators: Set[PeerId])
-
-  @derive(eqv, show)
-  case class ConsensusProposal[K](key: K, hash: Hash)
-
-  @derive(eqv, show)
-  case class MajoritySignature[K](key: K, signature: Signature)
+  case class ConsensusPeerDeclaration[K, D <: PeerDeclaration](key: K, declaration: D)
 
   @derive(eqv, show)
   case class ConsensusArtifact[K, A](key: K, artifact: A)

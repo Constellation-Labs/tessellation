@@ -3,6 +3,7 @@ package org.tessellation
 import org.tessellation.ext.kryo._
 import org.tessellation.kernel.{kernelKryoRegistrar, _}
 import org.tessellation.sdk.domain.healthcheck.consensus.types.HealthCheckRoundId
+import org.tessellation.sdk.infrastructure.consensus.declaration.{Facility, MajoritySignature, Proposal}
 import org.tessellation.sdk.infrastructure.consensus.message._
 import org.tessellation.sdk.infrastructure.healthcheck.declaration._
 import org.tessellation.sdk.infrastructure.healthcheck.ping._
@@ -31,15 +32,15 @@ package object sdk {
       classOf[PeerUnavailable] -> 504,
       classOf[PeerUnknown] -> 505,
       classOf[ConsensusEvent[_]] -> 506,
-      classOf[ConsensusFacility[_]] -> 507,
-      classOf[ConsensusProposal[_]] -> 508,
-      classOf[MajoritySignature[_]] -> 509,
+      classOf[Facility] -> 507,
+      classOf[Proposal] -> 508,
+      classOf[MajoritySignature] -> 509,
       classOf[ConsensusArtifact[_, _]] -> 510,
       classOf[PeerDeclarationHealthCheckKey[_]] -> 511,
       classOf[PeerDeclarationConsensusHealthStatus[_]] -> 512,
-      Facility.getClass -> 513,
-      Proposal.getClass -> 514,
-      Signature.getClass -> 515,
+      kind.Facility.getClass -> 513,
+      kind.Proposal.getClass -> 514,
+      kind.Signature.getClass -> 515,
       NotRequired.getClass -> 516,
       Received.getClass -> 517,
       Awaiting.getClass -> 518,
@@ -52,6 +53,7 @@ package object sdk {
       classOf[Ipv4Address] -> 525,
       classOf[Ipv6Address] -> 526,
       classOf[Hostname] -> 527,
-      classOf[IDN] -> 528
+      classOf[IDN] -> 528,
+      classOf[ConsensusPeerDeclaration[_, _]] -> 529
     ).union(sharedKryoRegistrar).union(kernelKryoRegistrar)
 }

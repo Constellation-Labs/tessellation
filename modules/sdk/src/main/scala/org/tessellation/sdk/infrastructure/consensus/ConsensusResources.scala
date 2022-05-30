@@ -4,10 +4,12 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.security.hash.Hash
 
 case class ConsensusResources[A](
-  peerDeclarations: Map[PeerId, PeerDeclaration],
-  artifacts: Map[Hash, A]
+  peerDeclarationsMap: Map[PeerId, PeerDeclarations],
+  artifacts: Map[Hash, A],
+  proposedFacilitators: Set[PeerId],
+  removedFacilitators: Set[PeerId]
 )
 
 object ConsensusResources {
-  def empty[A]: ConsensusResources[A] = ConsensusResources(Map.empty, Map.empty)
+  def empty[A]: ConsensusResources[A] = ConsensusResources(Map.empty, Map.empty, Set.empty, Set.empty)
 }

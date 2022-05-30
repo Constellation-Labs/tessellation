@@ -24,6 +24,7 @@ object GlobalSnapshotConsensus {
     gossip: Gossip[F],
     selfId: PeerId,
     keyPair: KeyPair,
+    whitelisting: Option[Set[PeerId]],
     clusterStorage: ClusterStorage[F],
     globalSnapshotStorage: GlobalSnapshotStorage[F],
     blockValidator: BlockValidator[F],
@@ -43,6 +44,7 @@ object GlobalSnapshotConsensus {
       gossip,
       selfId,
       keyPair,
+      whitelisting,
       clusterStorage,
       healthCheckConfig,
       none
