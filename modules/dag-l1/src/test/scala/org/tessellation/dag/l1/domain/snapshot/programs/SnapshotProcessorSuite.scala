@@ -9,6 +9,8 @@ import cats.syntax.either._
 import cats.syntax.option._
 import cats.syntax.traverse._
 
+import scala.collection.immutable.{SortedMap, SortedSet}
+
 import org.tessellation.dag.domain.block.{BlockReference, DAGBlock}
 import org.tessellation.dag.l1.Main
 import org.tessellation.dag.l1.domain.address.storage.AddressStorage
@@ -101,10 +103,10 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
   val snapshotSubHeight0 = SubHeight(0L)
   val snapshotSubHeight1 = SubHeight(1L)
 
-  def generateSnapshotBalances(address: Address) = Map(address -> Balance(50L))
+  def generateSnapshotBalances(address: Address) = SortedMap(address -> Balance(50L))
 
   def generateSnapshotLastAccTxRefs(address: Address) =
-    Map(address -> TransactionReference(TransactionOrdinal(2L), Hash("lastTx")))
+    SortedMap(address -> TransactionReference(TransactionOrdinal(2L), Hash("lastTx")))
 
   def generateSnapshot(peerId: PeerId): GlobalSnapshot =
     GlobalSnapshot(
@@ -112,12 +114,12 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
       snapshotHeight6,
       snapshotSubHeight0,
       Hash("hash"),
-      Set.empty,
-      Map.empty,
-      Set.empty,
+      SortedSet.empty,
+      SortedMap.empty,
+      SortedSet.empty,
       NonEmptyList.one(peerId),
-      GlobalSnapshotInfo(Map.empty, Map.empty, Map.empty),
-      GlobalSnapshotTips(Set.empty, Set.empty)
+      GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.empty),
+      GlobalSnapshotTips(SortedSet.empty, SortedSet.empty)
     )
 
   test("download should happen for the base no blocks case") {
@@ -128,7 +130,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
 
         val parent1 = BlockReference(Height(4L), ProofsHash("parent1"))
         val parent2 = BlockReference(Height(5L), ProofsHash("parent2"))
-        val block = DAGBlock(NonEmptyList.one(parent2), Set.empty)
+        val block = DAGBlock(NonEmptyList.one(parent2), SortedSet.empty)
 
         for {
           hashedBlock <- forAsyncKryo(block, key).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
@@ -137,11 +139,11 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
           hashedSnapshot <- forAsyncKryo(
             generateSnapshot(peerId)
               .copy(
-                blocks = Set(BlockAsActiveTip(hashedBlock.signed, NonNegLong.MinValue)),
-                info = GlobalSnapshotInfo(Map.empty, snapshotTxRefs, snapshotBalances),
+                blocks = SortedSet(BlockAsActiveTip(hashedBlock.signed, NonNegLong.MinValue)),
+                info = GlobalSnapshotInfo(SortedMap.empty, snapshotTxRefs, snapshotBalances),
                 tips = GlobalSnapshotTips(
-                  Set(DeprecatedTip(parent1, snapshotOrdinal8)),
-                  Set(ActiveTip(parent2, 2L, snapshotOrdinal9))
+                  SortedSet(DeprecatedTip(parent1, snapshotOrdinal8)),
+                  SortedSet(ActiveTip(parent2, 2L, snapshotOrdinal9))
                 )
               ),
             key
@@ -214,12 +216,12 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
         val parent2 = BlockReference(Height(2L), ProofsHash("parent2"))
         val parent3 = BlockReference(Height(6L), ProofsHash("parent3"))
         val parent4 = BlockReference(Height(5L), ProofsHash("parent4"))
-        val aboveRangeBlock = DAGBlock(NonEmptyList.one(parent1), Set.empty)
-        val nonMajorityInRangeBlock = DAGBlock(NonEmptyList.one(parent2), Set.empty)
-        val majorityInRangeBlock = DAGBlock(NonEmptyList.one(parent3), Set.empty)
-        val majorityAboveRangeActiveTipBlock = DAGBlock(NonEmptyList.one(parent3), Set.empty)
-        val majorityInRangeDeprecatedTipBlock = DAGBlock(NonEmptyList.one(parent4), Set.empty)
-        val majorityInRangeActiveTipBlock = DAGBlock(NonEmptyList.one(parent4), Set.empty)
+        val aboveRangeBlock = DAGBlock(NonEmptyList.one(parent1), SortedSet.empty)
+        val nonMajorityInRangeBlock = DAGBlock(NonEmptyList.one(parent2), SortedSet.empty)
+        val majorityInRangeBlock = DAGBlock(NonEmptyList.one(parent3), SortedSet.empty)
+        val majorityAboveRangeActiveTipBlock = DAGBlock(NonEmptyList.one(parent3), SortedSet.empty)
+        val majorityInRangeDeprecatedTipBlock = DAGBlock(NonEmptyList.one(parent4), SortedSet.empty)
+        val majorityInRangeActiveTipBlock = DAGBlock(NonEmptyList.one(parent4), SortedSet.empty)
 
         val blocks = List(
           aboveRangeBlock,
@@ -236,13 +238,13 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
           )
           hashedSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
-              blocks = Set(BlockAsActiveTip(hashedBlocks(2).signed, NonNegLong(1L))),
+              blocks = SortedSet(BlockAsActiveTip(hashedBlocks(2).signed, NonNegLong(1L))),
               tips = GlobalSnapshotTips(
-                Set(
+                SortedSet(
                   DeprecatedTip(parent3, snapshotOrdinal9),
                   DeprecatedTip(BlockReference(hashedBlocks(4).height, hashedBlocks(4).proofsHash), snapshotOrdinal9)
                 ),
-                Set(
+                SortedSet(
                   ActiveTip(parent1, 1L, snapshotOrdinal8),
                   ActiveTip(BlockReference(hashedBlocks(3).height, hashedBlocks(3).proofsHash), 1L, snapshotOrdinal9),
                   ActiveTip(BlockReference(hashedBlocks(5).height, hashedBlocks(5).proofsHash), 2L, snapshotOrdinal9)
@@ -363,11 +365,11 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
         val parent3 = BlockReference(Height(8L), ProofsHash("parent3"))
         val parent4 = BlockReference(Height(9L), ProofsHash("parent4"))
 
-        val waitingInRangeBlock = DAGBlock(NonEmptyList.one(parent1), Set.empty)
-        val majorityInRangeBlock = DAGBlock(NonEmptyList.one(parent2), Set.empty)
-        val aboveRangeAcceptedBlock = DAGBlock(NonEmptyList.one(parent3), Set.empty)
-        val aboveRangeMajorityBlock = DAGBlock(NonEmptyList.one(parent3), Set.empty)
-        val waitingAboveRangeBlock = DAGBlock(NonEmptyList.one(parent4), Set.empty)
+        val waitingInRangeBlock = DAGBlock(NonEmptyList.one(parent1), SortedSet.empty)
+        val majorityInRangeBlock = DAGBlock(NonEmptyList.one(parent2), SortedSet.empty)
+        val aboveRangeAcceptedBlock = DAGBlock(NonEmptyList.one(parent3), SortedSet.empty)
+        val aboveRangeMajorityBlock = DAGBlock(NonEmptyList.one(parent3), SortedSet.empty)
+        val waitingAboveRangeBlock = DAGBlock(NonEmptyList.one(parent4), SortedSet.empty)
 
         val blocks =
           List(
@@ -385,11 +387,11 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
           hashedLastSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
               tips = GlobalSnapshotTips(
-                Set(
+                SortedSet(
                   DeprecatedTip(parent1, snapshotOrdinal9),
                   DeprecatedTip(parent2, snapshotOrdinal9)
                 ),
-                Set(
+                SortedSet(
                   ActiveTip(parent3, 1L, snapshotOrdinal8),
                   ActiveTip(parent4, 1L, snapshotOrdinal9)
                 )
@@ -402,12 +404,13 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
               ordinal = snapshotOrdinal11,
               height = snapshotHeight8,
               lastSnapshotHash = hashedLastSnapshot.hash,
-              blocks = Set(BlockAsActiveTip(hashedBlocks(1).signed, 1L), BlockAsActiveTip(hashedBlocks(3).signed, 2L)),
+              blocks =
+                SortedSet(BlockAsActiveTip(hashedBlocks(1).signed, 1L), BlockAsActiveTip(hashedBlocks(3).signed, 2L)),
               tips = GlobalSnapshotTips(
-                Set(
+                SortedSet(
                   DeprecatedTip(parent3, snapshotOrdinal11)
                 ),
-                Set(
+                SortedSet(
                   ActiveTip(parent4, 1L, snapshotOrdinal9)
                 )
               )
@@ -476,15 +479,15 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
         val parent3 = BlockReference(Height(8L), ProofsHash("parent3"))
         val parent4 = BlockReference(Height(9L), ProofsHash("parent4"))
 
-        val waitingInRangeBlock = DAGBlock(NonEmptyList.one(parent1), Set.empty)
-        val waitingMajorityInRangeBlock = DAGBlock(NonEmptyList.one(parent1), Set.empty)
-        val acceptedMajorityInRangeBlock = DAGBlock(NonEmptyList.one(parent2), Set.empty)
-        val majorityUnknownBlock = DAGBlock(NonEmptyList.one(parent2), Set.empty)
-        val acceptedNonMajorityInRangeBlock = DAGBlock(NonEmptyList.one(parent2), Set.empty)
-        val aboveRangeAcceptedBlock = DAGBlock(NonEmptyList.one(parent3), Set.empty)
-        val aboveRangeAcceptedMajorityBlock = DAGBlock(NonEmptyList.one(parent3), Set.empty)
-        val aboveRangeUnknownMajorityBlock = DAGBlock(NonEmptyList.one(parent3), Set.empty)
-        val waitingAboveRangeBlock = DAGBlock(NonEmptyList.one(parent4), Set.empty)
+        val waitingInRangeBlock = DAGBlock(NonEmptyList.one(parent1), SortedSet.empty)
+        val waitingMajorityInRangeBlock = DAGBlock(NonEmptyList.one(parent1), SortedSet.empty)
+        val acceptedMajorityInRangeBlock = DAGBlock(NonEmptyList.one(parent2), SortedSet.empty)
+        val majorityUnknownBlock = DAGBlock(NonEmptyList.one(parent2), SortedSet.empty)
+        val acceptedNonMajorityInRangeBlock = DAGBlock(NonEmptyList.one(parent2), SortedSet.empty)
+        val aboveRangeAcceptedBlock = DAGBlock(NonEmptyList.one(parent3), SortedSet.empty)
+        val aboveRangeAcceptedMajorityBlock = DAGBlock(NonEmptyList.one(parent3), SortedSet.empty)
+        val aboveRangeUnknownMajorityBlock = DAGBlock(NonEmptyList.one(parent3), SortedSet.empty)
+        val waitingAboveRangeBlock = DAGBlock(NonEmptyList.one(parent4), SortedSet.empty)
 
         val blocks =
           List(
@@ -506,11 +509,11 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
           hashedLastSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
               tips = GlobalSnapshotTips(
-                Set(
+                SortedSet(
                   DeprecatedTip(parent1, snapshotOrdinal9),
                   DeprecatedTip(parent2, snapshotOrdinal9)
                 ),
-                Set(
+                SortedSet(
                   ActiveTip(parent3, 1L, snapshotOrdinal8),
                   ActiveTip(parent4, 1L, snapshotOrdinal9)
                 )
@@ -523,7 +526,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
               ordinal = snapshotOrdinal11,
               height = snapshotHeight8,
               lastSnapshotHash = hashedLastSnapshot.hash,
-              blocks = Set(
+              blocks = SortedSet(
                 BlockAsActiveTip(hashedBlocks(1).signed, 1L),
                 BlockAsActiveTip(hashedBlocks(2).signed, 2L),
                 BlockAsActiveTip(hashedBlocks(3).signed, 1L),
@@ -531,10 +534,10 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
                 BlockAsActiveTip(hashedBlocks(7).signed, 0L)
               ),
               tips = GlobalSnapshotTips(
-                Set(
+                SortedSet(
                   DeprecatedTip(parent3, snapshotOrdinal11)
                 ),
-                Set(
+                SortedSet(
                   ActiveTip(parent4, 1L, snapshotOrdinal9)
                 )
               )
@@ -675,10 +678,10 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
               height = snapshotHeight8,
               lastSnapshotHash = hashedLastSnapshot.hash,
               tips = GlobalSnapshotTips(
-                Set(
+                SortedSet(
                   DeprecatedTip(parent1, snapshotOrdinal11)
                 ),
-                Set(
+                SortedSet(
                   ActiveTip(parent2, 1L, snapshotOrdinal9)
                 )
               )

@@ -4,6 +4,7 @@ import cats.effect.Async
 import cats.syntax.functor._
 import cats.syntax.semigroup._
 
+import org.tessellation.ext.cats.data.OrderBasedOrdering
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
@@ -111,6 +112,9 @@ object transaction {
   }
 
   object Transaction {
+
+    implicit object OrderingInstance extends OrderBasedOrdering[Transaction]
+
     def runLengthEncoding(hashes: Seq[String]): String = hashes.fold("")((acc, hash) => s"$acc${hash.length}$hash")
 
     val _Source: Lens[Transaction, Address] = GenLens[Transaction](_.source)
@@ -129,4 +133,8 @@ object transaction {
     destination: Address,
     amount: TransactionAmount
   )
+
+  object RewardTransaction {
+    implicit object OrderingInstance extends OrderBasedOrdering[RewardTransaction]
+  }
 }

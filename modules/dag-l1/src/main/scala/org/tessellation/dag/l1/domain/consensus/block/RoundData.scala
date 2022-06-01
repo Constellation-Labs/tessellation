@@ -13,6 +13,7 @@ import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.{
 import org.tessellation.dag.l1.domain.consensus.round.RoundId
 import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.security.signature.Signed
+import org.tessellation.syntax.sortedCollection._
 
 import monocle.macros.syntax.lens._
 
@@ -44,5 +45,5 @@ case class RoundData(
     this.focus(_.peerCancellations).modify(_ + (cancellation.senderId -> cancellation.reason))
 
   def formBlock(): DAGBlock =
-    DAGBlock(tips.value, ownProposal.transactions ++ peerProposals.values.flatMap(_.transactions).toSet)
+    DAGBlock(tips.value, (ownProposal.transactions ++ peerProposals.values.flatMap(_.transactions).toSet).toSortedSet)
 }

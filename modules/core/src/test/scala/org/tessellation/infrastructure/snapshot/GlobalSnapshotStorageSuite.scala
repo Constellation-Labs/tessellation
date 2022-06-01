@@ -4,6 +4,8 @@ import cats.data.NonEmptyList
 import cats.effect.{IO, Resource}
 import cats.syntax.option._
 
+import scala.collection.immutable.{SortedMap, SortedSet}
+
 import org.tessellation.dag.dagSharedKryoRegistrar
 import org.tessellation.dag.snapshot.GlobalSnapshot
 import org.tessellation.ext.cats.syntax.next._
@@ -50,9 +52,9 @@ object GlobalSnapshotStorageSuite extends MutableIOSuite with Checkers {
             Height.MinValue,
             SubHeight.MinValue,
             genesis.value.hash.toOption.get,
-            Set.empty,
-            Map.empty,
-            Set.empty,
+            SortedSet.empty,
+            SortedMap.empty,
+            SortedSet.empty,
             NonEmptyList.of(PeerId(Hex("peer1"))),
             genesis.info,
             genesis.tips

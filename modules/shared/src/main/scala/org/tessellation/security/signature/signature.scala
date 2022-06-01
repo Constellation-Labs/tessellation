@@ -11,6 +11,7 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.show._
 
+import org.tessellation.ext.cats.data.OrderBasedOrdering
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID.Id
@@ -45,6 +46,8 @@ object signature {
   case class SignatureProof(id: Id, signature: Signature)
 
   object SignatureProof {
+
+    implicit object OrderingInstance extends OrderBasedOrdering[SignatureProof]
 
     def fromHash[F[_]: Async: SecurityProvider](keyPair: KeyPair, hash: Hash): F[SignatureProof] =
       for {

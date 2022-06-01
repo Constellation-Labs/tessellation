@@ -1,6 +1,7 @@
 package org.tessellation.sdk.infrastructure.consensus
 
 import cats.Show
+import cats.data.NonEmptySet._
 
 import scala.concurrent.duration.FiniteDuration
 

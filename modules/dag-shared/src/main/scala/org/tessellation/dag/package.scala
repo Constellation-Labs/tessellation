@@ -18,13 +18,17 @@ package object dag {
     classOf[StateChannelSnapshotBinary] -> 601,
     classOf[SnapshotOrdinal] -> 602,
     classOf[DAGBlock] -> 603,
-    classOf[BlockReference] -> 604,
-    classOf[GlobalSnapshotInfo] -> 605,
-    classOf[GlobalSnapshotTips] -> 606,
-    classOf[ActiveTip] -> 607,
-    classOf[BlockAsActiveTip] -> 608,
-    classOf[DeprecatedTip] -> 609,
-    classOf[L1Output] -> 610,
-    classOf[Tips] -> 611
+    DAGBlock.OrderingInstance.getClass -> 604,
+    classOf[BlockReference] -> 605,
+    classOf[GlobalSnapshotInfo] -> 606,
+    classOf[GlobalSnapshotTips] -> 607,
+    classOf[ActiveTip] -> 608,
+    ActiveTip.OrderingInstance.getClass -> 609,
+    classOf[BlockAsActiveTip] -> 610,
+    BlockAsActiveTip.OrderingInstance.getClass -> 611,
+    classOf[DeprecatedTip] -> 612,
+    DeprecatedTip.OrderingInstance.getClass -> 613,
+    classOf[L1Output] -> 614,
+    classOf[Tips] -> 615
   )
 }

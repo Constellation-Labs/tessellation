@@ -7,7 +7,6 @@ import cats.syntax.applicativeError._
 import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
-import cats.syntax.functorFilter._
 import cats.syntax.parallel._
 import cats.syntax.show._
 import cats.syntax.traverseFilter._
@@ -25,11 +24,9 @@ import org.tessellation.sdk.infrastructure.gossip.p2p.GossipClient
 import org.tessellation.sdk.infrastructure.healthcheck.ping.PingHealthCheckConsensus
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
-import org.tessellation.security.signature.Signed
 
 import fs2.Stream
 import org.typelevel.log4cats.slf4j.Slf4jLogger
-import shapeless._
 
 trait GossipDaemon[F[_]] extends Daemon[F]
 
@@ -92,12 +89,10 @@ object GossipDaemon {
           }
       }
 
-    private val commonTypable = Typeable[Signed[CommonRumorBinary]]
-    private val peerTypable = Typeable[Signed[PeerRumorBinary]]
-
     private def sortRumors(batch: RumorBatch): RumorBatch =
-      batch.mapFilter { case (h, r) => commonTypable.cast(r).map(h -> _) } ++
-        batch.mapFilter { case (h, r) => peerTypable.cast(r).map(h -> _) }.sortBy(_._2.ordinal)
+      batch.filter { case (_, s) => s.value.isInstanceOf[CommonRumorBinary] } ++
+        batch.filter { case (_, s) => s.value.isInstanceOf[PeerRumorBinary] }
+          .sortBy(_._2.asInstanceOf[PeerRumorBinary].ordinal)
 
     private def handleRumor(har: HashAndRumor): F[Unit] = har match {
       case (hash, signedRumor) =>
