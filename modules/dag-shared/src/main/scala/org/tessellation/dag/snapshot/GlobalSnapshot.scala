@@ -5,6 +5,8 @@ import cats.effect.{Async, Concurrent}
 import cats.syntax.functor._
 import cats.syntax.traverse._
 
+import scala.collection.immutable.{SortedMap, SortedSet}
+
 import org.tessellation.dag.domain.block.BlockReference
 import org.tessellation.ext.codecs.BinaryCodec
 import org.tessellation.kryo.KryoSerializer
@@ -15,6 +17,7 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.RewardTransaction
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.hex.Hex
+import org.tessellation.syntax.sortedCollection._
 
 import derevo.cats.{eqv, show}
 import derevo.derive
@@ -27,20 +30,20 @@ case class GlobalSnapshot(
   height: Height,
   subHeight: SubHeight,
   lastSnapshotHash: Hash,
-  blocks: Set[BlockAsActiveTip],
-  stateChannelSnapshots: Map[Address, NonEmptyList[StateChannelSnapshotBinary]],
-  rewards: Set[RewardTransaction],
+  blocks: SortedSet[BlockAsActiveTip],
+  stateChannelSnapshots: SortedMap[Address, NonEmptyList[StateChannelSnapshotBinary]],
+  rewards: SortedSet[RewardTransaction],
   nextFacilitators: NonEmptyList[PeerId],
   info: GlobalSnapshotInfo,
   tips: GlobalSnapshotTips
 ) {
 
-  def activeTips[F[_]: Async: KryoSerializer]: F[Set[ActiveTip]] =
+  def activeTips[F[_]: Async: KryoSerializer]: F[SortedSet[ActiveTip]] =
     blocks.toList.traverse { blockAsActiveTip =>
       BlockReference
         .of(blockAsActiveTip.block)
         .map(blockRef => ActiveTip(blockRef, blockAsActiveTip.usageCount, ordinal))
-    }.map(_.toSet.union(tips.remainedActive))
+    }.map(_.toSortedSet.union(tips.remainedActive))
 
 }
 
@@ -58,22 +61,23 @@ object GlobalSnapshot {
       Height.MinValue,
       SubHeight.MinValue,
       Hash.empty,
-      Set.empty,
-      Map.empty,
-      Set.empty,
+      SortedSet.empty,
+      SortedMap.empty,
+      SortedSet.empty,
       NonEmptyList.of(PeerId(Hex("peer1"))), // TODO
-      GlobalSnapshotInfo(Map.empty, Map.empty, balances),
+      GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.from(balances)),
       GlobalSnapshotTips(
-        Set.empty[DeprecatedTip],
+        SortedSet.empty[DeprecatedTip],
         mkActiveTips(16)
       )
     )
 
-  private def mkActiveTips(n: Int): Set[ActiveTip] =
+  private def mkActiveTips(n: Int): SortedSet[ActiveTip] =
     List
       .range(0, n)
       .map { i =>
         ActiveTip(BlockReference(Height.MinValue, ProofsHash(s"%064d".format(i))), 0L, SnapshotOrdinal.MinValue)
       }
-      .toSet
+      .toSortedSet
+
 }

@@ -3,6 +3,7 @@ package org.tessellation.infrastructure.snapshot
 import cats.data.NonEmptyList
 import cats.effect.Async
 import cats.syntax.applicativeError._
+import cats.syntax.bifunctor._
 import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.foldable._
@@ -14,6 +15,7 @@ import cats.syntax.order._
 import cats.syntax.traverse._
 import cats.{Applicative, Eval}
 
+import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
 
 import org.tessellation.dag.block.processing._
@@ -31,6 +33,7 @@ import org.tessellation.sdk.domain.consensus.ConsensusFunctions
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.signature.Signed
+import org.tessellation.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
@@ -126,7 +129,7 @@ object GlobalSnapshotConsensusFunctions {
             remainedActive = remainedActive
           )
         )
-        returnedEvents = returnedSCEvents.union(returnedDAGEvents.toSet)
+        returnedEvents = returnedSCEvents.union(returnedDAGEvents)
       } yield (globalSnapshot, returnedEvents)
     }
 
@@ -141,13 +144,14 @@ object GlobalSnapshotConsensusFunctions {
     }
 
     private def getUpdatedTips(
-      lastActive: Set[ActiveTip],
-      lastDeprecated: Set[DeprecatedTip],
+      lastActive: SortedSet[ActiveTip],
+      lastDeprecated: SortedSet[DeprecatedTip],
       acceptanceResult: BlockAcceptanceResult,
       currentOrdinal: SnapshotOrdinal
-    ): (Set[DeprecatedTip], Set[ActiveTip], Set[BlockAsActiveTip]) = {
+    ): (SortedSet[DeprecatedTip], SortedSet[ActiveTip], SortedSet[BlockAsActiveTip]) = {
       val usagesUpdate = acceptanceResult.contextUpdate.parentUsages
-      val accepted = acceptanceResult.accepted.map { case (block, usages) => BlockAsActiveTip(block, usages) }.toSet
+      val accepted =
+        acceptanceResult.accepted.map { case (block, usages) => BlockAsActiveTip(block, usages) }.toSortedSet
       val (remainedActive, newlyDeprecated) = lastActive.partitionMap { at =>
         val maybeUpdatedUsage = usagesUpdate.get(at.block)
         Either.cond(
@@ -155,7 +159,7 @@ object GlobalSnapshotConsensusFunctions {
           DeprecatedTip(at.block, currentOrdinal),
           maybeUpdatedUsage.map(uc => at.copy(usageCount = uc)).getOrElse(at)
         )
-      }
+      }.bimap(_.toSortedSet, _.toSortedSet)
       val lowestActiveIntroducedAt = remainedActive.toList.map(_.introducedAt).minimumOption.getOrElse(currentOrdinal)
       val remainedDeprecated = lastDeprecated.filter(_.deprecatedAt > lowestActiveIntroducedAt)
 
@@ -197,7 +201,7 @@ object GlobalSnapshotConsensusFunctions {
     private def processStateChannelEvents(
       lastGlobalSnapshotInfo: GlobalSnapshotInfo,
       events: List[StateChannelEvent]
-    ): (Map[Address, NonEmptyList[StateChannelSnapshotBinary]], Set[GlobalSnapshotEvent]) = {
+    ): (SortedMap[Address, NonEmptyList[StateChannelSnapshotBinary]], Set[GlobalSnapshotEvent]) = {
       val lshToSnapshot: Map[(Address, Hash), StateChannelEvent] = events.map { e =>
         (e.address, e.snapshot.value.lastSnapshotHash) -> e
       }.foldLeft(Map.empty[(Address, Hash), StateChannelEvent]) { (acc, entry) =>
@@ -245,7 +249,7 @@ object GlobalSnapshotConsensusFunctions {
                 }.reverse
             )
         }
-        .toMap
+        .toSortedMap
 
       (result, Set.empty)
     }

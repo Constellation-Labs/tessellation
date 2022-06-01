@@ -1,7 +1,7 @@
 package org.tessellation.crypto
 
 import cats.Eq
-import cats.data.NonEmptyList
+import cats.data.NonEmptySet
 import cats.kernel.laws.discipline.SemigroupTests
 
 import org.tessellation.schema.ID.Id
@@ -17,7 +17,7 @@ object SignedSuite extends FunSuite with Discipline {
   implicit val eq: Eq[Signed[Hex]] = _ == _
 
   implicit val arbitrarySigned: Arbitrary[Signed[Hex]] = Arbitrary(
-    Gen.alphaLowerStr.map(Hex(_)).map(str => Signed(str, NonEmptyList.one(SignatureProof(Id(str), Signature(str)))))
+    Gen.alphaLowerStr.map(Hex(_)).map(str => Signed(str, NonEmptySet.one(SignatureProof(Id(str), Signature(str)))))
   )
 
   checkAll("CellMonoidLaw", SemigroupTests[Signed[Hex]].semigroup)

@@ -6,13 +6,14 @@ import java.util.UUID
 import cats.data.NonEmptyList
 
 import org.tessellation.ext.kryo._
-import org.tessellation.schema.address.AddressCache
+import org.tessellation.schema.address.{Address, AddressCache}
 import org.tessellation.schema.gossip._
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.SignRequest
 import org.tessellation.schema.transaction.{RewardTransaction, Transaction, TransactionReference}
 import org.tessellation.schema.trust.PublicTrust
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.signature.Signed.SignedOrdering
 import org.tessellation.security.signature.signature.SignatureProof
 
 import eu.timepit.refined.api.Refined
@@ -28,34 +29,39 @@ package object shared {
   val sharedKryoRegistrar: Map[Class[_], SharedKryoRegistrationId] = Map(
     classOf[UUID] -> 300,
     classOf[SignatureProof] -> 301,
-    classOf[Signature] -> 302,
-    classOf[SignRequest] -> 303,
-    classOf[NonEmptyList[_]] -> 304,
-    classOf[Signed[_]] -> 305,
-    classOf[AddressCache] -> 306,
-    classOf[PeerRumorBinary] -> 307,
-    classOf[StartGossipRoundRequest] -> 308,
-    classOf[StartGossipRoundResponse] -> 309,
-    classOf[EndGossipRoundRequest] -> 310,
-    classOf[EndGossipRoundResponse] -> 311,
-    NodeState.Initial.getClass -> 312,
-    NodeState.ReadyToJoin.getClass -> 313,
-    NodeState.LoadingGenesis.getClass -> 314,
-    NodeState.GenesisReady.getClass -> 315,
-    NodeState.StartingSession.getClass -> 316,
-    NodeState.SessionStarted.getClass -> 317,
-    NodeState.WaitingForDownload.getClass -> 318,
-    NodeState.DownloadInProgress.getClass -> 319,
-    NodeState.Ready.getClass -> 320,
-    NodeState.Leaving.getClass -> 321,
-    NodeState.Offline.getClass -> 322,
-    classOf[PublicTrust] -> 323,
-    classOf[Ordinal] -> 324,
-    classOf[CommonRumorBinary] -> 325,
-    classOf[Transaction] -> 326,
-    classOf[TransactionReference] -> 327,
-    classOf[Refined[_, _]] -> 328,
-    classOf[RewardTransaction] -> 329
+    SignatureProof.OrderingInstance.getClass -> 302,
+    classOf[Signature] -> 303,
+    classOf[SignRequest] -> 304,
+    classOf[NonEmptyList[_]] -> 305,
+    classOf[Signed[_]] -> 306,
+    classOf[AddressCache] -> 307,
+    classOf[PeerRumorBinary] -> 308,
+    classOf[StartGossipRoundRequest] -> 309,
+    classOf[StartGossipRoundResponse] -> 310,
+    classOf[EndGossipRoundRequest] -> 311,
+    classOf[EndGossipRoundResponse] -> 312,
+    NodeState.Initial.getClass -> 313,
+    NodeState.ReadyToJoin.getClass -> 314,
+    NodeState.LoadingGenesis.getClass -> 315,
+    NodeState.GenesisReady.getClass -> 316,
+    NodeState.StartingSession.getClass -> 317,
+    NodeState.SessionStarted.getClass -> 318,
+    NodeState.WaitingForDownload.getClass -> 319,
+    NodeState.DownloadInProgress.getClass -> 320,
+    NodeState.Ready.getClass -> 321,
+    NodeState.Leaving.getClass -> 322,
+    NodeState.Offline.getClass -> 323,
+    classOf[PublicTrust] -> 324,
+    classOf[Ordinal] -> 325,
+    classOf[CommonRumorBinary] -> 326,
+    classOf[Transaction] -> 327,
+    Transaction.OrderingInstance.getClass -> 328,
+    classOf[TransactionReference] -> 329,
+    classOf[Refined[_, _]] -> 330,
+    classOf[RewardTransaction] -> 331,
+    RewardTransaction.OrderingInstance.getClass -> 332,
+    classOf[SignedOrdering[_]] -> 333,
+    Address.OrderingInstance.getClass -> 334
   )
 
 }

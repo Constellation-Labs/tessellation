@@ -10,6 +10,8 @@ import cats.syntax.functor._
 import cats.syntax.order._
 import cats.syntax.validated._
 
+import scala.collection.immutable.SortedSet
+
 import org.tessellation.dag.block.BlockValidator.BlockValidationError
 import org.tessellation.dag.dagSharedKryoRegistrar
 import org.tessellation.dag.domain.block.{BlockReference, DAGBlock}
@@ -55,7 +57,7 @@ object BlockValidatorSuite extends MutableIOSuite with Checkers {
     val validBlockGen = for {
       p1 <- arbitrary[BlockReference]
       p2 <- arbitrary[BlockReference].suchThat(br => br =!= p1)
-    } yield DAGBlock(parent = NonEmptyList.of(p1, p2), transactions = Set.empty)
+    } yield DAGBlock(parent = NonEmptyList.of(p1, p2), transactions = SortedSet.empty)
 
     val validator = makeValidator[IO]
 

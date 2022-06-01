@@ -1,5 +1,7 @@
 package org.tessellation.dag.snapshot
 
+import scala.collection.immutable.SortedMap
+
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.transaction.TransactionReference
@@ -11,7 +13,7 @@ import derevo.derive
 
 @derive(encoder, decoder, eqv, show)
 case class GlobalSnapshotInfo(
-  lastStateChannelSnapshotHashes: Map[Address, Hash],
-  lastTxRefs: Map[Address, TransactionReference],
-  balances: Map[Address, Balance]
+  lastStateChannelSnapshotHashes: SortedMap[Address, Hash],
+  lastTxRefs: SortedMap[Address, TransactionReference],
+  balances: SortedMap[Address, Balance]
 )

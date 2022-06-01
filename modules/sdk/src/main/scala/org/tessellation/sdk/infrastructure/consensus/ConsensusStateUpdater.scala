@@ -2,7 +2,7 @@ package org.tessellation.sdk.infrastructure.consensus
 
 import java.security.KeyPair
 
-import cats.data.NonEmptyList
+import cats.data.NonEmptySet
 import cats.effect.Async
 import cats.effect.kernel.Clock
 import cats.kernel.Next
@@ -32,6 +32,7 @@ import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.{Signature, SignatureProof}
+import org.tessellation.syntax.sortedCollection._
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -228,11 +229,11 @@ object ConsensusStateUpdater {
               resources.peerDeclarationsMap
                 .get(peerId)
                 .flatMap(peerDeclaration => peerDeclaration.signature.map(signature => (peerId, signature.signature)))
-            }.map(_.map { case (id, signature) => SignatureProof(PeerId._Id.get(id), signature) })
+            }.map(_.map { case (id, signature) => SignatureProof(PeerId._Id.get(id), signature) }.toSet)
 
           val maybeSignedArtifact = for {
             allSignatures <- maybeAllSignatures
-            allSignaturesNel <- NonEmptyList.fromList(allSignatures)
+            allSignaturesNel <- NonEmptySet.fromSet(allSignatures.toSortedSet)
             majorityArtifact <- resources.artifacts.get(majorityHash)
           } yield Signed(majorityArtifact, allSignaturesNel)
 

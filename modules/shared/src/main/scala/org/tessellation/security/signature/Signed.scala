@@ -2,16 +2,19 @@ package org.tessellation.security.signature
 
 import java.security.KeyPair
 
-import cats.data.NonEmptyList
+import cats.data.NonEmptySet
 import cats.effect.Async
 import cats.syntax.applicative._
+import cats.syntax.contravariant._
 import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.list._
+import cats.syntax.order._
 import cats.syntax.show._
 import cats.{Order, Semigroup, Show}
 
+import scala.collection.immutable.SortedSet
 import scala.util.control.NoStackTrace
 
 import org.tessellation.ext.crypto._
@@ -25,7 +28,7 @@ import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.{Decoder, Encoder}
 import io.estatico.newtype.ops._
 
-case class Signed[+A](value: A, proofs: NonEmptyList[SignatureProof])
+case class Signed[+A](value: A, proofs: NonEmptySet[SignatureProof])
 
 object Signed {
   case class InvalidSignatureForHash[A <: AnyRef](signed: Signed[A]) extends NoStackTrace
@@ -39,41 +42,41 @@ object Signed {
 
   implicit def autoUnwrap[T](t: Signed[T]): T = t.value
 
-  implicit def order[A: Order]: Order[Signed[A]] = (x: Signed[A], y: Signed[A]) => Order[A].compare(x, y)
+  implicit def order[A: Order]: Order[Signed[A]] = Order.fromOrdering(ordering(Order[A].toOrdering))
 
-  implicit def ordering[A: Order]: Ordering[Signed[A]] = order.toOrdering
+  implicit def ordering[A: Ordering]: Ordering[Signed[A]] = new SignedOrdering[A]()
 
   def forAsyncKryo[F[_]: Async: SecurityProvider: KryoSerializer, A <: AnyRef](
     data: A,
     keyPair: KeyPair
   ): F[Signed[A]] =
     SignatureProof.fromData(keyPair)(data).map { sp =>
-      Signed[A](data, NonEmptyList.one(sp))
+      Signed[A](data, NonEmptySet.fromSetUnsafe(SortedSet(sp)))
     }
 
   //@deprecated("use signAlsoWith", "0.6.0")
   implicit def semigroup[A]: Semigroup[Signed[A]] = Semigroup.instance { (a, b) =>
-    Signed(a.value, a.proofs ::: b.proofs)
+    Signed(a.value, a.proofs ++ b.proofs)
   }
 
   implicit class SignedOps[A <: AnyRef](signed: Signed[A]) {
 
     def signAlsoWith[F[_]: Async: SecurityProvider: KryoSerializer](keyPair: KeyPair): F[Signed[A]] =
       SignatureProof.fromData(keyPair)(signed.value).map { sp =>
-        Signed(signed.value, sp :: signed.proofs)
+        Signed(signed.value, signed.proofs.add(sp))
       }
 
     def isSignedBy(signers: Set[Id]): Boolean =
-      signed.proofs.map(_.id).toList.toSet == signers
+      signed.proofs.map(_.id).toSortedSet.unsorted === signers
 
     def hasValidSignature[F[_]: Async: SecurityProvider: KryoSerializer]: F[Boolean] =
       validProofs.map(_.isRight)
 
     def validProofs[F[_]: Async: SecurityProvider: KryoSerializer]
-      : F[Either[NonEmptyList[SignatureProof], NonEmptyList[SignatureProof]]] =
+      : F[Either[NonEmptySet[SignatureProof], NonEmptySet[SignatureProof]]] =
       for {
         hash <- signed.value.hashF
-        invalidOrValidProofs <- signed.proofs.traverse { proof =>
+        invalidOrValidProofs <- signed.proofs.toNonEmptyList.traverse { proof =>
           signature
             .verifySignatureProof(hash, proof)
             .map(result => proof -> result)
@@ -82,6 +85,7 @@ object Signed {
             .filterNot(_._2)
             .map(_._1)
             .toNel
+            .map(_.toNes)
             .toLeft(signed.proofs)
         }
       } yield invalidOrValidProofs
@@ -93,7 +97,7 @@ object Signed {
         InvalidSignatureForHash(signed).asLeft[Hashed[A]].pure[F]
       )
 
-    def toHashed[F[_]: Async: KryoSerializer: SecurityProvider]: F[Hashed[A]] =
+    def toHashed[F[_]: Async: KryoSerializer]: F[Hashed[A]] =
       signed.value.hashF.flatMap { hash =>
         proofsHash.map { proofsHash =>
           Hashed(signed, hash, proofsHash)
@@ -101,9 +105,18 @@ object Signed {
       }
 
     def proofsHash[F[_]: Async: KryoSerializer]: F[ProofsHash] =
-      signed.proofs
-        .sortBy(_.signature)
-        .hashF
+      signed.proofs.toSortedSet.hashF
         .map(hash => ProofsHash(hash.coerce))
+  }
+
+  final class SignedOrdering[A: Ordering] extends Ordering[Signed[A]] {
+
+    def compare(x: Signed[A], y: Signed[A]): Int =
+      Order
+        .whenEqual(
+          Order.fromOrdering(Ordering[A]).contramap[Signed[A]](s => s.value),
+          Order[NonEmptySet[SignatureProof]].contramap[Signed[A]](s => s.proofs)
+        )
+        .compare(x, y)
   }
 }

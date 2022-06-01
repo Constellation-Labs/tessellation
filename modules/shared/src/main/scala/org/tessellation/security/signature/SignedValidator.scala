@@ -1,7 +1,8 @@
 package org.tessellation.security.signature
 
 import cats.Order
-import cats.data.{NonEmptyList, ValidatedNec}
+import cats.data.NonEmptySet._
+import cats.data.{NonEmptySet, ValidatedNec}
 import cats.effect.Async
 import cats.syntax.all._
 
@@ -11,7 +12,7 @@ import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.SignedValidator.SignedValidationErrorOr
 import org.tessellation.security.signature.signature.SignatureProof
 
-import derevo.cats.{eqv, show}
+import derevo.cats.{order, show}
 import derevo.derive
 import eu.timepit.refined.auto._
 import eu.timepit.refined.cats._
@@ -52,6 +53,7 @@ object SignedValidator {
       signedBlock: Signed[A]
     ): SignedValidationErrorOr[Signed[A]] =
       duplicatedValues(signedBlock.proofs.map(_.id)).toNel
+        .map(_.toNes)
         .map(DuplicateSigners)
         .toInvalidNec(signedBlock)
 
@@ -64,8 +66,8 @@ object SignedValidator {
       else
         NotEnoughSignatures(signedBlock.proofs.size, minSignatureCount).invalidNec
 
-    private def duplicatedValues[B: Order](values: NonEmptyList[B]): List[B] =
-      values.groupBy(identity).toList.mapFilter {
+    private def duplicatedValues[B: Order](values: NonEmptySet[B]): List[B] =
+      values.groupBy(identity).toNel.toList.mapFilter {
         case (value, occurrences) =>
           if (occurrences.tail.nonEmpty)
             value.some
@@ -74,12 +76,12 @@ object SignedValidator {
       }
   }
 
-  @derive(eqv, show)
+  @derive(order, show)
   sealed trait SignedValidationError
-  case class InvalidSignatures(invalidSignatures: NonEmptyList[SignatureProof]) extends SignedValidationError
-  case class NotEnoughSignatures(signatureCount: Int, minSignatureCount: PosInt) extends SignedValidationError
-  case class DuplicateSigners(signers: NonEmptyList[Id]) extends SignedValidationError
-  case class MissingSigners(signers: NonEmptyList[Id]) extends SignedValidationError
+  case class InvalidSignatures(invalidSignatures: NonEmptySet[SignatureProof]) extends SignedValidationError
+  case class NotEnoughSignatures(signatureCount: Long, minSignatureCount: PosInt) extends SignedValidationError
+  case class DuplicateSigners(signers: NonEmptySet[Id]) extends SignedValidationError
+  case class MissingSigners(signers: NonEmptySet[Id]) extends SignedValidationError
 
   type SignedValidationErrorOr[A] = ValidatedNec[SignedValidationError, A]
 }
