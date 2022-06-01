@@ -20,6 +20,7 @@ trait SDK[F[_]] {
 
   val keyPair: KeyPair
   lazy val nodeId = PeerId.fromPublic(keyPair.getPublic)
+  val whitelisting: Option[Set[PeerId]]
 
   val sdkResources: SdkResources[F]
   val sdkP2PClient: SdkP2PClient[F]

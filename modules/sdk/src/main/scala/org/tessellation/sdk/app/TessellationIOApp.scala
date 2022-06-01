@@ -84,10 +84,10 @@ abstract class TessellationIOApp[A <: CliMethod](
                 SignallingRef.of[IO, Unit](()).flatMap { _restartSignal =>
                   def mkSDK =
                     for {
-                      whitelisting <- method.whitelistingPath
+                      _whitelisting <- method.whitelistingPath
                         .fold(none[Set[PeerId]].pure[IO])(WhitelistingLoader.make[IO].load(_).map(_.some))
                         .asResource
-                      _ <- whitelisting
+                      _ <- _whitelisting
                         .map(_.size)
                         .fold(logger.info(s"Whitelisting disabled.")) { size =>
                           logger.info(s"Whitelisting enabled. Allowed nodes: $size")
@@ -99,11 +99,11 @@ abstract class TessellationIOApp[A <: CliMethod](
                       p2pClient = SdkP2PClient.make[IO](res.client, session)
                       queues <- SdkQueues.make[IO].asResource
                       services <- SdkServices
-                        .make[IO](cfg, selfId, _keyPair, storages, queues, session, whitelisting, _restartSignal)
+                        .make[IO](cfg, selfId, _keyPair, storages, queues, session, _whitelisting, _restartSignal)
                         .asResource
 
                       programs <- SdkPrograms
-                        .make[IO](cfg, storages, services, p2pClient.cluster, p2pClient.sign, whitelisting, selfId)
+                        .make[IO](cfg, storages, services, p2pClient.cluster, p2pClient.sign, _whitelisting, selfId)
                         .asResource
 
                       sdk = new SDK[IO] {
@@ -112,6 +112,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                         val kryoPool = _kryoPool
 
                         val keyPair = _keyPair
+                        val whitelisting = _whitelisting
 
                         val sdkResources = res
                         val sdkP2PClient = p2pClient

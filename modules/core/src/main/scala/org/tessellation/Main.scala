@@ -51,7 +51,9 @@ object Main
       queues <- Queues.make[IO](sdkQueues).asResource
       storages <- Storages.make[IO](sdkStorages, cfg.snapshot).asResource
       validators = Validators.make[IO](cfg.snapshot)
-      services <- Services.make[IO](sdkServices, queues, storages, validators, sdk.nodeId, keyPair, cfg).asResource
+      services <- Services
+        .make[IO](sdkServices, queues, storages, validators, sdk.whitelisting, sdk.nodeId, keyPair, cfg)
+        .asResource
       programs = Programs.make[IO](sdkPrograms, storages, services, p2pClient)
       healthChecks <- HealthChecks
         .make[IO](storages, services, programs, p2pClient, cfg.healthCheck, sdk.nodeId)

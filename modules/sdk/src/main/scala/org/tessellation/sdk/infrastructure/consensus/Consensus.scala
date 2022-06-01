@@ -42,6 +42,7 @@ object Consensus {
     gossip: Gossip[F],
     selfId: PeerId,
     keyPair: KeyPair,
+    whitelisting: Option[Set[PeerId]],
     clusterStorage: ClusterStorage[F],
     healthCheckConfig: HealthCheckConfig,
     initKeyAndArtifact: Option[(Key, Signed[Artifact])] = none
@@ -53,6 +54,7 @@ object Consensus {
         storage,
         clusterStorage,
         gossip,
+        whitelisting,
         keyPair,
         selfId
       )
@@ -61,7 +63,7 @@ object Consensus {
         storage,
         stateUpdater
       )
-      healthCheck <- PeerDeclarationHealthCheck.make[F, Key](
+      healthCheck <- PeerDeclarationHealthCheck.make[F, Key, Artifact](
         clusterStorage,
         selfId,
         gossip,
@@ -69,7 +71,7 @@ object Consensus {
         storage,
         manager
       )
-      handler = ConsensusHandler.make[F, Event, Key, Artifact](storage, manager) <+>
+      handler = ConsensusHandler.make[F, Event, Key, Artifact](storage, manager, whitelisting) <+>
         PeerDeclarationProposalHandler.make[F, Key](healthCheck)
       daemon = PeerDeclarationHealthCheckDaemon.make(healthCheck, healthCheckConfig)
 
