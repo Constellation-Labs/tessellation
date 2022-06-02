@@ -14,7 +14,7 @@ import cats.syntax.traverseFilter._
 import scala.concurrent.duration._
 
 import org.tessellation.effects.GenUUID
-import org.tessellation.schema.cluster.PeerToJoin
+import org.tessellation.schema.cluster.{PeerToJoin, SessionToken}
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.Peer.toP2PContext
 import org.tessellation.schema.peer.{Peer, PeerId}
@@ -75,7 +75,7 @@ class PingHealthCheckConsensus[F[_]: Async: GenUUID: Random](
     rounds
 
   def ownStatus(key: PingHealthCheckKey): F[Fiber[F, Throwable, PingHealthCheckStatus]] =
-    Spawn[F].start(checkPeer(key.id, key.ip, key.p2pPort))
+    Spawn[F].start(checkPeer(key.id, key.ip, key.p2pPort, key.session))
 
   def statusOnError(key: PingHealthCheckKey): PingHealthCheckStatus = PeerCheckUnexpectedError(key.id)
 
@@ -117,8 +117,14 @@ class PingHealthCheckConsensus[F[_]: Async: GenUUID: Random](
                   clusterStorage.removePeer(key.id)
             }
           case (DecisionDropPeer, _) =>
-            logger.info(s"Outcome for peer ${key.id}: unavailable - removing peer") >>
-              clusterStorage.removePeer(key.id)
+            clusterStorage
+              .getPeer(key.id)
+              .map(_.exists(_.session === key.session))
+              .ifM(
+                logger.info(s"Outcome for peer ${key.id}: unavailable - removing peer") >>
+                  clusterStorage.removePeer(key.id),
+                logger.info(s"Outcome for peer ${key.id}: unavailable - known peer has a different session, ignoring")
+              )
         }
     }.void
 
@@ -126,15 +132,15 @@ class PingHealthCheckConsensus[F[_]: Async: GenUUID: Random](
     clusterStorage.getPeers.map { _.filterNot(p => NodeState.absent.contains(p.state)).toList }
       .flatMap(peers => peersUnderConsensus.map(uc => peers.filterNot(p => uc.contains(p.id))))
       .flatMap(pickRandomPeers(_, config.ping.concurrentChecks))
-      .flatMap(_.traverse(p => checkPeer(p.id, p.ip, p.p2pPort).map(s => (p -> s))))
+      .flatMap(_.traverse(p => checkPeer(p.id, p.ip, p.p2pPort, p.session).map(s => (p -> s))))
       .map(_.filterNot {
         case (_, status) => status.isInstanceOf[PeerAvailable]
       }.map {
         case (id, _) => id
       })
-      .flatMap(_.filterA(p => ensureOffline(p.id, p.ip, p.p2pPort)))
+      .flatMap(_.filterA(p => ensureOffline(p.id, p.ip, p.p2pPort, p.session)))
       .flatMap(_.traverse { peer =>
-        startOwnRound(PingHealthCheckKey(peer.id, peer.ip, peer.p2pPort))
+        startOwnRound(PingHealthCheckKey(peer.id, peer.ip, peer.p2pPort, peer.session))
       })
       .void
 
@@ -143,13 +149,14 @@ class PingHealthCheckConsensus[F[_]: Async: GenUUID: Random](
       .map(_.contains(peer.id))
       .ifM(
         Applicative[F].unit,
-        startOwnRound(PingHealthCheckKey(peer.id, peer.ip, peer.p2pPort))
+        startOwnRound(PingHealthCheckKey(peer.id, peer.ip, peer.p2pPort, peer.session))
       )
 
   private def checkPeer(
     peer: PeerId,
     ip: Host,
     p2pPort: Port,
+    session: SessionToken,
     timeout: FiniteDuration = config.ping.defaultCheckTimeout
   ): F[PingHealthCheckStatus] =
     timeoutTo(
@@ -157,8 +164,8 @@ class PingHealthCheckConsensus[F[_]: Async: GenUUID: Random](
         clusterStorage
           .getPeer(peer)
           .flatMap {
-            _.map(toP2PContext).fold { PeerUnknown(peer).pure[F].widen[PingHealthCheckStatus] } { p =>
-              if (p.ip === ip && p.port === p2pPort) {
+            _.fold { PeerUnknown(peer).pure[F].widen[PingHealthCheckStatus] } { p =>
+              if (p.ip === ip && p.port === p2pPort && p.session === session) {
                 nodeClient.health
                   .run(p)
                   .ifM(
@@ -180,15 +187,17 @@ class PingHealthCheckConsensus[F[_]: Async: GenUUID: Random](
     peer: PeerId,
     ip: Host,
     p2pPort: Port,
+    session: SessionToken,
     timeout: FiniteDuration = config.ping.defaultCheckTimeout,
     attempts: Int = config.ping.defaultCheckAttempts
   ): F[Boolean] =
-    checkPeer(peer, ip, p2pPort, timeout).flatMap {
-      case PeerAvailable(_) => false.pure[F]
-      case _ =>
+    checkPeer(peer, ip, p2pPort, session, timeout).flatMap {
+      case PeerAvailable(_)                 => false.pure[F]
+      case PeerMismatch(_) | PeerUnknown(_) => true.pure[F]
+      case PeerUnavailable(_) | PeerCheckTimeouted(_) | PeerCheckUnexpectedError(_) =>
         if (attempts > 0) {
           Temporal[F].sleep(config.ping.ensureCheckInterval).flatMap { _ =>
-            ensureOffline(peer, ip, p2pPort, timeout, attempts - 1)
+            ensureOffline(peer, ip, p2pPort, session, timeout, attempts - 1)
           }
         } else
           true.pure[F]
