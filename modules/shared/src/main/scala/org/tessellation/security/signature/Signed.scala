@@ -38,6 +38,11 @@ object Signed {
 
   implicit def encoder[A: Encoder]: Encoder[Signed[A]] = deriveEncoder
 
+  implicit def proofsDecoder: Decoder[NonEmptySet[SignatureProof]] =
+    Decoder.decodeNonEmptySet[SignatureProof].map { nes =>
+      NonEmptySet.fromSetUnsafe(SortedSet.from(nes.toSortedSet))
+    }
+
   implicit def decoder[A: Decoder]: Decoder[Signed[A]] = deriveDecoder
 
   implicit def autoUnwrap[T](t: Signed[T]): T = t.value
