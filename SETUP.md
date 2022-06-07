@@ -1,43 +1,57 @@
 # SETUP
 
+**Updated**: June 7, 2022
+
 This guide is to get you setup with the tools you'll need for development.
 
-**Date**: May 24, 2002
-
-**Platform**: Fedora 35, 64-bit
-
-1. Install _SDKMan_, [link](https://sdkman.io/install).
-   1. `curl -s "https://get.sdkman.io" | bash`
-   2. `source "$HOME/.sdkman/bin/sdkman-init.sh"`
-   3. Verify the installation: `sdk version`
-2. Install _Coretto Java 8_, [link](https://sdkman.io/usage).
-   1. List the versions: `sdk list java`
-   2. Install the desired versions: `sdk install java 8.332.08.1-amzn`
-   3. If _JAVA_HOME_ is not set, re-source SDKMan's init script: `source "$HOME/.sdkman/bin/sdkman-init.sh"`
-3. Install the latest version of _Scala_: `sdk install scala`
-4. Install the latest version of _SBT_: `sdk install sbt`
+1. Install _Java 11_, [link](https://openjdk.java.net/projects/jdk/11/).
+2. Install _SBT_, [link](https://www.scala-sbt.org/).
 
 # Starting A Local Cluster (Optional)
 
 To spin up a local cluster, we'll need a way to run [Kubernetes](https://kubernetes.io/) containers. One way is with [Docker](https://www.docker.com/). Running a local cluster is needed to run the integration tests.
 
-1. Install _Docker Engine_, _containerd_, and the _Docker Compose_ plugin, [link](https://docs.docker.com/engine/install/fedora/).
-   1. Install Docker using the package repository, [link](https://docs.docker.com/engine/install/fedora/#install-using-the-repository).
-   2. Do the post install for _Docker_, [link](https://docs.docker.com/engine/install/linux-postinstall/)
-2. Install _Docker Desktop_, [link](https://docs.docker.com/desktop/linux/install/fedora/).
-   1. Download the _RPM_ package, [link](https://docs.docker.com/desktop/release-notes/).
-3. Enable _Kubernetes_ on _Docker_.
-   1. Start _Docker Desktop_.
-   2. Click on the _Gear_ icon (i.e., settings).
-   3. Click on the _Kubernetes_ menu item.
-   4. Check the _Enable Kubernetes_ checkbox.
-   5. Click the _Apply & Restart_ button.
-4. Register for a _Docker Hub_ account and activate your account, [link](https://hub.docker.com/).
-5. Login to _Docker_, [link](https://docs.docker.com/desktop/linux/#credentials-management).
-6. Install _docker-credential-pass_, [link](https://github.com/docker/docker-credential-helpers/releases).
-   1. Download the appropriate tarball for your machine and extract it.
-   2. `sudo cp /path/to/docker-credential-pass /bin/docker-credential-desktop`
-7. Install _kubectl_, [link](https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/).
-   1. Ensure that _kubectl_ is pointing to the Docker Desktop context:
-      1. `kubectl config get-contexts`
-      2. `kubectl config use-context docker-desktop`
+After installing _Docker_ and enabling _Kubernetes_, register for a _Docker Hub_ account, [link](https://hub.docker.com/).
+
+## Fedora Linux
+
+1. Install [_Docker Engine_](https://docs.docker.com/engine/install/fedora/).
+2. Carry out the post install steps, [link](https://docs.docker.com/engine/install/linux-postinstall/).
+3. Install [_kubectl_](https://docs.docker.com/desktop/kubernetes/).
+
+Alternatively, simply install [_Docker Desktop_](https://docs.docker.com/desktop/linux/install/fedora/) and enable [_Kubernetes_](https://docs.docker.com/desktop/kubernetes/).
+
+## MacOS
+
+1. Install [_Docker Desktop_](https://docs.docker.com/desktop/mac/install/).
+2. Enable _Kubernetes_ via _Docker Desktop_, [link](https://docs.docker.com/desktop/kubernetes/).
+
+# Installing Java 11
+
+Installing _Java 11_ can vary depending on your operating system and chosen methodology. The recommended version to install is _OpenJDK 11_.
+
+## Fedora Linux
+
+Installing via _DNF_ is the recommended method for Fedora Linux. Instructions for that can be found [here](https://docs.fedoraproject.org/en-US/quick-docs/installing-java/).
+
+## Mac OS
+
+Installing via [_Homebrew_](https://brew.sh/) is the recommended method for Mac, though it can be used for other operating systems as well. To install _OpenJDK 11_, go [here](https://formulae.brew.sh/formula/openjdk@11#default).
+
+## SDKMan
+
+[_SDKMan_](https://sdkman.io/) is a cross-platform tool for managing SDK versions. Instructions for using it are [here](https://sdkman.io/usage). As with the other methods, _OpenJDK 11_ is the recommended Java version to install. For instances where that is not an option, other quality _JDK 11_ implementations (e.g., _Coretto Java 11_, _Liberica Java 11_, or _Zulu Java 11_) will suffice.
+
+# Installing SBT
+
+Install the latest version of _SBT_ in order to compile the code base and run unit tests.
+
+After _SBT_ is installed, it needs to be configured. The instructions for that are in _CONTRIBUTING.md_.
+
+## Fedora Linux
+
+On Linux, you can follow the instructions provided by _SBT_, [link](https://www.scala-sbt.org/1.x/docs/Installing-sbt-on-Linux.html).
+
+## Mac OS
+
+On Mac OS, _SBT_ provides instructions [here](https://www.scala-sbt.org/1.x/docs/Installing-sbt-on-Mac.html). It can be installed via [_Homebrew_](https://formulae.brew.sh/formula/sbt#default) as well. It is also recommended that _SBTEnv_ be installed as well, [link](https://formulae.brew.sh/formula/sbtenv#default). It can help configure the _SBT_ environment.
