@@ -70,6 +70,9 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey, A <: HealthChe
     }
   }
 
+  def hasProposal(peer: PeerId): F[Boolean] =
+    proposals.get.map(_.contains(peer))
+
   def isFinished: F[Boolean] = allProposalsReceived.flatMap { received =>
     sentProposal.get.map(_ && received)
   }

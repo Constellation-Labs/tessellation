@@ -5,6 +5,7 @@ import cats.effect._
 import cats.effect.std.Random
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
+import cats.syntax.contravariantSemigroupal._
 import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
@@ -50,7 +51,8 @@ class PingHealthCheckConsensus[F[_]: Async: GenUUID: Random](
     PingHealthCheckStatus,
     PingConsensusHealthStatus,
     PingHealthCheckConsensusDecision
-  ]]
+  ]],
+  waitingProposals: Ref[F, Set[PingConsensusHealthStatus]]
 ) extends HealthCheckConsensus[
       F,
       PingHealthCheckKey,
@@ -62,7 +64,8 @@ class PingHealthCheckConsensus[F[_]: Async: GenUUID: Random](
       selfId,
       driver,
       gossip,
-      config
+      config,
+      waitingProposals
     ) {
 
   def allRounds: Ref[F, ConsensusRounds[
@@ -228,24 +231,29 @@ object PingHealthCheckConsensus {
     config: HealthCheckConfig,
     gossip: Gossip[F],
     nodeClient: NodeClient[F]
-  ): F[PingHealthCheckConsensus[F]] =
-    Ref
-      .of[F, ConsensusRounds[
-        F,
-        PingHealthCheckKey,
-        PingHealthCheckStatus,
-        PingConsensusHealthStatus,
-        PingHealthCheckConsensusDecision
-      ]](
-        ConsensusRounds[
+  ): F[PingHealthCheckConsensus[F]] = {
+    def mkRounds =
+      Ref
+        .of[F, ConsensusRounds[
           F,
           PingHealthCheckKey,
           PingHealthCheckStatus,
           PingConsensusHealthStatus,
           PingHealthCheckConsensusDecision
-        ](List.empty, Map.empty)
-      )
-      .map {
-        new PingHealthCheckConsensus(clusterStorage, joining, selfId, driver, config, gossip, nodeClient, _)
-      }
+        ]](
+          ConsensusRounds[
+            F,
+            PingHealthCheckKey,
+            PingHealthCheckStatus,
+            PingConsensusHealthStatus,
+            PingHealthCheckConsensusDecision
+          ](List.empty, Map.empty)
+        )
+
+    def mkWaitingProposals = Ref.of[F, Set[PingConsensusHealthStatus]](Set.empty)
+
+    (mkRounds, mkWaitingProposals).mapN {
+      new PingHealthCheckConsensus(clusterStorage, joining, selfId, driver, config, gossip, nodeClient, _, _)
+    }
+  }
 }
