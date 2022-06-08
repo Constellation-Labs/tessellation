@@ -13,7 +13,7 @@ object `X-Id-Middleware` {
   def responseMiddleware[F[_]: Async](selfId: PeerId)(http: HttpRoutes[F]): HttpRoutes[F] =
     Kleisli { req: Request[F] =>
       http(req).map { res =>
-        def headers = req.headers.put(`X-Id`(selfId))
+        def headers = res.headers.put(`X-Id`(selfId))
 
         res.withHeaders(headers)
       }
