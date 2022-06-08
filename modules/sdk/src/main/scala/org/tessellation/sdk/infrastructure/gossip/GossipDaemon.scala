@@ -24,6 +24,7 @@ import org.tessellation.sdk.infrastructure.gossip.p2p.GossipClient
 import org.tessellation.sdk.infrastructure.healthcheck.ping.PingHealthCheckConsensus
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
+import org.tessellation.security.signature.Signed
 
 import fs2.Stream
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -95,7 +96,7 @@ object GossipDaemon {
     private def sortRumors(batch: RumorBatch): RumorBatch =
       batch.filter { case (_, s) => s.value.isInstanceOf[CommonRumorBinary] } ++
         batch.filter { case (_, s) => s.value.isInstanceOf[PeerRumorBinary] }
-          .sortBy(_._2.asInstanceOf[PeerRumorBinary].ordinal)
+          .sortBy(_._2.asInstanceOf[Signed[PeerRumorBinary]].ordinal)
 
     private def handleRumor(har: HashAndRumor): F[Unit] = har match {
       case (hash, signedRumor) =>
