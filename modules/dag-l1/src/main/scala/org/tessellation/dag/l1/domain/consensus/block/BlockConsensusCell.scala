@@ -8,7 +8,6 @@ import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
-import cats.syntax.semigroup._
 import cats.syntax.traverse._
 
 import scala.concurrent.duration.FiniteDuration
@@ -340,15 +339,27 @@ object BlockConsensusCell {
               if gotAllBlockProposals(roundData) =>
             for {
               _ <- Applicative[F].unit
-              finalBlock = roundData.peerBlocks.values.fold(ownBlock)(_ |+| _)
-              result <- finalBlock.toHashedWithSignatureCheck.flatMap {
-                case Left(_) =>
-                  cancelRound(roundData.ownProposal, ctx)
-                    .map(_ => CellError("Round cancelled after final block turned out to be invalid!").asLeft[Ω])
+              maybeFinalBlock = roundData.peerBlocks.values.foldLeft {
+                ownBlock.asRight[MergingProofsForDistinctValues[DAGBlock]]
+              } { case (agg, sb) => agg.flatMap(_.addProofs(sb)) }
+              result <- maybeFinalBlock match {
+                case Left(error) =>
+                  cancelRound(roundData.ownProposal, ctx).map(
+                    _ =>
+                      CellError(
+                        s"Round cancelled after merging blocks to a final block failed! Original message: ${error.getMessage}"
+                      ).asLeft[Ω]
+                  )
+                case Right(signedBlock) =>
+                  signedBlock.toHashedWithSignatureCheck.flatMap {
+                    case Left(_) =>
+                      cancelRound(roundData.ownProposal, ctx)
+                        .map(_ => CellError("Round cancelled after final block turned out to be invalid!").asLeft[Ω])
 
-                case Right(hashedBlock) =>
-                  cleanUpRoundData(roundData.ownProposal, ctx)
-                    .map(_ => FinalBlock(hashedBlock).asRight[CellError].widen[Ω])
+                    case Right(hashedBlock) =>
+                      cleanUpRoundData(roundData.ownProposal, ctx)
+                        .map(_ => FinalBlock(hashedBlock).asRight[CellError].widen[Ω])
+                  }
               }
             } yield result
           case _ =>
