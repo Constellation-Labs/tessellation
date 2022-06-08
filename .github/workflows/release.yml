@@ -11,12 +11,12 @@ jobs:
     name: Create Release
     runs-on: ubuntu-18.04
     steps:
-      - uses: actions/checkout@v2.4.0
+      - uses: actions/checkout@v3
 
       - name: Check if project version is release version
         run:  tr -d '\n' < ./version.sbt  | grep -E "^ThisBuild / version := \"[0-9]{1,}\.[0-9]{1,}\.[0-9]{1,}\"\s*$"
 
-      - name: "Build Changelog"
+      - name: Build Changelog
         id: build_changelog
         uses: mikepenz/release-changelog-builder-action@v2.4.2
         with:
@@ -30,22 +30,23 @@ jobs:
           tagRegex: "v(.*)"
           tagRegexGroup: 1
 
-      - name: "Cache for sbt & coursier ♨️"
-        uses: coursier/cache-action@v4.1
-
-      - name: "Install Nix ❄️"
-        uses: cachix/install-nix-action@v16
+      - name: Setup Java and scala
+        uses: olafurpg/setup-scala@v13
         with:
-          nix_path: nixpkgs=channel:nixos-unstable
+          java-version: openjdk@1.11.0
 
-      - name: "Install Cachix ❄️"
-        uses: cachix/cachix-action@v10
-        with:
-          name: tessellation
-          authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+      - name: Cache for sbt & coursier ♨️
+        uses: coursier/cache-action@v6
+        id: coursier-cache
 
-      - name: "Test and assembly 🚀"
-        run: nix-shell --argstr jdk "jdk8" --run "sbt 'scalafixAll --check --rules OrganizeImports;scalafmtCheckAll;test;keytool/assembly;wallet/assembly;core/assembly;dagL1/assembly'"
+      - name: Fetch Dependencies
+        if: steps.coursier-cache.outputs.cache-hit-coursier != 'true'
+        run: sbt +update
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Test and assembly 🚀
+        run: sbt 'scalafixAll --check --rules OrganizeImports;scalafmtCheckAll;test;keytool/assembly;wallet/assembly;core/assembly;dagL1/assembly'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
