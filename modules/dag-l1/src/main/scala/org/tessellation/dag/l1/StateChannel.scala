@@ -22,17 +22,18 @@ import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput._
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusOutput.{CleanedConsensuses, FinalBlock}
 import org.tessellation.dag.l1.domain.consensus.block.Validator.{canStartOwnConsensus, isPeerInputValid}
 import org.tessellation.dag.l1.domain.consensus.block.{BlockConsensusCell, BlockConsensusContext, BlockConsensusInput}
-import org.tessellation.dag.l1.domain.snapshot.programs.SnapshotProcessor.UnexpectedFailure
+import org.tessellation.dag.l1.domain.snapshot.programs.SnapshotProcessor.{SnapshotProcessingResult, UnexpectedFailure}
 import org.tessellation.dag.l1.http.p2p.P2PClient
 import org.tessellation.dag.l1.modules._
+import org.tessellation.dag.snapshot.{GlobalSnapshot, GlobalSnapshotReference}
 import org.tessellation.ext.fs2.StreamOps
 import org.tessellation.kernel.Cell.NullTerminal
 import org.tessellation.kernel.{CellError, Ω}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.height.Height
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hashed, SecurityProvider}
 
 import fs2.{Pipe, Stream}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -198,18 +199,37 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
   private val globalSnapshotProcessing: Stream[F, Unit] = Stream
     .awakeEvery(10.seconds)
     .evalMap(_ => services.l0.pullGlobalSnapshots)
-    .flatMap(snapshots => Stream.fromIterator(snapshots.iterator, 1))
-    .evalTap(
-      snapshot => logger.info(s"Pulled following global snapshot: ${snapshot.ordinal.show} --- ${snapshot.hash.show}")
-    )
-    .evalMapLocked(NonEmptyList.of(blockAcceptanceS, blockCreationS, blockStoringS)) {
-      programs.snapshotProcessor
-        .process(_)
-        .handleErrorWith { e =>
-          logger.warn(e)(s"Failure processing new global snapshot!").map(_ => UnexpectedFailure)
-        }
+    .evalTap {
+      _.traverse { s =>
+        logger.info(s"Pulled following global snapshot: ${GlobalSnapshotReference.fromHashedGlobalSnapshot(s)}")
+      }
     }
-    .evalMap(result => logger.info(s"Snapshot processing result: $result"))
+    .evalMapLocked(NonEmptyList.of(blockAcceptanceS, blockCreationS, blockStoringS)) { snapshots =>
+      (snapshots, List.empty[SnapshotProcessingResult]).tailRecM {
+        case (snapshot :: nextSnapshots, aggResults) =>
+          programs.snapshotProcessor
+            .process(snapshot)
+            .map(result => (nextSnapshots, aggResults :+ result).asLeft[List[SnapshotProcessingResult]])
+            .handleErrorWith { e =>
+              (aggResults :+ UnexpectedFailure(e, snapshot))
+                .asRight[(List[Hashed[GlobalSnapshot]], List[SnapshotProcessingResult])]
+                .pure[F]
+            }
+
+        case (Nil, aggResults) =>
+          aggResults.asRight[(List[Hashed[GlobalSnapshot]], List[SnapshotProcessingResult])].pure[F]
+      }
+    }
+    .evalMap {
+      _.traverse {
+        case UnexpectedFailure(e, snapshot) =>
+          logger.error(e)(
+            s"Snapshot processing failed for: ${GlobalSnapshotReference.fromHashedGlobalSnapshot(snapshot).show} full: ${snapshot.show}"
+          )
+        case result =>
+          logger.info(s"Snapshot processing result: $result")
+      }.void
+    }
 
   private val blockConsensus: Stream[F, Unit] =
     blockConsensusInputs
