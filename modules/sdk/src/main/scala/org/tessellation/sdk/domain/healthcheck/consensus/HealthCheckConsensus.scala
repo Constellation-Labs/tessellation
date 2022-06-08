@@ -37,7 +37,8 @@ abstract class HealthCheckConsensus[
   selfId: PeerId,
   driver: HealthCheckConsensusDriver[K, A, B, C],
   gossip: Gossip[F],
-  config: HealthCheckConfig
+  config: HealthCheckConfig,
+  waitingProposals: Ref[F, Set[B]]
 ) extends HealthCheck[F] {
   def logger = Slf4jLogger.getLogger[F]
 
@@ -116,6 +117,10 @@ abstract class HealthCheckConsensus[
 
             ConsensusRounds(updatedHistorical, updatedInProgress)
         }
+      }.flatTap { _ =>
+        waitingProposals.modify { proposals =>
+          (Set.empty[B], proposals.toList.traverse(handleProposal(_)))
+        }.flatten
       }
   }
 
@@ -204,10 +209,16 @@ abstract class HealthCheckConsensus[
 
              def participate = participateInRound(proposal.key, proposal.roundId)
 
-             inProgressRound
-               .map(_.processProposal(proposal))
+             historicalRound
+               .map(handleProposalForHistoricalRound(proposal))
                .orElse {
-                 historicalRound.map(handleProposalForHistoricalRound(proposal))
+                 inProgressRound.map { r =>
+                   r.hasProposal(proposal.owner)
+                     .ifM(
+                       waitingProposals.update(_ + proposal),
+                       r.processProposal(proposal)
+                     )
+                 }
                }
                .getOrElse {
                  if (depth > 0)
