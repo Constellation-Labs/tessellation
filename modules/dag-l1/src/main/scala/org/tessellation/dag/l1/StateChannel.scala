@@ -155,8 +155,8 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
       }
     }
 
-  private val sendBlockToL0: Pipe[F, FinalBlock, Unit] =
-    _.evalMap { fb =>
+  private val sendBlockToL0: Pipe[F, FinalBlock, FinalBlock] =
+    _.evalTap { fb =>
       for {
         tips <- storages.block
           .getTips(appConfig.consensus.tipsCount)
@@ -215,8 +215,9 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
     blockConsensusInputs
       .through(runConsensus)
       .through(gossipBlock)
+      .through(sendBlockToL0)
       .merge(peerBlocks)
-      .through(fb => storeBlock(fb).merge(sendBlockToL0(fb)))
+      .through(storeBlock)
 
   val runtime: Stream[F, Unit] =
     blockConsensus
