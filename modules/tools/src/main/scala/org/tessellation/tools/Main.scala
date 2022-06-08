@@ -163,7 +163,7 @@ object Main
 
   def checkLastReference[F[_]: Async: Console](client: Client[F], ip: String, port: Int)(address: String): F[Unit] = {
     val target = Uri(scheme = Scheme.http.some, authority = Authority(host = RegName(ip), port = port.some).some)
-      .addPath(s"transaction/last-ref/${address}")
+      .addPath(s"transaction/last-reference/${address}")
     val req = Request[F](method = Method.GET, uri = target)
 
     client.expect[TransactionReference](req).flatMap { reference =>
