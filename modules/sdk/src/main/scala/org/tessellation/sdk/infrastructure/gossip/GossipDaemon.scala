@@ -60,6 +60,9 @@ object GossipDaemon {
         .map(sortRumors)
         .flatMap(Stream.iterable)
         .evalMap(handleRumor)
+        .handleErrorWith { err =>
+          Stream.eval(logger.error(err)(s"Unexpected error in gossip")) >> Stream.raiseError(err)
+        }
         .compile
         .drain
 
