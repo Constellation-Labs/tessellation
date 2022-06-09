@@ -80,8 +80,6 @@ object Validator {
   ): F[Boolean] =
     for {
       hasValidSignature <- input.hasValidSignature
-      isSignedBy = input.isSignedBy(
-        Set(PeerId._Id.get(input.value.senderId))
-      )
+      isSignedBy = input.isSignedExclusivelyBy(PeerId._Id.get(input.value.senderId))
     } yield hasValidSignature && isSignedBy
 }
