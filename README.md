@@ -23,10 +23,12 @@ This will start both L0 and L1 clusters on kubernetes using current kube-context
 Initial validators for L0 and L1 have their public ports mapped to local ports 9000 and 9001 respectively.
 
 ```
+curl localhost:9000/cluster/info
 curl localhost:9100/cluster/info
 ```
 
-This will return a list of connected validators on L1. By default, L0 cluster starts with a single initial validator only and L1 with 3 validators: 1 initial and 2 regular.
+This will return a list of validators on L0 and L1. By default, L0 cluster starts with 2 validators (1 initial and 1 
+regular) and L1 with 3 validators (1 initial and 2 regular).
 
 ### Scaling a cluster
 
@@ -39,10 +41,9 @@ This scales the L0 cluster to 3 validators total: 1 initial and 2 regular.
 
 ### Profiles:
 
-* `logPods` prefix log entries with a pod name
 * `onlyL0` starts only L0 cluster
 
 Activate profiles using `-p` parameter.
 ```
-skaffold dev -p logPods,onlyL0
+skaffold dev -p onlyL0
 ```

@@ -14,4 +14,4 @@ configMapGenerator:
       - L0_INITIAL_VALIDATOR_ID=00b8a56a20fc2e2a0196b8b8f4593ea4f736555506950103eb6fbbe435c0eeb71b32abfe21ae63bb3de8b9afdfa604bfd5837ef61e261611b8a0e5efd92ef1ea
 replicas:
   - name: validator-deployment
-    count: 0
+    count: 1
