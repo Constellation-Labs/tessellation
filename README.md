@@ -20,7 +20,7 @@ skaffold dev --trigger=manual
 
 This will start both L0 and L1 clusters on kubernetes using current kube-context.
 
-Initial validators for L0 and L1 have their public ports mapped to local ports 9000 and 9001 respectively.
+Initial validators for L0 and L1 have their public ports mapped to local ports 9000 and 9100 respectively.
 
 ```
 curl localhost:9000/cluster/info
