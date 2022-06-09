@@ -7,8 +7,8 @@ import cats.syntax.functor._
 
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.PeerBlockConsensusInput
 import org.tessellation.dag.l1.domain.transaction.{TransactionService, TransactionStorage}
-import org.tessellation.ext.http4s.AddressVar
-import org.tessellation.schema.transaction.Transaction
+import org.tessellation.ext.http4s.{AddressVar, HashVar}
+import org.tessellation.schema.transaction.{Transaction, TransactionStatus, TransactionView}
 import org.tessellation.security.signature.Signed
 
 import io.circe.syntax.EncoderOps
@@ -32,6 +32,12 @@ final case class Routes[F[_]: Async](
           case Right(hash) => Ok(hash.asJson)
         }
       } yield response
+
+    case GET -> Root / "transaction" / HashVar(hash) =>
+      transactionStorage.find(hash).flatMap {
+        case Some(tx) => Ok(TransactionView(tx.signed.value, tx.hash, TransactionStatus.Waiting).asJson)
+        case None     => NotFound()
+      }
 
     case GET -> Root / "transaction" / "last-reference" / AddressVar(address) =>
       transactionStorage
