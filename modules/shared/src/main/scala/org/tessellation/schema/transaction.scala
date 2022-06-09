@@ -4,6 +4,8 @@ import cats.effect.Async
 import cats.syntax.functor._
 import cats.syntax.semigroup._
 
+import scala.util.Try
+
 import org.tessellation.ext.cats.data.OrderBasedOrdering
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
@@ -13,12 +15,14 @@ import org.tessellation.security.Encodable
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
-import derevo.cats.{order, show}
+import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
+import enumeratum._
 import eu.timepit.refined.auto.{autoInfer, autoRefineV, autoUnwrap}
 import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
+import io.circe.{Decoder, Encoder}
 import io.estatico.newtype.macros.newtype
 import io.estatico.newtype.ops._
 import monocle.Lens
@@ -137,4 +141,27 @@ object transaction {
   object RewardTransaction {
     implicit object OrderingInstance extends OrderBasedOrdering[RewardTransaction]
   }
+
+  @derive(decoder, encoder, show)
+  case class TransactionView(
+    transaction: Transaction,
+    hash: Hash,
+    status: TransactionStatus
+  )
+
+  @derive(eqv, show)
+  sealed trait TransactionStatus extends EnumEntry
+
+  object TransactionStatus extends Enum[TransactionStatus] with TransactionStatusCodecs {
+    val values = findValues
+
+    case object Waiting extends TransactionStatus
+  }
+
+  trait TransactionStatusCodecs {
+    implicit val encode: Encoder[TransactionStatus] = Encoder.encodeString.contramap[TransactionStatus](_.entryName)
+    implicit val decode: Decoder[TransactionStatus] =
+      Decoder.decodeString.emapTry(s => Try(TransactionStatus.withName(s)))
+  }
+
 }

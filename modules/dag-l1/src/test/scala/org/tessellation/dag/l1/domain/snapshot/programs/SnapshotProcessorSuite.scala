@@ -33,7 +33,6 @@ import org.tessellation.schema.transaction.{Transaction, TransactionOrdinal, Tra
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.key.ops.PublicKeyOps
-import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed.forAsyncKryo
 import org.tessellation.security.{Hashed, SecurityProvider}
 
@@ -66,7 +65,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
             blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]().asResource
             lastSnapR <- Ref.of[IO, Option[Hashed[GlobalSnapshot]]](None).asResource
             lastAccTxR <- MapRef.ofConcurrentHashMap[IO, Address, TransactionReference]().asResource
-            waitingTxsR <- MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Signed[Transaction]]]().asResource
+            waitingTxsR <- MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[Transaction]]]().asResource
             snapshotProcessor = {
               val addressStorage = new AddressStorage[IO] {
                 def getBalance(address: Address): IO[balance.Balance] =

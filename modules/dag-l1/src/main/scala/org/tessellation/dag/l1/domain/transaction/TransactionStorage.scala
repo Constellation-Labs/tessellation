@@ -25,6 +25,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction.{Transaction, TransactionOrdinal, TransactionReference}
 import org.tessellation.security.Hashed
+import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
 import io.chrisdavenport.mapref.MapRef
@@ -32,7 +33,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 class TransactionStorage[F[_]: Async: KryoSerializer](
   lastAccepted: MapRef[F, Address, Option[TransactionReference]],
-  waitingTransactions: MapRef[F, Address, Option[NonEmptySet[Signed[Transaction]]]]
+  waitingTransactions: MapRef[F, Address, Option[NonEmptySet[Hashed[Transaction]]]]
 ) {
 
   private val logger = Slf4jLogger.getLogger[F]
@@ -68,11 +69,11 @@ class TransactionStorage[F[_]: Async: KryoSerializer](
       .flatMap(_.liftTo[F])
   }
 
-  def put(transaction: Signed[Transaction]): F[Unit] = put(Set(transaction))
+  def put(transaction: Hashed[Transaction]): F[Unit] = put(Set(transaction))
 
-  def put(transactions: Set[Signed[Transaction]]): F[Unit] =
+  def put(transactions: Set[Hashed[Transaction]]): F[Unit] =
     transactions
-      .groupBy(_.value.source)
+      .groupBy(_.signed.value.source)
       .toList
       .traverse {
         case (source, txs) =>
@@ -97,14 +98,14 @@ class TransactionStorage[F[_]: Async: KryoSerializer](
         waitingTransactions(address).get.flatMap {
           case Some(waiting) =>
             val lastTx = lastAccepted.getOrElse(address, TransactionReference.empty)
-            Consecutive.take[F](waiting.toNonEmptyList.toList, lastTx)
+            Consecutive.take[F](waiting.toNonEmptyList.toList.map(_.signed), lastTx)
           case None =>
             List.empty[Signed[Transaction]].pure[F]
         }
       }.map(_.flatten)
     } yield txs.size
 
-  def pull(): F[Option[NonEmptyList[Signed[Transaction]]]] =
+  def pull(): F[Option[NonEmptyList[Hashed[Transaction]]]] =
     for {
       lastAccepted <- lastAccepted.toMap
       addresses <- waitingTransactions.keys
@@ -115,7 +116,8 @@ class TransactionStorage[F[_]: Async: KryoSerializer](
           maybePulled <- maybeWaiting.traverse { waiting =>
             val lastTx = lastAccepted.getOrElse(address, TransactionReference.empty)
             Consecutive
-              .take[F](waiting.toList, lastTx)
+              .take[F](waiting.toList.map(_.signed), lastTx)
+              .flatMap(_.traverse(_.toHashed))
               .map { pulled =>
                 (SortedSet.from(waiting.toList.diff(pulled)).toNes, pulled)
               }
@@ -128,7 +130,7 @@ class TransactionStorage[F[_]: Async: KryoSerializer](
                     .ifM(
                       logger.debug(s"Pulled ${pulled.size} transaction(s) for consensus").as(pulled),
                       logger.debug("Concurrent update occurred while trying to pull transactions") >>
-                        List.empty[Signed[Transaction]].pure[F]
+                        List.empty[Hashed[Transaction]].pure[F]
                     )
               }
           }
@@ -142,6 +144,11 @@ class TransactionStorage[F[_]: Async: KryoSerializer](
       }.map(_.flatten)
     } yield NonEmptyList.fromList(allPulled)
 
+  def find(hash: Hash): F[Option[Hashed[Transaction]]] =
+    waitingTransactions.toMap.map { _.view.values.toList.flatMap(_.toList) }.map {
+      _.find(_.hash === hash)
+    }
+
 }
 
 object TransactionStorage {
@@ -149,7 +156,7 @@ object TransactionStorage {
   def make[F[_]: Async: KryoSerializer]: F[TransactionStorage[F]] =
     for {
       lastAccepted <- MapRef.ofConcurrentHashMap[F, Address, TransactionReference]()
-      waitingTransactions <- MapRef.ofConcurrentHashMap[F, Address, NonEmptySet[Signed[Transaction]]]()
+      waitingTransactions <- MapRef.ofConcurrentHashMap[F, Address, NonEmptySet[Hashed[Transaction]]]()
       transactionStorage = new TransactionStorage[F](lastAccepted, waitingTransactions)
     } yield transactionStorage
 

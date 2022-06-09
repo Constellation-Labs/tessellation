@@ -31,9 +31,9 @@ import org.tessellation.kernel._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.schema.transaction.Transaction
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed._
+import org.tessellation.security.{Hashed, SecurityProvider}
 
 import eu.timepit.refined.auto.{autoRefineV, autoUnwrap}
 import higherkindness.droste.{AlgebraM, CoalgebraM, scheme}
@@ -112,8 +112,16 @@ object BlockConsensusCell {
   private def deriveConsensusPeerIds(proposal: Proposal, selfId: PeerId): Set[PeerId] =
     proposal.facilitators + proposal.senderId + proposal.owner - selfId
 
-  private def returnTransactions[F[_]](ownProposal: Proposal, transactionStorage: TransactionStorage[F]): F[Unit] =
-    transactionStorage.put(ownProposal.transactions)
+  private def returnTransactions[F[_]: Async: KryoSerializer](
+    ownProposal: Proposal,
+    transactionStorage: TransactionStorage[F]
+  ): F[Unit] =
+    ownProposal.transactions.toList
+      .traverse(_.toHashed[F])
+      .map(_.toSet)
+      .flatMap {
+        transactionStorage.put
+      }
 
   private def cleanUpRoundData[F[_]: Async](
     ownProposal: Proposal,
@@ -132,7 +140,7 @@ object BlockConsensusCell {
       )
   }
 
-  private def cancelRound[F[_]: Async](ownProposal: Proposal, ctx: BlockConsensusContext[F]): F[Unit] =
+  private def cancelRound[F[_]: Async: KryoSerializer](ownProposal: Proposal, ctx: BlockConsensusContext[F]): F[Unit] =
     for {
       _ <- returnTransactions(ownProposal, ctx.transactionStorage)
       _ <- cleanUpRoundData(ownProposal, ctx)
@@ -465,7 +473,7 @@ object BlockConsensusCell {
         }
       } yield result
 
-    def cancelTimedOutRounds[F[_]: Async](
+    def cancelTimedOutRounds[F[_]: Async: KryoSerializer](
       toCancel: Set[Proposal],
       ctx: BlockConsensusContext[F]
     ): F[Either[CellError, Ω]] =
@@ -485,7 +493,7 @@ object BlockConsensusCell {
           case _                                                           => None
         })
 
-    private def pullTransactions[F[_]: Async](transactionStorage: TransactionStorage[F]): F[Set[Signed[Transaction]]] =
+    private def pullTransactions[F[_]: Async](transactionStorage: TransactionStorage[F]): F[Set[Hashed[Transaction]]] =
       transactionStorage
         .pull()
         .map(_.map(_.toList.toSet).getOrElse(Set.empty))
@@ -505,7 +513,7 @@ object BlockConsensusCell {
                 senderId = ctx.selfId,
                 owner = ctx.selfId,
                 peers.map(_.id),
-                transactions,
+                transactions.map(_.signed),
                 tips
               )
               roundData = RoundData(roundId, startedAt, peers, ctx.selfId, proposal, tips = tips)
@@ -568,7 +576,7 @@ object BlockConsensusCell {
                 senderId = ctx.selfId,
                 owner = proposal.owner,
                 peers.map(_.id),
-                transactions,
+                transactions.map(_.signed),
                 proposal.tips
               )
               roundData = RoundData(
