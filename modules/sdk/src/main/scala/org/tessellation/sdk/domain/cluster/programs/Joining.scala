@@ -9,6 +9,7 @@ import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
+import cats.syntax.show._
 import cats.syntax.traverse._
 
 import org.tessellation.effects.GenUUID
@@ -29,6 +30,7 @@ import org.tessellation.security.signature.Signed
 
 import com.comcast.ip4s.{Host, IpLiteralSyntax, Port}
 import fs2.{Pipe, Stream}
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object Joining {
 
@@ -78,6 +80,9 @@ object Joining {
     stateAfterJoining: NodeState,
     peerDiscovery: PeerDiscovery[F]
   ): F[Joining[F]] = {
+
+    val logger = Slf4jLogger.getLogger[F]
+
     val joining = new Joining(
       environment,
       nodeStorage,
@@ -98,6 +103,9 @@ object Joining {
           joining.twoWayHandshake(peer, none) >>
             peerDiscovery
               .discoverFrom(peer)
+              .handleErrorWith { err =>
+                logger.error(err)(s"Peer discovery from peer ${peer.show} failed").as(Set.empty)
+              }
               .flatMap { _.toList.traverse(joiningQueue.offer(_).void) }
               .void
         }
