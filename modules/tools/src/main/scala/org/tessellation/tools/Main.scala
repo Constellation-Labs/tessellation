@@ -1,49 +1,39 @@
 package org.tessellation.tools
 
-import cats.effect.{Async, ExitCode, IO, LiftIO, Temporal}
-
-import java.nio.file.{Path => JPath}
-import java.security.KeyPair
 import cats.Applicative
 import cats.effect.std.{Console, Random}
-import eu.timepit.refined.string.Url
-import fs2.{Pipe, Pure, Stream, text}
-import org.tessellation.keytool.KeyStoreUtils
-import org.tessellation.schema.address.Address
-import org.typelevel.log4cats.slf4j.Slf4jLogger
-
-import java.net.URL
+import cats.effect._
 import cats.syntax.all._
-import fs2.io.file.Path
-
-import scala.concurrent.duration._
-import org.tessellation.BuildInfo
-import org.tessellation.ext.crypto._
-import org.tessellation.infrastructure.genesis.types.GenesisCSVAccount
-import org.tessellation.keytool.KeyPairGenerator
-import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.transaction._
-import org.tessellation.security.key.ops._
-import org.tessellation.security.signature.Signed
-import org.tessellation.security.{SecureRandom, SecurityProvider}
-import org.tessellation.shared.sharedKryoRegistrar
-import org.tessellation.tools.cli.method._
 import com.monovore.decline._
 import com.monovore.decline.effect._
-import eu.timepit.refined.types.numeric._
-import eu.timepit.refined.cats._
 import eu.timepit.refined.auto._
+import eu.timepit.refined.cats._
+import eu.timepit.refined.types.numeric._
 import fs2.data.csv._
 import fs2.data.csv.generic.semiauto.deriveRowEncoder
-import fs2.io.file.Files
-import org.http4s.Uri.{Authority, RegName, Scheme}
+import fs2.io.file.{Files, Path}
+import fs2.{Pipe, Pure, Stream, text}
 import org.http4s._
 import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder}
 import org.http4s.client.Client
 import org.http4s.ember.client.EmberClientBuilder
+import org.tessellation.BuildInfo
+import org.tessellation.infrastructure.genesis.types.GenesisCSVAccount
+import org.tessellation.keytool.{KeyPairGenerator, KeyStoreUtils}
+import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.address.Address
+import org.tessellation.schema.transaction._
+import org.tessellation.security.SecurityProvider
+import org.tessellation.security.key.ops._
+import org.tessellation.security.signature.Signed
+import org.tessellation.shared.sharedKryoRegistrar
+import org.tessellation.tools.TransactionGenerator._
+import org.tessellation.tools.cli.method._
 
+import java.nio.file.{Path => JPath}
+import java.security.KeyPair
 import scala.concurrent.duration._
-import TransactionGenerator._
+import scala.math.Integral.Implicits._
 
 object Main
     extends CommandIOApp(
@@ -124,20 +114,19 @@ object Main
     client: Client[F],
     basicOpts: BasicOpts,
     addressParams: List[AddressParams]
-  ): F[Unit] = {
-    val chunksBufferSize = 2
-    infiniteTransactionStream(basicOpts.chunkSize, addressParams)
-      .prefetchN(chunksBufferSize)
-      .evalTap(postTransaction(client, basicOpts.baseUrl))
-      .zipWithIndex
-      .evalTap(printProgress[F](basicOpts.verbose))
-      .through(applyLimit(basicOpts.take))
-      .through(applyDelay(basicOpts.delay))
-      .handleErrorWith(e => Stream.eval(console.red(e.toString) >> e.raiseError[F, Unit]))
-      .attempts(exponentialBackoff(0.5.seconds, basicOpts.retryTimeout))
-      .compile
-      .drain
-  }
+  ): F[Unit] =
+    Clock[F].monotonic.flatMap { startTime =>
+      infiniteTransactionStream(basicOpts.chunkSize, addressParams)
+        .evalTap(postTransaction(client, basicOpts.baseUrl))
+        .zipWithIndex
+        .evalTap(printProgress[F](basicOpts.verbose, startTime))
+        .through(applyLimit(basicOpts.take))
+        .through(applyDelay(basicOpts.delay))
+        .handleErrorWith(e => Stream.eval(console.red(e.toString) >> e.raiseError[F, Unit]))
+        .attempts(exponentialBackoff(0.5.seconds, basicOpts.retryTimeout))
+        .compile
+        .drain
+    }
 
   def exponentialBackoff(
     init: FiniteDuration,
@@ -193,11 +182,18 @@ object Main
       .drain
   }
 
-  def printProgress[F[_]: Async: Console](verbose: Boolean)(tuple: (Signed[Transaction], Long)): F[Unit] =
+  def printProgress[F[_]: Async: Console](verbose: Boolean, startTime: FiniteDuration)(
+    tuple: (Signed[Transaction], Long)
+  ): F[Unit] =
     tuple match {
       case (tx, index) =>
         Applicative[F].whenA(verbose)(console.cyan(s"Transaction sent ordinal=${tx.ordinal} source=${tx.source}")) >>
-          Applicative[F].whenA((index + 1) % 100 === 0)(console.green(s"${index + 1} transactions sent"))
+          Applicative[F].whenA((index + 1) % 100 === 0) {
+            Clock[F].monotonic.flatMap { currTime =>
+              val (minutes, seconds) = (currTime - startTime).toSeconds /% 60
+              console.green(s"${index + 1} transactions sent in ${minutes}m ${seconds}s")
+            }
+          }
     }
 
   def postTransaction[F[_]: Async](client: Client[F], baseUrl: UrlString)(

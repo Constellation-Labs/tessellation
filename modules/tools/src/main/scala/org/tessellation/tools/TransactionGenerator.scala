@@ -4,7 +4,7 @@ import cats.effect.Async
 import cats.effect.std.Random
 import cats.syntax.all._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong}
-import fs2.{Chunk, Stream}
+import fs2.{Chunk, Pure, Stream}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.transaction.{
   Transaction,
@@ -37,6 +37,8 @@ object TransactionGenerator {
     def apply(keyPair: KeyPair): AddressParams = AddressParams(keyPair, TransactionReference.empty)
   }
 
+  private val chunkMinSize = 100
+
   def infiniteTransactionStream[F[_]: Async: Random: KryoSerializer: SecurityProvider](
     chunkSize: PosInt,
     addressParams: List[AddressParams]
@@ -66,9 +68,12 @@ object TransactionGenerator {
           } yield result
 
         txStream(initialTxRef).chunkN(chunkSize)
-    }.foldLeft[Stream[F, Chunk[Signed[Transaction]]]](Stream.constant(Chunk.empty)) { (acc, s) =>
-        acc.zipWith(s)((accChunk, currChunk) => accChunk |+| currChunk)
+    }.foldLeft[Stream[F, Stream[Pure, Signed[Transaction]]]](Stream.constant(Stream.empty)) { (acc, s) =>
+        acc.zipWith(s)((acc, currChunk) => acc.cons(currChunk))
       }
-      .flatMap(Stream.chunk)
+      .flatten
+      .chunkMin(chunkMinSize)
+      .unchunks
+      .prefetch
 
 }
