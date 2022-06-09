@@ -77,7 +77,14 @@ object Signed {
         Signed(signed.value, signed.proofs.add(sp))
       }
 
+    def isSignedBy(signer: Id): Boolean = isSignedBy(Set(signer))
+
     def isSignedBy(signers: Set[Id]): Boolean =
+      signers.forall(signed.proofs.map(_.id).contains(_))
+
+    def isSignedExclusivelyBy(signer: Id): Boolean = isSignedExclusivelyBy(Set(signer))
+
+    def isSignedExclusivelyBy(signers: Set[Id]): Boolean =
       signed.proofs.map(_.id).toSortedSet.unsorted === signers
 
     def hasValidSignature[F[_]: Async: SecurityProvider: KryoSerializer]: F[Boolean] =
