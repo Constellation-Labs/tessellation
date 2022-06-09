@@ -17,7 +17,7 @@ object Dependencies {
     .map("io.higherkindness" %% _ % "0.8.0" % Provided)
 
   lazy val tessellation = Seq("tessellation-kernel", "tessellation-shared")
-    .map("org.constellation" %% _ % "0.7.0" % Provided)
+    .map("org.constellation" %% _ % "0.8.0-SNAPSHOT" % Provided)
 
   lazy val refined = Seq("refined")
     .map("eu.timepit" %% _ % "0.9.27" % Provided)
