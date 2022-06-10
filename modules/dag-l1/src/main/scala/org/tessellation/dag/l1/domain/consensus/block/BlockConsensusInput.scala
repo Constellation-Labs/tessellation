@@ -1,5 +1,7 @@
 package org.tessellation.dag.l1.domain.consensus.block
 
+import cats.Show
+
 import org.tessellation.dag.domain.block.{DAGBlock, Tips}
 import org.tessellation.dag.l1.domain.consensus.round.RoundId
 import org.tessellation.kernel.Ω
@@ -34,4 +36,16 @@ object BlockConsensusInput {
       extends PeerBlockConsensusInput
   case class CancelledBlockCreationRound(roundId: RoundId, senderId: PeerId, owner: PeerId, reason: CancellationReason)
       extends PeerBlockConsensusInput
+
+  implicit val showBlockConsensusInput: Show[BlockConsensusInput] = {
+    case OwnRoundTrigger   => "OwnRoundTrigger"
+    case InspectionTrigger => "InspectionTrigger"
+    case Proposal(roundId, senderId, _, _, txs, _) =>
+      s"Proposal(roundId=${roundId.value.toString.take(8)}, senderId=${senderId.value.value.take(8)} txsCount=${txs.size})"
+    case BlockProposal(roundId, senderId, _, block) =>
+      s"BlockProposal(roundId=${roundId.value.toString.take(8)}, senderId=${senderId.value.value
+        .take(8)}, txsCount=${block.transactions.size})"
+    case CancelledBlockCreationRound(roundId, senderId, _, reason) =>
+      s"CancelledBlockCreationRound(roundId=${roundId.value.toString.take(8)}, senderId=${senderId.value.value.take(8)}, reason=$reason)"
+  }
 }
