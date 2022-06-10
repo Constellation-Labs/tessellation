@@ -102,7 +102,7 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
     ownerBlockConsensusInputs.merge(peerBlockConsensusInputs)
 
   private val runConsensus: Pipe[F, BlockConsensusInput, FinalBlock] =
-    _.evalTap(input => logger.debug(s"Received block consensus input to process: $input"))
+    _.evalTap(input => logger.debug(s"Received block consensus input to process: ${input.show}"))
       .evalMap(
         new BlockConsensusCell[F](_, blockConsensusContext)
           .run()
