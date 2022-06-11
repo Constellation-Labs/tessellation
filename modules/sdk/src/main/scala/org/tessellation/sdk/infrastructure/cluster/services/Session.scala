@@ -11,8 +11,6 @@ import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tessellation.sdk.domain.node.NodeStorage
 
-import com.comcast.ip4s.Host
-
 object Session {
 
   def make[F[+ _]: Async](
@@ -46,8 +44,5 @@ object Session {
 
       def verifyToken(peer: PeerId, headerToken: Option[SessionToken]): F[TokenVerificationResult] =
         verifyToken(headerToken, clusterStorage.getPeer(peer))
-
-      def verifyToken(host: Host, headerToken: Option[SessionToken]): F[TokenVerificationResult] =
-        verifyToken(headerToken, clusterStorage.getPeers(host))
     }
 }
