@@ -18,7 +18,6 @@ import org.tessellation.sdk.http.p2p.headers.{`X-Id`, `X-Session-Token`}
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signing
 
-import com.comcast.ip4s.Host
 import fs2.{Chunk, Stream}
 import org.http4s.Status.Unauthorized
 import org.http4s._
@@ -36,24 +35,22 @@ object PeerAuthMiddleware {
   private def getOwnTokenHeader[F[_]: Async](sessionStorage: SessionStorage[F]): F[Option[`X-Session-Token`]] =
     sessionStorage.getToken.map(_.map(t => `X-Session-Token`(t)))
 
-  private def getHost[F[_]](req: Request[F]): Option[Host] =
-    req.uri.authority.map(_.host.value).flatMap(Host.fromString)
+  private def getPeerId[F[_]](req: Request[F]): Option[PeerId] =
+    req.headers.get[`X-Id`].map(_.id)
 
-  private def getRemoteHost[F[_]](req: Request[F]): Option[Host] =
-    req.remoteAddr
-      .flatMap(_.asIpv4)
-      .map(_.toString)
-      .flatMap(Host.fromString)
+  private def getPeerId[F[_]](res: Response[F]): Option[PeerId] =
+    res.headers.get[`X-Id`].map(_.id)
 
   def responseSignerMiddleware[F[_]: Async: SecurityProvider](
     privateKey: PrivateKey,
-    sessionStorage: SessionStorage[F]
+    sessionStorage: SessionStorage[F],
+    selfId: PeerId
   )(http: HttpRoutes[F]): HttpRoutes[F] =
     Kleisli { req: Request[F] =>
       for {
         res <- http(req)
         headerToken <- getOwnTokenHeader(sessionStorage).attemptT.toOption
-        newHeaders = headerToken.fold(res.headers)(h => res.headers.put(h))
+        newHeaders = headerToken.fold(res.headers)(h => res.headers.put(h)).put(`X-Id`(selfId))
         resWithHeader = res.copy(headers = newHeaders)
         signedResponse <- new Http4sResponseSigner[F](getGenerator(privateKey), new TessellationHttpCryptoConfig {})
           .sign(resWithHeader)
@@ -72,8 +69,8 @@ object PeerAuthMiddleware {
           val token = response.headers
             .get[`X-Session-Token`]
             .map(_.token)
-          getHost(req).map { host =>
-            session.verifyToken(host, token).flatMap {
+          getPeerId(response).map { peerId =>
+            session.verifyToken(peerId, token).flatMap {
               case TokenValid => response.pure[F]
               case _          => unauthorized[F].pure[F]
             }
@@ -151,20 +148,16 @@ object PeerAuthMiddleware {
         .get[`X-Session-Token`]
         .map(_.token)
 
-      getRemoteHost(req).map { host =>
-        session.verifyToken(host, token).attemptT.toOption.flatMap {
+      getPeerId(req).map { peerId =>
+        session.verifyToken(peerId, token).attemptT.toOption.flatMap {
           case TokenValid => http(req)
           case _          => OptionT.pure[F](unauthorized[F])
         }
       }.getOrElse(OptionT.pure[F](unauthorized[F]))
     }
 
-  def requestVerifierMiddleware[F[_]: Async: SecurityProvider](
-    knownPeer: Host => F[Set[PeerId]]
-  )(http: HttpRoutes[F]): HttpRoutes[F] =
+  def requestVerifierMiddleware[F[_]: Async: SecurityProvider](http: HttpRoutes[F]): HttpRoutes[F] =
     Kleisli { req: Request[F] =>
-      val idFromHeaders = req.headers.get[`X-Id`].map(_.id)
-
       val verify: OptionT[F, Response[F]] = for {
 
         tuple <- Ref[F]
@@ -178,10 +171,7 @@ object PeerAuthMiddleware {
           .attemptT
           .toOption
 
-        id <- getRemoteHost(req).map { host =>
-          knownPeer(host).map(_.find(id => idFromHeaders.exists(_ == id))).attemptT.toOption.flatMap(_.toOptionT)
-        }.getOrElse(OptionT.none)
-
+        id <- getPeerId(req).toOptionT[F]
         publicKey <- id.value.toPublicKey[F].attemptT.toOption
 
         crypto = getVerifier(publicKey)
