@@ -2,6 +2,7 @@ package org.tessellation.infrastructure.snapshot
 
 import cats.data.NonEmptyList
 import cats.effect.Async
+import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.bifunctor._
 import cats.syntax.either._
@@ -21,17 +22,18 @@ import scala.util.control.NoStackTrace
 import org.tessellation.dag.block.processing._
 import org.tessellation.dag.domain.block.BlockReference
 import org.tessellation.dag.snapshot._
+import org.tessellation.domain.rewards.Rewards
 import org.tessellation.domain.snapshot._
-import org.tessellation.domain.snapshot.rewards.Rewards
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.balance.Amount
+import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.transaction.RewardTransaction
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
-import org.tessellation.sdk.infrastructure.consensus.trigger.ConsensusTrigger
+import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.hex.Hex
@@ -51,7 +53,8 @@ object GlobalSnapshotConsensusFunctions {
     globalSnapshotStorage: GlobalSnapshotStorage[F],
     heightInterval: NonNegLong,
     blockAcceptanceManager: BlockAcceptanceManager[F],
-    collateral: Amount
+    collateral: Amount,
+    rewards: Rewards[F]
   ): GlobalSnapshotConsensusFunctions[F] = new GlobalSnapshotConsensusFunctions[F] {
 
     private val logger = Slf4jLogger.getLoggerFromClass(GlobalSnapshotConsensusFunctions.getClass)
@@ -84,6 +87,10 @@ object GlobalSnapshotConsensusFunctions {
       for {
         lastGSHash <- lastGS.value.hashF
         currentOrdinal = lastGS.ordinal.next
+        epochProgress = trigger match {
+          case EventTrigger => lastGS.epochProgress
+          case TimeTrigger  => lastGS.epochProgress.next
+        }
         (scSnapshots, returnedSCEvents) = processStateChannelEvents(lastGS.info, scEvents)
         sCSnapshotHashes <- scSnapshots.toList.traverse { case (address, nel) => nel.head.hashF.map(address -> _) }
           .map(_.toMap)
@@ -113,7 +120,15 @@ object GlobalSnapshotConsensusFunctions {
         updatedLastTxRefs = lastGS.info.lastTxRefs ++ acceptanceResult.contextUpdate.lastTxRefs
         updatedBalances = lastGS.info.balances ++ acceptanceResult.contextUpdate.balances
 
-        rewards = Rewards.calculateRewards(lastGS.proofs.map(_.id))
+        (updatedBalancesWithRewards, rewardTxs) <- trigger match {
+          case EventTrigger => (updatedBalances, SortedSet.empty[RewardTransaction]).pure[F]
+          case TimeTrigger =>
+            rewards
+              .calculateRewards(epochProgress, lastGS.proofs.map(_.id))
+              .map { txs =>
+                (updateBalancesByTransactions(updatedBalances, txs), txs)
+              }
+        }
 
         returnedDAGEvents = getReturnedDAGEvents(acceptanceResult)
 
@@ -124,12 +139,13 @@ object GlobalSnapshotConsensusFunctions {
           lastGSHash,
           accepted,
           scSnapshots,
-          rewards,
+          SortedSet.from(rewardTxs),
+          epochProgress,
           NonEmptyList.of(PeerId(Hex("peer1"))), // TODO
           GlobalSnapshotInfo(
             updatedLastStateChannelSnapshotHashes,
             updatedLastTxRefs,
-            updatedBalances
+            updatedBalancesWithRewards
           ),
           GlobalSnapshotTips(
             deprecated = deprecated,
@@ -139,6 +155,16 @@ object GlobalSnapshotConsensusFunctions {
         returnedEvents = returnedSCEvents.union(returnedDAGEvents)
       } yield (globalSnapshot, returnedEvents)
     }
+
+    private def updateBalancesByTransactions(balances: SortedMap[Address, Balance], txs: SortedSet[RewardTransaction]) =
+      txs.foldLeft(balances) {
+        case (acc, tx) =>
+          acc.updatedWith(tx.destination) { existingBalance =>
+            existingBalance
+              .flatMap(_.plus(tx.amount).toOption)
+              .orElse(existingBalance)
+          }
+      }
 
     private def getTipsUsages(
       lastActive: Set[ActiveTip],

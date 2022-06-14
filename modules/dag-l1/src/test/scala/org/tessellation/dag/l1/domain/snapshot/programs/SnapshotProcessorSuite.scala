@@ -21,6 +21,7 @@ import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage.{LastTransactionReferenceState, Majority}
 import org.tessellation.dag.l1.{Main, TransactionGenerator}
 import org.tessellation.dag.snapshot._
+import org.tessellation.dag.snapshot.epoch.EpochProgress
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.collection.MapRefUtils._
 import org.tessellation.keytool.KeyPairGenerator
@@ -144,6 +145,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
       SortedSet.empty,
       SortedMap.empty,
       SortedSet.empty,
+      EpochProgress.MinValue,
       NonEmptyList.one(peerId),
       GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.empty),
       GlobalSnapshotTips(SortedSet.empty, SortedSet.empty)

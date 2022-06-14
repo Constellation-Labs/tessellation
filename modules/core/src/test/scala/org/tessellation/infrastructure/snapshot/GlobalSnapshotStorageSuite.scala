@@ -56,6 +56,7 @@ object GlobalSnapshotStorageSuite extends MutableIOSuite with Checkers {
             SortedSet.empty,
             SortedMap.empty,
             SortedSet.empty,
+            genesis.value.epochProgress,
             NonEmptyList.of(PeerId(Hex("peer1"))),
             genesis.info,
             genesis.tips
