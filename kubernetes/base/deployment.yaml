@@ -44,6 +44,8 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: status.podIP
+            - name: CL_COLLATERAL
+              value: "0"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -93,3 +95,5 @@ spec:
                   fieldPath: status.podIP
             - name: INITIAL_VALIDATOR
               value: "1"
+            - name: CL_COLLATERAL
+              value: "0"

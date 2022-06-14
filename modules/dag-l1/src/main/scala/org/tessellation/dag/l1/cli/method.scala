@@ -8,9 +8,10 @@ import org.tessellation.cli.env.{KeyAlias, Password, StorePath}
 import org.tessellation.dag.l1.config.types.{AppConfig, DBConfig}
 import org.tessellation.dag.l1.domain.consensus.block.config.ConsensusConfig
 import org.tessellation.ext.decline.decline._
+import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.L0Peer
-import org.tessellation.sdk.cli.{CliMethod, L0PeerOpts}
+import org.tessellation.sdk.cli.{CliMethod, CollateralAmountOpts, L0PeerOpts}
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types._
 
@@ -58,7 +59,8 @@ object method {
           receiveTimeout = 20.seconds,
           triggerInterval = 10.seconds
         )
-      )
+      ),
+      collateral = collateralConfig(environment, collateralAmount)
     )
   }
 
@@ -70,7 +72,8 @@ object method {
     httpConfig: HttpConfig,
     dbConfig: DBConfig,
     l0Peer: L0Peer,
-    whitelistingPath: Option[Path]
+    whitelistingPath: Option[Path],
+    collateralAmount: Option[Amount]
   ) extends Run
 
   object RunInitialValidator {
@@ -85,8 +88,9 @@ object method {
         http.opts,
         db.opts,
         L0PeerOpts.opts,
-        whitelistingPathOpts
-      ).mapN(RunInitialValidator(_, _, _, _, _, _, _, _))
+        whitelistingPathOpts,
+        CollateralAmountOpts.opts
+      ).mapN(RunInitialValidator(_, _, _, _, _, _, _, _, _))
     }
   }
 
@@ -98,7 +102,8 @@ object method {
     httpConfig: HttpConfig,
     dbConfig: DBConfig,
     l0Peer: L0Peer,
-    whitelistingPath: Option[Path]
+    whitelistingPath: Option[Path],
+    collateralAmount: Option[Amount]
   ) extends Run
 
   object RunValidator {
@@ -113,8 +118,9 @@ object method {
         http.opts,
         db.opts,
         L0PeerOpts.opts,
-        whitelistingPathOpts
-      ).mapN(RunValidator(_, _, _, _, _, _, _, _))
+        whitelistingPathOpts,
+        CollateralAmountOpts.opts
+      ).mapN(RunValidator(_, _, _, _, _, _, _, _, _))
     }
   }
 

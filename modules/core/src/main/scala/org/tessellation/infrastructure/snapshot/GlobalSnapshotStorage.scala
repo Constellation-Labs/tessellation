@@ -20,6 +20,9 @@ import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.cats.syntax.partialPrevious._
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.address.Address
+import org.tessellation.schema.balance.Balance
+import org.tessellation.sdk.domain.collateral.LatestBalances
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
@@ -35,7 +38,7 @@ object GlobalSnapshotStorage {
   def make[F[_]: Async: KryoSerializer](
     globalSnapshotLocalFileSystemStorage: GlobalSnapshotLocalFileSystemStorage[F],
     inMemoryCapacity: NonNegLong
-  ): F[GlobalSnapshotStorage[F]] = {
+  ): F[GlobalSnapshotStorage[F] with LatestBalances[F]] = {
     def mkHeadRef = Ref.of[F, Option[Signed[GlobalSnapshot]]](none)
     def mkOrdinalCache = MapRef.ofSingleImmutableMap[F, SnapshotOrdinal, Hash](Map.empty)
     def mkHashCache = MapRef.ofSingleImmutableMap[F, Hash, Signed[GlobalSnapshot]](Map.empty)
@@ -57,7 +60,7 @@ object GlobalSnapshotStorage {
     offloadQueue: Queue[F, SnapshotOrdinal],
     globalSnapshotLocalFileSystemStorage: GlobalSnapshotLocalFileSystemStorage[F],
     inMemoryCapacity: NonNegLong
-  ): F[GlobalSnapshotStorage[F]] = {
+  ): F[GlobalSnapshotStorage[F] with LatestBalances[F]] = {
 
     def offloadProcess: F[Unit] =
       Stream
@@ -104,7 +107,7 @@ object GlobalSnapshotStorage {
       }
 
     Spawn[F].start { offloadProcess }.map { _ =>
-      new GlobalSnapshotStorage[F] {
+      new GlobalSnapshotStorage[F] with LatestBalances[F] {
         def prepend(snapshot: Signed[GlobalSnapshot]): F[Boolean] =
           headRef.modify {
             case None =>
@@ -133,6 +136,9 @@ object GlobalSnapshotStorage {
             case Some(s) => s.some.pure[F]
             case None    => globalSnapshotLocalFileSystemStorage.read(hash)
           }
+
+        def getLatestBalances: F[Option[Map[Address, Balance]]] =
+          head.map(_.map(_.info.balances))
 
         private def isNextSnapshot(
           current: Signed[GlobalSnapshot],

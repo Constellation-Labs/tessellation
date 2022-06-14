@@ -2,7 +2,7 @@ package org.tessellation.dag.l1.config
 
 import org.tessellation.dag.l1.domain.consensus.block.config.ConsensusConfig
 import org.tessellation.sdk.config.AppEnvironment
-import org.tessellation.sdk.config.types.{GossipConfig, HealthCheckConfig, HttpConfig}
+import org.tessellation.sdk.config.types._
 
 import ciris.Secret
 import eu.timepit.refined.types.string.NonEmptyString
@@ -15,7 +15,8 @@ object types {
     db: DBConfig,
     gossip: GossipConfig,
     consensus: ConsensusConfig,
-    healthCheck: HealthCheckConfig
+    healthCheck: HealthCheckConfig,
+    collateral: CollateralConfig
   )
 
   case class DBConfig(

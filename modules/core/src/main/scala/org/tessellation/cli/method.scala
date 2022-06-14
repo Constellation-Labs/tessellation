@@ -9,8 +9,9 @@ import org.tessellation.cli.env.{KeyAlias, Password, StorePath}
 import org.tessellation.config.types._
 import org.tessellation.ext.decline.WithOpts
 import org.tessellation.ext.decline.decline._
+import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.node.NodeState
-import org.tessellation.sdk.cli.CliMethod
+import org.tessellation.sdk.cli.{CliMethod, CollateralAmountOpts}
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types._
 
@@ -45,7 +46,8 @@ object method {
         )
       ),
       healthCheck = healthCheckConfig,
-      snapshot = snapshotConfig
+      snapshot = snapshotConfig,
+      collateral = collateralConfig(environment, collateralAmount)
     )
 
     val stateAfterJoining: NodeState = NodeState.WaitingForDownload
@@ -61,7 +63,8 @@ object method {
     environment: AppEnvironment,
     snapshotConfig: SnapshotConfig,
     genesisPath: Path,
-    whitelistingPath: Option[Path]
+    whitelistingPath: Option[Path],
+    collateralAmount: Option[Amount]
   ) extends Run
 
   object RunGenesis extends WithOpts[RunGenesis] {
@@ -80,8 +83,9 @@ object method {
         AppEnvironment.opts,
         snapshot.opts,
         genesisPathOpts,
-        whitelistingPathOpts
-      ).mapN(RunGenesis.apply(_, _, _, _, _, _, _, _, _))
+        whitelistingPathOpts,
+        CollateralAmountOpts.opts
+      ).mapN(RunGenesis.apply(_, _, _, _, _, _, _, _, _, _))
     }
   }
 
@@ -93,7 +97,8 @@ object method {
     httpConfig: HttpConfig,
     environment: AppEnvironment,
     snapshotConfig: SnapshotConfig,
-    whitelistingPath: Option[Path]
+    whitelistingPath: Option[Path],
+    collateralAmount: Option[Amount]
   ) extends Run
 
   object RunValidator extends WithOpts[RunValidator] {
@@ -109,8 +114,9 @@ object method {
         http.opts,
         AppEnvironment.opts,
         snapshot.opts,
-        whitelistingPathOpts
-      ).mapN(RunValidator.apply(_, _, _, _, _, _, _, _))
+        whitelistingPathOpts,
+        CollateralAmountOpts.opts
+      ).mapN(RunValidator.apply(_, _, _, _, _, _, _, _, _))
     }
   }
 

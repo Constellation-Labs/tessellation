@@ -11,6 +11,7 @@ import org.tessellation.schema.peer.Peer.toP2PContext
 import org.tessellation.sdk.domain.cluster.programs.{Joining, PeerDiscovery}
 import org.tessellation.sdk.domain.cluster.services.Cluster
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
+import org.tessellation.sdk.domain.collateral.Collateral
 import org.tessellation.sdk.ext.http4s.refined.RefinedRequestDecoder
 
 import com.comcast.ip4s.Host
@@ -24,7 +25,8 @@ final case class ClusterRoutes[F[_]: Async](
   joining: Joining[F],
   peerDiscovery: PeerDiscovery[F],
   clusterStorage: ClusterStorage[F],
-  cluster: Cluster[F]
+  cluster: Cluster[F],
+  collateral: Collateral[F]
 ) extends Http4sDsl[F] {
 
   implicit val logger = Slf4jLogger.getLogger[F]
@@ -63,7 +65,7 @@ final case class ClusterRoutes[F[_]: Async](
           .fold(BadRequest())(
             host =>
               joining
-                .joinRequest(joinRequest, host)
+                .joinRequest(collateral.hasCollateral)(joinRequest, host)
                 .flatMap(_ => Ok())
           )
       }

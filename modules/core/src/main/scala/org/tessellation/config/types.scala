@@ -3,7 +3,7 @@ package org.tessellation.config
 import scala.concurrent.duration.FiniteDuration
 
 import org.tessellation.sdk.config.AppEnvironment
-import org.tessellation.sdk.config.types.{GossipConfig, HealthCheckConfig, HttpConfig}
+import org.tessellation.sdk.config.types._
 
 import ciris.Secret
 import eu.timepit.refined.types.numeric.NonNegLong
@@ -19,7 +19,8 @@ object types {
     gossip: GossipConfig,
     trust: TrustConfig,
     healthCheck: HealthCheckConfig,
-    snapshot: SnapshotConfig
+    snapshot: SnapshotConfig,
+    collateral: CollateralConfig
   )
 
   case class DBConfig(

@@ -43,7 +43,7 @@ sealed abstract class HttpApi[F[_]: Async: KryoSerializer: SecurityProvider: Met
   selfId: PeerId
 ) {
   private val clusterRoutes =
-    ClusterRoutes[F](programs.joining, programs.peerDiscovery, storages.cluster, services.cluster)
+    ClusterRoutes[F](programs.joining, programs.peerDiscovery, storages.cluster, services.cluster, services.collateral)
   private val registrationRoutes = RegistrationRoutes[F](services.cluster)
   private val gossipRoutes = GossipRoutes[F](storages.rumor, queues.rumor, services.gossip)
   private val dagRoutes = Routes[F](services.transaction, storages.transaction, queues.peerBlockConsensusInput)
