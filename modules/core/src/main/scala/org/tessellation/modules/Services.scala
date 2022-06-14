@@ -4,11 +4,15 @@ import java.security.KeyPair
 
 import cats.effect.kernel.Async
 import cats.effect.std.Random
+import cats.syntax.applicative._
+import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.config.types.AppConfig
 import org.tessellation.domain.dag.DAGService
+import org.tessellation.domain.rewards.Rewards
 import org.tessellation.infrastructure.dag.DAGService
+import org.tessellation.infrastructure.rewards._
 import org.tessellation.infrastructure.snapshot._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
@@ -38,6 +42,15 @@ object Services {
     cfg: AppConfig
   ): F[Services[F]] =
     for {
+      rewards <- Rewards
+        .make[F](
+          cfg.rewards,
+          cfg.snapshot.timeTriggerInterval,
+          SoftStaking.make(cfg.rewards.softStaking),
+          DTM.make(cfg.rewards.dtm, cfg.snapshot.timeTriggerInterval),
+          StardustCollective.make(cfg.rewards.stardust)
+        )
+        .pure[F]
       consensus <- GlobalSnapshotConsensus
         .make[F](
           sdkServices.gossip,
@@ -51,7 +64,8 @@ object Services {
           cfg.healthCheck,
           cfg.snapshot,
           client,
-          session
+          session,
+          rewards
         )
       dagService = DAGService.make[F](storages.globalSnapshot)
       collateralService = Collateral.make[F](cfg.collateral, storages.globalSnapshot)
@@ -62,7 +76,8 @@ object Services {
         gossip = sdkServices.gossip,
         consensus = consensus,
         dag = dagService,
-        collateral = collateralService
+        collateral = collateralService,
+        rewards = rewards
       ) {}
 }
 
@@ -72,5 +87,6 @@ sealed abstract class Services[F[_]] private (
   val gossip: Gossip[F],
   val consensus: Consensus[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact],
   val dag: DAGService[F],
-  val collateral: Collateral[F]
+  val collateral: Collateral[F],
+  val rewards: Rewards[F]
 )

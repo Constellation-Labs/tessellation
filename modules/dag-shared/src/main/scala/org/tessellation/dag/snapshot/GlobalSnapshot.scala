@@ -8,6 +8,7 @@ import cats.syntax.traverse._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import org.tessellation.dag.domain.block.BlockReference
+import org.tessellation.dag.snapshot.epoch.EpochProgress
 import org.tessellation.ext.codecs.BinaryCodec
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
@@ -33,6 +34,7 @@ case class GlobalSnapshot(
   blocks: SortedSet[BlockAsActiveTip],
   stateChannelSnapshots: SortedMap[Address, NonEmptyList[StateChannelSnapshotBinary]],
   rewards: SortedSet[RewardTransaction],
+  epochProgress: EpochProgress,
   nextFacilitators: NonEmptyList[PeerId],
   info: GlobalSnapshotInfo,
   tips: GlobalSnapshotTips
@@ -64,6 +66,7 @@ object GlobalSnapshot {
       SortedSet.empty,
       SortedMap.empty,
       SortedSet.empty,
+      EpochProgress.MinValue,
       NonEmptyList.of(PeerId(Hex("peer1"))), // TODO
       GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.from(balances)),
       GlobalSnapshotTips(
