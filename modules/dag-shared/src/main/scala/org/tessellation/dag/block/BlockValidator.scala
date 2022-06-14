@@ -8,7 +8,6 @@ import cats.syntax.functor._
 import cats.syntax.functorFilter._
 import cats.syntax.list._
 import cats.syntax.option._
-import cats.syntax.traverse._
 import cats.syntax.validated._
 import cats.{Functor, Order}
 
@@ -90,7 +89,7 @@ object BlockValidator {
       private def validateTransactions(
         signedBlock: Signed[DAGBlock]
       ): F[BlockValidationErrorOr[Signed[DAGBlock]]] =
-        signedBlock.value.transactions.toList.traverse { signedTransaction =>
+        signedBlock.value.transactions.toNonEmptyList.traverse { signedTransaction =>
           for {
             txRef <- TransactionReference.of(signedTransaction)
             txV <- transactionValidator.validate(signedTransaction)

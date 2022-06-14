@@ -44,7 +44,7 @@ object BlockConsensusInput {
       s"Proposal(roundId=${roundId.value.toString.take(8)}, senderId=${senderId.value.value.take(8)} txsCount=${txs.size})"
     case BlockProposal(roundId, senderId, _, block) =>
       s"BlockProposal(roundId=${roundId.value.toString.take(8)}, senderId=${senderId.value.value
-        .take(8)}, txsCount=${block.transactions.size})"
+        .take(8)}, txsCount=${block.transactions.toSortedSet.size})"
     case CancelledBlockCreationRound(roundId, senderId, _, reason) =>
       s"CancelledBlockCreationRound(roundId=${roundId.value.toString.take(8)}, senderId=${senderId.value.value.take(8)}, reason=$reason)"
   }

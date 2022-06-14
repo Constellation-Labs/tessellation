@@ -16,7 +16,7 @@ import derevo.derive
 trait TransactionChainValidator[F[_]] {
 
   def validate(
-    transactions: Set[Signed[Transaction]]
+    transactions: NonEmptySet[Signed[Transaction]]
   ): F[TransactionChainValidationErrorOr[Map[Address, TransactionNel]]]
 }
 
@@ -26,25 +26,20 @@ object TransactionChainValidator {
     new TransactionChainValidator[F] {
 
       def validate(
-        transactions: Set[Signed[Transaction]]
+        transactions: NonEmptySet[Signed[Transaction]]
       ): F[TransactionChainValidationErrorOr[Map[Address, TransactionNel]]] =
-        NonEmptyList
-          .fromList(transactions.toList)
-          .map { allTxs =>
-            allTxs
-              .groupBy(_.value.source)
-              .toList
-              .traverse {
-                case (address, txs) =>
-                  validateChainForSingleAddress(address, txs)
-                    .map(chainedTxs => address -> chainedTxs)
-                    .value
-                    .map(_.toValidatedNec)
-              }
-              .map(_.foldMap(_.map(Chain(_))))
-              .map(_.map(_.toList.toMap))
+        transactions.toNonEmptyList
+          .groupBy(_.value.source)
+          .toList
+          .traverse {
+            case (address, txs) =>
+              validateChainForSingleAddress(address, txs)
+                .map(chainedTxs => address -> chainedTxs)
+                .value
+                .map(_.toValidatedNec)
           }
-          .getOrElse(Map.empty[Address, TransactionNel].validNec[TransactionChainBroken].pure[F])
+          .map(_.foldMap(_.map(Chain(_))))
+          .map(_.map(_.toList.toMap))
 
       private def validateChainForSingleAddress(
         address: Address,

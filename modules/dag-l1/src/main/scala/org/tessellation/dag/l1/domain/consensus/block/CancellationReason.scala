@@ -10,5 +10,6 @@ object CancellationReason {
   case object ReceivedProposalForNonExistentOwnRound extends CancellationReason
   case object MissingRoundPeers extends CancellationReason
   case object CreatedInvalidBlock extends CancellationReason
+  case object CreatedBlockWithNoTransactions extends CancellationReason
   case object PeerCancelled extends CancellationReason
 }
