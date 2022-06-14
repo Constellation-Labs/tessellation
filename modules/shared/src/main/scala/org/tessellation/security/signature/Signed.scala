@@ -17,6 +17,7 @@ import cats.{Eq, Order, Show}
 import scala.collection.immutable.SortedSet
 import scala.util.control.NoStackTrace
 
+import org.tessellation.ext.codecs.NonEmptySetCodec
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID.Id
@@ -43,10 +44,7 @@ object Signed {
 
   implicit def encoder[A: Encoder]: Encoder[Signed[A]] = deriveEncoder
 
-  implicit def proofsDecoder: Decoder[NonEmptySet[SignatureProof]] =
-    Decoder.decodeNonEmptySet[SignatureProof].map { nes =>
-      NonEmptySet.fromSetUnsafe(SortedSet.from(nes.toSortedSet))
-    }
+  implicit val proofsDecoder: Decoder[NonEmptySet[SignatureProof]] = NonEmptySetCodec.decoder[SignatureProof]
 
   implicit def decoder[A: Decoder]: Decoder[Signed[A]] = deriveDecoder
 

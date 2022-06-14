@@ -286,29 +286,38 @@ object BlockConsensusCell {
         )
         .flatMap {
           case Some(roundData) if gotAllProposals(roundData) =>
-            for {
-              _ <- Applicative[F].unit
-              block = roundData.formBlock()
-              signedBlock <- Signed.forAsyncKryo(block, ctx.keyPair)
-              result <- ctx.blockValidator
-                .validate(signedBlock, validationParams)
-                .flatTap { validationResult =>
-                  if (validationResult.isInvalid) Logger[F].debug(s"Created block is invalid: $validationResult")
-                  else Applicative[F].unit
-                }
-                .map(_.isValid)
-                .ifM(
-                  processValidBlock(proposal, signedBlock, ctx), {
-                    val cancellation = CancelledBlockCreationRound(
-                      roundData.roundId,
-                      senderId = ctx.selfId,
-                      owner = roundData.owner,
-                      CreatedInvalidBlock
+            roundData.formBlock() match {
+              case Some(block) =>
+                Signed.forAsyncKryo(block, ctx.keyPair).flatMap { signedBlock =>
+                  ctx.blockValidator
+                    .validate(signedBlock, validationParams)
+                    .flatTap { validationResult =>
+                      Applicative[F].whenA(validationResult.isInvalid) {
+                        Logger[F].debug(s"Created block is invalid: $validationResult")
+                      }
+                    }
+                    .map(_.isValid)
+                    .ifM(
+                      processValidBlock(proposal, signedBlock, ctx), {
+                        val cancellation = CancelledBlockCreationRound(
+                          roundData.roundId,
+                          senderId = ctx.selfId,
+                          owner = roundData.owner,
+                          CreatedInvalidBlock
+                        )
+                        processCancellation(cancellation, ctx)
+                      }
                     )
-                    processCancellation(cancellation, ctx)
-                  }
+                }
+              case None =>
+                val cancellation = CancelledBlockCreationRound(
+                  roundData.roundId,
+                  senderId = ctx.selfId,
+                  owner = roundData.owner,
+                  CreatedBlockWithNoTransactions
                 )
-            } yield result
+                processCancellation(cancellation, ctx)
+            }
           case _ => NullTerminal.asRight[CellError].widen[Ω].pure[F]
         }
 

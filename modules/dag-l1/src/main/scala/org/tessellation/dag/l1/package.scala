@@ -23,6 +23,7 @@ package object l1 {
     ReceivedProposalForNonExistentOwnRound.getClass -> 805,
     MissingRoundPeers.getClass -> 806,
     CreatedInvalidBlock.getClass -> 807,
-    PeerCancelled.getClass -> 808
+    CreatedBlockWithNoTransactions.getClass -> 808,
+    PeerCancelled.getClass -> 809
   )
 }

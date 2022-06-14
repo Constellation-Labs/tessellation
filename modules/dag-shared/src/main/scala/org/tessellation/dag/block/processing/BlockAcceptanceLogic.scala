@@ -167,7 +167,7 @@ object BlockAcceptanceLogic {
       val minusFn: Amount => Balance => Either[BalanceArithmeticError, Balance] = a => _.minus(a)
       val plusFn: Amount => Balance => Either[BalanceArithmeticError, Balance] = a => _.plus(a)
 
-      val sortedTxs = block.transactions.toList.sorted
+      val sortedTxs = block.transactions.toNonEmptyList
       val minusAmountOps = sortedTxs.groupMap(_.source)(tx => minusFn(tx.amount))
       val minusFeeOps = sortedTxs.groupMap(_.source)(tx => minusFn(tx.fee))
       val plusAmountOps = sortedTxs.groupMap(_.destination)(tx => plusFn(tx.amount))

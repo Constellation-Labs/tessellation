@@ -1,5 +1,6 @@
 package org.tessellation.dag.l1.domain.consensus.block
 
+import cats.data.NonEmptySet
 import cats.syntax.option._
 
 import scala.concurrent.duration.FiniteDuration
@@ -44,6 +45,9 @@ case class RoundData(
   def addPeerCancellation(cancellation: CancelledBlockCreationRound): RoundData =
     this.focus(_.peerCancellations).modify(_ + (cancellation.senderId -> cancellation.reason))
 
-  def formBlock(): DAGBlock =
-    DAGBlock(tips.value, (ownProposal.transactions ++ peerProposals.values.flatMap(_.transactions).toSet).toSortedSet)
+  def formBlock(): Option[DAGBlock] =
+    NonEmptySet
+      .fromSet((ownProposal.transactions ++ peerProposals.values.flatMap(_.transactions).toSet).toSortedSet)
+      .map(DAGBlock(tips.value, _))
+
 }

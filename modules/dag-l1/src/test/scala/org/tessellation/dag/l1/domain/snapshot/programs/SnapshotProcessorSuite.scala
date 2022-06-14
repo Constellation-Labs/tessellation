@@ -3,9 +3,12 @@ package org.tessellation.dag.l1.domain.snapshot.programs
 import java.security.KeyPair
 
 import cats.data.{NonEmptyList, NonEmptySet}
+import cats.effect._
 import cats.effect.std.Random
-import cats.effect.{IO, Ref, Resource}
 import cats.syntax.either._
+import cats.syntax.flatMap._
+import cats.syntax.foldable._
+import cats.syntax.functor._
 import cats.syntax.option._
 import cats.syntax.traverse._
 
@@ -29,7 +32,7 @@ import org.tessellation.schema.balance
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.transaction.{Transaction, TransactionOrdinal, TransactionReference}
+import org.tessellation.schema.transaction._
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.key.ops.PublicKeyOps
@@ -37,7 +40,7 @@ import org.tessellation.security.signature.Signed.forAsyncKryo
 import org.tessellation.security.{Hashed, SecurityProvider}
 
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.NonNegLong
+import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
 import io.chrisdavenport.mapref.MapRef
 import weaver.SimpleIOSuite
 
@@ -48,6 +51,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
     SecurityProvider[IO],
     KryoSerializer[IO],
     KeyPair,
+    KeyPair,
+    Address,
     Address,
     PeerId,
     Ref[IO, Map[Address, Balance]],
@@ -84,10 +89,26 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
               SnapshotProcessor
                 .make[IO](addressStorage, blockStorage, lastGlobalSnapshotStorage, transactionStorage)
             }
-            key <- KeyPairGenerator.makeKeyPair[IO].asResource
-            address = key.getPublic.toAddress
-            peerId = PeerId.fromId(key.getPublic.toId)
-          } yield (snapshotProcessor, sp, kp, key, address, peerId, balancesR, blocksR, lastSnapR, lastAccTxR)
+            srcKey <- KeyPairGenerator.makeKeyPair[IO].asResource
+            dstKey <- KeyPairGenerator.makeKeyPair[IO].asResource
+            srcAddress = srcKey.getPublic.toAddress
+            dstAddress = dstKey.getPublic.toAddress
+            peerId = PeerId.fromId(srcKey.getPublic.toId)
+          } yield
+            (
+              snapshotProcessor,
+              sp,
+              kp,
+              srcKey,
+              dstKey,
+              srcAddress,
+              dstAddress,
+              peerId,
+              balancesR,
+              blocksR,
+              lastSnapR,
+              lastAccTxR
+            )
         }
       }
     }
@@ -102,10 +123,18 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
   val snapshotSubHeight0 = SubHeight(0L)
   val snapshotSubHeight1 = SubHeight(1L)
 
-  def generateSnapshotBalances(address: Address) = SortedMap(address -> Balance(50L))
+  def generateSnapshotBalances(addresses: Set[Address]): SortedMap[Address, Balance] =
+    SortedMap.from(addresses.map(_ -> Balance(50L)))
 
-  def generateSnapshotLastAccTxRefs(address: Address) =
-    SortedMap(address -> TransactionReference(TransactionOrdinal(2L), Hash("lastTx")))
+  def generateSnapshotLastAccTxRefs(
+    addressTxs: Map[Address, Hashed[Transaction]]
+  ): SortedMap[Address, TransactionReference] =
+    SortedMap.from(
+      addressTxs.map {
+        case (address, transaction) =>
+          address -> TransactionReference(transaction.ordinal, transaction.hash)
+      }
+    )
 
   def generateSnapshot(peerId: PeerId): GlobalSnapshot =
     GlobalSnapshot(
@@ -121,20 +150,54 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
       GlobalSnapshotTips(SortedSet.empty, SortedSet.empty)
     )
 
+  def generateTransactions[F[_]: Async: KryoSerializer: SecurityProvider](
+    src: Address,
+    srcKey: KeyPair,
+    dst: Address,
+    count: PosInt
+  ): F[NonEmptyList[Hashed[Transaction]]] = {
+    def generate(src: Address, srcKey: KeyPair, dst: Address, lastTxRef: TransactionReference): F[Hashed[Transaction]] =
+      forAsyncKryo[F, Transaction](
+        Transaction(src, dst, TransactionAmount(1L), TransactionFee(0L), lastTxRef, TransactionSalt(0L)),
+        srcKey
+      ).flatMap(_.toHashed[F])
+
+    generate(src, srcKey, dst, TransactionReference.empty).flatMap { first =>
+      (1 until count).toList.foldLeftM(NonEmptyList.one(first)) {
+        case (txs, _) =>
+          generate(src, srcKey, dst, TransactionReference(txs.head.ordinal, txs.head.hash)).map(txs.prepend)
+      }
+    }
+  }.map(_.reverse)
+
   test("download should happen for the base no blocks case") {
     testResources.use {
-      case (snapshotProcessor, sp, kp, key, address, peerId, balancesR, blocksR, lastSnapR, lastAccTxR) =>
+      case (
+          snapshotProcessor,
+          sp,
+          kp,
+          srcKey,
+          _,
+          srcAddress,
+          dstAddress,
+          peerId,
+          balancesR,
+          blocksR,
+          lastSnapR,
+          lastAccTxR
+          ) =>
         implicit val securityProvider = sp
         implicit val kryoPool = kp
 
         val parent1 = BlockReference(Height(4L), ProofsHash("parent1"))
         val parent2 = BlockReference(Height(5L), ProofsHash("parent2"))
-        val block = DAGBlock(NonEmptyList.one(parent2), SortedSet.empty)
 
         for {
-          hashedBlock <- forAsyncKryo(block, key).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
-          snapshotBalances = generateSnapshotBalances(address)
-          snapshotTxRefs = generateSnapshotLastAccTxRefs(address)
+          correctTxs <- generateTransactions(srcAddress, srcKey, dstAddress, 1)
+          block = DAGBlock(NonEmptyList.one(parent2), NonEmptySet.fromSetUnsafe(SortedSet(correctTxs.head.signed)))
+          hashedBlock <- forAsyncKryo(block, srcKey).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
+          snapshotBalances = generateSnapshotBalances(Set(srcAddress))
+          snapshotTxRefs = generateSnapshotLastAccTxRefs(Map(srcAddress -> correctTxs.head))
           hashedSnapshot <- forAsyncKryo(
             generateSnapshot(peerId)
               .copy(
@@ -145,7 +208,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
                   SortedSet(ActiveTip(parent2, 2L, snapshotOrdinal9))
                 )
               ),
-            key
+            srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           balancesBefore <- balancesR.get
           blocksBefore <- blocksR.toMap
@@ -207,7 +270,20 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
 
   test("download should happen for the case when there are waiting blocks in the storage") {
     testResources.use {
-      case (snapshotProcessor, sp, kp, key, _, peerId, _, blocksR, _, _) =>
+      case (
+          snapshotProcessor,
+          sp,
+          kp,
+          srcKey,
+          dstKey,
+          srcAddress,
+          dstAddress,
+          peerId,
+          balancesR,
+          blocksR,
+          lastSnapR,
+          lastAccTxR
+          ) =>
         implicit val securityProvider = sp
         implicit val kryoPool = kp
 
@@ -215,29 +291,54 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
         val parent2 = BlockReference(Height(2L), ProofsHash("parent2"))
         val parent3 = BlockReference(Height(6L), ProofsHash("parent3"))
         val parent4 = BlockReference(Height(5L), ProofsHash("parent4"))
-        val aboveRangeBlock = DAGBlock(NonEmptyList.one(parent1), SortedSet.empty)
-        val nonMajorityInRangeBlock = DAGBlock(NonEmptyList.one(parent2), SortedSet.empty)
-        val majorityInRangeBlock = DAGBlock(NonEmptyList.one(parent3), SortedSet.empty)
-        val majorityAboveRangeActiveTipBlock = DAGBlock(NonEmptyList.one(parent3), SortedSet.empty)
-        val majorityInRangeDeprecatedTipBlock = DAGBlock(NonEmptyList.one(parent4), SortedSet.empty)
-        val majorityInRangeActiveTipBlock = DAGBlock(NonEmptyList.one(parent4), SortedSet.empty)
-
-        val blocks = List(
-          aboveRangeBlock,
-          nonMajorityInRangeBlock,
-          majorityInRangeBlock,
-          majorityAboveRangeActiveTipBlock,
-          majorityInRangeDeprecatedTipBlock,
-          majorityInRangeActiveTipBlock
-        )
 
         for {
-          hashedBlocks <- blocks.traverse(
-            forAsyncKryo(_, key).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
+          correctTxs <- generateTransactions(srcAddress, srcKey, dstAddress, 7).map(_.toList)
+          wrongTxs <- generateTransactions(dstAddress, dstKey, srcAddress, 1).map(_.toList)
+
+          aboveRangeBlock = DAGBlock(
+            NonEmptyList.one(parent1),
+            NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(6).signed))
           )
+          nonMajorityInRangeBlock = DAGBlock(
+            NonEmptyList.one(parent2),
+            NonEmptySet.fromSetUnsafe(SortedSet(wrongTxs.head.signed))
+          )
+          majorityInRangeBlock = DAGBlock(
+            NonEmptyList.one(parent3),
+            NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(5).signed))
+          )
+          majorityAboveRangeActiveTipBlock = DAGBlock(
+            NonEmptyList.one(parent3),
+            NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(4).signed))
+          )
+          majorityInRangeDeprecatedTipBlock = DAGBlock(
+            NonEmptyList.one(parent4),
+            NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(2).signed))
+          )
+          majorityInRangeActiveTipBlock = DAGBlock(
+            NonEmptyList.one(parent4),
+            NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(3).signed))
+          )
+
+          blocks = List(
+            aboveRangeBlock,
+            nonMajorityInRangeBlock,
+            majorityInRangeBlock,
+            majorityAboveRangeActiveTipBlock,
+            majorityInRangeDeprecatedTipBlock,
+            majorityInRangeActiveTipBlock
+          )
+
+          hashedBlocks <- blocks.traverse(
+            forAsyncKryo(_, srcKey).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
+          )
+          snapshotBalances = generateSnapshotBalances(Set(srcAddress))
+          snapshotTxRefs = generateSnapshotLastAccTxRefs(Map(srcAddress -> correctTxs(5)))
           hashedSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
               blocks = SortedSet(BlockAsActiveTip(hashedBlocks(2).signed, NonNegLong(1L))),
+              info = GlobalSnapshotInfo(SortedMap.empty, snapshotTxRefs, snapshotBalances),
               tips = GlobalSnapshotTips(
                 SortedSet(
                   DeprecatedTip(parent3, snapshotOrdinal9),
@@ -250,7 +351,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
                 )
               )
             ),
-            key
+            srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
 
           // Inserting blocks in required state
@@ -263,10 +364,13 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
 
           processingResult <- snapshotProcessor.process(hashedSnapshot)
 
+          balancesAfter <- balancesR.get
           blocksAfter <- blocksR.toMap
+          lastGlobalSnapshotAfter <- lastSnapR.get
+          lastAcceptedTxRAfter <- lastAccTxR.toMap
         } yield
           expect.same(
-            (processingResult, blocksAfter),
+            (processingResult, blocksAfter, balancesAfter, lastGlobalSnapshotAfter, lastAcceptedTxRAfter),
             (
               DownloadPerformed(
                 GlobalSnapshotReference(
@@ -303,7 +407,10 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
                 ),
                 parent1.hash -> MajorityBlock(parent1, 1L, Active),
                 parent3.hash -> MajorityBlock(parent3, 0L, Deprecated)
-              )
+              ),
+              snapshotBalances,
+              Some(hashedSnapshot),
+              snapshotTxRefs
             )
           )
     }
@@ -311,14 +418,14 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
 
   test("alignment at same height should happen when snapshot with new ordinal but known height is processed") {
     testResources.use {
-      case (snapshotProcessor, sp, kp, key, _, peerId, _, _, lastSnapR, _) =>
+      case (snapshotProcessor, sp, kp, srcKey, _, _, _, peerId, balancesR, blocksR, lastSnapR, lastAccTxR) =>
         implicit val securityProvider = sp
         implicit val kryoPool = kp
 
         for {
           hashedLastSnapshot <- forAsyncKryo(
             generateSnapshot(peerId),
-            key
+            srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           hashedNextSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
@@ -326,16 +433,19 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
               subHeight = snapshotSubHeight1,
               lastSnapshotHash = hashedLastSnapshot.hash
             ),
-            key
+            srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           _ <- lastSnapR.set(hashedLastSnapshot.some)
 
           processingResult <- snapshotProcessor.process(hashedNextSnapshot)
 
-          lastSnapshotAfter <- lastSnapR.get.map(_.get)
+          balancesAfter <- balancesR.get
+          blocksAfter <- blocksR.toMap
+          lastGlobalSnapshotAfter <- lastSnapR.get
+          lastAcceptedTxRAfter <- lastAccTxR.toMap
         } yield
           expect.same(
-            (processingResult, lastSnapshotAfter),
+            (processingResult, balancesAfter, blocksAfter, lastGlobalSnapshotAfter, lastAcceptedTxRAfter),
             (
               Aligned(
                 GlobalSnapshotReference(
@@ -347,7 +457,10 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
                 ),
                 Set.empty
               ),
-              hashedNextSnapshot
+              Map.empty,
+              Map.empty,
+              Some(hashedNextSnapshot),
+              Map.empty
             )
           )
     }
@@ -355,7 +468,20 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
 
   test("alignment at new height should happen when node is aligned with the majority in processed snapshot") {
     testResources.use {
-      case (snapshotProcessor, sp, kp, key, _, peerId, _, blocksR, lastSnapR, _) =>
+      case (
+          snapshotProcessor,
+          sp,
+          kp,
+          srcKey,
+          dstKey,
+          srcAddress,
+          dstAddress,
+          peerId,
+          balancesR,
+          blocksR,
+          lastSnapR,
+          lastAccTxR
+          ) =>
         implicit val securityProvider = sp
         implicit val kryoPool = kp
 
@@ -364,14 +490,32 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
         val parent3 = BlockReference(Height(8L), ProofsHash("parent3"))
         val parent4 = BlockReference(Height(9L), ProofsHash("parent4"))
 
-        val waitingInRangeBlock = DAGBlock(NonEmptyList.one(parent1), SortedSet.empty)
-        val majorityInRangeBlock = DAGBlock(NonEmptyList.one(parent2), SortedSet.empty)
-        val aboveRangeAcceptedBlock = DAGBlock(NonEmptyList.one(parent3), SortedSet.empty)
-        val aboveRangeMajorityBlock = DAGBlock(NonEmptyList.one(parent3), SortedSet.empty)
-        val waitingAboveRangeBlock = DAGBlock(NonEmptyList.one(parent4), SortedSet.empty)
+        for {
+          correctTxs <- generateTransactions(srcAddress, srcKey, dstAddress, 4).map(_.toList)
+          wrongTxs <- generateTransactions(dstAddress, dstKey, srcAddress, 1).map(_.toList)
 
-        val blocks =
-          List(
+          waitingInRangeBlock = DAGBlock(
+            NonEmptyList.one(parent1),
+            NonEmptySet.fromSetUnsafe(SortedSet(wrongTxs.head.signed))
+          )
+          majorityInRangeBlock = DAGBlock(
+            NonEmptyList.one(parent2),
+            NonEmptySet.fromSetUnsafe(SortedSet(correctTxs.head.signed))
+          )
+          aboveRangeAcceptedBlock = DAGBlock(
+            NonEmptyList.one(parent3),
+            NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(2).signed))
+          )
+          aboveRangeMajorityBlock = DAGBlock(
+            NonEmptyList.one(parent3),
+            NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(1).signed))
+          )
+          waitingAboveRangeBlock = DAGBlock(
+            NonEmptyList.one(parent4),
+            NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(3).signed))
+          )
+
+          blocks = List(
             waitingInRangeBlock, //0
             majorityInRangeBlock, //1
             aboveRangeAcceptedBlock, //2
@@ -379,9 +523,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
             waitingAboveRangeBlock //4
           )
 
-        for {
           hashedBlocks <- blocks.traverse(
-            forAsyncKryo(_, key).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
+            forAsyncKryo(_, srcKey).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           )
           hashedLastSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
@@ -396,7 +539,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
                 )
               )
             ),
-            key
+            srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           hashedNextSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
@@ -414,7 +557,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
                 )
               )
             ),
-            key
+            srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           _ <- lastSnapR.set(hashedLastSnapshot.some)
           // Inserting tips
@@ -431,10 +574,13 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
 
           processingResult <- snapshotProcessor.process(hashedNextSnapshot)
 
+          balancesAfter <- balancesR.get
           blocksAfter <- blocksR.toMap
+          lastGlobalSnapshotAfter <- lastSnapR.get
+          lastAcceptedTxRAfter <- lastAccTxR.toMap
         } yield
           expect.same(
-            (processingResult, blocksAfter),
+            (processingResult, blocksAfter, balancesAfter, lastGlobalSnapshotAfter, lastAcceptedTxRAfter),
             (
               Aligned(
                 GlobalSnapshotReference(
@@ -461,7 +607,10 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
                   Active
                 ),
                 hashedBlocks(4).proofsHash -> WaitingBlock(hashedBlocks(4).signed)
-              )
+              ),
+              Map.empty,
+              Some(hashedNextSnapshot),
+              Map.empty
             )
           )
     }
@@ -469,7 +618,20 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
 
   test("redownload should happen when node is misaligned with majority in processed snapshot") {
     testResources.use {
-      case (snapshotProcessor, sp, kp, key, _, peerId, _, blocksR, lastSnapR, _) =>
+      case (
+          snapshotProcessor,
+          sp,
+          kp,
+          srcKey,
+          dstKey,
+          srcAddress,
+          dstAddress,
+          peerId,
+          balancesR,
+          blocksR,
+          lastSnapR,
+          lastAccTxR
+          ) =>
         implicit val securityProvider = sp
         implicit val kryoPool = kp
 
@@ -478,18 +640,48 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
         val parent3 = BlockReference(Height(8L), ProofsHash("parent3"))
         val parent4 = BlockReference(Height(9L), ProofsHash("parent4"))
 
-        val waitingInRangeBlock = DAGBlock(NonEmptyList.one(parent1), SortedSet.empty)
-        val waitingMajorityInRangeBlock = DAGBlock(NonEmptyList.one(parent1), SortedSet.empty)
-        val acceptedMajorityInRangeBlock = DAGBlock(NonEmptyList.one(parent2), SortedSet.empty)
-        val majorityUnknownBlock = DAGBlock(NonEmptyList.one(parent2), SortedSet.empty)
-        val acceptedNonMajorityInRangeBlock = DAGBlock(NonEmptyList.one(parent2), SortedSet.empty)
-        val aboveRangeAcceptedBlock = DAGBlock(NonEmptyList.one(parent3), SortedSet.empty)
-        val aboveRangeAcceptedMajorityBlock = DAGBlock(NonEmptyList.one(parent3), SortedSet.empty)
-        val aboveRangeUnknownMajorityBlock = DAGBlock(NonEmptyList.one(parent3), SortedSet.empty)
-        val waitingAboveRangeBlock = DAGBlock(NonEmptyList.one(parent4), SortedSet.empty)
+        for {
+          correctTxs <- generateTransactions(srcAddress, srcKey, dstAddress, 6).map(_.toList)
+          wrongTxs <- generateTransactions(dstAddress, dstKey, srcAddress, 3).map(_.toList)
 
-        val blocks =
-          List(
+          waitingInRangeBlock = DAGBlock(
+            NonEmptyList.one(parent1),
+            NonEmptySet.fromSetUnsafe(SortedSet(wrongTxs(2).signed))
+          )
+          waitingMajorityInRangeBlock = DAGBlock(
+            NonEmptyList.one(parent1),
+            NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(4).signed))
+          )
+          acceptedMajorityInRangeBlock = DAGBlock(
+            NonEmptyList.one(parent2),
+            NonEmptySet.fromSetUnsafe(SortedSet(correctTxs.head.signed))
+          )
+          majorityUnknownBlock = DAGBlock(
+            NonEmptyList.one(parent2),
+            NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(2).signed))
+          )
+          acceptedNonMajorityInRangeBlock = DAGBlock(
+            NonEmptyList.one(parent2),
+            NonEmptySet.fromSetUnsafe(SortedSet(wrongTxs.head.signed))
+          )
+          aboveRangeAcceptedBlock = DAGBlock(
+            NonEmptyList.one(parent3),
+            NonEmptySet.fromSetUnsafe(SortedSet(wrongTxs(1).signed))
+          )
+          aboveRangeAcceptedMajorityBlock = DAGBlock(
+            NonEmptyList.one(parent3),
+            NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(1).signed))
+          )
+          aboveRangeUnknownMajorityBlock = DAGBlock(
+            NonEmptyList.one(parent3),
+            NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(3).signed))
+          )
+          waitingAboveRangeBlock = DAGBlock(
+            NonEmptyList.one(parent4),
+            NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(5).signed))
+          )
+
+          blocks = List(
             waitingInRangeBlock, //0
             waitingMajorityInRangeBlock, //1
             acceptedMajorityInRangeBlock, //2
@@ -501,10 +693,11 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
             waitingAboveRangeBlock //8
           )
 
-        for {
           hashedBlocks <- blocks.traverse(
-            forAsyncKryo(_, key).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
+            forAsyncKryo(_, srcKey).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           )
+          snapshotBalances = generateSnapshotBalances(Set(srcAddress))
+          snapshotTxRefs = generateSnapshotLastAccTxRefs(Map(srcAddress -> correctTxs(4)))
           hashedLastSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
               tips = GlobalSnapshotTips(
@@ -518,7 +711,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
                 )
               )
             ),
-            key
+            srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           hashedNextSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
@@ -532,6 +725,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
                 BlockAsActiveTip(hashedBlocks(6).signed, 0L),
                 BlockAsActiveTip(hashedBlocks(7).signed, 0L)
               ),
+              info = GlobalSnapshotInfo(SortedMap.empty, snapshotTxRefs, snapshotBalances),
               tips = GlobalSnapshotTips(
                 SortedSet(
                   DeprecatedTip(parent3, snapshotOrdinal11)
@@ -541,7 +735,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
                 )
               )
             ),
-            key
+            srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           _ <- lastSnapR.set(hashedLastSnapshot.some)
           // Inserting tips
@@ -560,10 +754,13 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
 
           processingResult <- snapshotProcessor.process(hashedNextSnapshot)
 
+          balancesAfter <- balancesR.get
           blocksAfter <- blocksR.toMap
+          lastGlobalSnapshotAfter <- lastSnapR.get
+          lastAcceptedTxRAfter <- lastAccTxR.toMap
         } yield
           expect.same(
-            (processingResult, blocksAfter),
+            (processingResult, blocksAfter, balancesAfter, lastGlobalSnapshotAfter, lastAcceptedTxRAfter),
             (
               RedownloadPerformed(
                 GlobalSnapshotReference(
@@ -607,7 +804,10 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
                   Active
                 ),
                 hashedBlocks(8).proofsHash -> WaitingBlock(hashedBlocks(8).signed)
-              )
+              ),
+              snapshotBalances,
+              Some(hashedNextSnapshot),
+              snapshotTxRefs
             )
           )
     }
@@ -615,21 +815,21 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
 
   test("error should be thrown when a snapshot pushed for processing is not a next one") {
     testResources.use {
-      case (snapshotProcessor, sp, kp, key, _, peerId, _, _, lastSnapR, _) =>
+      case (snapshotProcessor, sp, kp, srcKey, _, _, _, peerId, _, _, lastSnapR, _) =>
         implicit val securityProvider = sp
         implicit val kryoPool = kp
 
         for {
           hashedLastSnapshot <- forAsyncKryo(
             generateSnapshot(peerId),
-            key
+            srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           hashedNextSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
               ordinal = snapshotOrdinal12,
               lastSnapshotHash = hashedLastSnapshot.hash
             ),
-            key
+            srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           _ <- lastSnapR.set(hashedLastSnapshot.some)
           processingResult <- snapshotProcessor
@@ -659,7 +859,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
 
   test("error should be thrown when the tips get misaligned") {
     testResources.use {
-      case (snapshotProcessor, sp, kp, key, _, peerId, _, blocksR, lastSnapR, _) =>
+      case (snapshotProcessor, sp, kp, srcKey, _, _, _, peerId, _, blocksR, lastSnapR, _) =>
         implicit val securityProvider = sp
         implicit val kryoPool = kp
 
@@ -669,7 +869,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
         for {
           hashedLastSnapshot <- forAsyncKryo(
             generateSnapshot(peerId),
-            key
+            srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           hashedNextSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
@@ -685,7 +885,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
                 )
               )
             ),
-            key
+            srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           _ <- lastSnapR.set(hashedLastSnapshot.some)
           // Inserting tips

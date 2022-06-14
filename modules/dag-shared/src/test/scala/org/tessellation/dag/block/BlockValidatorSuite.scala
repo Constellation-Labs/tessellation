@@ -2,12 +2,11 @@ package org.tessellation.dag.block
 
 import java.security.KeyPair
 
-import cats.data.NonEmptyList
+import cats.data.{NonEmptyList, NonEmptySet}
 import cats.effect.{Async, IO, Resource}
 import cats.syntax.applicative._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
-import cats.syntax.order._
 import cats.syntax.validated._
 
 import scala.collection.immutable.SortedSet
@@ -20,13 +19,16 @@ import org.tessellation.ext.crypto._
 import org.tessellation.ext.kryo._
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.height.Height
+import org.tessellation.schema.transaction._
 import org.tessellation.security.SecurityProvider
-import org.tessellation.security.signature.SignedValidator
+import org.tessellation.security.hash.ProofsHash
+import org.tessellation.security.key.ops.PublicKeyOps
+import org.tessellation.security.signature.{Signed, SignedValidator}
 import org.tessellation.shared.sharedKryoRegistrar
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.PosInt
-import org.scalacheck.Arbitrary.arbitrary
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
 
@@ -54,20 +56,34 @@ object BlockValidatorSuite extends MutableIOSuite with Checkers {
   test("validation should pass for valid block") { res =>
     implicit val (kryo, sp) = res
 
-    val validBlockGen = for {
-      p1 <- arbitrary[BlockReference]
-      p2 <- arbitrary[BlockReference].suchThat(br => br =!= p1)
-    } yield DAGBlock(parent = NonEmptyList.of(p1, p2), transactions = SortedSet.empty)
-
     val validator = makeValidator[IO]
 
-    forall(validBlockGen) { block =>
-      for {
-        keys <- generateKeys[IO](3)
-        signedBlock <- block.sign(keys)
-        validated <- validator.validateGetBlock(signedBlock)
-      } yield expect.same(validated, signedBlock.validNec[BlockValidationError])
-    }
+    for {
+      keys <- generateKeys[IO](3)
+      src = keys.head.getPublic.toAddress
+      dst = keys.toList(1).getPublic.toAddress
+      tx <- Signed
+        .forAsyncKryo[IO, Transaction](
+          Transaction(
+            src,
+            dst,
+            TransactionAmount(1L),
+            TransactionFee(0L),
+            TransactionReference.empty,
+            TransactionSalt(0L)
+          ),
+          keys.head
+        )
+      block = DAGBlock(
+        NonEmptyList.of(
+          BlockReference(Height(10L), ProofsHash("parent1")),
+          BlockReference(Height(12L), ProofsHash("parent2"))
+        ),
+        NonEmptySet.fromSetUnsafe(SortedSet(tx))
+      )
+      signedBlock <- block.sign(keys)
+      validated <- validator.validateGetBlock(signedBlock)
+    } yield expect.same(validated, signedBlock.validNec[BlockValidationError])
   }
 
 }

@@ -6,7 +6,6 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
 import cats.syntax.show._
-import cats.syntax.traverse._
 
 import scala.util.control.NoStackTrace
 
@@ -14,7 +13,6 @@ import org.tessellation.dag.block.processing.{BlockAcceptanceContext, BlockAccep
 import org.tessellation.dag.domain.block.{BlockReference, DAGBlock}
 import org.tessellation.dag.l1.domain.address.storage.AddressStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
-import org.tessellation.ext.cats.conversion.order._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
@@ -47,7 +45,7 @@ object BlockService {
           errorOrAccepted <- blockAcceptanceLogic.acceptBlock(signedBlock, context)
           (contextUpdate, _) <- errorOrAccepted.leftMap(BlockAcceptanceError(blockRef, _)).liftTo[F]
 
-          hashedTransactions <- signedBlock.transactions.toList
+          hashedTransactions <- signedBlock.transactions.toNonEmptyList
             .sortBy(_.ordinal)
             .traverse(_.toHashed)
 
