@@ -13,7 +13,9 @@ import org.tessellation.infrastructure.snapshot._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
+import org.tessellation.sdk.domain.collateral.Collateral
 import org.tessellation.sdk.domain.gossip.Gossip
+import org.tessellation.sdk.infrastructure.Collateral
 import org.tessellation.sdk.infrastructure.consensus.Consensus
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.modules.SdkServices
@@ -51,13 +53,15 @@ object Services {
           session
         )
       dagService = DAGService.make[F](storages.globalSnapshot)
+      collateralService = Collateral.make[F](cfg.collateral, storages.globalSnapshot)
     } yield
       new Services[F](
         cluster = sdkServices.cluster,
         session = sdkServices.session,
         gossip = sdkServices.gossip,
         consensus = consensus,
-        dag = dagService
+        dag = dagService,
+        collateral = collateralService
       ) {}
 }
 
@@ -66,5 +70,6 @@ sealed abstract class Services[F[_]] private (
   val session: Session[F],
   val gossip: Gossip[F],
   val consensus: Consensus[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact],
-  val dag: DAGService[F]
+  val dag: DAGService[F],
+  val collateral: Collateral[F]
 )

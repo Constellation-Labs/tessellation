@@ -2,6 +2,7 @@ package org.tessellation.sdk.config
 
 import scala.concurrent.duration.FiniteDuration
 
+import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.node.NodeState
 
 import com.comcast.ip4s.{Host, Port}
@@ -68,5 +69,9 @@ object types {
     defaultCheckTimeout: FiniteDuration,
     defaultCheckAttempts: PosInt,
     ensureCheckInterval: FiniteDuration
+  )
+
+  case class CollateralConfig(
+    amount: Amount
   )
 }

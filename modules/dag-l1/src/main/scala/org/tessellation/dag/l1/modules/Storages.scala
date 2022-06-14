@@ -15,6 +15,7 @@ import org.tessellation.dag.l1.infrastructure.db.Database
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.L0Peer
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, L0ClusterStorage, SessionStorage}
+import org.tessellation.sdk.domain.collateral.LatestBalances
 import org.tessellation.sdk.domain.gossip.RumorStorage
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.infrastructure.cluster.storage.L0ClusterStorage
@@ -54,7 +55,7 @@ sealed abstract class Storages[F[_]] private (
   val consensus: ConsensusStorage[F],
   val cluster: ClusterStorage[F],
   val l0Cluster: L0ClusterStorage[F],
-  val lastGlobalSnapshotStorage: LastGlobalSnapshotStorage[F],
+  val lastGlobalSnapshotStorage: LastGlobalSnapshotStorage[F] with LatestBalances[F],
   val node: NodeStorage[F],
   val session: SessionStorage[F],
   val rumor: RumorStorage[F],

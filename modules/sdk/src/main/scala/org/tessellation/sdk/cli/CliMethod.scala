@@ -3,11 +3,14 @@ package org.tessellation.sdk.cli
 import scala.concurrent.duration._
 
 import org.tessellation.cli.env._
+import org.tessellation.schema.balance.{Amount, _}
 import org.tessellation.schema.node.NodeState
 import org.tessellation.sdk.config.AppEnvironment
+import org.tessellation.sdk.config.AppEnvironment.Mainnet
 import org.tessellation.sdk.config.types._
 
 import eu.timepit.refined.auto.autoRefineV
+import eu.timepit.refined.types.numeric.NonNegLong
 import fs2.io.file.Path
 
 trait CliMethod {
@@ -23,6 +26,15 @@ trait CliMethod {
   val httpConfig: HttpConfig
 
   val stateAfterJoining: NodeState
+
+  val collateralAmount: Option[Amount]
+
+  val collateralConfig = (environment: AppEnvironment, amount: Option[Amount]) =>
+    CollateralConfig(
+      amount = amount
+        .filter(_ => environment != Mainnet)
+        .getOrElse(Amount(NonNegLong.unsafeFrom(250_000L * normalizationFactor)))
+    )
 
   val gossipConfig: GossipConfig = GossipConfig(
     storage = RumorStorageConfig(

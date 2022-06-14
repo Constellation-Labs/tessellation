@@ -11,6 +11,7 @@ import org.tessellation.infrastructure.snapshot.{GlobalSnapshotLocalFileSystemSt
 import org.tessellation.infrastructure.trust.storage.TrustStorage
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
+import org.tessellation.sdk.domain.collateral.LatestBalances
 import org.tessellation.sdk.domain.gossip.RumorStorage
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.modules.SdkStorages
@@ -45,5 +46,5 @@ sealed abstract class Storages[F[_]] private (
   val session: SessionStorage[F],
   val rumor: RumorStorage[F],
   val trust: TrustStorage[F],
-  val globalSnapshot: GlobalSnapshotStorage[F]
+  val globalSnapshot: GlobalSnapshotStorage[F] with LatestBalances[F]
 )

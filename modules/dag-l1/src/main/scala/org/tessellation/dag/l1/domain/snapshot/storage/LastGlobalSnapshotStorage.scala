@@ -9,7 +9,10 @@ import cats.{Applicative, MonadThrow}
 
 import org.tessellation.dag.snapshot.{GlobalSnapshot, SnapshotOrdinal}
 import org.tessellation.ext.cats.syntax.next._
+import org.tessellation.schema.address.Address
+import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.height.Height
+import org.tessellation.sdk.domain.collateral.LatestBalances
 import org.tessellation.security.Hashed
 
 trait LastGlobalSnapshotStorage[F[_]] {
@@ -22,11 +25,13 @@ trait LastGlobalSnapshotStorage[F[_]] {
 
 object LastGlobalSnapshotStorage {
 
-  def make[F[_]: MonadThrow: Ref.Make]: F[LastGlobalSnapshotStorage[F]] =
+  def make[F[_]: MonadThrow: Ref.Make]: F[LastGlobalSnapshotStorage[F] with LatestBalances[F]] =
     Ref.of[F, Option[Hashed[GlobalSnapshot]]](None).map(make(_))
 
-  def make[F[_]: MonadThrow](snapshotR: Ref[F, Option[Hashed[GlobalSnapshot]]]): LastGlobalSnapshotStorage[F] =
-    new LastGlobalSnapshotStorage[F] {
+  def make[F[_]: MonadThrow](
+    snapshotR: Ref[F, Option[Hashed[GlobalSnapshot]]]
+  ): LastGlobalSnapshotStorage[F] with LatestBalances[F] =
+    new LastGlobalSnapshotStorage[F] with LatestBalances[F] {
 
       def set(snapshot: Hashed[GlobalSnapshot]): F[Unit] =
         snapshotR.modify {
@@ -54,5 +59,8 @@ object LastGlobalSnapshotStorage {
         snapshotR.get.map(_.map(_.ordinal))
 
       def getHeight: F[Option[Height]] = snapshotR.get.map(_.map(_.height))
+
+      def getLatestBalances: F[Option[Map[Address, Balance]]] =
+        get.map(_.map(_.info.balances))
     }
 }

@@ -152,13 +152,15 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
   private def validateHandshakeConditions(toPeer: PeerToJoin): F[Unit] =
     validateHandshakeConditions(toPeer.id, toPeer.ip, toPeer.p2pPort)
 
-  def joinRequest(joinRequest: JoinRequest, remoteAddress: Host): F[Unit] =
+  def joinRequest(hasCollateral: PeerId => F[Boolean])(joinRequest: JoinRequest, remoteAddress: Host): F[Unit] =
     for {
       _ <- sessionStorage.getToken.flatMap(_.fold(SessionDoesNotExist.raiseError[F, Unit])(_ => Applicative[F].unit))
 
       registrationRequest = joinRequest.registrationRequest
 
       _ <- validateHandshakeConditions(joinRequest.registrationRequest)
+
+      _ <- hasCollateral(registrationRequest.id).flatMap(CollateralNotSatisfied.raiseError[F, Unit].unlessA)
 
       withPeer = PeerToJoin(
         registrationRequest.id,
