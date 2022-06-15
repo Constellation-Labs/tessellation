@@ -4,7 +4,7 @@ import org.tessellation.sdk.domain.healthcheck.consensus.HealthCheckConsensusRou
 import org.tessellation.sdk.domain.healthcheck.consensus.types.ConsensusRounds.InProgress
 
 final case class ConsensusRounds[F[_], K <: HealthCheckKey, A <: HealthCheckStatus, B <: ConsensusHealthStatus[K, A], C <: HealthCheckConsensusDecision](
-  historical: List[HistoricalRound[K]],
+  historical: List[HistoricalRound[K, A, B]],
   inProgress: InProgress[F, K, A, B, C]
 )
 

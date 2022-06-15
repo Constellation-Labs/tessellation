@@ -15,15 +15,17 @@ import cats.syntax.traverseFilter._
 import scala.concurrent.duration._
 
 import org.tessellation.effects.GenUUID
+import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.cluster.{PeerToJoin, SessionToken}
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.Peer.toP2PContext
 import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.sdk.config.types.HealthCheckConfig
 import org.tessellation.sdk.domain.cluster.programs.Joining
+import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.gossip.Gossip
-import org.tessellation.sdk.domain.healthcheck.consensus.types.ConsensusRounds
+import org.tessellation.sdk.domain.healthcheck.consensus.types.{ConsensusRounds, HealthCheckRoundId}
 import org.tessellation.sdk.domain.healthcheck.consensus.{HealthCheckConsensus, HealthCheckConsensusDriver}
 import org.tessellation.sdk.http.p2p.clients.NodeClient
 import org.tessellation.sdk.infrastructure.healthcheck.ping.{PeerAvailable, PeerUnavailable}
@@ -31,6 +33,7 @@ import org.tessellation.sdk.infrastructure.healthcheck.ping.{PeerAvailable, Peer
 import com.comcast.ip4s.{Host, Port}
 import eu.timepit.refined.auto.autoUnwrap
 import eu.timepit.refined.types.numeric.PosInt
+import org.http4s.client.Client
 
 class PingHealthCheckConsensus[F[_]: Async: GenUUID: Random](
   clusterStorage: ClusterStorage[F],
@@ -52,7 +55,8 @@ class PingHealthCheckConsensus[F[_]: Async: GenUUID: Random](
     PingConsensusHealthStatus,
     PingHealthCheckConsensusDecision
   ]],
-  waitingProposals: Ref[F, Set[PingConsensusHealthStatus]]
+  waitingProposals: Ref[F, Set[PingConsensusHealthStatus]],
+  httpClient: PingHealthCheckHttpClient[F]
 ) extends HealthCheckConsensus[
       F,
       PingHealthCheckKey,
@@ -155,6 +159,12 @@ class PingHealthCheckConsensus[F[_]: Async: GenUUID: Random](
         startOwnRound(PingHealthCheckKey(peer.id, peer.ip, peer.p2pPort, peer.session))
       )
 
+  def requestProposal(peer: PeerId, round: HealthCheckRoundId): F[Option[PingConsensusHealthStatus]] =
+    clusterStorage
+      .getPeer(peer)
+      .flatMap { _.map(toP2PContext).traverse(httpClient.requestProposal(round).run) }
+      .map(_.flatten)
+
   private def checkPeer(
     peer: PeerId,
     ip: Host,
@@ -218,7 +228,7 @@ class PingHealthCheckConsensus[F[_]: Async: GenUUID: Random](
 
 object PingHealthCheckConsensus {
 
-  def make[F[_]: Async: GenUUID: Random](
+  def make[F[_]: Async: KryoSerializer: GenUUID: Random](
     clusterStorage: ClusterStorage[F],
     joining: Joining[F],
     selfId: PeerId,
@@ -230,7 +240,9 @@ object PingHealthCheckConsensus {
     ],
     config: HealthCheckConfig,
     gossip: Gossip[F],
-    nodeClient: NodeClient[F]
+    nodeClient: NodeClient[F],
+    client: Client[F],
+    session: Session[F]
   ): F[PingHealthCheckConsensus[F]] = {
     def mkRounds =
       Ref
@@ -251,9 +263,21 @@ object PingHealthCheckConsensus {
         )
 
     def mkWaitingProposals = Ref.of[F, Set[PingConsensusHealthStatus]](Set.empty)
+    def httpClient = PingHealthCheckHttpClient.make[F](client, session)
 
-    (mkRounds, mkWaitingProposals).mapN {
-      new PingHealthCheckConsensus(clusterStorage, joining, selfId, driver, config, gossip, nodeClient, _, _)
+    (mkRounds, mkWaitingProposals).mapN { (rounds, waitingProposals) =>
+      new PingHealthCheckConsensus(
+        clusterStorage,
+        joining,
+        selfId,
+        driver,
+        config,
+        gossip,
+        nodeClient,
+        rounds,
+        waitingProposals,
+        httpClient
+      )
     }
   }
 }

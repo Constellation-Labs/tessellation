@@ -5,6 +5,7 @@ import java.security.PrivateKey
 import cats.effect.Async
 import cats.syntax.semigroupk._
 
+import org.tessellation.dag.snapshot.SnapshotOrdinal
 import org.tessellation.domain.cell.L0Cell
 import org.tessellation.http.routes._
 import org.tessellation.kryo.KryoSerializer
@@ -13,9 +14,12 @@ import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.AppEnvironment.{Dev, Testnet}
 import org.tessellation.sdk.http.p2p.middleware.{PeerAuthMiddleware, `X-Id-Middleware`}
 import org.tessellation.sdk.http.routes._
+import org.tessellation.sdk.infrastructure.healthcheck.declaration.PeerProposalHealthcheckRoutes
+import org.tessellation.sdk.infrastructure.healthcheck.ping.PingHealthCheckRoutes
 import org.tessellation.security.SecurityProvider
 
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
+import org.http4s.server.Router
 import org.http4s.server.middleware.{RequestLogger, ResponseLogger}
 import org.http4s.{HttpApp, HttpRoutes}
 
@@ -26,11 +30,12 @@ object HttpApi {
     queues: Queues[F],
     services: Services[F],
     programs: Programs[F],
+    healthchecks: HealthChecks[F],
     privateKey: PrivateKey,
     environment: AppEnvironment,
     selfId: PeerId
   ): HttpApi[F] =
-    new HttpApi[F](storages, queues, services, programs, privateKey, environment, selfId) {}
+    new HttpApi[F](storages, queues, services, programs, healthchecks, privateKey, environment, selfId) {}
 }
 
 sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer] private (
@@ -38,6 +43,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer] pri
   queues: Queues[F],
   services: Services[F],
   programs: Programs[F],
+  healthchecks: HealthChecks[F],
   privateKey: PrivateKey,
   environment: AppEnvironment,
   selfId: PeerId
@@ -54,6 +60,13 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer] pri
   private val stateChannelRoutes = StateChannelRoutes[F](mkDagCell)
   private val globalSnapshotRoutes = GlobalSnapshotRoutes[F](storages.globalSnapshot)
   private val dagRoutes = DagRoutes[F](services.dag, mkDagCell)
+
+  private val healthcheckP2PRoutes = {
+    val pingHealthcheckRoutes = PingHealthCheckRoutes[F](healthchecks.ping)
+    val peerDeclaration = PeerProposalHealthcheckRoutes[F, SnapshotOrdinal](services.consensus.healthcheck)
+
+    Router("healthcheck" -> (pingHealthcheckRoutes.p2pRoutes <+> peerDeclaration.p2pRoutes))
+  }
 
   private val debugRoutes = DebugRoutes[F](storages, services).routes
 
@@ -83,7 +96,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer] pri
               nodeRoutes.p2pRoutes <+>
               gossipRoutes.p2pRoutes <+>
               trustRoutes.p2pRoutes <+>
-              globalSnapshotRoutes.p2pRoutes
+              globalSnapshotRoutes.p2pRoutes <+>
+              healthcheckP2PRoutes
           )
         )
     )

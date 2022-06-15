@@ -13,24 +13,28 @@ import scala.concurrent.duration.FiniteDuration
 import scala.reflect.runtime.universe.TypeTag
 
 import org.tessellation.effects.GenUUID
+import org.tessellation.schema.peer.Peer.toP2PContext
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.config.types.HealthCheckConfig
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.healthcheck.consensus.HealthCheckConsensus
-import org.tessellation.sdk.domain.healthcheck.consensus.types.ConsensusRounds
+import org.tessellation.sdk.domain.healthcheck.consensus.types.{ConsensusRounds, HealthCheckRoundId}
 import org.tessellation.sdk.infrastructure.consensus._
 import org.tessellation.sdk.infrastructure.consensus.declaration.PeerDeclaration
 
+import io.circe.{Decoder, Encoder}
+
 object PeerDeclarationHealthCheck {
 
-  def make[F[_]: Async: GenUUID, K: TypeTag, A](
+  def make[F[_]: Async: GenUUID, K: TypeTag: Encoder: Decoder, A](
     clusterStorage: ClusterStorage[F],
     selfId: PeerId,
     gossip: Gossip[F],
     config: HealthCheckConfig,
     consensusStorage: ConsensusStorage[F, _, K, A],
-    consensusManager: ConsensusManager[F, _, K, A]
+    consensusManager: ConsensusManager[F, _, K, A],
+    httpClient: PeerDeclarationHttpClient[F, K]
   ): F[HealthCheckConsensus[F, Key[K], Health, Status[K], Decision]] = {
     def mkWaitingProposals = Ref.of[F, Set[Status[K]]](Set.empty)
     def mkRounds =
@@ -52,6 +56,12 @@ object PeerDeclarationHealthCheck {
         def ownStatus(key: Key[K]): F[Fiber[F, Throwable, PeerDeclarationHealth]] = Spawn[F].start(peerHealth(key))
 
         def statusOnError(key: Key[K]): PeerDeclarationHealth = TimedOut
+
+        def requestProposal(peer: PeerId, round: HealthCheckRoundId): F[Option[Status[K]]] =
+          clusterStorage
+            .getPeer(peer)
+            .flatMap { _.map(toP2PContext).traverse(httpClient.requestProposal(round).run) }
+            .map(_.flatten)
 
         def periodic: F[Unit] =
           for {

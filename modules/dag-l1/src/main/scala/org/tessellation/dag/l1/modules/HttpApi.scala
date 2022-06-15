@@ -10,9 +10,11 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.http.p2p.middleware.{PeerAuthMiddleware, `X-Id-Middleware`}
 import org.tessellation.sdk.http.routes._
+import org.tessellation.sdk.infrastructure.healthcheck.ping.PingHealthCheckRoutes
 import org.tessellation.security.SecurityProvider
 
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
+import org.http4s.server.Router
 import org.http4s.server.middleware.{RequestLogger, ResponseLogger}
 import org.http4s.{HttpApp, HttpRoutes}
 
@@ -24,9 +26,10 @@ object HttpApi {
     privateKey: PrivateKey,
     services: Services[F],
     programs: Programs[F],
+    healthchecks: HealthChecks[F],
     selfId: PeerId
   ): HttpApi[F] =
-    new HttpApi[F](storages, queues, privateKey, services, programs, selfId) {}
+    new HttpApi[F](storages, queues, privateKey, services, programs, healthchecks, selfId) {}
 }
 
 sealed abstract class HttpApi[F[_]: Async: KryoSerializer: SecurityProvider] private (
@@ -35,6 +38,7 @@ sealed abstract class HttpApi[F[_]: Async: KryoSerializer: SecurityProvider] pri
   privateKey: PrivateKey,
   services: Services[F],
   programs: Programs[F],
+  healthchecks: HealthChecks[F],
   selfId: PeerId
 ) {
   private val clusterRoutes =
@@ -43,6 +47,11 @@ sealed abstract class HttpApi[F[_]: Async: KryoSerializer: SecurityProvider] pri
   private val gossipRoutes = GossipRoutes[F](storages.rumor, queues.rumor, services.gossip)
   private val dagRoutes = Routes[F](services.transaction, storages.transaction, queues.peerBlockConsensusInput)
   private val nodeRoutes = NodeRoutes[F](storages.node)
+  private val healthcheckP2PRoutes = {
+    val pingHealthcheckRoutes = PingHealthCheckRoutes[F](healthchecks.ping)
+
+    Router("healthcheck" -> pingHealthcheckRoutes.p2pRoutes)
+  }
 
   private val openRoutes: HttpRoutes[F] =
     `X-Id-Middleware`.responseMiddleware(selfId) {
@@ -59,7 +68,8 @@ sealed abstract class HttpApi[F[_]: Async: KryoSerializer: SecurityProvider] pri
           PeerAuthMiddleware.requestTokenVerifierMiddleware(services.session)(
             clusterRoutes.p2pRoutes <+>
               gossipRoutes.p2pRoutes <+>
-              dagRoutes.p2pRoutes
+              dagRoutes.p2pRoutes <+>
+              healthcheckP2PRoutes
           )
         )
     )

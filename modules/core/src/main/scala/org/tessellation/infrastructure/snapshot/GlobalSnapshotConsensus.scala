@@ -13,10 +13,13 @@ import org.tessellation.domain.snapshot.GlobalSnapshotStorage
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.config.types.HealthCheckConfig
+import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.infrastructure.consensus.Consensus
 import org.tessellation.security.SecurityProvider
+
+import org.http4s.client.Client
 
 object GlobalSnapshotConsensus {
 
@@ -29,7 +32,9 @@ object GlobalSnapshotConsensus {
     globalSnapshotStorage: GlobalSnapshotStorage[F],
     blockValidator: BlockValidator[F],
     healthCheckConfig: HealthCheckConfig,
-    snapshotConfig: SnapshotConfig
+    snapshotConfig: SnapshotConfig,
+    client: Client[F],
+    session: Session[F]
   ): F[Consensus[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact]] =
     Consensus.make[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact](
       GlobalSnapshotConsensusFunctions.make[F](
@@ -47,6 +52,8 @@ object GlobalSnapshotConsensus {
       whitelisting,
       clusterStorage,
       healthCheckConfig,
+      client,
+      session,
       none
     )
 

@@ -52,7 +52,16 @@ object Main
         services = Services.make[IO](storages, validators, sdkServices, p2pClient)
         programs = Programs.make(sdkPrograms, p2pClient, storages)
         healthChecks <- HealthChecks
-          .make[IO](storages, services, programs, p2pClient, cfg.healthCheck, sdk.nodeId)
+          .make[IO](
+            storages,
+            services,
+            programs,
+            p2pClient,
+            sdkResources.client,
+            sdkServices.session,
+            cfg.healthCheck,
+            sdk.nodeId
+          )
           .asResource
 
         rumorHandler = RumorHandlers.make[IO](storages.cluster, healthChecks.ping).handlers <+>
@@ -62,7 +71,7 @@ object Main
           .start(storages, services, queues, healthChecks, p2pClient, rumorHandler, nodeId, cfg)
           .asResource
 
-        api = HttpApi.make[IO](storages, queues, keyPair.getPrivate, services, programs, sdk.nodeId)
+        api = HttpApi.make[IO](storages, queues, keyPair.getPrivate, services, programs, healthChecks, sdk.nodeId)
         _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
         _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)
         _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.http.cliHttp, api.cliApp)
