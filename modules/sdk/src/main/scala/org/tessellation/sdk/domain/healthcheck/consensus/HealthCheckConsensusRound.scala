@@ -96,6 +96,8 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey, A <: HealthChe
 
   def getRoundIds: F[Set[HealthCheckRoundId]] = roundIds.get
 
+  def getOwnRoundId: HealthCheckRoundId = roundId
+
   def addParallelRounds(key: K)(roundIds: Set[HealthCheckRoundId]): F[Unit] =
     parallelRounds.update { m =>
       def updated = m.get(key).fold(roundIds)(_ ++ roundIds)
@@ -109,7 +111,9 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey, A <: HealthChe
         def missing = _parallelRounds.keySet.map(_.id).intersect(_peers -- _proposals)
 
         peers.update(_ -- missing) >>
-          logger.debug(s"Removed unresponsive parallel peers: ${missing.show} for round: ${roundId.show}")
+          Applicative[F].whenA(missing.size > 0) {
+            logger.debug(s"Removed unresponsive parallel peers: ${missing.show} for round: ${roundId.show}")
+          }
       } else Applicative[F].unit
     }.flatten
 
@@ -130,15 +134,14 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey, A <: HealthChe
     }
 
   def manage: F[Unit] =
-    sendProposal >>
-      Clock[F].monotonic.map(_ - startedAt).flatMap { elapsed =>
-        if (driver.removePeersWithParallelRound && elapsed >= config.removeUnresponsiveParallelPeersAfter) {
-          removeUnresponsiveParallelPeers()
-        } else Applicative[F].unit
-      }
+    Clock[F].monotonic.map(_ - startedAt).flatMap { elapsed =>
+      if (driver.removePeersWithParallelRound && elapsed >= config.removeUnresponsiveParallelPeersAfter) {
+        removeUnresponsiveParallelPeers()
+      } else Applicative[F].unit
+    }
 
-  def generateHistoricalData(decision: C): F[HistoricalRound[K]] =
-    roundIds.get.map(HistoricalRound(key, _, decision))
+  def generateHistoricalData(ownProposal: B, decision: C): F[HistoricalRound[K, A, B]] =
+    roundIds.get.map(HistoricalRound(key, _, ownProposal, decision))
 
   def ownConsensusHealthStatus: F[B] =
     clusterStorage.getPeers.map(_.map(_.id)).flatMap { clusterState =>

@@ -52,11 +52,31 @@ object Main
       storages <- Storages.make[IO](sdkStorages, cfg.snapshot).asResource
       validators = Validators.make[IO](cfg.snapshot)
       services <- Services
-        .make[IO](sdkServices, queues, storages, validators, sdk.whitelisting, sdk.nodeId, keyPair, cfg)
+        .make[IO](
+          sdkServices,
+          queues,
+          storages,
+          validators,
+          sdkResources.client,
+          sdkServices.session,
+          sdk.whitelisting,
+          sdk.nodeId,
+          keyPair,
+          cfg
+        )
         .asResource
       programs = Programs.make[IO](sdkPrograms, storages, services, p2pClient)
       healthChecks <- HealthChecks
-        .make[IO](storages, services, programs, p2pClient, cfg.healthCheck, sdk.nodeId)
+        .make[IO](
+          storages,
+          services,
+          programs,
+          p2pClient,
+          sdkResources.client,
+          sdkServices.session,
+          cfg.healthCheck,
+          sdk.nodeId
+        )
         .asResource
 
       rumorHandler = RumorHandlers.make[IO](storages.cluster, healthChecks.ping).handlers <+>
@@ -66,7 +86,8 @@ object Main
         .start(storages, services, programs, queues, healthChecks, validators, p2pClient, rumorHandler, nodeId, cfg)
         .asResource
 
-      api = HttpApi.make[IO](storages, queues, services, programs, keyPair.getPrivate, cfg.environment, sdk.nodeId)
+      api = HttpApi
+        .make[IO](storages, queues, services, programs, healthChecks, keyPair.getPrivate, cfg.environment, sdk.nodeId)
       _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
       _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)
       _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.http.cliHttp, api.cliApp)

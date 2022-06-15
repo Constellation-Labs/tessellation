@@ -3,9 +3,10 @@ package org.tessellation.sdk.infrastructure.healthcheck.declaration
 import org.tessellation.sdk.domain.healthcheck.consensus.types.HealthCheckStatus
 
 import derevo.cats.{eqv, show}
+import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 
-@derive(eqv, show)
+@derive(eqv, show, encoder, decoder)
 sealed trait PeerDeclarationHealth extends HealthCheckStatus
 
 /** Peer is either not a facilitator or his declaration is not required in the current state of consensus */

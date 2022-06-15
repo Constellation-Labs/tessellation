@@ -1,6 +1,8 @@
 package org.tessellation.sdk.infrastructure.healthcheck.declaration
 
+import cats.Applicative
 import cats.effect.Async
+import cats.syntax.eq._
 
 import scala.reflect.runtime.universe.TypeTag
 
@@ -14,7 +16,9 @@ object PeerDeclarationProposalHandler {
     healthCheck: HealthCheckConsensus[F, Key[K], Health, Status[K], Decision]
   ): RumorHandler[F] =
     RumorHandler.fromPeerRumorConsumer[F, Status[K]](IgnoreSelfOrigin) { rumor =>
-      healthCheck.handleProposal(rumor.content)
+      Applicative[F].whenA(rumor.content.owner === rumor.origin) {
+        healthCheck.handleProposal(rumor.content)
+      }
     }
 
 }

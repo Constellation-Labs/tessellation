@@ -1,6 +1,7 @@
 package org.tessellation.sdk.domain.healthcheck.consensus
 
 import cats.Applicative
+import cats.data.OptionT
 import cats.effect._
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
@@ -52,11 +53,34 @@ abstract class HealthCheckConsensus[
 
   def onOutcome(outcomes: ConsensusRounds.Outcome[F, K, A, B, C]): F[Unit]
 
+  def requestProposal(peer: PeerId, round: HealthCheckRoundId): F[Option[B]]
+
   def roundsInProgress: F[InProgress[F, K, A, B, C]] = allRounds.get.map(_.inProgress)
-  def historicalRounds: F[List[HistoricalRound[K]]] = allRounds.get.map(_.historical)
+  def historicalRounds: F[List[HistoricalRound[K, A, B]]] = allRounds.get.map(_.historical)
 
   def peersUnderConsensus: F[Set[PeerId]] =
     roundsInProgress.map(_.keySet.map(_.id))
+
+  def getOwnProposal(roundId: HealthCheckRoundId): F[Option[B]] = {
+    def inProgress =
+      roundsInProgress.flatMap { r =>
+        r.values.toList.traverse { round =>
+          round.getRoundIds.map { ids =>
+            (round, ids)
+          }
+        }
+      }.flatMap { r =>
+        r.find {
+          case (_, ids) => ids.contains(roundId)
+        }.map(_._1).traverse(_.ownConsensusHealthStatus)
+      }
+
+    def historical = historicalRounds.map { r =>
+      r.find(_.roundIds.contains(roundId)).map(_.ownProposal)
+    }
+
+    OptionT(historical).orElseF(inProgress).value
+  }
 
   final override def trigger(): F[Unit] =
     periodic >> triggerRound()
@@ -65,6 +89,27 @@ abstract class HealthCheckConsensus[
     roundsInProgress.flatMap { inProgress =>
       if (inProgress.nonEmpty) manageRounds(inProgress) else Applicative[F].unit
     }
+
+  private def manageMissingProposals(
+    missingFromPeers: Set[PeerId],
+    key: K,
+    round: HealthCheckConsensusRound[F, K, A, B, C]
+  ): F[Unit] =
+    round.getRoundIds.flatMap { roundIds =>
+      Applicative[F].whenA(missingFromPeers.size > 0) {
+        logger.debug(
+          s"Missing proposals for round ids: ${roundIds} for key: ${key} are from peers: ${missingFromPeers}. Requesting proposals"
+        )
+      }
+    } >>
+      missingFromPeers.toList.traverse { id =>
+        requestProposal(id, round.getOwnRoundId).map(_.map((id, _)))
+      }.map(_.flatten)
+        .flatMap(_.traverse {
+          case (peerId, proposal) =>
+            Applicative[F].whenA(peerId === proposal.owner) { handleProposal(proposal) }
+        })
+        .void
 
   private def manageRounds(rounds: ConsensusRounds.InProgress[F, K, A, B, C]): F[Unit] = {
     def checkRounds(inProgress: ConsensusRounds.InProgress[F, K, A, B, C]): F[ConsensusRounds.Finished[F, K, A, B, C]] =
@@ -77,13 +122,7 @@ abstract class HealthCheckConsensus[
           case (_, inProgress) =>
             inProgress.toList.traverse {
               case (key, round) =>
-                round.missingProposals >>= { peers =>
-                  round.getRoundIds >>= { roundIds =>
-                    logger.debug(
-                      s"Missing proposals for round ids: ${roundIds} for key: ${key} are from peers: ${peers}"
-                    )
-                  }
-                }
+                round.missingProposals.flatMap(manageMissingProposals(_, key, round))
             }
         }.map { case (finished, _) => finished }
       }
@@ -107,7 +146,7 @@ abstract class HealthCheckConsensus[
         )
       }.flatMap {
         _.values.toList.traverse {
-          case (decision, round) => round.generateHistoricalData(decision)
+          case (decision, round) => round.ownConsensusHealthStatus.flatMap(round.generateHistoricalData(_, decision))
         }
       }.flatMap { finishedRounds =>
         allRounds.update {
@@ -228,7 +267,7 @@ abstract class HealthCheckConsensus[
                }
          })
 
-  def handleProposalForHistoricalRound(proposal: B)(round: HistoricalRound[K]): F[Unit] =
+  def handleProposalForHistoricalRound(proposal: B)(round: HistoricalRound[K, A, B]): F[Unit] =
     Applicative[F].unit
 
   private def calculateOutcome(

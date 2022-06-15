@@ -20,6 +20,8 @@ import org.tessellation.sdk.infrastructure.consensus.Consensus
 import org.tessellation.sdk.modules.SdkServices
 import org.tessellation.security.SecurityProvider
 
+import org.http4s.client.Client
+
 object Services {
 
   def make[F[_]: Async: Random: KryoSerializer: SecurityProvider](
@@ -27,6 +29,8 @@ object Services {
     queues: Queues[F],
     storages: Storages[F],
     validators: Validators[F],
+    client: Client[F],
+    session: Session[F],
     whitelisting: Option[Set[PeerId]],
     selfId: PeerId,
     keyPair: KeyPair,
@@ -44,7 +48,9 @@ object Services {
           storages.globalSnapshot,
           validators.blockValidator,
           cfg.healthCheck,
-          cfg.snapshot
+          cfg.snapshot,
+          client,
+          session
         )
       dagService = DAGService.make[F](storages.globalSnapshot)
     } yield
