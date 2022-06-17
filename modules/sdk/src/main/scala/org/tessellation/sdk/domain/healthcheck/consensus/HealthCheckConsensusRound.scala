@@ -19,6 +19,7 @@ import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.sdk.config.types.HealthCheckConfig
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.gossip.Gossip
+import org.tessellation.sdk.domain.healthcheck.consensus.HealthCheckConsensusRound._
 import org.tessellation.sdk.domain.healthcheck.consensus.types._
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -70,8 +71,12 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey, A <: HealthChe
     }
   }
 
-  def hasProposal(peer: PeerId): F[Boolean] =
-    proposals.get.map(_.contains(peer))
+  def hasProposal(proposal: B): F[HasProposal] =
+    proposals.get.map(_.get(proposal.owner)).map {
+      _.fold[HasProposal](ProposalAndOwnerDoesNotExist) { p =>
+        if (p == proposal) SameProposalExists else OwnersProposalExists
+      }
+    }
 
   def isFinished: F[Boolean] = allProposalsReceived.flatMap { received =>
     sentProposal.get.map(_ && received)
@@ -210,4 +215,10 @@ object HealthCheckConsensusRound {
         )
     }
   }
+
+  trait HasProposal
+  case object ProposalAndOwnerDoesNotExist extends HasProposal
+  case object SameProposalExists extends HasProposal
+  case object OwnersProposalExists extends HasProposal
+
 }

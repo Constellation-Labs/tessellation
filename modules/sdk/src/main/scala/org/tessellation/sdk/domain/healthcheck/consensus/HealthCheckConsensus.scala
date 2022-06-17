@@ -213,11 +213,13 @@ abstract class HealthCheckConsensus[
                .map(handleProposalForHistoricalRound(proposal))
                .orElse {
                  inProgressRound.map { r =>
-                   r.hasProposal(proposal.owner)
-                     .ifM(
-                       waitingProposals.update(_ + proposal),
-                       r.processProposal(proposal)
-                     )
+                   r.hasProposal(proposal).flatMap {
+                     case HealthCheckConsensusRound.ProposalAndOwnerDoesNotExist => r.processProposal(proposal)
+                     case HealthCheckConsensusRound.SameProposalExists =>
+                       logger.debug(s"Same proposal exists, ignoring")
+                     case HealthCheckConsensusRound.OwnersProposalExists => waitingProposals.update(_ + proposal)
+                     case _                                              => logger.error(s"Unpexpected state returned")
+                   }
                  }
                }
                .getOrElse {
