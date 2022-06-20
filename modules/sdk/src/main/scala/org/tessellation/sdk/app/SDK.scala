@@ -7,6 +7,7 @@ import cats.effect.std.Random
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.http.p2p.SdkP2PClient
+import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.modules._
 import org.tessellation.sdk.resources.SdkResources
 import org.tessellation.security.SecurityProvider
@@ -17,6 +18,7 @@ trait SDK[F[_]] {
   implicit val random: Random[F]
   implicit val securityProvider: SecurityProvider[F]
   implicit val kryoPool: KryoSerializer[F]
+  implicit val metrics: Metrics[F]
 
   val keyPair: KeyPair
   lazy val nodeId = PeerId.fromPublic(keyPair.getPublic)

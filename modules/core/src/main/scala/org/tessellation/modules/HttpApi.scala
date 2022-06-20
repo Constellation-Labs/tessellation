@@ -13,9 +13,11 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.AppEnvironment.{Dev, Testnet}
 import org.tessellation.sdk.http.p2p.middleware.{PeerAuthMiddleware, `X-Id-Middleware`}
+import org.tessellation.sdk.http.routes
 import org.tessellation.sdk.http.routes._
 import org.tessellation.sdk.infrastructure.healthcheck.declaration.PeerProposalHealthcheckRoutes
 import org.tessellation.sdk.infrastructure.healthcheck.ping.PingHealthCheckRoutes
+import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
 
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
@@ -25,7 +27,7 @@ import org.http4s.{HttpApp, HttpRoutes}
 
 object HttpApi {
 
-  def make[F[_]: Async: SecurityProvider: KryoSerializer](
+  def make[F[_]: Async: SecurityProvider: KryoSerializer: Metrics](
     storages: Storages[F],
     queues: Queues[F],
     services: Services[F],
@@ -38,7 +40,7 @@ object HttpApi {
     new HttpApi[F](storages, queues, services, programs, healthchecks, privateKey, environment, selfId) {}
 }
 
-sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer] private (
+sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Metrics] private (
   storages: Storages[F],
   queues: Queues[F],
   services: Services[F],
@@ -70,7 +72,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer] pri
 
   private val debugRoutes = DebugRoutes[F](storages, services).routes
 
-  private val metricRoutes = MetricRoutes[F](services).routes
+  private val metricRoutes = routes.MetricRoutes[F]().routes
+  private val targetRoutes = routes.TargetRoutes[F](services.cluster).routes
 
   private val openRoutes: HttpRoutes[F] =
     PeerAuthMiddleware
@@ -78,6 +81,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer] pri
         `X-Id-Middleware`.responseMiddleware(selfId) {
           (if (environment == Testnet || environment == Dev) debugRoutes else HttpRoutes.empty) <+>
             metricRoutes <+>
+            targetRoutes <+>
             stateChannelRoutes.publicRoutes <+>
             clusterRoutes.publicRoutes <+>
             globalSnapshotRoutes.publicRoutes <+>

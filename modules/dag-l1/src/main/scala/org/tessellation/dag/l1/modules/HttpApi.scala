@@ -11,6 +11,7 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.http.p2p.middleware.{PeerAuthMiddleware, `X-Id-Middleware`}
 import org.tessellation.sdk.http.routes._
 import org.tessellation.sdk.infrastructure.healthcheck.ping.PingHealthCheckRoutes
+import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
 
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
@@ -20,7 +21,7 @@ import org.http4s.{HttpApp, HttpRoutes}
 
 object HttpApi {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider](
+  def make[F[_]: Async: KryoSerializer: SecurityProvider: Metrics](
     storages: Storages[F],
     queues: Queues[F],
     privateKey: PrivateKey,
@@ -32,7 +33,7 @@ object HttpApi {
     new HttpApi[F](storages, queues, privateKey, services, programs, healthchecks, selfId) {}
 }
 
-sealed abstract class HttpApi[F[_]: Async: KryoSerializer: SecurityProvider] private (
+sealed abstract class HttpApi[F[_]: Async: KryoSerializer: SecurityProvider: Metrics] private (
   storages: Storages[F],
   queues: Queues[F],
   privateKey: PrivateKey,
@@ -53,11 +54,16 @@ sealed abstract class HttpApi[F[_]: Async: KryoSerializer: SecurityProvider] pri
     Router("healthcheck" -> pingHealthcheckRoutes.p2pRoutes)
   }
 
+  private val metricRoutes = MetricRoutes[F]().routes
+  private val targetRoutes = TargetRoutes[F](services.cluster).routes
+
   private val openRoutes: HttpRoutes[F] =
     `X-Id-Middleware`.responseMiddleware(selfId) {
       dagRoutes.publicRoutes <+>
         clusterRoutes.publicRoutes <+>
-        nodeRoutes.publicRoutes
+        nodeRoutes.publicRoutes <+>
+        metricRoutes <+>
+        targetRoutes
     }
 
   private val p2pRoutes: HttpRoutes[F] =

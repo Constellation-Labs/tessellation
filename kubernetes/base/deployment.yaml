@@ -4,7 +4,13 @@ metadata:
   name: validator-deployment
 spec:
   replicas: 1
+  selector:
+    matchLabels:
+      node: validator
   template:
+    metadata:
+      labels:
+        node: validator
     spec:
       containers:
         - name: validator
@@ -13,16 +19,23 @@ spec:
             - containerPort: 9000
             - containerPort: 9001
             - containerPort: 9002
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"
           livenessProbe:
             httpGet:
               path: /node/health
               port: 9000
-            initialDelaySeconds: 30
+            initialDelaySeconds: 60
           readinessProbe:
             httpGet:
               path: /node/health
               port: 9000
-            initialDelaySeconds: 5
+            initialDelaySeconds: 15
           envFrom:
             - configMapRef:
                 name: validator-config
@@ -53,16 +66,23 @@ spec:
             - containerPort: 9000
             - containerPort: 9001
             - containerPort: 9002
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"
           livenessProbe:
             httpGet:
               path: /node/health
               port: 9000
-            initialDelaySeconds: 30
+            initialDelaySeconds: 60
           readinessProbe:
             httpGet:
               path: /node/health
               port: 9000
-            initialDelaySeconds: 5
+            initialDelaySeconds: 15
           envFrom:
             - configMapRef:
                 name: validator-config

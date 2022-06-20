@@ -12,13 +12,14 @@ import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.infrastructure.cluster.services.Cluster
 import org.tessellation.sdk.infrastructure.gossip.Gossip
+import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
 
 import fs2.concurrent.SignallingRef
 
 object SdkServices {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider](
+  def make[F[_]: Async: KryoSerializer: SecurityProvider: Metrics](
     cfg: SdkConfig,
     nodeId: PeerId,
     keyPair: KeyPair,

@@ -48,7 +48,6 @@ lazy val dockerSettings = Seq(
   dockerBaseImage := "openjdk:jre-alpine"
 )
 
-
 lazy val root = (project in file("."))
   .settings(
     name := "tessellation"
@@ -246,9 +245,17 @@ lazy val sdk = (project in file("modules/sdk"))
       CompilerPlugin.semanticDB,
       Libraries.cats,
       Libraries.catsEffect,
+      Libraries.circeCore,
+      Libraries.circeGeneric,
+      Libraries.circeParser,
+      Libraries.circeRefined,
+      Libraries.derevoCore,
+      Libraries.derevoCats,
+      Libraries.derevoCirce,
       Libraries.fs2Core,
       Libraries.fs2DataCsv,
       Libraries.fs2DataCsvGeneric,
+      Libraries.http4sCore,
       Libraries.http4sDsl,
       Libraries.http4sServer,
       Libraries.http4sClient,
@@ -261,6 +268,7 @@ lazy val sdk = (project in file("modules/sdk"))
       Libraries.declineRefined,
       Libraries.logback,
       Libraries.log4cats,
+      Libraries.micrometerPrometheusRegistry,
       Libraries.shapeless
     )
   )
@@ -361,7 +369,7 @@ lazy val tools = (project in file("modules/tools"))
       Libraries.refinedCore,
       Libraries.refinedCats,
       Libraries.skunkCore,
-      Libraries.skunkCirce,
+      Libraries.skunkCirce
     )
   )
 lazy val core = (project in file("modules/core"))
@@ -417,7 +425,6 @@ lazy val core = (project in file("modules/core"))
       Libraries.logback,
       Libraries.mapref,
       Libraries.monocleCore,
-      Libraries.micrometerPrometheusRegistry,
       Libraries.newtype,
       Libraries.redis4catsEffects,
       Libraries.redis4catsLog4cats,

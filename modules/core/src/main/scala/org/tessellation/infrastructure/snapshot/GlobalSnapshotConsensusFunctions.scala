@@ -30,6 +30,7 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
+import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.signature.Signed
@@ -44,7 +45,7 @@ trait GlobalSnapshotConsensusFunctions[F[_]]
 
 object GlobalSnapshotConsensusFunctions {
 
-  def make[F[_]: Async: KryoSerializer](
+  def make[F[_]: Async: KryoSerializer: Metrics](
     globalSnapshotStorage: GlobalSnapshotStorage[F],
     heightInterval: NonNegLong,
     blockAcceptanceManager: BlockAcceptanceManager[F]
@@ -55,7 +56,10 @@ object GlobalSnapshotConsensusFunctions {
     def consumeSignedMajorityArtifact(signedArtifact: Signed[GlobalSnapshotArtifact]): F[Unit] =
       globalSnapshotStorage
         .prepend(signedArtifact)
-        .ifM(Applicative[F].unit, logger.error("Cannot save GlobalSnapshot into the storage"))
+        .ifM(
+          metrics.globalSnapshot(signedArtifact),
+          logger.error("Cannot save GlobalSnapshot into the storage")
+        )
 
     def triggerPredicate(
       last: (GlobalSnapshotKey, Signed[GlobalSnapshotArtifact]),
@@ -252,6 +256,24 @@ object GlobalSnapshotConsensusFunctions {
         .toSortedMap
 
       (result, Set.empty)
+    }
+
+    object metrics {
+
+      def globalSnapshot(signedGS: Signed[GlobalSnapshot]): F[Unit] = {
+        val activeTipsCount = signedGS.tips.remainedActive.size + signedGS.blocks.size
+        val deprecatedTipsCount = signedGS.tips.deprecated.size
+        val transactionCount = signedGS.blocks.map(_.block.transactions.size).sum
+
+        Metrics[F].updateGauge("dag_global_snapshot_ordinal", signedGS.ordinal.value) >>
+          Metrics[F].updateGauge("dag_global_snapshot_height", signedGS.height.value) >>
+          Metrics[F].updateGauge("dag_global_snapshot_signature_count", signedGS.proofs.size) >>
+          Metrics[F]
+            .updateGauge("dag_global_snapshot_tips_count", deprecatedTipsCount, Seq(("tip_type", "deprecated"))) >>
+          Metrics[F].updateGauge("dag_global_snapshot_tips_count", activeTipsCount, Seq(("tip_type", "active"))) >>
+          Metrics[F].incrementCounterBy("dag_global_snapshot_blocks_total", signedGS.blocks.size) >>
+          Metrics[F].incrementCounterBy("dag_global_snapshot_transactions_total", transactionCount)
+      }
     }
 
   }

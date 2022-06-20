@@ -9,12 +9,14 @@ import org.tessellation.ext.codecs.BinaryCodec._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.gossip._
 import org.tessellation.sdk.domain.gossip.{Gossip, RumorStorage}
+import org.tessellation.sdk.infrastructure.gossip.metrics
+import org.tessellation.sdk.infrastructure.metrics.Metrics
 
 import org.http4s.HttpRoutes
 import org.http4s.dsl.Http4sDsl
 import org.http4s.server.Router
 
-final case class GossipRoutes[F[_]: Async: KryoSerializer](
+final case class GossipRoutes[F[_]: Async: KryoSerializer: Metrics](
   rumorStorage: RumorStorage[F],
   rumorQueue: Queue[F, RumorBatch],
   gossip: Gossip[F]
@@ -38,9 +40,11 @@ final case class GossipRoutes[F[_]: Async: KryoSerializer](
       for {
         endRequest <- req.as[EndGossipRoundRequest]
         _ <- rumorQueue.offer(endRequest.answer)
+        _ <- metrics.updateRumorsReceived(endRequest.answer)
         answer <- rumorStorage.getRumors(endRequest.inquiry)
         endResponse = EndGossipRoundResponse(answer)
         result <- Ok(endResponse)
+        _ <- metrics.updateRumorsSent(endResponse.answer)
       } yield result
   }
 

@@ -145,7 +145,7 @@ object Main
     in => maybeLimit.map(in.take(_)).getOrElse(in)
 
   def applyDelay[F[_]: Temporal, A](delay: Option[FiniteDuration]): Pipe[F, A, A] =
-    in => delay.map(in.delayBy(_)).getOrElse(in)
+    in => delay.map(in.spaced(_)).getOrElse(in)
 
   def loadKeys[F[_]: Files: Async: SecurityProvider](opts: LoadedWallets): F[List[KeyPair]] =
     Files[F]
