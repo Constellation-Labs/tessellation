@@ -7,12 +7,6 @@ This guide is to get you setup with the tools you'll need for development.
 1. Install _Java 11_, [link](https://openjdk.java.net/projects/jdk/11/).
 2. Install _SBT_, [link](https://www.scala-sbt.org/).
 
-# Starting A Local Cluster (Optional)
-
-To spin up a local cluster, we'll need a way to run [Kubernetes](https://kubernetes.io/) containers. One way is with [Docker](https://www.docker.com/). Running a local cluster is needed to run the integration tests.
-
-After installing _Docker_ and enabling _Kubernetes_, register for a _Docker Hub_ account, [link](https://hub.docker.com/).
-
 ## Fedora Linux
 
 1. Install [_Docker Engine_](https://docs.docker.com/engine/install/fedora/).
@@ -55,3 +49,77 @@ On Linux, you can follow the instructions provided by _SBT_, [link](https://www.
 ## Mac OS
 
 On Mac OS, _SBT_ provides instructions [here](https://www.scala-sbt.org/1.x/docs/Installing-sbt-on-Mac.html). It can be installed via [_Homebrew_](https://formulae.brew.sh/formula/sbt#default) as well. It is also recommended that _SBTEnv_ be installed as well, [link](https://formulae.brew.sh/formula/sbtenv#default). It can help configure the _SBT_ environment.
+
+# Running L0 & L1 on EKS cluster
+
+## Prerequisites
+
+1. [sbt](https://www.scala-sbt.org/)
+2. [Docker Desktop](https://www.docker.com/get-started/) with [Kubernetes](https://docs.docker.com/desktop/kubernetes/) enabled
+3. [Skaffold CLI](https://skaffold.dev/docs/install/#standalone-binary)
+4. [AWS CLI version 2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
+
+## Kubernetes cluster setup 
+
+### Update your kubeconfig
+
+```
+aws eks --region us-west-1 update-kubeconfig --name eks-dev
+kubectl config rename-context $(kubectl config current-context) eks-dev
+```
+
+### Create your namespace
+
+```
+IAM_USER=$(aws sts get-caller-identity --query Arn --output text | sed 's/.*\///g')
+
+kubectl create namespace $IAM_USER
+kubectl config set-context --current --namespace=$IAM_USER
+```
+
+### Verify kubernetes setup
+
+```
+kubectl get pods
+```
+Should return:
+
+```
+No resources found in <your-namespace-name> namespace.
+```
+
+## Docker image repository setup
+
+### Install Docker credential helper
+
+```
+brew install docker-credential-helper-ecr
+```
+
+### Update Docker config
+
+Add this to your `~/.docker/config.json`
+
+```json
+{
+  "credHelpers": {
+    "150340915792.dkr.ecr.us-west-1.amazonaws.com": "ecr-login"
+  }
+}
+```
+
+### Update Skaffold config
+
+```
+skaffold config set default-repo 150340915792.dkr.ecr.us-west-1.amazonaws.com
+```
+
+### Verify docker & kubernetes setup
+
+```
+skaffold dev --trigger manual
+```
+
+You should see docker images successfully uploaded to the container registry
+and then kubernetes resources successfully deployed on the EKS cluster. Open grafana
+to monitor the L0 and L1 clusters performance [http://localhost:8000](http://localhost:8000).
