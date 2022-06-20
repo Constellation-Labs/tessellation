@@ -91,7 +91,7 @@ object BlockAcceptanceManager {
             case reason: BlockRejectionReason =>
               logger.info(s"Rejected block: ${blockRef.show}, reason: ${reason.show}")
             case reason: BlockAwaitReason =>
-              logger.info(s"Rejected block: ${blockRef.show}, reason: ${reason.show}")
+              logger.info(s"Awaiting block: ${blockRef.show}, reason: ${reason.show}")
 
           }
         }
