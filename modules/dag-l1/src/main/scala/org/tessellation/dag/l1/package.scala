@@ -17,7 +17,7 @@ package object l1 {
   val dagL1KryoRegistrar: Map[Class[_], DagL1KryoRegistrationId] = Map(
     classOf[PeerBlockConsensusInput] -> 800,
     classOf[Proposal] -> 801,
-    classOf[BlockProposal] -> 802,
+    classOf[BlockSignatureProposal] -> 802,
     classOf[CancelledBlockCreationRound] -> 803,
     classOf[CancellationReason] -> 804,
     ReceivedProposalForNonExistentOwnRound.getClass -> 805,
