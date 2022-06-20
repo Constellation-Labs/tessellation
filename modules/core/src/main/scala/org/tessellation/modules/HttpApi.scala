@@ -96,12 +96,14 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
         clusterRoutes.p2pPublicRoutes <+>
         PeerAuthMiddleware.requestVerifierMiddleware(
           PeerAuthMiddleware.requestTokenVerifierMiddleware(services.session)(
-            clusterRoutes.p2pRoutes <+>
-              nodeRoutes.p2pRoutes <+>
-              gossipRoutes.p2pRoutes <+>
-              trustRoutes.p2pRoutes <+>
-              globalSnapshotRoutes.p2pRoutes <+>
-              healthcheckP2PRoutes
+            PeerAuthMiddleware.requestCollateralVerifierMiddleware(services.collateral)(
+              clusterRoutes.p2pRoutes <+>
+                nodeRoutes.p2pRoutes <+>
+                gossipRoutes.p2pRoutes <+>
+                trustRoutes.p2pRoutes <+>
+                globalSnapshotRoutes.p2pRoutes <+>
+                healthcheckP2PRoutes
+            )
           )
         )
     )
