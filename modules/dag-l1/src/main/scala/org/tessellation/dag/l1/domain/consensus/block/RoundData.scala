@@ -7,13 +7,14 @@ import scala.concurrent.duration.FiniteDuration
 
 import org.tessellation.dag.domain.block.{DAGBlock, Tips}
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.{
-  BlockProposal,
+  BlockSignatureProposal,
   CancelledBlockCreationRound,
   Proposal
 }
 import org.tessellation.dag.l1.domain.consensus.round.RoundId
 import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.signature.signature.SignatureProof
 import org.tessellation.syntax.sortedCollection._
 
 import monocle.macros.syntax.lens._
@@ -27,7 +28,7 @@ case class RoundData(
   ownBlock: Option[Signed[DAGBlock]] = None,
   ownCancellation: Option[CancellationReason] = None,
   peerProposals: Map[PeerId, Proposal] = Map.empty,
-  peerBlocks: Map[PeerId, Signed[DAGBlock]] = Map.empty,
+  peerBlockSignatures: Map[PeerId, SignatureProof] = Map.empty,
   peerCancellations: Map[PeerId, CancellationReason] = Map.empty,
   tips: Tips
 ) {
@@ -37,8 +38,10 @@ case class RoundData(
 
   def setOwnBlock(block: Signed[DAGBlock]): RoundData = this.focus(_.ownBlock).replace(block.some)
 
-  def addPeerBlock(blockProposal: BlockProposal): RoundData =
-    this.focus(_.peerBlocks).modify(_ + (blockProposal.senderId -> blockProposal.signedBlock))
+  def addPeerBlockSignature(blockSignatureProposal: BlockSignatureProposal): RoundData = {
+    val proof = SignatureProof(PeerId._Id.get(blockSignatureProposal.senderId), blockSignatureProposal.signature)
+    this.focus(_.peerBlockSignatures).modify(_ + (blockSignatureProposal.senderId -> proof))
+  }
 
   def setOwnCancellation(reason: CancellationReason): RoundData = this.focus(_.ownCancellation).replace(reason.some)
 

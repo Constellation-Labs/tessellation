@@ -12,7 +12,7 @@ import cats.syntax.functor._
 import cats.syntax.list._
 import cats.syntax.order._
 import cats.syntax.show._
-import cats.{Eq, Order, Show}
+import cats.{Order, Show}
 
 import scala.collection.immutable.SortedSet
 import scala.util.control.NoStackTrace
@@ -33,11 +33,6 @@ case class Signed[+A](value: A, proofs: NonEmptySet[SignatureProof])
 
 object Signed {
   case class InvalidSignatureForHash[A <: AnyRef](signed: Signed[A]) extends NoStackTrace
-
-  case class MergingProofsForDistinctValues[A](first: A, second: A) extends NoStackTrace {
-    override def getMessage: String =
-      s"Attempted to merge proofs for two distinct values $first != $second"
-  }
 
   implicit def show[A: Show]: Show[Signed[A]] =
     s => s"Signed(value=${s.value.show}, proofs=${s.proofs.show})"
@@ -64,11 +59,8 @@ object Signed {
 
   implicit class SignedOps[A <: AnyRef](signed: Signed[A]) {
 
-    def addProofs(that: Signed[A])(implicit eq: Eq[A]): Either[MergingProofsForDistinctValues[A], Signed[A]] =
-      if (signed.value === that.value)
-        signed.copy(proofs = NonEmptySet.fromSetUnsafe(signed.proofs.toSortedSet ++ that.proofs.toSortedSet)).asRight
-      else
-        MergingProofsForDistinctValues(signed.value, that.value).asLeft
+    def addProof(proof: SignatureProof): Signed[A] =
+      signed.copy(proofs = NonEmptySet.fromSetUnsafe(signed.proofs.toSortedSet + proof))
 
     def signAlsoWith[F[_]: Async: SecurityProvider: KryoSerializer](keyPair: KeyPair): F[Signed[A]] =
       SignatureProof.fromData(keyPair)(signed.value).map { sp =>

@@ -58,8 +58,8 @@ class BlockConsensusCell[F[_]: Async: SecurityProvider: KryoSerializer: Random: 
                 case PersistProposal(proposal) =>
                   Algebra.persistProposal(proposal, ctx)
 
-                case PersistBlockProposal(blockProposal) =>
-                  Algebra.persistBlockProposal(blockProposal, ctx)
+                case PersistBlockSignatureProposal(blockSignatureProposal) =>
+                  Algebra.persistBlockSignatureProposal(blockSignatureProposal, ctx)
 
                 case InformAboutInabilityToParticipate(proposal, reason) =>
                   Algebra.informAboutInabilityToParticipate(proposal, reason, ctx)
@@ -89,19 +89,19 @@ class BlockConsensusCell[F[_]: Async: SecurityProvider: KryoSerializer: Random: 
             case ProcessProposal(proposal) =>
               Coalgebra.processProposal(proposal, ctx)
 
-            case ProcessBlockProposal(blockProposal) =>
-              Applicative[F].pure(Done(PersistBlockProposal(blockProposal).asRight[CellError]))
+            case ProcessBlockSignatureProposal(blockSignatureProposal) =>
+              Applicative[F].pure(Done(PersistBlockSignatureProposal(blockSignatureProposal).asRight[CellError]))
 
             case ProcessCancellation(cancellation) =>
               Applicative[F].pure(Done(PersistCancellationResult(cancellation).asRight[CellError]))
           }
         )
       }, {
-        case OwnRoundTrigger                           => StartOwnRound
-        case InspectionTrigger                         => InspectConsensuses
-        case proposal: Proposal                        => ProcessProposal(proposal)
-        case blockProposal: BlockProposal              => ProcessBlockProposal(blockProposal)
-        case cancellation: CancelledBlockCreationRound => ProcessCancellation(cancellation)
+        case OwnRoundTrigger                                => StartOwnRound
+        case InspectionTrigger                              => InspectConsensuses
+        case proposal: Proposal                             => ProcessProposal(proposal)
+        case blockSignatureProposal: BlockSignatureProposal => ProcessBlockSignatureProposal(blockSignatureProposal)
+        case cancellation: CancelledBlockCreationRound      => ProcessCancellation(cancellation)
       }
     )
 
@@ -243,10 +243,15 @@ object BlockConsensusCell {
     ): F[Either[CellError, Ω]] =
       for {
         _ <- Applicative[F].unit
-        blockProposal = BlockProposal(roundData.roundId, ctx.selfId, roundData.owner, signedBlock)
-        signedBlockProposal <- Signed
-          .forAsyncKryo[F, PeerBlockConsensusInput](blockProposal, ctx.keyPair)
-        _ <- broadcast(signedBlockProposal, roundData.peers, ctx.blockConsensusClient)
+        blockSignatureProposal = BlockSignatureProposal(
+          roundData.roundId,
+          ctx.selfId,
+          roundData.owner,
+          signedBlock.proofs.head.signature
+        )
+        signedBlockSignatureProposal <- Signed
+          .forAsyncKryo[F, PeerBlockConsensusInput](blockSignatureProposal, ctx.keyPair)
+        _ <- broadcast(signedBlockSignatureProposal, roundData.peers, ctx.blockConsensusClient)
       } yield NullTerminal.asRight[CellError].widen[Ω]
 
     private def processValidBlock[F[_]: Async: SecurityProvider: KryoSerializer](
@@ -321,62 +326,57 @@ object BlockConsensusCell {
           case _ => NullTerminal.asRight[CellError].widen[Ω].pure[F]
         }
 
-    private def canPersistBlockProposal(roundData: RoundData, blockProposal: BlockProposal): Boolean = {
-      val sameRoundId = roundData.roundId == blockProposal.roundId
-      lazy val peerExists = roundData.peers.exists(_.id == blockProposal.senderId)
-      lazy val noBlockYet = !roundData.peerBlocks.contains(blockProposal.senderId)
+    private def canPersistBlockSignatureProposal(
+      roundData: RoundData,
+      blockSignatureProposal: BlockSignatureProposal
+    ): Boolean = {
+      val sameRoundId = roundData.roundId == blockSignatureProposal.roundId
+      lazy val peerExists = roundData.peers.exists(_.id == blockSignatureProposal.senderId)
+      lazy val noBlockYet = !roundData.peerBlockSignatures.contains(blockSignatureProposal.senderId)
 
       sameRoundId && peerExists && noBlockYet
     }
 
-    private def gotAllBlockProposals(roundData: RoundData): Boolean =
-      roundData.peers.map(_.id) == roundData.peerBlocks.keySet
+    private def gotAllSignatures(roundData: RoundData): Boolean =
+      roundData.peers.map(_.id) == roundData.peerBlockSignatures.keySet
 
-    private def tryPersistBlockProposal(
-      blockProposal: BlockProposal
+    private def tryPersistBlockSignatureProposal(
+      blockSignatureProposal: BlockSignatureProposal
     ): Option[RoundData] => (Option[RoundData], Option[RoundData]) = {
-      case Some(roundData) if canPersistBlockProposal(roundData, blockProposal) =>
-        val updated = roundData.addPeerBlock(blockProposal)
+      case Some(roundData) if canPersistBlockSignatureProposal(roundData, blockSignatureProposal) =>
+        val updated = roundData.addPeerBlockSignature(blockSignatureProposal)
         (updated.some, updated.some)
       case other => (other, None)
     }
 
-    def persistBlockProposal[F[_]: Async: SecurityProvider: KryoSerializer](
-      blockProposal: BlockProposal,
+    def persistBlockSignatureProposal[F[_]: Async: SecurityProvider: KryoSerializer](
+      blockSignatureProposal: BlockSignatureProposal,
       ctx: BlockConsensusContext[F]
     ): F[Either[CellError, Ω]] =
-      (blockProposal.owner == ctx.selfId)
+      (blockSignatureProposal.owner == ctx.selfId)
         .pure[F]
         .ifM(
-          ctx.consensusStorage.ownConsensus.modify(tryPersistBlockProposal(blockProposal)),
-          ctx.consensusStorage.peerConsensuses(blockProposal.roundId).modify(tryPersistBlockProposal(blockProposal))
+          ctx.consensusStorage.ownConsensus.modify(tryPersistBlockSignatureProposal(blockSignatureProposal)),
+          ctx.consensusStorage
+            .peerConsensuses(blockSignatureProposal.roundId)
+            .modify(tryPersistBlockSignatureProposal(blockSignatureProposal))
         )
         .flatMap {
           case Some(roundData @ RoundData(_, _, _, _, _, Some(ownBlock), _, _, _, _, _))
-              if gotAllBlockProposals(roundData) =>
+              if gotAllSignatures(roundData) =>
             for {
               _ <- Applicative[F].unit
-              maybeFinalBlock = roundData.peerBlocks.values.foldLeft {
-                ownBlock.asRight[MergingProofsForDistinctValues[DAGBlock]]
-              } { case (agg, sb) => agg.flatMap(_.addProofs(sb)) }
-              result <- maybeFinalBlock match {
-                case Left(error) =>
-                  cancelRound(roundData.ownProposal, ctx).map(
-                    _ =>
-                      CellError(
-                        s"Round cancelled after merging blocks to a final block failed! Original message: ${error.getMessage}"
-                      ).asLeft[Ω]
-                  )
-                case Right(signedBlock) =>
-                  signedBlock.toHashedWithSignatureCheck.flatMap {
-                    case Left(_) =>
-                      cancelRound(roundData.ownProposal, ctx)
-                        .map(_ => CellError("Round cancelled after final block turned out to be invalid!").asLeft[Ω])
+              finalBlock = roundData.peerBlockSignatures.values.foldLeft(ownBlock) {
+                case (agg, proof) => agg.addProof(proof)
+              }
+              result <- finalBlock.toHashedWithSignatureCheck.flatMap {
+                case Left(_) =>
+                  cancelRound(roundData.ownProposal, ctx)
+                    .map(_ => CellError("Round cancelled after final block turned out to be invalid!").asLeft[Ω])
 
-                    case Right(hashedBlock) =>
-                      cleanUpRoundData(roundData.ownProposal, ctx)
-                        .map(_ => FinalBlock(hashedBlock).asRight[CellError].widen[Ω])
-                  }
+                case Right(hashedBlock) =>
+                  cleanUpRoundData(roundData.ownProposal, ctx)
+                    .map(_ => FinalBlock(hashedBlock).asRight[CellError].widen[Ω])
               }
             } yield result
           case _ =>
