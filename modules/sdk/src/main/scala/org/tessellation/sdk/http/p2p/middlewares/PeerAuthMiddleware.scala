@@ -14,6 +14,7 @@ import org.tessellation.schema.cluster.TokenValid
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.domain.cluster.storage.SessionStorage
+import org.tessellation.sdk.domain.collateral.Collateral
 import org.tessellation.sdk.http.p2p.headers.{`X-Id`, `X-Session-Token`}
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signing
@@ -141,6 +142,13 @@ object PeerAuthMiddleware {
       }
     } >>= client.run
   }
+
+  def requestCollateralVerifierMiddleware[F[_]: Async](collateral: Collateral[F])(http: HttpRoutes[F]): HttpRoutes[F] =
+    Kleisli { req: Request[F] =>
+      getPeerId(req).map { peerId =>
+        collateral.hasCollateral(peerId).attemptT.toOption.ifM(http(req), OptionT.pure[F](unauthorized[F]))
+      }.getOrElse(OptionT.pure[F](unauthorized[F]))
+    }
 
   def requestTokenVerifierMiddleware[F[_]: Async](session: Session[F])(http: HttpRoutes[F]): HttpRoutes[F] =
     Kleisli { req: Request[F] =>
