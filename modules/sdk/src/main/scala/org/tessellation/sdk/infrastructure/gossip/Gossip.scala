@@ -17,14 +17,16 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.gossip._
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.gossip.Gossip
+import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
 
+import eu.timepit.refined.auto._
 import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.PosLong
 
 object Gossip {
 
-  def make[F[_]: Async: SecurityProvider: KryoSerializer](
+  def make[F[_]: Async: SecurityProvider: KryoSerializer: Metrics](
     rumorQueue: Queue[F, RumorBatch],
     nodeId: PeerId,
     keyPair: KeyPair
@@ -35,7 +37,7 @@ object Gossip {
       generation <- PosLong.from(time.toMillis).leftMap(new RuntimeException(_)).liftTo[F]
     } yield make(counter, generation, rumorQueue, nodeId, keyPair)
 
-  def make[F[_]: Async: SecurityProvider: KryoSerializer](
+  def make[F[_]: Async: SecurityProvider: KryoSerializer: Metrics](
     counter: Ref[F, PosLong],
     generation: PosLong,
     rumorQueue: Queue[F, RumorBatch],
@@ -64,6 +66,7 @@ object Gossip {
           signedRumor <- rumor.sign(keyPair)
           hash <- rumor.hashF
           _ <- rumorQueue.offer(List(hash -> signedRumor))
+          _ <- metrics.updateRumorsSpread(signedRumor)
         } yield ()
     }
 

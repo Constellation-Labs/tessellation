@@ -27,7 +27,7 @@ import eu.timepit.refined.boolean.Or
 
 object Main
     extends TessellationIOApp[Run](
-      name = "",
+      name = "dag-l0",
       header = "Tessellation Node",
       version = BuildInfo.version,
       clusterId = ClusterId("6d7f1d6a-213a-4148-9d45-d7200f555ecf")

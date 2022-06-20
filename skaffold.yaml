@@ -24,6 +24,8 @@ deploy:
     paths:
       - kubernetes/l0-cluster
       - kubernetes/l1-cluster
+      - kubernetes/grafana
+      - kubernetes/prometheus
   logs:
     prefix: podAndContainer
 
@@ -36,6 +38,10 @@ portForward:
     resourceName: l1-initial-validator
     port: 9000
     localPort: 9100
+  - resourceType: service
+    resourceName: grafana
+    port: 8000
+    localPort: 8000
 
 profiles:
   - name: logPods

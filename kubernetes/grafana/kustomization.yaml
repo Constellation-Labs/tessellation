@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - grafana-deployment.yaml
+  - grafana-service.yaml
+configMapGenerator:
+  - name: grafana-dashboards
+    files:
+      - dashboards/dashboards.yaml
+      - dashboards/tessellation.json
+      - dashboards/jvm-micrometer_rev9.json
+  - name: grafana-config
+    files:
+      - grafana.ini
+  - name: grafana-datasources
+    files:
+      - datasources/datasource.yaml

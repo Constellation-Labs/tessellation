@@ -22,10 +22,12 @@ import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.gossip.RumorStorage
 import org.tessellation.sdk.infrastructure.gossip.p2p.GossipClient
 import org.tessellation.sdk.infrastructure.healthcheck.ping.PingHealthCheckConsensus
+import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
+import eu.timepit.refined.auto._
 import fs2.Stream
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -33,7 +35,7 @@ trait GossipDaemon[F[_]] extends Daemon[F]
 
 object GossipDaemon {
 
-  def make[F[_]: Async: SecurityProvider: KryoSerializer: Random: Parallel](
+  def make[F[_]: Async: SecurityProvider: KryoSerializer: Random: Parallel: Metrics](
     rumorStorage: RumorStorage[F],
     rumorQueue: Queue[F, RumorBatch],
     clusterStorage: ClusterStorage[F],
@@ -76,7 +78,7 @@ object GossipDaemon {
               if (valid) Applicative[F].unit
               else
                 logger.warn(
-                  s"Discarding rumor ${signedRumor.value.show} with hash ${hash.show} due to invalid hash."
+                  s"Discarding rumor ${signedRumor.value.show} with hash ${hash.show} due to invalid hash"
                 )
             }
       }
@@ -88,7 +90,7 @@ object GossipDaemon {
             if (valid) Applicative[F].unit
             else
               logger.warn(
-                s"Discarding rumor ${signedRumor.value.show} with hash ${hash.show} due to invalid hash signature."
+                s"Discarding rumor ${signedRumor.value.show} with hash ${hash.show} due to invalid hash signature"
               )
           }
       }
@@ -102,13 +104,14 @@ object GossipDaemon {
       case (hash, signedRumor) =>
         rumorHandler
           .run((signedRumor.value, nodeId))
+          .semiflatTap(_ => metrics.updateRumorsConsumed("success", signedRumor))
           .getOrElseF {
-            logger.debug(s"Unhandled rumor ${signedRumor.value.show} with hash ${hash.show}.")
+            logger.debug(s"Unhandled rumor ${signedRumor.value.show} with hash ${hash.show}") >>
+              metrics.updateRumorsConsumed("unhandled", signedRumor)
           }
           .handleErrorWith { err =>
-            logger.error(err)(
-              s"Error handling rumor ${signedRumor.value.show} with hash ${hash.show}."
-            )
+            logger.error(err)(s"Error handling rumor ${signedRumor.value.show} with hash ${hash.show}") >>
+              metrics.updateRumorsConsumed("error", signedRumor)
           }
     }
 
@@ -140,8 +143,10 @@ object GossipDaemon {
         inquiry = startResponse.offer.diff(seenHashes)
         answer <- rumorStorage.getRumors(startResponse.inquiry)
         endRequest = EndGossipRoundRequest(answer, inquiry)
+        _ <- metrics.updateRumorsSent(answer)
         endResponse <- gossipClient.endGossiping(endRequest).run(peer)
         _ <- rumorQueue.offer(endResponse.answer)
+        _ <- metrics.updateRumorsReceived(endResponse.answer)
       } yield ()
   }
 

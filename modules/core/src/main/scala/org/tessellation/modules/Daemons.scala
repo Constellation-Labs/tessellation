@@ -17,11 +17,12 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.Daemon
 import org.tessellation.sdk.infrastructure.cluster.daemon.NodeStateDaemon
 import org.tessellation.sdk.infrastructure.gossip.{GossipDaemon, RumorHandler}
+import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
 
 object Daemons {
 
-  def start[F[_]: Async: SecurityProvider: KryoSerializer: Random: Parallel](
+  def start[F[_]: Async: SecurityProvider: KryoSerializer: Random: Parallel: Metrics](
     storages: Storages[F],
     services: Services[F],
     programs: Programs[F],
