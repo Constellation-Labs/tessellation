@@ -1,26 +1,23 @@
 package org.tessellation.tools
 
+import java.security.KeyPair
+
+import cats.data.NonEmptyList
 import cats.effect.Async
 import cats.effect.std.Random
 import cats.syntax.all._
-import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong}
-import fs2.{Chunk, Pure, Stream}
-import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.transaction.{
-  Transaction,
-  TransactionAmount,
-  TransactionFee,
-  TransactionReference,
-  TransactionSalt
-}
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.signature.Signed
-import org.tessellation.ext.crypto._
-import org.tessellation.schema.address.Address
-import org.tessellation.security.key.ops._
-import eu.timepit.refined.auto._
 
-import java.security.KeyPair
+import org.tessellation.ext.crypto._
+import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.address.Address
+import org.tessellation.schema.transaction._
+import org.tessellation.security.SecurityProvider
+import org.tessellation.security.key.ops._
+import org.tessellation.security.signature.Signed
+
+import eu.timepit.refined.auto._
+import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong}
+import fs2.{Pure, Stream}
 
 object TransactionGenerator {
 
@@ -41,7 +38,7 @@ object TransactionGenerator {
 
   def infiniteTransactionStream[F[_]: Async: Random: KryoSerializer: SecurityProvider](
     chunkSize: PosInt,
-    addressParams: List[AddressParams]
+    addressParams: NonEmptyList[AddressParams]
   ): Stream[F, Signed[Transaction]] =
     addressParams.reverse.map {
       case AddressParams(source, key, initialTxRef) =>

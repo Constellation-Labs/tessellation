@@ -1,26 +1,23 @@
 package org.tessellation.tools.cli
 
-import cats.data.Validated
-import eu.timepit.refined.types.numeric.PosLong
+import java.nio.file.Path
 
-import java.nio.file.{Files, Path}
-import scala.concurrent.duration.{Duration, FiniteDuration}
 import cats.syntax.all._
+
+import scala.concurrent.duration.{FiniteDuration, _}
+
 import org.tessellation.ext.decline.WithOpts
+import org.tessellation.ext.decline.decline.coercibleArgument
+
 import com.monovore.decline.Opts
 import com.monovore.decline.refined.refTypeArgument
 import eu.timepit.refined.api.RefType.refinedRefType
 import eu.timepit.refined.api.Refined
 import eu.timepit.refined.auto._
-import eu.timepit.refined.refineV
 import eu.timepit.refined.numeric.GreaterEqual
+import eu.timepit.refined.refineV
 import eu.timepit.refined.string.Url
-import eu.timepit.refined.types.numeric.{NonNegInt, PosInt}
-import org.tessellation.ext.decline.decline.coercibleArgument
-
-import java.net.URL
-
-import scala.concurrent.duration._
+import eu.timepit.refined.types.numeric.{PosInt, PosLong}
 
 object method {
 
@@ -41,6 +38,11 @@ object method {
   case class SendTransactionsCmd(
     basicOpts: BasicOpts,
     walletsOpts: WalletsOpts
+  ) extends CliMethod
+
+  case class SendStateChannelSnapshotCmd(
+    baseUrl: UrlString,
+    verbose: Boolean
   ) extends CliMethod
 
   sealed trait WalletsOpts
@@ -78,7 +80,18 @@ object method {
     }
   }
 
-  val opts: Opts[CliMethod] = SendTransactionsCmd.opts
+  object SendStateChannelSnapshotCmd extends WithOpts[SendStateChannelSnapshotCmd] {
+
+    val opts: Opts[SendStateChannelSnapshotCmd] =
+      Opts.subcommand("send-state-channel-snapshot", "Send sample state-channel snapshot") {
+        (
+          Opts.argument[String](metavar = "baseUrl").map(withProtocol).mapValidated(refineV[Url](_).toValidatedNel),
+          Opts.flag("verbose", "Display debug messages", "v").map(_ => true).withDefault(false)
+        ).mapN(SendStateChannelSnapshotCmd.apply)
+      }
+  }
+
+  val opts: Opts[CliMethod] = SendTransactionsCmd.opts.orElse(SendStateChannelSnapshotCmd.opts)
 
   private val defaultProtocol = "http://"
 
