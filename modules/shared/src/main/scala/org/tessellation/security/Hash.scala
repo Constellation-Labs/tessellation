@@ -23,7 +23,7 @@ object hash {
     def fromBytes(bytes: Array[Byte]): Hash =
       Hash(Hashing.sha256().hashBytes(bytes).toString)
 
-    def empty: Hash = Hash("")
+    def empty: Hash = Hash(s"%064d".format(0))
 
     implicit val arbitrary: Arbitrary[Hash] = Arbitrary(Gen.resize(64, Gen.hexStr).map(Hash(_)))
   }

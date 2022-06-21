@@ -60,7 +60,7 @@ object transaction {
   case class TransactionReference(ordinal: TransactionOrdinal, hash: Hash)
 
   object TransactionReference {
-    val empty: TransactionReference = TransactionReference(TransactionOrdinal(0L), Hash("".padTo(64, '0')))
+    val empty: TransactionReference = TransactionReference(TransactionOrdinal(0L), Hash.empty)
 
     val _Hash: Lens[TransactionReference, Hash] = GenLens[TransactionReference](_.hash)
     val _Ordinal: Lens[TransactionReference, TransactionOrdinal] = GenLens[TransactionReference](_.ordinal)
