@@ -38,7 +38,8 @@ object Daemons {
           handler,
           nodeId,
           cfg.gossip.daemon,
-          healthChecks.ping
+          healthChecks.ping,
+          services.collateral
         ),
       NodeStateDaemon.make(storages.node, services.gossip)
     ).traverse(_.start).void
