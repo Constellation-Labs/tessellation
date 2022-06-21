@@ -13,7 +13,7 @@ import org.tessellation.sdk.domain.node.NodeStorage
 
 object Session {
 
-  def make[F[+ _]: Async](
+  def make[F[+_]: Async](
     sessionStorage: SessionStorage[F],
     nodeStorage: NodeStorage[F],
     clusterStorage: ClusterStorage[F]
