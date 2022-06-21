@@ -1,39 +1,46 @@
 package org.tessellation.tools
 
+import java.nio.file.{Path => JPath}
+import java.security.KeyPair
+
 import cats.Applicative
-import cats.effect.std.{Console, Random}
+import cats.data.NonEmptyList
 import cats.effect._
+import cats.effect.std.{Console, Random}
 import cats.syntax.all._
-import com.monovore.decline._
-import com.monovore.decline.effect._
-import eu.timepit.refined.auto._
-import eu.timepit.refined.cats._
-import eu.timepit.refined.types.numeric._
-import fs2.data.csv._
-import fs2.data.csv.generic.semiauto.deriveRowEncoder
-import fs2.io.file.{Files, Path}
-import fs2.{Pipe, Pure, Stream, text}
-import org.http4s._
-import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder}
-import org.http4s.client.Client
-import org.http4s.ember.client.EmberClientBuilder
+
+import scala.concurrent.duration._
+import scala.math.Integral.Implicits._
+
 import org.tessellation.BuildInfo
+import org.tessellation.dag.dagSharedKryoRegistrar
+import org.tessellation.dag.snapshot.StateChannelSnapshotBinary
 import org.tessellation.infrastructure.genesis.types.GenesisCSVAccount
 import org.tessellation.keytool.{KeyPairGenerator, KeyStoreUtils}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction._
 import org.tessellation.security.SecurityProvider
+import org.tessellation.security.hash.Hash
 import org.tessellation.security.key.ops._
 import org.tessellation.security.signature.Signed
 import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.tools.TransactionGenerator._
 import org.tessellation.tools.cli.method._
 
-import java.nio.file.{Path => JPath}
-import java.security.KeyPair
-import scala.concurrent.duration._
-import scala.math.Integral.Implicits._
+import com.monovore.decline._
+import com.monovore.decline.effect._
+import eu.timepit.refined.auto._
+import eu.timepit.refined.cats._
+import eu.timepit.refined.types.numeric._
+import fs2._
+import fs2.data.csv._
+import fs2.data.csv.generic.semiauto.deriveRowEncoder
+import fs2.io.file.{Files, Path}
+import org.http4s._
+import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder}
+import org.http4s.client.Client
+import org.http4s.ember.client.EmberClientBuilder
 
 object Main
     extends CommandIOApp(
@@ -60,7 +67,7 @@ object Main
   override def main: Opts[IO[ExitCode]] =
     cli.method.opts.map { method =>
       SecurityProvider.forAsync[IO].use { implicit sp =>
-        KryoSerializer.forAsync[IO](sharedKryoRegistrar).use { implicit kryo =>
+        KryoSerializer.forAsync[IO](sharedKryoRegistrar ++ dagSharedKryoRegistrar).use { implicit kryo =>
           EmberClientBuilder.default[IO].build.use { client =>
             Random.scalaUtilRandom[IO].flatMap { implicit random =>
               (method match {
@@ -69,6 +76,8 @@ object Main
                     case w: GeneratedWallets => sendTxsUsingGeneratedWallets(client, basicOpts, w)
                     case l: LoadedWallets    => sendTxsUsingLoadedWallets(client, basicOpts, l)
                   }
+                case SendStateChannelSnapshotCmd(baseUrl, verbose) =>
+                  sendStateChannelSnapshot(client, baseUrl, verbose)
                 case _ => IO.raiseError(new Throwable("Not implemented"))
               }).as(ExitCode.Success)
             }
@@ -76,6 +85,22 @@ object Main
         }
       }
     }
+
+  def sendStateChannelSnapshot[F[_]: Async: KryoSerializer: SecurityProvider: Console](
+    client: Client[F],
+    baseUrl: UrlString,
+    verbose: Boolean
+  ): F[Unit] =
+    for {
+      key <- generateKeys(1).map(_.head)
+      address = key.getPublic.toAddress
+      _ <- console.green(s"Generated address: $address")
+      snapshot = StateChannelSnapshotBinary(Hash.empty, "test".getBytes)
+      signedSnapshot <- Signed.forAsyncKryo(snapshot, key)
+      hashed <- signedSnapshot.toHashed
+      _ <- console.green(s"Snapshot hash: ${hashed.hash.show}, proofs hash: ${hashed.proofsHash.show}")
+      _ <- postStateChannelSnapshot(client, baseUrl)(signedSnapshot, address)
+    } yield ()
 
   def sendTxsUsingGeneratedWallets[F[_]: Async: Random: KryoSerializer: SecurityProvider: Console](
     client: Client[F],
@@ -85,7 +110,7 @@ object Main
     console.green(s"Configuration: ") >>
       console.yellow(s"Wallets: ${walletsOpts.count.show}") >>
       console.yellow(s"Genesis path: ${walletsOpts.genesisPath.toString.show}") >>
-      generateKeys[F](walletsOpts.count).flatMap { keys =>
+      generateKeys[F](PosInt.unsafeFrom(walletsOpts.count)).flatMap { keys =>
         createGenesis(walletsOpts.genesisPath, keys) >>
           console.cyan("Genesis created. Please start the network and continue... [ENTER]") >>
           Console[F].readLine >>
@@ -100,7 +125,9 @@ object Main
     walletsOpts: LoadedWallets
   ): F[Unit] =
     for {
-      keys <- loadKeys(walletsOpts)
+      keys <- loadKeys(walletsOpts).map(NonEmptyList.fromList).flatMap {
+        Async[F].fromOption(_, new Throwable("Keys not found"))
+      }
       _ <- console.green(s"Loaded ${keys.size} keys")
       addressParams <- keys.traverse { key =>
         getLastReference(client, basicOpts.baseUrl)(key.getPublic.toAddress)
@@ -113,7 +140,7 @@ object Main
   def sendTransactions[F[_]: Async: Random: KryoSerializer: SecurityProvider: Console](
     client: Client[F],
     basicOpts: BasicOpts,
-    addressParams: List[AddressParams]
+    addressParams: NonEmptyList[AddressParams]
   ): F[Unit] =
     Clock[F].monotonic.flatMap { startTime =>
       infiniteTransactionStream(basicOpts.chunkSize, addressParams)
@@ -162,16 +189,16 @@ object Main
       .compile
       .toList
 
-  def generateKeys[F[_]: Async: SecurityProvider](wallets: Int): F[List[KeyPair]] =
-    (1 to wallets).toList.traverse { _ =>
+  def generateKeys[F[_]: Async: SecurityProvider](wallets: PosInt): F[NonEmptyList[KeyPair]] =
+    NonEmptyList.fromListUnsafe((1 to wallets).toList).traverse { _ =>
       KeyPairGenerator.makeKeyPair[F]
     }
 
-  def createGenesis[F[_]: Async](genesisPath: JPath, keys: List[KeyPair]): F[Unit] = {
+  def createGenesis[F[_]: Async](genesisPath: JPath, keys: NonEmptyList[KeyPair]): F[Unit] = {
     implicit val encoder: RowEncoder[GenesisCSVAccount] = deriveRowEncoder
 
     Stream
-      .emits[F, KeyPair](keys)
+      .emits[F, KeyPair](keys.toList)
       .map(_.getPublic.toAddress)
       .map(_.value.toString)
       .map(GenesisCSVAccount(_, 100000000L))
@@ -196,6 +223,16 @@ object Main
           }
     }
 
+  def postStateChannelSnapshot[F[_]: Async](
+    client: Client[F],
+    baseUrl: UrlString
+  )(snapshot: Signed[StateChannelSnapshotBinary], address: Address): F[Unit] = {
+    val target = Uri.unsafeFromString(baseUrl.toString).addPath(s"global-snapshot/${address.value.value}/snapshot")
+    val req = Request[F](method = Method.POST, uri = target).withEntity(snapshot)
+
+    client.successful(req).void
+  }
+
   def postTransaction[F[_]: Async](client: Client[F], baseUrl: UrlString)(
     tx: Signed[Transaction]
   ): F[Unit] = {
@@ -210,7 +247,7 @@ object Main
   def checkLastReferences[F[_]: Async: Console](
     client: Client[F],
     baseUrl: UrlString,
-    addresses: List[Address]
+    addresses: NonEmptyList[Address]
   ): F[Unit] =
     addresses.traverse(checkLastReference(client, baseUrl)).void
 
