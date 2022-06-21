@@ -26,7 +26,6 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction.{Transaction, TransactionOrdinal, TransactionReference}
 import org.tessellation.security.Hashed
 import org.tessellation.security.hash.Hash
-import org.tessellation.security.signature.Signed
 
 import io.chrisdavenport.mapref.MapRef
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -98,9 +97,9 @@ class TransactionStorage[F[_]: Async: KryoSerializer](
         waitingTransactions(address).get.flatMap {
           case Some(waiting) =>
             val lastTx = lastAccepted.getOrElse(address, TransactionReference.empty)
-            Consecutive.take[F](waiting.toNonEmptyList.toList.map(_.signed), lastTx)
+            Consecutive.take[F](waiting.toNonEmptyList.toList, lastTx)
           case None =>
-            List.empty[Signed[Transaction]].pure[F]
+            List.empty[Hashed[Transaction]].pure[F]
         }
       }.map(_.flatten)
     } yield txs.size
@@ -116,8 +115,7 @@ class TransactionStorage[F[_]: Async: KryoSerializer](
           maybePulled <- maybeWaiting.traverse { waiting =>
             val lastTx = lastAccepted.getOrElse(address, TransactionReference.empty)
             Consecutive
-              .take[F](waiting.toList.map(_.signed), lastTx)
-              .flatMap(_.traverse(_.toHashed))
+              .take[F](waiting.toList, lastTx)
               .map { pulled =>
                 (SortedSet.from(waiting.toList.diff(pulled)).toNes, pulled)
               }

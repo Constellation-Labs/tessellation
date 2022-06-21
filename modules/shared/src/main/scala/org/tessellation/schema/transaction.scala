@@ -11,9 +11,9 @@ import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
-import org.tessellation.security.Encodable
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Encodable, Hashed}
 
 import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia.{decoder, encoder}
@@ -67,6 +67,9 @@ object transaction {
 
     def of[F[_]: Async: KryoSerializer](signedTransaction: Signed[Transaction]): F[TransactionReference] =
       signedTransaction.value.hashF.map(TransactionReference(signedTransaction.ordinal, _))
+
+    def of(hashedTransaction: Hashed[Transaction]): TransactionReference =
+      TransactionReference(hashedTransaction.ordinal, hashedTransaction.hash)
 
   }
 
