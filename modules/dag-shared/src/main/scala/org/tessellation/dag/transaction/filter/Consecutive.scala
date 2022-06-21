@@ -11,16 +11,16 @@ import scala.annotation.tailrec
 
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.transaction.{Transaction, TransactionReference}
-import org.tessellation.security.signature.Signed
+import org.tessellation.security.Hashed
 
 object Consecutive {
 
   def take[F[_]: Async: KryoSerializer](
-    txs: List[Signed[Transaction]],
+    txs: List[Hashed[Transaction]],
     lastAcceptedTxRef: TransactionReference
-  ): F[List[Signed[Transaction]]] =
+  ): F[List[Hashed[Transaction]]] =
     takeGeneric(
-      TransactionReference.of[F],
+      hashedTx => Applicative[F].pure(TransactionReference.of(hashedTx)),
       _.parent,
       txs,
       lastAcceptedTxRef
