@@ -227,7 +227,7 @@ object Main
     client: Client[F],
     baseUrl: UrlString
   )(snapshot: Signed[StateChannelSnapshotBinary], address: Address): F[Unit] = {
-    val target = Uri.unsafeFromString(baseUrl.toString).addPath(s"global-snapshot/${address.value.value}/snapshot")
+    val target = Uri.unsafeFromString(baseUrl.toString).addPath(s"state-channel/${address.value.value}/snapshot")
     val req = Request[F](method = Method.POST, uri = target).withEntity(snapshot)
 
     client.successful(req).void
