@@ -103,6 +103,7 @@ Add this to your `~/.docker/config.json`
 ```json
 {
   "credHelpers": {
+    "public.ecr.aws": "ecr-login",
     "150340915792.dkr.ecr.us-west-1.amazonaws.com": "ecr-login"
   }
 }
@@ -114,7 +115,15 @@ Add this to your `~/.docker/config.json`
 skaffold config set default-repo 150340915792.dkr.ecr.us-west-1.amazonaws.com
 ```
 
-### Verify docker & kubernetes setup
+### Verify docker setup
+
+```
+docker image ls 150340915792.dkr.ecr.us-west-1.amazonaws.com/l0-validator
+```
+
+Should list existing l0-validator images.
+
+## Build images and start cluster
 
 ```
 skaffold dev --trigger manual

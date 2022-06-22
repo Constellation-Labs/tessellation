@@ -6,7 +6,8 @@ build:
       custom:
         buildCommand: |
           sbt core/assembly keytool/assembly && \
-            docker build $BUILD_CONTEXT --file kubernetes/l0.Dockerfile --tag $IMAGE
+            docker build $BUILD_CONTEXT --file kubernetes/l0.Dockerfile --tag $IMAGE && \
+              [[ "$PUSH_IMAGE" == "true" ]] && docker push $IMAGE || echo "Skip pushing image"
         dependencies:
           paths:
             - modules/**/src/main/**/*.scala
@@ -14,7 +15,8 @@ build:
       custom:
         buildCommand: |
           sbt dagL1/assembly keytool/assembly && \
-            docker build $BUILD_CONTEXT --file kubernetes/l1.Dockerfile --tag $IMAGE
+            docker build $BUILD_CONTEXT --file kubernetes/l1.Dockerfile --tag $IMAGE && \
+              [[ "$PUSH_IMAGE" == "true" ]] && docker push $IMAGE || echo "Skip pushing image"
         dependencies:
           paths:
             - modules/**/src/main/**/*.scala
