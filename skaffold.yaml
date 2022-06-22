@@ -11,6 +11,10 @@ build:
         dependencies:
           paths:
             - modules/**/src/main/**/*.scala
+            - "*.sbt"
+            - project/*.scala
+            - project/**.sbt
+            - project/build.properties
     - image: l1-validator
       custom:
         buildCommand: |
@@ -20,6 +24,10 @@ build:
         dependencies:
           paths:
             - modules/**/src/main/**/*.scala
+            - "*.sbt"
+            - project/*.scala
+            - project/**.sbt
+            - project/build.properties
 
 deploy:
   kustomize:
