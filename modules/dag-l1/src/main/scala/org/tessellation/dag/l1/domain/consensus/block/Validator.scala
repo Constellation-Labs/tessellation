@@ -2,7 +2,9 @@ package org.tessellation.dag.l1.domain.consensus.block
 
 import cats.effect.Async
 import cats.syntax.flatMap._
+import cats.syntax.foldable._
 import cats.syntax.functor._
+import cats.syntax.traverseFilter._
 import cats.{Applicative, Monad}
 
 import org.tessellation.dag.l1.domain.block.BlockStorage
@@ -14,6 +16,7 @@ import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.node.NodeState.Ready
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
+import org.tessellation.sdk.domain.collateral.Collateral
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
@@ -28,10 +31,13 @@ object Validator {
 
   private def enoughPeersForConsensus[F[_]: Monad](
     clusterStorage: ClusterStorage[F],
+    collateral: Collateral[F],
     peersCount: PosInt
   ): F[Boolean] =
     clusterStorage.getPeers
       .map(_.filter(p => isReadyForBlockConsensus(p.state)))
+      .map(_.toList)
+      .flatMap(_.filterA(p => collateral.hasCollateral(p.id)))
       .map(_.size >= peersCount)
 
   private def enoughTipsForConsensus[F[_]: Monad](
@@ -51,13 +57,14 @@ object Validator {
     clusterStorage: ClusterStorage[F],
     blockStorage: BlockStorage[F],
     transactionStorage: TransactionStorage[F],
+    collateral: Collateral[F],
     peersCount: PosInt,
     tipsCount: PosInt
   ): F[Boolean] =
     for {
       noOwnRoundInProgress <- consensusStorage.ownConsensus.get.map(_.isEmpty)
       stateReadyForConsensus <- nodeStorage.getNodeState.map(isReadyForBlockConsensus)
-      enoughPeers <- enoughPeersForConsensus(clusterStorage, peersCount)
+      enoughPeers <- enoughPeersForConsensus(clusterStorage, collateral, peersCount)
       enoughTips <- enoughTipsForConsensus(blockStorage, tipsCount)
       enoughTxs <- atLeastOneTransaction(transactionStorage)
 

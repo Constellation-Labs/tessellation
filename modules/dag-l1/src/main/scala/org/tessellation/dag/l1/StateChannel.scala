@@ -13,6 +13,7 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.show._
 import cats.syntax.traverse._
+import cats.syntax.traverseFilter._
 
 import scala.concurrent.duration.DurationInt
 
@@ -65,7 +66,8 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
       storages.consensus,
       keyPair,
       selfId,
-      storages.transaction
+      storages.transaction,
+      services.collateral
     )
 
   private val inspectionTriggerInput: Stream[F, OwnerBlockConsensusInput] = Stream
@@ -81,6 +83,7 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
         storages.cluster,
         storages.block,
         storages.transaction,
+        services.collateral,
         appConfig.consensus.peersCount,
         appConfig.consensus.tipsCount
       ).handleErrorWith { e =>
@@ -162,16 +165,19 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
         tips <- storages.block
           .getTips(appConfig.consensus.tipsCount)
 
-        l0Peer <- storages.l0Cluster.getPeers
-          .flatMap(peers => Random[F].shuffleList(peers.toNonEmptyList.toList))
-          .map(peers => peers.head)
+        l0PeerOpt <- storages.l0Cluster.getPeers
+          .map(_.toNonEmptyList.toList)
+          .flatMap(_.filterA(p => services.collateral.hasCollateral(p.id)))
+          .flatMap(peers => Random[F].shuffleList(peers))
+          .map(peers => peers.headOption)
 
-        signedOutput <- Signed.forAsyncKryo[F, L1Output](L1Output(fb.hashedBlock.signed, tips), keyPair)
-
-        _ <- p2PClient.l0DAGCluster
-          .sendL1Output(signedOutput)(l0Peer)
-          .ifM(Applicative[F].unit, logger.warn("Sending block to L0 failed."))
-
+        _ <- l0PeerOpt.fold(logger.warn("No available L0 peer")) { l0Peer =>
+          Signed.forAsyncKryo[F, L1Output](L1Output(fb.hashedBlock.signed, tips), keyPair).flatMap { signedOutput =>
+            p2PClient.l0DAGCluster
+              .sendL1Output(signedOutput)(l0Peer)
+              .ifM(Applicative[F].unit, logger.warn("Sending block to L0 failed."))
+          }
+        }
       } yield ()
     }
 

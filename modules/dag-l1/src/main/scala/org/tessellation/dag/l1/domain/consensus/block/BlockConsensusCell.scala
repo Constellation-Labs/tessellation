@@ -9,6 +9,7 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
 import cats.syntax.traverse._
+import cats.syntax.traverseFilter._
 
 import scala.concurrent.duration.FiniteDuration
 
@@ -496,7 +497,9 @@ object BlockConsensusCell {
     private def pullNewConsensusPeers[F[_]: Async: Random](ctx: BlockConsensusContext[F]): F[Option[Set[Peer]]] =
       ctx.clusterStorage.getPeers
         .map(_.filter(p => isReadyForBlockConsensus(p.state)))
-        .flatMap(peers => Random[F].shuffleList(peers.toList))
+        .map(_.toList)
+        .flatMap(_.filterA(p => ctx.collateral.hasCollateral(p.id)))
+        .flatMap(peers => Random[F].shuffleList(peers))
         .map(_.take(ctx.consensusConfig.peersCount).toSet match {
           case peers if peers.size == ctx.consensusConfig.peersCount.value => peers.some
           case _                                                           => None
