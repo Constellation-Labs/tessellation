@@ -23,7 +23,7 @@ object Collateral {
   ): Collateral[F] =
     new Collateral[F] {
 
-      override def hasCollateral(peerId: PeerId): F[Boolean] =
+      def hasCollateral(peerId: PeerId): F[Boolean] =
         peerId.value.toPublicKey
           .map(_.toAddress)
           .flatMap(getBalance)
