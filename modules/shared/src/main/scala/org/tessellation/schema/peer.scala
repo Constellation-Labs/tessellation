@@ -23,6 +23,7 @@ import derevo.derive
 import derevo.scalacheck.arbitrary
 import io.estatico.newtype.macros.newtype
 import io.estatico.newtype.ops._
+import io.getquill.MappedEncoding
 import monocle.macros.GenLens
 import monocle.{Iso, Lens}
 
@@ -41,6 +42,11 @@ object peer {
       Iso[PeerId, Id](peerId => Id(peerId.coerce))(id => PeerId(id.hex))
 
     implicit def ordering: Ordering[PeerId] = Order[PeerId].toOrdering
+
+    implicit val quillEncode: MappedEncoding[PeerId, String] =
+      MappedEncoding[PeerId, String](_.value.value)
+
+    implicit val quillDecode: MappedEncoding[String, PeerId] = MappedEncoding[String, PeerId](x => PeerId(Hex(x)))
 
     val fromId: Id => PeerId = _Id.reverseGet
 
