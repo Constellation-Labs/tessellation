@@ -13,23 +13,24 @@ case class BlockAcceptanceState(
   contextUpdate: BlockAcceptanceContextUpdate,
   accepted: List[(Signed[DAGBlock], NonNegLong)],
   rejected: List[(Signed[DAGBlock], BlockRejectionReason)],
-  awaiting: List[(Signed[DAGBlock], BlockAwaitReason)]
+  awaiting: List[((Signed[DAGBlock], TxChains), BlockAwaitReason)]
 ) {
 
   def toBlockAcceptanceResult: BlockAcceptanceResult =
     BlockAcceptanceResult(
       contextUpdate,
       accepted,
-      awaiting ++ rejected
+      awaiting.map { case ((block, _), reason) => (block, reason) } ++ rejected
     )
 }
 
 object BlockAcceptanceState {
 
-  val empty: BlockAcceptanceState = BlockAcceptanceState(
-    BlockAcceptanceContextUpdate.empty,
-    List.empty,
-    List.empty,
-    List.empty
-  )
+  def withRejectedBlocks(rejected: List[(Signed[DAGBlock], BlockRejectionReason)]): BlockAcceptanceState =
+    BlockAcceptanceState(
+      contextUpdate = BlockAcceptanceContextUpdate.empty,
+      accepted = List.empty,
+      rejected = rejected,
+      awaiting = List.empty
+    )
 }

@@ -10,8 +10,8 @@ import cats.syntax.option._
 import cats.syntax.order._
 import cats.syntax.semigroup._
 
-import org.tessellation.dag.block.BlockValidator
 import org.tessellation.dag.domain.block.DAGBlock
+import org.tessellation.dag.transaction.TransactionChainValidator.TransactionNel
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance, BalanceArithmeticError}
@@ -20,53 +20,39 @@ import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.cats._
-import eu.timepit.refined.types.numeric.NonNegLong
 
-trait BlockAcceptanceLogic[F[_]] {
-
-  type UsageCount = NonNegLong
+private[processing] trait BlockAcceptanceLogic[F[_]] {
 
   def acceptBlock(
     block: Signed[DAGBlock],
+    txChains: Map[Address, TransactionNel],
     context: BlockAcceptanceContext[F],
-    contextUpdate: BlockAcceptanceContextUpdate = BlockAcceptanceContextUpdate.empty
-  ): F[Either[BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)]]
+    contextUpdate: BlockAcceptanceContextUpdate
+  ): EitherT[F, BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)]
 
 }
 
 object BlockAcceptanceLogic {
 
-  def make[F[_]: Async: KryoSerializer](
-    blockValidator: BlockValidator[F]
-  ): BlockAcceptanceLogic[F] = new BlockAcceptanceLogic[F] {
+  def make[F[_]: Async: KryoSerializer]: BlockAcceptanceLogic[F] = new BlockAcceptanceLogic[F] {
 
     def acceptBlock(
       signedBlock: Signed[DAGBlock],
+      txChains: Map[Address, TransactionNel],
       context: BlockAcceptanceContext[F],
       contextUpdate: BlockAcceptanceContextUpdate
-    ): F[Either[BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)]] =
-      (for {
-        txChains <- validateBlock(signedBlock)
+    ): EitherT[F, BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)] =
+      for {
         (contextUpdate1, blockUsages) <- processParents(signedBlock, context, contextUpdate)
         contextUpdate2 <- processLastTxRefs(txChains, context, contextUpdate1)
         contextUpdate3 <- processBalances(signedBlock, context, contextUpdate2)
-      } yield (contextUpdate3, blockUsages)).value
-
-    private def validateBlock(
-      signedBlock: Signed[DAGBlock]
-    ): EitherT[F, BlockNotAcceptedReason, Map[Address, NonEmptyList[Signed[Transaction]]]] =
-      EitherT(
-        blockValidator
-          .validateGetTxChains(signedBlock)
-          .map(_.toEither)
-      ).leftMap(errorsChain => ValidationFailed(errorsChain.toNonEmptyList))
-        .leftWiden[BlockNotAcceptedReason]
+      } yield (contextUpdate3, blockUsages)
 
     private def processParents(
       signedBlock: Signed[DAGBlock],
       context: BlockAcceptanceContext[F],
       contextUpdate: BlockAcceptanceContextUpdate
-    ): EitherT[F, BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, NonNegLong)] =
+    ): EitherT[F, BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)] =
       signedBlock.value.parent
         .foldLeft((contextUpdate.parentUsages, initUsageCount).asRight[BlockRejectionReason].toEitherT[F]) {
           (acc, parent) =>
