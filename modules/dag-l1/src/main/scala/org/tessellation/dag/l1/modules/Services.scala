@@ -2,7 +2,7 @@ package org.tessellation.dag.l1.modules
 
 import cats.effect.kernel.Async
 
-import org.tessellation.dag.block.processing.BlockAcceptanceLogic
+import org.tessellation.dag.block.processing.BlockAcceptanceManager
 import org.tessellation.dag.l1.config.types.AppConfig
 import org.tessellation.dag.l1.domain.block.BlockService
 import org.tessellation.dag.l1.domain.snapshot.services.L0Service
@@ -27,7 +27,7 @@ object Services {
   ): Services[F] =
     new Services[F](
       block = BlockService.make[F](
-        BlockAcceptanceLogic.make[F](validators.block),
+        BlockAcceptanceManager.make[F](validators.block),
         storages.address,
         storages.block,
         storages.transaction

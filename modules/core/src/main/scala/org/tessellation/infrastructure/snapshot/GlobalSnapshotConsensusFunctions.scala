@@ -96,7 +96,7 @@ object GlobalSnapshotConsensusFunctions {
 
         tipUsages = getTipsUsages(lastActiveTips, lastDeprecatedTips)
         context = BlockAcceptanceContext.fromStaticData(lastGS.info.balances, lastGS.info.lastTxRefs, tipUsages)
-        acceptanceResult <- blockAcceptanceManager.acceptBlocks(blocksForAcceptance, context)
+        acceptanceResult <- blockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context)
 
         (deprecated, remainedActive, accepted) = getUpdatedTips(
           lastActiveTips,
