@@ -3,12 +3,15 @@ package org.tessellation.sdk.http.routes
 import cats.effect.Async
 import cats.syntax.functor._
 
-import org.tessellation.schema.peer.{Peer, PeerId}
+import org.tessellation.schema.peer.Peer
 import org.tessellation.sdk.domain.cluster.services.Cluster
 import org.tessellation.sdk.http.routes.TargetRoutes.Target
+import org.tessellation.sdk.infrastructure.metrics.Metrics.LabelName
 
 import derevo.circe.magnolia._
 import derevo.derive
+import eu.timepit.refined.auto._
+import io.circe.refined.{refinedKeyDecoder, refinedKeyEncoder}
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.dsl.Http4sDsl
@@ -31,19 +34,17 @@ final case class TargetRoutes[F[_]: Async](
 object TargetRoutes {
 
   @derive(decoder, encoder)
-  case class Labels(ip: String, peer_id: PeerId) // keep the snake_case
-
-  @derive(decoder, encoder)
-  case class Target(targets: List[String], labels: Labels)
+  case class Target(targets: List[String], labels: Map[LabelName, String])
 
   object Target {
 
     def fromPeer(peer: Peer): Target =
       Target(
         targets = List(s"${peer.ip}:${peer.publicPort}"),
-        labels = Labels(
-          ip = peer.ip.toString,
-          peer_id = peer.id
+        labels = Map[LabelName, String](
+          ("ip", peer.ip.toString),
+          ("peer_id", peer.id.value.value),
+          ("peer_id_short", peer.id.value.shortValue)
         )
       )
   }

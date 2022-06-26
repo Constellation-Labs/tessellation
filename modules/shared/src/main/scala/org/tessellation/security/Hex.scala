@@ -50,6 +50,8 @@ object hex {
           kf.generatePublic(spec)
         }
       } yield pk
+
+    def shortValue: String = value.substring(0, 8)
   }
 
   object Hex {
