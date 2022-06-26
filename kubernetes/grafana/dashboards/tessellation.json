@@ -25,7 +25,7 @@
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
   "id": 2,
-  "iteration": 1655717826457,
+  "iteration": 1656248937813,
   "links": [],
   "liveNow": false,
   "panels": [
@@ -260,7 +260,7 @@
           },
           "editorMode": "code",
           "expr": "dag_global_snapshot_ordinal{ip=~\"$ip\", peer_id=~\"$peer_id\"}",
-          "legendFormat": "{{ip}}",
+          "legendFormat": "{{ip}} {{peer_id_short}}",
           "range": true,
           "refId": "A"
         }
@@ -1109,7 +1109,7 @@
         "refresh": 1,
         "regex": "",
         "skipUrlSync": false,
-        "sort": 0,
+        "sort": 1,
         "type": "query"
       }
     ]
@@ -1122,6 +1122,6 @@
   "timezone": "browser",
   "title": "Tessellation",
   "uid": "lro46qC7k",
-  "version": 4,
+  "version": 3,
   "weekStart": ""
 }
