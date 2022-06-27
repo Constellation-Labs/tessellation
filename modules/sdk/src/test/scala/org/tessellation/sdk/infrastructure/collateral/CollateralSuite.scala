@@ -12,7 +12,6 @@ import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hex.Hex
 
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.NonNegLong
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
 
@@ -32,34 +31,51 @@ object CollateralSuite extends MutableIOSuite with Checkers {
   override def sharedResource: Resource[IO, SecurityProvider[IO]] =
     SecurityProvider.forAsync[IO]
 
-  def mkCollateral(balances: Option[Map[Address, Balance]])(implicit sc: SecurityProvider[IO]) = {
+  def mkCollateral(balances: Option[Map[Address, Balance]], collateral: Amount)(implicit sc: SecurityProvider[IO]) = {
     val latestBalances = new LatestBalances[IO] {
       def getLatestBalances = IO.delay(balances)
     }
-    Collateral.make[IO](CollateralConfig(Amount(25_000_000_000_000L)), latestBalances)
+    Collateral.make[IO](CollateralConfig(collateral), latestBalances)
   }
 
-  test("should return false when balances are not initialized") { implicit sc =>
-    mkCollateral(None)
+  test("should return false when balances are not initialized and required collateral is bigger than 0") {
+    implicit sc =>
+      mkCollateral(None, Amount(25_000_000_000_000L))
+        .hasCollateral(peer1)
+        .map(expect.same(false, _))
+  }
+
+  test(
+    "should return false when the balance for a given address is empty or not found and required collateral is bigger than 0"
+  ) { implicit sc =>
+    mkCollateral(Some(Map.empty), Amount(25_000_000_000_000L))
       .hasCollateral(peer1)
       .map(expect.same(false, _))
   }
 
-  test("should return false when the balance for a given address is empty or not found") { implicit sc =>
-    mkCollateral(Some(Map.empty))
+  test("should return true when balances are not initialized and required collateral is 0") { implicit sc =>
+    mkCollateral(None, Amount(0L))
       .hasCollateral(peer1)
-      .map(expect.same(false, _))
+      .map(expect.same(true, _))
+  }
+
+  test(
+    "should return true when the balance for a given address is empty or not found and required collateral is 0"
+  ) { implicit sc =>
+    mkCollateral(Some(Map.empty), Amount(0L))
+      .hasCollateral(peer1)
+      .map(expect.same(true, _))
   }
 
   test("should return true when the balance for a given address is equal to the required collateral") { implicit sc =>
-    mkCollateral(Some(Map((address1, Balance(NonNegLong(25_000_000_000_000L))))))
+    mkCollateral(Some(Map((address1, Balance(25_000_000_000_000L)))), Amount(25_000_000_000_000L))
       .hasCollateral(peer1)
       .map(expect.same(true, _))
   }
 
   test("should return false when the balance for a given address is lower than the required collateral") {
     implicit sc =>
-      mkCollateral(Some(Map((address1, Balance(NonNegLong(24_999_999_999_999L))))))
+      mkCollateral(Some(Map((address1, Balance(24_999_999_999_999L)))), Amount(25_000_000_000_000L))
         .hasCollateral(peer1)
         .map(expect.same(false, _))
   }
