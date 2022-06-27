@@ -24,6 +24,14 @@ git rebase develop
    - Documentation
    - New/updated tests
 
+# When developing
+
+- Try to mimic the style of the repository.
+- Use Scala's formatter, [scalafmt](https://scalameta.org/scalafmt/), and [ScalaFix](https://scalacenter.github.io/scalafix/). Before committing, run `sbt runLinter`.
+
+## Setting up _scalafmt_
+- For IntelliJ, click [here](https://www.jetbrains.com/help/idea/work-with-scala-formatter.html).
+
 # Running SBT in the command-line
 
 Run these commands from the base directory of this project.
