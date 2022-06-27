@@ -43,6 +43,7 @@ object Daemons {
           storages.cluster,
           p2pClient.gossip,
           handler,
+          validators.rumorValidator,
           nodeId,
           cfg.gossip.daemon,
           healthChecks.ping,

@@ -21,6 +21,7 @@ object Daemons {
   def start[F[_]: Async: SecurityProvider: KryoSerializer: Random: Parallel: Metrics](
     storages: Storages[F],
     services: Services[F],
+    validators: Validators[F],
     queues: Queues[F],
     healthChecks: HealthChecks[F],
     p2pClient: P2PClient[F],
@@ -36,6 +37,7 @@ object Daemons {
           storages.cluster,
           p2pClient.gossip,
           handler,
+          validators.rumorValidator,
           nodeId,
           cfg.gossip.daemon,
           healthChecks.ping,

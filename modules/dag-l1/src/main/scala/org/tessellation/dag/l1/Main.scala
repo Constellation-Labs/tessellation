@@ -47,7 +47,7 @@ object Main
       for {
         queues <- Queues.make[IO](sdkQueues).asResource
         storages <- Storages.make[IO](sdkStorages, method.l0Peer).asResource
-        validators = Validators.make[IO](storages)
+        validators = Validators.make[IO](storages, whitelisting)
         p2pClient = P2PClient.make(sdkP2PClient, sdkResources.client)
         services = Services.make[IO](storages, validators, sdkServices, p2pClient, cfg)
         programs = Programs.make(sdkPrograms, p2pClient, storages)
@@ -68,7 +68,7 @@ object Main
           blockRumorHandler(queues.peerBlock)
 
         _ <- Daemons
-          .start(storages, services, queues, healthChecks, p2pClient, rumorHandler, nodeId, cfg)
+          .start(storages, services, validators, queues, healthChecks, p2pClient, rumorHandler, nodeId, cfg)
           .asResource
 
         api = HttpApi.make[IO](storages, queues, keyPair.getPrivate, services, programs, healthChecks, sdk.nodeId)

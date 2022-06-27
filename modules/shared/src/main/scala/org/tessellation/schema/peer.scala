@@ -44,6 +44,10 @@ object peer {
       fromId(publicKey.toId)
   }
 
+  implicit class PeerIdOps(peerId: PeerId) {
+    def toId: Id = PeerId._Id.get(peerId)
+  }
+
   @derive(eqv, encoder, decoder, show)
   case class Peer(
     id: PeerId,
