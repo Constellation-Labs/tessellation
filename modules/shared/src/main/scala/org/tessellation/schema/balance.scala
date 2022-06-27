@@ -7,7 +7,7 @@ import cats.syntax.semigroup._
 import scala.util.Try
 import scala.util.control.NoStackTrace
 
-import derevo.cats.{eqv, show}
+import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import eu.timepit.refined.cats._
@@ -19,7 +19,7 @@ import io.getquill.MappedEncoding
 
 object balance {
 
-  @derive(decoder, encoder, eqv, show)
+  @derive(decoder, encoder, order, show)
   @newtype
   case class Amount(value: NonNegLong)
 
