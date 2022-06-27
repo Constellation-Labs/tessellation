@@ -2,19 +2,9 @@ package org.tessellation.sdk.infrastructure.gossip
 
 import cats.effect.std.{Queue, Random}
 import cats.effect.{Async, Spawn, Temporal}
-import cats.syntax.applicative._
-import cats.syntax.applicativeError._
-import cats.syntax.eq._
-import cats.syntax.flatMap._
-import cats.syntax.foldable._
-import cats.syntax.functor._
-import cats.syntax.parallel._
-import cats.syntax.show._
-import cats.syntax.traverse._
-import cats.syntax.traverseFilter._
+import cats.syntax.all._
 import cats.{Applicative, Parallel}
 
-import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.gossip._
 import org.tessellation.schema.peer.{Peer, PeerId}
@@ -44,6 +34,7 @@ object GossipDaemon {
     clusterStorage: ClusterStorage[F],
     gossipClient: GossipClient[F],
     rumorHandler: RumorHandler[F],
+    rumorValidator: RumorValidator[F],
     nodeId: PeerId,
     cfg: GossipDaemonConfig,
     healthcheck: PingHealthCheckConsensus[F],
@@ -63,9 +54,8 @@ object GossipDaemon {
       Stream
         .fromQueueUnterminated(rumorQueue)
         .evalTap(logConsumption)
-        .evalMap(validateHash)
-        .evalMap(validateSignature)
-        .evalMap(validateCollateral)
+        .evalMap(validateRumors)
+        .evalMap(verifyCollateral)
         .evalMap(rumorStorage.addRumors)
         .map(sortRumors)
         .flatMap(Stream.iterable)
@@ -84,34 +74,18 @@ object GossipDaemon {
           )
       }.void
 
-    private def validateHash(batch: RumorBatch): F[RumorBatch] =
-      batch.filterA {
-        case (hash, signedRumor) =>
-          signedRumor.value.hashF
-            .map(_ === hash)
-            .flatTap(
-              logger
-                .warn(
-                  s"Discarding rumor ${signedRumor.value.show} with hash ${hash.show} due to invalid hash"
-                )
-                .unlessA
-            )
+    private def validateRumors(batch: RumorBatch): F[RumorBatch] =
+      batch.traverseFilter { har =>
+        rumorValidator
+          .validate(har)
+          .flatTap { harV =>
+            Applicative[F]
+              .whenA(harV.isInvalid)(logger.warn(s"Discarding invalid rumor {hash=${har._1.show}, reason=${harV.show}"))
+          }
+          .map(_.toOption)
       }
 
-    private def validateSignature(batch: RumorBatch): F[RumorBatch] =
-      batch.filterA {
-        case (hash, signedRumor) =>
-          signedRumor.hasValidSignature
-            .flatTap(
-              logger
-                .warn(
-                  s"Discarding rumor ${signedRumor.value.show} with hash ${hash.show} due to invalid hash signature"
-                )
-                .unlessA
-            )
-      }
-
-    private def validateCollateral(batch: RumorBatch): F[RumorBatch] =
+    private def verifyCollateral(batch: RumorBatch): F[RumorBatch] =
       batch.filterA {
         case (hash, signedRumor) => {
           signedRumor.proofs.toNonEmptyList

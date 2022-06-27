@@ -79,7 +79,7 @@ object Consensus {
         manager,
         httpClient
       )
-      handler = ConsensusHandler.make[F, Event, K, Artifact](storage, manager, consensusFns, whitelisting) <+>
+      handler = ConsensusHandler.make[F, Event, K, Artifact](storage, manager, consensusFns) <+>
         PeerDeclarationProposalHandler.make[F, K](healthCheck)
       daemon = PeerDeclarationHealthCheckDaemon.make(healthCheck, healthCheckConfig)
 
