@@ -28,6 +28,7 @@ import org.tessellation.sdk.domain.consensus.ConsensusFunctions
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.infrastructure.consensus.declaration.{Facility, MajoritySignature, Proposal}
 import org.tessellation.sdk.infrastructure.consensus.message._
+import org.tessellation.sdk.infrastructure.consensus.trigger.TimeTrigger
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
@@ -132,7 +133,7 @@ object ConsensusStateUpdater {
               time
             )
             bound <- consensusStorage.getUpperBound
-            effect = gossip.spread(ConsensusPeerDeclaration(key, Facility(bound, facilitators)))
+            effect = gossip.spread(ConsensusPeerDeclaration(key, Facility(bound, facilitators, TimeTrigger)))
           } yield (state, effect).some
         case Some(_) =>
           none.pure[F]
@@ -185,31 +186,32 @@ object ConsensusStateUpdater {
     ): F[Option[(ConsensusState[Key, Artifact], F[Unit])]] = {
       state.status match {
         case Facilitated() =>
-          val maybeBound = state.facilitators
+          state.facilitators
             .traverse(resources.peerDeclarationsMap.get)
-            .flatMap(_.foldMap(_.facility.map(_.upperBound)))
-
-          maybeBound.traverse { bound =>
-            for {
-              peerEvents <- consensusStorage.pullEvents(bound)
-              events = peerEvents.toList.flatMap(_._2).map(_._2).toSet
-              (artifact, returnedEvents) <- consensusFns
-                .createProposalArtifact(state.lastKeyAndArtifact, events)
-              returnedPeerEvents = peerEvents.map {
-                case (peerId, events) =>
-                  (peerId, events.filter { case (_, event) => returnedEvents.contains(event) })
-              }.filter { case (_, events) => events.nonEmpty }
-              _ <- consensusStorage.addEvents(returnedPeerEvents)
-              hash <- artifact.hashF
-              newState = state.copy(status = ProposalMade[Artifact](hash, artifact))
-              effect = gossip.spread(ConsensusPeerDeclaration(key, Proposal(hash)))
-            } yield (newState, effect)
-          }
-        case ProposalMade(proposalHash, proposalArtifact) =>
+            .flatMap(_.foldMap(_.facility.map(f => (f.upperBound, List(f.trigger)))))
+            .flatMap { case (bound, triggers) => pickMajority(triggers).map((bound, _)) }
+            .traverse {
+              case (bound, trigger) =>
+                for {
+                  peerEvents <- consensusStorage.pullEvents(bound)
+                  events = peerEvents.toList.flatMap(_._2).map(_._2).toSet
+                  (artifact, returnedEvents) <- consensusFns
+                    .createProposalArtifact(state.lastKeyAndArtifact, trigger, events)
+                  returnedPeerEvents = peerEvents.map {
+                    case (peerId, events) =>
+                      (peerId, events.filter { case (_, event) => returnedEvents.contains(event) })
+                  }.filter { case (_, events) => events.nonEmpty }
+                  _ <- consensusStorage.addEvents(returnedPeerEvents)
+                  hash <- artifact.hashF
+                  newState = state.copy(status = ProposalMade[Artifact](hash, trigger, artifact))
+                  effect = gossip.spread(ConsensusPeerDeclaration(key, Proposal(hash)))
+                } yield (newState, effect)
+            }
+        case ProposalMade(proposalHash, _, proposalArtifact) =>
           val maybeMajority = state.facilitators
             .traverse(resources.peerDeclarationsMap.get)
             .flatMap(_.traverse(_.proposal.map(_.hash)))
-            .flatMap(pickMajority)
+            .flatMap(pickMajority[Hash])
 
           maybeMajority.traverse { majorityHash =>
             val newState = state.copy(status = MajoritySigned[Artifact](majorityHash))
@@ -254,8 +256,8 @@ object ConsensusStateUpdater {
         }
     })
 
-    private def pickMajority(proposals: List[Hash]): Option[Hash] =
-      proposals.foldMap(h => Map(h -> 1)).toList.map(_.swap).maximumOption.map(_._2)
+    private def pickMajority[A: Order](proposals: List[A]): Option[A] =
+      proposals.foldMap(a => Map(a -> 1)).toList.map(_.swap).maximumOption.map(_._2)
 
     private def calculateFacilitators(
       proposed: Set[PeerId],

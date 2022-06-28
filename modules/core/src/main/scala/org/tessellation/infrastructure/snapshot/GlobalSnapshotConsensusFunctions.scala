@@ -30,6 +30,7 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
+import org.tessellation.sdk.infrastructure.consensus.trigger.ConsensusTrigger
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.hex.Hex
@@ -71,6 +72,7 @@ object GlobalSnapshotConsensusFunctions {
 
     def createProposalArtifact(
       last: (GlobalSnapshotKey, Signed[GlobalSnapshotArtifact]),
+      trigger: ConsensusTrigger,
       events: Set[GlobalSnapshotEvent]
     ): F[(GlobalSnapshotArtifact, Set[GlobalSnapshotEvent])] = {
       val (_, lastGS) = last
