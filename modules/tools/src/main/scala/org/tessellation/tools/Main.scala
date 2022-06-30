@@ -144,29 +144,24 @@ object Main
   ): F[Unit] =
     Clock[F].monotonic.flatMap { startTime =>
       infiniteTransactionStream(basicOpts.chunkSize, addressParams)
-        .evalTap(postTransaction(client, basicOpts.baseUrl))
+        .flatTap(
+          tx =>
+            Stream.retry(
+              postTransaction(client, basicOpts.baseUrl)(tx)
+                .handleErrorWith(e => console.red(e.toString) >> e.raiseError[F, Unit]),
+              0.5.seconds,
+              d => (d * 1.25).asInstanceOf[FiniteDuration],
+              basicOpts.retryAttempts
+            )
+        )
         .zipWithIndex
         .evalTap(printProgress[F](basicOpts.verbose, startTime))
         .through(applyLimit(basicOpts.take))
         .through(applyDelay(basicOpts.delay))
-        .handleErrorWith(e => Stream.eval(console.red(e.toString) >> e.raiseError[F, Unit]))
-        .attempts(exponentialBackoff(0.5.seconds, basicOpts.retryTimeout))
+        .handleErrorWith(e => Stream.eval(console.red(e.toString)))
         .compile
         .drain
     }
-
-  def exponentialBackoff(
-    init: FiniteDuration,
-    timeout: FiniteDuration,
-    factor: NonNegDouble = 1.5
-  ): Stream[Pure, FiniteDuration] =
-    Stream
-      .unfold((init, 0.seconds)) {
-        case (step, acc) =>
-          val nextStep = (step * factor).asInstanceOf[FiniteDuration]
-          val nextAcc = acc + step
-          Option.when(nextAcc <= timeout)((step, (nextStep, nextAcc)))
-      }
 
   def applyLimit[F[_], A](maybeLimit: Option[PosLong]): Pipe[F, A, A] =
     in => maybeLimit.map(in.take(_)).getOrElse(in)
