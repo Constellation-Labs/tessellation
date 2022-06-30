@@ -22,7 +22,7 @@ import org.tessellation.security.SecurityProvider
 
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
 import org.http4s.server.Router
-import org.http4s.server.middleware.{RequestLogger, ResponseLogger}
+import org.http4s.server.middleware.{CORS, RequestLogger, ResponseLogger}
 import org.http4s.{HttpApp, HttpRoutes}
 
 object HttpApi {
@@ -76,19 +76,21 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
   private val targetRoutes = routes.TargetRoutes[F](services.cluster).routes
 
   private val openRoutes: HttpRoutes[F] =
-    PeerAuthMiddleware
-      .responseSignerMiddleware(privateKey, storages.session, selfId) {
-        `X-Id-Middleware`.responseMiddleware(selfId) {
-          (if (environment == Testnet || environment == Dev) debugRoutes else HttpRoutes.empty) <+>
-            metricRoutes <+>
-            targetRoutes <+>
-            stateChannelRoutes.publicRoutes <+>
-            clusterRoutes.publicRoutes <+>
-            globalSnapshotRoutes.publicRoutes <+>
-            dagRoutes.publicRoutes <+>
-            nodeRoutes.publicRoutes
+    CORS.policy.withAllowOriginAll.withAllowHeadersAll.withAllowCredentials(false).apply {
+      PeerAuthMiddleware
+        .responseSignerMiddleware(privateKey, storages.session, selfId) {
+          `X-Id-Middleware`.responseMiddleware(selfId) {
+            (if (environment == Testnet || environment == Dev) debugRoutes else HttpRoutes.empty) <+>
+              metricRoutes <+>
+              targetRoutes <+>
+              stateChannelRoutes.publicRoutes <+>
+              clusterRoutes.publicRoutes <+>
+              globalSnapshotRoutes.publicRoutes <+>
+              dagRoutes.publicRoutes <+>
+              nodeRoutes.publicRoutes
+          }
         }
-      }
+    }
 
   private val p2pRoutes: HttpRoutes[F] =
     PeerAuthMiddleware.responseSignerMiddleware(privateKey, storages.session, selfId)(
