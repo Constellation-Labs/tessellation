@@ -5,6 +5,7 @@ import org.tessellation.kernel.{kernelKryoRegistrar, _}
 import org.tessellation.sdk.domain.healthcheck.consensus.types.HealthCheckRoundId
 import org.tessellation.sdk.infrastructure.consensus.declaration.{Facility, MajoritySignature, Proposal}
 import org.tessellation.sdk.infrastructure.consensus.message._
+import org.tessellation.sdk.infrastructure.consensus.trigger.{EventTrigger, TimeTrigger}
 import org.tessellation.sdk.infrastructure.healthcheck.declaration._
 import org.tessellation.sdk.infrastructure.healthcheck.ping._
 import org.tessellation.shared.{sharedKryoRegistrar, _}
@@ -54,6 +55,8 @@ package object sdk {
       classOf[Ipv6Address] -> 526,
       classOf[Hostname] -> 527,
       classOf[IDN] -> 528,
-      classOf[ConsensusPeerDeclaration[_, _]] -> 529
+      classOf[ConsensusPeerDeclaration[_, _]] -> 529,
+      EventTrigger.getClass -> 530,
+      TimeTrigger.getClass -> 531
     ).union(sharedKryoRegistrar).union(kernelKryoRegistrar)
 }
