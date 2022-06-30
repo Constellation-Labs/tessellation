@@ -16,7 +16,7 @@ import org.tessellation.security.SecurityProvider
 
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
 import org.http4s.server.Router
-import org.http4s.server.middleware.{RequestLogger, ResponseLogger}
+import org.http4s.server.middleware.{CORS, RequestLogger, ResponseLogger}
 import org.http4s.{HttpApp, HttpRoutes}
 
 object HttpApi {
@@ -58,12 +58,14 @@ sealed abstract class HttpApi[F[_]: Async: KryoSerializer: SecurityProvider: Met
   private val targetRoutes = TargetRoutes[F](services.cluster).routes
 
   private val openRoutes: HttpRoutes[F] =
-    `X-Id-Middleware`.responseMiddleware(selfId) {
-      dagRoutes.publicRoutes <+>
-        clusterRoutes.publicRoutes <+>
-        nodeRoutes.publicRoutes <+>
-        metricRoutes <+>
-        targetRoutes
+    CORS.policy.withAllowOriginAll.withAllowHeadersAll.withAllowCredentials(false).apply {
+      `X-Id-Middleware`.responseMiddleware(selfId) {
+        dagRoutes.publicRoutes <+>
+          clusterRoutes.publicRoutes <+>
+          nodeRoutes.publicRoutes <+>
+          metricRoutes <+>
+          targetRoutes
+      }
     }
 
   private val p2pRoutes: HttpRoutes[F] =
