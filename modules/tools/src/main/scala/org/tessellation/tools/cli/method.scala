@@ -1,14 +1,11 @@
 package org.tessellation.tools.cli
 
 import java.nio.file.Path
-
 import cats.syntax.all._
 
 import scala.concurrent.duration.{FiniteDuration, _}
-
 import org.tessellation.ext.decline.WithOpts
 import org.tessellation.ext.decline.decline.coercibleArgument
-
 import com.monovore.decline.Opts
 import com.monovore.decline.refined.refTypeArgument
 import eu.timepit.refined.api.RefType.refinedRefType
@@ -17,7 +14,7 @@ import eu.timepit.refined.auto._
 import eu.timepit.refined.numeric.GreaterEqual
 import eu.timepit.refined.refineV
 import eu.timepit.refined.string.Url
-import eu.timepit.refined.types.numeric.{PosInt, PosLong}
+import eu.timepit.refined.types.numeric.{NonNegInt, PosInt, PosLong}
 
 object method {
 
@@ -31,7 +28,7 @@ object method {
     take: Option[PosLong],
     chunkSize: PosInt,
     delay: Option[FiniteDuration],
-    retryTimeout: FiniteDuration,
+    retryAttempts: NonNegInt,
     verbose: Boolean
   )
 
@@ -56,8 +53,8 @@ object method {
       Opts.option[PosInt]("chunk", "Size of a chunk, default 1.", "c").withDefault(PosInt(1)),
       Opts.option[FiniteDuration]("delay", "Delay before sending each transaction.", "d").orNone,
       Opts
-        .option[FiniteDuration]("retryTimeout", "Retry timeout for sending transactions, default 15s.")
-        .withDefault(15.seconds),
+        .option[NonNegInt]("retryAttempts", "Number of retry attempts to send transaction, default 10.")
+        .withDefault(NonNegInt(10)),
       Opts.flag("verbose", "Print individual transactions.", "v").map(_ => true).withDefault(false)
     ).mapN(BasicOpts.apply)
 
