@@ -222,7 +222,7 @@ object Main
     client: Client[F],
     baseUrl: UrlString
   )(snapshot: Signed[StateChannelSnapshotBinary], address: Address): F[Unit] = {
-    val target = Uri.unsafeFromString(baseUrl.toString).addPath(s"state-channel/${address.value.value}/snapshot")
+    val target = Uri.unsafeFromString(baseUrl.toString).addPath(s"state-channels/${address.value.value}/snapshot")
     val req = Request[F](method = Method.POST, uri = target).withEntity(snapshot)
 
     client.successful(req).void
@@ -231,7 +231,7 @@ object Main
   def postTransaction[F[_]: Async](client: Client[F], baseUrl: UrlString)(
     tx: Signed[Transaction]
   ): F[Unit] = {
-    val target = Uri.unsafeFromString(baseUrl.toString).addPath("transaction")
+    val target = Uri.unsafeFromString(baseUrl.toString).addPath("transactions")
     val req = Request[F](method = Method.POST, uri = target).withEntity(tx)
 
     client
@@ -254,7 +254,7 @@ object Main
   def getLastReference[F[_]: Async](client: Client[F], baseUrl: UrlString)(
     address: Address
   ): F[TransactionReference] = {
-    val target = Uri.unsafeFromString(baseUrl.toString).addPath(s"transaction/last-reference/${address.value.value}")
+    val target = Uri.unsafeFromString(baseUrl.toString).addPath(s"transactions/last-reference/${address.value.value}")
     val req = Request[F](method = Method.GET, uri = target)
 
     client.expect[TransactionReference](req)

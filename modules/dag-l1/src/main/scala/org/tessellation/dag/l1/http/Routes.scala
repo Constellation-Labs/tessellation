@@ -24,7 +24,7 @@ final case class Routes[F[_]: Async](
 ) extends Http4sDsl[F] {
 
   private val public: HttpRoutes[F] = HttpRoutes.of[F] {
-    case req @ POST -> Root / "transaction" =>
+    case req @ POST -> Root / "transactions" =>
       for {
         transaction <- req.as[Signed[Transaction]]
         response <- transactionService.offer(transaction).flatMap {
@@ -33,13 +33,13 @@ final case class Routes[F[_]: Async](
         }
       } yield response
 
-    case GET -> Root / "transaction" / HashVar(hash) =>
+    case GET -> Root / "transactions" / HashVar(hash) =>
       transactionStorage.find(hash).flatMap {
         case Some(tx) => Ok(TransactionView(tx.signed.value, tx.hash, TransactionStatus.Waiting).asJson)
         case None     => NotFound()
       }
 
-    case GET -> Root / "transaction" / "last-reference" / AddressVar(address) =>
+    case GET -> Root / "transactions" / "last-reference" / AddressVar(address) =>
       transactionStorage
         .getLastAcceptedReference(address)
         .flatMap(Ok(_))

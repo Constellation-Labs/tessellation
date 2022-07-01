@@ -27,6 +27,6 @@ object GlobalSnapshotClient {
     new GlobalSnapshotClient[F] with Http4sClientDsl[F] {
 
       def getLatest: PeerResponse[F, Signed[GlobalSnapshot]] =
-        PeerResponse[F, Signed[GlobalSnapshot]]("global-snapshot/latest")(client, session)
+        PeerResponse[F, Signed[GlobalSnapshot]]("global-snapshots/latest")(client, session)
     }
 }

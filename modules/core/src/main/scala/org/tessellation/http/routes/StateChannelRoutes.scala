@@ -18,7 +18,7 @@ import org.http4s.{EntityDecoder, HttpRoutes}
 final case class StateChannelRoutes[F[_]: Async](
   mkDagCell: L0Cell.Mk[F]
 ) extends Http4sDsl[F] {
-  private val prefixPath = "/state-channel"
+  private val prefixPath = "/state-channels"
   implicit val decoder: EntityDecoder[F, Array[Byte]] = EntityDecoder.byteArrayDecoder[F]
 
   private val httpRoutes: HttpRoutes[F] = HttpRoutes.of[F] {
