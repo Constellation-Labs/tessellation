@@ -10,4 +10,7 @@ trait DAGService[F[_]] {
 
   def getTotalSupply: F[Option[(BigInt, SnapshotOrdinal)]]
   def getTotalSupply(ordinal: SnapshotOrdinal): F[Option[(BigInt, SnapshotOrdinal)]]
+
+  def getWalletCount: F[Option[(Int, SnapshotOrdinal)]]
+  def getWalletCount(ordinal: SnapshotOrdinal): F[Option[(Int, SnapshotOrdinal)]]
 }
