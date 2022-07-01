@@ -24,13 +24,13 @@ object L0GlobalSnapshotClient {
       def getLatestOrdinal: PeerResponse[F, SnapshotOrdinal] = {
         import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
 
-        PeerResponse[F, SnapshotOrdinal]("global-snapshot/latest/ordinal")(client)
+        PeerResponse[F, SnapshotOrdinal]("global-snapshots/latest/ordinal")(client)
       }
 
       def get(ordinal: SnapshotOrdinal): PeerResponse[F, Signed[GlobalSnapshot]] = {
         import org.tessellation.ext.codecs.BinaryCodec.decoder
 
-        PeerResponse[F, Signed[GlobalSnapshot]](s"global-snapshot/${ordinal.value.value}")(client)
+        PeerResponse[F, Signed[GlobalSnapshot]](s"global-snapshots/${ordinal.value.value}")(client)
       }
     }
 }

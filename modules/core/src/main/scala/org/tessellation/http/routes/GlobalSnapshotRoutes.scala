@@ -14,7 +14,7 @@ import org.http4s.server.Router
 
 final case class GlobalSnapshotRoutes[F[_]: Async: KryoSerializer](globalSnapshotStorage: GlobalSnapshotStorage[F])
     extends Http4sDsl[F] {
-  private val prefixPath = "/global-snapshot"
+  private val prefixPath = "/global-snapshots"
 
   private val httpRoutes: HttpRoutes[F] = HttpRoutes.of[F] {
     case GET -> Root / "latest" / "ordinal" =>
