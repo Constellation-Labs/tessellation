@@ -19,7 +19,9 @@ import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.dag.snapshot._
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.address.Address
 import org.tessellation.schema.height.{Height, SubHeight}
+import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.security.hash.ProofsHash
 import org.tessellation.security.{Hashed, SecurityProvider}
 
@@ -39,13 +41,15 @@ object SnapshotProcessor {
   case class AlignedAtNewOrdinal(
     toMarkMajority: Set[(ProofsHash, NonNegLong)],
     tipsToDeprecate: Set[ProofsHash],
-    tipsToRemove: Set[ProofsHash]
+    tipsToRemove: Set[ProofsHash],
+    txRefsToMarkMajority: Map[Address, TransactionReference]
   ) extends Alignment
   case class AlignedAtNewHeight(
     toMarkMajority: Set[(ProofsHash, NonNegLong)],
     obsoleteToRemove: Set[ProofsHash],
     tipsToDeprecate: Set[ProofsHash],
-    tipsToRemove: Set[ProofsHash]
+    tipsToRemove: Set[ProofsHash],
+    txRefsToMarkMajority: Map[Address, TransactionReference]
   ) extends Alignment
   case class DownloadNeeded(
     toAdd: Set[(Hashed[DAGBlock], NonNegLong)],
@@ -112,31 +116,49 @@ sealed abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityPro
 
   def process(globalSnapshot: Hashed[GlobalSnapshot]): F[SnapshotProcessingResult] =
     checkAlignment(globalSnapshot).flatMap {
-      case AlignedAtNewOrdinal(toMarkMajority, tipsToDeprecate, tipsToRemove) =>
-        blockStorage
-          .adjustToMajority(
-            toMarkMajority = toMarkMajority,
-            tipsToDeprecate = tipsToDeprecate,
-            tipsToRemove = tipsToRemove
-          )
-          .flatMap(_ => lastGlobalSnapshotStorage.set(globalSnapshot))
-          .map { _ =>
+      case AlignedAtNewOrdinal(toMarkMajority, tipsToDeprecate, tipsToRemove, txRefsToMarkMajority) =>
+        val adjustToMajority: F[Unit] =
+          blockStorage
+            .adjustToMajority(
+              toMarkMajority = toMarkMajority,
+              tipsToDeprecate = tipsToDeprecate,
+              tipsToRemove = tipsToRemove
+            )
+
+        val markTxRefsAsMajority: F[Unit] =
+          transactionStorage.markMajority(txRefsToMarkMajority)
+
+        val setSnapshot: F[Unit] =
+          lastGlobalSnapshotStorage.set(globalSnapshot)
+
+        adjustToMajority >>
+          markTxRefsAsMajority >>
+          setSnapshot.map { _ =>
             Aligned(
               GlobalSnapshotReference.fromHashedGlobalSnapshot(globalSnapshot),
               Set.empty
             )
           }
 
-      case AlignedAtNewHeight(toMarkMajority, obsoleteToRemove, tipsToDeprecate, tipsToRemove) =>
-        blockStorage
-          .adjustToMajority(
-            toMarkMajority = toMarkMajority,
-            obsoleteToRemove = obsoleteToRemove,
-            tipsToDeprecate = tipsToDeprecate,
-            tipsToRemove = tipsToRemove
-          )
-          .flatMap(_ => lastGlobalSnapshotStorage.set(globalSnapshot))
-          .map { _ =>
+      case AlignedAtNewHeight(toMarkMajority, obsoleteToRemove, tipsToDeprecate, tipsToRemove, txRefsToMarkMajority) =>
+        val adjustToMajority: F[Unit] =
+          blockStorage
+            .adjustToMajority(
+              toMarkMajority = toMarkMajority,
+              obsoleteToRemove = obsoleteToRemove,
+              tipsToDeprecate = tipsToDeprecate,
+              tipsToRemove = tipsToRemove
+            )
+
+        val markTxRefsAsMajority: F[Unit] =
+          transactionStorage.markMajority(txRefsToMarkMajority)
+
+        val setSnapshot: F[Unit] =
+          lastGlobalSnapshotStorage.set(globalSnapshot)
+
+        adjustToMajority >>
+          markTxRefsAsMajority >>
+          setSnapshot.map { _ =>
             Aligned(
               GlobalSnapshotReference.fromHashedGlobalSnapshot(globalSnapshot),
               obsoleteToRemove
@@ -237,11 +259,14 @@ sealed abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityPro
               val deprecatedTipsToAdd = gsDeprecatedTips.map(_.block.hash) -- deprecatedTips
               val tipsToDeprecate = activeTips -- gsRemainedActive.map(_.block.hash)
               val areTipsAligned = deprecatedTipsToAdd == tipsToDeprecate
+              lazy val txRefsToMarkMajority = extractMajorityTxRefs(acceptedInMajority, globalSnapshot)
 
               if (!areTipsAligned)
                 MonadThrow[F].raiseError[Alignment](TipsGotMisaligned(deprecatedTipsToAdd, tipsToDeprecate))
               else if (onlyInMajority.isEmpty)
-                Applicative[F].pure[Alignment](AlignedAtNewOrdinal(toMarkMajority.toSet, tipsToDeprecate, tipsToRemove))
+                Applicative[F].pure[Alignment](
+                  AlignedAtNewOrdinal(toMarkMajority.toSet, tipsToDeprecate, tipsToRemove, txRefsToMarkMajority)
+                )
               else
                 Applicative[F]
                   .pure[Alignment](
@@ -278,12 +303,19 @@ sealed abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityPro
               val deprecatedTipsToAdd = gsDeprecatedTips.map(_.block.hash) -- deprecatedTips
               val tipsToDeprecate = activeTips -- gsRemainedActive.map(_.block.hash)
               val areTipsAligned = deprecatedTipsToAdd == tipsToDeprecate
+              lazy val txRefsToMarkMajority = extractMajorityTxRefs(acceptedInMajority, globalSnapshot)
 
               if (!areTipsAligned)
                 MonadThrow[F].raiseError[Alignment](TipsGotMisaligned(deprecatedTipsToAdd, tipsToDeprecate))
               else if (onlyInMajority.isEmpty && acceptedToRemove.isEmpty)
                 Applicative[F].pure[Alignment](
-                  AlignedAtNewHeight(toMarkMajority.toSet, obsoleteToRemove, tipsToDeprecate, tipsToRemove)
+                  AlignedAtNewHeight(
+                    toMarkMajority.toSet,
+                    obsoleteToRemove,
+                    tipsToDeprecate,
+                    tipsToRemove,
+                    txRefsToMarkMajority
+                  )
                 )
               else
                 Applicative[F].pure[Alignment](
@@ -328,4 +360,17 @@ sealed abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityPro
           }
       }
     } yield result
+
+  private def extractMajorityTxRefs(
+    acceptedInMajority: Map[ProofsHash, (Hashed[DAGBlock], NonNegLong)],
+    globalSnapshot: GlobalSnapshot
+  ): Map[Address, TransactionReference] = {
+    val sourceAddresses =
+      acceptedInMajority.values
+        .flatMap(_._1.transactions.toSortedSet)
+        .map(_.source)
+        .toSet
+
+    globalSnapshot.info.lastTxRefs.view.filterKeys(sourceAddresses.contains).toMap
+  }
 }

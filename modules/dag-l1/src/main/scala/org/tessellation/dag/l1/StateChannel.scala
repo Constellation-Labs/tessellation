@@ -133,7 +133,9 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
 
   private val gossipBlock: Pipe[F, FinalBlock, FinalBlock] =
     _.evalTap { fb =>
-      services.gossip.spread(fb.hashedBlock.signed).handleErrorWith(e => logger.warn(e)("Block gossip spread failed!"))
+      services.gossip
+        .spreadCommon(fb.hashedBlock.signed)
+        .handleErrorWith(e => logger.warn(e)("Block gossip spread failed!"))
     }
 
   private val peerBlocks: Stream[F, FinalBlock] = Stream
@@ -207,7 +209,7 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
     .evalMap(_ => services.l0.pullGlobalSnapshots)
     .evalTap {
       _.traverse { s =>
-        logger.info(s"Pulled following global snapshot: ${GlobalSnapshotReference.fromHashedGlobalSnapshot(s)}")
+        logger.info(s"Pulled following global snapshot: ${GlobalSnapshotReference.fromHashedGlobalSnapshot(s).show}")
       }
     }
     .evalMapLocked(NonEmptyList.of(blockAcceptanceS, blockCreationS, blockStoringS)) { snapshots =>

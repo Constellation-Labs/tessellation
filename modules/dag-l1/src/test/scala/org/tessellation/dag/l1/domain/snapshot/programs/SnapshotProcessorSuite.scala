@@ -6,22 +6,20 @@ import cats.data.{NonEmptyList, NonEmptySet}
 import cats.effect._
 import cats.effect.std.Random
 import cats.syntax.either._
-import cats.syntax.flatMap._
-import cats.syntax.foldable._
-import cats.syntax.functor._
 import cats.syntax.option._
 import cats.syntax.traverse._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import org.tessellation.dag.domain.block.{BlockReference, DAGBlock}
-import org.tessellation.dag.l1.Main
 import org.tessellation.dag.l1.domain.address.storage.AddressStorage
 import org.tessellation.dag.l1.domain.block.BlockStorage
 import org.tessellation.dag.l1.domain.block.BlockStorage._
 import org.tessellation.dag.l1.domain.snapshot.programs.SnapshotProcessor._
 import org.tessellation.dag.l1.domain.snapshot.storage.LastGlobalSnapshotStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
+import org.tessellation.dag.l1.domain.transaction.TransactionStorage.{LastTransactionReferenceState, Majority}
+import org.tessellation.dag.l1.{Main, TransactionGenerator}
 import org.tessellation.dag.snapshot._
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.collection.MapRefUtils._
@@ -40,11 +38,11 @@ import org.tessellation.security.signature.Signed.forAsyncKryo
 import org.tessellation.security.{Hashed, SecurityProvider}
 
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
+import eu.timepit.refined.types.numeric.NonNegLong
 import io.chrisdavenport.mapref.MapRef
 import weaver.SimpleIOSuite
 
-object SnapshotProcessorSuite extends SimpleIOSuite {
+object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
   type TestResources = (
     SnapshotProcessor[IO],
@@ -58,7 +56,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
     Ref[IO, Map[Address, Balance]],
     MapRef[IO, ProofsHash, Option[StoredBlock]],
     Ref[IO, Option[Hashed[GlobalSnapshot]]],
-    MapRef[IO, Address, Option[TransactionReference]]
+    MapRef[IO, Address, Option[LastTransactionReferenceState]]
   )
 
   def testResources: Resource[IO, TestResources] =
@@ -69,7 +67,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
             balancesR <- Ref.of[IO, Map[Address, Balance]](Map.empty).asResource
             blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]().asResource
             lastSnapR <- Ref.of[IO, Option[Hashed[GlobalSnapshot]]](None).asResource
-            lastAccTxR <- MapRef.ofConcurrentHashMap[IO, Address, TransactionReference]().asResource
+            lastAccTxR <- MapRef.ofConcurrentHashMap[IO, Address, LastTransactionReferenceState]().asResource
             waitingTxsR <- MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[Transaction]]]().asResource
             snapshotProcessor = {
               val addressStorage = new AddressStorage[IO] {
@@ -149,26 +147,6 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
       GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.empty),
       GlobalSnapshotTips(SortedSet.empty, SortedSet.empty)
     )
-
-  def generateTransactions[F[_]: Async: KryoSerializer: SecurityProvider](
-    src: Address,
-    srcKey: KeyPair,
-    dst: Address,
-    count: PosInt
-  ): F[NonEmptyList[Hashed[Transaction]]] = {
-    def generate(src: Address, srcKey: KeyPair, dst: Address, lastTxRef: TransactionReference): F[Hashed[Transaction]] =
-      forAsyncKryo[F, Transaction](
-        Transaction(src, dst, TransactionAmount(1L), TransactionFee(0L), lastTxRef, TransactionSalt(0L)),
-        srcKey
-      ).flatMap(_.toHashed[F])
-
-    generate(src, srcKey, dst, TransactionReference.empty).flatMap { first =>
-      (1 until count).toList.foldLeftM(NonEmptyList.one(first)) {
-        case (txs, _) =>
-          generate(src, srcKey, dst, TransactionReference(txs.head.ordinal, txs.head.hash)).map(txs.prepend)
-      }
-    }
-  }.map(_.reverse)
 
   test("download should happen for the base no blocks case") {
     testResources.use {
@@ -262,7 +240,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
                 None,
                 Some(hashedSnapshot),
                 Map.empty,
-                snapshotTxRefs
+                snapshotTxRefs.map { case (k, v) => k -> Majority(v) }
               )
             )
     }
@@ -410,7 +388,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
               ),
               snapshotBalances,
               Some(hashedSnapshot),
-              snapshotTxRefs
+              snapshotTxRefs.map { case (k, v) => k -> Majority(v) }
             )
           )
     }
@@ -807,7 +785,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite {
               ),
               snapshotBalances,
               Some(hashedNextSnapshot),
-              snapshotTxRefs
+              snapshotTxRefs.map { case (k, v) => k -> Majority(v) }
             )
           )
     }

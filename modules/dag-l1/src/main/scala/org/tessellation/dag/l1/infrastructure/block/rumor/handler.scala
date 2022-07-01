@@ -5,8 +5,8 @@ import cats.effect.std.Queue
 
 import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.gossip.PeerRumor
-import org.tessellation.sdk.infrastructure.gossip.{IgnoreSelfOrigin, RumorHandler}
+import org.tessellation.schema.gossip.CommonRumor
+import org.tessellation.sdk.infrastructure.gossip.RumorHandler
 import org.tessellation.security.signature.Signed
 
 object handler {
@@ -14,8 +14,8 @@ object handler {
   def blockRumorHandler[F[_]: Async: KryoSerializer](
     peerBlockQueue: Queue[F, Signed[DAGBlock]]
   ): RumorHandler[F] =
-    RumorHandler.fromPeerRumorConsumer[F, Signed[DAGBlock]](IgnoreSelfOrigin) {
-      case PeerRumor(_, _, signedBlock) =>
+    RumorHandler.fromCommonRumorConsumer[F, Signed[DAGBlock]] {
+      case CommonRumor(signedBlock) =>
         peerBlockQueue.offer(signedBlock)
     }
 }
