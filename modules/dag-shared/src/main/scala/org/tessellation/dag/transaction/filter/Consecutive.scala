@@ -18,15 +18,19 @@ object Consecutive {
   def take[F[_]: Async: KryoSerializer](
     txs: List[Hashed[Transaction]],
     lastAcceptedTxRef: TransactionReference
-  ): F[List[Hashed[Transaction]]] =
-    takeGeneric(
+  ): F[List[Hashed[Transaction]]] = {
+    val hashedTxOrder: Order[Hashed[Transaction]] =
+      Order.whenEqual(Order.by(-_.fee.value.value), Order[Hashed[Transaction]])
+
+    takeGeneric[F, TransactionReference, Hashed[Transaction]](
       hashedTx => Applicative[F].pure(TransactionReference.of(hashedTx)),
       _.parent,
       txs,
       lastAcceptedTxRef
-    )
+    )(Applicative[F], Order[TransactionReference], hashedTxOrder)
+  }
 
-  private def takeGeneric[F[_]: Applicative, Ref: Order, Item](
+  private def takeGeneric[F[_]: Applicative, Ref: Order, Item: Order](
     refOf: Item => F[Ref],
     prevRefOf: Item => Ref,
     items: List[Item],
@@ -35,7 +39,7 @@ object Consecutive {
     items.traverse { item =>
       refOf(item).map(_ -> item)
     }.map { refItemPairs =>
-      val grouped = refItemPairs.groupByNel { case (_, item) => prevRefOf(item) }
+      val grouped = refItemPairs.groupByNel { case (_, item) => prevRefOf(item) }.view.mapValues(_.sortBy(_._2))
 
       @tailrec
       def loop(acc: List[Item], prevRef: Ref): List[Item] =

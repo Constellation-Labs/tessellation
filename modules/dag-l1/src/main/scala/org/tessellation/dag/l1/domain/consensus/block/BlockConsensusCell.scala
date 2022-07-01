@@ -505,9 +505,9 @@ object BlockConsensusCell {
           case _                                                           => None
         })
 
-    private def pullTransactions[F[_]: Async](transactionStorage: TransactionStorage[F]): F[Set[Hashed[Transaction]]] =
-      transactionStorage
-        .pull()
+    private def pullTransactions[F[_]: Async](ctx: BlockConsensusContext[F]): F[Set[Hashed[Transaction]]] =
+      ctx.transactionStorage
+        .pull(ctx.consensusConfig.pullTxsCount)
         .map(_.map(_.toList.toSet).getOrElse(Set.empty))
 
     def startOwnRound[F[_]: Async: Random](ctx: BlockConsensusContext[F]): F[StackF[CoalgebraCommand]] =
@@ -518,7 +518,7 @@ object BlockConsensusCell {
         algebraCommand <- (maybePeers, maybeTips) match {
           case (Some(peers), Some(tips)) =>
             for {
-              transactions <- pullTransactions(ctx.transactionStorage)
+              transactions <- pullTransactions(ctx)
               startedAt <- getTime()
               proposal = Proposal(
                 roundId,
@@ -581,7 +581,7 @@ object BlockConsensusCell {
             InformAboutInabilityToParticipate(proposal, ReceivedProposalForNonExistentOwnRound).pure[F]
           case (None, Some(peers)) =>
             for {
-              transactions <- pullTransactions(ctx.transactionStorage)
+              transactions <- pullTransactions(ctx)
               startedAt <- getTime()
               ownProposal = Proposal(
                 proposal.roundId,

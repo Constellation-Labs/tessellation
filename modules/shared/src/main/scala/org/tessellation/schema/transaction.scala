@@ -44,6 +44,7 @@ object transaction {
 
   object TransactionFee {
     implicit def toAmount(fee: TransactionFee): Amount = Amount(fee.value)
+    val zero: TransactionFee = TransactionFee(0L)
   }
 
   @derive(decoder, encoder, order, show)

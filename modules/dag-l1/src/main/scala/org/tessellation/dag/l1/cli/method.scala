@@ -45,7 +45,8 @@ object method {
       consensus = ConsensusConfig(
         peersCount = 2,
         tipsCount = 2,
-        timeout = 5.seconds
+        timeout = 5.seconds,
+        pullTxsCount = 100L
       ),
       healthCheck = HealthCheckConfig(
         removeUnresponsiveParallelPeersAfter = 10.seconds,
