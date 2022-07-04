@@ -1,19 +1,14 @@
 package org.tessellation.infrastructure
 
-import cats.syntax.either._
-
 import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.dag.snapshot._
 import org.tessellation.domain.aci.StateChannelOutput
-import org.tessellation.domain.snapshot.SnapshotTrigger
-import org.tessellation.sdk.infrastructure.consensus.ConsensusStorage
+import org.tessellation.sdk.infrastructure.consensus.Consensus
 import org.tessellation.security.signature.Signed
-
-import eu.timepit.refined.auto._
 
 package object snapshot {
 
-  type DAGEvent = Either[Signed[DAGBlock], SnapshotTrigger]
+  type DAGEvent = Signed[DAGBlock]
 
   type StateChannelEvent = StateChannelOutput
 
@@ -23,10 +18,6 @@ package object snapshot {
 
   type GlobalSnapshotArtifact = GlobalSnapshot
 
-  type GlobalSnapshotConsensusStorage[F[_]] =
-    ConsensusStorage[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact]
-
-  def toEvent(trigger: SnapshotTrigger): GlobalSnapshotEvent =
-    trigger.asRight[Signed[DAGBlock]].asRight[StateChannelEvent]
+  type GlobalSnapshotConsensus[F[_]] = Consensus[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact]
 
 }

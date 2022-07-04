@@ -46,6 +46,7 @@ object GlobalSnapshotConsensus {
       gossip,
       selfId,
       keyPair,
+      snapshotConfig.fallbackTriggerTimeout,
       whitelisting,
       clusterStorage,
       healthCheckConfig,

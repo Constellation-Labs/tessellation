@@ -31,9 +31,10 @@ object PeerDeclarationHealthCheck {
     clusterStorage: ClusterStorage[F],
     selfId: PeerId,
     gossip: Gossip[F],
+    timeTriggerInterval: FiniteDuration,
     config: HealthCheckConfig,
     consensusStorage: ConsensusStorage[F, _, K, A],
-    consensusManager: ConsensusManager[F, _, K, A],
+    consensusManager: ConsensusManager[F, K, A],
     httpClient: PeerDeclarationHttpClient[F, K]
   ): F[HealthCheckConsensus[F, Key[K], Health, Status[K], Decision]] = {
     def mkWaitingProposals = Ref.of[F, Set[Status[K]]](Set.empty)
@@ -146,7 +147,11 @@ object PeerDeclarationHealthCheck {
           } yield health
 
         private def isTimedOut(state: ConsensusState[K, _], time: FiniteDuration) =
-          time > (state.statusUpdatedAt |+| config.peerDeclaration.receiveTimeout)
+          state.status match {
+            case Facilitated(None) =>
+              time > (state.statusUpdatedAt |+| config.peerDeclaration.receiveTimeout |+| timeTriggerInterval)
+            case _ => time > (state.statusUpdatedAt |+| config.peerDeclaration.receiveTimeout)
+          }
       }
 
     }

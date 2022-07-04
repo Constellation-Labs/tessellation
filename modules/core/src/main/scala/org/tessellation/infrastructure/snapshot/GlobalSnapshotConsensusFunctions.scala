@@ -19,7 +19,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
 
 import org.tessellation.dag.block.processing._
-import org.tessellation.dag.domain.block.{BlockReference, DAGBlock}
+import org.tessellation.dag.domain.block.BlockReference
 import org.tessellation.dag.snapshot._
 import org.tessellation.domain.snapshot._
 import org.tessellation.domain.snapshot.rewards.Rewards
@@ -63,12 +63,8 @@ object GlobalSnapshotConsensusFunctions {
         )
 
     def triggerPredicate(
-      last: (GlobalSnapshotKey, Signed[GlobalSnapshotArtifact]),
       event: GlobalSnapshotEvent
-    ): Boolean = event.toOption.flatMap(_.toOption).fold(false) {
-      case TipSnapshotTrigger(height) => last._2.value.height.nextN(heightInterval) === height
-      case TimeSnapshotTrigger()      => true
-    }
+    ): Boolean = true // placeholder for triggering based on fee
 
     def createProposalArtifact(
       last: (GlobalSnapshotKey, Signed[GlobalSnapshotArtifact]),
@@ -81,7 +77,6 @@ object GlobalSnapshotConsensusFunctions {
       val dagEvents: Seq[DAGEvent] = events.toList.mapFilter(_.toOption)
 
       val blocksForAcceptance = dagEvents
-        .mapFilter[Signed[DAGBlock]](_.swap.toOption)
         .filter(_.height > lastGS.height)
         .toList
 
@@ -197,7 +192,7 @@ object GlobalSnapshotConsensusFunctions {
       acceptanceResult: BlockAcceptanceResult
     ): Set[GlobalSnapshotEvent] =
       acceptanceResult.notAccepted.mapFilter {
-        case (signedBlock, _: BlockAwaitReason) => signedBlock.asLeft[SnapshotTrigger].asRight[StateChannelEvent].some
+        case (signedBlock, _: BlockAwaitReason) => signedBlock.asRight[StateChannelEvent].some
         case _                                  => none
       }.toSet
 

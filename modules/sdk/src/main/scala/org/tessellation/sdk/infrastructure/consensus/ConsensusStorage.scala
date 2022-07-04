@@ -6,6 +6,7 @@ import cats.kernel.Next
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.contravariant._
+import cats.syntax.contravariantSemigroupal._
 import cats.syntax.flatMap._
 import cats.syntax.foldable._
 import cats.syntax.functor._
@@ -13,7 +14,9 @@ import cats.syntax.option._
 import cats.syntax.order._
 import cats.syntax.traverse._
 import cats.syntax.traverseFilter._
-import cats.{Eq, Show}
+import cats.{Eq, Order, Show}
+
+import scala.concurrent.duration.FiniteDuration
 
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
@@ -36,7 +39,9 @@ trait ConsensusStorage[F[_], Event, Key, Artifact] {
 
   private[consensus] def condModifyState[B](key: Key)(modifyStateFn: ModifyStateFn[B]): F[Option[B]]
 
-  private[consensus] def findEvent(predicate: Event => Boolean): F[Option[Event]]
+  private[consensus] def containsTriggerEvent: F[Boolean]
+
+  private[consensus] def addTriggerEvent(peerId: PeerId, peerEvent: (Ordinal, Event)): F[Unit]
 
   private[consensus] def addEvent(peerId: PeerId, peerEvent: (Ordinal, Event)): F[Unit]
 
@@ -47,6 +52,12 @@ trait ConsensusStorage[F[_], Event, Key, Artifact] {
   private[consensus] def getUpperBound: F[Bound]
 
   private[consensus] def getResources(key: Key): F[ConsensusResources[Artifact]]
+
+  private[consensus] def getTimeTrigger: F[Option[FiniteDuration]]
+
+  private[consensus] def setTimeTrigger(time: FiniteDuration): F[Unit]
+
+  private[consensus] def clearTimeTrigger: F[Unit]
 
   private[sdk] def getPeerDeclarations(key: Key): F[Map[PeerId, PeerDeclarations]]
 
@@ -83,15 +94,17 @@ object ConsensusStorage {
     for {
       stateUpdateSemaphore <- Semaphore[F](1)
       lastKeyAndArtifactR <- Ref.of(lastKeyAndArtifact)
-      eventsR <- MapRef.ofConcurrentHashMap[F, PeerId, List[(Ordinal, Event)]]()
+      timeTriggerR <- Ref.of(none[FiniteDuration])
+      eventsR <- MapRef.ofConcurrentHashMap[F, PeerId, PeerEvents[Event]]()
       statesR <- MapRef.ofConcurrentHashMap[F, Key, ConsensusState[Key, Artifact]]()
       resourcesR <- MapRef.ofConcurrentHashMap[F, Key, ConsensusResources[Artifact]]()
-    } yield make(stateUpdateSemaphore, lastKeyAndArtifactR, eventsR, statesR, resourcesR)
+    } yield make(stateUpdateSemaphore, lastKeyAndArtifactR, timeTriggerR, eventsR, statesR, resourcesR)
 
   def make[F[_]: Async: KryoSerializer, Event, Key: Show: Next: Eq, Artifact <: AnyRef: Show: Eq](
     stateUpdateSemaphore: Semaphore[F],
     lastKeyAndArtifactR: Ref[F, Option[(Key, Signed[Artifact])]],
-    eventsR: MapRef[F, PeerId, Option[List[(Ordinal, Event)]]],
+    timeTriggerR: Ref[F, Option[FiniteDuration]],
+    eventsR: MapRef[F, PeerId, Option[PeerEvents[Event]]],
     statesR: MapRef[F, Key, Option[ConsensusState[Key, Artifact]]],
     resourcesR: MapRef[F, Key, Option[ConsensusResources[Artifact]]]
   ): ConsensusStorage[F, Event, Key, Artifact] =
@@ -105,6 +118,15 @@ object ConsensusStorage {
 
       def getResources(key: Key): F[ConsensusResources[Artifact]] =
         resourcesR(key).get.map(_.getOrElse(ConsensusResources.empty))
+
+      def getTimeTrigger: F[Option[FiniteDuration]] =
+        timeTriggerR.get
+
+      def setTimeTrigger(time: FiniteDuration): F[Unit] =
+        timeTriggerR.set(time.some)
+
+      def clearTimeTrigger: F[Unit] =
+        timeTriggerR.set(none)
 
       def getPeerDeclarations(key: Key): F[Map[PeerId, PeerDeclarations]] =
         resourcesR(key).get.map(_.map(_.peerDeclarationsMap).getOrElse(Map.empty))
@@ -150,41 +172,62 @@ object ConsensusStorage {
           (none[ConsensusState[Key, Artifact]], ()).some.pure[F]
         }.void
 
-      def findEvent(predicate: Event => Boolean): F[Option[Event]] =
-        for {
-          peerIds <- eventsR.keys
-          maybeFoundEvent <- peerIds.foldM(none[Event]) { (acc, peerId) =>
-            acc match {
-              case Some(foundEvent) => foundEvent.some.pure[F]
-              case None =>
-                eventsR(peerId).get.map {
-                  _.flatMap(events => events.map(_._2).find(predicate))
-                }
-            }
+      def containsTriggerEvent: F[Boolean] =
+        eventsR.keys.flatMap { keys =>
+          keys.existsM { peerId =>
+            eventsR(peerId).get
+              .map(_.flatMap(_.trigger).isDefined)
           }
-        } yield maybeFoundEvent
+        }
+
+      def addTriggerEvent(peerId: PeerId, peerEvent: (Ordinal, Event)): F[Unit] =
+        addEvents(peerId, List(peerEvent), updateTrigger = true)
 
       def addEvent(peerId: PeerId, peerEvent: (Ordinal, Event)): F[Unit] =
-        addEvents(Map(peerId -> List(peerEvent)))
+        addEvents(peerId, List(peerEvent), updateTrigger = false)
 
       def addEvents(events: Map[PeerId, List[(Ordinal, Event)]]): F[Unit] =
         events.toList.traverse {
           case (peerId, peerEvents) =>
-            eventsR(peerId).update { maybePeerEvents =>
-              (peerEvents ++ maybePeerEvents
-                .getOrElse(List.empty)).some
-            }
+            addEvents(peerId, peerEvents, updateTrigger = false)
         }.void
+
+      private def addEvents(peerId: PeerId, events: List[(Ordinal, Event)], updateTrigger: Boolean) =
+        eventsR(peerId).update { maybePeerEvents =>
+          maybePeerEvents
+            .getOrElse(PeerEvents.empty[Event])
+            .focus(_.events)
+            .modify(events ++ _)
+            .focus(_.trigger)
+            .modify { maybeCurrentTrigger =>
+              if (updateTrigger) {
+                val maybeNewTrigger = events.map(_._1).maximumOption
+
+                (maybeCurrentTrigger, maybeNewTrigger)
+                  .mapN(Order[Ordinal].max)
+                  .orElse(maybeCurrentTrigger)
+                  .orElse(maybeNewTrigger)
+              } else
+                maybeCurrentTrigger
+            }
+            .some
+        }
 
       def pullEvents(upperBound: Bound): F[Map[PeerId, List[(Ordinal, Event)]]] =
         upperBound.toList.traverse {
           case (peerId, peerBound) =>
             eventsR(peerId).modify { maybePeerEvents =>
               maybePeerEvents.traverse { peerEvents =>
-                peerEvents.partitionMap {
-                  case oe @ (eventOrdinal, _) =>
-                    Either.cond(eventOrdinal > peerBound, oe, oe)
+                val (eventsAboveBound, pulledEvents) = peerEvents.events.partition {
+                  case (eventOrdinal, _) => eventOrdinal > peerBound
                 }
+                val updatedPeerEvents = peerEvents
+                  .focus(_.events)
+                  .replace(eventsAboveBound)
+                  .focus(_.trigger)
+                  .modify(_.filter(_ > peerBound))
+
+                (pulledEvents, updatedPeerEvents)
               }.swap
             }.map((peerId, _))
         }.map(_.toMap)
@@ -195,7 +238,7 @@ object ConsensusStorage {
           bound <- peerIds.traverseFilter { peerId =>
             eventsR(peerId).get.map { maybePeerEvents =>
               maybePeerEvents.flatMap { peerEvents =>
-                peerEvents.map(_._1).maximumOption.map((peerId, _))
+                peerEvents.events.map(_._1).maximumOption.map((peerId, _))
               }
             }
           }

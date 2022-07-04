@@ -2,9 +2,7 @@ package org.tessellation.sdk.infrastructure.consensus
 
 import cats.Show
 import cats.effect.Async
-import cats.syntax.flatMap._
-import cats.syntax.semigroupk._
-import cats.syntax.show._
+import cats.syntax.all._
 
 import scala.reflect.ClassTag
 import scala.reflect.runtime.universe.TypeTag
@@ -12,6 +10,7 @@ import scala.reflect.runtime.universe.TypeTag
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.gossip.PeerRumor
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.sdk.domain.consensus.ConsensusFunctions
 import org.tessellation.sdk.infrastructure.consensus.declaration._
 import org.tessellation.sdk.infrastructure.consensus.message._
 import org.tessellation.sdk.infrastructure.gossip.RumorHandler
@@ -24,7 +23,8 @@ object ConsensusHandler {
 
   def make[F[_]: Async: KryoSerializer: SecurityProvider, Event <: AnyRef: TypeTag: ClassTag, Key: Show: TypeTag: ClassTag, Artifact <: AnyRef: TypeTag](
     storage: ConsensusStorage[F, Event, Key, Artifact],
-    manager: ConsensusManager[F, Event, Key, Artifact],
+    manager: ConsensusManager[F, Key, Artifact],
+    fns: ConsensusFunctions[F, Event, Key, Artifact],
     whitelisting: Option[Set[PeerId]]
   ): RumorHandler[F] = {
 
@@ -39,8 +39,11 @@ object ConsensusHandler {
 
     val eventHandler = RumorHandler.fromPeerRumorConsumer[F, ConsensusEvent[Event]]() {
       filterWhitelisted { rumor =>
-        storage.addEvent(rumor.origin, (rumor.ordinal, rumor.content.value)) >>
-          manager.checkForTrigger(rumor.content.value)
+        if (fns.triggerPredicate(rumor.content.value))
+          storage.addTriggerEvent(rumor.origin, (rumor.ordinal, rumor.content.value)) >>
+            manager.triggerOnEvent
+        else
+          storage.addEvent(rumor.origin, (rumor.ordinal, rumor.content.value))
       }
     }
 

@@ -9,8 +9,8 @@ import cats.syntax.traverse._
 import org.tessellation.config.types.AppConfig
 import org.tessellation.http.p2p.P2PClient
 import org.tessellation.infrastructure.healthcheck.HealthCheckDaemon
+import org.tessellation.infrastructure.snapshot.GlobalSnapshotEventsPublisherDaemon
 import org.tessellation.infrastructure.snapshot.daemon.DownloadDaemon
-import org.tessellation.infrastructure.snapshot.{GlobalSnapshotEventsPublisherDaemon, SnapshotTriggerPipeline}
 import org.tessellation.infrastructure.trust.TrustDaemon
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
@@ -33,14 +33,7 @@ object Daemons {
     handler: RumorHandler[F],
     nodeId: PeerId,
     cfg: AppConfig
-  ): F[Unit] = {
-    val dagEvents = SnapshotTriggerPipeline.stream(
-      storages.globalSnapshot,
-      validators.snapshotPreconditions,
-      queues.l1Output,
-      cfg.snapshot
-    )
-
+  ): F[Unit] =
     List[Daemon[F]](
       GossipDaemon
         .make[F](
@@ -58,9 +51,8 @@ object Daemons {
       DownloadDaemon.make(storages.node, programs.download),
       TrustDaemon.make(cfg.trust.daemon, storages.trust, nodeId),
       HealthCheckDaemon.make(healthChecks),
-      GlobalSnapshotEventsPublisherDaemon.make(queues.stateChannelOutput, dagEvents, services.gossip),
+      GlobalSnapshotEventsPublisherDaemon.make(queues.stateChannelOutput, queues.l1Output, services.gossip),
       services.consensus.daemon
     ).traverse(_.start).void
-  }
 
 }

@@ -50,7 +50,7 @@ object Main
       p2pClient = P2PClient.make[IO](sdkP2PClient, sdkResources.client, sdkServices.session)
       queues <- Queues.make[IO](sdkQueues).asResource
       storages <- Storages.make[IO](sdkStorages, cfg.snapshot).asResource
-      validators = Validators.make[IO](cfg.snapshot)
+      validators = Validators.make[IO]
       services <- Services
         .make[IO](
           sdkServices,
@@ -106,7 +106,8 @@ object Main
 
               Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair).flatMap { signedGenesis =>
                 storages.globalSnapshot.prepend(signedGenesis) >>
-                  services.consensus.storage.setLastKeyAndArtifact((genesis.ordinal, signedGenesis).some)
+                  services.consensus.storage.setLastKeyAndArtifact((genesis.ordinal, signedGenesis).some) >>
+                  services.consensus.manager.scheduleTriggerOnTime
               }
             }
           } >>

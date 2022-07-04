@@ -23,7 +23,7 @@ object Programs {
         storages.cluster,
         p2pClient.globalSnapshot,
         storages.globalSnapshot,
-        services.consensus.storage
+        services.consensus
       )
 
     new Programs[F](sdkPrograms.peerDiscovery, sdkPrograms.joining, trustPush, download) {}
