@@ -22,9 +22,15 @@ object Download {
     clusterStorage: ClusterStorage[F],
     globalSnapshotClient: GlobalSnapshotClient[F],
     globalSnapshotStorage: GlobalSnapshotStorage[F],
-    consensusStorage: GlobalSnapshotConsensusStorage[F]
+    consensus: GlobalSnapshotConsensus[F]
   ): Download[F] =
-    new Download[F](nodeStorage, clusterStorage, globalSnapshotClient, globalSnapshotStorage, consensusStorage) {}
+    new Download[F](
+      nodeStorage,
+      clusterStorage,
+      globalSnapshotClient,
+      globalSnapshotStorage,
+      consensus
+    ) {}
 }
 
 sealed abstract class Download[F[_]: Async] private (
@@ -32,7 +38,7 @@ sealed abstract class Download[F[_]: Async] private (
   clusterStorage: ClusterStorage[F],
   globalSnapshotClient: GlobalSnapshotClient[F],
   globalSnapshotStorage: GlobalSnapshotStorage[F],
-  consensusStorage: GlobalSnapshotConsensusStorage[F]
+  consensus: GlobalSnapshotConsensus[F]
 ) {
   private def logger = Slf4jLogger.getLogger[F]
 
@@ -49,7 +55,8 @@ sealed abstract class Download[F[_]: Async] private (
               .run(peer)
               .flatMap { snapshot =>
                 globalSnapshotStorage.prepend(snapshot) >>
-                  consensusStorage.setLastKeyAndArtifact((snapshot.value.ordinal, snapshot).some)
+                  consensus.storage.setLastKeyAndArtifact((snapshot.value.ordinal, snapshot).some) >>
+                  consensus.manager.triggerOnStart
               }
         }
         .handleErrorWith { err =>

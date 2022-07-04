@@ -11,6 +11,7 @@ import cats.syntax.option._
 import cats.syntax.semigroupk._
 import cats.{Eq, Order, Show}
 
+import scala.concurrent.duration.FiniteDuration
 import scala.reflect.ClassTag
 import scala.reflect.runtime.universe.TypeTag
 
@@ -43,6 +44,7 @@ object Consensus {
     gossip: Gossip[F],
     selfId: PeerId,
     keyPair: KeyPair,
+    timeTriggerInterval: FiniteDuration,
     whitelisting: Option[Set[PeerId]],
     clusterStorage: ClusterStorage[F],
     healthCheckConfig: HealthCheckConfig,
@@ -62,7 +64,7 @@ object Consensus {
         selfId
       )
       manager = ConsensusManager.make[F, Event, K, Artifact](
-        consensusFns,
+        timeTriggerInterval,
         storage,
         stateUpdater
       )
@@ -71,21 +73,23 @@ object Consensus {
         clusterStorage,
         selfId,
         gossip,
+        timeTriggerInterval,
         healthCheckConfig,
         storage,
         manager,
         httpClient
       )
-      handler = ConsensusHandler.make[F, Event, K, Artifact](storage, manager, whitelisting) <+>
+      handler = ConsensusHandler.make[F, Event, K, Artifact](storage, manager, consensusFns, whitelisting) <+>
         PeerDeclarationProposalHandler.make[F, K](healthCheck)
       daemon = PeerDeclarationHealthCheckDaemon.make(healthCheck, healthCheckConfig)
 
-    } yield new Consensus(handler, storage, daemon, healthCheck)
+    } yield new Consensus(handler, storage, manager, daemon, healthCheck)
 }
 
 sealed class Consensus[F[_]: Async, Event, K, Artifact] private (
   val handler: RumorHandler[F],
   val storage: ConsensusStorage[F, Event, K, Artifact],
+  val manager: ConsensusManager[F, K, Artifact],
   val daemon: Daemon[F],
   val healthcheck: HealthCheckConsensus[F, Key[K], Health, Status[K], Decision]
 ) {}

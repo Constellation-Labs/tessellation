@@ -5,7 +5,7 @@ import org.tessellation.security.signature.Signed
 
 trait ConsensusFunctions[F[_], Event, Key, Artifact] {
 
-  def triggerPredicate(last: (Key, Signed[Artifact]), event: Event): Boolean
+  def triggerPredicate(event: Event): Boolean
 
   def createProposalArtifact(
     last: (Key, Signed[Artifact]),

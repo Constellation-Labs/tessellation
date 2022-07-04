@@ -9,7 +9,8 @@ object declaration {
 
   sealed trait PeerDeclaration
 
-  case class Facility(upperBound: Bound, facilitators: Set[PeerId], trigger: ConsensusTrigger) extends PeerDeclaration
+  case class Facility(upperBound: Bound, facilitators: Set[PeerId], trigger: Option[ConsensusTrigger])
+      extends PeerDeclaration
   case class Proposal(hash: Hash) extends PeerDeclaration
   case class MajoritySignature(signature: Signature) extends PeerDeclaration
 
