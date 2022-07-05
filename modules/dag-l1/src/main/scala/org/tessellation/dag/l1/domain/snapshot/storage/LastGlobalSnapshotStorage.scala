@@ -1,6 +1,7 @@
 package org.tessellation.dag.l1.domain.snapshot.storage
 
 import cats.effect.Ref
+import cats.effect.kernel.Async
 import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
@@ -15,6 +16,9 @@ import org.tessellation.schema.height.Height
 import org.tessellation.sdk.domain.collateral.LatestBalances
 import org.tessellation.security.Hashed
 
+import fs2.Stream
+import fs2.concurrent.SignallingRef
+
 trait LastGlobalSnapshotStorage[F[_]] {
   def set(snapshot: Hashed[GlobalSnapshot]): F[Unit]
   def setInitial(snapshot: Hashed[GlobalSnapshot]): F[Unit]
@@ -25,11 +29,11 @@ trait LastGlobalSnapshotStorage[F[_]] {
 
 object LastGlobalSnapshotStorage {
 
-  def make[F[_]: MonadThrow: Ref.Make]: F[LastGlobalSnapshotStorage[F] with LatestBalances[F]] =
-    Ref.of[F, Option[Hashed[GlobalSnapshot]]](None).map(make(_))
+  def make[F[_]: Async: Ref.Make]: F[LastGlobalSnapshotStorage[F] with LatestBalances[F]] =
+    (SignallingRef.of[F, Option[Hashed[GlobalSnapshot]]](None)).map(make(_))
 
   def make[F[_]: MonadThrow](
-    snapshotR: Ref[F, Option[Hashed[GlobalSnapshot]]]
+    snapshotR: SignallingRef[F, Option[Hashed[GlobalSnapshot]]]
   ): LastGlobalSnapshotStorage[F] with LatestBalances[F] =
     new LastGlobalSnapshotStorage[F] with LatestBalances[F] {
 
@@ -62,5 +66,10 @@ object LastGlobalSnapshotStorage {
 
       def getLatestBalances: F[Option[Map[Address, Balance]]] =
         get.map(_.map(_.info.balances))
+
+      def getLatestBalancesStream: Stream[F, Map[Address, Balance]] =
+        snapshotR.discrete
+          .flatMap(_.fold[Stream[F, Hashed[GlobalSnapshot]]](Stream.empty)(Stream(_)))
+          .map(_.info.balances)
     }
 }

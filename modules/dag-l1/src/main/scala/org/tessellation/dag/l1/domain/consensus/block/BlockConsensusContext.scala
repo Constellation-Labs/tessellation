@@ -10,7 +10,6 @@ import org.tessellation.dag.l1.domain.consensus.block.storage.ConsensusStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
-import org.tessellation.sdk.domain.collateral.Collateral
 
 case class BlockConsensusContext[F[_]](
   blockConsensusClient: BlockConsensusClient[F],
@@ -21,6 +20,5 @@ case class BlockConsensusContext[F[_]](
   consensusStorage: ConsensusStorage[F],
   keyPair: KeyPair,
   selfId: PeerId,
-  transactionStorage: TransactionStorage[F],
-  collateral: Collateral[F]
+  transactionStorage: TransactionStorage[F]
 )

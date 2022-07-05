@@ -66,6 +66,9 @@ object ClusterStorage {
       def removePeer(id: PeerId): F[Unit] =
         setPeer(id)(none)
 
+      def removePeers(ids: Set[PeerId]): F[Unit] =
+        ids.toList.traverse(removePeer).void
+
       def peerChanges: Stream[F, (PeerId, Option[Peer])] =
         topic.subscribe(maxQueuedPeerChanges)
 

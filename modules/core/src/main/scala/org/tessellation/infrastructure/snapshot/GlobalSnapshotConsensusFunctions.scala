@@ -73,8 +73,7 @@ object GlobalSnapshotConsensusFunctions {
     ): F[(GlobalSnapshotArtifact, Set[GlobalSnapshotEvent])] = {
       val (_, lastGS) = last
 
-      val scEvents = events.toList.mapFilter(_.swap.toOption)
-      val dagEvents: Seq[DAGEvent] = events.toList.mapFilter(_.toOption)
+      val (scEvents: List[StateChannelEvent], dagEvents: List[DAGEvent]) = events.toList.partitionMap(identity)
 
       val blocksForAcceptance = dagEvents
         .filter(_.height > lastGS.height)

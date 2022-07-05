@@ -1,7 +1,7 @@
 package org.tessellation.infrastructure.snapshot
 
 import cats.effect.std.Queue
-import cats.effect.{Async, Ref, Spawn}
+import cats.effect.{Async, Spawn}
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.contravariantSemigroupal._
@@ -29,6 +29,7 @@ import org.tessellation.security.signature.Signed
 import eu.timepit.refined.auto.autoUnwrap
 import eu.timepit.refined.types.numeric.NonNegLong
 import fs2.Stream
+import fs2.concurrent.SignallingRef
 import io.chrisdavenport.mapref.MapRef
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -39,7 +40,7 @@ object GlobalSnapshotStorage {
     globalSnapshotLocalFileSystemStorage: GlobalSnapshotLocalFileSystemStorage[F],
     inMemoryCapacity: NonNegLong
   ): F[GlobalSnapshotStorage[F] with LatestBalances[F]] = {
-    def mkHeadRef = Ref.of[F, Option[Signed[GlobalSnapshot]]](none)
+    def mkHeadRef = SignallingRef.of[F, Option[Signed[GlobalSnapshot]]](none)
     def mkOrdinalCache = MapRef.ofSingleImmutableMap[F, SnapshotOrdinal, Hash](Map.empty)
     def mkHashCache = MapRef.ofSingleImmutableMap[F, Hash, Signed[GlobalSnapshot]](Map.empty)
     def mkOffloadQueue = Queue.unbounded[F, SnapshotOrdinal]
@@ -54,7 +55,7 @@ object GlobalSnapshotStorage {
   }
 
   def make[F[_]: Async: Logger: KryoSerializer](
-    headRef: Ref[F, Option[Signed[GlobalSnapshot]]],
+    headRef: SignallingRef[F, Option[Signed[GlobalSnapshot]]],
     ordinalCache: MapRef[F, SnapshotOrdinal, Option[Hash]],
     hashCache: MapRef[F, Hash, Option[Signed[GlobalSnapshot]]],
     offloadQueue: Queue[F, SnapshotOrdinal],
@@ -139,6 +140,11 @@ object GlobalSnapshotStorage {
 
         def getLatestBalances: F[Option[Map[Address, Balance]]] =
           head.map(_.map(_.info.balances))
+
+        def getLatestBalancesStream: Stream[F, Map[Address, Balance]] =
+          headRef.discrete
+            .flatMap(_.fold[Stream[F, Signed[GlobalSnapshotArtifact]]](Stream.empty)(Stream(_)))
+            .map(_.info.balances)
 
         private def isNextSnapshot(
           current: Signed[GlobalSnapshot],

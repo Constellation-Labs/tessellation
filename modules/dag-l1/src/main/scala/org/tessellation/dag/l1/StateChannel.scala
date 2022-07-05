@@ -66,8 +66,7 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
       storages.consensus,
       keyPair,
       selfId,
-      storages.transaction,
-      services.collateral
+      storages.transaction
     )
 
   private val inspectionTriggerInput: Stream[F, OwnerBlockConsensusInput] = Stream
@@ -83,7 +82,6 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
         storages.cluster,
         storages.block,
         storages.transaction,
-        services.collateral,
         appConfig.consensus.peersCount,
         appConfig.consensus.tipsCount
       ).handleErrorWith { e =>

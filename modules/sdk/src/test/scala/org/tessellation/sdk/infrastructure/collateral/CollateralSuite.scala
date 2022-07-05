@@ -34,6 +34,8 @@ object CollateralSuite extends MutableIOSuite with Checkers {
   def mkCollateral(balances: Option[Map[Address, Balance]], collateral: Amount)(implicit sc: SecurityProvider[IO]) = {
     val latestBalances = new LatestBalances[IO] {
       def getLatestBalances = IO.delay(balances)
+
+      def getLatestBalancesStream = ???
     }
     Collateral.make[IO](CollateralConfig(collateral), latestBalances)
   }
