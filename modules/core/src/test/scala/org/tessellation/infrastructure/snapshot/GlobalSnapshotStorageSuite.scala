@@ -15,6 +15,7 @@ import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.{address, balance}
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hex.Hex
@@ -144,6 +145,39 @@ object GlobalSnapshotStorageSuite extends MutableIOSuite with Checkers {
             storage.prepend(genesis) >>
               genesis.value.hashF.flatMap { hash =>
                 storage.get(hash).map { expect.same(_, genesis.some) }
+              }
+        }
+      }
+    }
+  }
+
+  test("getLatestBalancesStream - subscriber should get latest balances") { res =>
+    implicit val (kryo, sp) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      mkStorage(tmpDir).flatMap { storage =>
+        mkSnapshots.flatMap {
+          case (genesis, _) =>
+            storage.prepend(genesis) >>
+              storage.getLatestBalancesStream.take(1).compile.toList.map {
+                expect.same(_, List(Map.empty[address.Address, balance.Balance]))
+              }
+        }
+      }
+    }
+  }
+
+  test("getLatestBalancesStream - second subscriber should get latest balances") { res =>
+    implicit val (kryo, sp) = res
+
+    File.temporaryDirectory() { tmpDir =>
+      mkStorage(tmpDir).flatMap { storage =>
+        mkSnapshots.flatMap {
+          case (genesis, _) =>
+            storage.prepend(genesis) >>
+              storage.getLatestBalancesStream.take(1).compile.toList >>
+              storage.getLatestBalancesStream.take(1).compile.toList.map {
+                expect.same(_, List(Map.empty[address.Address, balance.Balance]))
               }
         }
       }

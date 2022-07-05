@@ -16,6 +16,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.Daemon
 import org.tessellation.sdk.infrastructure.cluster.daemon.NodeStateDaemon
+import org.tessellation.sdk.infrastructure.collateral.daemon.CollateralDaemon
 import org.tessellation.sdk.infrastructure.gossip.{GossipDaemon, RumorHandler}
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
@@ -52,7 +53,8 @@ object Daemons {
       TrustDaemon.make(cfg.trust.daemon, storages.trust, nodeId),
       HealthCheckDaemon.make(healthChecks),
       GlobalSnapshotEventsPublisherDaemon.make(queues.stateChannelOutput, queues.l1Output, services.gossip),
-      services.consensus.daemon
+      services.consensus.daemon,
+      CollateralDaemon.make(services.collateral, storages.globalSnapshot, storages.cluster)
     ).traverse(_.start).void
 
 }

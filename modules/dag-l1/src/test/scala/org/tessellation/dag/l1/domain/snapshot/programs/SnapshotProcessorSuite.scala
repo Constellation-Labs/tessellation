@@ -39,6 +39,7 @@ import org.tessellation.security.{Hashed, SecurityProvider}
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
+import fs2.concurrent.SignallingRef
 import io.chrisdavenport.mapref.MapRef
 import weaver.SimpleIOSuite
 
@@ -66,7 +67,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           for {
             balancesR <- Ref.of[IO, Map[Address, Balance]](Map.empty).asResource
             blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]().asResource
-            lastSnapR <- Ref.of[IO, Option[Hashed[GlobalSnapshot]]](None).asResource
+            lastSnapR <- SignallingRef.of[IO, Option[Hashed[GlobalSnapshot]]](None).asResource
             lastAccTxR <- MapRef.ofConcurrentHashMap[IO, Address, LastTransactionReferenceState]().asResource
             waitingTxsR <- MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[Transaction]]]().asResource
             snapshotProcessor = {
