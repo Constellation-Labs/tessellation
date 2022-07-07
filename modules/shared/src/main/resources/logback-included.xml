@@ -2,6 +2,8 @@
 
     <property name="APP_LOG" value="logs/app.log"/>
     <property name="APP_ROLLING_LOG" value="logs/archived/app.%d{yyyy-MM-dd}.%i.log.gz"/>
+    <property name="GOSSIP_LOG" value="logs/gossip.log"/>
+    <property name="GOSSIP_ROLLING_LOG" value="logs/archived/gossip.%d{yyyy-MM-dd}.%i.log.gz"/>
     <property name="HTTP_LOG" value="logs/http.log"/>
     <property name="HTTP_ROLLING_LOG" value="logs/archived/http.%d{yyyy-MM-dd}.%i.log.gz"/>
     <property name="JSON_LOG" value="logs/json_logs/json.log"/>
@@ -23,6 +25,18 @@
         <file>${HTTP_LOG}</file>
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
             <fileNamePattern>${HTTP_ROLLING_LOG}</fileNamePattern>
+            <maxFileSize>200MB</maxFileSize>
+            <totalSizeCap>2GB</totalSizeCap>
+            <maxHistory>10</maxHistory>
+        </rollingPolicy>
+        <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+            <pattern>%date [%thread] [%X{node_id}] %highlight(%-5level) %cyan(%logger{15}) - %msg %n</pattern>
+        </encoder>
+    </appender>
+    <appender name="GOSSIP" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${GOSSIP_LOG}</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${GOSSIP_ROLLING_LOG}</fileNamePattern>
             <maxFileSize>200MB</maxFileSize>
             <totalSizeCap>2GB</totalSizeCap>
             <maxHistory>10</maxHistory>
@@ -55,12 +69,17 @@
     <logger name="org.tessellation" level="DEBUG" />
     <logger name="org.http4s.server.middleware.RequestLogger" level="OFF" />
     <logger name="org.http4s.server.middleware.ResponseLogger" level="OFF" />
+    <logger name="org.tessellation.sdk.infrastructure.gossip.RumorLogger" level="OFF" />
     <logger name="org.http4s.server.middleware.RequestLogger" level="INFO" additivity="false">
         <appender-ref ref="HTTP" />
         <appender-ref ref="JSON" />
     </logger>
     <logger name="org.http4s.server.middleware.ResponseLogger" level="INFO" additivity="false">
         <appender-ref ref="HTTP" />
+        <appender-ref ref="JSON" />
+    </logger>
+    <logger name="org.tessellation.sdk.infrastructure.gossip.RumorLogger" level="INFO" additivity="false">
+        <appender-ref ref="GOSSIP" />
         <appender-ref ref="JSON" />
     </logger>
 
