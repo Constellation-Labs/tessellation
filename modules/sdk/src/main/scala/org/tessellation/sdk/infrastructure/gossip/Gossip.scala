@@ -8,6 +8,7 @@ import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.semigroup._
+import cats.syntax.show._
 
 import scala.reflect.runtime.universe.TypeTag
 
@@ -19,10 +20,13 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
+import org.tessellation.security.hash.Hash
+import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.PosLong
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object Gossip {
 
@@ -46,6 +50,8 @@ object Gossip {
   ): Gossip[F] =
     new Gossip[F] {
 
+      private val rumorLogger = Slf4jLogger.getLoggerFromName[F](rumorLoggerName)
+
       def spread[A <: AnyRef: TypeTag](rumorContent: A): F[Unit] =
         for {
           contentBinary <- rumorContent.toBinaryF
@@ -67,7 +73,14 @@ object Gossip {
           hash <- rumor.hashF
           _ <- rumorQueue.offer(List(hash -> signedRumor))
           _ <- metrics.updateRumorsSpread(signedRumor)
+          _ <- logSpread(hash, signedRumor)
         } yield ()
+
+      private def logSpread(hash: Hash, signedRumor: Signed[RumorBinary]): F[Unit] =
+        rumorLogger.info(
+          s"Rumor spread {hash=${hash.show}, contentType=${signedRumor.contentType}}"
+        )
+
     }
 
 }

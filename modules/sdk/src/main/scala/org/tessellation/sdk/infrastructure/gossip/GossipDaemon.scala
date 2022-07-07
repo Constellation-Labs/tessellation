@@ -10,6 +10,7 @@ import cats.syntax.foldable._
 import cats.syntax.functor._
 import cats.syntax.parallel._
 import cats.syntax.show._
+import cats.syntax.traverse._
 import cats.syntax.traverseFilter._
 import cats.{Applicative, Parallel}
 
@@ -50,6 +51,7 @@ object GossipDaemon {
   ): GossipDaemon[F] = new GossipDaemon[F] {
 
     private val logger = Slf4jLogger.getLogger[F]
+    private val rumorLogger = Slf4jLogger.getLoggerFromName[F](rumorLoggerName)
 
     def start: F[Unit] =
       for {
@@ -60,6 +62,7 @@ object GossipDaemon {
     private def consumeRumors: F[Unit] =
       Stream
         .fromQueueUnterminated(rumorQueue)
+        .evalTap(logConsumption)
         .evalMap(validateHash)
         .evalMap(validateSignature)
         .evalMap(validateCollateral)
@@ -72,6 +75,14 @@ object GossipDaemon {
         }
         .compile
         .drain
+
+    private def logConsumption(batch: RumorBatch): F[Unit] =
+      batch.traverse {
+        case (hash, signedRumor) =>
+          rumorLogger.info(
+            s"Rumor consumed {hash=${hash.show}, contentType=${signedRumor.contentType}, signer=${signedRumor.proofs.head.id}}"
+          )
+      }.void
 
     private def validateHash(batch: RumorBatch): F[RumorBatch] =
       batch.filterA {
