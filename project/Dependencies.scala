@@ -73,6 +73,7 @@ object Dependencies {
 
     val cats = "org.typelevel" %% "cats-core" % V.cats
     val catsEffect = "org.typelevel" %% "cats-effect" % V.catsEffect
+    val catsEffectTestkit = "org.typelevel" %% "cats-effect-testkit" % V.catsEffect
     val catsRetry = "com.github.cb372" %% "cats-retry" % V.catsRetry
 
     val squants = "org.typelevel" %% "squants" % V.squants
