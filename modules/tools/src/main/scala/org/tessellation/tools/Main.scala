@@ -143,7 +143,7 @@ object Main
     addressParams: NonEmptyList[AddressParams]
   ): F[Unit] =
     Clock[F].monotonic.flatMap { startTime =>
-      infiniteTransactionStream(basicOpts.chunkSize, addressParams)
+      infiniteTransactionStream(basicOpts.chunkSize, basicOpts.fee, addressParams)
         .flatTap(
           tx =>
             Stream.retry(

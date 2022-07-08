@@ -14,7 +14,7 @@ import eu.timepit.refined.auto._
 import eu.timepit.refined.numeric.GreaterEqual
 import eu.timepit.refined.refineV
 import eu.timepit.refined.string.Url
-import eu.timepit.refined.types.numeric.{NonNegInt, PosInt, PosLong}
+import eu.timepit.refined.types.numeric.{NonNegInt, NonNegLong, PosInt, PosLong}
 
 object method {
 
@@ -29,7 +29,8 @@ object method {
     chunkSize: PosInt,
     delay: Option[FiniteDuration],
     retryAttempts: NonNegInt,
-    verbose: Boolean
+    verbose: Boolean,
+    fee: NonNegLong
   )
 
   case class SendTransactionsCmd(
@@ -55,7 +56,8 @@ object method {
       Opts
         .option[NonNegInt]("retryAttempts", "Number of retry attempts to send transaction, default 10.")
         .withDefault(NonNegInt(10)),
-      Opts.flag("verbose", "Print individual transactions.", "v").map(_ => true).withDefault(false)
+      Opts.flag("verbose", "Print individual transactions.", "v").map(_ => true).withDefault(false),
+      Opts.option[NonNegLong]("fee", "Transaction fee, default 1.", "f").withDefault(NonNegLong(1L))
     ).mapN(BasicOpts.apply)
 
     private val generatedWallets = (
