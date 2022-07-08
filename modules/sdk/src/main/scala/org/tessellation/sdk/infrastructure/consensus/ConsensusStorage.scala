@@ -27,6 +27,7 @@ import org.tessellation.security.signature.Signed
 
 import io.chrisdavenport.mapref.MapRef
 import monocle.syntax.all._
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait ConsensusStorage[F[_], Event, Key, Artifact] {
 
@@ -110,6 +111,8 @@ object ConsensusStorage {
   ): ConsensusStorage[F, Event, Key, Artifact] =
     new ConsensusStorage[F, Event, Key, Artifact] {
 
+      private val logger = Slf4jLogger.getLoggerFromClass[F](ConsensusManager.getClass)
+
       def getState(key: Key): F[Option[ConsensusState[Key, Artifact]]] =
         statesR(key).get
 
@@ -136,6 +139,11 @@ object ConsensusStorage {
           for {
             (maybeState, setter) <- statesR(key).access
             maybeResult <- modifyStateFn(maybeState)
+              .handleErrorWith(
+                e =>
+                  logger.error(e)("Error evaluating state update") >> e
+                    .raiseError[F, Option[(Option[ConsensusState[Key, Artifact]], B)]]
+              )
 
             maybeB <- maybeResult.traverse {
               case (maybeState, b) =>

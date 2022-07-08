@@ -72,12 +72,14 @@ object ConsensusStateUpdater {
       resources: ConsensusResources[Artifact],
       lastKeyAndArtifact: (Key, Signed[Artifact])
     ): F[MaybeState] =
-      tryModifyConsensus(key, internalTryFacilitateConsensus(key, trigger, resources, lastKeyAndArtifact))
-        .flatTap(logStatusIfModified(key))
+      logger.debug(s"Trying to facilitate consensus with key ${key.show} using resources ${resources.show}") >>
+        tryModifyConsensus(key, internalTryFacilitateConsensus(key, trigger, resources, lastKeyAndArtifact))
+          .flatTap(logStatusIfModified(key))
 
     def tryUpdateConsensus(key: Key, resources: ConsensusResources[Artifact]): F[MaybeState] =
-      tryModifyConsensus(key, internalTryUpdateConsensus(key, resources))
-        .flatTap(logStatusIfModified(key))
+      logger.debug(s"Trying to update consensus with key ${key.show} using resources ${resources.show}") >>
+        tryModifyConsensus(key, internalTryUpdateConsensus(key, resources))
+          .flatTap(logStatusIfModified(key))
 
     import consensusStorage.ModifyStateFn
 
