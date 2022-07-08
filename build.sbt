@@ -376,7 +376,7 @@ lazy val tools = (project in file("modules/tools"))
 lazy val core = (project in file("modules/core"))
   .enablePlugins(AshScriptPlugin)
   .enablePlugins(JavaAppPackaging)
-  .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test, dagShared, sdk)
+  .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test, dagShared % "compile->compile;test->test", sdk)
   .settings(
     name := "tessellation-core",
     Defaults.itSettings,

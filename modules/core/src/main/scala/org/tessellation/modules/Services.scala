@@ -44,6 +44,7 @@ object Services {
           selfId,
           keyPair,
           whitelisting,
+          cfg.collateral.amount,
           storages.cluster,
           storages.globalSnapshot,
           validators.blockValidator,

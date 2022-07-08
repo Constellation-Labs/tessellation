@@ -39,6 +39,8 @@ object balance {
       NonNegLong
         .from(value.value - that.value.value)
         .bimap(_ => BalanceUnderflow, Balance(_))
+
+    def satisfiesCollateral(collateral: Amount): Boolean = value >= collateral.value
   }
 
   object Balance {

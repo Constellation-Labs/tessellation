@@ -1,18 +1,35 @@
 package org.tessellation.schema
 
+import cats.data.NonEmptySet
+
+import scala.collection.immutable.SortedSet
+
 import org.tessellation.generators._
+import org.tessellation.schema.ID.Id
+import org.tessellation.schema.address.{Address, DAGAddressRefined}
 import org.tessellation.schema.cluster.SessionToken
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.{Peer, PeerId}
+import org.tessellation.schema.transaction._
+import org.tessellation.security.generators._
+import org.tessellation.security.hash.Hash
 import org.tessellation.security.hex.Hex
+import org.tessellation.security.signature.Signed
+import org.tessellation.security.signature.signature.{Signature, SignatureProof}
 
 import com.comcast.ip4s.{Host, Port}
-import org.scalacheck.Gen
+import eu.timepit.refined.refineV
+import eu.timepit.refined.scalacheck.numeric._
+import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
+import org.scalacheck.{Arbitrary, Gen}
 
 object generators {
 
   val peerIdGen: Gen[PeerId] =
     nesGen(str => PeerId(Hex(str)))
+
+  val idGen: Gen[Id] =
+    nesGen(str => Id(Hex(str)))
 
   val hostGen: Gen[Host] =
     for {
@@ -42,5 +59,49 @@ object generators {
     n.map(Gen.const).getOrElse(Gen.chooseNum(1, 20)).flatMap { n =>
       Gen.sequence[Set[Peer], Peer](Array.tabulate(n)(_ => peerGen))
     }
+
+  val addressGen: Gen[Address] =
+    for {
+      end <- Gen.stringOfN(36, base58CharGen)
+      par = end.filter(_.isDigit).map(_.toString.toInt).sum % 9
+    } yield Address(refineV[DAGAddressRefined].unsafeFrom(s"DAG$par$end"))
+
+  val transactionAmountGen: Gen[TransactionAmount] = Arbitrary.arbitrary[PosLong].map(TransactionAmount(_))
+  val transactionFeeGen: Gen[TransactionFee] = Arbitrary.arbitrary[NonNegLong].map(TransactionFee(_))
+  val transactionOrdinalGen: Gen[TransactionOrdinal] = Arbitrary.arbitrary[NonNegLong].map(TransactionOrdinal(_))
+
+  val transactionReferenceGen: Gen[TransactionReference] =
+    for {
+      ordinal <- transactionOrdinalGen
+      hash <- Arbitrary.arbitrary[Hash]
+    } yield TransactionReference(ordinal, hash)
+
+  val transactionSaltGen: Gen[TransactionSalt] = Gen.long.map(TransactionSalt(_))
+
+  val transactionGen: Gen[Transaction] =
+    for {
+      src <- addressGen
+      dst <- addressGen
+      txnAmount <- transactionAmountGen
+      txnFee <- transactionFeeGen
+      txnReference <- transactionReferenceGen
+      txnSalt <- transactionSaltGen
+    } yield Transaction(src, dst, txnAmount, txnFee, txnReference, txnSalt)
+
+  val signatureGen: Gen[Signature] = nesGen(str => Signature(Hex(str)))
+
+  val signatureProofGen: Gen[SignatureProof] =
+    for {
+      id <- idGen
+      signature <- signatureGen
+    } yield SignatureProof(id, signature)
+
+  def signedOf[A](valueGen: Gen[A]): Gen[Signed[A]] =
+    for {
+      txn <- valueGen
+      signatureProof <- Gen.nonEmptyListOf(signatureProofGen).map(l => NonEmptySet.fromSetUnsafe(SortedSet.from(l)))
+    } yield Signed(txn, signatureProof)
+
+  val signedTransactionGen: Gen[Signed[Transaction]] = signedOf(transactionGen)
 
 }

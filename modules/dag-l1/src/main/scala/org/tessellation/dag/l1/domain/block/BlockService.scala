@@ -15,7 +15,7 @@ import org.tessellation.dag.l1.domain.address.storage.AddressStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.balance.Balance
+import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.transaction
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
@@ -33,7 +33,8 @@ object BlockService {
     blockAcceptanceManager: BlockAcceptanceManager[F],
     addressStorage: AddressStorage[F],
     blockStorage: BlockStorage[F],
-    transactionStorage: TransactionStorage[F]
+    transactionStorage: TransactionStorage[F],
+    collateral: Amount
   ): BlockService[F] =
     new BlockService[F] {
 
@@ -64,6 +65,8 @@ object BlockService {
 
         def getParentUsage(blockReference: BlockReference): F[Option[NonNegLong]] =
           blockStorage.getUsages(blockReference.hash)
+
+        def getCollateral: Amount = collateral
       }
     }
 

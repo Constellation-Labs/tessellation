@@ -14,6 +14,7 @@ import cats.syntax.traverse._
 import org.tessellation.dag.block.BlockValidator
 import org.tessellation.dag.domain.block.{BlockReference, DAGBlock}
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.cats._
@@ -37,7 +38,7 @@ trait BlockAcceptanceManager[F[_]] {
 
 object BlockAcceptanceManager {
 
-  def make[F[_]: Async: KryoSerializer](
+  def make[F[_]: Async: KryoSerializer: SecurityProvider](
     blockValidator: BlockValidator[F]
   ): BlockAcceptanceManager[F] = make(BlockAcceptanceLogic.make[F], blockValidator)
 

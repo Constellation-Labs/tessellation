@@ -5,10 +5,13 @@ import cats.effect.Async
 import cats.syntax.bifunctor._
 import cats.syntax.either._
 import cats.syntax.flatMap._
+import cats.syntax.foldable._
 import cats.syntax.functor._
 import cats.syntax.option._
 import cats.syntax.order._
 import cats.syntax.semigroup._
+import cats.syntax.traverse._
+import cats.syntax.traverseFilter._
 
 import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.dag.transaction.TransactionChainValidator.TransactionNel
@@ -16,6 +19,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance, BalanceArithmeticError}
 import org.tessellation.schema.transaction.{Transaction, TransactionReference}
+import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto._
@@ -34,7 +38,7 @@ private[processing] trait BlockAcceptanceLogic[F[_]] {
 
 object BlockAcceptanceLogic {
 
-  def make[F[_]: Async: KryoSerializer]: BlockAcceptanceLogic[F] = new BlockAcceptanceLogic[F] {
+  def make[F[_]: Async: KryoSerializer: SecurityProvider]: BlockAcceptanceLogic[F] = new BlockAcceptanceLogic[F] {
 
     def acceptBlock(
       signedBlock: Signed[DAGBlock],
@@ -43,6 +47,7 @@ object BlockAcceptanceLogic {
       contextUpdate: BlockAcceptanceContextUpdate
     ): EitherT[F, BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)] =
       for {
+        _ <- processSignatures(signedBlock, context)
         (contextUpdate1, blockUsages) <- processParents(signedBlock, context, contextUpdate)
         contextUpdate2 <- processLastTxRefs(txChains, context, contextUpdate1)
         contextUpdate3 <- processBalances(signedBlock, context, contextUpdate2)
@@ -189,4 +194,30 @@ object BlockAcceptanceLogic {
     }
 
   }
+
+  def processSignatures[F[_]: Async: SecurityProvider](
+    signedBlock: Signed[DAGBlock],
+    context: BlockAcceptanceContext[F]
+  ): EitherT[F, BlockNotAcceptedReason, Unit] =
+    EitherT(
+      signedBlock.proofs
+        .map(_.id.toPeerId)
+        .toList
+        .traverse(_.toAddress)
+        .flatMap(
+          _.filterA(
+            address =>
+              context.getBalance(address).map { balances =>
+                !balances.getOrElse(Balance.empty).satisfiesCollateral(context.getCollateral)
+              }
+          )
+        )
+        .map(
+          list =>
+            NonEmptyList
+              .fromList(list)
+              .map(nel => SigningPeerBelowCollateral(nel).asLeft[Unit])
+              .getOrElse(().asRight[BlockNotAcceptedReason])
+        )
+    )
 }
