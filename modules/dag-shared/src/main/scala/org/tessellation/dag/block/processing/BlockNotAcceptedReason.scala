@@ -26,6 +26,7 @@ case class RejectedTransaction(tx: TransactionReference, reason: TransactionReje
 sealed trait BlockAwaitReason extends BlockNotAcceptedReason
 case class AwaitingTransaction(tx: TransactionReference, reason: TransactionAwaitReason) extends BlockAwaitReason
 case class AddressBalanceOutOfRange(address: Address, error: BalanceArithmeticError) extends BlockAwaitReason
+case class SigningPeerBelowCollateral(peerIds: NonEmptyList[Address]) extends BlockAwaitReason
 
 @derive(eqv, show)
 sealed trait TransactionAwaitReason

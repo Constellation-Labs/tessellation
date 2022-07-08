@@ -30,7 +30,8 @@ object Services {
         BlockAcceptanceManager.make[F](validators.block),
         storages.address,
         storages.block,
-        storages.transaction
+        storages.transaction,
+        cfg.collateral.amount
       ),
       cluster = sdkServices.cluster,
       gossip = sdkServices.gossip,

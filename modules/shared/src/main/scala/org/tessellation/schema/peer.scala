@@ -3,11 +3,15 @@ package org.tessellation.schema
 import java.security.PublicKey
 import java.util.UUID
 
+import cats.effect.kernel.Async
 import cats.kernel.Order
+import cats.syntax.functor._
 
 import org.tessellation.schema.ID.Id
+import org.tessellation.schema.address.Address
 import org.tessellation.schema.cluster.{ClusterId, ClusterSessionToken, SessionToken}
 import org.tessellation.schema.node.NodeState
+import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.key.ops._
@@ -46,6 +50,10 @@ object peer {
 
   implicit class PeerIdOps(peerId: PeerId) {
     def toId: Id = PeerId._Id.get(peerId)
+
+    def toAddress[F[_]: Async](implicit sc: SecurityProvider[F]): F[Address] =
+      peerId.value.toPublicKey
+        .map(_.toAddress)
   }
 
   @derive(eqv, encoder, decoder, show)

@@ -27,6 +27,7 @@ import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
+import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
@@ -49,7 +50,8 @@ object GlobalSnapshotConsensusFunctions {
   def make[F[_]: Async: KryoSerializer: Metrics](
     globalSnapshotStorage: GlobalSnapshotStorage[F],
     heightInterval: NonNegLong,
-    blockAcceptanceManager: BlockAcceptanceManager[F]
+    blockAcceptanceManager: BlockAcceptanceManager[F],
+    collateral: Amount
   ): GlobalSnapshotConsensusFunctions[F] = new GlobalSnapshotConsensusFunctions[F] {
 
     private val logger = Slf4jLogger.getLoggerFromClass(GlobalSnapshotConsensusFunctions.getClass)
@@ -91,7 +93,12 @@ object GlobalSnapshotConsensusFunctions {
         lastDeprecatedTips = lastGS.tips.deprecated
 
         tipUsages = getTipsUsages(lastActiveTips, lastDeprecatedTips)
-        context = BlockAcceptanceContext.fromStaticData(lastGS.info.balances, lastGS.info.lastTxRefs, tipUsages)
+        context = BlockAcceptanceContext.fromStaticData(
+          lastGS.info.balances,
+          lastGS.info.lastTxRefs,
+          tipUsages,
+          collateral
+        )
         acceptanceResult <- blockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context)
 
         (deprecated, remainedActive, accepted) = getUpdatedTips(
