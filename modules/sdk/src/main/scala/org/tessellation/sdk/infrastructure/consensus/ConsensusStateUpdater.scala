@@ -191,7 +191,8 @@ object ConsensusStateUpdater {
         case Facilitated(_) =>
           state.facilitators
             .traverse(resources.peerDeclarationsMap.get)
-            .flatMap(_.foldMap(_.facility.map(f => (f.upperBound, f.trigger.map(List(_)).getOrElse(List.empty)))))
+            .flatMap(_.traverse(_.facility))
+            .map(_.foldMap(f => (f.upperBound, f.trigger.toList)))
             .flatMap { case (bound, triggers) => pickMajority(triggers).map((bound, _)) }
             .traverse {
               case (bound, majorityTrigger) =>
