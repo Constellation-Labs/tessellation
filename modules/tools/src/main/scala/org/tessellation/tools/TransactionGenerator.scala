@@ -38,6 +38,7 @@ object TransactionGenerator {
 
   def infiniteTransactionStream[F[_]: Async: Random: KryoSerializer: SecurityProvider](
     chunkSize: PosInt,
+    feeValue: NonNegLong,
     addressParams: NonEmptyList[AddressParams]
   ): Stream[F, Signed[Transaction]] =
     addressParams.reverse.map {
@@ -51,7 +52,7 @@ object TransactionGenerator {
               .map(_.headOption)
               .flatMap(_.liftTo[F](new Throwable("Not enough wallets")))
             amount = TransactionAmount(PosLong.MinValue)
-            fee = TransactionFee(NonNegLong.MinValue)
+            fee = TransactionFee(feeValue)
             salt <- Random[F].nextLong.map(TransactionSalt.apply)
             tx = Transaction(source, destination, amount, fee, lastTxRef, salt)
             signedTx <- tx.sign(key)
