@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1.4
 FROM amazoncorretto:11-alpine
+ARG BUILD_VERSION
 
 WORKDIR /app
 
@@ -40,7 +41,7 @@ RUN chmod +x start.sh
 
 EXPOSE 9000 9001 9002
 
-COPY modules/keytool/target/scala-2.13/tessellation-keytool-assembly*.jar keytool.jar
-COPY modules/dag-l1/target/scala-2.13/tessellation-dag-l1-assembly*.jar dag-l1.jar
+COPY modules/keytool/target/scala-2.13/tessellation-keytool-assembly-${BUILD_VERSION}.jar keytool.jar
+COPY modules/dag-l1/target/scala-2.13/tessellation-dag-l1-assembly-${BUILD_VERSION}.jar dag-l1.jar
 
 CMD ["/bin/sh", "-c", "/app/start.sh"]
