@@ -1,11 +1,14 @@
 package org.tessellation.tools.cli
 
 import java.nio.file.Path
+
 import cats.syntax.all._
 
-import scala.concurrent.duration.{FiniteDuration, _}
+import scala.concurrent.duration.FiniteDuration
+
 import org.tessellation.ext.decline.WithOpts
 import org.tessellation.ext.decline.decline.coercibleArgument
+
 import com.monovore.decline.Opts
 import com.monovore.decline.refined.refTypeArgument
 import eu.timepit.refined.api.RefType.refinedRefType
