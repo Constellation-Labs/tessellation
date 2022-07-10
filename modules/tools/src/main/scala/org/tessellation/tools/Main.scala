@@ -143,24 +143,33 @@ object Main
     addressParams: NonEmptyList[AddressParams]
   ): F[Unit] =
     Clock[F].monotonic.flatMap { startTime =>
-      infiniteTransactionStream(basicOpts.chunkSize, basicOpts.fee, addressParams)
-        .flatTap(
-          tx =>
-            Stream.retry(
-              postTransaction(client, basicOpts.baseUrl)(tx)
-                .handleErrorWith(e => console.red(e.toString) >> e.raiseError[F, Unit]),
-              0.5.seconds,
-              d => (d * 1.25).asInstanceOf[FiniteDuration],
-              basicOpts.retryAttempts
-            )
-        )
-        .zipWithIndex
-        .evalTap(printProgress[F](basicOpts.verbose, startTime))
-        .through(applyLimit(basicOpts.take))
-        .through(applyDelay(basicOpts.delay))
-        .handleErrorWith(e => Stream.eval(console.red(e.toString)))
-        .compile
-        .drain
+      Ref.of(0L).flatMap { counterR =>
+        val printProgressApplied = counterR.get.flatMap(printProgress(startTime, _))
+        val progressPrinter = Stream
+          .awakeEvery(1.seconds)
+          .evalMap(_ => printProgressApplied)
+
+        infiniteTransactionStream(basicOpts.chunkSize, basicOpts.fee, addressParams)
+          .flatTap(
+            tx =>
+              Stream.retry(
+                postTransaction(client, basicOpts.baseUrl)(tx)
+                  .handleErrorWith(e => console.red(e.toString) >> e.raiseError[F, Unit]),
+                0.5.seconds,
+                d => (d * 1.25).asInstanceOf[FiniteDuration],
+                basicOpts.retryAttempts
+              )
+          )
+          .through(applyLimit(basicOpts.take))
+          .through(applyDelay(basicOpts.delay))
+          .evalTap(printTx[F](basicOpts.verbose))
+          .evalMap(_ => counterR.update(_ |+| 1L))
+          .handleErrorWith(e => Stream.eval(console.red(e.toString)))
+          .mergeHaltL(progressPrinter)
+          .append(Stream.eval(printProgressApplied))
+          .compile
+          .drain
+      }
     }
 
   def applyLimit[F[_], A](maybeLimit: Option[PosLong]): Pipe[F, A, A] =
@@ -204,18 +213,15 @@ object Main
       .drain
   }
 
-  def printProgress[F[_]: Async: Console](verbose: Boolean, startTime: FiniteDuration)(
-    tuple: (Signed[Transaction], Long)
-  ): F[Unit] =
-    tuple match {
-      case (tx, index) =>
-        Applicative[F].whenA(verbose)(console.cyan(s"Transaction sent ordinal=${tx.ordinal} source=${tx.source}")) >>
-          Applicative[F].whenA((index + 1) % 100 === 0) {
-            Clock[F].monotonic.flatMap { currTime =>
-              val (minutes, seconds) = (currTime - startTime).toSeconds /% 60
-              console.green(s"${index + 1} transactions sent in ${minutes}m ${seconds}s")
-            }
-          }
+  def printProgress[F[_]: Async: Console](startTime: FiniteDuration, counter: Long): F[Unit] =
+    Clock[F].monotonic.flatMap { currentTime =>
+      val (minutes, seconds) = (currentTime - startTime).toSeconds /% 60
+      console.green(s"$counter transactions sent in ${minutes}m ${seconds}s")
+    }
+
+  def printTx[F[_]: Applicative: Console](verbose: Boolean)(tx: Signed[Transaction]): F[Unit] =
+    Applicative[F].whenA(verbose) {
+      console.cyan(s"Transaction sent ordinal=${tx.ordinal} sourceAddress=${tx.source}")
     }
 
   def postStateChannelSnapshot[F[_]: Async](

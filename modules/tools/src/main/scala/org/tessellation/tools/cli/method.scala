@@ -17,7 +17,7 @@ import eu.timepit.refined.auto._
 import eu.timepit.refined.numeric.GreaterEqual
 import eu.timepit.refined.refineV
 import eu.timepit.refined.string.Url
-import eu.timepit.refined.types.numeric.{NonNegInt, NonNegLong, PosInt, PosLong}
+import eu.timepit.refined.types.numeric._
 
 object method {
 
