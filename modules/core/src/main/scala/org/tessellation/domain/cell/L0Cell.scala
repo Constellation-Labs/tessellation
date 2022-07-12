@@ -7,7 +7,7 @@ import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.dag.domain.block.L1Output
+import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.domain.aci.StateChannelOutput
 import org.tessellation.domain.cell.AlgebraCommand._
 import org.tessellation.domain.cell.CoalgebraCommand._
@@ -22,13 +22,13 @@ import higherkindness.droste.{AlgebraM, CoalgebraM, scheme}
 sealed trait L0CellInput
 
 object L0CellInput {
-  case class HandleDAGL1(data: Signed[L1Output]) extends L0CellInput
+  case class HandleDAGL1(data: Signed[DAGBlock]) extends L0CellInput
   case class HandleStateChannelSnapshot(snapshot: StateChannelOutput) extends L0CellInput
 }
 
 class L0Cell[F[_]: Async](
   data: L0CellInput,
-  l1OutputQueue: Queue[F, Signed[L1Output]],
+  l1OutputQueue: Queue[F, Signed[DAGBlock]],
   stateChannelOutputQueue: Queue[F, StateChannelOutput]
 ) extends Cell[F, StackF, L0CellInput, Either[CellError, Ω], CoalgebraCommand](
       data, {
@@ -62,7 +62,7 @@ object L0Cell {
   type Mk[F[_]] = L0CellInput => L0Cell[F]
 
   def mkL0Cell[F[_]: Async](
-    l1OutputQueue: Queue[F, Signed[L1Output]],
+    l1OutputQueue: Queue[F, Signed[DAGBlock]],
     stateChannelOutputQueue: Queue[F, StateChannelOutput]
   ): Mk[F] =
     data => new L0Cell(data, l1OutputQueue, stateChannelOutputQueue)
@@ -78,14 +78,14 @@ object L0Cell {
       queue.offer(snapshot) >>
         NullTerminal.asRight[CellError].widen[Ω].pure[F]
 
-    def enqueueDAGL1Data[F[_]: Async](queue: Queue[F, Signed[L1Output]])(data: Signed[L1Output]): AlgebraR[F] =
+    def enqueueDAGL1Data[F[_]: Async](queue: Queue[F, Signed[DAGBlock]])(data: Signed[DAGBlock]): AlgebraR[F] =
       queue.offer(data) >>
         NullTerminal.asRight[CellError].widen[Ω].pure[F]
   }
 
   object Coalgebra {
 
-    def processDAGL1[F[_]: Async](data: Signed[L1Output]): CoalgebraR[F] = {
+    def processDAGL1[F[_]: Async](data: Signed[DAGBlock]): CoalgebraR[F] = {
       def res: StackF[CoalgebraCommand] = Done(AlgebraCommand.EnqueueDAGL1Data(data).asRight[CellError])
 
       res.pure[F]

@@ -17,7 +17,6 @@ import cats.syntax.traverseFilter._
 
 import scala.concurrent.duration.DurationInt
 
-import org.tessellation.dag.domain.block.L1Output
 import org.tessellation.dag.l1.config.types.AppConfig
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput._
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusOutput.{CleanedConsensuses, FinalBlock}
@@ -33,7 +32,6 @@ import org.tessellation.kernel.{CellError, Ω}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.height.Height
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hashed, SecurityProvider}
 
 import fs2.{Pipe, Stream}
@@ -162,9 +160,6 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
   private val sendBlockToL0: Pipe[F, FinalBlock, FinalBlock] =
     _.evalTap { fb =>
       for {
-        tips <- storages.block
-          .getTips(appConfig.consensus.tipsCount)
-
         l0PeerOpt <- storages.l0Cluster.getPeers
           .map(_.toNonEmptyList.toList)
           .flatMap(_.filterA(p => services.collateral.hasCollateral(p.id)))
@@ -172,11 +167,9 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
           .map(peers => peers.headOption)
 
         _ <- l0PeerOpt.fold(logger.warn("No available L0 peer")) { l0Peer =>
-          Signed.forAsyncKryo[F, L1Output](L1Output(fb.hashedBlock.signed, tips), keyPair).flatMap { signedOutput =>
-            p2PClient.l0DAGCluster
-              .sendL1Output(signedOutput)(l0Peer)
-              .ifM(Applicative[F].unit, logger.warn("Sending block to L0 failed."))
-          }
+          p2PClient.l0DAGCluster
+            .sendL1Output(fb.hashedBlock.signed)(l0Peer)
+            .ifM(Applicative[F].unit, logger.warn("Sending block to L0 failed."))
         }
       } yield ()
     }

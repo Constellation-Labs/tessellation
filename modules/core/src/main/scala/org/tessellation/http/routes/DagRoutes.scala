@@ -4,7 +4,7 @@ import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.dag.domain.block.L1Output
+import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.domain.cell.{L0Cell, L0CellInput}
 import org.tessellation.domain.dag.DAGService
 import org.tessellation.ext.http4s.{AddressVar, SnapshotOrdinalVar}
@@ -54,7 +54,7 @@ final case class DagRoutes[F[_]: Async](dagService: DAGService[F], mkDagCell: L0
 
     case req @ POST -> Root / "l1-output" =>
       req
-        .as[Signed[L1Output]]
+        .as[Signed[DAGBlock]]
         .map(L0CellInput.HandleDAGL1(_))
         .map(mkDagCell)
         .flatMap(_.run())
