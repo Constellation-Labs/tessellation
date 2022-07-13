@@ -1,5 +1,6 @@
 package org.tessellation.sdk.infrastructure.gossip
 
+import cats.Order._
 import cats.effect.std.{Queue, Random}
 import cats.effect.{Async, Spawn, Temporal}
 import cats.syntax.applicative._

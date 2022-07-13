@@ -11,6 +11,7 @@ import cats.syntax.applicativeError._
 import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+import cats.syntax.order._
 import cats.syntax.show._
 import cats.syntax.traverse._
 import cats.syntax.traverseFilter._
@@ -150,7 +151,7 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
   private val storeBlock: Pipe[F, FinalBlock, Unit] =
     _.evalMapLocked(blockStoringS) { fb =>
       storages.lastGlobalSnapshotStorage.getHeight.map(_.getOrElse(Height.MinValue)).flatMap { lastSnapshotHeight =>
-        if (lastSnapshotHeight.value < fb.hashedBlock.height.value)
+        if (lastSnapshotHeight < fb.hashedBlock.height)
           storages.block.store(fb.hashedBlock).handleErrorWith(e => logger.debug(e)("Block storing failed."))
         else
           logger.debug(
@@ -189,7 +190,7 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
         else Async[F].unit
       }.flatMap(
         _.toList
-          .sortBy(_._2.value.height.value)
+          .sortBy(_._2.value.height)
           .traverse {
             case (hash, signedBlock) =>
               logger.debug(s"Acceptance of a block $hash starts!") >>

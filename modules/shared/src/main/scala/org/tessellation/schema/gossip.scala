@@ -2,7 +2,6 @@ package org.tessellation.schema
 
 import cats.effect.Concurrent
 import cats.kernel.Monoid
-import cats.syntax.contravariant._
 import cats.syntax.show._
 import cats.{Order, Show}
 
@@ -32,8 +31,6 @@ object gossip {
     val MinValue: Ordinal = Ordinal(PosLong.MinValue, PosLong.MinValue)
 
     implicit val maxMonoid: Monoid[Ordinal] = Monoid.instance(MinValue, (a, b) => Order[Ordinal].max(a, b))
-
-    implicit def ordering: Ordering[Ordinal] = Order[Ordinal].toOrdering
 
   }
 
@@ -83,8 +80,6 @@ object gossip {
   ) extends RumorBinary
 
   object PeerRumorBinary {
-    implicit val order: Order[PeerRumorBinary] = Order[Ordinal].contramap[PeerRumorBinary](_.ordinal)
-
     implicit val show: Show[PeerRumorBinary] = (t: PeerRumorBinary) =>
       s"PeerRumorBinary(origin=${t.origin.show}, ordinal=${t.ordinal.show}, contentType=${t.contentType.show})"
   }

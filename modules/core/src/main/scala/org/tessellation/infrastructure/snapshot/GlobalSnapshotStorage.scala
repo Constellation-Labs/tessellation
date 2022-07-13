@@ -1,15 +1,15 @@
 package org.tessellation.infrastructure.snapshot
 
+import cats.Order._
 import cats.effect.std.Queue
 import cats.effect.{Async, Spawn}
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.contravariantSemigroupal._
-import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
-import cats.syntax.partialOrder.catsSyntaxPartialOrder
+import cats.syntax.order._
 import cats.syntax.show._
 import cats.syntax.traverse._
 import cats.{Applicative, MonadThrow}
