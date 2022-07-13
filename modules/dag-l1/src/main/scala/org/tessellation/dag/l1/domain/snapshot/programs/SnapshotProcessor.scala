@@ -4,6 +4,7 @@ import cats.effect.Async
 import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+import cats.syntax.order._
 import cats.syntax.traverse._
 import cats.{Applicative, MonadThrow}
 
@@ -282,8 +283,7 @@ sealed abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityPro
                   )
           }
 
-        case Some(last)
-            if last.ordinal.next == globalSnapshot.ordinal && last.height.value < globalSnapshot.height.value =>
+        case Some(last) if last.ordinal.next === globalSnapshot.ordinal && last.height < globalSnapshot.height =>
           blockStorage.getBlocksForMajorityReconciliation(last.height, globalSnapshot.height).flatMap {
             case MajorityReconciliationData(
                 deprecatedTips,

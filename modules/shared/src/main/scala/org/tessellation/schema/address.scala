@@ -1,7 +1,5 @@
 package org.tessellation.schema
 
-import cats.{Eq, Order, Show}
-
 import org.tessellation.ext.cats.data.OrderBasedOrdering
 import org.tessellation.ext.refined._
 import org.tessellation.schema.balance.Balance
@@ -11,6 +9,7 @@ import derevo.cats.{order, show}
 import derevo.circe.magnolia._
 import derevo.derive
 import eu.timepit.refined.api.{Refined, Validate}
+import eu.timepit.refined.cats._
 import eu.timepit.refined.refineV
 import io.circe._
 import io.estatico.newtype.macros.newtype
@@ -50,18 +49,6 @@ object address {
     implicit val keyEncodeDAGAddress: KeyEncoder[DAGAddress] = new KeyEncoder[DAGAddress] {
       def apply(key: DAGAddress): String = key.value
     }
-
-    implicit val eqDAGAddress: Eq[DAGAddress] =
-      eqOf[String, DAGAddressRefined]
-
-    implicit val showDAGAddress: Show[DAGAddress] =
-      showOf[String, DAGAddressRefined]
-
-    implicit val orderDAGAddress: Order[DAGAddress] =
-      orderOf[String, DAGAddressRefined]
-
-    implicit val orderingDAGAddress: Ordering[DAGAddress] =
-      Order[DAGAddress].toOrdering
   }
 
   case class AddressCache(balance: Balance)

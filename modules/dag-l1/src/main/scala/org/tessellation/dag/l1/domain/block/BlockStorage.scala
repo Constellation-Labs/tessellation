@@ -26,7 +26,6 @@ import org.tessellation.security.signature.Signed
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
 import io.chrisdavenport.mapref.MapRef
-import io.estatico.newtype.ops.toCoercibleIdOps
 import monocle.macros.syntax.lens._
 
 class BlockStorage[F[_]: Sync: Random](blocks: MapRef[F, ProofsHash, Option[StoredBlock]]) {
@@ -171,11 +170,14 @@ class BlockStorage[F[_]: Sync: Random](blocks: MapRef[F, ProofsHash, Option[Stor
   def getBlocksForMajorityReconciliation(lastHeight: Height, currentHeight: Height): F[MajorityReconciliationData] =
     for {
       all <- blocks.toMap
-      range = lastHeight.next.value to currentHeight.value
-      deprecatedTips = all.collect { case (hash, MajorityBlock(_, _, Deprecated))                     => hash }.toSet
-      activeTips = all.collect { case (hash, MajorityBlock(_, _, Active))                             => hash }.toSet
-      waitingInRange = all.collect { case (hash, WaitingBlock(b)) if range.contains(b.height.value)   => hash }.toSet
-      acceptedInRange = all.collect { case (hash, AcceptedBlock(b)) if range.contains(b.height.value) => hash }.toSet
+      deprecatedTips = all.collect { case (hash, MajorityBlock(_, _, Deprecated)) => hash }.toSet
+      activeTips = all.collect { case (hash, MajorityBlock(_, _, Active))         => hash }.toSet
+      waitingInRange = all.collect {
+        case (hash, WaitingBlock(b)) if b.height.inRangeInclusive(lastHeight.next, currentHeight) => hash
+      }.toSet
+      acceptedInRange = all.collect {
+        case (hash, AcceptedBlock(b)) if b.height.inRangeInclusive(lastHeight.next, currentHeight) => hash
+      }.toSet
       acceptedAbove = all.collect {
         case (hash, AcceptedBlock(block)) if block.height.value > currentHeight.value => hash
       }.toSet
@@ -186,7 +188,7 @@ class BlockStorage[F[_]: Sync: Random](blocks: MapRef[F, ProofsHash, Option[Stor
       .map(_.collect { case (_, MajorityBlock(blockReference, _, Active)) => blockReference })
       .map(_.toList)
       .flatMap(Random[F].shuffleList)
-      .map(_.sortBy(_.height.coerce))
+      .map(_.sortBy(_.height))
       .map {
         case tips if tips.size >= tipsCount =>
           NonEmptyList
