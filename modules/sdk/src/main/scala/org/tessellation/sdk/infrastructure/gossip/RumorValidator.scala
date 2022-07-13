@@ -1,11 +1,11 @@
 package org.tessellation.sdk.infrastructure.gossip
 
+import cats.Order._
 import cats.data.NonEmptySet._
 import cats.data.{NonEmptySet, Validated, ValidatedNec}
 import cats.effect.Async
 import cats.syntax.all._
 
-import org.tessellation.ext.cats.conversion.order._
 import org.tessellation.ext.cats.syntax.validated._
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
