@@ -59,7 +59,7 @@ object BlockAcceptanceManager {
           toProcess: List[(Signed[DAGBlock], TxChains)]
         ): F[BlockAcceptanceState] =
           for {
-            currState <- toProcess.foldLeftM(initState) { (acc, blockAndTxChains) =>
+            currState <- toProcess.foldLeftM(initState.copy(awaiting = List.empty)) { (acc, blockAndTxChains) =>
               blockAndTxChains match {
                 case (block, txChains) =>
                   logic
@@ -86,7 +86,7 @@ object BlockAcceptanceManager {
               }
             }
             result <- if (initState === currState) currState.pure[F]
-            else go(currState.copy(awaiting = List.empty), currState.awaiting.map(_._1))
+            else go(currState, currState.awaiting.map(_._1))
           } yield result
 
         blocks.sorted

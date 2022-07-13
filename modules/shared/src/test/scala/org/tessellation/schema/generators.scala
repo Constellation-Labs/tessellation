@@ -99,7 +99,7 @@ object generators {
   def signedOf[A](valueGen: Gen[A]): Gen[Signed[A]] =
     for {
       txn <- valueGen
-      signatureProof <- Gen.nonEmptyListOf(signatureProofGen).map(l => NonEmptySet.fromSetUnsafe(SortedSet.from(l)))
+      signatureProof <- Gen.listOfN(3, signatureProofGen).map(l => NonEmptySet.fromSetUnsafe(SortedSet.from(l)))
     } yield Signed(txn, signatureProof)
 
   val signedTransactionGen: Gen[Signed[Transaction]] = signedOf(transactionGen)
