@@ -27,12 +27,10 @@ object Collateral {
         peerId.value.toPublicKey
           .map(_.toAddress)
           .flatMap(getBalance)
-          .map(_ >= config.amount)
+          .map(_.map(_ >= config.amount).getOrElse(true))
 
-      private def getBalance(address: Address): F[Amount] =
+      private def getBalance(address: Address): F[Option[Amount]] =
         latestBalances.getLatestBalances
-          .map(_.getOrElse(Map.empty))
-          .map(_.withDefaultValue(Balance.empty))
-          .map(_.apply(address))
+          .map(_.map(_.withDefaultValue(Balance.empty)(address)))
     }
 }
