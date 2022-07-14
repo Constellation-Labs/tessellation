@@ -19,9 +19,7 @@ case class DistinguishedName(
       "C" -> country
     )
 
-    mapping
-      .filter({ case (_, v) => v.isDefined })
-      .map({ case (k, v) => s"$k=${v.get}" })
+    mapping.filter { case (_, v) => v.isDefined }.map { case (k, v) => s"$k=${v.get}" }
       .mkString(",")
   }
 }

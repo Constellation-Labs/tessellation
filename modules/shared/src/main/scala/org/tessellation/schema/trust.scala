@@ -31,7 +31,7 @@ object trust {
       MappedEncoding[Score, Double](_.value.value)
 
     implicit val quillDecode: MappedEncoding[Double, Score] = MappedEncoding[Double, Score](
-      refineV[TrustValueRefinement].apply[Double](_).leftMap(new Throwable((_))) match {
+      refineV[TrustValueRefinement].apply[Double](_).leftMap(new Throwable(_)) match {
         case Left(err)    => throw err
         case Right(value) => Score(value)
       }
@@ -48,7 +48,7 @@ object trust {
       MappedEncoding[Rating, Double](_.value.value)
 
     implicit val quillDecode: MappedEncoding[Double, Rating] = MappedEncoding[Double, Rating](
-      refineV[TrustValueRefinement].apply[Double](_).leftMap(new Throwable((_))) match {
+      refineV[TrustValueRefinement].apply[Double](_).leftMap(new Throwable(_)) match {
         case Left(err)    => throw err
         case Right(value) => Rating(value)
       }
@@ -66,7 +66,7 @@ object trust {
 
     implicit val quillDecode: MappedEncoding[Double, ObservationAdjustment] =
       MappedEncoding[Double, ObservationAdjustment](
-        refineV[TrustValueRefinement].apply[Double](_).leftMap(new Throwable((_))) match {
+        refineV[TrustValueRefinement].apply[Double](_).leftMap(new Throwable(_)) match {
           case Left(err)    => throw err
           case Right(value) => ObservationAdjustment(value)
         }

@@ -24,8 +24,8 @@ object SdkResources {
     sessionStorage: SessionStorage[F],
     selfId: PeerId
   ): Resource[F, SdkResources[F]] =
-    (MkHttpClient[F]
-      .newEmber(cfg.httpConfig.client))
+    MkHttpClient[F]
+      .newEmber(cfg.httpConfig.client)
       .map(
         PeerAuthMiddleware.requestSignerMiddleware[F](_, privateKey, sessionStorage, selfId)
       )

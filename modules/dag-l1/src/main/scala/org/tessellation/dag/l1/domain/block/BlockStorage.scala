@@ -171,7 +171,7 @@ class BlockStorage[F[_]: Sync: Random](blocks: MapRef[F, ProofsHash, Option[Stor
     for {
       all <- blocks.toMap
       deprecatedTips = all.collect { case (hash, MajorityBlock(_, _, Deprecated)) => hash }.toSet
-      activeTips = all.collect { case (hash, MajorityBlock(_, _, Active))         => hash }.toSet
+      activeTips = all.collect { case (hash, MajorityBlock(_, _, Active)) => hash }.toSet
       waitingInRange = all.collect {
         case (hash, WaitingBlock(b)) if b.height.inRangeInclusive(lastHeight.next, currentHeight) => hash
       }.toSet
@@ -200,33 +200,30 @@ class BlockStorage[F[_]: Sync: Random](blocks: MapRef[F, ProofsHash, Option[Stor
   private def isBlockAccepted(blockReference: BlockReference): F[Boolean] =
     blocks(blockReference.hash).get.map(_.exists(_.isInstanceOf[MajorityBlock]))
 
-  private def addParentUsages(hashedBlock: Hashed[DAGBlock]): F[Unit] = {
+  private def addParentUsages(hashedBlock: Hashed[DAGBlock]): F[Unit] =
     hashedBlock.parent.toList.traverse { blockReference =>
       blocks(blockReference.hash).modify {
         case Some(majority: MajorityBlock) => (majority.addUsage.some, ().asRight)
         case other                         => (other, TipUsageUpdateError(hashedBlock.proofsHash, blockReference.hash, other).asLeft)
       }.flatMap(_.liftTo[F])
-    }
-  }.void
+    }.void
 
-  private def addParentUsagesAfterRedownload(hashedBlock: Hashed[DAGBlock]): F[Unit] = {
+  private def addParentUsagesAfterRedownload(hashedBlock: Hashed[DAGBlock]): F[Unit] =
     hashedBlock.parent.toList.traverse { blockReference =>
       blocks(blockReference.hash).update {
         case Some(majority: MajorityBlock) => majority.addUsage.some
         case other                         => other
       }
-    }
-  }.void
+    }.void
 
-  private def removeParentUsages(hashedBlock: Hashed[DAGBlock]): F[Unit] = {
+  private def removeParentUsages(hashedBlock: Hashed[DAGBlock]): F[Unit] =
     hashedBlock.parent.toList.traverse { blockReference =>
       blocks(blockReference.hash).modify {
         case Some(majorityBlock: MajorityBlock) =>
           (majorityBlock.removeUsage.some, ().asRight)
         case other => (other, TipUsageUpdateError(hashedBlock.proofsHash, blockReference.hash, other).asLeft)
       }
-    }
-  }.void
+    }.void
 }
 
 object BlockStorage {
@@ -237,8 +234,7 @@ object BlockStorage {
   sealed trait StoredBlock
   case class WaitingBlock(block: Signed[DAGBlock]) extends StoredBlock
   case class AcceptedBlock(block: Hashed[DAGBlock]) extends StoredBlock
-  case class MajorityBlock(blockReference: BlockReference, usages: NonNegLong, tipStatus: TipStatus)
-      extends StoredBlock {
+  case class MajorityBlock(blockReference: BlockReference, usages: NonNegLong, tipStatus: TipStatus) extends StoredBlock {
     def addUsage: MajorityBlock = this.focus(_.usages).modify(usages => NonNegLong.unsafeFrom(usages + 1L))
 
     def removeUsage: MajorityBlock =
@@ -282,30 +278,25 @@ object BlockStorage {
       s"Block with hash=${hash.show} is already stored. Encountered state: ${encountered.show}."
   }
   sealed trait BlockMajorityUpdateError extends BlockStorageError
-  case class UnexpectedBlockStateWhenMarkingAsMajority(hash: ProofsHash, got: Option[StoredBlock])
-      extends BlockMajorityUpdateError {
+  case class UnexpectedBlockStateWhenMarkingAsMajority(hash: ProofsHash, got: Option[StoredBlock]) extends BlockMajorityUpdateError {
     val errorMessage: String = s"Accepted block to be marked as majority with hash: $hash not found! But got: $got"
   }
-  case class UnexpectedBlockStateWhenRemovingAccepted(hash: ProofsHash, got: Option[StoredBlock])
-      extends BlockMajorityUpdateError {
+  case class UnexpectedBlockStateWhenRemovingAccepted(hash: ProofsHash, got: Option[StoredBlock]) extends BlockMajorityUpdateError {
 
     val errorMessage: String =
       s"Accepted block to be removed during majority update with hash: $hash not found! But got: $got"
   }
-  case class UnexpectedBlockStateWhenRemoving(hash: ProofsHash, got: Option[StoredBlock])
-      extends BlockMajorityUpdateError {
+  case class UnexpectedBlockStateWhenRemoving(hash: ProofsHash, got: Option[StoredBlock]) extends BlockMajorityUpdateError {
 
     val errorMessage: String =
       s"Block to be removed during majority update with hash: $hash not found in expected state! But got: $got"
   }
-  case class UnexpectedBlockStateWhenResetting(hash: ProofsHash, got: Option[StoredBlock])
-      extends BlockMajorityUpdateError {
+  case class UnexpectedBlockStateWhenResetting(hash: ProofsHash, got: Option[StoredBlock]) extends BlockMajorityUpdateError {
 
     val errorMessage: String =
       s"Block to be reset during majority update with hash: $hash not found in expected state! But got: $got"
   }
-  case class UnexpectedBlockStateWhenAddingMajorityBlock(hash: ProofsHash, got: Option[StoredBlock])
-      extends BlockMajorityUpdateError {
+  case class UnexpectedBlockStateWhenAddingMajorityBlock(hash: ProofsHash, got: Option[StoredBlock]) extends BlockMajorityUpdateError {
 
     val errorMessage: String =
       s"Block to be added during majority update with hash: $hash not found in expected state! But got: $got"

@@ -106,7 +106,7 @@ object Joining {
               .handleErrorWith { err =>
                 logger.error(err)(s"Peer discovery from peer ${peer.show} failed").as(Set.empty)
               }
-              .flatMap { _.toList.traverse(joiningQueue.offer(_).void) }
+              .flatMap(_.toList.traverse(joiningQueue.offer(_).void))
               .void
         }
 
@@ -143,8 +143,9 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
       nodeState <- nodeStorage.getNodeState
 
       canJoinCluster <- nodeStorage.canJoinCluster
-      _ <- if (!canJoinCluster) NodeStateDoesNotAllowForJoining(nodeState).raiseError[F, Unit]
-      else Applicative[F].unit
+      _ <-
+        if (!canJoinCluster) NodeStateDoesNotAllowForJoining(nodeState).raiseError[F, Unit]
+        else Applicative[F].unit
 
       _ <- validateHandshakeConditions(toPeer)
     } yield ()
@@ -198,19 +199,20 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
       _ <- verifySignRequest(signRequest, signedSignRequest, PeerId._Id.get(withPeer.id))
         .ifM(Applicative[F].unit, HandshakeSignatureNotValid.raiseError[F, Unit])
 
-      _ <- if (skipJoinRequest) {
-        Applicative[F].unit
-      } else {
-        clusterStorage
-          .setClusterSession(registrationRequest.clusterSession)
-          .flatMap(_ => cluster.getRegistrationRequest)
-          .map(JoinRequest.apply)
-          .flatMap(signClient.joinRequest(_).run(withPeer))
-          .ifM(
-            Applicative[F].unit,
-            new Throwable(s"Unexpected error occured when joining with peer=${withPeer.id}.").raiseError[F, Unit]
-          )
-      }
+      _ <-
+        if (skipJoinRequest) {
+          Applicative[F].unit
+        } else {
+          clusterStorage
+            .setClusterSession(registrationRequest.clusterSession)
+            .flatMap(_ => cluster.getRegistrationRequest)
+            .map(JoinRequest.apply)
+            .flatMap(signClient.joinRequest(_).run(withPeer))
+            .ifM(
+              Applicative[F].unit,
+              new Throwable(s"Unexpected error occured when joining with peer=${withPeer.id}.").raiseError[F, Unit]
+            )
+        }
 
       peer = Peer(
         registrationRequest.id,
@@ -240,9 +242,10 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
 
       ownClusterId = clusterStorage.getClusterId
 
-      _ <- if (registrationRequest.clusterId == ownClusterId)
-        Applicative[F].unit
-      else ClusterIdDoesNotMatch.raiseError[F, Unit]
+      _ <-
+        if (registrationRequest.clusterId == ownClusterId)
+          Applicative[F].unit
+        else ClusterIdDoesNotMatch.raiseError[F, Unit]
 
       ownClusterSession <- clusterStorage.getClusterSession
 
@@ -252,20 +255,22 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
         case _                                                               => ClusterSessionDoesNotMatch.raiseError[F, Unit]
       }
 
-      _ <- if (environment == Dev || ip.toString != host"127.0.0.1".toString && ip.toString != host"localhost".toString)
-        Applicative[F].unit
-      else LocalHostNotPermitted.raiseError[F, Unit]
+      _ <-
+        if (environment == Dev || ip.toString != host"127.0.0.1".toString && ip.toString != host"localhost".toString)
+          Applicative[F].unit
+        else LocalHostNotPermitted.raiseError[F, Unit]
 
-      _ <- remoteAddress.fold(Applicative[F].unit)(
-        ra => if (ip.compare(ra) == 0) Applicative[F].unit else InvalidRemoteAddress.raiseError[F, Unit]
+      _ <- remoteAddress.fold(Applicative[F].unit)(ra =>
+        if (ip.compare(ra) == 0) Applicative[F].unit else InvalidRemoteAddress.raiseError[F, Unit]
       )
 
       _ <- if (registrationRequest.id != selfId) Applicative[F].unit else IdDuplicationFound.raiseError[F, Unit]
 
       whitelistingHash <- whitelisting.hashF
 
-      _ <- if (registrationRequest.whitelisting === whitelistingHash) Applicative[F].unit
-      else WhitelistingDoesNotMatch.raiseError[F, Unit]
+      _ <-
+        if (registrationRequest.whitelisting === whitelistingHash) Applicative[F].unit
+        else WhitelistingDoesNotMatch.raiseError[F, Unit]
 
     } yield ()
 

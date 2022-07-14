@@ -85,21 +85,21 @@ object BlockAcceptanceManager {
                     .merge
               }
             }
-            result <- if (initState === currState) currState.pure[F]
-            else go(currState, currState.awaiting.map(_._1))
+            result <-
+              if (initState === currState) currState.pure[F]
+              else go(currState, currState.awaiting.map(_._1))
           } yield result
 
         blocks.sorted
-          .foldLeftM((List.empty[(Signed[DAGBlock], TxChains)], List.empty[(Signed[DAGBlock], ValidationFailed)])) {
-            (acc, block) =>
-              acc match {
-                case (validList, invalidList) =>
-                  blockValidator.validate(block).map {
-                    case Valid(blockAndTxChains) => (blockAndTxChains :: validList, invalidList)
-                    case Invalid(errors) =>
-                      (validList, (block, ValidationFailed(errors.toNonEmptyList)) :: invalidList)
-                  }
-              }
+          .foldLeftM((List.empty[(Signed[DAGBlock], TxChains)], List.empty[(Signed[DAGBlock], ValidationFailed)])) { (acc, block) =>
+            acc match {
+              case (validList, invalidList) =>
+                blockValidator.validate(block).map {
+                  case Valid(blockAndTxChains) => (blockAndTxChains :: validList, invalidList)
+                  case Invalid(errors) =>
+                    (validList, (block, ValidationFailed(errors.toNonEmptyList)) :: invalidList)
+                }
+            }
           }
           .flatMap {
             case (validList, invalidList) =>

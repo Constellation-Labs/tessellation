@@ -85,12 +85,10 @@ sealed abstract class HttpApi[F[_]: Async: KryoSerializer: SecurityProvider: Met
   private val cliRoutes: HttpRoutes[F] =
     clusterRoutes.cliRoutes
 
-  private val loggers: HttpApp[F] => HttpApp[F] = {
-    { http: HttpApp[F] =>
-      RequestLogger.httpApp(logHeaders = true, logBody = false)(http)
-    }.andThen { http: HttpApp[F] =>
-      ResponseLogger.httpApp(logHeaders = true, logBody = false)(http)
-    }
+  private val loggers: HttpApp[F] => HttpApp[F] = { http: HttpApp[F] =>
+    RequestLogger.httpApp(logHeaders = true, logBody = false)(http)
+  }.andThen { http: HttpApp[F] =>
+    ResponseLogger.httpApp(logHeaders = true, logBody = false)(http)
   }
 
   val publicApp: HttpApp[F] = loggers(openRoutes.orNotFound)

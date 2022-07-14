@@ -15,8 +15,7 @@ object CellMonoidLawsSuite extends FunSuite with Discipline {
   //       Because two functions with the same implementation are never equal to each other we can't compare
   //       the cells to each other by comparing the cell objects (neither convert nor hylo functions will be ever equal).
   implicit val eq: Eq[Cell[Id, StackF, Ω, Either[CellError, Ω], Ω]] =
-    (x: Cell[Id, StackF, Ω, Either[CellError, Ω], Ω], y: Cell[Id, StackF, Ω, Either[CellError, Ω], Ω]) =>
-      x.run() == y.run()
+    (x: Cell[Id, StackF, Ω, Either[CellError, Ω], Ω], y: Cell[Id, StackF, Ω, Either[CellError, Ω], Ω]) => x.run() == y.run()
 
   implicit val arbitraryCell: Arbitrary[Cell[Id, StackF, Ω, Either[CellError, Ω], Ω]] = Arbitrary(
     Gen.long.map(l => LongToStringCell(TestLongInput(l)))

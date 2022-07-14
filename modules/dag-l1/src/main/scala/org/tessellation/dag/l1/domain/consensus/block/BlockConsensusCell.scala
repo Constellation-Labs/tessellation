@@ -43,60 +43,60 @@ class BlockConsensusCell[F[_]: Async: SecurityProvider: KryoSerializer: Random: 
   data: BlockConsensusInput,
   ctx: BlockConsensusContext[F]
 ) extends Cell[F, StackF, BlockConsensusInput, Either[CellError, Ω], CoalgebraCommand](
-      data, {
-        scheme.hyloM(
-          AlgebraM[F, StackF, Either[CellError, Ω]] {
-            case More(a) => a.pure[F]
-            case Done(Right(cmd: AlgebraCommand)) =>
-              cmd match {
-                case PersistInitialOwnRoundData(roundData) =>
-                  Algebra.persistInitialOwnRoundData(roundData, ctx)
+      data,
+      scheme.hyloM(
+        AlgebraM[F, StackF, Either[CellError, Ω]] {
+          case More(a) => a.pure[F]
+          case Done(Right(cmd: AlgebraCommand)) =>
+            cmd match {
+              case PersistInitialOwnRoundData(roundData) =>
+                Algebra.persistInitialOwnRoundData(roundData, ctx)
 
-                case PersistInitialPeerRoundData(roundData, peerProposal) =>
-                  Algebra.persistInitialPeerRoundData(roundData, peerProposal, ctx)
+              case PersistInitialPeerRoundData(roundData, peerProposal) =>
+                Algebra.persistInitialPeerRoundData(roundData, peerProposal, ctx)
 
-                case PersistProposal(proposal) =>
-                  Algebra.persistProposal(proposal, ctx)
+              case PersistProposal(proposal) =>
+                Algebra.persistProposal(proposal, ctx)
 
-                case PersistBlockSignatureProposal(blockSignatureProposal) =>
-                  Algebra.persistBlockSignatureProposal(blockSignatureProposal, ctx)
+              case PersistBlockSignatureProposal(blockSignatureProposal) =>
+                Algebra.persistBlockSignatureProposal(blockSignatureProposal, ctx)
 
-                case InformAboutInabilityToParticipate(proposal, reason) =>
-                  Algebra.informAboutInabilityToParticipate(proposal, reason, ctx)
+              case InformAboutInabilityToParticipate(proposal, reason) =>
+                Algebra.informAboutInabilityToParticipate(proposal, reason, ctx)
 
-                case PersistCancellationResult(cancellation) =>
-                  Algebra.processCancellation(cancellation, ctx)
+              case PersistCancellationResult(cancellation) =>
+                Algebra.processCancellation(cancellation, ctx)
 
-                case InformAboutRoundStartFailure(message) =>
-                  CellError(message).asLeft[Ω].pure[F]
+              case InformAboutRoundStartFailure(message) =>
+                CellError(message).asLeft[Ω].pure[F]
 
-                case CancelTimedOutRounds(toCancel) =>
-                  Algebra.cancelTimedOutRounds(toCancel, ctx)
+              case CancelTimedOutRounds(toCancel) =>
+                Algebra.cancelTimedOutRounds(toCancel, ctx)
 
-                case NoAction =>
-                  NullTerminal.asRight[CellError].widen[Ω].pure[F]
-              }
+              case NoAction =>
+                NullTerminal.asRight[CellError].widen[Ω].pure[F]
+            }
 
-            case Done(other) => other.pure[F]
-          },
-          CoalgebraM[F, StackF, CoalgebraCommand] {
-            case StartOwnRound =>
-              Coalgebra.startOwnRound(ctx)
+          case Done(other) => other.pure[F]
+        },
+        CoalgebraM[F, StackF, CoalgebraCommand] {
+          case StartOwnRound =>
+            Coalgebra.startOwnRound(ctx)
 
-            case InspectConsensuses =>
-              Coalgebra.inspectConsensuses(ctx)
+          case InspectConsensuses =>
+            Coalgebra.inspectConsensuses(ctx)
 
-            case ProcessProposal(proposal) =>
-              Coalgebra.processProposal(proposal, ctx)
+          case ProcessProposal(proposal) =>
+            Coalgebra.processProposal(proposal, ctx)
 
-            case ProcessBlockSignatureProposal(blockSignatureProposal) =>
-              Applicative[F].pure(Done(PersistBlockSignatureProposal(blockSignatureProposal).asRight[CellError]))
+          case ProcessBlockSignatureProposal(blockSignatureProposal) =>
+            Applicative[F].pure(Done(PersistBlockSignatureProposal(blockSignatureProposal).asRight[CellError]))
 
-            case ProcessCancellation(cancellation) =>
-              Applicative[F].pure(Done(PersistCancellationResult(cancellation).asRight[CellError]))
-          }
-        )
-      }, {
+          case ProcessCancellation(cancellation) =>
+            Applicative[F].pure(Done(PersistCancellationResult(cancellation).asRight[CellError]))
+        }
+      ),
+      {
         case OwnRoundTrigger                                => StartOwnRound
         case InspectionTrigger                              => InspectConsensuses
         case proposal: Proposal                             => ProcessProposal(proposal)
@@ -362,8 +362,7 @@ object BlockConsensusCell {
             .modify(tryPersistBlockSignatureProposal(blockSignatureProposal))
         )
         .flatMap {
-          case Some(roundData @ RoundData(_, _, _, _, _, Some(ownBlock), _, _, _, _, _))
-              if gotAllSignatures(roundData) =>
+          case Some(roundData @ RoundData(_, _, _, _, _, Some(ownBlock), _, _, _, _, _)) if gotAllSignatures(roundData) =>
             for {
               _ <- Applicative[F].unit
               finalBlock = roundData.peerBlockSignatures.values.foldLeft(ownBlock) {
@@ -556,10 +555,11 @@ object BlockConsensusCell {
           .map(id => id -> knownPeers.find(_.id == id))
           .collect { case (id, Some(peer)) => id -> peer }
           .toMap
-        result <- if (peers.keySet == peerIds && peerIds.size == ctx.consensusConfig.peersCount.value)
-          peers.values.toSet.some.pure[F]
-        else
-          none[Set[Peer]].pure[F]
+        result <-
+          if (peers.keySet == peerIds && peerIds.size == ctx.consensusConfig.peersCount.value)
+            peers.values.toSet.some.pure[F]
+          else
+            none[Set[Peer]].pure[F]
       } yield result
 
     def processProposal[F[_]: Async](

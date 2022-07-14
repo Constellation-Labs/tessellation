@@ -9,11 +9,7 @@ import cats.syntax.contravariantSemigroupal._
 import cats.syntax.validated._
 
 import org.tessellation.dag.transaction.ContextualTransactionValidator._
-import org.tessellation.dag.transaction.TransactionValidator.{
-  InvalidSigned,
-  NotSignedBySourceAddressOwner,
-  SameSourceAndDestinationAddress
-}
+import org.tessellation.dag.transaction.TransactionValidator.{InvalidSigned, NotSignedBySourceAddressOwner, SameSourceAndDestinationAddress}
 import org.tessellation.ext.cats.effect._
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
@@ -161,9 +157,7 @@ object ContextualTransactionValidatorSuite extends ResourceSuite with Checkers {
       val validator = txValidator(initialReference)
 
       for {
-        signedTx <- signTx(tx, dstKey).map(
-          signed => signed.copy(proofs = signed.proofs.map(_.copy(id = srcKey.getPublic.toId)))
-        )
+        signedTx <- signTx(tx, dstKey).map(signed => signed.copy(proofs = signed.proofs.map(_.copy(id = srcKey.getPublic.toId))))
         validationResult <- validator.validate(signedTx)
       } yield
         expect.same(

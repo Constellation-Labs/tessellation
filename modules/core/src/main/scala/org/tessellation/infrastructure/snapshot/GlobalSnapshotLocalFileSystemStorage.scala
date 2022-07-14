@@ -53,7 +53,7 @@ final class GlobalSnapshotLocalFileSystemStorage[F[_]: Async: KryoSerializer] pr
 object GlobalSnapshotLocalFileSystemStorage {
 
   def make[F[_]: Async: KryoSerializer](path: Path): F[GlobalSnapshotLocalFileSystemStorage[F]] =
-    Applicative[F].pure { new GlobalSnapshotLocalFileSystemStorage[F](path) }.flatTap { storage =>
+    Applicative[F].pure(new GlobalSnapshotLocalFileSystemStorage[F](path)).flatTap { storage =>
       storage.createDirectoryIfNotExists().rethrowT
     }
 }

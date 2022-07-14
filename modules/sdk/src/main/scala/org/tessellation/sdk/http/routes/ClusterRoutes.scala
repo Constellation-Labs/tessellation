@@ -62,11 +62,10 @@ final case class ClusterRoutes[F[_]: Async](
           .flatMap(_.asIpv4)
           .map(_.toString)
           .flatMap(Host.fromString)
-          .fold(BadRequest())(
-            host =>
-              joining
-                .joinRequest(collateral.hasCollateral)(joinRequest, host)
-                .flatMap(_ => Ok())
+          .fold(BadRequest())(host =>
+            joining
+              .joinRequest(collateral.hasCollateral)(joinRequest, host)
+              .flatMap(_ => Ok())
           )
       }
   }

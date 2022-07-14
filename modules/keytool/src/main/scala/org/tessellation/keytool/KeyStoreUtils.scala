@@ -36,11 +36,10 @@ object KeyStoreUtils {
       keyPair <- readKeyPairFromStore(path, alias, storePassword, keyPassword)
       hex = keyPair.getPrivate.toHex
       _ <- writer(pathDir(path) + privateKeyHexName)
-        .use(
-          os =>
-            Async[F].delay {
-              os.write(hex.coerce.getBytes(Charset.forName("UTF-8")))
-            }
+        .use(os =>
+          Async[F].delay {
+            os.write(hex.coerce.getBytes(Charset.forName("UTF-8")))
+          }
         )
     } yield hex
 
@@ -75,8 +74,7 @@ object KeyStoreUtils {
       .makeKeyPair[F]
       .flatMap(writeKeyPairToStore(_, path, alias, password, distinguishedName, certificateValidityDays))
 
-  /**
-    * Puts existing to new keyStore at path
+  /** Puts existing to new keyStore at path
     */
   private[keytool] def writeKeyPairToStore[F[_]: Async: SecurityProvider](
     keyPair: KeyPair,
@@ -87,14 +85,13 @@ object KeyStoreUtils {
     certificateValidityDays: Long
   ): F[KeyStore] =
     writer(withExtension(path))
-      .use(
-        stream =>
-          for {
-            keyStore <- createEmptyKeyStore(password)
-            chain <- generateCertificateChain(distinguishedName, certificateValidityDays, keyPair)
-            _ <- setKeyEntry(alias, keyPair, password, chain)(keyStore)
-            _ <- store(stream, password)(keyStore)
-          } yield keyStore
+      .use(stream =>
+        for {
+          keyStore <- createEmptyKeyStore(password)
+          chain <- generateCertificateChain(distinguishedName, certificateValidityDays, keyPair)
+          _ <- setKeyEntry(alias, keyPair, password, chain)(keyStore)
+          _ <- store(stream, password)(keyStore)
+        } yield keyStore
       )
 
   def readKeyPairFromStore[F[_]: Async: SecurityProvider](
@@ -139,29 +136,28 @@ object KeyStoreUtils {
   private def unlockKeyStore[F[_]: Async: SecurityProvider](
     password: Array[Char]
   )(stream: FileInputStream): F[KeyStore] =
-    Async[F].delay { KeyStore.getInstance(storeType, SecurityProvider[F].provider) }.flatTap { keyStore =>
-      Async[F].delay { keyStore.load(stream, password) }
+    Async[F].delay(KeyStore.getInstance(storeType, SecurityProvider[F].provider)).flatTap { keyStore =>
+      Async[F].delay(keyStore.load(stream, password))
     }
 
-  /**
-    * Just for backward compatibility. Uses regular Security provider order instead of explicit one
+  /** Just for backward compatibility. Uses regular Security provider order instead of explicit one
     */
   private def unlockLegacyKeyStore[F[_]: Async](password: Array[Char])(
     stream: FileInputStream
   ): F[KeyStore] =
-    Async[F].delay { KeyStore.getInstance(storeType) }.flatTap { keyStore =>
-      Async[F].delay { keyStore.load(stream, password) }
+    Async[F].delay(KeyStore.getInstance(storeType)).flatTap { keyStore =>
+      Async[F].delay(keyStore.load(stream, password))
     }
 
   private def createEmptyKeyStore[F[_]: Async: SecurityProvider](password: Array[Char]): F[KeyStore] =
-    Async[F].delay { KeyStore.getInstance(storeType, SecurityProvider[F].provider) }.flatTap { keyStore =>
-      Async[F].delay { keyStore.load(null, password) }
+    Async[F].delay(KeyStore.getInstance(storeType, SecurityProvider[F].provider)).flatTap { keyStore =>
+      Async[F].delay(keyStore.load(null, password))
     }
 
   private def unlockKeyPair[F[_]: Async](alias: String, keyPassword: Array[Char])(keyStore: KeyStore): F[KeyPair] =
     for {
-      privateKey <- Async[F].delay { keyStore.getKey(alias, keyPassword).asInstanceOf[PrivateKey] }
-      publicKey <- Async[F].delay { keyStore.getCertificate(alias).getPublicKey }
+      privateKey <- Async[F].delay(keyStore.getKey(alias, keyPassword).asInstanceOf[PrivateKey])
+      publicKey <- Async[F].delay(keyStore.getCertificate(alias).getPublicKey)
     } yield new KeyPair(publicKey, privateKey)
 
   private def setKeyEntry[F[_]: Async](

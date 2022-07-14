@@ -28,7 +28,7 @@ object RumorHandler {
       def isDefinedAt(v: (RumorBinary, PeerId)): Boolean = v match {
         case (rumor, _) =>
           rumor.isInstanceOf[CommonRumorBinary] &&
-            rumor.contentType === handlerContentType
+          rumor.contentType === handlerContentType
       }
 
       def apply(v: (RumorBinary, PeerId)): F[Unit] = v match {
@@ -53,8 +53,8 @@ object RumorHandler {
       def isDefinedAt(v: (RumorBinary, PeerId)): Boolean = v match {
         case (rumor, selfId) =>
           rumor.isInstanceOf[PeerRumorBinary] &&
-            rumor.contentType === handlerContentType &&
-            ((rumor.asInstanceOf[PeerRumorBinary].origin === selfId) ==> (selfOriginPolicy =!= ExcludeSelfOrigin))
+          rumor.contentType === handlerContentType &&
+          ((rumor.asInstanceOf[PeerRumorBinary].origin === selfId) ==> (selfOriginPolicy =!= ExcludeSelfOrigin))
       }
 
       def apply(v: (RumorBinary, PeerId)): F[Unit] = v match {
@@ -62,10 +62,11 @@ object RumorHandler {
           for {
             content <- rumor.content.fromBinaryF[A]
             fn = f(PeerRumor(rumor.origin, rumor.ordinal, content))
-            _ <- if (rumor.origin === selfId && selfOriginPolicy === IgnoreSelfOrigin)
-              Applicative[F].unit
-            else
-              fn
+            _ <-
+              if (rumor.origin === selfId && selfOriginPolicy === IgnoreSelfOrigin)
+                Applicative[F].unit
+              else
+                fn
           } yield ()
         case (r, _) => UnexpectedRumorClass(r).raiseError[F, Unit]
       }

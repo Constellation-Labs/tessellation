@@ -12,9 +12,7 @@ class DataGenerator[F[_]: Monad: Random] {
     for {
       value1 <- Random[F].nextDouble
       value2 <- Random[F].nextDouble
-    } yield {
-      value1 > distance && value2 < 0.2
-    }
+    } yield value1 > distance && value2 < 0.2
 
   def randomEdge(logic: Double => F[Boolean] = randomEdgeLogic)(n: TrustNode, n2: TrustNode) =
     for {
@@ -22,11 +20,10 @@ class DataGenerator[F[_]: Monad: Random] {
         Math.sqrt(Math.pow(n.xCoordinate - n2.xCoordinate, 2) + Math.pow(n.yCoordinate - n2.yCoordinate, 2))
       )
       trustZeroToOne <- Random[F].nextDouble
-    } yield {
+    } yield
       if (result) {
         Some(TrustEdge(n.id, n2.id, 2 * (trustZeroToOne - 0.5), isLabel = true))
       } else None
-    }
 
   def randomPositiveEdge(
     logic: Double => F[Boolean] = randomEdgeLogic
@@ -36,11 +33,10 @@ class DataGenerator[F[_]: Monad: Random] {
         Math.sqrt(Math.pow(n.xCoordinate - n2.xCoordinate, 2) + Math.pow(n.yCoordinate - n2.yCoordinate, 2))
       )
       trustZeroToOne <- Random[F].nextDouble
-    } yield {
+    } yield
       if (result) {
         Some(TrustEdge(n.id, n2.id, trustZeroToOne, isLabel = true))
       } else None
-    }
 
   def seedCliqueLogic(maxSeedNodeIdx: Int = 1)(id: Double): F[Boolean] =
     Applicative[F].pure(id <= maxSeedNodeIdx)

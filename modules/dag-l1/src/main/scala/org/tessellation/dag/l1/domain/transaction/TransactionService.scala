@@ -33,7 +33,7 @@ object TransactionService {
         case Valid(_) =>
           signedTransaction
             .toHashed[F]
-            .flatTap { transactionStorage.put }
+            .flatTap(transactionStorage.put)
             .map(_.hash.asRight[NonEmptyList[ContextualTransactionValidationError]])
         case Invalid(e) => e.toNonEmptyList.asLeft[Hash].pure[F]
       }

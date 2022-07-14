@@ -67,8 +67,7 @@ object gossip {
   ) extends RumorBinary
 
   object CommonRumorBinary {
-    implicit val show: Show[CommonRumorBinary] = (t: CommonRumorBinary) =>
-      s"CommonRumorBinary(contentType=${t.contentType.show})"
+    implicit val show: Show[CommonRumorBinary] = (t: CommonRumorBinary) => s"CommonRumorBinary(contentType=${t.contentType.show})"
   }
 
   @derive(arbitrary)

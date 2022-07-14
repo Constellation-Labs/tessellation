@@ -128,14 +128,15 @@ object ConsensusManager {
         maybeTimeTrigger <- consensusStorage.getTimeTrigger
         currentTime <- Clock[F].monotonic
         containsTriggerEvent <- consensusStorage.containsTriggerEvent
-        _ <- if (maybeTimeTrigger.exists(currentTime >= _))
-          internalTriggerWith(TimeTrigger.some)
-        else if (containsTriggerEvent)
-          internalTriggerWith(EventTrigger.some)
-        else if (maybeTimeTrigger.isEmpty)
-          internalTriggerWith(none) // when there's no time trigger scheduled yet, trigger again with nothing
-        else
-          Applicative[F].unit
+        _ <-
+          if (maybeTimeTrigger.exists(currentTime >= _))
+            internalTriggerWith(TimeTrigger.some)
+          else if (containsTriggerEvent)
+            internalTriggerWith(EventTrigger.some)
+          else if (maybeTimeTrigger.isEmpty)
+            internalTriggerWith(none) // when there's no time trigger scheduled yet, trigger again with nothing
+          else
+            Applicative[F].unit
       } yield ()
 
     private def afterTimeTrigger: F[Unit] =

@@ -1,4 +1,5 @@
 package org.tessellation.wallet.cli
+
 import cats.syntax.contravariantSemigroupal._
 import cats.syntax.either._
 import cats.syntax.validated._

@@ -210,7 +210,7 @@ class TransactionStorage[F[_]: Async: KryoSerializer](
   }
 
   def find(hash: Hash): F[Option[Hashed[Transaction]]] =
-    waitingTransactions.toMap.map { _.view.values.toList.flatMap(_.toList) }.map {
+    waitingTransactions.toMap.map(_.view.values.toList.flatMap(_.toList)).map {
       _.find(_.hash === hash)
     }
 

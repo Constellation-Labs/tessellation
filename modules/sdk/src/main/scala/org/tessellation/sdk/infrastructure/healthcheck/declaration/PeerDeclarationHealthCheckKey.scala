@@ -7,8 +7,7 @@ import org.tessellation.sdk.infrastructure.healthcheck.declaration.kind.PeerDecl
 import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.{Decoder, Encoder}
 
-case class PeerDeclarationHealthCheckKey[K](id: PeerId, consensusKey: K, kind: PeerDeclarationKind)
-    extends HealthCheckKey
+case class PeerDeclarationHealthCheckKey[K](id: PeerId, consensusKey: K, kind: PeerDeclarationKind) extends HealthCheckKey
 
 object PeerDeclarationHealthCheckKey {
   implicit def encoder[K: Encoder]: Encoder[PeerDeclarationHealthCheckKey[K]] = deriveEncoder

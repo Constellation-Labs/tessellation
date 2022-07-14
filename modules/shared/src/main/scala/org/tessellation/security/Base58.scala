@@ -1,4 +1,5 @@
 package org.tessellation.security
+
 import java.math.BigInteger
 
 import scala.annotation.tailrec
@@ -11,8 +12,10 @@ object Base58 {
 
   /** Documentation.
     *
-    * @param input binary data
-    * @return the base-58 representation of input
+    * @param input
+    *   binary data
+    * @return
+    *   the base-58 representation of input
     */
   def encode(input: Seq[Byte]): String =
     if (input.isEmpty) ""
@@ -36,23 +39,24 @@ object Base58 {
 
   /** Documentation.
     *
-    * @param input base-58 encoded data
-    * @return the decoded data
+    * @param input
+    *   base-58 encoded data
+    * @return
+    *   the decoded data
     */
   def decode(input: String): Array[Byte] = {
     val zeroes = input.takeWhile(_ == '1').map(_ => 0: Byte).toArray
     val trim = input.dropWhile(_ == '1').toList
-    val decoded = trim.foldLeft(BigInteger.ZERO)(
-      (a, b) => a.multiply(BigInteger.valueOf(58L)).add(BigInteger.valueOf(map(b).toLong))
-    )
+    val decoded = trim.foldLeft(BigInteger.ZERO)((a, b) => a.multiply(BigInteger.valueOf(58L)).add(BigInteger.valueOf(map(b).toLong)))
     if (trim.isEmpty) zeroes else zeroes ++ decoded.toByteArray.dropWhile(_ == 0) // BigInteger.toByteArray may add a leading 0x00
   }
 
-  /**
-    * Checks if the input contains base58 chars only
+  /** Checks if the input contains base58 chars only
     *
-    * @param input string to check
-    * @return true if input contains base58 chars only, false otherwise
+    * @param input
+    *   string to check
+    * @return
+    *   true if input contains base58 chars only, false otherwise
     */
   def isBase58(input: String): Boolean =
     input.forall(alphabet.toSet.contains)

@@ -52,14 +52,13 @@ object balance {
     implicit val quillEncode: MappedEncoding[Balance, String] =
       MappedEncoding[Balance, String](_.value.value.toString())
 
-    implicit val quillDecode: MappedEncoding[String, Balance] = MappedEncoding[String, Balance](
-      strBalance =>
-        Try(strBalance.toLong).toEither
-          .flatMap(refineV[NonNegative].apply[Long](_).leftMap(new Throwable(_))) match {
-          //TODO: look at quill Decode for Address
-          case Left(e)  => throw e
-          case Right(b) => Balance(b)
-        }
+    implicit val quillDecode: MappedEncoding[String, Balance] = MappedEncoding[String, Balance](strBalance =>
+      Try(strBalance.toLong).toEither
+        .flatMap(refineV[NonNegative].apply[Long](_).leftMap(new Throwable(_))) match {
+        // TODO: look at quill Decode for Address
+        case Left(e)  => throw e
+        case Right(b) => Balance(b)
+      }
     )
 
   }

@@ -4,10 +4,7 @@ import scala.util.Random
 
 import com.typesafe.scalalogging.StrictLogging
 
-/**
-  * https://en.wikipedia.org/wiki/Node_influence_metric
-  * https://en.wikipedia.org/wiki/Self-avoiding_walk
-  *
+/** https://en.wikipedia.org/wiki/Node_influence_metric https://en.wikipedia.org/wiki/Self-avoiding_walk
   */
 object SelfAvoidingWalk extends StrictLogging {
 
@@ -112,11 +109,11 @@ object SelfAvoidingWalk extends StrictLogging {
   def normalizeScores(scores: Array[Double]): Array[Double] = {
     val sumScore = scores.sum
     if (sumScore == 0d) scores
-    else scores.map { _ / sumScore }
+    else scores.map(_ / sumScore)
   }
 
   def normalizeScoresWithIndex(scores: Array[(Double, Int)]): Array[(Double, Int)] = {
-    val sumScore = scores.map { _._1 }.sum
+    val sumScore = scores.map(_._1).sum
     if (sumScore == 0d) scores
     else scores.map { case (k, v) => (k / sumScore) -> v }
   }
@@ -161,9 +158,12 @@ object SelfAvoidingWalk extends StrictLogging {
       println(s"runWalkBatches - Batch number $iterationNum with delta $delta")
     }
 
-    reweightEdges(walkProbability, nodes.map { n =>
-      n.id -> n
-    }.toMap)
+    reweightEdges(
+      walkProbability,
+      nodes.map { n =>
+        n.id -> n
+      }.toMap
+    )
   }
 
   def runWalkBatchesFeedback(
@@ -206,21 +206,29 @@ object SelfAvoidingWalk extends StrictLogging {
 //      println(s"runWalkBatchesFeedback - Batch number $iterationNum with delta $delta")
     }
 
-    val selfNode = nodes.filter { _.id == selfId }.head
-    val others = nodes.filterNot { _.id == selfId }.map { o =>
-      o.id -> o
-    }.toMap
+    val selfNode = nodes.filter(_.id == selfId).head
+    val others = nodes
+      .filterNot(_.id == selfId)
+      .map { o =>
+        o.id -> o
+      }
+      .toMap
 
-    val negativeScores = merged.zipWithIndex.filterNot { _._2 == selfId }.flatMap {
-      case (score, id) =>
-        val negativeEdges = others.get(id).map(_.negativeEdges).getOrElse(Seq())
+    val negativeScores = merged.zipWithIndex
+      .filterNot(_._2 == selfId)
+      .flatMap {
+        case (score, id) =>
+          val negativeEdges = others.get(id).map(_.negativeEdges).getOrElse(Seq())
 //        logger.debug(s"runWalkBatchesFeedback - negativeScores - selfId: $selfId - negativeEdges: $negativeEdges")
-        negativeEdges.filterNot { _.dst == selfId }.map { ne =>
-          val nanTest = (ne.trust * score / negativeEdges.size)
+          negativeEdges.filterNot(_.dst == selfId).map { ne =>
+            val nanTest = ne.trust * score / negativeEdges.size
 //          println("nanTest =>" + nanTest)
-          ne.dst -> nanTest
-        }
-    }.groupBy(_._1).view.mapValues(_.map { _._2 }.sum)
+            ne.dst -> nanTest
+          }
+      }
+      .groupBy(_._1)
+      .view
+      .mapValues(_.map(_._2).sum)
 
     negativeScores.foreach {
       case (id, negScore) =>
@@ -228,7 +236,7 @@ object SelfAvoidingWalk extends StrictLogging {
     }
 
     val labelEdges = selfNode.edges.filter(_.isLabel)
-    val labelDst = labelEdges.map { _.dst }
+    val labelDst = labelEdges.map(_.dst)
 //    logger.debug(s"runWalkBatchesFeedback - labelDst ${labelDst.toList.toString()}")
 
     val doNormalizeScoresWithNegative = normalizeScoresWithNegative(merged)
@@ -281,13 +289,13 @@ object SelfAvoidingWalk extends StrictLogging {
         else {
           edge.copy(trust = sumTransitives(edge.dst))
         }
-      } ++ sumTransitives.filterNot(n.edges.map { _.dst }.contains).map {
+      } ++ sumTransitives.filterNot(n.edges.map(_.dst).contains).map {
         case (id, trust) => TrustEdge(n.id, id, trust)
       }
     )
 
   def updateNodeIn(selfId: Int, nodes: Seq[TrustNode], prevEdges: Array[Double]): Seq[TrustNode] =
-    nodes.filter { _.id == selfId }.map { n =>
+    nodes.filter(_.id == selfId).map { n =>
       updateNode(n, prevEdges.zipWithIndex.filterNot(_._2 == selfId).map { case (x, y) => y -> x }.toMap)
     } ++ nodes.filterNot(_.id == selfId)
 
@@ -319,7 +327,7 @@ object SelfAvoidingWalk extends StrictLogging {
     }.getOrElse(weightedEdgeZero)
 
     // TODO: Normalize again
-    weightedEdgesAll.zipWithIndex.foreach { println }
+    weightedEdgesAll.zipWithIndex.foreach(println)
 
     //  println(s"n1 id: ${n1.id}")
 
@@ -337,7 +345,7 @@ object SelfAvoidingWalk extends StrictLogging {
   ): TrustNode = {
 
     var nodesCycle = nodes
-    if (nodesCycle.size > 2) { //note, need min of 3 nodes
+    if (nodesCycle.size > 2) { // note, need min of 3 nodes
       //          println(s"runWalkFeedbackUpdateSingleNode nodes ${nodes.toList} for node $selfId")
       (0 until feedbackCycles).foreach { cycle =>
         //            println(s"feedback cycle $cycle for node $selfId")
@@ -379,7 +387,7 @@ object SelfAvoidingWalk extends StrictLogging {
       }
     }
     val sumScore = walkScores.sum
-    val walkProbability = walkScores.map { _ / sumScore }
+    val walkProbability = walkScores.map(_ / sumScore)
 //    walkProbability.zipWithIndex.foreach{println}
 //    n1.positiveEdges.foreach{println}
     val weightedEdgesAll = Array.fill(nodes.size)(0d)
@@ -394,7 +402,7 @@ object SelfAvoidingWalk extends StrictLogging {
     weightedEdgesAll.zipWithIndex
   }
 
-  def updateTrustDistro(curNodes: Seq[TrustNode], updateGroups: Map[Int, Seq[TrustEdge]]) = { //todo should dist updates be a map from observer to its edges?
+  def updateTrustDistro(curNodes: Seq[TrustNode], updateGroups: Map[Int, Seq[TrustEdge]]) = { // todo should dist updates be a map from observer to its edges?
     val curDist: Map[Int, Seq[TrustNode]] = curNodes.groupBy(_.id)
     val updatedNeighborhoods = updateGroups.map {
       case (id, edgeUpdates: Seq[TrustEdge]) =>
@@ -402,7 +410,7 @@ object SelfAvoidingWalk extends StrictLogging {
         val updateDsts = edgeUpdates.map(_.dst)
         val unchangedEdges = curNode.edges.filterNot { edge =>
           updateDsts.contains(edge.dst)
-        } //should only have one TrustNode per Id
+        } // should only have one TrustNode per Id
         val newEdges = unchangedEdges ++ edgeUpdates
         curNode.copy(edges = newEdges)
     }
@@ -411,10 +419,15 @@ object SelfAvoidingWalk extends StrictLogging {
 
   def getRandomDistro(num: Int = 10) = Seq.tabulate(num) { i =>
     // Change edges to Map[Dst, TrustInfo]
-    val edgeIds = Random.shuffle(Seq.tabulate(10) { identity }).take(Random.nextInt(3) + 5)
-    TrustNode(i, 0d, 0d, edgeIds.map { dst =>
-      TrustEdge(i, dst, Random.nextDouble())
-    })
+    val edgeIds = Random.shuffle(Seq.tabulate(10)(identity)).take(Random.nextInt(3) + 5)
+    TrustNode(
+      i,
+      0d,
+      0d,
+      edgeIds.map { dst =>
+        TrustEdge(i, dst, Random.nextDouble())
+      }
+    )
 
   }
 }

@@ -185,10 +185,11 @@ object GlobalSnapshotConsensusFunctions {
       for {
         height <- tipHeights.minimumOption.liftTo[F](NoTipsRemaining)
 
-        _ <- if (height < lastGS.height)
-          InvalidHeight(lastGS.height, height).raiseError
-        else
-          Applicative[F].unit
+        _ <-
+          if (height < lastGS.height)
+            InvalidHeight(lastGS.height, height).raiseError
+          else
+            Applicative[F].unit
 
         subHeight = if (height === lastGS.height) lastGS.subHeight.next else SubHeight.MinValue
       } yield (height, subHeight)
@@ -234,7 +235,7 @@ object GlobalSnapshotConsensusFunctions {
           lastGlobalSnapshotInfo.lastStateChannelSnapshotHashes
             .get(address)
             .map(hash => address -> hash)
-            .getOrElse((address -> Hash.empty))
+            .getOrElse(address -> Hash.empty)
         }
         .mapFilter {
           case (address, initLsh) =>
@@ -249,12 +250,11 @@ object GlobalSnapshotConsensusFunctions {
                 }
                 .getOrElse(Eval.now(List.empty))
 
-            unfold(initLsh).value.toNel.map(
-              nel =>
-                address -> nel.map { event =>
-                  StateChannelSnapshotBinary(event.snapshot.value.lastSnapshotHash, event.snapshot.content)
+            unfold(initLsh).value.toNel.map(nel =>
+              address -> nel.map { event =>
+                StateChannelSnapshotBinary(event.snapshot.value.lastSnapshotHash, event.snapshot.content)
 
-                }.reverse
+              }.reverse
             )
         }
         .toSortedMap

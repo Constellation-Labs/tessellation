@@ -19,9 +19,8 @@ trait OrphanInstances {
   implicit val hostEncoder: Encoder[Host] =
     Encoder[String].contramap(_.toString)
 
-  implicit val portDecoder: Decoder[Port] = {
+  implicit val portDecoder: Decoder[Port] =
     Decoder[Int].emap(p => Port.fromInt(p).toRight("Invalid port"))
-  }
 
   implicit val portEncoder: Encoder[Port] =
     Encoder[Int].contramap(_.value)

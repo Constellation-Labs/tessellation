@@ -14,7 +14,7 @@ trait DownloadDaemon[F[_]] extends Daemon[F] {}
 object DownloadDaemon {
 
   def make[F[_]: Async](nodeStorage: NodeStorage[F], download: Download[F]) = new DownloadDaemon[F] {
-    def start: F[Unit] = Spawn[F].start { watchForDownload }.void
+    def start: F[Unit] = Spawn[F].start(watchForDownload).void
 
     private def watchForDownload: F[Unit] =
       nodeStorage.nodeStates

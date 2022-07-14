@@ -30,16 +30,16 @@ abstract class LocalFileSystemStorage[F[_]: KryoSerializer, A <: AnyRef: ClassTa
   }
 
   private lazy val jDir: F[JFile] = dir.flatMap { a =>
-    F.delay { a.toJava }
+    F.delay(a.toJava)
   }
 
   def createDirectoryIfNotExists(): EitherT[F, Throwable, Unit] =
     dir.flatMap { a =>
-      F.delay { a.createDirectoryIfNotExists() }
+      F.delay(a.createDirectoryIfNotExists())
     }.void.attemptT
 
   def exists(fileName: String): F[Boolean] = dir.flatMap { a =>
-    F.delay { (a / fileName).exists }
+    F.delay((a / fileName).exists)
   }
 
   def read(fileName: String): F[Option[A]] =
@@ -50,41 +50,41 @@ abstract class LocalFileSystemStorage[F[_]: KryoSerializer, A <: AnyRef: ClassTa
     dir
       .map(_ / fileName)
       .flatMap { a =>
-        F.delay { a.loadBytes }.map(_.some)
+        F.delay(a.loadBytes).map(_.some)
       }
       .recover {
         case _: NoSuchFileException => none[Array[Byte]]
       }
 
   def write(fileName: String, a: A): F[Unit] =
-    a.toBinaryF.flatMap { write(fileName, _) }
+    a.toBinaryF.flatMap(write(fileName, _))
 
   def write(fileName: String, bytes: Array[Byte]): F[Unit] =
     dir
       .map(_ / fileName)
       .flatMap { a =>
-        F.delay { a.writeByteArray(bytes) }
+        F.delay(a.writeByteArray(bytes))
       }
       .void
 
   def link(fileName: String, to: String): F[Unit] =
     (dir.map(_ / fileName), dir.map(_ / to)).mapN {
-      case (src, dst) => F.delay { src.linkTo(dst) }.void
+      case (src, dst) => F.delay(src.linkTo(dst)).void
     }.flatten
 
   def delete(fileName: String): F[Unit] =
     dir
       .map(_ / fileName)
       .flatMap { a =>
-        F.delay { a.delete() }
+        F.delay(a.delete())
       }
       .void
 
   def getUsableSpace: F[Long] = jDir.flatMap { a =>
-    F.delay { a.getUsableSpace() }
+    F.delay(a.getUsableSpace())
   }
 
   def getOccupiedSpace: F[Long] = dir.flatMap { a =>
-    F.delay { a.size }
+    F.delay(a.size)
   }
 }

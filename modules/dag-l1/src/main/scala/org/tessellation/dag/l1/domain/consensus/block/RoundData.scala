@@ -6,11 +6,7 @@ import cats.syntax.option._
 import scala.concurrent.duration.FiniteDuration
 
 import org.tessellation.dag.domain.block.{DAGBlock, Tips}
-import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.{
-  BlockSignatureProposal,
-  CancelledBlockCreationRound,
-  Proposal
-}
+import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.{BlockSignatureProposal, CancelledBlockCreationRound, Proposal}
 import org.tessellation.dag.l1.domain.consensus.round.RoundId
 import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.security.signature.Signed

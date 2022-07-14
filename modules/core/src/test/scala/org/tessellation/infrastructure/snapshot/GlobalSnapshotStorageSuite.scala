@@ -102,7 +102,7 @@ object GlobalSnapshotStorageSuite extends MutableIOSuite with Checkers {
         mkSnapshots.flatMap {
           case (genesis, snapshot) =>
             storage.prepend(genesis) >>
-              storage.prepend(snapshot).map { expect.same(_, true) }
+              storage.prepend(snapshot).map(expect.same(_, true))
         }
       }
     }
@@ -115,7 +115,7 @@ object GlobalSnapshotStorageSuite extends MutableIOSuite with Checkers {
       mkStorage(tmpDir).flatMap { storage =>
         mkSnapshots.flatMap {
           case (_, snapshot) =>
-            storage.prepend(snapshot).map { expect.same(_, true) }
+            storage.prepend(snapshot).map(expect.same(_, true))
         }
       }
     }
@@ -129,7 +129,7 @@ object GlobalSnapshotStorageSuite extends MutableIOSuite with Checkers {
         mkSnapshots.flatMap {
           case (genesis, _) =>
             storage.prepend(genesis) >>
-              storage.get(genesis.ordinal).map { expect.same(_, genesis.some) }
+              storage.get(genesis.ordinal).map(expect.same(_, genesis.some))
         }
       }
     }
@@ -144,7 +144,7 @@ object GlobalSnapshotStorageSuite extends MutableIOSuite with Checkers {
           case (genesis, _) =>
             storage.prepend(genesis) >>
               genesis.value.hashF.flatMap { hash =>
-                storage.get(hash).map { expect.same(_, genesis.some) }
+                storage.get(hash).map(expect.same(_, genesis.some))
               }
         }
       }

@@ -30,7 +30,7 @@ trait LastGlobalSnapshotStorage[F[_]] {
 object LastGlobalSnapshotStorage {
 
   def make[F[_]: Async: Ref.Make]: F[LastGlobalSnapshotStorage[F] with LatestBalances[F]] =
-    (SignallingRef.of[F, Option[Hashed[GlobalSnapshot]]](None)).map(make(_))
+    SignallingRef.of[F, Option[Hashed[GlobalSnapshot]]](None).map(make(_))
 
   def make[F[_]: MonadThrow](
     snapshotR: SignallingRef[F, Option[Hashed[GlobalSnapshot]]]
@@ -39,8 +39,7 @@ object LastGlobalSnapshotStorage {
 
       def set(snapshot: Hashed[GlobalSnapshot]): F[Unit] =
         snapshotR.modify {
-          case Some(current)
-              if current.hash === snapshot.lastSnapshotHash && current.ordinal.next === snapshot.ordinal =>
+          case Some(current) if current.hash === snapshot.lastSnapshotHash && current.ordinal.next === snapshot.ordinal =>
             (snapshot.some, Applicative[F].unit)
           case other =>
             (other, MonadThrow[F].raiseError[Unit](new Throwable("Failure during setting new global snapshot!")))
