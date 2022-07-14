@@ -40,11 +40,10 @@ object CollateralSuite extends MutableIOSuite with Checkers {
     Collateral.make[IO](CollateralConfig(collateral), latestBalances)
   }
 
-  test("should return false when balances are not initialized and required collateral is bigger than 0") {
-    implicit sc =>
-      mkCollateral(None, Amount(25_000_000_000_000L))
-        .hasCollateral(peer1)
-        .map(expect.same(false, _))
+  test("should return true when balances are not initialized yet") { implicit sc =>
+    mkCollateral(None, Amount(25_000_000_000_000L))
+      .hasCollateral(peer1)
+      .map(expect.same(true, _))
   }
 
   test(
@@ -53,12 +52,6 @@ object CollateralSuite extends MutableIOSuite with Checkers {
     mkCollateral(Some(Map.empty), Amount(25_000_000_000_000L))
       .hasCollateral(peer1)
       .map(expect.same(false, _))
-  }
-
-  test("should return true when balances are not initialized and required collateral is 0") { implicit sc =>
-    mkCollateral(None, Amount(0L))
-      .hasCollateral(peer1)
-      .map(expect.same(true, _))
   }
 
   test(
