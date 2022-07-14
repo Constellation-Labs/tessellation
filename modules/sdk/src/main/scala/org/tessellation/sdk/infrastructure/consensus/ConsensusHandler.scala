@@ -19,7 +19,9 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object ConsensusHandler {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider, Event <: AnyRef: TypeTag: ClassTag, Key: Show: TypeTag: ClassTag, Artifact <: AnyRef: TypeTag](
+  def make[F[
+    _
+  ]: Async: KryoSerializer: SecurityProvider, Event <: AnyRef: TypeTag: ClassTag, Key: Show: TypeTag: ClassTag, Artifact <: AnyRef: TypeTag](
     storage: ConsensusStorage[F, Event, Key, Artifact],
     manager: ConsensusManager[F, Key, Artifact],
     fns: ConsensusFunctions[F, Event, Key, Artifact]
@@ -57,9 +59,8 @@ object ConsensusHandler {
           manager.checkForStateUpdate(rumor.content.key)
       }
 
-    val signedArtifactHandler = RumorHandler.fromCommonRumorConsumer[F, ConsensusArtifact[Key, Signed[Artifact]]] {
-      rumor =>
-        logger.info(s"Signed artifact received ${rumor.content.key.show}")
+    val signedArtifactHandler = RumorHandler.fromCommonRumorConsumer[F, ConsensusArtifact[Key, Signed[Artifact]]] { rumor =>
+      logger.info(s"Signed artifact received ${rumor.content.key.show}")
     }
 
     eventHandler <+>

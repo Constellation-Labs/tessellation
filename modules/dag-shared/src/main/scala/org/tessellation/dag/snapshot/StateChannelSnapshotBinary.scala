@@ -16,8 +16,7 @@ case class StateChannelSnapshotBinary(
 )
 
 object StateChannelSnapshotBinary {
-  implicit val show: Show[StateChannelSnapshotBinary] = s =>
-    s"StateChannelSnapshotBinary(lastSnapshotHash=${s.lastSnapshotHash.show})"
+  implicit val show: Show[StateChannelSnapshotBinary] = s => s"StateChannelSnapshotBinary(lastSnapshotHash=${s.lastSnapshotHash.show})"
 
   implicit val eq: Eq[StateChannelSnapshotBinary] = (x, y) => {
     implicit val arrayEq: Eq[Array[Byte]] = Eq.fromUniversalEquals[Array[Byte]]

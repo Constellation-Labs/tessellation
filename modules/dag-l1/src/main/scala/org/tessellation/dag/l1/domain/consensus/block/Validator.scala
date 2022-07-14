@@ -64,16 +64,17 @@ object Validator {
 
       res = noOwnRoundInProgress && stateReadyForConsensus && enoughPeers && enoughTips && enoughTxs
 
-      _ <- if (!res) {
-        val reason = Seq(
-          (if (!noOwnRoundInProgress) "Own round in progress" else ""),
-          (if (!stateReadyForConsensus) "State not ready for consensus" else ""),
-          (if (!enoughPeers) "Not enough peers" else ""),
-          (if (!enoughTips) "Not enough tips" else ""),
-          (if (!enoughTxs) "No transactions" else "")
-        ).filter(_.nonEmpty).mkString(", ")
-        Logger[F].debug(s"Cannot start own consensus: ${reason}")
-      } else Applicative[F].unit
+      _ <-
+        if (!res) {
+          val reason = Seq(
+            if (!noOwnRoundInProgress) "Own round in progress" else "",
+            if (!stateReadyForConsensus) "State not ready for consensus" else "",
+            if (!enoughPeers) "Not enough peers" else "",
+            if (!enoughTips) "Not enough tips" else "",
+            if (!enoughTxs) "No transactions" else ""
+          ).filter(_.nonEmpty).mkString(", ")
+          Logger[F].debug(s"Cannot start own consensus: ${reason}")
+        } else Applicative[F].unit
     } yield res
 
   def isPeerInputValid[F[_]: Async: KryoSerializer: SecurityProvider](

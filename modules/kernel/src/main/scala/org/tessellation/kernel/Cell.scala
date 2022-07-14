@@ -7,8 +7,7 @@ import cats.syntax.functor._
 
 import higherkindness.droste.{AlgebraM, CoalgebraM, scheme}
 
-class Cell[M[_]: Monad, F[_]: Traverse, A, B, S](val data: A, val hylo: S => M[B], val convert: A => S)
-    extends Hom[A, B] { // TODO: was Topos but we aren't using it yet
+class Cell[M[_]: Monad, F[_]: Traverse, A, B, S](val data: A, val hylo: S => M[B], val convert: A => S) extends Hom[A, B] { // TODO: was Topos but we aren't using it yet
   // extends Topos[A, B] {
   def run(): M[B] = hylo(convert(data))
 }
@@ -59,13 +58,12 @@ object Cell {
         case (cella @ Cell(a, _), cellb @ Cell(b, _)) =>
           val input: ΩList = a :: b
 
-          val combinedHyloM: Ω => M[Either[CellError, Ω]] = _ => {
+          val combinedHyloM: Ω => M[Either[CellError, Ω]] = _ =>
             for {
               aOutput <- cella.run()
               bOutput <- cellb.run()
               combinedOutput = aOutput.flatMap(aΩ => bOutput.map(bΩ => aΩ :: bΩ))
             } yield combinedOutput
-          }
           new Cell[M, F, Ω, Either[CellError, Ω], Ω](
             input,
             combinedHyloM,

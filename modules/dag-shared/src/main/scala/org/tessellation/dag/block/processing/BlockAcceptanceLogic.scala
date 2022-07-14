@@ -59,26 +59,25 @@ object BlockAcceptanceLogic {
       contextUpdate: BlockAcceptanceContextUpdate
     ): EitherT[F, BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)] =
       signedBlock.value.parent
-        .foldLeft((contextUpdate.parentUsages, initUsageCount).asRight[BlockRejectionReason].toEitherT[F]) {
-          (acc, parent) =>
-            acc.flatMap {
-              case (parentUsagesUpdate, blockUsages) =>
-                parentUsagesUpdate
-                  .get(parent)
-                  .toOptionT[F]
-                  .orElseF(context.getParentUsage(parent))
-                  .map { parentUsages =>
-                    val newBlockUsages =
-                      if (parentUsages >= deprecationThreshold)
-                        blockUsages |+| usageIncrement
-                      else
-                        blockUsages
-                    val newParentUsagesUpdate = parentUsagesUpdate.updated(parent, parentUsages |+| usageIncrement)
+        .foldLeft((contextUpdate.parentUsages, initUsageCount).asRight[BlockRejectionReason].toEitherT[F]) { (acc, parent) =>
+          acc.flatMap {
+            case (parentUsagesUpdate, blockUsages) =>
+              parentUsagesUpdate
+                .get(parent)
+                .toOptionT[F]
+                .orElseF(context.getParentUsage(parent))
+                .map { parentUsages =>
+                  val newBlockUsages =
+                    if (parentUsages >= deprecationThreshold)
+                      blockUsages |+| usageIncrement
+                    else
+                      blockUsages
+                  val newParentUsagesUpdate = parentUsagesUpdate.updated(parent, parentUsages |+| usageIncrement)
 
-                    (newParentUsagesUpdate, newBlockUsages)
-                  }
-                  .toRight(ParentNotFound(parent))
-            }
+                  (newParentUsagesUpdate, newBlockUsages)
+                }
+                .toRight(ParentNotFound(parent))
+          }
         }
         .leftWiden[BlockNotAcceptedReason]
         .map {
@@ -92,25 +91,24 @@ object BlockAcceptanceLogic {
       contextUpdate: BlockAcceptanceContextUpdate
     ): EitherT[F, BlockNotAcceptedReason, BlockAcceptanceContextUpdate] =
       txChains.toList
-        .foldLeft((contextUpdate.lastTxRefs, none[BlockAwaitReason]).asRight[RejectedTransaction].toEitherT[F]) {
-          (acc, tup) =>
-            acc.flatMap {
-              case (lastTxRefsUpdate, maybeAwaitingBlock) =>
-                val (address, txChain) = tup
+        .foldLeft((contextUpdate.lastTxRefs, none[BlockAwaitReason]).asRight[RejectedTransaction].toEitherT[F]) { (acc, tup) =>
+          acc.flatMap {
+            case (lastTxRefsUpdate, maybeAwaitingBlock) =>
+              val (address, txChain) = tup
 
-                val rejectionOrUpdate
-                  : F[Either[RejectedTransaction, (Map[Address, TransactionReference], Option[BlockAwaitReason])]] =
-                  for {
-                    lastTxRef <- contextUpdate.lastTxRefs
-                      .get(address)
-                      .toOptionT[F]
-                      .orElseF(context.getLastTxRef(address))
-                      .getOrElse(TransactionReference.empty)
+              val rejectionOrUpdate: F[Either[RejectedTransaction, (Map[Address, TransactionReference], Option[BlockAwaitReason])]] =
+                for {
+                  lastTxRef <- contextUpdate.lastTxRefs
+                    .get(address)
+                    .toOptionT[F]
+                    .orElseF(context.getLastTxRef(address))
+                    .getOrElse(TransactionReference.empty)
 
-                    headTxChainRef <- TransactionReference.of(txChain.head)
-                    lastTxChainRef <- TransactionReference.of(txChain.last)
+                  headTxChainRef <- TransactionReference.of(txChain.head)
+                  lastTxChainRef <- TransactionReference.of(txChain.last)
 
-                    result = if (txChain.head.parent.ordinal < lastTxRef.ordinal)
+                  result =
+                    if (txChain.head.parent.ordinal < lastTxRef.ordinal)
                       RejectedTransaction(
                         headTxChainRef,
                         ParentOrdinalBelowLastTxOrdinal(txChain.head.parent.ordinal, lastTxRef.ordinal)
@@ -133,10 +131,10 @@ object BlockAcceptanceLogic {
                     else // hashes and ordinals are equal
                       (lastTxRefsUpdate.updated(address, lastTxChainRef), maybeAwaitingBlock).asRight
 
-                  } yield result
+                } yield result
 
-                EitherT(rejectionOrUpdate)
-            }
+              EitherT(rejectionOrUpdate)
+          }
         }
         .leftWiden[BlockNotAcceptedReason]
         .flatMap {
@@ -205,19 +203,17 @@ object BlockAcceptanceLogic {
         .toList
         .traverse(_.toAddress)
         .flatMap(
-          _.filterA(
-            address =>
-              context.getBalance(address).map { balances =>
-                !balances.getOrElse(Balance.empty).satisfiesCollateral(context.getCollateral)
-              }
+          _.filterA(address =>
+            context.getBalance(address).map { balances =>
+              !balances.getOrElse(Balance.empty).satisfiesCollateral(context.getCollateral)
+            }
           )
         )
-        .map(
-          list =>
-            NonEmptyList
-              .fromList(list)
-              .map(nel => SigningPeerBelowCollateral(nel).asLeft[Unit])
-              .getOrElse(().asRight[BlockNotAcceptedReason])
+        .map(list =>
+          NonEmptyList
+            .fromList(list)
+            .map(nel => SigningPeerBelowCollateral(nel).asLeft[Unit])
+            .getOrElse(().asRight[BlockNotAcceptedReason])
         )
     )
 }

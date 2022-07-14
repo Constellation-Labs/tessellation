@@ -42,6 +42,6 @@ object CollateralDaemon {
           }
         }
         .map(_.toSet)
-        .flatMap { clusterStorage.removePeers }
+        .flatMap(clusterStorage.removePeers)
   }
 }

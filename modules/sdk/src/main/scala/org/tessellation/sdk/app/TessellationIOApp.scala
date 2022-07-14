@@ -48,15 +48,13 @@ abstract class TessellationIOApp[A <: CliMethod](
       version
     ) {
 
-  /**
-    * Command-line opts
+  /** Command-line opts
     */
   def opts: Opts[A]
 
   type KryoRegistrationIdRange
 
-  /**
-    * Kryo registration is required for (de)serialization.
+  /** Kryo registration is required for (de)serialization.
     */
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]]
 

@@ -39,8 +39,6 @@ object ConsensusStatus {
 }
 
 final case class Facilitated[A](proposalTrigger: Option[ConsensusTrigger]) extends ConsensusStatus[A]
-final case class ProposalMade[A](proposalHash: Hash, majorityTrigger: ConsensusTrigger, proposalArtifact: A)
-    extends ConsensusStatus[A]
+final case class ProposalMade[A](proposalHash: Hash, majorityTrigger: ConsensusTrigger, proposalArtifact: A) extends ConsensusStatus[A]
 final case class MajoritySigned[A](majorityHash: Hash, majorityTrigger: ConsensusTrigger) extends ConsensusStatus[A]
-final case class Finished[A](signedMajorityArtifact: Signed[A], majorityTrigger: ConsensusTrigger)
-    extends ConsensusStatus[A]
+final case class Finished[A](signedMajorityArtifact: Signed[A], majorityTrigger: ConsensusTrigger) extends ConsensusStatus[A]

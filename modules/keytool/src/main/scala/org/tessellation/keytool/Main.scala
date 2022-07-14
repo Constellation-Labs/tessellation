@@ -33,12 +33,12 @@ object Main
               .handleErrorWith(err => logger.error(err)(s"Error while generating a keystore."))
               .as(ExitCode.Success)
           case MigrateExistingKeyStoreToStorePassOnly(
-              keyStore,
-              alias,
-              storepass,
-              keypass,
-              distinguishedName,
-              certificateValidityDays
+                keyStore,
+                alias,
+                storepass,
+                keypass,
+                distinguishedName,
+                certificateValidityDays
               ) =>
             migrateKeyStoreToSinglePassword[IO](
               keyStore,

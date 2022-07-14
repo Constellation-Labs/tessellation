@@ -25,7 +25,7 @@ final case class PingHealthCheckRoutes[F[_]: Async: KryoSerializer](
 ) extends Http4sDsl[F] {
 
   private val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
-    case req @ POST -> Root => {
+    case req @ POST -> Root =>
       req
         .as[HealthCheckRoundId]
         .flatMap(healthcheck.getOwnProposal)
@@ -33,7 +33,6 @@ final case class PingHealthCheckRoutes[F[_]: Async: KryoSerializer](
           case None           => NotFound()
           case Some(proposal) => Ok(proposal)
         }
-    }
 
   }
 

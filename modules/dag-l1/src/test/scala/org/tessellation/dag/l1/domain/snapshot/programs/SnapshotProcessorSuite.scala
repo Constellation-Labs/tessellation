@@ -152,18 +152,18 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
   test("download should happen for the base no blocks case") {
     testResources.use {
       case (
-          snapshotProcessor,
-          sp,
-          kp,
-          srcKey,
-          _,
-          srcAddress,
-          dstAddress,
-          peerId,
-          balancesR,
-          blocksR,
-          lastSnapR,
-          lastAccTxR
+            snapshotProcessor,
+            sp,
+            kp,
+            srcKey,
+            _,
+            srcAddress,
+            dstAddress,
+            peerId,
+            balancesR,
+            blocksR,
+            lastSnapR,
+            lastAccTxR
           ) =>
         implicit val securityProvider = sp
         implicit val kryoPool = kp
@@ -250,18 +250,18 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
   test("download should happen for the case when there are waiting blocks in the storage") {
     testResources.use {
       case (
-          snapshotProcessor,
-          sp,
-          kp,
-          srcKey,
-          dstKey,
-          srcAddress,
-          dstAddress,
-          peerId,
-          balancesR,
-          blocksR,
-          lastSnapR,
-          lastAccTxR
+            snapshotProcessor,
+            sp,
+            kp,
+            srcKey,
+            dstKey,
+            srcAddress,
+            dstAddress,
+            peerId,
+            balancesR,
+            blocksR,
+            lastSnapR,
+            lastAccTxR
           ) =>
         implicit val securityProvider = sp
         implicit val kryoPool = kp
@@ -448,18 +448,18 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
   test("alignment at new height should happen when node is aligned with the majority in processed snapshot") {
     testResources.use {
       case (
-          snapshotProcessor,
-          sp,
-          kp,
-          srcKey,
-          dstKey,
-          srcAddress,
-          dstAddress,
-          peerId,
-          balancesR,
-          blocksR,
-          lastSnapR,
-          lastAccTxR
+            snapshotProcessor,
+            sp,
+            kp,
+            srcKey,
+            dstKey,
+            srcAddress,
+            dstAddress,
+            peerId,
+            balancesR,
+            blocksR,
+            lastSnapR,
+            lastAccTxR
           ) =>
         implicit val securityProvider = sp
         implicit val kryoPool = kp
@@ -495,11 +495,11 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           )
 
           blocks = List(
-            waitingInRangeBlock, //0
-            majorityInRangeBlock, //1
-            aboveRangeAcceptedBlock, //2
-            aboveRangeMajorityBlock, //3
-            waitingAboveRangeBlock //4
+            waitingInRangeBlock, // 0
+            majorityInRangeBlock, // 1
+            aboveRangeAcceptedBlock, // 2
+            aboveRangeMajorityBlock, // 3
+            waitingAboveRangeBlock // 4
           )
 
           hashedBlocks <- blocks.traverse(
@@ -525,8 +525,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               ordinal = snapshotOrdinal11,
               height = snapshotHeight8,
               lastSnapshotHash = hashedLastSnapshot.hash,
-              blocks =
-                SortedSet(BlockAsActiveTip(hashedBlocks(1).signed, 1L), BlockAsActiveTip(hashedBlocks(3).signed, 2L)),
+              blocks = SortedSet(BlockAsActiveTip(hashedBlocks(1).signed, 1L), BlockAsActiveTip(hashedBlocks(3).signed, 2L)),
               tips = GlobalSnapshotTips(
                 SortedSet(
                   DeprecatedTip(parent3, snapshotOrdinal11)
@@ -598,18 +597,18 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
   test("redownload should happen when node is misaligned with majority in processed snapshot") {
     testResources.use {
       case (
-          snapshotProcessor,
-          sp,
-          kp,
-          srcKey,
-          dstKey,
-          srcAddress,
-          dstAddress,
-          peerId,
-          balancesR,
-          blocksR,
-          lastSnapR,
-          lastAccTxR
+            snapshotProcessor,
+            sp,
+            kp,
+            srcKey,
+            dstKey,
+            srcAddress,
+            dstAddress,
+            peerId,
+            balancesR,
+            blocksR,
+            lastSnapR,
+            lastAccTxR
           ) =>
         implicit val securityProvider = sp
         implicit val kryoPool = kp
@@ -661,15 +660,15 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           )
 
           blocks = List(
-            waitingInRangeBlock, //0
-            waitingMajorityInRangeBlock, //1
-            acceptedMajorityInRangeBlock, //2
-            majorityUnknownBlock, //3
-            acceptedNonMajorityInRangeBlock, //4
-            aboveRangeAcceptedBlock, //5
-            aboveRangeAcceptedMajorityBlock, //6
-            aboveRangeUnknownMajorityBlock, //7
-            waitingAboveRangeBlock //8
+            waitingInRangeBlock, // 0
+            waitingMajorityInRangeBlock, // 1
+            acceptedMajorityInRangeBlock, // 2
+            majorityUnknownBlock, // 3
+            acceptedNonMajorityInRangeBlock, // 4
+            aboveRangeAcceptedBlock, // 5
+            aboveRangeAcceptedMajorityBlock, // 6
+            aboveRangeUnknownMajorityBlock, // 7
+            waitingAboveRangeBlock // 8
           )
 
           hashedBlocks <- blocks.traverse(

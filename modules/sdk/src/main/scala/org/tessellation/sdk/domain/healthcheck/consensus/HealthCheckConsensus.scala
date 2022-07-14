@@ -107,7 +107,7 @@ abstract class HealthCheckConsensus[
       }.map(_.flatten)
         .flatMap(_.traverse {
           case (peerId, proposal) =>
-            Applicative[F].whenA(peerId === proposal.owner) { handleProposal(proposal) }
+            Applicative[F].whenA(peerId === proposal.owner)(handleProposal(proposal))
         })
         .void
 
@@ -141,9 +141,7 @@ abstract class HealthCheckConsensus[
       }.flatMap {
         calculateOutcome
       }.flatTap { outcome =>
-        onOutcome(outcome).handleErrorWith(
-          e => logger.error(e)("Unhandled error on outcome action. Check implementation.")
-        )
+        onOutcome(outcome).handleErrorWith(e => logger.error(e)("Unhandled error on outcome action. Check implementation."))
       }.flatMap {
         _.values.toList.traverse {
           case (decision, round) => round.ownConsensusHealthStatus.flatMap(round.generateHistoricalData(_, decision))

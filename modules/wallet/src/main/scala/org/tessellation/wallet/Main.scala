@@ -1,4 +1,5 @@
 package org.tessellation.wallet
+
 import java.security.KeyPair
 
 import cats.MonadThrow
@@ -89,10 +90,9 @@ object Main
       prevTx <- prevTxPath match {
         case Some(path) =>
           readFromJsonFile(path)
-            .handleErrorWith(
-              e =>
-                logger.error(e)(s"Error while reading previous transaction from path $path") >> MonadThrow[F]
-                  .raiseError[Option[Signed[Transaction]]](e)
+            .handleErrorWith(e =>
+              logger.error(e)(s"Error while reading previous transaction from path $path") >> MonadThrow[F]
+                .raiseError[Option[Signed[Transaction]]](e)
             )
         case None => None.pure[F]
       }

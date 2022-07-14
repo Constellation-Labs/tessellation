@@ -82,10 +82,8 @@ object ContextualTransactionValidator {
   sealed trait ContextualTransactionValidationError
   case class ParentOrdinalLowerThenLastTxOrdinal(parentOrdinal: TransactionOrdinal, lastTxOrdinal: TransactionOrdinal)
       extends ContextualTransactionValidationError
-  case class ParentHashDifferentThanLastTxHash(parentHash: Hash, lastTxHash: Hash)
-      extends ContextualTransactionValidationError
-  case class NonContextualValidationError(error: TransactionValidationError)
-      extends ContextualTransactionValidationError
+  case class ParentHashDifferentThanLastTxHash(parentHash: Hash, lastTxHash: Hash) extends ContextualTransactionValidationError
+  case class NonContextualValidationError(error: TransactionValidationError) extends ContextualTransactionValidationError
 
   type ContextualTransactionValidationErrorOr[A] = ValidatedNec[ContextualTransactionValidationError, A]
 }

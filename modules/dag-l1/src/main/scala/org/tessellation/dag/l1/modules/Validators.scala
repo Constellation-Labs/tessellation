@@ -3,11 +3,7 @@ package org.tessellation.dag.l1.modules
 import cats.effect.Async
 
 import org.tessellation.dag.block.BlockValidator
-import org.tessellation.dag.transaction.{
-  ContextualTransactionValidator,
-  TransactionChainValidator,
-  TransactionValidator
-}
+import org.tessellation.dag.transaction.{ContextualTransactionValidator, TransactionChainValidator, TransactionValidator}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.PeerId

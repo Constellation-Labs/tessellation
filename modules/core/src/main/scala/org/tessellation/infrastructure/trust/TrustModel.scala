@@ -34,10 +34,15 @@ object TrustModel {
 
     val trustNodes = allNodesTrustLabels.map {
       case (peerId, labels) =>
-        TrustNode(peerIdToIdx(peerId), 0, 0, labels.map {
-          case (pid, label) =>
-            TrustEdge(peerIdToIdx(peerId), peerIdToIdx(pid), label, peerId == selfPeerId)
-        }.toList)
+        TrustNode(
+          peerIdToIdx(peerId),
+          0,
+          0,
+          labels.map {
+            case (pid, label) =>
+              TrustEdge(peerIdToIdx(peerId), peerIdToIdx(pid), label, peerId == selfPeerId)
+          }.toList
+        )
     }.toList
     calculateTrust(trustNodes, selfPeerIdx).map { case (k, v) => idxToPeerId(k) -> v }
   }

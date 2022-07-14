@@ -1,10 +1,6 @@
 package org.tessellation.dag.l1.domain.consensus.block
 
-import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.{
-  BlockSignatureProposal,
-  CancelledBlockCreationRound,
-  Proposal
-}
+import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.{BlockSignatureProposal, CancelledBlockCreationRound, Proposal}
 import org.tessellation.kernel.Ω
 
 sealed trait AlgebraCommand extends Ω

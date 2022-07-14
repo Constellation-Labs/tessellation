@@ -96,7 +96,7 @@ object SybilAttackSuite extends SimpleIOSuite with Checkers {
               col.map(_ :+ n)
             }
         }
-      ser = networkData.flatMap { _.map { _.asJson.noSpaces } }
+      ser = networkData.flatMap(_.map(_.asJson.noSpaces))
       _ <- IO.delay(
         Files
           .write(
@@ -134,9 +134,12 @@ object SybilAttackSuite extends SimpleIOSuite with Checkers {
           else node
         }
         val attackData = networks(1).map { tn =>
-          val node = tn.copy(tn.id + numNodes, edges = tn.edges.map { e =>
-            e.copy(src = e.src + numNodes, dst = e.dst + numNodes)
-          })
+          val node = tn.copy(
+            tn.id + numNodes,
+            edges = tn.edges.map { e =>
+              e.copy(src = e.src + numNodes, dst = e.dst + numNodes)
+            }
+          )
           // Add a single strong edge between networks.
           if (node.id == maliciousEdgeId)
             node.copy(edges = node.edges.appended(TrustEdge(node.id, maliciousInviteNodeId, 1.0, isLabel = true)))
@@ -219,11 +222,17 @@ object SybilAttackSuite extends SimpleIOSuite with Checkers {
             else node
           }
 
-        val regularAndAttack = List(networks.head, networks(1).map { tn =>
-          tn.copy(tn.id + numNodes, edges = tn.edges.map { e =>
-            e.copy(src = e.src + numNodes, dst = e.dst + numNodes)
-          })
-        })
+        val regularAndAttack = List(
+          networks.head,
+          networks(1).map { tn =>
+            tn.copy(
+              tn.id + numNodes,
+              edges = tn.edges.map { e =>
+                e.copy(src = e.src + numNodes, dst = e.dst + numNodes)
+              }
+            )
+          }
+        )
 
         val allData = regularAndAttack.map { n =>
           withEdge(n, maliciousInviteNodeId, maliciousEdgeId)

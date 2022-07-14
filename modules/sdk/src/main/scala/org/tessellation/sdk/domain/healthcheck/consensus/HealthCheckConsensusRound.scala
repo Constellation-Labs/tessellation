@@ -92,7 +92,7 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey, A <: HealthChe
             (m, none)
           }
       }.flatMap {
-        _.fold { Applicative[F].unit } { proposal =>
+        _.fold(Applicative[F].unit) { proposal =>
           roundIds.update(_ + proposal.roundId) >>
             peers.update(_ ++ proposal.clusterState.filterNot(p => p === selfId || p === key.id))
         }
@@ -177,7 +177,10 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey, A <: HealthChe
 
 object HealthCheckConsensusRound {
 
-  def make[F[_]: Async, K <: HealthCheckKey, A <: HealthCheckStatus, B <: ConsensusHealthStatus[K, A]: TypeTag, C <: HealthCheckConsensusDecision](
+  def make[F[_]: Async, K <: HealthCheckKey, A <: HealthCheckStatus, B <: ConsensusHealthStatus[
+    K,
+    A
+  ]: TypeTag, C <: HealthCheckConsensusDecision](
     key: K,
     roundId: HealthCheckRoundId,
     initialPeers: Set[PeerId],

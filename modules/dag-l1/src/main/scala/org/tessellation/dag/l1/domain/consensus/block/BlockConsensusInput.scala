@@ -33,8 +33,7 @@ object BlockConsensusInput {
     transactions: Set[Signed[Transaction]],
     tips: Tips
   ) extends PeerBlockConsensusInput
-  case class BlockSignatureProposal(roundId: RoundId, senderId: PeerId, owner: PeerId, signature: Signature)
-      extends PeerBlockConsensusInput
+  case class BlockSignatureProposal(roundId: RoundId, senderId: PeerId, owner: PeerId, signature: Signature) extends PeerBlockConsensusInput
   case class CancelledBlockCreationRound(roundId: RoundId, senderId: PeerId, owner: PeerId, reason: CancellationReason)
       extends PeerBlockConsensusInput
 

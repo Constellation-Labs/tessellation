@@ -54,7 +54,9 @@ trait ConsensusStateUpdater[F[_], Key, Artifact] {
 
 object ConsensusStateUpdater {
 
-  def make[F[_]: Async: Clock: KryoSerializer: SecurityProvider, Event, Key: Show: Order: Next: TypeTag: ClassTag, Artifact <: AnyRef: Show: TypeTag](
+  def make[F[
+    _
+  ]: Async: Clock: KryoSerializer: SecurityProvider, Event, Key: Show: Order: Next: TypeTag: ClassTag, Artifact <: AnyRef: Show: TypeTag](
     consensusFns: ConsensusFunctions[F, Event, Key, Artifact],
     consensusStorage: ConsensusStorage[F, Event, Key, Artifact],
     clusterStorage: ClusterStorage[F],
@@ -154,9 +156,9 @@ object ConsensusStateUpdater {
         .map(_.orElse(maybeUpdatedState.map(state => (state, Applicative[F].unit))))
     }
 
-    /**
-      * Updates the facilitator list if necessary
-      * @return Some(newState) if facilitator list required update, otherwise None
+    /** Updates the facilitator list if necessary
+      * @return
+      *   Some(newState) if facilitator list required update, otherwise None
       */
     private def internalTryUpdateFacilitators(resources: ConsensusResources[Artifact])(
       state: ConsensusState[Key, Artifact]
@@ -180,9 +182,9 @@ object ConsensusStateUpdater {
         none
     }
 
-    /**
-      * Updates the status if necessary
-      * @return Some(newState) if state required update, otherwise None
+    /** Updates the status if necessary
+      * @return
+      *   Some(newState) if state required update, otherwise None
       */
     private def internalTryUpdateStatus(key: Key, resources: ConsensusResources[Artifact])(
       state: ConsensusState[Key, Artifact]

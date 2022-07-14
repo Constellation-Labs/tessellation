@@ -9,9 +9,9 @@ object SecureRandom {
 
   def get[F[_]: Async]: F[jSecureRandom] =
     Async[F].delay {
-      try {
+      try
         jSecureRandom.getInstance(secureRandomInstance)
-      } catch {
+      catch {
         case _: Throwable => jSecureRandom.getInstanceStrong
       }
     }

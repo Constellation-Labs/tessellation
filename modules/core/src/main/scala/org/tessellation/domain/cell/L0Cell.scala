@@ -31,27 +31,27 @@ class L0Cell[F[_]: Async](
   l1OutputQueue: Queue[F, Signed[DAGBlock]],
   stateChannelOutputQueue: Queue[F, StateChannelOutput]
 ) extends Cell[F, StackF, L0CellInput, Either[CellError, Ω], CoalgebraCommand](
-      data, {
-        scheme.hyloM(
-          AlgebraM[F, StackF, Either[CellError, Ω]] {
-            case More(a) => a.pure[F]
-            case Done(Right(cmd: AlgebraCommand)) =>
-              cmd match {
-                case EnqueueStateChannelSnapshot(snapshot) =>
-                  Algebra.enqueueStateChannelSnapshot(stateChannelOutputQueue)(snapshot)
-                case EnqueueDAGL1Data(data) =>
-                  Algebra.enqueueDAGL1Data(l1OutputQueue)(data)
-                case NoAction =>
-                  NullTerminal.asRight[CellError].widen[Ω].pure[F]
-              }
-            case Done(other) => other.pure[F]
-          },
-          CoalgebraM[F, StackF, CoalgebraCommand] {
-            case ProcessDAGL1(data)                    => Coalgebra.processDAGL1(data)
-            case ProcessStateChannelSnapshot(snapshot) => Coalgebra.processStateChannelSnapshot(snapshot)
-          }
-        )
-      }, {
+      data,
+      scheme.hyloM(
+        AlgebraM[F, StackF, Either[CellError, Ω]] {
+          case More(a) => a.pure[F]
+          case Done(Right(cmd: AlgebraCommand)) =>
+            cmd match {
+              case EnqueueStateChannelSnapshot(snapshot) =>
+                Algebra.enqueueStateChannelSnapshot(stateChannelOutputQueue)(snapshot)
+              case EnqueueDAGL1Data(data) =>
+                Algebra.enqueueDAGL1Data(l1OutputQueue)(data)
+              case NoAction =>
+                NullTerminal.asRight[CellError].widen[Ω].pure[F]
+            }
+          case Done(other) => other.pure[F]
+        },
+        CoalgebraM[F, StackF, CoalgebraCommand] {
+          case ProcessDAGL1(data)                    => Coalgebra.processDAGL1(data)
+          case ProcessStateChannelSnapshot(snapshot) => Coalgebra.processStateChannelSnapshot(snapshot)
+        }
+      ),
+      {
         case HandleDAGL1(data)                    => ProcessDAGL1(data)
         case HandleStateChannelSnapshot(snapshot) => ProcessStateChannelSnapshot(snapshot)
       }

@@ -49,41 +49,42 @@ object BlockAcceptanceManagerSuite extends MutableIOSuite with Checkers {
           context: BlockAcceptanceContext[IO],
           contextUpdate: BlockAcceptanceContextUpdate
         ): EitherT[IO, BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)] =
-          EitherT(for {
-            wasSeen <- state.getAndUpdate(wasSeen => wasSeen + ((block, true)))
-          } yield {
-            block.parent.head match {
-              case `validAcceptedParent` =>
-                (BlockAcceptanceContextUpdate.empty.copy(parentUsages = Map((block.parent.head, 1L))), initUsageCount)
-                  .asRight[BlockNotAcceptedReason]
+          EitherT(
+            for {
+              wasSeen <- state.getAndUpdate(wasSeen => wasSeen + ((block, true)))
+            } yield
+              block.parent.head match {
+                case `validAcceptedParent` =>
+                  (BlockAcceptanceContextUpdate.empty.copy(parentUsages = Map((block.parent.head, 1L))), initUsageCount)
+                    .asRight[BlockNotAcceptedReason]
 
-              case `validRejectedParent` =>
-                ParentNotFound(validRejectedParent)
-                  .asLeft[(BlockAcceptanceContextUpdate, UsageCount)]
-                  .leftWiden[BlockNotAcceptedReason]
+                case `validRejectedParent` =>
+                  ParentNotFound(validRejectedParent)
+                    .asLeft[(BlockAcceptanceContextUpdate, UsageCount)]
+                    .leftWiden[BlockNotAcceptedReason]
 
-              case `validAwaitingParent` =>
-                SigningPeerBelowCollateral(NonEmptyList.of(commonAddress))
-                  .asLeft[(BlockAcceptanceContextUpdate, UsageCount)]
-                  .leftWiden[BlockNotAcceptedReason]
+                case `validAwaitingParent` =>
+                  SigningPeerBelowCollateral(NonEmptyList.of(commonAddress))
+                    .asLeft[(BlockAcceptanceContextUpdate, UsageCount)]
+                    .leftWiden[BlockNotAcceptedReason]
 
-              case `validInitiallyAwaitingParent` if !wasSeen.apply(block) =>
-                SigningPeerBelowCollateral(NonEmptyList.of(commonAddress))
-                  .asLeft[(BlockAcceptanceContextUpdate, UsageCount)]
-                  .leftWiden[BlockNotAcceptedReason]
+                case `validInitiallyAwaitingParent` if !wasSeen.apply(block) =>
+                  SigningPeerBelowCollateral(NonEmptyList.of(commonAddress))
+                    .asLeft[(BlockAcceptanceContextUpdate, UsageCount)]
+                    .leftWiden[BlockNotAcceptedReason]
 
-              case `validInitiallyAwaitingParent` if wasSeen.apply(block) && acceptInitiallyAwaiting =>
-                (BlockAcceptanceContextUpdate.empty.copy(parentUsages = Map((block.parent.head, 1L))), initUsageCount)
-                  .asRight[BlockNotAcceptedReason]
+                case `validInitiallyAwaitingParent` if wasSeen.apply(block) && acceptInitiallyAwaiting =>
+                  (BlockAcceptanceContextUpdate.empty.copy(parentUsages = Map((block.parent.head, 1L))), initUsageCount)
+                    .asRight[BlockNotAcceptedReason]
 
-              case `validInitiallyAwaitingParent` if wasSeen.apply(block) && !acceptInitiallyAwaiting =>
-                ParentNotFound(validInitiallyAwaitingParent)
-                  .asLeft[(BlockAcceptanceContextUpdate, UsageCount)]
-                  .leftWiden[BlockNotAcceptedReason]
+                case `validInitiallyAwaitingParent` if wasSeen.apply(block) && !acceptInitiallyAwaiting =>
+                  ParentNotFound(validInitiallyAwaitingParent)
+                    .asLeft[(BlockAcceptanceContextUpdate, UsageCount)]
+                    .leftWiden[BlockNotAcceptedReason]
 
-              case _ => ???
-            }
-          })
+                case _ => ???
+              }
+          )
       }
 
       val blockValidator = new BlockValidator[IO] {

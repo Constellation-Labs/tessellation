@@ -42,7 +42,7 @@ object SelfSignedCertificate {
       signer <- Async[F].delay {
         new JcaContentSignerBuilder(algorithm).setProvider(provider).build(pair.getPrivate)
       }
-      certificateHolder <- Async[F].delay { builder.build(signer) }
+      certificateHolder <- Async[F].delay(builder.build(signer))
       selfSignedCertificate <- Async[F].delay {
         new JcaX509CertificateConverter().setProvider(provider).getCertificate(certificateHolder)
       }

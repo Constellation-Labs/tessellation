@@ -101,8 +101,7 @@ object SnapshotProcessor {
     override def getMessage: String =
       s"Unexpected case during global snapshot processing! Last: (height: $lastHeight, subHeight: $lastSubHeight, ordinal: $lastOrdinal) processing: (height: $processingHeight, subHeight:$processingSubHeight, ordinal: $processingOrdinal)."
   }
-  case class TipsGotMisaligned(deprecatedToAdd: Set[ProofsHash], activeToDeprecate: Set[ProofsHash])
-      extends SnapshotProcessingError {
+  case class TipsGotMisaligned(deprecatedToAdd: Set[ProofsHash], activeToDeprecate: Set[ProofsHash]) extends SnapshotProcessingError {
     override def getMessage: String =
       s"Tips got misaligned! Check the implementation! deprecatedToAdd -> $deprecatedToAdd not equal activeToDeprecate -> $activeToDeprecate"
   }
@@ -197,13 +196,13 @@ sealed abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityPro
           }
 
       case RedownloadNeeded(
-          toAdd,
-          toMarkMajority,
-          acceptedToRemove,
-          obsoleteToRemove,
-          toReset,
-          tipsToDeprecate,
-          tipsToRemove
+            toAdd,
+            toMarkMajority,
+            acceptedToRemove,
+            obsoleteToRemove,
+            toReset,
+            tipsToDeprecate,
+            tipsToRemove
           ) =>
         val adjustToMajority: F[Unit] =
           blockStorage.adjustToMajority(
@@ -286,11 +285,11 @@ sealed abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityPro
         case Some(last) if last.ordinal.next === globalSnapshot.ordinal && last.height < globalSnapshot.height =>
           blockStorage.getBlocksForMajorityReconciliation(last.height, globalSnapshot.height).flatMap {
             case MajorityReconciliationData(
-                deprecatedTips,
-                activeTips,
-                waitingInRange,
-                acceptedInRange,
-                acceptedAbove
+                  deprecatedTips,
+                  activeTips,
+                  waitingInRange,
+                  acceptedInRange,
+                  acceptedAbove
                 ) =>
               val acceptedLocally = acceptedInRange ++ acceptedAbove
               val onlyInMajority = acceptedInMajority -- acceptedLocally

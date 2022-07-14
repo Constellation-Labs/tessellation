@@ -19,8 +19,7 @@ sealed trait BlockNotAcceptedReason
 sealed trait BlockRejectionReason extends BlockNotAcceptedReason
 case class ValidationFailed(reasons: NonEmptyList[BlockValidationError]) extends BlockRejectionReason
 case class ParentNotFound(parent: BlockReference) extends BlockRejectionReason
-case class RejectedTransaction(tx: TransactionReference, reason: TransactionRejectionReason)
-    extends BlockRejectionReason
+case class RejectedTransaction(tx: TransactionReference, reason: TransactionRejectionReason) extends BlockRejectionReason
 
 @derive(eqv, show)
 sealed trait BlockAwaitReason extends BlockNotAcceptedReason

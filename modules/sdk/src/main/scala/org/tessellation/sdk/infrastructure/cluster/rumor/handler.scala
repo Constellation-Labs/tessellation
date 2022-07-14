@@ -24,11 +24,11 @@ object handler {
       case PeerRumor(origin, _, state) =>
         logger.info(s"Received state=${state.show} from id=${origin.show}") >>
           clusterStorage.setPeerState(origin, state) >> {
-          if (NodeState.absent.contains(state))
-            clusterStorage.removePeer(origin)
-          else
-            Applicative[F].unit
-        }
+            if (NodeState.absent.contains(state))
+              clusterStorage.removePeer(origin)
+            else
+              Applicative[F].unit
+          }
     }
   }
 }

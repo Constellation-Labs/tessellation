@@ -68,10 +68,9 @@ object CollateralSuite extends MutableIOSuite with Checkers {
       .map(expect.same(true, _))
   }
 
-  test("should return false when the balance for a given address is lower than the required collateral") {
-    implicit sc =>
-      mkCollateral(Some(Map((address1, Balance(24_999_999_999_999L)))), Amount(25_000_000_000_000L))
-        .hasCollateral(peer1)
-        .map(expect.same(false, _))
+  test("should return false when the balance for a given address is lower than the required collateral") { implicit sc =>
+    mkCollateral(Some(Map((address1, Balance(24_999_999_999_999L)))), Amount(25_000_000_000_000L))
+      .hasCollateral(peer1)
+      .map(expect.same(false, _))
   }
 }

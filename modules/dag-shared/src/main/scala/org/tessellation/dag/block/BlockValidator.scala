@@ -149,8 +149,7 @@ object BlockValidator {
   @derive(eqv, show)
   sealed trait BlockValidationError
   case class InvalidTransactionChain(error: TransactionChainBroken) extends BlockValidationError
-  case class InvalidTransaction(transactionReference: TransactionReference, error: TransactionValidationError)
-      extends BlockValidationError
+  case class InvalidTransaction(transactionReference: TransactionReference, error: TransactionValidationError) extends BlockValidationError
   case class InvalidSigned(error: SignedValidationError) extends BlockValidationError
   case class NotEnoughParents(parentCount: Int, minParentCount: Int) extends BlockValidationError
   case class NonUniqueParents(duplicatedParents: NonEmptyList[BlockReference]) extends BlockValidationError

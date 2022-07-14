@@ -1,4 +1,5 @@
 package org.tessellation.wallet.transaction
+
 import cats.effect.Async
 
 import org.tessellation.schema.transaction.Transaction

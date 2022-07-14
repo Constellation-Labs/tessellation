@@ -2,16 +2,14 @@ package org.tessellation.infrastructure.trust
 
 import scala.collection.immutable.Map
 
-/**
-  * See example usage here : https://github.com/djelenc/alpha-testbed/blob/83e669e69463872aa84017051392c885d4183d1d/src/test/java/atb/trustmodel/EigenTrustTMTest.java#L24
-  * Reimplemented from atb.trustmodel.EigenTrust
-  * https://nlp.stanford.edu/pubs/eigentrust.pdf
+/** See example usage here :
+  * https://github.com/djelenc/alpha-testbed/blob/83e669e69463872aa84017051392c885d4183d1d/src/test/java/atb/trustmodel/EigenTrustTMTest.java#L24
+  * Reimplemented from atb.trustmodel.EigenTrust https://nlp.stanford.edu/pubs/eigentrust.pdf
   *
-  * This uses only a subset of code -- ignores the opinion / experience code implemented by raw example
-  * and expects a raw C_ij trust matrix to be supplied. Also mostly ignores pre-trust vector
+  * This uses only a subset of code -- ignores the opinion / experience code implemented by raw example and expects a raw C_ij trust matrix
+  * to be supplied. Also mostly ignores pre-trust vector
   *
   * Code can be optimized with use of breeze matrix
-  *
   */
 object EigenTrust {
 
@@ -51,9 +49,8 @@ object EigenTrust {
     epsilon: Double = 0.01
   ): Boolean = {
     var sum = 0d
-    for (i <- t_old.indices) {
+    for (i <- t_old.indices)
       sum += (t_new(i) - t_old(i)) * (t_new(i) - t_old(i))
-    }
     Math.sqrt(sum) < epsilon
   }
 
@@ -74,7 +71,7 @@ object EigenTrust {
             preTrustVector(j) += col
         }
       }
-      preTrustVector = preTrustVector.map { _ / length }
+      preTrustVector = preTrustVector.map(_ / length)
     }
     val length = preTrustVector.length
     val t_new = new Array[Double](length)
@@ -86,9 +83,8 @@ object EigenTrust {
       // t_new = C * t_old
       for (row <- t_old.indices) {
         var sum = 0d
-        for (col <- t_old.indices) {
+        for (col <- t_old.indices)
           sum += trustMatrixCij(row)(col) * t_old(col)
-        }
         t_new(row) = sum
       }
       // t_new = (1 - weight) * t_new + weight * p
@@ -96,13 +92,12 @@ object EigenTrust {
         val weighted = preTrustWeight * preTrustVector(i)
         t_new(i) = (1 - preTrustWeight) * t_new(i) + weighted
       }
-    } while ({
+    } while (
       !hasConverged(t_new, t_old, epsilon)
-    })
+    )
     val trust = new scala.collection.mutable.HashMap[Int, Double]
-    for (i <- t_old.indices) {
+    for (i <- t_old.indices)
       trust.put(i, t_new(i))
-    }
     trust.toMap
   }
 

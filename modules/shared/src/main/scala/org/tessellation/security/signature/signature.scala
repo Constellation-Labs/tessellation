@@ -66,7 +66,7 @@ object signature {
     signatureProof: SignatureProof
   ): F[Boolean] = {
     val verifyResult = for {
-      signatureBytes <- Async[F].delay { signatureProof.signature.coerce.toBytes }
+      signatureBytes <- Async[F].delay(signatureProof.signature.coerce.toBytes)
       publicKey <- signatureProof.id.hex.toPublicKey
       result <- verifySignature(hash.value.getBytes(StandardCharsets.UTF_8), signatureBytes)(publicKey)
     } yield result

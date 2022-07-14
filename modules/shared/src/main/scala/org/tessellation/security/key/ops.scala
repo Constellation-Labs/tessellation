@@ -39,8 +39,8 @@ object ops {
     def toAddress: Address = {
       val hash = toHash.coerce
       val end = hash.slice(hash.length - 36, hash.length)
-      val validInt = end.filter { Character.isDigit }
-      val ints = validInt.map { _.toString.toInt }
+      val validInt = end.filter(Character.isDigit)
+      val ints = validInt.map(_.toString.toInt)
       val sum = ints.sum
       val par = sum % 9
       val res2: DAGAddress = refineV[DAGAddressRefined].unsafeFrom(s"DAG$par$end")

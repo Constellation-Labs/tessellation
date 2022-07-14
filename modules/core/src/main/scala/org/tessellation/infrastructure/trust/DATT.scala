@@ -1,7 +1,6 @@
 package org.tessellation.infrastructure.trust
 
-/**
-  * Directed Acyclic Transitive Trust Scores
+/** Directed Acyclic Transitive Trust Scores
   */
 object DATT {
 
@@ -19,7 +18,7 @@ object DATT {
     while (currentNeighborExpansion.nonEmpty) {
       val nextNeighborExpansion = scala.collection.mutable.HashSet.empty[K]
       val dotScores = scala.collection.mutable.HashMap.empty[K, scala.collection.mutable.HashMap[K, Double]]
-      for (neighbor <- currentNeighborExpansion) {
+      for (neighbor <- currentNeighborExpansion)
         scores.get(neighbor).foreach { neighborScore =>
           if (neighborScore > expansionThreshold && neighborScore > 0) {
             trust.get(neighbor).foreach { outerLabels =>
@@ -36,7 +35,6 @@ object DATT {
             }
           }
         }
-      }
       dotScores.foreach {
         case (k, v) =>
           val totalWeight = v.map { case (weightingPeer, _) => scores(weightingPeer) }.sum

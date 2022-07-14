@@ -80,8 +80,7 @@ object Signed {
     def hasValidSignature[F[_]: Async: SecurityProvider: KryoSerializer]: F[Boolean] =
       validProofs.map(_.isRight)
 
-    def validProofs[F[_]: Async: SecurityProvider: KryoSerializer]
-      : F[Either[NonEmptySet[SignatureProof], NonEmptySet[SignatureProof]]] =
+    def validProofs[F[_]: Async: SecurityProvider: KryoSerializer]: F[Either[NonEmptySet[SignatureProof], NonEmptySet[SignatureProof]]] =
       for {
         hash <- signed.value.hashF
         invalidOrValidProofs <- signed.proofs.toNonEmptyList.traverse { proof =>
@@ -98,8 +97,7 @@ object Signed {
         }
       } yield invalidOrValidProofs
 
-    def toHashedWithSignatureCheck[F[_]: Async: KryoSerializer: SecurityProvider]
-      : F[Either[InvalidSignatureForHash[A], Hashed[A]]] =
+    def toHashedWithSignatureCheck[F[_]: Async: KryoSerializer: SecurityProvider]: F[Either[InvalidSignatureForHash[A], Hashed[A]]] =
       hasValidSignature.ifM(
         toHashed.map(_.asRight[InvalidSignatureForHash[A]]),
         InvalidSignatureForHash(signed).asLeft[Hashed[A]].pure[F]

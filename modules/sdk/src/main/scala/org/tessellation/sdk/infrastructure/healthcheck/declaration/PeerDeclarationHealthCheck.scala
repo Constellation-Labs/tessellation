@@ -61,7 +61,7 @@ object PeerDeclarationHealthCheck {
         def requestProposal(peer: PeerId, round: HealthCheckRoundId): F[Option[Status[K]]] =
           clusterStorage
             .getPeer(peer)
-            .flatMap { _.map(toP2PContext).traverse(httpClient.requestProposal(round).run) }
+            .flatMap(_.map(toP2PContext).traverse(httpClient.requestProposal(round).run))
             .map(_.flatten)
 
         def periodic: F[Unit] =

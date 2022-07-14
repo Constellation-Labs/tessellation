@@ -107,7 +107,7 @@ object GlobalSnapshotStorage {
             .fold(Applicative[F].unit)(offloadQueue.offer(_))
       }
 
-    Spawn[F].start { offloadProcess }.map { _ =>
+    Spawn[F].start(offloadProcess).map { _ =>
       new GlobalSnapshotStorage[F] with LatestBalances[F] {
         def prepend(snapshot: Signed[GlobalSnapshot]): F[Boolean] =
           headRef.modify {

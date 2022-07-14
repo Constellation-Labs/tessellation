@@ -88,7 +88,7 @@ object GossipDaemon {
 
     private def verifyCollateral(batch: RumorBatch): F[RumorBatch] =
       batch.filterA {
-        case (hash, signedRumor) => {
+        case (hash, signedRumor) =>
           signedRumor.proofs.toNonEmptyList
             .map(_.id)
             .map(PeerId.fromId)
@@ -100,7 +100,6 @@ object GossipDaemon {
                 )
                 .unlessA
             )
-        }
       }
 
     private def sortRumors(batch: RumorBatch): RumorBatch =
@@ -127,8 +126,9 @@ object GossipDaemon {
       for {
         _ <- Temporal[F].sleep(cfg.interval)
         activeHashes <- rumorStorage.getActiveHashes
-        _ <- if (activeHashes.nonEmpty) runGossipRounds(activeHashes)
-        else Applicative[F].unit
+        _ <-
+          if (activeHashes.nonEmpty) runGossipRounds(activeHashes)
+          else Applicative[F].unit
       } yield ()
 
     private def runGossipRounds(activeHashes: List[Hash]): F[Unit] =
@@ -139,7 +139,7 @@ object GossipDaemon {
         _ <- selectedPeers.parTraverse { peer =>
           runGossipRound(activeHashes, seenHashes, peer).handleErrorWith { err =>
             logger.error(err)(s"Error running gossip round with peer ${peer.show}") >>
-              Spawn[F].start { healthcheck.triggerCheckForPeer(peer) }.void
+              Spawn[F].start(healthcheck.triggerCheckForPeer(peer)).void
           }
         }
       } yield ()

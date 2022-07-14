@@ -31,7 +31,7 @@ object TrustStorage {
       def getTrust: F[Map[PeerId, TrustInfo]] = trust.get
 
       def getPublicTrust: F[PublicTrust] = getTrust.map { trust =>
-        PublicTrust(trust.mapFilter { _.publicTrust })
+        PublicTrust(trust.mapFilter(_.publicTrust))
       }
 
       def updatePeerPublicTrustInfo(peerId: PeerId, publicTrust: PublicTrust): F[Unit] = trust.update { t =>
