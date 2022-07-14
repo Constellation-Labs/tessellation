@@ -4,6 +4,8 @@ import java.security.PublicKey
 
 import cats.effect.Async
 
+import scala.util.control.NoStackTrace
+
 import org.tessellation.domain.aci.StateChannelOutput
 import org.tessellation.ext.kryo._
 import org.tessellation.schema.peer.PeerId
@@ -27,5 +29,7 @@ package object tessellation {
     def toPublic[F[_]: Async: SecurityProvider]: F[PublicKey] =
       id.coerce.toPublicKey
   }
+
+  case object OwnCollateralNotSatisfied extends NoStackTrace
 
 }

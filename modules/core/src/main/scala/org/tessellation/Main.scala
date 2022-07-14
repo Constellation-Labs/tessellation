@@ -1,6 +1,8 @@
 package org.tessellation
 
 import cats.effect._
+import cats.syntax.applicative._
+import cats.syntax.applicativeError._
 import cats.syntax.option._
 import cats.syntax.semigroupk._
 
@@ -106,6 +108,9 @@ object Main
 
               Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair).flatMap { signedGenesis =>
                 storages.globalSnapshot.prepend(signedGenesis) >>
+                  services.collateral
+                    .hasCollateral(sdk.nodeId)
+                    .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
                   services.consensus.storage.setLastKeyAndArtifact((genesis.ordinal, signedGenesis).some) >>
                   services.consensus.manager.scheduleTriggerOnTime
               }
