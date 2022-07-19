@@ -53,7 +53,7 @@ lazy val root = (project in file("."))
   .settings(
     name := "tessellation"
   )
-  .aggregate(keytool, kernel, shared, core, testShared, wallet, dagShared, sdk, dagL1)
+  .aggregate(keytool, kernel, shared, core, testShared, wallet, dagShared, sdk, dagL1, rosetta)
 
 lazy val kernel = (project in file("modules/kernel"))
   .enablePlugins(AshScriptPlugin)
@@ -288,6 +288,41 @@ lazy val dagShared = (project in file("modules/dag-shared"))
       CompilerPlugin.betterMonadicFor,
       CompilerPlugin.semanticDB,
       Libraries.logback % Runtime
+    )
+  )
+
+lazy val circeVersion         = "0.11.0"
+lazy val finagleVersion       = "6.45.0"
+lazy val finchVersion         = "0.15.1"
+lazy val scalaTestVersion     = "3.0.0"
+
+lazy val rosetta = (project in file("modules/rosetta"))
+  .enablePlugins(JavaAppPackaging)
+  .dependsOn(shared % "compile->compile;test->test",
+    testShared % Test, keytool, sdk, wallet, dagShared)
+  .settings(
+    name := "tessellation-rosetta",
+    Defaults.itSettings,
+    scalafixCommonSettings,
+    commonSettings,
+    commonTestSettings,
+    makeBatScripts := Seq(),
+    libraryDependencies := Seq(
+      CompilerPlugin.kindProjector,
+      CompilerPlugin.betterMonadicFor,
+      CompilerPlugin.semanticDB,
+      Libraries.logback % Runtime,
+      Libraries.circeCore,
+      Libraries.circeGeneric,
+      Libraries.circeParser,
+      Libraries.circeRefined,
+      Libraries.circeShapes,
+      Libraries.circeDerivation,
+      Libraries.http4sDsl,
+      Libraries.http4sServer,
+      Libraries.http4sClient,
+      Libraries.http4sCirce,
+      Libraries.http4sJwtAuth,
     )
   )
 
