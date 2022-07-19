@@ -4,10 +4,12 @@ import cats.effect.std.Queue
 import cats.effect.{Async, Spawn}
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+import cats.syntax.show._
 
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.PeerBlockConsensusInput
 import org.tessellation.dag.l1.domain.transaction.{TransactionService, TransactionStorage}
 import org.tessellation.ext.http4s.{AddressVar, HashVar}
+import org.tessellation.schema.http.{ErrorCause, ErrorResponse}
 import org.tessellation.schema.transaction.{Transaction, TransactionStatus, TransactionView}
 import org.tessellation.security.signature.Signed
 
@@ -28,8 +30,8 @@ final case class Routes[F[_]: Async](
       for {
         transaction <- req.as[Signed[Transaction]]
         response <- transactionService.offer(transaction).flatMap {
-          case Left(e)     => BadRequest(e.show.asJson)
-          case Right(hash) => Ok(hash.asJson)
+          case Left(errors) => BadRequest(ErrorResponse(errors.map(e => ErrorCause(e.show))).asJson)
+          case Right(hash)  => Ok(hash.asJson)
         }
       } yield response
 
