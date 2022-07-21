@@ -20,7 +20,8 @@ object Session {
   ): Session[F] =
     new Session[F] {
 
-      private val validNodeStatesForSessionCreation: Set[NodeState] = Set(NodeState.GenesisReady, NodeState.ReadyToJoin)
+      private val validNodeStatesForSessionCreation: Set[NodeState] =
+        Set(NodeState.GenesisReady, NodeState.RollbackDone, NodeState.ReadyToJoin)
 
       def createSession: F[SessionToken] =
         nodeStorage

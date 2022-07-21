@@ -38,7 +38,7 @@ object GlobalSnapshotStorageSuite extends MutableIOSuite with Checkers {
 
   def mkStorage(tmpDir: File)(implicit K: KryoSerializer[IO]) =
     GlobalSnapshotLocalFileSystemStorage.make[IO](Path(tmpDir.pathAsString)).flatMap {
-      GlobalSnapshotStorage.make[IO](_, 5L)
+      GlobalSnapshotStorage.make[IO](_, 5L, None)
     }
 
   def mkSnapshots(

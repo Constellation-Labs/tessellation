@@ -25,6 +25,9 @@ object node {
     case object LoadingGenesis extends NodeState
     case object GenesisReady extends NodeState
 
+    case object RollbackInProgress extends NodeState
+    case object RollbackDone extends NodeState
+
     case object StartingSession extends NodeState
     case object SessionStarted extends NodeState
 

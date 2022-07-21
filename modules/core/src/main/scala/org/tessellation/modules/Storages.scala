@@ -15,12 +15,14 @@ import org.tessellation.sdk.domain.collateral.LatestBalances
 import org.tessellation.sdk.domain.gossip.RumorStorage
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.modules.SdkStorages
+import org.tessellation.security.hash.Hash
 
 object Storages {
 
   def make[F[_]: Async: KryoSerializer](
     sdkStorages: SdkStorages[F],
-    snapshotConfig: SnapshotConfig
+    snapshotConfig: SnapshotConfig,
+    maybeRollbackHash: Option[Hash]
   ): F[Storages[F]] =
     for {
       trustStorage <- TrustStorage.make[F]
@@ -28,7 +30,7 @@ object Storages {
         snapshotConfig.globalSnapshotPath
       )
       globalSnapshotStorage <- GlobalSnapshotStorage
-        .make[F](globalSnapshotLocalFileSystemStorage, snapshotConfig.inMemoryCapacity)
+        .make[F](globalSnapshotLocalFileSystemStorage, snapshotConfig.inMemoryCapacity, maybeRollbackHash)
     } yield
       new Storages[F](
         cluster = sdkStorages.cluster,

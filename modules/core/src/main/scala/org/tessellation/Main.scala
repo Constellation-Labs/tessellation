@@ -1,12 +1,13 @@
 package org.tessellation
 
+import cats.ApplicativeError
 import cats.effect._
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.option._
 import cats.syntax.semigroupk._
 
-import org.tessellation.cli.method.{Run, RunGenesis, RunValidator}
+import org.tessellation.cli.method._
 import org.tessellation.dag._
 import org.tessellation.dag.snapshot.GlobalSnapshot
 import org.tessellation.ext.cats.effect._
@@ -51,7 +52,8 @@ object Main
       _ <- IO.unit.asResource
       p2pClient = P2PClient.make[IO](sdkP2PClient, sdkResources.client, sdkServices.session)
       queues <- Queues.make[IO](sdkQueues).asResource
-      storages <- Storages.make[IO](sdkStorages, cfg.snapshot).asResource
+      maybeRollbackHash = Option(method).collect { case rr: RunRollback => rr.rollbackHash }
+      storages <- Storages.make[IO](sdkStorages, cfg.snapshot, maybeRollbackHash).asResource
       validators = Validators.make[IO](whitelisting)
       services <- Services
         .make[IO](
@@ -97,6 +99,27 @@ object Main
       _ <- (method match {
         case _: RunValidator =>
           storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
+        case _: RunRollback =>
+          storages.node.tryModifyState(
+            NodeState.Initial,
+            NodeState.RollbackInProgress,
+            NodeState.RollbackDone
+          ) {
+
+            storages.globalSnapshot.head.flatMap {
+              ApplicativeError.liftFromOption[IO](_, new Throwable(s"Rollback performed but snapshot not found!")).flatMap {
+                globalSnapshot =>
+                  services.collateral
+                    .hasCollateral(sdk.nodeId)
+                    .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
+                    services.consensus.storage.setLastKeyAndArtifact((globalSnapshot.ordinal, globalSnapshot).some) >>
+                    services.consensus.manager.scheduleTriggerOnTime
+              }
+            }
+          } >>
+            services.cluster.createSession >>
+            services.session.createSession >>
+            storages.node.setNodeState(NodeState.Ready)
         case m: RunGenesis =>
           storages.node.tryModifyState(
             NodeState.Initial,
