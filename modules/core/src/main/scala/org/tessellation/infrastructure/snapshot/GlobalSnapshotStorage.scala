@@ -2,7 +2,7 @@ package org.tessellation.infrastructure.snapshot
 
 import cats.Order._
 import cats.effect.std.Queue
-import cats.effect.{Async, Spawn}
+import cats.effect.{Async, Ref, Spawn}
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.contravariantSemigroupal._
@@ -12,7 +12,7 @@ import cats.syntax.option._
 import cats.syntax.order._
 import cats.syntax.show._
 import cats.syntax.traverse._
-import cats.{Applicative, MonadThrow}
+import cats.{Applicative, ApplicativeError, MonadThrow}
 
 import org.tessellation.dag.snapshot.{GlobalSnapshot, SnapshotOrdinal}
 import org.tessellation.domain.snapshot.GlobalSnapshotStorage
@@ -36,28 +36,78 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object GlobalSnapshotStorage {
 
-  def make[F[_]: Async: KryoSerializer](
-    globalSnapshotLocalFileSystemStorage: GlobalSnapshotLocalFileSystemStorage[F],
-    inMemoryCapacity: NonNegLong
-  ): F[GlobalSnapshotStorage[F] with LatestBalances[F]] = {
+  private def makeResources[F[_]: Async]() = {
     def mkHeadRef = SignallingRef.of[F, Option[Signed[GlobalSnapshot]]](none)
     def mkOrdinalCache = MapRef.ofSingleImmutableMap[F, SnapshotOrdinal, Hash](Map.empty)
     def mkHashCache = MapRef.ofSingleImmutableMap[F, Hash, Signed[GlobalSnapshot]](Map.empty)
+    def mkNotPersistedCache = Ref.of(Set.empty[SnapshotOrdinal])
     def mkOffloadQueue = Queue.unbounded[F, SnapshotOrdinal]
 
     def mkLogger = Slf4jLogger.create[F]
 
-    mkLogger.flatMap { implicit logger =>
-      (mkHeadRef, mkOrdinalCache, mkHashCache, mkOffloadQueue).mapN {
-        make(_, _, _, _, globalSnapshotLocalFileSystemStorage, inMemoryCapacity)
-      }.flatten
+    (mkHeadRef, mkOrdinalCache, mkHashCache, mkNotPersistedCache, mkOffloadQueue, mkLogger).mapN {
+      (_, _, _, _, _, _)
     }
   }
+
+  def make[F[_]: Async: KryoSerializer](
+    globalSnapshotLocalFileSystemStorage: GlobalSnapshotLocalFileSystemStorage[F],
+    inMemoryCapacity: NonNegLong,
+    maybeRollbackHash: Option[Hash]
+  ): F[GlobalSnapshotStorage[F] with LatestBalances[F]] =
+    maybeRollbackHash match {
+      case Some(rollbackHash) =>
+        GlobalSnapshotStorage
+          .make[F](globalSnapshotLocalFileSystemStorage, inMemoryCapacity, rollbackHash)
+      case None =>
+        GlobalSnapshotStorage
+          .make[F](globalSnapshotLocalFileSystemStorage, inMemoryCapacity)
+    }
+
+  private def make[F[_]: Async: KryoSerializer](
+    globalSnapshotLocalFileSystemStorage: GlobalSnapshotLocalFileSystemStorage[F],
+    inMemoryCapacity: NonNegLong,
+    rollbackHash: Hash
+  ): F[GlobalSnapshotStorage[F] with LatestBalances[F]] =
+    globalSnapshotLocalFileSystemStorage
+      .read(rollbackHash)
+      .flatMap(ApplicativeError.liftFromOption(_, new Throwable("Rollback global snapshot not found!")))
+      .flatMap { rollbackSnapshot =>
+        makeResources().flatMap {
+          case (headRef, ordinalCache, hashCache, notPersistedCache, offloadQueue, logger) =>
+            implicit val l = logger
+
+            headRef.set(rollbackSnapshot.some) >>
+              ordinalCache(rollbackSnapshot.ordinal).set(rollbackHash.some) >>
+              hashCache(rollbackHash).set(rollbackSnapshot.some) >>
+              make(
+                headRef,
+                ordinalCache,
+                hashCache,
+                notPersistedCache,
+                offloadQueue,
+                globalSnapshotLocalFileSystemStorage,
+                inMemoryCapacity
+              )
+        }
+      }
+
+  private def make[F[_]: Async: KryoSerializer](
+    globalSnapshotLocalFileSystemStorage: GlobalSnapshotLocalFileSystemStorage[F],
+    inMemoryCapacity: NonNegLong
+  ): F[GlobalSnapshotStorage[F] with LatestBalances[F]] =
+    makeResources().flatMap {
+      case (headRef, ordinalCache, hashCache, notPersistedCache, offloadQueue, logger) =>
+        implicit val l = logger
+
+        make(headRef, ordinalCache, hashCache, notPersistedCache, offloadQueue, globalSnapshotLocalFileSystemStorage, inMemoryCapacity)
+    }
 
   def make[F[_]: Async: Logger: KryoSerializer](
     headRef: SignallingRef[F, Option[Signed[GlobalSnapshot]]],
     ordinalCache: MapRef[F, SnapshotOrdinal, Option[Hash]],
     hashCache: MapRef[F, Hash, Option[Signed[GlobalSnapshot]]],
+    notPersistedCache: Ref[F, Set[SnapshotOrdinal]],
     offloadQueue: Queue[F, SnapshotOrdinal],
     globalSnapshotLocalFileSystemStorage: GlobalSnapshotLocalFileSystemStorage[F],
     inMemoryCapacity: NonNegLong
@@ -68,31 +118,44 @@ object GlobalSnapshotStorage {
         .fromQueueUnterminated(offloadQueue)
         .evalMap { cutOffOrdinal =>
           ordinalCache.keys
-            .map(_.filter(_ <= cutOffOrdinal).sorted)
-            .flatMap {
-              _.traverse { ordinal =>
-                def offload: F[Unit] =
-                  ordinalCache(ordinal).get.flatMap {
-                    case Some(hash) =>
-                      hashCache(hash).get.flatMap {
-                        case Some(snapshot) =>
-                          globalSnapshotLocalFileSystemStorage.write(snapshot) >>
-                            ordinalCache(ordinal).set(none) >>
-                            hashCache(hash).set(none)
-                        case None =>
-                          MonadThrow[F].raiseError[Unit](
-                            new Throwable("Unexpected state: ordinal and hash found but snapshot not found")
-                          )
-                      }
-                    case None =>
-                      MonadThrow[F].raiseError[Unit](
-                        new Throwable("Unexpected state: hash not found but ordinal exists")
-                      )
-                  }
+            .map(_.filter(_ <= cutOffOrdinal))
+            .flatMap { toOffload =>
+              notPersistedCache.get.map { toPersist =>
+                val allOrdinals = toOffload.toSet ++ toPersist
 
-                offload.handleErrorWith { e =>
-                  Logger[F].error(e)(s"Failed offloading global snapshot to disk! Snapshot ordinal=${ordinal.show}")
-                }
+                allOrdinals.map(o => (o, toPersist.contains(o), toOffload.contains(o))).toList.sorted
+              }
+            }
+            .flatMap {
+              _.traverse {
+                case (ordinal, shouldPersist, shouldOffload) =>
+                  def offload: F[Unit] =
+                    ordinalCache(ordinal).get.flatMap {
+                      case Some(hash) =>
+                        hashCache(hash).get.flatMap {
+                          case Some(snapshot) =>
+                            Applicative[F].whenA(shouldPersist) {
+                              globalSnapshotLocalFileSystemStorage.write(snapshot) >>
+                                notPersistedCache.update(current => current - ordinal)
+                            } >>
+                              Applicative[F].whenA(shouldOffload) {
+                                ordinalCache(ordinal).set(none) >>
+                                  hashCache(hash).set(none)
+                              }
+                          case None =>
+                            MonadThrow[F].raiseError[Unit](
+                              new Throwable("Unexpected state: ordinal and hash found but snapshot not found")
+                            )
+                        }
+                      case None =>
+                        MonadThrow[F].raiseError[Unit](
+                          new Throwable("Unexpected state: hash not found but ordinal exists")
+                        )
+                    }
+
+                  offload.handleErrorWith { e =>
+                    Logger[F].error(e)(s"Failed offloading global snapshot! Snapshot ordinal=${ordinal.show}")
+                  }
               }
             }
         }
@@ -101,7 +164,12 @@ object GlobalSnapshotStorage {
 
     def enqueue(snapshot: Signed[GlobalSnapshot]) =
       snapshot.value.hashF.flatMap { hash =>
-        hashCache(hash).set(snapshot.some) >> ordinalCache(snapshot.ordinal).set(hash.some) >>
+        hashCache(hash).set(snapshot.some) >>
+          ordinalCache(snapshot.ordinal).set(hash.some) >>
+          globalSnapshotLocalFileSystemStorage.write(snapshot).handleErrorWith { e =>
+            Logger[F].error(e)(s"Failed writing snapshot to disk! hash=$hash ordinal=${snapshot.ordinal}") >>
+              notPersistedCache.update(current => current + snapshot.ordinal)
+          } >>
           snapshot.ordinal
             .partialPreviousN(inMemoryCapacity)
             .fold(Applicative[F].unit)(offloadQueue.offer(_))

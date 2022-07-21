@@ -14,6 +14,7 @@ import org.tessellation.schema.node.NodeState
 import org.tessellation.sdk.cli.{CliMethod, CollateralAmountOpts}
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types._
+import org.tessellation.security.hash.Hash
 
 import com.monovore.decline.Opts
 import fs2.io.file.Path
@@ -89,6 +90,41 @@ object method {
     }
   }
 
+  case class RunRollback(
+    keyStore: StorePath,
+    alias: KeyAlias,
+    password: Password,
+    dbConfig: DBConfig,
+    httpConfig: HttpConfig,
+    environment: AppEnvironment,
+    snapshotConfig: SnapshotConfig,
+    whitelistingPath: Option[Path],
+    collateralAmount: Option[Amount],
+    rollbackHash: Hash
+  ) extends Run
+
+  object RunRollback extends WithOpts[RunRollback] {
+
+    val whitelistingPathOpts: Opts[Option[Path]] = Opts.option[Path]("whitelisting", "").orNone
+
+    val rollbackHashOpts: Opts[Hash] = Opts.argument[Hash]("rollbackHash")
+
+    val opts = Opts.subcommand("run-rollback", "Run rollback mode") {
+      (
+        StorePath.opts,
+        KeyAlias.opts,
+        Password.opts,
+        db.opts,
+        http.opts,
+        AppEnvironment.opts,
+        snapshot.opts,
+        whitelistingPathOpts,
+        CollateralAmountOpts.opts,
+        rollbackHashOpts
+      ).mapN(RunRollback.apply(_, _, _, _, _, _, _, _, _, _))
+    }
+  }
+
   case class RunValidator(
     keyStore: StorePath,
     alias: KeyAlias,
@@ -121,5 +157,5 @@ object method {
   }
 
   val opts: Opts[Run] =
-    RunGenesis.opts.orElse(RunValidator.opts)
+    RunGenesis.opts.orElse(RunValidator.opts).orElse(RunRollback.opts)
 }
