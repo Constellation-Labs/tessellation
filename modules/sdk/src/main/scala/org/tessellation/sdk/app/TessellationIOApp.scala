@@ -75,6 +75,7 @@ abstract class TessellationIOApp[A <: CliMethod](
 
       LoggerConfigurator.configureLogger[IO](cfg.environment) >>
         logger.info(s"App environment: ${cfg.environment}") >>
+        logger.info(s"App version: ${version.show}") >>
         Random.scalaUtilRandom[IO].flatMap { _random =>
           SecurityProvider.forAsync[IO].use { implicit _securityProvider =>
             loadKeyPair[IO](keyStore, alias, password).flatMap { _keyPair =>
