@@ -9,15 +9,18 @@ import cats.syntax.show._
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.PeerBlockConsensusInput
 import org.tessellation.dag.l1.domain.transaction.{TransactionService, TransactionStorage}
 import org.tessellation.ext.http4s.{AddressVar, HashVar}
-import org.tessellation.schema.http.{ErrorCause, ErrorResponse}
+import org.tessellation.schema.http.{ErrorCause, ErrorResponse, SuccessResponse}
 import org.tessellation.schema.transaction.{Transaction, TransactionStatus, TransactionView}
 import org.tessellation.security.signature.Signed
 
+import io.circe.shapes._
 import io.circe.syntax.EncoderOps
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder}
 import org.http4s.circe._
 import org.http4s.dsl.Http4sDsl
+import shapeless._
+import shapeless.syntax.singleton._
 
 final case class Routes[F[_]: Async](
   transactionService: TransactionService[F],
@@ -31,7 +34,9 @@ final case class Routes[F[_]: Async](
         transaction <- req.as[Signed[Transaction]]
         response <- transactionService.offer(transaction).flatMap {
           case Left(errors) => BadRequest(ErrorResponse(errors.map(e => ErrorCause(e.show))).asJson)
-          case Right(hash)  => Ok(hash.asJson)
+          case Right(hash) =>
+            val response = ("hash" ->> hash.value) :: HNil
+            Ok(SuccessResponse(response))
         }
       } yield response
 
