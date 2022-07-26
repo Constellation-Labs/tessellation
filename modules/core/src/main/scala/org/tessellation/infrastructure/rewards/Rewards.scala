@@ -1,143 +1,84 @@
 package org.tessellation.infrastructure.rewards
 
+import cats.Applicative
+import cats.arrow.FunctionK.lift
 import cats.data._
 import cats.effect.Async
-import cats.effect.std.Random
-import cats.syntax.applicative._
 import cats.syntax.either._
 import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
-import cats.syntax.list._
-import cats.syntax.semigroup._
+import cats.syntax.show._
 
-import scala.collection.immutable.SortedSet
-import scala.concurrent.duration.FiniteDuration
-import scala.math.Integral.Implicits._
+import scala.collection.immutable.{SortedMap, SortedSet}
 
-import org.tessellation.config.types.RewardsConfig
 import org.tessellation.dag.snapshot.epoch.EpochProgress
 import org.tessellation.domain.rewards._
 import org.tessellation.schema.ID.Id
-import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.transaction.{RewardTransaction, TransactionAmount}
 import org.tessellation.security.SecurityProvider
+import org.tessellation.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._
-import eu.timepit.refined.cats._
-import eu.timepit.refined.types.numeric._
+import eu.timepit.refined.numeric.Positive
+import eu.timepit.refined.refineV
 import io.estatico.newtype.ops.toCoercibleIdOps
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object Rewards {
 
   def make[F[_]: Async: SecurityProvider](
-    config: RewardsConfig,
-    timeTriggerInterval: FiniteDuration,
-    softStaking: SoftStaking,
-    dtm: DTM,
-    stardust: StardustCollective
+    rewardsPerEpoch: SortedMap[EpochProgress, Amount],
+    softStaking: SimpleRewardsDistributor,
+    dtm: SimpleRewardsDistributor,
+    stardust: SimpleRewardsDistributor,
+    regular: RewardsDistributor[F]
   ): Rewards[F] =
     new Rewards[F] {
 
-      implicit val logger = Slf4jLogger.getLogger[F]
+      private val logger = Slf4jLogger.getLogger[F]
 
       def calculateRewards(
         epochProgress: EpochProgress,
         facilitators: NonEmptySet[Id]
       ): F[SortedSet[RewardTransaction]] = {
-        val rewards = getRewardsPerSnapshot(epochProgress)
+        val amount = getAmountByEpoch(epochProgress, rewardsPerEpoch)
 
-        if (rewards === Amount.empty) {
-          SortedSet.empty[RewardTransaction].pure[F]
-        } else
-          EitherT.liftF {
-            facilitators.toNonEmptyList
-              .traverse(_.toAddress)
-              .map(_.toNes)
-          }.flatMap(createSharedDistribution(epochProgress, rewards, _))
-            .flatMap { distribution =>
-              EitherT.fromEither {
-                Kleisli(weightByDTM)
-                  .compose(weightByStardust)
-                  .apply(distribution)
-              }
-            }
-            .flatMap { distribution =>
-              EitherT.fromEither {
-                distribution.toNel.traverse {
-                  case (address, reward) =>
-                    PosLong
-                      .from(reward.value)
-                      .map(reward => RewardTransaction(address, TransactionAmount(reward)))
-                      .left
-                      .map[RewardsError](NumberRefinementPredicatedFailure)
-                }.map(_.toNes.toSortedSet)
-              }
-            }
-            .flatTap(txs => EitherT.liftF(logger.info(s"Minted reward transactions: $txs")))
-            .valueOrF { error =>
-              val logError = error match {
-                case err @ NumberRefinementPredicatedFailure(_) =>
-                  logger.error(err)("Unhandled refinement predicate failure")
-                case IgnoredAllAddressesDuringWeighting =>
-                  logger.warn("Ignored all the addresses from distribution so weights won't be applied")
-              }
+        val programRewardsState = for {
+          stardustCollective <- stardust.distribute(epochProgress, facilitators)
+          softStakingRewards <- softStaking.distribute(epochProgress, facilitators)
+          dtmRewards <- dtm.distribute(epochProgress, facilitators)
+        } yield dtmRewards ++ softStakingRewards ++ stardustCollective
 
-              logError.as(SortedSet.empty[RewardTransaction])
-            }
+        def eitherToF[A](either: Either[ArithmeticException, A]): F[A] = either.liftTo[F]
+
+        val allRewardsState = for {
+          programRewards <- programRewardsState.mapK[F](lift(eitherToF))
+          regularRewards <- regular.distribute(epochProgress, facilitators)
+        } yield programRewards ++ regularRewards
+
+        allRewardsState
+          .run(amount)
+          .flatTap {
+            case (remaining, _) =>
+              Applicative[F].whenA(remaining =!= Amount(0L))(
+                logger.error(s"Some rewards were not distributed {amount=${amount.show}, remainingAmount=${remaining.show}}")
+              )
+          }
+          .map {
+            case (_, rewards) =>
+              rewards.flatMap {
+                case (address, amount) =>
+                  refineV[Positive](amount.coerce.value).toList.map(a => RewardTransaction(address, TransactionAmount(a)))
+              }.toSortedSet
+          }
       }
 
-      def getRewardsPerSnapshot(epochProgress: EpochProgress): Amount =
-        config.rewardsPerEpoch
+      def getAmountByEpoch(epochProgress: EpochProgress, rewardsPerEpoch: SortedMap[EpochProgress, Amount]): Amount =
+        rewardsPerEpoch
           .minAfter(epochProgress)
           .map { case (_, reward) => reward }
-          .getOrElse(Amount(0L))
-
-      private[rewards] def createSharedDistribution(
-        epochProgress: EpochProgress,
-        snapshotReward: Amount,
-        addresses: NonEmptySet[Address]
-      ): EitherT[F, RewardsError, NonEmptyMap[Address, Amount]] = {
-
-        val (quotient, remainder) = snapshotReward.coerce.toLong /% addresses.length.toLong
-
-        val quotientDistribution = addresses.toNonEmptyList.map(_ -> NonNegLong.unsafeFrom(quotient)).toNem
-
-        EitherT.liftF {
-          Random.scalaUtilRandomSeedLong(epochProgress.coerce).flatMap { random =>
-            random
-              .shuffleList(addresses.toNonEmptyList.toList)
-              .map { shuffled =>
-                shuffled.take(remainder.toInt)
-              }
-              .map { top =>
-                top.toNel
-                  .fold(quotientDistribution) { topNel =>
-                    topNel.map(_ -> NonNegLong(1L)).toNem |+| quotientDistribution
-                  }
-                  .mapBoth { case (addr, reward) => (addr, Amount(reward)) }
-              }
-          }
-        }
-      }
-
-      private[rewards] def weightBySoftStaking(
-        epochProgress: EpochProgress
-      ): NonEmptyMap[Address, Amount] => Either[RewardsError, NonEmptyMap[Address, Amount]] =
-        epochProgress match {
-          case ordinal if ordinal.value >= config.softStaking.startingOrdinal.value =>
-            softStaking.weight(config.softStaking.nodes)(Set(stardust.getAddress, dtm.getAddress))
-          case _ => distribution => Either.right(distribution)
-        }
-
-      private[rewards] def weightByStardust: NonEmptyMap[Address, Amount] => Either[RewardsError, NonEmptyMap[Address, Amount]] =
-        stardust.weight(Set.empty)
-
-      private[rewards] def weightByDTM: NonEmptyMap[Address, Amount] => Either[RewardsError, NonEmptyMap[Address, Amount]] =
-        dtm.weight(Set(stardust.getAddress))
-
+          .getOrElse(Amount.empty)
     }
-
 }

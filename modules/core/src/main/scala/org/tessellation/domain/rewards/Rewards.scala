@@ -2,16 +2,12 @@ package org.tessellation.domain.rewards
 
 import cats.data.NonEmptySet
 
-import scala.collection.immutable.SortedSet
-import scala.util.control.NoStackTrace
+import scala.collection.immutable.{SortedMap, SortedSet}
 
 import org.tessellation.dag.snapshot.epoch.EpochProgress
 import org.tessellation.schema.ID.Id
+import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.transaction.RewardTransaction
-
-sealed trait RewardsError extends NoStackTrace
-case class NumberRefinementPredicatedFailure(reason: String) extends RewardsError
-case object IgnoredAllAddressesDuringWeighting extends RewardsError
 
 trait Rewards[F[_]] {
 
@@ -19,4 +15,6 @@ trait Rewards[F[_]] {
     epochProgress: EpochProgress,
     facilitators: NonEmptySet[Id]
   ): F[SortedSet[RewardTransaction]]
+
+  def getAmountByEpoch(epochProgress: EpochProgress, rewardsPerEpoch: SortedMap[EpochProgress, Amount]): Amount
 }

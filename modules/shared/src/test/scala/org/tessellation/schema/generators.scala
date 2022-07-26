@@ -18,12 +18,23 @@ import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.{Signature, SignatureProof}
 
 import com.comcast.ip4s.{Host, Port}
+import eu.timepit.refined.api.{RefType, Validate}
 import eu.timepit.refined.refineV
 import eu.timepit.refined.scalacheck.numeric._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
+import org.scalacheck.Gen.Choose
 import org.scalacheck.{Arbitrary, Gen}
 
 object generators {
+
+  def chooseNumRefined[F[_, _], T: Numeric: Choose, P](min: F[T, P], max: F[T, P], specials: F[T, P]*)(
+    implicit rt: RefType[F],
+    v: Validate[T, P]
+  ): Gen[F[T, P]] =
+    Gen
+      .chooseNum(rt.unwrap(min), rt.unwrap(max), specials.map(rt.unwrap): _*)
+      .filter(v.isValid)
+      .map(rt.unsafeWrap)
 
   val peerIdGen: Gen[PeerId] =
     nesGen(str => PeerId(Hex(str)))
