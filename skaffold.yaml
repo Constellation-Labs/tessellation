@@ -6,7 +6,7 @@ build:
       custom:
         buildCommand: |
           sbt core/assembly keytool/assembly && \
-            docker build $BUILD_CONTEXT --file kubernetes/l0.Dockerfile --tag $IMAGE --build-arg BUILD_VERSION=$(cut -d \" -f 2 version.sbt) && \
+            docker build $BUILD_CONTEXT --file kubernetes/l0.Dockerfile --tag $IMAGE --build-arg BUILD_VERSION=$(cut -d \" -f 2 version.sbt) --platform linux/amd64 && \
               [[ "$PUSH_IMAGE" == "true" ]] && docker push $IMAGE || echo "Skip pushing image"
         dependencies:
           paths:
@@ -19,7 +19,7 @@ build:
       custom:
         buildCommand: |
           sbt dagL1/assembly keytool/assembly && \
-            docker build $BUILD_CONTEXT --file kubernetes/l1.Dockerfile --tag $IMAGE --build-arg BUILD_VERSION=$(cut -d \" -f 2 version.sbt) && \
+            docker build $BUILD_CONTEXT --file kubernetes/l1.Dockerfile --tag $IMAGE --build-arg BUILD_VERSION=$(cut -d \" -f 2 version.sbt) --platform linux/amd64 && \
               [[ "$PUSH_IMAGE" == "true" ]] && docker push $IMAGE || echo "Skip pushing image"
         dependencies:
           paths:
