@@ -45,10 +45,10 @@ object Services {
       rewards <- Rewards
         .make[F](
           cfg.rewards,
-          cfg.snapshot.timeTriggerInterval,
           SoftStaking.make(cfg.rewards.softStaking),
-          DTM.make(cfg.rewards.dtm, cfg.snapshot.timeTriggerInterval),
-          StardustCollective.make(cfg.rewards.stardust)
+          DTM.make(cfg.rewards.dtm),
+          StardustCollective.make(cfg.rewards.stardust),
+          Regular.make
         )
         .pure[F]
       consensus <- GlobalSnapshotConsensus

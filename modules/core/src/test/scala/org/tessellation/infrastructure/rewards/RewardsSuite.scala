@@ -7,7 +7,6 @@ import cats.implicits.catsSyntaxApplicativeId
 import cats.syntax.contravariantSemigroupal._
 
 import scala.collection.immutable.SortedSet
-import scala.concurrent.duration.DurationInt
 
 import org.tessellation.config.types._
 import org.tessellation.dag.dagSharedKryoRegistrar
@@ -42,7 +41,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
   val totalPool = Amount(160000000000000000L)
 
   val softStaking = SoftStaking.make(config.softStaking)
-  val dtm = DTM.make(config.dtm, 1.minutes)
+  val dtm = DTM.make(config.dtm)
   val stardust = StardustCollective.make(config.stardust)
   val hash = Hash("")
 
@@ -63,9 +62,10 @@ object RewardsSuite extends MutableIOSuite with Checkers {
 
   test("epoch 1 snapshot reward is valid") { res =>
     implicit val (_, sp, rand) = res
+    val regular = Regular.make
 
     for {
-      rewards <- Rewards.make[IO](config, 1.minutes, softStaking, dtm, stardust).pure[F]
+      rewards <- Rewards.make[IO](config, softStaking, dtm, stardust, regular).pure[F]
       txs <- rewards
         .calculateRewards(
           EpochProgress(1L),
@@ -78,9 +78,10 @@ object RewardsSuite extends MutableIOSuite with Checkers {
 
   test("epoch 2 snapshot reward is valid") { res =>
     implicit val (_, sp, rand) = res
+    val regular = Regular.make
 
     for {
-      rewards <- Rewards.make[IO](config, 1.minutes, softStaking, dtm, stardust).pure[F]
+      rewards <- Rewards.make[IO](config, softStaking, dtm, stardust, regular).pure[F]
       txs <- rewards
         .calculateRewards(
           EpochProgress(1296001L),
@@ -93,9 +94,10 @@ object RewardsSuite extends MutableIOSuite with Checkers {
 
   test("epoch 3 snapshot reward is valid") { res =>
     implicit val (_, sp, rand) = res
+    val regular = Regular.make
 
     for {
-      rewards <- Rewards.make[IO](config, 1.minutes, softStaking, dtm, stardust).pure[F]
+      rewards <- Rewards.make[IO](config, softStaking, dtm, stardust, regular).pure[F]
       txs <- rewards
         .calculateRewards(
           EpochProgress(1296001L * 2),
@@ -108,9 +110,10 @@ object RewardsSuite extends MutableIOSuite with Checkers {
 
   test("epoch 4 snapshot reward is valid") { res =>
     implicit val (_, sp, rand) = res
+    val regular = Regular.make
 
     for {
-      rewards <- Rewards.make[IO](config, 1.minutes, softStaking, dtm, stardust).pure[F]
+      rewards <- Rewards.make[IO](config, softStaking, dtm, stardust, regular).pure[F]
       txs <- rewards
         .calculateRewards(
           EpochProgress(1296001L * 3),
@@ -123,9 +126,10 @@ object RewardsSuite extends MutableIOSuite with Checkers {
 
   test("epoch 4+n snapshot reward is 0") { res =>
     implicit val (_, sp, rand) = res
+    val regular = Regular.make
 
     for {
-      rewards <- Rewards.make[IO](config, 1.minutes, softStaking, dtm, stardust).pure[F]
+      rewards <- Rewards.make[IO](config, softStaking, dtm, stardust, regular).pure[F]
       txs <- rewards
         .calculateRewards(
           EpochProgress(1296001L * 4),
