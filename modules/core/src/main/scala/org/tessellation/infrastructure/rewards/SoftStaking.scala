@@ -1,84 +1,41 @@
 package org.tessellation.infrastructure.rewards
 
-import cats.data.NonEmptyMap
+import cats.data.StateT
+import cats.syntax.all._
 
-import org.tessellation.config.types.SoftStakingConfig
-import org.tessellation.domain.rewards._
-import org.tessellation.schema.address.Address
+import org.tessellation.config.types.SoftStakingAndTestnetConfig
 import org.tessellation.schema.balance.Amount
 
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.{NonNegInt, NonNegLong}
+import eu.timepit.refined.types.numeric.NonNegLong
+import io.estatico.newtype.ops._
+
+import Arithmetic._
 
 object SoftStaking {
 
-  def make(config: SoftStakingConfig): SoftStaking = new SoftStaking {
-    def getAddress: Address = config.address
+  def make(config: SoftStakingAndTestnetConfig): RewardsDistributor[Either[ArithmeticException, *]] =
+    (epochProgress, facilitators) =>
+      StateT { amount =>
+        if (epochProgress < config.startingOrdinal)
+          (amount, List.empty).asRight
+        else
+          for {
+            f <- NonNegLong.unsafeFrom(facilitators.length.toLong) * config.facilitatorWeight
+            s <- config.softStakeCount * config.softStakeWeight
+            t <- config.testnetCount * config.testnetWeight
 
-    def weight(softStakingNodes: NonNegInt)(
-      ignore: Set[Address] = Set.empty[Address]
-    )(distribution: NonEmptyMap[Address, Amount]): Either[RewardsError, NonEmptyMap[Address, Amount]] =
-      if (softStakingNodes.value == 0) Right(distribution)
-      else {
-        for {
-          fullNodesPercentage <- NonNegInt
-            .from(100 - config.softNodesPercentage)
-            .left
-            .map(NumberRefinementPredicatedFailure)
+            numeratorS <- amount.coerce * s
+            numeratorT <- amount.coerce * t
+            denominator <- (f + s).flatMap(_ + t)
 
-          softStakingNodesWithTestnet = softStakingNodes + config.testnetNodes
-
-          withoutIgnored <- NonEmptyMap
-            .fromMap(ignore.foldLeft(distribution.toSortedMap) {
-              case (acc, addressToIgnore) => acc - addressToIgnore
-            })
-            .toRight[RewardsError](IgnoredAllAddressesDuringWeighting)
-
-          ignored <- NonEmptyMap
-            .fromMap(withoutIgnored.keys.foldLeft(distribution.toSortedMap) {
-              case (acc, nonIgnoredAddress) => acc - nonIgnoredAddress
-            })
-            .toRight[RewardsError](IgnoredAllAddressesDuringWeighting)
-
-          fullNodes <- NonNegInt
-            .from(withoutIgnored.length)
-            .left
-            .map(NumberRefinementPredicatedFailure)
-
-          weightedSum <- NonNegInt
-            .from(
-              ((config.softNodesPercentage * softStakingNodesWithTestnet) / 100) + ((fullNodesPercentage * fullNodes) / 100)
+            softStakingRewards <- numeratorS / denominator
+            testnetRewards <- numeratorT / denominator
+            facilitatorRewards <- (amount.value - softStakingRewards).flatMap(_ - testnetRewards)
+          } yield
+            (
+              Amount(facilitatorRewards),
+              List(config.softStakeAddress -> Amount(softStakingRewards), config.testnetAddress -> Amount(testnetRewards))
             )
-            .left
-            .map(NumberRefinementPredicatedFailure)
-
-          rewards = distribution.toSortedMap.values.map(_.value.toLong).sum
-
-          perSoftNode <- NonNegLong
-            .from((config.softNodesPercentage * rewards) / weightedSum)
-            .left
-            .map(NumberRefinementPredicatedFailure)
-
-          perFullNode <- NonNegLong
-            .from((fullNodesPercentage * rewards) / weightedSum)
-            .left
-            .map(NumberRefinementPredicatedFailure)
-
-          totalSoftStakingReward <- NonNegLong
-            .from(perSoftNode * softStakingNodes)
-            .map(Amount(_))
-            .left
-            .map(NumberRefinementPredicatedFailure)
-
-          totalTestnetReward <- NonNegLong
-            .from(perSoftNode * config.testnetNodes)
-            .map(Amount(_))
-            .left
-            .map(NumberRefinementPredicatedFailure)
-
-          weighted = withoutIgnored.transform { case (_, _) => Amount(perFullNode) } ++ ignored
-        } yield weighted.add(getAddress -> totalSoftStakingReward).add(config.testnetAddress -> totalTestnetReward)
       }
-  }
-
 }

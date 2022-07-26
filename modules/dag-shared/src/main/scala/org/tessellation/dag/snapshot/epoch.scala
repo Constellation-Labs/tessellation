@@ -23,6 +23,7 @@ object epoch {
 
   object EpochProgress {
     val MinValue: EpochProgress = EpochProgress(NonNegLong.MinValue)
+    val MaxValue: EpochProgress = EpochProgress(NonNegLong.MaxValue)
 
     implicit val next: Next[EpochProgress] = new Next[EpochProgress] {
       def next(a: EpochProgress): EpochProgress = EpochProgress(a.value |+| NonNegLong(1L))
