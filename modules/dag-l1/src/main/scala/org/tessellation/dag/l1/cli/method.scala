@@ -73,12 +73,12 @@ object method {
     httpConfig: HttpConfig,
     dbConfig: DBConfig,
     l0Peer: L0Peer,
-    whitelistingPath: Option[Path],
+    seedlistPath: Option[Path],
     collateralAmount: Option[Amount]
   ) extends Run
 
   object RunInitialValidator {
-    val whitelistingPathOpts: Opts[Option[Path]] = Opts.option[Path]("whitelisting", "").orNone
+    val seedlistPathOpts: Opts[Option[Path]] = Opts.option[Path]("seedlist", "").orNone
 
     val opts = Opts.subcommand("run-initial-validator", "Run initial validator mode") {
       (
@@ -89,7 +89,7 @@ object method {
         http.opts,
         db.opts,
         L0PeerOpts.opts,
-        whitelistingPathOpts,
+        seedlistPathOpts,
         CollateralAmountOpts.opts
       ).mapN(RunInitialValidator(_, _, _, _, _, _, _, _, _))
     }
@@ -103,12 +103,12 @@ object method {
     httpConfig: HttpConfig,
     dbConfig: DBConfig,
     l0Peer: L0Peer,
-    whitelistingPath: Option[Path],
+    seedlistPath: Option[Path],
     collateralAmount: Option[Amount]
   ) extends Run
 
   object RunValidator {
-    val whitelistingPathOpts: Opts[Option[Path]] = Opts.option[Path]("whitelisting", "").orNone
+    val seedlistPathOpts: Opts[Option[Path]] = Opts.option[Path]("seedlist", "").orNone
 
     val opts = Opts.subcommand("run-validator", "Run validator mode") {
       (
@@ -119,7 +119,7 @@ object method {
         http.opts,
         db.opts,
         L0PeerOpts.opts,
-        whitelistingPathOpts,
+        seedlistPathOpts,
         CollateralAmountOpts.opts
       ).mapN(RunValidator(_, _, _, _, _, _, _, _, _))
     }

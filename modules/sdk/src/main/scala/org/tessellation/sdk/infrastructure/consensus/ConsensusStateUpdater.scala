@@ -61,7 +61,7 @@ object ConsensusStateUpdater {
     consensusStorage: ConsensusStorage[F, Event, Key, Artifact],
     clusterStorage: ClusterStorage[F],
     gossip: Gossip[F],
-    whitelisting: Option[Set[PeerId]],
+    seedlist: Option[Set[PeerId]],
     keyPair: KeyPair,
     selfId: PeerId
   ): ConsensusStateUpdater[F, Key, Artifact] = new ConsensusStateUpdater[F, Key, Artifact] {
@@ -272,7 +272,7 @@ object ConsensusStateUpdater {
       removed: Set[PeerId]
     ): Set[PeerId] = {
       val allProposed = proposed.union(local)
-      whitelisting
+      seedlist
         .map(_.intersect(allProposed))
         .getOrElse(allProposed)
         .diff(removed)

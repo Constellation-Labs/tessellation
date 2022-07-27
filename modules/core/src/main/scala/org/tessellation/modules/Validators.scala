@@ -13,13 +13,13 @@ import org.tessellation.security.signature.SignedValidator
 object Validators {
 
   def make[F[_]: Async: KryoSerializer: SecurityProvider](
-    whitelisting: Option[Set[PeerId]]
+    seedlist: Option[Set[PeerId]]
   ) = {
     val signedValidator = SignedValidator.make[F]
     val transactionChainValidator = TransactionChainValidator.make[F]
     val transactionValidator = TransactionValidator.make[F](signedValidator)
     val blockValidator = BlockValidator.make[F](signedValidator, transactionChainValidator, transactionValidator)
-    val rumorValidator = RumorValidator.make[F](whitelisting, signedValidator)
+    val rumorValidator = RumorValidator.make[F](seedlist, signedValidator)
 
     new Validators[F](
       signedValidator,

@@ -45,7 +45,7 @@ object Consensus {
     selfId: PeerId,
     keyPair: KeyPair,
     timeTriggerInterval: FiniteDuration,
-    whitelisting: Option[Set[PeerId]],
+    seedlist: Option[Set[PeerId]],
     clusterStorage: ClusterStorage[F],
     healthCheckConfig: HealthCheckConfig,
     client: Client[F],
@@ -59,7 +59,7 @@ object Consensus {
         storage,
         clusterStorage,
         gossip,
-        whitelisting,
+        seedlist,
         keyPair,
         selfId
       )

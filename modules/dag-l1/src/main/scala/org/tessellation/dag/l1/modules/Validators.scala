@@ -15,7 +15,7 @@ object Validators {
 
   def make[F[_]: Async: KryoSerializer: SecurityProvider](
     storages: Storages[F],
-    whitelisting: Option[Set[PeerId]]
+    seedlist: Option[Set[PeerId]]
   ): Validators[F] = {
     val signedValidator = SignedValidator.make[F]
     val transactionChainValidator = TransactionChainValidator.make[F]
@@ -26,7 +26,7 @@ object Validators {
       transactionValidator,
       (address: Address) => storages.transaction.getLastAcceptedReference(address)
     )
-    val rumorValidator = RumorValidator.make[F](whitelisting, signedValidator)
+    val rumorValidator = RumorValidator.make[F](seedlist, signedValidator)
 
     new Validators[F](
       signedValidator,
