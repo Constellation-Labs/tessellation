@@ -1,6 +1,7 @@
 package org.tessellation.dag.l1.modules
 
 import cats.effect.Async
+import cats.effect.std.Random
 
 import org.tessellation.dag.l1.domain.snapshot.programs.SnapshotProcessor
 import org.tessellation.dag.l1.http.p2p.P2PClient
@@ -11,7 +12,7 @@ import org.tessellation.security.SecurityProvider
 
 object Programs {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider](
+  def make[F[_]: Async: KryoSerializer: SecurityProvider: Random](
     sdkPrograms: SdkPrograms[F],
     p2pClient: P2PClient[F],
     storages: Storages[F]

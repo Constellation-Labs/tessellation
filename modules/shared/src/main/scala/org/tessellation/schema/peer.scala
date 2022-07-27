@@ -7,6 +7,7 @@ import cats.effect.kernel.Async
 import cats.kernel.Order
 import cats.syntax.functor._
 
+import org.tessellation.ext.derevo.ordering
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.cluster.{ClusterId, ClusterSessionToken, SessionToken}
@@ -79,7 +80,7 @@ object peer {
     val _State: Lens[Peer, NodeState] = GenLens[Peer](_.state)
   }
 
-  @derive(eqv, encoder, decoder, show)
+  @derive(eqv, encoder, decoder, order, ordering, show)
   case class L0Peer(id: PeerId, ip: Host, port: Port)
 
   object L0Peer {

@@ -43,5 +43,12 @@ object L0ClusterStorage {
 
           (updated, ())
         }
+
+      def setPeers(l0Peers: NonEmptySet[L0Peer]): F[Unit] = {
+        val head = l0Peers.head
+        peers.set {
+          NonEmptyMap.of((head.id, head), l0Peers.tail.map(p => p.id -> p).toSeq: _*)
+        }
+      }
     }
 }
