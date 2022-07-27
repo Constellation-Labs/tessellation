@@ -54,7 +54,7 @@ object Main
       queues <- Queues.make[IO](sdkQueues).asResource
       maybeRollbackHash = Option(method).collect { case rr: RunRollback => rr.rollbackHash }
       storages <- Storages.make[IO](sdkStorages, cfg.snapshot, maybeRollbackHash).asResource
-      validators = Validators.make[IO](whitelisting)
+      validators = Validators.make[IO](seedlist)
       services <- Services
         .make[IO](
           sdkServices,
@@ -63,7 +63,7 @@ object Main
           validators,
           sdkResources.client,
           sdkServices.session,
-          sdk.whitelisting,
+          sdk.seedlist,
           sdk.nodeId,
           keyPair,
           cfg

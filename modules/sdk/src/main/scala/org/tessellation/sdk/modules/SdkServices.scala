@@ -26,7 +26,7 @@ object SdkServices {
     storages: SdkStorages[F],
     queues: SdkQueues[F],
     session: Session[F],
-    whitelisting: Option[Set[PeerId]],
+    seedlist: Option[Set[PeerId]],
     restartSignal: SignallingRef[F, Unit]
   ): F[SdkServices[F]] = {
     val cluster = Cluster
@@ -38,7 +38,7 @@ object SdkServices {
         storages.cluster,
         storages.session,
         storages.node,
-        whitelisting,
+        seedlist,
         restartSignal
       )
 

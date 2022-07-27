@@ -64,7 +64,7 @@ object method {
     environment: AppEnvironment,
     snapshotConfig: SnapshotConfig,
     genesisPath: Path,
-    whitelistingPath: Option[Path],
+    seedlistPath: Option[Path],
     collateralAmount: Option[Amount]
   ) extends Run
 
@@ -72,7 +72,7 @@ object method {
 
     val genesisPathOpts: Opts[Path] = Opts.argument[Path]("genesis")
 
-    val whitelistingPathOpts: Opts[Option[Path]] = Opts.option[Path]("whitelisting", "").orNone
+    val seedlistPathOpts: Opts[Option[Path]] = Opts.option[Path]("seedlist", "").orNone
 
     val opts = Opts.subcommand("run-genesis", "Run genesis mode") {
       (
@@ -84,7 +84,7 @@ object method {
         AppEnvironment.opts,
         snapshot.opts,
         genesisPathOpts,
-        whitelistingPathOpts,
+        seedlistPathOpts,
         CollateralAmountOpts.opts
       ).mapN(RunGenesis.apply(_, _, _, _, _, _, _, _, _, _))
     }
@@ -98,14 +98,14 @@ object method {
     httpConfig: HttpConfig,
     environment: AppEnvironment,
     snapshotConfig: SnapshotConfig,
-    whitelistingPath: Option[Path],
+    seedlistPath: Option[Path],
     collateralAmount: Option[Amount],
     rollbackHash: Hash
   ) extends Run
 
   object RunRollback extends WithOpts[RunRollback] {
 
-    val whitelistingPathOpts: Opts[Option[Path]] = Opts.option[Path]("whitelisting", "").orNone
+    val seedlistPathOpts: Opts[Option[Path]] = Opts.option[Path]("seedlist", "").orNone
 
     val rollbackHashOpts: Opts[Hash] = Opts.argument[Hash]("rollbackHash")
 
@@ -118,7 +118,7 @@ object method {
         http.opts,
         AppEnvironment.opts,
         snapshot.opts,
-        whitelistingPathOpts,
+        seedlistPathOpts,
         CollateralAmountOpts.opts,
         rollbackHashOpts
       ).mapN(RunRollback.apply(_, _, _, _, _, _, _, _, _, _))
@@ -133,13 +133,13 @@ object method {
     httpConfig: HttpConfig,
     environment: AppEnvironment,
     snapshotConfig: SnapshotConfig,
-    whitelistingPath: Option[Path],
+    seedlistPath: Option[Path],
     collateralAmount: Option[Amount]
   ) extends Run
 
   object RunValidator extends WithOpts[RunValidator] {
 
-    val whitelistingPathOpts: Opts[Option[Path]] = Opts.option[Path]("whitelisting", "").orNone
+    val seedlistPathOpts: Opts[Option[Path]] = Opts.option[Path]("seedlist", "").orNone
 
     val opts = Opts.subcommand("run-validator", "Run validator mode") {
       (
@@ -150,7 +150,7 @@ object method {
         http.opts,
         AppEnvironment.opts,
         snapshot.opts,
-        whitelistingPathOpts,
+        seedlistPathOpts,
         CollateralAmountOpts.opts
       ).mapN(RunValidator.apply(_, _, _, _, _, _, _, _, _))
     }

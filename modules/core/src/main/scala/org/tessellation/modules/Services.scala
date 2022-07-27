@@ -32,7 +32,7 @@ object Services {
     validators: Validators[F],
     client: Client[F],
     session: Session[F],
-    whitelisting: Option[Set[PeerId]],
+    seedlist: Option[Set[PeerId]],
     selfId: PeerId,
     keyPair: KeyPair,
     cfg: AppConfig
@@ -43,7 +43,7 @@ object Services {
           sdkServices.gossip,
           selfId,
           keyPair,
-          whitelisting,
+          seedlist,
           cfg.collateral.amount,
           storages.cluster,
           storages.globalSnapshot,

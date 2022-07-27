@@ -20,7 +20,7 @@ import org.tessellation.sdk.http.p2p.SdkP2PClient
 import org.tessellation.sdk.infrastructure.cluster.services.Session
 import org.tessellation.sdk.infrastructure.logs.LoggerConfigurator
 import org.tessellation.sdk.infrastructure.metrics.Metrics
-import org.tessellation.sdk.infrastructure.whitelisting.{Loader => WhitelistingLoader}
+import org.tessellation.sdk.infrastructure.seedlist.{Loader => SeedlistLoader}
 import org.tessellation.sdk.modules._
 import org.tessellation.sdk.resources.SdkResources
 import org.tessellation.sdk.{sdkKryoRegistrar, _}
@@ -85,13 +85,13 @@ abstract class TessellationIOApp[A <: CliMethod](
                   SignallingRef.of[IO, Unit](()).flatMap { _restartSignal =>
                     def mkSDK =
                       for {
-                        _whitelisting <- method.whitelistingPath
-                          .fold(none[Set[PeerId]].pure[IO])(WhitelistingLoader.make[IO].load(_).map(_.some))
+                        _seedlist <- method.seedlistPath
+                          .fold(none[Set[PeerId]].pure[IO])(SeedlistLoader.make[IO].load(_).map(_.some))
                           .asResource
-                        _ <- _whitelisting
+                        _ <- _seedlist
                           .map(_.size)
-                          .fold(logger.info(s"Whitelisting disabled.")) { size =>
-                            logger.info(s"Whitelisting enabled. Allowed nodes: $size")
+                          .fold(logger.info(s"Seedlist disabled.")) { size =>
+                            logger.info(s"Seedlist enabled. Allowed nodes: $size")
                           }
                           .asResource
                         storages <- SdkStorages.make[IO](clusterId, cfg).asResource
@@ -100,11 +100,11 @@ abstract class TessellationIOApp[A <: CliMethod](
                         p2pClient = SdkP2PClient.make[IO](res.client, session)
                         queues <- SdkQueues.make[IO].asResource
                         services <- SdkServices
-                          .make[IO](cfg, selfId, _keyPair, storages, queues, session, _whitelisting, _restartSignal)
+                          .make[IO](cfg, selfId, _keyPair, storages, queues, session, _seedlist, _restartSignal)
                           .asResource
 
                         programs <- SdkPrograms
-                          .make[IO](cfg, storages, services, p2pClient.cluster, p2pClient.sign, _whitelisting, selfId)
+                          .make[IO](cfg, storages, services, p2pClient.cluster, p2pClient.sign, _seedlist, selfId)
                           .asResource
 
                         sdk = new SDK[IO] {
@@ -114,7 +114,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                           val metrics = _metrics
 
                           val keyPair = _keyPair
-                          val whitelisting = _whitelisting
+                          val seedlist = _seedlist
 
                           val sdkResources = res
                           val sdkP2PClient = p2pClient

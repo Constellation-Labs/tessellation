@@ -42,7 +42,7 @@ object Joining {
     cluster: Cluster[F],
     session: Session[F],
     sessionStorage: SessionStorage[F],
-    whitelisting: Option[Set[PeerId]],
+    seedlist: Option[Set[PeerId]],
     selfId: PeerId,
     stateAfterJoining: NodeState,
     peerDiscovery: PeerDiscovery[F]
@@ -59,7 +59,7 @@ object Joining {
           cluster,
           session,
           sessionStorage,
-          whitelisting,
+          seedlist,
           selfId,
           stateAfterJoining,
           peerDiscovery
@@ -75,7 +75,7 @@ object Joining {
     cluster: Cluster[F],
     session: Session[F],
     sessionStorage: SessionStorage[F],
-    whitelisting: Option[Set[PeerId]],
+    seedlist: Option[Set[PeerId]],
     selfId: PeerId,
     stateAfterJoining: NodeState,
     peerDiscovery: PeerDiscovery[F]
@@ -91,7 +91,7 @@ object Joining {
       cluster,
       session,
       sessionStorage,
-      whitelisting,
+      seedlist,
       selfId,
       stateAfterJoining,
       joiningQueue
@@ -124,7 +124,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
   cluster: Cluster[F],
   session: Session[F],
   sessionStorage: SessionStorage[F],
-  whitelisting: Option[Set[PeerId]],
+  seedlist: Option[Set[PeerId]],
   selfId: PeerId,
   stateAfterJoining: NodeState,
   joiningQueue: Queue[F, P2PContext]
@@ -187,7 +187,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
     skipJoinRequest: Boolean = false
   ): F[Peer] =
     for {
-      _ <- validateWhitelisting(withPeer)
+      _ <- validateSeedlist(withPeer)
 
       registrationRequest <- signClient.getRegistrationRequest.run(withPeer)
 
@@ -229,11 +229,11 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
       _ <- nodeStorage.tryModifyState(NodeState.SessionStarted, stateAfterJoining).handleError(_ => ())
     } yield peer
 
-  private def validateWhitelisting(peer: PeerToJoin): F[Unit] =
-    whitelisting match {
+  private def validateSeedlist(peer: PeerToJoin): F[Unit] =
+    seedlist match {
       case None => Applicative[F].unit
       case Some(entries) =>
-        if (entries.contains(peer.id)) Applicative[F].unit else PeerNotWhitelisted(peer.id).raiseError[F, Unit]
+        if (entries.contains(peer.id)) Applicative[F].unit else PeerNotInSeedlist(peer.id).raiseError[F, Unit]
     }
 
   private def validateHandshake(registrationRequest: RegistrationRequest, remoteAddress: Option[Host]): F[Unit] =
@@ -266,11 +266,11 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
 
       _ <- if (registrationRequest.id != selfId) Applicative[F].unit else IdDuplicationFound.raiseError[F, Unit]
 
-      whitelistingHash <- whitelisting.hashF
+      seedlistHash <- seedlist.hashF
 
       _ <-
-        if (registrationRequest.whitelisting === whitelistingHash) Applicative[F].unit
-        else WhitelistingDoesNotMatch.raiseError[F, Unit]
+        if (registrationRequest.seedlist === seedlistHash) Applicative[F].unit
+        else SeedlistDoesNotMatch.raiseError[F, Unit]
 
     } yield ()
 

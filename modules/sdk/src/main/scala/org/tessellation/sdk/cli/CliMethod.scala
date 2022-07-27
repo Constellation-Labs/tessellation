@@ -21,7 +21,7 @@ trait CliMethod {
 
   val environment: AppEnvironment
 
-  val whitelistingPath: Option[Path]
+  val seedlistPath: Option[Path]
 
   val httpConfig: HttpConfig
 

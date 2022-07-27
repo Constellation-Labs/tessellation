@@ -47,7 +47,7 @@ object Main
       for {
         queues <- Queues.make[IO](sdkQueues).asResource
         storages <- Storages.make[IO](sdkStorages, method.l0Peer).asResource
-        validators = Validators.make[IO](storages, whitelisting)
+        validators = Validators.make[IO](storages, seedlist)
         p2pClient = P2PClient.make(sdkP2PClient, sdkResources.client)
         services = Services.make[IO](storages, validators, sdkServices, p2pClient, cfg)
         programs = Programs.make(sdkPrograms, p2pClient, storages)

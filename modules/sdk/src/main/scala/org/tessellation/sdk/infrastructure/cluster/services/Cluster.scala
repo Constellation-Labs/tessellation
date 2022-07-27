@@ -34,7 +34,7 @@ object Cluster {
     clusterStorage: ClusterStorage[F],
     sessionStorage: SessionStorage[F],
     nodeStorage: NodeStorage[F],
-    whitelisting: Option[Set[PeerId]],
+    seedlist: Option[Set[PeerId]],
     restartSignal: SignallingRef[F, Unit]
   ): Cluster[F] =
     new Cluster[F] {
@@ -51,7 +51,7 @@ object Cluster {
           }
           clusterId = clusterStorage.getClusterId
           state <- nodeStorage.getNodeState
-          whitelistingHash <- whitelisting.hashF
+          seedlistHash <- seedlist.hashF
         } yield
           RegistrationRequest(
             selfId,
@@ -62,7 +62,7 @@ object Cluster {
             clusterSession,
             clusterId,
             state,
-            whitelistingHash
+            seedlistHash
           )
 
       def signRequest(signRequest: SignRequest): F[Signed[SignRequest]] =

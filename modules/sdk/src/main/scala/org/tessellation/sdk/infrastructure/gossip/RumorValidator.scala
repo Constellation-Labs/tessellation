@@ -29,7 +29,7 @@ trait RumorValidator[F[_]] {
 object RumorValidator {
 
   def make[F[_]: Async: KryoSerializer](
-    whitelisting: Option[Set[PeerId]],
+    seedlist: Option[Set[PeerId]],
     signedValidator: SignedValidator[F]
   ): RumorValidator[F] = new RumorValidator[F] {
 
@@ -41,12 +41,12 @@ object RumorValidator {
           hashV <- validateHash(hash, signedRumor)
           originV = validateOrigin(signedRumor)
           signatureV <- validateSignature(signedRumor)
-          whitelistingV = validateWhitelisting(signedRumor)
+          seedlistV = validateSeedlist(signedRumor)
         } yield
           hashV
             .productL(originV)
             .productL(signatureV)
-            .productL(whitelistingV)
+            .productL(seedlistV)
     }
 
     def validateHash(hash: Hash, signedRumor: Signed[RumorBinary]): F[RumorValidationErrorOr[HashAndRumor]] =
@@ -69,15 +69,15 @@ object RumorValidator {
     def validateSignature(signedRumor: Signed[RumorBinary]): F[RumorValidationErrorOr[Signed[RumorBinary]]] =
       signedValidator.validateSignatures(signedRumor).map(_.errorMap(InvalidSigned))
 
-    def validateWhitelisting(signedRumor: Signed[RumorBinary]): RumorValidationErrorOr[Signed[RumorBinary]] =
-      whitelisting.flatMap { whitelistedPeers =>
+    def validateSeedlist(signedRumor: Signed[RumorBinary]): RumorValidationErrorOr[Signed[RumorBinary]] =
+      seedlist.flatMap { peers =>
         signedRumor.proofs
           .map(_.id.toPeerId)
           .toSortedSet
-          .diff(whitelistedPeers)
+          .diff(peers)
           .map(_.toId)
           .toNes
-      }.map(SignersNotWhitelisted).toInvalidNec(signedRumor)
+      }.map(SignersNotInSeedlist).toInvalidNec(signedRumor)
 
   }
 
@@ -85,7 +85,7 @@ object RumorValidator {
   sealed trait RumorValidationError
   case class InvalidHash(calculatedHash: Hash, receivedHash: Hash) extends RumorValidationError
   case class InvalidSigned(error: SignedValidationError) extends RumorValidationError
-  case class SignersNotWhitelisted(signers: NonEmptySet[Id]) extends RumorValidationError
+  case class SignersNotInSeedlist(signers: NonEmptySet[Id]) extends RumorValidationError
   case class NotSignedByOrigin(origin: PeerId, signers: NonEmptySet[Id]) extends RumorValidationError
 
   type RumorValidationErrorOr[A] = ValidatedNec[RumorValidationError, A]
