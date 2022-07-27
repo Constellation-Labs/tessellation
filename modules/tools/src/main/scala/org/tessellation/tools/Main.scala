@@ -51,16 +51,14 @@ object Main
 
   /** Continuously sends transactions to a cluster
     *
-    * @example {{{
-    * send-transactions localhost:9100
-    *  --loadWallets kubernetes/data/genesis-keys/
-    * }}}
+    * @example
+    *   {{{ send-transactions localhost:9100
+    * --loadWallets kubernetes/data/genesis-keys/ }}}
     *
-    * @example {{{
-    * send-transactions localhost:9100
-    *  --generateWallets 100
-    *  --genesisPath genesis.csv
-    * }}}
+    * @example
+    *   {{{ send-transactions localhost:9100
+    * --generateWallets 100
+    * --genesisPath genesis.csv }}}
     *
     * @return
     */
@@ -150,15 +148,14 @@ object Main
           .evalMap(_ => printProgressApplied)
 
         infiniteTransactionStream(basicOpts.chunkSize, basicOpts.fee, addressParams)
-          .flatTap(
-            tx =>
-              Stream.retry(
-                postTransaction(client, basicOpts.baseUrl)(tx)
-                  .handleErrorWith(e => console.red(e.toString) >> e.raiseError[F, Unit]),
-                0.5.seconds,
-                d => (d * 1.25).asInstanceOf[FiniteDuration],
-                basicOpts.retryAttempts
-              )
+          .flatTap(tx =>
+            Stream.retry(
+              postTransaction(client, basicOpts.baseUrl)(tx)
+                .handleErrorWith(e => console.red(e.toString) >> e.raiseError[F, Unit]),
+              0.5.seconds,
+              d => (d * 1.25).asInstanceOf[FiniteDuration],
+              basicOpts.retryAttempts
+            )
           )
           .through(applyLimit(basicOpts.take))
           .through(applyDelay(basicOpts.delay))

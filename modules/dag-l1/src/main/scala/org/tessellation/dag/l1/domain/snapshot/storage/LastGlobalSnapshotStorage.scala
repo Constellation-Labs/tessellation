@@ -15,6 +15,7 @@ import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.height.Height
 import org.tessellation.sdk.domain.collateral.LatestBalances
 import org.tessellation.security.Hashed
+import org.tessellation.security.signature.Signed
 
 import fs2.Stream
 import fs2.concurrent.SignallingRef
@@ -22,7 +23,7 @@ import fs2.concurrent.SignallingRef
 trait LastGlobalSnapshotStorage[F[_]] {
   def set(snapshot: Hashed[GlobalSnapshot]): F[Unit]
   def setInitial(snapshot: Hashed[GlobalSnapshot]): F[Unit]
-  def get: F[Option[GlobalSnapshot]]
+  def get: F[Option[Signed[GlobalSnapshot]]]
   def getOrdinal: F[Option[SnapshotOrdinal]]
   def getHeight: F[Option[Height]]
 }
@@ -55,7 +56,7 @@ object LastGlobalSnapshotStorage {
             )
         }.flatten
 
-      def get: F[Option[GlobalSnapshot]] =
+      def get: F[Option[Signed[GlobalSnapshot]]] =
         snapshotR.get.map(_.map(_.signed))
 
       def getOrdinal: F[Option[SnapshotOrdinal]] =

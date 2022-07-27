@@ -67,9 +67,8 @@ object TransactionGenerator {
 
         txStream(initialTxRef).chunkN(chunkSize)
     }.foldLeft[Stream[F, Stream[Pure, Signed[Transaction]]]](Stream.constant(Stream.empty)) { (acc, s) =>
-        acc.zipWith(s)((acc, currChunk) => acc.cons(currChunk))
-      }
-      .flatten
+      acc.zipWith(s)((acc, currChunk) => acc.cons(currChunk))
+    }.flatten
       .chunkMin(chunkMinSize)
       .unchunks
       .prefetch

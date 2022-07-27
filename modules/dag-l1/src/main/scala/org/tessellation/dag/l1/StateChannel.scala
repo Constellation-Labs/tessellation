@@ -90,6 +90,16 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
     .filter(identity)
     .as(OwnRoundTrigger)
 
+  private val peerDiscovery: Stream[F, Unit] = Stream
+    .awakeEvery(10.seconds)
+    .evalMap { _ =>
+      storages.lastGlobalSnapshotStorage.get.flatMap {
+        _.fold(Applicative[F].unit) { latestSnapshot =>
+          programs.l0PeerDiscovery.discover(latestSnapshot.proofs.map(_.id).map(PeerId._Id.reverseGet))
+        }
+      }
+    }
+
   private val ownerBlockConsensusInputs: Stream[F, OwnerBlockConsensusInput] =
     inspectionTriggerInput.merge(ownRoundTriggerInput)
 
@@ -243,6 +253,7 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
     blockConsensus
       .merge(blockAcceptance)
       .merge(globalSnapshotProcessing)
+      .merge(peerDiscovery)
 
 }
 
