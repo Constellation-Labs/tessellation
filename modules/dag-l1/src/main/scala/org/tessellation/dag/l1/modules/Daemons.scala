@@ -12,6 +12,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.Daemon
 import org.tessellation.sdk.infrastructure.cluster.daemon.NodeStateDaemon
+import org.tessellation.sdk.infrastructure.collateral.daemon.CollateralDaemon
 import org.tessellation.sdk.infrastructure.gossip.{GossipDaemon, RumorHandler}
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
@@ -43,7 +44,8 @@ object Daemons {
           healthChecks.ping,
           services.collateral
         ),
-      NodeStateDaemon.make(storages.node, services.gossip)
+      NodeStateDaemon.make(storages.node, services.gossip),
+      CollateralDaemon.make(services.collateral, storages.lastGlobalSnapshotStorage, storages.cluster)
     ).traverse(_.start).void
 
 }
