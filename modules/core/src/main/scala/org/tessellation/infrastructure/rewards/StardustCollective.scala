@@ -21,7 +21,7 @@ object StardustCollective {
 
       val stardustWeights = (distribution.toSortedMap -- ignore).transform {
         case (a, reward) =>
-          Math.floorDiv(reward.value * config.percentage, 100)
+          (reward.value * config.percentage) / 100
       }
 
       val weighted = distribution.transform {
