@@ -42,7 +42,7 @@ object DTM {
 
         perNode <- NonNegLong
           .from(
-            if (reduced >= 0) Math.floorDiv(reduced, withoutIgnored.length.toLong) else 0L
+            if (reduced >= 0) reduced / withoutIgnored.length.toLong else 0L
           )
           .left
           .map(NumberRefinementPredicatedFailure)
