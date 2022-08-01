@@ -162,7 +162,7 @@ object GlobalSnapshotConsensusFunctions {
           acc.updatedWith(tx.destination) { existingBalance =>
             existingBalance
               .flatMap(_.plus(tx.amount).toOption)
-              .orElse(existingBalance)
+              .orElse(Some(Balance.fromAmount(tx.amount)))
           }
       }
 
