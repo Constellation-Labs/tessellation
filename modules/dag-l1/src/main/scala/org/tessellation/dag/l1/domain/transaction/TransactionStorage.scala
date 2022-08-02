@@ -112,14 +112,14 @@ class TransactionStorage[F[_]: Async: KryoSerializer](
       lastAccepted <- lastAccepted.toMap
       addresses <- waitingTransactions.keys
       txs <- addresses.traverse { address =>
-        waitingTransactions(address).get.flatMap {
+        waitingTransactions(address).get.map {
           case Some(waiting) =>
             val lastTxState = lastAccepted.getOrElse(address, Majority(TransactionReference.empty))
-            Consecutive
-              .take[F](waiting.toList, lastTxState.ref)
-              .map(consecutiveTxs => pullForAddress(lastTxState, consecutiveTxs))
+            val consecutiveTxs = Consecutive.take(waiting.toList, lastTxState.ref)
+
+            pullForAddress(lastTxState, consecutiveTxs)
           case None =>
-            List.empty[Hashed[Transaction]].pure[F]
+            List.empty[Hashed[Transaction]]
         }
       }.map(_.flatten)
     } yield txs.size
@@ -134,22 +134,20 @@ class TransactionStorage[F[_]: Async: KryoSerializer](
 
           pulled <- maybeWaiting.traverse { waiting =>
             val lastTxState = lastAccepted.getOrElse(address, Majority(TransactionReference.empty))
-            Consecutive
-              .take[F](waiting.toList, lastTxState.ref)
-              .map(consecutiveTxs => pullForAddress(lastTxState, consecutiveTxs))
-              .map(pulled => (SortedSet.from(waiting.toList.diff(pulled)).toNes, pulled))
-              .flatMap {
-                case (maybeNotPulled, pulled) =>
-                  val maybeStillWaiting = maybeNotPulled
-                    .flatMap(_.filter(_.ordinal > lastTxState.ref.ordinal).toNes)
+            val consecutiveTxs = Consecutive.take(waiting.toList, lastTxState.ref)
+            val pulled = pullForAddress(lastTxState, consecutiveTxs)
+            val maybeStillWaiting =
+              SortedSet
+                .from(waiting.toList.diff(pulled))
+                .toNes
+                .flatMap(_.filter(_.ordinal > lastTxState.ref.ordinal).toNes)
 
-                  setter(maybeStillWaiting)
-                    .ifM(
-                      NonEmptyList.fromList(pulled).pure[F],
-                      logger.debug("Concurrent update occurred while trying to pull transactions") >>
-                        none[NonEmptyList[Hashed[Transaction]]].pure[F]
-                    )
-              }
+            setter(maybeStillWaiting)
+              .ifM(
+                NonEmptyList.fromList(pulled).pure[F],
+                logger.debug("Concurrent update occurred while trying to pull transactions") >>
+                  none[NonEmptyList[Hashed[Transaction]]].pure[F]
+              )
           }.map(_.flatten)
         } yield pulled
 
