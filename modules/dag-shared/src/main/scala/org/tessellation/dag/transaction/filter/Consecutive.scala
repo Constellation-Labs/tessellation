@@ -2,33 +2,56 @@ package org.tessellation.dag.transaction.filter
 
 import cats.data.NonEmptyList
 import cats.effect.Async
+import cats.syntax.contravariant._
+import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.list._
 import cats.syntax.traverse._
-import cats.{Applicative, Order}
+import cats.{Applicative, Id, Order}
 
 import scala.annotation.tailrec
 
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.transaction.{Transaction, TransactionReference}
 import org.tessellation.security.Hashed
+import org.tessellation.security.signature.Signed
 
 object Consecutive {
+  val signedTxOrder: Order[Signed[Transaction]] =
+    Order.whenEqual(Order.by(-_.fee.value.value), Order[Signed[Transaction]])
 
-  def take[F[_]: Async: KryoSerializer](
+  val hashedTxOrder: Order[Hashed[Transaction]] = signedTxOrder.contramap(_.signed)
+
+  def take[F[_]: Async: KryoSerializer](txs: List[Signed[Transaction]]): F[List[Signed[Transaction]]] = {
+    val headTx =
+      txs.sorted(Order.whenEqual(Order.by[Signed[Transaction], Long](_.ordinal.value.value), signedTxOrder).toOrdering).headOption
+
+    headTx match {
+      case None => Applicative[F].pure(List.empty)
+      case Some(headTx) =>
+        TransactionReference
+          .of(headTx)
+          .flatMap { headTxReference =>
+            takeGeneric[F, TransactionReference, Signed[Transaction]](
+              signedTx => TransactionReference.of(signedTx),
+              _.parent,
+              txs.diff(Seq(headTx)),
+              headTxReference
+            )(Applicative[F], Order[TransactionReference], signedTxOrder).map(_ :+ headTx)
+          }
+    }
+  }
+
+  def take(
     txs: List[Hashed[Transaction]],
     lastAcceptedTxRef: TransactionReference
-  ): F[List[Hashed[Transaction]]] = {
-    val hashedTxOrder: Order[Hashed[Transaction]] =
-      Order.whenEqual(Order.by(-_.fee.value.value), Order[Hashed[Transaction]])
-
-    takeGeneric[F, TransactionReference, Hashed[Transaction]](
-      hashedTx => Applicative[F].pure(TransactionReference.of(hashedTx)),
+  ): List[Hashed[Transaction]] =
+    takeGeneric[Id, TransactionReference, Hashed[Transaction]](
+      hashedTx => Id(TransactionReference.of(hashedTx)),
       _.parent,
       txs,
       lastAcceptedTxRef
-    )(Applicative[F], Order[TransactionReference], hashedTxOrder)
-  }
+    )(Applicative[Id], Order[TransactionReference], hashedTxOrder)
 
   private def takeGeneric[F[_]: Applicative, Ref: Order, Item: Order](
     refOf: Item => F[Ref],

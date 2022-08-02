@@ -65,7 +65,8 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
       storages.consensus,
       keyPair,
       selfId,
-      storages.transaction
+      storages.transaction,
+      validators.transaction
     )
 
   private val inspectionTriggerInput: Stream[F, OwnerBlockConsensusInput] = Stream

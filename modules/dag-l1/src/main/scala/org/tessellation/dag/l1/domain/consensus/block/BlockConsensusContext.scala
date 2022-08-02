@@ -8,6 +8,7 @@ import org.tessellation.dag.l1.domain.consensus.block.config.ConsensusConfig
 import org.tessellation.dag.l1.domain.consensus.block.http.p2p.clients.BlockConsensusClient
 import org.tessellation.dag.l1.domain.consensus.block.storage.ConsensusStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
+import org.tessellation.dag.transaction.TransactionValidator
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 
@@ -20,5 +21,6 @@ case class BlockConsensusContext[F[_]](
   consensusStorage: ConsensusStorage[F],
   keyPair: KeyPair,
   selfId: PeerId,
-  transactionStorage: TransactionStorage[F]
+  transactionStorage: TransactionStorage[F],
+  transactionValidator: TransactionValidator[F]
 )

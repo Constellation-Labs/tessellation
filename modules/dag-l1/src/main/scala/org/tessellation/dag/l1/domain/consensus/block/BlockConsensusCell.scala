@@ -291,7 +291,7 @@ object BlockConsensusCell {
         )
         .flatMap {
           case Some(roundData) if gotAllProposals(roundData) =>
-            roundData.formBlock() match {
+            roundData.formBlock(ctx.transactionValidator).flatMap {
               case Some(block) =>
                 Signed.forAsyncKryo(block, ctx.keyPair).flatMap { signedBlock =>
                   ctx.blockValidator
