@@ -78,9 +78,6 @@ object types {
   )
 
   case class RewardsConfig(
-    epochs: PosInt,
-    epochDurationInYears: PosDouble,
-    baseEpochReward: Amount,
     softStaking: SoftStakingAndTestnetConfig,
     dtm: DTMConfig,
     stardust: StardustConfig,
@@ -90,12 +87,9 @@ object types {
   object RewardsConfig {
 
     val default = RewardsConfig(
-      epochs = 4,
-      epochDurationInYears = 2.5,
-      baseEpochReward = Amount(85333333320000000L),
       softStaking = SoftStakingAndTestnetConfig(
         softStakeAddress = Address("DAG77VVVRvdZiYxZ2hCtkHz68h85ApT5b2xzdTkn"),
-        softStakeCount = 0L,
+        softStakeCount = 20L,
         startingOrdinal = EpochProgress(0L),
         testnetCount = 50L,
         testnetAddress = Address("DAG0qE5tkz6cMUD5M2dkqgfV4TQCzUUdAP5MFM9P")

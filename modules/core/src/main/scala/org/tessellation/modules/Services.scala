@@ -44,7 +44,7 @@ object Services {
     for {
       rewards <- Rewards
         .make[F](
-          cfg.rewards,
+          cfg.rewards.rewardsPerEpoch,
           SoftStaking.make(cfg.rewards.softStaking),
           DTM.make(cfg.rewards.dtm),
           StardustCollective.make(cfg.rewards.stardust),
