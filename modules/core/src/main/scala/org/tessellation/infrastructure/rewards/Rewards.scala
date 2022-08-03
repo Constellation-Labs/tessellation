@@ -4,11 +4,14 @@ import cats.Applicative
 import cats.arrow.FunctionK.lift
 import cats.data._
 import cats.effect.Async
-import cats.syntax.all._
+import cats.syntax.either._
+import cats.syntax.eq._
+import cats.syntax.flatMap._
+import cats.syntax.functor._
+import cats.syntax.show._
 
-import scala.collection.immutable.SortedSet
+import scala.collection.immutable.{SortedMap, SortedSet}
 
-import org.tessellation.config.types.RewardsConfig
 import org.tessellation.dag.snapshot.epoch.EpochProgress
 import org.tessellation.domain.rewards._
 import org.tessellation.schema.ID.Id
@@ -21,11 +24,12 @@ import eu.timepit.refined.auto._
 import eu.timepit.refined.numeric.Positive
 import eu.timepit.refined.refineV
 import io.estatico.newtype.ops.toCoercibleIdOps
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object Rewards {
 
   def make[F[_]: Async: SecurityProvider](
-    config: RewardsConfig,
+    rewardsPerEpoch: SortedMap[EpochProgress, Amount],
     softStaking: SimpleRewardsDistributor,
     dtm: SimpleRewardsDistributor,
     stardust: SimpleRewardsDistributor,
@@ -33,18 +37,18 @@ object Rewards {
   ): Rewards[F] =
     new Rewards[F] {
 
-//      private val logger = Slf4jLogger.getLogger[F]
+      private val logger = Slf4jLogger.getLogger[F]
 
       def calculateRewards(
         epochProgress: EpochProgress,
         facilitators: NonEmptySet[Id]
       ): F[SortedSet[RewardTransaction]] = {
-        val amount = getAmountByEpoch(epochProgress)
+        val amount = getAmountByEpoch(epochProgress, rewardsPerEpoch)
 
         val programRewardsState = for {
-          dtmRewards <- dtm.distribute(epochProgress, facilitators)
-          softStakingRewards <- softStaking.distribute(epochProgress, facilitators)
           stardustCollective <- stardust.distribute(epochProgress, facilitators)
+          softStakingRewards <- softStaking.distribute(epochProgress, facilitators)
+          dtmRewards <- dtm.distribute(epochProgress, facilitators)
         } yield dtmRewards ++ softStakingRewards ++ stardustCollective
 
         def eitherToF[A](either: Either[ArithmeticException, A]): F[A] = either.liftTo[F]
@@ -59,8 +63,7 @@ object Rewards {
           .flatTap {
             case (remaining, _) =>
               Applicative[F].whenA(remaining =!= Amount(0L))(
-                Applicative[F].unit
-//                logger.error(s"Some rewards were not distributed {amount=${amount.show}, remainingAmount=${remaining.show}}")
+                logger.error(s"Some rewards were not distributed {amount=${amount.show}, remainingAmount=${remaining.show}}")
               )
           }
           .map {
@@ -72,11 +75,10 @@ object Rewards {
           }
       }
 
-      def getAmountByEpoch(epochProgress: EpochProgress): Amount =
-        config.rewardsPerEpoch
+      def getAmountByEpoch(epochProgress: EpochProgress, rewardsPerEpoch: SortedMap[EpochProgress, Amount]): Amount =
+        rewardsPerEpoch
           .minAfter(epochProgress)
           .map { case (_, reward) => reward }
           .getOrElse(Amount.empty)
     }
-
 }
