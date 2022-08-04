@@ -51,7 +51,6 @@ object GlobalSnapshotConsensusFunctions {
 
   def make[F[_]: Async: KryoSerializer: Metrics](
     globalSnapshotStorage: GlobalSnapshotStorage[F],
-    heightInterval: NonNegLong,
     blockAcceptanceManager: BlockAcceptanceManager[F],
     collateral: Amount,
     rewards: Rewards[F]
@@ -86,7 +85,7 @@ object GlobalSnapshotConsensusFunctions {
       for {
         lastGSHash <- lastArtifact.value.hashF
         currentOrdinal = lastArtifact.ordinal.next
-        epochProgress = trigger match {
+        currentEpochProgress = trigger match {
           case EventTrigger => lastArtifact.epochProgress
           case TimeTrigger  => lastArtifact.epochProgress.next
         }
@@ -123,9 +122,9 @@ object GlobalSnapshotConsensusFunctions {
           case EventTrigger => (updatedBalances, SortedSet.empty[RewardTransaction]).pure[F]
           case TimeTrigger =>
             rewards
-              .calculateRewards(epochProgress, lastArtifact.proofs.map(_.id))
+              .calculateRewards(lastArtifact.epochProgress, lastArtifact.proofs.map(_.id))
               .map { txs =>
-                (updateBalancesByTransactions(updatedBalances, txs), txs)
+                (updateBalancesByRewards(updatedBalances, txs), txs)
               }
         }
 
@@ -139,7 +138,7 @@ object GlobalSnapshotConsensusFunctions {
           accepted,
           scSnapshots,
           SortedSet.from(rewardTxs),
-          epochProgress,
+          currentEpochProgress,
           NonEmptyList.of(PeerId(Hex("peer1"))), // TODO
           GlobalSnapshotInfo(
             updatedLastStateChannelSnapshotHashes,
@@ -155,7 +154,7 @@ object GlobalSnapshotConsensusFunctions {
       } yield (globalSnapshot, returnedEvents)
     }
 
-    private def updateBalancesByTransactions(balances: SortedMap[Address, Balance], txs: SortedSet[RewardTransaction]) =
+    private def updateBalancesByRewards(balances: SortedMap[Address, Balance], txs: SortedSet[RewardTransaction]) =
       txs.foldLeft(balances) {
         case (acc, tx) =>
           acc.updatedWith(tx.destination) { existingBalance =>
