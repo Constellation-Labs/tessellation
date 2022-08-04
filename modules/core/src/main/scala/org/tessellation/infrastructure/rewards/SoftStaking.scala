@@ -1,16 +1,16 @@
 package org.tessellation.infrastructure.rewards
 
 import cats.data.StateT
-import cats.syntax.all._
+import cats.syntax.either._
+
+import scala.math.Ordered.orderingToOrdered
 
 import org.tessellation.config.types.SoftStakingAndTestnetConfig
+import org.tessellation.ext.refined._
 import org.tessellation.schema.balance.Amount
 
-import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 import io.estatico.newtype.ops._
-
-import Arithmetic._
 
 object SoftStaking {
 
