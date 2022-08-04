@@ -3,16 +3,20 @@ package org.tessellation.infrastructure.rewards
 import cats.data.StateT
 import cats.effect.Async
 import cats.effect.std.Random
-import cats.syntax.all._
+import cats.syntax.bifunctor._
+import cats.syntax.either._
+import cats.syntax.flatMap._
+import cats.syntax.foldable._
+import cats.syntax.functor._
+import cats.syntax.traverse._
 
+import org.tessellation.ext.refined._
 import org.tessellation.schema.balance.Amount
 import org.tessellation.security.SecurityProvider
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 import io.estatico.newtype.ops._
-
-import Arithmetic._
 
 object Regular {
 
