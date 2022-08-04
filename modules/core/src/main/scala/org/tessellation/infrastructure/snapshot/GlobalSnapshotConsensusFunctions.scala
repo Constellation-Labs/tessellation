@@ -51,7 +51,6 @@ object GlobalSnapshotConsensusFunctions {
 
   def make[F[_]: Async: KryoSerializer: Metrics](
     globalSnapshotStorage: GlobalSnapshotStorage[F],
-    heightInterval: NonNegLong,
     blockAcceptanceManager: BlockAcceptanceManager[F],
     collateral: Amount,
     rewards: Rewards[F]
@@ -87,7 +86,7 @@ object GlobalSnapshotConsensusFunctions {
       for {
         lastGSHash <- lastGS.value.hashF
         currentOrdinal = lastGS.ordinal.next
-        epochProgress = trigger match {
+        currentEpochProgress = trigger match {
           case EventTrigger => lastGS.epochProgress
           case TimeTrigger  => lastGS.epochProgress.next
         }
@@ -124,9 +123,9 @@ object GlobalSnapshotConsensusFunctions {
           case EventTrigger => (updatedBalances, SortedSet.empty[RewardTransaction]).pure[F]
           case TimeTrigger =>
             rewards
-              .calculateRewards(epochProgress, lastGS.proofs.map(_.id))
+              .calculateRewards(lastGS.epochProgress, lastGS.proofs.map(_.id))
               .map { txs =>
-                (updateBalancesByTransactions(updatedBalances, txs), txs)
+                (updateBalancesByRewards(updatedBalances, txs), txs)
               }
         }
 
@@ -140,7 +139,7 @@ object GlobalSnapshotConsensusFunctions {
           accepted,
           scSnapshots,
           SortedSet.from(rewardTxs),
-          epochProgress,
+          currentEpochProgress,
           NonEmptyList.of(PeerId(Hex("peer1"))), // TODO
           GlobalSnapshotInfo(
             updatedLastStateChannelSnapshotHashes,
@@ -156,7 +155,7 @@ object GlobalSnapshotConsensusFunctions {
       } yield (globalSnapshot, returnedEvents)
     }
 
-    private def updateBalancesByTransactions(balances: SortedMap[Address, Balance], txs: SortedSet[RewardTransaction]) =
+    private def updateBalancesByRewards(balances: SortedMap[Address, Balance], txs: SortedSet[RewardTransaction]) =
       txs.foldLeft(balances) {
         case (acc, tx) =>
           acc.updatedWith(tx.destination) { existingBalance =>

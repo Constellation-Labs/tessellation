@@ -44,7 +44,6 @@ object GlobalSnapshotConsensus {
     Consensus.make[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact](
       GlobalSnapshotConsensusFunctions.make[F](
         globalSnapshotStorage,
-        snapshotConfig.heightInterval,
         BlockAcceptanceManager.make[F](blockValidator),
         collateral,
         rewards
