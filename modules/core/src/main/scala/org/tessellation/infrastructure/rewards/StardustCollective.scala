@@ -3,11 +3,8 @@ package org.tessellation.infrastructure.rewards
 import cats.data.StateT
 
 import org.tessellation.config.types.StardustConfig
+import org.tessellation.ext.refined._
 import org.tessellation.schema.balance.Amount
-
-import eu.timepit.refined.auto._
-
-import Arithmetic._
 
 object StardustCollective {
 
