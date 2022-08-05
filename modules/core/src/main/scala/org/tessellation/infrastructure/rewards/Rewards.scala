@@ -19,18 +19,16 @@ import org.tessellation.schema.ID.Id
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.transaction.{RewardTransaction, TransactionAmount}
-import org.tessellation.security.SecurityProvider
 import org.tessellation.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.numeric.Positive
 import eu.timepit.refined.refineV
 import io.estatico.newtype.ops.toCoercibleIdOps
-import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object Rewards {
 
-  def make[F[_]: Async: SecurityProvider](
+  def make[F[_]: Async](
     rewardsPerEpoch: SortedMap[EpochProgress, Amount],
     softStaking: SimpleRewardsDistributor,
     dtm: SimpleRewardsDistributor,
@@ -38,9 +36,6 @@ object Rewards {
     regular: RewardsDistributor[F]
   ): Rewards[F] =
     new Rewards[F] {
-
-      private val logger = Slf4jLogger.getLogger[F]
-
       def calculateRewards(
         epochProgress: EpochProgress,
         facilitators: NonEmptySet[Id]

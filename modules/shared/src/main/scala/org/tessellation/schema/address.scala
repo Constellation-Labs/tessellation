@@ -75,22 +75,4 @@ object address {
   }
 
   type DAGAddress = String Refined DAGAddressRefined
-
-//  final case class IntegerFractionRefined()
-//  object IntegerFractionRefined {
-//    implicit def integerFractionValidate: Validate.Plain[(Long, Long), IntegerFractionRefined] =
-//      Validate.fromPredicate(
-//        {
-//          case (nom, denom) => nom <= denom
-//        },
-//        f => s"Denominator is not less or equal to nominator $f",
-//        IntegerFractionRefined()
-//      )
-//  }
-
-//  type IntegerFraction = (Long, Long) Refined IntegerFractionRefined
-//
-//  import eu.timepit.refined.auto._
-//  val x: IntegerFraction = (5L, 6L)
-//  val y: IntegerFraction = (5L, 4L)
 }

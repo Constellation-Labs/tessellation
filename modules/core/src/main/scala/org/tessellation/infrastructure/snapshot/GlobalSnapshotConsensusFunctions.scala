@@ -116,17 +116,16 @@ object GlobalSnapshotConsensusFunctions {
         (height, subHeight) <- getHeightAndSubHeight(lastArtifact, deprecated, remainedActive, accepted)
 
         updatedLastTxRefs = lastArtifact.info.lastTxRefs ++ acceptanceResult.contextUpdate.lastTxRefs
-        updatedBalances = lastArtifact.info.balances ++ acceptanceResult.contextUpdate.balances
+        balances = lastArtifact.info.balances ++ acceptanceResult.contextUpdate.balances
 
-        (updatedBalancesWithRewards, rewardTxs) <- trigger match {
-          case EventTrigger => (updatedBalances, SortedSet.empty[RewardTransaction]).pure[F]
+        rewardTxsForAcceptance <- trigger match {
+          case EventTrigger => SortedSet.empty[RewardTransaction].pure[F]
           case TimeTrigger =>
             rewards
               .calculateRewards(lastArtifact.epochProgress, lastArtifact.proofs.map(_.id))
-              .map { txs =>
-                (updateBalancesByRewards(updatedBalances, txs), txs)
-              }
         }
+
+        (updatedBalancesByRewards, acceptedRewardTxs) = acceptRewardTxs(balances, rewardTxsForAcceptance)
 
         returnedDAGEvents = getReturnedDAGEvents(acceptanceResult)
 
@@ -137,13 +136,13 @@ object GlobalSnapshotConsensusFunctions {
           lastGSHash,
           accepted,
           scSnapshots,
-          SortedSet.from(rewardTxs),
+          acceptedRewardTxs,
           currentEpochProgress,
           NonEmptyList.of(PeerId(Hex("peer1"))), // TODO
           GlobalSnapshotInfo(
             updatedLastStateChannelSnapshotHashes,
             updatedLastTxRefs,
-            updatedBalancesWithRewards
+            updatedBalancesByRewards
           ),
           GlobalSnapshotTips(
             deprecated = deprecated,
@@ -154,14 +153,18 @@ object GlobalSnapshotConsensusFunctions {
       } yield (globalSnapshot, returnedEvents)
     }
 
-    private def updateBalancesByRewards(balances: SortedMap[Address, Balance], txs: SortedSet[RewardTransaction]) =
-      txs.foldLeft(balances) {
-        case (acc, tx) =>
-          acc.updatedWith(tx.destination) { existingBalance =>
-            existingBalance
-              .flatMap(_.plus(tx.amount).toOption)
-              .orElse(Some(Balance.fromAmount(tx.amount)))
-          }
+    private def acceptRewardTxs(
+      balances: SortedMap[Address, Balance],
+      txs: SortedSet[RewardTransaction]
+    ): (SortedMap[Address, Balance], SortedSet[RewardTransaction]) =
+      txs.foldLeft((balances, SortedSet.empty[RewardTransaction])) { (acc, tx) =>
+        val (updatedBalances, acceptedTxs) = acc
+
+        updatedBalances
+          .getOrElse(tx.destination, Balance.empty)
+          .plus(tx.amount)
+          .map(balance => (updatedBalances.updated(tx.destination, balance), acceptedTxs + tx))
+          .getOrElse(acc)
       }
 
     private def getTipsUsages(
