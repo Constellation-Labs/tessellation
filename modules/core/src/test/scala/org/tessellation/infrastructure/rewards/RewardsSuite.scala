@@ -1,7 +1,6 @@
 package org.tessellation.infrastructure.rewards
 
 import cats.data.NonEmptySet
-import cats.effect.std.Random
 import cats.effect.unsafe.implicits.global
 import cats.effect.{IO, Resource}
 import cats.implicits.catsSyntaxApplicativeId
@@ -30,16 +29,15 @@ import weaver.scalacheck.Checkers
 
 object RewardsSuite extends MutableIOSuite with Checkers {
   type GenIdFn = () => Id
-  type Res = (KryoSerializer[IO], SecurityProvider[IO], Random[IO], GenIdFn)
+  type Res = (KryoSerializer[IO], SecurityProvider[IO], GenIdFn)
 
   override def sharedResource: Resource[IO, Res] = for {
     kryo <- KryoSerializer.forAsync[IO](dagSharedKryoRegistrar.union(sdkKryoRegistrar))
     implicit0(sp: SecurityProvider[IO]) <- SecurityProvider.forAsync[IO]
-    rand <- Resource.liftK(Random.scalaUtilRandom[IO])
     mkKeyPair = () => KeyPairGenerator.makeKeyPair.map(_.getPublic.toId).unsafeRunSync()
-  } yield (kryo, sp, rand, mkKeyPair)
+  } yield (kryo, sp, mkKeyPair)
 
-  val config: RewardsConfig = RewardsConfig.default
+  val config: RewardsConfig = RewardsConfig()
   val totalSupply: Amount = Amount(1599999999_74784000L) // approx because of rounding
 
   val lowerBound: NonNegLong = EpochProgress.MinValue.value
@@ -75,7 +73,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
   }
 
   test("generated reward transactions sum up to the total snapshot reward") { res =>
-    implicit val (_, sp, rand, makeIdFn) = res
+    implicit val (_, sp, makeIdFn) = res
 
     val gen = for {
       epochProgress <- meaningfulEpochProgressGen
@@ -102,7 +100,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
   }
 
   test("reward transactions won't be generated after the last epoch") { res =>
-    implicit val (_, sp, rand, makeIdFn) = res
+    implicit val (_, sp, makeIdFn) = res
 
     val gen = for {
       epochProgress <- overflowEpochProgressGen

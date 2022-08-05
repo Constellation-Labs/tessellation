@@ -50,7 +50,7 @@ object method {
       healthCheck = healthCheckConfig,
       snapshot = snapshotConfig,
       collateral = collateralConfig(environment, collateralAmount),
-      rewards = RewardsConfig.default
+      rewards = RewardsConfig()
     )
 
     val stateAfterJoining: NodeState = NodeState.WaitingForDownload
