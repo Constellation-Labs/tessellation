@@ -39,7 +39,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
     mkKeyPair = () => KeyPairGenerator.makeKeyPair.map(_.getPublic.toId).unsafeRunSync()
   } yield (kryo, sp, rand, mkKeyPair)
 
-  val config: RewardsConfig = RewardsConfig.default
+  val config: RewardsConfig = RewardsConfig()
   val totalSupply: Amount = Amount(1599999999_74784000L) // approx because of rounding
 
   val lowerBound: NonNegLong = EpochProgress.MinValue.value

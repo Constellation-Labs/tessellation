@@ -55,58 +55,37 @@ object types {
   )
 
   case class SoftStakingAndTestnetConfig(
-    softStakeAddress: Address,
-    testnetAddress: Address,
-    startingOrdinal: EpochProgress,
-    testnetCount: NonNegLong,
+    softStakeAddress: Address = Address("DAG77VVVRvdZiYxZ2hCtkHz68h85ApT5b2xzdTkn"),
+    testnetAddress: Address = Address("DAG0qE5tkz6cMUD5M2dkqgfV4TQCzUUdAP5MFM9P"),
+    startingOrdinal: EpochProgress = EpochProgress(0L),
+    testnetCount: NonNegLong = 50L,
     testnetWeight: NonNegLong = 4L,
-    softStakeCount: NonNegLong,
+    softStakeCount: NonNegLong = 20L,
     softStakeWeight: NonNegLong = 4L,
     facilitatorWeight: NonNegLong = 6L
   )
 
   case class DTMConfig(
-    address: Address,
-    dtmWeight: NonNegLong = 10L, // TODO: move these values below
-    remainingWeight: NonNegLong = 132L
+    address: Address = Address("DAG0Njmo6JZ3FhkLsipJSppepUHPuTXcSifARfvK"),
+    dtmWeight: NonNegLong = 11L,
+    remainingWeight: NonNegLong = 89L
   )
 
   case class StardustConfig(
-    address: Address,
+    address: Address = Address("DAGSTARDUSTCOLLECTIVEHZOIPHXZUBFGNXWJETZVSPAPAHMLXS"),
     stardustWeight: NonNegLong = 1L,
     remainingWeight: NonNegLong = 9L
   )
 
   case class RewardsConfig(
-    softStaking: SoftStakingAndTestnetConfig,
-    dtm: DTMConfig,
-    stardust: StardustConfig,
-    rewardsPerEpoch: SortedMap[EpochProgress, Amount]
-  )
-
-  object RewardsConfig {
-
-    val default = RewardsConfig(
-      softStaking = SoftStakingAndTestnetConfig(
-        softStakeAddress = Address("DAG77VVVRvdZiYxZ2hCtkHz68h85ApT5b2xzdTkn"),
-        softStakeCount = 20L,
-        startingOrdinal = EpochProgress(0L),
-        testnetCount = 50L,
-        testnetAddress = Address("DAG0qE5tkz6cMUD5M2dkqgfV4TQCzUUdAP5MFM9P")
-      ),
-      dtm = DTMConfig(
-        address = Address("DAG0Njmo6JZ3FhkLsipJSppepUHPuTXcSifARfvK")
-      ),
-      stardust = StardustConfig(
-        address = Address("DAGSTARDUSTCOLLECTIVEHZOIPHXZUBFGNXWJETZVSPAPAHMLXS")
-      ),
-      rewardsPerEpoch = SortedMap(
-        EpochProgress(1296000L) -> Amount(658_43621389L),
-        EpochProgress(2592000L) -> Amount(329_21810694L),
-        EpochProgress(3888000L) -> Amount(164_60905347L),
-        EpochProgress(5184000L) -> Amount(82_30452674L)
-      )
+    softStaking: SoftStakingAndTestnetConfig = SoftStakingAndTestnetConfig(),
+    dtm: DTMConfig = DTMConfig(),
+    stardust: StardustConfig = StardustConfig(),
+    rewardsPerEpoch: SortedMap[EpochProgress, Amount] = SortedMap(
+      EpochProgress(1296000L) -> Amount(658_43621389L),
+      EpochProgress(2592000L) -> Amount(329_21810694L),
+      EpochProgress(3888000L) -> Amount(164_60905347L),
+      EpochProgress(5184000L) -> Amount(82_30452674L)
     )
-  }
-
+  )
 }
