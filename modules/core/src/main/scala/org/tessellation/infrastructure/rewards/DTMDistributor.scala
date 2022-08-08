@@ -6,10 +6,14 @@ import org.tessellation.config.types.DTMConfig
 import org.tessellation.ext.refined._
 import org.tessellation.schema.balance.Amount
 
-object DTM {
+trait DTMDistributor[F[_]] {
+  def distribute(): DistributionState[F]
+}
 
-  def make(config: DTMConfig): RewardsDistributor[Either[ArithmeticException, *]] =
-    (_, _) =>
+object DTMDistributor {
+
+  def make(config: DTMConfig): DTMDistributor[Either[ArithmeticException, *]] =
+    () =>
       StateT { amount: Amount =>
         for {
           numerator <- amount.value * config.dtmWeight

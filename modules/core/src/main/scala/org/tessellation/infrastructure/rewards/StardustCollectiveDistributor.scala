@@ -6,10 +6,14 @@ import org.tessellation.config.types.StardustConfig
 import org.tessellation.ext.refined._
 import org.tessellation.schema.balance.Amount
 
-object StardustCollective {
+trait StardustCollectiveDistributor[F[_]] {
+  def distribute(): DistributionState[F]
+}
 
-  def make(config: StardustConfig): RewardsDistributor[Either[ArithmeticException, *]] =
-    (_, _) =>
+object StardustCollectiveDistributor {
+
+  def make(config: StardustConfig): StardustCollectiveDistributor[Either[ArithmeticException, *]] =
+    () =>
       StateT { amount =>
         for {
           numerator <- amount.value * config.stardustWeight

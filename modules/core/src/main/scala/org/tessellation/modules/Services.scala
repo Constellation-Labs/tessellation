@@ -45,10 +45,10 @@ object Services {
       rewards <- Rewards
         .make[F](
           cfg.rewards.rewardsPerEpoch,
-          SoftStaking.make(cfg.rewards.softStaking),
-          DTM.make(cfg.rewards.dtm),
-          StardustCollective.make(cfg.rewards.stardust),
-          Regular.make
+          SoftStakingDistributor.make(cfg.rewards.softStaking),
+          DTMDistributor.make(cfg.rewards.dtm),
+          StardustCollectiveDistributor.make(cfg.rewards.stardust),
+          RegularDistributor.make
         )
         .pure[F]
       consensus <- GlobalSnapshotConsensus

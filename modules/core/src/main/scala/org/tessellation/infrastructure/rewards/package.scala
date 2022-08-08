@@ -2,6 +2,7 @@ package org.tessellation.infrastructure
 
 import cats.data.StateT
 
+import org.tessellation.domain.rewards.RewardsDistributor
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 
