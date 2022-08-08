@@ -7,15 +7,20 @@ import cats.implicits.catsSyntaxApplicativeId
 import cats.syntax.eq._
 import cats.syntax.list._
 
+import scala.collection.immutable.SortedSet
+
 import org.tessellation.config.types._
 import org.tessellation.dag.dagSharedKryoRegistrar
+import org.tessellation.dag.snapshot.SnapshotOrdinal
 import org.tessellation.dag.snapshot.epoch.EpochProgress
+import org.tessellation.domain.rewards.Rewards
 import org.tessellation.ext.kryo._
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.balance.Amount
-import org.tessellation.schema.generators.chooseNumRefined
+import org.tessellation.schema.generators.{chooseNumRefined, transactionGen}
+import org.tessellation.schema.transaction.TransactionFee
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.key.ops.PublicKeyOps
@@ -46,6 +51,9 @@ object RewardsSuite extends MutableIOSuite with Checkers {
   val special: Seq[NonNegLong] =
     config.rewardsPerEpoch.keys.flatMap(epochEnd => Seq(epochEnd.value, NonNegLong.unsafeFrom(epochEnd.value + 1L))).toSeq
 
+  val snapshotOrdinalGen: Gen[SnapshotOrdinal] =
+    chooseNumRefined(SnapshotOrdinal.MinValue.value, NonNegLong.MinValue, special: _*).map(SnapshotOrdinal(_))
+
   val meaningfulEpochProgressGen: Gen[EpochProgress] =
     chooseNumRefined(lowerBound, upperBound, special: _*).map(EpochProgress(_))
 
@@ -60,6 +68,39 @@ object RewardsSuite extends MutableIOSuite with Checkers {
       Gen.delay(genIdFn())
     )
     .map(_.toNel.get.toNes)
+
+  def makeRewards(config: RewardsConfig, softStakeCount: NonNegLong, testnetCount: NonNegLong)(
+    implicit sp: SecurityProvider[IO]
+  ): Rewards[F] = {
+    val softStaking = SoftStakingDistributor.make(config.softStaking.copy(softStakeCount = softStakeCount, testnetCount = testnetCount))
+    val dtm = DTMDistributor.make(config.dtm)
+    val stardust = StardustCollectiveDistributor.make(config.stardust)
+    val regular = RegularDistributor.make
+    Rewards.make[IO](config.rewardsPerEpoch, softStaking, dtm, stardust, regular)
+  }
+
+  test("fee rewards sum up to the total fee") { res =>
+    implicit val (_, sp, makeIdFn) = res
+
+    // total supply is lower than Long.MaxValue so generated fee needs to be limited to avoid cases which won't happen
+    val feeMaxVal = TransactionFee(NonNegLong(99999999_00000000L))
+
+    val gen = for {
+      snapshotOrdinal <- snapshotOrdinalGen
+      facilitators <- facilitatorsGen
+      txs <- Gen.nonEmptyListOf(transactionGen.retryUntil(_.fee.value < feeMaxVal.value))
+    } yield (snapshotOrdinal, facilitators, SortedSet.from(txs))
+
+    forall(gen) {
+      case (epochProgress, facilitators, txs) =>
+        for {
+          rewards <- makeRewards(config, 0L, 0L).pure[F]
+          expectedSum = txs.toList.map(_.fee.value.toLong).sum
+          txs <- rewards.feeDistribution(epochProgress, txs, facilitators)
+          sum = txs.toList.map(_.amount.value.toLong).sum
+        } yield expect(sum === expectedSum)
+    }
+  }
 
   pureTest("all the epochs sum up to the total supply") {
     val l = config.rewardsPerEpoch.toList
@@ -84,14 +125,9 @@ object RewardsSuite extends MutableIOSuite with Checkers {
 
     forall(gen) {
       case (epochProgress, facilitators, softStakeCount, testnetCount) =>
-        val softStaking = SoftStaking.make(config.softStaking.copy(softStakeCount = softStakeCount, testnetCount = testnetCount))
-        val dtm = DTM.make(config.dtm)
-        val stardust = StardustCollective.make(config.stardust)
-        val regular = Regular.make
-
         for {
-          rewards <- Rewards.make[IO](config.rewardsPerEpoch, softStaking, dtm, stardust, regular).pure[F]
-          txs <- rewards.calculateRewards(epochProgress, facilitators)
+          rewards <- makeRewards(config, softStakeCount, testnetCount).pure[F]
+          txs <- rewards.mintedDistribution(epochProgress, facilitators)
           sum = txs.toList.map(_.amount.value.toLong).sum
           expected = rewards.getAmountByEpoch(epochProgress, config.rewardsPerEpoch).value.toLong
 
@@ -111,14 +147,9 @@ object RewardsSuite extends MutableIOSuite with Checkers {
 
     forall(gen) {
       case (epochProgress, facilitators, softStakeCount, testnetCount) =>
-        val softStaking = SoftStaking.make(config.softStaking.copy(softStakeCount = softStakeCount, testnetCount = testnetCount))
-        val dtm = DTM.make(config.dtm)
-        val stardust = StardustCollective.make(config.stardust)
-        val regular = Regular.make
-
         for {
-          rewards <- Rewards.make[IO](config.rewardsPerEpoch, softStaking, dtm, stardust, regular).pure[F]
-          txs <- rewards.calculateRewards(epochProgress, facilitators)
+          rewards <- makeRewards(config, softStakeCount, testnetCount).pure[F]
+          txs <- rewards.mintedDistribution(epochProgress, facilitators)
         } yield expect(txs.isEmpty)
     }
   }

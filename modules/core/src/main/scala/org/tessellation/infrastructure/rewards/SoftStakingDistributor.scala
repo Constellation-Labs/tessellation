@@ -1,20 +1,26 @@
 package org.tessellation.infrastructure.rewards
 
-import cats.data.StateT
+import cats.data.{NonEmptySet, StateT}
 import cats.syntax.either._
 
 import scala.math.Ordered.orderingToOrdered
 
 import org.tessellation.config.types.SoftStakingAndTestnetConfig
+import org.tessellation.dag.snapshot.epoch.EpochProgress
 import org.tessellation.ext.refined._
+import org.tessellation.schema.ID.Id
 import org.tessellation.schema.balance.Amount
 
 import eu.timepit.refined.types.numeric.NonNegLong
 import io.estatico.newtype.ops._
 
-object SoftStaking {
+trait SoftStakingDistributor[F[_]] {
+  def distribute(epochProgress: EpochProgress, facilitators: NonEmptySet[Id]): DistributionState[F]
+}
 
-  def make(config: SoftStakingAndTestnetConfig): RewardsDistributor[Either[ArithmeticException, *]] =
+object SoftStakingDistributor {
+
+  def make(config: SoftStakingAndTestnetConfig): SoftStakingDistributor[Either[ArithmeticException, *]] =
     (epochProgress, facilitators) =>
       StateT { amount =>
         if (epochProgress < config.startingOrdinal)

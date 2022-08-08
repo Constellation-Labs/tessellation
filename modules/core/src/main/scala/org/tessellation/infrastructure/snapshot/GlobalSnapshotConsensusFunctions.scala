@@ -83,7 +83,7 @@ object GlobalSnapshotConsensusFunctions {
         .toList
 
       for {
-        lastGSHash <- lastArtifact.value.hashF
+        lastArtifactHash <- lastArtifact.value.hashF
         currentOrdinal = lastArtifact.ordinal.next
         currentEpochProgress = trigger match {
           case EventTrigger => lastArtifact.epochProgress
@@ -118,11 +118,14 @@ object GlobalSnapshotConsensusFunctions {
         updatedLastTxRefs = lastArtifact.info.lastTxRefs ++ acceptanceResult.contextUpdate.lastTxRefs
         balances = lastArtifact.info.balances ++ acceptanceResult.contextUpdate.balances
 
-        rewardTxsForAcceptance <- trigger match {
-          case EventTrigger => SortedSet.empty[RewardTransaction].pure[F]
-          case TimeTrigger =>
-            rewards
-              .calculateRewards(lastArtifact.epochProgress, lastArtifact.proofs.map(_.id))
+        facilitators = lastArtifact.proofs.map(_.id)
+        transactions = lastArtifact.value.blocks.flatMap(_.block.transactions.toSortedSet).map(_.value)
+
+        rewardTxsForAcceptance <- rewards.feeDistribution(lastArtifact.ordinal, transactions, facilitators).flatMap { feeRewardTxs =>
+          trigger match {
+            case EventTrigger => feeRewardTxs.pure[F]
+            case TimeTrigger  => rewards.mintedDistribution(lastArtifact.epochProgress, facilitators).map(_ ++ feeRewardTxs)
+          }
         }
 
         (updatedBalancesByRewards, acceptedRewardTxs) = acceptRewardTxs(balances, rewardTxsForAcceptance)
@@ -133,7 +136,7 @@ object GlobalSnapshotConsensusFunctions {
           currentOrdinal,
           height,
           subHeight,
-          lastGSHash,
+          lastArtifactHash,
           accepted,
           scSnapshots,
           acceptedRewardTxs,
