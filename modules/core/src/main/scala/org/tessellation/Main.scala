@@ -125,7 +125,10 @@ object Main
             NodeState.GenesisReady
           ) {
             GenesisLoader.make[IO].load(m.genesisPath).flatMap { accounts =>
-              val genesis = GlobalSnapshot.mkGenesis(accounts.map(a => (a.address, a.balance)).toMap)
+              val genesis = GlobalSnapshot.mkGenesis(
+                accounts.map(a => (a.address, a.balance)).toMap,
+                m.startingEpochProgress
+              )
 
               Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair).flatMap { signedGenesis =>
                 storages.globalSnapshot.prepend(signedGenesis) >>
