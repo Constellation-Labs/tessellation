@@ -57,7 +57,7 @@ object GlobalSnapshot {
   implicit def decoder[G[_]: Concurrent: KryoSerializer]: EntityDecoder[G, GlobalSnapshot] =
     BinaryCodec.decoder[G, GlobalSnapshot]
 
-  def mkGenesis(balances: Map[Address, Balance]) =
+  def mkGenesis(balances: Map[Address, Balance], startingEpochProgress: EpochProgress) =
     GlobalSnapshot(
       SnapshotOrdinal.MinValue,
       Height.MinValue,
@@ -66,7 +66,7 @@ object GlobalSnapshot {
       SortedSet.empty,
       SortedMap.empty,
       SortedSet.empty,
-      EpochProgress.MinValue,
+      startingEpochProgress,
       NonEmptyList.of(PeerId(Hex("peer1"))), // TODO
       GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.from(balances)),
       GlobalSnapshotTips(

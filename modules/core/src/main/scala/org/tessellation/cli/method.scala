@@ -7,6 +7,7 @@ import scala.concurrent.duration._
 import org.tessellation.cli.db
 import org.tessellation.cli.env.{KeyAlias, Password, StorePath}
 import org.tessellation.config.types._
+import org.tessellation.dag.snapshot.epoch.EpochProgress
 import org.tessellation.ext.decline.WithOpts
 import org.tessellation.ext.decline.decline._
 import org.tessellation.schema.balance.Amount
@@ -17,7 +18,9 @@ import org.tessellation.sdk.config.types._
 import org.tessellation.security.hash.Hash
 
 import com.monovore.decline.Opts
+import com.monovore.decline.refined._
 import eu.timepit.refined.auto._
+import eu.timepit.refined.types.numeric.NonNegLong
 import fs2.io.file.Path
 
 object method {
@@ -67,7 +70,8 @@ object method {
     snapshotConfig: SnapshotConfig,
     genesisPath: Path,
     seedlistPath: Option[Path],
-    collateralAmount: Option[Amount]
+    collateralAmount: Option[Amount],
+    startingEpochProgress: EpochProgress
   ) extends Run
 
   object RunGenesis extends WithOpts[RunGenesis] {
@@ -75,6 +79,11 @@ object method {
     val genesisPathOpts: Opts[Path] = Opts.argument[Path]("genesis")
 
     val seedlistPathOpts: Opts[Option[Path]] = Opts.option[Path]("seedlist", "").orNone
+
+    val startingEpochProgressOpts: Opts[EpochProgress] = Opts
+      .option[NonNegLong]("startingEpochProgress", "Set starting progress for rewarding at the specific epoch")
+      .map(EpochProgress(_))
+      .withDefault(EpochProgress.MinValue)
 
     val opts = Opts.subcommand("run-genesis", "Run genesis mode") {
       (
@@ -87,8 +96,9 @@ object method {
         snapshot.opts,
         genesisPathOpts,
         seedlistPathOpts,
-        CollateralAmountOpts.opts
-      ).mapN(RunGenesis.apply(_, _, _, _, _, _, _, _, _, _))
+        CollateralAmountOpts.opts,
+        startingEpochProgressOpts
+      ).mapN(RunGenesis.apply(_, _, _, _, _, _, _, _, _, _, _))
     }
   }
 

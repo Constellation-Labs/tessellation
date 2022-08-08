@@ -8,6 +8,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import org.tessellation.dag.dagSharedKryoRegistrar
 import org.tessellation.dag.snapshot.GlobalSnapshot
+import org.tessellation.dag.snapshot.epoch.EpochProgress
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
 import org.tessellation.ext.kryo._
@@ -46,7 +47,7 @@ object GlobalSnapshotStorageSuite extends MutableIOSuite with Checkers {
     S: SecurityProvider[IO]
   ): IO[(Signed[GlobalSnapshot], Signed[GlobalSnapshot])] =
     KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>
-      Signed.forAsyncKryo[IO, GlobalSnapshot](GlobalSnapshot.mkGenesis(Map.empty), keyPair).flatMap { genesis =>
+      Signed.forAsyncKryo[IO, GlobalSnapshot](GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue), keyPair).flatMap { genesis =>
         def snapshot =
           GlobalSnapshot(
             genesis.value.ordinal.next,
