@@ -161,7 +161,7 @@ abstract class HealthCheckConsensus[
       }
   }
 
-  private def createRoundId: F[RoundId] = GenUUID[F].make.map(RoundId.apply)
+  protected def createRoundId: F[RoundId] = GenUUID[F].make.map(RoundId.apply)
 
   def startOwnRound(key: K) =
     clusterStorage

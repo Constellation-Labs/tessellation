@@ -64,6 +64,9 @@ object PeerDeclarationHealthCheck {
             .flatMap(_.map(toP2PContext).traverse(httpClient.requestProposal(round).run))
             .map(_.flatten)
 
+        override def startOwnRound(key: Key[K]): F[Unit] =
+          createRoundId.map(HealthCheckRoundId(_, selfId)).flatMap(startRound(key, _))
+
         def periodic: F[Unit] =
           for {
             time <- Clock[F].realTime
