@@ -59,6 +59,7 @@ object Services {
           seedlist,
           cfg.collateral.amount,
           storages.cluster,
+          storages.node,
           storages.globalSnapshot,
           validators.blockValidator,
           cfg.healthCheck,

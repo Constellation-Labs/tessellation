@@ -15,15 +15,18 @@ import scala.reflect.ClassTag
 import scala.reflect.runtime.universe.TypeTag
 
 import org.tessellation.ext.cats.syntax.next._
+import org.tessellation.schema.node.NodeState.{Observing, Ready}
+import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
+import org.tessellation.security.signature.Signed
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait ConsensusManager[F[_], Key, Artifact] {
 
-  def scheduleTriggerOnTime: F[Unit]
-  def triggerOnStart: F[Unit]
-  private[consensus] def triggerOnEvent: F[Unit]
+  def startObservingAfter(lastKey: Key): F[Unit]
+  def startFacilitatingAfter(lastKey: Key, lastArtifact: Signed[Artifact]): F[Unit]
+  private[consensus] def facilitateOnEvent: F[Unit]
   private[consensus] def checkForStateUpdate(key: Key)(resources: ConsensusResources[Artifact]): F[Unit]
   private[sdk] def checkForStateUpdateSync(key: Key)(resources: ConsensusResources[Artifact]): F[Unit]
 
@@ -34,24 +37,41 @@ object ConsensusManager {
   def make[F[_]: Async: Clock, Event, Key: Show: Order: Next: TypeTag: ClassTag, Artifact <: AnyRef: Show: TypeTag](
     timeTriggerInterval: FiniteDuration,
     consensusStorage: ConsensusStorage[F, Event, Key, Artifact],
-    consensusStateUpdater: ConsensusStateUpdater[F, Key, Artifact]
+    consensusStateUpdater: ConsensusStateUpdater[F, Key, Artifact],
+    nodeStorage: NodeStorage[F]
   ): ConsensusManager[F, Key, Artifact] = new ConsensusManager[F, Key, Artifact] {
 
     private val logger = Slf4jLogger.getLoggerFromClass[F](ConsensusManager.getClass)
 
-    def triggerOnEvent: F[Unit] =
+    def startObservingAfter(lastKey: Key): F[Unit] =
       Spawn[F].start {
-        internalTriggerWith(EventTrigger.some)
-          .handleErrorWith(logger.error(_)(s"Error triggering consensus with event trigger"))
+        val nextKey = lastKey.next
+
+        consensusStorage.setLastKey(lastKey) >>
+          consensusStorage
+            .getResources(nextKey)
+            .flatMap { resources =>
+              logger.debug(s"Trying to observe consensus {key=${nextKey.show}}") >>
+                consensusStateUpdater.tryObserveConsensus(nextKey, lastKey, resources).flatMap {
+                  case Some(_) =>
+                    internalCheckForStateUpdate(nextKey, resources)
+                  case None => Applicative[F].unit
+                }
+            }
+            .handleErrorWith(logger.error(_)(s"Error observing consensus {key=${nextKey.show}}"))
       }.void
 
-    def triggerOnStart: F[Unit] =
+    def facilitateOnEvent: F[Unit] =
       Spawn[F].start {
-        internalTriggerWith(none)
-          .handleErrorWith(logger.error(_)("Error triggering consensus with empty trigger"))
+        internalFacilitateWith(EventTrigger.some)
+          .handleErrorWith(logger.error(_)(s"Error facilitating consensus with event trigger"))
       }.void
 
-    def scheduleTriggerOnTime: F[Unit] =
+    def startFacilitatingAfter(lastKey: Key, lastArtifact: Signed[Artifact]): F[Unit] =
+      consensusStorage.setLastKeyAndArtifact(lastKey, lastArtifact) >>
+        scheduleFacility
+
+    private def scheduleFacility: F[Unit] =
       Clock[F].monotonic.map(_ + timeTriggerInterval).flatMap { nextTimeValue =>
         consensusStorage.setTimeTrigger(nextTimeValue) >>
           Spawn[F].start {
@@ -59,7 +79,7 @@ object ConsensusManager {
               maybeTimeTrigger <- consensusStorage.getTimeTrigger
               currentTime <- Clock[F].monotonic
               _ <- Applicative[F]
-                .whenA(maybeTimeTrigger.exists(currentTime >= _))(internalTriggerWith(TimeTrigger.some))
+                .whenA(maybeTimeTrigger.exists(currentTime >= _))(internalFacilitateWith(TimeTrigger.some))
             } yield ()
 
             Temporal[F].sleep(timeTriggerInterval) >> condTriggerWithTime
@@ -76,23 +96,25 @@ object ConsensusManager {
     def checkForStateUpdateSync(key: Key)(resources: ConsensusResources[Artifact]): F[Unit] =
       internalCheckForStateUpdate(key, resources)
 
-    private def internalTriggerWith(
+    private def internalFacilitateWith(
       trigger: Option[ConsensusTrigger]
     ): F[Unit] =
       consensusStorage.getLastKeyAndArtifact.flatMap { maybeLastKeyAndArtifact =>
-        maybeLastKeyAndArtifact.traverse { lastKeyAndArtifact =>
-          val nextKey = lastKeyAndArtifact._1.next
+        maybeLastKeyAndArtifact.traverse {
+          case (lastKey, Some(lastArtifact)) =>
+            val nextKey = lastKey.next
 
-          consensusStorage
-            .getResources(nextKey)
-            .flatMap { resources =>
-              logger.debug(s"Trying to facilitate consensus {key=${nextKey.show}, trigger=${trigger.show}}") >>
-                consensusStateUpdater.tryFacilitateConsensus(nextKey, trigger, resources, lastKeyAndArtifact).flatMap {
-                  case Some(_) =>
-                    internalCheckForStateUpdate(nextKey, resources)
-                  case None => Applicative[F].unit
-                }
-            }
+            consensusStorage
+              .getResources(nextKey)
+              .flatMap { resources =>
+                logger.debug(s"Trying to facilitate consensus {key=${nextKey.show}, trigger=${trigger.show}}") >>
+                  consensusStateUpdater.tryFacilitateConsensus(nextKey, lastKey, lastArtifact, trigger, resources).flatMap {
+                    case Some(_) =>
+                      internalCheckForStateUpdate(nextKey, resources)
+                    case None => Applicative[F].unit
+                  }
+              }
+          case _ => Applicative[F].unit
         }.void
       }
 
@@ -104,13 +126,15 @@ object ConsensusManager {
         case Some(state) =>
           state.status match {
             case Finished(signedArtifact, majorityTrigger) =>
-              val keyAndArtifact = state.key -> signedArtifact
               consensusStorage
-                .tryUpdateLastKeyAndArtifactWithCleanup(state.lastKeyAndArtifact, keyAndArtifact)
+                .tryUpdateLastKeyAndArtifactWithCleanup(state.lastKey, key, signedArtifact)
                 .ifM(
                   afterConsensusFinish(majorityTrigger),
                   logger.info("Skip triggering another consensus")
                 )
+            case CollectingProposals(_, None) =>
+              nodeStorage.tryModifyState(Observing, Ready) >>
+                internalCheckForStateUpdate(key, resources)
             case _ =>
               internalCheckForStateUpdate(key, resources)
           }
@@ -130,18 +154,18 @@ object ConsensusManager {
         containsTriggerEvent <- consensusStorage.containsTriggerEvent
         _ <-
           if (maybeTimeTrigger.exists(currentTime >= _))
-            internalTriggerWith(TimeTrigger.some)
+            internalFacilitateWith(TimeTrigger.some)
           else if (containsTriggerEvent)
-            internalTriggerWith(EventTrigger.some)
+            internalFacilitateWith(EventTrigger.some)
           else if (maybeTimeTrigger.isEmpty)
-            internalTriggerWith(none) // when there's no time trigger scheduled yet, trigger again with nothing
+            internalFacilitateWith(none) // when there's no time trigger scheduled yet, trigger again with nothing
           else
             Applicative[F].unit
       } yield ()
 
     private def afterTimeTrigger: F[Unit] =
-      scheduleTriggerOnTime >> consensusStorage.containsTriggerEvent
-        .ifM(internalTriggerWith(EventTrigger.some), Applicative[F].unit)
+      scheduleFacility >> consensusStorage.containsTriggerEvent
+        .ifM(internalFacilitateWith(EventTrigger.some), Applicative[F].unit)
   }
 
 }

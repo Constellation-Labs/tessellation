@@ -68,31 +68,33 @@ object PeerDeclarationHealthCheck {
           for {
             time <- Clock[F].realTime
             states <- consensusStorage.getStates
-            roundKeys <- states.flatTraverse { state =>
-              if (isTimedOut(state, time)) {
-                consensusStorage.getPeerDeclarations(state.key).map { peerDeclarations =>
-                  def peersMissingDeclaration[B <: PeerDeclaration](
-                    getter: PeerDeclarations => Option[B]
-                  ): List[PeerId] =
-                    state.facilitators.filter(peerId => peerDeclarations.get(peerId).flatMap(getter).isEmpty)
+            roundKeys <- states
+              .filter(_.facilitators.contains(selfId))
+              .flatTraverse { state =>
+                if (isTimedOut(state, time)) {
+                  consensusStorage.getPeerDeclarations(state.key).map { peerDeclarations =>
+                    def peersMissingDeclaration[B <: PeerDeclaration](
+                      getter: PeerDeclarations => Option[B]
+                    ): List[PeerId] =
+                      state.facilitators.filter(peerId => peerDeclarations.get(peerId).flatMap(getter).isEmpty)
 
-                  state.status match {
-                    case _: Facilitated[_] =>
-                      peersMissingDeclaration(_.facility)
-                        .map(PeerDeclarationHealthCheckKey(_, state.key, kind.Facility))
-                    case _: ProposalMade[_] =>
-                      peersMissingDeclaration(_.proposal)
-                        .map(PeerDeclarationHealthCheckKey(_, state.key, kind.Proposal))
-                    case _: MajoritySigned[_] =>
-                      peersMissingDeclaration(_.signature)
-                        .map(PeerDeclarationHealthCheckKey(_, state.key, kind.Signature))
-                    case _: Finished[_] => List.empty[Key[K]]
+                    state.status match {
+                      case _: CollectingFacilities[_] =>
+                        peersMissingDeclaration(_.facility)
+                          .map(PeerDeclarationHealthCheckKey(_, state.key, kind.Facility))
+                      case _: CollectingProposals[_] =>
+                        peersMissingDeclaration(_.proposal)
+                          .map(PeerDeclarationHealthCheckKey(_, state.key, kind.Proposal))
+                      case _: CollectingSignatures[_] =>
+                        peersMissingDeclaration(_.signature)
+                          .map(PeerDeclarationHealthCheckKey(_, state.key, kind.Signature))
+                      case _: Finished[_] => List.empty[Key[K]]
+                    }
                   }
+                } else {
+                  List.empty[Key[K]].pure[F]
                 }
-              } else {
-                List.empty[Key[K]].pure[F]
               }
-            }
             _ <- roundKeys.traverse(startOwnRound)
           } yield ()
 
@@ -129,10 +131,10 @@ object PeerDeclarationHealthCheck {
                 .filter(_.facilitators.contains(key.id))
                 .filter { state =>
                   (key.kind, state.status) match {
-                    case (kind.Facility, _: Facilitated[_])     => true
-                    case (kind.Proposal, _: ProposalMade[_])    => true
-                    case (kind.Signature, _: MajoritySigned[_]) => true
-                    case _                                      => false
+                    case (kind.Facility, _: CollectingFacilities[_])  => true
+                    case (kind.Proposal, _: CollectingProposals[_])   => true
+                    case (kind.Signature, _: CollectingSignatures[_]) => true
+                    case _                                            => false
                   }
                 }
                 .map { state =>
@@ -148,7 +150,7 @@ object PeerDeclarationHealthCheck {
 
         private def isTimedOut(state: ConsensusState[K, _], time: FiniteDuration) =
           state.status match {
-            case Facilitated(None) =>
+            case CollectingFacilities(Some(FacilityInfo(_, None))) =>
               time > (state.statusUpdatedAt |+| config.peerDeclaration.receiveTimeout |+| timeTriggerInterval)
             case _ => time > (state.statusUpdatedAt |+| config.peerDeclaration.receiveTimeout)
           }

@@ -18,6 +18,7 @@ import org.tessellation.sdk.config.types.HealthCheckConfig
 import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.gossip.Gossip
+import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.infrastructure.consensus.Consensus
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
@@ -33,6 +34,7 @@ object GlobalSnapshotConsensus {
     seedlist: Option[Set[PeerId]],
     collateral: Amount,
     clusterStorage: ClusterStorage[F],
+    nodeStorage: NodeStorage[F],
     globalSnapshotStorage: GlobalSnapshotStorage[F],
     blockValidator: BlockValidator[F],
     healthCheckConfig: HealthCheckConfig,
@@ -55,6 +57,7 @@ object GlobalSnapshotConsensus {
       snapshotConfig.timeTriggerInterval,
       seedlist,
       clusterStorage,
+      nodeStorage,
       healthCheckConfig,
       client,
       session,

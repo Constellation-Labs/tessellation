@@ -24,6 +24,7 @@ import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.healthcheck.consensus.HealthCheckConsensus
+import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.infrastructure.gossip.RumorHandler
 import org.tessellation.sdk.infrastructure.healthcheck.declaration._
 import org.tessellation.security.SecurityProvider
@@ -47,10 +48,11 @@ object Consensus {
     timeTriggerInterval: FiniteDuration,
     seedlist: Option[Set[PeerId]],
     clusterStorage: ClusterStorage[F],
+    nodeStorage: NodeStorage[F],
     healthCheckConfig: HealthCheckConfig,
     client: Client[F],
     session: Session[F],
-    initKeyAndArtifact: Option[(K, Signed[Artifact])] = none
+    initKeyAndArtifact: Option[(K, Option[Signed[Artifact]])] = none
   ): F[Consensus[F, Event, K, Artifact]] =
     for {
       storage <- ConsensusStorage.make[F, Event, K, Artifact](initKeyAndArtifact)
@@ -66,7 +68,8 @@ object Consensus {
       manager = ConsensusManager.make[F, Event, K, Artifact](
         timeTriggerInterval,
         storage,
-        stateUpdater
+        stateUpdater,
+        nodeStorage
       )
       httpClient = PeerDeclarationHttpClient.make[F, K](client, session)
       healthCheck <- PeerDeclarationHealthCheck.make[F, K, Artifact](

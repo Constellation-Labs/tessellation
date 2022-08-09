@@ -32,7 +32,7 @@ object ConsensusHandler {
     val eventHandler = RumorHandler.fromPeerRumorConsumer[F, ConsensusEvent[Event]]() { rumor =>
       if (fns.triggerPredicate(rumor.content.value))
         storage.addTriggerEvent(rumor.origin, (rumor.ordinal, rumor.content.value)) >>
-          manager.triggerOnEvent
+          manager.facilitateOnEvent
       else
         storage.addEvent(rumor.origin, (rumor.ordinal, rumor.content.value))
     }

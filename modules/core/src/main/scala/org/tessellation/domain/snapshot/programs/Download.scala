@@ -4,9 +4,9 @@ import cats.effect.Async
 import cats.syntax.applicativeError._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
-import cats.syntax.option._
 
 import org.tessellation.domain.snapshot.GlobalSnapshotStorage
+import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.http.p2p.clients.GlobalSnapshotClient
 import org.tessellation.infrastructure.snapshot._
 import org.tessellation.schema.node.NodeState
@@ -43,20 +43,18 @@ sealed abstract class Download[F[_]: Async] private (
   private def logger = Slf4jLogger.getLogger[F]
 
   def download(): F[Unit] =
-    nodeStorage.tryModifyState(NodeState.WaitingForDownload, NodeState.DownloadInProgress, NodeState.Ready) {
+    nodeStorage.tryModifyState(NodeState.WaitingForDownload, NodeState.DownloadInProgress, NodeState.Observing) {
       clusterStorage.getPeers
         .map(_.headOption)
         .flatMap {
           case None =>
-            (new Throwable(s"Unexpected state during download. No peer found, but node should be already connected."))
+            new Throwable(s"Unexpected state during download. No peer found, but node should be already connected.")
               .raiseError[F, Unit]
           case Some(peer) =>
-            globalSnapshotClient.getLatest
+            globalSnapshotClient.getLatestOrdinal
               .run(peer)
-              .flatMap { snapshot =>
-                globalSnapshotStorage.prepend(snapshot) >>
-                  consensus.storage.setLastKeyAndArtifact((snapshot.value.ordinal, snapshot).some) >>
-                  consensus.manager.triggerOnStart
+              .flatMap { ordinal =>
+                consensus.manager.startObservingAfter(ordinal.next)
               }
         }
         .handleErrorWith { err =>

@@ -33,8 +33,6 @@ final case class DebugRoutes[F[_]: Async](
       services.gossip.spread(intContent.some) >> Ok()
     case POST -> Root / "gossip" / "spread" / strContent =>
       services.gossip.spreadCommon(strContent) >> Ok()
-    case POST -> Root / "consensus" / "stop" =>
-      services.consensus.storage.setLastKeyAndArtifact(none) >> Ok()
   }
 
   val routes: HttpRoutes[F] = Router(
