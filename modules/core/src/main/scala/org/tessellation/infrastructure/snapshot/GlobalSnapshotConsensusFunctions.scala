@@ -72,37 +72,36 @@ object GlobalSnapshotConsensusFunctions {
     ): Boolean = true // placeholder for triggering based on fee
 
     def createProposalArtifact(
-      last: (GlobalSnapshotKey, Signed[GlobalSnapshotArtifact]),
+      lastKey: GlobalSnapshotKey,
+      lastArtifact: Signed[GlobalSnapshotArtifact],
       trigger: ConsensusTrigger,
       events: Set[GlobalSnapshotEvent]
     ): F[(GlobalSnapshotArtifact, Set[GlobalSnapshotEvent])] = {
-      val (_, lastGS) = last
-
       val (scEvents: List[StateChannelEvent], dagEvents: List[DAGEvent]) = events.toList.partitionMap(identity)
 
       val blocksForAcceptance = dagEvents
-        .filter(_.height > lastGS.height)
+        .filter(_.height > lastArtifact.height)
         .toList
 
       for {
-        lastGSHash <- lastGS.value.hashF
-        currentOrdinal = lastGS.ordinal.next
+        lastGSHash <- lastArtifact.value.hashF
+        currentOrdinal = lastArtifact.ordinal.next
         epochProgress = trigger match {
-          case EventTrigger => lastGS.epochProgress
-          case TimeTrigger  => lastGS.epochProgress.next
+          case EventTrigger => lastArtifact.epochProgress
+          case TimeTrigger  => lastArtifact.epochProgress.next
         }
-        (scSnapshots, returnedSCEvents) = processStateChannelEvents(lastGS.info, scEvents)
+        (scSnapshots, returnedSCEvents) = processStateChannelEvents(lastArtifact.info, scEvents)
         sCSnapshotHashes <- scSnapshots.toList.traverse { case (address, nel) => nel.head.hashF.map(address -> _) }
           .map(_.toMap)
-        updatedLastStateChannelSnapshotHashes = lastGS.info.lastStateChannelSnapshotHashes ++ sCSnapshotHashes
+        updatedLastStateChannelSnapshotHashes = lastArtifact.info.lastStateChannelSnapshotHashes ++ sCSnapshotHashes
 
-        lastActiveTips <- lastGS.activeTips
-        lastDeprecatedTips = lastGS.tips.deprecated
+        lastActiveTips <- lastArtifact.activeTips
+        lastDeprecatedTips = lastArtifact.tips.deprecated
 
         tipUsages = getTipsUsages(lastActiveTips, lastDeprecatedTips)
         context = BlockAcceptanceContext.fromStaticData(
-          lastGS.info.balances,
-          lastGS.info.lastTxRefs,
+          lastArtifact.info.balances,
+          lastArtifact.info.lastTxRefs,
           tipUsages,
           collateral
         )
@@ -115,16 +114,16 @@ object GlobalSnapshotConsensusFunctions {
           currentOrdinal
         )
 
-        (height, subHeight) <- getHeightAndSubHeight(lastGS, deprecated, remainedActive, accepted)
+        (height, subHeight) <- getHeightAndSubHeight(lastArtifact, deprecated, remainedActive, accepted)
 
-        updatedLastTxRefs = lastGS.info.lastTxRefs ++ acceptanceResult.contextUpdate.lastTxRefs
-        updatedBalances = lastGS.info.balances ++ acceptanceResult.contextUpdate.balances
+        updatedLastTxRefs = lastArtifact.info.lastTxRefs ++ acceptanceResult.contextUpdate.lastTxRefs
+        updatedBalances = lastArtifact.info.balances ++ acceptanceResult.contextUpdate.balances
 
         (updatedBalancesWithRewards, rewardTxs) <- trigger match {
           case EventTrigger => (updatedBalances, SortedSet.empty[RewardTransaction]).pure[F]
           case TimeTrigger =>
             rewards
-              .calculateRewards(epochProgress, lastGS.proofs.map(_.id))
+              .calculateRewards(epochProgress, lastArtifact.proofs.map(_.id))
               .map { txs =>
                 (updateBalancesByTransactions(updatedBalances, txs), txs)
               }

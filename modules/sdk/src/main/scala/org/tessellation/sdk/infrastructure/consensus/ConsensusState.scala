@@ -17,8 +17,8 @@ import derevo.derive
 @derive(eqv, show)
 case class ConsensusState[Key, Artifact](
   key: Key,
+  lastKey: Key,
   facilitators: List[PeerId],
-  lastKeyAndArtifact: (Key, Signed[Artifact]),
   status: ConsensusStatus[Artifact],
   statusUpdatedAt: FiniteDuration
 )
@@ -26,19 +26,34 @@ case class ConsensusState[Key, Artifact](
 @derive(eqv)
 sealed trait ConsensusStatus[Artifact]
 
+final case class CollectingFacilities[A](maybeFacilityInfo: Option[FacilityInfo[A]]) extends ConsensusStatus[A]
+final case class CollectingProposals[A](majorityTrigger: ConsensusTrigger, maybeProposalInfo: Option[ProposalInfo[A]])
+    extends ConsensusStatus[A]
+final case class CollectingSignatures[A](majorityArtifactHash: Hash, majorityTrigger: ConsensusTrigger) extends ConsensusStatus[A]
+final case class Finished[A](signedMajorityArtifact: Signed[A], majorityTrigger: ConsensusTrigger) extends ConsensusStatus[A]
+
 object ConsensusStatus {
   implicit def showInstance[A]: Show[ConsensusStatus[A]] = {
-    case Facilitated(proposalTrigger) => s"Facilitated{proposalTrigger=${proposalTrigger.show}}"
-    case ProposalMade(proposalHash, majorityTrigger, _) =>
-      s"ProposalMade{proposalHash=$proposalHash, majorityTrigger=$majorityTrigger, proposalArtifact=***}"
-    case MajoritySigned(majorityHash, majorityTrigger) =>
-      s"MajoritySigned{majorityHash=$majorityHash, majorityTrigger=$majorityTrigger}"
+    case CollectingFacilities(maybeFacilityInfo) =>
+      s"CollectingFacilities{maybeFacilityInfo=${maybeFacilityInfo.show}}"
+    case CollectingProposals(majorityTrigger, maybeProposalInfo) =>
+      s"CollectingProposals{majorityTrigger=${majorityTrigger.show}, maybeProposalInfo=${maybeProposalInfo.show}}"
+    case CollectingSignatures(majorityArtifactHash, majorityTrigger) =>
+      s"CollectingSignatures{majorityArtifactHash=${majorityArtifactHash.show}, ${majorityTrigger.show}}"
     case Finished(_, majorityTrigger) =>
-      s"Finished{signedMajorityArtifact=***, majorityTrigger=$majorityTrigger}"
+      s"Finished{signedMajorityArtifact=***, majorityTrigger=${majorityTrigger.show}}"
   }
 }
 
-final case class Facilitated[A](proposalTrigger: Option[ConsensusTrigger]) extends ConsensusStatus[A]
-final case class ProposalMade[A](proposalHash: Hash, majorityTrigger: ConsensusTrigger, proposalArtifact: A) extends ConsensusStatus[A]
-final case class MajoritySigned[A](majorityHash: Hash, majorityTrigger: ConsensusTrigger) extends ConsensusStatus[A]
-final case class Finished[A](signedMajorityArtifact: Signed[A], majorityTrigger: ConsensusTrigger) extends ConsensusStatus[A]
+@derive(eqv)
+case class FacilityInfo[A](lastSignedArtifact: Signed[A], maybeTrigger: Option[ConsensusTrigger])
+object FacilityInfo {
+  implicit def showInstance[A]: Show[FacilityInfo[A]] = f => s"FacilityInfo{lastSignedArtifact=***, maybeTrigger=${f.maybeTrigger.show}}"
+}
+
+@derive(eqv)
+case class ProposalInfo[A](proposalArtifact: A, proposalArtifactHash: Hash)
+object ProposalInfo {
+  implicit def showInstance[A]: Show[ProposalInfo[A]] = pi =>
+    s"ProposalInfo{proposalArtifact=***, proposalArtifactHash=${pi.proposalArtifactHash.show}}"
+}

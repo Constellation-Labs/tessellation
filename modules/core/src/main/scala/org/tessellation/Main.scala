@@ -4,7 +4,6 @@ import cats.ApplicativeError
 import cats.effect._
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
-import cats.syntax.option._
 import cats.syntax.semigroupk._
 
 import org.tessellation.cli.method._
@@ -112,8 +111,7 @@ object Main
                   services.collateral
                     .hasCollateral(sdk.nodeId)
                     .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
-                    services.consensus.storage.setLastKeyAndArtifact((globalSnapshot.ordinal, globalSnapshot).some) >>
-                    services.consensus.manager.scheduleTriggerOnTime
+                    services.consensus.manager.startFacilitatingAfter(globalSnapshot.ordinal, globalSnapshot)
               }
             }
           } >>
@@ -134,8 +132,7 @@ object Main
                   services.collateral
                     .hasCollateral(sdk.nodeId)
                     .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
-                  services.consensus.storage.setLastKeyAndArtifact((genesis.ordinal, signedGenesis).some) >>
-                  services.consensus.manager.scheduleTriggerOnTime
+                  services.consensus.manager.startFacilitatingAfter(genesis.ordinal, signedGenesis)
               }
             }
           } >>

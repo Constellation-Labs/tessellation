@@ -34,6 +34,7 @@ object node {
     case object WaitingForDownload extends NodeState
     case object DownloadInProgress extends NodeState
 
+    case object Observing extends NodeState
     case object Ready extends NodeState
     case object Leaving extends NodeState
     case object Offline extends NodeState
@@ -41,7 +42,7 @@ object node {
     val all: Set[NodeState] = NodeState.values.toSet
 
     val toBroadcast: Set[NodeState] =
-      Set(WaitingForDownload, DownloadInProgress, Ready, Leaving, Offline)
+      Set(WaitingForDownload, DownloadInProgress, Observing, Ready, Leaving, Offline)
 
     def absent: Set[NodeState] =
       Set(Leaving, Offline)
@@ -52,6 +53,10 @@ object node {
       Set(Ready)
 
     def ready(peers: Set[Peer]): Set[Peer] = peers.filter(peer => ready.contains(peer.state))
+
+    def observing: Set[NodeState] = Set(Observing)
+
+    def observing(peers: Set[Peer]): Set[Peer] = peers.filter(peer => observing.contains(peer.state))
   }
 
   trait NodeStateCodecs {
