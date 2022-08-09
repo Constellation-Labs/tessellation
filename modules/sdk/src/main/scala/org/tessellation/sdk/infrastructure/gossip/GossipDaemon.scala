@@ -47,7 +47,7 @@ object GossipDaemon {
 
     def start: F[Unit] =
       for {
-        _ <- Spawn[F].start(spreadActiveRumors.foreverM).void
+        _ <- Spawn[F].start(runGossipRounds.foreverM).void
         _ <- Spawn[F].start(consumeRumors)
       } yield ()
 
@@ -122,17 +122,10 @@ object GossipDaemon {
           }
     }
 
-    private def spreadActiveRumors: F[Unit] =
+    private def runGossipRounds: F[Unit] =
       for {
         _ <- Temporal[F].sleep(cfg.interval)
         activeHashes <- rumorStorage.getActiveHashes
-        _ <-
-          if (activeHashes.nonEmpty) runGossipRounds(activeHashes)
-          else Applicative[F].unit
-      } yield ()
-
-    private def runGossipRounds(activeHashes: List[Hash]): F[Unit] =
-      for {
         seenHashes <- rumorStorage.getSeenHashes
         peers <- clusterStorage.getPeers
         selectedPeers <- Random[F].shuffleList(peers.toList).map(_.take(cfg.fanout))
