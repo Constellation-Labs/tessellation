@@ -1,10 +1,10 @@
 package org.tessellation.infrastructure.rewards
 
-import cats.MonadThrow
 import cats.arrow.FunctionK.lift
 import cats.data._
 import cats.effect.Async
 import cats.syntax.applicative._
+import cats.syntax.applicativeError._
 import cats.syntax.either._
 import cats.syntax.eq._
 import cats.syntax.flatMap._
@@ -14,9 +14,8 @@ import cats.syntax.show._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import org.tessellation.dag.snapshot.epoch.EpochProgress
-import org.tessellation.domain.rewards._
+import org.tessellation.domain.rewards.Rewards
 import org.tessellation.schema.ID.Id
-import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.transaction.{RewardTransaction, TransactionAmount}
 import org.tessellation.syntax.sortedCollection._
@@ -25,6 +24,7 @@ import eu.timepit.refined.auto._
 import eu.timepit.refined.numeric.Positive
 import eu.timepit.refined.refineV
 import io.estatico.newtype.ops.toCoercibleIdOps
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object Rewards {
 
@@ -36,6 +36,8 @@ object Rewards {
     regular: RewardsDistributor[F]
   ): Rewards[F] =
     new Rewards[F] {
+      private val logger = Slf4jLogger.getLoggerFromClass(Rewards.getClass)
+
       def calculateRewards(
         epochProgress: EpochProgress,
         facilitators: NonEmptySet[Id]
@@ -57,13 +59,11 @@ object Rewards {
 
         allRewardsState
           .run(amount)
-          .flatMap {
-            case result @ (remaining, _) =>
-              if (remaining =!= Amount(0L)) {
-                MonadThrow[F].raiseError[(Amount, List[(Address, Amount)])](
-                  new RuntimeException(s"Some rewards were not distributed {amount=${amount.show}, remainingAmount=${remaining.show}}")
-                )
-              } else result.pure[F]
+          .flatTap {
+            case (remaining, _) =>
+              new RuntimeException(s"Some rewards were not distributed {amount=${amount.show}, remainingAmount=${remaining.show}}")
+                .raiseError[F, Unit]
+                .whenA(remaining =!= Amount.empty)
           }
           .map {
             case (_, rewards) =>
@@ -72,6 +72,7 @@ object Rewards {
                   refineV[Positive](amount.coerce.value).toList.map(a => RewardTransaction(address, TransactionAmount(a)))
               }.toSortedSet
           }
+          .flatTap(rewardTxs => logger.info(s"Minted amount of ${amount.show} and distributed in ${rewardTxs.size} transaction(s)"))
       }
 
       def getAmountByEpoch(epochProgress: EpochProgress, rewardsPerEpoch: SortedMap[EpochProgress, Amount]): Amount =
