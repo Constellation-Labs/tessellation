@@ -69,10 +69,6 @@ object SnapshotProcessor {
   ) extends Alignment
 
   sealed trait SnapshotProcessingResult
-  case class UnexpectedFailure(
-    error: Throwable,
-    snapshot: Hashed[GlobalSnapshot]
-  ) extends SnapshotProcessingResult
   case class Aligned(
     reference: GlobalSnapshotReference,
     removedObsoleteBlocks: Set[ProofsHash]
