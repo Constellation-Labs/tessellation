@@ -227,7 +227,7 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
       }
     }
     .evalMap {
-      _.traverse(result => logger.info(s"Snapshot processing result: $result")).void
+      _.traverse(result => logger.info(s"Snapshot processing result: ${result.show}")).void
     }
 
   private val blockConsensus: Stream[F, Unit] =
