@@ -8,6 +8,7 @@ import cats.syntax.traverse._
 
 import org.tessellation.dag.l1.config.types.AppConfig
 import org.tessellation.dag.l1.http.p2p.P2PClient
+import org.tessellation.dag.l1.infrastructure.healthcheck.HealthCheckDaemon
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.Daemon
@@ -45,7 +46,8 @@ object Daemons {
           services.collateral
         ),
       NodeStateDaemon.make(storages.node, services.gossip),
-      CollateralDaemon.make(services.collateral, storages.lastGlobalSnapshotStorage, storages.cluster)
+      CollateralDaemon.make(services.collateral, storages.lastGlobalSnapshotStorage, storages.cluster),
+      HealthCheckDaemon.make(healthChecks)
     ).traverse(_.start).void
 
 }
