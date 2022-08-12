@@ -14,7 +14,6 @@ import org.tessellation.dag.domain.block.{BlockReference, DAGBlock}
 import org.tessellation.dag.l1.domain.address.storage.AddressStorage
 import org.tessellation.dag.l1.domain.block.BlockStorage
 import org.tessellation.dag.l1.domain.block.BlockStorage.MajorityReconciliationData
-import org.tessellation.dag.l1.domain.snapshot.programs.SnapshotProcessor._
 import org.tessellation.dag.l1.domain.snapshot.storage.LastGlobalSnapshotStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.dag.snapshot._
@@ -26,6 +25,8 @@ import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.security.hash.ProofsHash
 import org.tessellation.security.{Hashed, SecurityProvider}
 
+import derevo.cats.show
+import derevo.derive
 import eu.timepit.refined.types.numeric.NonNegLong
 
 object SnapshotProcessor {
@@ -68,6 +69,7 @@ object SnapshotProcessor {
     tipsToRemove: Set[ProofsHash]
   ) extends Alignment
 
+  @derive(show)
   sealed trait SnapshotProcessingResult
   case class Aligned(
     reference: GlobalSnapshotReference,
@@ -109,6 +111,8 @@ sealed abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityPro
   lastGlobalSnapshotStorage: LastGlobalSnapshotStorage[F],
   transactionStorage: TransactionStorage[F]
 ) {
+
+  import SnapshotProcessor._
 
   def process(globalSnapshot: Hashed[GlobalSnapshot]): F[SnapshotProcessingResult] =
     checkAlignment(globalSnapshot).flatMap {
