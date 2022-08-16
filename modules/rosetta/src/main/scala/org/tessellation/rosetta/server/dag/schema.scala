@@ -1,4 +1,4 @@
-package org.tessellation.rosetta.server.model.dag
+package org.tessellation.rosetta.server.dag
 
 import derevo.cats.eqv
 import derevo.derive

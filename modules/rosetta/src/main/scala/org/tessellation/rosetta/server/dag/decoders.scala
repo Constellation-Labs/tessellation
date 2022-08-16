@@ -1,7 +1,7 @@
-package org.tessellation.rosetta.server.model.dag
+package org.tessellation.rosetta.server.dag
 
 import org.tessellation.rosetta.server.model._
-import org.tessellation.rosetta.server.model.dag.schema._
+import schema._
 
 /**
   * This whole thing has to be manually re-arranged after generating because of

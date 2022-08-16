@@ -10,7 +10,7 @@
   */
 
 package org.tessellation.rosetta.server.model
-import org.tessellation.rosetta.server.model.dag.schema.GenericMetadata
+import org.tessellation.rosetta.server.dag.schema.GenericMetadata
 
 case class ConstructionPreprocessResponse(
   /* The options that will be sent directly to `/construction/metadata` by the caller. */

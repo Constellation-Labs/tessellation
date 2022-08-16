@@ -11,7 +11,7 @@
 
 package org.tessellation.rosetta.server.model
 
-import org.tessellation.rosetta.server.model.dag.schema.CallResponseActual
+import org.tessellation.rosetta.server.dag.schema.CallResponseActual
 
 case class CallResponse(
   /* Result contains the result of the `/call` invocation. This result will not be inspected or interpreted by Rosetta tooling and is left to the caller to decode. */

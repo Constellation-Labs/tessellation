@@ -10,7 +10,7 @@
   */
 
 package org.tessellation.rosetta.server.model
-import org.tessellation.rosetta.server.model.dag.schema.GenericMetadata
+import org.tessellation.rosetta.server.dag.schema.GenericMetadata
 
 case class Version(
   /* The rosetta_version is the version of the Rosetta interface the implementation adheres to. This can be useful for clients looking to reliably parse responses. */

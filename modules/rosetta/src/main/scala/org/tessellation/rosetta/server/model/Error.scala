@@ -10,7 +10,7 @@
   */
 
 package org.tessellation.rosetta.server.model
-import org.tessellation.rosetta.server.model.dag.schema.ErrorDetails
+import org.tessellation.rosetta.server.dag.schema.ErrorDetails
 
 case class Error(
   /* Code is a network-specific error code. If desired, this code can be equivalent to an HTTP status code. */

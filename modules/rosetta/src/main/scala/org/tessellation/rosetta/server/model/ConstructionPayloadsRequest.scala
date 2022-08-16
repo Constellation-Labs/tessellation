@@ -10,7 +10,7 @@
   */
 
 package org.tessellation.rosetta.server.model
-import org.tessellation.rosetta.server.model.dag.schema.ConstructionPayloadsRequestMetadata
+import org.tessellation.rosetta.server.dag.schema.ConstructionPayloadsRequestMetadata
 
 case class ConstructionPayloadsRequest(
   networkIdentifier: NetworkIdentifier,

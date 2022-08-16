@@ -1,4 +1,4 @@
-package org.tessellation.rosetta.server.model.dag
+package org.tessellation.rosetta.server.dag
 
 import scala.reflect.io.Path
 
