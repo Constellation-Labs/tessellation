@@ -323,6 +323,11 @@ lazy val rosetta = (project in file("modules/rosetta"))
       Libraries.http4sClient,
       Libraries.http4sCirce,
       Libraries.http4sJwtAuth,
+      Libraries.doobieCore,
+      Libraries.doobieHikari,
+      Libraries.doobieQuill,
+      Libraries.sqlite,
+      Libraries.flyway
     )
   )
 
