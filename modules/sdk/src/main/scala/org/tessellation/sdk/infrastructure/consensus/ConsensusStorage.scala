@@ -32,7 +32,7 @@ trait ConsensusStorage[F[_], Event, Key, Artifact] {
   private[consensus] trait ModifyStateFn[B]
       extends (Option[ConsensusState[Key, Artifact]] => F[Option[(Option[ConsensusState[Key, Artifact]], B)]])
 
-  private[sdk] def getState(key: Key): F[Option[ConsensusState[Key, Artifact]]]
+  def getState(key: Key): F[Option[ConsensusState[Key, Artifact]]]
 
   private[sdk] def getStates: F[List[ConsensusState[Key, Artifact]]]
 
@@ -50,7 +50,7 @@ trait ConsensusStorage[F[_], Event, Key, Artifact] {
 
   private[consensus] def getUpperBound: F[Bound]
 
-  private[consensus] def getResources(key: Key): F[ConsensusResources[Artifact]]
+  def getResources(key: Key): F[ConsensusResources[Artifact]]
 
   private[consensus] def getTimeTrigger: F[Option[FiniteDuration]]
 
