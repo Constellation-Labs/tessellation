@@ -19,6 +19,8 @@ import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder}
 import org.http4s.circe._
 import org.http4s.dsl.Http4sDsl
+import org.typelevel.log4cats.SelfAwareStructuredLogger
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 import shapeless._
 import shapeless.syntax.singleton._
 
@@ -28,14 +30,22 @@ final case class Routes[F[_]: Async](
   peerBlockConsensusInputQueue: Queue[F, Signed[PeerBlockConsensusInput]]
 ) extends Http4sDsl[F] {
 
+  val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLogger[F]
+
   private val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "transactions" =>
       for {
         transaction <- req.as[Signed[Transaction]]
-        response <- transactionService.offer(transaction).flatMap {
-          case Left(errors) => BadRequest(ErrorResponse(errors.map(e => ErrorCause(e.show))).asJson)
-          case Right(hash)  => Ok(("hash" ->> hash.value) :: HNil)
-        }
+        response <- transactionService
+          .offer(transaction)
+          .flatTap {
+            case Left(errors) => logger.warn(s"Received transaction is invalid: ${transaction.show}, reason: ${errors.show}")
+            case Right(hash)  => logger.info(s"Received valid transaction: ${hash.show}")
+          }
+          .flatMap {
+            case Left(errors) => BadRequest(ErrorResponse(errors.map(e => ErrorCause(e.show))).asJson)
+            case Right(hash)  => Ok(("hash" ->> hash.value) :: HNil)
+          }
       } yield response
 
     case GET -> Root / "transactions" / HashVar(hash) =>

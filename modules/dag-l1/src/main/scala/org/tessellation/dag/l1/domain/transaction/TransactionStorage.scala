@@ -159,9 +159,9 @@ class TransactionStorage[F[_]: Async: KryoSerializer](
 
       selected = takeFirstNHighestFeeTxs(allPulled, count)
       toReturn = allPulled.flatMap(_.toList).toSet.diff(selected.toSet)
-      _ <- logger.debug(s"Transactions to return ${toReturn.size}")
+      _ <- logger.debug(s"Pulled transactions to return: ${toReturn.size} | Returned: ${toReturn.map(_.hash).show}")
       _ <- put(toReturn)
-      _ <- logger.debug(s"Pulled ${selected.size} transaction(s) for consensus")
+      _ <- logger.debug(s"Pulled ${selected.size} transaction(s) for consensus | Pulled: ${selected.map(_.hash).show}")
     } yield NonEmptyList.fromList(selected)
 
   private def pullForAddress(
