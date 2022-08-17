@@ -28,6 +28,8 @@ build:
             - project/*.scala
             - project/**.sbt
             - project/build.properties
+  tagPolicy:
+    inputDigest: {}
 
 deploy:
   kustomize:

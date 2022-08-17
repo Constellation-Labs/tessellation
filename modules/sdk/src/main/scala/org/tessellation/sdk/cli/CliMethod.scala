@@ -44,7 +44,8 @@ trait CliMethod {
     daemon = GossipDaemonConfig(
       fanout = 2,
       interval = 0.2.seconds,
-      maxConcurrentHandlers = 20
+      maxConcurrentRounds = 4,
+      roundTimeout = 5.seconds
     )
   )
 

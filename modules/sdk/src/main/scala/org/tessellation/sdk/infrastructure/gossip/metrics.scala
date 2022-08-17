@@ -44,4 +44,7 @@ object metrics {
       ("rumor_type", if (signedRumor.value.isInstanceOf[CommonRumorBinary]) "common" else "peer")
     )
 
+  def incrementGossipRoundSucceeded[F[_]: Monad: Metrics]: F[Unit] =
+    Metrics[F].incrementCounter("dag_gossip_round_succeeded_total")
+
 }
