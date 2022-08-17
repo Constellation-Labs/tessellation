@@ -52,7 +52,7 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey, A <: HealthChe
       sendProposal
         .handleErrorWith(err => logger.error(err)(s"An error occurred while sending the healthcheck proposal"))
         .flatTap { _ =>
-          logger.info(s"HealthCheck round started with roundId=$roundId for peer=${key.id}")
+          logger.info(s"HealthCheck round started with roundId=$roundId for peer=${key.id.show}")
         }
     }.void
 
