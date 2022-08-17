@@ -3,6 +3,7 @@ package org.tessellation.dag.l1.modules
 import cats.Parallel
 import cats.effect.Async
 import cats.effect.std.Random
+import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.traverse._
 
@@ -31,23 +32,28 @@ object Daemons {
     nodeId: PeerId,
     cfg: AppConfig
   ): F[Unit] =
-    List[Daemon[F]](
-      GossipDaemon
-        .make[F](
-          storages.rumor,
-          queues.rumor,
-          storages.cluster,
-          p2pClient.gossip,
-          handler,
-          validators.rumorValidator,
-          nodeId,
-          cfg.gossip.daemon,
-          healthChecks.ping,
-          services.collateral
-        ),
-      NodeStateDaemon.make(storages.node, services.gossip),
-      CollateralDaemon.make(services.collateral, storages.lastGlobalSnapshotStorage, storages.cluster),
-      HealthCheckDaemon.make(healthChecks)
-    ).traverse(_.start).void
+    GossipDaemon
+      .make[F](
+        storages.rumor,
+        queues.rumor,
+        storages.cluster,
+        p2pClient.gossip,
+        handler,
+        validators.rumorValidator,
+        nodeId,
+        cfg.gossip.daemon,
+        healthChecks.ping,
+        services.collateral
+      )
+      .map { gossipDaemon =>
+        List[Daemon[F]](
+          gossipDaemon,
+          NodeStateDaemon.make(storages.node, services.gossip),
+          CollateralDaemon.make(services.collateral, storages.lastGlobalSnapshotStorage, storages.cluster),
+          HealthCheckDaemon.make(healthChecks)
+        )
+      }
+      .flatMap(_.traverse(_.start))
+      .void
 
 }

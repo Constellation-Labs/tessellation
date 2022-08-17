@@ -3,6 +3,7 @@ package org.tessellation.modules
 import cats.Parallel
 import cats.effect.Async
 import cats.effect.std.Random
+import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.traverse._
 
@@ -35,27 +36,32 @@ object Daemons {
     nodeId: PeerId,
     cfg: AppConfig
   ): F[Unit] =
-    List[Daemon[F]](
-      GossipDaemon
-        .make[F](
-          storages.rumor,
-          queues.rumor,
-          storages.cluster,
-          p2pClient.gossip,
-          handler,
-          validators.rumorValidator,
-          nodeId,
-          cfg.gossip.daemon,
-          healthChecks.ping,
-          services.collateral
-        ),
-      NodeStateDaemon.make(storages.node, services.gossip),
-      DownloadDaemon.make(storages.node, programs.download),
-      TrustDaemon.make(cfg.trust.daemon, storages.trust, nodeId),
-      HealthCheckDaemon.make(healthChecks),
-      GlobalSnapshotEventsPublisherDaemon.make(queues.stateChannelOutput, queues.l1Output, services.gossip),
-      services.consensus.daemon,
-      CollateralDaemon.make(services.collateral, storages.globalSnapshot, storages.cluster)
-    ).traverse(_.start).void
+    GossipDaemon
+      .make[F](
+        storages.rumor,
+        queues.rumor,
+        storages.cluster,
+        p2pClient.gossip,
+        handler,
+        validators.rumorValidator,
+        nodeId,
+        cfg.gossip.daemon,
+        healthChecks.ping,
+        services.collateral
+      )
+      .map { gossipDaemon =>
+        List[Daemon[F]](
+          gossipDaemon,
+          NodeStateDaemon.make(storages.node, services.gossip),
+          DownloadDaemon.make(storages.node, programs.download),
+          TrustDaemon.make(cfg.trust.daemon, storages.trust, nodeId),
+          HealthCheckDaemon.make(healthChecks),
+          GlobalSnapshotEventsPublisherDaemon.make(queues.stateChannelOutput, queues.l1Output, services.gossip),
+          services.consensus.daemon,
+          CollateralDaemon.make(services.collateral, storages.globalSnapshot, storages.cluster)
+        )
+      }
+      .flatMap(_.traverse(_.start))
+      .void
 
 }
