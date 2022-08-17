@@ -4,13 +4,14 @@ import java.nio.charset.Charset
 import java.security.spec.X509EncodedKeySpec
 import java.security.{KeyFactory, PublicKey}
 
+import cats.Show
 import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.security.key.{ECDSA, PublicKeyHexPrefix}
 
-import derevo.cats.{eqv, order, show}
+import derevo.cats.{eqv, order}
 import derevo.circe.magnolia._
 import derevo.derive
 import derevo.scalacheck.arbitrary
@@ -19,7 +20,7 @@ import io.estatico.newtype.ops._
 
 object hex {
 
-  @derive(arbitrary, decoder, encoder, eqv, show, order, keyEncoder, keyDecoder)
+  @derive(arbitrary, decoder, encoder, eqv, order, keyEncoder, keyDecoder)
   @newtype
   case class Hex(value: String) {
 
@@ -55,6 +56,8 @@ object hex {
   }
 
   object Hex {
+
+    implicit val show: Show[Hex] = Show.show(_.shortValue)
 
     def fromBytes(bytes: Array[Byte], sep: Option[String] = None): Hex =
       sep match {

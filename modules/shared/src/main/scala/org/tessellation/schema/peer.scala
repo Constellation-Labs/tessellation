@@ -3,8 +3,10 @@ package org.tessellation.schema
 import java.security.PublicKey
 import java.util.UUID
 
+import cats.Show
 import cats.effect.kernel.Async
 import cats.kernel.Order
+import cats.syntax.contravariant._
 import cats.syntax.functor._
 
 import org.tessellation.ext.derevo.ordering
@@ -33,11 +35,13 @@ object peer {
   @derive(eqv, show, decoder, encoder)
   case class P2PContext(ip: Host, port: Port, id: PeerId)
 
-  @derive(arbitrary, eqv, show, order, decoder, encoder, keyEncoder, keyDecoder)
+  @derive(arbitrary, eqv, order, decoder, encoder, keyEncoder, keyDecoder)
   @newtype
   case class PeerId(value: Hex)
 
   object PeerId {
+
+    implicit val show: Show[PeerId] = Show[Id].contramap(_.toId)
 
     val _Id: Iso[PeerId, Id] =
       Iso[PeerId, Id](peerId => Id(peerId.coerce))(id => PeerId(id.hex))
