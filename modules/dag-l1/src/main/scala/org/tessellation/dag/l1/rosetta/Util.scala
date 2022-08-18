@@ -1,4 +1,4 @@
-package org.tessellation.rosetta.server
+package org.tessellation.dag.l1.rosetta
 
 import org.bouncycastle.jce.{ECNamedCurveTable, ECPointUtil}
 import org.bouncycastle.jce.provider.BouncyCastleProvider

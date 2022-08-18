@@ -1,28 +1,22 @@
-package org.tessellation
+package org.tessellation.dag.l1.rosetta
 
-import cats.effect.kernel.Resource
 import cats.effect.unsafe.implicits.global
-import cats.implicits.catsSyntaxApplicative
-import weaver.SimpleIOSuite
 import cats.effect.{Async, IO}
+import com.comcast.ip4s.{Host, Port}
+import org.http4s.HttpApp
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.rosetta.server.{MockData, RosettaRoutes, examples}
+import org.tessellation.sdk.config.types.HttpServerConfig
 import org.tessellation.sdk.resources.MkHttpServer
+import org.tessellation.sdk.resources.MkHttpServer.ServerName
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hex.Hex
 import org.tessellation.shared.sharedKryoRegistrar
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+import weaver.SimpleIOSuite
 import org.tessellation.ext.crypto._
-import org.tessellation.sdk.config.types.HttpServerConfig
-import org.tessellation.sdk.resources.MkHttpServer.ServerName
-import com.comcast.ip4s.{Host, Port}
-import org.http4s.server.Server
-import org.http4s.{HttpApp, HttpRoutes, Response, _}
-import org.tessellation.rosetta.server.dag.Registry.rosettaKryoRegistrar
 
 object RosettaMainTest extends SimpleIOSuite {
-
 
   test("asdf") {
     for {
@@ -72,7 +66,7 @@ object RosettaMainTest extends SimpleIOSuite {
                 .fromBytes(value1.toOption.get)
                 .value
             )
-            val http = new RosettaRoutes[IO]()(Async[IO], kryo, sp)
+            val http = new RosettaRoutes[IO]("mainnet", new BlockIndexClient(), new L1Client())(Async[IO], kryo, sp)
             val publicApp: HttpApp[IO] = http.allRoutes.orNotFound
             //loggers(openRoutes.orNotFound)
             MkHttpServer[IO].newEmber(

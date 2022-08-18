@@ -1,4 +1,4 @@
-package org.tessellation.rosetta.server.db
+package org.tessellation.dag.l1.rosetta.db
 
 import javax.sql.DataSource
 

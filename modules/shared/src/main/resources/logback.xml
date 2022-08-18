@@ -10,7 +10,7 @@
     </root>
 
     <logger name="org.tessellation" level="DEBUG" />
-    <logger name="org.http4s.server.middleware.RequestLogger" level="OFF" />
-    <logger name="org.http4s.server.middleware.ResponseLogger" level="OFF" />
+    <logger name="org.http4s.rosetta.middleware.RequestLogger" level="OFF" />
+    <logger name="org.http4s.rosetta.middleware.ResponseLogger" level="OFF" />
     <logger name="org.tessellation.sdk.infrastructure.gossip.RumorLogger" level="OFF" />
 </configuration>

@@ -10,6 +10,9 @@
   */
 
 package org.tessellation.rosetta.server.model
+
+import org.tessellation.rosetta.server.dag.schema.AccountCoinsResponseMetadata
+import org.tessellation.rosetta.server.dag.schema.AccountCoinsResponseMetadata
 import org.tessellation.rosetta.server.dag.schema.AccountCoinsResponseMetadata
 
 case class AccountCoinsResponse(

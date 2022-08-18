@@ -10,9 +10,12 @@
   */
 
 package org.tessellation.rosetta.server.model
+
 //import derevo.cats.show
 //import derevo.circe.magnolia.{decoder, encoder}
 //import derevo.derive
+import org.tessellation.rosetta.server.dag.schema.GenericMetadata
+import org.tessellation.rosetta.server.dag.schema.GenericMetadata
 import org.tessellation.rosetta.server.dag.schema.GenericMetadata
 
 //

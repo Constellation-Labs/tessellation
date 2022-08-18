@@ -1,4 +1,4 @@
-package org.tessellation.rosetta.server
+package org.tessellation.dag.l1.rosetta
 
 import java.math.BigInteger
 import java.security.{KeyFactory, PrivateKey}
@@ -16,7 +16,7 @@ import org.tessellation.dag.snapshot._
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.rosetta.server.examples.{proofs, sampleHash}
+import examples.{proofs, sampleHash}
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance

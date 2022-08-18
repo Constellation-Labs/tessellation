@@ -1,4 +1,4 @@
-package org.tessellation.rosetta.server
+package org.tessellation.dag.l1.rosetta
 
 import cats.Order
 import cats.data.NonEmptySet
@@ -8,13 +8,10 @@ import org.http4s.dsl.Http4sDsl
 import org.http4s.{HttpRoutes, Response}
 import org.tessellation.dag.snapshot.GlobalSnapshot
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.rosetta.server.MockData.mockup
-import org.tessellation.rosetta.server.Rosetta._
-import org.tessellation.rosetta.server.Util.{getPublicKeyFromBytes, reduceListEither}
-import org.tessellation.rosetta.server.dag.decoders.NetworkRequestDecoder
-import org.tessellation.rosetta.server.dag.schema.{ChainObjectStatus, ErrorDetailKeyValue, ErrorDetails}
-import org.tessellation.rosetta.server.examples.proofs
-import org.tessellation.rosetta.server.model._
+import MockData.mockup
+import Rosetta._
+import Util.{getPublicKeyFromBytes, reduceListEither}
+import examples.proofs
 import org.tessellation.schema.address.{Address, DAGAddressRefined}
 import org.tessellation.schema.transaction.{Transaction => DAGTransaction, _}
 import org.tessellation.security.hash.Hash
@@ -45,11 +42,8 @@ import org.tessellation.dag.snapshot.GlobalSnapshot
 import org.tessellation.ext.crypto._
 import org.tessellation.ext.kryo.KryoRegistrationId
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.rosetta.server.MockData.mockup
-import org.tessellation.rosetta.server.examples.proofs
-import org.tessellation.rosetta.server.model._
-import org.tessellation.rosetta.server.dag.schema._
-import org.tessellation.rosetta.server.dag.decoders._
+import MockData.mockup
+import examples.proofs
 import org.tessellation.schema.address
 import org.tessellation.schema.address.{Address, DAGAddressRefined}
 import org.tessellation.schema.transaction.{Transaction => DAGTransaction, _}
@@ -80,12 +74,11 @@ import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import SignatureProof._
 import Signed._
-import org.tessellation.rosetta.server.Util.{getPublicKeyFromBytes, reduceListEither}
+import Util.{getPublicKeyFromBytes, reduceListEither}
 import cats.syntax.flatMap._
 
 //import io.circe.generic.extras.Configuration
 //import io.circe.generic.extras.auto._
-import org.tessellation.rosetta.server.dag.decoders._
 
 
 /**
@@ -99,7 +92,10 @@ import org.tessellation.rosetta.server.dag.decoders._
   * Enum types do not generate properly (in any of the Scala code generators.)
   * circe json decoders were manually generated separately
   */
-final case class RosettaRoutes[F[_]: Async: KryoSerializer: SecurityProvider](val networkId: String = "mainnet")
+final case class RosettaRoutes[F[_]: Async: KryoSerializer: SecurityProvider](val networkId: String = "mainnet",
+                                                                              blockIndexClient: BlockIndexClient[F],
+                                                                              l1Client: L1Client[F]
+                                                                             )
     extends Http4sDsl[F] {
 
   implicit val logger = Slf4jLogger.getLogger[F]
@@ -139,7 +135,7 @@ final case class RosettaRoutes[F[_]: Async: KryoSerializer: SecurityProvider](va
       return Left(errorMsg(1, "Subnetworks not supported"))
     }
     networkIdentifier.blockchain match {
-      case Rosetta.dagBlockchainId =>
+      case constants.dagBlockchainId =>
         networkIdentifier.network match {
           case x if x == networkId =>
             Right(())
@@ -155,6 +151,12 @@ final case class RosettaRoutes[F[_]: Async: KryoSerializer: SecurityProvider](va
     if (DAGAddressRefined.addressCorrectValidate.isValid(address)) {
       f(address)
     } else errorMsg(4, address)
+  }
+
+  def validateAddress2(address: String): Either[F[Response[F]], Unit] = {
+    if (DAGAddressRefined.addressCorrectValidate.isValid(address)) {
+      Right(())
+    } else Left(errorMsg(4, address))
   }
 
   def validateCurveType(curveType: String): Either[F[Response[F]], Unit] =
@@ -186,49 +188,44 @@ final case class RosettaRoutes[F[_]: Async: KryoSerializer: SecurityProvider](va
 
     case req @ POST -> Root / "account" / "balance" => {
       req.decodeRosetta[AccountBalanceRequest] { r =>
-        validateNetwork[AccountBalanceRequest](
-          r,
-          _.networkIdentifier, { x =>
-            validateAddress[AccountBalanceRequest](
-              r, // TODO: Error on accountIdentifier subaccount not supported.
-              _.accountIdentifier.address, { address =>
-                new BlockIndexClient(x)
-                  .queryAccountBalance(address, r.blockIdentifier)
-                  .left
-                  .map(e => errorMsg(5, e))
-                  .map(
-                    o =>
-                      o.map(
-                          a =>
-                            Ok(
-                              AccountBalanceResponse(
-                                BlockIdentifier(a.height, a.snapshotHash),
-                                // TODO: Enum
-                                List(Amount(a.amount.toString, DagCurrency, None)),
-                                None
-                              )
-                            )
-                        )
-                        .getOrElse(errorMsg(6, address))
+        val resp = for {
+          _ <- validateNetwork2(r.networkIdentifier)
+          _ <- validateAddress2(
+            // TODO: Error on accountIdentifier subaccount not supported.
+            r.accountIdentifier.address
+          )
+          address = r.accountIdentifier.address
+
+        } yield {
+          val balanceRes = blockIndexClient.queryAccountBalance(address, r.blockIdentifier)
+          val res = balanceRes.flatMap{ b =>
+            b.left.map(e => errorMsg(5, e))
+              .map(o => o.map(a =>
+                Ok(
+                  AccountBalanceResponse(
+                    BlockIdentifier(a.height, a.snapshotHash),
+                    // TODO: Enum
+                    List(Amount(a.amount.toString, DagCurrency, None)),
+                    None
                   )
-                  .fold(identity, identity)
-              }
-            )
+                )
+              ).getOrElse(errorMsg(6, address))).merge
           }
-        )
+          res
+        }
+        resp.merge
       }
     }
 
-    case req @ POST -> Root / "account" / "coins" => {
-      errorMsg(0, "UTXO endpoints not implemented")
-    }
+    case _ @ POST -> Root / "account" / "coins" => errorMsg(0, "UTXO endpoints not implemented")
+
 
     case req @ POST -> Root / "block" => {
       req.decodeRosetta[BlockRequest] { br =>
-        validateNetwork[BlockRequest](
-          br,
-          _.networkIdentifier, { (x) =>
-            val value = new BlockIndexClient(x).queryBlock(br.blockIdentifier).map { ogs =>
+        val resp = for {
+          _ <- validateNetwork2(br.networkIdentifier)
+        } yield {
+            val value = blockIndexClient.queryBlock(br.blockIdentifier).map { ogs =>
               val inner = ogs.map {
                 gs =>
                   gs.hash.left
@@ -270,7 +267,7 @@ final case class RosettaRoutes[F[_]: Async: KryoSerializer: SecurityProvider](va
               r
             }
           }
-        )
+        resp.merge
       }
     }
 
@@ -279,7 +276,7 @@ final case class RosettaRoutes[F[_]: Async: KryoSerializer: SecurityProvider](va
         validateNetwork[BlockTransactionRequest](
           br,
           _.networkIdentifier, { (x) =>
-            val value = new BlockIndexClient(x).queryBlockTransaction(br.blockIdentifier)
+            val value = new BlockIndexClient().queryBlockTransaction(br.blockIdentifier)
             value.left
               .map(errorMsg(5, _))
               .map(
@@ -416,7 +413,7 @@ final case class RosettaRoutes[F[_]: Async: KryoSerializer: SecurityProvider](va
                     val res = inner.flatMap {
                       pk =>
                         val address = pk.toAddress
-                        val resp = new DagL1APIClient[F]()
+                        val resp = new L1Client[F]()
                           .requestLastTransactionMetadataAndFee(address)
                           .left
                           .map(e => errorMsg(13, e))
@@ -425,7 +422,7 @@ final case class RosettaRoutes[F[_]: Async: KryoSerializer: SecurityProvider](va
                             val done = l match {
                               case Some(_) => Right(l)
                               case None =>
-                                new BlockIndexClient(endpoint)
+                                new BlockIndexClient()
                                   .requestLastTransactionMetadata(address)
                                   .left
                                   .map(e => errorMsg(5, e))
@@ -486,7 +483,7 @@ final case class RosettaRoutes[F[_]: Async: KryoSerializer: SecurityProvider](va
                               // Do we need an API call here?
                               translateDAGTransactionToOperations(
                                 stx.value,
-                                ChainObjectStatus.Unknown.toString,
+                                Unknown.toString,
                                 ignoreStatus = true
                               ),
                               Some(addresses),
@@ -611,7 +608,7 @@ final case class RosettaRoutes[F[_]: Async: KryoSerializer: SecurityProvider](va
                     stx.hash.left
                       .map(e => errorMsg(0, "Hash calculation failure: " + e.getMessage))
                       .map { hash =>
-                        new DagL1APIClient()
+                        new L1Client()
                           .submitTransaction(stx)
                           // TODO block service error meessage
                           .left
@@ -635,7 +632,7 @@ final case class RosettaRoutes[F[_]: Async: KryoSerializer: SecurityProvider](va
         validateNetwork[EventsBlocksRequest](
           br,
           _.networkIdentifier, { (x) =>
-            new BlockIndexClient(x)
+            new BlockIndexClient()
               .queryBlockEvents(br.limit, br.offset)
               // TODO: error code and abstract
               .left
@@ -662,7 +659,7 @@ final case class RosettaRoutes[F[_]: Async: KryoSerializer: SecurityProvider](va
       req.decodeRosetta[NetworkRequest] { NR =>
         println("Mempool request " + NR)
         validateNetwork[NetworkRequest](NR, _.networkIdentifier, { (x) =>
-          val value = new DagL1APIClient()
+          val value = new L1Client()
             .queryMempool()
             .map(v => TransactionIdentifier(v))
           Ok(MempoolResponse(value))
@@ -674,10 +671,10 @@ final case class RosettaRoutes[F[_]: Async: KryoSerializer: SecurityProvider](va
         validateNetwork[MempoolTransactionRequest](
           NR,
           _.networkIdentifier, { (x) =>
-            val value = new DagL1APIClient().queryMempoolTransaction(NR.transactionIdentifier.hash)
+            val value = new L1Client().queryMempoolTransaction(NR.transactionIdentifier.hash)
             value.map { v =>
               // TODO: Enum
-              val t: Either[Error, Transaction] =
+              val t: Either[model.Error, Transaction] =
                 Rosetta.translateTransaction(v, status = ChainObjectStatus.Pending.toString)
               t.map { tt =>
                 Ok(MempoolTransactionResponse(tt, None))
@@ -708,7 +705,7 @@ final case class RosettaRoutes[F[_]: Async: KryoSerializer: SecurityProvider](va
         validateNetwork[NetworkRequest](
           br,
           _.networkIdentifier, { (x) =>
-            new DagL1APIClient()
+            new L1Client()
               .queryVersion()
               // TODO: err
               .left
@@ -731,12 +728,12 @@ final case class RosettaRoutes[F[_]: Async: KryoSerializer: SecurityProvider](va
                             Error(code, descr, Some(extended), retriable = true, None)
                         }.toList,
                         // TODO: set historical balance lookup if block indexer provides, can be optional.
-                        false,
+                        historicalBalanceLookup = false,
                         None,
                         List(),
                         // TODO: Verify no balance exemptions
                         List(),
-                        false,
+                        mempoolCoins = false,
                         Some("lower_case"),
                         Some("lower_case")
                       )
@@ -753,7 +750,7 @@ final case class RosettaRoutes[F[_]: Async: KryoSerializer: SecurityProvider](va
       req.decodeRosetta[NetworkRequest] { br =>
         println("network status request " + br)
 
-        new DagL1APIClient()
+        new L1Client()
           .queryNetworkStatus()
           .flatMap { statusF =>
             val res = for {
@@ -781,7 +778,7 @@ final case class RosettaRoutes[F[_]: Async: KryoSerializer: SecurityProvider](va
         validateNetwork[SearchTransactionsRequest](
           br,
           _.networkIdentifier, { (x) =>
-            val client = new BlockIndexClient(x)
+            val client = new BlockIndexClient()
             // TODO: Enum
             val isOr = br.operator.contains("or")
             val isAnd = br.operator.contains("and")
@@ -831,7 +828,7 @@ final case class RosettaRoutes[F[_]: Async: KryoSerializer: SecurityProvider](va
         case (a, b) =>
           // TODO: Empty transaction translator
           Signed(
-            Transaction(
+            DAGTransaction(
               Address("DAG2EUdecqFwEGcgAcH1ac2wrsg8acrgGwrQabcd"),
               a,
               TransactionAmount(PosLong.from(b.value).toOption.get),
@@ -850,7 +847,7 @@ final case class RosettaRoutes[F[_]: Async: KryoSerializer: SecurityProvider](va
       .flatMap(x => x.block.value.transactions.toNonEmptyList.toList)
     val rewardTxs = gs.rewards.toList.map { rw =>
       Signed(
-        Transaction(
+        DAGTransaction(
           Address("DAG2EUdecqFwEGcgAcH1ac2wrsg8acrgGwrQabcd"),
           rw.destination,
           rw.amount,

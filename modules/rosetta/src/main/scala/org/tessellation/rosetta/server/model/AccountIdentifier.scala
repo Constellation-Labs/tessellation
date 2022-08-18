@@ -10,6 +10,7 @@
   */
 
 package org.tessellation.rosetta.server.model
+
 import org.tessellation.rosetta.server.dag.schema.AccountIdentifierMetadata
 
 case class AccountIdentifier(

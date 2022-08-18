@@ -1,4 +1,5 @@
-package org.tessellation.rosetta.server
+package org.tessellation.dag.l1.rosetta
+
 import java.security.KeyFactory
 import java.security.interfaces.ECPublicKey
 import java.security.spec.ECPublicKeySpec
@@ -14,10 +15,8 @@ import org.tessellation.dag.snapshot.GlobalSnapshot
 import org.tessellation.ext.crypto._
 import org.tessellation.ext.kryo.KryoRegistrationId
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.rosetta.server.MockData.mockup
-import org.tessellation.rosetta.server.examples.proofs
-import org.tessellation.rosetta.server.model._
-import org.tessellation.rosetta.server.dag.schema._
+import MockData.mockup
+import examples.proofs
 import org.tessellation.schema.address
 import org.tessellation.schema.address.{Address, DAGAddressRefined}
 import org.tessellation.schema.transaction.{Transaction => DAGTransaction, _}
@@ -43,14 +42,13 @@ import org.bouncycastle.jce.{ECNamedCurveTable, ECPointUtil}
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.circe._
 import org.http4s.dsl.Http4sDsl
-import org.http4s.{HttpApp, HttpRoutes, Response, _}
+import org.http4s._
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import SignatureProof._
 import Signed._
-import org.tessellation.rosetta.server.Util.{getPublicKeyFromBytes, reduceListEither}
+import Util.{getPublicKeyFromBytes, reduceListEither}
 
-// TODO: https://github.com/coinbase/rosetta-ethereum/blob/master/rosetta-cli-conf/testnet/ethereum.ros
 
 case class LastTransactionResponse(
   constructionMetadataResponseMetadata: Option[ConstructionMetadataResponseMetadata],
@@ -63,102 +61,7 @@ case class SnapshotInfo(
   timestamp: Long
 )
 
-// Mockup of real client
-class DagL1APIClient[F[_]: Async] {
 
-//  var currentBlock
-
-  def queryCurrentSnapshotHashAndHeight(): F[Either[String, SnapshotInfo]] =
-    Async[F].pure(
-      Right(
-        SnapshotInfo(
-          MockData.mockup.currentBlockHash.value,
-          MockData.mockup.height.value.value,
-          MockData.mockup.currentTimeStamp
-        )
-      )
-    )
-
-  def queryGenesisSnapshotHash(): Either[String, String] =
-    Right(MockData.mockup.genesisHash)
-
-  def queryPeerIds(): Either[String, List[String]] =
-    Right(List(examples.sampleHash))
-
-  def queryNetworkStatus(): F[Either[String, NetworkStatusResponse]] =
-    // TODO: Monadic for
-//    for {
-//      peerIds <- queryPeerIds()
-//
-//    }
-    queryPeerIds() match {
-      case Left(x) => Async[F].pure(Left(x))
-      case Right(peerIds) =>
-        queryGenesisSnapshotHash() match {
-          case Left(x) => Async[F].pure(Left(x))
-          case Right(genesisHash) =>
-            queryCurrentSnapshotHashAndHeight().map {
-              case Left(x) => Left(x)
-              case Right(SnapshotInfo(snapshotHash, snapshotHeight, timestamp)) =>
-                Right(
-                  NetworkStatusResponse(
-                    BlockIdentifier(snapshotHeight, snapshotHash),
-                    timestamp,
-                    BlockIdentifier(0, genesisHash),
-                    Some(BlockIdentifier(0, genesisHash)),
-                    // TODO: check if node status is downloading, if so provide info.
-                    Some(SyncStatus(Some(snapshotHeight), Some(snapshotHeight), Some("synced"), Some(true))),
-                    peerIds.map { id =>
-                      Peer(id, None)
-                    }
-                  )
-                )
-            }
-        }
-    }
-
-  def queryVersion(): Either[String, String] =
-    Right("2.0.0")
-
-  def submitTransaction[Q[_]: KryoSerializer](stx: Signed[DAGTransaction]): Either[String, Unit] =
-    mockup.acceptTransactionIncrementBlock(stx)
-  //Right(())
-  //Either.cond(test = true, println("Submitting transaction " + stx), "")
-
-  def requestSuggestedFee(): Either[String, Option[Long]] =
-    Right(Some(123))
-
-  def requestLastTransactionMetadataAndFee(
-    addressActual: address.Address
-  ): Either[String, Option[ConstructionPayloadsRequestMetadata]] =
-    Right(
-      Some(
-        ConstructionPayloadsRequestMetadata(
-          addressActual.value.value,
-          "emptylasttxhashref",
-          0L,
-          0L,
-          None
-        )
-      )
-    )
-//    Either.cond(
-//      true,//addressActual.value.value == examples.address,
-//      LastTransactionResponse(
-//        Some(ConstructionMetadataResponseMetadata(examples.sampleHash, 123)),
-//        Some(456)
-//      ),
-//      "exception from l1 client query"
-//    )
-
-  def queryMempool(): List[String] =
-    List(examples.sampleHash)
-
-  def queryMempoolTransaction(hash: String): Option[Signed[DAGTransaction]] =
-    if (hash == examples.sampleHash) Some(examples.transaction)
-    else None
-
-}
 
 case class AccountBlockResponse(
   amount: Long,
@@ -189,100 +92,16 @@ case class BlockSearchResponse(
   nextOffset: Option[Long]
 )
 
-// Mockup of real client
 
-class BlockIndexClient(val endpoint: String) {
 
-  def searchBlocks(blockSearchRequest: BlockSearchRequest): Either[String, BlockSearchResponse] =
-    Right(BlockSearchResponse(List(TransactionWithBlockHash(examples.transaction, examples.sampleHash, 0)), 1, None))
-
-  def queryBlockEvents(limit: Option[Long], offset: Option[Long]): Either[String, List[GlobalSnapshot]] =
-    Either.cond(offset.contains(0L), List(examples.snapshot), "err from block service")
-
-  // This also has to request from L1 in case the indexer doesn't have it
-  def requestLastTransactionMetadata(
-    addressActual: address.Address
-  ): Either[String, Option[ConstructionPayloadsRequestMetadata]] =
-    Right(
-      Some(
-        ConstructionPayloadsRequestMetadata(
-          addressActual.value.value,
-          "emptylasttxhashref",
-          0L,
-          0L,
-          None
-        )
-      )
-    )
-//    Either.cond(
-//      addressActual.value.value == examples.address,
-//      Some(ConstructionMetadataResponseMetadata(examples.sampleHash, 123)),
-//      "exception from l1 client query"
-//    )
-
-  def queryBlockTransaction(blockIdentifier: BlockIdentifier): Either[String, Option[Signed[DAGTransaction]]] =
-    Either.cond(
-      test = blockIdentifier.index == 0 ||
-        blockIdentifier.hash.contains(examples.sampleHash),
-      Some(examples.transaction),
-      "err"
-    )
-
-  def queryBlock(blockIdentifier: PartialBlockIdentifier): Either[String, Option[GlobalSnapshot]] = {
-    println("Query block " + blockIdentifier)
-    val maybeSnapshot = findBlock(blockIdentifier).map(_._1)
-    println("maybeSnapshot " + maybeSnapshot)
-    Right(maybeSnapshot)
-  }
-
-  def findBlock(pbi: PartialBlockIdentifier): Option[(GlobalSnapshot, Long)] = {
-    val block = mockup.allBlocks.zipWithIndex.find {
-      case (b, i) =>
-        val h = mockup.blockToHash.get(b)
-        pbi.index.contains(i) || pbi.hash.exists(hh => h.exists(_.value == hh))
-    }
-    block.map { case (k, v) => k -> v.toLong }
-  }
-
-  def queryAccountBalance(
-    address: String,
-    blockIndex: Option[PartialBlockIdentifier]
-  ): Either[String, Option[AccountBlockResponse]] = {
-    val maybeBalance = blockIndex.flatMap { pbi =>
-      val block = findBlock(pbi)
-      block.flatMap {
-        case (s, i) =>
-          s.info.balances.map { case (k, v) => k.value.value -> v }.toMap.get(address).map { b =>
-            val h = mockup.blockToHash(s)
-            AccountBlockResponse(b.value.value, h.value, i)
-          }
-      }
-    }
-    Right(maybeBalance.orElse {
-      mockup.balances.get(address).map { v =>
-        AccountBlockResponse(v, mockup.currentBlockHash.value, mockup.currentBlock.height.value.value)
-      }
-    })
-//    mockup.currentBlock.info.balances
-//    Either.cond(
-//      test = address == examples.address,
-//      Some(AccountBlockResponse(123457890, examples.sampleHash, 1)),
-//      "some error"
-//    )
-  }
-
-}
 import cats.syntax.flatMap._
 
 //import io.circe.generic.extras.Configuration
 //import io.circe.generic.extras.auto._
-import org.tessellation.rosetta.server.dag.decoders._
 
 import java.security.{PublicKey => JPublicKey}
 
 object Rosetta {
-
-  val dagBlockchainId = "dag"
 
   // block_added or block_removed
   def convertSnapshotsToBlockEvents[F[_]: KryoSerializer: SecurityProvider: Async](
@@ -303,7 +122,7 @@ object Rosetta {
 
   def convertSignature[F[_]: KryoSerializer: SecurityProvider: Async](
     signature: List[Signature]
-  ): F[Either[Error, NonEmptyList[SignatureProof]]] = {
+  ): F[Either[model.Error, NonEmptyList[SignatureProof]]] = {
     val value = signature.map { s =>
       // TODO: Handle hex validation here
       val value1 = Async[F].delay(Util.getPublicKeyFromBytes(Hex(s.publicKey.hexBytes).toBytes))
@@ -320,7 +139,7 @@ object Rosetta {
         }
       }
     }
-    val zero: Either[Error, List[SignatureProof]] = Right[Error, List[SignatureProof]](List())
+    val zero: Either[model.Error, List[SignatureProof]] = Right[model.Error, List[SignatureProof]](List())
     value
       .foldLeft(Async[F].delay(zero)) {
         case (agga, nextFEither) =>
@@ -329,7 +148,7 @@ object Rosetta {
               val res = eitherErrSigProof.map { sp =>
                 agg.map(ls => ls ++ List(sp))
               }
-              var rett: Either[Error, List[SignatureProof]] = null
+              var rett: Either[model.Error, List[SignatureProof]] = null
               // TODO: Better syntax
               if (res.isRight) {
                 val value2 = res.toOption.get
@@ -378,7 +197,7 @@ object Rosetta {
     15 -> ("Malformed request", "Missing required information or necessary fields")
   )
 
-  def makeErrorCode(code: Int, retriable: Boolean = true, details: Option[ErrorDetails] = None): Error = {
+  def makeErrorCode(code: Int, retriable: Boolean = true, details: Option[ErrorDetails] = None): model.Error = {
     val (message, description) = errorCodes(code)
     Error(
       code,
@@ -389,7 +208,7 @@ object Rosetta {
     )
   }
 
-  def makeErrorCodeMsg(code: Int, message: String, retriable: Boolean = true): Error =
+  def makeErrorCodeMsg(code: Int, message: String, retriable: Boolean = true): model.Error =
     makeErrorCode(code, retriable, Some(ErrorDetails(List(ErrorDetailKeyValue("exception", message)))))
 
   implicit class RefinedRosettaRequestDecoder[F[_]: JsonDecoder: MonadThrow](req: Request[F]) extends Http4sDsl[F] {
@@ -534,13 +353,13 @@ object Rosetta {
     includeNegative: Boolean = true
     // kryoSerializerReference<T>
     // that object would internally have innerKryoReference<Q>
-  ): Either[Error, Transaction] = {
+  ): Either[model.Error, Transaction] = {
     // Is this the correct hash reference here? Are we segregating the signature data here?
     import org.tessellation.ext.crypto._
 
     val tx = dagTransaction
     tx.hash.left.map(_ => makeErrorCode(0)).map { hash =>
-      model.Transaction(
+      Transaction(
         TransactionIdentifier(hash.value),
         translateDAGTransactionToOperations(tx, status, includeNegative),
         None,
@@ -550,6 +369,6 @@ object Rosetta {
   }
 }
 
-import org.tessellation.rosetta.server.Rosetta._
+import Rosetta._
 
 
