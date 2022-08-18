@@ -11,6 +11,7 @@ import org.tessellation.dag.l1.domain.transaction.{TransactionService, Transacti
 import org.tessellation.ext.http4s.{AddressVar, HashVar}
 import org.tessellation.schema.http.{ErrorCause, ErrorResponse}
 import org.tessellation.schema.transaction.{Transaction, TransactionStatus, TransactionView}
+import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.security.signature.Signed
 
 import io.circe.shapes._
@@ -27,6 +28,7 @@ import shapeless.syntax.singleton._
 final case class Routes[F[_]: Async](
   transactionService: TransactionService[F],
   transactionStorage: TransactionStorage[F],
+  l0ClusterStorage: L0ClusterStorage[F],
   peerBlockConsensusInputQueue: Queue[F, Signed[PeerBlockConsensusInput]]
 ) extends Http4sDsl[F] {
 
@@ -58,6 +60,9 @@ final case class Routes[F[_]: Async](
       transactionStorage
         .getLastAcceptedReference(address)
         .flatMap(Ok(_))
+
+    case GET -> Root / "l0" / "peers" =>
+      l0ClusterStorage.getPeers.flatMap(Ok(_))
   }
 
   private val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
