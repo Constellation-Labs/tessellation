@@ -9,6 +9,6 @@ package object gossip {
 
   type RumorHandler[F[_]] = Kleisli[OptionT[F, *], (RumorBinary, PeerId), Unit]
 
-  val rumorLoggerName = "org.tessellation.sdk.infrastructure.gossip.RumorLogger"
+  val rumorLoggerName = "RumorLogger"
 
 }

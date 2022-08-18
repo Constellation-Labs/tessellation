@@ -92,15 +92,13 @@
         <appender-ref ref="HTTP" />
         <appender-ref ref="JSON" />
     </logger>
-    <logger name="org.tessellation.sdk.infrastructure.gossip.RumorLogger" level="INFO" additivity="false">
+    <logger name="RumorLogger" level="INFO" additivity="false">
         <appender-ref ref="GOSSIP" />
         <appender-ref ref="JSON" />
     </logger>
-    <logger name="org.tessellation.dag.l1.http.Routes" level="DEBUG" additivity="false">
+    <logger name="TransactionLogger" level="DEBUG" additivity="false">
         <appender-ref ref="TRANSACTIONS" />
-    </logger>
-    <logger name="org.tessellation.dag.l1.domain.transaction.TransactionStorage" level="DEBUG" additivity="false">
-        <appender-ref ref="TRANSACTIONS" />
+        <appender-ref ref="JSON" />
     </logger>
 
 
