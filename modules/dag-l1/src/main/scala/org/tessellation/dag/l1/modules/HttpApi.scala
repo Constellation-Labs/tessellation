@@ -46,7 +46,7 @@ sealed abstract class HttpApi[F[_]: Async: KryoSerializer: SecurityProvider: Met
     ClusterRoutes[F](programs.joining, programs.peerDiscovery, storages.cluster, services.cluster, services.collateral)
   private val registrationRoutes = RegistrationRoutes[F](services.cluster)
   private val gossipRoutes = GossipRoutes[F](storages.rumor, queues.rumor, services.gossip)
-  private val dagRoutes = Routes[F](services.transaction, storages.transaction, queues.peerBlockConsensusInput)
+  private val dagRoutes = Routes[F](services.transaction, storages.transaction, storages.l0Cluster, queues.peerBlockConsensusInput)
   private val nodeRoutes = NodeRoutes[F](storages.node)
   private val healthcheckP2PRoutes = {
     val pingHealthcheckRoutes = PingHealthCheckRoutes[F](healthchecks.ping)
