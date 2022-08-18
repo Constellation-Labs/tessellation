@@ -10,31 +10,29 @@ import cats.syntax.functor._
 
 import org.tessellation.dag.transaction.ContextualTransactionValidator
 import org.tessellation.dag.transaction.ContextualTransactionValidator.ContextualTransactionValidationError
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.transaction.Transaction
+import org.tessellation.security.Hashed
 import org.tessellation.security.hash.Hash
-import org.tessellation.security.signature.Signed
 
 trait TransactionService[F[_]] {
-  def offer(signedTransaction: Signed[Transaction]): F[Either[NonEmptyList[ContextualTransactionValidationError], Hash]]
+  def offer(transaction: Hashed[Transaction]): F[Either[NonEmptyList[ContextualTransactionValidationError], Hash]]
 }
 
 object TransactionService {
 
-  def make[F[_]: Async: KryoSerializer](
+  def make[F[_]: Async](
     transactionStorage: TransactionStorage[F],
     contextualTransactionValidator: ContextualTransactionValidator[F]
   ): TransactionService[F] = new TransactionService[F] {
 
     def offer(
-      signedTransaction: Signed[Transaction]
+      transaction: Hashed[Transaction]
     ): F[Either[NonEmptyList[ContextualTransactionValidationError], Hash]] =
-      contextualTransactionValidator.validate(signedTransaction).flatMap {
+      contextualTransactionValidator.validate(transaction.signed).flatMap {
         case Valid(_) =>
-          signedTransaction
-            .toHashed[F]
-            .flatTap(transactionStorage.put)
-            .map(_.hash.asRight[NonEmptyList[ContextualTransactionValidationError]])
+          transactionStorage
+            .put(transaction)
+            .as(transaction.hash.asRight[NonEmptyList[ContextualTransactionValidationError]])
         case Invalid(e) => e.toNonEmptyList.asLeft[Hash].pure[F]
       }
 

@@ -7,8 +7,9 @@ import cats.syntax.functor._
 import cats.syntax.show._
 
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.PeerBlockConsensusInput
-import org.tessellation.dag.l1.domain.transaction.{TransactionService, TransactionStorage}
+import org.tessellation.dag.l1.domain.transaction.{TransactionService, TransactionStorage, transactionLoggerName}
 import org.tessellation.ext.http4s.{AddressVar, HashVar}
+import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.http.{ErrorCause, ErrorResponse}
 import org.tessellation.schema.transaction.{Transaction, TransactionStatus, TransactionView}
 import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
@@ -20,29 +21,32 @@ import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder}
 import org.http4s.circe._
 import org.http4s.dsl.Http4sDsl
-import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import shapeless._
 import shapeless.syntax.singleton._
 
-final case class Routes[F[_]: Async](
+final case class Routes[F[_]: Async: KryoSerializer](
   transactionService: TransactionService[F],
   transactionStorage: TransactionStorage[F],
   l0ClusterStorage: L0ClusterStorage[F],
   peerBlockConsensusInputQueue: Queue[F, Signed[PeerBlockConsensusInput]]
 ) extends Http4sDsl[F] {
 
-  val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLogger[F]
+  private val transactionLogger = Slf4jLogger.getLoggerFromName[F](transactionLoggerName)
 
   private val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "transactions" =>
       for {
         transaction <- req.as[Signed[Transaction]]
+        hashedTransaction <- transaction.toHashed[F]
         response <- transactionService
-          .offer(transaction)
+          .offer(hashedTransaction)
           .flatTap {
-            case Left(errors) => logger.warn(s"Received transaction is invalid: ${transaction.show}, reason: ${errors.show}")
-            case Right(hash)  => logger.info(s"Received valid transaction: ${hash.show}")
+            case Left(errors) =>
+              transactionLogger.warn(
+                s"Received transaction hash=${hashedTransaction.hash} is invalid: ${transaction.show}, reason: ${errors.show}"
+              )
+            case Right(hash) => transactionLogger.info(s"Received valid transaction: ${hash.show}")
           }
           .flatMap {
             case Left(errors) => BadRequest(ErrorResponse(errors.map(e => ErrorCause(e.show))).asJson)

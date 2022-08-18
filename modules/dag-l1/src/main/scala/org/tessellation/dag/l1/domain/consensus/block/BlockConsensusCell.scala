@@ -8,6 +8,7 @@ import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
+import cats.syntax.show._
 import cats.syntax.traverse._
 
 import scala.concurrent.duration.FiniteDuration
@@ -23,7 +24,7 @@ import org.tessellation.dag.l1.domain.consensus.block.CoalgebraCommand._
 import org.tessellation.dag.l1.domain.consensus.block.Validator.isReadyForBlockConsensus
 import org.tessellation.dag.l1.domain.consensus.block.http.p2p.clients.BlockConsensusClient
 import org.tessellation.dag.l1.domain.consensus.round.RoundId
-import org.tessellation.dag.l1.domain.transaction.TransactionStorage
+import org.tessellation.dag.l1.domain.transaction.{TransactionStorage, transactionLoggerName}
 import org.tessellation.effects.GenUUID
 import org.tessellation.ext.collection.MapRefUtils.MapRefOps
 import org.tessellation.kernel.Cell.NullTerminal
@@ -38,6 +39,7 @@ import org.tessellation.security.{Hashed, SecurityProvider}
 import eu.timepit.refined.auto.{autoRefineV, autoUnwrap}
 import higherkindness.droste.{AlgebraM, CoalgebraM, scheme}
 import org.typelevel.log4cats.Logger
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 class BlockConsensusCell[F[_]: Async: SecurityProvider: KryoSerializer: Random: Logger](
   data: BlockConsensusInput,
@@ -107,6 +109,8 @@ class BlockConsensusCell[F[_]: Async: SecurityProvider: KryoSerializer: Random: 
 
 object BlockConsensusCell {
 
+  private def getTransactionLogger[F[_]: Async] = Slf4jLogger.getLoggerFromName(transactionLoggerName)
+
   private def getTime[F[_]: Clock](): F[FiniteDuration] = Clock[F].monotonic
 
   private def deriveConsensusPeerIds(proposal: Proposal, selfId: PeerId): Set[PeerId] =
@@ -119,6 +123,10 @@ object BlockConsensusCell {
     ownProposal.transactions.toList
       .traverse(_.toHashed[F])
       .map(_.toSet)
+      .flatTap { txs =>
+        getTransactionLogger[F]
+          .info(s"Returned transactions for round: ${ownProposal.roundId} are: ${txs.size}, ${txs.map(_.hash).show}")
+      }
       .flatMap {
         transactionStorage.put
       }
