@@ -11,6 +11,7 @@ import cats.{Applicative, MonadThrow}
 import scala.collection.immutable.SortedSet
 import scala.util.control.NoStackTrace
 
+import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.{L0Peer, P2PContext, PeerId}
 import org.tessellation.sdk.domain.cluster.programs.L0PeerDiscovery.L0PeerDiscoveryError
 import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
@@ -56,6 +57,7 @@ sealed abstract class L0PeerDiscovery[F[_]: Sync: Random] private (
   private def getPeersFrom(peer: P2PContext): F[NonEmptySet[L0Peer]] =
     l0ClusterClient.getPeers
       .run(peer)
+      .map(NodeState.ready)
       .map(_.map(L0Peer.fromPeer))
       .flatMap { s =>
         NonEmptySet
