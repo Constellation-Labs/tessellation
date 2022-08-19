@@ -1,6 +1,7 @@
 package org.tessellation
 
 import cats.effect.IO
+
 import weaver.SimpleIOSuite
 
 object RosettaTest extends SimpleIOSuite {

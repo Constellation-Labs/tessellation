@@ -2,14 +2,16 @@ package org.tessellation.rosetta.server
 import java.security.KeyFactory
 import java.security.interfaces.ECPublicKey
 import java.security.spec.ECPublicKeySpec
-import cats.{MonadThrow, Order}
+
 import cats.data.{NonEmptyList, NonEmptySet}
 import cats.effect.unsafe.implicits.global
 import cats.effect.{Async, IO}
 import cats.implicits.{toFunctorOps, toSemigroupKOps}
+import cats.{MonadThrow, Order}
 
 import scala.collection.immutable.SortedSet
 import scala.util.Try
+
 import org.tessellation.dag.snapshot.GlobalSnapshot
 import org.tessellation.ext.crypto._
 import org.tessellation.ext.kryo.KryoRegistrationId
@@ -31,6 +33,7 @@ import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.SignatureProof
 import org.tessellation.security.{Hashable, SecurityProvider}
 import org.tessellation.shared.sharedKryoRegistrar
+
 import com.comcast.ip4s.{Host, Port}
 import eu.timepit.refined.numeric.Interval
 import eu.timepit.refined.refineV
@@ -46,10 +49,9 @@ import org.http4s.dsl.Http4sDsl
 import org.http4s.{HttpApp, HttpRoutes, Response, _}
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+
 import SignatureProof._
 import Signed._
-
-import scala.concurrent.Future
 
 // TODO: https://github.com/coinbase/rosetta-ethereum/blob/master/rosetta-cli-conf/testnet/ethereum.ros
 
@@ -823,7 +825,9 @@ final case class RosettaRoutes[F[_]: Async: KryoSerializer: SecurityProvider](va
                             .serialize(
                               Signed[DAGTransaction](
                                 t,
-                                NonEmptySet(prf.head, SortedSet(prf.tail: _*))(Order.fromOrdering(SignatureProof.OrderingInstance))
+                                NonEmptySet(prf.head, SortedSet(prf.tail: _*))(
+                                  Order.fromOrdering(SignatureProof.OrderingInstance)
+                                )
                               )
                             )
                             .left

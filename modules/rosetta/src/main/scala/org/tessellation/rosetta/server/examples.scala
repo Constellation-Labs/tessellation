@@ -2,12 +2,15 @@ package org.tessellation.rosetta.server
 
 import java.math.BigInteger
 import java.security.{KeyFactory, PrivateKey}
+
+import cats.Order
 import cats.data.{NonEmptyList, NonEmptySet}
 import cats.effect.Async
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.collection.mutable
 import scala.util.Random
+
 import org.tessellation.dag.domain.block.{BlockReference, DAGBlock}
 import org.tessellation.dag.snapshot._
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
@@ -26,13 +29,14 @@ import org.tessellation.security.hex.Hex
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.{Signature, SignatureProof}
 import org.tessellation.security.{SecurityProvider, hash}
+
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 import org.bouncycastle.jce.ECNamedCurveTable
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 import org.bouncycastle.jce.spec.ECPrivateKeySpec
+
 import Transaction._
-import cats.Order
 /*
 key 0:
 public hex: bb2c6883916fc5fd703a69dbb8685cb3db1f6cbef131afe9e8fbd72faf7f6129e068f1ea48f2e4dd9f1297a5ce0acfe7b570b7a22a3452ef182f2533188270e6
@@ -51,6 +55,7 @@ class MockupData() {
     SortedMap(
       // DAG3k3VihUWMjse9LE93jRqZLEuwGd6a5Ypk4zYS ) has balance (0), less than the minimum balance (10000000000000000)
       Address("DAG3k3VihUWMjse9LE93jRqZLEuwGd6a5Ypk4zYS") -> Balance(NonNegLong(1000000000000000000L)),
+      Address("DAG2EUdecqFwEGcgAcH1ac2wrsg8acrgGwrQabcd") -> Balance(NonNegLong(1000000000000000000L)),
       Address("DAG3JxRL8KuYAcdc58o4JdGAmNjJCN5woNFDsWEA") -> Balance(NonNegLong(1000000000000000000L)),
       Address("DAG2EUdecqFwEGcgAcH1ac2wrsg8acrgGwrQefgh") -> Balance(NonNegLong(1000000000000000000L))
     )
@@ -201,15 +206,13 @@ object examples {
 //  import SignatureProof._
 //  import Signed._
 
-
-
   // workaround to deal with ambiguous implicits
   val spOrder = Order.fromOrdering(SignatureProof.OrderingInstance)
 
   val proofs: NonEmptySet[SignatureProof] =
     NonEmptySet(SignatureProof(Id(Hex("a")), Signature(Hex("a"))), SortedSet.empty[SignatureProof])(
       spOrder
-  )
+    )
 
   val address = "DAG2EUdecqFwEGcgAcH1ac2wrsg8acrgGwrQefgh"
 

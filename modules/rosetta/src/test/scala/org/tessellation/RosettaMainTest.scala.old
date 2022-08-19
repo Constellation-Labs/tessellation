@@ -1,28 +1,26 @@
 package org.tessellation
 
-import cats.effect.kernel.Resource
 import cats.effect.unsafe.implicits.global
-import cats.implicits.catsSyntaxApplicative
-import weaver.SimpleIOSuite
 import cats.effect.{Async, IO}
+
+import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.rosetta.server.runner.runnerKryoRegistrar
 import org.tessellation.rosetta.server.{MockData, RosettaRoutes, examples}
+import org.tessellation.sdk.config.types.HttpServerConfig
 import org.tessellation.sdk.resources.MkHttpServer
+import org.tessellation.sdk.resources.MkHttpServer.ServerName
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hex.Hex
 import org.tessellation.shared.sharedKryoRegistrar
+
+import com.comcast.ip4s.{Host, Port}
+import org.http4s.HttpApp
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
-import org.tessellation.ext.crypto._
-import org.tessellation.sdk.config.types.HttpServerConfig
-import org.tessellation.sdk.resources.MkHttpServer.ServerName
-import com.comcast.ip4s.{Host, Port}
-import org.http4s.server.Server
-import org.http4s.{HttpApp, HttpRoutes, Response, _}
-import org.tessellation.rosetta.server.runner.runnerKryoRegistrar
+import weaver.SimpleIOSuite
 
 object RosettaMainTest extends SimpleIOSuite {
-
 
   test("asdf") {
     for {
