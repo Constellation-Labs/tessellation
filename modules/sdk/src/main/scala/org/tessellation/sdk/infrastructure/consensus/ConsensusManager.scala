@@ -142,7 +142,7 @@ object ConsensusManager {
                   .ifM(
                     afterConsensusFinish(majorityTrigger),
                     logger.info("Skip triggering another consensus")
-                  ) >> nodeStorage.tryModifyStateB(Observing, Ready).void
+                  ) >> nodeStorage.tryModifyStateGetResult(Observing, Ready).void
               case _ =>
                 internalCheckForStateUpdate(key, resources)
             }

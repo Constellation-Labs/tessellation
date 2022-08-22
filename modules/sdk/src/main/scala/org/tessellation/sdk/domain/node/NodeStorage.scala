@@ -1,6 +1,6 @@
 package org.tessellation.sdk.domain.node
 
-import org.tessellation.schema.node.NodeState
+import org.tessellation.schema.node.{NodeState, NodeStateTransition}
 
 import fs2.Stream
 
@@ -19,7 +19,10 @@ trait NodeStorage[F[_]] {
   def tryModifyState(from: NodeState, to: NodeState): F[Unit] =
     tryModifyState(Set(from), to)
 
-  def tryModifyStateB(from: NodeState, to: NodeState): F[Boolean]
+  def tryModifyStateGetResult(from: NodeState, to: NodeState): F[NodeStateTransition] =
+    tryModifyStateGetResult(Set(from), to)
+
+  def tryModifyStateGetResult(from: Set[NodeState], to: NodeState): F[NodeStateTransition]
 
   def canJoinCluster: F[Boolean]
 

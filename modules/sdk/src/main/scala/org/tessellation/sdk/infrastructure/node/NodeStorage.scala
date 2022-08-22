@@ -2,7 +2,6 @@ package org.tessellation.sdk.infrastructure.node
 
 import cats.effect.{Concurrent, Ref}
 import cats.syntax.applicativeError._
-import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.{Applicative, MonadThrow}
@@ -60,13 +59,8 @@ object NodeStorage {
           }
         }
 
-      def tryModifyStateB(from: NodeState, to: NodeState): F[Boolean] =
-        nodeState.modify { state =>
-          if (state === from)
-            (to, true)
-          else
-            (from, false)
-        }
+      def tryModifyStateGetResult(from: Set[NodeState], to: NodeState): F[NodeStateTransition] =
+        modify(from, to)
 
       def nodeStates: Stream[F, NodeState] =
         nodeStateTopic.subscribe(maxQueuedNodeStates)
