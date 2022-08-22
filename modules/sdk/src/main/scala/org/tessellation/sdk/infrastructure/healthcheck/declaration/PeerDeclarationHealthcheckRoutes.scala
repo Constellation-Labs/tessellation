@@ -13,7 +13,7 @@ import org.http4s.HttpRoutes
 import org.http4s.dsl.Http4sDsl
 import org.http4s.server.Router
 
-final case class PeerProposalHealthcheckRoutes[F[_]: Async: KryoSerializer, K](
+final case class PeerDeclarationHealthcheckRoutes[F[_]: Async: KryoSerializer, K](
   healthcheck: HealthCheckConsensus[F, Key[K], Health, Status[K], Decision]
 ) extends Http4sDsl[F] {
 

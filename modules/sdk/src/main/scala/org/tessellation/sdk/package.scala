@@ -1,14 +1,15 @@
 package org.tessellation
 
 import org.tessellation.ext.kryo._
-import org.tessellation.kernel.{kernelKryoRegistrar, _}
+import org.tessellation.kernel._
 import org.tessellation.sdk.domain.healthcheck.consensus.types.HealthCheckRoundId
 import org.tessellation.sdk.infrastructure.consensus.declaration.{Facility, MajoritySignature, Proposal}
 import org.tessellation.sdk.infrastructure.consensus.message._
 import org.tessellation.sdk.infrastructure.consensus.trigger.{EventTrigger, TimeTrigger}
+import org.tessellation.sdk.infrastructure.consensus.{RegistrationExchangeRequest, RegistrationExchangeResponse}
 import org.tessellation.sdk.infrastructure.healthcheck.declaration._
 import org.tessellation.sdk.infrastructure.healthcheck.ping._
-import org.tessellation.shared.{sharedKryoRegistrar, _}
+import org.tessellation.shared._
 
 import com.comcast.ip4s._
 import eu.timepit.refined.auto._
@@ -57,6 +58,8 @@ package object sdk {
       classOf[IDN] -> 528,
       classOf[ConsensusPeerDeclaration[_, _]] -> 529,
       EventTrigger.getClass -> 530,
-      TimeTrigger.getClass -> 531
+      TimeTrigger.getClass -> 531,
+      classOf[RegistrationExchangeRequest[_]] -> 532,
+      classOf[RegistrationExchangeResponse[_]] -> 533
     ).union(sharedKryoRegistrar).union(kernelKryoRegistrar)
 }

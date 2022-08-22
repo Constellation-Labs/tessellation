@@ -21,9 +21,7 @@ import scala.reflect.runtime.universe.TypeTag
 
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.infrastructure.consensus.declaration.{Facility, MajoritySignature, Proposal}
@@ -66,7 +64,6 @@ object ConsensusStateUpdater {
   ]: Async: Clock: KryoSerializer: SecurityProvider, Event, Key: Show: Order: Next: TypeTag: ClassTag, Artifact <: AnyRef: Show: TypeTag](
     consensusFns: ConsensusFunctions[F, Event, Key, Artifact],
     consensusStorage: ConsensusStorage[F, Event, Key, Artifact],
-    clusterStorage: ClusterStorage[F],
     gossip: Gossip[F],
     seedlist: Option[Set[PeerId]],
     keyPair: KeyPair,
@@ -138,8 +135,8 @@ object ConsensusStateUpdater {
       maybeState match {
         case None =>
           for {
-            peers <- clusterStorage.getPeers
-            readyPeers = NodeState.ready(peers).map(_.id) ++ maybeLastArtifact.map(_ => selfId).toSet
+            peers <- consensusStorage.getRegisteredPeers(key)
+            readyPeers = peers.toSet ++ maybeLastArtifact.map(_ => selfId).toSet
             facilitators = calculateFacilitators(
               resources.proposedFacilitators,
               readyPeers,

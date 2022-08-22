@@ -9,6 +9,7 @@ import cats.syntax.contravariantSemigroupal._
 import cats.syntax.flatMap._
 import cats.syntax.foldable._
 import cats.syntax.functor._
+import cats.syntax.functorFilter._
 import cats.syntax.option._
 import cats.syntax.order._
 import cats.syntax.traverse._
@@ -86,231 +87,261 @@ trait ConsensusStorage[F[_], Event, Key, Artifact] {
     newArtifact: Signed[Artifact]
   ): F[Boolean]
 
+  private[consensus] def getOwnRegistration: F[Option[Key]]
+
+  private[consensus] def setOwnRegistration(from: Key): F[Unit]
+
+  def getRegisteredPeers(key: Key): F[List[PeerId]]
+
+  private[consensus] def registerPeer(peerId: PeerId)(from: Key): F[Unit]
+
+  private[sdk] def removeRegisteredPeer(peerId: PeerId): F[Unit]
+
 }
 
 object ConsensusStorage {
 
-  def make[F[_]: Async: KryoSerializer, Event, Key: Show: Next: Eq, Artifact <: AnyRef: Show: Eq](
+  def make[F[_]: Async: KryoSerializer, Event, Key: Show: Next: Order, Artifact <: AnyRef: Show: Eq](
     lastKeyAndArtifact: Option[(Key, Option[Signed[Artifact]])]
   ): F[ConsensusStorage[F, Event, Key, Artifact]] =
     for {
       stateUpdateSemaphore <- Semaphore[F](1)
       lastKeyAndArtifactR <- Ref.of(lastKeyAndArtifact)
       timeTriggerR <- Ref.of(none[FiniteDuration])
+      ownRegistrationR <- Ref.of(Option.empty[Key])
+      peerRegistrationsR <- Ref.of(Map.empty[PeerId, Key])
       eventsR <- MapRef.ofConcurrentHashMap[F, PeerId, PeerEvents[Event]]()
       statesR <- MapRef.ofConcurrentHashMap[F, Key, ConsensusState[Key, Artifact]]()
       resourcesR <- MapRef.ofConcurrentHashMap[F, Key, ConsensusResources[Artifact]]()
-    } yield make(stateUpdateSemaphore, lastKeyAndArtifactR, timeTriggerR, eventsR, statesR, resourcesR)
+    } yield
+      new ConsensusStorage[F, Event, Key, Artifact] {
 
-  def make[F[_]: Async: KryoSerializer, Event, Key: Show: Next: Eq, Artifact <: AnyRef: Show: Eq](
-    stateUpdateSemaphore: Semaphore[F],
-    lastKeyAndArtifactR: Ref[F, Option[(Key, Option[Signed[Artifact]])]],
-    timeTriggerR: Ref[F, Option[FiniteDuration]],
-    eventsR: MapRef[F, PeerId, Option[PeerEvents[Event]]],
-    statesR: MapRef[F, Key, Option[ConsensusState[Key, Artifact]]],
-    resourcesR: MapRef[F, Key, Option[ConsensusResources[Artifact]]]
-  ): ConsensusStorage[F, Event, Key, Artifact] =
-    new ConsensusStorage[F, Event, Key, Artifact] {
+        def getState(key: Key): F[Option[ConsensusState[Key, Artifact]]] =
+          statesR(key).get
 
-      def getState(key: Key): F[Option[ConsensusState[Key, Artifact]]] =
-        statesR(key).get
+        def getStates: F[List[ConsensusState[Key, Artifact]]] =
+          statesR.keys.flatMap(_.traverseFilter(key => statesR(key).get))
 
-      def getStates: F[List[ConsensusState[Key, Artifact]]] =
-        statesR.keys.flatMap(_.traverseFilter(key => statesR(key).get))
+        def getResources(key: Key): F[ConsensusResources[Artifact]] =
+          resourcesR(key).get.map(_.getOrElse(ConsensusResources.empty))
 
-      def getResources(key: Key): F[ConsensusResources[Artifact]] =
-        resourcesR(key).get.map(_.getOrElse(ConsensusResources.empty))
+        def getTimeTrigger: F[Option[FiniteDuration]] =
+          timeTriggerR.get
 
-      def getTimeTrigger: F[Option[FiniteDuration]] =
-        timeTriggerR.get
+        def setTimeTrigger(time: FiniteDuration): F[Unit] =
+          timeTriggerR.set(time.some)
 
-      def setTimeTrigger(time: FiniteDuration): F[Unit] =
-        timeTriggerR.set(time.some)
+        def clearTimeTrigger: F[Unit] =
+          timeTriggerR.set(none)
 
-      def clearTimeTrigger: F[Unit] =
-        timeTriggerR.set(none)
+        def getPeerDeclarations(key: Key): F[Map[PeerId, PeerDeclarations]] =
+          resourcesR(key).get.map(_.map(_.peerDeclarationsMap).getOrElse(Map.empty))
 
-      def getPeerDeclarations(key: Key): F[Map[PeerId, PeerDeclarations]] =
-        resourcesR(key).get.map(_.map(_.peerDeclarationsMap).getOrElse(Map.empty))
+        def condModifyState[B](key: Key)(modifyStateFn: ModifyStateFn[B]): F[Option[B]] =
+          stateUpdateSemaphore.permit.use { _ =>
+            for {
+              (maybeState, setter) <- statesR(key).access
+              maybeResult <- modifyStateFn(maybeState)
 
-      def condModifyState[B](key: Key)(modifyStateFn: ModifyStateFn[B]): F[Option[B]] =
-        stateUpdateSemaphore.permit.use { _ =>
-          for {
-            (maybeState, setter) <- statesR(key).access
-            maybeResult <- modifyStateFn(maybeState)
-
-            maybeB <- maybeResult.traverse {
-              case (maybeState, b) =>
-                setter(maybeState)
-                  .ifM(
-                    b.pure[F],
-                    new Throwable(
-                      "Failed consensus state update, all consensus state updates should be sequenced with a semaphore"
-                    ).raiseError[F, B]
-                  )
-            }
-          } yield maybeB
-        }
-
-      def setLastKeyAndArtifact(key: Key, artifact: Signed[Artifact]): F[Unit] =
-        lastKeyAndArtifactR.set((key, artifact.some).some)
-
-      def setLastKey(key: Key): F[Unit] =
-        lastKeyAndArtifactR.set((key, none).some)
-
-      def getLastKeyAndArtifact: F[Option[(Key, Option[Signed[Artifact]])]] = lastKeyAndArtifactR.get
-
-      private[consensus] def tryUpdateLastKeyAndArtifactWithCleanup(
-        lastKey: Key,
-        newKey: Key,
-        newArtifact: Signed[Artifact]
-      ): F[Boolean] =
-        lastKeyAndArtifactR.modify {
-          case Some((actualLastKey, _)) if actualLastKey === lastKey =>
-            ((newKey, newArtifact.some).some, true)
-          case other @ _ =>
-            (other, false)
-        }.flatTap(_ => cleanupStateAndResource(lastKey))
-
-      private def cleanupStateAndResource(key: Key): F[Unit] =
-        condModifyState[Unit](key) { _ =>
-          (none[ConsensusState[Key, Artifact]], ()).some.pure[F]
-        }.void
-
-      def containsTriggerEvent: F[Boolean] =
-        eventsR.keys.flatMap { keys =>
-          keys.existsM { peerId =>
-            eventsR(peerId).get
-              .map(_.flatMap(_.trigger).isDefined)
+              maybeB <- maybeResult.traverse {
+                case (maybeState, b) =>
+                  setter(maybeState)
+                    .ifM(
+                      b.pure[F],
+                      new Throwable(
+                        "Failed consensus state update, all consensus state updates should be sequenced with a semaphore"
+                      ).raiseError[F, B]
+                    )
+              }
+            } yield maybeB
           }
-        }
 
-      def addTriggerEvent(peerId: PeerId, peerEvent: (Ordinal, Event)): F[Unit] =
-        addEvents(peerId, List(peerEvent), updateTrigger = true)
+        def setLastKeyAndArtifact(key: Key, artifact: Signed[Artifact]): F[Unit] =
+          lastKeyAndArtifactR.set((key, artifact.some).some)
 
-      def addEvent(peerId: PeerId, peerEvent: (Ordinal, Event)): F[Unit] =
-        addEvents(peerId, List(peerEvent), updateTrigger = false)
+        def setLastKey(key: Key): F[Unit] =
+          lastKeyAndArtifactR.set((key, none).some)
 
-      def addEvents(events: Map[PeerId, List[(Ordinal, Event)]]): F[Unit] =
-        events.toList.traverse {
-          case (peerId, peerEvents) =>
-            addEvents(peerId, peerEvents, updateTrigger = false)
-        }.void
+        def getLastKeyAndArtifact: F[Option[(Key, Option[Signed[Artifact]])]] = lastKeyAndArtifactR.get
 
-      private def addEvents(peerId: PeerId, events: List[(Ordinal, Event)], updateTrigger: Boolean) =
-        eventsR(peerId).update { maybePeerEvents =>
-          maybePeerEvents
-            .getOrElse(PeerEvents.empty[Event])
-            .focus(_.events)
-            .modify(events ++ _)
-            .focus(_.trigger)
-            .modify { maybeCurrentTrigger =>
-              if (updateTrigger) {
-                val maybeNewTrigger = events.map(_._1).maximumOption
+        private[consensus] def tryUpdateLastKeyAndArtifactWithCleanup(
+          lastKey: Key,
+          newKey: Key,
+          newArtifact: Signed[Artifact]
+        ): F[Boolean] =
+          lastKeyAndArtifactR.modify {
+            case Some((actualLastKey, _)) if actualLastKey === lastKey =>
+              ((newKey, newArtifact.some).some, true)
+            case other @ _ =>
+              (other, false)
+          }.flatTap(_ => cleanupStateAndResource(lastKey))
 
-                (maybeCurrentTrigger, maybeNewTrigger)
-                  .mapN(Order[Ordinal].max)
-                  .orElse(maybeCurrentTrigger)
-                  .orElse(maybeNewTrigger)
-              } else
-                maybeCurrentTrigger
+        private def cleanupStateAndResource(key: Key): F[Unit] =
+          condModifyState[Unit](key) { _ =>
+            (none[ConsensusState[Key, Artifact]], ()).some.pure[F]
+          }.void
+
+        def containsTriggerEvent: F[Boolean] =
+          eventsR.keys.flatMap { keys =>
+            keys.existsM { peerId =>
+              eventsR(peerId).get
+                .map(_.flatMap(_.trigger).isDefined)
             }
-            .some
-        }
+          }
 
-      def pullEvents(upperBound: Bound): F[Map[PeerId, List[(Ordinal, Event)]]] =
-        upperBound.toList.traverse {
-          case (peerId, peerBound) =>
-            eventsR(peerId).modify { maybePeerEvents =>
-              maybePeerEvents.traverse { peerEvents =>
-                val (eventsAboveBound, pulledEvents) = peerEvents.events.partition {
-                  case (eventOrdinal, _) => eventOrdinal > peerBound
+        def addTriggerEvent(peerId: PeerId, peerEvent: (Ordinal, Event)): F[Unit] =
+          addEvents(peerId, List(peerEvent), updateTrigger = true)
+
+        def addEvent(peerId: PeerId, peerEvent: (Ordinal, Event)): F[Unit] =
+          addEvents(peerId, List(peerEvent), updateTrigger = false)
+
+        def addEvents(events: Map[PeerId, List[(Ordinal, Event)]]): F[Unit] =
+          events.toList.traverse {
+            case (peerId, peerEvents) =>
+              addEvents(peerId, peerEvents, updateTrigger = false)
+          }.void
+
+        private def addEvents(peerId: PeerId, events: List[(Ordinal, Event)], updateTrigger: Boolean) =
+          eventsR(peerId).update { maybePeerEvents =>
+            maybePeerEvents
+              .getOrElse(PeerEvents.empty[Event])
+              .focus(_.events)
+              .modify(events ++ _)
+              .focus(_.trigger)
+              .modify { maybeCurrentTrigger =>
+                if (updateTrigger) {
+                  val maybeNewTrigger = events.map(_._1).maximumOption
+
+                  (maybeCurrentTrigger, maybeNewTrigger)
+                    .mapN(Order[Ordinal].max)
+                    .orElse(maybeCurrentTrigger)
+                    .orElse(maybeNewTrigger)
+                } else
+                  maybeCurrentTrigger
+              }
+              .some
+          }
+
+        def pullEvents(upperBound: Bound): F[Map[PeerId, List[(Ordinal, Event)]]] =
+          upperBound.toList.traverse {
+            case (peerId, peerBound) =>
+              eventsR(peerId).modify { maybePeerEvents =>
+                maybePeerEvents.traverse { peerEvents =>
+                  val (eventsAboveBound, pulledEvents) = peerEvents.events.partition {
+                    case (eventOrdinal, _) => eventOrdinal > peerBound
+                  }
+                  val updatedPeerEvents = peerEvents
+                    .focus(_.events)
+                    .replace(eventsAboveBound)
+                    .focus(_.trigger)
+                    .modify(_.filter(_ > peerBound))
+
+                  (pulledEvents, updatedPeerEvents)
+                }.swap
+              }.map((peerId, _))
+          }.map(_.toMap)
+
+        def getUpperBound: F[Bound] =
+          for {
+            peerIds <- eventsR.keys
+            bound <- peerIds.traverseFilter { peerId =>
+              eventsR(peerId).get.map { maybePeerEvents =>
+                maybePeerEvents.flatMap { peerEvents =>
+                  peerEvents.events.map(_._1).maximumOption.map((peerId, _))
                 }
-                val updatedPeerEvents = peerEvents
-                  .focus(_.events)
-                  .replace(eventsAboveBound)
-                  .focus(_.trigger)
-                  .modify(_.filter(_ > peerBound))
-
-                (pulledEvents, updatedPeerEvents)
-              }.swap
-            }.map((peerId, _))
-        }.map(_.toMap)
-
-      def getUpperBound: F[Bound] =
-        for {
-          peerIds <- eventsR.keys
-          bound <- peerIds.traverseFilter { peerId =>
-            eventsR(peerId).get.map { maybePeerEvents =>
-              maybePeerEvents.flatMap { peerEvents =>
-                peerEvents.events.map(_._1).maximumOption.map((peerId, _))
               }
             }
+          } yield bound.toMap
+
+        def addFacility(peerId: PeerId, key: Key, facility: Facility): F[ConsensusResources[Artifact]] =
+          updateResources(key) { resources =>
+            val (proposedFacilitators, updatedResources) = resources
+              .focus(_.peerDeclarationsMap)
+              .at(peerId)
+              .modifyA { maybePeerDeclaration =>
+                maybePeerDeclaration
+                  .getOrElse(PeerDeclarations.empty)
+                  .focus(_.facility)
+                  .modifyA { maybeFacility =>
+                    val facility2 = maybeFacility.getOrElse(facility)
+                    (facility2.facilitators, facility2.some)
+                  }
+                  .map(_.some)
+              }
+
+            updatedResources
+              .focus(_.proposedFacilitators)
+              .modify(_.union(proposedFacilitators))
           }
-        } yield bound.toMap
 
-      def addFacility(peerId: PeerId, key: Key, facility: Facility): F[ConsensusResources[Artifact]] =
-        updateResources(key) { resources =>
-          val (proposedFacilitators, updatedResources) = resources
-            .focus(_.peerDeclarationsMap)
-            .at(peerId)
-            .modifyA { maybePeerDeclaration =>
-              maybePeerDeclaration
-                .getOrElse(PeerDeclarations.empty)
-                .focus(_.facility)
-                .modifyA { maybeFacility =>
-                  val facility2 = maybeFacility.getOrElse(facility)
-                  (facility2.facilitators, facility2.some)
-                }
-                .map(_.some)
+        def addProposal(peerId: PeerId, key: Key, proposal: Proposal): F[ConsensusResources[Artifact]] =
+          updatePeerDeclaration(key, peerId) { peerDeclaration =>
+            peerDeclaration.focus(_.proposal).modify(_.orElse(proposal.some))
+          }
+
+        def addSignature(peerId: PeerId, key: Key, signature: MajoritySignature): F[ConsensusResources[Artifact]] =
+          updatePeerDeclaration(key, peerId) { peerDeclaration =>
+            peerDeclaration.focus(_.signature).modify(_.orElse(signature.some))
+          }
+
+        def addArtifact(key: Key, artifact: Artifact): F[ConsensusResources[Artifact]] =
+          artifact.hashF.flatMap { hash =>
+            updateResources(key) { resources =>
+              resources
+                .focus(_.artifacts)
+                .at(hash)
+                .replace(artifact.some)
             }
+          }
 
-          updatedResources
-            .focus(_.proposedFacilitators)
-            .modify(_.union(proposedFacilitators))
-        }
-
-      def addProposal(peerId: PeerId, key: Key, proposal: Proposal): F[ConsensusResources[Artifact]] =
-        updatePeerDeclaration(key, peerId) { peerDeclaration =>
-          peerDeclaration.focus(_.proposal).modify(_.orElse(proposal.some))
-        }
-
-      def addSignature(peerId: PeerId, key: Key, signature: MajoritySignature): F[ConsensusResources[Artifact]] =
-        updatePeerDeclaration(key, peerId) { peerDeclaration =>
-          peerDeclaration.focus(_.signature).modify(_.orElse(signature.some))
-        }
-
-      def addArtifact(key: Key, artifact: Artifact): F[ConsensusResources[Artifact]] =
-        artifact.hashF.flatMap { hash =>
+        def addRemovedFacilitator(key: Key, facilitator: PeerId): F[ConsensusResources[Artifact]] =
           updateResources(key) { resources =>
             resources
-              .focus(_.artifacts)
-              .at(hash)
-              .replace(artifact.some)
+              .focus(_.removedFacilitators)
+              .modify(_ + facilitator)
           }
-        }
 
-      def addRemovedFacilitator(key: Key, facilitator: PeerId): F[ConsensusResources[Artifact]] =
-        updateResources(key) { resources =>
-          resources
-            .focus(_.removedFacilitators)
-            .modify(_ + facilitator)
-        }
+        private def updatePeerDeclaration(key: Key, peerId: PeerId)(f: PeerDeclarations => PeerDeclarations) =
+          updateResources(key) { resources =>
+            resources
+              .focus(_.peerDeclarationsMap)
+              .at(peerId)
+              .modify { maybePeerDeclaration =>
+                f(maybePeerDeclaration.getOrElse(PeerDeclarations.empty)).some
+              }
+          }
 
-      private def updatePeerDeclaration(key: Key, peerId: PeerId)(f: PeerDeclarations => PeerDeclarations) =
-        updateResources(key) { resources =>
-          resources
-            .focus(_.peerDeclarationsMap)
-            .at(peerId)
-            .modify { maybePeerDeclaration =>
-              f(maybePeerDeclaration.getOrElse(PeerDeclarations.empty)).some
+        private def updateResources(key: Key)(f: ConsensusResources[Artifact] => ConsensusResources[Artifact]) =
+          resourcesR(key).updateAndGet { maybeResource =>
+            f(maybeResource.getOrElse(ConsensusResources.empty)).some
+          }.flatMap(_.liftTo[F](new RuntimeException("Should never happen")))
+
+        def getOwnRegistration: F[Option[Key]] = ownRegistrationR.get
+
+        def setOwnRegistration(key: Key): F[Unit] = ownRegistrationR.set(key.some)
+
+        def getRegisteredPeers(key: Key): F[List[PeerId]] =
+          peerRegistrationsR.get.map { peerRegistrations =>
+            peerRegistrations.toList.mapFilter {
+              case (peerId, current) if key >= current => peerId.some
+              case _                                   => none[PeerId]
             }
-        }
+          }
 
-      private def updateResources(key: Key)(f: ConsensusResources[Artifact] => ConsensusResources[Artifact]) =
-        resourcesR(key).updateAndGet { maybeResource =>
-          f(maybeResource.getOrElse(ConsensusResources.empty)).some
-        }.flatMap(_.liftTo[F](new RuntimeException("Should never happen")))
+        def registerPeer(peerId: PeerId)(key: Key): F[Unit] =
+          peerRegistrationsR.update { peerRegistrations =>
+            peerRegistrations
+              .focus()
+              .at(peerId)
+              .replace(key.some)
+          }
 
-    }
+        def removeRegisteredPeer(peerId: PeerId): F[Unit] =
+          peerRegistrationsR.update { peerRegistrations =>
+            peerRegistrations
+              .focus()
+              .at(peerId)
+              .replace(none[Key])
+          }
+      }
 }

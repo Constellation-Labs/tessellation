@@ -112,6 +112,7 @@ object PeerDeclarationHealthCheck {
                 case (NegativeOutcome, round) =>
                   round.getRoundIds.flatMap { roundIds =>
                     logger.info(s"Outcome for $roundIds for peer ${key.id}: negative - removing facilitator") >>
+                      consensusStorage.removeRegisteredPeer(key.id) >>
                       (consensusStorage.addRemovedFacilitator(key.consensusKey, key.id) >>=
                         consensusManager.checkForStateUpdateSync(key.consensusKey))
                   }
