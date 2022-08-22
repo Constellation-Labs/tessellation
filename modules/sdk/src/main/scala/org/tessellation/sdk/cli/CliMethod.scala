@@ -53,9 +53,10 @@ trait CliMethod {
 
   val healthCheckConfig = HealthCheckConfig(
     removeUnresponsiveParallelPeersAfter = 10.seconds,
+    requestProposalsAfter = 8.seconds,
     ping = PingHealthCheckConfig(
       concurrentChecks = 3,
-      defaultCheckTimeout = 10.seconds,
+      defaultCheckTimeout = 6.seconds,
       defaultCheckAttempts = 3,
       ensureCheckInterval = 10.seconds
     ),
