@@ -19,6 +19,8 @@ trait NodeStorage[F[_]] {
   def tryModifyState(from: NodeState, to: NodeState): F[Unit] =
     tryModifyState(Set(from), to)
 
+  def tryModifyStateB(from: NodeState, to: NodeState): F[Boolean]
+
   def canJoinCluster: F[Boolean]
 
   def nodeStates: Stream[F, NodeState]

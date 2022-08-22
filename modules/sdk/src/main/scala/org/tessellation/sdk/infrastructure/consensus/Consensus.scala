@@ -26,11 +26,12 @@ import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.healthcheck.consensus.HealthCheckConsensus
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.infrastructure.gossip.RumorHandler
-import org.tessellation.sdk.infrastructure.healthcheck.declaration._
+import org.tessellation.sdk.infrastructure.healthcheck.declaration.{Key => HealthCheckKey, _}
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 
 import io.circe.{Decoder, Encoder}
+import org.http4s.HttpRoutes
 import org.http4s.client.Client
 
 object Consensus {
@@ -38,10 +39,10 @@ object Consensus {
   def make[
     F[_]: Async: Random: KryoSerializer: SecurityProvider,
     Event <: AnyRef: TypeTag: ClassTag,
-    K: Show: Order: Next: TypeTag: ClassTag: Encoder: Decoder,
+    Key: Show: Order: Next: TypeTag: ClassTag: Encoder: Decoder,
     Artifact <: AnyRef: Show: Eq: TypeTag
   ](
-    consensusFns: ConsensusFunctions[F, Event, K, Artifact],
+    consensusFns: ConsensusFunctions[F, Event, Key, Artifact],
     gossip: Gossip[F],
     selfId: PeerId,
     keyPair: KeyPair,
@@ -52,27 +53,29 @@ object Consensus {
     healthCheckConfig: HealthCheckConfig,
     client: Client[F],
     session: Session[F],
-    initKeyAndArtifact: Option[(K, Option[Signed[Artifact]])] = none
-  ): F[Consensus[F, Event, K, Artifact]] =
+    initKeyAndArtifact: Option[(Key, Option[Signed[Artifact]])] = none
+  ): F[Consensus[F, Event, Key, Artifact]] =
     for {
-      storage <- ConsensusStorage.make[F, Event, K, Artifact](initKeyAndArtifact)
-      stateUpdater = ConsensusStateUpdater.make[F, Event, K, Artifact](
+      storage <- ConsensusStorage.make[F, Event, Key, Artifact](initKeyAndArtifact)
+      stateUpdater = ConsensusStateUpdater.make[F, Event, Key, Artifact](
         consensusFns,
         storage,
-        clusterStorage,
         gossip,
         seedlist,
         keyPair,
         selfId
       )
-      manager = ConsensusManager.make[F, Event, K, Artifact](
+      consClient = ConsensusClient.make[F, Key](client, session)
+      manager <- ConsensusManager.make[F, Event, Key, Artifact](
         timeTriggerInterval,
         storage,
         stateUpdater,
-        nodeStorage
+        nodeStorage,
+        clusterStorage,
+        consClient
       )
-      httpClient = PeerDeclarationHttpClient.make[F, K](client, session)
-      healthCheck <- PeerDeclarationHealthCheck.make[F, K, Artifact](
+      httpClient = PeerDeclarationHttpClient.make[F, Key](client, session)
+      healthCheck <- PeerDeclarationHealthCheck.make[F, Key, Artifact](
         clusterStorage,
         selfId,
         gossip,
@@ -82,17 +85,20 @@ object Consensus {
         manager,
         httpClient
       )
-      handler = ConsensusHandler.make[F, Event, K, Artifact](storage, manager, consensusFns) <+>
-        PeerDeclarationProposalHandler.make[F, K](healthCheck)
+      handler = ConsensusHandler.make[F, Event, Key, Artifact](storage, manager, consensusFns) <+>
+        PeerDeclarationProposalHandler.make[F, Key](healthCheck)
       daemon = PeerDeclarationHealthCheckDaemon.make(healthCheck, healthCheckConfig)
 
-    } yield new Consensus(handler, storage, manager, daemon, healthCheck)
+      routes = new ConsensusRoutes[F, Key](storage)
+
+    } yield new Consensus(handler, storage, manager, daemon, healthCheck, routes.routes)
 }
 
-sealed class Consensus[F[_]: Async, Event, K, Artifact] private (
+sealed class Consensus[F[_]: Async, Event, Key, Artifact] private (
   val handler: RumorHandler[F],
-  val storage: ConsensusStorage[F, Event, K, Artifact],
-  val manager: ConsensusManager[F, K, Artifact],
+  val storage: ConsensusStorage[F, Event, Key, Artifact],
+  val manager: ConsensusManager[F, Key, Artifact],
   val daemon: Daemon[F],
-  val healthcheck: HealthCheckConsensus[F, Key[K], Health, Status[K], Decision]
+  val healthcheck: HealthCheckConsensus[F, HealthCheckKey[Key], Health, Status[Key], Decision],
+  val p2pRoutes: HttpRoutes[F]
 ) {}

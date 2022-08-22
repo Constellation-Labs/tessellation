@@ -46,13 +46,15 @@ final case class DebugRoutes[F[_]: Async](
       services.consensus.storage.getState(ordinal).map(_.map(_.facilitators)).flatMap {
         _.map(Ok(_)).getOrElse(NotFound())
       }
+    case GET -> Root / "consensus" / SnapshotOrdinalVar(ordinal) / "registrations" =>
+      services.consensus.storage.getRegisteredPeers(ordinal).flatMap(Ok(_))
   }
 
   @derive(encoder, decoder)
   case class ConsensusResourcesView(
-    facility: List[PeerId],
-    proposal: List[PeerId],
-    signature: List[PeerId]
+    facilities: List[PeerId],
+    proposals: List[PeerId],
+    signatures: List[PeerId]
   )
 
   object ConsensusResourcesView {

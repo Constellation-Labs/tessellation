@@ -2,6 +2,7 @@ package org.tessellation.sdk.infrastructure.node
 
 import cats.effect.{Concurrent, Ref}
 import cats.syntax.applicativeError._
+import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.{Applicative, MonadThrow}
@@ -57,6 +58,14 @@ object NodeStorage {
             case NodeStateTransition.Failure => InvalidNodeStateTransition(initial, from, to).raiseError[F, Unit]
             case NodeStateTransition.Success => Applicative[F].unit
           }
+        }
+
+      def tryModifyStateB(from: NodeState, to: NodeState): F[Boolean] =
+        nodeState.modify { state =>
+          if (state === from)
+            (to, true)
+          else
+            (from, false)
         }
 
       def nodeStates: Stream[F, NodeState] =
