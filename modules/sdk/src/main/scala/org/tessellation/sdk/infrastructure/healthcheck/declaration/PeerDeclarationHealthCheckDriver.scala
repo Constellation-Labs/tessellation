@@ -8,7 +8,7 @@ import org.tessellation.sdk.domain.healthcheck.consensus.types._
 
 class PeerDeclarationHealthCheckDriver[K] extends HealthCheckConsensusDriver[Key[K], Health, Status[K], Decision] {
 
-  def removePeersWithParallelRound: Boolean = true
+  def removePeersWithParallelRound: Boolean = false
 
   def calculateConsensusOutcome(
     key: Key[K],
