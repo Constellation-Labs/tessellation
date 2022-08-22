@@ -57,7 +57,8 @@ object types {
   case class HealthCheckConfig(
     ping: PingHealthCheckConfig,
     peerDeclaration: PeerDeclarationHealthCheckConfig,
-    removeUnresponsiveParallelPeersAfter: FiniteDuration
+    removeUnresponsiveParallelPeersAfter: FiniteDuration,
+    requestProposalsAfter: FiniteDuration
   )
 
   case class PeerDeclarationHealthCheckConfig(

@@ -95,21 +95,26 @@ abstract class HealthCheckConsensus[
     key: K,
     round: HealthCheckConsensusRound[F, K, A, B, C]
   ): F[Unit] =
-    round.getRoundIds.flatMap { roundIds =>
-      Applicative[F].whenA(missingFromPeers.size > 0) {
-        logger.debug(
-          s"Missing proposals for round ids: ${roundIds} for key: ${key} are from peers: ${missingFromPeers}. Requesting proposals"
-        )
-      }
-    } >>
-      missingFromPeers.toList.traverse { id =>
-        requestProposal(id, round.getOwnRoundId).map(_.map((id, _)))
-      }.map(_.flatten)
-        .flatMap(_.traverse {
-          case (peerId, proposal) =>
-            Applicative[F].whenA(peerId === proposal.owner)(handleProposal(proposal))
-        })
-        .void
+    round.elapsed
+      .map(_ >= config.requestProposalsAfter)
+      .ifM(
+        round.getRoundIds.flatMap { roundIds =>
+          Applicative[F].whenA(missingFromPeers.size > 0) {
+            logger.debug(
+              s"Missing proposals for round ids: ${roundIds} for key: ${key} are from peers: ${missingFromPeers}. Requesting proposals"
+            )
+          }
+        } >>
+          missingFromPeers.toList.traverse { id =>
+            requestProposal(id, round.getOwnRoundId).map(_.map((id, _)))
+          }.map(_.flatten)
+            .flatMap(_.traverse {
+              case (peerId, proposal) =>
+                Applicative[F].whenA(peerId === proposal.owner)(handleProposal(proposal))
+            })
+            .void,
+        Applicative[F].unit
+      )
 
   private def manageRounds(rounds: ConsensusRounds.InProgress[F, K, A, B, C]): F[Unit] = {
     def checkRounds(inProgress: ConsensusRounds.InProgress[F, K, A, B, C]): F[ConsensusRounds.Finished[F, K, A, B, C]] =

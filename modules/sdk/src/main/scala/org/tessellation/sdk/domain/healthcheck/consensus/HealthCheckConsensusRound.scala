@@ -82,6 +82,9 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey, A <: HealthChe
     sentProposal.get.map(_ && received)
   }
 
+  def elapsed: F[FiniteDuration] =
+    Clock[F].monotonic.map(_ - startedAt)
+
   def processProposal(proposal: B): F[Unit] =
     if (proposal.key == key) {
       proposals.modify { m =>
@@ -139,8 +142,8 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey, A <: HealthChe
     }
 
   def manage: F[Unit] =
-    Clock[F].monotonic.map(_ - startedAt).flatMap { elapsed =>
-      if (driver.removePeersWithParallelRound && elapsed >= config.removeUnresponsiveParallelPeersAfter) {
+    elapsed.flatMap { e =>
+      if (driver.removePeersWithParallelRound && e >= config.removeUnresponsiveParallelPeersAfter) {
         removeUnresponsiveParallelPeers()
       } else Applicative[F].unit
     }
