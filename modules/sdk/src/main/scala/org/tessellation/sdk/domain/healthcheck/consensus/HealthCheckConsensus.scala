@@ -1,6 +1,5 @@
 package org.tessellation.sdk.domain.healthcheck.consensus
 
-import cats.Applicative
 import cats.data.OptionT
 import cats.effect._
 import cats.syntax.applicative._
@@ -10,7 +9,9 @@ import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
+import cats.syntax.show._
 import cats.syntax.traverse._
+import cats.{Applicative, Show}
 
 import scala.reflect.runtime.universe.TypeTag
 
@@ -29,7 +30,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 abstract class HealthCheckConsensus[
   F[_]: Async: GenUUID,
-  K <: HealthCheckKey,
+  K <: HealthCheckKey: Show,
   A <: HealthCheckStatus,
   B <: ConsensusHealthStatus[K, A]: TypeTag,
   C <: HealthCheckConsensusDecision
@@ -101,7 +102,7 @@ abstract class HealthCheckConsensus[
         round.getRoundIds.flatMap { roundIds =>
           Applicative[F].whenA(missingFromPeers.size > 0) {
             logger.debug(
-              s"Missing proposals for round ids: ${roundIds} for key: ${key} are from peers: ${missingFromPeers}. Requesting proposals"
+              s"Missing proposals for round ids: ${roundIds.show} for key: ${key.show} are from peers: ${missingFromPeers.show}. Requesting proposals"
             )
           }
         } >>
@@ -132,7 +133,7 @@ abstract class HealthCheckConsensus[
         }.map { case (finished, _) => finished }
       }
 
-    logger.info(s"Healthcheck rounds in progress: ${rounds.keySet}") >>
+    logger.info(s"Healthcheck rounds in progress: ${rounds.keySet.show}") >>
       partition(rounds).flatMap {
         case (finished, inProgress) =>
           checkRounds(inProgress).map(r => (finished ++ r, inProgress -- r.keySet))
@@ -173,7 +174,7 @@ abstract class HealthCheckConsensus[
       .hasPeerId(key.id)
       .ifM(
         createRoundId.map(HealthCheckRoundId(_, selfId)).flatMap(startRound(key, _)),
-        logger.warn(s"Trying to start own round for peer ${key.id}, but peer is unknown")
+        logger.warn(s"Trying to start own round for key ${key.show}, but peer is unknown")
       )
 
   def participateInRound(key: K, roundId: HealthCheckRoundId): F[Unit] =
@@ -239,7 +240,7 @@ abstract class HealthCheckConsensus[
 
   def handleProposal(proposal: B, depth: Int = 1): F[Unit] =
     logger.info(
-      s"Received proposal for roundIds: ${proposal.roundId} for peer: ${proposal.key.id} with status: ${proposal.status}"
+      s"Received proposal for roundIds: ${proposal.roundId.show} for key: ${proposal.key.show} with status: ${proposal.status} from peer: ${proposal.owner.show}"
     ) >>
       (if (proposal.owner === selfId || proposal.key.id === selfId)
          Applicative[F].unit

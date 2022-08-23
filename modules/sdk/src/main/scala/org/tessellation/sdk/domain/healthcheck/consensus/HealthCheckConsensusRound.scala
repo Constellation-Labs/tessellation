@@ -1,6 +1,5 @@
 package org.tessellation.sdk.domain.healthcheck.consensus
 
-import cats.Applicative
 import cats.effect._
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
@@ -10,6 +9,7 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
 import cats.syntax.show._
+import cats.{Applicative, Show}
 
 import scala.concurrent.duration._
 import scala.reflect.runtime.universe.TypeTag
@@ -24,7 +24,7 @@ import org.tessellation.sdk.domain.healthcheck.consensus.types._
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey, A <: HealthCheckStatus, B <: ConsensusHealthStatus[
+class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey: Show, A <: HealthCheckStatus, B <: ConsensusHealthStatus[
   K,
   A
 ]: TypeTag, C <: HealthCheckConsensusDecision](
@@ -50,9 +50,11 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey, A <: HealthChe
   def start: F[Unit] =
     Spawn[F].start {
       sendProposal
-        .handleErrorWith(err => logger.error(err)(s"An error occurred while sending the healthcheck proposal"))
+        .handleErrorWith(err =>
+          logger.error(err)(s"An error occurred while sending the healthcheck proposal for roundId=${roundId.show} for key=${key.show}")
+        )
         .flatTap { _ =>
-          logger.info(s"HealthCheck round started with roundId=$roundId for peer=${key.id.show}")
+          logger.info(s"HealthCheck round started with roundId=${roundId.show} for key=${key.show}")
         }
     }.void
 
@@ -180,7 +182,7 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey, A <: HealthChe
 
 object HealthCheckConsensusRound {
 
-  def make[F[_]: Async, K <: HealthCheckKey, A <: HealthCheckStatus, B <: ConsensusHealthStatus[
+  def make[F[_]: Async, K <: HealthCheckKey: Show, A <: HealthCheckStatus, B <: ConsensusHealthStatus[
     K,
     A
   ]: TypeTag, C <: HealthCheckConsensusDecision](
