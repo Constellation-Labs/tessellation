@@ -2,14 +2,20 @@ package org.tessellation.sdk.domain.healthcheck.consensus.types
 
 import java.util.UUID
 
-import derevo.cats.show
+import cats.Show
+import cats.syntax.show._
+
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import io.estatico.newtype.macros.newtype
 
 object types {
 
-  @derive(encoder, decoder, show)
+  @derive(encoder, decoder)
   @newtype
   final case class RoundId(value: UUID)
+
+  object RoundId {
+    implicit def showInstance: Show[RoundId] = r => s"RoundId(${r.value.show.take(8)}})"
+  }
 }

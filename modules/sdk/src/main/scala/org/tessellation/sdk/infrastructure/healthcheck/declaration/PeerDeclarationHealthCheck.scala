@@ -1,5 +1,6 @@
 package org.tessellation.sdk.infrastructure.healthcheck.declaration
 
+import cats.Show
 import cats.effect._
 import cats.effect.kernel.Clock
 import cats.syntax.applicative._
@@ -7,6 +8,7 @@ import cats.syntax.contravariantSemigroupal._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.semigroup._
+import cats.syntax.show._
 import cats.syntax.traverse._
 
 import scala.concurrent.duration.FiniteDuration
@@ -27,7 +29,7 @@ import io.circe.{Decoder, Encoder}
 
 object PeerDeclarationHealthCheck {
 
-  def make[F[_]: Async: GenUUID, K: TypeTag: Encoder: Decoder, A](
+  def make[F[_]: Async: GenUUID, K: TypeTag: Encoder: Decoder: Show, A](
     clusterStorage: ClusterStorage[F],
     selfId: PeerId,
     gossip: Gossip[F],
@@ -107,11 +109,11 @@ object PeerDeclarationHealthCheck {
               t match {
                 case (PositiveOutcome, round) =>
                   round.getRoundIds.flatMap { roundIds =>
-                    logger.info(s"Outcome for $roundIds for peer ${key.id}: positive - no action required")
+                    logger.info(s"Outcome for key ${key.show}: positive - no action required | Round ids: ${roundIds.show}")
                   }
                 case (NegativeOutcome, round) =>
                   round.getRoundIds.flatMap { roundIds =>
-                    logger.info(s"Outcome for $roundIds for peer ${key.id}: negative - removing facilitator") >>
+                    logger.info(s"Outcome for key ${key.show}: negative - removing facilitator | Round ids: ${roundIds.show}") >>
                       consensusStorage.removeRegisteredPeer(key.id) >>
                       (consensusStorage.addRemovedFacilitator(key.consensusKey, key.id) >>=
                         consensusManager.checkForStateUpdateSync(key.consensusKey))

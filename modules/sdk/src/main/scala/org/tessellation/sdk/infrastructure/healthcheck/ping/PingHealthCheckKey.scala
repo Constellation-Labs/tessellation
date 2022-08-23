@@ -6,8 +6,9 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.healthcheck.consensus.types.HealthCheckKey
 
 import com.comcast.ip4s.{Host, Port}
+import derevo.cats.show
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 
-@derive(encoder, decoder)
+@derive(encoder, decoder, show)
 case class PingHealthCheckKey(id: PeerId, ip: Host, p2pPort: Port, session: SessionToken) extends HealthCheckKey

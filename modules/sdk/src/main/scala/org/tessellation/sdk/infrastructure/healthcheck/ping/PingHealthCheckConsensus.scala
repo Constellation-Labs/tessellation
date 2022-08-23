@@ -9,6 +9,7 @@ import cats.syntax.contravariantSemigroupal._
 import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+import cats.syntax.show._
 import cats.syntax.traverse._
 import cats.syntax.traverseFilter._
 
@@ -103,34 +104,44 @@ class PingHealthCheckConsensus[F[_]: Async: GenUUID: Random](
         def rejoin = joining.join(PeerToJoin(key.id, key.ip, key.p2pPort))
         t match {
           case (DecisionKeepPeer, round) =>
-            round.ownConsensusHealthStatus.map(_.status).flatMap {
-              case PeerAvailable(_) | PeerUnavailable(_) | PeerCheckTimeouted(_) | PeerCheckUnexpectedError(_) =>
-                logger.info(s"Outcome for peer ${key.id}: available - no action required")
-              case _: PeerMismatch =>
-                logger.info(s"Outcome for peer ${key.id}: available, own: mismatch - removing and rejoining") >>
-                  clusterStorage.removePeer(key.id) >>
-                  rejoin
-              case _: PeerUnknown =>
-                logger.info(s"Outcome for peer ${key.id}: available, own: unknown - rejoining") >>
-                  rejoin
+            round.getRoundIds.flatMap { roundIds =>
+              round.ownConsensusHealthStatus.map(_.status).flatMap {
+                case PeerAvailable(_) | PeerUnavailable(_) | PeerCheckTimeouted(_) | PeerCheckUnexpectedError(_) =>
+                  logger.info(s"Outcome for key ${key.show}: available - no action required | Round ids: ${roundIds.show}")
+                case _: PeerMismatch =>
+                  logger.info(
+                    s"Outcome for key ${key.show}: available, own: mismatch - removing and rejoining | Round ids: ${roundIds.show}"
+                  ) >>
+                    clusterStorage.removePeer(key.id) >>
+                    rejoin
+                case _: PeerUnknown =>
+                  logger.info(s"Outcome for key ${key.show}: available, own: unknown - rejoining | Round ids: ${roundIds.show}") >>
+                    rejoin
+              }
             }
           case (DecisionPeerMismatch, round) =>
-            round.ownConsensusHealthStatus.map(_.status).flatMap {
-              case _: PeerMismatch =>
-                logger.info(s"Outcome for peer ${key.id}: mismatch - ignoring healthcheck round")
-              case PeerAvailable(_) | PeerUnavailable(_) | PeerUnknown(_) | PeerCheckTimeouted(_) | PeerCheckUnexpectedError(_) =>
-                logger.info(s"Outcome for peer ${key.id}: mismatch - removing peer") >>
-                  clusterStorage.removePeer(key.id)
+            round.getRoundIds.flatMap { roundIds =>
+              round.ownConsensusHealthStatus.map(_.status).flatMap {
+                case _: PeerMismatch =>
+                  logger.info(s"Outcome for key ${key.show}: mismatch - ignoring healthcheck round | Round ids: ${roundIds.show}")
+                case PeerAvailable(_) | PeerUnavailable(_) | PeerUnknown(_) | PeerCheckTimeouted(_) | PeerCheckUnexpectedError(_) =>
+                  logger.info(s"Outcome for key ${key.show}: mismatch - removing peer | Round ids: ${roundIds.show}") >>
+                    clusterStorage.removePeer(key.id)
+              }
             }
-          case (DecisionDropPeer, _) =>
-            clusterStorage
-              .getPeer(key.id)
-              .map(_.exists(_.session === key.session))
-              .ifM(
-                logger.info(s"Outcome for peer ${key.id}: unavailable - removing peer") >>
-                  clusterStorage.removePeer(key.id),
-                logger.info(s"Outcome for peer ${key.id}: unavailable - known peer has a different session, ignoring")
-              )
+          case (DecisionDropPeer, round) =>
+            round.getRoundIds.flatMap { roundIds =>
+              clusterStorage
+                .getPeer(key.id)
+                .map(_.exists(_.session === key.session))
+                .ifM(
+                  logger.info(s"Outcome for key ${key.show}: unavailable - removing peer | Round ids: ${roundIds.show}") >>
+                    clusterStorage.removePeer(key.id),
+                  logger.info(
+                    s"Outcome for key ${key.show}: unavailable - known peer has a different session, ignoring | Round ids: ${roundIds.show}"
+                  )
+                )
+            }
         }
     }.void
 
