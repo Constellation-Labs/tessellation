@@ -100,14 +100,18 @@ object Joining {
     def join: Pipe[F, P2PContext, Unit] =
       in =>
         in.evalMap { peer =>
-          joining.twoWayHandshake(peer, none) >>
-            peerDiscovery
-              .discoverFrom(peer)
-              .handleErrorWith { err =>
-                logger.error(err)(s"Peer discovery from peer ${peer.show} failed").as(Set.empty)
-              }
-              .flatMap(_.toList.traverse(joiningQueue.offer(_).void))
-              .void
+          {
+            joining.twoWayHandshake(peer, none) >>
+              peerDiscovery
+                .discoverFrom(peer)
+                .handleErrorWith { err =>
+                  logger.error(err)(s"Peer discovery from peer ${peer.show} failed").as(Set.empty)
+                }
+                .flatMap(_.toList.traverse(joiningQueue.offer(_).void))
+                .void
+          }.handleErrorWith { err =>
+            logger.error(err)(s"Joining to peer ${peer.show} failed")
+          }
         }
 
     val process = Stream.fromQueueUnterminated(joiningQueue).through(join).compile.drain
