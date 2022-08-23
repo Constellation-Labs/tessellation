@@ -11,7 +11,6 @@ import org.tessellation.dag.l1.domain.consensus.block.storage.ConsensusStorage
 import org.tessellation.dag.l1.domain.snapshot.storage.LastGlobalSnapshotStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.dag.l1.infrastructure.address.storage.AddressStorage
-import org.tessellation.dag.l1.infrastructure.db.Database
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.L0Peer
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, L0ClusterStorage, SessionStorage}
@@ -23,7 +22,7 @@ import org.tessellation.sdk.modules.SdkStorages
 
 object Storages {
 
-  def make[F[_]: Async: Database: Random: KryoSerializer](
+  def make[F[_]: Async: Random: KryoSerializer](
     sdkStorages: SdkStorages[F],
     l0Peer: L0Peer
   ): F[Storages[F]] =
@@ -33,7 +32,7 @@ object Storages {
       l0ClusterStorage <- L0ClusterStorage.make[F](l0Peer)
       lastGlobalSnapshotStorage <- LastGlobalSnapshotStorage.make[F]
       transactionStorage <- TransactionStorage.make[F]
-      addressStorage = AddressStorage.make[F]
+      addressStorage <- AddressStorage.make[F]
     } yield
       new Storages[F](
         address = addressStorage,

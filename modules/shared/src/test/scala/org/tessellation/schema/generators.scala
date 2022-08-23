@@ -7,6 +7,7 @@ import scala.collection.immutable.SortedSet
 import org.tessellation.generators._
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.address.{Address, DAGAddressRefined}
+import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.cluster.SessionToken
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.{Peer, PeerId}
@@ -76,6 +77,9 @@ object generators {
       end <- Gen.stringOfN(36, base58CharGen)
       par = end.filter(_.isDigit).map(_.toString.toInt).sum % 9
     } yield Address(refineV[DAGAddressRefined].unsafeFrom(s"DAG$par$end"))
+
+  val balanceGen: Gen[Balance] =
+    Arbitrary.arbitrary[NonNegLong].map(Balance(_))
 
   val transactionAmountGen: Gen[TransactionAmount] = Arbitrary.arbitrary[PosLong].map(TransactionAmount(_))
   val transactionFeeGen: Gen[TransactionFee] = Arbitrary.arbitrary[NonNegLong].map(TransactionFee(_))
