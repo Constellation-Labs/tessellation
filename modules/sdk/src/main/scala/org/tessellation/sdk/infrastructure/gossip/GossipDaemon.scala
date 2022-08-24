@@ -147,9 +147,9 @@ object GossipDaemon {
         private def runGossipRound(peer: Peer): F[Unit] =
           for {
             activeHashes <- rumorStorage.getActiveHashes
-            seenHashes <- rumorStorage.getSeenHashes
             startRequest = StartGossipRoundRequest(activeHashes)
             startResponse <- gossipClient.startGossiping(startRequest).run(peer)
+            seenHashes <- rumorStorage.getSeenHashes
             inquiry = startResponse.offer.diff(seenHashes)
             answer <- rumorStorage.getRumors(startResponse.inquiry)
             endRequest = EndGossipRoundRequest(answer, inquiry)

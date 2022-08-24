@@ -37,10 +37,10 @@ object method {
           seenRetention = 2.minutes
         ),
         daemon = GossipDaemonConfig(
-          fanout = 2,
+          fanout = 1,
           interval = 0.2.seconds,
           maxConcurrentRounds = 4,
-          roundTimeout = 5.seconds
+          roundTimeout = 10.seconds
         )
       ),
       consensus = ConsensusConfig(
