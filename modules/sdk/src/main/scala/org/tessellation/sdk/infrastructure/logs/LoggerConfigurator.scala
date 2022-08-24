@@ -33,7 +33,6 @@ object LoggerConfigurator {
     }.use { reader =>
       Sync[F].delay(LoggerFactory.getILoggerFactory.asInstanceOf[LoggerContext]).flatMap { loggerContext =>
         val configurator = new JoranConfigurator()
-        Sync[F].delay(loggerContext.putProperty("self_id", "xyz"))
         Sync[F].delay(loggerContext.reset()) >>
           Sync[F].delay(configurator.setContext(loggerContext)) >>
           Sync[F].delay(configurator.doConfigure(new InputSource(reader)))
