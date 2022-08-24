@@ -20,7 +20,7 @@
             <maxHistory>10</maxHistory>
         </rollingPolicy>
         <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
-            <pattern>%date [%thread] [%X{node_id}] %highlight(%-5level) %cyan(%logger{15}) - %msg%n</pattern>
+            <pattern>%date [%thread] [%property{self_id}] %highlight(%-5level) %cyan(%logger{15}) - %msg%n</pattern>
         </encoder>
     </appender>
     <appender name="HTTP" class="ch.qos.logback.core.rolling.RollingFileAppender">
@@ -32,7 +32,7 @@
             <maxHistory>10</maxHistory>
         </rollingPolicy>
         <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
-            <pattern>%date [%thread] [%X{node_id}] %highlight(%-5level) %cyan(%logger{15}) - %msg %n</pattern>
+            <pattern>%date [%thread] [%property{self_id}] %highlight(%-5level) %cyan(%logger{15}) - %msg %n</pattern>
         </encoder>
     </appender>
     <appender name="GOSSIP" class="ch.qos.logback.core.rolling.RollingFileAppender">
@@ -44,7 +44,7 @@
             <maxHistory>10</maxHistory>
         </rollingPolicy>
         <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
-            <pattern>%date [%thread] [%X{node_id}] %highlight(%-5level) %cyan(%logger{15}) - %msg %n</pattern>
+            <pattern>%date [%thread] [%property{self_id}] %highlight(%-5level) %cyan(%logger{15}) - %msg %n</pattern>
         </encoder>
     </appender>
     <appender name="TRANSACTIONS" class="ch.qos.logback.core.rolling.RollingFileAppender">
@@ -56,7 +56,7 @@
             <maxHistory>10</maxHistory>
         </rollingPolicy>
         <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
-            <pattern>%date [%thread] [%X{node_id}] %highlight(%-5level) %cyan(%logger{15}) - %msg %n</pattern>
+            <pattern>%date [%thread] [%property{self_id}] %highlight(%-5level) %cyan(%logger{15}) - %msg %n</pattern>
         </encoder>
     </appender>
     <appender name="JSON" class="ch.qos.logback.core.rolling.RollingFileAppender">
@@ -83,7 +83,7 @@
     <logger name="org.tessellation" level="DEBUG" />
     <logger name="org.http4s.server.middleware.RequestLogger" level="OFF" />
     <logger name="org.http4s.server.middleware.ResponseLogger" level="OFF" />
-    <logger name="org.tessellation.sdk.infrastructure.gossip.RumorLogger" level="OFF" />
+    <logger name="RumorLogger" level="OFF" />
     <logger name="org.http4s.server.middleware.RequestLogger" level="INFO" additivity="false">
         <appender-ref ref="HTTP" />
         <appender-ref ref="JSON" />

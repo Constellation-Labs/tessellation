@@ -12,5 +12,5 @@
     <logger name="org.tessellation" level="DEBUG" />
     <logger name="org.http4s.server.middleware.RequestLogger" level="OFF" />
     <logger name="org.http4s.server.middleware.ResponseLogger" level="OFF" />
-    <logger name="org.tessellation.sdk.infrastructure.gossip.RumorLogger" level="OFF" />
+    <logger name="RumorLogger" level="OFF" />
 </configuration>

@@ -85,6 +85,8 @@ abstract class TessellationIOApp[A <: CliMethod](
                   SignallingRef.of[IO, Unit](()).flatMap { _restartSignal =>
                     def mkSDK =
                       for {
+                        _ <- IO(System.setProperty("self_id", selfId.show)).asResource
+                        _ <- logger.info(s"Self peerId: ${selfId.show}").asResource
                         _seedlist <- method.seedlistPath
                           .fold(none[Set[PeerId]].pure[IO])(SeedlistLoader.make[IO].load(_).map(_.some))
                           .asResource
@@ -125,8 +127,6 @@ abstract class TessellationIOApp[A <: CliMethod](
 
                           def restartSignal = _restartSignal
                         }
-
-                        _ <- logger.info(s"Self peerId: ${selfId.show}").asResource
                       } yield sdk
 
                     def startup: Resource[IO, Unit] =
