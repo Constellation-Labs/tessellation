@@ -42,6 +42,7 @@ object Dependencies {
     val betterMonadicFor = "0.3.1"
     val kindProjector = "0.13.2"
     val logback = "1.2.11"
+    val logstashLogbackEncoder = "7.2"
     val organizeImports = "0.5.0"
     val semanticDB = "4.5.11"
     val weaver = "0.7.14"
@@ -161,6 +162,7 @@ object Dependencies {
 
     // Runtime
     val logback = "ch.qos.logback" % "logback-classic" % V.logback
+    val logstashLogbackEncoder = "net.logstash.logback" % "logstash-logback-encoder" % V.logstashLogbackEncoder
 
     // Test
     val catsLaws = "org.typelevel" %% "cats-laws" % V.cats

@@ -98,7 +98,8 @@ lazy val wallet = (project in file("modules/wallet"))
       Libraries.refinedCore,
       Libraries.refinedCats,
       Libraries.log4cats,
-      Libraries.logback % Runtime
+      Libraries.logback % Runtime,
+      Libraries.logstashLogbackEncoder % Runtime
     )
   )
 
@@ -132,6 +133,7 @@ lazy val keytool = (project in file("modules/keytool"))
       Libraries.fs2IO,
       Libraries.log4cats,
       Libraries.logback % Runtime,
+      Libraries.logstashLogbackEncoder % Runtime,
       Libraries.monocleCore,
       Libraries.monocleMacro,
       Libraries.newtype,
@@ -187,6 +189,7 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.guava,
       Libraries.log4cats,
       Libraries.logback % Runtime,
+      Libraries.logstashLogbackEncoder % Runtime,
       Libraries.mapref,
       Libraries.monocleCore,
       Libraries.monocleMacro,
@@ -268,6 +271,7 @@ lazy val sdk = (project in file("modules/sdk"))
       Libraries.declineEffect,
       Libraries.declineRefined,
       Libraries.logback,
+      Libraries.logstashLogbackEncoder % Runtime,
       Libraries.log4cats,
       Libraries.micrometerPrometheusRegistry,
       Libraries.shapeless
@@ -287,7 +291,8 @@ lazy val dagShared = (project in file("modules/dag-shared"))
       CompilerPlugin.kindProjector,
       CompilerPlugin.betterMonadicFor,
       CompilerPlugin.semanticDB,
-      Libraries.logback % Runtime
+      Libraries.logback % Runtime,
+      Libraries.logstashLogbackEncoder % Runtime
     )
   )
 
@@ -364,7 +369,8 @@ lazy val tools = (project in file("modules/tools"))
       Libraries.http4sClient,
       Libraries.http4sCirce,
       Libraries.log4cats,
-      Libraries.logback,
+      Libraries.logback % Runtime,
+      Libraries.logstashLogbackEncoder % Runtime,
       Libraries.mapref,
       Libraries.monocleCore,
       Libraries.newtype,
@@ -424,7 +430,8 @@ lazy val core = (project in file("modules/core"))
       Libraries.httpSignerHttp4s,
       Libraries.javaxCrypto,
       Libraries.log4cats,
-      Libraries.logback,
+      Libraries.logback % Runtime,
+      Libraries.logstashLogbackEncoder % Runtime,
       Libraries.mapref,
       Libraries.monocleCore,
       Libraries.newtype,

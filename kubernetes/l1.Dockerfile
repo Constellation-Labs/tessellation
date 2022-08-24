@@ -6,7 +6,7 @@ WORKDIR /app
 
 RUN apk --no-cache add curl
 
-COPY kubernetes/data/l1-initial-validator-key.p12 kubernetes/await-join.sh kubernetes/await.sh ./
+COPY kubernetes/data/l1-initial-validator-key.p12 kubernetes/await-join.sh kubernetes/await.sh kubernetes/logback-kubernetes.xml ./
 
 RUN cat <<EOF > start.sh
 export CL_KEYALIAS=alias
@@ -14,7 +14,8 @@ export CL_PASSWORD=password
 export CL_APP_ENV=dev
 export CL_L0_PEER_ID=\$L0_INITIAL_VALIDATOR_ID
 export CL_L0_PEER_HTTP_HOST=\$L0_INITIAL_VALIDATOR_SERVICE_HOST
-export CL_L0_PEER_HTTP_PORT=\$L0_INITIAL_VALIDATOR_SERVICE_PORT_PUBLIC
+export CL_L0_PEER_HTTP_PORT=\$L0_INITIAL_VALIDATOR_SERVICE_PORT_PUBLIC \
+export JAVA_OPTS="\$JAVA_OPTS -Dlogback.configurationFile=logback-kubernetes.xml -Dcats.effect.tracing.mode=full -Dcats.effect.tracing.buffer.size=64"
 
 CURL_RETRY_CMD="curl --retry 60 --retry-delay 1 --retry-all-errors --fail --silent"
 
@@ -22,7 +23,7 @@ if [ -n "\$INITIAL_VALIDATOR" ]
 then
     export CL_KEYSTORE=l1-initial-validator-key.p12
     ./await.sh \$L0_INITIAL_VALIDATOR_SERVICE_HOST \$L0_INITIAL_VALIDATOR_SERVICE_PORT_PUBLIC && \
-        java -jar dag-l1.jar run-initial-validator
+        java \$JAVA_OPTS -jar dag-l1.jar run-initial-validator
 else
     export CL_KEYSTORE=key.p12
     java -jar keytool.jar generate
@@ -33,7 +34,7 @@ else
                 \$L1_INITIAL_VALIDATOR_SERVICE_PORT_PUBLIC \
                 \$L1_INITIAL_VALIDATOR_SERVICE_PORT_P2P \
                 \$L1_INITIAL_VALIDATOR_ID &
-            java -jar dag-l1.jar run-validator
+            java \$JAVA_OPTS -jar dag-l1.jar run-validator
         )
 fi
 EOF
