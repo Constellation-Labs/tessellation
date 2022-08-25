@@ -113,6 +113,8 @@ object GlobalSnapshotStorage {
     inMemoryCapacity: NonNegLong
   ): F[GlobalSnapshotStorage[F] with LatestBalances[F]] = {
 
+    def logger = Slf4jLogger.getLogger[F]
+
     def offloadProcess: F[Unit] =
       Stream
         .fromQueueUnterminated(offloadQueue)
@@ -188,7 +190,13 @@ object GlobalSnapshotStorage {
                 case Right(isNext) if isNext =>
                   (snapshot.some, enqueue(snapshot).map(_ => true))
 
-                case _ => (current.some, false.pure[F])
+                case _ =>
+                  (
+                    current.some,
+                    logger
+                      .debug(s"Trying to prepend ${snapshot.ordinal.show} but the current snapshot is: ${current.ordinal.show}")
+                      .as(false)
+                  )
               }
           }.flatten
 
