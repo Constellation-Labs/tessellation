@@ -28,6 +28,7 @@ import org.tessellation.security.{Hashed, SecurityProvider}
 import derevo.cats.show
 import derevo.derive
 import eu.timepit.refined.types.numeric.NonNegLong
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object SnapshotProcessor {
 
@@ -68,6 +69,14 @@ object SnapshotProcessor {
     tipsToDeprecate: Set[ProofsHash],
     tipsToRemove: Set[ProofsHash]
   ) extends Alignment
+  case class Ignore(
+    lastHeight: Height,
+    lastSubHeight: SubHeight,
+    lastOrdinal: SnapshotOrdinal,
+    processingHeight: Height,
+    processingSubHeight: SubHeight,
+    processingOrdinal: SnapshotOrdinal
+  ) extends Alignment
 
   @derive(show)
   sealed trait SnapshotProcessingResult
@@ -86,19 +95,11 @@ object SnapshotProcessor {
     removedBlocks: Set[ProofsHash],
     removedObsoleteBlocks: Set[ProofsHash]
   ) extends SnapshotProcessingResult
+  case class SnapshotIgnored(
+    reference: GlobalSnapshotReference
+  ) extends SnapshotProcessingResult
 
   sealed trait SnapshotProcessingError extends NoStackTrace
-  case class UnexpectedCaseCheckingAlignment(
-    lastHeight: Height,
-    lastSubHeight: SubHeight,
-    lastOrdinal: SnapshotOrdinal,
-    processingHeight: Height,
-    processingSubHeight: SubHeight,
-    processingOrdinal: SnapshotOrdinal
-  ) extends SnapshotProcessingError {
-    override def getMessage: String =
-      s"Unexpected case during global snapshot processing! Last: (height: $lastHeight, subHeight: $lastSubHeight, ordinal: $lastOrdinal) processing: (height: $processingHeight, subHeight:$processingSubHeight, ordinal: $processingOrdinal)."
-  }
   case class TipsGotMisaligned(deprecatedToAdd: Set[ProofsHash], activeToDeprecate: Set[ProofsHash]) extends SnapshotProcessingError {
     override def getMessage: String =
       s"Tips got misaligned! Check the implementation! deprecatedToAdd -> $deprecatedToAdd not equal activeToDeprecate -> $activeToDeprecate"
@@ -113,6 +114,8 @@ sealed abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityPro
 ) {
 
   import SnapshotProcessor._
+
+  def logger = Slf4jLogger.getLogger[F]
 
   def process(globalSnapshot: Hashed[GlobalSnapshot]): F[SnapshotProcessingResult] =
     checkAlignment(globalSnapshot).flatMap {
@@ -236,6 +239,13 @@ sealed abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityPro
               obsoleteToRemove
             )
           }
+
+      case Ignore(lastHeight, lastSubHeight, lastOrdinal, processingHeight, processingSubHeight, processingOrdinal) =>
+        logger
+          .warn(
+            s"Unexpected case during global snapshot processing - ignoring snapshot! Last: (height: $lastHeight, subHeight: $lastSubHeight, ordinal: $lastOrdinal) processing: (height: $processingHeight, subHeight:$processingSubHeight, ordinal: $processingOrdinal)."
+          )
+          .as(SnapshotIgnored(GlobalSnapshotReference.fromHashedGlobalSnapshot(globalSnapshot)))
     }
 
   private def checkAlignment(globalSnapshot: GlobalSnapshot): F[Alignment] =
@@ -248,7 +258,8 @@ sealed abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityPro
       GlobalSnapshotTips(gsDeprecatedTips, gsRemainedActive) = globalSnapshot.tips
 
       result <- lastGlobalSnapshotStorage.get.flatMap {
-        case Some(last) if last.ordinal.next == globalSnapshot.ordinal && last.height == globalSnapshot.height =>
+        case Some(last)
+            if last.ordinal.next === globalSnapshot.ordinal && (last.height === globalSnapshot.height && last.subHeight.next === globalSnapshot.subHeight) && last.hash === globalSnapshot.lastSnapshotHash =>
           blockStorage.getBlocksForMajorityReconciliation(last.height, globalSnapshot.height).flatMap {
             case MajorityReconciliationData(deprecatedTips, activeTips, _, _, acceptedAbove) =>
               val onlyInMajority = acceptedInMajority -- acceptedAbove
@@ -282,7 +293,8 @@ sealed abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityPro
                   )
           }
 
-        case Some(last) if last.ordinal.next === globalSnapshot.ordinal && last.height < globalSnapshot.height =>
+        case Some(last)
+            if last.ordinal.next === globalSnapshot.ordinal && (last.height.next === globalSnapshot.height && globalSnapshot.subHeight === SubHeight.MinValue) && last.hash === globalSnapshot.lastSnapshotHash =>
           blockStorage.getBlocksForMajorityReconciliation(last.height, globalSnapshot.height).flatMap {
             case MajorityReconciliationData(
                   deprecatedTips,
@@ -331,15 +343,8 @@ sealed abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityPro
           }
 
         case Some(last) =>
-          MonadThrow[F].raiseError[Alignment](
-            UnexpectedCaseCheckingAlignment(
-              last.height,
-              last.subHeight,
-              last.ordinal,
-              globalSnapshot.height,
-              globalSnapshot.subHeight,
-              globalSnapshot.ordinal
-            )
+          Applicative[F].pure[Alignment](
+            Ignore(last.height, last.subHeight, last.ordinal, globalSnapshot.height, globalSnapshot.subHeight, globalSnapshot.ordinal)
           )
 
         case None =>

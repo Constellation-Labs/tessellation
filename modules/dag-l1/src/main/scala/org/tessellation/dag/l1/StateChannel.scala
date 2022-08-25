@@ -96,7 +96,7 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
     .evalMap { _ =>
       storages.lastGlobalSnapshotStorage.get.flatMap {
         _.fold(Applicative[F].unit) { latestSnapshot =>
-          programs.l0PeerDiscovery.discover(latestSnapshot.proofs.map(_.id).map(PeerId._Id.reverseGet))
+          programs.l0PeerDiscovery.discover(latestSnapshot.signed.proofs.map(_.id).map(PeerId._Id.reverseGet))
         }
       }
     }
