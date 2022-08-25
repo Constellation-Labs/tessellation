@@ -20,6 +20,7 @@ import org.tessellation.sdk.domain.cluster.services.Cluster
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.security.SecurityProvider
+import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
 import fs2.concurrent.SignallingRef
@@ -35,7 +36,8 @@ object Cluster {
     sessionStorage: SessionStorage[F],
     nodeStorage: NodeStorage[F],
     seedlist: Option[Set[PeerId]],
-    restartSignal: SignallingRef[F, Unit]
+    restartSignal: SignallingRef[F, Unit],
+    versionHash: Hash
   ): Cluster[F] =
     new Cluster[F] {
 
@@ -62,7 +64,8 @@ object Cluster {
             clusterSession,
             clusterId,
             state,
-            seedlistHash
+            seedlistHash,
+            versionHash
           )
 
       def signRequest(signRequest: SignRequest): F[Signed[SignRequest]] =

@@ -14,6 +14,7 @@ import org.tessellation.sdk.infrastructure.cluster.services.Cluster
 import org.tessellation.sdk.infrastructure.gossip.Gossip
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
+import org.tessellation.security.hash.Hash
 
 import fs2.concurrent.SignallingRef
 
@@ -27,7 +28,8 @@ object SdkServices {
     queues: SdkQueues[F],
     session: Session[F],
     seedlist: Option[Set[PeerId]],
-    restartSignal: SignallingRef[F, Unit]
+    restartSignal: SignallingRef[F, Unit],
+    versionHash: Hash
   ): F[SdkServices[F]] = {
     val cluster = Cluster
       .make[F](
@@ -39,7 +41,8 @@ object SdkServices {
         storages.session,
         storages.node,
         seedlist,
-        restartSignal
+        restartSignal,
+        versionHash
       )
 
     for {
