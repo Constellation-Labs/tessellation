@@ -26,6 +26,7 @@ import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStora
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.http.p2p.clients.SignClient
 import org.tessellation.security.SecurityProvider
+import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
 import com.comcast.ip4s.{Host, IpLiteralSyntax, Port}
@@ -45,7 +46,8 @@ object Joining {
     seedlist: Option[Set[PeerId]],
     selfId: PeerId,
     stateAfterJoining: NodeState,
-    peerDiscovery: PeerDiscovery[F]
+    peerDiscovery: PeerDiscovery[F],
+    versionHash: Hash
   ): F[Joining[F]] =
     Queue
       .unbounded[F, P2PContext]
@@ -62,7 +64,8 @@ object Joining {
           seedlist,
           selfId,
           stateAfterJoining,
-          peerDiscovery
+          peerDiscovery,
+          versionHash
         )
       )
 
@@ -78,7 +81,8 @@ object Joining {
     seedlist: Option[Set[PeerId]],
     selfId: PeerId,
     stateAfterJoining: NodeState,
-    peerDiscovery: PeerDiscovery[F]
+    peerDiscovery: PeerDiscovery[F],
+    versionHash: Hash
   ): F[Joining[F]] = {
 
     val logger = Slf4jLogger.getLogger[F]
@@ -94,6 +98,7 @@ object Joining {
       seedlist,
       selfId,
       stateAfterJoining,
+      versionHash,
       joiningQueue
     ) {}
 
@@ -131,6 +136,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
   seedlist: Option[Set[PeerId]],
   selfId: PeerId,
   stateAfterJoining: NodeState,
+  versionHash: Hash,
   joiningQueue: Queue[F, P2PContext]
 ) {
 
@@ -242,6 +248,9 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
 
   private def validateHandshake(registrationRequest: RegistrationRequest, remoteAddress: Option[Host]): F[Unit] =
     for {
+
+      _ <- VersionMismatch.raiseError[F, Unit].whenA(registrationRequest.version =!= versionHash)
+
       ip <- registrationRequest.ip.pure[F]
 
       ownClusterId = clusterStorage.getClusterId

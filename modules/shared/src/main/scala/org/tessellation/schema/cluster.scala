@@ -68,6 +68,7 @@ object cluster {
   case object IdDuplicationFound extends RegistrationRequestValidation
   case object SeedlistDoesNotMatch extends RegistrationRequestValidation
   case object CollateralNotSatisfied extends RegistrationRequestValidation
+  case object VersionMismatch extends RegistrationRequestValidation
 
   trait ClusterVerificationResult extends NoStackTrace
   case object ClusterIdDoesNotMatch extends ClusterVerificationResult

@@ -10,6 +10,7 @@ import org.tessellation.sdk.config.types.SdkConfig
 import org.tessellation.sdk.domain.cluster.programs.{Joining, PeerDiscovery}
 import org.tessellation.sdk.http.p2p.clients.{ClusterClient, SignClient}
 import org.tessellation.security.SecurityProvider
+import org.tessellation.security.hash.Hash
 
 object SdkPrograms {
 
@@ -20,7 +21,8 @@ object SdkPrograms {
     clusterClient: ClusterClient[F],
     signClient: SignClient[F],
     seedlist: Option[Set[PeerId]],
-    nodeId: PeerId
+    nodeId: PeerId,
+    versionHash: Hash
   ): F[SdkPrograms[F]] =
     for {
       pd <- PeerDiscovery.make(clusterClient, storages.cluster, nodeId)
@@ -35,7 +37,8 @@ object SdkPrograms {
         seedlist,
         nodeId,
         cfg.stateAfterJoining,
-        pd
+        pd,
+        versionHash
       )
     } yield new SdkPrograms[F](pd, joining) {}
 }
