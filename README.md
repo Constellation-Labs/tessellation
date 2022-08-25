@@ -37,13 +37,3 @@ kubectl scale deployment/l0-validator-deployment --replicas=2
 ```
 
 This scales the L0 cluster to 3 validators total: 1 initial and 2 regular.
-
-
-### Profiles:
-
-* `onlyL0` starts only L0 cluster
-
-Activate profiles using `-p` parameter.
-```
-skaffold dev -p onlyL0
-```
