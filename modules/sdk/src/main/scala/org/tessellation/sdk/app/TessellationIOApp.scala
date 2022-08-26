@@ -5,11 +5,13 @@ import java.security.KeyPair
 import cats.effect._
 import cats.effect.std.Random
 import cats.syntax.applicative._
+import cats.syntax.either._
 import cats.syntax.option._
 import cats.syntax.show._
 
 import org.tessellation.cli.env.{KeyAlias, Password, StorePath}
 import org.tessellation.ext.cats.effect._
+import org.tessellation.ext.crypto._
 import org.tessellation.ext.kryo._
 import org.tessellation.keytool.KeyStoreUtils
 import org.tessellation.kryo.KryoSerializer
@@ -87,6 +89,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                       for {
                         _ <- IO(System.setProperty("self_id", selfId.show)).asResource
                         _ <- logger.info(s"Self peerId: ${selfId.show}").asResource
+                        versionHash <- version.hash.liftTo[IO].asResource
                         _seedlist <- method.seedlistPath
                           .fold(none[Set[PeerId]].pure[IO])(SeedlistLoader.make[IO].load(_).map(_.some))
                           .asResource
@@ -102,11 +105,11 @@ abstract class TessellationIOApp[A <: CliMethod](
                         p2pClient = SdkP2PClient.make[IO](res.client, session)
                         queues <- SdkQueues.make[IO].asResource
                         services <- SdkServices
-                          .make[IO](cfg, selfId, _keyPair, storages, queues, session, _seedlist, _restartSignal)
+                          .make[IO](cfg, selfId, _keyPair, storages, queues, session, _seedlist, _restartSignal, versionHash)
                           .asResource
 
                         programs <- SdkPrograms
-                          .make[IO](cfg, storages, services, p2pClient.cluster, p2pClient.sign, _seedlist, selfId)
+                          .make[IO](cfg, storages, services, p2pClient.cluster, p2pClient.sign, _seedlist, selfId, versionHash)
                           .asResource
 
                         sdk = new SDK[IO] {

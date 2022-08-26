@@ -22,7 +22,9 @@ object handler {
 
     RumorHandler.fromPeerRumorConsumer[F, NodeState](IgnoreSelfOrigin) {
       case PeerRumor(origin, _, state) =>
-        logger.info(s"Received state=${state.show} from id=${origin.show}") >>
+        clusterStorage.hasPeerId(origin).flatMap { hasPeer =>
+          logger.info(s"Received state=${state.show} from id=${origin.show}. Peer is ${if (hasPeer) "" else "un"}known.")
+        } >>
           clusterStorage.setPeerState(origin, state) >> {
             if (NodeState.absent.contains(state))
               clusterStorage.removePeer(origin)

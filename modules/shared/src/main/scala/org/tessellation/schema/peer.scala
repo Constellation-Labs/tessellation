@@ -110,7 +110,8 @@ object peer {
     clusterSession: ClusterSessionToken,
     clusterId: ClusterId,
     state: NodeState,
-    seedlist: Hash
+    seedlist: Hash,
+    version: Hash
   )
 
   @derive(eqv, decoder, encoder, show)
