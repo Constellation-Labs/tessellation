@@ -87,7 +87,7 @@ trait ConsensusStorage[F[_], Event, Key, Artifact] {
     newArtifact: Signed[Artifact]
   ): F[Boolean]
 
-  private[consensus] def getOwnRegistration: F[Option[Key]]
+  private[sdk] def getOwnRegistration: F[Option[Key]]
 
   private[consensus] def setOwnRegistration(from: Key): F[Unit]
 

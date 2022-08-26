@@ -1,15 +1,16 @@
 package org.tessellation.sdk.infrastructure.healthcheck.declaration
 
-import cats.Show
 import cats.effect._
 import cats.effect.kernel.Clock
 import cats.syntax.applicative._
 import cats.syntax.contravariantSemigroupal._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+import cats.syntax.order._
 import cats.syntax.semigroup._
 import cats.syntax.show._
 import cats.syntax.traverse._
+import cats.{Order, Show}
 
 import scala.concurrent.duration.FiniteDuration
 import scala.reflect.runtime.universe.TypeTag
@@ -29,7 +30,7 @@ import io.circe.{Decoder, Encoder}
 
 object PeerDeclarationHealthCheck {
 
-  def make[F[_]: Async: GenUUID, K: TypeTag: Encoder: Decoder: Show, A](
+  def make[F[_]: Async: GenUUID, K: Order: TypeTag: Encoder: Decoder: Show, A](
     clusterStorage: ClusterStorage[F],
     selfId: PeerId,
     gossip: Gossip[F],
@@ -73,8 +74,10 @@ object PeerDeclarationHealthCheck {
           for {
             time <- Clock[F].realTime
             states <- consensusStorage.getStates
+            maybeOwnRegistration <- consensusStorage.getOwnRegistration
             roundKeys <- states
               .filter(_.facilitators.contains(selfId))
+              .filter(state => maybeOwnRegistration.fold(false)(state.key >= _))
               .flatTraverse { state =>
                 if (isTimedOut(state, time)) {
                   consensusStorage.getPeerDeclarations(state.key).map { peerDeclarations =>
@@ -126,6 +129,7 @@ object PeerDeclarationHealthCheck {
             time <- Clock[F].realTime
             maybeState <- consensusStorage.getState(key.consensusKey)
             maybePeerDeclaration <- consensusStorage.getPeerDeclarations(key.consensusKey).map(_.get(key.id))
+            maybeOwnRegistration <- consensusStorage.getOwnRegistration
             health = maybePeerDeclaration.flatMap { pd =>
               key.kind match {
                 case kind.Facility  => pd.facility
@@ -135,6 +139,7 @@ object PeerDeclarationHealthCheck {
             }.map(_ => Received).getOrElse {
               maybeState
                 .filter(_.facilitators.contains(key.id))
+                .filter(state => maybeOwnRegistration.fold(false)(state.key >= _))
                 .filter { state =>
                   (key.kind, state.status) match {
                     case (kind.Facility, _: CollectingFacilities[_])  => true
@@ -154,7 +159,7 @@ object PeerDeclarationHealthCheck {
 
           } yield health
 
-        private def isTimedOut(state: ConsensusState[K, _], time: FiniteDuration) =
+        private def isTimedOut(state: ConsensusState[K, _], time: FiniteDuration): Boolean =
           state.status match {
             case CollectingFacilities(Some(FacilityInfo(_, None))) =>
               time > (state.statusUpdatedAt |+| config.peerDeclaration.receiveTimeout |+| timeTriggerInterval)
