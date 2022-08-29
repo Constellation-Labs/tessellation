@@ -101,7 +101,8 @@ class PingHealthCheckConsensus[F[_]: Async: GenUUID: Random](
   ): F[Unit] =
     outcomes.toList.traverse {
       case (key, t) =>
-        def rejoin = joining.join(PeerToJoin(key.id, key.ip, key.p2pPort))
+        def rejoin =
+          joining.rejoin(PeerToJoin(key.id, key.ip, key.p2pPort)).handleErrorWith(err => logger.error(err)(s"Rejoin conditions not met"))
         t match {
           case (DecisionKeepPeer, round) =>
             round.getRoundIds.flatMap { roundIds =>
