@@ -38,10 +38,9 @@ import org.tessellation.security.{Hashed, SecurityProvider}
 
 import eu.timepit.refined.auto.{autoRefineV, autoUnwrap}
 import higherkindness.droste.{AlgebraM, CoalgebraM, scheme}
-import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-class BlockConsensusCell[F[_]: Async: SecurityProvider: KryoSerializer: Random: Logger](
+class BlockConsensusCell[F[_]: Async: SecurityProvider: KryoSerializer: Random](
   data: BlockConsensusInput,
   ctx: BlockConsensusContext[F]
 ) extends Cell[F, StackF, BlockConsensusInput, Either[CellError, Ω], CoalgebraCommand](
@@ -108,6 +107,8 @@ class BlockConsensusCell[F[_]: Async: SecurityProvider: KryoSerializer: Random: 
     )
 
 object BlockConsensusCell {
+
+  private def logger[F[_]: Async] = Slf4jLogger.getLogger
 
   private def getTransactionLogger[F[_]: Async] = Slf4jLogger.getLoggerFromName(transactionLoggerName)
 
@@ -195,7 +196,7 @@ object BlockConsensusCell {
               .map(_ => CellError("Another own round already in progress! Transactions returned.").asLeft[Ω])
         }
 
-    def persistInitialPeerRoundData[F[_]: Async: SecurityProvider: KryoSerializer: Logger](
+    def persistInitialPeerRoundData[F[_]: Async: SecurityProvider: KryoSerializer](
       roundData: RoundData,
       peerProposal: Proposal,
       ctx: BlockConsensusContext[F]
@@ -208,7 +209,7 @@ object BlockConsensusCell {
             sendOwnProposal(ownProposal, peers, ctx)
           case None =>
             for {
-              _ <- Logger[F]
+              _ <- logger
                 .debug(
                   s"Round with roundId=${roundData.roundId} already exists! Returning transactions and processing proposal!"
                 )
@@ -287,52 +288,52 @@ object BlockConsensusCell {
 
     private val validationParams: BlockValidationParams = BlockValidationParams.default.copy(minSignatureCount = 1)
 
-    def persistProposal[F[_]: Async: SecurityProvider: KryoSerializer: Logger](
+    def persistProposal[F[_]: Async: SecurityProvider: KryoSerializer](
       proposal: Proposal,
       ctx: BlockConsensusContext[F]
-    ): F[Either[CellError, Ω]] =
-      (proposal.owner == ctx.selfId)
-        .pure[F]
-        .ifM(
-          ctx.consensusStorage.ownConsensus.modify(tryPersistProposal(proposal)),
-          ctx.consensusStorage.peerConsensuses(proposal.roundId).modify(tryPersistProposal(proposal))
-        )
-        .flatMap {
-          case Some(roundData) if gotAllProposals(roundData) =>
-            roundData.formBlock(ctx.transactionValidator).flatMap {
-              case Some(block) =>
-                Signed.forAsyncKryo(block, ctx.keyPair).flatMap { signedBlock =>
-                  ctx.blockValidator
-                    .validate(signedBlock, validationParams)
-                    .flatTap { validationResult =>
-                      Applicative[F].whenA(validationResult.isInvalid) {
-                        Logger[F].debug(s"Created block is invalid: $validationResult")
-                      }
+    ): F[Either[CellError, Ω]] = (proposal.owner == ctx.selfId)
+      .pure[F]
+      .ifM(
+        ctx.consensusStorage.ownConsensus.modify(tryPersistProposal(proposal)),
+        ctx.consensusStorage.peerConsensuses(proposal.roundId).modify(tryPersistProposal(proposal))
+      )
+      .flatMap {
+        case Some(roundData) if gotAllProposals(roundData) =>
+          roundData.formBlock(ctx.transactionValidator).flatMap {
+            case Some(block) =>
+              Signed.forAsyncKryo(block, ctx.keyPair).flatMap { signedBlock =>
+                ctx.blockValidator
+                  .validate(signedBlock, validationParams)
+                  .flatTap { validationResult =>
+                    Applicative[F].whenA(validationResult.isInvalid) {
+                      logger.debug(s"Created block is invalid: $validationResult")
                     }
-                    .map(_.isValid)
-                    .ifM(
-                      processValidBlock(proposal, signedBlock, ctx), {
-                        val cancellation = CancelledBlockCreationRound(
-                          roundData.roundId,
-                          senderId = ctx.selfId,
-                          owner = roundData.owner,
-                          CreatedInvalidBlock
-                        )
-                        processCancellation(cancellation, ctx)
-                      }
-                    )
-                }
-              case None =>
-                val cancellation = CancelledBlockCreationRound(
-                  roundData.roundId,
-                  senderId = ctx.selfId,
-                  owner = roundData.owner,
-                  CreatedBlockWithNoTransactions
-                )
-                processCancellation(cancellation, ctx)
-            }
-          case _ => NullTerminal.asRight[CellError].widen[Ω].pure[F]
-        }
+                  }
+                  .map(_.isValid)
+                  .ifM(
+                    processValidBlock(proposal, signedBlock, ctx), {
+                      val cancellation = CancelledBlockCreationRound(
+                        roundData.roundId,
+                        senderId = ctx.selfId,
+                        owner = roundData.owner,
+                        CreatedInvalidBlock
+                      )
+                      processCancellation(cancellation, ctx)
+                    }
+                  )
+              }
+            case None =>
+              val cancellation = CancelledBlockCreationRound(
+                roundData.roundId,
+                senderId = ctx.selfId,
+                owner = roundData.owner,
+                CreatedBlockWithNoTransactions
+              )
+              processCancellation(cancellation, ctx)
+          }
+        case _ => NullTerminal.asRight[CellError].widen[Ω].pure[F]
+
+      }
 
     private def canPersistBlockSignatureProposal(
       roundData: RoundData,

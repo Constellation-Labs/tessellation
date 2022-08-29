@@ -60,7 +60,7 @@ abstract class TessellationIOApp[A <: CliMethod](
     */
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]]
 
-  protected implicit val logger = Slf4jLogger.getLogger[IO]
+  protected val logger = Slf4jLogger.getLogger[IO]
 
   def run(method: A, sdk: SDK[IO]): Resource[IO, Unit]
 

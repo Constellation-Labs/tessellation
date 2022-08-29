@@ -10,8 +10,6 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.trust.TrustInfo
 import org.tessellation.sdk.domain.Daemon
 
-import org.typelevel.log4cats.slf4j.Slf4jLogger
-
 trait TrustDaemon[F[_]] extends Daemon[F]
 
 object TrustDaemon {
@@ -21,8 +19,6 @@ object TrustDaemon {
     trustStorage: TrustStorage[F],
     selfPeerId: PeerId
   ): TrustDaemon[F] = new TrustDaemon[F] {
-
-    private val logger = Slf4jLogger.getLogger[F]
 
     def start: F[Unit] =
       for {
