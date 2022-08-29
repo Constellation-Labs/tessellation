@@ -148,6 +148,9 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
       _ <- joiningQueue.offer(toPeer)
     } yield ()
 
+  def rejoin(withPeer: PeerToJoin): F[Unit] =
+    validateHandshakeConditions(withPeer) >> joiningQueue.offer(withPeer)
+
   private def validateJoinConditions(toPeer: PeerToJoin): F[Unit] =
     for {
       nodeState <- nodeStorage.getNodeState
