@@ -21,9 +21,11 @@ import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto.autoUnwrap
 import eu.timepit.refined.types.numeric.PosInt
-import org.typelevel.log4cats.Logger
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object Validator {
+
+  private def logger[F[_]: Async] = Slf4jLogger.getLogger
 
   def isReadyForBlockConsensus(state: NodeState): Boolean = state == Ready
 
@@ -46,7 +48,7 @@ object Validator {
   ): F[Boolean] =
     transactionStorage.countAllowedForConsensus.map(_ >= 1)
 
-  def canStartOwnConsensus[F[_]: Monad: Logger](
+  def canStartOwnConsensus[F[_]: Monad: Async](
     consensusStorage: ConsensusStorage[F],
     nodeStorage: NodeStorage[F],
     clusterStorage: ClusterStorage[F],
@@ -63,9 +65,8 @@ object Validator {
       enoughTxs <- atLeastOneTransaction(transactionStorage)
 
       res = noOwnRoundInProgress && stateReadyForConsensus && enoughPeers && enoughTips && enoughTxs
-
       _ <-
-        if (!res) {
+        Applicative[F].whenA(!res) {
           val reason = Seq(
             if (!noOwnRoundInProgress) "Own round in progress" else "",
             if (!stateReadyForConsensus) "State not ready for consensus" else "",
@@ -73,8 +74,8 @@ object Validator {
             if (!enoughTips) "Not enough tips" else "",
             if (!enoughTxs) "No transactions" else ""
           ).filter(_.nonEmpty).mkString(", ")
-          Logger[F].debug(s"Cannot start own consensus: ${reason}")
-        } else Applicative[F].unit
+          logger.debug(s"Cannot start own consensus: ${reason}")
+        }
     } yield res
 
   def isPeerInputValid[F[_]: Async: KryoSerializer: SecurityProvider](

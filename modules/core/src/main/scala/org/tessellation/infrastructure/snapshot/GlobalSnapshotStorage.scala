@@ -31,7 +31,6 @@ import eu.timepit.refined.types.numeric.NonNegLong
 import fs2.Stream
 import fs2.concurrent.SignallingRef
 import io.chrisdavenport.mapref.MapRef
-import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object GlobalSnapshotStorage {
@@ -103,7 +102,7 @@ object GlobalSnapshotStorage {
         make(headRef, ordinalCache, hashCache, notPersistedCache, offloadQueue, globalSnapshotLocalFileSystemStorage, inMemoryCapacity)
     }
 
-  def make[F[_]: Async: Logger: KryoSerializer](
+  def make[F[_]: Async: KryoSerializer](
     headRef: SignallingRef[F, Option[Signed[GlobalSnapshot]]],
     ordinalCache: MapRef[F, SnapshotOrdinal, Option[Hash]],
     hashCache: MapRef[F, Hash, Option[Signed[GlobalSnapshot]]],
@@ -156,7 +155,7 @@ object GlobalSnapshotStorage {
                     }
 
                   offload.handleErrorWith { e =>
-                    Logger[F].error(e)(s"Failed offloading global snapshot! Snapshot ordinal=${ordinal.show}")
+                    logger.error(e)(s"Failed offloading global snapshot! Snapshot ordinal=${ordinal.show}")
                   }
               }
             }
@@ -169,7 +168,7 @@ object GlobalSnapshotStorage {
         hashCache(hash).set(snapshot.some) >>
           ordinalCache(snapshot.ordinal).set(hash.some) >>
           globalSnapshotLocalFileSystemStorage.write(snapshot).handleErrorWith { e =>
-            Logger[F].error(e)(s"Failed writing snapshot to disk! hash=$hash ordinal=${snapshot.ordinal}") >>
+            logger.error(e)(s"Failed writing snapshot to disk! hash=$hash ordinal=${snapshot.ordinal}") >>
               notPersistedCache.update(current => current + snapshot.ordinal)
           } >>
           snapshot.ordinal

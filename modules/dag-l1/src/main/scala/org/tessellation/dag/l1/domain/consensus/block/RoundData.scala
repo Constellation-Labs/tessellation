@@ -22,7 +22,7 @@ import org.tessellation.security.signature.signature.SignatureProof
 import org.tessellation.syntax.sortedCollection._
 
 import monocle.macros.syntax.lens._
-import org.typelevel.log4cats.Logger
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 case class RoundData(
   roundId: RoundId,
@@ -37,6 +37,8 @@ case class RoundData(
   peerCancellations: Map[PeerId, CancellationReason] = Map.empty,
   tips: Tips
 ) {
+
+  private def logger[F[_]: Async] = Slf4jLogger.getLogger
 
   def addPeerProposal(proposal: Proposal): RoundData =
     this.focus(_.peerProposals).modify(_ + (proposal.senderId -> proposal))
@@ -53,14 +55,14 @@ case class RoundData(
   def addPeerCancellation(cancellation: CancelledBlockCreationRound): RoundData =
     this.focus(_.peerCancellations).modify(_ + (cancellation.senderId -> cancellation.reason))
 
-  def formBlock[F[_]: Async: KryoSerializer: Logger](validator: TransactionValidator[F]): F[Option[DAGBlock]] =
+  def formBlock[F[_]: Async: KryoSerializer](validator: TransactionValidator[F]): F[Option[DAGBlock]] =
     (ownProposal.transactions ++ peerProposals.values.flatMap(_.transactions)).toList
       .traverse(validator.validate)
       .flatMap { validatedTxs =>
         val (invalid, valid) = validatedTxs.partitionMap(_.toEither)
 
         invalid.traverse { errors =>
-          Logger[F].warn(s"Discarded invalid transaction during L1 consensus with roundId=$roundId. Reasons: ${errors.show}")
+          logger.warn(s"Discarded invalid transaction during L1 consensus with roundId=$roundId. Reasons: ${errors.show}")
         } >>
           valid.pure[F]
       }
