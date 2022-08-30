@@ -95,7 +95,7 @@ trait ConsensusStorage[F[_], Event, Key, Artifact] {
 
   private[consensus] def registerPeer(peerId: PeerId)(from: Key): F[Unit]
 
-  private[sdk] def removeRegisteredPeer(peerId: PeerId): F[Unit]
+  private[sdk] def removeRegisteredPeer(peerId: PeerId, key: Key): F[Boolean]
 
 }
 
@@ -336,12 +336,15 @@ object ConsensusStorage {
               .replace(key.some)
           }
 
-        def removeRegisteredPeer(peerId: PeerId): F[Unit] =
-          peerRegistrationsR.update { peerRegistrations =>
-            peerRegistrations
-              .focus()
-              .at(peerId)
-              .replace(none[Key])
+        def removeRegisteredPeer(peerId: PeerId, key: Key): F[Boolean] =
+          peerRegistrationsR.modify { peerRegistrations =>
+            val updated =
+              peerRegistrations
+                .focus()
+                .at(peerId)
+                .modify(_.filter(_ > key))
+
+            (updated, peerRegistrations != updated)
           }
       }
 }

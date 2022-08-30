@@ -116,10 +116,19 @@ object PeerDeclarationHealthCheck {
                   }
                 case (NegativeOutcome, round) =>
                   round.getRoundIds.flatMap { roundIds =>
-                    logger.info(s"Outcome for key ${key.show}: negative - removing facilitator | Round ids: ${roundIds.show}") >>
-                      consensusStorage.removeRegisteredPeer(key.id) >>
-                      (consensusStorage.addRemovedFacilitator(key.consensusKey, key.id) >>=
-                        consensusManager.checkForStateUpdateSync(key.consensusKey))
+                    consensusStorage
+                      .removeRegisteredPeer(key.id, key.consensusKey)
+                      .ifM(
+                        logger.info(
+                          s"Outcome for key ${key.show}: negative - node found and unregistered at given height. Removing facilitator and removing from peer list | Round ids: ${roundIds.show}"
+                        ) >>
+                          clusterStorage.removePeer(key.id),
+                        logger.info(
+                          s"Outcome for key ${key.show}: negative - node not found as registered at given height. Removing facilitator | Round ids: ${roundIds.show}"
+                        )
+                      ) >>
+                      consensusStorage.addRemovedFacilitator(key.consensusKey, key.id) >>=
+                      consensusManager.checkForStateUpdateSync(key.consensusKey)
                   }
               }
           }.void
