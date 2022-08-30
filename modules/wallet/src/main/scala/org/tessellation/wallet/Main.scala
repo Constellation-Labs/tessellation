@@ -10,7 +10,6 @@ import cats.syntax.applicativeError._
 import cats.syntax.contravariantSemigroupal._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
-import cats.syntax.show._
 
 import org.tessellation.BuildInfo
 import org.tessellation.keytool.KeyStoreUtils
@@ -70,9 +69,9 @@ object Main
     }
 
   private def showAddress[F[_]: Console](keyPair: KeyPair): F[Unit] =
-    Console[F].println(keyPair.getPublic.toAddress.show)
+    Console[F].println(keyPair.getPublic.toAddress)
 
-  private def showId[F[_]: Console](keyPair: KeyPair): F[Unit] = Console[F].println(keyPair.getPublic.toId)
+  private def showId[F[_]: Console](keyPair: KeyPair): F[Unit] = Console[F].println(keyPair.getPublic.toId.hex.value)
 
   private def showPublicKey[F[_]: Console](keyPair: KeyPair): F[Unit] = Console[F].println(keyPair.getPublic)
 
