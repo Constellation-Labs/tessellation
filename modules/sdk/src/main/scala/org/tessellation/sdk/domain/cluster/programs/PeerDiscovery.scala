@@ -46,14 +46,13 @@ sealed abstract class PeerDiscovery[F[_]: Async] private (
       _ <- removePeer(peer)
       peers <- clusterClient.getDiscoveryPeers.run(peer)
       knownPeers <- clusterStorage.getPeers
+      peersQueue <- getPeers
       unknownPeers = peers.filterNot { p =>
-        p.id == nodeId || knownPeers.map(_.id).contains(p.id)
+        p.id == nodeId || p.id == peer.id || knownPeers.map(_.id).contains(p.id) || peersQueue.map(_.id).contains(p.id)
       }
       _ <- unknownPeers.toList
         .traverse(addNextPeer)
-
-      peersQueue <- getPeers
-    } yield peersQueue
+    } yield unknownPeers
 
   private def addNextPeer(peer: P2PContext): F[Unit] =
     cache.modify { c =>
