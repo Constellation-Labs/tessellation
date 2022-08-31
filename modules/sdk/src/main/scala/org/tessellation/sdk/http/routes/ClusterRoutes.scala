@@ -66,7 +66,15 @@ final case class ClusterRoutes[F[_]: Async](
             joining
               .joinRequest(collateral.hasCollateral)(joinRequest, host)
               .flatMap(_ => Ok())
+              .recoverWith {
+                case PeerIdInUse(id)               => Conflict(s"Peer id=${id} already in use.")
+                case PeerHostPortInUse(host, port) => Conflict(s"Peer host=${host.toString} port=${port.value} already in use.")
+                case SessionDoesNotExist           => Conflict("Peer does not have an active session.")
+                case CollateralNotSatisfied        => Conflict("Collateral is not satisfied.")
+                case _                             => InternalServerError("Unknown error.")
+              }
           )
+
       }
   }
 
