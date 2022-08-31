@@ -61,10 +61,10 @@ object PeerDeclarationHealthCheck {
 
         def statusOnError(key: Key[K]): PeerDeclarationHealth = TimedOut
 
-        def requestProposal(peer: PeerId, round: HealthCheckRoundId): F[Option[Status[K]]] =
+        def requestProposal(peer: PeerId, roundIds: Set[HealthCheckRoundId]): F[Option[Status[K]]] =
           clusterStorage
             .getPeer(peer)
-            .flatMap(_.map(toP2PContext).traverse(httpClient.requestProposal(round).run))
+            .flatMap(_.map(toP2PContext).traverse(httpClient.requestProposal(roundIds).run))
             .map(_.flatten)
 
         override def startOwnRound(key: Key[K]): F[Unit] =

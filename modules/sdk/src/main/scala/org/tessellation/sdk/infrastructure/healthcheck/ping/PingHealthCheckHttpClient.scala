@@ -16,7 +16,7 @@ import org.http4s.client.Client
 import org.http4s.client.dsl.Http4sClientDsl
 
 trait PingHealthCheckHttpClient[F[_]] {
-  def requestProposal(round: HealthCheckRoundId): PeerResponse[F, Option[PingConsensusHealthStatus]]
+  def requestProposal(roundIds: Set[HealthCheckRoundId]): PeerResponse[F, Option[PingConsensusHealthStatus]]
 }
 
 object PingHealthCheckHttpClient {
@@ -24,9 +24,9 @@ object PingHealthCheckHttpClient {
   def make[F[_]: Async: KryoSerializer](client: Client[F], session: Session[F]): PingHealthCheckHttpClient[F] =
     new PingHealthCheckHttpClient[F] with Http4sClientDsl[F] {
 
-      def requestProposal(round: HealthCheckRoundId): PeerResponse[F, Option[PingConsensusHealthStatus]] =
+      def requestProposal(roundIds: Set[HealthCheckRoundId]): PeerResponse[F, Option[PingConsensusHealthStatus]] =
         PeerResponse[F, PingConsensusHealthStatus](s"healthcheck/ping", POST)(client, session) { (req, c) =>
-          c.expect[PingConsensusHealthStatus](req.withEntity(round))
+          c.expect[PingConsensusHealthStatus](req.withEntity(roundIds))
         }.map(_.some).handleError(_ => none)
     }
 }

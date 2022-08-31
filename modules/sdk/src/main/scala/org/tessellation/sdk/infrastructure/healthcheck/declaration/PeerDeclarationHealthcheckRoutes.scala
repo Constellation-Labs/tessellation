@@ -21,7 +21,7 @@ final case class PeerDeclarationHealthcheckRoutes[F[_]: Async: KryoSerializer, K
 
     case req @ POST -> Root =>
       req
-        .as[HealthCheckRoundId]
+        .as[Set[HealthCheckRoundId]]
         .flatMap(healthcheck.getOwnProposal)
         .flatMap {
           case None           => NotFound()
