@@ -54,7 +54,7 @@ abstract class HealthCheckConsensus[
 
   def onOutcome(outcomes: ConsensusRounds.Outcome[F, K, A, B, C]): F[Unit]
 
-  def requestProposal(peer: PeerId, round: HealthCheckRoundId): F[Option[B]]
+  def requestProposal(peer: PeerId, roundIds: Set[HealthCheckRoundId]): F[Option[B]]
 
   def roundsInProgress: F[InProgress[F, K, A, B, C]] = allRounds.get.map(_.inProgress)
   def historicalRounds: F[List[HistoricalRound[K, A, B]]] = allRounds.get.map(_.historical)
@@ -62,7 +62,7 @@ abstract class HealthCheckConsensus[
   def peersUnderConsensus: F[Set[PeerId]] =
     roundsInProgress.map(_.keySet.map(_.id))
 
-  def getOwnProposal(roundId: HealthCheckRoundId): F[Option[B]] = {
+  def getOwnProposal(roundIds: Set[HealthCheckRoundId]): F[Option[B]] = {
     def inProgress =
       roundsInProgress.flatMap { r =>
         r.values.toList.traverse { round =>
@@ -72,12 +72,12 @@ abstract class HealthCheckConsensus[
         }
       }.flatMap { r =>
         r.find {
-          case (_, ids) => ids.contains(roundId)
+          case (_, ids) => ids.intersect(roundIds).nonEmpty
         }.map(_._1).traverse(_.ownConsensusHealthStatus)
       }
 
     def historical = historicalRounds.map { r =>
-      r.find(_.roundIds.contains(roundId)).map(_.ownProposal)
+      r.find(_.roundIds.intersect(roundIds).nonEmpty).map(_.ownProposal)
     }
 
     OptionT(historical).orElseF(inProgress).value
@@ -104,16 +104,16 @@ abstract class HealthCheckConsensus[
             logger.debug(
               s"Missing proposals for round ids: ${roundIds.show} for key: ${key.show} are from peers: ${missingFromPeers.show}. Requesting proposals"
             )
-          }
-        } >>
-          missingFromPeers.toList.traverse { id =>
-            requestProposal(id, round.getOwnRoundId).map(_.map((id, _)))
-          }.map(_.flatten)
-            .flatMap(_.traverse {
-              case (peerId, proposal) =>
-                Applicative[F].whenA(peerId === proposal.owner)(handleProposal(proposal))
-            })
-            .void,
+          } >>
+            missingFromPeers.toList.traverse { id =>
+              requestProposal(id, roundIds).map(_.map((id, _)))
+            }.map(_.flatten)
+              .flatMap(_.traverse {
+                case (peerId, proposal) =>
+                  Applicative[F].whenA(peerId === proposal.owner)(handleProposal(proposal))
+              })
+              .void
+        },
         Applicative[F].unit
       )
 

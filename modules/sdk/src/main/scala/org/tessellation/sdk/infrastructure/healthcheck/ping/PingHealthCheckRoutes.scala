@@ -27,7 +27,7 @@ final case class PingHealthCheckRoutes[F[_]: Async: KryoSerializer](
   private val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root =>
       req
-        .as[HealthCheckRoundId]
+        .as[Set[HealthCheckRoundId]]
         .flatMap(healthcheck.getOwnProposal)
         .flatMap {
           case None           => NotFound()

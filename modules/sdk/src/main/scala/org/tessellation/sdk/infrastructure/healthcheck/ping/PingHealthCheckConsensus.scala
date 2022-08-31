@@ -171,10 +171,10 @@ class PingHealthCheckConsensus[F[_]: Async: GenUUID: Random](
         startOwnRound(PingHealthCheckKey(peer.id, peer.ip, peer.p2pPort, peer.session))
       )
 
-  def requestProposal(peer: PeerId, round: HealthCheckRoundId): F[Option[PingConsensusHealthStatus]] =
+  def requestProposal(peer: PeerId, roundIds: Set[HealthCheckRoundId]): F[Option[PingConsensusHealthStatus]] =
     clusterStorage
       .getPeer(peer)
-      .flatMap(_.map(toP2PContext).traverse(httpClient.requestProposal(round).run))
+      .flatMap(_.map(toP2PContext).traverse(httpClient.requestProposal(roundIds).run))
       .map(_.flatten)
 
   private def checkPeer(
