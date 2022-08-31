@@ -11,8 +11,6 @@
 
 package org.tessellation.dag.l1.rosetta.model
 
-import org.tessellation.dag.l1.rosetta.model.dag.schema._
-
 case class NetworkIdentifier(
   blockchain: String,
   /* If a blockchain has a specific chain-id or network identifier, it should go in this field. It is up to the client to determine which network-specific identifier is mainnet or testnet. */

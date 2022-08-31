@@ -11,7 +11,8 @@
 
 package org.tessellation.dag.l1.rosetta.model
 
-import org.tessellation.dag.l1.rosetta.model.dag.schema.{AccountIdentifierMetadata, GenericMetadata}
+import org.tessellation.dag.l1.rosetta.model.dag.schema.AccountIdentifierMetadata
+import org.tessellation.dag.l1.rosetta.model.dag.schema.AccountIdentifierMetadata
 
 case class AccountIdentifier(
   /* The address may be a cryptographic public key (or some encoding of it) or a provided username. */

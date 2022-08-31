@@ -11,8 +11,6 @@
 
 package org.tessellation.dag.l1.rosetta.model
 
-import org.tessellation.dag.l1.rosetta.model.dag.schema._
-
 case class PublicKey(
   /* Hex-encoded public key bytes in the format specified by the CurveType. */
   hexBytes: String,

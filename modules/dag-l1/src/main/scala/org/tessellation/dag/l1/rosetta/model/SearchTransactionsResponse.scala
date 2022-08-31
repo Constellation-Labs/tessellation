@@ -11,8 +11,6 @@
 
 package org.tessellation.dag.l1.rosetta.model
 
-import org.tessellation.dag.l1.rosetta.model.dag.schema._
-
 case class SearchTransactionsResponse(
   /* transactions is an array of BlockTransactions sorted by most recent BlockIdentifier (meaning that transactions in recent blocks appear first). If there are many transactions for a particular search, transactions may not contain all matching transactions. It is up to the caller to paginate these transactions using the max_block field. */
   transactions: List[BlockTransaction],

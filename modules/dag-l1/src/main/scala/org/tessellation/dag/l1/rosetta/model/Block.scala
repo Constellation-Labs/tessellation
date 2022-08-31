@@ -11,7 +11,8 @@
 
 package org.tessellation.dag.l1.rosetta.model
 
-import org.tessellation.dag.l1.rosetta.model.dag.schema._
+import org.tessellation.dag.l1.rosetta.model.dag.schema.GenericMetadata
+import org.tessellation.dag.l1.rosetta.model.dag.schema.GenericMetadata
 
 case class Block(
   blockIdentifier: BlockIdentifier,

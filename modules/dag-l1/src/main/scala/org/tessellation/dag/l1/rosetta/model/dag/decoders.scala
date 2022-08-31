@@ -1,6 +1,7 @@
 package org.tessellation.dag.l1.rosetta.model.dag
 
-import org.tessellation.dag.l1.rosetta.model._
+import org.tessellation.dag.l1.rosetta.model
+import org.tessellation.dag.l1.rosetta.model.{AccountBalanceRequest, AccountBalanceResponse, AccountCoinsRequest, AccountCoinsResponse, AccountIdentifier, Allow, Amount, BalanceExemption, Block, BlockEvent, BlockEventType, BlockIdentifier, BlockRequest, BlockResponse, BlockTransaction, BlockTransactionRequest, BlockTransactionResponse, CallRequest, CallResponse, Coin, CoinAction, CoinChange, CoinIdentifier, ConstructionCombineRequest, ConstructionCombineResponse, ConstructionDeriveRequest, ConstructionDeriveResponse, ConstructionHashRequest, ConstructionMetadataRequest, ConstructionMetadataResponse, ConstructionParseRequest, ConstructionParseResponse, ConstructionPayloadsRequest, ConstructionPayloadsResponse, ConstructionPreprocessRequest, ConstructionPreprocessResponse, ConstructionSubmitRequest, Currency, CurveType, Direction, EventsBlocksRequest, EventsBlocksResponse, ExemptionType, MempoolResponse, MempoolTransactionRequest, MempoolTransactionResponse, MetadataRequest, ModelCase, NetworkIdentifier, NetworkListResponse, NetworkOptionsResponse, NetworkRequest, NetworkStatusResponse, Operation, OperationIdentifier, OperationStatus, Operator, PartialBlockIdentifier, Peer, PublicKey, RelatedTransaction, SearchTransactionsRequest, SearchTransactionsResponse, Signature, SignatureType, SigningPayload, SubAccountIdentifier, SubNetworkIdentifier, SyncStatus, Transaction, TransactionIdentifier, TransactionIdentifierResponse, Version}
 import schema._
 
 /**
@@ -61,8 +62,8 @@ object decoders {
   implicit lazy val ErrorDetailsKVDecoder = deriveConfiguredMagnoliaDecoder[ErrorDetailKeyValue]
   implicit lazy val ErrorDetailsEncoder = deriveConfiguredMagnoliaEncoder[ErrorDetails]
   implicit lazy val ErrorDetailsDecoder = deriveConfiguredMagnoliaDecoder[ErrorDetails]
-  implicit lazy val ErrorEncoder = deriveConfiguredMagnoliaEncoder[Error]
-  implicit lazy val ErrorDecoder = deriveConfiguredMagnoliaDecoder[Error]
+  implicit lazy val ErrorEncoder = deriveConfiguredMagnoliaEncoder[model.Error]
+  implicit lazy val ErrorDecoder = deriveConfiguredMagnoliaDecoder[model.Error]
   implicit lazy val AllowEncoder = deriveConfiguredMagnoliaEncoder[Allow]
   implicit lazy val AllowDecoder = deriveConfiguredMagnoliaDecoder[Allow]
   implicit lazy val SubAccountIdentifierEncoder = deriveConfiguredMagnoliaEncoder[SubAccountIdentifier]

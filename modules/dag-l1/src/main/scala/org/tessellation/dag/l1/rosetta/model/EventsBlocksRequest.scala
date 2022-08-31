@@ -11,8 +11,6 @@
 
 package org.tessellation.dag.l1.rosetta.model
 
-import org.tessellation.dag.l1.rosetta.model.dag.schema._
-
 case class EventsBlocksRequest(
   networkIdentifier: NetworkIdentifier,
   /* offset is the offset into the event stream to sync events from. If this field is not populated, we return the limit events backwards from tip. If this is set to 0, we start from the beginning. */

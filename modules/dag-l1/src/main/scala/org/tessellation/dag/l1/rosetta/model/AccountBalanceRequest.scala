@@ -11,7 +11,6 @@
 
 package org.tessellation.dag.l1.rosetta.model
 
-import org.tessellation.dag.l1.rosetta.model.dag.schema._
 case class AccountBalanceRequest(
   networkIdentifier: NetworkIdentifier,
   accountIdentifier: AccountIdentifier,

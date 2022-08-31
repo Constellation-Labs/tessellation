@@ -11,8 +11,6 @@
 
 package org.tessellation.dag.l1.rosetta.model
 
-import org.tessellation.dag.l1.rosetta.model.dag.schema._
-
 case class SigningPayload(
   /* [DEPRECATED by `account_identifier` in `v1.4.4`] The network-specific address of the account that should sign the payload. */
   address: Option[String],

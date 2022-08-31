@@ -11,8 +11,6 @@
 
 package org.tessellation.dag.l1.rosetta.model
 
-import org.tessellation.dag.l1.rosetta.model.dag.schema._
-
 case class EventsBlocksResponse(
   /* max_sequence is the maximum available sequence number to fetch. */
   maxSequence: Long,

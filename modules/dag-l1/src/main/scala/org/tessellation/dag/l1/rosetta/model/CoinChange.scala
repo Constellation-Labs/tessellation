@@ -11,8 +11,6 @@
 
 package org.tessellation.dag.l1.rosetta.model
 
-import org.tessellation.dag.l1.rosetta.model.dag.schema._
-
 case class CoinChange(
   coinIdentifier: CoinIdentifier,
   coinAction: CoinAction

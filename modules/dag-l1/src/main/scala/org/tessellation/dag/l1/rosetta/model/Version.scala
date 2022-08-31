@@ -11,7 +11,7 @@
 
 package org.tessellation.dag.l1.rosetta.model
 
-import org.tessellation.dag.l1.rosetta.model.dag.schema._
+import org.tessellation.dag.l1.rosetta.model.dag.schema.GenericMetadata
 
 case class Version(
   /* The rosetta_version is the version of the Rosetta interface the implementation adheres to. This can be useful for clients looking to reliably parse responses. */

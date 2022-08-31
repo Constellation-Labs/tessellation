@@ -11,8 +11,6 @@
 
 package org.tessellation.dag.l1.rosetta.model
 
-import org.tessellation.dag.l1.rosetta.model.dag.schema._
-
 case class BlockEvent(
   /* sequence is the unique identifier of a BlockEvent within the context of a NetworkIdentifier. */
   sequence: Long,

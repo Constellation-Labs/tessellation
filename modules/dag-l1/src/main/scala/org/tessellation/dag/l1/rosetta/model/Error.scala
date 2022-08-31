@@ -11,7 +11,8 @@
 
 package org.tessellation.dag.l1.rosetta.model
 
-import org.tessellation.dag.l1.rosetta.model.dag.schema.{ErrorDetails, GenericMetadata}
+import org.tessellation.dag.l1.rosetta.model.dag.schema.ErrorDetails
+import org.tessellation.dag.l1.rosetta.model.dag.schema.ErrorDetails
 
 case class Error(
   /* Code is a network-specific error code. If desired, this code can be equivalent to an HTTP status code. */

@@ -11,11 +11,11 @@
 
 package org.tessellation.dag.l1.rosetta.model
 
-import org.tessellation.dag.l1.rosetta.model.dag.schema._
-
 //import derevo.cats.show
 //import derevo.circe.magnolia.{decoder, encoder}
 //import derevo.derive
+import org.tessellation.dag.l1.rosetta.model.dag.schema.GenericMetadata
+import org.tessellation.dag.l1.rosetta.model.dag.schema.GenericMetadata
 
 //
 case class NetworkRequest(

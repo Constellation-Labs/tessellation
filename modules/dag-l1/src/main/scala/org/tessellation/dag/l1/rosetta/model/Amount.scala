@@ -11,7 +11,8 @@
 
 package org.tessellation.dag.l1.rosetta.model
 
-import org.tessellation.dag.l1.rosetta.model.dag.schema._
+import org.tessellation.dag.l1.rosetta.model.dag.schema.GenericMetadata
+import org.tessellation.dag.l1.rosetta.model.dag.schema.GenericMetadata
 
 case class Amount(
   /* Value of the transaction in atomic units represented as an arbitrary-sized signed integer. For example, 1 BTC would be represented by a value of 100000000. */
