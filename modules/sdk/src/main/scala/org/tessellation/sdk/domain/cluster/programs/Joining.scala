@@ -140,6 +140,8 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
   joiningQueue: Queue[F, P2PContext]
 ) {
 
+  private val logger = Slf4jLogger.getLogger[F]
+
   def join(toPeer: PeerToJoin): F[Unit] =
     for {
       _ <- validateJoinConditions(toPeer)
@@ -166,7 +168,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
   private def validateHandshakeConditions(toPeer: PeerToJoin): F[Unit] =
     validateHandshakeConditions(toPeer.id, toPeer.ip, toPeer.p2pPort)
 
-  def joinRequest(hasCollateral: PeerId => F[Boolean])(joinRequest: JoinRequest, remoteAddress: Host): F[Unit] =
+  def joinRequest(hasCollateral: PeerId => F[Boolean])(joinRequest: JoinRequest, remoteAddress: Host): F[Unit] = {
     for {
       _ <- sessionStorage.getToken.flatMap(_.fold(SessionDoesNotExist.raiseError[F, Unit])(_ => Applicative[F].unit))
 
@@ -183,6 +185,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
       )
       _ <- twoWayHandshake(withPeer, remoteAddress.some, skipJoinRequest = true)
     } yield ()
+  }.onError(err => logger.error(err)(s"Error during join attempt by ${joinRequest.registrationRequest.id.show}"))
 
   private def validateHandshakeConditions(req: RegistrationRequest): F[Unit] =
     validateHandshakeConditions(req.id, req.ip, req.p2pPort)
