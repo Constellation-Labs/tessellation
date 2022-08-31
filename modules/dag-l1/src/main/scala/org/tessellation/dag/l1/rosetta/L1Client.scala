@@ -7,6 +7,8 @@ import MockData.mockup
 import org.tessellation.schema.address
 import org.tessellation.security.signature.Signed
 import org.tessellation.schema.transaction.{Transaction => DAGTransaction, _}
+import model._
+import dag.schema._
 
 // Mockup of real client
 class L1Client[F[_]: Async] {

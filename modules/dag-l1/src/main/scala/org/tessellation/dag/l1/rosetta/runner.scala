@@ -1,4 +1,6 @@
 package org.tessellation.dag.l1.rosetta
+import model._
+import dag.schema._
 
 import java.security.KeyFactory
 import java.security.interfaces.ECPublicKey
@@ -48,6 +50,9 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 import SignatureProof._
 import Signed._
 import Util.{getPublicKeyFromBytes, reduceListEither}
+import model._
+import dag.schema._
+import dag.decoders._
 
 
 case class LastTransactionResponse(

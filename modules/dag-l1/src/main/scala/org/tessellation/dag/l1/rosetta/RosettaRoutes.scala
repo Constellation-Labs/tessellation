@@ -76,6 +76,9 @@ import SignatureProof._
 import Signed._
 import Util.{getPublicKeyFromBytes, reduceListEither}
 import cats.syntax.flatMap._
+import model._
+import dag.schema._
+import dag.decoders._
 
 //import io.circe.generic.extras.Configuration
 //import io.circe.generic.extras.auto._
@@ -483,7 +486,7 @@ final case class RosettaRoutes[F[_]: Async: KryoSerializer: SecurityProvider](va
                               // Do we need an API call here?
                               translateDAGTransactionToOperations(
                                 stx.value,
-                                Unknown.toString,
+                                ChainObjectStatus.Unknown.toString,
                                 ignoreStatus = true
                               ),
                               Some(addresses),
