@@ -83,12 +83,22 @@
     <logger name="org.tessellation" level="DEBUG" />
     <logger name="org.http4s.server.middleware.RequestLogger" level="OFF" />
     <logger name="org.http4s.server.middleware.ResponseLogger" level="OFF" />
+    <logger name="org.http4s.client.middleware.RequestLogger" level="OFF" />
+    <logger name="org.http4s.client.middleware.ResponseLogger" level="OFF" />
     <logger name="RumorLogger" level="OFF" />
     <logger name="org.http4s.server.middleware.RequestLogger" level="INFO" additivity="false">
         <appender-ref ref="HTTP" />
         <appender-ref ref="JSON" />
     </logger>
     <logger name="org.http4s.server.middleware.ResponseLogger" level="INFO" additivity="false">
+        <appender-ref ref="HTTP" />
+        <appender-ref ref="JSON" />
+    </logger>
+    <logger name="org.http4s.client.middleware.RequestLogger" level="INFO" additivity="false">
+        <appender-ref ref="HTTP" />
+        <appender-ref ref="JSON" />
+    </logger>
+    <logger name="org.http4s.client.middleware.ResponseLogger" level="INFO" additivity="false">
         <appender-ref ref="HTTP" />
         <appender-ref ref="JSON" />
     </logger>
