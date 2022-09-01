@@ -11,6 +11,8 @@ resolvers += Resolver.sonatypeRepo("snapshots")
 
 val scalafixCommonSettings = inConfig(IntegrationTest)(scalafixConfigSettings(IntegrationTest))
 
+bloopExportJarClassifiers in Global := Some(Set("sources"))
+
 lazy val commonSettings = Seq(
   scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info", "-language:reflectiveCalls"),
   scalafmtOnCompile := true,
