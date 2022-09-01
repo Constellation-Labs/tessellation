@@ -16,7 +16,7 @@ import org.http4s.client.Client
 import org.http4s.client.dsl.Http4sClientDsl
 
 trait PeerDeclarationHttpClient[F[_], K] {
-  def requestProposal(roundIds: Set[HealthCheckRoundId]): PeerResponse[F, Option[Status[K]]]
+  def requestProposal(roundIds: Set[HealthCheckRoundId], ownProposal: Status[K]): PeerResponse[F, Option[Status[K]]]
 }
 
 object PeerDeclarationHttpClient {
@@ -24,9 +24,9 @@ object PeerDeclarationHttpClient {
   def make[F[_]: Async: KryoSerializer, K](client: Client[F], session: Session[F]): PeerDeclarationHttpClient[F, K] =
     new PeerDeclarationHttpClient[F, K] with Http4sClientDsl[F] {
 
-      def requestProposal(roundIds: Set[HealthCheckRoundId]): PeerResponse[F, Option[Status[K]]] =
+      def requestProposal(roundIds: Set[HealthCheckRoundId], ownProposal: Status[K]): PeerResponse[F, Option[Status[K]]] =
         PeerResponse[F, Status[K]](s"healthcheck/peer-declaration", POST)(client, session) { (req, c) =>
-          c.expect[Status[K]](req.withEntity(roundIds))
+          c.expect[Status[K]](req.withEntity((roundIds, ownProposal)))
         }.map(_.some).handleError(_ => none)
     }
 }

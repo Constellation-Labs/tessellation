@@ -27,8 +27,11 @@ final case class PingHealthCheckRoutes[F[_]: Async: KryoSerializer](
   private val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root =>
       req
-        .as[Set[HealthCheckRoundId]]
-        .flatMap(healthcheck.getOwnProposal)
+        .as[(Set[HealthCheckRoundId], PingConsensusHealthStatus)]
+        .flatMap {
+          case (roundIds, proposal) =>
+            healthcheck.handleProposal(proposal) >> healthcheck.getOwnProposal(roundIds)
+        }
         .flatMap {
           case None           => NotFound()
           case Some(proposal) => Ok(proposal)
