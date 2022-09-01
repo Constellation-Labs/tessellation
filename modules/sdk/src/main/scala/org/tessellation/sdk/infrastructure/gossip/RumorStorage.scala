@@ -4,6 +4,7 @@ import cats.effect.{Async, Spawn, Temporal}
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
+import cats.syntax.show._
 import cats.syntax.traverse._
 import cats.syntax.traverseFilter._
 
@@ -15,6 +16,7 @@ import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto.autoUnwrap
 import io.chrisdavenport.mapref.MapRef
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object RumorStorage {
 
@@ -30,6 +32,8 @@ object RumorStorage {
     cfg: RumorStorageConfig
   ): RumorStorage[F] =
     new RumorStorage[F] {
+
+      private val rumorLogger = Slf4jLogger.getLoggerFromName[F](rumorLoggerName)
 
       def addRumors(rumors: RumorBatch): F[RumorBatch] =
         for {
@@ -58,18 +62,19 @@ object RumorStorage {
         } yield unseen
 
       private def setRumorsActive(rumors: RumorBatch): F[Unit] =
-        for {
-          _ <- rumors.traverse { case (hash, rumor) => active(hash).set(rumor.some) }
-          _ <- Spawn[F].start(setRetention(rumors))
-        } yield ()
+        rumors.traverse { case (hash, rumor) => active(hash).set(rumor.some) } >>
+          Spawn[F].start(setRetention(rumors)).void
 
       private def setRetention(rumors: RumorBatch): F[Unit] =
-        for {
-          _ <- Temporal[F].sleep(cfg.activeRetention)
-          _ <- rumors.traverse { case (hash, _) => active(hash).set(none[Signed[PeerRumorBinary]]) }
-          _ <- Temporal[F].sleep(cfg.seenRetention)
-          _ <- rumors.traverse { case (hash, _) => seen(hash).set(none[Unit]) }
-        } yield ()
+        Temporal[F].sleep(cfg.activeRetention) >>
+          rumors.traverse {
+            case (hash, _) =>
+              active(hash).set(none[Signed[PeerRumorBinary]]) >>
+                rumorLogger.info(s"Rumor deactivated {hash=${hash.show}}")
+          } >>
+          Temporal[F].sleep(cfg.seenRetention) >>
+          rumors.traverse { case (hash, _) => seen(hash).set(none[Unit]) }.void
+
     }
 
 }

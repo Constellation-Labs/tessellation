@@ -33,7 +33,7 @@ object method {
       db = dbConfig,
       gossip = GossipConfig(
         storage = RumorStorageConfig(
-          activeRetention = 10.seconds,
+          activeRetention = 4.seconds,
           seenRetention = 2.minutes
         ),
         daemon = GossipDaemonConfig(

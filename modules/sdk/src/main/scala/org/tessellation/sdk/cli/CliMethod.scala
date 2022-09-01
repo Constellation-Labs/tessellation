@@ -38,7 +38,7 @@ trait CliMethod {
 
   val gossipConfig: GossipConfig = GossipConfig(
     storage = RumorStorageConfig(
-      activeRetention = 2.seconds,
+      activeRetention = 4.seconds,
       seenRetention = 2.minutes
     ),
     daemon = GossipDaemonConfig(
