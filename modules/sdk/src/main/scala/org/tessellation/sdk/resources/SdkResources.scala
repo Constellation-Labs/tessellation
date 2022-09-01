@@ -11,6 +11,7 @@ import org.tessellation.sdk.http.p2p.middleware.PeerAuthMiddleware
 import org.tessellation.security.SecurityProvider
 
 import org.http4s.client.Client
+import org.http4s.client.middleware.{RequestLogger, ResponseLogger}
 
 sealed abstract class SdkResources[F[_]](
   val client: Client[F]
@@ -29,5 +30,8 @@ object SdkResources {
       .map(
         PeerAuthMiddleware.requestSignerMiddleware[F](_, privateKey, sessionStorage, selfId)
       )
+      .map { client =>
+        ResponseLogger(logHeaders = true, logBody = false)(RequestLogger(logHeaders = true, logBody = false)(client))
+      }
       .map(new SdkResources[F](_) {})
 }
