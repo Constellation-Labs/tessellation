@@ -56,8 +56,8 @@ object GossipDaemon {
             .evalTap(logConsumption)
             .evalMap(validateRumors)
             .evalMap(verifyCollateral)
-            .evalMap(rumorStorage.addRumors)
             .map(sortRumors)
+            .evalMap(rumorStorage.addRumors)
             .flatMap(Stream.iterable)
             .evalMap(handleRumor)
             .handleErrorWith { err =>
@@ -133,16 +133,21 @@ object GossipDaemon {
           Stream
             .fromQueueUnterminated(selectedPeerQueue)
             .parEvalMapUnordered(cfg.maxConcurrentRounds) { peer =>
-              Temporal[F]
-                .timeout(runGossipRound(peer), cfg.roundTimeout)
-                .flatTap(_ => metrics.incrementGossipRoundSucceeded)
-                .handleErrorWith { err =>
-                  logger.error(err)(s"Error running gossip round with peer ${peer.show}") >>
-                    Spawn[F].start(healthcheck.triggerCheckForPeer(peer)).void
-                }
+              runTimedGossipRound(peer).handleErrorWith { err =>
+                logger.error(err)(s"Error running gossip round with peer ${peer.show}") >>
+                  Spawn[F].start(healthcheck.triggerCheckForPeer(peer)).void
+              }
             }
             .compile
             .drain
+
+        private def runTimedGossipRound(peer: Peer): F[Unit] =
+          Temporal[F].timeout(
+            Temporal[F].timed(runGossipRound(peer)).flatMap {
+              case (duration, _) => metrics.updateRoundDurationSum(duration)
+            },
+            cfg.roundTimeout
+          ) >> metrics.incrementGossipRoundSucceeded
 
         private def runGossipRound(peer: Peer): F[Unit] =
           for {

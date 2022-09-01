@@ -1,7 +1,11 @@
 package org.tessellation.sdk.infrastructure.gossip
 
+import java.util.concurrent.TimeUnit
+
 import cats.Monad
 import cats.syntax.all._
+
+import scala.concurrent.duration.FiniteDuration
 
 import org.tessellation.schema.gossip.{CommonRumorBinary, RumorBatch, RumorBinary}
 import org.tessellation.sdk.infrastructure.metrics.Metrics
@@ -46,5 +50,8 @@ object metrics {
 
   def incrementGossipRoundSucceeded[F[_]: Monad: Metrics]: F[Unit] =
     Metrics[F].incrementCounter("dag_gossip_round_succeeded_total")
+
+  def updateRoundDurationSum[F[_]: Monad: Metrics](duration: FiniteDuration): F[Unit] =
+    Metrics[F].incrementCounterBy("dag_gossip_round_duration_seconds_sum", duration.toUnit(TimeUnit.SECONDS))
 
 }
