@@ -172,6 +172,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
 
   def joinRequest(hasCollateral: PeerId => F[Boolean])(joinRequest: JoinRequest, remoteAddress: Host): F[Unit] = {
     for {
+      _ <- nodeStorage.getNodeState.map(NodeState.inCluster).flatMap(NodeNotInCluster.raiseError[F, Unit].unlessA)
       _ <- sessionStorage.getToken.flatMap(_.fold(SessionDoesNotExist.raiseError[F, Unit])(_ => Applicative[F].unit))
 
       registrationRequest = joinRequest.registrationRequest

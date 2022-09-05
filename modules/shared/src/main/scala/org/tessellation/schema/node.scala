@@ -64,6 +64,10 @@ object node {
     def observing: Set[NodeState] = Set(Observing)
 
     def observing(peers: Set[Peer]): Set[Peer] = peers.filter(peer => observing.contains(peer.state))
+
+    val inCluster: Set[NodeState] = Set(Observing, Ready, WaitingForDownload, DownloadInProgress)
+
+    def inCluster(state: NodeState): Boolean = inCluster.contains(state)
   }
 
   trait NodeStateCodecs {

@@ -71,6 +71,7 @@ final case class ClusterRoutes[F[_]: Async](
                 case PeerHostPortInUse(host, port) => Conflict(s"Peer host=${host.toString} port=${port.value} already in use.")
                 case SessionDoesNotExist           => Conflict("Peer does not have an active session.")
                 case CollateralNotSatisfied        => Conflict("Collateral is not satisfied.")
+                case NodeNotInCluster              => Conflict("Node is not part of the cluster.")
                 case _                             => InternalServerError("Unknown error.")
               }
           )
