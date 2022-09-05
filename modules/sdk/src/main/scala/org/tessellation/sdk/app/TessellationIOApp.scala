@@ -88,7 +88,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                     def mkSDK =
                       for {
                         _ <- IO(System.setProperty("self_id", selfId.show)).asResource
-                        _ <- logger.info(s"Self peerId: ${selfId.show}").asResource
+                        _ <- logger.info(s"Self peerId: ${selfId}").asResource
                         versionHash <- version.hash.liftTo[IO].asResource
                         _seedlist <- method.seedlistPath
                           .fold(none[Set[PeerId]].pure[IO])(SeedlistLoader.make[IO].load(_).map(_.some))

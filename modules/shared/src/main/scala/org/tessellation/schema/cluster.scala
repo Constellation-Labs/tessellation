@@ -54,6 +54,7 @@ object cluster {
 
   case object SessionDoesNotExist extends NoStackTrace
   case object SessionAlreadyExists extends NoStackTrace
+  case object NodeNotInCluster extends NoStackTrace
 
   trait TokenVerificationResult
   case object EmptyHeaderToken extends TokenVerificationResult
@@ -74,4 +75,5 @@ object cluster {
   case object ClusterIdDoesNotMatch extends ClusterVerificationResult
   case object ClusterSessionDoesNotExist extends ClusterVerificationResult
   case object ClusterSessionDoesNotMatch extends ClusterVerificationResult
+  case object NotInCluster extends ClusterVerificationResult
 }
