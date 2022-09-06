@@ -254,25 +254,22 @@ abstract class HealthCheckConsensus[
 
              def participate = participateInRound(proposal.key, proposal.roundIds)
 
-             historicalRound
-               .map(handleProposalForHistoricalRound(proposal))
-               .orElse {
-                 inProgressRound.map { r =>
-                   r.hasProposal(proposal).flatMap {
-                     case HealthCheckConsensusRound.ProposalAndOwnerDoesNotExist => r.processProposal(proposal)
-                     case HealthCheckConsensusRound.SameProposalExists =>
-                       logger.debug(s"Same proposal exists, ignoring")
-                     case HealthCheckConsensusRound.OwnersProposalExists => waitingProposals.update(_ + proposal)
-                     case _                                              => logger.error(s"Unpexpected state returned")
-                   }
-                 }
+             inProgressRound.map { r =>
+               r.hasProposal(proposal).flatMap {
+                 case HealthCheckConsensusRound.ProposalAndOwnerDoesNotExist => r.processProposal(proposal)
+                 case HealthCheckConsensusRound.SameProposalExists =>
+                   logger.debug(s"Same proposal exists, ignoring")
+                 case HealthCheckConsensusRound.OwnersProposalExists => waitingProposals.update(_ + proposal)
+                 case _                                              => logger.error(s"Unpexpected state returned")
                }
-               .getOrElse {
-                 if (depth > 0)
-                   participate.flatMap(_ => handleProposal(proposal, depth - 1))
-                 else
-                   (new Throwable("Unexpected recursion!")).raiseError[F, Unit]
-               }
+             }.orElse {
+               historicalRound.map(handleProposalForHistoricalRound(proposal))
+             }.getOrElse {
+               if (depth > 0)
+                 participate.flatMap(_ => handleProposal(proposal, depth - 1))
+               else
+                 (new Throwable("Unexpected recursion!")).raiseError[F, Unit]
+             }
          })
 
   def handleProposalForHistoricalRound(proposal: B)(round: HistoricalRound[K, A, B]): F[Unit] =
