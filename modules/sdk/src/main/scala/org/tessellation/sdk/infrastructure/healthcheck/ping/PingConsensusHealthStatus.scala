@@ -5,7 +5,7 @@ import org.tessellation.sdk.domain.healthcheck.consensus.types.{ConsensusHealthS
 
 case class PingConsensusHealthStatus(
   key: PingHealthCheckKey,
-  roundId: HealthCheckRoundId,
+  roundIds: Set[HealthCheckRoundId],
   owner: PeerId,
   status: PingHealthCheckStatus,
   clusterState: Set[PeerId]

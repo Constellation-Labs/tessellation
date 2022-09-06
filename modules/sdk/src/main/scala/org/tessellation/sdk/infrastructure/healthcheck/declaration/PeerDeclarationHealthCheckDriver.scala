@@ -30,9 +30,9 @@ class PeerDeclarationHealthCheckDriver[K] extends HealthCheckConsensusDriver[Key
   def consensusHealthStatus(
     key: Key[K],
     ownStatus: Health,
-    roundId: HealthCheckRoundId,
+    roundIds: Set[HealthCheckRoundId],
     selfId: PeerId,
     clusterState: Set[PeerId]
   ): Status[K] =
-    PeerDeclarationConsensusHealthStatus(key, roundId, selfId, ownStatus, clusterState)
+    PeerDeclarationConsensusHealthStatus(key, roundIds, selfId, ownStatus, clusterState)
 }

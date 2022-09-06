@@ -5,7 +5,7 @@ import org.tessellation.sdk.domain.healthcheck.consensus.types.{ConsensusHealthS
 
 case class PeerDeclarationConsensusHealthStatus[K](
   key: PeerDeclarationHealthCheckKey[K],
-  roundId: HealthCheckRoundId,
+  roundIds: Set[HealthCheckRoundId],
   owner: PeerId,
   status: PeerDeclarationHealth,
   clusterState: Set[PeerId]

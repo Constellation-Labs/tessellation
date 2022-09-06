@@ -45,10 +45,10 @@ class PingHealthCheckConsensusDriver()
   def consensusHealthStatus(
     key: PingHealthCheckKey,
     ownStatus: PingHealthCheckStatus,
-    roundId: HealthCheckRoundId,
+    roundIds: Set[HealthCheckRoundId],
     selfId: PeerId,
     clusterState: Set[PeerId]
-  ): PingConsensusHealthStatus = PingConsensusHealthStatus(key, roundId, selfId, ownStatus, clusterState)
+  ): PingConsensusHealthStatus = PingConsensusHealthStatus(key, roundIds, selfId, ownStatus, clusterState)
 
   private def isAvailable(status: PingHealthCheckStatus) = status.isInstanceOf[PeerAvailable]
   private def isMismatch(status: PingHealthCheckStatus) = status.isInstanceOf[PeerMismatch]
