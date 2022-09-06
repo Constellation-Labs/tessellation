@@ -108,8 +108,6 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey: Show, A <: Hea
 
   def getRoundIds: F[Set[HealthCheckRoundId]] = roundIds.get
 
-  def getOwnRoundIds: Set[HealthCheckRoundId] = initialRoundIds
-
   def addParallelRounds(key: K)(roundIds: Set[HealthCheckRoundId]): F[Unit] =
     parallelRounds.update { m =>
       def updated = m.get(key).fold(roundIds)(_ ++ roundIds)
