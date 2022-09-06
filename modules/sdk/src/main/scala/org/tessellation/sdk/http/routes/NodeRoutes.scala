@@ -23,6 +23,9 @@ final case class NodeRoutes[F[_]: Async](
   }
 
   private val public: HttpRoutes[F] = HttpRoutes.of[F] {
+    case GET -> Root / "state" =>
+      Ok(nodeStorage.getNodeState)
+
     case GET -> Root / "health" =>
       Ok()
   }
