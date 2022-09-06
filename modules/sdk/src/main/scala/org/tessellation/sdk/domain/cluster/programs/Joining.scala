@@ -151,7 +151,9 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
     } yield ()
 
   def rejoin(withPeer: PeerToJoin): F[Unit] =
-    validateHandshakeConditions(withPeer) >> twoWayHandshake(withPeer, None, skipJoinRequest = true).void
+    clusterStorage.removePeer(withPeer.id) >>
+      validateHandshakeConditions(withPeer) >>
+      twoWayHandshake(withPeer, None, skipJoinRequest = true).void
 
   private def validateJoinConditions(toPeer: PeerToJoin): F[Unit] =
     for {
