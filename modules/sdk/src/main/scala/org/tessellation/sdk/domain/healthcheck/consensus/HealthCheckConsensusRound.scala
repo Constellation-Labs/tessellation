@@ -29,7 +29,7 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey: Show, A <: Hea
   A
 ]: TypeTag, C <: HealthCheckConsensusDecision](
   key: K,
-  roundId: HealthCheckRoundId,
+  initialRoundIds: Set[HealthCheckRoundId],
   driver: HealthCheckConsensusDriver[K, A, B, C],
   config: HealthCheckConfig,
   startedAt: FiniteDuration,
@@ -51,10 +51,12 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey: Show, A <: Hea
     Spawn[F].start {
       sendProposal
         .handleErrorWith(err =>
-          logger.error(err)(s"An error occurred while sending the healthcheck proposal for roundId=${roundId.show} for key=${key.show}")
+          logger.error(err)(
+            s"An error occurred while sending the healthcheck proposal for initialRoundIds=${initialRoundIds.show} for key=${key.show}"
+          )
         )
         .flatTap { _ =>
-          logger.info(s"HealthCheck round started with roundId=${roundId.show} for key=${key.show}")
+          logger.info(s"HealthCheck round started with initialRoundIds=${initialRoundIds.show} for key=${key.show}")
         }
     }.void
 
@@ -98,7 +100,7 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey: Show, A <: Hea
           }
       }.flatMap {
         _.fold(Applicative[F].unit) { proposal =>
-          roundIds.update(_ + proposal.roundId) >>
+          roundIds.update(_ ++ proposal.roundIds) >>
             peers.update(_ ++ proposal.clusterState.filterNot(p => p === selfId || p === key.id))
         }
       }
@@ -106,7 +108,7 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey: Show, A <: Hea
 
   def getRoundIds: F[Set[HealthCheckRoundId]] = roundIds.get
 
-  def getOwnRoundId: HealthCheckRoundId = roundId
+  def getOwnRoundIds: Set[HealthCheckRoundId] = initialRoundIds
 
   def addParallelRounds(key: K)(roundIds: Set[HealthCheckRoundId]): F[Unit] =
     parallelRounds.update { m =>
@@ -122,7 +124,9 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey: Show, A <: Hea
 
         peers.update(_ -- missing) >>
           Applicative[F].whenA(missing.size > 0) {
-            logger.debug(s"Removed unresponsive parallel peers: ${missing.show} for round: ${roundId.show}")
+            getRoundIds.flatMap { ids =>
+              logger.debug(s"Removed unresponsive parallel peers: ${missing.show} for round: ${ids.show}")
+            }
           }
       } else Applicative[F].unit
     }.flatten
@@ -155,8 +159,10 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey: Show, A <: Hea
 
   def ownConsensusHealthStatus: F[B] =
     clusterStorage.getPeers.map(_.map(_.id)).flatMap { clusterState =>
-      status.map {
-        driver.consensusHealthStatus(key, _, roundId, selfId, clusterState)
+      getRoundIds.flatMap { ids =>
+        status.map {
+          driver.consensusHealthStatus(key, _, ids, selfId, clusterState)
+        }
       }
     }
 
@@ -187,7 +193,7 @@ object HealthCheckConsensusRound {
     A
   ]: TypeTag, C <: HealthCheckConsensusDecision](
     key: K,
-    roundId: HealthCheckRoundId,
+    initialRoundIds: Set[HealthCheckRoundId],
     initialPeers: Set[PeerId],
     ownStatus: Fiber[F, Throwable, A],
     statusOnError: A,
@@ -200,7 +206,7 @@ object HealthCheckConsensusRound {
 
     def mkStartedAt = Clock[F].monotonic
     def mkPeers = Ref.of[F, Set[PeerId]](initialPeers)
-    def mkRoundIds = Ref.of[F, Set[HealthCheckRoundId]](Set(roundId))
+    def mkRoundIds = Ref.of[F, Set[HealthCheckRoundId]](initialRoundIds)
     def mkProposals = Ref.of[F, Map[PeerId, B]](Map.empty)
     def mkParallelRounds = Ref.of[F, Map[K, Set[HealthCheckRoundId]]](Map.empty)
     def mkSentProposal = Ref.of[F, Boolean](false)
@@ -209,7 +215,7 @@ object HealthCheckConsensusRound {
       (startedAt, peers, roundIds, proposals, parallelRounds, sentProposal) =>
         new HealthCheckConsensusRound[F, K, A, B, C](
           key,
-          roundId,
+          initialRoundIds,
           driver,
           config,
           startedAt,

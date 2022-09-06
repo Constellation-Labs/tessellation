@@ -68,7 +68,7 @@ object PeerDeclarationHealthCheck {
             .map(_.flatten)
 
         override def startOwnRound(key: Key[K]): F[Unit] =
-          createRoundId.map(HealthCheckRoundId(_, selfId)).flatMap(startRound(key, _))
+          createRoundId.map(HealthCheckRoundId(_, selfId)).flatMap(id => startRound(key, Set(id)))
 
         def periodic: F[Unit] =
           for {

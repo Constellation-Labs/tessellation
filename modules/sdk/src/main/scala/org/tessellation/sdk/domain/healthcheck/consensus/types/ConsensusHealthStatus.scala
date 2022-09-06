@@ -10,7 +10,7 @@ import org.http4s.{EntityDecoder, EntityEncoder}
 
 trait ConsensusHealthStatus[K <: HealthCheckKey, A <: HealthCheckStatus] {
   def key: K
-  def roundId: HealthCheckRoundId
+  def roundIds: Set[HealthCheckRoundId]
   def owner: PeerId
   def status: A
   def clusterState: Set[PeerId]

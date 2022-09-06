@@ -175,16 +175,16 @@ abstract class HealthCheckConsensus[
     clusterStorage
       .hasPeerId(key.id)
       .ifM(
-        createRoundId.map(HealthCheckRoundId(_, selfId)).flatMap(startRound(key, _)),
+        createRoundId.map(HealthCheckRoundId(_, selfId)).flatMap(id => startRound(key, Set(id))),
         logger.warn(s"Trying to start own round for key ${key.show}, but peer is unknown")
       )
 
-  def participateInRound(key: K, roundId: HealthCheckRoundId): F[Unit] =
-    startRound(key, roundId)
+  def participateInRound(key: K, roundIds: Set[HealthCheckRoundId]): F[Unit] =
+    startRound(key, roundIds)
 
   def startRound(
     key: K,
-    roundId: HealthCheckRoundId
+    roundIds: Set[HealthCheckRoundId]
   ): F[Unit] =
     clusterStorage.getPeers
       .map(_.map(_.id))
@@ -193,7 +193,7 @@ abstract class HealthCheckConsensus[
         ownStatus(key).flatMap { status =>
           HealthCheckConsensusRound.make[F, K, A, B, C](
             key,
-            roundId,
+            roundIds,
             initialPeers,
             status,
             statusOnError(key),
@@ -209,7 +209,7 @@ abstract class HealthCheckConsensus[
         allRounds.modify {
           case ConsensusRounds(historical, inProgress) =>
             def inProgressRound = inProgress.get(key)
-            def historicalRound = historical.find(_.roundIds.contains(roundId))
+            def historicalRound = historical.find(_.roundIds.intersect(roundIds).nonEmpty)
 
             historicalRound
               .orElse(inProgressRound)
@@ -230,7 +230,7 @@ abstract class HealthCheckConsensus[
                   parallelRound.getRoundIds
                     .flatMap(round.addParallelRounds(key))
                     .flatMap { _ =>
-                      parallelRound.addParallelRounds(key)(Set(roundId))
+                      parallelRound.addParallelRounds(key)(roundIds)
                     }
               }.void
             }
@@ -242,7 +242,7 @@ abstract class HealthCheckConsensus[
 
   def handleProposal(proposal: B, depth: Int = 1): F[Unit] =
     logger.info(
-      s"Received proposal for roundIds: ${proposal.roundId.show} for key: ${proposal.key.show} with status: ${proposal.status} from peer: ${proposal.owner.show}"
+      s"Received proposal for roundIds: ${proposal.roundIds.show} for key: ${proposal.key.show} with status: ${proposal.status} from peer: ${proposal.owner.show}"
     ) >>
       (if (proposal.owner === selfId || proposal.key.id === selfId)
          Applicative[F].unit
@@ -250,9 +250,9 @@ abstract class HealthCheckConsensus[
          allRounds.get.flatMap {
            case ConsensusRounds(historical, inProgress) =>
              def inProgressRound = inProgress.get(proposal.key)
-             def historicalRound = historical.find(_.roundIds.contains(proposal.roundId))
+             def historicalRound = historical.find(_.roundIds.intersect(proposal.roundIds).nonEmpty)
 
-             def participate = participateInRound(proposal.key, proposal.roundId)
+             def participate = participateInRound(proposal.key, proposal.roundIds)
 
              historicalRound
                .map(handleProposalForHistoricalRound(proposal))
