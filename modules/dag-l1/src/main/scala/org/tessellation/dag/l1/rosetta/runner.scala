@@ -1,6 +1,8 @@
 package org.tessellation.dag.l1.rosetta
-import model._
-import dag.schema._
+import org.tessellation.rosetta.server.model.dag.schema._
+import org.tessellation.rosetta.server.model.dag.decoders._
+import org.tessellation.rosetta.server.model._
+import org.tessellation.rosetta.server.model
 
 import java.security.KeyFactory
 import java.security.interfaces.ECPublicKey
@@ -51,9 +53,6 @@ import SignatureProof._
 import Signed._
 import Util.{getPublicKeyFromBytes, reduceListEither}
 import model._
-import dag.schema._
-import dag.decoders._
-
 
 case class LastTransactionResponse(
   constructionMetadataResponseMetadata: Option[ConstructionMetadataResponseMetadata],

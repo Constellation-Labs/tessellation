@@ -334,7 +334,7 @@ lazy val rosetta = (project in file("modules/rosetta"))
 lazy val dagL1 = (project in file("modules/dag-l1"))
   .enablePlugins(AshScriptPlugin)
   .enablePlugins(JavaAppPackaging)
-  .dependsOn(kernel, shared, dagShared, sdk, testShared % Test)
+  .dependsOn(kernel, shared, dagShared, sdk, rosetta, testShared % Test)
   .configs(IntegrationTest)
   .settings(
     name := "tessellation-dag-l1",
