@@ -119,7 +119,6 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
   val snapshotOrdinal11 = SnapshotOrdinal(11L)
   val snapshotOrdinal12 = SnapshotOrdinal(12L)
   val snapshotHeight6 = Height(6L)
-  val snapshotHeight7 = Height(7L)
   val snapshotHeight8 = Height(8L)
   val snapshotSubHeight0 = SubHeight(0L)
   val snapshotSubHeight1 = SubHeight(1L)
@@ -526,8 +525,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           hashedNextSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
               ordinal = snapshotOrdinal11,
-              height = snapshotHeight7,
-              subHeight = snapshotSubHeight0,
+              height = snapshotHeight8,
               lastSnapshotHash = hashedLastSnapshot.hash,
               blocks = SortedSet(BlockAsActiveTip(hashedBlocks(1).signed, 1L), BlockAsActiveTip(hashedBlocks(3).signed, 2L)),
               tips = GlobalSnapshotTips(
@@ -566,7 +564,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             (
               Aligned(
                 GlobalSnapshotReference(
-                  snapshotHeight7,
+                  snapshotHeight8,
                   snapshotSubHeight0,
                   snapshotOrdinal11,
                   hashedNextSnapshot.hash,
@@ -618,7 +616,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
         implicit val kryoPool = kp
 
         val parent1 = BlockReference(Height(6L), ProofsHash("parent1"))
-        val parent2 = BlockReference(Height(6L), ProofsHash("parent2"))
+        val parent2 = BlockReference(Height(7L), ProofsHash("parent2"))
         val parent3 = BlockReference(Height(8L), ProofsHash("parent3"))
         val parent4 = BlockReference(Height(9L), ProofsHash("parent4"))
 
@@ -698,7 +696,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           hashedNextSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
               ordinal = snapshotOrdinal11,
-              height = snapshotHeight7,
+              height = snapshotHeight8,
               lastSnapshotHash = hashedLastSnapshot.hash,
               blocks = SortedSet(
                 BlockAsActiveTip(hashedBlocks(1).signed, 1L),
@@ -746,7 +744,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             (
               RedownloadPerformed(
                 GlobalSnapshotReference(
-                  snapshotHeight7,
+                  snapshotHeight8,
                   snapshotSubHeight0,
                   snapshotOrdinal11,
                   hashedNextSnapshot.hash,
@@ -851,7 +849,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           hashedNextSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
               ordinal = snapshotOrdinal11,
-              height = snapshotHeight7,
+              height = snapshotHeight8,
               lastSnapshotHash = hashedLastSnapshot.hash,
               tips = GlobalSnapshotTips(
                 SortedSet(
