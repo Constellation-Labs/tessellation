@@ -79,6 +79,8 @@ trait ConsensusStorage[F[_], Event, Key, Artifact] {
 
   private[consensus] def setLastKey(key: Key): F[Unit]
 
+  private[consensus] def getLastKey: F[Option[Key]]
+
   private[consensus] def getLastKeyAndArtifact: F[Option[(Key, Option[Signed[Artifact]])]]
 
   private[consensus] def tryUpdateLastKeyAndArtifactWithCleanup(
@@ -161,6 +163,9 @@ object ConsensusStorage {
 
         def setLastKey(key: Key): F[Unit] =
           lastKeyAndArtifactR.set((key, none).some)
+
+        def getLastKey: F[Option[Key]] =
+          lastKeyAndArtifactR.get.map(_._1F)
 
         def getLastKeyAndArtifact: F[Option[(Key, Option[Signed[Artifact]])]] = lastKeyAndArtifactR.get
 

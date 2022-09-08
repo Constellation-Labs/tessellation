@@ -2,7 +2,10 @@ package org.tessellation.sdk.infrastructure.consensus
 
 import cats.Show
 import cats.effect.Async
-import cats.syntax.all._
+import cats.syntax.flatMap._
+import cats.syntax.functor._
+import cats.syntax.semigroupk._
+import cats.syntax.show._
 
 import scala.reflect.ClassTag
 import scala.reflect.runtime.universe.TypeTag
@@ -63,12 +66,17 @@ object ConsensusHandler {
       logger.info(s"Signed artifact received ${rumor.content.key.show}")
     }
 
+    val deregistrationHandler = RumorHandler.fromPeerRumorConsumer[F, Deregistration[Key]]() { rumor =>
+      storage.removeRegisteredPeer(rumor.origin, rumor.content.key).void
+    }
+
     eventHandler <+>
       facilityHandler <+>
       proposalHandler <+>
       artifactHandler <+>
       majoritySignatureHandler <+>
-      signedArtifactHandler
+      signedArtifactHandler <+>
+      deregistrationHandler
   }
 
 }
