@@ -148,7 +148,7 @@ class PingHealthCheckConsensus[F[_]: Async: GenUUID: Random](
 
   private def checkRandomPeers: F[Unit] =
     clusterStorage.getPeers
-      .map(_.filterNot(p => NodeState.absent.contains(p.state)).toList)
+      .map(_.filterNot(NodeState.is(NodeState.leaving ++ NodeState.absent)).toList)
       .flatMap(peers => peersUnderConsensus.map(uc => peers.filterNot(p => uc.contains(p.id))))
       .flatMap(pickRandomPeers(_, config.ping.concurrentChecks))
       .flatMap(_.traverse(p => checkPeer(p.id, p.ip, p.p2pPort, p.session).map(s => p -> s)))
