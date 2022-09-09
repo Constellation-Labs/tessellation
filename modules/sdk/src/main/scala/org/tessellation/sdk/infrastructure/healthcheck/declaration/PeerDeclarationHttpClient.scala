@@ -25,7 +25,7 @@ object PeerDeclarationHttpClient {
     new PeerDeclarationHttpClient[F, K] with Http4sClientDsl[F] {
 
       def requestProposal(roundIds: Set[HealthCheckRoundId], ownProposal: Status[K]): PeerResponse[F, Option[Status[K]]] =
-        PeerResponse[F, Status[K]](s"healthcheck/peer-declaration", POST)(client, session) { (req, c) =>
+        PeerResponse(s"healthcheck/peer-declaration", POST)(client, session) { (req, c) =>
           c.expect[Status[K]](req.withEntity((roundIds, ownProposal)))
         }.map(_.some).handleError(_ => none)
     }

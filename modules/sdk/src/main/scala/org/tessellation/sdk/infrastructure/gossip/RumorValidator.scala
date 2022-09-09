@@ -7,7 +7,6 @@ import cats.effect.Async
 import cats.syntax.all._
 
 import org.tessellation.ext.cats.syntax.validated._
-import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.gossip._
@@ -22,7 +21,7 @@ import derevo.derive
 
 trait RumorValidator[F[_]] {
 
-  def validate(har: HashAndRumor): F[RumorValidationErrorOr[HashAndRumor]]
+  def validate(signedRumor: Signed[RumorRaw]): F[RumorValidationErrorOr[Signed[RumorRaw]]]
 
 }
 
@@ -34,30 +33,18 @@ object RumorValidator {
   ): RumorValidator[F] = new RumorValidator[F] {
 
     def validate(
-      har: HashAndRumor
-    ): F[RumorValidationErrorOr[HashAndRumor]] = har match {
-      case (hash, signedRumor) =>
-        for {
-          hashV <- validateHash(hash, signedRumor)
-          originV = validateOrigin(signedRumor)
-          signatureV <- validateSignature(signedRumor)
-          seedlistV = validateSeedlist(signedRumor)
-        } yield
-          hashV
-            .productL(originV)
-            .productL(signatureV)
-            .productL(seedlistV)
-    }
-
-    def validateHash(hash: Hash, signedRumor: Signed[RumorBinary]): F[RumorValidationErrorOr[HashAndRumor]] =
-      signedRumor.value.hashF.map { calculatedHash =>
-        Validated.condNec(calculatedHash === hash, (hash, signedRumor), InvalidHash(calculatedHash, hash))
+      signedRumor: Signed[RumorRaw]
+    ): F[RumorValidationErrorOr[Signed[RumorRaw]]] =
+      validateSignature(signedRumor).map { signatureV =>
+        signatureV
+          .productR(validateOrigin(signedRumor))
+          .productR(validateSeedlist(signedRumor))
       }
 
-    def validateOrigin(signedRumor: Signed[RumorBinary]): RumorValidationErrorOr[Signed[RumorBinary]] =
+    def validateOrigin(signedRumor: Signed[RumorRaw]): RumorValidationErrorOr[Signed[RumorRaw]] =
       signedRumor.value match {
-        case _: CommonRumorBinary => signedRumor.validNec[RumorValidationError]
-        case rumor: PeerRumorBinary =>
+        case _: CommonRumorRaw => signedRumor.validNec[RumorValidationError]
+        case rumor: PeerRumorRaw =>
           val signers = signedRumor.proofs.map(_.id)
           Validated.condNec(
             signers.contains(rumor.origin.toId),
@@ -66,10 +53,10 @@ object RumorValidator {
           )
       }
 
-    def validateSignature(signedRumor: Signed[RumorBinary]): F[RumorValidationErrorOr[Signed[RumorBinary]]] =
+    def validateSignature(signedRumor: Signed[RumorRaw]): F[RumorValidationErrorOr[Signed[RumorRaw]]] =
       signedValidator.validateSignatures(signedRumor).map(_.errorMap(InvalidSigned))
 
-    def validateSeedlist(signedRumor: Signed[RumorBinary]): RumorValidationErrorOr[Signed[RumorBinary]] =
+    def validateSeedlist(signedRumor: Signed[RumorRaw]): RumorValidationErrorOr[Signed[RumorRaw]] =
       seedlist.flatMap { peers =>
         signedRumor.proofs
           .map(_.id.toPeerId)

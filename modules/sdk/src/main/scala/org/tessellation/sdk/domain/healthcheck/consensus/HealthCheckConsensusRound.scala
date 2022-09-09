@@ -22,12 +22,13 @@ import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.healthcheck.consensus.HealthCheckConsensusRound._
 import org.tessellation.sdk.domain.healthcheck.consensus.types._
 
+import io.circe.Encoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey: Show, A <: HealthCheckStatus, B <: ConsensusHealthStatus[
   K,
   A
-]: TypeTag, C <: HealthCheckConsensusDecision](
+]: TypeTag: Encoder, C <: HealthCheckConsensusDecision](
   key: K,
   initialRoundIds: Set[HealthCheckRoundId],
   driver: HealthCheckConsensusDriver[K, A, B, C],
@@ -189,7 +190,7 @@ object HealthCheckConsensusRound {
   def make[F[_]: Async, K <: HealthCheckKey: Show, A <: HealthCheckStatus, B <: ConsensusHealthStatus[
     K,
     A
-  ]: TypeTag, C <: HealthCheckConsensusDecision](
+  ]: TypeTag: Encoder, C <: HealthCheckConsensusDecision](
     key: K,
     initialRoundIds: Set[HealthCheckRoundId],
     initialPeers: Set[PeerId],

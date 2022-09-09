@@ -12,7 +12,6 @@ import cats.syntax.semigroupk._
 import cats.{Eq, Order, Show}
 
 import scala.concurrent.duration.FiniteDuration
-import scala.reflect.ClassTag
 import scala.reflect.runtime.universe.TypeTag
 
 import org.tessellation.kryo.KryoSerializer
@@ -38,9 +37,9 @@ object Consensus {
 
   def make[
     F[_]: Async: Random: KryoSerializer: SecurityProvider,
-    Event <: AnyRef: TypeTag: ClassTag,
-    Key: Show: Order: Next: TypeTag: ClassTag: Encoder: Decoder,
-    Artifact <: AnyRef: Show: Eq: TypeTag
+    Event: TypeTag: Decoder,
+    Key: Show: Order: Next: TypeTag: Encoder: Decoder,
+    Artifact <: AnyRef: Show: Eq: TypeTag: Encoder: Decoder
   ](
     consensusFns: ConsensusFunctions[F, Event, Key, Artifact],
     gossip: Gossip[F],

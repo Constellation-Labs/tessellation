@@ -7,10 +7,8 @@ import cats.syntax.functor._
 import cats.syntax.semigroupk._
 import cats.syntax.show._
 
-import scala.reflect.ClassTag
 import scala.reflect.runtime.universe.TypeTag
 
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
 import org.tessellation.sdk.infrastructure.consensus.declaration._
 import org.tessellation.sdk.infrastructure.consensus.message._
@@ -18,13 +16,14 @@ import org.tessellation.sdk.infrastructure.gossip.RumorHandler
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 
+import io.circe.Decoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object ConsensusHandler {
 
   def make[F[
     _
-  ]: Async: KryoSerializer: SecurityProvider, Event <: AnyRef: TypeTag: ClassTag, Key: Show: TypeTag: ClassTag, Artifact <: AnyRef: TypeTag](
+  ]: Async: SecurityProvider, Event: TypeTag: Decoder, Key: Show: TypeTag: Decoder, Artifact: TypeTag: Decoder](
     storage: ConsensusStorage[F, Event, Key, Artifact],
     manager: ConsensusManager[F, Key, Artifact],
     fns: ConsensusFunctions[F, Event, Key, Artifact]

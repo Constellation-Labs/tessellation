@@ -11,7 +11,8 @@ import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.infrastructure.consensus.message.ConsensusEvent
 import org.tessellation.security.signature.Signed
 
-import fs2._
+import fs2.Stream
+import io.circe.disjunctionCodecs._
 
 object GlobalSnapshotEventsPublisherDaemon {
 

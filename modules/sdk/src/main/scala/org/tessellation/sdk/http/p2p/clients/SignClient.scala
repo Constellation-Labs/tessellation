@@ -32,10 +32,10 @@ object SignClient {
       private val logger = Slf4jLogger.getLogger[F]
 
       def getRegistrationRequest: PeerResponse[F, RegistrationRequest] =
-        PeerResponse[F, RegistrationRequest]("registration/request")(client)
+        PeerResponse("registration/request")(client)
 
       def joinRequest(jr: JoinRequest): PeerResponse[F, Boolean] =
-        PeerResponse[F, Boolean]("cluster/join", POST)(client) { (req, c) =>
+        PeerResponse("cluster/join", POST)(client) { (req, c) =>
           c.run(req.withEntity(jr)).use {
             case Status.Successful(_) => Applicative[F].pure(true)
             case res                  => res.as[String].flatTap(msg => logger.warn(s"Join request rejected due to: $msg")).as(false)
@@ -43,7 +43,7 @@ object SignClient {
         }
 
       def sign(signRequest: SignRequest): PeerResponse[F, Signed[SignRequest]] =
-        PeerResponse[F, Signed[SignRequest]]("registration/sign", POST)(client) { (req, c) =>
+        PeerResponse("registration/sign", POST)(client) { (req, c) =>
           c.expect[Signed[SignRequest]](req.withEntity(signRequest))
         }
     }

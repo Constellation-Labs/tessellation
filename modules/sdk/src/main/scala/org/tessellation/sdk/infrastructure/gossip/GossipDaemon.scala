@@ -1,6 +1,5 @@
 package org.tessellation.sdk.infrastructure.gossip
 
-import cats.Order._
 import cats.effect.std.{Queue, Random}
 import cats.effect.{Async, Spawn, Temporal}
 import cats.syntax.all._
@@ -17,8 +16,7 @@ import org.tessellation.sdk.domain.gossip.RumorStorage
 import org.tessellation.sdk.infrastructure.gossip.p2p.GossipClient
 import org.tessellation.sdk.infrastructure.healthcheck.ping.PingHealthCheckConsensus
 import org.tessellation.sdk.infrastructure.metrics.Metrics
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hashed, SecurityProvider}
 
 import eu.timepit.refined.auto._
 import fs2.Stream
@@ -30,7 +28,7 @@ object GossipDaemon {
 
   def make[F[_]: Async: SecurityProvider: KryoSerializer: Random: Parallel: Metrics](
     rumorStorage: RumorStorage[F],
-    rumorQueue: Queue[F, RumorBatch],
+    rumorQueue: Queue[F, Hashed[RumorRaw]],
     clusterStorage: ClusterStorage[F],
     gossipClient: GossipClient[F],
     rumorHandler: RumorHandler[F],
@@ -54,11 +52,9 @@ object GossipDaemon {
           Stream
             .fromQueueUnterminated(rumorQueue)
             .evalTap(logConsumption)
-            .evalMap(validateRumors)
-            .evalMap(verifyCollateral)
-            .map(sortRumors)
-            .evalMap(rumorStorage.addRumors)
-            .flatMap(Stream.iterable)
+            .evalFilter(validateRumor)
+            .evalFilter(verifyCollateral)
+            .evalFilter(rumorStorage.addRumorIfNotSeen)
             .evalMap(handleRumor)
             .handleErrorWith { err =>
               Stream.eval(logger.error(err)(s"Unexpected error in gossip")) >> Stream.raiseError(err)
@@ -66,60 +62,47 @@ object GossipDaemon {
             .compile
             .drain
 
-        private def logConsumption(batch: RumorBatch): F[Unit] =
-          batch.traverse {
-            case (hash, signedRumor) =>
-              rumorLogger.info(
-                s"Rumor consumed {hash=${hash.show}, contentType=${signedRumor.contentType}, signer=${signedRumor.proofs.head.id}}"
-              )
-          }.void
+        private def logConsumption(hashedRumor: Hashed[RumorRaw]): F[Unit] =
+          rumorLogger.info(
+            s"Rumor consumed {hash=${hashedRumor.hash.show}, rumor=${hashedRumor.signed.value.show}}"
+          )
 
-        private def validateRumors(batch: RumorBatch): F[RumorBatch] =
-          batch.traverseFilter { har =>
-            rumorValidator
-              .validate(har)
-              .flatTap { harV =>
-                Applicative[F]
-                  .whenA(harV.isInvalid)(logger.warn(s"Discarding invalid rumor {hash=${har._1.show}, reason=${harV.show}"))
-              }
-              .map(_.toOption)
-          }
-
-        private def verifyCollateral(batch: RumorBatch): F[RumorBatch] =
-          batch.filterA {
-            case (hash, signedRumor) =>
-              signedRumor.proofs.toNonEmptyList
-                .map(_.id)
-                .map(PeerId.fromId)
-                .forallM(collateral.hasCollateral)
-                .flatTap(
-                  logger
-                    .warn(
-                      s"Discarding rumor ${signedRumor.value.show} with hash ${hash.show} due to not sufficient collateral"
-                    )
-                    .unlessA
+        private def validateRumor(hashedRumor: Hashed[RumorRaw]): F[Boolean] =
+          rumorValidator
+            .validate(hashedRumor.signed)
+            .flatTap { signedRumorV =>
+              Applicative[F]
+                .whenA(signedRumorV.isInvalid)(
+                  logger.warn(s"Discarding invalid rumor {hash=${hashedRumor.hash.show}, reason=${signedRumorV.show}")
                 )
-          }
+            }
+            .map(_.isValid)
 
-        private def sortRumors(batch: RumorBatch): RumorBatch =
-          batch.filter { case (_, s) => s.value.isInstanceOf[CommonRumorBinary] } ++
-            batch.filter { case (_, s) => s.value.isInstanceOf[PeerRumorBinary] }
-              .sortBy(_._2.asInstanceOf[Signed[PeerRumorBinary]].ordinal)
+        private def verifyCollateral(hashedRumor: Hashed[RumorRaw]): F[Boolean] =
+          hashedRumor.signed.proofs.toNonEmptyList
+            .map(_.id)
+            .map(PeerId.fromId)
+            .forallM(collateral.hasCollateral)
+            .flatTap(
+              logger
+                .warn(
+                  s"Discarding rumor due to not sufficient collateral {hash=${hashedRumor.hash.show}}"
+                )
+                .unlessA
+            )
 
-        private def handleRumor(har: HashAndRumor): F[Unit] = har match {
-          case (hash, signedRumor) =>
-            rumorHandler
-              .run((signedRumor.value, nodeId))
-              .semiflatTap(_ => metrics.updateRumorsConsumed("success", signedRumor))
-              .getOrElseF {
-                logger.debug(s"Unhandled rumor ${signedRumor.value.show} with hash ${hash.show}") >>
-                  metrics.updateRumorsConsumed("unhandled", signedRumor)
-              }
-              .handleErrorWith { err =>
-                logger.error(err)(s"Error handling rumor ${signedRumor.value.show} with hash ${hash.show}") >>
-                  metrics.updateRumorsConsumed("error", signedRumor)
-              }
-        }
+        private def handleRumor(hashedRumor: Hashed[RumorRaw]): F[Unit] =
+          rumorHandler
+            .run((hashedRumor.signed.value, nodeId))
+            .semiflatTap(_ => metrics.updateRumorsConsumed("success", hashedRumor))
+            .getOrElseF {
+              logger.debug(s"Unhandled rumor {hash=${hashedRumor.hash.show}}") >>
+                metrics.updateRumorsConsumed("unhandled", hashedRumor)
+            }
+            .handleErrorWith { err =>
+              logger.error(err)(s"Error handling rumor {hash=${hashedRumor.hash.show}}") >>
+                metrics.updateRumorsConsumed("error", hashedRumor)
+            }
 
         private def selectPeers: F[Unit] =
           for {
@@ -132,37 +115,39 @@ object GossipDaemon {
         private def runGossipRounds: F[Unit] =
           Stream
             .fromQueueUnterminated(selectedPeerQueue)
-            .parEvalMapUnordered(cfg.maxConcurrentRounds) { peer =>
-              runTimedGossipRound(peer).handleErrorWith { err =>
-                logger.error(err)(s"Error running gossip round with peer ${peer.show}") >>
-                  Spawn[F].start(healthcheck.triggerCheckForPeer(peer)).void
-              }
-            }
+            .parEvalMapUnordered(cfg.maxConcurrentRounds)(runTimedGossipRound)
             .compile
             .drain
 
         private def runTimedGossipRound(peer: Peer): F[Unit] =
-          Temporal[F].timeout(
-            Temporal[F].timed(runGossipRound(peer)).flatMap {
+          Temporal[F]
+            .timed(runGossipRound(peer))
+            .flatMap {
               case (duration, _) => metrics.updateRoundDurationSum(duration)
-            },
-            cfg.roundTimeout
-          ) >> metrics.incrementGossipRoundSucceeded
+            }
+            .flatMap(_ => metrics.incrementGossipRoundSucceeded)
+            .handleErrorWith(err =>
+              logger
+                .error(err)(s"Error running gossip round {peer=${peer.show}}") >>
+                Spawn[F].start(healthcheck.triggerCheckForPeer(peer)).void
+            )
 
         private def runGossipRound(peer: Peer): F[Unit] =
           for {
-            activeHashes <- rumorStorage.getActiveHashes
-            startRequest = StartGossipRoundRequest(activeHashes)
-            startResponse <- gossipClient.startGossiping(startRequest).run(peer)
+            offerResponse <- gossipClient.getOffer.run(peer)
             seenHashes <- rumorStorage.getSeenHashes
-            inquiry = startResponse.offer.diff(seenHashes)
-            answer <- rumorStorage.getRumors(startResponse.inquiry)
-            endRequest = EndGossipRoundRequest(answer, inquiry)
-            _ <- metrics.updateRumorsSent(answer)
-            endResponse <- gossipClient.endGossiping(endRequest).run(peer)
-            _ <- rumorQueue.offer(endResponse.answer)
-            _ <- metrics.updateRumorsReceived(endResponse.answer)
+            inquiryRequest = RumorInquiryRequest(offerResponse.offer.diff(seenHashes))
+            _ <- Applicative[F].whenA(inquiryRequest.inquiry.nonEmpty) {
+              gossipClient
+                .sendInquiry(inquiryRequest)
+                .run(peer)
+                .evalMap(_.toHashed)
+                .enqueueUnterminated(rumorQueue)
+                .compile
+                .drain
+            }
           } yield ()
+
       }
     }
   }

@@ -22,7 +22,7 @@ object BlockConsensusClient {
     new BlockConsensusClient[F] {
 
       def sendConsensusData(data: Signed[PeerBlockConsensusInput]): PeerResponse[F, Unit] =
-        PeerResponse[F, Unit]("consensus/data", POST)(client) { (req, c) =>
+        PeerResponse("consensus/data", POST)(client) { (req, c) =>
           c.successful(req.withEntity(data)).void
         }
     }

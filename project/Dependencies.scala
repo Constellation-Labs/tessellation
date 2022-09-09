@@ -18,6 +18,8 @@ object Dependencies {
     val enumeratum = "1.7.0"
     val h2 = "2.1.214"
     val javaxCrypto = "1.0.1"
+    val jawnVersion = "1.3.2"
+    val jawnFs2Version = "1.2.1"
     val flyway = "9.1.0"
     val fs2 = "3.2.11"
     val fs2Data = "1.4.1"
@@ -66,6 +68,8 @@ object Dependencies {
     def fs2Data(artifact: String): ModuleID = "org.gnieh" %% s"fs2-data-$artifact" % V.fs2Data
     def http4s(artifact: String): ModuleID = "org.http4s" %% s"http4s-$artifact" % V.http4s
     def bouncyCastle(artifact: String): ModuleID = "org.bouncycastle" % artifact % V.bouncyCastle
+
+    def jawn(artifact: String): ModuleID = "org.typelevel" %% artifact % V.jawnVersion
 
     val bc = bouncyCastle("bcprov-jdk15on")
     val bcExtensions = bouncyCastle("bcpkix-jdk15on")
@@ -133,6 +137,10 @@ object Dependencies {
     val guava = "com.google.guava" % "guava" % V.guava
 
     val http4sJwtAuth = "dev.profunktor" %% "http4s-jwt-auth" % V.http4sJwtAuth
+
+    val jawnParser = jawn("jawn-parser")
+    val jawnAst = jawn("jawn-ast")
+    val jawnFs2 = "org.http4s" %% "jawn-fs2" % V.jawnFs2Version
 
     val monocleCore = "dev.optics" %% "monocle-core" % V.monocle
     val monocleMacro = "dev.optics" %% "monocle-macro" % V.monocle

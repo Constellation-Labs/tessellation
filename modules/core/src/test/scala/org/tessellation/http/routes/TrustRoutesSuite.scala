@@ -16,6 +16,7 @@ import org.tessellation.schema.trust.{InternalTrustUpdate, InternalTrustUpdateBa
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.sdkKryoRegistrar
 
+import io.circe.Encoder
 import org.http4s.Method._
 import org.http4s._
 import org.http4s.client.dsl.io._
@@ -36,8 +37,8 @@ object TrustRoutesSuite extends HttpSuite {
           trust <- Ref[IO].of(Map.empty[PeerId, TrustInfo])
           ts = TrustStorage.make[IO](trust)
           gossip = new Gossip[IO] {
-            override def spread[A <: AnyRef: TypeTag](rumorContent: A): IO[Unit] = IO.unit
-            override def spreadCommon[A <: AnyRef: TypeTag](rumorContent: A): IO[Unit] = IO.unit
+            override def spread[A: TypeTag: Encoder](rumorContent: A): IO[Unit] = IO.unit
+            override def spreadCommon[A: TypeTag: Encoder](rumorContent: A): IO[Unit] = IO.unit
           }
           tp = TrustPush.make[IO](ts, gossip)
           _ <- ts.updateTrust(

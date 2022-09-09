@@ -7,10 +7,9 @@ import cats.syntax.all._
 
 import scala.concurrent.duration.FiniteDuration
 
-import org.tessellation.schema.gossip.{CommonRumorBinary, RumorBatch, RumorBinary}
+import org.tessellation.schema.gossip.{CommonRumorRaw, RumorBatch, RumorRaw}
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.infrastructure.metrics.Metrics.TagSeq
-import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto._
 
@@ -20,32 +19,28 @@ object metrics {
     batch.traverse {
       case (_, signedRumor) =>
         val rumorTags = getRumorTags(signedRumor)
-        val rumorSize = signedRumor.value.content.length
-        Metrics[F].incrementCounter("dag_rumors_received_total", rumorTags) >>
-          Metrics[F].incrementCounterBy("dag_rumors_received_bytes_total", rumorSize, rumorTags)
+        Metrics[F].incrementCounter("dag_rumors_received_total", rumorTags)
     }.void
 
   def updateRumorsSent[F[_]: Monad: Metrics](batch: RumorBatch): F[Unit] =
     batch.traverse {
       case (_, signedRumor) =>
         val rumorTags = getRumorTags(signedRumor)
-        val rumorSize = signedRumor.value.content.length
-        Metrics[F].incrementCounter("dag_rumors_sent_total", rumorTags) >>
-          Metrics[F].incrementCounterBy("dag_rumors_sent_bytes_total", rumorSize, rumorTags)
+        Metrics[F].incrementCounter("dag_rumors_sent_total", rumorTags)
     }.void
 
-  def updateRumorsConsumed[F[_]: Monad: Metrics](outcome: String, signedRumor: Signed[RumorBinary]): F[Unit] =
+  def updateRumorsConsumed[F[_]: Monad: Metrics](outcome: String, rumor: RumorRaw): F[Unit] =
     Metrics[F]
-      .incrementCounter("dag_rumors_consumed_total", getRumorTags(signedRumor) :+ ("outcome", outcome))
+      .incrementCounter("dag_rumors_consumed_total", getRumorTags(rumor) :+ ("outcome", outcome))
 
-  def updateRumorsSpread[F[_]: Monad: Metrics](signedRumor: Signed[RumorBinary]): F[Unit] =
-    Metrics[F].incrementCounter("dag_rumors_spread_total", getRumorTags(signedRumor))
+  def updateRumorsSpread[F[_]: Monad: Metrics](rumor: RumorRaw): F[Unit] =
+    Metrics[F].incrementCounter("dag_rumors_spread_total", getRumorTags(rumor))
 
-  def getRumorTags(signedRumor: Signed[RumorBinary]): TagSeq =
+  def getRumorTags(rumor: RumorRaw): TagSeq =
     Seq(
-      ("content_type", signedRumor.contentType.value),
-      ("content_type_short", signedRumor.contentType.value.replaceAll("\\w+\\.", "")),
-      ("rumor_type", if (signedRumor.value.isInstanceOf[CommonRumorBinary]) "common" else "peer")
+      ("content_type", rumor.contentType.value),
+      ("content_type_short", rumor.contentType.value.replaceAll("\\w+\\.", "")),
+      ("rumor_type", if (rumor.isInstanceOf[CommonRumorRaw]) "common" else "peer")
     )
 
   def incrementGossipRoundSucceeded[F[_]: Monad: Metrics]: F[Unit] =

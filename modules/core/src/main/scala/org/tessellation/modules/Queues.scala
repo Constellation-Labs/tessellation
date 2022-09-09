@@ -7,8 +7,9 @@ import cats.syntax.functor._
 
 import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.domain.aci.StateChannelOutput
-import org.tessellation.schema.gossip.RumorBatch
+import org.tessellation.schema.gossip.RumorRaw
 import org.tessellation.sdk.modules.SdkQueues
+import org.tessellation.security.Hashed
 import org.tessellation.security.signature.Signed
 
 object Queues {
@@ -26,7 +27,7 @@ object Queues {
 }
 
 sealed abstract class Queues[F[_]] private {
-  val rumor: Queue[F, RumorBatch]
+  val rumor: Queue[F, Hashed[RumorRaw]]
   val stateChannelOutput: Queue[F, StateChannelOutput]
   val l1Output: Queue[F, Signed[DAGBlock]]
 }

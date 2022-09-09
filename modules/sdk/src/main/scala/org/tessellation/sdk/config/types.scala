@@ -27,8 +27,7 @@ object types {
   case class GossipDaemonConfig(
     fanout: Int,
     interval: FiniteDuration,
-    maxConcurrentRounds: Int,
-    roundTimeout: FiniteDuration
+    maxConcurrentRounds: Int
   )
 
   case class GossipConfig(
