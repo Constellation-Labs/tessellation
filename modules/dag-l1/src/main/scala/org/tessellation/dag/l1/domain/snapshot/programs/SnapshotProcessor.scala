@@ -294,7 +294,7 @@ sealed abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityPro
           }
 
         case Some(last)
-            if last.ordinal.next === globalSnapshot.ordinal && (last.height.next === globalSnapshot.height && globalSnapshot.subHeight === SubHeight.MinValue) && last.hash === globalSnapshot.lastSnapshotHash =>
+            if last.ordinal.next === globalSnapshot.ordinal && (last.height < globalSnapshot.height && globalSnapshot.subHeight === SubHeight.MinValue) && last.hash === globalSnapshot.lastSnapshotHash =>
           blockStorage.getBlocksForMajorityReconciliation(last.height, globalSnapshot.height).flatMap {
             case MajorityReconciliationData(
                   deprecatedTips,

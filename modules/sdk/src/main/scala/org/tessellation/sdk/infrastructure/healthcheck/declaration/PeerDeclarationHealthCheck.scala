@@ -70,6 +70,8 @@ object PeerDeclarationHealthCheck {
         override def startOwnRound(key: Key[K]): F[Unit] =
           createRoundId.map(HealthCheckRoundId(_, selfId)).flatMap(id => startRound(key, Set(id)))
 
+        def threshold(state: ConsensusState[K, A]) = state.facilitators.size / 2
+
         def periodic: F[Unit] =
           for {
             time <- Clock[F].realTime
@@ -86,7 +88,7 @@ object PeerDeclarationHealthCheck {
                     ): List[PeerId] =
                       state.facilitators.filter(peerId => peerDeclarations.get(peerId).flatMap(getter).isEmpty)
 
-                    state.status match {
+                    val missing = state.status match {
                       case _: CollectingFacilities[_] =>
                         peersMissingDeclaration(_.facility)
                           .map(PeerDeclarationHealthCheckKey(_, state.key, kind.Facility))
@@ -98,6 +100,8 @@ object PeerDeclarationHealthCheck {
                           .map(PeerDeclarationHealthCheckKey(_, state.key, kind.Signature))
                       case _: Finished[_] => List.empty[Key[K]]
                     }
+
+                    if (missing.size <= threshold(state)) missing else List.empty[Key[K]]
                   }
                 } else {
                   List.empty[Key[K]].pure[F]

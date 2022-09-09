@@ -44,8 +44,15 @@ object node {
     val toBroadcast: Set[NodeState] =
       Set(WaitingForDownload, DownloadInProgress, Observing, Ready, Leaving, Offline)
 
+    def is(states: Set[NodeState])(peer: Peer) = states.contains(peer.state)
+
+    def leaving: Set[NodeState] =
+      Set(Leaving)
+
+    def leaving(peers: Set[Peer]): Set[Peer] = peers.filter(peer => leaving.contains(peer.state))
+
     def absent: Set[NodeState] =
-      Set(Leaving, Offline)
+      Set(Offline)
 
     def absent(peers: Set[Peer]): Set[Peer] = peers.filter(peer => absent.contains(peer.state))
 

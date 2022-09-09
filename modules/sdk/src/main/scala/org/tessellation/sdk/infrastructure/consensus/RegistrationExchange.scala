@@ -7,3 +7,5 @@ case class RegistrationExchangeRequest[Key](
 case class RegistrationExchangeResponse[Key](
   maybeKey: Option[Key]
 )
+
+case class Deregistration[Key](key: Key)
