@@ -4,14 +4,15 @@ import cats.Order
 import cats.effect.Async
 import cats.syntax.all._
 
-import org.tessellation.ext.codecs.BinaryCodec._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.sdk.http.p2p.headers.`X-Id`
 
+import io.circe.{Decoder, Encoder}
 import org.http4s.HttpRoutes
+import org.http4s.circe.CirceEntityCodec._
 import org.http4s.dsl.Http4sDsl
 
-class ConsensusRoutes[F[_]: Async: KryoSerializer, Key: Order](
+class ConsensusRoutes[F[_]: Async: KryoSerializer, Key: Order: Encoder: Decoder](
   storage: ConsensusStorage[F, _, Key, _]
 ) extends Http4sDsl[F] {
 

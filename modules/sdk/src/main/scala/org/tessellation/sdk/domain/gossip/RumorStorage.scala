@@ -1,13 +1,17 @@
 package org.tessellation.sdk.domain.gossip
 
-import org.tessellation.schema.gossip.RumorBatch
+import org.tessellation.schema.gossip.RumorRaw
+import org.tessellation.security.Hashed
 import org.tessellation.security.hash.Hash
+import org.tessellation.security.signature.Signed
 
 trait RumorStorage[F[_]] {
 
-  def addRumors(rumors: RumorBatch): F[RumorBatch]
+  def getRumors(hashes: List[Hash]): F[List[Signed[RumorRaw]]]
 
-  def getRumors(hashes: List[Hash]): F[RumorBatch]
+  def addRumorIfNotSeen(hashedRumor: Hashed[RumorRaw]): F[Boolean]
+
+  def getRumor(hash: Hash): F[Option[Signed[RumorRaw]]]
 
   def getActiveHashes: F[List[Hash]]
 

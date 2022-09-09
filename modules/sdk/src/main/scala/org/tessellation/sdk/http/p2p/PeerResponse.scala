@@ -25,17 +25,17 @@ object PeerResponse {
       ).some
     ).addPath(path)
 
-  def apply[F[_], A](path: String, method: Method) = new {
+  def apply[F[_], G[_], A](path: String, method: Method) = new {
 
-    def apply(client: Client[F])(f: (Request[F], Client[F]) => F[A]): PeerResponse[F, A] =
+    def apply(client: Client[F])(f: (Request[F], Client[F]) => G[A]): PeerResponse[G, A] =
       Kleisli.apply { peer =>
         val req = Request[F](method = method, uri = getUri(peer, path))
         f(req, client)
       }
 
     def apply(client: Client[F], session: Session[F])(
-      f: (Request[F], Client[F]) => F[A]
-    )(implicit F: Async[F]): PeerResponse[F, A] =
+      f: (Request[F], Client[F]) => G[A]
+    )(implicit F: Async[F]): PeerResponse[G, A] =
       apply(PeerAuthMiddleware.responseTokenVerifierMiddleware[F](client, session))(f)
   }
 

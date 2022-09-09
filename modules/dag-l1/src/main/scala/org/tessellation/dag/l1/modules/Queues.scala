@@ -7,8 +7,9 @@ import cats.syntax.functor._
 
 import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.PeerBlockConsensusInput
-import org.tessellation.schema.gossip.RumorBatch
+import org.tessellation.schema.gossip.RumorRaw
 import org.tessellation.sdk.modules.SdkQueues
+import org.tessellation.security.Hashed
 import org.tessellation.security.signature.Signed
 
 object Queues {
@@ -19,14 +20,14 @@ object Queues {
       peerBlockQueue <- Queue.unbounded[F, Signed[DAGBlock]]
     } yield
       new Queues[F] {
-        val rumor: Queue[F, RumorBatch] = sdkQueues.rumor
+        val rumor: Queue[F, Hashed[RumorRaw]] = sdkQueues.rumor
         val peerBlockConsensusInput: Queue[F, Signed[PeerBlockConsensusInput]] = peerBlockConsensusInputQueue
         val peerBlock: Queue[F, Signed[DAGBlock]] = peerBlockQueue
       }
 }
 
 sealed abstract class Queues[F[_]] private {
-  val rumor: Queue[F, RumorBatch]
+  val rumor: Queue[F, Hashed[RumorRaw]]
   val peerBlockConsensusInput: Queue[F, Signed[PeerBlockConsensusInput]]
   val peerBlock: Queue[F, Signed[DAGBlock]]
 }

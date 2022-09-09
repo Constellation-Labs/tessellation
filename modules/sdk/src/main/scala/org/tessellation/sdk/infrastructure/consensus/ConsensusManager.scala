@@ -13,7 +13,6 @@ import cats.syntax.traverse._
 import cats.{Applicative, Order, Show}
 
 import scala.concurrent.duration.FiniteDuration
-import scala.reflect.ClassTag
 import scala.reflect.runtime.universe.TypeTag
 
 import org.tessellation.ext.cats.syntax.next._
@@ -27,6 +26,7 @@ import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, 
 import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto._
+import io.circe.{Decoder, Encoder}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait ConsensusManager[F[_], Key, Artifact] {
@@ -41,7 +41,7 @@ trait ConsensusManager[F[_], Key, Artifact] {
 
 object ConsensusManager {
 
-  def make[F[_]: Async: Clock, Event, Key: Show: Order: Next: TypeTag: ClassTag, Artifact <: AnyRef: Show: TypeTag](
+  def make[F[_]: Async: Clock, Event, Key: Show: Order: Next: TypeTag: Encoder: Decoder, Artifact: Show: TypeTag](
     timeTriggerInterval: FiniteDuration,
     consensusStorage: ConsensusStorage[F, Event, Key, Artifact],
     consensusStateUpdater: ConsensusStateUpdater[F, Key, Artifact],

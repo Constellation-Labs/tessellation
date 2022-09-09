@@ -16,7 +16,6 @@ import cats.syntax.show._
 import cats.syntax.traverse._
 import cats.{Applicative, Order, Show}
 
-import scala.reflect.ClassTag
 import scala.reflect.runtime.universe.TypeTag
 
 import org.tessellation.ext.crypto._
@@ -33,6 +32,7 @@ import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.{Signature, SignatureProof}
 import org.tessellation.syntax.sortedCollection._
 
+import io.circe.Encoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait ConsensusStateUpdater[F[_], Key, Artifact] {
@@ -61,7 +61,7 @@ object ConsensusStateUpdater {
 
   def make[F[
     _
-  ]: Async: Clock: KryoSerializer: SecurityProvider, Event, Key: Show: Order: Next: TypeTag: ClassTag, Artifact <: AnyRef: Show: TypeTag](
+  ]: Async: Clock: KryoSerializer: SecurityProvider, Event, Key: Show: Order: Next: TypeTag: Encoder, Artifact <: AnyRef: Show: TypeTag: Encoder](
     consensusFns: ConsensusFunctions[F, Event, Key, Artifact],
     consensusStorage: ConsensusStorage[F, Event, Key, Artifact],
     gossip: Gossip[F],

@@ -26,13 +26,14 @@ import org.tessellation.sdk.domain.healthcheck.consensus.types._
 import org.tessellation.sdk.domain.healthcheck.consensus.types.types.RoundId
 import org.tessellation.sdk.domain.healthcheck.services.HealthCheck
 
+import io.circe.Encoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 abstract class HealthCheckConsensus[
   F[_]: Async: GenUUID,
   K <: HealthCheckKey: Show,
   A <: HealthCheckStatus,
-  B <: ConsensusHealthStatus[K, A]: TypeTag,
+  B <: ConsensusHealthStatus[K, A]: TypeTag: Encoder,
   C <: HealthCheckConsensusDecision
 ](
   clusterStorage: ClusterStorage[F],

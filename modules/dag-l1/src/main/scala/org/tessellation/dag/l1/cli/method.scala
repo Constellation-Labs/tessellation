@@ -34,13 +34,12 @@ object method {
       gossip = GossipConfig(
         storage = RumorStorageConfig(
           activeRetention = 4.seconds,
-          seenRetention = 2.minutes
+          seenRetention = 1.minutes
         ),
         daemon = GossipDaemonConfig(
           fanout = 1,
           interval = 0.2.seconds,
-          maxConcurrentRounds = 4,
-          roundTimeout = 10.seconds
+          maxConcurrentRounds = 4
         )
       ),
       consensus = ConsensusConfig(

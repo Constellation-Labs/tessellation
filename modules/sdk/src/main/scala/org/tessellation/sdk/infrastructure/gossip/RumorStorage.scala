@@ -1,16 +1,17 @@
 package org.tessellation.sdk.infrastructure.gossip
 
 import cats.effect.{Async, Spawn, Temporal}
+import cats.syntax.applicative._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
 import cats.syntax.show._
 import cats.syntax.traverse._
-import cats.syntax.traverseFilter._
 
 import org.tessellation.schema.gossip._
 import org.tessellation.sdk.config.types.RumorStorageConfig
 import org.tessellation.sdk.domain.gossip.RumorStorage
+import org.tessellation.security.Hashed
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
@@ -22,12 +23,12 @@ object RumorStorage {
 
   def make[F[_]: Async](cfg: RumorStorageConfig): F[RumorStorage[F]] =
     for {
-      active <- MapRef.ofConcurrentHashMap[F, Hash, Signed[RumorBinary]]()
+      active <- MapRef.ofConcurrentHashMap[F, Hash, Signed[RumorRaw]]()
       seen <- MapRef.ofConcurrentHashMap[F, Hash, Unit]()
     } yield make(active, seen, cfg)
 
   def make[F[_]: Async](
-    active: MapRef[F, Hash, Option[Signed[RumorBinary]]],
+    active: MapRef[F, Hash, Option[Signed[RumorRaw]]],
     seen: MapRef[F, Hash, Option[Unit]],
     cfg: RumorStorageConfig
   ): RumorStorage[F] =
@@ -35,45 +36,33 @@ object RumorStorage {
 
       private val rumorLogger = Slf4jLogger.getLoggerFromName[F](rumorLoggerName)
 
-      def addRumors(rumors: RumorBatch): F[RumorBatch] =
-        for {
-          unseen <- setRumorsSeenAndGetUnseen(rumors)
-          _ <- setRumorsActive(unseen)
-        } yield unseen
-
-      def getRumors(hashes: List[Hash]): F[RumorBatch] =
+      def getRumors(hashes: List[Hash]): F[List[Signed[RumorRaw]]] =
         hashes.flatTraverse { hash =>
-          active(hash).get.map(opt => opt.map(r => List(hash -> r)).getOrElse(List.empty[HashAndRumor]))
+          active(hash).get.map(_.toList)
         }
+
+      def addRumorIfNotSeen(hashedRumor: Hashed[RumorRaw]): F[Boolean] =
+        seen(hashedRumor.hash)
+          .getAndSet(().some)
+          .map(_.isEmpty)
+          .flatTap(setRumorActive(hashedRumor).whenA(_))
+
+      def getRumor(hash: Hash): F[Option[Signed[RumorRaw]]] =
+        active(hash).get
 
       def getActiveHashes: F[List[Hash]] = active.keys
 
       def getSeenHashes: F[List[Hash]] = seen.keys
 
-      private def setRumorsSeenAndGetUnseen(rumors: RumorBatch): F[RumorBatch] =
-        for {
-          unseen <- rumors.traverseFilter {
-            case p @ (hash, _) =>
-              seen(hash).getAndSet(().some).map {
-                case Some(_) => none[HashAndRumor]
-                case None    => p.some
-              }
-          }
-        } yield unseen
+      private def setRumorActive(hashedRumor: Hashed[RumorRaw]): F[Unit] =
+        active(hashedRumor.hash).set(hashedRumor.signed.some) >> Spawn[F].start(setRetention(hashedRumor)).void
 
-      private def setRumorsActive(rumors: RumorBatch): F[Unit] =
-        rumors.traverse { case (hash, rumor) => active(hash).set(rumor.some) } >>
-          Spawn[F].start(setRetention(rumors)).void
-
-      private def setRetention(rumors: RumorBatch): F[Unit] =
+      private def setRetention(hashedRumor: Hashed[RumorRaw]): F[Unit] =
         Temporal[F].sleep(cfg.activeRetention) >>
-          rumors.traverse {
-            case (hash, _) =>
-              active(hash).set(none[Signed[PeerRumorBinary]]) >>
-                rumorLogger.info(s"Rumor deactivated {hash=${hash.show}}")
-          } >>
+          active(hashedRumor.hash).set(none[Signed[RumorRaw]]) >>
+          rumorLogger.info(s"Rumor deactivated {hash=${hashedRumor.hash.show}}") >>
           Temporal[F].sleep(cfg.seenRetention) >>
-          rumors.traverse { case (hash, _) => seen(hash).set(none[Unit]) }.void
+          seen(hashedRumor.hash).set(none[Unit])
 
     }
 

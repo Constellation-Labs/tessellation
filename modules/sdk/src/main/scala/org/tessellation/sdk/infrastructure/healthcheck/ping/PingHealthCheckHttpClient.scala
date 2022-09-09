@@ -31,7 +31,7 @@ object PingHealthCheckHttpClient {
         roundIds: Set[HealthCheckRoundId],
         ownProposal: PingConsensusHealthStatus
       ): PeerResponse[F, Option[PingConsensusHealthStatus]] =
-        PeerResponse[F, PingConsensusHealthStatus](s"healthcheck/ping", POST)(client, session) { (req, c) =>
+        PeerResponse(s"healthcheck/ping", POST)(client, session) { (req, c) =>
           c.expect[PingConsensusHealthStatus](req.withEntity((roundIds, ownProposal)))
         }.map(_.some).handleError(_ => none)
     }

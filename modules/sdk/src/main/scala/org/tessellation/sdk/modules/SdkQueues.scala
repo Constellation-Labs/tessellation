@@ -4,13 +4,14 @@ import cats.effect.Concurrent
 import cats.effect.std.Queue
 import cats.syntax.functor._
 
-import org.tessellation.schema.gossip.RumorBatch
+import org.tessellation.schema.gossip.RumorRaw
+import org.tessellation.security.Hashed
 
 object SdkQueues {
 
   def make[F[_]: Concurrent]: F[SdkQueues[F]] =
     for {
-      rumorQueue <- Queue.unbounded[F, RumorBatch]
+      rumorQueue <- Queue.unbounded[F, Hashed[RumorRaw]]
     } yield
       new SdkQueues[F] {
         val rumor = rumorQueue
@@ -18,5 +19,5 @@ object SdkQueues {
 }
 
 sealed abstract class SdkQueues[F[_]] private {
-  val rumor: Queue[F, RumorBatch]
+  val rumor: Queue[F, Hashed[RumorRaw]]
 }

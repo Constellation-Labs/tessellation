@@ -23,6 +23,7 @@ import org.tessellation.sdk.infrastructure.consensus.Consensus
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
 
+import io.circe.disjunctionCodecs._
 import org.http4s.client.Client
 
 object GlobalSnapshotConsensus {
