@@ -64,8 +64,8 @@ object ConsensusStateUpdater {
   ]: Async: Clock: KryoSerializer: SecurityProvider, Event, Key: Show: Order: Next: TypeTag: Encoder, Artifact <: AnyRef: Show: TypeTag: Encoder](
     consensusFns: ConsensusFunctions[F, Event, Key, Artifact],
     consensusStorage: ConsensusStorage[F, Event, Key, Artifact],
+    facilitatorCalculator: FacilitatorCalculator,
     gossip: Gossip[F],
-    seedlist: Option[Set[PeerId]],
     keyPair: KeyPair,
     selfId: PeerId
   ): ConsensusStateUpdater[F, Key, Artifact] = new ConsensusStateUpdater[F, Key, Artifact] {
@@ -137,8 +137,8 @@ object ConsensusStateUpdater {
           for {
             peers <- consensusStorage.getRegisteredPeers(key)
             readyPeers = peers.toSet ++ maybeLastArtifact.map(_ => selfId).toSet
-            facilitators = calculateFacilitators(
-              resources.proposedFacilitators,
+            facilitators = facilitatorCalculator.calculate(
+              resources.peerDeclarationsMap,
               readyPeers,
               resources.removedFacilitators
             )
@@ -185,11 +185,13 @@ object ConsensusStateUpdater {
     ): MaybeState = {
       state.status match {
         case CollectingFacilities(_) =>
-          calculateFacilitators(
-            resources.proposedFacilitators,
-            state.facilitators.toSet,
-            resources.removedFacilitators
-          ).some
+          facilitatorCalculator
+            .calculate(
+              resources.peerDeclarationsMap,
+              state.facilitators.toSet,
+              resources.removedFacilitators
+            )
+            .some
         case Finished(_, _) =>
           none
         case _ =>
@@ -290,18 +292,6 @@ object ConsensusStateUpdater {
 
     private def pickMajority[A: Order](proposals: List[A]): Option[A] =
       proposals.foldMap(a => Map(a -> 1)).toList.map(_.swap).maximumOption.map(_._2)
-
-    private def calculateFacilitators(
-      proposed: Set[PeerId],
-      local: Set[PeerId],
-      removed: Set[PeerId]
-    ): Set[PeerId] = {
-      val allProposed = proposed.union(local)
-      seedlist
-        .map(_.intersect(allProposed))
-        .getOrElse(allProposed)
-        .diff(removed)
-    }
 
     private def calculateRemainingFacilitators(local: Set[PeerId], removed: Set[PeerId]): Set[PeerId] =
       local.diff(removed)

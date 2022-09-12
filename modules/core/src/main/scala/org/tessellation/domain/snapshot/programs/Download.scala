@@ -54,7 +54,7 @@ sealed abstract class Download[F[_]: Async] private (
             globalSnapshotClient.getLatestOrdinal
               .run(peer)
               .flatMap { ordinal =>
-                consensus.manager.startObservingAfter(ordinal.next)
+                consensus.manager.startObservingAfter(ordinal.next, peer)
               }
         }
         .handleErrorWith { err =>

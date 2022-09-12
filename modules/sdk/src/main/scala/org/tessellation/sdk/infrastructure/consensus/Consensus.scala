@@ -59,8 +59,8 @@ object Consensus {
       stateUpdater = ConsensusStateUpdater.make[F, Event, Key, Artifact](
         consensusFns,
         storage,
+        FacilitatorCalculator.make(seedlist),
         gossip,
-        seedlist,
         keyPair,
         selfId
       )
