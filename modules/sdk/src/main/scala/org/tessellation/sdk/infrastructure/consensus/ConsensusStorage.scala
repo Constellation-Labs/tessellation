@@ -259,24 +259,15 @@ object ConsensusStorage {
           } yield bound.toMap
 
         def addFacility(peerId: PeerId, key: Key, facility: Facility): F[ConsensusResources[Artifact]] =
-          updateResources(key) { resources =>
-            val (proposedFacilitators, updatedResources) = resources
-              .focus(_.peerDeclarationsMap)
+          updateResources(key) {
+            _.focus(_.peerDeclarationsMap)
               .at(peerId)
-              .modifyA { maybePeerDeclaration =>
-                maybePeerDeclaration
-                  .getOrElse(PeerDeclarations.empty)
+              .modify {
+                _.getOrElse(PeerDeclarations.empty)
                   .focus(_.facility)
-                  .modifyA { maybeFacility =>
-                    val facility2 = maybeFacility.getOrElse(facility)
-                    (facility2.facilitators, facility2.some)
-                  }
-                  .map(_.some)
+                  .modify(_.getOrElse(facility).some)
+                  .some
               }
-
-            updatedResources
-              .focus(_.proposedFacilitators)
-              .modify(_.union(proposedFacilitators))
           }
 
         def addProposal(peerId: PeerId, key: Key, proposal: Proposal): F[ConsensusResources[Artifact]] =

@@ -18,6 +18,7 @@ import scala.reflect.runtime.universe.TypeTag
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.node.NodeState.{Observing, Ready}
+import org.tessellation.schema.peer.Peer
 import org.tessellation.schema.peer.Peer.toP2PContext
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.gossip.Gossip
@@ -31,7 +32,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait ConsensusManager[F[_], Key, Artifact] {
 
-  def startObservingAfter(lastKey: Key): F[Unit]
+  def startObservingAfter(lastKey: Key, peer: Peer): F[Unit]
   def startFacilitatingAfter(lastKey: Key, lastArtifact: Signed[Artifact]): F[Unit]
   private[consensus] def facilitateOnEvent: F[Unit]
   private[consensus] def checkForStateUpdate(key: Key)(resources: ConsensusResources[Artifact]): F[Unit]
@@ -52,15 +53,23 @@ object ConsensusManager {
   ): F[ConsensusManager[F, Key, Artifact]] = {
     val logger = Slf4jLogger.getLoggerFromClass[F](ConsensusManager.getClass)
 
+    def exchangeRegistration(peer: Peer): F[Unit] =
+      for {
+        exchangeRequest <- consensusStorage.getOwnRegistration.map(RegistrationExchangeRequest(_))
+        exchangeResponse <- consensusClient.exchangeRegistration(exchangeRequest).run(peer)
+        _ <- exchangeResponse.maybeKey.traverse(consensusStorage.registerPeer(peer.id))
+      } yield ()
+
     val manager = new ConsensusManager[F, Key, Artifact] {
 
-      def startObservingAfter(lastKey: Key): F[Unit] =
+      def startObservingAfter(lastKey: Key, peer: Peer): F[Unit] =
         Spawn[F].start {
           val observationKey = lastKey.next
           val facilitationKey = lastKey.nextN(2L)
 
-          consensusStorage.setLastKey(lastKey) >>
-            consensusStorage.setOwnRegistration(facilitationKey) >>
+          consensusStorage.setOwnRegistration(facilitationKey) >>
+            exchangeRegistration(peer) >>
+            consensusStorage.setLastKey(lastKey) >>
             consensusStorage
               .getResources(observationKey)
               .flatMap { resources =>
@@ -191,13 +200,9 @@ object ConsensusManager {
     ) >>
       Spawn[F]
         .start(clusterStorage.peerChanges.evalMap {
-          case (peerId, Some(peer)) if peer.state === NodeState.Observing =>
-            val res = for {
-              exchangeRequest <- consensusStorage.getOwnRegistration.map(RegistrationExchangeRequest(_))
-              exchangeResponse <- consensusClient.exchangeRegistration(exchangeRequest).run(peer)
-              _ <- exchangeResponse.maybeKey.traverse(consensusStorage.registerPeer(peerId))
-            } yield ()
-            res.handleErrorWith(err => logger.error(err)(s"Error exchanging consensus registration with peer ${peerId.show}"))
+          case (_, Some(peer)) if peer.state === NodeState.Observing =>
+            exchangeRegistration(peer)
+              .handleErrorWith(err => logger.error(err)(s"Error exchanging consensus registration with peer ${peer.id.show}"))
           case _ => Applicative[F].unit
         }.compile.drain)
         .as(manager)
