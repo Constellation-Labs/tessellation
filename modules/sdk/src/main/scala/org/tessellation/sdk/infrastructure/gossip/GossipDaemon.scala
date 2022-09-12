@@ -128,8 +128,7 @@ object GossipDaemon {
             .flatMap(_ => metrics.incrementGossipRoundSucceeded)
             .handleErrorWith(err =>
               logger
-                .error(err)(s"Error running gossip round {peer=${peer.show}}") >>
-                Spawn[F].start(healthcheck.triggerCheckForPeer(peer)).void
+                .error(err)(s"Error running gossip round {peer=${peer.show}}")
             )
 
         private def runGossipRound(peer: Peer): F[Unit] =
