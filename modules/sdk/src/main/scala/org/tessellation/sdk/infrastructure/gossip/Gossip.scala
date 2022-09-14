@@ -3,9 +3,8 @@ package org.tessellation.sdk.infrastructure.gossip
 import java.security.KeyPair
 
 import cats.effect.std.Queue
-import cats.effect.{Async, Clock, Ref}
+import cats.effect.{Async, Ref}
 import cats.syntax.applicative._
-import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.semigroup._
@@ -38,8 +37,7 @@ object Gossip {
   ): F[Gossip[F]] =
     for {
       counter <- Ref.of[F, PosLong](PosLong(1L))
-      time <- Clock[F].realTime
-      generation <- PosLong.from(time.toMillis).map(Generation(_)).leftMap(new RuntimeException(_)).liftTo[F]
+      generation <- Generation.make[F]
     } yield
       new Gossip[F] {
 
