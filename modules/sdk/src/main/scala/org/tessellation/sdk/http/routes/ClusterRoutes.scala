@@ -15,11 +15,14 @@ import org.tessellation.sdk.domain.collateral.Collateral
 import org.tessellation.sdk.ext.http4s.refined.RefinedRequestDecoder
 
 import com.comcast.ip4s.Host
+import io.circe.shapes._
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.dsl.Http4sDsl
 import org.http4s.server.Router
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+import shapeless._
+import shapeless.syntax.singleton._
 
 final case class ClusterRoutes[F[_]: Async](
   joining: Joining[F],
@@ -97,6 +100,11 @@ final case class ClusterRoutes[F[_]: Async](
   private val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case GET -> Root / "info" =>
       Ok(cluster.info)
+    case GET -> Root / "session" =>
+      clusterStorage.getToken.flatMap {
+        case Some(token) => Ok(("token" ->> token) :: HNil)
+        case None        => NotFound()
+      }
   }
 
   val p2pPublicRoutes: HttpRoutes[F] = Router(

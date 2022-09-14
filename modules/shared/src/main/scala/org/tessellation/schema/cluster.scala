@@ -28,9 +28,9 @@ object cluster {
     def apply(uuidString: String Refined Uuid): ClusterId = ClusterId.apply(UUID.fromString(uuidString))
   }
 
-  @derive(encoder, decoder, eqv, show, uuid)
+  @derive(encoder, decoder, eqv, show)
   @newtype
-  final case class ClusterSessionToken(value: UUID)
+  final case class ClusterSessionToken(value: Generation)
 
   @derive(decoder, encoder, show)
   case class PeerToJoin(id: PeerId, ip: Host, p2pPort: Port)
@@ -55,6 +55,7 @@ object cluster {
 
   case object SessionDoesNotExist extends NoStackTrace
   case object SessionAlreadyExists extends NoStackTrace
+  case object ClusterSessionAlreadyExists extends NoStackTrace
   case object NodeNotInCluster extends NoStackTrace
 
   trait TokenVerificationResult

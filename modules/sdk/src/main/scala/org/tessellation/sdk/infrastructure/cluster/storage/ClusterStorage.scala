@@ -1,14 +1,16 @@
 package org.tessellation.sdk.infrastructure.cluster.storage
 
-import cats.Monad
 import cats.effect.{Async, Ref}
+import cats.syntax.applicative._
+import cats.syntax.applicativeError._
 import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
 import cats.syntax.traverse._
 
-import org.tessellation.schema.cluster.{ClusterId, ClusterSessionToken}
+import org.tessellation.schema.cluster.{ClusterId, ClusterSessionAlreadyExists, ClusterSessionToken}
+import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.node
 import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
@@ -29,7 +31,7 @@ object ClusterStorage {
       session <- Ref.of[F, Option[ClusterSessionToken]](None)
     } yield make(clusterId, topic, peers, session)
 
-  def make[F[_]: Monad](
+  def make[F[_]: Async](
     clusterId: ClusterId,
     topic: Topic[F, (PeerId, Option[Peer])],
     peers: MapRef[F, PeerId, Option[Peer]],
@@ -37,11 +39,19 @@ object ClusterStorage {
   ): ClusterStorage[F] =
     new ClusterStorage[F] {
 
-      def getClusterSession: F[Option[ClusterSessionToken]] =
+      def createToken: F[ClusterSessionToken] =
+        generateToken.flatMap { generatedToken =>
+          session.modify {
+            case None        => (generatedToken.some, generatedToken.pure[F])
+            case Some(token) => (token.some, ClusterSessionAlreadyExists.raiseError[F, ClusterSessionToken])
+          }.flatMap(identity)
+        }
+
+      def getToken: F[Option[ClusterSessionToken]] =
         session.get
 
-      def setClusterSession(clusterSession: ClusterSessionToken): F[Unit] =
-        session.set(clusterSession.some)
+      def setToken(token: ClusterSessionToken): F[Unit] =
+        session.set(token.some)
 
       def getClusterId: ClusterId = clusterId
 
@@ -86,6 +96,9 @@ object ClusterStorage {
         else
           (newValue, (peerId, newValue).some)
       }
+
+      private def generateToken: F[ClusterSessionToken] =
+        Generation.make[F].map(ClusterSessionToken(_))
     }
 
 }

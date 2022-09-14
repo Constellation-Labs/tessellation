@@ -223,7 +223,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
           Applicative[F].unit
         } else {
           clusterStorage
-            .setClusterSession(registrationRequest.clusterSession)
+            .setToken(registrationRequest.clusterSession)
             .flatMap(_ => cluster.getRegistrationRequest)
             .map(JoinRequest.apply)
             .flatMap(signClient.joinRequest(_).run(withPeer))
@@ -269,7 +269,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
           Applicative[F].unit
         else ClusterIdDoesNotMatch.raiseError[F, Unit]
 
-      ownClusterSession <- clusterStorage.getClusterSession
+      ownClusterSession <- clusterStorage.getToken
 
       _ <- ownClusterSession match {
         case Some(session) if session === registrationRequest.clusterSession => Applicative[F].unit
