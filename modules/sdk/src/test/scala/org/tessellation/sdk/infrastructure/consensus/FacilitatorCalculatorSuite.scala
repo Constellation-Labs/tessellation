@@ -29,32 +29,34 @@ object FacilitatorCalculatorSuite extends FunSuite with Checkers {
 
   test("calculate should correctly discover facilitators") {
 
-    val result = FacilitatorCalculator.make(seedlist).calculate(
-      Map(
-        peerB -> PeerDeclarations(
-          facility = Facility(Map.empty, Set(peerC, peerD), None).some,
-          proposal = None,
-          signature = None
+    val result = FacilitatorCalculator
+      .make(seedlist)
+      .calculate(
+        Map(
+          peerB -> PeerDeclarations(
+            facility = Facility(Map.empty, Set(peerC, peerD), None).some,
+            proposal = None,
+            signature = None
+          ),
+          peerC -> PeerDeclarations(
+            facility = Facility(Map.empty, Set(peerE, peerF), None).some,
+            proposal = None,
+            signature = None
+          ),
+          peerD -> PeerDeclarations(
+            facility = Facility(Map.empty, Set(peerE, peerF, peerG), None).some,
+            proposal = None,
+            signature = None
+          ),
+          peerG -> PeerDeclarations(
+            facility = Facility(Map.empty, Set(peerH, peerI, peerJ, peerK), None).some,
+            proposal = None,
+            signature = None
+          )
         ),
-        peerC -> PeerDeclarations(
-          facility = Facility(Map.empty, Set(peerE, peerF), None).some,
-          proposal = None,
-          signature = None
-        ),
-        peerD -> PeerDeclarations(
-          facility = Facility(Map.empty, Set(peerE, peerF, peerG), None).some,
-          proposal = None,
-          signature = None
-        ),
-        peerG -> PeerDeclarations(
-          facility = Facility(Map.empty, Set(peerH, peerI, peerJ, peerK), None).some,
-          proposal = None,
-          signature = None
-        )
-      ),
-      Set(peerA, peerB),
-      Set(peerI, peerJ)
-    )
+        Set(peerA, peerB),
+        Set(peerI, peerJ)
+      )
 
     val expected = Set(peerA, peerB, peerC, peerD, peerE, peerF, peerG, peerH)
 
