@@ -6,6 +6,7 @@ import cats.{Order, Show}
 
 import scala.reflect.runtime.universe.{TypeTag, typeOf}
 
+import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.security.Encodable
 import org.tessellation.security.hash.Hash
@@ -25,11 +26,11 @@ import io.estatico.newtype.ops._
 object gossip {
 
   @derive(arbitrary, order, show, encoder, decoder)
-  case class Ordinal(generation: PosLong, counter: PosLong)
+  case class Ordinal(generation: Generation, counter: PosLong)
 
   object Ordinal {
 
-    val MinValue: Ordinal = Ordinal(PosLong.MinValue, PosLong.MinValue)
+    val MinValue: Ordinal = Ordinal(Generation.MinValue, PosLong.MinValue)
 
     implicit val maxMonoid: Monoid[Ordinal] = Monoid.instance(MinValue, (a, b) => Order[Ordinal].max(a, b))
 
@@ -82,7 +83,7 @@ object gossip {
   ) extends RumorRaw {
     override def toEncode: AnyRef =
       content.noSpacesSortKeys ++ contentType.coerce[String] ++ origin.coerce[Hex].coerce[String] ++ ordinal.counter
-        .toString() ++ ordinal.generation.toString()
+        .toString() ++ ordinal.generation.value.toString()
   }
 
   object PeerRumorRaw {
