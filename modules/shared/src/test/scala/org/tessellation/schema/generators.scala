@@ -9,6 +9,7 @@ import org.tessellation.schema.ID.Id
 import org.tessellation.schema.address.{Address, DAGAddressRefined}
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.cluster.SessionToken
+import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.schema.transaction._
@@ -57,13 +58,16 @@ object generators {
   val nodeStateGen: Gen[NodeState] =
     Gen.oneOf(NodeState.all)
 
+  val generationGen: Gen[Generation] =
+    Arbitrary.arbitrary[PosLong].map(Generation(_))
+
   val peerGen: Gen[Peer] =
     for {
       i <- peerIdGen
       h <- hostGen
       p <- portGen
       p2 <- portGen
-      s <- Gen.uuid.map(SessionToken.apply)
+      s <- generationGen.map(SessionToken.apply)
       st <- nodeStateGen
     } yield Peer(i, h, p, p2, s, st)
 

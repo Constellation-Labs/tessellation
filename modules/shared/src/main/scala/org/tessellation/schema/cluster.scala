@@ -5,6 +5,7 @@ import java.util.UUID
 import scala.util.control.NoStackTrace
 
 import org.tessellation.optics.uuid
+import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.{P2PContext, PeerId}
 
@@ -48,9 +49,9 @@ object cluster {
   case class PeerHostPortInUse(host: Host, p2pPort: Port) extends NoStackTrace
   case class PeerNotInSeedlist(id: PeerId) extends NoStackTrace
 
-  @derive(decoder, encoder, eqv, show, uuid)
+  @derive(decoder, encoder, eqv, show)
   @newtype
-  case class SessionToken(value: UUID)
+  case class SessionToken(value: Generation)
 
   case object SessionDoesNotExist extends NoStackTrace
   case object SessionAlreadyExists extends NoStackTrace

@@ -8,17 +8,16 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
 
-import org.tessellation.effects.GenUUID
 import org.tessellation.schema.cluster.{SessionAlreadyExists, SessionToken}
-import org.tessellation.schema.uid
+import org.tessellation.schema.generation.Generation
 import org.tessellation.sdk.domain.cluster.storage.SessionStorage
 
 object SessionStorage {
 
-  def make[F[_]: Async: GenUUID]: F[SessionStorage[F]] =
+  def make[F[_]: Async]: F[SessionStorage[F]] =
     Ref.of[F, Option[SessionToken]](none).map(make(_))
 
-  def make[F[_]: Async: GenUUID](sessionToken: Ref[F, Option[SessionToken]]): SessionStorage[F] =
+  def make[F[_]: Async](sessionToken: Ref[F, Option[SessionToken]]): SessionStorage[F] =
     new SessionStorage[F] {
 
       def createToken: F[SessionToken] =
@@ -34,6 +33,6 @@ object SessionStorage {
       def clearToken: F[Unit] = sessionToken.set(none)
 
       private def generateToken: F[SessionToken] =
-        uid.make[F, SessionToken]
+        Generation.make[F].map(SessionToken(_))
     }
 }
