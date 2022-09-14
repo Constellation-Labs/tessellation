@@ -61,12 +61,13 @@ object PeerDiscoverySuite extends SimpleIOSuite with Checkers {
 
       override def peerChanges: fs2.Stream[IO, (PeerId, Option[Peer])] = ???
 
-      override def setClusterSession(token: cluster.ClusterSessionToken): IO[Unit] = ???
+      override def setToken(token: cluster.ClusterSessionToken): IO[Unit] = ???
 
-      override def getClusterSession: IO[Option[cluster.ClusterSessionToken]] = ???
+      override def getToken: IO[Option[cluster.ClusterSessionToken]] = ???
 
       override def getClusterId: cluster.ClusterId = ???
 
+      override def createToken: IO[cluster.ClusterSessionToken] = ???
     }
 
     PeerDiscovery.make(clusterClient, clusterStorage, nodeId)

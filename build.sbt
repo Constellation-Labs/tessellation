@@ -255,6 +255,7 @@ lazy val sdk = (project in file("modules/sdk"))
       Libraries.circeGeneric,
       Libraries.circeParser,
       Libraries.circeRefined,
+      Libraries.circeShapes,
       Libraries.derevoCore,
       Libraries.derevoCats,
       Libraries.derevoCirce,

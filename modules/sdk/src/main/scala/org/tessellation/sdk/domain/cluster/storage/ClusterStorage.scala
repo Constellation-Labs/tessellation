@@ -17,7 +17,8 @@ trait ClusterStorage[F[_]] {
   def removePeer(id: PeerId): F[Unit]
   def removePeers(ids: Set[PeerId]): F[Unit]
   def peerChanges: Stream[F, (PeerId, Option[Peer])]
-  def setClusterSession(token: ClusterSessionToken): F[Unit]
-  def getClusterSession: F[Option[ClusterSessionToken]]
+  def createToken: F[ClusterSessionToken]
+  def getToken: F[Option[ClusterSessionToken]]
+  def setToken(token: ClusterSessionToken): F[Unit]
   def getClusterId: ClusterId
 }
