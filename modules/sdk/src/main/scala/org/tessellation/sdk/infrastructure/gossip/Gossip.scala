@@ -15,6 +15,7 @@ import scala.reflect.runtime.universe.TypeTag
 
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.gossip._
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.gossip.Gossip
@@ -38,7 +39,7 @@ object Gossip {
     for {
       counter <- Ref.of[F, PosLong](PosLong(1L))
       time <- Clock[F].realTime
-      generation <- PosLong.from(time.toMillis).leftMap(new RuntimeException(_)).liftTo[F]
+      generation <- PosLong.from(time.toMillis).map(Generation(_)).leftMap(new RuntimeException(_)).liftTo[F]
     } yield
       new Gossip[F] {
 
