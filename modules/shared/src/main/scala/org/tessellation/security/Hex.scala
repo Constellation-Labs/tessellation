@@ -52,7 +52,7 @@ object hex {
         }
       } yield pk
 
-    def shortValue: String = value.substring(0, 8)
+    def shortValue: String = value.take(8)
   }
 
   object Hex {
