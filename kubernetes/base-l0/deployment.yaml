@@ -1,0 +1,118 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: validator-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      node: validator
+  template:
+    metadata:
+      labels:
+        node: validator
+    spec:
+      containers:
+        - name: validator
+          image: validator
+          ports:
+            - containerPort: 9000
+            - containerPort: 9001
+            - containerPort: 9002
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"
+          livenessProbe:
+            httpGet:
+              path: /node/health
+              port: 9000
+            initialDelaySeconds: 60
+          readinessProbe:
+            httpGet:
+              path: /node/health
+              port: 9000
+            initialDelaySeconds: 15
+          envFrom:
+            - configMapRef:
+                name: validator-config
+          env:
+            - name: CL_EXTERNAL_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: CL_COLLATERAL
+              value: "0"
+#            - name: CL_REPORTED_PUBLIC_HTTP_PORT
+#              value: "9010"
+            - name: CL_REPORTED_P2P_HTTP_PORT
+              value: "8080"
+        - name: mitmproxy
+          image: mitmproxy/mitmproxy:latest
+          ports:
+            - containerPort: 8080
+            - containerPort: 8081
+          args: ["mitmweb", "--web-host", "0.0.0.0", "--mode", "reverse:http://localhost:9001"]
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: initial-validator-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      node: initial-validator
+  template:
+    metadata:
+      labels:
+        node: initial-validator
+    spec:
+      containers:
+        - name: initial-validator
+          image: validator
+          ports:
+            - containerPort: 9000
+            - containerPort: 9001
+            - containerPort: 9002
+          resources:
+            requests:
+              memory: "1Gi"
+              cpu: "500m"
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"
+          livenessProbe:
+            httpGet:
+              path: /node/health
+              port: 9000
+            initialDelaySeconds: 60
+          readinessProbe:
+            httpGet:
+              path: /node/health
+              port: 9000
+            initialDelaySeconds: 15
+          envFrom:
+            - configMapRef:
+                name: validator-config
+          env:
+            - name: CL_EXTERNAL_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: INITIAL_VALIDATOR
+              value: "1"
+            - name: CL_COLLATERAL
+              value: "0"
+            - name: CL_REPORTED_P2P_HTTP_PORT
+              value: "8080"
+        - name: mitmproxy
+          image: mitmproxy/mitmproxy:latest
+          ports:
+            - containerPort: 8080
+            - containerPort: 8081
+          args: [ "mitmweb", "--web-host", "0.0.0.0", "--mode", "reverse:http://localhost:9001" ]

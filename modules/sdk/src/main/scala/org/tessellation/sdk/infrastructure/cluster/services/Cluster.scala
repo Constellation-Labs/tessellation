@@ -22,6 +22,7 @@ import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
+import com.comcast.ip4s.Port
 import fs2.concurrent.SignallingRef
 
 object Cluster {
@@ -57,8 +58,10 @@ object Cluster {
           RegistrationRequest(
             selfId,
             httpConfig.externalIp,
-            httpConfig.publicHttp.port,
-            httpConfig.p2pHttp.port,
+            sys.env.get("CL_REPORTED_PUBLIC_HTTP_PORT").flatMap(Port.fromString).getOrElse(httpConfig.publicHttp.port),
+            sys.env.get("CL_REPORTED_P2P_HTTP_PORT").flatMap(Port.fromString).getOrElse(httpConfig.p2pHttp.port),
+//            httpConfig.publicHttp.port,
+//            httpConfig.p2pHttp.port,
             session,
             clusterSession,
             clusterId,

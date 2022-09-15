@@ -21,7 +21,7 @@ then
 else
     export CL_KEYSTORE=key.p12
     java -jar keytool.jar generate
-    ./await-join.sh \
+    false && ./await-join.sh \
         \$L0_INITIAL_VALIDATOR_SERVICE_HOST \
         \$L0_INITIAL_VALIDATOR_SERVICE_PORT_PUBLIC \
         \$L0_INITIAL_VALIDATOR_SERVICE_PORT_P2P \

@@ -279,9 +279,9 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
           LocalHostNotPermitted.raiseError[F, Unit]
         }
 
-      _ <- remoteAddress.fold(Applicative[F].unit)(ra =>
-        Applicative[F].unlessA(ip.compare(ra) == 0)(InvalidRemoteAddress.raiseError[F, Unit])
-      )
+//      _ <- remoteAddress.fold(Applicative[F].unit)(ra =>
+//        if (ip.compare(ra) == 0) Applicative[F].unit else InvalidRemoteAddress.raiseError[F, Unit]
+//      )
 
       _ <- Applicative[F].unlessA(registrationRequest.id != selfId)(IdDuplicationFound.raiseError[F, Unit])
 

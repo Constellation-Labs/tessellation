@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: initial-validator
+spec:
+  type: NodePort
+  ports:
+    - port: 9000
+      name: public
+    - port: 9001
+      name: p2p
+    - port: 9002
+      name: cli
+  selector:
+    node: initial-validator
