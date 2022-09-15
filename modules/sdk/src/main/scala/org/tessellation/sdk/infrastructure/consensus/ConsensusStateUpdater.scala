@@ -6,6 +6,7 @@ import cats.data.NonEmptySet
 import cats.effect.Async
 import cats.effect.kernel.Clock
 import cats.kernel.Next
+import cats.syntax.alternative._
 import cats.syntax.applicative._
 import cats.syntax.flatMap._
 import cats.syntax.foldable._
@@ -29,7 +30,7 @@ import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, 
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.signature.signature.{Signature, SignatureProof}
+import org.tessellation.security.signature.signature.{Signature, SignatureProof, verifySignatureProof}
 import org.tessellation.syntax.sortedCollection._
 
 import io.circe.Encoder
@@ -267,16 +268,28 @@ object ConsensusStateUpdater {
                 .flatMap(peerDeclaration => peerDeclaration.signature.map(signature => (peerId, signature.signature)))
             }.map(_.map { case (id, signature) => SignatureProof(PeerId._Id.get(id), signature) }.toSet)
 
-          val maybeSignedArtifact = for {
-            allSignatures <- maybeAllSignatures
-            allSignaturesNel <- NonEmptySet.fromSet(allSignatures.toSortedSet)
-            majorityArtifact <- resources.artifacts.get(majorityHash)
-          } yield Signed(majorityArtifact, allSignaturesNel)
-
-          maybeSignedArtifact.traverse { signedArtifact =>
-            val newState = state.copy(status = Finished[Artifact](signedArtifact, majorityTrigger))
-            val effect = consensusFns.consumeSignedMajorityArtifact(signedArtifact)
-            (newState, effect).pure[F]
+          maybeAllSignatures.traverse { allSignatures =>
+            allSignatures.toList
+              .traverse(sp => verifySignatureProof(majorityHash, sp).map(Either.cond(_, sp, sp)))
+              .map(_.separate)
+              .flatMap {
+                case (invalid, valid) =>
+                  logger
+                    .error(
+                      s"Not all signatures are valid for majority artifact with hash ${majorityHash.show}. Valid count: ${valid.size} invalid count: ${invalid.size}"
+                    )
+                    .whenA(invalid.nonEmpty)
+                    .as(valid)
+              }
+          }.map { maybeOnlyValidSignatures =>
+            for {
+              validSignatures <- maybeOnlyValidSignatures
+              validSignaturesNel <- NonEmptySet.fromSet(validSignatures.toSortedSet)
+              majorityArtifact <- resources.artifacts.get(majorityHash)
+              signedArtifact = Signed(majorityArtifact, validSignaturesNel)
+              newState = state.copy(status = Finished[Artifact](signedArtifact, majorityTrigger))
+              effect = consensusFns.consumeSignedMajorityArtifact(signedArtifact)
+            } yield (newState, effect)
           }
         case Finished(_, _) =>
           none[(ConsensusState[Key, Artifact], F[Unit])].pure[F]

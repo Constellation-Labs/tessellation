@@ -61,7 +61,7 @@ object signature {
 
   }
 
-  private[security] def verifySignatureProof[F[_]: Async: SecurityProvider](
+  def verifySignatureProof[F[_]: Async: SecurityProvider](
     hash: Hash,
     signatureProof: SignatureProof
   ): F[Boolean] = {
