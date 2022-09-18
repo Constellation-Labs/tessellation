@@ -7,7 +7,6 @@ import cats.syntax.functor._
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.sdk.config.types.SdkConfig
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
-import org.tessellation.sdk.domain.gossip.RumorStorage
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.infrastructure.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tessellation.sdk.infrastructure.gossip.RumorStorage

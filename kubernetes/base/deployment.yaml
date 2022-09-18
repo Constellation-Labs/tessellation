@@ -16,26 +16,29 @@ spec:
         - name: validator
           image: validator
           ports:
-            - containerPort: 9000
-            - containerPort: 9001
-            - containerPort: 9002
+            - name: public
+              containerPort: 9000
+            - name: p2p
+              containerPort: 9001
+            - name: cli
+              containerPort: 9002
           resources:
             requests:
               memory: "1Gi"
-              cpu: "500m"
+              cpu: "1000m"
             limits:
               memory: "4Gi"
               cpu: "2000m"
           livenessProbe:
             httpGet:
               path: /node/health
-              port: 9000
-            initialDelaySeconds: 60
-          readinessProbe:
+              port: public
+          startupProbe:
             httpGet:
               path: /node/health
-              port: 9000
-            initialDelaySeconds: 15
+              port: public
+            failureThreshold: 30
+            periodSeconds: 10
           envFrom:
             - configMapRef:
                 name: validator-config
@@ -65,26 +68,33 @@ spec:
         - name: initial-validator
           image: validator
           ports:
-            - containerPort: 9000
-            - containerPort: 9001
-            - containerPort: 9002
+            - name: public
+              containerPort: 9000
+            - name: p2p
+              containerPort: 9001
+            - name: cli
+              containerPort: 9002
           resources:
             requests:
               memory: "1Gi"
-              cpu: "500m"
+              cpu: "1000m"
             limits:
               memory: "4Gi"
               cpu: "2000m"
           livenessProbe:
             httpGet:
               path: /node/health
-              port: 9000
-            initialDelaySeconds: 60
+              port: public
           readinessProbe:
             httpGet:
               path: /node/health
-              port: 9000
-            initialDelaySeconds: 15
+              port: public
+          startupProbe:
+            httpGet:
+              path: /node/health
+              port: public
+            failureThreshold: 30
+            periodSeconds: 10
           envFrom:
             - configMapRef:
                 name: validator-config

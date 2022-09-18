@@ -1,7 +1,5 @@
 package org.tessellation.sdk.infrastructure.gossip
 
-import java.util.concurrent.TimeUnit
-
 import cats.Monad
 import cats.syntax.all._
 
@@ -46,7 +44,7 @@ object metrics {
   def incrementGossipRoundSucceeded[F[_]: Monad: Metrics]: F[Unit] =
     Metrics[F].incrementCounter("dag_gossip_round_succeeded_total")
 
-  def updateRoundDurationSum[F[_]: Monad: Metrics](duration: FiniteDuration): F[Unit] =
-    Metrics[F].incrementCounterBy("dag_gossip_round_duration_seconds_sum", duration.toUnit(TimeUnit.SECONDS))
+  def recordRoundDuration[F[_]: Monad: Metrics](duration: FiniteDuration, roundLabel: String): F[Unit] =
+    Metrics[F].recordTime("dag_gossip_round_duration", duration, Seq(("round_label", roundLabel)))
 
 }

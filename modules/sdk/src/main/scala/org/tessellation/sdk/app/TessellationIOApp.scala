@@ -16,6 +16,7 @@ import org.tessellation.ext.kryo._
 import org.tessellation.keytool.KeyStoreUtils
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.cluster.ClusterId
+import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.cli.CliMethod
 import org.tessellation.sdk.http.p2p.SdkP2PClient
@@ -89,6 +90,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                       for {
                         _ <- IO(System.setProperty("self_id", selfId.show)).asResource
                         _ <- logger.info(s"Self peerId: ${selfId}").asResource
+                        _generation <- Generation.make[IO].asResource
                         versionHash <- version.hash.liftTo[IO].asResource
                         _seedlist <- method.seedlistPath
                           .fold(none[Set[PeerId]].pure[IO])(SeedlistLoader.make[IO].load(_).map(_.some))
@@ -105,7 +107,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                         p2pClient = SdkP2PClient.make[IO](res.client, session)
                         queues <- SdkQueues.make[IO].asResource
                         services <- SdkServices
-                          .make[IO](cfg, selfId, _keyPair, storages, queues, session, _seedlist, _restartSignal, versionHash)
+                          .make[IO](cfg, selfId, _generation, _keyPair, storages, queues, session, _seedlist, _restartSignal, versionHash)
                           .asResource
 
                         programs <- SdkPrograms
@@ -120,6 +122,7 @@ abstract class TessellationIOApp[A <: CliMethod](
 
                           val keyPair = _keyPair
                           val seedlist = _seedlist
+                          val generation = _generation
 
                           val sdkResources = res
                           val sdkP2PClient = p2pClient

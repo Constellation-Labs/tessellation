@@ -12,8 +12,8 @@ import org.tessellation.infrastructure.trust.storage.TrustStorage
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tessellation.sdk.domain.collateral.LatestBalances
-import org.tessellation.sdk.domain.gossip.RumorStorage
 import org.tessellation.sdk.domain.node.NodeStorage
+import org.tessellation.sdk.infrastructure.gossip.RumorStorage
 import org.tessellation.sdk.modules.SdkStorages
 import org.tessellation.security.hash.Hash
 

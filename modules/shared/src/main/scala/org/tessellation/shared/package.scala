@@ -36,8 +36,6 @@ package object shared {
     classOf[Signed[_]] -> 306,
     classOf[AddressCache] -> 307,
     classOf[PeerRumorRaw] -> 308,
-    classOf[RumorOfferResponse] -> 310,
-    classOf[RumorInquiryRequest] -> 311,
     NodeState.Initial.getClass -> 313,
     NodeState.ReadyToJoin.getClass -> 314,
     NodeState.LoadingGenesis.getClass -> 315,

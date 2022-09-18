@@ -7,7 +7,7 @@ import org.tessellation.ext.refined._
 import com.comcast.ip4s.{Host, Port}
 import eu.timepit.refined.numeric.{NonNegative, Positive}
 import eu.timepit.refined.types.numeric._
-import io.circe.{Decoder, Encoder}
+import io.circe._
 
 package object schema extends OrphanInstances
 
@@ -37,6 +37,12 @@ trait OrphanInstances {
   implicit val posLongEncoder: Encoder[PosLong] =
     encoderOf[Long, Positive]
 
+  implicit val posLongKeyEncoder: KeyEncoder[PosLong] =
+    keyEncoderOf[Long, Positive]
+
+  implicit val posLongKeyDecoder: KeyDecoder[PosLong] =
+    keyDecoderOf[Long, Positive]
+
   implicit val posLongDecoder: Decoder[PosLong] =
     decoderOf[Long, Positive]
 
@@ -45,6 +51,21 @@ trait OrphanInstances {
 
   implicit val nonNegLongDecoder: Decoder[NonNegLong] =
     decoderOf[Long, NonNegative]
+
+  implicit val nonNegLongKeyEncoder: KeyEncoder[NonNegLong] =
+    keyEncoderOf[Long, NonNegative]
+
+  implicit val nonNegLongKeyDecoder: KeyDecoder[NonNegLong] =
+    keyDecoderOf[Long, NonNegative]
+
+  implicit def tupleKeyEncoder[A, B](implicit A: KeyEncoder[A], B: KeyEncoder[B]): KeyEncoder[(A, B)] =
+    KeyEncoder.instance[(A, B)] { case (a, b) => A(a) + ":" + B(b) }
+
+  implicit def tupleKeyDecoder[A, B](implicit A: KeyDecoder[A], B: KeyDecoder[B]): KeyDecoder[(A, B)] =
+    KeyDecoder.instance[(A, B)] {
+      case s"$as:$bs" => A(as).flatMap(a => B(bs).map(b => a -> b))
+      case _          => None
+    }
 
   implicit val nonNegLongEq: Eq[NonNegLong] =
     eqOf[Long, NonNegative]

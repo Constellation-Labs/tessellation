@@ -6,6 +6,7 @@ import cats.effect.kernel.Async
 import cats.syntax.functor._
 
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.config.types.SdkConfig
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
@@ -23,6 +24,7 @@ object SdkServices {
   def make[F[_]: Async: KryoSerializer: SecurityProvider: Metrics](
     cfg: SdkConfig,
     nodeId: PeerId,
+    generation: Generation,
     keyPair: KeyPair,
     storages: SdkStorages[F],
     queues: SdkQueues[F],
@@ -46,7 +48,7 @@ object SdkServices {
       )
 
     for {
-      gossip <- Gossip.make[F](queues.rumor, nodeId, keyPair)
+      gossip <- Gossip.make[F](queues.rumor, nodeId, generation, keyPair)
     } yield
       new SdkServices[F](
         cluster = cluster,

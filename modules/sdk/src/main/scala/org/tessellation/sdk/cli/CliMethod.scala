@@ -38,13 +38,21 @@ trait CliMethod {
 
   val gossipConfig: GossipConfig = GossipConfig(
     storage = RumorStorageConfig(
-      activeRetention = 4.seconds,
-      seenRetention = 1.minutes
+      peerRumorsCapacity = 50L,
+      activeCommonRumorsCapacity = 20L,
+      seenCommonRumorsCapacity = 50L
     ),
     daemon = GossipDaemonConfig(
-      fanout = 1,
-      interval = 0.2.seconds,
-      maxConcurrentRounds = 4
+      peerRound = GossipRoundConfig(
+        fanout = 1,
+        interval = 0.2.seconds,
+        maxConcurrentRounds = 4
+      ),
+      commonRound = GossipRoundConfig(
+        fanout = 1,
+        interval = 0.5.seconds,
+        maxConcurrentRounds = 2
+      )
     )
   )
 
