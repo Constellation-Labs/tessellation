@@ -21,9 +21,15 @@ import org.typelevel.jawn.fs2._
 
 trait GossipClient[F[_]] {
 
-  def getOffer: PeerResponse[F, RumorOfferResponse]
+  def queryPeerRumors(request: PeerRumorInquiryRequest): PeerResponse[Stream[F, *], Signed[PeerRumorRaw]]
 
-  def sendInquiry(request: RumorInquiryRequest): PeerResponse[Stream[F, *], Signed[RumorRaw]]
+  def getInitialPeerRumors: PeerResponse[Stream[F, *], Signed[PeerRumorRaw]]
+
+  def getCommonRumorOffer: PeerResponse[F, CommonRumorOfferResponse]
+
+  def queryCommonRumors(request: QueryCommonRumorsRequest): PeerResponse[Stream[F, *], Signed[CommonRumorRaw]]
+
+  def getInitialCommonRumorHashes: PeerResponse[F, CommonRumorInitResponse]
 
 }
 
@@ -34,15 +40,35 @@ object GossipClient {
 
       implicit val facade: Facade[Json] = new CirceSupportParser(None, false).facade
 
-      def getOffer: PeerResponse[F, RumorOfferResponse] =
-        PeerResponse("gossip/offer", GET)(client, session) { (req, c) =>
-          c.expect[RumorOfferResponse](req.withEmptyBody)
-        }
-      def sendInquiry(request: RumorInquiryRequest): PeerResponse[Stream[F, *], Signed[RumorRaw]] =
-        PeerResponse(s"gossip/inquiry", POST)(client, session) { (req, c) =>
+      def queryPeerRumors(request: PeerRumorInquiryRequest): PeerResponse[Stream[F, *], Signed[PeerRumorRaw]] =
+        PeerResponse("rumors/peer/query", POST)(client, session) { (req, c) =>
           c.stream(req.withEntity(request)).flatMap { resp =>
-            resp.body.chunks.parseJsonStream[Json].evalMap(_.as[Signed[RumorRaw]].liftTo[F])
+            resp.body.chunks.parseJsonStream[Json].evalMap(_.as[Signed[PeerRumorRaw]].liftTo[F])
           }
+        }
+
+      def getInitialPeerRumors: PeerResponse[Stream[F, *], Signed[PeerRumorRaw]] =
+        PeerResponse("rumors/peer/init", POST)(client, session) { (req, c) =>
+          c.stream(req.withEmptyBody).flatMap { resp =>
+            resp.body.chunks.parseJsonStream[Json].evalMap(_.as[Signed[PeerRumorRaw]].liftTo[F])
+          }
+        }
+
+      def getCommonRumorOffer: PeerResponse[F, CommonRumorOfferResponse] =
+        PeerResponse("rumors/common/offer", GET)(client, session) { (req, c) =>
+          c.expect[CommonRumorOfferResponse](req.withEmptyBody)
+        }
+
+      def queryCommonRumors(request: QueryCommonRumorsRequest): PeerResponse[Stream[F, *], Signed[CommonRumorRaw]] =
+        PeerResponse("rumors/common/query", POST)(client, session) { (req, c) =>
+          c.stream(req.withEntity(request)).flatMap { resp =>
+            resp.body.chunks.parseJsonStream[Json].evalMap(_.as[Signed[CommonRumorRaw]].liftTo[F])
+          }
+        }
+
+      def getInitialCommonRumorHashes: PeerResponse[F, CommonRumorInitResponse] =
+        PeerResponse("rumors/common/init", GET)(client, session) { (req, c) =>
+          c.expect[CommonRumorInitResponse](req.withEmptyBody)
         }
     }
 }

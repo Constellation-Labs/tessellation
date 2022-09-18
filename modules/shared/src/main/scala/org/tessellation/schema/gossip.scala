@@ -1,6 +1,7 @@
 package org.tessellation.schema
 
-import cats.kernel.Monoid
+import cats.kernel.{Monoid, Next, PartialOrder}
+import cats.syntax.monoid._
 import cats.syntax.show._
 import cats.{Order, Show}
 
@@ -14,9 +15,11 @@ import org.tessellation.security.hex.Hex
 import org.tessellation.security.signature.Signed
 
 import derevo.cats.{order, show}
-import derevo.circe.magnolia.{decoder, encoder}
+import derevo.circe.magnolia._
 import derevo.derive
 import derevo.scalacheck.arbitrary
+import eu.timepit.refined.auto._
+import eu.timepit.refined.cats._
 import eu.timepit.refined.scalacheck.numeric._
 import eu.timepit.refined.types.numeric.PosLong
 import io.circe.Json
@@ -26,11 +29,26 @@ import io.estatico.newtype.ops._
 object gossip {
 
   @derive(arbitrary, order, show, encoder, decoder)
-  case class Ordinal(generation: Generation, counter: PosLong)
+  @newtype
+  case class Counter(value: PosLong)
+
+  object Counter {
+
+    val MinValue: Counter = Counter(PosLong.MinValue)
+
+    implicit val next: Next[Counter] = new Next[Counter] {
+      override def next(a: Counter): Counter = Counter(a.value |+| 1L)
+
+      override def partialOrder: PartialOrder[Counter] = Order[Counter]
+    }
+  }
+
+  @derive(arbitrary, order, show, encoder, decoder)
+  case class Ordinal(generation: Generation, counter: Counter)
 
   object Ordinal {
 
-    val MinValue: Ordinal = Ordinal(Generation.MinValue, PosLong.MinValue)
+    val MinValue: Ordinal = Ordinal(Generation.MinValue, Counter.MinValue)
 
     implicit val maxMonoid: Monoid[Ordinal] = Monoid.instance(MinValue, (a, b) => Order[Ordinal].max(a, b))
 
@@ -64,6 +82,7 @@ object gossip {
     }
   }
 
+  @derive(encoder, decoder)
   final case class CommonRumorRaw(
     content: Json,
     contentType: ContentType
@@ -75,6 +94,7 @@ object gossip {
     implicit val show: Show[CommonRumorRaw] = (t: CommonRumorRaw) => s"CommonRumorRaw(contentType=${t.contentType.show})"
   }
 
+  @derive(encoder, decoder)
   final case class PeerRumorRaw(
     origin: PeerId,
     ordinal: Ordinal,
@@ -94,13 +114,23 @@ object gossip {
   case class UnexpectedRumorClass(rumor: RumorRaw) extends Throwable(s"Unexpected rumor class ${rumor.show}")
 
   @derive(encoder, decoder)
-  case class RumorOfferResponse(
-    offer: List[Hash]
+  case class PeerRumorInquiryRequest(
+    headCounters: Map[(PeerId, Generation), Counter]
   )
 
   @derive(encoder, decoder)
-  case class RumorInquiryRequest(
-    inquiry: List[Hash]
+  case class CommonRumorOfferResponse(
+    offer: Set[Hash]
+  )
+
+  @derive(encoder, decoder)
+  case class QueryCommonRumorsRequest(
+    query: Set[Hash]
+  )
+
+  @derive(encoder, decoder)
+  case class CommonRumorInitResponse(
+    seen: Set[Hash]
   )
 
 }

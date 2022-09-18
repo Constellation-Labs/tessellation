@@ -9,7 +9,7 @@ import eu.timepit.refined.auto._
 import eu.timepit.refined.cats._
 import eu.timepit.refined.refineV
 import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
-import io.circe.{Decoder, Encoder}
+import io.circe._
 
 package object refined {
 
@@ -49,6 +49,12 @@ package object refined {
     d.emap(refineV[P].apply[T](_))
 
   def encoderOf[T, P](implicit e: Encoder[T]): Encoder[T Refined P] =
+    e.contramap(_.value)
+
+  def keyDecoderOf[T, P](implicit v: Validate[T, P], d: KeyDecoder[T]): KeyDecoder[T Refined P] =
+    KeyDecoder.instance(s => d(s).flatMap(t => refineV[P](t).toOption))
+
+  def keyEncoderOf[T, P](implicit e: KeyEncoder[T]): KeyEncoder[T Refined P] =
     e.contramap(_.value)
 
   def eqOf[T, P](implicit eqT: Eq[T]): Eq[T Refined P] =

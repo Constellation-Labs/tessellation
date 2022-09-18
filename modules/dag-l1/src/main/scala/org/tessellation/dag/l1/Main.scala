@@ -15,7 +15,7 @@ import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.node.NodeState.SessionStarted
 import org.tessellation.sdk.app.{SDK, TessellationIOApp}
-import org.tessellation.sdk.infrastructure.gossip.RumorHandlers
+import org.tessellation.sdk.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import org.tessellation.sdk.resources.MkHttpServer
 import org.tessellation.sdk.resources.MkHttpServer.ServerName
 
@@ -66,7 +66,7 @@ object Main
         blockRumorHandler(queues.peerBlock)
 
       _ <- Daemons
-        .start(storages, services, validators, queues, healthChecks, p2pClient, rumorHandler, nodeId, cfg)
+        .start(storages, services, healthChecks)
         .asResource
 
       api = HttpApi.make[IO](storages, queues, keyPair.getPrivate, services, programs, healthChecks, sdk.nodeId)
@@ -87,17 +87,32 @@ object Main
           validators
         )
         .asResource
+
+      gossipDaemon = GossipDaemon.make[IO](
+        storages.rumor,
+        queues.rumor,
+        storages.cluster,
+        p2pClient.gossip,
+        rumorHandler,
+        validators.rumorValidator,
+        nodeId,
+        generation,
+        cfg.gossip.daemon,
+        services.collateral
+      )
       _ <- {
         method match {
           case cfg: RunInitialValidator =>
-            programs.l0PeerDiscovery.discoverFrom(cfg.l0Peer) >>
+            gossipDaemon.startAsInitialValidator >>
+              programs.l0PeerDiscovery.discoverFrom(cfg.l0Peer) >>
               storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
               services.cluster.createSession >>
               services.session.createSession >>
               storages.node.tryModifyState(SessionStarted, NodeState.Ready)
 
           case cfg: RunValidator =>
-            programs.l0PeerDiscovery.discoverFrom(cfg.l0Peer) >>
+            gossipDaemon.startAsRegularValidator >>
+              programs.l0PeerDiscovery.discoverFrom(cfg.l0Peer) >>
               storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
         }
       }.asResource

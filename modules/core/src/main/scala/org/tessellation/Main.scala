@@ -18,7 +18,7 @@ import org.tessellation.modules._
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.node.NodeState
 import org.tessellation.sdk.app.{SDK, TessellationIOApp}
-import org.tessellation.sdk.infrastructure.gossip.RumorHandlers
+import org.tessellation.sdk.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import org.tessellation.sdk.resources.MkHttpServer
 import org.tessellation.sdk.resources.MkHttpServer.ServerName
 import org.tessellation.security.signature.Signed
@@ -86,7 +86,7 @@ object Main
         trustHandler(storages.trust) <+> services.consensus.handler
 
       _ <- Daemons
-        .start(storages, services, programs, queues, healthChecks, validators, p2pClient, rumorHandler, nodeId, cfg)
+        .start(storages, services, programs, queues, healthChecks, nodeId, cfg)
         .asResource
 
       api = HttpApi
@@ -95,9 +95,23 @@ object Main
       _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)
       _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.http.cliHttp, api.cliApp)
 
+      gossipDaemon = GossipDaemon.make[IO](
+        storages.rumor,
+        queues.rumor,
+        storages.cluster,
+        p2pClient.gossip,
+        rumorHandler,
+        validators.rumorValidator,
+        nodeId,
+        generation,
+        cfg.gossip.daemon,
+        services.collateral
+      )
+
       _ <- (method match {
         case _: RunValidator =>
-          storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
+          gossipDaemon.startAsRegularValidator >>
+            storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
         case _: RunRollback =>
           storages.node.tryModifyState(
             NodeState.Initial,
@@ -115,6 +129,7 @@ object Main
               }
             }
           } >>
+            gossipDaemon.startAsInitialValidator >>
             services.cluster.createSession >>
             services.session.createSession >>
             storages.node.setNodeState(NodeState.Ready)
@@ -139,6 +154,7 @@ object Main
               }
             }
           } >>
+            gossipDaemon.startAsInitialValidator >>
             services.cluster.createSession >>
             services.session.createSession >>
             storages.node.setNodeState(NodeState.Ready)

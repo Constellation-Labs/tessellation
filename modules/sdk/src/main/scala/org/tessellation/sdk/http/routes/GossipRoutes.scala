@@ -1,13 +1,19 @@
 package org.tessellation.sdk.http.routes
 
-import cats.Order._
 import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+import cats.syntax.functorFilter._
+import cats.syntax.option._
+import cats.syntax.order._
 
+import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.gossip._
-import org.tessellation.sdk.domain.gossip.{Gossip, RumorStorage}
+import org.tessellation.schema.peer.PeerId
+import org.tessellation.sdk.domain.gossip.Gossip
+import org.tessellation.sdk.infrastructure.gossip.RumorStorage
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.signature.Signed
 
@@ -22,30 +28,63 @@ final case class GossipRoutes[F[_]: Async: KryoSerializer: Metrics](
   gossip: Gossip[F]
 ) extends Http4sDsl[F] {
 
-  private val prefixPath = "/gossip"
+  private val prefixPath = "/rumors"
 
   private val httpRoutes: HttpRoutes[F] = HttpRoutes.of[F] {
-    case GET -> Root / "offer" =>
+    case req @ POST -> Root / "peer" / "query" =>
       for {
-        offer <- rumorStorage.getActiveHashes
-        beginResponse = RumorOfferResponse(offer)
-        result <- Ok(beginResponse)
+        inquiryRequest <- req.as[PeerRumorInquiryRequest]
+        localCounters <- rumorStorage.getPeerRumorHeadCounters
+        remoteCounters = inquiryRequest.headCounters
+        higherCounters = localCounters.toList.mapFilter {
+          case (peerIdAndGen, localCounter) =>
+            remoteCounters.get(peerIdAndGen) match {
+              case Some(remoteCounter) =>
+                if (localCounter > remoteCounter)
+                  (peerIdAndGen, remoteCounter.next).some
+                else
+                  none
+              case None =>
+                (peerIdAndGen, Counter.MinValue).some
+            }
+        }
+        result <- Ok(peerRumorStream(higherCounters.toMap))
       } yield result
 
-    case req @ POST -> Root / "inquiry" =>
+    case POST -> Root / "peer" / "init" =>
       for {
-        inquiryRequest <- req.as[RumorInquiryRequest]
-        rumors <- rumorStorage.getRumors(inquiryRequest.inquiry)
-        sortedRumors = sortRumors(rumors)
-        result <- Ok(Stream.emits(sortedRumors).covary[F])
+        localCounters <- rumorStorage.getPeerRumorHeadCounters
+        result <- Ok(peerRumorStream(localCounters))
       } yield result
 
+    case GET -> Root / "common" / "offer" =>
+      for {
+        offer <- rumorStorage.getCommonRumorActiveHashes
+        response = CommonRumorOfferResponse(offer)
+        result <- Ok(response)
+      } yield result
+
+    case req @ POST -> Root / "common" / "query" =>
+      for {
+        queryRequest <- req.as[QueryCommonRumorsRequest]
+        rumors = Stream.eval(rumorStorage.getCommonRumors(queryRequest.query)).flatMap(Stream.fromIterator(_, 5))
+        result <- Ok(rumors)
+      } yield result
+
+    case GET -> Root / "common" / "init" =>
+      for {
+        seen <- rumorStorage.getCommonRumorSeenHashes
+        result <- Ok(CommonRumorInitResponse(seen))
+      } yield result
   }
 
-  private def sortRumors(batch: List[Signed[RumorRaw]]): List[Signed[RumorRaw]] =
-    batch.filter(_.value.isInstanceOf[CommonRumorRaw]) ++ batch
-      .filter(_.value.isInstanceOf[PeerRumorRaw])
-      .sortBy(_.value.asInstanceOf[PeerRumorRaw].ordinal)
+  private def peerRumorStream(from: Map[(PeerId, Generation), Counter]): Stream[F, Signed[PeerRumorRaw]] =
+    Stream
+      .emits(from.toList)
+      .evalMap {
+        case (peerIdAndGen, counter) => rumorStorage.getPeerRumors(peerIdAndGen)(counter)
+      }
+      .flatMap(Stream.fromIterator(_, 5))
 
   val p2pRoutes: HttpRoutes[F] = Router(
     prefixPath -> httpRoutes
