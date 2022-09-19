@@ -3,9 +3,10 @@ package org.tessellation.sdk.domain.cluster.programs
 import cats.effect.{Async, Ref}
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+import cats.syntax.order._
 import cats.syntax.traverse._
 
-import org.tessellation.schema.peer.{P2PContext, Peer, PeerId}
+import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.http.p2p.clients.ClusterClient
 
@@ -17,11 +18,11 @@ object PeerDiscovery {
     nodeId: PeerId
   ): F[PeerDiscovery[F]] =
     Ref
-      .of[F, Set[P2PContext]](Set.empty)
+      .of[F, Set[Peer]](Set.empty)
       .map(make(_, clusterClient, clusterStorage, nodeId))
 
   def make[F[_]: Async](
-    cache: Ref[F, Set[P2PContext]],
+    cache: Ref[F, Set[Peer]],
     clusterClient: ClusterClient[F],
     clusterStorage: ClusterStorage[F],
     nodeId: PeerId
@@ -33,33 +34,37 @@ object PeerDiscovery {
 }
 
 sealed abstract class PeerDiscovery[F[_]: Async] private (
-  cache: Ref[F, Set[P2PContext]],
+  cache: Ref[F, Set[Peer]],
   clusterClient: ClusterClient[F],
   clusterStorage: ClusterStorage[F],
   nodeId: PeerId
 ) {
 
-  def getPeers: F[Set[P2PContext]] = cache.get
+  def getPeers: F[Set[Peer]] = cache.get
 
-  def discoverFrom(peer: P2PContext): F[Set[P2PContext]] =
+  def discoverFrom(peer: Peer): F[Set[Peer]] =
     for {
       _ <- removePeer(peer)
+
       peers <- clusterClient.getDiscoveryPeers.run(peer)
       knownPeers <- clusterStorage.getPeers
       peersQueue <- getPeers
+
       unknownPeers = peers.filterNot { p =>
-        p.id == nodeId || p.id == peer.id || knownPeers.map(_.id).contains(p.id) || peersQueue.map(_.id).contains(p.id)
+        p.id === nodeId || p.id === peer.id || knownPeers.filter(kp => kp.id === p.id && kp.session >= p.session).nonEmpty || peersQueue
+          .map(_.id)
+          .contains(p.id)
       }
       _ <- unknownPeers.toList
         .traverse(addNextPeer)
     } yield unknownPeers
 
-  private def addNextPeer(peer: P2PContext): F[Unit] =
+  private def addNextPeer(peer: Peer): F[Unit] =
     cache.modify { c =>
       (c + peer, ())
     }
 
-  private def removePeer(peer: P2PContext): F[Unit] =
+  private def removePeer(peer: Peer): F[Unit] =
     cache.modify { c =>
       (c - peer, ())
     }

@@ -68,13 +68,28 @@ object peer {
   }
 
   @derive(eqv, encoder, decoder, show)
+  sealed trait PeerResponsiveness
+
+  case object Responsive extends PeerResponsiveness
+  case object Unresponsive extends PeerResponsiveness
+
+  object PeerResponsiveness {
+    val _Bool: Iso[PeerResponsiveness, Boolean] =
+      Iso[PeerResponsiveness, Boolean] {
+        case Responsive   => true
+        case Unresponsive => false
+      }(if (_) Responsive else Unresponsive)
+  }
+
+  @derive(eqv, encoder, decoder, show)
   case class Peer(
     id: PeerId,
     ip: Host,
     publicPort: Port,
     p2pPort: Port,
     session: SessionToken,
-    state: NodeState
+    state: NodeState,
+    responsiveness: PeerResponsiveness
   )
 
   object Peer {
@@ -82,6 +97,21 @@ object peer {
       P2PContext(peer.ip, peer.p2pPort, peer.id)
 
     val _State: Lens[Peer, NodeState] = GenLens[Peer](_.state)
+  }
+
+  @derive(encoder, decoder, show)
+  case class PeerInfo(
+    id: PeerId,
+    ip: Host,
+    publicPort: Port,
+    p2pPort: Port,
+    session: String,
+    state: NodeState
+  )
+
+  object PeerInfo {
+    def fromPeer(peer: Peer): PeerInfo =
+      PeerInfo(peer.id, peer.ip, peer.publicPort, peer.p2pPort, peer.session.value.toString, peer.state)
   }
 
   @derive(eqv, encoder, decoder, order, ordering, show)

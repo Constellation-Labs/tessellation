@@ -5,10 +5,10 @@ import cats.effect.Async
 import cats.effect.std.Queue
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
-import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
+import cats.syntax.order._
 import cats.syntax.show._
 import cats.syntax.traverse._
 
@@ -18,6 +18,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.cluster._
 import org.tessellation.schema.node.NodeState
+import org.tessellation.schema.peer.Peer.toP2PContext
 import org.tessellation.schema.peer._
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.AppEnvironment.Dev
@@ -29,7 +30,7 @@ import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
-import com.comcast.ip4s.{Host, IpLiteralSyntax, Port}
+import com.comcast.ip4s.{Host, IpLiteralSyntax}
 import fs2.{Pipe, Stream}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -107,10 +108,14 @@ object Joining {
         in.evalMap { peer =>
           {
             joining.twoWayHandshake(peer, none) >>
-              peerDiscovery
-                .discoverFrom(peer)
-                .handleErrorWith { err =>
-                  logger.error(err)(s"Peer discovery from peer ${peer.show} failed").as(Set.empty)
+              clusterStorage
+                .getPeer(peer.id)
+                .flatMap {
+                  _.fold(Set.empty[P2PContext].pure[F]) { p =>
+                    peerDiscovery.discoverFrom(p).map(_.map(toP2PContext)).handleErrorWith { err =>
+                      logger.error(err)(s"Peer discovery from peer ${peer.show} failed").as(Set.empty)
+                    }
+                  }
                 }
                 .flatMap(_.toList.traverse(joiningQueue.offer(_).void))
                 .void
@@ -144,31 +149,21 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
 
   def join(toPeer: PeerToJoin): F[Unit] =
     for {
-      _ <- validateJoinConditions(toPeer)
+      _ <- validateJoinConditions()
       _ <- session.createSession
 
       _ <- joiningQueue.offer(toPeer)
     } yield ()
 
   def rejoin(withPeer: PeerToJoin): F[Unit] =
-    clusterStorage.removePeer(withPeer.id) >>
-      validateHandshakeConditions(withPeer) >>
-      twoWayHandshake(withPeer, None, skipJoinRequest = true).void
+    twoWayHandshake(withPeer, None, skipJoinRequest = true).void
 
-  private def validateJoinConditions(toPeer: PeerToJoin): F[Unit] =
+  private def validateJoinConditions(): F[Unit] =
     for {
       nodeState <- nodeStorage.getNodeState
-
       canJoinCluster <- nodeStorage.canJoinCluster
-      _ <-
-        if (!canJoinCluster) NodeStateDoesNotAllowForJoining(nodeState).raiseError[F, Unit]
-        else Applicative[F].unit
-
-      _ <- validateHandshakeConditions(toPeer)
+      _ <- Applicative[F].unlessA(canJoinCluster)(NodeStateDoesNotAllowForJoining(nodeState).raiseError[F, Unit])
     } yield ()
-
-  private def validateHandshakeConditions(toPeer: PeerToJoin): F[Unit] =
-    validateHandshakeConditions(toPeer.id, toPeer.ip, toPeer.p2pPort)
 
   def joinRequest(hasCollateral: PeerId => F[Boolean])(joinRequest: JoinRequest, remoteAddress: Host): F[Unit] = {
     for {
@@ -176,8 +171,6 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
       _ <- sessionStorage.getToken.flatMap(_.fold(SessionDoesNotExist.raiseError[F, Unit])(_ => Applicative[F].unit))
 
       registrationRequest = joinRequest.registrationRequest
-
-      _ <- validateHandshakeConditions(joinRequest.registrationRequest)
 
       _ <- hasCollateral(registrationRequest.id).flatMap(CollateralNotSatisfied.raiseError[F, Unit].unlessA)
 
@@ -189,16 +182,6 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
       _ <- twoWayHandshake(withPeer, remoteAddress.some, skipJoinRequest = true)
     } yield ()
   }.onError(err => logger.error(err)(s"Error during join attempt by ${joinRequest.registrationRequest.id.show}"))
-
-  private def validateHandshakeConditions(req: RegistrationRequest): F[Unit] =
-    validateHandshakeConditions(req.id, req.ip, req.p2pPort)
-
-  private def validateHandshakeConditions(id: PeerId, ip: Host, p2pPort: Port): F[Unit] =
-    clusterStorage.hasPeerId(id).ifM(PeerIdInUse(id).raiseError[F, Unit], Applicative[F].unit).flatMap { _ =>
-      clusterStorage
-        .hasPeerHostPort(ip, p2pPort)
-        .ifM(PeerHostPortInUse(ip, p2pPort).raiseError[F, Unit], Applicative[F].unit)
-    }
 
   private def twoWayHandshake(
     withPeer: PeerToJoin,
@@ -239,7 +222,8 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
         registrationRequest.publicPort,
         registrationRequest.p2pPort,
         registrationRequest.session,
-        registrationRequest.state
+        registrationRequest.state,
+        Responsive
       )
 
       _ <- clusterStorage.addPeer(peer)
@@ -260,14 +244,19 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
 
       _ <- VersionMismatch.raiseError[F, Unit].whenA(registrationRequest.version =!= versionHash)
 
-      ip <- registrationRequest.ip.pure[F]
+      ip = registrationRequest.ip
+      existingPeer <- clusterStorage.getPeer(registrationRequest.id)
+
+      _ <- existingPeer match {
+        case Some(peer) if peer.session < registrationRequest.session => Applicative[F].unit
+        case None                                                     => Applicative[F].unit
+        case _ =>
+          PeerAlreadyConnected(registrationRequest.id, ip, registrationRequest.p2pPort, registrationRequest.session).raiseError[F, Unit]
+      }
 
       ownClusterId = clusterStorage.getClusterId
 
-      _ <-
-        if (registrationRequest.clusterId == ownClusterId)
-          Applicative[F].unit
-        else ClusterIdDoesNotMatch.raiseError[F, Unit]
+      _ <- Applicative[F].unlessA(registrationRequest.clusterId == ownClusterId)(ClusterIdDoesNotMatch.raiseError[F, Unit])
 
       ownClusterSession <- clusterStorage.getToken
 
@@ -278,21 +267,18 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
       }
 
       _ <-
-        if (environment == Dev || ip.toString != host"127.0.0.1".toString && ip.toString != host"localhost".toString)
-          Applicative[F].unit
-        else LocalHostNotPermitted.raiseError[F, Unit]
+        Applicative[F].unlessA(environment == Dev || ip.toString != host"127.0.0.1".toString && ip.toString != host"localhost".toString) {
+          LocalHostNotPermitted.raiseError[F, Unit]
+        }
 
       _ <- remoteAddress.fold(Applicative[F].unit)(ra =>
-        if (ip.compare(ra) == 0) Applicative[F].unit else InvalidRemoteAddress.raiseError[F, Unit]
+        Applicative[F].unlessA(ip.compare(ra) == 0)(InvalidRemoteAddress.raiseError[F, Unit])
       )
 
-      _ <- if (registrationRequest.id != selfId) Applicative[F].unit else IdDuplicationFound.raiseError[F, Unit]
+      _ <- Applicative[F].unlessA(registrationRequest.id != selfId)(IdDuplicationFound.raiseError[F, Unit])
 
       seedlistHash <- seedlist.hashF
-
-      _ <-
-        if (registrationRequest.seedlist === seedlistHash) Applicative[F].unit
-        else SeedlistDoesNotMatch.raiseError[F, Unit]
+      _ <- Applicative[F].unlessA(registrationRequest.seedlist === seedlistHash)(SeedlistDoesNotMatch.raiseError[F, Unit])
 
     } yield ()
 

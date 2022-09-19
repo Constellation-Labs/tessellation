@@ -4,8 +4,8 @@ import java.util.UUID
 
 import org.tessellation.optics.IsUUID
 import org.tessellation.schema.ID.Id
-import org.tessellation.schema.healthcheck.Status
-import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.generators.peerResponsivenessGen
+import org.tessellation.schema.peer.{PeerId, PeerResponsiveness}
 import org.tessellation.security.hex.Hex
 
 import io.estatico.newtype.ops._
@@ -15,8 +15,8 @@ import weaver.FunSuite
 import weaver.discipline.Discipline
 
 object OpticsSuite extends FunSuite with Discipline {
-  implicit val arbStatus: Arbitrary[Status] =
-    Arbitrary(Gen.oneOf(Status.Okay, Status.Unreachable))
+  implicit val arbPeerResponsiveness: Arbitrary[PeerResponsiveness] =
+    Arbitrary(peerResponsivenessGen)
 
   implicit val arbPeerID: Arbitrary[PeerId] =
     Arbitrary(Gen.alphaStr.map(Hex(_)).map(PeerId(_)))
@@ -34,7 +34,7 @@ object OpticsSuite extends FunSuite with Discipline {
       uuid.getLeastSignificantBits -> uuid.getMostSignificantBits
     }
 
-  checkAll("Iso[Status._Bool", IsoTests(Status._Bool))
+  checkAll("Iso[PeerResponsiveness._Bool", IsoTests(PeerResponsiveness._Bool))
 
   checkAll("Iso[PeerId._Id", IsoTests(PeerId._Id))
 
