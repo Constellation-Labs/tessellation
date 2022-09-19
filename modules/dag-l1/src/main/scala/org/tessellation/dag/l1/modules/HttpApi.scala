@@ -28,9 +28,10 @@ object HttpApi {
     services: Services[F],
     programs: Programs[F],
     healthchecks: HealthChecks[F],
-    selfId: PeerId
+    selfId: PeerId,
+    nodeVersion: String
   ): HttpApi[F] =
-    new HttpApi[F](storages, queues, privateKey, services, programs, healthchecks, selfId) {}
+    new HttpApi[F](storages, queues, privateKey, services, programs, healthchecks, selfId, nodeVersion) {}
 }
 
 sealed abstract class HttpApi[F[_]: Async: KryoSerializer: SecurityProvider: Metrics] private (
@@ -40,14 +41,15 @@ sealed abstract class HttpApi[F[_]: Async: KryoSerializer: SecurityProvider: Met
   services: Services[F],
   programs: Programs[F],
   healthchecks: HealthChecks[F],
-  selfId: PeerId
+  selfId: PeerId,
+  nodeVersion: String
 ) {
   private val clusterRoutes =
     ClusterRoutes[F](programs.joining, programs.peerDiscovery, storages.cluster, services.cluster, services.collateral)
   private val registrationRoutes = RegistrationRoutes[F](services.cluster)
   private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip)
   private val dagRoutes = Routes[F](services.transaction, storages.transaction, storages.l0Cluster, queues.peerBlockConsensusInput)
-  private val nodeRoutes = NodeRoutes[F](storages.node)
+  private val nodeRoutes = NodeRoutes[F](storages.node, storages.session, nodeVersion)
   private val healthcheckP2PRoutes = {
     val pingHealthcheckRoutes = PingHealthCheckRoutes[F](healthchecks.ping)
 
