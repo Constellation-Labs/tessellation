@@ -66,6 +66,7 @@ object types {
   )
 
   case class PingHealthCheckConfig(
+    enabled: Boolean,
     concurrentChecks: PosInt,
     defaultCheckTimeout: FiniteDuration,
     defaultCheckAttempts: PosInt,
