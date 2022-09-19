@@ -11,7 +11,7 @@ import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.cluster.SessionToken
 import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.node.NodeState
-import org.tessellation.schema.peer.{Peer, PeerId}
+import org.tessellation.schema.peer._
 import org.tessellation.schema.transaction._
 import org.tessellation.security.generators._
 import org.tessellation.security.hash.Hash
@@ -41,6 +41,9 @@ object generators {
   val peerIdGen: Gen[PeerId] =
     nesGen(str => PeerId(Hex(str)))
 
+  val peerResponsivenessGen: Gen[PeerResponsiveness] =
+    Gen.oneOf(Responsive, Unresponsive)
+
   val idGen: Gen[Id] =
     nesGen(str => Id(Hex(str)))
 
@@ -69,7 +72,8 @@ object generators {
       p2 <- portGen
       s <- generationGen.map(SessionToken.apply)
       st <- nodeStateGen
-    } yield Peer(i, h, p, p2, s, st)
+      r <- peerResponsivenessGen
+    } yield Peer(i, h, p, p2, s, st, r)
 
   def peersGen(n: Option[Int] = None): Gen[Set[Peer]] =
     n.map(Gen.const).getOrElse(Gen.chooseNum(1, 20)).flatMap { n =>

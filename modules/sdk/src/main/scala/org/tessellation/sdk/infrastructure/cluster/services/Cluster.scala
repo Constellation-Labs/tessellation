@@ -81,18 +81,18 @@ object Cluster {
         Temporal[F].start(process).void
       }
 
-      def info: F[Set[Peer]] =
+      def info: F[Set[PeerInfo]] =
         getRegistrationRequest.flatMap { req =>
-          def self = Peer(
+          def self = PeerInfo(
             req.id,
             req.ip,
             req.publicPort,
             req.p2pPort,
-            req.session,
+            req.session.value.toString,
             req.state
           )
 
-          clusterStorage.getPeers.map(_ + self)
+          clusterStorage.getPeers.map(_.map(PeerInfo.fromPeer) + self)
         }
 
       def createSession: F[ClusterSessionToken] =

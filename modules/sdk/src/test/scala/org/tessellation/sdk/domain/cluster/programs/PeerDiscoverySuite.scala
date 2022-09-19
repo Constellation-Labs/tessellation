@@ -4,7 +4,7 @@ import cats.data.Kleisli
 import cats.effect.IO
 
 import org.tessellation.schema.generators._
-import org.tessellation.schema.peer.{P2PContext, Peer, PeerId}
+import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.schema.{cluster, node}
 import org.tessellation.sdk.domain.cluster.programs.PeerDiscovery
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
@@ -35,8 +35,8 @@ object PeerDiscoverySuite extends SimpleIOSuite with Checkers {
 
       override def getPeers: PeerResponse.PeerResponse[IO, Set[Peer]] = ???
 
-      override def getDiscoveryPeers: PeerResponse.PeerResponse[IO, Set[P2PContext]] = Kleisli.apply { _ =>
-        IO(discoverdPeers.map(p => p))
+      override def getDiscoveryPeers: PeerResponse.PeerResponse[IO, Set[Peer]] = Kleisli.apply { _ =>
+        IO(discoverdPeers)
       }
 
     }
@@ -89,7 +89,7 @@ object PeerDiscoverySuite extends SimpleIOSuite with Checkers {
         for {
           peerDiscovery <- mkPeerDiscovery(peersInCluster, returnedPeers)
           res <- peerDiscovery.discoverFrom(discoverFromPeer)
-        } yield expect.same(res, newPeers.map[P2PContext](identity))
+        } yield expect.same(res, newPeers)
     }
   }
 
@@ -123,7 +123,7 @@ object PeerDiscoverySuite extends SimpleIOSuite with Checkers {
           _ <- peerDiscovery.discoverFrom(discoverFromPeer)
           _ <- peerDiscovery.discoverFrom(discoverFromPeer)
           res <- peerDiscovery.getPeers
-        } yield expect.same(res, newPeers.map[P2PContext](identity))
+        } yield expect.same(res, newPeers)
     }
   }
 

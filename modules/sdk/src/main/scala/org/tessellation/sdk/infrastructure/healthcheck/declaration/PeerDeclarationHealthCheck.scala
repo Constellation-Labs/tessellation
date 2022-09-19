@@ -124,9 +124,8 @@ object PeerDeclarationHealthCheck {
                       .removeRegisteredPeer(key.id, key.consensusKey)
                       .ifM(
                         logger.info(
-                          s"Outcome for key ${key.show}: negative - node found and unregistered at given height. Removing facilitator and removing from peer list | Round ids: ${roundIds.show}"
-                        ) >>
-                          clusterStorage.removePeer(key.id),
+                          s"Outcome for key ${key.show}: negative - node found and unregistered at given height. Removing facilitator | Round ids: ${roundIds.show}"
+                        ),
                         logger.info(
                           s"Outcome for key ${key.show}: negative - node not found as registered at given height. Removing facilitator | Round ids: ${roundIds.show}"
                         )

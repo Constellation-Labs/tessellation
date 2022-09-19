@@ -10,7 +10,7 @@ import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.{P2PContext, PeerId}
 
 import com.comcast.ip4s.{Host, Port}
-import derevo.cats.{eqv, show}
+import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import eu.timepit.refined.api.Refined
@@ -45,11 +45,10 @@ object cluster {
   }
 
   case class NodeStateDoesNotAllowForJoining(nodeState: NodeState) extends NoStackTrace
-  case class PeerIdInUse(id: PeerId) extends NoStackTrace
-  case class PeerHostPortInUse(host: Host, p2pPort: Port) extends NoStackTrace
+  case class PeerAlreadyConnected(id: PeerId, host: Host, p2pPort: Port, session: SessionToken) extends NoStackTrace
   case class PeerNotInSeedlist(id: PeerId) extends NoStackTrace
 
-  @derive(decoder, encoder, eqv, show)
+  @derive(decoder, encoder, order, show)
   @newtype
   case class SessionToken(value: Generation)
 

@@ -3,7 +3,7 @@ package org.tessellation.sdk.http.routes
 import cats.effect.Async
 import cats.syntax.functor._
 
-import org.tessellation.schema.peer.Peer
+import org.tessellation.schema.peer.PeerInfo
 import org.tessellation.sdk.domain.cluster.services.Cluster
 import org.tessellation.sdk.http.routes.TargetRoutes.Target
 import org.tessellation.sdk.infrastructure.metrics.Metrics.LabelName
@@ -23,7 +23,7 @@ final case class TargetRoutes[F[_]: Async](
   private[routes] val prefixPath = "/targets"
 
   val httpRoutes: HttpRoutes[F] = HttpRoutes.of[F] {
-    case GET -> Root => Ok(cluster.info.map(_.map(Target.fromPeer)))
+    case GET -> Root => Ok(cluster.info.map(_.map(Target.fromPeerInfo)))
   }
 
   val routes: HttpRoutes[F] = Router(
@@ -38,7 +38,7 @@ object TargetRoutes {
 
   object Target {
 
-    def fromPeer(peer: Peer): Target =
+    def fromPeerInfo(peer: PeerInfo): Target =
       Target(
         targets = List(s"${peer.ip}:${peer.publicPort}"),
         labels = Map[LabelName, String](

@@ -9,7 +9,7 @@ trait Cluster[F[_]] {
   def signRequest(signRequest: SignRequest): F[Signed[SignRequest]]
   def leave(): F[Unit]
 
-  def info: F[Set[Peer]]
+  def info: F[Set[PeerInfo]]
 
   def createSession: F[ClusterSessionToken]
 }
