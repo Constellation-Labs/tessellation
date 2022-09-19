@@ -57,8 +57,8 @@ sealed abstract class L0PeerDiscovery[F[_]: Sync: Random] private (
   private def getPeersFrom(peer: P2PContext): F[NonEmptySet[L0Peer]] =
     l0ClusterClient.getPeers
       .run(peer)
-      .map(NodeState.ready)
-      .map(_.map(L0Peer.fromPeer))
+      .map(_.filter(p => NodeState.ready.contains(p.state)))
+      .map(_.map(L0Peer.fromPeerInfo))
       .flatMap { s =>
         NonEmptySet
           .fromSet(SortedSet.from(s))

@@ -121,7 +121,7 @@ object peer {
     implicit def toP2PContext(l0Peer: L0Peer): P2PContext =
       P2PContext(l0Peer.ip, l0Peer.port, l0Peer.id)
 
-    def fromPeer(p: Peer): L0Peer =
+    def fromPeerInfo(p: PeerInfo): L0Peer =
       L0Peer(p.id, p.ip, p.publicPort)
   }
 
