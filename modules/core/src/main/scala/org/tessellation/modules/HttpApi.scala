@@ -35,9 +35,10 @@ object HttpApi {
     healthchecks: HealthChecks[F],
     privateKey: PrivateKey,
     environment: AppEnvironment,
-    selfId: PeerId
+    selfId: PeerId,
+    nodeVersion: String
   ): HttpApi[F] =
-    new HttpApi[F](storages, queues, services, programs, healthchecks, privateKey, environment, selfId) {}
+    new HttpApi[F](storages, queues, services, programs, healthchecks, privateKey, environment, selfId, nodeVersion) {}
 }
 
 sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Metrics] private (
@@ -48,14 +49,15 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
   healthchecks: HealthChecks[F],
   privateKey: PrivateKey,
   environment: AppEnvironment,
-  selfId: PeerId
+  selfId: PeerId,
+  nodeVersion: String
 ) {
 
   private val mkDagCell: L0Cell.Mk[F] = L0Cell.mkL0Cell(queues.l1Output, queues.stateChannelOutput)
 
   private val clusterRoutes =
     ClusterRoutes[F](programs.joining, programs.peerDiscovery, storages.cluster, services.cluster, services.collateral)
-  private val nodeRoutes = NodeRoutes[F](storages.node)
+  private val nodeRoutes = NodeRoutes[F](storages.node, storages.session, nodeVersion)
   private val registrationRoutes = RegistrationRoutes[F](services.cluster)
   private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip)
   private val trustRoutes = TrustRoutes[F](storages.trust, programs.trustPush)
