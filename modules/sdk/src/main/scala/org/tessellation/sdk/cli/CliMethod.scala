@@ -29,6 +29,8 @@ trait CliMethod {
 
   val collateralAmount: Option[Amount]
 
+  val pingHealthCheckEnabled: Boolean
+
   val collateralConfig = (environment: AppEnvironment, amount: Option[Amount]) =>
     CollateralConfig(
       amount = amount
@@ -54,6 +56,7 @@ trait CliMethod {
     removeUnresponsiveParallelPeersAfter = 10.seconds,
     requestProposalsAfter = 8.seconds,
     ping = PingHealthCheckConfig(
+      enabled = pingHealthCheckEnabled,
       concurrentChecks = 3,
       defaultCheckTimeout = 6.seconds,
       defaultCheckAttempts = 3,

@@ -27,6 +27,8 @@ object method {
 
     val stateAfterJoining: NodeState = NodeState.Ready
 
+    val pingHealthCheckEnabled: Boolean = true
+
     val appConfig: AppConfig = AppConfig(
       environment = environment,
       http = httpConfig,
@@ -48,20 +50,7 @@ object method {
         timeout = 45.seconds,
         pullTxsCount = 100L
       ),
-      healthCheck = HealthCheckConfig(
-        removeUnresponsiveParallelPeersAfter = 10.seconds,
-        requestProposalsAfter = 8.seconds,
-        ping = PingHealthCheckConfig(
-          concurrentChecks = 3,
-          defaultCheckTimeout = 6.seconds,
-          defaultCheckAttempts = 3,
-          ensureCheckInterval = 10.seconds
-        ),
-        peerDeclaration = PeerDeclarationHealthCheckConfig(
-          receiveTimeout = 20.seconds,
-          triggerInterval = 10.seconds
-        )
-      ),
+      healthCheck = healthCheckConfig,
       collateral = collateralConfig(environment, collateralAmount)
     )
   }

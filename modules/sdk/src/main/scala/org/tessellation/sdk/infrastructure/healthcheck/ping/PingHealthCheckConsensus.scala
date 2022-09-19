@@ -88,7 +88,29 @@ class PingHealthCheckConsensus[F[_]: Async: GenUUID: Random](
   def statusOnError(key: PingHealthCheckKey): PingHealthCheckStatus = PeerCheckUnexpectedError(key.id)
 
   def periodic: F[Unit] =
-    checkRandomPeers
+    Applicative[F].whenA(config.ping.enabled) {
+      checkRandomPeers
+    }
+
+  override def startOwnRound(key: PingHealthCheckKey): F[Unit] =
+    Applicative[F].whenA(config.ping.enabled) {
+      super.startOwnRound(key)
+    }
+
+  override def participateInRound(key: PingHealthCheckKey, roundIds: Set[HealthCheckRoundId]): F[Unit] =
+    Applicative[F].whenA(config.ping.enabled) {
+      super.participateInRound(key, roundIds)
+    }
+
+  override def startRound(key: PingHealthCheckKey, roundIds: Set[HealthCheckRoundId]): F[Unit] =
+    Applicative[F].whenA(config.ping.enabled) {
+      super.startRound(key, roundIds)
+    }
+
+  override def handleProposal(proposal: PingConsensusHealthStatus, depth: Int): F[Unit] =
+    Applicative[F].whenA(config.ping.enabled) {
+      super.handleProposal(proposal, depth)
+    }
 
   def onOutcome(
     outcomes: ConsensusRounds.Outcome[

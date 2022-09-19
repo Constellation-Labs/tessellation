@@ -56,6 +56,8 @@ object method {
       rewards = RewardsConfig()
     )
 
+    val pingHealthCheckEnabled: Boolean = false
+
     val stateAfterJoining: NodeState = NodeState.WaitingForDownload
 
   }
