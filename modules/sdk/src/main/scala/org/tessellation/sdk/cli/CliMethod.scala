@@ -29,8 +29,6 @@ trait CliMethod {
 
   val collateralAmount: Option[Amount]
 
-  val pingHealthCheckEnabled: Boolean
-
   val collateralConfig = (environment: AppEnvironment, amount: Option[Amount]) =>
     CollateralConfig(
       amount = amount
@@ -60,11 +58,11 @@ trait CliMethod {
 
   val leavingDelay = 30.seconds
 
-  val healthCheckConfig = HealthCheckConfig(
+  def healthCheckConfig(pingEnabled: Boolean) = HealthCheckConfig(
     removeUnresponsiveParallelPeersAfter = 10.seconds,
     requestProposalsAfter = 8.seconds,
     ping = PingHealthCheckConfig(
-      enabled = pingHealthCheckEnabled,
+      enabled = pingEnabled,
       concurrentChecks = 3,
       defaultCheckTimeout = 6.seconds,
       defaultCheckAttempts = 3,
@@ -81,8 +79,7 @@ trait CliMethod {
     gossipConfig,
     httpConfig,
     leavingDelay,
-    stateAfterJoining,
-    healthCheckConfig
+    stateAfterJoining
   )
 
 }

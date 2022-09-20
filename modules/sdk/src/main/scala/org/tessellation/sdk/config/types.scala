@@ -15,8 +15,7 @@ object types {
     gossipConfig: GossipConfig,
     httpConfig: HttpConfig,
     leavingDelay: FiniteDuration,
-    stateAfterJoining: NodeState,
-    healthCheck: HealthCheckConfig
+    stateAfterJoining: NodeState
   )
 
   case class RumorStorageConfig(

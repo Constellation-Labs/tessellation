@@ -27,8 +27,6 @@ object method {
 
     val stateAfterJoining: NodeState = NodeState.Ready
 
-    val pingHealthCheckEnabled: Boolean = true
-
     val appConfig: AppConfig = AppConfig(
       environment = environment,
       http = httpConfig,
@@ -58,7 +56,7 @@ object method {
         timeout = 45.seconds,
         pullTxsCount = 100L
       ),
-      healthCheck = healthCheckConfig,
+      healthCheck = healthCheckConfig(true),
       collateral = collateralConfig(environment, collateralAmount)
     )
   }

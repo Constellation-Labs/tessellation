@@ -58,13 +58,11 @@ object method {
           10.minutes
         )
       ),
-      healthCheck = healthCheckConfig,
+      healthCheck = healthCheckConfig(false),
       snapshot = snapshotConfig,
       collateral = collateralConfig(environment, collateralAmount),
       rewards = RewardsConfig()
     )
-
-    val pingHealthCheckEnabled: Boolean = false
 
     val stateAfterJoining: NodeState = NodeState.WaitingForDownload
 
