@@ -7,7 +7,7 @@ object Dependencies {
     val betterFiles = "3.9.1"
     val cats = "2.8.0"
     val catsEffect = "3.3.14"
-    val catsRetry = "2.1.0" // not published for CE3 yet
+    val catsRetry = "3.0.0"
     val circe = "0.14.2"
     val ciris = "2.3.3"
     val comcast = "3.1.3"

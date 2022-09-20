@@ -5,7 +5,7 @@ import cats.effect.IO
 
 import org.tessellation.schema.generators._
 import org.tessellation.schema.peer.{Peer, PeerId}
-import org.tessellation.schema.{cluster, node}
+import org.tessellation.schema.{cluster, node, peer}
 import org.tessellation.sdk.domain.cluster.programs.PeerDiscovery
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.http.p2p.PeerResponse
@@ -45,6 +45,8 @@ object PeerDiscoverySuite extends SimpleIOSuite with Checkers {
 
       override def getPeers: IO[Set[Peer]] = IO(peersInCluster)
 
+      override def getResponsivePeers: IO[Set[Peer]] = IO(peersInCluster)
+
       override def getPeer(id: PeerId): IO[Option[Peer]] = ???
 
       override def addPeer(peer: Peer): IO[Unit] = ???
@@ -68,6 +70,8 @@ object PeerDiscoverySuite extends SimpleIOSuite with Checkers {
       override def getClusterId: cluster.ClusterId = ???
 
       override def createToken: IO[cluster.ClusterSessionToken] = ???
+
+      override def setPeerResponsiveness(id: PeerId, responsiveness: peer.PeerResponsiveness): IO[Unit] = ???
     }
 
     PeerDiscovery.make(clusterClient, clusterStorage, nodeId)

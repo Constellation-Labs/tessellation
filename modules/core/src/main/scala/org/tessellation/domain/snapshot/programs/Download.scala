@@ -44,7 +44,7 @@ sealed abstract class Download[F[_]: Async] private (
 
   def download(): F[Unit] =
     nodeStorage.tryModifyState(NodeState.WaitingForDownload, NodeState.DownloadInProgress, NodeState.Observing) {
-      clusterStorage.getPeers
+      clusterStorage.getResponsivePeers
         .map(_.headOption)
         .flatMap {
           case None =>

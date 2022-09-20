@@ -107,11 +107,33 @@ abstract class TessellationIOApp[A <: CliMethod](
                         p2pClient = SdkP2PClient.make[IO](res.client, session)
                         queues <- SdkQueues.make[IO].asResource
                         services <- SdkServices
-                          .make[IO](cfg, selfId, _generation, _keyPair, storages, queues, session, _seedlist, _restartSignal, versionHash)
+                          .make[IO](
+                            cfg,
+                            selfId,
+                            _generation,
+                            _keyPair,
+                            storages,
+                            queues,
+                            session,
+                            p2pClient.node,
+                            _seedlist,
+                            _restartSignal,
+                            versionHash
+                          )
                           .asResource
 
                         programs <- SdkPrograms
-                          .make[IO](cfg, storages, services, p2pClient.cluster, p2pClient.sign, _seedlist, selfId, versionHash)
+                          .make[IO](
+                            cfg,
+                            storages,
+                            services,
+                            p2pClient.cluster,
+                            p2pClient.sign,
+                            services.localHealthcheck,
+                            _seedlist,
+                            selfId,
+                            versionHash
+                          )
                           .asResource
 
                         sdk = new SDK[IO] {

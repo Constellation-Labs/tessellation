@@ -187,7 +187,7 @@ abstract class HealthCheckConsensus[
     key: K,
     roundIds: Set[HealthCheckRoundId]
   ): F[Unit] =
-    clusterStorage.getPeers
+    clusterStorage.getResponsivePeers
       .map(_.map(_.id))
       .map(_ - key.id)
       .flatMap { initialPeers =>

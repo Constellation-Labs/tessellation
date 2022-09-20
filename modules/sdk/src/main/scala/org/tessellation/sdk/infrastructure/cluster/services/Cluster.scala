@@ -92,7 +92,7 @@ object Cluster {
             req.state
           )
 
-          clusterStorage.getPeers.map(_.map(PeerInfo.fromPeer) + self)
+          clusterStorage.getResponsivePeers.map(_.map(PeerInfo.fromPeer) + self)
         }
 
       def createSession: F[ClusterSessionToken] =

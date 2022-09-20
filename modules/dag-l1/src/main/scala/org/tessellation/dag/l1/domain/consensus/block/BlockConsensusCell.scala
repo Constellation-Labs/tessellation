@@ -397,7 +397,7 @@ object BlockConsensusCell {
       ctx: BlockConsensusContext[F]
     ): F[Either[CellError, Ω]] =
       for {
-        peersToInform <- ctx.clusterStorage.getPeers
+        peersToInform <- ctx.clusterStorage.getResponsivePeers
           .map(_.filter(peer => deriveConsensusPeerIds(proposal, ctx.selfId).contains(peer.id)))
         cancellation = CancelledBlockCreationRound(
           proposal.roundId,
@@ -502,7 +502,7 @@ object BlockConsensusCell {
   object Coalgebra {
 
     private def pullNewConsensusPeers[F[_]: Async: Random](ctx: BlockConsensusContext[F]): F[Option[Set[Peer]]] =
-      ctx.clusterStorage.getPeers
+      ctx.clusterStorage.getResponsivePeers
         .map(_.filter(p => isReadyForBlockConsensus(p.state)))
         .flatMap(peers => Random[F].shuffleList(peers.toList))
         .map(_.take(ctx.consensusConfig.peersCount).toSet match {
@@ -558,7 +558,7 @@ object BlockConsensusCell {
       ctx: BlockConsensusContext[F]
     ): F[Option[Set[Peer]]] =
       for {
-        knownPeers <- ctx.clusterStorage.getPeers
+        knownPeers <- ctx.clusterStorage.getResponsivePeers
         peerIds = deriveConsensusPeerIds(proposal, ctx.selfId)
         peers = peerIds
           .map(id => id -> knownPeers.find(_.id == id))

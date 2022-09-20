@@ -12,6 +12,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.collateral.Collateral
 import org.tessellation.sdk.domain.gossip.Gossip
+import org.tessellation.sdk.domain.healthcheck.LocalHealthcheck
 import org.tessellation.sdk.infrastructure.Collateral
 import org.tessellation.sdk.modules.SdkServices
 import org.tessellation.security.SecurityProvider
@@ -26,6 +27,7 @@ object Services {
     cfg: AppConfig
   ): Services[F] =
     new Services[F](
+      localHealthcheck = sdkServices.localHealthcheck,
       block = BlockService.make[F](
         BlockAcceptanceManager.make[F](validators.block),
         storages.address,
@@ -44,6 +46,7 @@ object Services {
 }
 
 sealed abstract class Services[F[_]] private (
+  val localHealthcheck: LocalHealthcheck[F],
   val block: BlockService[F],
   val cluster: Cluster[F],
   val gossip: Gossip[F],

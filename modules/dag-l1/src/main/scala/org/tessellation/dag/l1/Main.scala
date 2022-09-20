@@ -62,7 +62,7 @@ object Main
         )
         .asResource
 
-      rumorHandler = RumorHandlers.make[IO](storages.cluster, healthChecks.ping).handlers <+>
+      rumorHandler = RumorHandlers.make[IO](storages.cluster, healthChecks.ping, services.localHealthcheck).handlers <+>
         blockRumorHandler(queues.peerBlock)
 
       _ <- Daemons
@@ -95,6 +95,7 @@ object Main
         p2pClient.gossip,
         rumorHandler,
         validators.rumorValidator,
+        services.localHealthcheck,
         nodeId,
         generation,
         cfg.gossip.daemon,

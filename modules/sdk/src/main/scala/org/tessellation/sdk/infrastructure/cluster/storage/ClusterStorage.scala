@@ -11,14 +11,15 @@ import cats.syntax.traverse._
 
 import org.tessellation.schema.cluster.{ClusterId, ClusterSessionAlreadyExists, ClusterSessionToken}
 import org.tessellation.schema.generation.Generation
-import org.tessellation.schema.node
-import org.tessellation.schema.peer.{Peer, PeerId}
+import org.tessellation.schema.node.NodeState
+import org.tessellation.schema.peer._
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 
 import com.comcast.ip4s.{Host, Port}
 import fs2.Stream
 import fs2.concurrent.Topic
 import io.chrisdavenport.mapref.MapRef
+import monocle.syntax.all._
 
 object ClusterStorage {
 
@@ -58,6 +59,9 @@ object ClusterStorage {
       def getPeers: F[Set[Peer]] =
         peers.keys.flatMap(_.map(peers(_).get).sequence).map(_.flatten.toSet)
 
+      def getResponsivePeers: F[Set[Peer]] =
+        getPeers.map(_.filter(_.responsiveness === Responsive))
+
       def getPeer(id: PeerId): F[Option[Peer]] =
         peers(id).get
 
@@ -70,8 +74,11 @@ object ClusterStorage {
       def hasPeerHostPort(host: Host, p2pPort: Port): F[Boolean] =
         getPeers.map(_.exists(peer => peer.ip == host && peer.p2pPort == p2pPort))
 
-      def setPeerState(id: PeerId, state: node.NodeState): F[Unit] =
+      def setPeerState(id: PeerId, state: NodeState): F[Unit] =
         updatePeer(id)(_.map(Peer._State.replace(state)(_)))
+
+      def setPeerResponsiveness(id: PeerId, responsiveness: PeerResponsiveness): F[Unit] =
+        updatePeer(id)(_.map(_.focus(_.responsiveness).replace(responsiveness)))
 
       def removePeer(id: PeerId): F[Unit] =
         setPeer(id)(none)

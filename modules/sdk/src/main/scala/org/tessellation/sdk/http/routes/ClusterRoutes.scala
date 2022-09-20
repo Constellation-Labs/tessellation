@@ -83,7 +83,7 @@ final case class ClusterRoutes[F[_]: Async](
       Ok(clusterStorage.getPeers)
     case GET -> Root / "discovery" =>
       Ok(
-        clusterStorage.getPeers.flatMap { knownPeers =>
+        clusterStorage.getResponsivePeers.flatMap { knownPeers =>
           peerDiscovery.getPeers.map { discoveredPeers =>
             knownPeers ++ discoveredPeers
           }

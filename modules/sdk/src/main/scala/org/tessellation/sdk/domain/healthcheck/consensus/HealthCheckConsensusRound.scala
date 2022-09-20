@@ -15,7 +15,7 @@ import scala.concurrent.duration._
 import scala.reflect.runtime.universe.TypeTag
 
 import org.tessellation.schema.node.NodeState
-import org.tessellation.schema.peer.{Peer, PeerId}
+import org.tessellation.schema.peer.{Peer, PeerId, Unresponsive}
 import org.tessellation.sdk.config.types.HealthCheckConfig
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.gossip.Gossip
@@ -64,7 +64,7 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey: Show, A <: Hea
   def getPeers: F[Set[PeerId]] = peers.get
 
   def managePeers(currentPeers: Set[Peer]): F[Unit] = {
-    def absentPeers = NodeState.absent(currentPeers).map(_.id)
+    def absentPeers = NodeState.absent(currentPeers).map(_.id) ++ currentPeers.filter(_.responsiveness === Unresponsive).map(_.id)
 
     proposals.get.flatMap { received =>
       peers.update { roundPeers =>
@@ -157,7 +157,7 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey: Show, A <: Hea
     roundIds.get.map(HistoricalRound(key, _, ownProposal, decision))
 
   def ownConsensusHealthStatus: F[B] =
-    clusterStorage.getPeers.map(_.map(_.id)).flatMap { clusterState =>
+    clusterStorage.getResponsivePeers.map(_.map(_.id)).flatMap { clusterState =>
       getRoundIds.flatMap { ids =>
         status.map {
           driver.consensusHealthStatus(key, _, ids, selfId, clusterState)

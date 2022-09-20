@@ -7,6 +7,7 @@ import cats.syntax.show._
 
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
+import org.tessellation.sdk.domain.healthcheck.LocalHealthcheck
 import org.tessellation.sdk.infrastructure.cluster.rumor.handler.nodeStateHandler
 import org.tessellation.sdk.infrastructure.healthcheck.ping.PingHealthCheckConsensus
 import org.tessellation.sdk.infrastructure.healthcheck.ping.handler.pingProposalHandler
@@ -17,16 +18,18 @@ object RumorHandlers {
 
   def make[F[_]: Async: KryoSerializer](
     clusterStorage: ClusterStorage[F],
-    pingHealthCheck: PingHealthCheckConsensus[F]
+    pingHealthCheck: PingHealthCheckConsensus[F],
+    localHealthcheck: LocalHealthcheck[F]
   ): RumorHandlers[F] =
-    new RumorHandlers[F](clusterStorage, pingHealthCheck) {}
+    new RumorHandlers[F](clusterStorage, pingHealthCheck, localHealthcheck) {}
 }
 
 sealed abstract class RumorHandlers[F[_]: Async: KryoSerializer] private (
   clusterStorage: ClusterStorage[F],
-  pingHealthCheck: PingHealthCheckConsensus[F]
+  pingHealthCheck: PingHealthCheckConsensus[F],
+  localHealthcheck: LocalHealthcheck[F]
 ) {
-  private val nodeState = nodeStateHandler(clusterStorage)
+  private val nodeState = nodeStateHandler(clusterStorage, localHealthcheck)
   private val pingProposal = pingProposalHandler(pingHealthCheck)
 
   private val debug: RumorHandler[F] = {
