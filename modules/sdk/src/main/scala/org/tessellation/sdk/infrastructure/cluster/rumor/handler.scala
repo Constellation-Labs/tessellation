@@ -9,6 +9,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.gossip.PeerRumor
 import org.tessellation.schema.node.NodeState
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
+import org.tessellation.sdk.domain.healthcheck.LocalHealthcheck
 import org.tessellation.sdk.infrastructure.gossip.{IgnoreSelfOrigin, RumorHandler}
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -16,7 +17,8 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 object handler {
 
   def nodeStateHandler[F[_]: Async: KryoSerializer](
-    clusterStorage: ClusterStorage[F]
+    clusterStorage: ClusterStorage[F],
+    localHealthcheck: LocalHealthcheck[F]
   ): RumorHandler[F] = {
     val logger = Slf4jLogger.getLogger[F]
 
@@ -27,7 +29,8 @@ object handler {
         } >>
           clusterStorage.setPeerState(origin, state) >> {
             if (NodeState.absent.contains(state))
-              clusterStorage.removePeer(origin)
+              localHealthcheck.cancel(origin) >>
+                clusterStorage.removePeer(origin)
             else
               Applicative[F].unit
           }

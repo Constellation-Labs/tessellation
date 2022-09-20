@@ -13,6 +13,7 @@ import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.sdk.config.types.GossipDaemonConfig
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.collateral.Collateral
+import org.tessellation.sdk.domain.healthcheck.LocalHealthcheck
 import org.tessellation.sdk.infrastructure.gossip.RumorStorage
 import org.tessellation.sdk.infrastructure.gossip.RumorStorage.{AddSuccess, CounterTooHigh}
 import org.tessellation.sdk.infrastructure.gossip.p2p.GossipClient
@@ -41,6 +42,7 @@ object GossipDaemon {
     gossipClient: GossipClient[F],
     rumorHandler: RumorHandler[F],
     rumorValidator: RumorValidator[F],
+    localHealthcheck: LocalHealthcheck[F],
     selfId: PeerId,
     generation: Generation,
     cfg: GossipDaemonConfig,
@@ -50,8 +52,8 @@ object GossipDaemon {
       private val logger = Slf4jLogger.getLogger[F]
       private val rumorLogger = Slf4jLogger.getLoggerFromName[F](rumorLoggerName)
 
-      private val peerRoundRunner = GossipRoundRunner.make(clusterStorage, peerRound, "peer", cfg.peerRound)
-      private val commonRoundRunner = GossipRoundRunner.make(clusterStorage, commonRound, "common", cfg.commonRound)
+      private val peerRoundRunner = GossipRoundRunner.make(clusterStorage, localHealthcheck, peerRound, "peer", cfg.peerRound)
+      private val commonRoundRunner = GossipRoundRunner.make(clusterStorage, localHealthcheck, commonRound, "common", cfg.commonRound)
 
       def startAsInitialValidator: F[Unit] =
         peerRoundRunner.runForever >>

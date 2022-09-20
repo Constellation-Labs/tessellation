@@ -33,7 +33,7 @@ object Validator {
     clusterStorage: ClusterStorage[F],
     peersCount: PosInt
   ): F[Boolean] =
-    clusterStorage.getPeers
+    clusterStorage.getResponsivePeers
       .map(_.filter(p => isReadyForBlockConsensus(p.state)))
       .map(_.size >= peersCount)
 

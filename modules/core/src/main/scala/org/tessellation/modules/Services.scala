@@ -19,6 +19,7 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.collateral.Collateral
 import org.tessellation.sdk.domain.gossip.Gossip
+import org.tessellation.sdk.domain.healthcheck.LocalHealthcheck
 import org.tessellation.sdk.infrastructure.Collateral
 import org.tessellation.sdk.infrastructure.consensus.Consensus
 import org.tessellation.sdk.infrastructure.metrics.Metrics
@@ -72,6 +73,7 @@ object Services {
       collateralService = Collateral.make[F](cfg.collateral, storages.globalSnapshot)
     } yield
       new Services[F](
+        localHealthcheck = sdkServices.localHealthcheck,
         cluster = sdkServices.cluster,
         session = sdkServices.session,
         gossip = sdkServices.gossip,
@@ -83,6 +85,7 @@ object Services {
 }
 
 sealed abstract class Services[F[_]] private (
+  val localHealthcheck: LocalHealthcheck[F],
   val cluster: Cluster[F],
   val session: Session[F],
   val gossip: Gossip[F],

@@ -47,7 +47,7 @@ sealed abstract class PeerDiscovery[F[_]: Async] private (
       _ <- removePeer(peer)
 
       peers <- clusterClient.getDiscoveryPeers.run(peer)
-      knownPeers <- clusterStorage.getPeers
+      knownPeers <- clusterStorage.getResponsivePeers
       peersQueue <- getPeers
 
       unknownPeers = peers.filterNot { p =>

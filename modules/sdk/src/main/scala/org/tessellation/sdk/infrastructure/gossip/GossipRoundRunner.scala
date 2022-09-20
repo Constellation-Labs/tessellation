@@ -7,6 +7,7 @@ import cats.syntax.all._
 import org.tessellation.schema.peer.Peer
 import org.tessellation.sdk.config.types.GossipRoundConfig
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
+import org.tessellation.sdk.domain.healthcheck.LocalHealthcheck
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 
 import fs2.Stream
@@ -22,6 +23,7 @@ object GossipRoundRunner {
 
   def make[F[_]: Async: Random: Metrics](
     clusterStorage: ClusterStorage[F],
+    localHealthcheck: LocalHealthcheck[F],
     round: Peer => F[Unit],
     roundLabel: String,
     cfg: GossipRoundConfig
@@ -37,12 +39,15 @@ object GossipRoundRunner {
               case (duration, _) => metrics.recordRoundDuration(duration, roundLabel)
             }
             .flatMap(_ => metrics.incrementGossipRoundSucceeded)
-            .handleErrorWith(err => logger.error(s"Error running gossip round {peer=${peer.show}, reason=${err.getMessage}"))
+            .handleErrorWith { err =>
+              logger.error(s"Error running gossip round {peer=${peer.show}, reason=${err.getMessage}") >>
+                localHealthcheck.start(peer)
+            }
 
         def selectPeers: F[Unit] =
           for {
             _ <- Temporal[F].sleep(cfg.interval)
-            peers <- clusterStorage.getPeers
+            peers <- clusterStorage.getResponsivePeers
             selectedPeers <- Random[F].shuffleList(peers.toList).map(_.take(cfg.fanout.value))
             _ <- selectedPeers.traverse(selectedPeerQueue.offer)
           } yield ()

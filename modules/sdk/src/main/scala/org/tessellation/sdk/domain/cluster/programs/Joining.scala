@@ -24,6 +24,7 @@ import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.AppEnvironment.Dev
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
+import org.tessellation.sdk.domain.healthcheck.LocalHealthcheck
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.http.p2p.clients.SignClient
 import org.tessellation.security.SecurityProvider
@@ -44,6 +45,7 @@ object Joining {
     cluster: Cluster[F],
     session: Session[F],
     sessionStorage: SessionStorage[F],
+    localHealthcheck: LocalHealthcheck[F],
     seedlist: Option[Set[PeerId]],
     selfId: PeerId,
     stateAfterJoining: NodeState,
@@ -62,6 +64,7 @@ object Joining {
           cluster,
           session,
           sessionStorage,
+          localHealthcheck,
           seedlist,
           selfId,
           stateAfterJoining,
@@ -79,6 +82,7 @@ object Joining {
     cluster: Cluster[F],
     session: Session[F],
     sessionStorage: SessionStorage[F],
+    localHealthcheck: LocalHealthcheck[F],
     seedlist: Option[Set[PeerId]],
     selfId: PeerId,
     stateAfterJoining: NodeState,
@@ -96,6 +100,7 @@ object Joining {
       cluster,
       session,
       sessionStorage,
+      localHealthcheck,
       seedlist,
       selfId,
       stateAfterJoining,
@@ -138,6 +143,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
   cluster: Cluster[F],
   session: Session[F],
   sessionStorage: SessionStorage[F],
+  localHealthcheck: LocalHealthcheck[F],
   seedlist: Option[Set[PeerId]],
   selfId: PeerId,
   stateAfterJoining: NodeState,
@@ -225,6 +231,8 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
         registrationRequest.state,
         Responsive
       )
+
+      _ <- localHealthcheck.cancel(registrationRequest.id)
 
       _ <- clusterStorage.addPeer(peer)
 
