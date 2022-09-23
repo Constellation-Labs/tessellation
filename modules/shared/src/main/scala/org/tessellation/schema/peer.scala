@@ -24,6 +24,7 @@ import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia._
 import derevo.derive
 import derevo.scalacheck.arbitrary
+import io.circe.{Decoder, Encoder}
 import io.estatico.newtype.macros.newtype
 import io.estatico.newtype.ops._
 import io.getquill.MappedEncoding
@@ -67,13 +68,23 @@ object peer {
         .map(_.toAddress)
   }
 
-  @derive(eqv, encoder, decoder, show)
+  @derive(eqv, show)
   sealed trait PeerResponsiveness
 
   case object Responsive extends PeerResponsiveness
   case object Unresponsive extends PeerResponsiveness
 
   object PeerResponsiveness {
+    implicit val encode: Encoder[PeerResponsiveness] = Encoder.encodeString.contramap {
+      case Responsive   => "Responsive"
+      case Unresponsive => "Unresponsive"
+    }
+
+    implicit val decode: Decoder[PeerResponsiveness] = Decoder.decodeString.map {
+      case "Responsive" => Responsive
+      case _            => Unresponsive
+    }
+
     val _Bool: Iso[PeerResponsiveness, Boolean] =
       Iso[PeerResponsiveness, Boolean] {
         case Responsive   => true

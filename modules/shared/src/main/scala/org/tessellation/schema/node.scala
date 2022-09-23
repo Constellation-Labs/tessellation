@@ -4,7 +4,7 @@ import cats.syntax.show._
 
 import scala.util.Try
 
-import org.tessellation.schema.cluster.SessionToken
+import org.tessellation.schema.cluster.{ClusterSessionToken, SessionToken}
 import org.tessellation.schema.peer.{Peer, PeerId}
 
 import com.comcast.ip4s.{Host, Port}
@@ -93,6 +93,7 @@ object node {
   case class NodeInfo(
     state: NodeState,
     session: Option[SessionToken],
+    clusterSession: Option[ClusterSessionToken],
     version: String,
     host: Host,
     publicPort: Port,
