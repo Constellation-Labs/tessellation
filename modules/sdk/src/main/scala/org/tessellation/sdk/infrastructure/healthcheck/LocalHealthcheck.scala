@@ -10,6 +10,7 @@ import cats.syntax.option._
 import cats.syntax.show._
 
 import scala.concurrent.duration._
+import scala.util.control.NoStackTrace
 
 import org.tessellation.schema.cluster.SessionToken
 import org.tessellation.schema.peer._
@@ -29,6 +30,8 @@ object LocalHealthcheck {
     mkPeersR.map(make(_, retryPolicy, nodeClient, clusterStorage))
   }
 
+  case class PeerUnresponsive(id: PeerId) extends NoStackTrace
+
   def make[F[_]: Async](
     peersR: MapRef[F, PeerId, Option[F[Fiber[F, Throwable, Unit]]]],
     retryPolicy: RetryPolicy[F],
@@ -39,13 +42,18 @@ object LocalHealthcheck {
     val logger = Slf4jLogger.getLogger[F]
 
     def onError(err: Throwable, details: RetryDetails) =
-      logger.debug(err)(
-        s"Peer is unresponsive - retriesSoFar: ${details.retriesSoFar.show}, cumulativeDelay: ${details.cumulativeDelay.toSeconds.show}s"
-      )
+      err match {
+        case PeerUnresponsive(id) =>
+          logger.debug(
+            s"Peer ${id.show} is unresponsive - retriesSoFar: ${details.retriesSoFar.show}, cumulativeDelay: ${details.cumulativeDelay.toSeconds.show}s"
+          )
+        case _ => logger.warn(err)(s"Unpexpected error when checking peer responsiveness.")
+      }
 
     def start(peer: Peer): F[Unit] =
       clusterStorage.getPeer(peer.id).flatMap {
         case Some(p) if p.responsiveness === Unresponsive => Applicative[F].unit
+        case None                                         => Applicative[F].unit
         case _ =>
           Deferred[F, Fiber[F, Throwable, Unit]].flatMap { d =>
             peersR(peer.id).modify {
@@ -73,12 +81,13 @@ object LocalHealthcheck {
           check(peer).flatMap {
             case Some(session) =>
               clusterStorage.getPeer(peer.id).flatMap {
-                case Some(p) if p.session === session => responsive
+                case Some(p) if p.session === session =>
+                  responsive >> cancel(p.id)
                 case _ =>
                   logger.info(s"Peer ${peer.id.show} is responsive but found different session.") >> clusterStorage.removePeer(peer.id)
               }
             case _ =>
-              unresponsive >> (new Throwable(s"Peer ${peer.id.show} is unresponsive, scheduling next check.")).raiseError[F, Unit]
+              unresponsive >> PeerUnresponsive(peer.id).raiseError[F, Unit]
           }
         }
       }
