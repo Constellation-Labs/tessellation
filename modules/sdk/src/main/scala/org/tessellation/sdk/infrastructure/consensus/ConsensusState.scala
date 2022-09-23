@@ -20,7 +20,8 @@ case class ConsensusState[Key, Artifact](
   lastKey: Key,
   facilitators: List[PeerId],
   status: ConsensusStatus[Artifact],
-  statusUpdatedAt: FiniteDuration
+  statusUpdatedAt: FiniteDuration,
+  createdAt: FiniteDuration
 )
 
 @derive(eqv)

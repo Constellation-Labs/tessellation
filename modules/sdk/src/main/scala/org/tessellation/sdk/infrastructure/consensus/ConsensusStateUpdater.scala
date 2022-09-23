@@ -27,12 +27,13 @@ import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.infrastructure.consensus.declaration.{Facility, MajoritySignature, Proposal}
 import org.tessellation.sdk.infrastructure.consensus.message._
 import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, TimeTrigger}
+import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
-import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.{Signature, SignatureProof, verifySignatureProof}
 import org.tessellation.syntax.sortedCollection._
 
+import eu.timepit.refined.auto._
 import io.circe.Encoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -62,7 +63,7 @@ object ConsensusStateUpdater {
 
   def make[F[
     _
-  ]: Async: Clock: KryoSerializer: SecurityProvider, Event, Key: Show: Order: Next: TypeTag: Encoder, Artifact <: AnyRef: Show: TypeTag: Encoder](
+  ]: Async: Clock: KryoSerializer: SecurityProvider: Metrics, Event, Key: Show: Order: Next: TypeTag: Encoder, Artifact <: AnyRef: Show: TypeTag: Encoder](
     consensusFns: ConsensusFunctions[F, Event, Key, Artifact],
     consensusStorage: ConsensusStorage[F, Event, Key, Artifact],
     facilitatorCalculator: FacilitatorCalculator,
@@ -158,6 +159,7 @@ object ConsensusStateUpdater {
               lastKey,
               facilitators.toList.sorted,
               CollectingFacilities(maybeFacilityInfo),
+              time,
               time
             )
           } yield (state, effect).some
@@ -244,21 +246,25 @@ object ConsensusStateUpdater {
                 }
           }
         case CollectingProposals(majorityTrigger, maybeProposalInfo) =>
-          val maybeMajority = state.facilitators
+          val maybeAllProposals = state.facilitators
             .traverse(resources.peerDeclarationsMap.get)
             .flatMap(_.traverse(_.proposal.map(_.hash)))
-            .flatMap(pickMajority[Hash])
 
-          maybeMajority.traverse { majorityHash =>
-            val newState = state.copy(status = CollectingSignatures[Artifact](majorityHash, majorityTrigger))
-            val effect = maybeProposalInfo.traverse { proposalInfo =>
-              Signature.fromHash(keyPair.getPrivate, majorityHash).flatMap { signature =>
-                gossip.spread(ConsensusPeerDeclaration(key, MajoritySignature(signature)))
-              } >> Applicative[F].whenA(majorityHash === proposalInfo.proposalArtifactHash) {
-                gossip.spreadCommon(ConsensusArtifact(key, proposalInfo.proposalArtifact))
-              }
-            }.void
-            (newState, effect).pure[F]
+          maybeAllProposals.flatTraverse { allProposals =>
+            pickMajority(allProposals).traverse { majorityHash =>
+              val newState = state.copy(status = CollectingSignatures[Artifact](majorityHash, majorityTrigger))
+              val effect = maybeProposalInfo.traverse { proposalInfo =>
+                Signature.fromHash(keyPair.getPrivate, majorityHash).flatMap { signature =>
+                  gossip.spread(ConsensusPeerDeclaration(key, MajoritySignature(signature)))
+                } >> Applicative[F].whenA(majorityHash === proposalInfo.proposalArtifactHash) {
+                  gossip.spreadCommon(ConsensusArtifact(key, proposalInfo.proposalArtifact))
+                } >> Metrics[F].recordDistribution(
+                  "dag_consensus_proposal_affinity",
+                  proposalAffinity(allProposals, proposalInfo.proposalArtifactHash)
+                )
+              }.void
+              (newState, effect).pure[F]
+            }
           }
         case CollectingSignatures(majorityHash, majorityTrigger) =>
           val maybeAllSignatures =
@@ -305,6 +311,12 @@ object ConsensusStateUpdater {
 
     private def pickMajority[A: Order](proposals: List[A]): Option[A] =
       proposals.foldMap(a => Map(a -> 1)).toList.map(_.swap).maximumOption.map(_._2)
+
+    private def proposalAffinity[A: Order](proposals: List[A], proposal: A): Double =
+      if (proposals.nonEmpty)
+        proposals.count(Order[A].eqv(proposal, _)).toDouble / proposals.size.toDouble
+      else
+        0.0
 
     private def calculateRemainingFacilitators(local: Set[PeerId], removed: Set[PeerId]): Set[PeerId] =
       local.diff(removed)

@@ -26,6 +26,7 @@ import org.tessellation.sdk.domain.healthcheck.consensus.HealthCheckConsensus
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.infrastructure.gossip.RumorHandler
 import org.tessellation.sdk.infrastructure.healthcheck.declaration.{Key => HealthCheckKey, _}
+import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 
@@ -36,7 +37,7 @@ import org.http4s.client.Client
 object Consensus {
 
   def make[
-    F[_]: Async: Random: KryoSerializer: SecurityProvider,
+    F[_]: Async: Random: KryoSerializer: SecurityProvider: Metrics,
     Event: TypeTag: Decoder,
     Key: Show: Order: Next: TypeTag: Encoder: Decoder,
     Artifact <: AnyRef: Show: Eq: TypeTag: Encoder: Decoder
