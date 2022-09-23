@@ -6,7 +6,6 @@ import cats.data.NonEmptySet
 import cats.effect.Async
 import cats.effect.kernel.Clock
 import cats.kernel.Next
-import cats.syntax.alternative._
 import cats.syntax.applicative._
 import cats.syntax.flatMap._
 import cats.syntax.foldable._
@@ -15,6 +14,7 @@ import cats.syntax.option._
 import cats.syntax.order._
 import cats.syntax.show._
 import cats.syntax.traverse._
+import cats.syntax.traverseFilter._
 import cats.{Applicative, Order, Show}
 
 import scala.reflect.runtime.universe.TypeTag
@@ -120,10 +120,11 @@ object ConsensusStateUpdater {
 
     private def logStatusIfModified(key: Key)(maybeState: MaybeState): F[Unit] =
       maybeState.traverse { state =>
-        logger.debug {
+        logger.info {
           s"Consensus for key ${key.show} has ${state.facilitators.size} facilitator(s) and status ${state.status.show}"
         }
       }.void
+
     private def internalTryStartConsensus(
       key: Key,
       lastKey: Key,
@@ -266,20 +267,18 @@ object ConsensusStateUpdater {
               resources.peerDeclarationsMap
                 .get(peerId)
                 .flatMap(peerDeclaration => peerDeclaration.signature.map(signature => (peerId, signature.signature)))
-            }.map(_.map { case (id, signature) => SignatureProof(PeerId._Id.get(id), signature) }.toSet)
+            }.map(_.map { case (id, signature) => SignatureProof(PeerId._Id.get(id), signature) }.toList)
 
           maybeAllSignatures.traverse { allSignatures =>
-            allSignatures.toList
-              .traverse(sp => verifySignatureProof(majorityHash, sp).map(Either.cond(_, sp, sp)))
-              .map(_.separate)
-              .flatMap {
-                case (invalid, valid) =>
-                  logger
-                    .error(
-                      s"Not all signatures are valid for majority artifact with hash ${majorityHash.show}. Valid count: ${valid.size} invalid count: ${invalid.size}"
-                    )
-                    .whenA(invalid.nonEmpty)
-                    .as(valid)
+            allSignatures
+              .filterA(verifySignatureProof(majorityHash, _))
+              .flatTap { validSignatures =>
+                logger
+                  .warn(
+                    s"Removed ${(allSignatures.size - validSignatures.size).show} invalid signatures during consensus for key ${key.show}, " +
+                      s"${validSignatures.size.show} valid signatures left"
+                  )
+                  .whenA(allSignatures.size =!= validSignatures.size)
               }
           }.map { maybeOnlyValidSignatures =>
             for {
