@@ -10,6 +10,8 @@ import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.healthcheck.LocalHealthcheck
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 
+import org.tessellation.schema._
+
 import fs2.Stream
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -40,7 +42,7 @@ object GossipRoundRunner {
             }
             .flatMap(_ => metrics.incrementGossipRoundSucceeded)
             .handleErrorWith { err =>
-              logger.error(s"Error running gossip round {peer=${peer.show}, reason=${err.getMessage}") >>
+              logger.error(s"Error running gossip round {peer=${peer.show}, reason=${err.show}") >>
                 localHealthcheck.start(peer)
             }
 

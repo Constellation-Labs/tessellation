@@ -28,6 +28,8 @@ import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.tools.TransactionGenerator._
 import org.tessellation.tools.cli.method._
 
+import org.tessellation.schema._
+
 import com.monovore.decline._
 import com.monovore.decline.effect._
 import eu.timepit.refined.auto._
@@ -151,7 +153,7 @@ object Main
           .flatTap(tx =>
             Stream.retry(
               postTransaction(client, basicOpts.baseUrl)(tx)
-                .handleErrorWith(e => console.red(e.toString) >> e.raiseError[F, Unit]),
+                .handleErrorWith(e => console.red(e.show) >> e.raiseError[F, Unit]),
               0.5.seconds,
               d => (d * 1.25).asInstanceOf[FiniteDuration],
               basicOpts.retryAttempts
@@ -161,7 +163,7 @@ object Main
           .through(applyDelay(basicOpts.delay))
           .evalTap(printTx[F](basicOpts.verbose))
           .evalMap(_ => counterR.update(_ |+| 1L))
-          .handleErrorWith(e => Stream.eval(console.red(e.toString)))
+          .handleErrorWith(e => Stream.eval(console.red(e.show)))
           .mergeHaltL(progressPrinter)
           .append(Stream.eval(printProgressApplied))
           .compile

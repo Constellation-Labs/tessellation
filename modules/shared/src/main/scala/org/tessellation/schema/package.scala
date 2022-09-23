@@ -75,4 +75,6 @@ trait OrphanInstances {
 
   implicit val nonNegLongOrder: Order[NonNegLong] =
     orderOf[Long, NonNegative]
+
+  implicit val errorShow: Show[Throwable] = e => s"${e.getClass.getName}{message=${e.getMessage}}"
 }
