@@ -7,7 +7,7 @@ import cats.syntax.flatMap._
 import org.tessellation.schema.node.NodeInfo
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.config.types.HttpConfig
-import org.tessellation.sdk.domain.cluster.storage.SessionStorage
+import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tessellation.sdk.domain.node.NodeStorage
 
 import org.http4s.HttpRoutes
@@ -18,6 +18,7 @@ import org.http4s.server.Router
 final case class NodeRoutes[F[_]: Async](
   nodeStorage: NodeStorage[F],
   sessionStorage: SessionStorage[F],
+  clusterStorage: ClusterStorage[F],
   version: String,
   httpCfg: HttpConfig,
   selfId: PeerId
@@ -37,8 +38,8 @@ final case class NodeRoutes[F[_]: Async](
 
   private val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case GET -> Root / "info" =>
-      (nodeStorage.getNodeState, sessionStorage.getToken).mapN { (state, session) =>
-        NodeInfo(state, session, version, httpCfg.externalIp, httpCfg.publicHttp.port, httpCfg.p2pHttp.port, selfId)
+      (nodeStorage.getNodeState, sessionStorage.getToken, clusterStorage.getToken).mapN { (state, session, clusterSession) =>
+        NodeInfo(state, session, clusterSession, version, httpCfg.externalIp, httpCfg.publicHttp.port, httpCfg.p2pHttp.port, selfId)
       }.flatMap(Ok(_))
 
     case GET -> Root / "state" =>
