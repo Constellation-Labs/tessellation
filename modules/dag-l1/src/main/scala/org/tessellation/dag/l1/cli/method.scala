@@ -56,7 +56,7 @@ object method {
         timeout = 45.seconds,
         pullTxsCount = 100L
       ),
-      healthCheck = healthCheckConfig(true),
+      healthCheck = healthCheckConfig(false),
       collateral = collateralConfig(environment, collateralAmount)
     )
   }
