@@ -53,6 +53,15 @@ trait Metrics[F[_]] {
 
   def recordTime(key: MetricKey, duration: FiniteDuration, tags: TagSeq = Seq.empty): F[Unit]
 
+  def recordDistribution(key: MetricKey, value: Int): F[Unit]
+  def recordDistribution(key: MetricKey, value: Int, tags: TagSeq): F[Unit]
+  def recordDistribution(key: MetricKey, value: Long): F[Unit]
+  def recordDistribution(key: MetricKey, value: Long, tags: TagSeq): F[Unit]
+  def recordDistribution(key: MetricKey, value: Float): F[Unit]
+  def recordDistribution(key: MetricKey, value: Float, tags: TagSeq): F[Unit]
+  def recordDistribution(key: MetricKey, value: Double): F[Unit]
+  def recordDistribution(key: MetricKey, value: Double, tags: TagSeq): F[Unit]
+
   private[sdk] def getAllAsText: F[String]
 }
 
@@ -188,6 +197,35 @@ object Metrics {
         def recordTime(key: MetricKey, duration: FiniteDuration, tags: TagSeq): F[Unit] =
           Async[F].delay {
             registry.timer(key, toMicrometerTags(tags)).record(duration.toJava)
+          }
+
+        def recordDistribution(key: MetricKey, value: Int): F[Unit] =
+          genericRecordDistribution(key, value, Seq.empty)
+
+        def recordDistribution(key: MetricKey, value: Int, tags: TagSeq): F[Unit] =
+          genericRecordDistribution(key, value, tags)
+
+        def recordDistribution(key: MetricKey, value: Long): F[Unit] =
+          genericRecordDistribution(key, value, Seq.empty)
+
+        def recordDistribution(key: MetricKey, value: Long, tags: TagSeq): F[Unit] =
+          genericRecordDistribution(key, value, tags)
+
+        def recordDistribution(key: MetricKey, value: Float): F[Unit] =
+          genericRecordDistribution(key, value, Seq.empty)
+
+        def recordDistribution(key: MetricKey, value: Float, tags: TagSeq): F[Unit] =
+          genericRecordDistribution(key, value, tags)
+
+        def recordDistribution(key: MetricKey, value: Double): F[Unit] =
+          genericRecordDistribution(key, value, Seq.empty)
+
+        def recordDistribution(key: MetricKey, value: Double, tags: TagSeq): F[Unit] =
+          genericRecordDistribution(key, value, tags)
+
+        private def genericRecordDistribution[A: Numeric](key: MetricKey, value: A, tags: TagSeq): F[Unit] =
+          Async[F].delay {
+            registry.summary(key, toMicrometerTags(tags)).record(Numeric[A].toDouble(value))
           }
 
         def getAllAsText: F[String] = Async[F].delay {

@@ -24,6 +24,7 @@ import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
+import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto._
@@ -42,7 +43,7 @@ trait ConsensusManager[F[_], Key, Artifact] {
 
 object ConsensusManager {
 
-  def make[F[_]: Async: Clock, Event, Key: Show: Order: Next: TypeTag: Encoder: Decoder, Artifact: Show: TypeTag](
+  def make[F[_]: Async: Clock: Metrics, Event, Key: Show: Order: Next: TypeTag: Encoder: Decoder, Artifact: Show: TypeTag](
     timeTriggerInterval: FiniteDuration,
     consensusStorage: ConsensusStorage[F, Event, Key, Artifact],
     consensusStateUpdater: ConsensusStateUpdater[F, Key, Artifact],
@@ -149,12 +150,13 @@ object ConsensusManager {
           case Some(state) =>
             state.status match {
               case Finished(signedArtifact, majorityTrigger) =>
-                consensusStorage
-                  .tryUpdateLastKeyAndArtifactWithCleanup(state.lastKey, key, signedArtifact)
-                  .ifM(
-                    afterConsensusFinish(majorityTrigger),
-                    logger.info("Skip triggering another consensus")
-                  ) >> nodeStorage.tryModifyStateGetResult(Observing, Ready).void
+                Metrics[F].recordTime("dag_consensus_duration", state.statusUpdatedAt.minus(state.createdAt)) >>
+                  consensusStorage
+                    .tryUpdateLastKeyAndArtifactWithCleanup(state.lastKey, key, signedArtifact)
+                    .ifM(
+                      afterConsensusFinish(majorityTrigger),
+                      logger.info("Skip triggering another consensus")
+                    ) >> nodeStorage.tryModifyStateGetResult(Observing, Ready).void
               case _ =>
                 internalCheckForStateUpdate(key, resources)
             }

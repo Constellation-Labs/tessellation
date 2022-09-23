@@ -25,7 +25,7 @@
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
   "id": 2,
-  "iteration": 1662725469045,
+  "iteration": 1663950912304,
   "links": [],
   "liveNow": false,
   "panels": [
@@ -192,14 +192,14 @@
             "axisPlacement": "auto",
             "barAlignment": 0,
             "drawStyle": "line",
-            "fillOpacity": 10,
+            "fillOpacity": 0,
             "gradientMode": "opacity",
             "hideFrom": {
               "legend": false,
               "tooltip": false,
               "viz": false
             },
-            "lineInterpolation": "linear",
+            "lineInterpolation": "stepBefore",
             "lineWidth": 1,
             "pointSize": 5,
             "scaleDistribution": {
@@ -260,13 +260,72 @@
           },
           "editorMode": "code",
           "expr": "dag_global_snapshot_ordinal{ip=~\"$ip\", peer_id=~\"$peer_id\"}",
-          "legendFormat": "{{ip}} {{peer_id_short}}",
+          "legendFormat": "{{peer_id_short}}",
           "range": true,
           "refId": "A"
         }
       ],
       "title": "Ordinal",
       "type": "timeseries"
+    },
+    {
+      "cards": {},
+      "color": {
+        "cardColor": "#b4ff00",
+        "colorScale": "sqrt",
+        "colorScheme": "interpolatePlasma",
+        "exponent": 0.5,
+        "mode": "spectrum"
+      },
+      "dataFormat": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "P1809F7CD0C75ACF3"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 10
+      },
+      "heatmap": {},
+      "hideZeroBuckets": false,
+      "highlightCards": true,
+      "id": 42,
+      "legend": {
+        "show": false
+      },
+      "reverseYBuckets": false,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "P1809F7CD0C75ACF3"
+          },
+          "editorMode": "code",
+          "expr": "rate(dag_consensus_duration_seconds_sum{ip=~\"$ip\", peer_id=~\"$peer_id\"}[1m])/rate(dag_consensus_duration_seconds_count{ip=~\"$ip\", peer_id=~\"$peer_id\"}[1m])",
+          "hide": false,
+          "legendFormat": "{{ip}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Consensus duration",
+      "tooltip": {
+        "show": true,
+        "showHistogram": false
+      },
+      "type": "heatmap",
+      "xAxis": {
+        "show": true
+      },
+      "yAxis": {
+        "decimals": 0,
+        "format": "s",
+        "logBase": 1,
+        "show": true
+      },
+      "yBucketBound": "auto"
     },
     {
       "datasource": {
@@ -326,8 +385,8 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 12,
-        "y": 10
+        "x": 0,
+        "y": 18
       },
       "id": 29,
       "options": {
@@ -376,76 +435,92 @@
         "type": "prometheus",
         "uid": "P1809F7CD0C75ACF3"
       },
+      "description": "Percent of the facilitators that proposed the same value",
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "fixedColor": "#808080",
+            "mode": "fixed"
           },
           "custom": {
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "barAlignment": 0,
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "gradientMode": "opacity",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineInterpolation": "linear",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "never",
-            "spanNulls": false,
-            "stacking": {
-              "group": "A",
-              "mode": "none"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
+            "fillOpacity": 70,
+            "lineWidth": 0,
+            "spanNulls": false
           },
-          "mappings": [],
+          "decimals": 1,
+          "mappings": [
+            {
+              "options": {
+                "1": {
+                  "color": "blue",
+                  "index": 2,
+                  "text": "UNANIMITY"
+                }
+              },
+              "type": "value"
+            },
+            {
+              "options": {
+                "from": 0,
+                "result": {
+                  "color": "red",
+                  "index": 0,
+                  "text": "MINORITY"
+                },
+                "to": 0.5
+              },
+              "type": "range"
+            },
+            {
+              "options": {
+                "from": 0.5,
+                "result": {
+                  "color": "green",
+                  "index": 1,
+                  "text": "MAJORITY"
+                },
+                "to": 1
+              },
+              "type": "range"
+            }
+          ],
+          "max": 1,
+          "min": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
-              },
-              {
                 "color": "red",
-                "value": 80
+                "value": null
               }
             ]
-          }
+          },
+          "unit": "percentunit"
         },
         "overrides": []
       },
       "gridPos": {
-        "h": 8,
+        "h": 24,
         "w": 12,
-        "x": 0,
+        "x": 12,
         "y": 18
       },
-      "id": 35,
+      "id": 43,
       "options": {
+        "alignValue": "left",
         "legend": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "displayMode": "hidden",
-          "placement": "right"
+          "displayMode": "list",
+          "placement": "bottom"
         },
+        "mergeValues": true,
+        "rowHeight": 0.9,
+        "showValue": "never",
         "tooltip": {
           "mode": "single",
           "sort": "none"
         }
       },
+      "pluginVersion": "8.5.5",
       "targets": [
         {
           "datasource": {
@@ -453,26 +528,15 @@
             "uid": "P1809F7CD0C75ACF3"
           },
           "editorMode": "code",
-          "expr": "max(dag_global_snapshot_blocks_total{ip=~\"$ip\", peer_id=~\"$peer_id\"})",
-          "legendFormat": "Max",
+          "expr": "rate(dag_consensus_proposal_affinity_sum{ip=~\"$ip\", peer_id=~\"$peer_id\"}[1m])/rate(dag_consensus_proposal_affinity_count{ip=~\"$ip\", peer_id=~\"$peer_id\"}[1m])",
+          "hide": false,
+          "legendFormat": "{{peer_id_short}}",
           "range": true,
           "refId": "A"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "P1809F7CD0C75ACF3"
-          },
-          "editorMode": "code",
-          "expr": "min(dag_global_snapshot_blocks_total{ip=~\"$ip\", peer_id=~\"$peer_id\"})",
-          "hide": false,
-          "legendFormat": "Min",
-          "range": true,
-          "refId": "B"
         }
       ],
-      "title": "Blocks",
-      "type": "timeseries"
+      "title": "Proposal affinity",
+      "type": "state-timeline"
     },
     {
       "datasource": {
@@ -532,8 +596,8 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 12,
-        "y": 18
+        "x": 0,
+        "y": 26
       },
       "id": 36,
       "options": {
@@ -578,12 +642,115 @@
       "type": "timeseries"
     },
     {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "P1809F7CD0C75ACF3"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 34
+      },
+      "id": 35,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "hidden",
+          "placement": "right"
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "P1809F7CD0C75ACF3"
+          },
+          "editorMode": "code",
+          "expr": "max(dag_global_snapshot_blocks_total{ip=~\"$ip\", peer_id=~\"$peer_id\"})",
+          "legendFormat": "Max",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "P1809F7CD0C75ACF3"
+          },
+          "editorMode": "code",
+          "expr": "min(dag_global_snapshot_blocks_total{ip=~\"$ip\", peer_id=~\"$peer_id\"})",
+          "hide": false,
+          "legendFormat": "Min",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "Blocks",
+      "type": "timeseries"
+    },
+    {
       "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 26
+        "y": 42
       },
       "id": 2,
       "panels": [],
@@ -615,7 +782,7 @@
         "h": 8,
         "w": 6,
         "x": 0,
-        "y": 27
+        "y": 43
       },
       "id": 14,
       "options": {
@@ -681,7 +848,7 @@
         "h": 8,
         "w": 6,
         "x": 6,
-        "y": 27
+        "y": 43
       },
       "id": 18,
       "options": {
@@ -784,7 +951,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 27
+        "y": 43
       },
       "id": 38,
       "options": {
@@ -808,7 +975,7 @@
           },
           "editorMode": "code",
           "expr": "increase(dag_gossip_round_succeeded_total{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}[1m])",
-          "legendFormat": "{{ip}} {{peer_id_short}}",
+          "legendFormat": "{{ip}}",
           "range": true,
           "refId": "A"
         }
@@ -879,7 +1046,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 35
+        "y": 51
       },
       "id": 4,
       "options": {
@@ -975,7 +1142,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 35
+        "y": 51
       },
       "id": 39,
       "options": {
@@ -1007,6 +1174,64 @@
       ],
       "title": "Rumors consumed/min",
       "type": "timeseries"
+    },
+    {
+      "cards": {},
+      "color": {
+        "cardColor": "#b4ff00",
+        "colorScale": "sqrt",
+        "colorScheme": "interpolatePlasma",
+        "exponent": 0.5,
+        "mode": "spectrum"
+      },
+      "dataFormat": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "P1809F7CD0C75ACF3"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 59
+      },
+      "heatmap": {},
+      "hideZeroBuckets": false,
+      "highlightCards": true,
+      "id": 40,
+      "legend": {
+        "show": false
+      },
+      "reverseYBuckets": false,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "P1809F7CD0C75ACF3"
+          },
+          "editorMode": "code",
+          "expr": "rate(dag_gossip_round_duration_seconds_sum{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\", round_label=\"peer\"}[1m])/rate(dag_gossip_round_duration_seconds_count{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\", round_label=\"peer\"}[1m])",
+          "legendFormat": "{{ip}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Round duration",
+      "tooltip": {
+        "show": true,
+        "showHistogram": false
+      },
+      "type": "heatmap",
+      "xAxis": {
+        "show": true
+      },
+      "yAxis": {
+        "decimals": 0,
+        "format": "s",
+        "logBase": 1,
+        "show": true
+      },
+      "yBucketBound": "auto"
     }
   ],
   "refresh": "10s",
@@ -1109,6 +1334,6 @@
   "timezone": "browser",
   "title": "Tessellation",
   "uid": "lro46qC7k",
-  "version": 2,
+  "version": 3,
   "weekStart": ""
 }
