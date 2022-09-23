@@ -90,7 +90,18 @@ object Main
         .asResource
 
       api = HttpApi
-        .make[IO](storages, queues, services, programs, healthChecks, keyPair.getPrivate, cfg.environment, sdk.nodeId, BuildInfo.version)
+        .make[IO](
+          storages,
+          queues,
+          services,
+          programs,
+          healthChecks,
+          keyPair.getPrivate,
+          cfg.environment,
+          sdk.nodeId,
+          BuildInfo.version,
+          cfg.http
+        )
       _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
       _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)
       _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.http.cliHttp, api.cliApp)

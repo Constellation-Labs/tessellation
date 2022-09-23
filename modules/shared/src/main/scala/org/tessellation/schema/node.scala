@@ -4,9 +4,12 @@ import cats.syntax.show._
 
 import scala.util.Try
 
-import org.tessellation.schema.peer.Peer
+import org.tessellation.schema.cluster.SessionToken
+import org.tessellation.schema.peer.{Peer, PeerId}
 
+import com.comcast.ip4s.{Host, Port}
 import derevo.cats.{eqv, show}
+import derevo.circe.magnolia.encoder
 import derevo.derive
 import enumeratum._
 import io.circe._
@@ -85,5 +88,16 @@ object node {
 
   case class InvalidNodeStateTransition(current: NodeState, from: Set[NodeState], to: NodeState)
       extends Throwable(s"Invalid node state transition from ${from.show} to ${to.show} but current is ${current.show}")
+
+  @derive(encoder)
+  case class NodeInfo(
+    state: NodeState,
+    session: Option[SessionToken],
+    version: String,
+    host: Host,
+    publicPort: Port,
+    p2pPort: Port,
+    id: PeerId
+  )
 
 }
