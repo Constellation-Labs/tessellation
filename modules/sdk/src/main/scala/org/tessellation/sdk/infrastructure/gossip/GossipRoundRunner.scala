@@ -4,6 +4,7 @@ import cats.effect.std.{Queue, Random}
 import cats.effect.{Async, Spawn, Temporal}
 import cats.syntax.all._
 
+import org.tessellation.schema._
 import org.tessellation.schema.peer.Peer
 import org.tessellation.sdk.config.types.GossipRoundConfig
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
@@ -40,7 +41,7 @@ object GossipRoundRunner {
             }
             .flatMap(_ => metrics.incrementGossipRoundSucceeded)
             .handleErrorWith { err =>
-              logger.error(s"Error running gossip round {peer=${peer.show}, reason=${err.getMessage}") >>
+              logger.error(s"Error running gossip round {peer=${peer.show}, reason=${err.show}") >>
                 localHealthcheck.start(peer)
             }
 

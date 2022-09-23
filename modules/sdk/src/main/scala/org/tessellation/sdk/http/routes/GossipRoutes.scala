@@ -48,13 +48,13 @@ final case class GossipRoutes[F[_]: Async: KryoSerializer: Metrics](
                 (peerIdAndGen, Counter.MinValue).some
             }
         }
-        result <- Ok(peerRumorStream(higherCounters.toMap))
+        result <- Ok(peerRumorStream(higherCounters))
       } yield result
 
     case POST -> Root / "peer" / "init" =>
       for {
         localCounters <- rumorStorage.getPeerRumorHeadCounters
-        result <- Ok(peerRumorStream(localCounters))
+        result <- Ok(peerRumorStream(localCounters.toList))
       } yield result
 
     case GET -> Root / "common" / "offer" =>
@@ -78,9 +78,9 @@ final case class GossipRoutes[F[_]: Async: KryoSerializer: Metrics](
       } yield result
   }
 
-  private def peerRumorStream(from: Map[(PeerId, Generation), Counter]): Stream[F, Signed[PeerRumorRaw]] =
+  private def peerRumorStream(counters: List[((PeerId, Generation), Counter)]): Stream[F, Signed[PeerRumorRaw]] =
     Stream
-      .emits(from.toList)
+      .emits(counters)
       .evalMap {
         case (peerIdAndGen, counter) => rumorStorage.getPeerRumors(peerIdAndGen)(counter)
       }
