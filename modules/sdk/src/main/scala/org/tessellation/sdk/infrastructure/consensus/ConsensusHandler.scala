@@ -5,7 +5,6 @@ import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.semigroupk._
-import cats.syntax.show._
 
 import scala.reflect.runtime.universe.TypeTag
 
@@ -14,7 +13,6 @@ import org.tessellation.sdk.infrastructure.consensus.declaration._
 import org.tessellation.sdk.infrastructure.consensus.message._
 import org.tessellation.sdk.infrastructure.gossip.RumorHandler
 import org.tessellation.security.SecurityProvider
-import org.tessellation.security.signature.Signed
 
 import io.circe.Decoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -61,12 +59,8 @@ object ConsensusHandler {
           manager.checkForStateUpdate(rumor.content.key)
       }
 
-    val signedArtifactHandler = RumorHandler.fromCommonRumorConsumer[F, ConsensusArtifact[Key, Signed[Artifact]]] { rumor =>
-      logger.info(s"Signed artifact received ${rumor.content.key.show}")
-    }
-
     val deregistrationHandler = RumorHandler.fromPeerRumorConsumer[F, Deregistration[Key]]() { rumor =>
-      storage.removeRegisteredPeer(rumor.origin, rumor.content.key).void
+      storage.deregisterPeer(rumor.origin, rumor.content.key).void
     }
 
     eventHandler <+>
@@ -74,7 +68,6 @@ object ConsensusHandler {
       proposalHandler <+>
       artifactHandler <+>
       majoritySignatureHandler <+>
-      signedArtifactHandler <+>
       deregistrationHandler
   }
 

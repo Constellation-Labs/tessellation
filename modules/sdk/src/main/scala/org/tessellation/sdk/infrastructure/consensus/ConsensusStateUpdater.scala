@@ -54,7 +54,8 @@ trait ConsensusStateUpdater[F[_], Key, Artifact] {
   def tryObserveConsensus(
     key: Key,
     lastKey: Key,
-    resources: ConsensusResources[Artifact]
+    resources: ConsensusResources[Artifact],
+    initialPeer: PeerId
   ): F[MaybeState]
 
 }
@@ -81,15 +82,16 @@ object ConsensusStateUpdater {
       maybeTrigger: Option[ConsensusTrigger],
       resources: ConsensusResources[Artifact]
     ): F[MaybeState] =
-      tryModifyConsensus(key, internalTryStartConsensus(key, lastKey, lastArtifact.some, maybeTrigger, resources))
+      tryModifyConsensus(key, internalTryFacilitateConsensus(key, lastKey, lastArtifact, maybeTrigger, resources))
         .flatTap(logStatusIfModified(key))
 
     def tryObserveConsensus(
       key: Key,
       lastKey: Key,
-      resources: ConsensusResources[Artifact]
+      resources: ConsensusResources[Artifact],
+      initialPeer: PeerId
     ): F[MaybeState] =
-      tryModifyConsensus(key, internalTryStartConsensus(key, lastKey, none, none, resources))
+      tryModifyConsensus(key, internalTryObserveConsensus(key, lastKey, resources, initialPeer))
         .flatTap(logStatusIfModified(key))
 
     def tryUpdateConsensus(key: Key, resources: ConsensusResources[Artifact]): F[MaybeState] =
@@ -126,10 +128,41 @@ object ConsensusStateUpdater {
         }
       }.void
 
-    private def internalTryStartConsensus(
+    private def internalTryObserveConsensus(
       key: Key,
       lastKey: Key,
-      maybeLastArtifact: Option[Signed[Artifact]],
+      resources: ConsensusResources[Artifact],
+      initialPeer: PeerId
+    )(
+      maybeState: MaybeState
+    ): F[Option[(ConsensusState[Key, Artifact], F[Unit])]] =
+      maybeState match {
+        case None =>
+          Clock[F].monotonic.map { time =>
+            val facilitators = facilitatorCalculator.calculate(
+              resources.peerDeclarationsMap,
+              List(initialPeer),
+              resources.removedFacilitators
+            )
+            val state = ConsensusState(
+              key,
+              lastKey,
+              facilitators.sorted,
+              CollectingFacilities(none[FacilityInfo[Artifact]]),
+              time,
+              time
+            )
+            val effect = Applicative[F].unit
+            (state, effect).some
+          }
+        case Some(_) =>
+          none.pure[F]
+      }
+
+    private def internalTryFacilitateConsensus(
+      key: Key,
+      lastKey: Key,
+      lastArtifact: Signed[Artifact],
       maybeTrigger: Option[ConsensusTrigger],
       resources: ConsensusResources[Artifact]
     )(
@@ -138,28 +171,21 @@ object ConsensusStateUpdater {
       maybeState match {
         case None =>
           for {
-            peers <- consensusStorage.getRegisteredPeers(key)
-            readyPeers = peers.toSet ++ maybeLastArtifact.map(_ => selfId).toSet
+            registeredPeers <- consensusStorage.getRegisteredPeers(key)
             facilitators = facilitatorCalculator.calculate(
               resources.peerDeclarationsMap,
-              readyPeers,
+              selfId :: registeredPeers,
               resources.removedFacilitators
             )
             time <- Clock[F].realTime
-            (maybeFacilityInfo, effect) = maybeLastArtifact match {
-              case Some(lastArtifact) =>
-                val effect = consensusStorage.getUpperBound.flatMap { bound =>
-                  gossip.spread(ConsensusPeerDeclaration(key, Facility(bound, facilitators, maybeTrigger)))
-                }
-                (FacilityInfo[Artifact](lastArtifact, maybeTrigger).some, effect)
-              case None =>
-                (none[FacilityInfo[Artifact]], Applicative[F].unit)
+            effect = consensusStorage.getUpperBound.flatMap { bound =>
+              gossip.spread(ConsensusPeerDeclaration(key, Facility(bound, facilitators.toSet, maybeTrigger)))
             }
             state = ConsensusState(
               key,
               lastKey,
-              facilitators.toList.sorted,
-              CollectingFacilities(maybeFacilityInfo),
+              facilitators,
+              CollectingFacilities(FacilityInfo[Artifact](lastArtifact, maybeTrigger).some),
               time,
               time
             )
@@ -192,16 +218,16 @@ object ConsensusStateUpdater {
           facilitatorCalculator
             .calculate(
               resources.peerDeclarationsMap,
-              state.facilitators.toSet,
+              state.facilitators,
               resources.removedFacilitators
             )
             .some
         case Finished(_, _) =>
           none
         case _ =>
-          calculateRemainingFacilitators(state.facilitators.toSet, resources.removedFacilitators).some
+          facilitatorCalculator.calculateRemaining(state.facilitators, resources.removedFacilitators).some
       }
-    }.map(_.toList.sorted).flatMap { facilitators =>
+    }.flatMap { facilitators =>
       if (facilitators =!= state.facilitators)
         state.copy(facilitators = facilitators).some
       else
@@ -316,9 +342,6 @@ object ConsensusStateUpdater {
         proposals.count(Order[A].eqv(proposal, _)).toDouble / proposals.size.toDouble
       else
         0.0
-
-    private def calculateRemainingFacilitators(local: Set[PeerId], removed: Set[PeerId]): Set[PeerId] =
-      local.diff(removed)
 
   }
 

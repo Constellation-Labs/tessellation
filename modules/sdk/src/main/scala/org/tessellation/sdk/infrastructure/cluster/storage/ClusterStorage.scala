@@ -1,5 +1,6 @@
 package org.tessellation.sdk.infrastructure.cluster.storage
 
+import cats.data.Ior
 import cats.effect.{Async, Ref}
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
@@ -27,14 +28,14 @@ object ClusterStorage {
 
   def make[F[_]: Async](clusterId: ClusterId, initialPeers: Map[PeerId, Peer] = Map.empty): F[ClusterStorage[F]] =
     for {
-      topic <- Topic[F, (PeerId, Option[Peer])]
+      topic <- Topic[F, Ior[Peer, Peer]]
       peers <- MapRef.ofSingleImmutableMap[F, PeerId, Peer](initialPeers)
       session <- Ref.of[F, Option[ClusterSessionToken]](None)
     } yield make(clusterId, topic, peers, session)
 
   def make[F[_]: Async](
     clusterId: ClusterId,
-    topic: Topic[F, (PeerId, Option[Peer])],
+    topic: Topic[F, Ior[Peer, Peer]],
     peers: MapRef[F, PeerId, Option[Peer]],
     session: Ref[F, Option[ClusterSessionToken]]
   ): ClusterStorage[F] =
@@ -86,7 +87,7 @@ object ClusterStorage {
       def removePeers(ids: Set[PeerId]): F[Unit] =
         ids.toList.traverse(removePeer).void
 
-      def peerChanges: Stream[F, (PeerId, Option[Peer])] =
+      def peerChanges: Stream[F, Ior[Peer, Peer]] =
         topic.subscribe(maxQueuedPeerChanges)
 
       private def setPeer(id: PeerId)(value: Option[Peer]): F[Unit] = updatePeer(id)(_ => value)
@@ -96,12 +97,12 @@ object ClusterStorage {
 
       private def wrapUpdateFn(peerId: PeerId)(fn: Option[Peer] => Option[Peer])(
         oldValue: Option[Peer]
-      ): (Option[Peer], Option[(PeerId, Option[Peer])]) = {
+      ): (Option[Peer], Option[Ior[Peer, Peer]]) = {
         val newValue = fn(oldValue)
         if (newValue === oldValue)
           (oldValue, none)
         else
-          (newValue, (peerId, newValue).some)
+          (newValue, Ior.fromOptions(oldValue, newValue))
       }
 
       private def generateToken: F[ClusterSessionToken] =

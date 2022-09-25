@@ -121,7 +121,7 @@ object PeerDeclarationHealthCheck {
                 case (NegativeOutcome, round) =>
                   round.getRoundIds.flatMap { roundIds =>
                     consensusStorage
-                      .removeRegisteredPeer(key.id, key.consensusKey)
+                      .deregisterPeer(key.id, key.consensusKey)
                       .ifM(
                         logger.info(
                           s"Outcome for key ${key.show}: negative - node found and unregistered at given height. Removing facilitator | Round ids: ${roundIds.show}"

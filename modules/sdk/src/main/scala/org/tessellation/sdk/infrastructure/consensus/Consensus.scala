@@ -73,7 +73,8 @@ object Consensus {
         nodeStorage,
         clusterStorage,
         consClient,
-        gossip
+        gossip,
+        selfId
       )
       httpClient = PeerDeclarationHttpClient.make[F, Key](client, session)
       healthCheck <- PeerDeclarationHealthCheck.make[F, Key, Artifact](

@@ -1,13 +1,16 @@
 package org.tessellation.sdk.infrastructure.consensus
 
+import cats.data.Ior
 import cats.effect._
 import cats.kernel.Next
+import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.contravariantSemigroupal._
-import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+import cats.syntax.functorFilter._
 import cats.syntax.option._
+import cats.syntax.order._
 import cats.syntax.show._
 import cats.syntax.traverse._
 import cats.{Applicative, Order, Show}
@@ -18,8 +21,8 @@ import scala.reflect.runtime.universe.TypeTag
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.node.NodeState.{Observing, Ready}
-import org.tessellation.schema.peer.Peer
 import org.tessellation.schema.peer.Peer.toP2PContext
+import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.node.NodeStorage
@@ -50,16 +53,26 @@ object ConsensusManager {
     nodeStorage: NodeStorage[F],
     clusterStorage: ClusterStorage[F],
     consensusClient: ConsensusClient[F, Key],
-    gossip: Gossip[F]
+    gossip: Gossip[F],
+    selfId: PeerId
   ): F[ConsensusManager[F, Key, Artifact]] = {
     val logger = Slf4jLogger.getLoggerFromClass[F](ConsensusManager.getClass)
 
     def exchangeRegistration(peer: Peer): F[Unit] =
-      for {
-        exchangeRequest <- consensusStorage.getOwnRegistration.map(RegistrationExchangeRequest(_))
-        exchangeResponse <- consensusClient.exchangeRegistration(exchangeRequest).run(peer)
-        _ <- exchangeResponse.maybeKey.traverse(consensusStorage.registerPeer(peer.id))
-      } yield ()
+      Spawn[F].start {
+        val exchange = for {
+          exchangeRequest <- consensusStorage.getOwnRegistration.map(RegistrationExchangeRequest(_))
+          exchangeResponse <- consensusClient.exchangeRegistration(exchangeRequest).run(peer)
+          maybeResult <- exchangeResponse.maybeKey.traverse(consensusStorage.registerPeer(peer.id, _))
+          _ <- (exchangeResponse.maybeKey, maybeResult).traverseN {
+            case (key, result) =>
+              logger.warn(s"Peer ${peer.id.show} cannot be registered at ${key.show}").unlessA(result)
+          }
+        } yield ()
+
+        exchange
+          .handleErrorWith(err => logger.error(err)(s"Error exchanging registration with peer ${peer.show}"))
+      }.void
 
     val manager = new ConsensusManager[F, Key, Artifact] {
 
@@ -69,13 +82,12 @@ object ConsensusManager {
           val facilitationKey = lastKey.nextN(2L)
 
           consensusStorage.setOwnRegistration(facilitationKey) >>
-            exchangeRegistration(peer) >>
             consensusStorage.setLastKey(lastKey) >>
             consensusStorage
               .getResources(observationKey)
               .flatMap { resources =>
                 logger.debug(s"Trying to observe consensus {key=${observationKey.show}}") >>
-                  consensusStateUpdater.tryObserveConsensus(observationKey, lastKey, resources).flatMap {
+                  consensusStateUpdater.tryObserveConsensus(observationKey, lastKey, resources, peer.id).flatMap {
                     case Some(_) =>
                       internalCheckForStateUpdate(observationKey, resources)
                     case None => Applicative[F].unit
@@ -194,19 +206,30 @@ object ConsensusManager {
       nodeStorage.nodeStates
         .filter(NodeState.leaving.contains)
         .evalTap { _ =>
-          (consensusStorage.getLastKey.map(_.map(_.next)), consensusStorage.getOwnRegistration).tupled
-            .flatMap(_.mapN(Order[Key].max).map(Deregistration(_)).traverse(gossip.spread[Deregistration[Key]]))
+          (consensusStorage.getLastKey.map(_.map(_.next)), consensusStorage.getOwnRegistration).tupled.flatMap {
+            _.mapN(Order[Key].max)
+              .map(Deregistration(_))
+              .traverse(gossip.spread[Deregistration[Key]])
+          }
         }
         .compile
         .drain
     ) >>
       Spawn[F]
-        .start(clusterStorage.peerChanges.evalMap {
-          case (_, Some(peer)) if peer.state === NodeState.Observing =>
-            exchangeRegistration(peer)
-              .handleErrorWith(err => logger.error(err)(s"Error exchanging consensus registration with peer ${peer.id.show}"))
-          case _ => Applicative[F].unit
-        }.compile.drain)
+        .start(
+          clusterStorage.peerChanges.mapFilter {
+            case Ior.Both(_, peer) if peer.state === NodeState.Observing =>
+              peer.some
+            case Ior.Right(peer) if NodeState.inConsensus(peer.state) =>
+              peer.some
+            case _ =>
+              none[Peer]
+          }
+            .filter(selfId < _.id)
+            .evalMap(exchangeRegistration)
+            .compile
+            .drain
+        )
         .as(manager)
   }
 }
