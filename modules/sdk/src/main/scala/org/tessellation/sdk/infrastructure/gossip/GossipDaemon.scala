@@ -1,5 +1,6 @@
 package org.tessellation.sdk.infrastructure.gossip
 
+import cats.data.Ior
 import cats.effect.std.{Queue, Random}
 import cats.effect.{Async, Spawn}
 import cats.syntax.all._
@@ -63,7 +64,8 @@ object GossipDaemon {
       def startAsRegularValidator: F[Unit] =
         Spawn[F].start {
           clusterStorage.peerChanges.collectFirst {
-            case (_, Some(peer)) if peer.state === NodeState.Ready => peer
+            case Ior.Right(peer) if peer.state === NodeState.Ready   => peer
+            case Ior.Both(_, peer) if peer.state === NodeState.Ready => peer
           }.compile.lastOrError.flatMap { peer =>
             initPeerRumorStorage(peer) >>
               peerRoundRunner.runForever >>

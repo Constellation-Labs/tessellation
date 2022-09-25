@@ -7,20 +7,21 @@ import scala.annotation.tailrec
 import org.tessellation.schema.peer.PeerId
 
 trait FacilitatorCalculator {
-  def calculate(peersDeclarations: Map[PeerId, PeerDeclarations], local: Set[PeerId], removed: Set[PeerId]): Set[PeerId]
+  def calculate(peersDeclarations: Map[PeerId, PeerDeclarations], local: List[PeerId], removed: Set[PeerId]): List[PeerId]
+
+  def calculateRemaining(local: List[PeerId], removed: Set[PeerId]): List[PeerId]
 }
 
 object FacilitatorCalculator {
 
-  def make(seedlist: Option[Set[PeerId]]): FacilitatorCalculator =
-    (peersDeclarations: Map[PeerId, PeerDeclarations], local: Set[PeerId], removed: Set[PeerId]) => {
+  def make(seedlist: Option[Set[PeerId]]): FacilitatorCalculator = new FacilitatorCalculator {
+    def calculate(peersDeclarations: Map[PeerId, PeerDeclarations], local: List[PeerId], removed: Set[PeerId]): List[PeerId] = {
       def peerFilter(p: PeerId): Boolean =
         seedlist.forall(_.contains(p)) && !removed.contains(p)
 
-      val localFiltered = local.filter(peerFilter)
+      val localFiltered = local.filter(peerFilter).toSet
       val proposedFiltered = peersDeclarations.view
-        .mapValues(_.facility.map(_.facilitators.filter(peerFilter)))
-        .collect { case (id, Some(facilitators)) => id -> facilitators }
+        .mapValues(_.facility.map(_.facilitators.filter(peerFilter)).getOrElse(Set.empty[PeerId]))
         .toMap
 
       @tailrec
@@ -33,6 +34,9 @@ object FacilitatorCalculator {
           loop(next)
       }
 
-      loop(localFiltered)
+      loop(localFiltered).toList.sorted
     }
+
+    def calculateRemaining(local: List[PeerId], removed: Set[PeerId]): List[PeerId] = local.toSet.diff(removed).toList.sorted
+  }
 }

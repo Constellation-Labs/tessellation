@@ -71,6 +71,8 @@ object node {
     val inCluster: Set[NodeState] = Set(Observing, Ready, WaitingForDownload, DownloadInProgress)
 
     def inCluster(state: NodeState): Boolean = inCluster.contains(state)
+
+    val inConsensus: Set[NodeState] = Set(Observing, Ready)
   }
 
   trait NodeStateCodecs {

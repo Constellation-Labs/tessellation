@@ -95,9 +95,9 @@ trait ConsensusStorage[F[_], Event, Key, Artifact] {
 
   def getRegisteredPeers(key: Key): F[List[PeerId]]
 
-  private[consensus] def registerPeer(peerId: PeerId)(from: Key): F[Unit]
+  private[consensus] def registerPeer(peerId: PeerId, key: Key): F[Boolean]
 
-  private[sdk] def removeRegisteredPeer(peerId: PeerId, key: Key): F[Boolean]
+  private[sdk] def deregisterPeer(peerId: PeerId, key: Key): F[Boolean]
 
 }
 
@@ -111,7 +111,7 @@ object ConsensusStorage {
       lastKeyAndArtifactR <- Ref.of(lastKeyAndArtifact)
       timeTriggerR <- Ref.of(none[FiniteDuration])
       ownRegistrationR <- Ref.of(Option.empty[Key])
-      peerRegistrationsR <- Ref.of(Map.empty[PeerId, Key])
+      peerRegistrationsR <- Ref.of(Map.empty[PeerId, PeerRegistration[Key]])
       eventsR <- MapRef.ofConcurrentHashMap[F, PeerId, PeerEvents[Event]]()
       statesR <- MapRef.ofConcurrentHashMap[F, Key, ConsensusState[Key, Artifact]]()
       resourcesR <- MapRef.ofConcurrentHashMap[F, Key, ConsensusResources[Artifact]]()
@@ -319,28 +319,42 @@ object ConsensusStorage {
         def getRegisteredPeers(key: Key): F[List[PeerId]] =
           peerRegistrationsR.get.map { peerRegistrations =>
             peerRegistrations.toList.mapFilter {
-              case (peerId, current) if key >= current => peerId.some
-              case _                                   => none[PeerId]
+              case (peerId, Registered(at)) if key >= at => peerId.some
+              case _                                     => none[PeerId]
             }
           }
 
-        def registerPeer(peerId: PeerId)(key: Key): F[Unit] =
-          peerRegistrationsR.update { peerRegistrations =>
-            peerRegistrations
-              .focus()
-              .at(peerId)
-              .replace(key.some)
+        def registerPeer(peerId: PeerId, key: Key): F[Boolean] =
+          condReplacePeerRegistration(peerId, Registered(key)) {
+            case Registered(at)   => key >= at // `>` part allows for a registration after a quick restart, before peer got deregistered
+            case Deregistered(at) => key > at
           }
 
-        def removeRegisteredPeer(peerId: PeerId, key: Key): F[Boolean] =
-          peerRegistrationsR.modify { peerRegistrations =>
-            val updated =
-              peerRegistrations
-                .focus()
-                .at(peerId)
-                .modify(_.filter(_ > key))
+        def deregisterPeer(peerId: PeerId, key: Key): F[Boolean] =
+          condReplacePeerRegistration(peerId, Deregistered(key)) {
+            case Registered(at)   => key >= at
+            case Deregistered(at) => key === at
+          }
 
-            (updated, peerRegistrations != updated)
+        /** Replaces peer registration with `value` when `cond` evaluates to `true` or when registration doesn't exists for a given `peerId`
+          * @return
+          *   `true` if value has been replaced
+          */
+        private def condReplacePeerRegistration(
+          peerId: PeerId,
+          value: PeerRegistration[Key]
+        )(cond: PeerRegistration[Key] => Boolean): F[Boolean] =
+          peerRegistrationsR.modify { peerRegistrations =>
+            val (resultInt, updated) = peerRegistrations
+              .focus()
+              .at(peerId)
+              .modifyA { maybePeerRegistration =>
+                maybePeerRegistration
+                  .filterNot(cond)
+                  .map(curr => (0, curr.some))
+                  .getOrElse((1, value.some))
+              }
+            (updated, resultInt === 1)
           }
       }
 }

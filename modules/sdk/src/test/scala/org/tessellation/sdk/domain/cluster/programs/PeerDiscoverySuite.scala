@@ -1,6 +1,6 @@
 package org.tessellation.sdk.domain.cluster.programs
 
-import cats.data.Kleisli
+import cats.data.{Ior, Kleisli}
 import cats.effect.IO
 
 import org.tessellation.schema.generators._
@@ -61,7 +61,7 @@ object PeerDiscoverySuite extends SimpleIOSuite with Checkers {
 
       override def removePeers(ids: Set[PeerId]): IO[Unit] = ???
 
-      override def peerChanges: fs2.Stream[IO, (PeerId, Option[Peer])] = ???
+      override def peerChanges: fs2.Stream[IO, Ior[Peer, Peer]] = ???
 
       override def setToken(token: cluster.ClusterSessionToken): IO[Unit] = ???
 

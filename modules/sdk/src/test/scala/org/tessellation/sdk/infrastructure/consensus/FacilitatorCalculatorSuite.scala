@@ -54,11 +54,11 @@ object FacilitatorCalculatorSuite extends FunSuite with Checkers {
             signature = None
           )
         ),
-        Set(peerA, peerB),
+        List(peerA, peerB),
         Set(peerI, peerJ)
       )
 
-    val expected = Set(peerA, peerB, peerC, peerD, peerE, peerF, peerG, peerH)
+    val expected = List(peerA, peerB, peerC, peerD, peerE, peerF, peerG, peerH)
 
     expect.same(expected, result)
   }
