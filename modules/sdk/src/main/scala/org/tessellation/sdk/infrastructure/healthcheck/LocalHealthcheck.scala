@@ -82,9 +82,11 @@ object LocalHealthcheck {
             case Some(session) =>
               clusterStorage.getPeer(peer.id).flatMap {
                 case Some(p) if p.session === session =>
-                  responsive >> cancel(p.id)
+                  responsive >> cancel(peer.id)
                 case _ =>
-                  logger.info(s"Peer ${peer.id.show} is responsive but found different session.") >> clusterStorage.removePeer(peer.id)
+                  logger.info(s"Peer ${peer.id.show} is responsive but found different session.") >>
+                    clusterStorage.removePeer(peer.id) >>
+                    cancel(peer.id)
               }
             case _ =>
               unresponsive >> PeerUnresponsive(peer.id).raiseError[F, Unit]
