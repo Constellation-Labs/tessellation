@@ -14,6 +14,7 @@ import org.tessellation.domain.snapshot.GlobalSnapshotStorage
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types.HealthCheckConfig
 import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
@@ -40,6 +41,7 @@ object GlobalSnapshotConsensus {
     blockValidator: BlockValidator[F],
     healthCheckConfig: HealthCheckConfig,
     snapshotConfig: SnapshotConfig,
+    environment: AppEnvironment,
     client: Client[F],
     session: Session[F],
     rewards: Rewards[F]
@@ -49,7 +51,8 @@ object GlobalSnapshotConsensus {
         globalSnapshotStorage,
         BlockAcceptanceManager.make[F](blockValidator),
         collateral,
-        rewards
+        rewards,
+        environment
       ),
       gossip,
       selfId,
