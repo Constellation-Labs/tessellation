@@ -55,7 +55,7 @@ object GlobalSnapshot {
       SnapshotOrdinal.MinValue,
       Height.MinValue,
       SubHeight.MinValue,
-      Hash.empty,
+      Coinbase.hash,
       SortedSet.empty,
       SortedMap.empty,
       SortedSet.empty,
