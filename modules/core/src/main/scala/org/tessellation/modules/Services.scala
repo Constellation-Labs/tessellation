@@ -65,6 +65,7 @@ object Services {
           validators.blockValidator,
           cfg.healthCheck,
           cfg.snapshot,
+          cfg.environment,
           client,
           session,
           rewards

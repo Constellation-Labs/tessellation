@@ -32,6 +32,8 @@ import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.RewardTransaction
+import org.tessellation.sdk.config.AppEnvironment
+import org.tessellation.sdk.config.AppEnvironment.Mainnet
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
 import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import org.tessellation.sdk.infrastructure.metrics.Metrics
@@ -53,7 +55,8 @@ object GlobalSnapshotConsensusFunctions {
     globalSnapshotStorage: GlobalSnapshotStorage[F],
     blockAcceptanceManager: BlockAcceptanceManager[F],
     collateral: Amount,
-    rewards: Rewards[F]
+    rewards: Rewards[F],
+    environment: AppEnvironment
   ): GlobalSnapshotConsensusFunctions[F] = new GlobalSnapshotConsensusFunctions[F] {
 
     private val logger = Slf4jLogger.getLoggerFromClass(GlobalSnapshotConsensusFunctions.getClass)
@@ -76,7 +79,9 @@ object GlobalSnapshotConsensusFunctions {
       trigger: ConsensusTrigger,
       events: Set[GlobalSnapshotEvent]
     ): F[(GlobalSnapshotArtifact, Set[GlobalSnapshotEvent])] = {
-      val (scEvents: List[StateChannelEvent], dagEvents: List[DAGEvent]) = events.toList.partitionMap(identity)
+      val (scEvents: List[StateChannelEvent], dagEvents: List[DAGEvent]) = events.filter { event =>
+        if (environment == Mainnet) event.isRight else true
+      }.toList.partitionMap(identity)
 
       val blocksForAcceptance = dagEvents
         .filter(_.height > lastArtifact.height)
