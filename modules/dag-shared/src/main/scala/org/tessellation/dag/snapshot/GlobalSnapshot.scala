@@ -23,6 +23,7 @@ import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import eu.timepit.refined.auto._
+import eu.timepit.refined.types.numeric.PosInt
 
 @derive(eqv, show, encoder, decoder)
 case class GlobalSnapshot(
@@ -64,13 +65,13 @@ object GlobalSnapshot {
       GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.from(balances)),
       GlobalSnapshotTips(
         SortedSet.empty[DeprecatedTip],
-        mkActiveTips(16)
+        mkActiveTips(8)
       )
     )
 
-  private def mkActiveTips(n: Int): SortedSet[ActiveTip] =
+  private def mkActiveTips(n: PosInt): SortedSet[ActiveTip] =
     List
-      .range(0, n)
+      .range(0, n.value)
       .map { i =>
         ActiveTip(BlockReference(Height.MinValue, ProofsHash(s"%064d".format(i))), 0L, SnapshotOrdinal.MinValue)
       }
