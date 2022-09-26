@@ -51,7 +51,7 @@ case class GlobalSnapshot(
 
 object GlobalSnapshot {
 
-  def mkGenesis(balances: Map[Address, Balance], startingEpochProgress: EpochProgress) =
+  def mkGenesis(balances: Map[Address, Balance], startingEpochProgress: EpochProgress): GlobalSnapshot =
     GlobalSnapshot(
       SnapshotOrdinal.MinValue,
       Height.MinValue,
@@ -61,13 +61,20 @@ object GlobalSnapshot {
       SortedMap.empty,
       SortedSet.empty,
       startingEpochProgress,
-      NonEmptyList.of(PeerId(Hex("peer1"))), // TODO
+      nextFacilitators,
       GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.from(balances)),
       GlobalSnapshotTips(
         SortedSet.empty[DeprecatedTip],
         mkActiveTips(8)
       )
     )
+
+  val nextFacilitators: NonEmptyList[PeerId] =
+    NonEmptyList
+      .of(
+        "e0c1ee6ec43510f0e16d2969a7a7c074a5c8cdb477c074fe9c32a9aad8cbc8ff1dff60bb81923e0db437d2686a9b65b86c403e6a21fa32b6acc4e61be4d70925"
+      )
+      .map(s => PeerId(Hex(s)))
 
   private def mkActiveTips(n: PosInt): SortedSet[ActiveTip] =
     List
