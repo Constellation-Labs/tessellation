@@ -30,7 +30,6 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.height.{Height, SubHeight}
-import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.RewardTransaction
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.AppEnvironment.Mainnet
@@ -38,7 +37,6 @@ import org.tessellation.sdk.domain.consensus.ConsensusFunctions
 import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.hash.Hash
-import org.tessellation.security.hex.Hex
 import org.tessellation.security.signature.Signed
 import org.tessellation.syntax.sortedCollection._
 
@@ -146,7 +144,7 @@ object GlobalSnapshotConsensusFunctions {
           scSnapshots,
           acceptedRewardTxs,
           currentEpochProgress,
-          NonEmptyList.of(PeerId(Hex("peer1"))), // TODO
+          GlobalSnapshot.nextFacilitators,
           GlobalSnapshotInfo(
             updatedLastStateChannelSnapshotHashes,
             updatedLastTxRefs,
