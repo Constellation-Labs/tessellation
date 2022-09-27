@@ -69,5 +69,6 @@ jobs:
             ./cl-wallet.jar
             ./cl-node.jar
             ./cl-dag-l1.jar
+            ./mainnet/mainnet-seedlist
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
