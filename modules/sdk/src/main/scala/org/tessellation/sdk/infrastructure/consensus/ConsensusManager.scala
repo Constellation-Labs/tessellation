@@ -1,9 +1,9 @@
 package org.tessellation.sdk.infrastructure.consensus
 
-import cats.data.Ior
+import cats.data.Ior.{Both, Right}
 import cats.effect._
+import cats.effect.std.Queue
 import cats.kernel.Next
-import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.contravariantSemigroupal._
 import cats.syntax.flatMap._
@@ -31,6 +31,7 @@ import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto._
+import fs2.Stream
 import io.circe.{Decoder, Encoder}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -55,23 +56,34 @@ object ConsensusManager {
     consensusClient: ConsensusClient[F, Key],
     gossip: Gossip[F],
     selfId: PeerId
-  ): F[ConsensusManager[F, Key, Artifact]] = {
+  ): F[ConsensusManager[F, Key, Artifact]] = Queue.unbounded[F, Peer].flatMap { peersForRegistrationExchange =>
     val logger = Slf4jLogger.getLoggerFromClass[F](ConsensusManager.getClass)
 
-    def exchangeRegistration(peer: Peer): F[Unit] =
-      Spawn[F].start {
-        val exchange = for {
-          exchangeRequest <- consensusStorage.getOwnRegistration.map(RegistrationExchangeRequest(_))
-          exchangeResponse <- consensusClient.exchangeRegistration(exchangeRequest).run(peer)
-          maybeResult <- exchangeResponse.maybeKey.traverse(consensusStorage.registerPeer(peer.id, _))
-          _ <- (exchangeResponse.maybeKey, maybeResult).traverseN {
-            case (key, result) =>
-              logger.warn(s"Peer ${peer.id.show} cannot be registered at ${key.show}").unlessA(result)
-          }
-        } yield ()
+    def exchangeRegistration(peer: Peer): F[Unit] = {
+      val exchange = for {
+        exchangeRequest <- consensusStorage.getOwnRegistration.map(RegistrationExchangeRequest(_))
+        exchangeResponse <- consensusClient.exchangeRegistration(exchangeRequest).run(peer)
+        maybeResult <- exchangeResponse.maybeKey.traverse(consensusStorage.registerPeer(peer.id, _))
+        _ <- (exchangeResponse.maybeKey, maybeResult).traverseN {
+          case (key, result) =>
+            if (result)
+              logger.info(s"Peer ${peer.id.show} registered at ${key.show}")
+            else
+              logger.warn(s"Peer ${peer.id.show} cannot be registered at ${key.show}")
+        }
+      } yield ()
 
-        exchange
-          .handleErrorWith(err => logger.error(err)(s"Error exchanging registration with peer ${peer.show}"))
+      exchange
+        .handleErrorWith(err => logger.error(err)(s"Error exchanging registration with peer ${peer.show}"))
+    }
+
+    def startRegistrationExchange: F[Unit] =
+      Spawn[F].start {
+        Stream
+          .fromQueueUnterminated(peersForRegistrationExchange)
+          .evalMap(exchangeRegistration)
+          .compile
+          .drain
       }.void
 
     val manager = new ConsensusManager[F, Key, Artifact] {
@@ -82,6 +94,7 @@ object ConsensusManager {
           val facilitationKey = lastKey.nextN(2L)
 
           consensusStorage.setOwnRegistration(facilitationKey) >>
+            startRegistrationExchange >>
             consensusStorage.setLastKey(lastKey) >>
             consensusStorage
               .getResources(observationKey)
@@ -105,6 +118,7 @@ object ConsensusManager {
       def startFacilitatingAfter(lastKey: Key, lastArtifact: Signed[Artifact]): F[Unit] =
         consensusStorage.setLastKeyAndArtifact(lastKey, lastArtifact) >>
           consensusStorage.setOwnRegistration(lastKey.next) >>
+          startRegistrationExchange >>
           scheduleFacility
 
       private def scheduleFacility: F[Unit] =
@@ -218,15 +232,16 @@ object ConsensusManager {
       Spawn[F]
         .start(
           clusterStorage.peerChanges.mapFilter {
-            case Ior.Both(_, peer) if peer.state === NodeState.Observing =>
+            case Both(_, peer) if peer.state === NodeState.Observing =>
               peer.some
-            case Ior.Right(peer) if NodeState.inConsensus(peer.state) =>
+            case Right(peer) if NodeState.inConsensus.contains(peer.state) =>
               peer.some
             case _ =>
               none[Peer]
           }
+            .filter(_.isResponsive)
             .filter(selfId < _.id)
-            .evalMap(exchangeRegistration)
+            .enqueueUnterminated(peersForRegistrationExchange)
             .compile
             .drain
         )

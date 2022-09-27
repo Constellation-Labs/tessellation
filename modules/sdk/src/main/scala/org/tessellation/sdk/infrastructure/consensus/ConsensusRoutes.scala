@@ -27,7 +27,10 @@ class ConsensusRoutes[F[_]: Async: KryoSerializer, Key: Order: Show: Encoder: De
         maybeRegistrationResult <- exchangeRequest.maybeKey.traverse(storage.registerPeer(idHeader.id, _))
         _ <- (exchangeRequest.maybeKey, maybeRegistrationResult).traverseN {
           case (key, result) =>
-            logger.warn(s"Peer ${idHeader.id.show} cannot be registered at ${key.show}").unlessA(result)
+            if (result)
+              logger.info(s"Peer ${idHeader.id.show} registered at ${key.show}")
+            else
+              logger.warn(s"Peer ${idHeader.id.show} cannot be registered at ${key.show}")
         }
         exchangeResponse <- storage.getOwnRegistration.map(RegistrationExchangeResponse(_))
         result <- Ok(exchangeResponse)

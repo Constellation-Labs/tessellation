@@ -7,6 +7,7 @@ import cats.Show
 import cats.effect.kernel.Async
 import cats.kernel.Order
 import cats.syntax.contravariant._
+import cats.syntax.eq._
 import cats.syntax.functor._
 
 import org.tessellation.ext.derevo.ordering
@@ -108,6 +109,10 @@ object peer {
       P2PContext(peer.ip, peer.p2pPort, peer.id)
 
     val _State: Lens[Peer, NodeState] = GenLens[Peer](_.state)
+  }
+
+  implicit class PeerOps(value: Peer) {
+    def isResponsive: Boolean = value.responsiveness === Responsive
   }
 
   @derive(encoder, decoder, show)

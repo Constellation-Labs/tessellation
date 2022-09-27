@@ -93,9 +93,9 @@ object ClusterStorage {
       private def setPeer(id: PeerId)(value: Option[Peer]): F[Unit] = updatePeer(id)(_ => value)
 
       private def updatePeer(id: PeerId)(fn: Option[Peer] => Option[Peer]): F[Unit] =
-        peers(id).modify(wrapUpdateFn(id)(fn)).flatTap(_.traverse(topic.publish1)).void
+        peers(id).modify(wrapUpdateFn(fn)).flatTap(_.traverse(topic.publish1)).void
 
-      private def wrapUpdateFn(peerId: PeerId)(fn: Option[Peer] => Option[Peer])(
+      private def wrapUpdateFn(fn: Option[Peer] => Option[Peer])(
         oldValue: Option[Peer]
       ): (Option[Peer], Option[Ior[Peer, Peer]]) = {
         val newValue = fn(oldValue)
