@@ -73,8 +73,8 @@ object Rewards {
 
         val programRewardsState = for {
           stardustCollective <- stardust.distribute()
-          softStakingRewards <- softStaking.distribute(epochProgress, facilitators)
           dtmRewards <- dtm.distribute()
+          softStakingRewards <- softStaking.distribute(epochProgress, facilitators)
         } yield dtmRewards ++ softStakingRewards ++ stardustCollective
 
         def eitherToF[A](either: Either[ArithmeticException, A]): F[A] = either.liftTo[F]
