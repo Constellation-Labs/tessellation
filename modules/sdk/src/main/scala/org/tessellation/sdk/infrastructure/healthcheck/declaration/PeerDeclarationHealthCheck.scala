@@ -74,7 +74,7 @@ object PeerDeclarationHealthCheck {
 
         def periodic: F[Unit] =
           for {
-            time <- Clock[F].realTime
+            time <- Clock[F].monotonic
             states <- consensusStorage.getStates
             maybeOwnRegistration <- consensusStorage.getOwnRegistration
             roundKeys <- states
@@ -138,7 +138,7 @@ object PeerDeclarationHealthCheck {
 
         private def peerHealth(key: Key[K]): F[Health] =
           for {
-            time <- Clock[F].realTime
+            time <- Clock[F].monotonic
             maybeState <- consensusStorage.getState(key.consensusKey)
             maybePeerDeclaration <- consensusStorage.getPeerDeclarations(key.consensusKey).map(_.get(key.id))
             maybeOwnRegistration <- consensusStorage.getOwnRegistration

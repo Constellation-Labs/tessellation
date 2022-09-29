@@ -177,7 +177,7 @@ object ConsensusStateUpdater {
               selfId :: registeredPeers,
               resources.removedFacilitators
             )
-            time <- Clock[F].realTime
+            time <- Clock[F].monotonic
             effect = consensusStorage.getUpperBound.flatMap { bound =>
               gossip.spread(ConsensusPeerDeclaration(key, Facility(bound, facilitators.toSet, maybeTrigger)))
             }
@@ -328,7 +328,7 @@ object ConsensusStateUpdater {
     }.flatMap {
       _.traverse {
         case (state, effect) =>
-          Clock[F].realTime.map { time =>
+          Clock[F].monotonic.map { time =>
             (state.copy(statusUpdatedAt = time), effect)
           }
       }
