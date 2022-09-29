@@ -25,7 +25,6 @@
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
   "id": 2,
-  "iteration": 1664231549328,
   "links": [],
   "liveNow": false,
   "panels": [
@@ -84,7 +83,7 @@
         },
         "textMode": "auto"
       },
-      "pluginVersion": "8.5.5",
+      "pluginVersion": "9.1.6",
       "targets": [
         {
           "datasource": {
@@ -142,7 +141,7 @@
         },
         "textMode": "auto"
       },
-      "pluginVersion": "8.5.5",
+      "pluginVersion": "9.1.6",
       "targets": [
         {
           "datasource": {
@@ -166,6 +165,7 @@
           "color": {
             "mode": "thresholds"
           },
+          "decimals": 1,
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
@@ -201,7 +201,7 @@
         },
         "textMode": "auto"
       },
-      "pluginVersion": "8.5.5",
+      "pluginVersion": "9.1.6",
       "targets": [
         {
           "datasource": {
@@ -225,6 +225,7 @@
           "color": {
             "mode": "thresholds"
           },
+          "decimals": 1,
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
@@ -260,7 +261,7 @@
         },
         "textMode": "auto"
       },
-      "pluginVersion": "8.5.5",
+      "pluginVersion": "9.1.6",
       "targets": [
         {
           "datasource": {
@@ -298,6 +299,8 @@
             "mode": "palette-classic"
           },
           "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
@@ -355,7 +358,8 @@
             "lastNotNull"
           ],
           "displayMode": "table",
-          "placement": "right"
+          "placement": "right",
+          "showLegend": true
         },
         "tooltip": {
           "mode": "single",
@@ -392,6 +396,21 @@
         "type": "prometheus",
         "uid": "P1809F7CD0C75ACF3"
       },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "scaleDistribution": {
+              "type": "linear"
+            }
+          }
+        },
+        "overrides": []
+      },
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -405,6 +424,45 @@
       "legend": {
         "show": false
       },
+      "options": {
+        "calculate": true,
+        "calculation": {},
+        "cellGap": 2,
+        "cellValues": {},
+        "color": {
+          "exponent": 0.5,
+          "fill": "#b4ff00",
+          "mode": "scheme",
+          "reverse": false,
+          "scale": "exponential",
+          "scheme": "Plasma",
+          "steps": 128
+        },
+        "exemplars": {
+          "color": "rgba(255,0,255,0.7)"
+        },
+        "filterValues": {
+          "le": 1e-9
+        },
+        "legend": {
+          "show": false
+        },
+        "rowsFrame": {
+          "layout": "auto"
+        },
+        "showValue": "never",
+        "tooltip": {
+          "show": true,
+          "yHistogram": false
+        },
+        "yAxis": {
+          "axisPlacement": "left",
+          "decimals": 0,
+          "reverse": false,
+          "unit": "s"
+        }
+      },
+      "pluginVersion": "9.1.6",
       "reverseYBuckets": false,
       "targets": [
         {
@@ -448,6 +506,8 @@
             "mode": "palette-classic"
           },
           "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
@@ -504,8 +564,9 @@
           "calcs": [
             "lastNotNull"
           ],
-          "displayMode": "hidden",
-          "placement": "right"
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": false
         },
         "tooltip": {
           "mode": "single",
@@ -549,7 +610,7 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "fixedColor": "#808080",
+            "fixedColor": "transparent",
             "mode": "fixed"
           },
           "custom": {
@@ -557,13 +618,16 @@
             "lineWidth": 0,
             "spanNulls": false
           },
-          "decimals": 1,
           "mappings": [
             {
               "options": {
+                "0": {
+                  "color": "transparent",
+                  "index": 0
+                },
                 "1": {
                   "color": "blue",
-                  "index": 2,
+                  "index": 3,
                   "text": "UNANIMITY"
                 }
               },
@@ -574,7 +638,7 @@
                 "from": 0,
                 "result": {
                   "color": "red",
-                  "index": 0,
+                  "index": 1,
                   "text": "MINORITY"
                 },
                 "to": 0.5
@@ -586,7 +650,7 @@
                 "from": 0.5,
                 "result": {
                   "color": "green",
-                  "index": 1,
+                  "index": 2,
                   "text": "MAJORITY"
                 },
                 "to": 1
@@ -594,8 +658,6 @@
               "type": "range"
             }
           ],
-          "max": 1,
-          "min": 0,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -617,14 +679,15 @@
       },
       "id": 43,
       "options": {
-        "alignValue": "left",
+        "alignValue": "center",
         "legend": {
           "displayMode": "list",
-          "placement": "bottom"
+          "placement": "bottom",
+          "showLegend": false
         },
         "mergeValues": true,
         "rowHeight": 0.9,
-        "showValue": "never",
+        "showValue": "auto",
         "tooltip": {
           "mode": "single",
           "sort": "none"
@@ -638,8 +701,12 @@
             "uid": "P1809F7CD0C75ACF3"
           },
           "editorMode": "code",
-          "expr": "rate(dag_consensus_proposal_affinity_sum{ip=~\"$ip\", peer_id=~\"$peer_id\"}[1m])/rate(dag_consensus_proposal_affinity_count{ip=~\"$ip\", peer_id=~\"$peer_id\"}[1m])",
+          "exemplar": false,
+          "expr": "rate(dag_consensus_proposal_affinity_sum{ip=~\"$ip\", peer_id=~\"$peer_id\"}[90s])/rate(dag_consensus_proposal_affinity_count{ip=~\"$ip\", peer_id=~\"$peer_id\"}[90s])",
+          "format": "time_series",
           "hide": false,
+          "instant": false,
+          "interval": "",
           "legendFormat": "{{peer_id_short}}",
           "range": true,
           "refId": "A"
@@ -659,6 +726,8 @@
             "mode": "palette-classic"
           },
           "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
@@ -715,8 +784,9 @@
           "calcs": [
             "lastNotNull"
           ],
-          "displayMode": "hidden",
-          "placement": "right"
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": false
         },
         "tooltip": {
           "mode": "single",
@@ -762,6 +832,8 @@
             "mode": "palette-classic"
           },
           "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
@@ -818,8 +890,9 @@
           "calcs": [
             "lastNotNull"
           ],
-          "displayMode": "hidden",
-          "placement": "right"
+          "displayMode": "list",
+          "placement": "right",
+          "showLegend": false
         },
         "tooltip": {
           "mode": "single",
@@ -900,8 +973,9 @@
           "percent"
         ],
         "legend": {
-          "displayMode": "hidden",
+          "displayMode": "list",
           "placement": "right",
+          "showLegend": false,
           "values": []
         },
         "pieType": "pie",
@@ -924,7 +998,7 @@
             "uid": "P1809F7CD0C75ACF3"
           },
           "editorMode": "code",
-          "expr": "sum by (content_type_short) (increase(dag_rumors_spread_total{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}[1m]))",
+          "expr": "sum by (content_type_short) (increase(dag_rumors_spread_total{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}[5m]))",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
@@ -966,8 +1040,9 @@
           "percent"
         ],
         "legend": {
-          "displayMode": "hidden",
+          "displayMode": "list",
           "placement": "right",
+          "showLegend": false,
           "values": []
         },
         "pieType": "pie",
@@ -990,7 +1065,7 @@
             "uid": "P1809F7CD0C75ACF3"
           },
           "editorMode": "code",
-          "expr": "sum by (rumor_type) (increase(dag_rumors_spread_total{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}[1m]))",
+          "expr": "sum by (rumor_type) (increase(dag_rumors_spread_total{application=~\"$application\", ip=~\"$ip\", peer_id=~\"$peer_id\"}[5m]))",
           "legendFormat": "__auto",
           "range": true,
           "refId": "A"
@@ -1010,6 +1085,8 @@
             "mode": "palette-classic"
           },
           "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
@@ -1070,7 +1147,8 @@
             "lastNotNull"
           ],
           "displayMode": "table",
-          "placement": "right"
+          "placement": "right",
+          "showLegend": true
         },
         "tooltip": {
           "mode": "single",
@@ -1104,6 +1182,8 @@
             "mode": "palette-classic"
           },
           "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
@@ -1166,7 +1246,8 @@
             "max"
           ],
           "displayMode": "table",
-          "placement": "right"
+          "placement": "right",
+          "showLegend": true
         },
         "tooltip": {
           "mode": "single",
@@ -1200,6 +1281,8 @@
             "mode": "palette-classic"
           },
           "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
             "axisLabel": "",
             "axisPlacement": "auto",
             "barAlignment": 0,
@@ -1262,7 +1345,8 @@
             "max"
           ],
           "displayMode": "table",
-          "placement": "right"
+          "placement": "right",
+          "showLegend": true
         },
         "tooltip": {
           "mode": "single",
@@ -1299,6 +1383,21 @@
         "type": "prometheus",
         "uid": "P1809F7CD0C75ACF3"
       },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "scaleDistribution": {
+              "type": "linear"
+            }
+          }
+        },
+        "overrides": []
+      },
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -1312,6 +1411,45 @@
       "legend": {
         "show": false
       },
+      "options": {
+        "calculate": true,
+        "calculation": {},
+        "cellGap": 2,
+        "cellValues": {},
+        "color": {
+          "exponent": 0.5,
+          "fill": "#b4ff00",
+          "mode": "scheme",
+          "reverse": false,
+          "scale": "exponential",
+          "scheme": "Plasma",
+          "steps": 128
+        },
+        "exemplars": {
+          "color": "rgba(255,0,255,0.7)"
+        },
+        "filterValues": {
+          "le": 1e-9
+        },
+        "legend": {
+          "show": false
+        },
+        "rowsFrame": {
+          "layout": "auto"
+        },
+        "showValue": "never",
+        "tooltip": {
+          "show": true,
+          "yHistogram": false
+        },
+        "yAxis": {
+          "axisPlacement": "left",
+          "decimals": 0,
+          "reverse": false,
+          "unit": "s"
+        }
+      },
+      "pluginVersion": "9.1.6",
       "reverseYBuckets": false,
       "targets": [
         {
@@ -1345,7 +1483,7 @@
     }
   ],
   "refresh": "10s",
-  "schemaVersion": 36,
+  "schemaVersion": 37,
   "style": "dark",
   "tags": [],
   "templating": {
@@ -1444,6 +1582,6 @@
   "timezone": "browser",
   "title": "Tessellation",
   "uid": "lro46qC7k",
-  "version": 3,
+  "version": 6,
   "weekStart": ""
 }

@@ -50,12 +50,12 @@ portForward:
   - resourceType: service
     resourceName: l1-initial-validator
     port: 9000
-    localPort: 9100
+    localPort: 9010
   - resourceType: service
     resourceName: grafana
-    port: 8000
-    localPort: 8000
+    port: 3000
+    localPort: 3000
   - resourceType: service
     resourceName: http-proxy
-    port: 8100
-    localPort: 8100
+    port: 8080
+    localPort: 8080
