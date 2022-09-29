@@ -16,10 +16,19 @@ object StardustCollectiveDistributor {
     () =>
       StateT { amount =>
         for {
-          numerator <- amount.value * config.stardustWeight
-          denominator <- config.stardustWeight + config.remainingWeight
-          stardustRewards <- numerator / denominator
-          remainingRewards <- amount.value - stardustRewards
-        } yield (Amount(remainingRewards), List(config.address -> Amount(stardustRewards)))
+          numeratorPrimary <- amount.value * config.primaryWeight
+          numeratorSecondary <- amount.value * config.secondaryWeight
+          denominator <- (config.primaryWeight + config.secondaryWeight).flatMap(_ + config.remainingWeight)
+          primaryRewards <- numeratorPrimary / denominator
+          secondaryRewards <- numeratorSecondary / denominator
+          remainingRewards <- (amount.value - primaryRewards).flatMap(_ - secondaryRewards)
+        } yield
+          (
+            Amount(remainingRewards),
+            List(
+              config.addressPrimary -> Amount(primaryRewards),
+              config.addressSecondary -> Amount(secondaryRewards)
+            )
+          )
       }
 }

@@ -72,9 +72,11 @@ object types {
   )
 
   case class StardustConfig(
-    address: Address = Address("DAGSTARDUSTCOLLECTIVEHZOIPHXZUBFGNXWJETZVSPAPAHMLXS"),
-    stardustWeight: NonNegLong = 1L,
-    remainingWeight: NonNegLong = 9L
+    addressPrimary: Address = Address("DAGSTARDUSTCOLLECTIVEHZOIPHXZUBFGNXWJETZVSPAPAHMLXS"),
+    addressSecondary: Address = Address("DAG8VT7bxjs1XXBAzJGYJDaeyNxuThikHeUTp9XY"),
+    primaryWeight: NonNegLong = 1L,
+    secondaryWeight: NonNegLong = 1L,
+    remainingWeight: NonNegLong = 18L
   )
 
   case class RewardsConfig(
