@@ -131,4 +131,19 @@ skaffold dev --trigger manual
 
 You should see docker images successfully uploaded to the container registry
 and then kubernetes resources successfully deployed on the EKS cluster. Open grafana
-to monitor the L0 and L1 clusters performance [http://localhost:8000](http://localhost:8000).
+to monitor the L0 and L1 clusters performance [http://localhost:3000](http://localhost:3000).
+
+To access the API of individual pods you can use an http proxy. First get the IP address
+of a pod in a cluster.
+
+```
+kubectl get pods -o wide
+```
+
+Then set the env variable `http_proxy` and use curl to query a pod.
+
+```
+export http_proxy=8080
+
+curl <pod-ip-address>:9000/cluster/info
+```
