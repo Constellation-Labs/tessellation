@@ -1,13 +1,15 @@
 package org.tessellation.dag.l1.rosetta
 
 import cats.effect.Async
+
 import org.tessellation.dag.snapshot.GlobalSnapshot
-import MockData.mockup
-import org.tessellation.schema.address
-import org.tessellation.security.signature.Signed
-import org.tessellation.schema.transaction.{Transaction => DAGTransaction, _}
-import org.tessellation.rosetta.server.model.dag.schema._
 import org.tessellation.rosetta.server.model._
+import org.tessellation.rosetta.server.model.dag.schema._
+import org.tessellation.schema.address
+import org.tessellation.schema.transaction.{Transaction => DAGTransaction}
+import org.tessellation.security.signature.Signed
+
+import MockData.mockup
 
 class BlockIndexClient[F[_]: Async]() {
 
@@ -65,7 +67,7 @@ class BlockIndexClient[F[_]: Async]() {
   def queryAccountBalance(
     address: String,
     blockIndex: Option[PartialBlockIdentifier]
-  ): F[Either[String, Option[AccountBlockResponse]]] = {
+  ): F[Either[String, Option[AccountBlockResponse]]] =
     Async[F].pure {
       val maybeBalance = blockIndex.flatMap { pbi =>
         val block = findBlock(pbi)
@@ -89,6 +91,5 @@ class BlockIndexClient[F[_]: Async]() {
 //      Some(AccountBlockResponse(123457890, examples.sampleHash, 1)),
 //      "some error"
 //    )
-  }
 
 }

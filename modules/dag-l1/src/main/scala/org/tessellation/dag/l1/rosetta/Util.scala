@@ -1,12 +1,12 @@
 package org.tessellation.dag.l1.rosetta
 
-import org.bouncycastle.jce.{ECNamedCurveTable, ECPointUtil}
-import org.bouncycastle.jce.provider.BouncyCastleProvider
-import org.bouncycastle.jce.spec.ECNamedCurveSpec
-
 import java.security.KeyFactory
 import java.security.interfaces.ECPublicKey
 import java.security.spec.ECPublicKeySpec
+
+import org.bouncycastle.jce.provider.BouncyCastleProvider
+import org.bouncycastle.jce.spec.ECNamedCurveSpec
+import org.bouncycastle.jce.{ECNamedCurveTable, ECPointUtil}
 
 object Util {
 

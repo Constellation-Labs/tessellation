@@ -1,57 +1,36 @@
 package org.tessellation.dag.l1.rosetta
-import org.tessellation.rosetta.server.model.dag.schema._
-import org.tessellation.rosetta.server.model.dag.decoders._
-import org.tessellation.rosetta.server.model._
-import org.tessellation.rosetta.server.model
+import cats.MonadThrow
+import cats.data.NonEmptyList
+import cats.effect.Async
+import cats.implicits.toFunctorOps
 
-import java.security.KeyFactory
-import java.security.interfaces.ECPublicKey
-import java.security.spec.ECPublicKeySpec
-import cats.data.{NonEmptyList, NonEmptySet}
-import cats.effect.unsafe.implicits.global
-import cats.effect.{Async, IO}
-import cats.implicits.{toFunctorOps, toSemigroupKOps}
-import cats.{MonadThrow, Order}
-
-import scala.collection.immutable.SortedSet
 import scala.util.Try
+
 import org.tessellation.dag.snapshot.GlobalSnapshot
 import org.tessellation.ext.crypto._
-import org.tessellation.ext.kryo.KryoRegistrationId
 import org.tessellation.kryo.KryoSerializer
-import MockData.mockup
-import examples.proofs
-import org.tessellation.schema.address
+import org.tessellation.rosetta.server.model
+import org.tessellation.rosetta.server.model.dag.decoders._
+import org.tessellation.rosetta.server.model.dag.schema._
 import org.tessellation.schema.address.{Address, DAGAddressRefined}
 import org.tessellation.schema.transaction.{Transaction => DAGTransaction, _}
-import org.tessellation.sdk.config.types.HttpServerConfig
-import org.tessellation.sdk.resources.MkHttpServer
-import org.tessellation.sdk.resources.MkHttpServer.ServerName
+import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.SignatureProof
-import org.tessellation.security.{Hashable, SecurityProvider}
-import org.tessellation.shared.sharedKryoRegistrar
-import com.comcast.ip4s.{Host, Port}
-import eu.timepit.refined.numeric.Interval
+
 import eu.timepit.refined.refineV
 import eu.timepit.refined.types.all.PosLong
 import eu.timepit.refined.types.numeric.NonNegLong
 import io.circe.Decoder
-import org.bouncycastle.jce.provider.BouncyCastleProvider
-import org.bouncycastle.jce.spec.ECNamedCurveSpec
-import org.bouncycastle.jce.{ECNamedCurveTable, ECPointUtil}
+import org.http4s._
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.circe._
 import org.http4s.dsl.Http4sDsl
-import org.http4s._
-import org.typelevel.log4cats.SelfAwareStructuredLogger
-import org.typelevel.log4cats.slf4j.Slf4jLogger
-import SignatureProof._
+
 import Signed._
-import Util.{getPublicKeyFromBytes, reduceListEither}
 import model._
 
 case class LastTransactionResponse(
@@ -64,8 +43,6 @@ case class SnapshotInfo(
   height: Long,
   timestamp: Long
 )
-
-
 
 case class AccountBlockResponse(
   amount: Long,
@@ -96,14 +73,10 @@ case class BlockSearchResponse(
   nextOffset: Option[Long]
 )
 
-
-
 import cats.syntax.flatMap._
 
 //import io.circe.generic.extras.Configuration
 //import io.circe.generic.extras.auto._
-
-import java.security.{PublicKey => JPublicKey}
 
 object Rosetta {
 
@@ -372,7 +345,3 @@ object Rosetta {
     }
   }
 }
-
-import Rosetta._
-
-

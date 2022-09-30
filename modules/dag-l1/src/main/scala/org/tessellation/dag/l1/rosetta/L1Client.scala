@@ -2,13 +2,15 @@ package org.tessellation.dag.l1.rosetta
 
 import cats.effect.Async
 import cats.implicits.toFunctorOps
+
 import org.tessellation.kryo.KryoSerializer
-import MockData.mockup
-import org.tessellation.schema.address
-import org.tessellation.security.signature.Signed
-import org.tessellation.schema.transaction.{Transaction => DAGTransaction, _}
-import org.tessellation.rosetta.server.model.dag.schema._
 import org.tessellation.rosetta.server.model._
+import org.tessellation.rosetta.server.model.dag.schema._
+import org.tessellation.schema.address
+import org.tessellation.schema.transaction.{Transaction => DAGTransaction}
+import org.tessellation.security.signature.Signed
+
+import MockData.mockup
 
 // Mockup of real client
 class L1Client[F[_]: Async] {

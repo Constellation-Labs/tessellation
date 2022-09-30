@@ -1,89 +1,48 @@
 package org.tessellation.dag.l1.rosetta
 
+import java.security.{PublicKey => JPublicKey}
+
 import cats.Order
 import cats.data.NonEmptySet
 import cats.effect.Async
-import eu.timepit.refined.types.all.PosLong
-import org.http4s.dsl.Http4sDsl
-import org.http4s.{HttpRoutes, Response}
-import org.tessellation.dag.snapshot.GlobalSnapshot
-import org.tessellation.kryo.KryoSerializer
-import MockData.mockup
-import Rosetta._
-import Util.{getPublicKeyFromBytes, reduceListEither}
-import examples.proofs
-import org.tessellation.schema.address.{Address, DAGAddressRefined}
-import org.tessellation.schema.transaction.{Transaction => DAGTransaction, _}
-import org.tessellation.security.hash.Hash
-import org.tessellation.security.hex.Hex
-import org.tessellation.security.signature.Signed
-import org.tessellation.security.signature.signature.SignatureProof
-import org.tessellation.security.{Hashable, SecurityProvider}
-import org.typelevel.log4cats.slf4j.Slf4jLogger
-import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
-
-import scala.collection.immutable.SortedSet
-import scala.util.Try
-import java.security.{PublicKey => JPublicKey}
-import org.tessellation.ext.crypto._
-
-import java.security.KeyFactory
-import java.security.interfaces.ECPublicKey
-import java.security.spec.ECPublicKeySpec
-import cats.data.{NonEmptyList, NonEmptySet}
-import cats.effect.unsafe.implicits.global
-import cats.effect.{Async, IO}
 import cats.implicits.{toFlatMapOps, toFunctorOps, toSemigroupKOps}
-import cats.{MonadThrow, Order}
+import cats.syntax.flatMap._
 
 import scala.collection.immutable.SortedSet
 import scala.util.Try
+
 import org.tessellation.dag.snapshot.GlobalSnapshot
 import org.tessellation.ext.crypto._
-import org.tessellation.ext.kryo.KryoRegistrationId
 import org.tessellation.kryo.KryoSerializer
-import MockData.mockup
-import examples.proofs
-import org.tessellation.schema.address
+import org.tessellation.rosetta.server.model
+import org.tessellation.rosetta.server.model._
+import org.tessellation.rosetta.server.model.dag.decoders._
+import org.tessellation.rosetta.server.model.dag.schema._
 import org.tessellation.schema.address.{Address, DAGAddressRefined}
-import org.tessellation.schema.transaction.{Transaction => DAGTransaction, _}
-import org.tessellation.sdk.config.types.HttpServerConfig
-import org.tessellation.sdk.resources.MkHttpServer
-import org.tessellation.sdk.resources.MkHttpServer.ServerName
+import org.tessellation.schema.transaction.{Transaction => DAGTransaction}
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.SignatureProof
 import org.tessellation.security.{Hashable, SecurityProvider}
-import org.tessellation.shared.sharedKryoRegistrar
-import com.comcast.ip4s.{Host, Port}
-import eu.timepit.refined.numeric.Interval
-import eu.timepit.refined.refineV
+
 import eu.timepit.refined.types.all.PosLong
-import eu.timepit.refined.types.numeric.NonNegLong
-import io.circe.Decoder
-import org.bouncycastle.jce.provider.BouncyCastleProvider
-import org.bouncycastle.jce.spec.ECNamedCurveSpec
-import org.bouncycastle.jce.{ECNamedCurveTable, ECPointUtil}
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.circe._
 import org.http4s.dsl.Http4sDsl
-import org.http4s.{HttpApp, HttpRoutes, Response, _}
-import org.typelevel.log4cats.SelfAwareStructuredLogger
+import org.http4s.{HttpRoutes, Response}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+
+import Rosetta._
+import MockData.mockup
+import examples.proofs
 import SignatureProof._
 import Signed._
 import Util.{getPublicKeyFromBytes, reduceListEither}
-import cats.syntax.flatMap._
-import org.tessellation.rosetta.server.model.dag.schema._
-import org.tessellation.rosetta.server.model.dag.decoders._
-import org.tessellation.rosetta.server.model._
-import org.tessellation.rosetta.server.model
 
 //import io.circe.generic.extras.Configuration
 //import io.circe.generic.extras.auto._
-
 
 /**
   * The data model for these routes was code-genned according to openapi spec using
@@ -96,11 +55,11 @@ import org.tessellation.rosetta.server.model
   * Enum types do not generate properly (in any of the Scala code generators.)
   * circe json decoders were manually generated separately
   */
-final case class RosettaRoutes[F[_]: Async: KryoSerializer: SecurityProvider](val networkId: String = "mainnet",
-                                                                              blockIndexClient: BlockIndexClient[F],
-                                                                              l1Client: L1Client[F]
-                                                                             )
-    extends Http4sDsl[F] {
+final case class RosettaRoutes[F[_]: Async: KryoSerializer: SecurityProvider](
+  val networkId: String = "mainnet",
+  blockIndexClient: BlockIndexClient[F],
+  l1Client: L1Client[F]
+) extends Http4sDsl[F] {
 
   implicit val logger = Slf4jLogger.getLogger[F]
 
@@ -157,11 +116,10 @@ final case class RosettaRoutes[F[_]: Async: KryoSerializer: SecurityProvider](va
     } else errorMsg(4, address)
   }
 
-  def validateAddress2(address: String): Either[F[Response[F]], Unit] = {
+  def validateAddress2(address: String): Either[F[Response[F]], Unit] =
     if (DAGAddressRefined.addressCorrectValidate.isValid(address)) {
       Right(())
     } else Left(errorMsg(4, address))
-  }
 
   def validateCurveType(curveType: String): Either[F[Response[F]], Unit] =
     curveType match {
@@ -202,18 +160,25 @@ final case class RosettaRoutes[F[_]: Async: KryoSerializer: SecurityProvider](va
 
         } yield {
           val balanceRes = blockIndexClient.queryAccountBalance(address, r.blockIdentifier)
-          val res = balanceRes.flatMap{ b =>
-            b.left.map(e => errorMsg(5, e))
-              .map(o => o.map(a =>
-                Ok(
-                  AccountBalanceResponse(
-                    BlockIdentifier(a.height, a.snapshotHash),
-                    // TODO: Enum
-                    List(Amount(a.amount.toString, DagCurrency, None)),
-                    None
-                  )
-                )
-              ).getOrElse(errorMsg(6, address))).merge
+          val res = balanceRes.flatMap { b =>
+            b.left
+              .map(e => errorMsg(5, e))
+              .map(
+                o =>
+                  o.map(
+                      a =>
+                        Ok(
+                          AccountBalanceResponse(
+                            BlockIdentifier(a.height, a.snapshotHash),
+                            // TODO: Enum
+                            List(Amount(a.amount.toString, DagCurrency, None)),
+                            None
+                          )
+                        )
+                    )
+                    .getOrElse(errorMsg(6, address))
+              )
+              .merge
           }
           res
         }
@@ -221,56 +186,54 @@ final case class RosettaRoutes[F[_]: Async: KryoSerializer: SecurityProvider](va
       }
     }
 
-    case _ @ POST -> Root / "account" / "coins" => errorMsg(0, "UTXO endpoints not implemented")
-
+    case _ @POST -> Root / "account" / "coins" => errorMsg(0, "UTXO endpoints not implemented")
 
     case req @ POST -> Root / "block" => {
       req.decodeRosetta[BlockRequest] { br =>
         val resp = for {
           _ <- validateNetwork2(br.networkIdentifier)
         } yield {
-            val value = blockIndexClient.queryBlock(br.blockIdentifier).map { ogs =>
-              val inner = ogs.map {
-                gs =>
-                  gs.hash.left
-                    .map(t => errorMsg(0, "Hash calculation on snapshot failure: " + t.getMessage))
-                    .map { gsHash =>
-                      val translatedTransactions = extractTransactions(gs)
-                      if (translatedTransactions.exists(_.isLeft)) {
-                        errorMsg(0, "Internal transaction translation failure")
-                      } else {
-                        val txs = translatedTransactions.map(_.toOption.get)
-                        Ok(
-                          BlockResponse(
-                            Some(
-                              Block(
-                                BlockIdentifier(gs.height.value.value, gsHash.value),
-                                BlockIdentifier(
-                                  Math.max(gs.height.value.value - 1, 0),
-                                  if (gs.height.value.value > 0) gs.lastSnapshotHash.value
-                                  else gsHash.value
-                                ),
-                                // TODO: Timestamp??
-                                mockup.timestamps(gs.height.value.value),
-                                txs,
-                                None
-                              )
+          val value = blockIndexClient.queryBlock(br.blockIdentifier).map { ogs =>
+            val inner = ogs.map { gs =>
+              gs.hash.left
+                .map(t => errorMsg(0, "Hash calculation on snapshot failure: " + t.getMessage))
+                .map { gsHash =>
+                  val translatedTransactions = extractTransactions(gs)
+                  if (translatedTransactions.exists(_.isLeft)) {
+                    errorMsg(0, "Internal transaction translation failure")
+                  } else {
+                    val txs = translatedTransactions.map(_.toOption.get)
+                    Ok(
+                      BlockResponse(
+                        Some(
+                          Block(
+                            BlockIdentifier(gs.height.value.value, gsHash.value),
+                            BlockIdentifier(
+                              Math.max(gs.height.value.value - 1, 0),
+                              if (gs.height.value.value > 0) gs.lastSnapshotHash.value
+                              else gsHash.value
                             ),
+                            // TODO: Timestamp??
+                            mockup.timestamps(gs.height.value.value),
+                            txs,
                             None
                           )
-                        )
-                      }
-                    }
-                    .merge
-              }
-              inner.getOrElse(Ok(BlockResponse(None, None)))
+                        ),
+                        None
+                      )
+                    )
+                  }
+                }
+                .merge
             }
-            val response = value.left.map(e => errorMsg(5, e)).merge
-            response.map { r =>
-              println("response: " + r.asJson.toString)
-              r
-            }
+            inner.getOrElse(Ok(BlockResponse(None, None)))
           }
+          val response = value.left.map(e => errorMsg(5, e)).merge
+          response.map { r =>
+            println("response: " + r.asJson.toString)
+            r
+          }
+        }
         resp.merge
       }
     }
