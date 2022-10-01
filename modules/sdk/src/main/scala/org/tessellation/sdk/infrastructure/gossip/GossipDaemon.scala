@@ -53,12 +53,9 @@ object GossipDaemon {
       private val logger = Slf4jLogger.getLogger[F]
       private val rumorLogger = Slf4jLogger.getLoggerFromName[F](rumorLoggerName)
 
-      private val peerRoundRunner = GossipRoundRunner.make(clusterStorage, localHealthcheck, peerRound, "peer", cfg.peerRound)
-      private val commonRoundRunner = GossipRoundRunner.make(clusterStorage, localHealthcheck, commonRound, "common", cfg.commonRound)
-
       def startAsInitialValidator: F[Unit] =
-        peerRoundRunner.runForever >>
-          commonRoundRunner.runForever >>
+        runPeerRoundRunner >>
+          runCommonRoundRunner >>
           consumeRumors
 
       def startAsRegularValidator: F[Unit] =
@@ -68,12 +65,17 @@ object GossipDaemon {
             case Ior.Both(_, peer) if peer.state === NodeState.Ready => peer
           }.compile.lastOrError.flatMap { peer =>
             initPeerRumorStorage(peer) >>
-              peerRoundRunner.runForever >>
+              runPeerRoundRunner >>
               initCommonRumorStorage(peer) >>
-              commonRoundRunner.runForever >>
+              runCommonRoundRunner >>
               consumeRumors
           }
         }.void
+
+      private def runPeerRoundRunner =
+        GossipRoundRunner.make(clusterStorage, localHealthcheck, peerRound, "peer", cfg.peerRound).flatMap(_.runForever)
+      private def runCommonRoundRunner =
+        GossipRoundRunner.make(clusterStorage, localHealthcheck, commonRound, "common", cfg.commonRound).flatMap(_.runForever)
 
       private def consumeRumors: F[Unit] =
         Spawn[F].start {

@@ -1,7 +1,8 @@
 package org.tessellation.sdk.infrastructure.gossip
 
+import cats.Applicative
+import cats.effect._
 import cats.effect.std.{Queue, Random}
-import cats.effect.{Async, Spawn, Temporal}
 import cats.syntax.all._
 
 import org.tessellation.schema._
@@ -28,39 +29,55 @@ object GossipRoundRunner {
     round: Peer => F[Unit],
     roundLabel: String,
     cfg: GossipRoundConfig
-  ): GossipRoundRunner[F] = new GossipRoundRunner[F] {
-    private val logger = Slf4jLogger.getLogger[F]
+  ): F[GossipRoundRunner[F]] =
+    for {
+      selectedPeersQueue <- Queue.bounded[F, Peer](cfg.maxConcurrentRounds.value * 2)
+      selectedPeersR <- Ref.of(Set.empty[Peer])
+    } yield
+      new GossipRoundRunner[F] {
+        private val logger = Slf4jLogger.getLogger[F]
 
-    def runForever: F[Unit] =
-      Queue.dropping[F, Peer](cfg.maxConcurrentRounds.value * 2).flatMap { selectedPeerQueue =>
-        def evalRound(peer: Peer): F[Unit] =
-          Temporal[F]
-            .timed(round(peer))
-            .flatMap {
-              case (duration, _) => metrics.recordRoundDuration(duration, roundLabel)
-            }
-            .flatMap(_ => metrics.incrementGossipRoundSucceeded)
-            .handleErrorWith { err =>
-              logger.error(s"Error running gossip round {peer=${peer.show}, reason=${err.show}") >>
-                localHealthcheck.start(peer)
-            }
-
-        def selectPeers: F[Unit] =
-          for {
-            _ <- Temporal[F].sleep(cfg.interval)
-            peers <- clusterStorage.getResponsivePeers
-            selectedPeers <- Random[F].shuffleList(peers.toList).map(_.take(cfg.fanout.value))
-            _ <- selectedPeers.traverse(selectedPeerQueue.offer)
-          } yield ()
-
-        Spawn[F].start {
+        def runForever: F[Unit] = Spawn[F].start {
           Stream
-            .fromQueueUnterminated(selectedPeerQueue)
+            .fromQueueUnterminated(selectedPeersQueue)
             .parEvalMapUnordered(cfg.maxConcurrentRounds.value)(evalRound)
             .compile
             .drain
         } >> Spawn[F].start(selectPeers.foreverM).void
-      }
-  }
 
+        private def evalRound(peer: Peer): F[Unit] =
+          MonadCancel[F].guarantee(
+            Temporal[F]
+              .timed(round(peer))
+              .flatMap {
+                case (duration, _) => metrics.recordRoundDuration(duration, roundLabel)
+              }
+              .flatMap(_ => metrics.incrementGossipRoundSucceeded)
+              .handleErrorWith { err =>
+                logger.error(s"Error running gossip round {peer=${peer.show}, reason=${err.show}") >>
+                  localHealthcheck.start(peer)
+              },
+            selectedPeersR.update(_.excl(peer))
+          )
+
+        private def selectPeers: F[Unit] =
+          for {
+            _ <- Temporal[F].sleep(cfg.interval)
+            allPeers <- clusterStorage.getResponsivePeers
+            selectedPeers <- selectedPeersR.get
+            availablePeers = allPeers.diff(selectedPeers)
+            drawnPeers <- Random[F].shuffleList(availablePeers.toList).map(_.take(cfg.fanout.value))
+            _ <- drawnPeers.traverse { peer =>
+              selectedPeersR.modify { selectedPeers =>
+                if (selectedPeers.contains(peer))
+                  (selectedPeers, false)
+                else
+                  (selectedPeers.incl(peer), true)
+              }.ifM(
+                selectedPeersQueue.tryOffer(peer).ifM(Applicative[F].unit, selectedPeersR.update(_.excl(peer))),
+                Applicative[F].unit
+              )
+            }
+          } yield ()
+      }
 }
