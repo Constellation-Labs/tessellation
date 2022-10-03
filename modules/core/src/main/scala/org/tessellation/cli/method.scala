@@ -44,12 +44,12 @@ object method {
           peerRound = GossipRoundConfig(
             fanout = 1,
             interval = 0.2.seconds,
-            maxConcurrentRounds = 4
+            maxConcurrentRounds = 8
           ),
           commonRound = GossipRoundConfig(
             fanout = 1,
             interval = 0.5.seconds,
-            maxConcurrentRounds = 2
+            maxConcurrentRounds = 4
           )
         )
       ),
