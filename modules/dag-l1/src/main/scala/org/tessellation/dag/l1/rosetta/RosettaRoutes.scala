@@ -11,12 +11,12 @@ import cats.syntax.flatMap._
 import scala.collection.immutable.SortedSet
 import scala.util.Try
 
+import org.tessellation.dag.l1.rosetta.api.model.BlockSearchRequest
 import org.tessellation.dag.snapshot.GlobalSnapshot
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.rosetta.server.model
 import org.tessellation.rosetta.server.model._
-import org.tessellation.dag.l1.rosetta.BlockSearchRequest
 import org.tessellation.rosetta.server.model.dag.decoders._
 import org.tessellation.rosetta.server.model.dag.schema._
 import org.tessellation.schema.address.{Address, DAGAddressRefined}

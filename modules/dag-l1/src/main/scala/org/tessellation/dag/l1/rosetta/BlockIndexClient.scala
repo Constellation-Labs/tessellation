@@ -2,6 +2,7 @@ package org.tessellation.dag.l1.rosetta
 
 import cats.effect.Async
 
+import org.tessellation.dag.l1.rosetta.api.model.BlockSearchRequest
 import org.tessellation.dag.snapshot.GlobalSnapshot
 import org.tessellation.rosetta.server.model._
 import org.tessellation.rosetta.server.model.dag.schema._

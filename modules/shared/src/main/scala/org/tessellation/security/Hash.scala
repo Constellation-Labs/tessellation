@@ -10,6 +10,7 @@ import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import io.estatico.newtype.macros.newtype
 import io.estatico.newtype.ops._
+import io.getquill.MappedEncoding
 import org.scalacheck.{Arbitrary, Gen}
 
 object hash {
@@ -26,6 +27,14 @@ object hash {
     def empty: Hash = Hash(s"%064d".format(0))
 
     implicit val arbitrary: Arbitrary[Hash] = Arbitrary(Gen.resize(64, Gen.hexStr).map(Hash(_)))
+
+    implicit val quillEncode: MappedEncoding[Hash, String] =
+      MappedEncoding[Hash, String](_.value)
+
+    implicit val quillDecode: MappedEncoding[String, Hash] =
+      MappedEncoding[String, Hash](
+        Hash(_)
+      )
   }
 
   @derive(encoder, decoder, ordering, order, show)

@@ -49,7 +49,7 @@ case class AccountBlockResponse(
   snapshotHash: String,
   height: Long
 )
-
+/*
 case class BlockSearchRequest(
   isOr: Boolean,
   isAnd: Boolean,
@@ -60,7 +60,7 @@ case class BlockSearchRequest(
   transactionHash: Option[String],
   maxBlock: Option[Long]
 )
-
+ */
 case class TransactionWithBlockHash(
   transaction: Signed[DAGTransaction],
   blockHash: String,
