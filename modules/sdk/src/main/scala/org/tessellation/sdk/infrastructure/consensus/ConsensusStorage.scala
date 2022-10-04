@@ -184,7 +184,7 @@ object ConsensusStorage {
         private def cleanupStateAndResource(key: Key): F[Unit] =
           condModifyState[Unit](key) { _ =>
             (none[ConsensusState[Key, Artifact]], ()).some.pure[F]
-          }.void
+          }.void >> cleanResources(key)
 
         def containsTriggerEvent: F[Boolean] =
           eventsR.keys.flatMap { keys =>
@@ -311,6 +311,9 @@ object ConsensusStorage {
           resourcesR(key).updateAndGet { maybeResource =>
             f(maybeResource.getOrElse(ConsensusResources.empty)).some
           }.flatMap(_.liftTo[F](new RuntimeException("Should never happen")))
+
+        private def cleanResources(key: Key): F[Unit] =
+          resourcesR(key).set(none)
 
         def getOwnRegistration: F[Option[Key]] = ownRegistrationR.get
 
