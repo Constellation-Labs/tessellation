@@ -27,42 +27,42 @@ final case class DagRoutes[F[_]: Async](dagService: DAGService[F], mkDagCell: L0
         .getBalance(address)
         .flatMap {
           case Some((balance, ordinal)) =>
-            Ok(("balance" ->> balance) :: ("ordinal" ->> ordinal) :: HNil)
+            Ok(("balance" ->> balance) :: ("ordinal" ->> ordinal.value.value) :: HNil)
           case _ => NotFound()
         }
 
     case GET -> Root / "total-supply" =>
       dagService.getTotalSupply.flatMap {
         case Some((supply, ordinal)) =>
-          Ok(("total" ->> supply) :: ("ordinal" ->> ordinal) :: HNil)
+          Ok(("total" ->> supply) :: ("ordinal" ->> ordinal.value.value) :: HNil)
         case _ => NotFound()
       }
 
     case GET -> Root / "wallet-count" =>
       dagService.getWalletCount.flatMap {
         case Some((wallets, ordinal)) =>
-          Ok(("count" ->> wallets) :: ("ordinal" ->> ordinal) :: HNil)
+          Ok(("count" ->> wallets) :: ("ordinal" ->> ordinal.value.value) :: HNil)
         case _ => NotFound()
       }
 
     case GET -> Root / SnapshotOrdinalVar(ordinal) / AddressVar(address) / "balance" =>
       dagService.getBalance(ordinal, address).flatMap {
         case Some((balance, ordinal)) =>
-          Ok(("balance" ->> balance) :: ("ordinal" ->> ordinal) :: HNil)
+          Ok(("balance" ->> balance) :: ("ordinal" ->> ordinal.value.value) :: HNil)
         case _ => NotFound()
       }
 
     case GET -> Root / SnapshotOrdinalVar(ordinal) / "total-supply" =>
       dagService.getTotalSupply(ordinal).flatMap {
         case Some((supply, ordinal)) =>
-          Ok(("total" ->> supply) :: ("ordinal" ->> ordinal) :: HNil)
+          Ok(("total" ->> supply) :: ("ordinal" ->> ordinal.value.value) :: HNil)
         case _ => NotFound()
       }
 
     case GET -> Root / SnapshotOrdinalVar(ordinal) / "wallet-count" =>
       dagService.getWalletCount(ordinal).flatMap {
         case Some((wallets, ordinal)) =>
-          Ok(("count" ->> wallets) :: ("ordinal" ->> ordinal) :: HNil)
+          Ok(("count" ->> wallets) :: ("ordinal" ->> ordinal.value.value) :: HNil)
         case _ => NotFound()
       }
 
