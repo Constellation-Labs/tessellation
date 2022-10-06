@@ -1,7 +1,8 @@
 package org.tessellation.sdk.infrastructure.collateral.daemon
 
 import cats.Applicative
-import cats.effect.{Async, Spawn}
+import cats.effect.Async
+import cats.effect.std.Supervisor
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.show._
@@ -21,15 +22,15 @@ object CollateralDaemon {
     collateral: Collateral[F],
     latestBalances: LatestBalances[F],
     clusterStorage: ClusterStorage[F]
-  ) = new CollateralDaemon[F] {
+  )(implicit S: Supervisor[F]) = new CollateralDaemon[F] {
     private val logger = Slf4jLogger.getLogger[F]
 
     def start: F[Unit] =
-      Spawn[F].start(updatePeersInCluster).void
+      S.supervise(updatePeersInCluster).void
 
     private def updatePeersInCluster: F[Unit] =
       latestBalances.getLatestBalancesStream
-        .evalMap(_ => updateCluster())
+        .foreach(_ => updateCluster())
         .compile
         .drain
 

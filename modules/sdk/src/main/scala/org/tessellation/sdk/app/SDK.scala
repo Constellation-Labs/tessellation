@@ -2,7 +2,7 @@ package org.tessellation.sdk.app
 
 import java.security.KeyPair
 
-import cats.effect.std.Random
+import cats.effect.std.{Random, Supervisor}
 
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.generation.Generation
@@ -20,6 +20,7 @@ trait SDK[F[_]] {
   implicit val securityProvider: SecurityProvider[F]
   implicit val kryoPool: KryoSerializer[F]
   implicit val metrics: Metrics[F]
+  implicit val supervisor: Supervisor[F]
 
   val keyPair: KeyPair
   lazy val nodeId = PeerId.fromPublic(keyPair.getPublic)

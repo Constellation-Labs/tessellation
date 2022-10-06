@@ -3,7 +3,7 @@ package org.tessellation.sdk.infrastructure.consensus
 import java.security.KeyPair
 
 import cats.effect.Async
-import cats.effect.std.Random
+import cats.effect.std.{Random, Supervisor}
 import cats.kernel.Next
 import cats.syntax.flatMap._
 import cats.syntax.functor._
@@ -37,7 +37,7 @@ import org.http4s.client.Client
 object Consensus {
 
   def make[
-    F[_]: Async: Random: KryoSerializer: SecurityProvider: Metrics,
+    F[_]: Async: Supervisor: Random: KryoSerializer: SecurityProvider: Metrics,
     Event: TypeTag: Decoder,
     Key: Show: Order: Next: TypeTag: Encoder: Decoder,
     Artifact <: AnyRef: Show: Eq: TypeTag: Encoder: Decoder

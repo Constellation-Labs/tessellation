@@ -1,9 +1,13 @@
 package org.tessellation.sdk.infrastructure.collateral.daemon
 
+import cats.effect.std.Supervisor
 import cats.effect.testkit.TestControl
 import cats.effect.{IO, Resource}
-import cats.syntax.option._
+import cats.syntax.all._
 
+import scala.concurrent.duration._
+
+import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.cluster.ClusterId
@@ -20,10 +24,10 @@ import org.tessellation.security.hex.Hex
 import eu.timepit.refined.auto._
 import fs2.Stream
 import fs2.concurrent.SignallingRef
-import weaver.MutableIOSuite
+import suite.ResourceSuite
 import weaver.scalacheck.Checkers
 
-object CollateralDaemonSuite extends MutableIOSuite with Checkers {
+object CollateralDaemonSuite extends ResourceSuite with Checkers {
 
   type Res = SecurityProvider[IO]
 
@@ -62,48 +66,60 @@ object CollateralDaemonSuite extends MutableIOSuite with Checkers {
   }
 
   def mkCollateralDaemon(latestBalances: LatestBalances[IO], clusterStorage: ClusterStorage[IO])(
-    implicit sc: SecurityProvider[IO]
+    implicit sc: SecurityProvider[IO],
+    S: Supervisor[IO]
   ) = {
     val collateralConfig = CollateralConfig(Amount(25_000_000_000_000L))
     val collateral = Collateral.make[IO](collateralConfig, latestBalances)
     CollateralDaemon.make(collateral, latestBalances, clusterStorage)
   }
 
-  test("peers stay in cluster when collateral is sufficient") { implicit sc =>
-    for {
-      balancesRef <- SignallingRef.of[IO, Option[Map[Address, Balance]]](
-        Some(Map(address1 -> Balance(25_000_000_000_000L), address2 -> Balance(25_000_000_000_000L)))
-      )
-      latestBalances = mkLatestBalances(balancesRef)
-      clusterStorage <- mkClusterStorage()
-      collateralDaemon = mkCollateralDaemon(latestBalances, clusterStorage)
-      control <- TestControl.execute(
-        collateralDaemon.start >> balancesRef.set(
-          Map(address1 -> Balance(25_000_000_000_000L), address2 -> Balance(25_000_000_000_000L)).some
-        )
-      )
-      _ <- control.tickAll
-      peers <- clusterStorage.getPeers
-      peersIds = peers.map(_.id)
-    } yield expect.same(peersIds, Set(peer1, peer2))
+  test("peers stay in cluster when collateral is sufficient") { implicit sp =>
+    mkClusterStorage().flatMap { clusterStorage =>
+      val prog =
+        (
+          SignallingRef
+            .of[IO, Option[Map[Address, Balance]]](
+              Some(Map(address1 -> Balance(25_000_000_000_000L), address2 -> Balance(25_000_000_000_000L)))
+            )
+            .asResource,
+          Supervisor[IO]
+        ).tupled.use {
+          case (balancesRef, supervisor) =>
+            implicit val _super = supervisor
+            val latestBalances = mkLatestBalances(balancesRef)
+            val collateralDaemon = mkCollateralDaemon(latestBalances, clusterStorage)
+            collateralDaemon.start >> balancesRef.set(
+              Map(address1 -> Balance(25_000_000_000_000L), address2 -> Balance(25_000_000_000_000L)).some
+            )
+        }
+
+      TestControl.executeEmbed(prog) >> clusterStorage.getPeers.map(_.map(_.id)).map(ids => expect.same(ids, Set(peer1, peer2)))
+    }
+
   }
 
-  test("peers are removed from cluster when collateral is not sufficient") { implicit sc =>
-    for {
-      balancesRef <- SignallingRef.of[IO, Option[Map[Address, Balance]]](
-        Some(Map(address1 -> Balance(25_000_000_000_000L), address2 -> Balance(25_000_000_000_000L)))
-      )
-      latestBalances = mkLatestBalances(balancesRef)
-      clusterStorage <- mkClusterStorage()
-      collateralDaemon = mkCollateralDaemon(latestBalances, clusterStorage)
-      control <- TestControl.execute(
-        collateralDaemon.start >> balancesRef.set(
-          Map(address1 -> Balance(24_999_999_999_999L), address2 -> Balance(25_000_000_000_000L)).some
-        )
-      )
-      _ <- control.tickAll
-      peers <- clusterStorage.getPeers
-      peersIds = peers.map(_.id)
-    } yield expect.same(peersIds, Set(peer2))
+  test("peers are removed from cluster when collateral is not sufficient") { implicit sp =>
+    mkClusterStorage().flatMap { clusterStorage =>
+      val prog =
+        (
+          SignallingRef
+            .of[IO, Option[Map[Address, Balance]]](
+              Some(Map(address1 -> Balance(25_000_000_000_000L), address2 -> Balance(25_000_000_000_000L)))
+            )
+            .asResource,
+          Supervisor[IO]
+        ).tupled.use {
+          case (balancesRef, supervisor) =>
+            implicit val _super = supervisor
+            val latestBalances = mkLatestBalances(balancesRef)
+            val collateralDaemon = mkCollateralDaemon(latestBalances, clusterStorage)
+            collateralDaemon.start >> balancesRef.set(
+              Map(address1 -> Balance(24_999_999_999_999L), address2 -> Balance(25_000_000_000_000L)).some
+            ) >> IO.sleep(1.second)
+        }
+
+      TestControl.executeEmbed(prog) >> clusterStorage.getPeers.map(_.map(_.id)).map(ids => expect.same(ids, Set(peer2)))
+    }
   }
 }

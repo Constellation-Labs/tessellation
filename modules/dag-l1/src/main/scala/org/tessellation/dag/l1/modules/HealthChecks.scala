@@ -1,7 +1,7 @@
 package org.tessellation.dag.l1.modules
 
 import cats.effect.Async
-import cats.effect.std.Random
+import cats.effect.std.{Random, Supervisor}
 import cats.syntax.functor._
 
 import org.tessellation.dag.l1.http.p2p.P2PClient
@@ -16,7 +16,7 @@ import org.http4s.client.Client
 
 object HealthChecks {
 
-  def make[F[_]: Async: KryoSerializer: GenUUID: Random](
+  def make[F[_]: Async: KryoSerializer: GenUUID: Random: Supervisor](
     storages: Storages[F],
     services: Services[F],
     programs: Programs[F],

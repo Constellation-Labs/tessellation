@@ -2,7 +2,7 @@ package org.tessellation.sdk.infrastructure.consensus
 
 import cats.data.Ior.{Both, Right}
 import cats.effect._
-import cats.effect.std.Queue
+import cats.effect.std.{Queue, Supervisor}
 import cats.kernel.Next
 import cats.syntax.applicativeError._
 import cats.syntax.contravariantSemigroupal._
@@ -56,7 +56,7 @@ object ConsensusManager {
     consensusClient: ConsensusClient[F, Key],
     gossip: Gossip[F],
     selfId: PeerId
-  ): F[ConsensusManager[F, Key, Artifact]] = Queue.unbounded[F, Peer].flatMap { peersForRegistrationExchange =>
+  )(implicit S: Supervisor[F]): F[ConsensusManager[F, Key, Artifact]] = Queue.unbounded[F, Peer].flatMap { peersForRegistrationExchange =>
     val logger = Slf4jLogger.getLoggerFromClass[F](ConsensusManager.getClass)
 
     def exchangeRegistration(peer: Peer): F[Unit] = {
@@ -78,7 +78,7 @@ object ConsensusManager {
     }
 
     def startRegistrationExchange: F[Unit] =
-      Spawn[F].start {
+      S.supervise {
         Stream
           .fromQueueUnterminated(peersForRegistrationExchange)
           .evalMap(exchangeRegistration)
@@ -89,7 +89,7 @@ object ConsensusManager {
     val manager = new ConsensusManager[F, Key, Artifact] {
 
       def startObservingAfter(lastKey: Key, peer: Peer): F[Unit] =
-        Spawn[F].start {
+        S.supervise {
           val observationKey = lastKey.next
           val facilitationKey = lastKey.nextN(2L)
 
@@ -110,7 +110,7 @@ object ConsensusManager {
         }.void
 
       def facilitateOnEvent: F[Unit] =
-        Spawn[F].start {
+        S.supervise {
           internalFacilitateWith(EventTrigger.some)
             .handleErrorWith(logger.error(_)(s"Error facilitating consensus with event trigger"))
         }.void
@@ -124,7 +124,7 @@ object ConsensusManager {
       private def scheduleFacility: F[Unit] =
         Clock[F].monotonic.map(_ + timeTriggerInterval).flatMap { nextTimeValue =>
           consensusStorage.setTimeTrigger(nextTimeValue) >>
-            Spawn[F].start {
+            S.supervise {
               val condTriggerWithTime = for {
                 maybeTimeTrigger <- consensusStorage.getTimeTrigger
                 currentTime <- Clock[F].monotonic
@@ -138,7 +138,7 @@ object ConsensusManager {
         }
 
       def checkForStateUpdate(key: Key)(resources: ConsensusResources[Artifact]): F[Unit] =
-        Spawn[F].start {
+        S.supervise {
           internalCheckForStateUpdate(key, resources)
             .handleErrorWith(logger.error(_)(s"Error checking for consensus state update {key=${key.show}}"))
         }.void
@@ -216,7 +216,7 @@ object ConsensusManager {
           .ifM(internalFacilitateWith(EventTrigger.some), Applicative[F].unit)
     }
 
-    Spawn[F].start(
+    S.supervise(
       nodeStorage.nodeStates
         .filter(NodeState.leaving.contains)
         .evalTap { _ =>
@@ -229,22 +229,20 @@ object ConsensusManager {
         .compile
         .drain
     ) >>
-      Spawn[F]
-        .start(
-          clusterStorage.peerChanges.mapFilter {
-            case Both(_, peer) if peer.state === NodeState.Observing =>
-              peer.some
-            case Right(peer) if NodeState.inConsensus.contains(peer.state) =>
-              peer.some
-            case _ =>
-              none[Peer]
-          }
-            .filter(_.isResponsive)
-            .filter(selfId < _.id)
-            .enqueueUnterminated(peersForRegistrationExchange)
-            .compile
-            .drain
-        )
-        .as(manager)
+      S.supervise(
+        clusterStorage.peerChanges.mapFilter {
+          case Both(_, peer) if peer.state === NodeState.Observing =>
+            peer.some
+          case Right(peer) if NodeState.inConsensus.contains(peer.state) =>
+            peer.some
+          case _ =>
+            none[Peer]
+        }
+          .filter(_.isResponsive)
+          .filter(selfId < _.id)
+          .enqueueUnterminated(peersForRegistrationExchange)
+          .compile
+          .drain
+      ).as(manager)
   }
 }

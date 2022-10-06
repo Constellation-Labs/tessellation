@@ -1,6 +1,7 @@
 package org.tessellation.sdk.domain
 
-import cats.effect.Spawn
+import cats.effect.kernel.Async
+import cats.effect.std.Supervisor
 import cats.syntax.functor._
 
 trait Daemon[F[_]] {
@@ -9,8 +10,8 @@ trait Daemon[F[_]] {
 
 object Daemon {
 
-  def spawn[F[_]: Spawn](thunk: F[Unit]): Daemon[F] = new Daemon[F] {
-    def start: F[Unit] = Spawn[F].start(thunk).void
+  def spawn[F[_]: Async](thunk: F[Unit])(implicit S: Supervisor[F]): Daemon[F] = new Daemon[F] {
+    def start: F[Unit] = S.supervise(thunk).void
   }
 
 }

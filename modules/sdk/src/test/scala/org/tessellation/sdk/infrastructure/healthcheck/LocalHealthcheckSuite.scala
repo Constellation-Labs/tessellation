@@ -1,8 +1,10 @@
 package org.tessellation.sdk.infrastructure.healthcheck
 
 import cats.data.Kleisli
+import cats.effect.IO
 import cats.effect.kernel.Fiber
-import cats.effect.{IO, Temporal}
+import cats.effect.std.Supervisor
+import cats.effect.testkit.TestControl
 import cats.syntax.contravariantSemigroupal._
 import cats.syntax.parallel._
 
@@ -37,9 +39,13 @@ object LocalHealthcheckSuite extends SimpleIOSuite with Checkers {
 
     forall(peerGen) { peer =>
       (mkClusterStorage(initialPeers), mkPeersR).flatMapN { (cs, peersR) =>
-        val lh = LocalHealthcheck.make(peersR, retryPolicy, nodeClient, cs)
+        val prog = Supervisor[IO].use { implicit s =>
+          val lh = LocalHealthcheck.make(peersR, retryPolicy, nodeClient, cs)
 
-        lh.start(peer).flatMap { _ =>
+          lh.start(peer)
+        }
+
+        TestControl.executeEmbed(prog).flatMap { _ =>
           peersR.keys.map(_.size).map(expect.same(_, 0))
         }
       }
@@ -52,41 +58,46 @@ object LocalHealthcheckSuite extends SimpleIOSuite with Checkers {
       val initialPeers: Map[PeerId, Peer] = Map(peer.id -> peer.copy(responsiveness = Unresponsive))
 
       (mkClusterStorage(initialPeers), mkPeersR).flatMapN { (cs, peersR) =>
-        val lh = LocalHealthcheck.make(peersR, retryPolicy, nodeClient, cs)
+        val prog = Supervisor[IO].use { implicit s =>
+          val lh = LocalHealthcheck.make(peersR, retryPolicy, nodeClient, cs)
 
-        lh.start(peer).flatMap { _ =>
-          peersR.keys.map(_.size).map(expect.same(_, 0))
+          lh.start(peer)
         }
+
+        TestControl.executeEmbed(prog) >>
+          peersR.keys.map(_.size).map(expect.same(_, 0))
       }
     }
   }
 
   test("spawns healthcheck for responsive peer") {
-
     forall(peerGen) { peer =>
       val initialPeers: Map[PeerId, Peer] = Map(peer.id -> mapPeer(peer))
 
       (mkClusterStorage(initialPeers), mkPeersR).flatMapN { (cs, peersR) =>
-        val lh = LocalHealthcheck.make(peersR, retryPolicy, nodeClient, cs)
+        val prog = Supervisor[IO].use { implicit s =>
+          val lh = LocalHealthcheck.make(peersR, retryPolicy, nodeClient, cs)
+          lh.start(peer)
+        }
 
-        lh.start(peer)
-          .flatMap { _ =>
-            peersR.keys.map(_.size).map(expect.same(_, 1))
-          }
-          .flatTap(_ => lh.cancel(peer.id))
+        TestControl.executeEmbed(prog).flatMap { _ =>
+          peersR.keys.map(_.size).map(expect.same(_, 1))
+        }
       }
     }
   }
 
   test("spawns healthcheck for responsive peer and expect closed fiber") {
-
     forall(peerGen) { peer =>
       val initialPeers: Map[PeerId, Peer] = Map(peer.id -> mapPeer(peer))
 
       (mkClusterStorage(initialPeers), mkPeersR).flatMapN { (cs, peersR) =>
-        val lh = LocalHealthcheck.make(peersR, retryPolicy, mkNodeClient(responsive = true), cs)
+        val prog = Supervisor[IO].use { implicit s =>
+          val lh = LocalHealthcheck.make(peersR, retryPolicy, mkNodeClient(responsive = true), cs)
+          lh.start(peer) >> lh.cancel(peer.id)
+        }
 
-        lh.start(peer).flatMap(_ => Temporal[IO].sleep(2.seconds)).flatMap { _ =>
+        TestControl.executeEmbed(prog).flatMap { _ =>
           peersR.keys.map(_.size).map(expect.same(_, 0))
         }
       }
@@ -94,15 +105,17 @@ object LocalHealthcheckSuite extends SimpleIOSuite with Checkers {
   }
 
   test("cancels existing healthcheck") {
-
     forall(peerGen) { peer =>
       val initialPeers: Map[PeerId, Peer] = Map(peer.id -> mapPeer(peer))
 
       (mkClusterStorage(initialPeers), mkPeersR).flatMapN { (cs, peersR) =>
-        val lh = LocalHealthcheck.make(peersR, retryPolicy, nodeClient, cs)
+        val prog = Supervisor[IO].use { implicit s =>
+          val lh = LocalHealthcheck.make(peersR, retryPolicy, mkNodeClient(responsive = true), cs)
+          lh.start(peer) >> lh.cancel(peer.id)
+        }
 
-        lh.start(peer).flatMap(_ => lh.cancel(peer.id)).flatMap { _ =>
-          Temporal[IO].sleep(2.seconds) >> peersR(peer.id).get.map(expect.same(_, None))
+        TestControl.executeEmbed(prog).flatMap { _ =>
+          peersR(peer.id).get.map(expect.same(_, None))
         }
       }
     }
@@ -115,17 +128,13 @@ object LocalHealthcheckSuite extends SimpleIOSuite with Checkers {
         peers.map(mapPeer).map(p => (p.id, p)).toMap
 
       (mkClusterStorage(initialPeers), mkPeersR).flatMapN { (cs, peersR) =>
-        val lh = LocalHealthcheck.make(peersR, retryPolicy, nodeClient, cs)
-
-        peers.toList.parTraverse { peer =>
-          lh.start(peer)
-        }.flatMap { _ =>
-          Temporal[IO].sleep(2.seconds) >> peersR.keys.map(_.size).map(expect.same(_, peers.size))
-        }.flatTap { _ =>
-          peers.toList.parTraverse { peer =>
-            lh.cancel(peer.id)
-          }
+        val prog = Supervisor[IO].use { implicit s =>
+          val lh = LocalHealthcheck.make(peersR, retryPolicy, nodeClient, cs)
+          peers.toList.parTraverse(peer => lh.start(peer))
         }
+
+        TestControl.executeEmbed(prog) >>
+          peersR.keys.map(_.size).map(expect.same(_, peers.size))
       }
     }
   }
@@ -137,13 +146,13 @@ object LocalHealthcheckSuite extends SimpleIOSuite with Checkers {
         peers.map(mapPeer).map(p => (p.id, p)).toMap
 
       (mkClusterStorage(initialPeers), mkPeersR).flatMapN { (cs, peersR) =>
-        val lh = LocalHealthcheck.make(peersR, retryPolicy, nodeClient, cs)
-
-        peers.toList.parTraverse { peer =>
-          lh.start(peer).flatMap(_ => lh.cancel(peer.id))
-        }.flatMap { _ =>
-          Temporal[IO].sleep(2.seconds) >> peersR.keys.map(_.size).map(expect.same(_, 0))
+        val prog = Supervisor[IO].use { implicit s =>
+          val lh = LocalHealthcheck.make(peersR, retryPolicy, nodeClient, cs)
+          peers.toList.parTraverse(peer => lh.start(peer) >> lh.cancel(peer.id))
         }
+
+        TestControl.executeEmbed(prog) >>
+          peersR.keys.map(_.size).map(expect.same(_, 0))
       }
     }
   }
@@ -155,25 +164,17 @@ object LocalHealthcheckSuite extends SimpleIOSuite with Checkers {
         peers.map(mapPeer).map(p => (p.id, p)).toMap
 
       (mkClusterStorage(initialPeers), mkPeersR).flatMapN { (cs, peersR) =>
-        val lh = LocalHealthcheck.make(peersR, retryPolicy, nodeClient, cs)
-
-        peers.toList.parTraverse { peer =>
-          for {
-            _ <- lh.start(peer)
-            _ <- Temporal[IO].sleep(1.second)
-            _ <- lh.cancel(peer.id)
-            _ <- Temporal[IO].sleep(1.second)
-            _ <- cs.setPeerResponsiveness(peer.id, Responsive)
-            _ <- lh.start(peer)
-            _ <- Temporal[IO].sleep(1.second)
-          } yield ()
-        }.flatMap { _ =>
-          peersR.keys.map(_.size).map(expect.same(_, peers.size))
-        }.flatTap { _ =>
+        val prog = Supervisor[IO].use { implicit s =>
+          val lh = LocalHealthcheck.make(peersR, retryPolicy, nodeClient, cs)
           peers.toList.parTraverse { peer =>
-            lh.cancel(peer.id)
+            lh.start(peer) >> lh.cancel(peer.id) >> lh.start(peer)
           }
+
         }
+
+        TestControl.executeEmbed(prog) >>
+          peersR.keys.map(_.size).map(expect.same(_, peers.size))
+
       }
     }
   }

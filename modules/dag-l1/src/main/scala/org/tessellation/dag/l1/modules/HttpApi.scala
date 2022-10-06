@@ -3,6 +3,7 @@ package org.tessellation.dag.l1.modules
 import java.security.PrivateKey
 
 import cats.effect.Async
+import cats.effect.std.Supervisor
 import cats.syntax.semigroupk._
 
 import org.tessellation.dag.l1.http.Routes
@@ -22,7 +23,7 @@ import org.http4s.{HttpApp, HttpRoutes}
 
 object HttpApi {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider: Metrics](
+  def make[F[_]: Async: KryoSerializer: SecurityProvider: Metrics: Supervisor](
     storages: Storages[F],
     queues: Queues[F],
     privateKey: PrivateKey,
@@ -36,7 +37,7 @@ object HttpApi {
     new HttpApi[F](storages, queues, privateKey, services, programs, healthchecks, selfId, nodeVersion, httpCfg) {}
 }
 
-sealed abstract class HttpApi[F[_]: Async: KryoSerializer: SecurityProvider: Metrics] private (
+sealed abstract class HttpApi[F[_]: Async: KryoSerializer: SecurityProvider: Metrics: Supervisor] private (
   storages: Storages[F],
   queues: Queues[F],
   privateKey: PrivateKey,

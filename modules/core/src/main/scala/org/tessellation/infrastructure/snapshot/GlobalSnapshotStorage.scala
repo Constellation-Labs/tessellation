@@ -1,8 +1,8 @@
 package org.tessellation.infrastructure.snapshot
 
 import cats.Order._
-import cats.effect.std.Queue
-import cats.effect.{Async, Ref, Spawn}
+import cats.effect.std.{Queue, Supervisor}
+import cats.effect.{Async, Ref}
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.contravariantSemigroupal._
@@ -49,7 +49,7 @@ object GlobalSnapshotStorage {
     }
   }
 
-  def make[F[_]: Async: KryoSerializer](
+  def make[F[_]: Async: KryoSerializer: Supervisor](
     globalSnapshotLocalFileSystemStorage: GlobalSnapshotLocalFileSystemStorage[F],
     inMemoryCapacity: NonNegLong,
     maybeRollbackHash: Option[Hash]
@@ -63,7 +63,7 @@ object GlobalSnapshotStorage {
           .make[F](globalSnapshotLocalFileSystemStorage, inMemoryCapacity)
     }
 
-  private def make[F[_]: Async: KryoSerializer](
+  private def make[F[_]: Async: KryoSerializer: Supervisor](
     globalSnapshotLocalFileSystemStorage: GlobalSnapshotLocalFileSystemStorage[F],
     inMemoryCapacity: NonNegLong,
     rollbackHash: Hash
@@ -94,7 +94,7 @@ object GlobalSnapshotStorage {
   private def make[F[_]: Async: KryoSerializer](
     globalSnapshotLocalFileSystemStorage: GlobalSnapshotLocalFileSystemStorage[F],
     inMemoryCapacity: NonNegLong
-  ): F[GlobalSnapshotStorage[F] with LatestBalances[F]] =
+  )(implicit S: Supervisor[F]): F[GlobalSnapshotStorage[F] with LatestBalances[F]] =
     makeResources().flatMap {
       case (headRef, ordinalCache, hashCache, notPersistedCache, offloadQueue, logger) =>
         implicit val l = logger
@@ -110,7 +110,7 @@ object GlobalSnapshotStorage {
     offloadQueue: Queue[F, SnapshotOrdinal],
     globalSnapshotLocalFileSystemStorage: GlobalSnapshotLocalFileSystemStorage[F],
     inMemoryCapacity: NonNegLong
-  ): F[GlobalSnapshotStorage[F] with LatestBalances[F]] = {
+  )(implicit S: Supervisor[F]): F[GlobalSnapshotStorage[F] with LatestBalances[F]] = {
 
     def logger = Slf4jLogger.getLogger[F]
 
@@ -176,7 +176,7 @@ object GlobalSnapshotStorage {
             .fold(Applicative[F].unit)(offloadQueue.offer(_))
       }
 
-    Spawn[F].start(offloadProcess).map { _ =>
+    S.supervise(offloadProcess).map { _ =>
       new GlobalSnapshotStorage[F] with LatestBalances[F] {
         def prepend(snapshot: Signed[GlobalSnapshot]): F[Boolean] =
           headRef.modify {

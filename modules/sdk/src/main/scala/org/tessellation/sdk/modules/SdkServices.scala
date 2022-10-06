@@ -3,6 +3,7 @@ package org.tessellation.sdk.modules
 import java.security.KeyPair
 
 import cats.effect.Async
+import cats.effect.std.Supervisor
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
@@ -25,7 +26,7 @@ import fs2.concurrent.SignallingRef
 
 object SdkServices {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider: Metrics](
+  def make[F[_]: Async: KryoSerializer: SecurityProvider: Metrics: Supervisor](
     cfg: SdkConfig,
     nodeId: PeerId,
     generation: Generation,

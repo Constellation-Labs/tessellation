@@ -2,6 +2,7 @@ package org.tessellation.sdk.infrastructure.healthcheck.declaration
 
 import cats.effect._
 import cats.effect.kernel.Clock
+import cats.effect.std.Supervisor
 import cats.syntax.applicative._
 import cats.syntax.contravariantSemigroupal._
 import cats.syntax.flatMap._
@@ -39,7 +40,7 @@ object PeerDeclarationHealthCheck {
     consensusStorage: ConsensusStorage[F, _, K, A],
     consensusManager: ConsensusManager[F, K, A],
     httpClient: PeerDeclarationHttpClient[F, K]
-  ): F[HealthCheckConsensus[F, Key[K], Health, Status[K], Decision]] = {
+  )(implicit S: Supervisor[F]): F[HealthCheckConsensus[F, Key[K], Health, Status[K], Decision]] = {
     def mkWaitingProposals = Ref.of[F, Set[Status[K]]](Set.empty)
     def mkRounds =
       Ref.of[F, ConsensusRounds[F, Key[K], Health, Status[K], Decision]](ConsensusRounds(List.empty, Map.empty))
@@ -57,7 +58,7 @@ object PeerDeclarationHealthCheck {
 
         def allRounds: Ref[F, ConsensusRounds[F, Key[K], Health, Status[K], Decision]] = rounds
 
-        def ownStatus(key: Key[K]): F[Fiber[F, Throwable, PeerDeclarationHealth]] = Spawn[F].start(peerHealth(key))
+        def ownStatus(key: Key[K]): F[Fiber[F, Throwable, PeerDeclarationHealth]] = S.supervise(peerHealth(key))
 
         def statusOnError(key: Key[K]): PeerDeclarationHealth = TimedOut
 

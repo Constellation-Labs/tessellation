@@ -3,7 +3,7 @@ package org.tessellation.infrastructure.snapshot
 import java.security.KeyPair
 
 import cats.effect.kernel.Async
-import cats.effect.std.Random
+import cats.effect.std.{Random, Supervisor}
 import cats.syntax.option._
 
 import org.tessellation.config.types.SnapshotConfig
@@ -29,7 +29,7 @@ import org.http4s.client.Client
 
 object GlobalSnapshotConsensus {
 
-  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider: Metrics](
+  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider: Metrics: Supervisor](
     gossip: Gossip[F],
     selfId: PeerId,
     keyPair: KeyPair,

@@ -2,7 +2,7 @@ package org.tessellation.modules
 
 import cats.Parallel
 import cats.effect.Async
-import cats.effect.std.Random
+import cats.effect.std.{Random, Supervisor}
 import cats.syntax.functor._
 import cats.syntax.traverse._
 
@@ -21,7 +21,7 @@ import org.tessellation.security.SecurityProvider
 
 object Daemons {
 
-  def start[F[_]: Async: SecurityProvider: KryoSerializer: Random: Parallel: Metrics](
+  def start[F[_]: Async: SecurityProvider: KryoSerializer: Random: Parallel: Metrics: Supervisor](
     storages: Storages[F],
     services: Services[F],
     programs: Programs[F],
