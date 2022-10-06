@@ -1,7 +1,7 @@
 package org.tessellation.dag.l1.http
 
-import cats.effect.std.Queue
-import cats.effect.{Async, Spawn}
+import cats.effect.Async
+import cats.effect.std.{Queue, Supervisor}
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.show._
@@ -30,7 +30,8 @@ final case class Routes[F[_]: Async: KryoSerializer](
   transactionStorage: TransactionStorage[F],
   l0ClusterStorage: L0ClusterStorage[F],
   peerBlockConsensusInputQueue: Queue[F, Signed[PeerBlockConsensusInput]]
-) extends Http4sDsl[F] {
+)(implicit S: Supervisor[F])
+    extends Http4sDsl[F] {
 
   private val transactionLogger = Slf4jLogger.getLoggerFromName[F](transactionLoggerName)
 
@@ -73,7 +74,7 @@ final case class Routes[F[_]: Async: KryoSerializer](
     case req @ POST -> Root / "consensus" / "data" =>
       for {
         peerBlockConsensusInput <- req.as[Signed[PeerBlockConsensusInput]]
-        _ <- Spawn[F].start(peerBlockConsensusInputQueue.offer(peerBlockConsensusInput))
+        _ <- S.supervise(peerBlockConsensusInputQueue.offer(peerBlockConsensusInput))
         response <- Ok()
       } yield response
   }

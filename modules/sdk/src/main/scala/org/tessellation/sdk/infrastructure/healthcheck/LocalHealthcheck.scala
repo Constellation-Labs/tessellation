@@ -2,6 +2,7 @@ package org.tessellation.sdk.infrastructure.healthcheck
 
 import cats.Applicative
 import cats.effect._
+import cats.effect.std.Supervisor
 import cats.syntax.applicativeError._
 import cats.syntax.eq._
 import cats.syntax.flatMap._
@@ -23,7 +24,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 import retry._
 
 object LocalHealthcheck {
-  def make[F[_]: Async](nodeClient: NodeClient[F], clusterStorage: ClusterStorage[F]): F[LocalHealthcheck[F]] = {
+  def make[F[_]: Async: Supervisor](nodeClient: NodeClient[F], clusterStorage: ClusterStorage[F]): F[LocalHealthcheck[F]] = {
     def mkPeersR = MapRef.ofConcurrentHashMap[F, PeerId, F[Fiber[F, Throwable, Unit]]]()
     def retryPolicy: RetryPolicy[F] = RetryPolicies.fibonacciBackoff[F](2.seconds)
 
@@ -37,7 +38,7 @@ object LocalHealthcheck {
     retryPolicy: RetryPolicy[F],
     nodeClient: NodeClient[F],
     clusterStorage: ClusterStorage[F]
-  ): LocalHealthcheck[F] = new LocalHealthcheck[F] {
+  )(implicit S: Supervisor[F]): LocalHealthcheck[F] = new LocalHealthcheck[F] {
 
     val logger = Slf4jLogger.getLogger[F]
 
@@ -76,7 +77,7 @@ object LocalHealthcheck {
       def responsive = clusterStorage.setPeerResponsiveness(peer.id, Responsive)
       def unresponsive = clusterStorage.setPeerResponsiveness(peer.id, Unresponsive)
 
-      Spawn[F].start {
+      S.supervise {
         retryingOnAllErrors(policy = retryPolicy, onError = onError) {
           check(peer).flatMap {
             case Some(session) =>

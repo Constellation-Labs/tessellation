@@ -2,6 +2,7 @@ package org.tessellation.sdk.infrastructure.healthcheck.declaration
 
 import cats.effect.Temporal
 import cats.effect.kernel.Async
+import cats.effect.std.Supervisor
 import cats.syntax.flatMap._
 
 import org.tessellation.sdk.config.types.HealthCheckConfig
@@ -10,7 +11,7 @@ import org.tessellation.sdk.domain.healthcheck.consensus.HealthCheckConsensus
 
 object PeerDeclarationHealthCheckDaemon {
 
-  def make[F[_]: Async, K](
+  def make[F[_]: Async: Supervisor, K](
     healthCheck: HealthCheckConsensus[F, Key[K], Health, Status[K], Decision],
     config: HealthCheckConfig
   ): Daemon[F] =

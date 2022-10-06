@@ -1,7 +1,7 @@
 package org.tessellation.infrastructure.snapshot
 
 import cats.effect.Async
-import cats.effect.std.Queue
+import cats.effect.std.{Queue, Supervisor}
 import cats.syntax.all._
 
 import org.tessellation.dag.domain.block.DAGBlock
@@ -16,7 +16,7 @@ import io.circe.disjunctionCodecs._
 
 object GlobalSnapshotEventsPublisherDaemon {
 
-  def make[F[_]: Async](
+  def make[F[_]: Async: Supervisor](
     stateChannelOutputs: Queue[F, StateChannelOutput],
     l1OutputQueue: Queue[F, Signed[DAGBlock]],
     gossip: Gossip[F]

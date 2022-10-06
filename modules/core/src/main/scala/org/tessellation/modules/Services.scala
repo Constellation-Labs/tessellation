@@ -3,7 +3,7 @@ package org.tessellation.modules
 import java.security.KeyPair
 
 import cats.effect.kernel.Async
-import cats.effect.std.Random
+import cats.effect.std.{Random, Supervisor}
 import cats.syntax.applicative._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
@@ -30,7 +30,7 @@ import org.http4s.client.Client
 
 object Services {
 
-  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider: Metrics](
+  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider: Metrics: Supervisor](
     sdkServices: SdkServices[F],
     queues: Queues[F],
     storages: Storages[F],

@@ -2,6 +2,7 @@ package org.tessellation.sdk.domain.healthcheck.consensus
 
 import cats.data.OptionT
 import cats.effect._
+import cats.effect.std.Supervisor
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.bifunctor._
@@ -42,7 +43,8 @@ abstract class HealthCheckConsensus[
   gossip: Gossip[F],
   config: HealthCheckConfig,
   waitingProposals: Ref[F, Set[B]]
-) extends HealthCheck[F] {
+)(implicit S: Supervisor[F])
+    extends HealthCheck[F] {
   def logger = Slf4jLogger.getLogger[F]
 
   def allRounds: Ref[F, ConsensusRounds[F, K, A, B, C]]
@@ -144,7 +146,7 @@ abstract class HealthCheckConsensus[
         case (ready, toManage) =>
           toManage.values.toList
             .map(_.manage)
-            .map(Spawn[F].start)
+            .map(S.supervise)
             .sequence
             .as(ready)
       }.flatMap {

@@ -2,7 +2,7 @@ package org.tessellation.sdk.infrastructure.healthcheck.ping
 
 import cats.Applicative
 import cats.effect._
-import cats.effect.std.Random
+import cats.effect.std.{Random, Supervisor}
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.contravariantSemigroupal._
@@ -58,7 +58,8 @@ class PingHealthCheckConsensus[F[_]: Async: GenUUID: Random](
   ]],
   waitingProposals: Ref[F, Set[PingConsensusHealthStatus]],
   httpClient: PingHealthCheckHttpClient[F]
-) extends HealthCheckConsensus[
+)(implicit S: Supervisor[F])
+    extends HealthCheckConsensus[
       F,
       PingHealthCheckKey,
       PingHealthCheckStatus,
@@ -83,7 +84,7 @@ class PingHealthCheckConsensus[F[_]: Async: GenUUID: Random](
     rounds
 
   def ownStatus(key: PingHealthCheckKey): F[Fiber[F, Throwable, PingHealthCheckStatus]] =
-    Spawn[F].start(checkPeer(key.id, key.ip, key.p2pPort, key.session))
+    S.supervise(checkPeer(key.id, key.ip, key.p2pPort, key.session))
 
   def statusOnError(key: PingHealthCheckKey): PingHealthCheckStatus = PeerCheckUnexpectedError(key.id)
 
@@ -264,7 +265,7 @@ class PingHealthCheckConsensus[F[_]: Async: GenUUID: Random](
 
 object PingHealthCheckConsensus {
 
-  def make[F[_]: Async: KryoSerializer: GenUUID: Random](
+  def make[F[_]: Async: KryoSerializer: GenUUID: Random: Supervisor](
     clusterStorage: ClusterStorage[F],
     joining: Joining[F],
     selfId: PeerId,

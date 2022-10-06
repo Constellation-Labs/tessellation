@@ -1,6 +1,7 @@
 package org.tessellation.sdk.domain.healthcheck.consensus
 
 import cats.effect._
+import cats.effect.std.Supervisor
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.contravariantSemigroupal._
@@ -44,12 +45,12 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey: Show, A <: Hea
   gossip: Gossip[F],
   clusterStorage: ClusterStorage[F],
   selfId: PeerId
-) {
+)(implicit S: Supervisor[F]) {
 
   def logger = Slf4jLogger.getLogger[F]
 
   def start: F[Unit] =
-    Spawn[F].start {
+    S.supervise {
       sendProposal
         .handleErrorWith(err =>
           logger.error(err)(
@@ -187,7 +188,7 @@ class HealthCheckConsensusRound[F[_]: Async, K <: HealthCheckKey: Show, A <: Hea
 
 object HealthCheckConsensusRound {
 
-  def make[F[_]: Async, K <: HealthCheckKey: Show, A <: HealthCheckStatus, B <: ConsensusHealthStatus[
+  def make[F[_]: Async: Supervisor, K <: HealthCheckKey: Show, A <: HealthCheckStatus, B <: ConsensusHealthStatus[
     K,
     A
   ]: TypeTag: Encoder, C <: HealthCheckConsensusDecision](

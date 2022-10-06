@@ -1,6 +1,7 @@
 package org.tessellation.infrastructure.trust
 
-import cats.effect.{Async, Spawn, Temporal}
+import cats.effect.std.Supervisor
+import cats.effect.{Async, Temporal}
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
@@ -18,11 +19,11 @@ object TrustDaemon {
     cfg: TrustDaemonConfig,
     trustStorage: TrustStorage[F],
     selfPeerId: PeerId
-  ): TrustDaemon[F] = new TrustDaemon[F] {
+  )(implicit S: Supervisor[F]): TrustDaemon[F] = new TrustDaemon[F] {
 
     def start: F[Unit] =
       for {
-        _ <- Spawn[F].start(modelUpdate.foreverM).void
+        _ <- S.supervise(modelUpdate.foreverM).void
       } yield ()
 
     private def calculatePredictedTrust(trust: Map[PeerId, TrustInfo]): Map[PeerId, Double] =

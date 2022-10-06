@@ -2,7 +2,7 @@ package org.tessellation.sdk.infrastructure.gossip
 
 import cats.Applicative
 import cats.effect._
-import cats.effect.std.{Queue, Random}
+import cats.effect.std.{Queue, Random, Supervisor}
 import cats.syntax.all._
 
 import org.tessellation.schema._
@@ -29,7 +29,7 @@ object GossipRoundRunner {
     round: Peer => F[Unit],
     roundLabel: String,
     cfg: GossipRoundConfig
-  ): F[GossipRoundRunner[F]] =
+  )(implicit S: Supervisor[F]): F[GossipRoundRunner[F]] =
     for {
       selectedPeersQueue <- Queue.bounded[F, Peer](cfg.maxConcurrentRounds.value * 2)
       selectedPeersR <- Ref.of(Set.empty[Peer])
@@ -37,13 +37,13 @@ object GossipRoundRunner {
       new GossipRoundRunner[F] {
         private val logger = Slf4jLogger.getLogger[F]
 
-        def runForever: F[Unit] = Spawn[F].start {
+        def runForever: F[Unit] = S.supervise {
           Stream
             .fromQueueUnterminated(selectedPeersQueue)
             .parEvalMapUnordered(cfg.maxConcurrentRounds.value)(evalRound)
             .compile
             .drain
-        } >> Spawn[F].start(selectPeers.foreverM).void
+        } >> S.supervise(selectPeers.foreverM).void
 
         private def evalRound(peer: Peer): F[Unit] =
           MonadCancel[F].guarantee(
