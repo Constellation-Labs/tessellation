@@ -360,4 +360,9 @@ object ConsensusStorage {
             (updated, resultInt === 1)
           }
       }
+
+  sealed trait PeerRegistration[Key]
+
+  case class Registered[Key](at: Key) extends PeerRegistration[Key]
+  case class Deregistered[Key](at: Key) extends PeerRegistration[Key]
 }
