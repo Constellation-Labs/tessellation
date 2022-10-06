@@ -11,6 +11,7 @@ import scala.reflect.runtime.universe.TypeTag
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
 import org.tessellation.sdk.infrastructure.consensus.declaration._
 import org.tessellation.sdk.infrastructure.consensus.message._
+import org.tessellation.sdk.infrastructure.consensus.registration.Deregistration
 import org.tessellation.sdk.infrastructure.gossip.RumorHandler
 import org.tessellation.security.SecurityProvider
 
