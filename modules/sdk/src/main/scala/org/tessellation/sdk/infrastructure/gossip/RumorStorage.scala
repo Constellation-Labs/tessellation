@@ -1,11 +1,10 @@
 package org.tessellation.sdk.infrastructure.gossip
 
-import cats.data.Chain
+import cats.data.{Chain, NonEmptyChain}
 import cats.effect.{Async, Ref}
 import cats.syntax.all._
 
 import org.tessellation.ext.cats.syntax.next._
-import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.gossip._
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.config.types.RumorStorageConfig
@@ -18,14 +17,16 @@ import derevo.cats.{order, show}
 import derevo.derive
 import eu.timepit.refined.auto._
 import eu.timepit.refined.cats._
-import eu.timepit.refined.types.numeric.NonNegLong
+import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 import io.chrisdavenport.mapref.MapRef
 
 trait RumorStorage[F[_]] {
 
-  def getPeerRumorHeadCounters: F[Map[(PeerId, Generation), Counter]]
+  def getLastOrdinals: F[Map[PeerId, Ordinal]]
 
-  def getPeerRumors(peerIdAndGen: (PeerId, Generation))(from: Counter): F[Iterator[Signed[PeerRumorRaw]]]
+  def getPeerIds: F[Set[PeerId]]
+
+  def getPeerRumors(peerId: PeerId, fromOrdinal: Ordinal): F[Iterator[Signed[PeerRumorRaw]]]
 
   def addPeerRumorIfConsecutive(rumor: Signed[PeerRumorRaw]): F[AddResult]
 
@@ -50,6 +51,27 @@ object RumorStorage {
   case object AddSuccess extends AddResult
   case object CounterTooHigh extends AddResult
   case object CounterTooLow extends AddResult
+  case object GenerationTooLow extends AddResult
+
+  case class NonEmptyChainWrapper[A](chain: NonEmptyChain[A], size: PosLong)
+
+  object NonEmptyChainWrapper {
+    def one[A](a: A): NonEmptyChainWrapper[A] = NonEmptyChainWrapper(NonEmptyChain.one(a), 1L)
+  }
+
+  implicit class NonEmptyChainWrapperOps[A](value: NonEmptyChainWrapper[A]) {
+    def prependInitLast(a: A, n: PosLong): (NonEmptyChainWrapper[A], Option[A]) =
+      if (value.size < n)
+        (NonEmptyChainWrapper(value.chain.prepend(a), value.size |+| 1L), none[A])
+      else
+        value.chain.initLast match {
+          case (init, last) =>
+            (NonEmptyChainWrapper(NonEmptyChain.fromChainPrepend(a, init), value.size), last.some)
+        }
+
+    def prependInit(a: A, n: PosLong): NonEmptyChainWrapper[A] =
+      prependInitLast(a, n)._1
+  }
 
   case class ChainWrapper[A](chain: Chain[A], size: NonNegLong)
 
@@ -91,46 +113,78 @@ object RumorStorage {
 
   def make[F[_]: Async](cfg: RumorStorageConfig): F[RumorStorage[F]] =
     for {
-      peerRumorsR <- MapRef.ofConcurrentHashMap[F, (PeerId, Generation), ChainWrapper[Signed[PeerRumorRaw]]]()
+      peerRumorsR <- MapRef.ofConcurrentHashMap[F, PeerId, NonEmptyChainWrapper[Signed[PeerRumorRaw]]]()
       commonRumorsR <- Ref.of(CommonRumors.empty)
     } yield
       new RumorStorage[F] {
-        def getPeerRumorHeadCounters: F[Map[(PeerId, Generation), Counter]] = peerRumorsR.keys.flatMap { keys =>
-          keys.flatTraverse { key =>
-            peerRumorsR(key).get.map(_.flatMap(_.chain.headOption).map(key -> _.ordinal.counter).toList)
+        def getLastOrdinals: F[Map[PeerId, Ordinal]] = peerRumorsR.keys.flatMap { peerIds =>
+          peerIds.flatTraverse { peerId =>
+            peerRumorsR(peerId).get.map { maybeWrapper =>
+              maybeWrapper.map(peerId -> _.chain.head.ordinal).toList
+            }
           }.map(_.toMap)
         }
 
-        def getPeerRumors(key: (PeerId, Generation))(from: Counter): F[Iterator[Signed[PeerRumorRaw]]] =
-          peerRumorsR(key).get.map { maybeWrapper =>
+        def getPeerIds: F[Set[PeerId]] = peerRumorsR.keys.map(_.toSet)
+
+        def getPeerRumors(peerId: PeerId, fromOrdinal: Ordinal): F[Iterator[Signed[PeerRumorRaw]]] =
+          peerRumorsR(peerId).get.map { maybeWrapper =>
+            val Ordinal(fromGen, fromCounter) = fromOrdinal
+
             maybeWrapper.map { wrapper =>
-              wrapper.chain.takeWhile(_.ordinal.counter >= from)
-            }.filter(_.lastOption.exists(_.ordinal.counter === from))
+              val headGen = wrapper.chain.head.ordinal.generation
+              val lastCounter = wrapper.chain.last.ordinal.counter
+
+              if (headGen === fromGen)
+                if (lastCounter <= fromCounter)
+                  wrapper.chain.toChain.takeWhile(_.ordinal.counter >= fromCounter)
+                else
+                  Chain.empty
+              else if (headGen > fromGen)
+                if (lastCounter === Counter.MinValue)
+                  wrapper.chain.toChain
+                else
+                  Chain.empty
+              else
+                Chain.empty
+            }
               .map(_.reverseIterator)
               .getOrElse(Iterator.empty[Signed[PeerRumorRaw]])
           }
 
         def addPeerRumorIfConsecutive(rumor: Signed[PeerRumorRaw]): F[AddResult] =
-          peerRumorsR((rumor.origin, rumor.ordinal.generation)).modify { maybeWrapper =>
-            maybeWrapper.flatMap { wrapper =>
-              wrapper.chain.headOption.map { head =>
-                if (rumor.ordinal.counter === head.ordinal.counter.next)
-                  (wrapper.prependInit(rumor, cfg.peerRumorsCapacity).some, AddSuccess)
-                else if (rumor.ordinal.counter > head.ordinal.counter.next)
-                  (wrapper.some, CounterTooHigh)
+          peerRumorsR(rumor.origin).modify { maybeWrapper =>
+            val Ordinal(rumorGen, rumorCounter) = rumor.ordinal
+
+            maybeWrapper.map { wrapper =>
+              val Ordinal(headGen, headCounter) = wrapper.chain.head.ordinal
+
+              if (headGen === rumorGen)
+                if (headCounter.next === rumorCounter)
+                  (wrapper.prependInit(rumor, cfg.peerRumorsCapacity), AddSuccess)
+                else if (headCounter.next > rumorCounter)
+                  (wrapper, CounterTooLow)
                 else
-                  (wrapper.some, CounterTooLow)
-              }
+                  (wrapper, CounterTooHigh)
+              else if (headGen < rumorGen)
+                if (rumorCounter === Counter.MinValue)
+                  (NonEmptyChainWrapper.one(rumor), AddSuccess)
+                else
+                  (wrapper, CounterTooHigh)
+              else
+                (wrapper, GenerationTooLow)
+            }.map {
+              case (wrapper, result) => (wrapper.some, result)
             }.getOrElse {
-              if (rumor.ordinal.counter === Counter.MinValue)
-                (ChainWrapper.one(rumor).some, AddSuccess)
+              if (rumorCounter === Counter.MinValue)
+                (NonEmptyChainWrapper.one(rumor).some, AddSuccess)
               else
                 (none, CounterTooHigh)
             }
           }
 
         def setInitialPeerRumor(rumor: Signed[PeerRumorRaw]): F[Unit] =
-          peerRumorsR((rumor.origin, rumor.ordinal.generation)).set(ChainWrapper.one(rumor).some)
+          peerRumorsR(rumor.origin).set(NonEmptyChainWrapper.one(rumor).some)
 
         def getCommonRumorActiveHashes: F[Set[Hash]] =
           commonRumorsR.get.map(_.activeSet)
@@ -143,7 +197,7 @@ object RumorStorage {
             commonRumors.activeChain.chain.filter(h => hashes.contains(h.hash)).reverseIterator.map(_.signed)
           }
 
-        override def addCommonRumorIfUnseen(rumor: Hashed[CommonRumorRaw]): F[Boolean] =
+        def addCommonRumorIfUnseen(rumor: Hashed[CommonRumorRaw]): F[Boolean] =
           commonRumorsR.modify {
             case o @ CommonRumors(seenChain, seenSet, activeChain, activeSet) =>
               if (seenSet.contains(rumor.hash))

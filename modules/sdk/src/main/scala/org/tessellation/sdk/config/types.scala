@@ -6,7 +6,7 @@ import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.node.NodeState
 
 import com.comcast.ip4s.{Host, Port}
-import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
+import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong}
 
 object types {
 
@@ -19,7 +19,7 @@ object types {
   )
 
   case class RumorStorageConfig(
-    peerRumorsCapacity: NonNegLong,
+    peerRumorsCapacity: PosLong,
     activeCommonRumorsCapacity: NonNegLong,
     seenCommonRumorsCapacity: NonNegLong
   )

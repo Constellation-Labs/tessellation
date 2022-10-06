@@ -102,8 +102,8 @@ object gossip {
     contentType: ContentType
   ) extends RumorRaw {
     override def toEncode: AnyRef =
-      content.noSpacesSortKeys ++ contentType.coerce[String] ++ origin.coerce[Hex].coerce[String] ++ ordinal.counter
-        .toString() ++ ordinal.generation.value.toString()
+      content.noSpacesSortKeys ++ contentType
+        .coerce[String] ++ origin.coerce[Hex].coerce[String] ++ ordinal.counter.toString ++ ordinal.generation.toString
   }
 
   object PeerRumorRaw {
@@ -115,7 +115,7 @@ object gossip {
 
   @derive(encoder, decoder)
   case class PeerRumorInquiryRequest(
-    headCounters: Map[(PeerId, Generation), Counter]
+    ordinals: Map[PeerId, Ordinal]
   )
 
   @derive(encoder, decoder)

@@ -165,9 +165,9 @@ object GossipDaemon {
         }
 
       private def peerRound(peer: Peer): F[Unit] =
-        rumorStorage.getPeerRumorHeadCounters.flatMap { headCounters =>
+        rumorStorage.getLastOrdinals.flatMap { ordinals =>
           gossipClient
-            .queryPeerRumors(PeerRumorInquiryRequest(headCounters))
+            .queryPeerRumors(PeerRumorInquiryRequest(ordinals))
             .run(peer)
             .evalMap(_.toHashed)
             .enqueueUnterminated(rumorQueue)
