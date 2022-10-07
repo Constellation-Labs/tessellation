@@ -84,9 +84,9 @@ abstract class TessellationIOApp[A <: CliMethod](
             loadKeyPair[IO](keyStore, alias, password).flatMap { _keyPair =>
               val selfId = PeerId.fromPublic(_keyPair.getPublic)
               KryoSerializer.forAsync[IO](registrar).use { implicit _kryoPool =>
-                SignallingRef.of[IO, Unit](()).flatMap { _restartSignal =>
-                  def mkSDK =
-                    Metrics.forAsync[IO](Seq(("application", name))).flatMap { implicit _metrics =>
+                Metrics.forAsync[IO](Seq(("application", name))).use { implicit _metrics =>
+                  SignallingRef.of[IO, Unit](()).flatMap { _restartSignal =>
+                    def mkSDK =
                       Supervisor[IO].flatMap { implicit _supervisor =>
                         for {
                           _ <- IO(System.setProperty("self_id", selfId.show)).asResource
@@ -159,21 +159,21 @@ abstract class TessellationIOApp[A <: CliMethod](
                           }
                         } yield sdk
                       }
-                    }
 
-                  def startup: Resource[IO, Unit] =
-                    mkSDK.handleErrorWith { (e: Throwable) =>
-                      (logger.error(e)(s"Unhandled exception during initialization.") >> IO
-                        .raiseError[SDK[IO]](e)).asResource
-                    }.flatMap { sdk =>
-                      run(method, sdk).handleErrorWith { (e: Throwable) =>
-                        (logger.error(e)(s"Unhandled exception during runtime.") >> IO.raiseError[Unit](e)).asResource
+                    def startup: Resource[IO, Unit] =
+                      mkSDK.handleErrorWith { (e: Throwable) =>
+                        (logger.error(e)(s"Unhandled exception during initialization.") >> IO
+                          .raiseError[SDK[IO]](e)).asResource
+                      }.flatMap { sdk =>
+                        run(method, sdk).handleErrorWith { (e: Throwable) =>
+                          (logger.error(e)(s"Unhandled exception during runtime.") >> IO.raiseError[Unit](e)).asResource
+                        }
                       }
-                    }
 
-                  _restartSignal.discrete.switchMap { _ =>
-                    Stream.eval(startup.useForever)
-                  }.compile.drain.as(ExitCode.Success)
+                    _restartSignal.discrete.switchMap { _ =>
+                      Stream.eval(startup.useForever)
+                    }.compile.drain.as(ExitCode.Success)
+                  }
                 }
               }
             }
