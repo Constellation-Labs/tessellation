@@ -22,11 +22,13 @@ import io.chrisdavenport.mapref.MapRef
 
 trait RumorStorage[F[_]] {
 
-  def getLastOrdinals: F[Map[PeerId, Ordinal]]
+  def getLastPeerOrdinals: F[Map[PeerId, Ordinal]]
+
+  def getLastPeerRumors: F[Iterator[Signed[PeerRumorRaw]]]
 
   def getPeerIds: F[Set[PeerId]]
 
-  def getPeerRumors(peerId: PeerId, fromOrdinal: Ordinal): F[Iterator[Signed[PeerRumorRaw]]]
+  def getPeerRumorsAfterCursor(peerId: PeerId, fromOrdinal: Ordinal): F[Iterator[Signed[PeerRumorRaw]]]
 
   def addPeerRumorIfConsecutive(rumor: Signed[PeerRumorRaw]): F[AddResult]
 
@@ -117,7 +119,7 @@ object RumorStorage {
       commonRumorsR <- Ref.of(CommonRumors.empty)
     } yield
       new RumorStorage[F] {
-        def getLastOrdinals: F[Map[PeerId, Ordinal]] = peerRumorsR.keys.flatMap { peerIds =>
+        def getLastPeerOrdinals: F[Map[PeerId, Ordinal]] = peerRumorsR.keys.flatMap { peerIds =>
           peerIds.flatTraverse { peerId =>
             peerRumorsR(peerId).get.map { maybeWrapper =>
               maybeWrapper.map(peerId -> _.chain.head.ordinal).toList
@@ -125,22 +127,30 @@ object RumorStorage {
           }.map(_.toMap)
         }
 
+        def getLastPeerRumors: F[Iterator[Signed[PeerRumorRaw]]] = peerRumorsR.keys.flatMap { peerIds =>
+          peerIds.flatTraverse { peerId =>
+            peerRumorsR(peerId).get.map { maybeWrapper =>
+              maybeWrapper.map(_.chain.head).toList
+            }
+          }.map(_.iterator)
+        }
+
         def getPeerIds: F[Set[PeerId]] = peerRumorsR.keys.map(_.toSet)
 
-        def getPeerRumors(peerId: PeerId, fromOrdinal: Ordinal): F[Iterator[Signed[PeerRumorRaw]]] =
+        def getPeerRumorsAfterCursor(peerId: PeerId, cursor: Ordinal): F[Iterator[Signed[PeerRumorRaw]]] =
           peerRumorsR(peerId).get.map { maybeWrapper =>
-            val Ordinal(fromGen, fromCounter) = fromOrdinal
+            val Ordinal(cursorGen, cursorCounter) = cursor
 
             maybeWrapper.map { wrapper =>
               val headGen = wrapper.chain.head.ordinal.generation
               val lastCounter = wrapper.chain.last.ordinal.counter
 
-              if (headGen === fromGen)
-                if (lastCounter <= fromCounter)
-                  wrapper.chain.toChain.takeWhile(_.ordinal.counter >= fromCounter)
+              if (headGen === cursorGen)
+                if (lastCounter <= cursorCounter.next)
+                  wrapper.chain.toChain.takeWhile(_.ordinal.counter >= cursorCounter.next)
                 else
                   Chain.empty
-              else if (headGen > fromGen)
+              else if (headGen > cursorGen)
                 if (lastCounter === Counter.MinValue)
                   wrapper.chain.toChain
                 else
