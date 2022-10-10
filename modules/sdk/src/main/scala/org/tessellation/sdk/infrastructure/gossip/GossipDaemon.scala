@@ -165,7 +165,7 @@ object GossipDaemon {
         }
 
       private def peerRound(peer: Peer): F[Unit] =
-        rumorStorage.getLastOrdinals.flatMap { ordinals =>
+        rumorStorage.getLastPeerOrdinals.flatMap { ordinals =>
           gossipClient
             .queryPeerRumors(PeerRumorInquiryRequest(ordinals))
             .run(peer)
