@@ -24,6 +24,7 @@ final case class GossipRoutes[F[_]: Async: KryoSerializer: Metrics](
 ) extends Http4sDsl[F] {
 
   private val prefixPath = "/rumors"
+  private val chunkSize = 10
 
   private val httpRoutes: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "peer" / "query" =>
@@ -37,8 +38,8 @@ final case class GossipRoutes[F[_]: Async: KryoSerializer: Metrics](
 
     case POST -> Root / "peer" / "init" =>
       for {
-        localOrdinals <- rumorStorage.getLastOrdinals
-        result <- Ok(peerRumorStream(localOrdinals.toList))
+        lastRumors <- rumorStorage.getLastPeerRumors
+        result <- Ok(Stream.fromIterator(lastRumors, chunkSize))
       } yield result
 
     case GET -> Root / "common" / "offer" =>
@@ -66,9 +67,9 @@ final case class GossipRoutes[F[_]: Async: KryoSerializer: Metrics](
     Stream
       .emits(ordinals)
       .evalMap {
-        case (peerId, ordinal) => rumorStorage.getPeerRumors(peerId, ordinal)
+        case (peerId, ordinal) => rumorStorage.getPeerRumorsAfterCursor(peerId, ordinal)
       }
-      .flatMap(Stream.fromIterator(_, 5))
+      .flatMap(Stream.fromIterator(_, chunkSize))
 
   val p2pRoutes: HttpRoutes[F] = Router(
     prefixPath -> httpRoutes
