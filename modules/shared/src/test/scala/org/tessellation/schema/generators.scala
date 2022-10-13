@@ -4,18 +4,16 @@ import cats.data.NonEmptySet
 
 import scala.collection.immutable.SortedSet
 
-import org.tessellation.generators._
-import org.tessellation.schema.ID.Id
 import org.tessellation.schema.address.{Address, DAGAddressRefined}
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.cluster.SessionToken
 import org.tessellation.schema.generation.Generation
+import org.tessellation.schema.id.Id
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer._
 import org.tessellation.schema.transaction._
 import org.tessellation.security.generators._
 import org.tessellation.security.hash.Hash
-import org.tessellation.security.hex.Hex
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.{Signature, SignatureProof}
 
@@ -24,8 +22,11 @@ import eu.timepit.refined.api.{RefType, Validate}
 import eu.timepit.refined.refineV
 import eu.timepit.refined.scalacheck.numeric._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
+import org.scalacheck.Arbitrary.arbitrary
 import org.scalacheck.Gen.Choose
 import org.scalacheck.{Arbitrary, Gen}
+
+import hex._
 
 object generators {
 
@@ -38,14 +39,12 @@ object generators {
       .filter(v.isValid)
       .map(rt.unsafeWrap)
 
-  val peerIdGen: Gen[PeerId] =
-    nesGen(str => PeerId(Hex(str)))
+  val peerIdGen: Gen[PeerId] = arbitrary[PeerId]
 
   val peerResponsivenessGen: Gen[PeerResponsiveness] =
     Gen.oneOf(Responsive, Unresponsive)
 
-  val idGen: Gen[Id] =
-    nesGen(str => Id(Hex(str)))
+  val idGen: Gen[Id] = arbitrary[Id]
 
   val hostGen: Gen[Host] =
     for {
@@ -111,7 +110,7 @@ object generators {
       txnSalt <- transactionSaltGen
     } yield Transaction(src, dst, txnAmount, txnFee, txnReference, txnSalt)
 
-  val signatureGen: Gen[Signature] = nesGen(str => Signature(Hex(str)))
+  val signatureGen: Gen[Signature] = arbitrary[HexString].map(Signature(_))
 
   val signatureProofGen: Gen[SignatureProof] =
     for {

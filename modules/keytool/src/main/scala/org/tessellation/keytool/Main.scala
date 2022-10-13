@@ -8,8 +8,8 @@ import org.tessellation.BuildInfo
 import org.tessellation.cli.env._
 import org.tessellation.keytool.cert.DistinguishedName
 import org.tessellation.keytool.cli.method.{ExportPrivateKeyHex, GenerateWallet, MigrateExistingKeyStoreToStorePassOnly}
+import org.tessellation.schema.hex.HexString
 import org.tessellation.security.SecurityProvider
-import org.tessellation.security.hex.Hex
 
 import com.monovore.decline.Opts
 import com.monovore.decline.effect.CommandIOApp
@@ -95,7 +95,7 @@ object Main
     alias: KeyAlias,
     storePass: StorePass,
     keyPass: KeyPass
-  ): F[Hex] =
+  ): F[HexString] =
     KeyStoreUtils.exportPrivateKeyAsHex(
       path = keyStore.coerce.toString,
       alias = alias.coerce.value,

@@ -11,7 +11,6 @@ import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.security.Encodable
 import org.tessellation.security.hash.Hash
-import org.tessellation.security.hex.Hex
 import org.tessellation.security.signature.Signed
 
 import derevo.cats.{order, show}
@@ -25,6 +24,8 @@ import eu.timepit.refined.types.numeric.PosLong
 import io.circe.Json
 import io.estatico.newtype.macros.newtype
 import io.estatico.newtype.ops._
+
+import hex.HexString128
 
 object gossip {
 
@@ -103,7 +104,7 @@ object gossip {
   ) extends RumorRaw {
     override def toEncode: AnyRef =
       content.noSpacesSortKeys ++ contentType
-        .coerce[String] ++ origin.coerce[Hex].coerce[String] ++ ordinal.counter.toString ++ ordinal.generation.toString
+        .coerce[String] ++ origin.coerce[HexString128].value ++ ordinal.counter.toString ++ ordinal.generation.toString
   }
 
   object PeerRumorRaw {

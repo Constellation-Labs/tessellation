@@ -2,6 +2,8 @@ package org.tessellation.dag.snapshot
 
 import org.tessellation.security.hash.Hash
 
+import eu.timepit.refined.auto._
+
 object Coinbase {
 
   val value: String = "Nature loves courage. You make the commitment and nature will respond to that commitment " +

@@ -41,12 +41,12 @@ final class GlobalSnapshotLocalFileSystemStorage[F[_]: Async: KryoSerializer] pr
     read(toOrdinalName(ordinal))
 
   def read(hash: Hash): F[Option[Signed[GlobalSnapshot]]] =
-    read(hash.coerce[String])
+    read(hash.coerce)
 
   private def toOrdinalName(snapshot: GlobalSnapshot): String = toOrdinalName(snapshot.ordinal)
   private def toOrdinalName(ordinal: SnapshotOrdinal): String = ordinal.value.value.toString
 
-  private def toHashName(snapshot: GlobalSnapshot): F[String] = snapshot.hashF.map(_.coerce[String])
+  private def toHashName(snapshot: GlobalSnapshot): F[String] = snapshot.hashF.map(_.coerce)
 
 }
 

@@ -17,9 +17,9 @@ import org.tessellation.domain.rewards.Rewards
 import org.tessellation.ext.kryo._
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.ID.Id
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.generators.{chooseNumRefined, transactionGen}
+import org.tessellation.schema.id.Id
 import org.tessellation.schema.transaction.TransactionFee
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.SecurityProvider

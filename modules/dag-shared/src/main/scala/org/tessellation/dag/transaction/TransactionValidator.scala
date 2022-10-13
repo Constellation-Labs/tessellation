@@ -8,6 +8,7 @@ import org.tessellation.dag.transaction.TransactionValidator.TransactionValidati
 import org.tessellation.ext.cats.syntax.validated._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
+import org.tessellation.schema.hex._
 import org.tessellation.schema.transaction.Transaction
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.key.ops.PublicKeyOps

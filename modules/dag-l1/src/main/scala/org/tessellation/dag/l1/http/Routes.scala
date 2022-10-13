@@ -17,6 +17,7 @@ import org.tessellation.security.signature.Signed
 
 import io.circe.shapes._
 import io.circe.syntax.EncoderOps
+import io.estatico.newtype.ops._
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder}
 import org.http4s.circe._
@@ -51,7 +52,7 @@ final case class Routes[F[_]: Async: KryoSerializer](
           }
           .flatMap {
             case Left(errors) => BadRequest(ErrorResponse(errors.map(e => ErrorCause(e.show))).asJson)
-            case Right(hash)  => Ok(("hash" ->> hash.value) :: HNil)
+            case Right(hash)  => Ok(("hash" ->> hash.coerce.value) :: HNil)
           }
       } yield response
 

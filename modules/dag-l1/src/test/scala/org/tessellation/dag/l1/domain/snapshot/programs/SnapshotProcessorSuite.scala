@@ -170,8 +170,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
         implicit val securityProvider = sp
         implicit val kryoPool = kp
 
-        val parent1 = BlockReference(Height(4L), ProofsHash("parent1"))
-        val parent2 = BlockReference(Height(5L), ProofsHash("parent2"))
+        val parent1 = BlockReference(Height(4L), ProofsHash("0000000000000000000000000000000000000000000000000000000000000000"))
+        val parent2 = BlockReference(Height(5L), ProofsHash("0000000000000000000000000000000000000000000000000000000000000001"))
 
         for {
           correctTxs <- generateTransactions(srcAddress, srcKey, dstAddress, 1)
@@ -268,10 +268,10 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
         implicit val securityProvider = sp
         implicit val kryoPool = kp
 
-        val parent1 = BlockReference(Height(8L), ProofsHash("parent1"))
-        val parent2 = BlockReference(Height(2L), ProofsHash("parent2"))
-        val parent3 = BlockReference(Height(6L), ProofsHash("parent3"))
-        val parent4 = BlockReference(Height(5L), ProofsHash("parent4"))
+        val parent1 = BlockReference(Height(8L), ProofsHash("0000000000000000000000000000000000000000000000000000000000000001"))
+        val parent2 = BlockReference(Height(2L), ProofsHash("0000000000000000000000000000000000000000000000000000000000000002"))
+        val parent3 = BlockReference(Height(6L), ProofsHash("0000000000000000000000000000000000000000000000000000000000000003"))
+        val parent4 = BlockReference(Height(5L), ProofsHash("0000000000000000000000000000000000000000000000000000000000000004"))
 
         for {
           correctTxs <- generateTransactions(srcAddress, srcKey, dstAddress, 7).map(_.toList)
@@ -466,10 +466,10 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
         implicit val securityProvider = sp
         implicit val kryoPool = kp
 
-        val parent1 = BlockReference(Height(6L), ProofsHash("parent1"))
-        val parent2 = BlockReference(Height(7L), ProofsHash("parent2"))
-        val parent3 = BlockReference(Height(8L), ProofsHash("parent3"))
-        val parent4 = BlockReference(Height(9L), ProofsHash("parent4"))
+        val parent1 = BlockReference(Height(6L), ProofsHash("0000000000000000000000000000000000000000000000000000000000000001"))
+        val parent2 = BlockReference(Height(7L), ProofsHash("0000000000000000000000000000000000000000000000000000000000000002"))
+        val parent3 = BlockReference(Height(8L), ProofsHash("0000000000000000000000000000000000000000000000000000000000000003"))
+        val parent4 = BlockReference(Height(9L), ProofsHash("0000000000000000000000000000000000000000000000000000000000000004"))
 
         for {
           correctTxs <- generateTransactions(srcAddress, srcKey, dstAddress, 4).map(_.toList)
@@ -615,10 +615,10 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
         implicit val securityProvider = sp
         implicit val kryoPool = kp
 
-        val parent1 = BlockReference(Height(6L), ProofsHash("parent1"))
-        val parent2 = BlockReference(Height(7L), ProofsHash("parent2"))
-        val parent3 = BlockReference(Height(8L), ProofsHash("parent3"))
-        val parent4 = BlockReference(Height(9L), ProofsHash("parent4"))
+        val parent1 = BlockReference(Height(6L), ProofsHash("0000000000000000000000000000000000000000000000000000000000000001"))
+        val parent2 = BlockReference(Height(7L), ProofsHash("0000000000000000000000000000000000000000000000000000000000000002"))
+        val parent3 = BlockReference(Height(8L), ProofsHash("0000000000000000000000000000000000000000000000000000000000000003"))
+        val parent4 = BlockReference(Height(9L), ProofsHash("0000000000000000000000000000000000000000000000000000000000000004"))
 
         for {
           correctTxs <- generateTransactions(srcAddress, srcKey, dstAddress, 6).map(_.toList)
@@ -838,8 +838,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
         implicit val securityProvider = sp
         implicit val kryoPool = kp
 
-        val parent1 = BlockReference(Height(8L), ProofsHash("parent1"))
-        val parent2 = BlockReference(Height(9L), ProofsHash("parent2"))
+        val parent1 = BlockReference(Height(8L), ProofsHash("0000000000000000000000000000000000000000000000000000000000000001"))
+        val parent2 = BlockReference(Height(9L), ProofsHash("0000000000000000000000000000000000000000000000000000000000000002"))
 
         for {
           hashedLastSnapshot <- forAsyncKryo(

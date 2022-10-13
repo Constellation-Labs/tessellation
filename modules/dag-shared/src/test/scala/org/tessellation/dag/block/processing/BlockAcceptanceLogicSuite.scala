@@ -11,7 +11,6 @@ import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.security.SecurityProvider
-import org.tessellation.security.hex.Hex
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.{Signature, SignatureProof}
 
@@ -26,18 +25,14 @@ object BlockAcceptanceLogicSuite extends MutableIOSuite with Checkers {
   private val (address1, peer1) = (
     Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB"),
     PeerId(
-      Hex(
-        "6128e64d623ce4320c9523dc6d64d7d93647e40fb44c77d70bcb34dc4042e63cde16320f336c9c0011315aa9f006ad2941b9a92102a055e1bcc5a66ef8b612ef"
-      )
+      "6128e64d623ce4320c9523dc6d64d7d93647e40fb44c77d70bcb34dc4042e63cde16320f336c9c0011315aa9f006ad2941b9a92102a055e1bcc5a66ef8b612ef"
     )
   )
 
   private val (addressWithoutBalance, peerWithoutBalance) = (
     Address("DAG07tqNLYW8jHU9emXcRTT3CfgCUoumwcLghopd"),
     PeerId(
-      Hex(
-        "79c4a78387a8782dbc88de95098d134a7dbf3b8a3316eaa1e41e112dc5b21a5b0cefdd0871495435591089264aa5c8a2429a75b384519662184bedfa6e7b886f"
-      )
+      "79c4a78387a8782dbc88de95098d134a7dbf3b8a3316eaa1e41e112dc5b21a5b0cefdd0871495435591089264aa5c8a2429a75b384519662184bedfa6e7b886f"
     )
   )
 
@@ -101,6 +96,17 @@ object BlockAcceptanceLogicSuite extends MutableIOSuite with Checkers {
     signedDAGBlockGen.map(_.copy(proofs = buildProofs(peers)))
 
   def buildProofs(peerIds: Seq[PeerId]) =
-    NonEmptyList.fromListUnsafe(peerIds.toList.map(peerId => SignatureProof(peerId.toId, Signature(Hex(""))))).toNes
+    NonEmptyList
+      .fromListUnsafe(
+        peerIds.toList.map(peerId =>
+          SignatureProof(
+            peerId.toId,
+            Signature(
+              "0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+            )
+          )
+        )
+      )
+      .toNes
 
 }

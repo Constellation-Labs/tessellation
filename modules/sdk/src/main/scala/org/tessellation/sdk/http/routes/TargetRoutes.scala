@@ -43,8 +43,8 @@ object TargetRoutes {
         targets = List(s"${peer.ip}:${peer.publicPort}"),
         labels = Map[LabelName, String](
           ("ip", peer.ip.toString),
-          ("peer_id", peer.id.value.value),
-          ("peer_id_short", peer.id.value.shortValue)
+          ("peer_id", peer.id.value),
+          ("peer_id_short", peer.id.shortValue)
         )
       )
   }

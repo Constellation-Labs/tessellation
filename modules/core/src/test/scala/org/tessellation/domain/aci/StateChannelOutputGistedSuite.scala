@@ -5,8 +5,9 @@ import cats.syntax.option._
 
 import org.tessellation.coreKryoRegistrar
 import org.tessellation.ext.kryo._
-import org.tessellation.kernel.{StateChannelSnapshot, kernelKryoRegistrar}
+import org.tessellation.kernel.StateChannelSnapshot
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.hash.Hash
 
 import weaver.MutableIOSuite
@@ -16,10 +17,10 @@ object StateChannelOutputGistedSuite extends MutableIOSuite with Checkers {
   type Res = KryoSerializer[IO]
 
   // not registered in Kryo
-  case class NonSerializableSnapshot(lastSnapshotHash: Hash = Hash("0")) extends StateChannelSnapshot {}
+  case class NonSerializableSnapshot(lastSnapshotHash: Hash = Hash.empty) extends StateChannelSnapshot {}
 
   override def sharedResource: Resource[IO, StateChannelOutputGistedSuite.Res] =
-    KryoSerializer.forAsync[IO](coreKryoRegistrar.union(kernelKryoRegistrar))
+    KryoSerializer.forAsync[IO](coreKryoRegistrar.union(sdkKryoRegistrar))
 
   test("raw snapshot should not be serializable") { implicit kryo =>
     val nonSerializableSnapshot = NonSerializableSnapshot()

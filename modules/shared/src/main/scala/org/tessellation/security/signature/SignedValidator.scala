@@ -7,7 +7,7 @@ import cats.effect.Async
 import cats.syntax.all._
 
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.ID.Id
+import org.tessellation.schema.id.Id
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.SignedValidator.SignedValidationErrorOr
 import org.tessellation.security.signature.signature.SignatureProof

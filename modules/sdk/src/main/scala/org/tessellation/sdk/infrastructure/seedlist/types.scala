@@ -1,20 +1,25 @@
 package org.tessellation.sdk.infrastructure.seedlist
 
-import org.tessellation.schema.peer.PeerId
-import org.tessellation.security.hex.Hex
+import cats.syntax.either._
 
-import fs2.data.csv.RowDecoder
-import fs2.data.csv.generic.semiauto.deriveRowDecoder
+import org.tessellation.schema.hex.HexString128Spec
+import org.tessellation.schema.peer.PeerId
+
+import eu.timepit.refined.refineV
+import fs2.data.csv.{DecoderError, RowDecoder}
+import io.estatico.newtype.macros.newtype
 
 object types {
 
-  case class SeedlistCSVEntry(id: String) {
-
-    def toPeerId: PeerId = PeerId(Hex(id))
-  }
+  @newtype
+  case class SeedlistCSVEntry(peerId: PeerId)
 
   object SeedlistCSVEntry {
-    implicit val rowDecoder: RowDecoder[SeedlistCSVEntry] = deriveRowDecoder
+    implicit val rowDecoder: RowDecoder[SeedlistCSVEntry] = RowDecoder.instance { row =>
+      refineV[HexString128Spec](row.values.head)
+        .map(hex => SeedlistCSVEntry(PeerId(hex)))
+        .leftMap(err => new DecoderError(err, row.line))
+    }
   }
 
 }

@@ -11,6 +11,7 @@ import cats.syntax.functor._
 import cats.syntax.option._
 
 import org.tessellation.schema.cluster.TokenValid
+import org.tessellation.schema.hex._
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.domain.cluster.storage.SessionStorage

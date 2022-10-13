@@ -20,7 +20,6 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.{address, balance}
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.SecurityProvider
-import org.tessellation.security.hex.Hex
 import org.tessellation.security.signature.Signed
 
 import better.files._
@@ -61,7 +60,11 @@ object GlobalSnapshotStorageSuite extends MutableIOSuite with Checkers {
             SortedMap.empty,
             SortedSet.empty,
             genesis.value.epochProgress,
-            NonEmptyList.of(PeerId(Hex("peer1"))),
+            NonEmptyList.of(
+              PeerId(
+                "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+              )
+            ),
             genesis.info,
             genesis.tips
           )

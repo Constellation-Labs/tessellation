@@ -34,7 +34,7 @@ object TransactionSuite extends ResourceSuite with Checkers {
       Address("DAG2EUdecqFwEGcgAcH1ac2wrsg8acrgGwrQefgh"),
       TransactionAmount(10L),
       TransactionFee(3L),
-      TransactionReference(TransactionOrdinal(2L), Hash("someHash")),
+      TransactionReference(TransactionOrdinal(2L), Hash("f608315455fee7e2898bbd0c0501c2cc6997682d45a6d34e6d334c664c884141")),
       TransactionSalt(1234L)
     )
 
@@ -46,8 +46,8 @@ object TransactionSuite extends ResourceSuite with Checkers {
         "DAG2EUdecqFwEGcgAcH1ac2wrsg8acrgGwrQefgh" +
         "1" +
         "a" +
-        "8" +
-        "someHash" +
+        "64" +
+        "f608315455fee7e2898bbd0c0501c2cc6997682d45a6d34e6d334c664c884141" +
         "1" +
         "2" +
         "1" +
@@ -59,7 +59,7 @@ object TransactionSuite extends ResourceSuite with Checkers {
   }
 
   test("Hash for a new Transaction schema should be the same as hash for old Transaction schema") { implicit kryo =>
-    val expectedHash = "1017a072225263aa502d9dcd22a04455f9b063cc19166356be50b4730afc44f6"
+    val expectedHash = Hash("1017a072225263aa502d9dcd22a04455f9b063cc19166356be50b4730afc44f6")
 
     val transaction = Transaction(
       Address("DAG53ho9ssY8KYQdjxsWPYgNbDJ1YqM2RaPDZebU"),

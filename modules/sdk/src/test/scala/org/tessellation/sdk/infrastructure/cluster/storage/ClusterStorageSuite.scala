@@ -6,7 +6,6 @@ import cats.syntax.option._
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.generators._
 import org.tessellation.schema.peer.{Peer, PeerId}
-import org.tessellation.security.hex.Hex
 
 import com.comcast.ip4s.IpLiteralSyntax
 import eu.timepit.refined.auto._
@@ -56,7 +55,11 @@ object ClusterStorageSuite extends SimpleIOSuite with Checkers {
     forall(peerGen) { peer =>
       for {
         cs <- ClusterStorage.make[IO](clusterId, Map(peer.id -> peer))
-        hasPeerId <- cs.hasPeerId(PeerId(Hex("unknown")))
+        hasPeerId <- cs.hasPeerId(
+          PeerId(
+            "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+          )
+        )
       } yield expect(!hasPeerId)
     }
   }

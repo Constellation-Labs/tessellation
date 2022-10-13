@@ -79,6 +79,9 @@ object ContextualTransactionValidatorSuite extends ResourceSuite with Checkers {
 
   val initialReference: Address => TransactionReference = _ => TransactionReference.empty
 
+  val someHash = Hash("f608315455fee7e2898bbd0c0501c2cc6997682d45a6d34e6d334c664c884141")
+  val someOtherHash = Hash("79ce148dcf2dc061d897c0105a24726f1c9fc3a3928522fceb360682fd0830ee")
+
   def setReference(hash: Hash) =
     Transaction._ParentHash.replace(hash).andThen(Transaction._ParentOrdinal.replace(TransactionOrdinal(1L)))
 
@@ -96,7 +99,7 @@ object ContextualTransactionValidatorSuite extends ResourceSuite with Checkers {
     case (txValidator, srcKey, _, _, _, baseTx, signTx) =>
       val validator = txValidator(initialReference)
 
-      val tx = setReference(Hash("someHash"))(baseTx)
+      val tx = setReference(someHash)(baseTx)
 
       for {
         signedTx <- signTx(tx, srcKey)
@@ -107,7 +110,7 @@ object ContextualTransactionValidatorSuite extends ResourceSuite with Checkers {
   test("should fail when lastTxRef's ordinal is lower than one stored on the node") {
     case (txValidator, srcKey, _, _, _, tx, signTx) =>
       val reference =
-        (_: Address) => TransactionReference(TransactionOrdinal(NonNegLong(1L)), Hash("someHash"))
+        (_: Address) => TransactionReference(TransactionOrdinal(NonNegLong(1L)), someHash)
       val validator = txValidator(reference)
 
       for {
@@ -123,17 +126,17 @@ object ContextualTransactionValidatorSuite extends ResourceSuite with Checkers {
   test("should fail when lastTxRef's ordinal matches but the hash is different") {
     case (txValidator, srcKey, _, _, _, baseTx, signTx) =>
       val reference =
-        (_: Address) => TransactionReference(TransactionOrdinal(NonNegLong(1L)), Hash("someHash"))
+        (_: Address) => TransactionReference(TransactionOrdinal(NonNegLong(1L)), someHash)
       val validator = txValidator(reference)
 
-      val tx = setReference(Hash("someOtherHash"))(baseTx)
+      val tx = setReference(someOtherHash)(baseTx)
 
       for {
         signedTx <- signTx(tx, srcKey)
         validationResult <- validator.validate(signedTx)
       } yield
         expect.same(
-          ParentHashDifferentThanLastTxHash(Hash("someOtherHash"), Hash("someHash")).invalidNec,
+          ParentHashDifferentThanLastTxHash(someOtherHash, someHash).invalidNec,
           validationResult
         )
   }

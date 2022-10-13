@@ -6,18 +6,16 @@ import java.util.UUID
 import cats.Show
 import cats.effect.kernel.Async
 import cats.kernel.Order
-import cats.syntax.contravariant._
 import cats.syntax.eq._
 import cats.syntax.functor._
 
 import org.tessellation.ext.derevo.ordering
-import org.tessellation.schema.ID.Id
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.cluster.{ClusterId, ClusterSessionToken, SessionToken}
+import org.tessellation.schema.id.Id
 import org.tessellation.schema.node.NodeState
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
-import org.tessellation.security.hex.Hex
 import org.tessellation.security.key.ops._
 
 import com.comcast.ip4s.{Host, Port}
@@ -25,6 +23,9 @@ import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia._
 import derevo.derive
 import derevo.scalacheck.arbitrary
+import eu.timepit.refined.cats._
+import eu.timepit.refined.refineV
+import io.circe.refined._
 import io.circe.{Decoder, Encoder}
 import io.estatico.newtype.macros.newtype
 import io.estatico.newtype.ops._
@@ -32,18 +33,20 @@ import io.getquill.MappedEncoding
 import monocle.macros.GenLens
 import monocle.{Iso, Lens}
 
+import hex._
+
 object peer {
 
   @derive(eqv, show, decoder, encoder)
   case class P2PContext(ip: Host, port: Port, id: PeerId)
 
-  @derive(arbitrary, eqv, order, decoder, encoder, keyEncoder, keyDecoder)
+  @derive(arbitrary, order, decoder, encoder, keyEncoder, keyDecoder)
   @newtype
-  case class PeerId(value: Hex)
+  case class PeerId(value: HexString128)
 
   object PeerId {
 
-    implicit val show: Show[PeerId] = Show[Id].contramap(_.toId)
+    implicit val show: Show[PeerId] = _.shortValue
 
     val _Id: Iso[PeerId, Id] =
       Iso[PeerId, Id](peerId => Id(peerId.coerce))(id => PeerId(id.hex))
@@ -53,20 +56,23 @@ object peer {
     implicit val quillEncode: MappedEncoding[PeerId, String] =
       MappedEncoding[PeerId, String](_.value.value)
 
-    implicit val quillDecode: MappedEncoding[String, PeerId] = MappedEncoding[String, PeerId](x => PeerId(Hex(x)))
+    implicit val quillDecode: MappedEncoding[String, PeerId] =
+      MappedEncoding[String, PeerId](x => PeerId(refineV[HexString128Spec].unsafeFrom(x)))
 
     val fromId: Id => PeerId = _Id.reverseGet
 
     def fromPublic(publicKey: PublicKey): PeerId =
       fromId(publicKey.toId)
-  }
 
-  implicit class PeerIdOps(peerId: PeerId) {
-    def toId: Id = PeerId._Id.get(peerId)
+    implicit class PeerIdOps(peerId: PeerId) {
+      def toId: Id = PeerId._Id.get(peerId)
 
-    def toAddress[F[_]: Async](implicit sc: SecurityProvider[F]): F[Address] =
-      peerId.value.toPublicKey
-        .map(_.toAddress)
+      def toAddress[F[_]: Async](implicit sc: SecurityProvider[F]): F[Address] =
+        peerId.value.toPublicKey
+          .map(_.toAddress)
+
+      def shortValue: String = peerId.value.value.take(8)
+    }
   }
 
   @derive(eqv, show)

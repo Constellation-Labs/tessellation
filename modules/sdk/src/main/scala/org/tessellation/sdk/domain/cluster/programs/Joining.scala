@@ -15,8 +15,8 @@ import cats.syntax.traverse._
 import org.tessellation.effects.GenUUID
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.ID.Id
 import org.tessellation.schema.cluster._
+import org.tessellation.schema.id.Id
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.Peer.toP2PContext
 import org.tessellation.schema.peer._

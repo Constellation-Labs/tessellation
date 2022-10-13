@@ -18,7 +18,7 @@ import org.tessellation.ext.kryo._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.height.Height
-import org.tessellation.security.hash.{Hash, ProofsHash}
+import org.tessellation.security.hash.ProofsHash
 import org.tessellation.security.signature.Signed
 import org.tessellation.shared.sharedKryoRegistrar
 
@@ -29,11 +29,12 @@ import weaver.scalacheck.Checkers
 
 object BlockAcceptanceManagerSuite extends MutableIOSuite with Checkers {
 
-  val validAcceptedParent = BlockReference(Height(0L), ProofsHash(Hash.empty.value.init + "1"))
-  val validRejectedParent = BlockReference(Height(0L), ProofsHash(Hash.empty.value.init + "2"))
-  val validAwaitingParent = BlockReference(Height(0L), ProofsHash(Hash.empty.value.init + "3"))
-  val validInitiallyAwaitingParent = BlockReference(Height(0L), ProofsHash(Hash.empty.value.init + "4"))
-  val invalidParent = BlockReference(Height(0L), ProofsHash(Hash.empty.value.init + "5"))
+  val validAcceptedParent = BlockReference(Height(0L), ProofsHash("0000000000000000000000000000000000000000000000000000000000000001"))
+  val validRejectedParent = BlockReference(Height(0L), ProofsHash("0000000000000000000000000000000000000000000000000000000000000002"))
+  val validAwaitingParent = BlockReference(Height(0L), ProofsHash("0000000000000000000000000000000000000000000000000000000000000003"))
+  val validInitiallyAwaitingParent =
+    BlockReference(Height(0L), ProofsHash("0000000000000000000000000000000000000000000000000000000000000004"))
+  val invalidParent = BlockReference(Height(0L), ProofsHash("0000000000000000000000000000000000000000000000000000000000000005"))
   val commonAddress = Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB")
   type Res = KryoSerializer[IO]
 

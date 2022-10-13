@@ -9,7 +9,6 @@ import org.tessellation.sdk.config.types.CollateralConfig
 import org.tessellation.sdk.domain.collateral.LatestBalances
 import org.tessellation.sdk.infrastructure.Collateral
 import org.tessellation.security.SecurityProvider
-import org.tessellation.security.hex.Hex
 
 import eu.timepit.refined.auto._
 import weaver.MutableIOSuite
@@ -20,9 +19,7 @@ object CollateralSuite extends MutableIOSuite with Checkers {
   private val (address1, peer1) = (
     Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB"),
     PeerId(
-      Hex(
-        "6128e64d623ce4320c9523dc6d64d7d93647e40fb44c77d70bcb34dc4042e63cde16320f336c9c0011315aa9f006ad2941b9a92102a055e1bcc5a66ef8b612ef"
-      )
+      "6128e64d623ce4320c9523dc6d64d7d93647e40fb44c77d70bcb34dc4042e63cde16320f336c9c0011315aa9f006ad2941b9a92102a055e1bcc5a66ef8b612ef"
     )
   )
 

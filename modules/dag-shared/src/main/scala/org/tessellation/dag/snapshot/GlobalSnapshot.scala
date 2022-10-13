@@ -13,17 +13,16 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.height.{Height, SubHeight}
+import org.tessellation.schema.hex.HexString64
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.RewardTransaction
 import org.tessellation.security.hash.{Hash, ProofsHash}
-import org.tessellation.security.hex.Hex
 import org.tessellation.syntax.sortedCollection._
 
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.PosInt
 
 @derive(eqv, show, encoder, decoder)
 case class GlobalSnapshot(
@@ -65,23 +64,30 @@ object GlobalSnapshot {
       GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.from(balances)),
       GlobalSnapshotTips(
         SortedSet.empty[DeprecatedTip],
-        mkActiveTips(8)
+        mkActiveTips
       )
     )
 
   val nextFacilitators: NonEmptyList[PeerId] =
     NonEmptyList
-      .of(
-        "e0c1ee6ec43510f0e16d2969a7a7c074a5c8cdb477c074fe9c32a9aad8cbc8ff1dff60bb81923e0db437d2686a9b65b86c403e6a21fa32b6acc4e61be4d70925"
+      .one(
+        PeerId(
+          "e0c1ee6ec43510f0e16d2969a7a7c074a5c8cdb477c074fe9c32a9aad8cbc8ff1dff60bb81923e0db437d2686a9b65b86c403e6a21fa32b6acc4e61be4d70925"
+        )
       )
-      .map(s => PeerId(Hex(s)))
 
-  private def mkActiveTips(n: PosInt): SortedSet[ActiveTip] =
-    List
-      .range(0, n.value)
-      .map { i =>
-        ActiveTip(BlockReference(Height.MinValue, ProofsHash(s"%064d".format(i))), 0L, SnapshotOrdinal.MinValue)
-      }
-      .toSortedSet
+  private def mkActiveTips: SortedSet[ActiveTip] =
+    List[HexString64](
+      "0000000000000000000000000000000000000000000000000000000000000000",
+      "0000000000000000000000000000000000000000000000000000000000000001",
+      "0000000000000000000000000000000000000000000000000000000000000002",
+      "0000000000000000000000000000000000000000000000000000000000000003",
+      "0000000000000000000000000000000000000000000000000000000000000004",
+      "0000000000000000000000000000000000000000000000000000000000000005",
+      "0000000000000000000000000000000000000000000000000000000000000006",
+      "0000000000000000000000000000000000000000000000000000000000000007"
+    ).map { hex =>
+      ActiveTip(BlockReference(Height.MinValue, ProofsHash(hex)), 0L, SnapshotOrdinal.MinValue)
+    }.toSortedSet
 
 }

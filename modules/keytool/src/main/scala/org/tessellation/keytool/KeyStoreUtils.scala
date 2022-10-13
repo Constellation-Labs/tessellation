@@ -1,7 +1,7 @@
 package org.tessellation.keytool
 
 import java.io._
-import java.nio.charset.Charset
+import java.nio.charset.StandardCharsets
 import java.nio.file.FileAlreadyExistsException
 import java.security.cert.Certificate
 import java.security.{KeyPair, KeyStore, PrivateKey}
@@ -12,12 +12,10 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.keytool.cert.{DistinguishedName, SelfSignedCertificate}
+import org.tessellation.schema.hex.HexString
 import org.tessellation.security._
-import org.tessellation.security.hex.Hex
 import org.tessellation.security.key.ops._
 import org.tessellation.security.signature.Signing
-
-import io.estatico.newtype.ops._
 
 object KeyStoreUtils {
 
@@ -31,14 +29,14 @@ object KeyStoreUtils {
     alias: String,
     storePassword: Array[Char],
     keyPassword: Array[Char]
-  ): F[Hex] =
+  ): F[HexString] =
     for {
       keyPair <- readKeyPairFromStore(path, alias, storePassword, keyPassword)
       hex = keyPair.getPrivate.toHex
       _ <- writer(pathDir(path) + privateKeyHexName)
         .use(os =>
           Async[F].delay {
-            os.write(hex.coerce.getBytes(Charset.forName("UTF-8")))
+            os.write(hex.value.getBytes(StandardCharsets.UTF_8))
           }
         )
     } yield hex

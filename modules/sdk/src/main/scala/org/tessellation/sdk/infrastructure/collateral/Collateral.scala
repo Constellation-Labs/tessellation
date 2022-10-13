@@ -7,6 +7,7 @@ import cats.syntax.order._
 
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
+import org.tessellation.schema.hex._
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.config.types.CollateralConfig
 import org.tessellation.sdk.domain.collateral.{Collateral, LatestBalances}

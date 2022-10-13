@@ -10,9 +10,9 @@ import org.tessellation.sdk.domain.cluster.programs.PeerDiscovery
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.http.p2p.PeerResponse
 import org.tessellation.sdk.http.p2p.clients.ClusterClient
-import org.tessellation.security.hex.Hex
 
 import com.comcast.ip4s.{Host, Port}
+import eu.timepit.refined.auto._
 import org.scalacheck.Arbitrary
 import weaver.SimpleIOSuite
 import weaver.scalacheck.Checkers
@@ -22,9 +22,7 @@ object PeerDiscoverySuite extends SimpleIOSuite with Checkers {
   private implicit val arbitraryPeer: Arbitrary[Peer] = Arbitrary(peerGen)
 
   val nodeId = PeerId(
-    Hex(
-      "6128e64d623ce4320c9523dc6d64d7d93647e40fb44c77d70bcb34dc4042e63cde16320f336c9c0011315aa9f006ad2941b9a92102a055e1bcc5a66ef8b612ef"
-    )
+    "6128e64d623ce4320c9523dc6d64d7d93647e40fb44c77d70bcb34dc4042e63cde16320f336c9c0011315aa9f006ad2941b9a92102a055e1bcc5a66ef8b612ef"
   )
 
   lazy val selfPeer = peerGen.sample.get.copy(id = nodeId)

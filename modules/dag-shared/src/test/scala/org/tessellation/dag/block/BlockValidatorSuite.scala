@@ -76,8 +76,8 @@ object BlockValidatorSuite extends MutableIOSuite with Checkers {
         )
       block = DAGBlock(
         NonEmptyList.of(
-          BlockReference(Height(10L), ProofsHash("parent1")),
-          BlockReference(Height(12L), ProofsHash("parent2"))
+          BlockReference(Height(10L), ProofsHash("0000000000000000000000000000000000000000000000000000000000000000")),
+          BlockReference(Height(12L), ProofsHash("0000000000000000000000000000000000000000000000000000000000000001"))
         ),
         NonEmptySet.fromSetUnsafe(SortedSet(tx))
       )

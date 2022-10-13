@@ -8,8 +8,8 @@ import cats.syntax.all._
 
 import org.tessellation.ext.cats.syntax.validated._
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.ID.Id
 import org.tessellation.schema.gossip._
+import org.tessellation.schema.id.Id
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.infrastructure.gossip.RumorValidator.RumorValidationErrorOr
 import org.tessellation.security.hash.Hash

@@ -25,7 +25,6 @@ import org.tessellation.schema.transaction.{TransactionFee, TransactionReference
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.ProofsHash
-import org.tessellation.security.hex.Hex
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.SignedValidator
 import org.tessellation.security.signature.signature.SignatureProof
@@ -56,10 +55,18 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
   implicit val logger = Slf4jLogger.getLogger[IO]
 
   val roundId = RoundId(UUID.randomUUID())
-  val peerIdA = PeerId(Hex("peerA"))
-  val peerIdB = PeerId(Hex("peerB"))
-  val peerIdC = PeerId(Hex("peerC"))
-  val tips = Tips(NonEmptyList.of(BlockReference(Height(1L), ProofsHash("0000"))))
+  val peerIdA = PeerId(
+    "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+  )
+  val peerIdB = PeerId(
+    "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001"
+  )
+  val peerIdC = PeerId(
+    "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000002"
+  )
+  val tips = Tips(
+    NonEmptyList.of(BlockReference(Height(1L), ProofsHash("0000000000000000000000000000000000000000000000000000000000000000")))
+  )
   val baseProposal = Proposal(roundId, peerIdA, peerIdA, Set.empty, Set.empty, tips)
 
   val baseRoundData =

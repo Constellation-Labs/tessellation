@@ -19,9 +19,9 @@ import org.tessellation.dag.snapshot.SnapshotOrdinal
 import org.tessellation.dag.snapshot.epoch.EpochProgress
 import org.tessellation.domain.rewards._
 import org.tessellation.ext.refined._
-import org.tessellation.schema.ID.Id
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
+import org.tessellation.schema.id.Id
 import org.tessellation.schema.transaction
 import org.tessellation.schema.transaction.{RewardTransaction, TransactionAmount}
 import org.tessellation.syntax.sortedCollection._

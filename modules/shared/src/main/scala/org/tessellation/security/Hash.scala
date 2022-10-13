@@ -1,40 +1,47 @@
 package org.tessellation.security
 
+import cats.Order._
+
 import org.tessellation.ext.derevo.ordering
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.hex._
 import org.tessellation.security.hash.Hash
 
 import com.google.common.hash.Hashing
 import derevo.cats.{order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
+import derevo.scalacheck.arbitrary
+import eu.timepit.refined.auto._
+import eu.timepit.refined.cats._
+import eu.timepit.refined.refineV
+import io.circe.refined._
 import io.estatico.newtype.macros.newtype
 import io.estatico.newtype.ops._
-import org.scalacheck.{Arbitrary, Gen}
+import org.scalacheck.Arbitrary
 
 object hash {
 
-  @derive(encoder, decoder, ordering, order, show)
+  @derive(arbitrary, encoder, decoder, ordering, order, show)
   @newtype
-  case class Hash(value: String)
+  case class Hash(value: HexString64)
 
   object Hash {
 
     def fromBytes(bytes: Array[Byte]): Hash =
-      Hash(Hashing.sha256().hashBytes(bytes).toString)
+      Hash(refineV[HexString64Spec].unsafeFrom(Hashing.sha256().hashBytes(bytes).asBytes().toHexString))
 
-    def empty: Hash = Hash(s"%064d".format(0))
+    def empty: Hash = Hash("0000000000000000000000000000000000000000000000000000000000000000")
 
-    implicit val arbitrary: Arbitrary[Hash] = Arbitrary(Gen.resize(64, Gen.hexStr).map(Hash(_)))
   }
 
   @derive(encoder, decoder, ordering, order, show)
   @newtype
-  case class ProofsHash(value: String)
+  case class ProofsHash(value: HexString64)
 
   object ProofsHash {
     implicit val arbitrary: Arbitrary[ProofsHash] = Arbitrary(
-      Arbitrary.arbitrary[Hash].map(h => ProofsHash(h.coerce[String]))
+      Arbitrary.arbitrary[Hash].map(h => ProofsHash(h.coerce))
     )
   }
 

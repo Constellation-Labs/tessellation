@@ -8,6 +8,7 @@ import scala.util.control.NoStackTrace
 
 import org.tessellation.domain.aci.StateChannelOutput
 import org.tessellation.ext.kryo._
+import org.tessellation.schema.hex._
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.security.SecurityProvider
 

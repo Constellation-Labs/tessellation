@@ -7,6 +7,7 @@ import org.tessellation.schema.peer.{L0Peer, PeerId}
 
 import com.comcast.ip4s.{Host, IpLiteralSyntax, Port}
 import com.monovore.decline.Opts
+import com.monovore.decline.refined._
 
 object L0PeerOpts {
 

@@ -19,7 +19,6 @@ import org.tessellation.sdk.domain.collateral.LatestBalances
 import org.tessellation.sdk.infrastructure.Collateral
 import org.tessellation.sdk.infrastructure.cluster.storage.ClusterStorage
 import org.tessellation.security.SecurityProvider
-import org.tessellation.security.hex.Hex
 
 import eu.timepit.refined.auto._
 import fs2.Stream
@@ -37,18 +36,14 @@ object CollateralDaemonSuite extends ResourceSuite with Checkers {
   private val (address1, peer1) = (
     Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB"),
     PeerId(
-      Hex(
-        "6128e64d623ce4320c9523dc6d64d7d93647e40fb44c77d70bcb34dc4042e63cde16320f336c9c0011315aa9f006ad2941b9a92102a055e1bcc5a66ef8b612ef"
-      )
+      "6128e64d623ce4320c9523dc6d64d7d93647e40fb44c77d70bcb34dc4042e63cde16320f336c9c0011315aa9f006ad2941b9a92102a055e1bcc5a66ef8b612ef"
     )
   )
 
   private val (address2, peer2) = (
     Address("DAG07tqNLYW8jHU9emXcRTT3CfgCUoumwcLghopd"),
     PeerId(
-      Hex(
-        "79c4a78387a8782dbc88de95098d134a7dbf3b8a3316eaa1e41e112dc5b21a5b0cefdd0871495435591089264aa5c8a2429a75b384519662184bedfa6e7b886f"
-      )
+      "79c4a78387a8782dbc88de95098d134a7dbf3b8a3316eaa1e41e112dc5b21a5b0cefdd0871495435591089264aa5c8a2429a75b384519662184bedfa6e7b886f"
     )
   )
 
