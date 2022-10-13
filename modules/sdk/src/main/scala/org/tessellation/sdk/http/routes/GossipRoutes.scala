@@ -39,7 +39,7 @@ final case class GossipRoutes[F[_]: Async: KryoSerializer: Metrics](
     case POST -> Root / "peer" / "init" =>
       for {
         lastRumors <- rumorStorage.getLastPeerRumors
-        result <- Ok(Stream.fromIterator(lastRumors, chunkSize))
+        result <- Ok(Stream.emits(lastRumors.toList).covary[F]) // Stream.fromIterator fails because of a double pull from the stream
       } yield result
 
     case GET -> Root / "common" / "offer" =>
@@ -52,7 +52,7 @@ final case class GossipRoutes[F[_]: Async: KryoSerializer: Metrics](
     case req @ POST -> Root / "common" / "query" =>
       for {
         queryRequest <- req.as[QueryCommonRumorsRequest]
-        rumors = Stream.eval(rumorStorage.getCommonRumors(queryRequest.query)).flatMap(Stream.fromIterator(_, 5))
+        rumors = Stream.eval(rumorStorage.getCommonRumors(queryRequest.query)).flatMap(Stream.fromIterator(_, chunkSize))
         result <- Ok(rumors)
       } yield result
 
@@ -67,7 +67,7 @@ final case class GossipRoutes[F[_]: Async: KryoSerializer: Metrics](
     Stream
       .emits(ordinals)
       .evalMap {
-        case (peerId, ordinal) => rumorStorage.getPeerRumorsAfterCursor(peerId, ordinal)
+        case (peerId, ordinal) => rumorStorage.getPeerRumorsFromCursor(peerId, ordinal)
       }
       .flatMap(Stream.fromIterator(_, chunkSize))
 

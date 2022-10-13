@@ -6,6 +6,7 @@ import cats.effect.std.{Queue, Random, Supervisor}
 import cats.syntax.all._
 import cats.{Applicative, Parallel}
 
+import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.gossip._
@@ -154,8 +155,12 @@ object GossipDaemon {
       private def initPeerRumorStorage(peer: Peer): F[Unit] =
         gossipClient.getInitialPeerRumors
           .run(peer)
-          .evalFilter(_.toHashed >>= validateRumor)
-          .evalMap(rumorStorage.setInitialPeerRumor)
+          .evalMap(_.toHashed)
+          .evalTap { hashedRumor =>
+            logger.info(s"Initializing rumor {hash=${hashedRumor.hash.show}, rumor=${hashedRumor.signed.value.show}}")
+          }
+          .evalFilter(validateRumor)
+          .evalMap(hashedRumor => rumorStorage.setInitialPeerRumor(hashedRumor.signed))
           .compile
           .drain
 
@@ -165,9 +170,13 @@ object GossipDaemon {
         }
 
       private def peerRound(peer: Peer): F[Unit] =
-        rumorStorage.getLastPeerOrdinals.flatMap { ordinals =>
+        rumorStorage.getLastPeerOrdinals.flatMap { lastOrdinals =>
+          val nextOrdinals = lastOrdinals.view
+            .mapValues(o => Ordinal(o.generation, o.counter.next))
+            .toMap
+
           gossipClient
-            .queryPeerRumors(PeerRumorInquiryRequest(ordinals))
+            .queryPeerRumors(PeerRumorInquiryRequest(nextOrdinals))
             .run(peer)
             .evalMap(_.toHashed)
             .enqueueUnterminated(rumorQueue)

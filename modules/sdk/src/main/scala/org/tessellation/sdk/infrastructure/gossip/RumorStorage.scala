@@ -28,7 +28,7 @@ trait RumorStorage[F[_]] {
 
   def getPeerIds: F[Set[PeerId]]
 
-  def getPeerRumorsAfterCursor(peerId: PeerId, fromOrdinal: Ordinal): F[Iterator[Signed[PeerRumorRaw]]]
+  def getPeerRumorsFromCursor(peerId: PeerId, fromOrdinal: Ordinal): F[Iterator[Signed[PeerRumorRaw]]]
 
   def addPeerRumorIfConsecutive(rumor: Signed[PeerRumorRaw]): F[AddResult]
 
@@ -137,7 +137,7 @@ object RumorStorage {
 
         def getPeerIds: F[Set[PeerId]] = peerRumorsR.keys.map(_.toSet)
 
-        def getPeerRumorsAfterCursor(peerId: PeerId, cursor: Ordinal): F[Iterator[Signed[PeerRumorRaw]]] =
+        def getPeerRumorsFromCursor(peerId: PeerId, cursor: Ordinal): F[Iterator[Signed[PeerRumorRaw]]] =
           peerRumorsR(peerId).get.map { maybeWrapper =>
             val Ordinal(cursorGen, cursorCounter) = cursor
 
@@ -146,8 +146,8 @@ object RumorStorage {
               val lastCounter = wrapper.chain.last.ordinal.counter
 
               if (headGen === cursorGen)
-                if (lastCounter <= cursorCounter.next)
-                  wrapper.chain.toChain.takeWhile(_.ordinal.counter >= cursorCounter.next)
+                if (lastCounter <= cursorCounter)
+                  wrapper.chain.toChain.takeWhile(_.ordinal.counter >= cursorCounter)
                 else
                   Chain.empty
               else if (headGen > cursorGen)
