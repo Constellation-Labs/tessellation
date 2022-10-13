@@ -1,8 +1,10 @@
 package org.tessellation.sdk.http.routes
 
+import cats.data.Chain
 import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+import cats.syntax.traverse._
 
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.gossip._
@@ -12,7 +14,7 @@ import org.tessellation.sdk.infrastructure.gossip.RumorStorage
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.signature.Signed
 
-import fs2.Stream
+import fs2.{Chunk, Stream}
 import org.http4s._
 import org.http4s.circe.CirceEntityCodec._
 import org.http4s.dsl._
@@ -24,7 +26,6 @@ final case class GossipRoutes[F[_]: Async: KryoSerializer: Metrics](
 ) extends Http4sDsl[F] {
 
   private val prefixPath = "/rumors"
-  private val chunkSize = 10
 
   private val httpRoutes: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "peer" / "query" =>
@@ -32,14 +33,16 @@ final case class GossipRoutes[F[_]: Async: KryoSerializer: Metrics](
         inquiryRequest <- req.as[PeerRumorInquiryRequest]
         inquiryOrdinals = inquiryRequest.ordinals
         localPeerIds <- rumorStorage.getPeerIds
+        rumors <- peerRumorChain(inquiryOrdinals.toList)
         additionalOrdinals = localPeerIds.diff(inquiryOrdinals.keySet).toList.map(_ -> Ordinal.MinValue)
-        result <- Ok(peerRumorStream(inquiryOrdinals.toList) ++ peerRumorStream(additionalOrdinals))
+        additionalRumors <- peerRumorChain(additionalOrdinals)
+        result <- Ok(streamFromChain(rumors ++ additionalRumors))
       } yield result
 
     case POST -> Root / "peer" / "init" =>
       for {
-        lastRumors <- rumorStorage.getLastPeerRumors
-        result <- Ok(Stream.emits(lastRumors.toList).covary[F]) // Stream.fromIterator fails because of a double pull from the stream
+        rumors <- rumorStorage.getLastPeerRumors
+        result <- Ok(streamFromChain(rumors))
       } yield result
 
     case GET -> Root / "common" / "offer" =>
@@ -52,8 +55,8 @@ final case class GossipRoutes[F[_]: Async: KryoSerializer: Metrics](
     case req @ POST -> Root / "common" / "query" =>
       for {
         queryRequest <- req.as[QueryCommonRumorsRequest]
-        rumors = Stream.eval(rumorStorage.getCommonRumors(queryRequest.query)).flatMap(Stream.fromIterator(_, chunkSize))
-        result <- Ok(rumors)
+        rumors <- rumorStorage.getCommonRumors(queryRequest.query)
+        result <- Ok(streamFromChain(rumors))
       } yield result
 
     case GET -> Root / "common" / "init" =>
@@ -63,13 +66,15 @@ final case class GossipRoutes[F[_]: Async: KryoSerializer: Metrics](
       } yield result
   }
 
-  private def peerRumorStream(ordinals: List[(PeerId, Ordinal)]): Stream[F, Signed[PeerRumorRaw]] =
-    Stream
-      .emits(ordinals)
-      .evalMap {
+  private def peerRumorChain(ordinals: List[(PeerId, Ordinal)]): F[Chain[Signed[PeerRumorRaw]]] =
+    Chain
+      .fromSeq(ordinals)
+      .flatTraverse {
         case (peerId, ordinal) => rumorStorage.getPeerRumorsFromCursor(peerId, ordinal)
       }
-      .flatMap(Stream.fromIterator(_, chunkSize))
+
+  private def streamFromChain[A](chain: Chain[A]): Stream[F, A] =
+    Stream.chunk(Chunk.chain(chain)).covary[F]
 
   val p2pRoutes: HttpRoutes[F] = Router(
     prefixPath -> httpRoutes
