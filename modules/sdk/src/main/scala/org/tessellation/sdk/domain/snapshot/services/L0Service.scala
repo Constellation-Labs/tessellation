@@ -6,6 +6,7 @@ import cats.syntax.applicativeError._
 import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+import cats.syntax.option._
 
 import org.tessellation.dag.snapshot.{GlobalSnapshot, SnapshotOrdinal}
 import org.tessellation.ext.cats.syntax.next._
@@ -20,6 +21,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait L0Service[F[_]] {
   def pullGlobalSnapshots: F[List[Hashed[GlobalSnapshot]]]
+  def pullGlobalSnapshot(ordinal: SnapshotOrdinal): F[Option[Hashed[GlobalSnapshot]]]
 }
 
 object L0Service {
@@ -33,6 +35,19 @@ object L0Service {
     new L0Service[F] {
 
       private val logger = Slf4jLogger.getLogger[F]
+
+      def pullGlobalSnapshot(ordinal: SnapshotOrdinal): F[Option[Hashed[GlobalSnapshot]]] =
+        l0ClusterStorage.getRandomPeer.flatMap { l0Peer =>
+          l0GlobalSnapshotClient
+            .get(ordinal)(l0Peer)
+            .flatMap(_.toHashedWithSignatureCheck)
+            .flatMap(_.liftTo[F])
+            .map(_.some)
+        }.handleErrorWith { e =>
+          logger
+            .warn(e)(s"Failure pulling single snapshot with ordinal=$ordinal")
+            .map(_ => none[Hashed[GlobalSnapshot]])
+        }
 
       def pullGlobalSnapshots: F[List[Hashed[GlobalSnapshot]]] = {
         for {
