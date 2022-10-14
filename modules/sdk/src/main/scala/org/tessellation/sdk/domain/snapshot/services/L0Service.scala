@@ -15,7 +15,7 @@ import org.tessellation.sdk.domain.snapshot.storage.LastGlobalSnapshotStorage
 import org.tessellation.sdk.http.p2p.clients.L0GlobalSnapshotClient
 import org.tessellation.security.{Hashed, SecurityProvider}
 
-import eu.timepit.refined.types.numeric.NonNegLong
+import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait L0Service[F[_]] {
@@ -27,7 +27,8 @@ object L0Service {
   def make[F[_]: Async: KryoSerializer: SecurityProvider](
     l0GlobalSnapshotClient: L0GlobalSnapshotClient[F],
     l0ClusterStorage: L0ClusterStorage[F],
-    lastSnapshotStorage: LastGlobalSnapshotStorage[F]
+    lastSnapshotStorage: LastGlobalSnapshotStorage[F],
+    singlePullLimit: Option[PosLong]
   ): L0Service[F] =
     new L0Service[F] {
 
@@ -42,8 +43,10 @@ object L0Service {
             .run(l0Peer)
             .map { lastOrdinal =>
               val nextOrdinal = lastStoredOrdinal.map(_.next).getOrElse(lastOrdinal)
+              val lastOrdinalCap = lastOrdinal.value.value
+                .min(singlePullLimit.map(nextOrdinal.value.value + _.value).getOrElse(lastOrdinal.value.value))
 
-              nextOrdinal.value.value to lastOrdinal.value.value
+              nextOrdinal.value.value to lastOrdinalCap
             }
             .map(_.toList.map(o => SnapshotOrdinal(NonNegLong.unsafeFrom(o))))
             .flatMap { ordinals =>
