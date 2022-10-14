@@ -77,4 +77,9 @@ trait OrphanInstances {
     orderOf[Long, NonNegative]
 
   implicit val errorShow: Show[Throwable] = e => s"${e.getClass.getName}{message=${e.getMessage}}"
+
+  implicit def arrayShow[A: Show]: Show[Array[A]] = a => a.iterator.map(Show[A].show(_)).mkString("Array(", ", ", ")")
+
+  implicit def arrayEq[A: Eq]: Eq[Array[A]] = (xs: Array[A], ys: Array[A]) =>
+    Eq[Int].eqv(xs.length, ys.length) && xs.zip(ys).forall { case (x, y) => Eq[A].eqv(x, y) }
 }
