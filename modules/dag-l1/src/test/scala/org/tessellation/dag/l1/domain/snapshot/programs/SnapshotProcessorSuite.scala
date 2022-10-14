@@ -42,6 +42,8 @@ import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 import fs2.concurrent.SignallingRef
 import io.chrisdavenport.mapref.MapRef
+import org.scalacheck.Gen.Parameters
+import org.scalacheck.rng.Seed
 import weaver.SimpleIOSuite
 
 object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
@@ -113,6 +115,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
       }
     }
 
+  val lastSnapshotHash = Hash.arbitrary.arbitrary.pureApply(Parameters.default, Seed(1234L))
+
   val snapshotOrdinal8 = SnapshotOrdinal(8L)
   val snapshotOrdinal9 = SnapshotOrdinal(9L)
   val snapshotOrdinal10 = SnapshotOrdinal(10L)
@@ -141,7 +145,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
       snapshotOrdinal10,
       snapshotHeight6,
       snapshotSubHeight0,
-      Hash.empty,
+      lastSnapshotHash,
       SortedSet.empty,
       SortedMap.empty,
       SortedSet.empty,
@@ -222,6 +226,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                     snapshotHeight6,
                     snapshotSubHeight0,
                     snapshotOrdinal10,
+                    lastSnapshotHash,
                     hashedSnapshot.hash,
                     hashedSnapshot.proofsHash
                   ),
@@ -358,6 +363,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   snapshotHeight6,
                   snapshotSubHeight0,
                   snapshotOrdinal10,
+                  lastSnapshotHash,
                   hashedSnapshot.hash,
                   hashedSnapshot.proofsHash
                 ),
@@ -433,6 +439,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   snapshotHeight6,
                   snapshotSubHeight1,
                   snapshotOrdinal11,
+                  hashedLastSnapshot.hash,
                   hashedNextSnapshot.hash,
                   hashedNextSnapshot.proofsHash
                 ),
@@ -567,6 +574,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   snapshotHeight8,
                   snapshotSubHeight0,
                   snapshotOrdinal11,
+                  hashedLastSnapshot.hash,
                   hashedNextSnapshot.hash,
                   hashedNextSnapshot.proofsHash
                 ),
@@ -747,6 +755,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   snapshotHeight8,
                   snapshotSubHeight0,
                   snapshotOrdinal11,
+                  hashedLastSnapshot.hash,
                   hashedNextSnapshot.hash,
                   hashedNextSnapshot.proofsHash
                 ),
