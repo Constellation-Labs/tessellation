@@ -237,7 +237,7 @@ lazy val testShared = (project in file("modules/test-shared"))
   )
 
 lazy val sdk = (project in file("modules/sdk"))
-  .dependsOn(shared % "compile->compile;test->test", testShared % Test, keytool, kernel)
+  .dependsOn(shared % "compile->compile;test->test", testShared % Test, keytool, kernel, dagShared)
   .configs(IntegrationTest)
   .settings(
     name := "tessellation-sdk",

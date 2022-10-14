@@ -16,6 +16,7 @@ import org.tessellation.schema.peer.L0Peer
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, L0ClusterStorage, SessionStorage}
 import org.tessellation.sdk.domain.collateral.LatestBalances
 import org.tessellation.sdk.domain.node.NodeStorage
+import org.tessellation.sdk.domain.snapshot.storage.LastGlobalSnapshotStorage
 import org.tessellation.sdk.infrastructure.cluster.storage.L0ClusterStorage
 import org.tessellation.sdk.infrastructure.gossip.RumorStorage
 import org.tessellation.sdk.modules.SdkStorages

@@ -5,7 +5,6 @@ import cats.effect.kernel.Async
 import org.tessellation.dag.block.processing.BlockAcceptanceManager
 import org.tessellation.dag.l1.config.types.AppConfig
 import org.tessellation.dag.l1.domain.block.BlockService
-import org.tessellation.dag.l1.domain.snapshot.services.L0Service
 import org.tessellation.dag.l1.domain.transaction.TransactionService
 import org.tessellation.dag.l1.http.p2p.P2PClient
 import org.tessellation.kryo.KryoSerializer
@@ -13,6 +12,7 @@ import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.collateral.Collateral
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.healthcheck.LocalHealthcheck
+import org.tessellation.sdk.domain.snapshot.services.L0Service
 import org.tessellation.sdk.infrastructure.Collateral
 import org.tessellation.sdk.modules.SdkServices
 import org.tessellation.security.SecurityProvider

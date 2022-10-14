@@ -14,18 +14,11 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.height.Height
 import org.tessellation.sdk.domain.collateral.LatestBalances
+import org.tessellation.sdk.domain.snapshot.storage.LastGlobalSnapshotStorage
 import org.tessellation.security.Hashed
 
 import fs2.Stream
 import fs2.concurrent.SignallingRef
-
-trait LastGlobalSnapshotStorage[F[_]] {
-  def set(snapshot: Hashed[GlobalSnapshot]): F[Unit]
-  def setInitial(snapshot: Hashed[GlobalSnapshot]): F[Unit]
-  def get: F[Option[Hashed[GlobalSnapshot]]]
-  def getOrdinal: F[Option[SnapshotOrdinal]]
-  def getHeight: F[Option[Height]]
-}
 
 object LastGlobalSnapshotStorage {
 
