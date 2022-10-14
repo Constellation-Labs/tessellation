@@ -12,6 +12,7 @@ case class GlobalSnapshotReference(
   height: Height,
   subHeight: SubHeight,
   ordinal: SnapshotOrdinal,
+  lastSnapshotHash: Hash,
   hash: Hash,
   proofsHash: ProofsHash
 )
@@ -23,6 +24,7 @@ object GlobalSnapshotReference {
       snapshot.height,
       snapshot.subHeight,
       snapshot.ordinal,
+      snapshot.lastSnapshotHash,
       snapshot.hash,
       snapshot.proofsHash
     )
