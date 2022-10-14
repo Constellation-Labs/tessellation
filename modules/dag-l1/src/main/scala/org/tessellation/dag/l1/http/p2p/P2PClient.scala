@@ -3,7 +3,6 @@ package org.tessellation.dag.l1.http.p2p
 import cats.effect.Async
 
 import org.tessellation.dag.l1.domain.consensus.block.http.p2p.clients.BlockConsensusClient
-import org.tessellation.dag.l1.http.p2p.clients.L0GlobalSnapshotClient
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.sdk.http.p2p.SdkP2PClient
 import org.tessellation.sdk.http.p2p.clients._

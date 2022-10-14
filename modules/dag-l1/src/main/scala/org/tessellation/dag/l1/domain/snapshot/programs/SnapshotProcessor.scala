@@ -14,7 +14,6 @@ import org.tessellation.dag.domain.block.{BlockReference, DAGBlock}
 import org.tessellation.dag.l1.domain.address.storage.AddressStorage
 import org.tessellation.dag.l1.domain.block.BlockStorage
 import org.tessellation.dag.l1.domain.block.BlockStorage.MajorityReconciliationData
-import org.tessellation.dag.l1.domain.snapshot.storage.LastGlobalSnapshotStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.dag.snapshot._
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
@@ -22,6 +21,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.transaction.TransactionReference
+import org.tessellation.sdk.domain.snapshot.storage.LastGlobalSnapshotStorage
 import org.tessellation.security.hash.ProofsHash
 import org.tessellation.security.{Hashed, SecurityProvider}
 

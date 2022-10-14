@@ -1,4 +1,4 @@
-package org.tessellation.dag.l1.http.p2p.clients
+package org.tessellation.sdk.http.p2p.clients
 
 import cats.effect.Async
 

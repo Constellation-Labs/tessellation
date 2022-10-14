@@ -1,4 +1,4 @@
-package org.tessellation.dag.l1.domain.snapshot.services
+package org.tessellation.sdk.domain.snapshot.services
 
 import cats.Applicative
 import cats.effect.Async
@@ -7,12 +7,12 @@ import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.dag.l1.domain.snapshot.storage.LastGlobalSnapshotStorage
-import org.tessellation.dag.l1.http.p2p.clients.L0GlobalSnapshotClient
 import org.tessellation.dag.snapshot.{GlobalSnapshot, SnapshotOrdinal}
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
+import org.tessellation.sdk.domain.snapshot.storage.LastGlobalSnapshotStorage
+import org.tessellation.sdk.http.p2p.clients.L0GlobalSnapshotClient
 import org.tessellation.security.{Hashed, SecurityProvider}
 
 import eu.timepit.refined.types.numeric.NonNegLong
