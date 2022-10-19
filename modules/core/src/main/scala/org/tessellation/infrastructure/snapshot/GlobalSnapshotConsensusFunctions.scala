@@ -30,12 +30,14 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.height.{Height, SubHeight}
+import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.RewardTransaction
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.AppEnvironment.Mainnet
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
 import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import org.tessellation.sdk.infrastructure.metrics.Metrics
+import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 import org.tessellation.syntax.sortedCollection._
@@ -49,7 +51,7 @@ trait GlobalSnapshotConsensusFunctions[F[_]]
 
 object GlobalSnapshotConsensusFunctions {
 
-  def make[F[_]: Async: KryoSerializer: Metrics](
+  def make[F[_]: Async: KryoSerializer: SecurityProvider: Metrics](
     globalSnapshotStorage: GlobalSnapshotStorage[F],
     blockAcceptanceManager: BlockAcceptanceManager[F],
     collateral: Amount,
@@ -70,6 +72,11 @@ object GlobalSnapshotConsensusFunctions {
     def triggerPredicate(
       event: GlobalSnapshotEvent
     ): Boolean = true // placeholder for triggering based on fee
+
+    def facilitatorFilter(lastSignedArtifact: Signed[GlobalSnapshotArtifact], peerId: PeerId): F[Boolean] =
+      peerId.toAddress[F].map { address =>
+        lastSignedArtifact.info.balances.getOrElse(address, Balance.empty).satisfiesCollateral(collateral)
+      }
 
     def createProposalArtifact(
       lastKey: GlobalSnapshotKey,

@@ -172,14 +172,15 @@ object ConsensusStateUpdater {
         case None =>
           for {
             registeredPeers <- consensusStorage.getRegisteredPeers(key)
+            localFacilitators <- (selfId :: registeredPeers).filterA(consensusFns.facilitatorFilter(lastArtifact, _))
             facilitators = facilitatorCalculator.calculate(
               resources.peerDeclarationsMap,
-              selfId :: registeredPeers,
+              localFacilitators,
               resources.removedFacilitators
             )
             time <- Clock[F].monotonic
             effect = consensusStorage.getUpperBound.flatMap { bound =>
-              gossip.spread(ConsensusPeerDeclaration(key, Facility(bound, facilitators.toSet, maybeTrigger)))
+              gossip.spread(ConsensusPeerDeclaration(key, Facility(bound, localFacilitators.toSet, maybeTrigger)))
             }
             state = ConsensusState(
               key,
