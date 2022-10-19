@@ -111,17 +111,20 @@ object GossipDaemon {
           .map(_.isValid)
 
       private def verifyCollateral(hashedRumor: Hashed[RumorRaw]): F[Boolean] =
-        hashedRumor.signed.proofs.toNonEmptyList
+        hashedRumor.signed.proofs.toList
           .map(_.id)
           .map(PeerId.fromId)
-          .forallM(collateral.hasCollateral)
-          .flatTap(
-            logger
-              .warn(
-                s"Discarding rumor due to not sufficient collateral {hash=${hashedRumor.hash.show}}"
-              )
-              .unlessA
-          )
+          .partitionEitherM(peerId => collateral.hasCollateral(peerId).map(Either.cond(_, peerId, peerId)))
+          .flatMap {
+            case (signersWithoutCollateral, _) =>
+              val result = signersWithoutCollateral.isEmpty
+              logger
+                .warn(
+                  s"Discarding rumor due to insufficient collateral {hash=${hashedRumor.hash.show}, signers=${signersWithoutCollateral.show}}"
+                )
+                .unlessA(result)
+                .as(result)
+          }
 
       private def tryAddRumorToStore(hashedRumor: Hashed[RumorRaw]): F[Boolean] =
         hashedRumor.signed.value match {
@@ -157,7 +160,7 @@ object GossipDaemon {
           .run(peer)
           .evalMap(_.toHashed)
           .evalTap { hashedRumor =>
-            logger.info(s"Initializing rumor {hash=${hashedRumor.hash.show}, rumor=${hashedRumor.signed.value.show}}")
+            rumorLogger.info(s"Initializing rumor {hash=${hashedRumor.hash.show}, rumor=${hashedRumor.signed.value.show}}")
           }
           .evalFilter(validateRumor)
           .evalMap(hashedRumor => rumorStorage.setInitialPeerRumor(hashedRumor.signed))

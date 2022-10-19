@@ -80,8 +80,6 @@ object balance {
 
   }
 
-  val normalizationFactor = 1e8.toLong
-
   @derive(eqv, show)
   sealed trait BalanceArithmeticError extends NoStackTrace
   case object AmountOverflow extends BalanceArithmeticError
