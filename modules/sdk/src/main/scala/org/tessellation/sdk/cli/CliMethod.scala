@@ -3,14 +3,13 @@ package org.tessellation.sdk.cli
 import scala.concurrent.duration._
 
 import org.tessellation.cli.env._
-import org.tessellation.schema.balance.{Amount, _}
+import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.node.NodeState
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.AppEnvironment.Mainnet
 import org.tessellation.sdk.config.types._
 
-import eu.timepit.refined.auto.autoRefineV
-import eu.timepit.refined.types.numeric.NonNegLong
+import eu.timepit.refined.auto._
 import fs2.io.file.Path
 
 trait CliMethod {
@@ -33,7 +32,7 @@ trait CliMethod {
     CollateralConfig(
       amount = amount
         .filter(_ => environment != Mainnet)
-        .getOrElse(Amount(NonNegLong.unsafeFrom(250_000L * normalizationFactor)))
+        .getOrElse(Amount(250_000_00000000L))
     )
 
   val gossipConfig: GossipConfig = GossipConfig(
