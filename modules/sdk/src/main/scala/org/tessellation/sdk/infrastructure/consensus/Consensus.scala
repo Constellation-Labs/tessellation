@@ -31,7 +31,6 @@ import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 
 import io.circe.{Decoder, Encoder}
-import org.http4s.HttpRoutes
 import org.http4s.client.Client
 
 object Consensus {
@@ -90,9 +89,7 @@ object Consensus {
         PeerDeclarationProposalHandler.make[F, Key](healthCheck)
       daemon = PeerDeclarationHealthCheckDaemon.make(healthCheck, healthCheckConfig)
 
-      routes = new ConsensusRoutes[F, Key](storage)
-
-    } yield new Consensus(handler, storage, manager, daemon, healthCheck, routes.routes)
+    } yield new Consensus(handler, storage, manager, daemon, healthCheck)
 }
 
 sealed class Consensus[F[_]: Async, Event, Key, Artifact] private (
@@ -100,6 +97,5 @@ sealed class Consensus[F[_]: Async, Event, Key, Artifact] private (
   val storage: ConsensusStorage[F, Event, Key, Artifact],
   val manager: ConsensusManager[F, Key, Artifact],
   val daemon: Daemon[F],
-  val healthcheck: HealthCheckConsensus[F, HealthCheckKey[Key], Health, Status[Key], Decision],
-  val p2pRoutes: HttpRoutes[F]
+  val healthcheck: HealthCheckConsensus[F, HealthCheckKey[Key], Health, Status[Key], Decision]
 ) {}
