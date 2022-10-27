@@ -127,6 +127,7 @@ object GlobalSnapshotConsensusFunctions {
 
         updatedLastTxRefs = lastArtifact.info.lastTxRefs ++ acceptanceResult.contextUpdate.lastTxRefs
         balances = lastArtifact.info.balances ++ acceptanceResult.contextUpdate.balances
+        positiveBalances = balances.filter { case (_, balance) => balance =!= Balance.empty }
 
         facilitators = lastArtifact.proofs.map(_.id)
         transactions = lastArtifact.value.blocks.flatMap(_.block.transactions.toSortedSet).map(_.value)
@@ -138,7 +139,7 @@ object GlobalSnapshotConsensusFunctions {
           }
         }
 
-        (updatedBalancesByRewards, acceptedRewardTxs) = acceptRewardTxs(balances, rewardTxsForAcceptance)
+        (updatedBalancesByRewards, acceptedRewardTxs) = acceptRewardTxs(positiveBalances, rewardTxsForAcceptance)
 
         returnedDAGEvents = getReturnedDAGEvents(acceptanceResult)
 
