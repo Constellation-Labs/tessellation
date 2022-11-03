@@ -28,8 +28,11 @@ case class ConsensusState[Key, Artifact](
 sealed trait ConsensusStatus[Artifact]
 
 final case class CollectingFacilities[A](maybeFacilityInfo: Option[FacilityInfo[A]]) extends ConsensusStatus[A]
-final case class CollectingProposals[A](majorityTrigger: ConsensusTrigger, maybeProposalInfo: Option[ProposalInfo[A]])
-    extends ConsensusStatus[A]
+final case class CollectingProposals[A](
+  majorityTrigger: ConsensusTrigger,
+  maybeProposalInfo: Option[ProposalInfo[A]],
+  maybeLastArtifact: Option[Signed[A]]
+) extends ConsensusStatus[A]
 final case class CollectingSignatures[A](majorityArtifactHash: Hash, majorityTrigger: ConsensusTrigger) extends ConsensusStatus[A]
 final case class Finished[A](signedMajorityArtifact: Signed[A], majorityTrigger: ConsensusTrigger) extends ConsensusStatus[A]
 
@@ -37,8 +40,8 @@ object ConsensusStatus {
   implicit def showInstance[A]: Show[ConsensusStatus[A]] = {
     case CollectingFacilities(maybeFacilityInfo) =>
       s"CollectingFacilities{maybeFacilityInfo=${maybeFacilityInfo.show}}"
-    case CollectingProposals(majorityTrigger, maybeProposalInfo) =>
-      s"CollectingProposals{majorityTrigger=${majorityTrigger.show}, maybeProposalInfo=${maybeProposalInfo.show}}"
+    case CollectingProposals(majorityTrigger, maybeProposalInfo, _) =>
+      s"CollectingProposals{majorityTrigger=${majorityTrigger.show}, maybeProposalInfo=${maybeProposalInfo.show}, maybeLastArtifact=***}"
     case CollectingSignatures(majorityArtifactHash, majorityTrigger) =>
       s"CollectingSignatures{majorityArtifactHash=${majorityArtifactHash.show}, ${majorityTrigger.show}}"
     case Finished(_, majorityTrigger) =>
