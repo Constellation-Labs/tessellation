@@ -7,6 +7,7 @@ import cats.effect.Async
 import cats.effect.kernel.Clock
 import cats.kernel.Next
 import cats.syntax.applicative._
+import cats.syntax.apply._
 import cats.syntax.flatMap._
 import cats.syntax.foldable._
 import cats.syntax.functor._
@@ -29,6 +30,7 @@ import org.tessellation.sdk.infrastructure.consensus.message._
 import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, TimeTrigger}
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
+import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.{Signature, SignatureProof, verifySignatureProof}
 import org.tessellation.syntax.sortedCollection._
@@ -265,35 +267,43 @@ object ConsensusStateUpdater {
                     }.filter { case (_, events) => events.nonEmpty }
                     _ <- consensusStorage.addEvents(returnedPeerEvents)
                     hash <- artifact.hashF
-                    effect = gossip.spread(ConsensusPeerDeclaration(key, Proposal(hash)))
-                  } yield (ProposalInfo[Artifact](artifact, hash).some, effect)
-                }.map(_.getOrElse((none[ProposalInfo[Artifact]], Applicative[F].unit))).map {
-                  case (maybeProposalInfo, effect) =>
-                    val newState = state.copy(status = CollectingProposals[Artifact](majorityTrigger, maybeProposalInfo))
+                    effect = gossip.spread(ConsensusPeerDeclaration(key, Proposal(hash))) *>
+                      gossip.spreadCommon(ConsensusArtifact(key, artifact))
+                  } yield (ProposalInfo[Artifact](artifact, hash).some, facilityInfo.lastSignedArtifact.some, effect)
+                }.map(_.getOrElse((none[ProposalInfo[Artifact]], none[Signed[Artifact]], Applicative[F].unit))).map {
+                  case (maybeProposalInfo, maybeLastSignedArtifact, effect) =>
+                    val newState =
+                      state.copy(status = CollectingProposals[Artifact](majorityTrigger, maybeProposalInfo, maybeLastSignedArtifact))
                     (newState, effect)
                 }
           }
-        case CollectingProposals(majorityTrigger, maybeProposalInfo) =>
+
+        case CollectingProposals(majorityTrigger, maybeProposalInfo, maybeLastArtifact) =>
           val maybeAllProposals = state.facilitators
             .traverse(resources.peerDeclarationsMap.get)
             .flatMap(_.traverse(_.proposal.map(_.hash)))
 
           maybeAllProposals.flatTraverse { allProposals =>
-            pickMajority(allProposals).traverse { majorityHash =>
-              val newState = state.copy(status = CollectingSignatures[Artifact](majorityHash, majorityTrigger))
-              val effect = maybeProposalInfo.traverse { proposalInfo =>
-                Signature.fromHash(keyPair.getPrivate, majorityHash).flatMap { signature =>
-                  gossip.spread(ConsensusPeerDeclaration(key, MajoritySignature(signature)))
-                } >> Applicative[F].whenA(majorityHash === proposalInfo.proposalArtifactHash) {
-                  gossip.spreadCommon(ConsensusArtifact(key, proposalInfo.proposalArtifact))
-                } >> Metrics[F].recordDistribution(
-                  "dag_consensus_proposal_affinity",
-                  proposalAffinity(allProposals, proposalInfo.proposalArtifactHash)
-                )
-              }.void
-              (newState, effect).pure[F]
+            maybeLastArtifact.map { lastSignedArtifact =>
+              pickValidatedMajority(lastSignedArtifact, majorityTrigger, resources)(allProposals)
             }
+              .getOrElse(pickMajority(allProposals).pure[F])
+              .flatMap {
+                _.traverse { majorityHash =>
+                  val newState = state.copy(status = CollectingSignatures[Artifact](majorityHash, majorityTrigger))
+                  val effect = maybeProposalInfo.traverse { proposalInfo =>
+                    Signature.fromHash(keyPair.getPrivate, majorityHash).flatMap { signature =>
+                      gossip.spread(ConsensusPeerDeclaration(key, MajoritySignature(signature)))
+                    } >> Metrics[F].recordDistribution(
+                      "dag_consensus_proposal_affinity",
+                      proposalAffinity(allProposals, proposalInfo.proposalArtifactHash)
+                    )
+                  }.void
+                  (newState, effect).pure[F]
+                }
+              }
           }
+
         case CollectingSignatures(majorityHash, majorityTrigger) =>
           val maybeAllSignatures =
             state.facilitators.sorted.traverse { peerId =>
@@ -337,6 +347,36 @@ object ConsensusStateUpdater {
 
     private def pickMajority[A: Order](proposals: List[A]): Option[A] =
       proposals.foldMap(a => Map(a -> 1)).toList.map(_.swap).maximumOption.map(_._2)
+
+    private def pickValidatedMajority(
+      lastSignedArtifact: Signed[Artifact],
+      trigger: ConsensusTrigger,
+      resources: ConsensusResources[Artifact]
+    )(proposals: List[Hash]): F[Option[Hash]] = {
+      val sortedProposals = proposals.foldMap(a => Map(a -> 1)).toList.map(_.swap).sorted.reverse
+
+      def go(proposals: List[(Int, Hash)]): F[Option[Hash]] =
+        proposals match {
+          case (occurrences, majorityHash) :: tail =>
+            resources.artifacts
+              .get(majorityHash)
+              .traverse { artifact =>
+                consensusFns.validateArtifact(lastSignedArtifact, trigger)(artifact)
+              }
+              .flatMap {
+                _.flatTraverse {
+                  _.fold(
+                    cause =>
+                      logger.warn(cause)(s"Found invalid majority hash=${majorityHash.show} with occurrences=$occurrences") >> go(tail),
+                    _ => majorityHash.some.pure[F]
+                  )
+                }
+              }
+          case Nil => none[Hash].pure[F]
+        }
+
+      go(sortedProposals)
+    }
 
     private def proposalAffinity[A: Order](proposals: List[A], proposal: A): Double =
       if (proposals.nonEmpty)

@@ -22,6 +22,7 @@ import scala.util.control.NoStackTrace
 import org.tessellation.dag.block.processing._
 import org.tessellation.dag.domain.block.BlockReference
 import org.tessellation.dag.snapshot._
+import org.tessellation.domain.aci.StateChannelOutput
 import org.tessellation.domain.rewards.Rewards
 import org.tessellation.domain.snapshot._
 import org.tessellation.ext.cats.syntax.next._
@@ -35,6 +36,7 @@ import org.tessellation.schema.transaction.RewardTransaction
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.AppEnvironment.Mainnet
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
+import org.tessellation.sdk.domain.consensus.ConsensusFunctions.InvalidArtifact
 import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
@@ -77,6 +79,28 @@ object GlobalSnapshotConsensusFunctions {
       peerId.toAddress[F].map { address =>
         lastSignedArtifact.info.balances.getOrElse(address, Balance.empty).satisfiesCollateral(collateral)
       }
+
+    def validateArtifact(lastSignedArtifact: Signed[GlobalSnapshot], trigger: ConsensusTrigger)(
+      artifact: GlobalSnapshot
+    ): F[Either[InvalidArtifact, GlobalSnapshot]] = {
+      val events = artifact.blocks.unsorted.map(_.block.asRight[StateChannelOutput])
+
+      def recreatedArtifact: F[GlobalSnapshot] = createProposalArtifact(lastSignedArtifact.ordinal, lastSignedArtifact, trigger, events)
+        .map(_._1)
+        .map { a =>
+          a.copy(
+            stateChannelSnapshots = artifact.stateChannelSnapshots,
+            info = a.info.copy(lastStateChannelSnapshotHashes = artifact.info.lastStateChannelSnapshotHashes)
+          )
+        }
+
+      recreatedArtifact
+        .map(_ === artifact)
+        .ifF(
+          artifact.asRight[InvalidArtifact],
+          ArtifactMismatch.asLeft[GlobalSnapshot]
+        )
+    }
 
     def createProposalArtifact(
       lastKey: GlobalSnapshotKey,
@@ -302,6 +326,8 @@ object GlobalSnapshotConsensusFunctions {
 
       (result, Set.empty)
     }
+
+    case object ArtifactMismatch extends InvalidArtifact
 
     object metrics {
 
