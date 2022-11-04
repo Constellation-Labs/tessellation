@@ -13,10 +13,13 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.security.signature.Signed
 
 import io.circe.Encoder
+import io.circe.shapes._
 import org.http4s.circe.CirceEntityEncoder
 import org.http4s.dsl.Http4sDsl
 import org.http4s.server.Router
 import org.http4s.{EntityEncoder, HttpRoutes}
+import shapeless.HNil
+import shapeless.syntax.singleton._
 
 final case class GlobalSnapshotRoutes[F[_]: Async: KryoSerializer](globalSnapshotStorage: GlobalSnapshotStorage[F]) extends Http4sDsl[F] {
   private val prefixPath = "/global-snapshots"
@@ -30,7 +33,7 @@ final case class GlobalSnapshotRoutes[F[_]: Async: KryoSerializer](globalSnapsho
       import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 
       globalSnapshotStorage.head.map(_.map(_.ordinal)).flatMap {
-        case Some(ordinal) => Ok(ordinal)
+        case Some(ordinal) => Ok(("value" ->> ordinal.value.value) :: HNil)
         case None          => NotFound()
       }
 
