@@ -10,6 +10,9 @@ import org.tessellation.sdk.http.p2p.PeerResponse.PeerResponse
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 
+import io.circe.Decoder
+import io.circe.magnolia.derivation.decoder.semiauto._
+import io.circe.refined._
 import org.http4s.client.Client
 import org.http4s.client.dsl.Http4sClientDsl
 
@@ -33,6 +36,9 @@ object GlobalSnapshotClient {
 
       def getLatestOrdinal: PeerResponse[F, SnapshotOrdinal] = {
         import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
+
+        implicit val decoder: Decoder[SnapshotOrdinal] = deriveMagnoliaDecoder[SnapshotOrdinal]
+
         PeerResponse[F, SnapshotOrdinal]("global-snapshots/latest/ordinal")(client, session)
       }
     }
