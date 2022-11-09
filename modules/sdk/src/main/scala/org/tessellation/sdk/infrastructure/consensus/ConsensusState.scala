@@ -31,26 +31,29 @@ final case class CollectingFacilities[A](maybeFacilityInfo: Option[FacilityInfo[
 final case class CollectingProposals[A](
   majorityTrigger: ConsensusTrigger,
   maybeProposalInfo: Option[ProposalInfo[A]],
-  maybeLastArtifact: Option[Signed[A]]
+  maybeLastArtifact: Option[Signed[A]],
+  facilitatorsHash: Hash
 ) extends ConsensusStatus[A]
-final case class CollectingSignatures[A](majorityArtifactHash: Hash, majorityTrigger: ConsensusTrigger) extends ConsensusStatus[A]
-final case class Finished[A](signedMajorityArtifact: Signed[A], majorityTrigger: ConsensusTrigger) extends ConsensusStatus[A]
+final case class CollectingSignatures[A](majorityArtifactHash: Hash, majorityTrigger: ConsensusTrigger, facilitatorsHash: Hash)
+    extends ConsensusStatus[A]
+final case class Finished[A](signedMajorityArtifact: Signed[A], majorityTrigger: ConsensusTrigger, facilitatorsHash: Hash)
+    extends ConsensusStatus[A]
 
 object ConsensusStatus {
   implicit def showInstance[A]: Show[ConsensusStatus[A]] = {
     case CollectingFacilities(maybeFacilityInfo) =>
       s"CollectingFacilities{maybeFacilityInfo=${maybeFacilityInfo.show}}"
-    case CollectingProposals(majorityTrigger, maybeProposalInfo, _) =>
+    case CollectingProposals(majorityTrigger, maybeProposalInfo, _, _) =>
       s"CollectingProposals{majorityTrigger=${majorityTrigger.show}, maybeProposalInfo=${maybeProposalInfo.show}, maybeLastArtifact=***}"
-    case CollectingSignatures(majorityArtifactHash, majorityTrigger) =>
+    case CollectingSignatures(majorityArtifactHash, majorityTrigger, _) =>
       s"CollectingSignatures{majorityArtifactHash=${majorityArtifactHash.show}, ${majorityTrigger.show}}"
-    case Finished(_, majorityTrigger) =>
+    case Finished(_, majorityTrigger, _) =>
       s"Finished{signedMajorityArtifact=***, majorityTrigger=${majorityTrigger.show}}"
   }
 }
 
 @derive(eqv)
-case class FacilityInfo[A](lastSignedArtifact: Signed[A], maybeTrigger: Option[ConsensusTrigger])
+case class FacilityInfo[A](lastSignedArtifact: Signed[A], maybeTrigger: Option[ConsensusTrigger], facilitatorsHash: Hash)
 object FacilityInfo {
   implicit def showInstance[A]: Show[FacilityInfo[A]] = f => s"FacilityInfo{lastSignedArtifact=***, maybeTrigger=${f.maybeTrigger.show}}"
 }

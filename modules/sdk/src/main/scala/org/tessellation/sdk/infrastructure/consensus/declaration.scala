@@ -10,15 +10,18 @@ import derevo.derive
 
 object declaration {
 
-  sealed trait PeerDeclaration
+  sealed trait PeerDeclaration {
+    def facilitatorsHash: Hash
+  }
 
   @derive(encoder, decoder)
-  case class Facility(upperBound: Bound, facilitators: Set[PeerId], trigger: Option[ConsensusTrigger]) extends PeerDeclaration
+  case class Facility(upperBound: Bound, facilitators: Set[PeerId], trigger: Option[ConsensusTrigger], facilitatorsHash: Hash)
+      extends PeerDeclaration
 
   @derive(encoder, decoder)
-  case class Proposal(hash: Hash) extends PeerDeclaration
+  case class Proposal(hash: Hash, facilitatorsHash: Hash) extends PeerDeclaration
 
   @derive(encoder, decoder)
-  case class MajoritySignature(signature: Signature) extends PeerDeclaration
+  case class MajoritySignature(signature: Signature, facilitatorsHash: Hash) extends PeerDeclaration
 
 }

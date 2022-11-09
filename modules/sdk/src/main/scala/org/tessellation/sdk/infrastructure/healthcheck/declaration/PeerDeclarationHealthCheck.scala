@@ -174,7 +174,7 @@ object PeerDeclarationHealthCheck {
 
         private def isTimedOut(state: ConsensusState[K, _], time: FiniteDuration): Boolean =
           state.status match {
-            case CollectingFacilities(Some(FacilityInfo(_, None))) =>
+            case CollectingFacilities(Some(FacilityInfo(_, None, _))) =>
               time > (state.statusUpdatedAt |+| config.peerDeclaration.receiveTimeout |+| timeTriggerInterval)
             case _ => time > (state.statusUpdatedAt |+| config.peerDeclaration.receiveTimeout)
           }

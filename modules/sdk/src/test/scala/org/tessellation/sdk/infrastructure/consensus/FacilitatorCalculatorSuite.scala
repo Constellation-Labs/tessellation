@@ -4,6 +4,7 @@ import cats.syntax.option._
 
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.infrastructure.consensus.declaration.Facility
+import org.tessellation.security.hash.Hash
 import org.tessellation.security.hex.Hex
 
 import weaver.FunSuite
@@ -33,26 +34,10 @@ object FacilitatorCalculatorSuite extends FunSuite with Checkers {
       .make(seedlist)
       .calculate(
         Map(
-          peerB -> PeerDeclarations(
-            facility = Facility(Map.empty, Set(peerC, peerD), None).some,
-            proposal = None,
-            signature = None
-          ),
-          peerC -> PeerDeclarations(
-            facility = Facility(Map.empty, Set(peerE, peerF), None).some,
-            proposal = None,
-            signature = None
-          ),
-          peerD -> PeerDeclarations(
-            facility = Facility(Map.empty, Set(peerE, peerF, peerG), None).some,
-            proposal = None,
-            signature = None
-          ),
-          peerG -> PeerDeclarations(
-            facility = Facility(Map.empty, Set(peerH, peerI, peerJ, peerK), None).some,
-            proposal = None,
-            signature = None
-          )
+          peerB -> facilityDeclaration(Set(peerC, peerD)),
+          peerC -> facilityDeclaration(Set(peerE, peerF)),
+          peerD -> facilityDeclaration(Set(peerE, peerF, peerG)),
+          peerG -> facilityDeclaration(Set(peerH, peerI, peerJ, peerK))
         ),
         List(peerA, peerB),
         Set(peerI, peerJ)
@@ -62,4 +47,11 @@ object FacilitatorCalculatorSuite extends FunSuite with Checkers {
 
     expect.same(expected, result)
   }
+
+  private def facilityDeclaration(facilitators: Set[PeerId]) =
+    PeerDeclarations(
+      facility = Facility(Map.empty, facilitators, None, Hash.empty).some,
+      proposal = None,
+      signature = None
+    )
 }

@@ -23,7 +23,6 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.gossip.Ordinal
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.infrastructure.consensus.declaration.{Facility, MajoritySignature, Proposal}
-import org.tessellation.security.signature.Signed
 
 import io.chrisdavenport.mapref.MapRef
 import monocle.syntax.all._
@@ -75,18 +74,18 @@ trait ConsensusStorage[F[_], Event, Key, Artifact] {
     signature: MajoritySignature
   ): F[ConsensusResources[Artifact]]
 
-  private[consensus] def setLastKeyAndArtifact(key: Key, artifact: Signed[Artifact]): F[Unit]
+  private[consensus] def setLastKeyAndStatus(key: Key, artifact: Finished[Artifact]): F[Unit]
 
   private[consensus] def setLastKey(key: Key): F[Unit]
 
   private[consensus] def getLastKey: F[Option[Key]]
 
-  private[consensus] def getLastKeyAndArtifact: F[Option[(Key, Option[Signed[Artifact]])]]
+  private[consensus] def getLastKeyAndStatus: F[Option[(Key, Option[Finished[Artifact]])]]
 
-  private[consensus] def tryUpdateLastKeyAndArtifactWithCleanup(
+  private[consensus] def tryUpdateLastKeyAndStatusWithCleanup(
     oldKey: Key,
     newKey: Key,
-    newArtifact: Signed[Artifact]
+    newArtifact: Finished[Artifact]
   ): F[Boolean]
 
   private[sdk] def getOwnRegistration: F[Option[Key]]
@@ -104,11 +103,11 @@ trait ConsensusStorage[F[_], Event, Key, Artifact] {
 object ConsensusStorage {
 
   def make[F[_]: Async: KryoSerializer, Event, Key: Show: Next: Order, Artifact <: AnyRef: Show: Eq](
-    lastKeyAndArtifact: Option[(Key, Option[Signed[Artifact]])]
+    lastKeyAndStatus: Option[(Key, Option[Finished[Artifact]])]
   ): F[ConsensusStorage[F, Event, Key, Artifact]] =
     for {
       stateUpdateSemaphore <- Semaphore[F](1)
-      lastKeyAndArtifactR <- Ref.of(lastKeyAndArtifact)
+      lastKeyAndStatusR <- Ref.of(lastKeyAndStatus)
       timeTriggerR <- Ref.of(none[FiniteDuration])
       ownRegistrationR <- Ref.of(Option.empty[Key])
       peerRegistrationsR <- Ref.of(Map.empty[PeerId, PeerRegistration[Key]])
@@ -158,23 +157,23 @@ object ConsensusStorage {
             } yield maybeB
           }
 
-        def setLastKeyAndArtifact(key: Key, artifact: Signed[Artifact]): F[Unit] =
-          lastKeyAndArtifactR.set((key, artifact.some).some)
+        def setLastKeyAndStatus(key: Key, artifact: Finished[Artifact]): F[Unit] =
+          lastKeyAndStatusR.set((key, artifact.some).some)
 
         def setLastKey(key: Key): F[Unit] =
-          lastKeyAndArtifactR.set((key, none).some)
+          lastKeyAndStatusR.set((key, none).some)
 
         def getLastKey: F[Option[Key]] =
-          lastKeyAndArtifactR.get.map(_._1F)
+          lastKeyAndStatusR.get.map(_._1F)
 
-        def getLastKeyAndArtifact: F[Option[(Key, Option[Signed[Artifact]])]] = lastKeyAndArtifactR.get
+        def getLastKeyAndStatus: F[Option[(Key, Option[Finished[Artifact]])]] = lastKeyAndStatusR.get
 
-        private[consensus] def tryUpdateLastKeyAndArtifactWithCleanup(
+        private[consensus] def tryUpdateLastKeyAndStatusWithCleanup(
           lastKey: Key,
           newKey: Key,
-          newArtifact: Signed[Artifact]
+          newArtifact: Finished[Artifact]
         ): F[Boolean] =
-          lastKeyAndArtifactR.modify {
+          lastKeyAndStatusR.modify {
             case Some((actualLastKey, _)) if actualLastKey === lastKey =>
               ((newKey, newArtifact.some).some, true)
             case other @ _ =>
@@ -259,15 +258,8 @@ object ConsensusStorage {
           } yield bound.toMap
 
         def addFacility(peerId: PeerId, key: Key, facility: Facility): F[ConsensusResources[Artifact]] =
-          updateResources(key) {
-            _.focus(_.peerDeclarationsMap)
-              .at(peerId)
-              .modify {
-                _.getOrElse(PeerDeclarations.empty)
-                  .focus(_.facility)
-                  .modify(_.getOrElse(facility).some)
-                  .some
-              }
+          updatePeerDeclaration(key, peerId) { peerDeclaration =>
+            peerDeclaration.focus(_.facility).modify(_.orElse(facility.some))
           }
 
         def addProposal(peerId: PeerId, key: Key, proposal: Proposal): F[ConsensusResources[Artifact]] =

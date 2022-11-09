@@ -29,6 +29,7 @@ import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.infrastructure.consensus.registration.Deregistration
 import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import org.tessellation.sdk.infrastructure.metrics.Metrics
+import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto._
@@ -100,7 +101,7 @@ object ConsensusManager {
         }.void
 
       def startFacilitatingAfter(lastKey: Key, lastArtifact: Signed[Artifact]): F[Unit] =
-        consensusStorage.setLastKeyAndArtifact(lastKey, lastArtifact) >>
+        consensusStorage.setLastKeyAndStatus(lastKey, Finished(lastArtifact, EventTrigger, Hash.empty)) >>
           consensusStorage.setOwnRegistration(lastKey.next) >>
           scheduleFacility
 
@@ -132,16 +133,16 @@ object ConsensusManager {
       private def internalFacilitateWith(
         trigger: Option[ConsensusTrigger]
       ): F[Unit] =
-        consensusStorage.getLastKeyAndArtifact.flatMap { maybeLastKeyAndArtifact =>
-          maybeLastKeyAndArtifact.traverse {
-            case (lastKey, Some(lastArtifact)) =>
+        consensusStorage.getLastKeyAndStatus.flatMap { maybeLastKeyAndStatus =>
+          maybeLastKeyAndStatus.traverse {
+            case (lastKey, Some(lastStatus)) =>
               val nextKey = lastKey.next
 
               consensusStorage
                 .getResources(nextKey)
                 .flatMap { resources =>
                   logger.debug(s"Trying to facilitate consensus {key=${nextKey.show}, trigger=${trigger.show}}") >>
-                    consensusStateUpdater.tryFacilitateConsensus(nextKey, lastKey, lastArtifact, trigger, resources).flatMap {
+                    consensusStateUpdater.tryFacilitateConsensus(nextKey, lastKey, lastStatus, trigger, resources).flatMap {
                       case Some(_) =>
                         internalCheckForStateUpdate(nextKey, resources)
                       case None => Applicative[F].unit
@@ -158,14 +159,15 @@ object ConsensusManager {
         consensusStateUpdater.tryUpdateConsensus(key, resources).flatMap {
           case Some(state) =>
             state.status match {
-              case Finished(signedArtifact, majorityTrigger) =>
+              case finish @ Finished(_, majorityTrigger, _) =>
                 Metrics[F].recordTime("dag_consensus_duration", state.statusUpdatedAt.minus(state.createdAt)) >>
                   consensusStorage
-                    .tryUpdateLastKeyAndArtifactWithCleanup(state.lastKey, key, signedArtifact)
+                    .tryUpdateLastKeyAndStatusWithCleanup(state.lastKey, key, finish)
                     .ifM(
                       afterConsensusFinish(majorityTrigger),
                       logger.info("Skip triggering another consensus")
-                    ) >> nodeStorage.tryModifyStateGetResult(Observing, Ready).void
+                    ) >>
+                  nodeStorage.tryModifyStateGetResult(Observing, Ready).void
               case _ =>
                 internalCheckForStateUpdate(key, resources)
             }

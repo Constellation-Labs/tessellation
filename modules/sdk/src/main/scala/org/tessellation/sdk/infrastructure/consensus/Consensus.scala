@@ -28,7 +28,6 @@ import org.tessellation.sdk.infrastructure.gossip.RumorHandler
 import org.tessellation.sdk.infrastructure.healthcheck.declaration.{Key => HealthCheckKey, _}
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
-import org.tessellation.security.signature.Signed
 
 import io.circe.{Decoder, Encoder}
 import org.http4s.client.Client
@@ -52,10 +51,10 @@ object Consensus {
     healthCheckConfig: HealthCheckConfig,
     client: Client[F],
     session: Session[F],
-    initKeyAndArtifact: Option[(Key, Option[Signed[Artifact]])] = none
+    initKeyAndStatus: Option[(Key, Option[Finished[Artifact]])] = none
   ): F[Consensus[F, Event, Key, Artifact]] =
     for {
-      storage <- ConsensusStorage.make[F, Event, Key, Artifact](initKeyAndArtifact)
+      storage <- ConsensusStorage.make[F, Event, Key, Artifact](initKeyAndStatus)
       stateUpdater = ConsensusStateUpdater.make[F, Event, Key, Artifact](
         consensusFns,
         storage,
