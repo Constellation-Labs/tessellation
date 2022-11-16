@@ -15,7 +15,6 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.config.AppEnvironment
-import org.tessellation.sdk.config.types.HealthCheckConfig
 import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.gossip.Gossip
@@ -39,7 +38,6 @@ object GlobalSnapshotConsensus {
     nodeStorage: NodeStorage[F],
     globalSnapshotStorage: GlobalSnapshotStorage[F],
     blockValidator: BlockValidator[F],
-    healthCheckConfig: HealthCheckConfig,
     snapshotConfig: SnapshotConfig,
     environment: AppEnvironment,
     client: Client[F],
@@ -57,11 +55,10 @@ object GlobalSnapshotConsensus {
       gossip,
       selfId,
       keyPair,
-      snapshotConfig.timeTriggerInterval,
+      snapshotConfig.consensusConfig,
       seedlist,
       clusterStorage,
       nodeStorage,
-      healthCheckConfig,
       client,
       session,
       none

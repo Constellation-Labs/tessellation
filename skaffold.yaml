@@ -59,3 +59,18 @@ portForward:
     resourceName: http-proxy
     port: 8080
     localPort: 8080
+
+profiles:
+  - name: chaos
+    patches:
+      - op: add
+        path: /portForward/-
+        value:
+          resourceType: service
+          resourceName: chaos-dashboard
+          namespace: chaos-mesh
+          port: 2333
+          localPort: 2333
+      - op: add
+        path: /deploy/kustomize/paths/-
+        value: kubernetes/chaos-mesh

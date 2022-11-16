@@ -54,9 +54,15 @@ object ConsensusHandler {
         manager.checkForStateUpdate(rumor.content.key)
     }
 
-    val majoritySignatureHandler =
+    val signatureHandler =
       RumorHandler.fromPeerRumorConsumer[F, ConsensusPeerDeclaration[Key, MajoritySignature]]() { rumor =>
         storage.addSignature(rumor.origin, rumor.content.key, rumor.content.declaration) >>=
+          manager.checkForStateUpdate(rumor.content.key)
+      }
+
+    val peerDeclarationAckHandler =
+      RumorHandler.fromPeerRumorConsumer[F, ConsensusPeerDeclarationAck[Key]]() { rumor =>
+        storage.addPeerDeclarationAck(rumor.origin, rumor.content.key, rumor.content.kind, rumor.content.ack) >>=
           manager.checkForStateUpdate(rumor.content.key)
       }
 
@@ -67,8 +73,9 @@ object ConsensusHandler {
     eventHandler <+>
       facilityHandler <+>
       proposalHandler <+>
+      signatureHandler <+>
+      peerDeclarationAckHandler <+>
       artifactHandler <+>
-      majoritySignatureHandler <+>
       deregistrationHandler
   }
 

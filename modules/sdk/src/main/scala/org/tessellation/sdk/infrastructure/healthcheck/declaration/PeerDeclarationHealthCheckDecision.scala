@@ -1,8 +1,0 @@
-package org.tessellation.sdk.infrastructure.healthcheck.declaration
-
-import org.tessellation.sdk.domain.healthcheck.consensus.types.HealthCheckConsensusDecision
-
-sealed trait PeerDeclarationHealthDecision extends HealthCheckConsensusDecision
-
-final case object PositiveOutcome extends PeerDeclarationHealthDecision
-final case object NegativeOutcome extends PeerDeclarationHealthDecision

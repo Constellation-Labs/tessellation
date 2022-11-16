@@ -126,7 +126,7 @@ Should list existing l0-validator images.
 ## Build images and start cluster
 
 ```
-skaffold dev --trigger manual
+skaffold dev --trigger manual --tail false
 ```
 
 You should see docker images successfully uploaded to the container registry
@@ -147,3 +147,16 @@ export http_proxy=8080
 
 curl <pod-ip-address>:9000/cluster/info
 ```
+
+##  Using profiles
+
+### Profile activation
+
+Activate profiles using option `-p`. Profiles can also be manually deactivated by prefixing the profile name with `-`.
+```
+skaffold dev -p foo,-bar
+```
+
+### Profiles
+
+* chaos - inject chaos experiments into the cluster (like a failure of some number of pods) 

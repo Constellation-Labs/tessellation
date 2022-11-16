@@ -17,7 +17,6 @@ import org.tessellation.sdk.http.p2p.middleware.{PeerAuthMiddleware, `X-Id-Middl
 import org.tessellation.sdk.http.routes
 import org.tessellation.sdk.http.routes._
 import org.tessellation.sdk.infrastructure.consensus.ConsensusRoutes
-import org.tessellation.sdk.infrastructure.healthcheck.declaration.PeerDeclarationHealthcheckRoutes
 import org.tessellation.sdk.infrastructure.healthcheck.ping.PingHealthCheckRoutes
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
@@ -84,9 +83,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
 
   private val healthcheckP2PRoutes = {
     val pingHealthcheckRoutes = PingHealthCheckRoutes[F](healthchecks.ping)
-    val peerDeclaration = PeerDeclarationHealthcheckRoutes[F, SnapshotOrdinal](services.consensus.healthcheck)
 
-    Router("healthcheck" -> (pingHealthcheckRoutes.p2pRoutes <+> peerDeclaration.p2pRoutes))
+    Router("healthcheck" -> pingHealthcheckRoutes.p2pRoutes)
   }
 
   private val debugRoutes = DebugRoutes[F](storages, services).routes

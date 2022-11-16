@@ -1,0 +1,42 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Workflow
+metadata:
+  name: workflow-main
+spec:
+  entry: workflow-entry
+  templates:
+    - name: workflow-entry
+      templateType: Parallel
+      children:
+        - workflow-l0-node-chaos
+        - workflow-l1-node-chaos
+    - name: workflow-l0-node-chaos
+      templateType: Schedule
+      schedule:
+        schedule: "@every 5m"
+        concurrencyPolicy: Allow
+        type: PodChaos
+        podChaos:
+          action: pod-failure
+          mode: random-max-percent
+          value: "25"
+          duration: "30s"
+          selector:
+            labelSelectors:
+              node: validator
+              cluster: l0
+    - name: workflow-l1-node-chaos
+      templateType: Schedule
+      schedule:
+        schedule: "@every 5m"
+        concurrencyPolicy: Allow
+        type: PodChaos
+        podChaos:
+          action: pod-failure
+          mode: random-max-percent
+          value: "25"
+          duration: "30s"
+          selector:
+            labelSelectors:
+              node: validator
+              cluster: l1
