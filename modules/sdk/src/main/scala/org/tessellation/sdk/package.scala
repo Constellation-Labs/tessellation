@@ -6,7 +6,6 @@ import org.tessellation.sdk.domain.healthcheck.consensus.types.HealthCheckRoundI
 import org.tessellation.sdk.infrastructure.consensus.declaration.{Facility, MajoritySignature, Proposal}
 import org.tessellation.sdk.infrastructure.consensus.message._
 import org.tessellation.sdk.infrastructure.consensus.trigger.{EventTrigger, TimeTrigger}
-import org.tessellation.sdk.infrastructure.healthcheck.declaration._
 import org.tessellation.sdk.infrastructure.healthcheck.ping._
 import org.tessellation.shared._
 
@@ -37,15 +36,6 @@ package object sdk {
       classOf[Proposal] -> 508,
       classOf[MajoritySignature] -> 509,
       classOf[ConsensusArtifact[_, _]] -> 510,
-      classOf[PeerDeclarationHealthCheckKey[_]] -> 511,
-      classOf[PeerDeclarationConsensusHealthStatus[_]] -> 512,
-      kind.Facility.getClass -> 513,
-      kind.Proposal.getClass -> 514,
-      kind.Signature.getClass -> 515,
-      NotRequired.getClass -> 516,
-      Received.getClass -> 517,
-      Awaiting.getClass -> 518,
-      TimedOut.getClass -> 519,
       classOf[PeerMismatch] -> 520,
       classOf[PeerCheckTimeouted] -> 521,
       classOf[PeerCheckUnexpectedError] -> 522,

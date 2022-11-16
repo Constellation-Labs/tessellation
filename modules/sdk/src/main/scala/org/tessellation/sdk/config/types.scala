@@ -40,6 +40,12 @@ object types {
     daemon: GossipDaemonConfig
   )
 
+  case class ConsensusConfig(
+    timeTriggerInterval: FiniteDuration,
+    lockDelay: FiniteDuration,
+    lockDuration: FiniteDuration
+  )
+
   case class HttpClientConfig(
     timeout: FiniteDuration,
     idleTimeInPool: FiniteDuration
@@ -60,14 +66,8 @@ object types {
 
   case class HealthCheckConfig(
     ping: PingHealthCheckConfig,
-    peerDeclaration: PeerDeclarationHealthCheckConfig,
     removeUnresponsiveParallelPeersAfter: FiniteDuration,
     requestProposalsAfter: FiniteDuration
-  )
-
-  case class PeerDeclarationHealthCheckConfig(
-    receiveTimeout: FiniteDuration,
-    triggerInterval: FiniteDuration
   )
 
   case class PingHealthCheckConfig(

@@ -7,9 +7,7 @@ import scala.annotation.tailrec
 import org.tessellation.schema.peer.PeerId
 
 trait FacilitatorCalculator {
-  def calculate(peersDeclarations: Map[PeerId, PeerDeclarations], local: List[PeerId], removed: Set[PeerId]): List[PeerId]
-
-  def calculateRemaining(local: List[PeerId], removed: Set[PeerId]): List[PeerId]
+  def calculate(peersDeclarations: Map[PeerId, PeerDeclarations], local: List[PeerId], removed: Set[PeerId] = Set.empty): List[PeerId]
 }
 
 object FacilitatorCalculator {
@@ -36,7 +34,5 @@ object FacilitatorCalculator {
 
       loop(localFiltered).toList.sorted
     }
-
-    def calculateRemaining(local: List[PeerId], removed: Set[PeerId]): List[PeerId] = local.toSet.diff(removed).toList.sorted
   }
 }

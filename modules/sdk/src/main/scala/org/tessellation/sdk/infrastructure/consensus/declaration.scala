@@ -5,6 +5,7 @@ import org.tessellation.sdk.infrastructure.consensus.trigger.ConsensusTrigger
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.signature.Signature
 
+import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 
@@ -23,5 +24,21 @@ object declaration {
 
   @derive(encoder, decoder)
   case class MajoritySignature(signature: Signature, facilitatorsHash: Hash) extends PeerDeclaration
+
+  object kind {
+
+    @derive(eqv, show, encoder, decoder)
+    sealed trait PeerDeclarationKind
+
+    @derive(eqv, show, encoder, decoder)
+    case object Facility extends PeerDeclarationKind
+
+    @derive(eqv, show, encoder, decoder)
+    case object Proposal extends PeerDeclarationKind
+
+    @derive(eqv, show, encoder, decoder)
+    case object MajoritySignature extends PeerDeclarationKind
+
+  }
 
 }

@@ -8,24 +8,19 @@ import cats.kernel.Next
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
-import cats.syntax.semigroupk._
 import cats.{Eq, Order, Show}
 
-import scala.concurrent.duration.FiniteDuration
 import scala.reflect.runtime.universe.TypeTag
 
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.sdk.config.types.HealthCheckConfig
-import org.tessellation.sdk.domain.Daemon
+import org.tessellation.sdk.config.types.ConsensusConfig
 import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
 import org.tessellation.sdk.domain.gossip.Gossip
-import org.tessellation.sdk.domain.healthcheck.consensus.HealthCheckConsensus
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.infrastructure.gossip.RumorHandler
-import org.tessellation.sdk.infrastructure.healthcheck.declaration.{Key => HealthCheckKey, _}
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
 
@@ -44,11 +39,10 @@ object Consensus {
     gossip: Gossip[F],
     selfId: PeerId,
     keyPair: KeyPair,
-    timeTriggerInterval: FiniteDuration,
+    consensusConfig: ConsensusConfig,
     seedlist: Option[Set[PeerId]],
     clusterStorage: ClusterStorage[F],
     nodeStorage: NodeStorage[F],
-    healthCheckConfig: HealthCheckConfig,
     client: Client[F],
     session: Session[F],
     initKeyAndStatus: Option[(Key, Option[Finished[Artifact]])] = none
@@ -65,7 +59,7 @@ object Consensus {
       )
       consClient = ConsensusClient.make[F, Key](client, session)
       manager <- ConsensusManager.make[F, Event, Key, Artifact](
-        timeTriggerInterval,
+        consensusConfig,
         storage,
         stateUpdater,
         nodeStorage,
@@ -73,28 +67,13 @@ object Consensus {
         consClient,
         gossip
       )
-      httpClient = PeerDeclarationHttpClient.make[F, Key](client, session)
-      healthCheck <- PeerDeclarationHealthCheck.make[F, Key, Artifact](
-        clusterStorage,
-        selfId,
-        gossip,
-        timeTriggerInterval,
-        healthCheckConfig,
-        storage,
-        manager,
-        httpClient
-      )
-      handler = ConsensusHandler.make[F, Event, Key, Artifact](storage, manager, consensusFns) <+>
-        PeerDeclarationProposalHandler.make[F, Key](healthCheck)
-      daemon = PeerDeclarationHealthCheckDaemon.make(healthCheck, healthCheckConfig)
+      handler = ConsensusHandler.make[F, Event, Key, Artifact](storage, manager, consensusFns)
 
-    } yield new Consensus(handler, storage, manager, daemon, healthCheck)
+    } yield new Consensus(handler, storage, manager)
 }
 
 sealed class Consensus[F[_]: Async, Event, Key, Artifact] private (
   val handler: RumorHandler[F],
   val storage: ConsensusStorage[F, Event, Key, Artifact],
-  val manager: ConsensusManager[F, Key, Artifact],
-  val daemon: Daemon[F],
-  val healthcheck: HealthCheckConsensus[F, HealthCheckKey[Key], Health, Status[Key], Decision]
+  val manager: ConsensusManager[F, Key, Artifact]
 ) {}

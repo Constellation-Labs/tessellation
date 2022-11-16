@@ -63,7 +63,6 @@ object Services {
           storages.node,
           storages.globalSnapshot,
           validators.blockValidator,
-          cfg.healthCheck,
           cfg.snapshot,
           cfg.environment,
           client,

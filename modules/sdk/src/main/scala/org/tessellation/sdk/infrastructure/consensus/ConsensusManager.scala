@@ -15,14 +15,15 @@ import cats.syntax.show._
 import cats.syntax.traverse._
 import cats.{Applicative, Order, Show}
 
-import scala.concurrent.duration.FiniteDuration
+import scala.concurrent.duration._
 import scala.reflect.runtime.universe.TypeTag
 
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.node.NodeState.{Observing, Ready}
-import org.tessellation.schema.peer.Peer
 import org.tessellation.schema.peer.Peer.toP2PContext
+import org.tessellation.schema.peer.{Peer, PeerId}
+import org.tessellation.sdk.config.types.ConsensusConfig
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.node.NodeStorage
@@ -42,14 +43,13 @@ trait ConsensusManager[F[_], Key, Artifact] {
   def startFacilitatingAfter(lastKey: Key, lastArtifact: Signed[Artifact]): F[Unit]
   private[consensus] def facilitateOnEvent: F[Unit]
   private[consensus] def checkForStateUpdate(key: Key)(resources: ConsensusResources[Artifact]): F[Unit]
-  private[sdk] def checkForStateUpdateSync(key: Key)(resources: ConsensusResources[Artifact]): F[Unit]
 
 }
 
 object ConsensusManager {
 
   def make[F[_]: Async: Clock: Metrics, Event, Key: Show: Order: Next: TypeTag: Encoder: Decoder, Artifact: Show: TypeTag](
-    timeTriggerInterval: FiniteDuration,
+    config: ConsensusConfig,
     consensusStorage: ConsensusStorage[F, Event, Key, Artifact],
     consensusStateUpdater: ConsensusStateUpdater[F, Key, Artifact],
     nodeStorage: NodeStorage[F],
@@ -106,7 +106,7 @@ object ConsensusManager {
           scheduleFacility
 
       private def scheduleFacility: F[Unit] =
-        Clock[F].monotonic.map(_ + timeTriggerInterval).flatMap { nextTimeValue =>
+        Clock[F].monotonic.map(_ + config.timeTriggerInterval).flatMap { nextTimeValue =>
           consensusStorage.setTimeTrigger(nextTimeValue) >>
             S.supervise {
               val condTriggerWithTime = for {
@@ -116,7 +116,7 @@ object ConsensusManager {
                   .whenA(maybeTimeTrigger.exists(currentTime >= _))(internalFacilitateWith(TimeTrigger.some))
               } yield ()
 
-              Temporal[F].sleep(timeTriggerInterval) >> condTriggerWithTime
+              Temporal[F].sleep(config.timeTriggerInterval) >> condTriggerWithTime
                 .handleErrorWith(logger.error(_)(s"Error triggering consensus with time trigger"))
             }.void
         }
@@ -126,9 +126,6 @@ object ConsensusManager {
           internalCheckForStateUpdate(key, resources)
             .handleErrorWith(logger.error(_)(s"Error checking for consensus state update {key=${key.show}}"))
         }.void
-
-      def checkForStateUpdateSync(key: Key)(resources: ConsensusResources[Artifact]): F[Unit] =
-        internalCheckForStateUpdate(key, resources)
 
       private def internalFacilitateWith(
         trigger: Option[ConsensusTrigger]
@@ -143,8 +140,9 @@ object ConsensusManager {
                 .flatMap { resources =>
                   logger.debug(s"Trying to facilitate consensus {key=${nextKey.show}, trigger=${trigger.show}}") >>
                     consensusStateUpdater.tryFacilitateConsensus(nextKey, lastKey, lastStatus, trigger, resources).flatMap {
-                      case Some(_) =>
-                        internalCheckForStateUpdate(nextKey, resources)
+                      case Some(state) =>
+                        stallDetection(nextKey, state, delay = config.timeTriggerInterval) >>
+                          internalCheckForStateUpdate(nextKey, resources)
                       case None => Applicative[F].unit
                     }
                 }
@@ -160,7 +158,10 @@ object ConsensusManager {
           case Some(state) =>
             state.status match {
               case finish @ Finished(_, majorityTrigger, _) =>
-                Metrics[F].recordTime("dag_consensus_duration", state.statusUpdatedAt.minus(state.createdAt)) >>
+                Clock[F].monotonic.flatMap { finishedAt =>
+                  Metrics[F].recordTime("dag_consensus_duration", finishedAt - state.createdAt)
+                } >>
+                  deregisterPeers(key, state.removedFacilitators) >>
                   consensusStorage
                     .tryUpdateLastKeyAndStatusWithCleanup(state.lastKey, key, finish)
                     .ifM(
@@ -169,10 +170,16 @@ object ConsensusManager {
                     ) >>
                   nodeStorage.tryModifyStateGetResult(Observing, Ready).void
               case _ =>
-                internalCheckForStateUpdate(key, resources)
+                stallDetection(key, state) >>
+                  internalCheckForStateUpdate(key, resources)
             }
           case None => Applicative[F].unit
         }
+
+      private def deregisterPeers(key: Key, peers: Set[PeerId]): F[Unit] =
+        peers.toList.traverse { peerId =>
+          consensusStorage.deregisterPeer(peerId, key)
+        }.void
 
       private def afterConsensusFinish(majorityTrigger: ConsensusTrigger): F[Unit] =
         majorityTrigger match {
@@ -199,6 +206,22 @@ object ConsensusManager {
       private def afterTimeTrigger: F[Unit] =
         scheduleFacility >> consensusStorage.containsTriggerEvent
           .ifM(internalFacilitateWith(EventTrigger.some), Applicative[F].unit)
+
+      private def stallDetection(key: Key, state: ConsensusState[Key, Artifact], delay: FiniteDuration = 0.seconds): F[Unit] =
+        S.supervise {
+          Temporal[F].sleep(delay + config.lockDelay) >>
+            consensusStateUpdater.tryLockConsensus(key, state).flatMap { maybeLockedState =>
+              maybeLockedState.traverse { lockedState =>
+                Temporal[F].sleep(config.lockDuration) >>
+                  lockedState.maybeCollectingKind.traverse { ackKind =>
+                    consensusStorage.getResources(key).flatMap { resources =>
+                      consensusStateUpdater.trySpreadAck(key, ackKind, resources)
+                    }
+                  }
+              }
+            }
+        }.void
+
     }
 
     S.supervise(

@@ -22,6 +22,7 @@ import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.gossip.Ordinal
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.sdk.infrastructure.consensus.declaration.kind.PeerDeclarationKind
 import org.tessellation.sdk.infrastructure.consensus.declaration.{Facility, MajoritySignature, Proposal}
 
 import io.chrisdavenport.mapref.MapRef
@@ -33,8 +34,6 @@ trait ConsensusStorage[F[_], Event, Key, Artifact] {
       extends (Option[ConsensusState[Key, Artifact]] => F[Option[(Option[ConsensusState[Key, Artifact]], B)]])
 
   def getState(key: Key): F[Option[ConsensusState[Key, Artifact]]]
-
-  private[sdk] def getStates: F[List[ConsensusState[Key, Artifact]]]
 
   private[consensus] def condModifyState[B](key: Key)(modifyStateFn: ModifyStateFn[B]): F[Option[B]]
 
@@ -58,20 +57,19 @@ trait ConsensusStorage[F[_], Event, Key, Artifact] {
 
   private[consensus] def clearTimeTrigger: F[Unit]
 
-  private[sdk] def getPeerDeclarations(key: Key): F[Map[PeerId, PeerDeclarations]]
-
-  private[sdk] def addRemovedFacilitator(key: Key, facilitator: PeerId): F[ConsensusResources[Artifact]]
-
   private[consensus] def addArtifact(key: Key, artifact: Artifact): F[ConsensusResources[Artifact]]
 
   private[consensus] def addFacility(peerId: PeerId, key: Key, facility: Facility): F[ConsensusResources[Artifact]]
 
   private[consensus] def addProposal(peerId: PeerId, key: Key, proposal: Proposal): F[ConsensusResources[Artifact]]
 
-  private[consensus] def addSignature(
+  private[consensus] def addSignature(peerId: PeerId, key: Key, signature: MajoritySignature): F[ConsensusResources[Artifact]]
+
+  private[consensus] def addPeerDeclarationAck(
     peerId: PeerId,
     key: Key,
-    signature: MajoritySignature
+    kind: PeerDeclarationKind,
+    ack: Set[PeerId]
   ): F[ConsensusResources[Artifact]]
 
   private[consensus] def setLastKeyAndStatus(key: Key, artifact: Finished[Artifact]): F[Unit]
@@ -88,7 +86,7 @@ trait ConsensusStorage[F[_], Event, Key, Artifact] {
     newArtifact: Finished[Artifact]
   ): F[Boolean]
 
-  private[sdk] def getOwnRegistration: F[Option[Key]]
+  private[consensus] def getOwnRegistration: F[Option[Key]]
 
   private[consensus] def setOwnRegistration(from: Key): F[Unit]
 
@@ -96,7 +94,7 @@ trait ConsensusStorage[F[_], Event, Key, Artifact] {
 
   private[consensus] def registerPeer(peerId: PeerId, key: Key): F[Boolean]
 
-  private[sdk] def deregisterPeer(peerId: PeerId, key: Key): F[Boolean]
+  private[consensus] def deregisterPeer(peerId: PeerId, key: Key): F[Boolean]
 
 }
 
@@ -120,9 +118,6 @@ object ConsensusStorage {
         def getState(key: Key): F[Option[ConsensusState[Key, Artifact]]] =
           statesR(key).get
 
-        def getStates: F[List[ConsensusState[Key, Artifact]]] =
-          statesR.keys.flatMap(_.traverseFilter(key => statesR(key).get))
-
         def getResources(key: Key): F[ConsensusResources[Artifact]] =
           resourcesR(key).get.map(_.getOrElse(ConsensusResources.empty))
 
@@ -134,9 +129,6 @@ object ConsensusStorage {
 
         def clearTimeTrigger: F[Unit] =
           timeTriggerR.set(none)
-
-        def getPeerDeclarations(key: Key): F[Map[PeerId, PeerDeclarations]] =
-          resourcesR(key).get.map(_.map(_.peerDeclarationsMap).getOrElse(Map.empty))
 
         def condModifyState[B](key: Key)(modifyStateFn: ModifyStateFn[B]): F[Option[B]] =
           stateUpdateSemaphore.permit.use { _ =>
@@ -272,6 +264,18 @@ object ConsensusStorage {
             peerDeclaration.focus(_.signature).modify(_.orElse(signature.some))
           }
 
+        def addPeerDeclarationAck(peerId: PeerId, key: Key, kind: PeerDeclarationKind, ack: Set[PeerId]): F[ConsensusResources[Artifact]] =
+          updateResources(key) { resources =>
+            resources
+              .focus(_.acksMap)
+              .at((peerId, kind))
+              .modify { maybeAck =>
+                maybeAck.orElse(ack.some)
+              }
+              .focus(_.ackKinds)
+              .modify(_.incl(kind))
+          }
+
         def addArtifact(key: Key, artifact: Artifact): F[ConsensusResources[Artifact]] =
           artifact.hashF.flatMap { hash =>
             updateResources(key) { resources =>
@@ -280,13 +284,6 @@ object ConsensusStorage {
                 .at(hash)
                 .replace(artifact.some)
             }
-          }
-
-        def addRemovedFacilitator(key: Key, facilitator: PeerId): F[ConsensusResources[Artifact]] =
-          updateResources(key) { resources =>
-            resources
-              .focus(_.removedFacilitators)
-              .modify(_ + facilitator)
           }
 
         private def updatePeerDeclaration(key: Key, peerId: PeerId)(f: PeerDeclarations => PeerDeclarations) =
