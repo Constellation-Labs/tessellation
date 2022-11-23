@@ -5,8 +5,6 @@ import java.security.KeyPair
 import cats._
 import cats.data.{NonEmptySet, StateT}
 import cats.effect.Async
-import cats.effect.kernel.Clock
-import cats.kernel.Next
 import cats.syntax.all._
 
 import scala.reflect.runtime.universe.TypeTag
@@ -33,28 +31,31 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait ConsensusStateUpdater[F[_], Key, Artifact] {
 
-  type MaybeState = Option[ConsensusState[Key, Artifact]]
+  type StateUpdateResult = Option[(ConsensusState[Key, Artifact], ConsensusState[Key, Artifact])]
 
-  def tryUpdateConsensus(key: Key, resources: ConsensusResources[Artifact]): F[MaybeState]
+  /** Tries to conditionally update a consensus based on information collected in `resources`, this includes:
+    *   - unlocking consensus,
+    *   - updating facilitators,
+    *   - spreading historical acks,
+    *   - advancing consensus status.
+    *
+    * Returns `Some((oldState, newState))` when the consensus with `key` exists and update was successful, otherwise `None`
+    */
+  def tryUpdateConsensus(key: Key, resources: ConsensusResources[Artifact]): F[StateUpdateResult]
 
-  def tryFacilitateConsensus(
+  /** Tries to lock a consensus if the current status equals to status in the `referenceState`. Returns `Some((unlockedState, lockedState))`
+    * when the consensus with `key` exists and was successfully locked, otherwise `None`
+    */
+  def tryLockConsensus(key: Key, referenceState: ConsensusState[Key, Artifact]): F[StateUpdateResult]
+
+  /** Tries to spread ack if it wasn't already spread. Returns `Some((oldState, newState))` when the consenus with `key` exists and spread
+    * was successful, otherwise `None`
+    */
+  def trySpreadAck(
     key: Key,
-    lastKey: Key,
-    lastStatus: Finished[Artifact],
-    maybeTrigger: Option[ConsensusTrigger],
+    ackKind: PeerDeclarationKind,
     resources: ConsensusResources[Artifact]
-  ): F[MaybeState]
-
-  def tryObserveConsensus(
-    key: Key,
-    lastKey: Key,
-    resources: ConsensusResources[Artifact],
-    initialPeer: PeerId
-  ): F[MaybeState]
-
-  def tryLockConsensus(key: Key, referenceState: ConsensusState[Key, Artifact]): F[MaybeState]
-
-  def trySpreadAck(key: Key, ackKind: PeerDeclarationKind, resources: ConsensusResources[Artifact]): F[MaybeState]
+  ): F[StateUpdateResult]
 
 }
 
@@ -62,196 +63,96 @@ object ConsensusStateUpdater {
 
   def make[F[
     _
-  ]: Async: Clock: KryoSerializer: SecurityProvider: Metrics, Event, Key: Show: Order: Next: TypeTag: Encoder, Artifact <: AnyRef: Eq: Show: TypeTag: Encoder](
+  ]: Async: KryoSerializer: SecurityProvider: Metrics, Event, Key: Show: Order: TypeTag: Encoder, Artifact <: AnyRef: Eq: Show: TypeTag: Encoder](
     consensusFns: ConsensusFunctions[F, Event, Key, Artifact],
     consensusStorage: ConsensusStorage[F, Event, Key, Artifact],
     facilitatorCalculator: FacilitatorCalculator,
     gossip: Gossip[F],
-    keyPair: KeyPair,
-    selfId: PeerId
+    keyPair: KeyPair
   ): ConsensusStateUpdater[F, Key, Artifact] = new ConsensusStateUpdater[F, Key, Artifact] {
 
     private val logger = Slf4jLogger.getLoggerFromClass(ConsensusStateUpdater.getClass)
 
-    def tryFacilitateConsensus(
+    def tryLockConsensus(key: Key, referenceState: ConsensusState[Key, Artifact]): F[StateUpdateResult] =
+      tryUpdateExistingConsensus(key, lockConsensus(referenceState))
+
+    def trySpreadAck(
       key: Key,
-      lastKey: Key,
-      lastStatus: Finished[Artifact],
-      maybeTrigger: Option[ConsensusTrigger],
-      resources: ConsensusResources[Artifact]
-    ): F[MaybeState] =
-      tryModifyConsensus(key, internalTryFacilitateConsensus(key, lastKey, lastStatus, maybeTrigger, resources))
-
-    def tryObserveConsensus(
-      key: Key,
-      lastKey: Key,
-      resources: ConsensusResources[Artifact],
-      initialPeer: PeerId
-    ): F[MaybeState] =
-      tryModifyConsensus(key, internalTryObserveConsensus(key, lastKey, resources, initialPeer))
-
-    def tryUpdateConsensus(key: Key, resources: ConsensusResources[Artifact]): F[MaybeState] =
-      tryModifyConsensus(key, internalTryUpdateConsensus(resources))
-
-    def tryLockConsensus(key: Key, referenceState: ConsensusState[Key, Artifact]): F[MaybeState] =
-      tryModifyConsensusNoEffect(
-        key,
-        maybeState =>
-          maybeState
-            .filter(state => state.status === referenceState.status && state.lockStatus === Open)
-            .map(_.copy(lockStatus = Closed))
-            .pure[F]
-      )
-
-    def trySpreadAck(key: Key, ackKind: PeerDeclarationKind, resources: ConsensusResources[Artifact]): F[MaybeState] =
-      tryModifyConsensus(
-        key,
-        internalTrySpreadAck(ackKind, resources)
-      )
-
-    def internalTrySpreadAck(
       ackKind: PeerDeclarationKind,
       resources: ConsensusResources[Artifact]
-    )(maybeState: MaybeState): F[Option[(ConsensusState[Key, Artifact], F[Unit])]] =
-      maybeState.flatMap { state =>
-        if (state.spreadAckKinds.contains(ackKind))
-          none[(ConsensusState[Key, Artifact], F[Unit])]
-        else {
-          val ack = getAck(ackKind, resources)
-          val newState = state.copy(spreadAckKinds = state.spreadAckKinds.incl(ackKind))
-          val effect = gossip.spread(ConsensusPeerDeclarationAck(state.key, ackKind, ack))
-          (newState, effect).some
-        }
-      }.pure[F]
+    ): F[StateUpdateResult] =
+      tryUpdateExistingConsensus(key, spreadAck(ackKind, resources))
+
+    def tryUpdateConsensus(key: Key, resources: ConsensusResources[Artifact]): F[StateUpdateResult] =
+      tryUpdateExistingConsensus(key, updateConsensus(resources))
 
     import consensusStorage.ModifyStateFn
 
-    private def tryModifyConsensus(
+    private def tryUpdateExistingConsensus(
       key: Key,
-      fn: MaybeState => F[Option[(ConsensusState[Key, Artifact], F[Unit])]]
-    ): F[MaybeState] =
+      fn: ConsensusState[Key, Artifact] => F[(ConsensusState[Key, Artifact], F[Unit])]
+    ): F[StateUpdateResult] =
       consensusStorage
-        .condModifyState(key)(toModifyStateFn(fn))
+        .condModifyState(key)(toUpdateStateFn(fn))
         .flatMap(evalEffect)
-        .flatTap(logStatusIfModified)
+        .flatTap(logIfUpdatedState)
 
-    private def tryModifyConsensusNoEffect(
-      key: Key,
-      fn: MaybeState => F[MaybeState]
-    ): F[MaybeState] =
-      tryModifyConsensus(
-        key,
-        maybeState => fn(maybeState).map(maybeUpdatedState => maybeUpdatedState.map(state => (state, Applicative[F].unit)))
-      )
-
-    private def toModifyStateFn(
-      fn: MaybeState => F[Option[(ConsensusState[Key, Artifact], F[Unit])]]
-    ): ModifyStateFn[(MaybeState, F[Unit])] =
-      maybeState =>
-        fn(maybeState).map(_.map {
-          case (state, effect) => (state.some, (state.some, effect))
-        })
-
-    private def evalEffect(result: Option[(MaybeState, F[Unit])]): F[MaybeState] =
-      result.flatTraverse {
-        case (maybeState, effect) => effect.map(_ => maybeState)
+    private def toUpdateStateFn(
+      fn: ConsensusState[Key, Artifact] => F[(ConsensusState[Key, Artifact], F[Unit])]
+    ): ModifyStateFn[(StateUpdateResult, F[Unit])] = { maybeState =>
+      maybeState.flatTraverse { oldState =>
+        fn(oldState).map {
+          case (newState, effect) =>
+            Option.when(newState =!= oldState)((newState.some, ((oldState, newState).some, effect)))
+        }
       }
+    }
 
-    private def logStatusIfModified(maybeState: MaybeState): F[Unit] =
-      maybeState.traverse { state =>
-        logger.info(s"State updated ${state.show}")
+    private def evalEffect(maybeResultAndEffect: Option[(StateUpdateResult, F[Unit])]): F[StateUpdateResult] =
+      maybeResultAndEffect.flatTraverse { case (result, effect) => effect.map(_ => result) }
+
+    private def logIfUpdatedState(updateResult: StateUpdateResult): F[Unit] =
+      updateResult.traverse {
+        case (_, newState) =>
+          logger.info(s"State updated ${newState.show}")
       }.void
 
-    private def internalTryObserveConsensus(
-      key: Key,
-      lastKey: Key,
-      resources: ConsensusResources[Artifact],
-      initialPeer: PeerId
-    )(
-      maybeState: MaybeState
-    ): F[Option[(ConsensusState[Key, Artifact], F[Unit])]] =
-      maybeState match {
-        case None =>
-          Clock[F].monotonic.map { time =>
-            val facilitators = facilitatorCalculator.calculate(
-              resources.peerDeclarationsMap,
-              List(initialPeer)
-            )
-            val state = ConsensusState(
-              key,
-              lastKey,
-              facilitators,
-              CollectingFacilities(none[FacilityInfo[Artifact]]),
-              time
-            )
-            val effect = Applicative[F].unit
-            (state, effect).some
-          }
-        case Some(_) =>
-          none.pure[F]
-      }
+    private def lockConsensus(
+      referenceState: ConsensusState[Key, Artifact]
+    )(state: ConsensusState[Key, Artifact]): F[(ConsensusState[Key, Artifact], F[Unit])] =
+      if (state.status === referenceState.status && state.lockStatus === Open)
+        (state.copy(lockStatus = Closed), Applicative[F].unit).pure[F]
+      else
+        (state, Applicative[F].unit).pure[F]
 
-    private def internalTryFacilitateConsensus(
-      key: Key,
-      lastKey: Key,
-      lastStatus: Finished[Artifact],
-      maybeTrigger: Option[ConsensusTrigger],
+    private def spreadAck(
+      ackKind: PeerDeclarationKind,
       resources: ConsensusResources[Artifact]
-    )(
-      maybeState: MaybeState
-    ): F[Option[(ConsensusState[Key, Artifact], F[Unit])]] =
-      maybeState match {
-        case None =>
-          for {
-            registeredPeers <- consensusStorage.getRegisteredPeers(key)
-            localFacilitators <- (selfId :: registeredPeers).filterA(consensusFns.facilitatorFilter(lastStatus.signedMajorityArtifact, _))
-            facilitators = facilitatorCalculator.calculate(
-              resources.peerDeclarationsMap,
-              localFacilitators
-            )
-            time <- Clock[F].monotonic
-            effect = consensusStorage.getUpperBound.flatMap { bound =>
-              gossip.spread(
-                ConsensusPeerDeclaration(
-                  key,
-                  Facility(bound, localFacilitators.toSet, maybeTrigger, lastStatus.facilitatorsHash)
-                )
-              )
-            }
-            state = ConsensusState(
-              key,
-              lastKey,
-              facilitators,
-              CollectingFacilities(
-                FacilityInfo[Artifact](lastStatus.signedMajorityArtifact, maybeTrigger, lastStatus.facilitatorsHash).some
-              ),
-              time
-            )
-          } yield (state, effect).some
-        case Some(_) =>
-          none.pure[F]
+    )(state: ConsensusState[Key, Artifact]): F[(ConsensusState[Key, Artifact], F[Unit])] =
+      if (state.spreadAckKinds.contains(ackKind))
+        (state, Applicative[F].unit).pure[F]
+      else {
+        val ack = getAck(ackKind, resources)
+        val newState = state.copy(spreadAckKinds = state.spreadAckKinds.incl(ackKind))
+        val effect = gossip.spread(ConsensusPeerDeclarationAck(state.key, ackKind, ack))
+        (newState, effect).pure[F]
       }
 
-    private def internalTryUpdateConsensus(resources: ConsensusResources[Artifact])(
-      maybeState: MaybeState
-    ): F[Option[(ConsensusState[Key, Artifact], F[Unit])]] =
-      maybeState.flatTraverse { initialState =>
-        val stateT = for {
-          _ <- internalTryUnlock(resources)
-          _ <- internalTryUpdateFacilitators(resources)
-          effect1 <- internalTrySpreadHistoricalAck(resources)
-          effect2 <- internalTryUpdateStatus(resources)
-        } yield effect1 >> effect2
+    private def updateConsensus(resources: ConsensusResources[Artifact])(
+      state: ConsensusState[Key, Artifact]
+    ): F[(ConsensusState[Key, Artifact], F[Unit])] = {
+      val stateAndEffect = for {
+        _ <- unlockConsensus(resources)
+        _ <- updateFacilitators(resources)
+        effect1 <- spreadHistoricalAck(resources)
+        effect2 <- advanceStatus(resources)
+      } yield effect1 >> effect2
 
-        stateT
-          .run(initialState)
-          .map {
-            case o @ (state, _) =>
-              Option.when(state =!= initialState)(o)
-          }
-      }
+      stateAndEffect
+        .run(state)
+    }
 
-    private def internalTryUnlock(resources: ConsensusResources[Artifact]): StateT[F, ConsensusState[Key, Artifact], Unit] =
+    private def unlockConsensus(resources: ConsensusResources[Artifact]): StateT[F, ConsensusState[Key, Artifact], Unit] =
       StateT.modify { state =>
         if (state.notLocked)
           state
@@ -303,7 +204,22 @@ object ConsensusStateUpdater {
         }
       }
 
-    private def internalTrySpreadHistoricalAck(
+    private def updateFacilitators(resources: ConsensusResources[Artifact]): StateT[F, ConsensusState[Key, Artifact], Unit] =
+      StateT.modify { state =>
+        if (state.locked)
+          state
+        else
+          state.status match {
+            case _: CollectingFacilities[Artifact] =>
+              state.copy(facilitators =
+                facilitatorCalculator.calculate(resources.peerDeclarationsMap, state.facilitators, state.removedFacilitators)
+              )
+            case _ =>
+              state
+          }
+      }
+
+    private def spreadHistoricalAck(
       resources: ConsensusResources[Artifact]
     ): StateT[F, ConsensusState[Key, Artifact], F[Unit]] =
       StateT { state =>
@@ -323,33 +239,7 @@ object ConsensusStateUpdater {
           .pure[F]
       }
 
-    private def getAck(ackKind: PeerDeclarationKind, resources: ConsensusResources[Artifact]): Set[PeerId] = {
-      def ackFor[B <: PeerDeclaration](getter: PeerDeclarations => Option[B]): Set[PeerId] =
-        resources.peerDeclarationsMap.view.filter { case (_, peerDeclarations) => getter(peerDeclarations).isDefined }.keys.toSet
-
-      ackKind match {
-        case kind.Facility          => ackFor(_.facility)
-        case kind.Proposal          => ackFor(_.proposal)
-        case kind.MajoritySignature => ackFor(_.signature)
-      }
-    }
-
-    private def internalTryUpdateFacilitators(resources: ConsensusResources[Artifact]): StateT[F, ConsensusState[Key, Artifact], Unit] =
-      StateT.modify { state =>
-        if (state.locked)
-          state
-        else
-          state.status match {
-            case _: CollectingFacilities[Artifact] =>
-              state.copy(facilitators =
-                facilitatorCalculator.calculate(resources.peerDeclarationsMap, state.facilitators, state.removedFacilitators)
-              )
-            case _ =>
-              state
-          }
-      }
-
-    private def internalTryUpdateStatus(resources: ConsensusResources[Artifact]): StateT[F, ConsensusState[Key, Artifact], F[Unit]] =
+    private def advanceStatus(resources: ConsensusResources[Artifact]): StateT[F, ConsensusState[Key, Artifact], F[Unit]] =
       StateT { state =>
         if (state.locked)
           (state, Applicative[F].unit).pure[F]
@@ -475,6 +365,17 @@ object ConsensusStateUpdater {
             .getOrElse((state, Applicative[F].unit))
         }
       }
+
+    private def getAck(ackKind: PeerDeclarationKind, resources: ConsensusResources[Artifact]): Set[PeerId] = {
+      def ackFor[B <: PeerDeclaration](getter: PeerDeclarations => Option[B]): Set[PeerId] =
+        resources.peerDeclarationsMap.view.filter { case (_, peerDeclarations) => getter(peerDeclarations).isDefined }.keys.toSet
+
+      ackKind match {
+        case kind.Facility          => ackFor(_.facility)
+        case kind.Proposal          => ackFor(_.proposal)
+        case kind.MajoritySignature => ackFor(_.signature)
+      }
+    }
 
     private def warnIfForking(ownFacilitatorsHash: Hash)(
       declarations: List[PeerDeclaration]
