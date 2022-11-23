@@ -1,19 +1,11 @@
 package org.tessellation.sdk.infrastructure.consensus
 
+import cats._
 import cats.data.Ior.{Both, Right}
 import cats.effect._
 import cats.effect.std.Supervisor
 import cats.kernel.Next
-import cats.syntax.applicativeError._
-import cats.syntax.contravariantSemigroupal._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
-import cats.syntax.functorFilter._
-import cats.syntax.option._
-import cats.syntax.order._
-import cats.syntax.show._
-import cats.syntax.traverse._
-import cats.{Applicative, Order, Show}
+import cats.syntax.all._
 
 import scala.concurrent.duration._
 import scala.reflect.runtime.universe.TypeTag
@@ -48,9 +40,10 @@ trait ConsensusManager[F[_], Key, Artifact] {
 
 object ConsensusManager {
 
-  def make[F[_]: Async: Clock: Metrics, Event, Key: Show: Order: Next: TypeTag: Encoder: Decoder, Artifact: Show: TypeTag](
+  def make[F[_]: Async: Clock: Metrics, Event, Key: Show: Order: Next: TypeTag: Encoder: Decoder, Artifact: Eq: Show: TypeTag](
     config: ConsensusConfig,
     consensusStorage: ConsensusStorage[F, Event, Key, Artifact],
+    consensusStateCreator: ConsensusStateCreator[F, Key, Artifact],
     consensusStateUpdater: ConsensusStateUpdater[F, Key, Artifact],
     nodeStorage: NodeStorage[F],
     clusterStorage: ClusterStorage[F],
@@ -59,7 +52,7 @@ object ConsensusManager {
   )(implicit S: Supervisor[F]): F[ConsensusManager[F, Key, Artifact]] = {
     val logger = Slf4jLogger.getLoggerFromClass[F](ConsensusManager.getClass)
 
-    def getRegistration(peer: Peer): F[Unit] =
+    def collectRegistration(peer: Peer): F[Unit] =
       for {
         registrationResponse <- consensusClient.getRegistration.run(peer)
         maybeResult <- registrationResponse.maybeKey.traverse(consensusStorage.registerPeer(peer.id, _))
@@ -85,7 +78,7 @@ object ConsensusManager {
               .getResources(observationKey)
               .flatMap { resources =>
                 logger.debug(s"Trying to observe consensus {key=${observationKey.show}}") >>
-                  consensusStateUpdater.tryObserveConsensus(observationKey, lastKey, resources, peer.id).flatMap {
+                  consensusStateCreator.tryObserveConsensus(observationKey, lastKey, resources, peer.id).flatMap {
                     case Some(_) =>
                       internalCheckForStateUpdate(observationKey, resources)
                     case None => Applicative[F].unit
@@ -139,7 +132,7 @@ object ConsensusManager {
                 .getResources(nextKey)
                 .flatMap { resources =>
                   logger.debug(s"Trying to facilitate consensus {key=${nextKey.show}, trigger=${trigger.show}}") >>
-                    consensusStateUpdater.tryFacilitateConsensus(nextKey, lastKey, lastStatus, trigger, resources).flatMap {
+                    consensusStateCreator.tryFacilitateConsensus(nextKey, lastKey, lastStatus, trigger, resources).flatMap {
                       case Some(state) =>
                         stallDetection(nextKey, state, delay = config.timeTriggerInterval) >>
                           internalCheckForStateUpdate(nextKey, resources)
@@ -155,22 +148,22 @@ object ConsensusManager {
         resources: ConsensusResources[Artifact]
       ): F[Unit] =
         consensusStateUpdater.tryUpdateConsensus(key, resources).flatMap {
-          case Some(state) =>
-            state.status match {
+          case Some((oldState, newState)) =>
+            newState.status match {
               case finish @ Finished(_, majorityTrigger, _) =>
                 Clock[F].monotonic.flatMap { finishedAt =>
-                  Metrics[F].recordTime("dag_consensus_duration", finishedAt - state.createdAt)
+                  Metrics[F].recordTime("dag_consensus_duration", finishedAt - newState.createdAt)
                 } >>
-                  deregisterPeers(key, state.removedFacilitators) >>
+                  deregisterPeers(key, newState.removedFacilitators) >>
                   consensusStorage
-                    .tryUpdateLastKeyAndStatusWithCleanup(state.lastKey, key, finish)
+                    .tryUpdateLastKeyAndStatusWithCleanup(newState.lastKey, key, finish)
                     .ifM(
                       afterConsensusFinish(majorityTrigger),
                       logger.info("Skip triggering another consensus")
                     ) >>
                   nodeStorage.tryModifyStateGetResult(Observing, Ready).void
               case _ =>
-                stallDetection(key, state) >>
+                stallDetection(key, newState).whenA(oldState.status =!= newState.status) >>
                   internalCheckForStateUpdate(key, resources)
             }
           case None => Applicative[F].unit
@@ -210,14 +203,15 @@ object ConsensusManager {
       private def stallDetection(key: Key, state: ConsensusState[Key, Artifact], delay: FiniteDuration = 0.seconds): F[Unit] =
         S.supervise {
           Temporal[F].sleep(delay + config.lockDelay) >>
-            consensusStateUpdater.tryLockConsensus(key, state).flatMap { maybeLockedState =>
-              maybeLockedState.traverse { lockedState =>
-                Temporal[F].sleep(config.lockDuration) >>
-                  lockedState.maybeCollectingKind.traverse { ackKind =>
-                    consensusStorage.getResources(key).flatMap { resources =>
-                      consensusStateUpdater.trySpreadAck(key, ackKind, resources)
+            consensusStateUpdater.tryLockConsensus(key, state).flatMap { maybeResult =>
+              maybeResult.traverse {
+                case (_, lockedState) =>
+                  Temporal[F].sleep(config.lockDuration) >>
+                    lockedState.maybeCollectingKind.traverse { ackKind =>
+                      consensusStorage.getResources(key).flatMap { resources =>
+                        consensusStateUpdater.trySpreadAck(key, ackKind, resources)
+                      }
                     }
-                  }
               }
             }
         }.void
@@ -248,7 +242,7 @@ object ConsensusManager {
         }
           .filter(_.isResponsive)
           .parEvalMapUnbounded { peer =>
-            getRegistration(peer)
+            collectRegistration(peer)
               .handleErrorWith(err => logger.error(err)(s"Error exchanging registration with peer ${peer.show}"))
           }
           .compile

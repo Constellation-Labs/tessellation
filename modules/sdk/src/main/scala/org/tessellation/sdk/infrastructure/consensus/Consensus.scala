@@ -49,18 +49,26 @@ object Consensus {
   ): F[Consensus[F, Event, Key, Artifact]] =
     for {
       storage <- ConsensusStorage.make[F, Event, Key, Artifact](initKeyAndStatus)
+      facilitatorCalculator = FacilitatorCalculator.make(seedlist)
       stateUpdater = ConsensusStateUpdater.make[F, Event, Key, Artifact](
         consensusFns,
         storage,
-        FacilitatorCalculator.make(seedlist),
+        facilitatorCalculator,
         gossip,
-        keyPair,
+        keyPair
+      )
+      stateCreator = ConsensusStateCreator.make[F, Event, Key, Artifact](
+        consensusFns,
+        storage,
+        facilitatorCalculator,
+        gossip,
         selfId
       )
       consClient = ConsensusClient.make[F, Key](client, session)
       manager <- ConsensusManager.make[F, Event, Key, Artifact](
         consensusConfig,
         storage,
+        stateCreator,
         stateUpdater,
         nodeStorage,
         clusterStorage,

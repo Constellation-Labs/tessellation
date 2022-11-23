@@ -4,7 +4,7 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.infrastructure.consensus.declaration.kind.PeerDeclarationKind
 import org.tessellation.security.hash.Hash
 
-/** Represents various data received from other peers
+/** Represents various data collected from other peers
   */
 case class ConsensusResources[A](
   peerDeclarationsMap: Map[PeerId, PeerDeclarations],
