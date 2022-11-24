@@ -1,10 +1,12 @@
 package org.tessellation.currency.cli
 
 import cats.syntax.contravariantSemigroupal._
+
+import org.tessellation.sdk.cli.http._
+import org.tessellation.sdk.config.types.{HttpConfig, HttpServerConfig}
+
 import com.comcast.ip4s.IpLiteralSyntax
 import com.monovore.decline.Opts
-import org.tessellation.sdk.cli.http.{cliHttpPortOpts, client, externalIpOpts, p2pHttpPortOpts, publicHttpPortOpts}
-import org.tessellation.sdk.config.types.{HttpConfig, HttpServerConfig}
 
 object http {
 

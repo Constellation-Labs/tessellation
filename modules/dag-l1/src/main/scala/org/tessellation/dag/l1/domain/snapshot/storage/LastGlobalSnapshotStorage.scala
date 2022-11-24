@@ -8,8 +8,9 @@ import cats.syntax.functor._
 import cats.syntax.option._
 import cats.{Applicative, MonadThrow}
 
-import org.tessellation.dag.snapshot.{GlobalSnapshot, SnapshotOrdinal}
+import org.tessellation.dag.snapshot.GlobalSnapshot
 import org.tessellation.ext.cats.syntax.next._
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.height.Height

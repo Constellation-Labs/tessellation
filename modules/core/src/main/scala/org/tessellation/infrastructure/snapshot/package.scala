@@ -3,6 +3,7 @@ package org.tessellation.infrastructure
 import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.dag.snapshot._
 import org.tessellation.domain.aci.StateChannelOutput
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.sdk.infrastructure.consensus.Consensus
 import org.tessellation.security.signature.Signed
 

@@ -11,7 +11,7 @@ import cats.syntax.traverse._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import org.tessellation.dag.domain.block.{BlockReference, DAGBlock}
+import org.tessellation.dag.domain.block.{DAGBlock, DAGBlockAsActiveTip}
 import org.tessellation.dag.l1.domain.address.storage.AddressStorage
 import org.tessellation.dag.l1.domain.block.BlockStorage
 import org.tessellation.dag.l1.domain.block.BlockStorage._
@@ -26,8 +26,8 @@ import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.collection.MapRefUtils._
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema._
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.balance
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
@@ -115,17 +115,17 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
       }
     }
 
-  val lastSnapshotHash = Hash.arbitrary.arbitrary.pureApply(Parameters.default, Seed(1234L))
+  val lastSnapshotHash: Hash = Hash.arbitrary.arbitrary.pureApply(Parameters.default, Seed(1234L))
 
-  val snapshotOrdinal8 = SnapshotOrdinal(8L)
-  val snapshotOrdinal9 = SnapshotOrdinal(9L)
-  val snapshotOrdinal10 = SnapshotOrdinal(10L)
-  val snapshotOrdinal11 = SnapshotOrdinal(11L)
-  val snapshotOrdinal12 = SnapshotOrdinal(12L)
-  val snapshotHeight6 = Height(6L)
-  val snapshotHeight8 = Height(8L)
-  val snapshotSubHeight0 = SubHeight(0L)
-  val snapshotSubHeight1 = SubHeight(1L)
+  val snapshotOrdinal8: SnapshotOrdinal = SnapshotOrdinal(8L)
+  val snapshotOrdinal9: SnapshotOrdinal = SnapshotOrdinal(9L)
+  val snapshotOrdinal10: SnapshotOrdinal = SnapshotOrdinal(10L)
+  val snapshotOrdinal11: SnapshotOrdinal = SnapshotOrdinal(11L)
+  val snapshotOrdinal12: SnapshotOrdinal = SnapshotOrdinal(12L)
+  val snapshotHeight6: Height = Height(6L)
+  val snapshotHeight8: Height = Height(8L)
+  val snapshotSubHeight0: SubHeight = SubHeight(0L)
+  val snapshotSubHeight1: SubHeight = SubHeight(1L)
 
   def generateSnapshotBalances(addresses: Set[Address]): SortedMap[Address, Balance] =
     SortedMap.from(addresses.map(_ -> Balance(50L)))
@@ -152,7 +152,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
       EpochProgress.MinValue,
       NonEmptyList.one(peerId),
       GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.empty),
-      GlobalSnapshotTips(SortedSet.empty, SortedSet.empty)
+      SnapshotTips(SortedSet.empty, SortedSet.empty)
     )
 
   test("download should happen for the base no blocks case") {
@@ -171,8 +171,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             lastSnapR,
             lastAccTxR
           ) =>
-        implicit val securityProvider = sp
-        implicit val kryoPool = kp
+        implicit val securityProvider: SecurityProvider[IO] = sp
+        implicit val kryoPool: KryoSerializer[IO] = kp
 
         val parent1 = BlockReference(Height(4L), ProofsHash("parent1"))
         val parent2 = BlockReference(Height(5L), ProofsHash("parent2"))
@@ -186,9 +186,9 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           hashedSnapshot <- forAsyncKryo(
             generateSnapshot(peerId)
               .copy(
-                blocks = SortedSet(BlockAsActiveTip(hashedBlock.signed, NonNegLong.MinValue)),
+                blocks = SortedSet(DAGBlockAsActiveTip(hashedBlock.signed, NonNegLong.MinValue)),
                 info = GlobalSnapshotInfo(SortedMap.empty, snapshotTxRefs, snapshotBalances),
-                tips = GlobalSnapshotTips(
+                tips = SnapshotTips(
                   SortedSet(DeprecatedTip(parent1, snapshotOrdinal8)),
                   SortedSet(ActiveTip(parent2, 2L, snapshotOrdinal9))
                 )
@@ -270,8 +270,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             lastSnapR,
             lastAccTxR
           ) =>
-        implicit val securityProvider = sp
-        implicit val kryoPool = kp
+        implicit val securityProvider: SecurityProvider[IO] = sp
+        implicit val kryoPool: KryoSerializer[IO] = kp
 
         val parent1 = BlockReference(Height(8L), ProofsHash("parent1"))
         val parent2 = BlockReference(Height(2L), ProofsHash("parent2"))
@@ -323,9 +323,9 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           snapshotTxRefs = generateSnapshotLastAccTxRefs(Map(srcAddress -> correctTxs(5)))
           hashedSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
-              blocks = SortedSet(BlockAsActiveTip(hashedBlocks(2).signed, NonNegLong(1L))),
+              blocks = SortedSet(DAGBlockAsActiveTip(hashedBlocks(2).signed, NonNegLong(1L))),
               info = GlobalSnapshotInfo(SortedMap.empty, snapshotTxRefs, snapshotBalances),
-              tips = GlobalSnapshotTips(
+              tips = SnapshotTips(
                 SortedSet(
                   DeprecatedTip(parent3, snapshotOrdinal9),
                   DeprecatedTip(BlockReference(hashedBlocks(4).height, hashedBlocks(4).proofsHash), snapshotOrdinal9)
@@ -406,8 +406,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
   test("alignment at same height should happen when snapshot with new ordinal but known height is processed") {
     testResources.use {
       case (snapshotProcessor, sp, kp, srcKey, _, _, _, peerId, balancesR, blocksR, lastSnapR, lastAccTxR) =>
-        implicit val securityProvider = sp
-        implicit val kryoPool = kp
+        implicit val securityProvider: SecurityProvider[IO] = sp
+        implicit val kryoPool: KryoSerializer[IO] = kp
 
         for {
           hashedLastSnapshot <- forAsyncKryo(
@@ -470,8 +470,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             lastSnapR,
             lastAccTxR
           ) =>
-        implicit val securityProvider = sp
-        implicit val kryoPool = kp
+        implicit val securityProvider: SecurityProvider[IO] = sp
+        implicit val kryoPool: KryoSerializer[IO] = kp
 
         val parent1 = BlockReference(Height(6L), ProofsHash("parent1"))
         val parent2 = BlockReference(Height(7L), ProofsHash("parent2"))
@@ -516,7 +516,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           )
           hashedLastSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
-              tips = GlobalSnapshotTips(
+              tips = SnapshotTips(
                 SortedSet(
                   DeprecatedTip(parent1, snapshotOrdinal9),
                   DeprecatedTip(parent2, snapshotOrdinal9)
@@ -534,8 +534,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               ordinal = snapshotOrdinal11,
               height = snapshotHeight8,
               lastSnapshotHash = hashedLastSnapshot.hash,
-              blocks = SortedSet(BlockAsActiveTip(hashedBlocks(1).signed, 1L), BlockAsActiveTip(hashedBlocks(3).signed, 2L)),
-              tips = GlobalSnapshotTips(
+              blocks = SortedSet(DAGBlockAsActiveTip(hashedBlocks(1).signed, 1L), DAGBlockAsActiveTip(hashedBlocks(3).signed, 2L)),
+              tips = SnapshotTips(
                 SortedSet(
                   DeprecatedTip(parent3, snapshotOrdinal11)
                 ),
@@ -620,8 +620,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             lastSnapR,
             lastAccTxR
           ) =>
-        implicit val securityProvider = sp
-        implicit val kryoPool = kp
+        implicit val securityProvider: SecurityProvider[IO] = sp
+        implicit val kryoPool: KryoSerializer[IO] = kp
 
         val parent1 = BlockReference(Height(6L), ProofsHash("parent1"))
         val parent2 = BlockReference(Height(7L), ProofsHash("parent2"))
@@ -688,7 +688,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           snapshotTxRefs = generateSnapshotLastAccTxRefs(Map(srcAddress -> correctTxs(4)))
           hashedLastSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
-              tips = GlobalSnapshotTips(
+              tips = SnapshotTips(
                 SortedSet(
                   DeprecatedTip(parent1, snapshotOrdinal9),
                   DeprecatedTip(parent2, snapshotOrdinal9)
@@ -707,14 +707,14 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               height = snapshotHeight8,
               lastSnapshotHash = hashedLastSnapshot.hash,
               blocks = SortedSet(
-                BlockAsActiveTip(hashedBlocks(1).signed, 1L),
-                BlockAsActiveTip(hashedBlocks(2).signed, 2L),
-                BlockAsActiveTip(hashedBlocks(3).signed, 1L),
-                BlockAsActiveTip(hashedBlocks(6).signed, 0L),
-                BlockAsActiveTip(hashedBlocks(7).signed, 0L)
+                DAGBlockAsActiveTip(hashedBlocks(1).signed, 1L),
+                DAGBlockAsActiveTip(hashedBlocks(2).signed, 2L),
+                DAGBlockAsActiveTip(hashedBlocks(3).signed, 1L),
+                DAGBlockAsActiveTip(hashedBlocks(6).signed, 0L),
+                DAGBlockAsActiveTip(hashedBlocks(7).signed, 0L)
               ),
               info = GlobalSnapshotInfo(SortedMap.empty, snapshotTxRefs, snapshotBalances),
-              tips = GlobalSnapshotTips(
+              tips = SnapshotTips(
                 SortedSet(
                   DeprecatedTip(parent3, snapshotOrdinal11)
                 ),
@@ -805,8 +805,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
   test("snapshot should be ignored when a snapshot pushed for processing is not a next one") {
     testResources.use {
       case (snapshotProcessor, sp, kp, srcKey, _, _, _, peerId, _, _, lastSnapR, _) =>
-        implicit val securityProvider = sp
-        implicit val kryoPool = kp
+        implicit val securityProvider: SecurityProvider[IO] = sp
+        implicit val kryoPool: KryoSerializer[IO] = kp
 
         for {
           hashedLastSnapshot <- forAsyncKryo(
@@ -844,8 +844,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
   test("error should be thrown when the tips get misaligned") {
     testResources.use {
       case (snapshotProcessor, sp, kp, srcKey, _, _, _, peerId, _, blocksR, lastSnapR, _) =>
-        implicit val securityProvider = sp
-        implicit val kryoPool = kp
+        implicit val securityProvider: SecurityProvider[IO] = sp
+        implicit val kryoPool: KryoSerializer[IO] = kp
 
         val parent1 = BlockReference(Height(8L), ProofsHash("parent1"))
         val parent2 = BlockReference(Height(9L), ProofsHash("parent2"))
@@ -860,7 +860,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               ordinal = snapshotOrdinal11,
               height = snapshotHeight8,
               lastSnapshotHash = hashedLastSnapshot.hash,
-              tips = GlobalSnapshotTips(
+              tips = SnapshotTips(
                 SortedSet(
                   DeprecatedTip(parent1, snapshotOrdinal11)
                 ),

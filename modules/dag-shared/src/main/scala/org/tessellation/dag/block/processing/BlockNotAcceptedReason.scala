@@ -3,7 +3,7 @@ package org.tessellation.dag.block.processing
 import cats.data.NonEmptyList
 
 import org.tessellation.dag.block.BlockValidator.BlockValidationError
-import org.tessellation.dag.domain.block.BlockReference
+import org.tessellation.schema.BlockReference
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.BalanceArithmeticError
 import org.tessellation.schema.transaction.{TransactionOrdinal, TransactionReference}

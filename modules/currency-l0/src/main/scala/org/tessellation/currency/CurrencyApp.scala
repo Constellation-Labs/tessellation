@@ -1,11 +1,12 @@
 package org.tessellation.currency
 
-import com.monovore.decline.Opts
-import org.tessellation.currency.cli.method
-import org.tessellation.currency.cli.method.Run
+import org.tessellation.currency.l0.cli.method
+import org.tessellation.currency.l0.cli.method.Run
 import org.tessellation.ext.kryo.KryoRegistrationId
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.sdk.app.TessellationIOApp
+
+import com.monovore.decline.Opts
 
 abstract class CurrencyApp(
   header: String,

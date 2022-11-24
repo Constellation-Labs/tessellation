@@ -1,7 +1,8 @@
 package org.tessellation
 
-import eu.timepit.refined.numeric.Positive
 import org.tessellation.ext.kryo.KryoRegistrationId
+
+import eu.timepit.refined.numeric.Positive
 
 package object currency {
 

@@ -1,7 +1,9 @@
-package org.tessellation.currency
+package org.tessellation.currency.l0
 
 import cats.effect.{IO, Resource}
-import org.tessellation.currency.cli.method._
+
+import org.tessellation.currency.CurrencyApp
+import org.tessellation.currency.l0.cli.method._
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.sdk.app.SDK
 

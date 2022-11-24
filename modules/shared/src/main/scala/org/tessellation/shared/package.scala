@@ -6,6 +6,7 @@ import java.util.UUID
 import cats.data.NonEmptyList
 
 import org.tessellation.ext.kryo._
+import org.tessellation.schema._
 import org.tessellation.schema.address.{Address, AddressCache}
 import org.tessellation.schema.gossip._
 import org.tessellation.schema.node.NodeState
@@ -18,11 +19,11 @@ import org.tessellation.security.signature.signature.SignatureProof
 
 import eu.timepit.refined.api.Refined
 import eu.timepit.refined.auto._
-import eu.timepit.refined.numeric.Interval
+import eu.timepit.refined.numeric.Greater
 
 package object shared {
 
-  type SharedKryoRegistrationIdRange = Interval.Closed[300, 399]
+  type SharedKryoRegistrationIdRange = Greater[100]
 
   type SharedKryoRegistrationId = KryoRegistrationId[SharedKryoRegistrationIdRange]
 
@@ -60,7 +61,14 @@ package object shared {
     RewardTransaction.OrderingInstance.getClass -> 334,
     classOf[SignedOrdering[_]] -> 335,
     Address.OrderingInstance.getClass -> 336,
-    NodeState.Observing.getClass -> 337
+    NodeState.Observing.getClass -> 337,
+    classOf[SnapshotOrdinal] -> 602,
+    classOf[BlockReference] -> 605,
+    classOf[SnapshotTips] -> 607,
+    classOf[ActiveTip] -> 608,
+    ActiveTip.OrderingInstance.getClass -> 609,
+    classOf[DeprecatedTip] -> 612,
+    DeprecatedTip.OrderingInstance.getClass -> 613
   )
 
 }

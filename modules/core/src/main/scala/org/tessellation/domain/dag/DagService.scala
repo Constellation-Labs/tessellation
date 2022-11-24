@@ -1,6 +1,6 @@
 package org.tessellation.domain.dag
 
-import org.tessellation.dag.snapshot.SnapshotOrdinal
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 

@@ -3,9 +3,10 @@ package org.tessellation.infrastructure.dag
 import cats.effect.Async
 import cats.syntax.functor._
 
-import org.tessellation.dag.snapshot.{GlobalSnapshot, SnapshotOrdinal}
+import org.tessellation.dag.snapshot.GlobalSnapshot
 import org.tessellation.domain.dag.DAGService
 import org.tessellation.domain.snapshot.GlobalSnapshotStorage
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.security.signature.Signed
