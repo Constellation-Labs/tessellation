@@ -453,4 +453,25 @@ lazy val core = (project in file("modules/core"))
     )
   )
 
+lazy val currencyL0 = (project in file("modules/currency-l0"))
+  .enablePlugins(AshScriptPlugin)
+  .enablePlugins(JavaAppPackaging)
+  .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test, dagShared % "compile->compile;test->test", sdk)
+  .settings(
+    name := "tessellation-currency-l0",
+    Defaults.itSettings,
+    scalafixCommonSettings,
+    commonSettings,
+    commonTestSettings,
+    dockerSettings,
+    makeBatScripts := Seq(),
+    libraryDependencies ++= Seq(
+      CompilerPlugin.kindProjector,
+      CompilerPlugin.betterMonadicFor,
+      CompilerPlugin.semanticDB,
+      Libraries.refinedCore,
+      Libraries.refinedCats,
+    )
+  )
+
 addCommandAlias("runLinter", ";scalafixAll --rules OrganizeImports")
