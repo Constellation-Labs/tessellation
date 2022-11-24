@@ -13,12 +13,12 @@ import cats.syntax.traverse._
 
 import scala.util.control.NoStackTrace
 
-import org.tessellation.dag.domain.block.{BlockReference, DAGBlock, Tips}
+import org.tessellation.dag.domain.block.{DAGBlock, Tips}
 import org.tessellation.dag.l1.domain.block.BlockStorage._
-import org.tessellation.dag.snapshot.ActiveTip
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
 import org.tessellation.ext.collection.MapRefUtils.MapRefOps
 import org.tessellation.schema.height.Height
+import org.tessellation.schema.{ActiveTip, BlockReference}
 import org.tessellation.security.Hashed
 import org.tessellation.security.hash.ProofsHash
 import org.tessellation.security.signature.Signed

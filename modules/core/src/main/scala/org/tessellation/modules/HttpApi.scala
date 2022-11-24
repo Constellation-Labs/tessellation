@@ -5,10 +5,10 @@ import java.security.PrivateKey
 import cats.effect.Async
 import cats.syntax.semigroupk._
 
-import org.tessellation.dag.snapshot.SnapshotOrdinal
 import org.tessellation.domain.cell.L0Cell
 import org.tessellation.http.routes._
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.AppEnvironment.{Dev, Mainnet, Testnet}

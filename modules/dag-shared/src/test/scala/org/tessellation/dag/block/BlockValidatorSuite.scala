@@ -13,12 +13,13 @@ import scala.collection.immutable.SortedSet
 
 import org.tessellation.dag.block.BlockValidator.BlockValidationError
 import org.tessellation.dag.dagSharedKryoRegistrar
-import org.tessellation.dag.domain.block.{BlockReference, DAGBlock}
+import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.dag.transaction.{TransactionChainValidator, TransactionValidator}
 import org.tessellation.ext.crypto._
 import org.tessellation.ext.kryo._
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.BlockReference
 import org.tessellation.schema.height.Height
 import org.tessellation.schema.transaction._
 import org.tessellation.security.SecurityProvider

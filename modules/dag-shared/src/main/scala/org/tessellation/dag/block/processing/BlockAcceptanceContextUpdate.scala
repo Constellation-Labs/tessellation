@@ -1,6 +1,6 @@
 package org.tessellation.dag.block.processing
 
-import org.tessellation.dag.domain.block.BlockReference
+import org.tessellation.schema.BlockReference
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.transaction.TransactionReference

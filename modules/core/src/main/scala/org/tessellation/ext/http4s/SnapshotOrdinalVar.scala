@@ -2,7 +2,7 @@ package org.tessellation.ext.http4s
 
 import scala.util.Try
 
-import org.tessellation.dag.snapshot.SnapshotOrdinal
+import org.tessellation.schema.SnapshotOrdinal
 
 import eu.timepit.refined.numeric.NonNegative
 import eu.timepit.refined.refineV

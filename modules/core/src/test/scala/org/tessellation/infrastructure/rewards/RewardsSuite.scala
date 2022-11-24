@@ -3,7 +3,7 @@ package org.tessellation.infrastructure.rewards
 import cats.data.NonEmptySet
 import cats.effect.unsafe.implicits.global
 import cats.effect.{IO, Resource}
-import cats.implicits.catsSyntaxApplicativeId
+import cats.syntax.applicative._
 import cats.syntax.eq._
 import cats.syntax.list._
 
@@ -11,13 +11,13 @@ import scala.collection.immutable.SortedSet
 
 import org.tessellation.config.types._
 import org.tessellation.dag.dagSharedKryoRegistrar
-import org.tessellation.dag.snapshot.SnapshotOrdinal
 import org.tessellation.dag.snapshot.epoch.EpochProgress
 import org.tessellation.domain.rewards.Rewards
 import org.tessellation.ext.kryo._
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID.Id
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.generators.{chooseNumRefined, transactionGen}
 import org.tessellation.schema.transaction.TransactionFee

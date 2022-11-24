@@ -7,9 +7,10 @@ import cats.syntax.traverse._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import org.tessellation.dag.domain.block.BlockReference
+import org.tessellation.dag.domain.block.DAGBlockAsActiveTip
 import org.tessellation.dag.snapshot.epoch.EpochProgress
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.height.{Height, SubHeight}
@@ -32,13 +33,13 @@ case class GlobalSnapshot(
   height: Height,
   subHeight: SubHeight,
   lastSnapshotHash: Hash,
-  blocks: SortedSet[BlockAsActiveTip],
+  blocks: SortedSet[DAGBlockAsActiveTip],
   stateChannelSnapshots: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
   rewards: SortedSet[RewardTransaction],
   epochProgress: EpochProgress,
   nextFacilitators: NonEmptyList[PeerId],
   info: GlobalSnapshotInfo,
-  tips: GlobalSnapshotTips
+  tips: SnapshotTips
 ) {
 
   def activeTips[F[_]: Async: KryoSerializer]: F[SortedSet[ActiveTip]] =
@@ -64,7 +65,7 @@ object GlobalSnapshot {
       startingEpochProgress,
       nextFacilitators,
       GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.from(balances)),
-      GlobalSnapshotTips(
+      SnapshotTips(
         SortedSet.empty[DeprecatedTip],
         mkActiveTips(8)
       )

@@ -1,4 +1,4 @@
-package org.tessellation.dag.domain.block
+package org.tessellation.schema
 
 import cats.effect.Async
 import cats.syntax.functor._
@@ -18,8 +18,6 @@ import derevo.scalacheck.arbitrary
 case class BlockReference(height: Height, hash: ProofsHash)
 
 object BlockReference {
-
-  def of[F[_]: Async: KryoSerializer](block: Signed[DAGBlock]): F[BlockReference] =
+  def of[F[_]: Async: KryoSerializer, B <: Block[_]](block: Signed[B]): F[BlockReference] =
     block.proofsHash.map(BlockReference(block.height, _))
-
 }

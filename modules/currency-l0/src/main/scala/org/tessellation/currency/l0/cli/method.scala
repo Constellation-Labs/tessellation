@@ -1,21 +1,24 @@
-package org.tessellation.currency.cli
+package org.tessellation.currency.l0.cli
 
-import com.monovore.decline.Opts
-import fs2.io.file.Path
 import cats.syntax.contravariantSemigroupal._
-import eu.timepit.refined.auto._
+
+import scala.concurrent.duration._
+
 import org.tessellation.cli.env.{KeyAlias, Password, StorePath}
-import org.tessellation.currency.config.types._
+import org.tessellation.currency.cli.http
+import org.tessellation.currency.l0.config.types._
 import org.tessellation.ext.decline.WithOpts
 import org.tessellation.ext.decline.decline._
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.node.NodeState
 import org.tessellation.sdk.cli.{CliMethod, CollateralAmountOpts}
 import org.tessellation.sdk.config.AppEnvironment
-import org.tessellation.sdk.config.types.{GossipConfig, GossipDaemonConfig, GossipRoundConfig, HttpConfig, RumorStorageConfig}
+import org.tessellation.sdk.config.types._
 import org.tessellation.security.hash.Hash
 
-import scala.concurrent.duration._
+import com.monovore.decline.Opts
+import eu.timepit.refined.auto._
+import fs2.io.file.Path
 
 object method {
 

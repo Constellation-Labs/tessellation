@@ -1,11 +1,11 @@
-package org.tessellation.currency.cli
+package org.tessellation.currency.l0.cli
+
+import org.tessellation.currency.l0.config.types.SnapshotConfig
+import org.tessellation.ext.decline.decline._
 
 import com.monovore.decline.Opts
-import fs2.io.file.Path
-import org.tessellation.currency.config.types.SnapshotConfig
-import org.tessellation.ext.decline.decline._
-import com.monovore.decline._
 import eu.timepit.refined.auto._
+import fs2.io.file.Path
 
 object snapshot {
 

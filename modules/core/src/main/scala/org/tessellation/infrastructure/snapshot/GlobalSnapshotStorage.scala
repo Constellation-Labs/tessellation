@@ -14,12 +14,13 @@ import cats.syntax.show._
 import cats.syntax.traverse._
 import cats.{Applicative, ApplicativeError, MonadThrow}
 
-import org.tessellation.dag.snapshot.{GlobalSnapshot, SnapshotOrdinal}
+import org.tessellation.dag.snapshot.GlobalSnapshot
 import org.tessellation.domain.snapshot.GlobalSnapshotStorage
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.cats.syntax.partialPrevious._
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.sdk.domain.collateral.LatestBalances

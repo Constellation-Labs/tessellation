@@ -1,8 +1,6 @@
-package org.tessellation.dag.snapshot
+package org.tessellation.schema
 
-import org.tessellation.dag.domain.block.BlockReference
 import org.tessellation.ext.cats.data.OrderBasedOrdering
-import org.tessellation.schema._
 
 import derevo.cats.{order, show}
 import derevo.circe.magnolia.{decoder, encoder}

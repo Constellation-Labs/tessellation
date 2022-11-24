@@ -1,34 +1,35 @@
 package org.tessellation.dag.domain.block
 
-import cats.data.NonEmptySet._
 import cats.data.{NonEmptyList, NonEmptySet}
-import cats.syntax.reducible._
 
 import org.tessellation.ext.cats.data.OrderBasedOrdering
-import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.codecs.NonEmptySetCodec
-import org.tessellation.schema.Fiber
-import org.tessellation.schema.height.Height
+import org.tessellation.schema._
 import org.tessellation.schema.transaction.Transaction
 import org.tessellation.security.signature.Signed
 
-import derevo.cats.{order, show}
+import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
+import eu.timepit.refined.types.numeric.NonNegLong
 import io.circe.Decoder
 
-case class DAGBlockReference(parents: NonEmptyList[BlockReference])
-case class DAGBlockData(transactions: NonEmptySet[Signed[Transaction]])
+case class DAGBlockReference(parents: NonEmptyList[BlockReference]) extends BaseBlockReference
+case class DAGBlockData(transactions: NonEmptySet[Signed[Transaction]]) extends BaseBlockData[Transaction]
+@derive(order, show, encoder, decoder)
+case class DAGBlockAsActiveTip(block: Signed[DAGBlock], usageCount: NonNegLong) extends BlockAsActiveTip[DAGBlock]
 
-@derive(encoder, decoder, order, show)
+object DAGBlockAsActiveTip {
+  implicit object OrderingInstance extends OrderBasedOrdering[DAGBlockAsActiveTip]
+}
+
+@derive(show, eqv, encoder, decoder, order)
 case class DAGBlock(
   parent: NonEmptyList[BlockReference],
   transactions: NonEmptySet[Signed[Transaction]]
-) extends Fiber[DAGBlockReference, DAGBlockData] {
-  val height: Height = parent.maximum.height.next
-
-  def reference = DAGBlockReference(parent)
-  def data = DAGBlockData(transactions)
+) extends Block[Transaction] {
+  def reference: BaseBlockReference = DAGBlockReference(parent)
+  def data: BaseBlockData[Transaction] = DAGBlockData(transactions)
 }
 
 object DAGBlock {
