@@ -274,7 +274,7 @@ object GlobalSnapshotConsensusFunctions {
     private def processStateChannelEvents(
       lastGlobalSnapshotInfo: GlobalSnapshotInfo,
       events: List[StateChannelEvent]
-    ): (SortedMap[Address, NonEmptyList[StateChannelSnapshotBinary]], Set[GlobalSnapshotEvent]) = {
+    ): (SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set[GlobalSnapshotEvent]) = {
       val lshToSnapshot: Map[(Address, Hash), StateChannelEvent] = events.map { e =>
         (e.address, e.snapshot.value.lastSnapshotHash) -> e
       }.foldLeft(Map.empty[(Address, Hash), StateChannelEvent]) { (acc, entry) =>
@@ -315,12 +315,7 @@ object GlobalSnapshotConsensusFunctions {
                 }
                 .getOrElse(Eval.now(List.empty))
 
-            unfold(initLsh).value.toNel.map(nel =>
-              address -> nel.map { event =>
-                StateChannelSnapshotBinary(event.snapshot.value.lastSnapshotHash, event.snapshot.content)
-
-              }.reverse
-            )
+            unfold(initLsh).value.toNel.map(address -> _.map(_.snapshot).reverse)
         }
         .toSortedMap
 
