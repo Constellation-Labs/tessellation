@@ -14,11 +14,12 @@ import org.tessellation.security.key.ops._
 import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
+import derevo.scalacheck.arbitrary
 import io.estatico.newtype.macros.newtype
 
 object ID {
 
-  @derive(decoder, encoder, eqv, show, order)
+  @derive(arbitrary, decoder, encoder, eqv, show, order)
   @newtype
   case class Id(hex: Hex) {
     def toPublicKey[F[_]: Async: SecurityProvider]: F[PublicKey] = hex.toPublicKey

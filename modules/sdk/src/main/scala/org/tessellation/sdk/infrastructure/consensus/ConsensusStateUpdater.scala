@@ -18,6 +18,7 @@ import org.tessellation.sdk.infrastructure.consensus.declaration._
 import org.tessellation.sdk.infrastructure.consensus.declaration.kind.PeerDeclarationKind
 import org.tessellation.sdk.infrastructure.consensus.message._
 import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, TimeTrigger}
+import org.tessellation.sdk.infrastructure.consensus.update.UnlockConsensusUpdate
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
@@ -72,6 +73,8 @@ object ConsensusStateUpdater {
   ): ConsensusStateUpdater[F, Key, Artifact] = new ConsensusStateUpdater[F, Key, Artifact] {
 
     private val logger = Slf4jLogger.getLoggerFromClass(ConsensusStateUpdater.getClass)
+
+    private val unlockConsensusFn = UnlockConsensusUpdate.make[F, Key, Artifact]
 
     def tryLockConsensus(key: Key, referenceState: ConsensusState[Key, Artifact]): F[StateUpdateResult] =
       tryUpdateExistingConsensus(key, lockConsensus(referenceState))
@@ -142,7 +145,7 @@ object ConsensusStateUpdater {
       state: ConsensusState[Key, Artifact]
     ): F[(ConsensusState[Key, Artifact], F[Unit])] = {
       val stateAndEffect = for {
-        _ <- unlockConsensus(resources)
+        _ <- unlockConsensusFn(resources)
         _ <- updateFacilitators(resources)
         effect1 <- spreadHistoricalAck(resources)
         effect2 <- advanceStatus(resources)
@@ -151,58 +154,6 @@ object ConsensusStateUpdater {
       stateAndEffect
         .run(state)
     }
-
-    private def unlockConsensus(resources: ConsensusResources[Artifact]): StateT[F, ConsensusState[Key, Artifact], Unit] =
-      StateT.modify { state =>
-        if (state.notLocked)
-          state
-        else {
-          val (voteKeep, voteRemove, initialVotes) = ((1, 0), (0, 1), (0, 0))
-
-          state.maybeCollectingKind.flatMap { collectingKind =>
-            val votingResult = state.facilitators.foldLeft(state.facilitators.map(_ -> initialVotes).toMap) { (acc, facilitator) =>
-              resources.acksMap
-                .get((facilitator, collectingKind))
-                .map { ack =>
-                  acc.map {
-                    case (peerId, votes) =>
-                      if (ack.contains(peerId))
-                        (peerId, votes |+| voteKeep)
-                      else
-                        (peerId, votes |+| voteRemove)
-                  }
-                }
-                .getOrElse(acc)
-            }
-
-            val keepThreshold = (state.facilitators.size + 1) / 2
-            val removeThreshold = state.facilitators.size / 2 + 1
-
-            state.facilitators.traverse { peerId =>
-              votingResult.get(peerId).flatMap {
-                case (votesKeep, votesRemove) =>
-                  if (votesKeep >= keepThreshold)
-                    (peerId, true).some
-                  else if (votesRemove >= removeThreshold)
-                    (peerId, false).some
-                  else
-                    none
-              }
-            }.map {
-              _.partitionMap {
-                case (peerId, decision) => Either.cond(decision, peerId, peerId)
-              }
-            }.map {
-              case (removedFacilitators, keptFacilitators) =>
-                state.copy(
-                  lockStatus = Reopened,
-                  facilitators = keptFacilitators,
-                  removedFacilitators = state.removedFacilitators.union(removedFacilitators.toSet)
-                )
-            }
-          }.getOrElse(state)
-        }
-      }
 
     private def updateFacilitators(resources: ConsensusResources[Artifact]): StateT[F, ConsensusState[Key, Artifact], Unit] =
       StateT.modify { state =>
