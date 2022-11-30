@@ -8,7 +8,9 @@ import cats.syntax.all._
 
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID.Id
+import org.tessellation.schema.address.Address
 import org.tessellation.security.SecurityProvider
+import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.SignedValidator.SignedValidationErrorOr
 import org.tessellation.security.signature.signature.SignatureProof
 
@@ -32,6 +34,11 @@ trait SignedValidator[F[_]] {
     signed: Signed[A],
     minSignatureCount: PosInt
   ): SignedValidationErrorOr[Signed[A]]
+
+  def isSignedExclusivelyBy[A <: AnyRef](
+    signed: Signed[A],
+    minSignatureCount: Address
+  ): F[SignedValidationErrorOr[Signed[A]]]
 
 }
 
@@ -66,6 +73,22 @@ object SignedValidator {
       else
         NotEnoughSignatures(signed.proofs.size, minSignatureCount).invalidNec
 
+    def isSignedExclusivelyBy[A <: AnyRef](
+      signed: Signed[A],
+      signerAddress: Address
+    ): F[SignedValidationErrorOr[Signed[A]]] =
+      signed.proofs.existsM { proof =>
+        proof.id.hex.toPublicKey.map { signerPk =>
+          signerPk.toAddress =!= signerAddress
+        }
+      }.ifM(
+        NotSignedExclusivelyByAddressOwner
+          .asInstanceOf[SignedValidationError]
+          .invalidNec[Signed[A]]
+          .pure[F],
+        signed.validNec[SignedValidationError].pure[F]
+      )
+
     private def duplicatedValues[B: Order](values: NonEmptySet[B]): List[B] =
       values.groupBy(identity).toNel.toList.mapFilter {
         case (value, occurrences) =>
@@ -82,6 +105,7 @@ object SignedValidator {
   case class NotEnoughSignatures(signatureCount: Long, minSignatureCount: PosInt) extends SignedValidationError
   case class DuplicateSigners(signers: NonEmptySet[Id]) extends SignedValidationError
   case class MissingSigners(signers: NonEmptySet[Id]) extends SignedValidationError
+  case object NotSignedExclusivelyByAddressOwner extends SignedValidationError
 
   type SignedValidationErrorOr[A] = ValidatedNec[SignedValidationError, A]
 }
