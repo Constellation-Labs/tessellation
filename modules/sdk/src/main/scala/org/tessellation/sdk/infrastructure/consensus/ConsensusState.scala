@@ -1,7 +1,6 @@
 package org.tessellation.sdk.infrastructure.consensus
 
 import cats.Show
-import cats.data.NonEmptySet._
 import cats.syntax.eq._
 import cats.syntax.option._
 import cats.syntax.show._

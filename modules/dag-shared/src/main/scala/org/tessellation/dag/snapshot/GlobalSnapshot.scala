@@ -17,6 +17,7 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.RewardTransaction
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.hex.Hex
+import org.tessellation.security.signature.Signed
 import org.tessellation.syntax.sortedCollection._
 
 import derevo.cats.{eqv, show}
@@ -32,7 +33,7 @@ case class GlobalSnapshot(
   subHeight: SubHeight,
   lastSnapshotHash: Hash,
   blocks: SortedSet[BlockAsActiveTip],
-  stateChannelSnapshots: SortedMap[Address, NonEmptyList[StateChannelSnapshotBinary]],
+  stateChannelSnapshots: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
   rewards: SortedSet[RewardTransaction],
   epochProgress: EpochProgress,
   nextFacilitators: NonEmptyList[PeerId],

@@ -4,6 +4,7 @@ import java.security.KeyPair
 
 import cats.data.NonEmptySet
 import cats.effect.Async
+import cats.kernel.Eq
 import cats.syntax.applicative._
 import cats.syntax.contravariant._
 import cats.syntax.either._
@@ -48,6 +49,8 @@ object Signed {
   implicit def order[A: Order]: Order[Signed[A]] = Order.fromOrdering(ordering(Order[A].toOrdering))
 
   implicit def ordering[A: Ordering]: Ordering[Signed[A]] = new SignedOrdering[A]()
+
+  implicit def eqv[A: Eq]: Eq[Signed[A]] = (x, y) => x.value === y.value && x.proofs === y.proofs
 
   def forAsyncKryo[F[_]: Async: SecurityProvider: KryoSerializer, A <: AnyRef](
     data: A,
