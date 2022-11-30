@@ -1,17 +1,20 @@
 package org.tessellation.infrastructure.snapshot
 
-import cats.data.NonEmptySet
+import cats.data.{NonEmptyList, NonEmptySet}
 import cats.effect.std.Supervisor
 import cats.effect.{IO, Resource}
 import cats.syntax.applicative._
+import cats.syntax.either._
+import cats.syntax.list._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import org.tessellation.dag.block.processing._
 import org.tessellation.dag.dagSharedKryoRegistrar
 import org.tessellation.dag.domain.block.DAGBlock
+import org.tessellation.dag.snapshot._
 import org.tessellation.dag.snapshot.epoch.EpochProgress
-import org.tessellation.dag.snapshot.{GlobalSnapshot, SnapshotOrdinal}
+import org.tessellation.domain.aci.StateChannelOutput
 import org.tessellation.domain.rewards.Rewards
 import org.tessellation.domain.snapshot.GlobalSnapshotStorage
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
@@ -19,6 +22,7 @@ import org.tessellation.ext.kryo._
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID
+import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.transaction.{RewardTransaction, Transaction}
 import org.tessellation.sdk.config.AppEnvironment
@@ -27,8 +31,12 @@ import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
+import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.signature.Signed.forAsyncKryo
+import org.tessellation.syntax.sortedCollection._
 
+import eu.timepit.refined.auto._
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
 
@@ -73,6 +81,15 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
   }
 
+  val scProcessor = new GlobalSnapshotStateChannelEventsProcessor[IO] {
+    def process(
+      lastGlobalSnapshotInfo: GlobalSnapshotInfo,
+      events: List[StateChannelEvent]
+    ): IO[(SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set[GlobalSnapshotEvent])] = IO(
+      (events.groupByNel(_.address).view.mapValues(_.map(_.snapshot)).toSortedMap, Set.empty)
+    )
+  }
+
   val collateral: Amount = Amount.empty
 
   val rewards: Rewards[IO] = new Rewards[IO] {
@@ -92,19 +109,24 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       ???
 
   }
-  val env: AppEnvironment = AppEnvironment.Mainnet
+
+  val env: AppEnvironment = AppEnvironment.Testnet
 
   test("validateArtifact - returns artifact for correct data") { res =>
     implicit val (_, ks, sp, m) = res
 
-    val gscf = GlobalSnapshotConsensusFunctions.make(gss, bam, collateral, rewards, env)
+    val gscf = GlobalSnapshotConsensusFunctions.make(gss, bam, scProcessor, collateral, rewards, env)
 
     KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>
       val genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
       Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair).flatMap { signedGenesis =>
-        gscf.createProposalArtifact(SnapshotOrdinal.MinValue, signedGenesis, EventTrigger, Set.empty).flatMap { lastArtifact =>
-          gscf.validateArtifact(signedGenesis, EventTrigger)(lastArtifact._1).map { result =>
-            expect.same(result.isRight, true)
+        mkStateChannelEvent().flatMap { scEvent =>
+          gscf.createProposalArtifact(SnapshotOrdinal.MinValue, signedGenesis, EventTrigger, Set(scEvent.asLeft[DAGEvent])).flatMap {
+            lastArtifact =>
+              gscf.validateArtifact(signedGenesis, EventTrigger)(lastArtifact._1).map { result =>
+                expect.same(result.isRight, true) && expect
+                  .same(result.map(_.stateChannelSnapshots(scEvent.address)), Right(NonEmptyList.one(scEvent.snapshot)))
+              }
           }
         }
       }
@@ -114,17 +136,29 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
   test("validateArtifact - returns invalid artifact error for incorrect data") { res =>
     implicit val (_, ks, sp, m) = res
 
-    val gscf = GlobalSnapshotConsensusFunctions.make(gss, bam, collateral, rewards, env)
+    val gscf = GlobalSnapshotConsensusFunctions.make(gss, bam, scProcessor, collateral, rewards, env)
 
     KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>
       val genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
       Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair).flatMap { signedGenesis =>
-        gscf.createProposalArtifact(SnapshotOrdinal.MinValue, signedGenesis, EventTrigger, Set.empty).flatMap { lastArtifact =>
-          gscf.validateArtifact(signedGenesis, EventTrigger)(lastArtifact._1.copy(ordinal = lastArtifact._1.ordinal.next)).map { result =>
-            expect.same(result.isLeft, true)
-          }
+        mkStateChannelEvent().flatMap {
+          case scEvent =>
+            gscf.createProposalArtifact(SnapshotOrdinal.MinValue, signedGenesis, EventTrigger, Set(scEvent.asLeft[DAGEvent])).flatMap {
+              lastArtifact =>
+                gscf.validateArtifact(signedGenesis, EventTrigger)(lastArtifact._1.copy(ordinal = lastArtifact._1.ordinal.next)).map {
+                  result =>
+                    expect.same(result.isLeft, true)
+                }
+            }
         }
       }
     }
   }
+
+  def mkStateChannelEvent()(implicit S: SecurityProvider[IO], K: KryoSerializer[IO]) = for {
+    keyPair <- KeyPairGenerator.makeKeyPair[IO]
+    binary = StateChannelSnapshotBinary(Hash.empty, "test".getBytes)
+    signedSC <- forAsyncKryo(binary, keyPair)
+  } yield StateChannelOutput(keyPair.getPublic.toAddress, signedSC)
+
 }

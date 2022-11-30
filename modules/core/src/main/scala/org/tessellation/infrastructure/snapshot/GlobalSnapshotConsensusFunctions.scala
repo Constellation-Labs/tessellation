@@ -1,6 +1,6 @@
 package org.tessellation.infrastructure.snapshot
 
-import cats.data.NonEmptyList
+import cats.Applicative
 import cats.effect.Async
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
@@ -10,11 +10,9 @@ import cats.syntax.flatMap._
 import cats.syntax.foldable._
 import cats.syntax.functor._
 import cats.syntax.functorFilter._
-import cats.syntax.list._
 import cats.syntax.option._
 import cats.syntax.order._
 import cats.syntax.traverse._
-import cats.{Applicative, Eval}
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
@@ -40,7 +38,6 @@ import org.tessellation.sdk.domain.consensus.ConsensusFunctions.InvalidArtifact
 import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
-import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 import org.tessellation.syntax.sortedCollection._
 
@@ -56,6 +53,7 @@ object GlobalSnapshotConsensusFunctions {
   def make[F[_]: Async: KryoSerializer: SecurityProvider: Metrics](
     globalSnapshotStorage: GlobalSnapshotStorage[F],
     blockAcceptanceManager: BlockAcceptanceManager[F],
+    stateChannelEventsProcessor: GlobalSnapshotStateChannelEventsProcessor[F],
     collateral: Amount,
     rewards: Rewards[F],
     environment: AppEnvironment
@@ -83,16 +81,14 @@ object GlobalSnapshotConsensusFunctions {
     def validateArtifact(lastSignedArtifact: Signed[GlobalSnapshot], trigger: ConsensusTrigger)(
       artifact: GlobalSnapshot
     ): F[Either[InvalidArtifact, GlobalSnapshot]] = {
-      val events = artifact.blocks.unsorted.map(_.block.asRight[StateChannelOutput])
+      val dagEvents = artifact.blocks.unsorted.map(_.block.asRight[StateChannelOutput])
+      val scEvents = artifact.stateChannelSnapshots.toList.flatMap {
+        case (address, stateChannelBinaries) => stateChannelBinaries.map(StateChannelOutput(address, _).asLeft[DAGEvent]).toList
+      }
+      val events = dagEvents ++ scEvents
 
       def recreatedArtifact: F[GlobalSnapshot] = createProposalArtifact(lastSignedArtifact.ordinal, lastSignedArtifact, trigger, events)
         .map(_._1)
-        .map { a =>
-          a.copy(
-            stateChannelSnapshots = artifact.stateChannelSnapshots,
-            info = a.info.copy(lastStateChannelSnapshotHashes = artifact.info.lastStateChannelSnapshotHashes)
-          )
-        }
 
       recreatedArtifact
         .map(_ === artifact)
@@ -123,7 +119,7 @@ object GlobalSnapshotConsensusFunctions {
           case EventTrigger => lastArtifact.epochProgress
           case TimeTrigger  => lastArtifact.epochProgress.next
         }
-        (scSnapshots, returnedSCEvents) = processStateChannelEvents(lastArtifact.info, scEvents)
+        (scSnapshots, returnedSCEvents) <- stateChannelEventsProcessor.process(lastArtifact.info, scEvents)
         sCSnapshotHashes <- scSnapshots.toList.traverse { case (address, nel) => nel.head.hashF.map(address -> _) }
           .map(_.toMap)
         updatedLastStateChannelSnapshotHashes = lastArtifact.info.lastStateChannelSnapshotHashes ++ sCSnapshotHashes
@@ -270,57 +266,6 @@ object GlobalSnapshotConsensusFunctions {
 
     case class InvalidHeight(lastHeight: Height, currentHeight: Height) extends NoStackTrace
     case object NoTipsRemaining extends NoStackTrace
-
-    private def processStateChannelEvents(
-      lastGlobalSnapshotInfo: GlobalSnapshotInfo,
-      events: List[StateChannelEvent]
-    ): (SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set[GlobalSnapshotEvent]) = {
-      val lshToSnapshot: Map[(Address, Hash), StateChannelEvent] = events.map { e =>
-        (e.address, e.snapshot.value.lastSnapshotHash) -> e
-      }.foldLeft(Map.empty[(Address, Hash), StateChannelEvent]) { (acc, entry) =>
-        entry match {
-          case (k, newEvent) =>
-            acc.updatedWith(k) { maybeEvent =>
-              maybeEvent
-                .fold(newEvent) { event =>
-                  if (Hash.fromBytes(event.snapshot.content) < Hash.fromBytes(newEvent.snapshot.content))
-                    event
-                  else
-                    newEvent
-                }
-                .some
-            }
-        }
-      }
-
-      val result = events
-        .map(_.address)
-        .distinct
-        .map { address =>
-          lastGlobalSnapshotInfo.lastStateChannelSnapshotHashes
-            .get(address)
-            .map(hash => address -> hash)
-            .getOrElse(address -> Hash.empty)
-        }
-        .mapFilter {
-          case (address, initLsh) =>
-            def unfold(lsh: Hash): Eval[List[StateChannelEvent]] =
-              lshToSnapshot
-                .get((address, lsh))
-                .map { go =>
-                  for {
-                    head <- Eval.now(go)
-                    tail <- unfold(Hash.fromBytes(go.snapshot.content))
-                  } yield head :: tail
-                }
-                .getOrElse(Eval.now(List.empty))
-
-            unfold(initLsh).value.toNel.map(address -> _.map(_.snapshot).reverse)
-        }
-        .toSortedMap
-
-      (result, Set.empty)
-    }
 
     case object ArtifactMismatch extends InvalidArtifact
 

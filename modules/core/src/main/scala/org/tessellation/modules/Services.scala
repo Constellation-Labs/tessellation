@@ -9,8 +9,10 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.config.types.AppConfig
+import org.tessellation.domain.cell.L0Cell
 import org.tessellation.domain.dag.DAGService
 import org.tessellation.domain.rewards.Rewards
+import org.tessellation.domain.statechannel.StateChannelService
 import org.tessellation.infrastructure.dag.DAGService
 import org.tessellation.infrastructure.rewards._
 import org.tessellation.infrastructure.snapshot._
@@ -63,6 +65,7 @@ object Services {
           storages.node,
           storages.globalSnapshot,
           validators.blockValidator,
+          validators.stateChannelValidator,
           cfg.snapshot,
           cfg.environment,
           client,
@@ -71,6 +74,8 @@ object Services {
         )
       dagService = DAGService.make[F](storages.globalSnapshot)
       collateralService = Collateral.make[F](cfg.collateral, storages.globalSnapshot)
+      stateChannelService = StateChannelService
+        .make[F](L0Cell.mkL0Cell(queues.l1Output, queues.stateChannelOutput), validators.stateChannelValidator)
     } yield
       new Services[F](
         localHealthcheck = sdkServices.localHealthcheck,
@@ -80,7 +85,8 @@ object Services {
         consensus = consensus,
         dag = dagService,
         collateral = collateralService,
-        rewards = rewards
+        rewards = rewards,
+        stateChannel = stateChannelService
       ) {}
 }
 
@@ -92,5 +98,6 @@ sealed abstract class Services[F[_]] private (
   val consensus: Consensus[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact],
   val dag: DAGService[F],
   val collateral: Collateral[F],
-  val rewards: Rewards[F]
+  val rewards: Rewards[F],
+  val stateChannel: StateChannelService[F]
 )
