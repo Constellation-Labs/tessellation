@@ -23,6 +23,7 @@ import org.tessellation.security.hex.Hex
 import derevo.cats.{order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
+import derevo.scalacheck.arbitrary
 import io.estatico.newtype.macros.newtype
 import io.estatico.newtype.ops._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -31,7 +32,7 @@ import Signing.{signData, verifySignature}
 
 object signature {
 
-  @derive(decoder, encoder, show, order)
+  @derive(arbitrary, decoder, encoder, show, order)
   @newtype
   case class Signature(value: Hex)
 
@@ -42,7 +43,7 @@ object signature {
 
   }
 
-  @derive(decoder, encoder, show, order)
+  @derive(arbitrary, decoder, encoder, show, order)
   case class SignatureProof(id: Id, signature: Signature)
 
   object SignatureProof {

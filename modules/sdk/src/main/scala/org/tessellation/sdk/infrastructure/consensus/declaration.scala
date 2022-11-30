@@ -15,14 +15,14 @@ object declaration {
     def facilitatorsHash: Hash
   }
 
-  @derive(encoder, decoder)
+  @derive(eqv, show, encoder, decoder)
   case class Facility(upperBound: Bound, facilitators: Set[PeerId], trigger: Option[ConsensusTrigger], facilitatorsHash: Hash)
       extends PeerDeclaration
 
-  @derive(encoder, decoder)
+  @derive(eqv, show, encoder, decoder)
   case class Proposal(hash: Hash, facilitatorsHash: Hash) extends PeerDeclaration
 
-  @derive(encoder, decoder)
+  @derive(eqv, show, encoder, decoder)
   case class MajoritySignature(signature: Signature, facilitatorsHash: Hash) extends PeerDeclaration
 
   object kind {

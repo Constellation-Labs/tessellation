@@ -14,13 +14,13 @@ import org.tessellation.security.key.{ECDSA, PublicKeyHexPrefix}
 import derevo.cats.{eqv, order}
 import derevo.circe.magnolia._
 import derevo.derive
-import derevo.scalacheck.arbitrary
 import io.estatico.newtype.macros.newtype
 import io.estatico.newtype.ops._
+import org.scalacheck.{Arbitrary, Gen}
 
 object hex {
 
-  @derive(arbitrary, decoder, encoder, eqv, order, keyEncoder, keyDecoder)
+  @derive(decoder, encoder, eqv, order, keyEncoder, keyDecoder)
   @newtype
   case class Hex(value: String) {
 
@@ -58,6 +58,9 @@ object hex {
   object Hex {
 
     implicit val show: Show[Hex] = Show.show(_.shortValue)
+
+    implicit val arbitrary: Arbitrary[Hex] =
+      Arbitrary(Gen.sized(size => Gen.stringOfN((size / 2) * 2, Gen.hexChar).map(_.toLowerCase).map(Hex(_))))
 
     def fromBytes(bytes: Array[Byte], sep: Option[String] = None): Hex =
       sep match {
