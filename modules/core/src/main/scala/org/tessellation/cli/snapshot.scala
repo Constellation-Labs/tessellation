@@ -16,5 +16,5 @@ object snapshot {
     .env[Path]("CL_SNAPSHOT_STORED_PATH", help = "Path to store created snapshot")
     .withDefault(Path("data/snapshot"))
 
-  val opts = globalSnapshotPath.map(SnapshotConfig(ConsensusConfig(48.seconds, 50.seconds, 10.seconds), _, 10L))
+  val opts = globalSnapshotPath.map(SnapshotConfig(ConsensusConfig(43.seconds, 50.seconds, 10.seconds), _, 10L))
 }
