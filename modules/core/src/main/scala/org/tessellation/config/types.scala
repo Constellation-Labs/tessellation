@@ -66,8 +66,8 @@ object types {
 
   case class DTMConfig(
     address: Address = Address("DAG0Njmo6JZ3FhkLsipJSppepUHPuTXcSifARfvK"),
-    dtmWeight: NonNegLong = 156L,
-    remainingWeight: NonNegLong = 844L
+    dtmWeight: NonNegLong = 176L,
+    remainingWeight: NonNegLong = 824L
   )
 
   case class StardustConfig(
