@@ -59,7 +59,7 @@ object types {
     startingOrdinal: EpochProgress = EpochProgress(0L),
     testnetCount: NonNegLong = 75L,
     testnetWeight: NonNegLong = 4L,
-    softStakeCount: NonNegLong = 4964L,
+    softStakeCount: NonNegLong = 4890L,
     softStakeWeight: NonNegLong = 4L,
     facilitatorWeight: NonNegLong = 6L
   )
