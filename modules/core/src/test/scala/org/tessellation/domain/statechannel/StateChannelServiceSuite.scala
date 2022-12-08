@@ -50,7 +50,7 @@ object StateChannelServiceSuite extends MutableIOSuite {
 
     for {
       output <- mkStateChannelOutput()
-      expected = StateChannelValidator.NotSignedExclusivelyeByStateChannelOwner
+      expected = StateChannelValidator.NotSignedExclusivelyByStateChannelOwner
       service <- mkService(Some(expected))
       result <- service.process(output)
     } yield expect.same(Left(NonEmptyList.of(expected)), result)

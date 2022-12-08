@@ -14,6 +14,7 @@ import org.tessellation.dag.dagSharedKryoRegistrar
 import org.tessellation.dag.snapshot.{GlobalSnapshotInfo, StateChannelSnapshotBinary}
 import org.tessellation.domain.aci.StateChannelOutput
 import org.tessellation.domain.statechannel.StateChannelValidator
+import org.tessellation.ext.crypto._
 import org.tessellation.ext.kryo._
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
@@ -35,7 +36,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       SecurityProvider.forAsync[IO].map((ks, _))
     }
 
-  def mkProcessor(failed: Option[(Address, StateChannelValidator.StateChannelValidationError)] = None) = {
+  def mkProcessor(failed: Option[(Address, StateChannelValidator.StateChannelValidationError)] = None)(implicit K: KryoSerializer[IO]) = {
     val validator = new StateChannelValidator[IO] {
       def validate(output: StateChannelOutput) =
         IO.pure(failed.filter(f => f._1 == output.address).map(_._2.invalidNec).getOrElse(output.validNec))
@@ -48,10 +49,11 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
 
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      address = keyPair.getPublic().toAddress
       output <- mkStateChannelOutput(keyPair)
       snapshotInfo = mkGlobalSnapshotInfo()
       service = mkProcessor()
-      expected = (SortedMap((output.address, NonEmptyList.one(output.snapshot))), Set.empty)
+      expected = (SortedMap((address, NonEmptyList.one(output.snapshot))), Set.empty)
       result <- service.process(snapshotInfo, output :: Nil)
     } yield expect.same(expected, result)
 
@@ -62,39 +64,44 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
 
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      address = keyPair.getPublic().toAddress
       output1 <- mkStateChannelOutput(keyPair)
-      output2 <- mkStateChannelOutput(keyPair, Some(Hash.fromBytes(output1.snapshot.content)))
+      output1Hash <- output1.snapshot.hashF
+      output2 <- mkStateChannelOutput(keyPair, Some(output1Hash))
       snapshotInfo = mkGlobalSnapshotInfo()
       service = mkProcessor()
-      expected = (SortedMap((output1.address, NonEmptyList.of(output2.snapshot, output1.snapshot))), Set.empty)
+      expected = (SortedMap((address, NonEmptyList.of(output2.snapshot, output1.snapshot))), Set.empty)
       result <- service.process(snapshotInfo, output1 :: output2 :: Nil)
     } yield expect.same(expected, result)
 
   }
 
-  test("return sc event when last state channel snapshot is correct") { res =>
+  test("return sc event when reference to last state channel snapshot hash is correct") { res =>
     implicit val (kryo, sp) = res
 
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      address = keyPair.getPublic().toAddress
       output1 <- mkStateChannelOutput(keyPair)
-      output2 <- mkStateChannelOutput(keyPair, Some(Hash.fromBytes(output1.snapshot.content)))
-      snapshotInfo = mkGlobalSnapshotInfo(SortedMap((output1.address, Hash.fromBytes(output1.snapshot.content))))
+      output1Hash <- output1.snapshot.hashF
+      output2 <- mkStateChannelOutput(keyPair, Some(output1Hash))
+      snapshotInfo = mkGlobalSnapshotInfo(SortedMap((address, output1Hash)))
       service = mkProcessor()
-      expected = (SortedMap((output1.address, NonEmptyList.of(output2.snapshot))), Set.empty)
+      expected = (SortedMap((address, NonEmptyList.of(output2.snapshot))), Set.empty)
       result <- service.process(snapshotInfo, output2 :: Nil)
     } yield expect.same(expected, result)
 
   }
 
-  test("return no sc events when last state channel snapshot hash is incorrect") { res =>
+  test("return no sc events when reference to last state channel snapshot hash is incorrect") { res =>
     implicit val (kryo, sp) = res
 
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      address = keyPair.getPublic().toAddress
       output1 <- mkStateChannelOutput(keyPair)
       output2 <- mkStateChannelOutput(keyPair, Some(Hash.fromBytes("incorrect".getBytes())))
-      snapshotInfo = mkGlobalSnapshotInfo(SortedMap((output1.address, Hash.fromBytes(output1.snapshot.content))))
+      snapshotInfo = mkGlobalSnapshotInfo(SortedMap((address, Hash.fromBytes(output1.snapshot.content))))
       service = mkProcessor()
       expected = (SortedMap.empty[Address, NonEmptyList[StateChannelSnapshotBinary]], Set.empty)
       result <- service.process(snapshotInfo, output2 :: Nil)
@@ -107,13 +114,15 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
 
     for {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
+      address1 = keyPair1.getPublic().toAddress
       output1 <- mkStateChannelOutput(keyPair1)
       keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
+      address2 = keyPair2.getPublic().toAddress
       output2 <- mkStateChannelOutput(keyPair2)
       snapshotInfo = mkGlobalSnapshotInfo()
       service = mkProcessor()
       expected = (
-        SortedMap((output1.address, NonEmptyList.of(output1.snapshot)), (output2.address, NonEmptyList.of(output2.snapshot))),
+        SortedMap((address1, NonEmptyList.of(output1.snapshot)), (address2, NonEmptyList.of(output2.snapshot))),
         Set.empty
       )
       result <- service.process(snapshotInfo, output1 :: output2 :: Nil)
@@ -126,13 +135,15 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
 
     for {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
+      address1 = keyPair1.getPublic().toAddress
       output1 <- mkStateChannelOutput(keyPair1)
       keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
+      address2 = keyPair2.getPublic().toAddress
       output2 <- mkStateChannelOutput(keyPair2)
       snapshotInfo = mkGlobalSnapshotInfo()
-      service = mkProcessor(Some(keyPair1.getPublic().toAddress -> StateChannelValidator.NotSignedExclusivelyeByStateChannelOwner))
+      service = mkProcessor(Some(address1 -> StateChannelValidator.NotSignedExclusivelyByStateChannelOwner))
       expected = (
-        SortedMap((output2.address, NonEmptyList.of(output2.snapshot))),
+        SortedMap((address2, NonEmptyList.of(output2.snapshot))),
         Set.empty
       )
       result <- service.process(snapshotInfo, output1 :: output2 :: Nil)

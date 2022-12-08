@@ -40,13 +40,13 @@ object StateChannelValidator {
     ): F[StateChannelValidationErrorOr[Signed[StateChannelSnapshotBinary]]] =
       signedValidator
         .isSignedExclusivelyBy(signedSC, address)
-        .map(_.errorMap[StateChannelValidationError](_ => NotSignedExclusivelyeByStateChannelOwner))
+        .map(_.errorMap[StateChannelValidationError](_ => NotSignedExclusivelyByStateChannelOwner))
   }
 
   @derive(eqv, show)
   sealed trait StateChannelValidationError
   case class InvalidSigned(error: SignedValidationError) extends StateChannelValidationError
-  case object NotSignedExclusivelyeByStateChannelOwner extends StateChannelValidationError
+  case object NotSignedExclusivelyByStateChannelOwner extends StateChannelValidationError
 
   type StateChannelValidationErrorOr[A] = ValidatedNec[StateChannelValidationError, A]
 
