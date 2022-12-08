@@ -9,7 +9,7 @@ import org.tessellation.dag.dagSharedKryoRegistrar
 import org.tessellation.dag.snapshot.StateChannelSnapshotBinary
 import org.tessellation.domain.aci.StateChannelOutput
 import org.tessellation.domain.statechannel.StateChannelValidator
-import org.tessellation.domain.statechannel.StateChannelValidator.{InvalidSigned, NotSignedExclusivelyeByStateChannelOwner}
+import org.tessellation.domain.statechannel.StateChannelValidator.{InvalidSigned, NotSignedExclusivelyByStateChannelOwner}
 import org.tessellation.ext.kryo._
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
@@ -82,7 +82,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       result <- validator.validate(scOutput)
     } yield
       expect.same(
-        NotSignedExclusivelyeByStateChannelOwner.invalidNec,
+        NotSignedExclusivelyByStateChannelOwner.invalidNec,
         result
       )
   }
@@ -101,7 +101,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       result <- validator.validate(scOutput)
     } yield
       expect.same(
-        NotSignedExclusivelyeByStateChannelOwner.invalidNec,
+        NotSignedExclusivelyByStateChannelOwner.invalidNec,
         result
       )
   }

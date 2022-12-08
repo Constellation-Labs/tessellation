@@ -17,6 +17,8 @@ import scala.collection.immutable.SortedMap
 import org.tessellation.dag.snapshot.{GlobalSnapshotInfo, StateChannelSnapshotBinary}
 import org.tessellation.domain.statechannel.StateChannelValidator
 import org.tessellation.ext.cats.syntax.validated._
+import org.tessellation.ext.crypto._
+import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
@@ -33,70 +35,66 @@ trait GlobalSnapshotStateChannelEventsProcessor[F[_]] {
 }
 
 object GlobalSnapshotStateChannelEventsProcessor {
-  def make[F[_]: Async](stateChannelValidator: StateChannelValidator[F]) = new GlobalSnapshotStateChannelEventsProcessor[F] {
-    private val logger = Slf4jLogger.getLoggerFromClass[F](GlobalSnapshotStateChannelEventsProcessor.getClass)
-    def process(
-      lastGlobalSnapshotInfo: GlobalSnapshotInfo,
-      events: List[StateChannelEvent]
-    ): F[(SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set[GlobalSnapshotEvent])] =
-      events
-        .traverse(event => stateChannelValidator.validate(event).map(_.errorMap(error => (event.address, error))))
-        .map(_.partitionMap(_.toEither))
-        .flatTap {
-          case (invalid, _) => logger.warn(s"Invalid state channels events: ${invalid}").whenA(invalid.nonEmpty)
-        }
-        .map { case (_, validatedEvents) => processStateChannelEvents(lastGlobalSnapshotInfo, validatedEvents) }
+  def make[F[_]: Async: KryoSerializer](stateChannelValidator: StateChannelValidator[F]) =
+    new GlobalSnapshotStateChannelEventsProcessor[F] {
+      private val logger = Slf4jLogger.getLoggerFromClass[F](GlobalSnapshotStateChannelEventsProcessor.getClass)
+      def process(
+        lastGlobalSnapshotInfo: GlobalSnapshotInfo,
+        events: List[StateChannelEvent]
+      ): F[(SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set[GlobalSnapshotEvent])] =
+        events
+          .traverse(event => stateChannelValidator.validate(event).map(_.errorMap(error => (event.address, error))))
+          .map(_.partitionMap(_.toEither))
+          .flatTap {
+            case (invalid, _) => logger.warn(s"Invalid state channels events: ${invalid}").whenA(invalid.nonEmpty)
+          }
+          .map { case (_, validatedEvents) => processStateChannelEvents(lastGlobalSnapshotInfo, validatedEvents) }
 
-    private def processStateChannelEvents(
-      lastGlobalSnapshotInfo: GlobalSnapshotInfo,
-      events: List[StateChannelEvent]
-    ): (SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set[GlobalSnapshotEvent]) = {
-      val lshToSnapshot: Map[(Address, Hash), StateChannelEvent] = events.map { e =>
-        (e.address, e.snapshot.value.lastSnapshotHash) -> e
-      }.foldLeft(Map.empty[(Address, Hash), StateChannelEvent]) { (acc, entry) =>
-        entry match {
-          case (k, newEvent) =>
-            acc.updatedWith(k) { maybeEvent =>
-              maybeEvent
-                .fold(newEvent) { event =>
-                  if (Hash.fromBytes(event.snapshot.content) < Hash.fromBytes(newEvent.snapshot.content))
-                    event
-                  else
-                    newEvent
-                }
-                .some
-            }
+      private def processStateChannelEvents(
+        lastGlobalSnapshotInfo: GlobalSnapshotInfo,
+        events: List[StateChannelEvent]
+      ): (SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set[GlobalSnapshotEvent]) = {
+
+        val lshToSnapshot: Map[(Address, Hash), StateChannelEvent] = events.map { e =>
+          (e.address, e.snapshot.value.lastSnapshotHash) -> e
+        }.foldLeft(Map.empty[(Address, Hash), StateChannelEvent]) { (acc, entry) =>
+          entry match {
+            case (k, newEvent) =>
+              acc.updatedWith(k) { maybeEvent =>
+                maybeEvent.filter(event => Hash.fromBytes(event.snapshot.content) < Hash.fromBytes(newEvent.snapshot.content))
+                  .orElse(newEvent.some)
+              }
+          }
         }
+
+        val result = events
+          .map(_.address)
+          .distinct
+          .map { address =>
+            lastGlobalSnapshotInfo.lastStateChannelSnapshotHashes
+              .get(address)
+              .map(hash => address -> hash)
+              .getOrElse(address -> Hash.empty)
+          }
+          .mapFilter {
+            case (address, initLsh) =>
+              def unfold(lsh: Hash): Eval[List[StateChannelEvent]] =
+                lshToSnapshot
+                  .get((address, lsh))
+                  .map { go =>
+                    for {
+                      head <- Eval.now(go)
+                      tail <- go.snapshot.hash.fold(_ => Eval.now(List.empty), unfold)
+                    } yield head :: tail
+                  }
+                  .getOrElse(Eval.now(List.empty))
+
+              unfold(initLsh).value.toNel.map(address -> _.map(_.snapshot).reverse)
+          }
+          .toSortedMap
+
+        (result, Set.empty[GlobalSnapshotEvent])
       }
-
-      val result = events
-        .map(_.address)
-        .distinct
-        .map { address =>
-          lastGlobalSnapshotInfo.lastStateChannelSnapshotHashes
-            .get(address)
-            .map(hash => address -> hash)
-            .getOrElse(address -> Hash.empty)
-        }
-        .mapFilter {
-          case (address, initLsh) =>
-            def unfold(lsh: Hash): Eval[List[StateChannelEvent]] =
-              lshToSnapshot
-                .get((address, lsh))
-                .map { go =>
-                  for {
-                    head <- Eval.now(go)
-                    tail <- unfold(Hash.fromBytes(go.snapshot.content))
-                  } yield head :: tail
-                }
-                .getOrElse(Eval.now(List.empty))
-
-            unfold(initLsh).value.toNel.map(address -> _.map(_.snapshot).reverse)
-        }
-        .toSortedMap
-
-      (result, Set.empty[GlobalSnapshotEvent])
     }
-  }
 
 }
