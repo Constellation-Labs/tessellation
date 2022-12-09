@@ -61,7 +61,8 @@ object GlobalSnapshotStateChannelEventsProcessor {
           entry match {
             case (k, newEvent) =>
               acc.updatedWith(k) { maybeEvent =>
-                maybeEvent.filter(event => Hash.fromBytes(event.snapshot.content) < Hash.fromBytes(newEvent.snapshot.content))
+                maybeEvent
+                  .filter(event => Hash.fromBytes(event.snapshot.content) < Hash.fromBytes(newEvent.snapshot.content))
                   .orElse(newEvent.some)
               }
           }

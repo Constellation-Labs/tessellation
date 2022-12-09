@@ -355,7 +355,7 @@ object ConsensusStateUpdater {
               .traverse { artifact =>
                 consensusFns.validateArtifact(lastSignedArtifact, trigger)(artifact)
               }
-              .flatMap {
+                .flatMap {
                 _.flatTraverse {
                   _.fold(
                     cause =>
