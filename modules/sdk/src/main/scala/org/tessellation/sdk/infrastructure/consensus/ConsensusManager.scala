@@ -7,7 +7,6 @@ import cats.effect.std.Supervisor
 import cats.kernel.Next
 import cats.syntax.all._
 
-import scala.concurrent.duration._
 import scala.reflect.runtime.universe.TypeTag
 
 import org.tessellation.ext.cats.syntax.next._
@@ -79,8 +78,9 @@ object ConsensusManager {
               .flatMap { resources =>
                 logger.debug(s"Trying to observe consensus {key=${observationKey.show}}") >>
                   consensusStateCreator.tryObserveConsensus(observationKey, lastKey, resources, peer.id).flatMap {
-                    case Some(_) =>
-                      internalCheckForStateUpdate(observationKey, resources)
+                    case Some(state) =>
+                      stallDetection(observationKey, state) >>
+                        internalCheckForStateUpdate(observationKey, resources)
                     case None => Applicative[F].unit
                   }
               }
@@ -134,7 +134,7 @@ object ConsensusManager {
                   logger.debug(s"Trying to facilitate consensus {key=${nextKey.show}, trigger=${trigger.show}}") >>
                     consensusStateCreator.tryFacilitateConsensus(nextKey, lastKey, lastStatus, trigger, resources).flatMap {
                       case Some(state) =>
-                        stallDetection(nextKey, state, delay = config.timeTriggerInterval) >>
+                        stallDetection(nextKey, state) >>
                           internalCheckForStateUpdate(nextKey, resources)
                       case None => Applicative[F].unit
                     }
@@ -200,9 +200,9 @@ object ConsensusManager {
         scheduleFacility >> consensusStorage.containsTriggerEvent
           .ifM(internalFacilitateWith(EventTrigger.some), Applicative[F].unit)
 
-      private def stallDetection(key: Key, state: ConsensusState[Key, Artifact], delay: FiniteDuration = 0.seconds): F[Unit] =
+      private def stallDetection(key: Key, state: ConsensusState[Key, Artifact]): F[Unit] =
         S.supervise {
-          Temporal[F].sleep(delay + config.lockDelay) >>
+          Temporal[F].sleep(config.declarationTimeout) >>
             consensusStateUpdater.tryLockConsensus(key, state).flatMap { maybeResult =>
               maybeResult.traverse {
                 case (_, lockedState) =>

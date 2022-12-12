@@ -4,13 +4,18 @@ import cats.Monad
 import cats.data.StateT
 import cats.syntax.all._
 
-import org.tessellation.sdk.infrastructure.consensus.{ConsensusResources, Reopened}
+import org.tessellation.sdk.infrastructure.consensus.{CollectingFacilities, ConsensusResources, Reopened}
 
 object UnlockConsensusUpdate {
 
   def make[F[_]: Monad, Key, Artifact]: ConsensusStateUpdateFn[F, Key, Artifact, Unit] = (resources: ConsensusResources[Artifact]) =>
     StateT.modify { state =>
-      if (state.notLocked)
+      val synchronized = state.status match {
+        case CollectingFacilities(maybeFacilityInfo) => maybeFacilityInfo.flatMap(_.maybeTrigger).isDefined
+        case _                                       => true
+      }
+
+      if (state.notLocked && synchronized)
         state
       else {
         val (voteKeep, voteRemove, initialVotes) = ((1, 0), (0, 1), (0, 0))
@@ -51,7 +56,7 @@ object UnlockConsensusUpdate {
           }.map {
             case (removedFacilitators, keptFacilitators) =>
               state.copy(
-                lockStatus = Reopened,
+                lockStatus = if (state.locked) Reopened else state.lockStatus,
                 facilitators = keptFacilitators,
                 removedFacilitators = state.removedFacilitators.union(removedFacilitators.toSet)
               )
