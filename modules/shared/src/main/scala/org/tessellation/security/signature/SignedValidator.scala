@@ -21,15 +21,15 @@ import eu.timepit.refined.types.numeric.PosInt
 trait SignedValidator[F[_]] {
 
   def validateSignatures[A <: AnyRef](
-    signedBlock: Signed[A]
+    signed: Signed[A]
   ): F[SignedValidationErrorOr[Signed[A]]]
 
   def validateUniqueSigners[A <: AnyRef](
-    signedBlock: Signed[A]
+    signed: Signed[A]
   ): SignedValidationErrorOr[Signed[A]]
 
   def validateMinSignatureCount[A <: AnyRef](
-    signedBlock: Signed[A],
+    signed: Signed[A],
     minSignatureCount: PosInt
   ): SignedValidationErrorOr[Signed[A]]
 
@@ -40,31 +40,31 @@ object SignedValidator {
   def make[F[_]: Async: KryoSerializer: SecurityProvider]: SignedValidator[F] = new SignedValidator[F] {
 
     def validateSignatures[A <: AnyRef](
-      signedBlock: Signed[A]
+      signed: Signed[A]
     ): F[SignedValidationErrorOr[Signed[A]]] =
-      signedBlock.validProofs.map { either =>
+      signed.validProofs.map { either =>
         either
           .leftMap(InvalidSignatures)
           .toValidatedNec
-          .map(_ => signedBlock)
+          .map(_ => signed)
       }
 
     def validateUniqueSigners[A <: AnyRef](
-      signedBlock: Signed[A]
+      signed: Signed[A]
     ): SignedValidationErrorOr[Signed[A]] =
-      duplicatedValues(signedBlock.proofs.map(_.id)).toNel
+      duplicatedValues(signed.proofs.map(_.id)).toNel
         .map(_.toNes)
         .map(DuplicateSigners)
-        .toInvalidNec(signedBlock)
+        .toInvalidNec(signed)
 
     def validateMinSignatureCount[A <: AnyRef](
-      signedBlock: Signed[A],
+      signed: Signed[A],
       minSignatureCount: PosInt
     ): SignedValidationErrorOr[Signed[A]] =
-      if (signedBlock.proofs.size >= minSignatureCount)
-        signedBlock.validNec
+      if (signed.proofs.size >= minSignatureCount)
+        signed.validNec
       else
-        NotEnoughSignatures(signedBlock.proofs.size, minSignatureCount).invalidNec
+        NotEnoughSignatures(signed.proofs.size, minSignatureCount).invalidNec
 
     private def duplicatedValues[B: Order](values: NonEmptySet[B]): List[B] =
       values.groupBy(identity).toNel.toList.mapFilter {
