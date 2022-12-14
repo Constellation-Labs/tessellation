@@ -39,7 +39,6 @@ object GlobalSnapshotSerializationSuite extends MutableIOSuite with Checkers {
 
   test("snapshot is successfully deserialized and serialized with kryo") { implicit kryo =>
     for {
-      _ <- ignore("requires fix for snapshot schema").unlessA(cond = false)
       storedBytes <- getBytesFromClasspath(kryoFilename)
       signedSnapshot <- storedBytes.fromBinaryF[Signed[GlobalSnapshot]]
       serializedBytes <- signedSnapshot.toBinaryF
@@ -49,7 +48,6 @@ object GlobalSnapshotSerializationSuite extends MutableIOSuite with Checkers {
 
   test("snapshot is successfully deserialized and serialized with json parser") { implicit kryo =>
     for {
-      _ <- ignore("requires fix for snapshot schema").unlessA(cond = false)
       storedJson <- getJsonFromClasspath(jsonFilename)
       signedSnapshot <- storedJson.as[Signed[GlobalSnapshot]].leftWiden[Throwable].liftTo[IO]
       snapshotHash <- signedSnapshot.value.hashF
