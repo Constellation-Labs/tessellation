@@ -82,4 +82,6 @@ trait OrphanInstances {
 
   implicit def arrayEq[A: Eq]: Eq[Array[A]] = (xs: Array[A], ys: Array[A]) =>
     Eq[Int].eqv(xs.length, ys.length) && xs.zip(ys).forall { case (x, y) => Eq[A].eqv(x, y) }
+
+  implicit def arrayOrder[A: Order]: Order[Array[A]] = Order.by(_.toSeq)
 }
