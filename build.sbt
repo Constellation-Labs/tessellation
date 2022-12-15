@@ -55,7 +55,7 @@ lazy val root = (project in file("."))
   .settings(
     name := "tessellation"
   )
-  .aggregate(keytool, kernel, shared, core, testShared, wallet, dagShared, sdk, dagL1)
+  .aggregate(keytool, kernel, shared, core, testShared, wallet, dagShared, sdk, dagL1, rosetta)
 
 lazy val kernel = (project in file("modules/kernel"))
   .enablePlugins(AshScriptPlugin)
@@ -300,6 +300,22 @@ lazy val dagShared = (project in file("modules/dag-shared"))
       CompilerPlugin.semanticDB,
       Libraries.logback % Runtime,
       Libraries.logstashLogbackEncoder % Runtime
+    )
+  )
+
+lazy val rosetta = (project in file("modules/rosetta"))
+  .dependsOn(shared % "compile->compile;test->test")
+  .settings(
+    name := "tessellation-rosetta",
+    Defaults.itSettings,
+    scalafixCommonSettings,
+    commonSettings,
+    commonTestSettings,
+    makeBatScripts := Seq(),
+    libraryDependencies := Seq(
+      CompilerPlugin.kindProjector,
+      CompilerPlugin.betterMonadicFor,
+      CompilerPlugin.semanticDB
     )
   )
 
