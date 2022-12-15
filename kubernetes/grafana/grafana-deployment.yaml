@@ -47,6 +47,8 @@ spec:
               value: "true"
             - name: GF_AUTH_ANONYMOUS_ORG_ROLE
               value: Admin
+            - name: GF_INSTALL_PLUGINS
+              value: natel-discrete-panel
       volumes:
         - name: grafana-storage
           emptyDir: { }
