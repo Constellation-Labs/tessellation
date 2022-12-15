@@ -95,6 +95,8 @@ object Dependencies {
     val circeRefined = circe("refined")
     val circeFs2 = circe("fs2", "0.14.0")
     val circeShapes = circe("shapes")
+    // TODO: Is this being used anymore?
+    val circeDerivation = "io.circe" %% "circe-derivation" % "0.13.0-M5"
 
     val cirisCore = ciris("ciris")
     val cirisEnum = ciris("ciris-enumeratum")

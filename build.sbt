@@ -55,7 +55,7 @@ lazy val root = (project in file("."))
   .settings(
     name := "tessellation"
   )
-  .aggregate(keytool, kernel, shared, core, testShared, wallet, dagShared, sdk, dagL1)
+  .aggregate(keytool, kernel, shared, core, testShared, wallet, dagShared, sdk, dagL1, rosetta)
 
 lazy val kernel = (project in file("modules/kernel"))
   .enablePlugins(AshScriptPlugin)
@@ -303,10 +303,50 @@ lazy val dagShared = (project in file("modules/dag-shared"))
     )
   )
 
+lazy val circeVersion         = "0.11.0"
+lazy val finagleVersion       = "6.45.0"
+lazy val finchVersion         = "0.15.1"
+lazy val scalaTestVersion     = "3.0.0"
+
+lazy val rosetta = (project in file("modules/rosetta"))
+  .enablePlugins(JavaAppPackaging)
+  .dependsOn(shared % "compile->compile;test->test",
+    testShared % Test, keytool, sdk, wallet, dagShared)
+  .settings(
+    name := "tessellation-rosetta",
+    Defaults.itSettings,
+    scalafixCommonSettings,
+    commonSettings,
+    commonTestSettings,
+    makeBatScripts := Seq(),
+    libraryDependencies := Seq(
+      CompilerPlugin.kindProjector,
+      CompilerPlugin.betterMonadicFor,
+      CompilerPlugin.semanticDB,
+      Libraries.logback % Runtime,
+      Libraries.circeCore,
+      Libraries.circeGeneric,
+      Libraries.circeParser,
+      Libraries.circeRefined,
+      Libraries.circeShapes,
+      Libraries.circeDerivation,
+      Libraries.http4sDsl,
+      Libraries.http4sServer,
+      Libraries.http4sClient,
+      Libraries.http4sCirce,
+      Libraries.http4sJwtAuth,
+      Libraries.doobieCore,
+      Libraries.doobieHikari,
+      Libraries.doobieQuill,
+      Libraries.sqlite,
+      Libraries.flyway
+    )
+  )
+
 lazy val dagL1 = (project in file("modules/dag-l1"))
   .enablePlugins(AshScriptPlugin)
   .enablePlugins(JavaAppPackaging)
-  .dependsOn(kernel, shared % "compile->compile;test->test", dagShared, sdk, testShared % Test)
+  .dependsOn(kernel, shared % "compile->compile;test->test", dagShared, sdk, rosetta, testShared % Test)
   .configs(IntegrationTest)
   .settings(
     name := "tessellation-dag-l1",
@@ -319,6 +359,12 @@ lazy val dagL1 = (project in file("modules/dag-l1"))
       CompilerPlugin.kindProjector,
       CompilerPlugin.betterMonadicFor,
       CompilerPlugin.semanticDB,
+      Libraries.circeCore,
+      Libraries.circeGeneric,
+      Libraries.circeParser,
+      Libraries.circeRefined,
+      Libraries.circeShapes,
+      Libraries.circeDerivation,
       Libraries.cats,
       Libraries.catsEffect,
       Libraries.circeShapes,

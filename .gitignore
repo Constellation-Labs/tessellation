@@ -34,3 +34,11 @@ site/
 .bsp/
 scripts/
 /logs/
+
+# System files.
+**/*.iml
+
+# Testing files.
+*.p12
+*.request.json
+nodedb

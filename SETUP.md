@@ -92,9 +92,7 @@ No resources found in <your-namespace-name> namespace.
 
 ### Install Docker credential helper
 
-```
-brew install docker-credential-helper-ecr
-```
+1. Follow the instructions at [link](https://github.com/awslabs/amazon-ecr-credential-helper#installing) as appropriate.
 
 ### Update Docker config
 
