@@ -20,10 +20,10 @@ import org.tessellation.schema.ID.Id
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.generators.{chooseNumRefined, transactionGen}
+import org.tessellation.schema.security.SecurityProvider
+import org.tessellation.schema.security.key.ops.PublicKeyOps
 import org.tessellation.schema.transaction.TransactionFee
 import org.tessellation.sdk.sdkKryoRegistrar
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.key.ops.PublicKeyOps
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.cats._

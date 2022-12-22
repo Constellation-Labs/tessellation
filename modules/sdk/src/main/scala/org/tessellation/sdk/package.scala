@@ -1,7 +1,7 @@
 package org.tessellation
 
 import org.tessellation.ext.kryo._
-import org.tessellation.kernel._
+import org.tessellation.schema.kryo.{ProtocolKryoRegistrationId, schemaKryoRegistrar}
 import org.tessellation.sdk.domain.healthcheck.consensus.types.HealthCheckRoundId
 import org.tessellation.sdk.infrastructure.consensus.declaration.{Facility, MajoritySignature, Proposal}
 import org.tessellation.sdk.infrastructure.consensus.message._
@@ -11,20 +11,11 @@ import org.tessellation.shared._
 
 import com.comcast.ip4s._
 import eu.timepit.refined.auto._
-import eu.timepit.refined.boolean.Or
-import eu.timepit.refined.numeric.Interval
 
 package object sdk {
 
-  type SdkKryoRegistrationIdRange = Interval.Closed[500, 599]
-
-  type SdkOrSharedOrKernelRegistrationIdRange =
-    SdkKryoRegistrationIdRange Or SharedKryoRegistrationIdRange Or KernelKryoRegistrationIdRange
-
-  type SdkKryoRegistrationId = KryoRegistrationId[SdkKryoRegistrationIdRange]
-
-  val sdkKryoRegistrar: Map[Class[_], KryoRegistrationId[SdkOrSharedOrKernelRegistrationIdRange]] =
-    Map[Class[_], SdkKryoRegistrationId](
+  val sdkKryoRegistrar: Map[Class[_], ProtocolKryoRegistrationId] =
+    Map[Class[_], ProtocolKryoRegistrationId](
       classOf[PingConsensusHealthStatus] -> 500,
       classOf[PingHealthCheckKey] -> 501,
       classOf[HealthCheckRoundId] -> 502,
@@ -48,5 +39,5 @@ package object sdk {
       classOf[ConsensusPeerDeclaration[_, _]] -> 529,
       EventTrigger.getClass -> 530,
       TimeTrigger.getClass -> 531
-    ).union(sharedKryoRegistrar).union(kernelKryoRegistrar)
+    ).union(sharedKryoRegistrar).union(schemaKryoRegistrar)
 }

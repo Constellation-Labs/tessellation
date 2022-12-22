@@ -1,6 +1,6 @@
 package org.tessellation.dag.snapshot
 
-import org.tessellation.security.hash.Hash
+import org.tessellation.schema.security.hash.Hash
 
 object Coinbase {
 

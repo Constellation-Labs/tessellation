@@ -7,13 +7,13 @@ import cats.syntax.all._
 
 import org.tessellation.dag.dagSharedKryoRegistrar
 import org.tessellation.dag.snapshot.GlobalSnapshot
-import org.tessellation.ext.crypto._
 import org.tessellation.ext.kryo._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
+import org.tessellation.schema.ext.crypto._
+import org.tessellation.schema.security.hash.Hash
+import org.tessellation.schema.security.signature.Signed
 import org.tessellation.sdk.sdkKryoRegistrar
-import org.tessellation.security.hash.Hash
-import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto._
 import fs2.io.file.{Files, Path}

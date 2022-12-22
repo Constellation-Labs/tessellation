@@ -4,11 +4,10 @@ import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.dag.snapshot.StateChannelSnapshotBinary
-import org.tessellation.domain.aci.StateChannelOutput
 import org.tessellation.domain.statechannel.StateChannelService
-import org.tessellation.ext.http4s.AddressVar
-import org.tessellation.security.signature.Signed
+import org.tessellation.schema.ext.http4s.AddressVar
+import org.tessellation.schema.security.signature.Signed
+import org.tessellation.schema.statechannels.{StateChannelOutput, StateChannelSnapshotBinary}
 
 import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
 import org.http4s.dsl.Http4sDsl

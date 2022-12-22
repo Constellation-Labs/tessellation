@@ -7,9 +7,9 @@ import org.tessellation.dag.transaction.{ContextualTransactionValidator, Transac
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.security.SecurityProvider
+import org.tessellation.schema.security.signature.SignedValidator
 import org.tessellation.sdk.infrastructure.gossip.RumorValidator
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.signature.SignedValidator
 
 object Validators {
 

@@ -11,7 +11,7 @@ import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.security.{SecureRandom, SecurityProvider}
+import org.tessellation.schema.security.{SecureRandom, SecurityProvider}
 
 import org.bouncycastle.asn1.x500.X500Name
 import org.bouncycastle.asn1.x509.SubjectPublicKeyInfo

@@ -3,7 +3,7 @@ package org.tessellation.sdk.http.p2p.headers
 import cats.syntax.either._
 
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.security.hex.Hex
+import org.tessellation.schema.security.hex.Hex
 
 import io.estatico.newtype.ops._
 import org.http4s.{Header, ParseFailure, ParseResult}

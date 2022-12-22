@@ -8,11 +8,11 @@ import cats.syntax.traverse._
 
 import org.tessellation.dag.l1.infrastructure.healthcheck.HealthCheckDaemon
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.security.SecurityProvider
 import org.tessellation.sdk.domain.Daemon
 import org.tessellation.sdk.infrastructure.cluster.daemon.NodeStateDaemon
 import org.tessellation.sdk.infrastructure.collateral.daemon.CollateralDaemon
 import org.tessellation.sdk.infrastructure.metrics.Metrics
-import org.tessellation.security.SecurityProvider
 
 object Daemons {
 

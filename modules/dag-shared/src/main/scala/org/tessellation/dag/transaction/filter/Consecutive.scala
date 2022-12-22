@@ -12,9 +12,9 @@ import cats.{Applicative, Id, Order}
 import scala.annotation.tailrec
 
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.security.Hashed
+import org.tessellation.schema.security.signature.Signed
 import org.tessellation.schema.transaction.{Transaction, TransactionReference}
-import org.tessellation.security.Hashed
-import org.tessellation.security.signature.Signed
 
 object Consecutive {
   val signedTxOrder: Order[Signed[Transaction]] =

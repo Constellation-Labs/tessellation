@@ -16,9 +16,9 @@ import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
+import org.tessellation.schema.security.SecurityProvider
+import org.tessellation.schema.security.signature.Signed
 import org.tessellation.schema.{BlockReference, transaction}
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong

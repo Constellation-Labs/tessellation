@@ -12,10 +12,10 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.keytool.cert.{DistinguishedName, SelfSignedCertificate}
-import org.tessellation.security._
-import org.tessellation.security.hex.Hex
-import org.tessellation.security.key.ops._
-import org.tessellation.security.signature.Signing
+import org.tessellation.schema.security._
+import org.tessellation.schema.security.hex.Hex
+import org.tessellation.schema.security.key.ops._
+import org.tessellation.schema.security.signature.Signing
 
 import io.estatico.newtype.ops._
 

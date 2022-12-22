@@ -6,9 +6,9 @@ import org.tessellation.dag.domain.block.Tips
 import org.tessellation.dag.l1.domain.consensus.round.RoundId
 import org.tessellation.kernel.Ω
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.security.signature.Signed
+import org.tessellation.schema.security.signature.signature.Signature
 import org.tessellation.schema.transaction.Transaction
-import org.tessellation.security.signature.Signed
-import org.tessellation.security.signature.signature.Signature
 
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive

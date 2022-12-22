@@ -18,10 +18,10 @@ import org.tessellation.dag.l1.domain.block.BlockStorage._
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
 import org.tessellation.ext.collection.MapRefUtils.MapRefOps
 import org.tessellation.schema.height.Height
+import org.tessellation.schema.security.Hashed
+import org.tessellation.schema.security.hash.ProofsHash
+import org.tessellation.schema.security.signature.Signed
 import org.tessellation.schema.{ActiveTip, BlockReference}
-import org.tessellation.security.Hashed
-import org.tessellation.security.hash.ProofsHash
-import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}

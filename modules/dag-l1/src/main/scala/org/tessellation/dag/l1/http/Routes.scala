@@ -8,12 +8,12 @@ import cats.syntax.show._
 
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.PeerBlockConsensusInput
 import org.tessellation.dag.l1.domain.transaction.{TransactionService, TransactionStorage, transactionLoggerName}
-import org.tessellation.ext.http4s.{AddressVar, HashVar}
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.ext.http4s.{AddressVar, HashVar}
 import org.tessellation.schema.http.{ErrorCause, ErrorResponse}
+import org.tessellation.schema.security.signature.Signed
 import org.tessellation.schema.transaction.{Transaction, TransactionStatus, TransactionView}
 import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
-import org.tessellation.security.signature.Signed
 
 import io.circe.shapes._
 import io.circe.syntax.EncoderOps

@@ -31,10 +31,10 @@ import org.tessellation.kernel.Cell.NullTerminal
 import org.tessellation.kernel._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.{Peer, PeerId}
+import org.tessellation.schema.security.signature.Signed
+import org.tessellation.schema.security.signature.Signed._
+import org.tessellation.schema.security.{Hashed, SecurityProvider}
 import org.tessellation.schema.transaction.Transaction
-import org.tessellation.security.signature.Signed
-import org.tessellation.security.signature.Signed._
-import org.tessellation.security.{Hashed, SecurityProvider}
 
 import eu.timepit.refined.auto.{autoRefineV, autoUnwrap}
 import higherkindness.droste.{AlgebraM, CoalgebraM, scheme}

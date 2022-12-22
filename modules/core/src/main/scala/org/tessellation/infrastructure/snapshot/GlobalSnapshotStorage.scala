@@ -18,14 +18,14 @@ import org.tessellation.dag.snapshot.GlobalSnapshot
 import org.tessellation.domain.snapshot.GlobalSnapshotStorage
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.cats.syntax.partialPrevious._
-import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
+import org.tessellation.schema.ext.crypto._
+import org.tessellation.schema.security.hash.Hash
+import org.tessellation.schema.security.signature.Signed
 import org.tessellation.sdk.domain.collateral.LatestBalances
-import org.tessellation.security.hash.Hash
-import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto.autoUnwrap
 import eu.timepit.refined.types.numeric.NonNegLong

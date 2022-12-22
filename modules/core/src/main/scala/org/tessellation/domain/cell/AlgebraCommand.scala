@@ -1,9 +1,9 @@
 package org.tessellation.domain.cell
 
 import org.tessellation.dag.domain.block.DAGBlock
-import org.tessellation.domain.aci.StateChannelOutput
 import org.tessellation.kernel.Ω
-import org.tessellation.security.signature.Signed
+import org.tessellation.schema.security.signature.Signed
+import org.tessellation.schema.statechannels.StateChannelOutput
 
 sealed trait AlgebraCommand extends Ω
 

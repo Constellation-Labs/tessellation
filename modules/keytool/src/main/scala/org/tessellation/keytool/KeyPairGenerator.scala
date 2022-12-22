@@ -7,8 +7,8 @@ import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.security.key.{ECDSA, secp256k}
-import org.tessellation.security.{SecureRandom, SecurityProvider}
+import org.tessellation.schema.security.key.{ECDSA, secp256k}
+import org.tessellation.schema.security.{SecureRandom, SecurityProvider}
 
 /** Need to compare this to: https://github.com/bitcoinj/bitcoinj/blob/master/core/src/main/java/org/bitcoinj/core/ECKey.java
   *

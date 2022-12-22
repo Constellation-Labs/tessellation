@@ -10,9 +10,9 @@ import cats.syntax.functor._
 
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
+import org.tessellation.schema.security.signature.Signed.forAsyncKryo
+import org.tessellation.schema.security.{Hashed, SecurityProvider}
 import org.tessellation.schema.transaction._
-import org.tessellation.security.signature.Signed.forAsyncKryo
-import org.tessellation.security.{Hashed, SecurityProvider}
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.PosInt

@@ -15,17 +15,18 @@ import org.tessellation.dag.block.BlockValidator.BlockValidationError
 import org.tessellation.dag.dagSharedKryoRegistrar
 import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.dag.transaction.{TransactionChainValidator, TransactionValidator}
-import org.tessellation.ext.crypto._
 import org.tessellation.ext.kryo._
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.BlockReference
+import org.tessellation.schema.ext.crypto._
 import org.tessellation.schema.height.Height
+import org.tessellation.schema.kryo.schemaKryoRegistrar
+import org.tessellation.schema.security.SecurityProvider
+import org.tessellation.schema.security.hash.ProofsHash
+import org.tessellation.schema.security.key.ops.PublicKeyOps
+import org.tessellation.schema.security.signature.{Signed, SignedValidator}
 import org.tessellation.schema.transaction._
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.hash.ProofsHash
-import org.tessellation.security.key.ops.PublicKeyOps
-import org.tessellation.security.signature.{Signed, SignedValidator}
 import org.tessellation.shared.sharedKryoRegistrar
 
 import eu.timepit.refined.auto._
@@ -37,7 +38,7 @@ object BlockValidatorSuite extends MutableIOSuite with Checkers {
   type Res = (KryoSerializer[IO], SecurityProvider[IO])
 
   override def sharedResource: Resource[IO, BlockValidatorSuite.Res] =
-    KryoSerializer.forAsync[IO](dagSharedKryoRegistrar.union(sharedKryoRegistrar)).flatMap { ks =>
+    KryoSerializer.forAsync[IO](dagSharedKryoRegistrar.union(sharedKryoRegistrar).union(schemaKryoRegistrar)).flatMap { ks =>
       SecurityProvider.forAsync[IO].map((ks, _))
     }
 

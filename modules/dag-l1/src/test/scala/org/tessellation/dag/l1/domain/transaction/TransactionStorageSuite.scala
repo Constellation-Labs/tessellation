@@ -12,10 +12,10 @@ import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
+import org.tessellation.schema.security.key.ops.PublicKeyOps
+import org.tessellation.schema.security.{Hashed, SecurityProvider}
 import org.tessellation.schema.transaction._
 import org.tessellation.sdk.sdkKryoRegistrar
-import org.tessellation.security.key.ops.PublicKeyOps
-import org.tessellation.security.{Hashed, SecurityProvider}
 
 import eu.timepit.refined.auto._
 import io.chrisdavenport.mapref.MapRef

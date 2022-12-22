@@ -4,9 +4,9 @@ import cats.effect.Sync
 import cats.syntax.functor._
 
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.PeerBlockConsensusInput
+import org.tessellation.schema.security.signature.Signed
 import org.tessellation.sdk.http.p2p.PeerResponse
 import org.tessellation.sdk.http.p2p.PeerResponse.PeerResponse
-import org.tessellation.security.signature.Signed
 
 import org.http4s.Method.POST
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder

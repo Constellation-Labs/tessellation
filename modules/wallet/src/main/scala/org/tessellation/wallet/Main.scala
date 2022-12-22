@@ -12,13 +12,15 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.BuildInfo
+import org.tessellation.ext.kryo._
 import org.tessellation.keytool.KeyStoreUtils
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
+import org.tessellation.schema.kryo.schemaKryoRegistrar
+import org.tessellation.schema.security.SecurityProvider
+import org.tessellation.schema.security.key.ops._
+import org.tessellation.schema.security.signature.Signed
 import org.tessellation.schema.transaction.{Transaction, TransactionAmount, TransactionFee}
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.key.ops._
-import org.tessellation.security.signature.Signed
 import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.wallet.cli.env.EnvConfig
 import org.tessellation.wallet.cli.method._
@@ -43,7 +45,7 @@ object Main
     (cli.method.opts, cli.env.opts).mapN {
       case (method, envs) =>
         SecurityProvider.forAsync[IO].use { implicit sp =>
-          KryoSerializer.forAsync[IO](sharedKryoRegistrar).use { implicit kryo =>
+          KryoSerializer.forAsync[IO](sharedKryoRegistrar.union(schemaKryoRegistrar)).use { implicit kryo =>
             loadKeyPair[IO](envs).flatMap { keyPair =>
               method match {
                 case ShowAddress() =>

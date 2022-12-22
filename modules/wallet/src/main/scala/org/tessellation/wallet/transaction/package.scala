@@ -7,13 +7,13 @@ import cats.syntax.applicative._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
+import org.tessellation.schema.ext.crypto._
+import org.tessellation.schema.security.key.ops._
+import org.tessellation.schema.security.signature.Signed
+import org.tessellation.schema.security.{SecureRandom, SecurityProvider}
 import org.tessellation.schema.transaction._
-import org.tessellation.security.key.ops._
-import org.tessellation.security.signature.Signed
-import org.tessellation.security.{SecureRandom, SecurityProvider}
 
 package object transaction {
 

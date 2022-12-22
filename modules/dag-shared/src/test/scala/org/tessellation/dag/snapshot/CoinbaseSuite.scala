@@ -3,8 +3,8 @@ package org.tessellation.dag.snapshot
 import cats.effect.{IO, Resource}
 
 import org.tessellation.dag.dagSharedKryoRegistrar
-import org.tessellation.ext.crypto.RefinedHashableF
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.ext.crypto.RefinedHashableF
 
 import suite.ResourceSuite
 import weaver.scalacheck.Checkers

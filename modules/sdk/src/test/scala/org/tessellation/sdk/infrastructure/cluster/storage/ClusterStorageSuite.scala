@@ -6,7 +6,7 @@ import cats.syntax.option._
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.generators._
 import org.tessellation.schema.peer.{Peer, PeerId}
-import org.tessellation.security.hex.Hex
+import org.tessellation.schema.security.hex.Hex
 
 import com.comcast.ip4s.IpLiteralSyntax
 import eu.timepit.refined.auto._

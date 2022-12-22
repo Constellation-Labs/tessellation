@@ -14,13 +14,13 @@ import org.tessellation.ext.cats.effect._
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
+import org.tessellation.schema.security.SecurityProvider
+import org.tessellation.schema.security.hash.Hash
+import org.tessellation.schema.security.key.ops.PublicKeyOps
+import org.tessellation.schema.security.signature.Signed.forAsyncKryo
+import org.tessellation.schema.security.signature.SignedValidator.InvalidSignatures
+import org.tessellation.schema.security.signature.{Signed, SignedValidator}
 import org.tessellation.schema.transaction._
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.hash.Hash
-import org.tessellation.security.key.ops.PublicKeyOps
-import org.tessellation.security.signature.Signed.forAsyncKryo
-import org.tessellation.security.signature.SignedValidator.InvalidSignatures
-import org.tessellation.security.signature.{Signed, SignedValidator}
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}

@@ -10,6 +10,8 @@ import cats.syntax.functor._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.security.SecurityProvider
+import org.tessellation.schema.security.hash.Hash
 import org.tessellation.sdk.config.types.SdkConfig
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.gossip.Gossip
@@ -19,8 +21,6 @@ import org.tessellation.sdk.infrastructure.cluster.services.Cluster
 import org.tessellation.sdk.infrastructure.gossip.Gossip
 import org.tessellation.sdk.infrastructure.healthcheck.LocalHealthcheck
 import org.tessellation.sdk.infrastructure.metrics.Metrics
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.hash.Hash
 
 import fs2.concurrent.SignallingRef
 

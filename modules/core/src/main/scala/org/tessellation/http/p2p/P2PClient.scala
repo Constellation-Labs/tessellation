@@ -4,11 +4,11 @@ import cats.effect.Async
 
 import org.tessellation.http.p2p.clients._
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.security.SecurityProvider
 import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.http.p2p.SdkP2PClient
 import org.tessellation.sdk.http.p2p.clients.{ClusterClient, NodeClient, SignClient}
 import org.tessellation.sdk.infrastructure.gossip.p2p.GossipClient
-import org.tessellation.security.SecurityProvider
 
 import org.http4s.client._
 

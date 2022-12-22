@@ -6,21 +6,17 @@ import cats.effect.Async
 
 import scala.util.control.NoStackTrace
 
-import org.tessellation.domain.aci.StateChannelOutput
-import org.tessellation.ext.kryo._
+import org.tessellation.schema.kryo.ProtocolKryoRegistrationId
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.security.SecurityProvider
+import org.tessellation.schema.security.SecurityProvider
+import org.tessellation.schema.statechannels.StateChannelOutput
 
 import eu.timepit.refined.auto._
-import eu.timepit.refined.numeric.Interval
 import io.estatico.newtype.ops._
 
 package object tessellation {
 
-  type CoreKryoRegistrationIdRange = Interval.Closed[700, 799]
-  type CoreKryoRegistrationId = KryoRegistrationId[CoreKryoRegistrationIdRange]
-
-  val coreKryoRegistrar: Map[Class[_], CoreKryoRegistrationId] = Map(
+  val coreKryoRegistrar: Map[Class[_], ProtocolKryoRegistrationId] = Map(
     classOf[StateChannelOutput] -> 700
   )
 

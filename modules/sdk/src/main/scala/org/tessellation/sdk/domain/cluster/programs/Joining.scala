@@ -13,13 +13,16 @@ import cats.syntax.show._
 import cats.syntax.traverse._
 
 import org.tessellation.effects.GenUUID
-import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.cluster._
+import org.tessellation.schema.ext.crypto._
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.Peer.toP2PContext
 import org.tessellation.schema.peer._
+import org.tessellation.schema.security.SecurityProvider
+import org.tessellation.schema.security.hash.Hash
+import org.tessellation.schema.security.signature.Signed
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.AppEnvironment.Dev
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
@@ -27,9 +30,6 @@ import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStora
 import org.tessellation.sdk.domain.healthcheck.LocalHealthcheck
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.http.p2p.clients.SignClient
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.hash.Hash
-import org.tessellation.security.signature.Signed
 
 import com.comcast.ip4s.{Host, IpLiteralSyntax}
 import fs2.{Pipe, Stream}

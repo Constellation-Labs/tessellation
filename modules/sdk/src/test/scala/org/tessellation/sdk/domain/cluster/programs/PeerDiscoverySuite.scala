@@ -5,12 +5,12 @@ import cats.effect.IO
 
 import org.tessellation.schema.generators._
 import org.tessellation.schema.peer.{Peer, PeerId}
+import org.tessellation.schema.security.hex.Hex
 import org.tessellation.schema.{cluster, node, peer}
 import org.tessellation.sdk.domain.cluster.programs.PeerDiscovery
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.http.p2p.PeerResponse
 import org.tessellation.sdk.http.p2p.clients.ClusterClient
-import org.tessellation.security.hex.Hex
 
 import com.comcast.ip4s.{Host, Port}
 import org.scalacheck.Arbitrary

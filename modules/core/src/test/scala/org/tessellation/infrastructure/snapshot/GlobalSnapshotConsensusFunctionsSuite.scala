@@ -14,7 +14,6 @@ import org.tessellation.dag.dagSharedKryoRegistrar
 import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.dag.snapshot.epoch.EpochProgress
 import org.tessellation.dag.snapshot.{GlobalSnapshot, _}
-import org.tessellation.domain.aci.StateChannelOutput
 import org.tessellation.domain.rewards.Rewards
 import org.tessellation.domain.snapshot.GlobalSnapshotStorage
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
@@ -23,17 +22,18 @@ import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
+import org.tessellation.schema.security.SecurityProvider
+import org.tessellation.schema.security.hash.Hash
+import org.tessellation.schema.security.key.ops.PublicKeyOps
+import org.tessellation.schema.security.signature.Signed
+import org.tessellation.schema.security.signature.Signed.forAsyncKryo
+import org.tessellation.schema.statechannels.{StateChannelOutput, StateChannelSnapshotBinary}
 import org.tessellation.schema.transaction.{RewardTransaction, Transaction}
 import org.tessellation.schema.{ID, SnapshotOrdinal}
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.infrastructure.consensus.trigger.EventTrigger
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.sdkKryoRegistrar
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.hash.Hash
-import org.tessellation.security.key.ops.PublicKeyOps
-import org.tessellation.security.signature.Signed
-import org.tessellation.security.signature.Signed.forAsyncKryo
 import org.tessellation.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._

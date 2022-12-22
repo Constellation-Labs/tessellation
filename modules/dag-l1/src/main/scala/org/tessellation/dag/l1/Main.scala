@@ -12,6 +12,7 @@ import org.tessellation.dag.l1.modules._
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.kryo._
 import org.tessellation.schema.cluster.ClusterId
+import org.tessellation.schema.kryo.ProtocolKryoRegistrationIdRange
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.node.NodeState.SessionStarted
 import org.tessellation.sdk.app.{SDK, TessellationIOApp}
@@ -21,7 +22,6 @@ import org.tessellation.sdk.resources.MkHttpServer.ServerName
 
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
-import eu.timepit.refined.boolean.Or
 
 object Main
     extends TessellationIOApp[Run](
@@ -32,7 +32,7 @@ object Main
     ) {
   val opts: Opts[Run] = cli.method.opts
 
-  type KryoRegistrationIdRange = DagL1KryoRegistrationIdRange Or DagSharedKryoRegistrationIdRange
+  type KryoRegistrationIdRange = ProtocolKryoRegistrationIdRange
 
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
     dagL1KryoRegistrar.union(dagSharedKryoRegistrar)

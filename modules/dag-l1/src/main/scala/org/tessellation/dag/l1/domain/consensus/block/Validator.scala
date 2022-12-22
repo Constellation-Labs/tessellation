@@ -14,10 +14,10 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.node.NodeState.Ready
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.security.SecurityProvider
+import org.tessellation.schema.security.signature.Signed
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.node.NodeStorage
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto.autoUnwrap
 import eu.timepit.refined.types.numeric.PosInt

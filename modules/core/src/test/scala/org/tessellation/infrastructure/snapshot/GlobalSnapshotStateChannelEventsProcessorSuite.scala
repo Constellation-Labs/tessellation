@@ -11,18 +11,19 @@ import cats.syntax.validated._
 import scala.collection.immutable.SortedMap
 
 import org.tessellation.dag.dagSharedKryoRegistrar
-import org.tessellation.dag.snapshot.{GlobalSnapshotInfo, StateChannelSnapshotBinary}
-import org.tessellation.domain.aci.StateChannelOutput
+import org.tessellation.dag.snapshot.GlobalSnapshotInfo
 import org.tessellation.domain.statechannel.StateChannelValidator
-import org.tessellation.ext.crypto._
 import org.tessellation.ext.kryo._
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.hash.Hash
-import org.tessellation.security.key.ops.PublicKeyOps
-import org.tessellation.security.signature.Signed.forAsyncKryo
+import org.tessellation.schema.ext.crypto._
+import org.tessellation.schema.kryo.schemaKryoRegistrar
+import org.tessellation.schema.security.SecurityProvider
+import org.tessellation.schema.security.hash.Hash
+import org.tessellation.schema.security.key.ops.PublicKeyOps
+import org.tessellation.schema.security.signature.Signed.forAsyncKryo
+import org.tessellation.schema.statechannels.{StateChannelOutput, StateChannelSnapshotBinary}
 import org.tessellation.shared.sharedKryoRegistrar
 
 import weaver.MutableIOSuite
@@ -32,7 +33,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
   type Res = (KryoSerializer[IO], SecurityProvider[IO])
 
   override def sharedResource: Resource[IO, GlobalSnapshotStateChannelEventsProcessorSuite.Res] =
-    KryoSerializer.forAsync[IO](dagSharedKryoRegistrar.union(sharedKryoRegistrar)).flatMap { ks =>
+    KryoSerializer.forAsync[IO](dagSharedKryoRegistrar.union(sharedKryoRegistrar).union(schemaKryoRegistrar)).flatMap { ks =>
       SecurityProvider.forAsync[IO].map((ks, _))
     }
 

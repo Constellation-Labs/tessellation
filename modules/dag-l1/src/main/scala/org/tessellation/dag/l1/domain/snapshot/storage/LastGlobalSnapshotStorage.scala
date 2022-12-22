@@ -14,9 +14,9 @@ import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.height.Height
+import org.tessellation.schema.security.Hashed
 import org.tessellation.sdk.domain.collateral.LatestBalances
 import org.tessellation.sdk.domain.snapshot.storage.LastGlobalSnapshotStorage
-import org.tessellation.security.Hashed
 
 import fs2.Stream
 import fs2.concurrent.SignallingRef

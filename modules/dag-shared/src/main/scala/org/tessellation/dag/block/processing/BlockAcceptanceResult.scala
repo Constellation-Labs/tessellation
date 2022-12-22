@@ -1,7 +1,7 @@
 package org.tessellation.dag.block.processing
 
 import org.tessellation.dag.domain.block.DAGBlock
-import org.tessellation.security.signature.Signed
+import org.tessellation.schema.security.signature.Signed
 
 import derevo.cats.{eqv, show}
 import derevo.derive

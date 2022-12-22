@@ -7,8 +7,8 @@ import cats.syntax.all._
 import org.tessellation.dag.transaction.TransactionChainValidator.{TransactionChainValidationErrorOr, TransactionNel}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
+import org.tessellation.schema.security.signature.Signed
 import org.tessellation.schema.transaction.{Transaction, TransactionReference}
-import org.tessellation.security.signature.Signed
 
 import derevo.cats.{eqv, show}
 import derevo.derive

@@ -18,9 +18,9 @@ import org.tessellation.dag.transaction.TransactionChainValidator.TransactionNel
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance, BalanceArithmeticError}
+import org.tessellation.schema.security.SecurityProvider
+import org.tessellation.schema.security.signature.Signed
 import org.tessellation.schema.transaction.{Transaction, TransactionReference}
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.cats._

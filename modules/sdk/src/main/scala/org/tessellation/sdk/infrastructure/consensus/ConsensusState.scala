@@ -8,10 +8,10 @@ import cats.syntax.show._
 import scala.concurrent.duration.FiniteDuration
 
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.security.hash.Hash
+import org.tessellation.schema.security.signature.Signed
 import org.tessellation.sdk.infrastructure.consensus.declaration.kind._
 import org.tessellation.sdk.infrastructure.consensus.trigger.ConsensusTrigger
-import org.tessellation.security.hash.Hash
-import org.tessellation.security.signature.Signed
 
 import derevo.cats.{eqv, show}
 import derevo.derive

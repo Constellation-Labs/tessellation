@@ -12,14 +12,14 @@ import cats.syntax.show._
 import scala.reflect.runtime.universe.TypeTag
 
 import org.tessellation.ext.cats.syntax.next._
-import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.ext.crypto._
 import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.gossip._
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.security.{Hashed, SecurityProvider}
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.infrastructure.metrics.Metrics
-import org.tessellation.security.{Hashed, SecurityProvider}
 
 import eu.timepit.refined.auto._
 import io.circe.Encoder

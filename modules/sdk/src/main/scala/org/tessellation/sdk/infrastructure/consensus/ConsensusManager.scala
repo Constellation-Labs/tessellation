@@ -14,6 +14,8 @@ import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.node.NodeState.{Observing, Ready}
 import org.tessellation.schema.peer.Peer.toP2PContext
 import org.tessellation.schema.peer.{Peer, PeerId}
+import org.tessellation.schema.security.hash.Hash
+import org.tessellation.schema.security.signature.Signed
 import org.tessellation.sdk.config.types.ConsensusConfig
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.gossip.Gossip
@@ -21,8 +23,6 @@ import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.infrastructure.consensus.registration.Deregistration
 import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import org.tessellation.sdk.infrastructure.metrics.Metrics
-import org.tessellation.security.hash.Hash
-import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto._
 import io.circe.{Decoder, Encoder}

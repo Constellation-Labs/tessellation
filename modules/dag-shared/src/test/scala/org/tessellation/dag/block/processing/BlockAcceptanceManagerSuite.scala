@@ -19,8 +19,9 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.BlockReference
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.height.Height
-import org.tessellation.security.hash.{Hash, ProofsHash}
-import org.tessellation.security.signature.Signed
+import org.tessellation.schema.kryo.schemaKryoRegistrar
+import org.tessellation.schema.security.hash.{Hash, ProofsHash}
+import org.tessellation.schema.security.signature.Signed
 import org.tessellation.shared.sharedKryoRegistrar
 
 import eu.timepit.refined.auto._
@@ -39,7 +40,7 @@ object BlockAcceptanceManagerSuite extends MutableIOSuite with Checkers {
   type Res = KryoSerializer[IO]
 
   override def sharedResource: Resource[IO, BlockAcceptanceManagerSuite.Res] =
-    KryoSerializer.forAsync[IO](dagSharedKryoRegistrar.union(sharedKryoRegistrar))
+    KryoSerializer.forAsync[IO](dagSharedKryoRegistrar.union(sharedKryoRegistrar).union(schemaKryoRegistrar))
 
   def mkBlockAcceptanceManager(acceptInitiallyAwaiting: Boolean = true)(implicit kryo: KryoSerializer[IO]) =
     Ref[F].of[Map[Signed[DAGBlock], Boolean]](Map.empty.withDefaultValue(false)).map { state =>

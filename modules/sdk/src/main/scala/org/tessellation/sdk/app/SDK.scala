@@ -7,11 +7,11 @@ import cats.effect.std.{Random, Supervisor}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.security.SecurityProvider
 import org.tessellation.sdk.http.p2p.SdkP2PClient
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.modules._
 import org.tessellation.sdk.resources.SdkResources
-import org.tessellation.security.SecurityProvider
 
 import fs2.concurrent.SignallingRef
 

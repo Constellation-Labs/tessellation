@@ -5,10 +5,10 @@ import cats.syntax.all._
 
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.gossip._
+import org.tessellation.schema.security.signature.Signed
 import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.http.p2p.PeerResponse
 import org.tessellation.sdk.http.p2p.PeerResponse.PeerResponse
-import org.tessellation.security.signature.Signed
 
 import fs2.Stream
 import io.circe.Json

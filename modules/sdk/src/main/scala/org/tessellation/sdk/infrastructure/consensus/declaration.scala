@@ -1,9 +1,9 @@
 package org.tessellation.sdk.infrastructure.consensus
 
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.security.hash.Hash
+import org.tessellation.schema.security.signature.signature.Signature
 import org.tessellation.sdk.infrastructure.consensus.trigger.ConsensusTrigger
-import org.tessellation.security.hash.Hash
-import org.tessellation.security.signature.signature.Signature
 
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}

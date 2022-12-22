@@ -14,6 +14,7 @@ import scala.reflect.runtime.universe.TypeTag
 
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.security.SecurityProvider
 import org.tessellation.sdk.config.types.ConsensusConfig
 import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
@@ -22,7 +23,6 @@ import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.infrastructure.gossip.RumorHandler
 import org.tessellation.sdk.infrastructure.metrics.Metrics
-import org.tessellation.security.SecurityProvider
 
 import io.circe.{Decoder, Encoder}
 import org.http4s.client.Client

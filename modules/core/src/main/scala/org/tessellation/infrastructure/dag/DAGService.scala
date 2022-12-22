@@ -9,7 +9,7 @@ import org.tessellation.domain.snapshot.GlobalSnapshotStorage
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
-import org.tessellation.security.signature.Signed
+import org.tessellation.schema.security.signature.Signed
 
 import io.estatico.newtype.ops._
 

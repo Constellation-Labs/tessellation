@@ -8,8 +8,8 @@ import org.tessellation.BuildInfo
 import org.tessellation.cli.env._
 import org.tessellation.keytool.cert.DistinguishedName
 import org.tessellation.keytool.cli.method.{ExportPrivateKeyHex, GenerateWallet, MigrateExistingKeyStoreToStorePassOnly}
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.hex.Hex
+import org.tessellation.schema.security.SecurityProvider
+import org.tessellation.schema.security.hex.Hex
 
 import com.monovore.decline.Opts
 import com.monovore.decline.effect.CommandIOApp

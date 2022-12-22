@@ -1,7 +1,7 @@
 package org.tessellation.sdk.infrastructure.seedlist
 
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.security.hex.Hex
+import org.tessellation.schema.security.hex.Hex
 
 import fs2.data.csv.RowDecoder
 import fs2.data.csv.generic.semiauto.deriveRowDecoder

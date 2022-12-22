@@ -8,14 +8,14 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.dag.domain.block.DAGBlock
-import org.tessellation.domain.aci.StateChannelOutput
 import org.tessellation.domain.cell.AlgebraCommand._
 import org.tessellation.domain.cell.CoalgebraCommand._
 import org.tessellation.domain.cell.L0Cell.{Algebra, Coalgebra}
 import org.tessellation.domain.cell.L0CellInput._
 import org.tessellation.kernel.Cell.NullTerminal
 import org.tessellation.kernel.{Cell, CellError, _}
-import org.tessellation.security.signature.Signed
+import org.tessellation.schema.security.signature.Signed
+import org.tessellation.schema.statechannels.StateChannelOutput
 
 import higherkindness.droste.{AlgebraM, CoalgebraM, scheme}
 

@@ -21,10 +21,10 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.height.{Height, SubHeight}
+import org.tessellation.schema.security.hash.ProofsHash
+import org.tessellation.schema.security.{Hashed, SecurityProvider}
 import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.sdk.domain.snapshot.storage.LastGlobalSnapshotStorage
-import org.tessellation.security.hash.ProofsHash
-import org.tessellation.security.{Hashed, SecurityProvider}
 
 import derevo.cats.show
 import derevo.derive

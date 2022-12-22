@@ -12,9 +12,9 @@ import org.tessellation.dag.transaction.TransactionValidator.TransactionValidati
 import org.tessellation.ext.cats.syntax.validated._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
+import org.tessellation.schema.security.hash.Hash
+import org.tessellation.schema.security.signature.Signed
 import org.tessellation.schema.transaction.{Transaction, TransactionOrdinal, TransactionReference}
-import org.tessellation.security.hash.Hash
-import org.tessellation.security.signature.Signed
 
 import derevo.cats.{eqv, show}
 import derevo.derive

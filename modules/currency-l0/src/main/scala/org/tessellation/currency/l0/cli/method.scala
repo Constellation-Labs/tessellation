@@ -14,7 +14,7 @@ import org.tessellation.schema.node.NodeState
 import org.tessellation.sdk.cli.{CliMethod, CollateralAmountOpts}
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types._
-import org.tessellation.security.hash.Hash
+import org.tessellation.schema.security.hash.Hash
 
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto._

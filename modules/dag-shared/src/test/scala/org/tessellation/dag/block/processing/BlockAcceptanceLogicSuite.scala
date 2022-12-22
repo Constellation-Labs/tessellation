@@ -10,11 +10,11 @@ import org.tessellation.schema.BlockReference
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.security.SecurityProvider
+import org.tessellation.schema.security.hex.Hex
+import org.tessellation.schema.security.signature.Signed
+import org.tessellation.schema.security.signature.signature.{Signature, SignatureProof}
 import org.tessellation.schema.transaction.TransactionReference
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.hex.Hex
-import org.tessellation.security.signature.Signed
-import org.tessellation.security.signature.signature.{Signature, SignatureProof}
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong

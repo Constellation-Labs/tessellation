@@ -5,7 +5,7 @@ import cats.effect.std.Queue
 import cats.syntax.functor._
 
 import org.tessellation.schema.gossip.RumorRaw
-import org.tessellation.security.Hashed
+import org.tessellation.schema.security.Hashed
 
 object SdkQueues {
 

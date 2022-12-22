@@ -5,10 +5,10 @@ import cats.syntax.all._
 import scala.concurrent.duration.FiniteDuration
 
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.security.hash.Hash
 import org.tessellation.sdk.infrastructure.consensus._
 import org.tessellation.sdk.infrastructure.consensus.declaration.kind
 import org.tessellation.sdk.infrastructure.consensus.declaration.kind.PeerDeclarationKind
-import org.tessellation.security.hash.Hash
 
 import org.scalacheck.Arbitrary.arbitrary
 import org.scalacheck.Gen

@@ -13,7 +13,6 @@ package object kernel {
   type KernelKryoRegistrationId = KryoRegistrationId[KernelKryoRegistrationIdRange]
 
   val kernelKryoRegistrar: Map[Class[_], KernelKryoRegistrationId] = Map(
-    classOf[ProcessSnapshot] -> 400,
-    classOf[StateChannelSnapshotGist] -> 401
+    classOf[ProcessSnapshot] -> 400
   )
 }

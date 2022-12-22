@@ -2,18 +2,14 @@ package org.tessellation
 
 import org.tessellation.dag.domain.block._
 import org.tessellation.dag.snapshot._
-import org.tessellation.ext.kryo._
+import org.tessellation.schema.kryo.ProtocolKryoRegistrationId
+import org.tessellation.schema.statechannels.StateChannelSnapshotBinary
 
 import eu.timepit.refined.auto._
-import eu.timepit.refined.numeric.Greater
 
 package object dag {
 
-  type DagSharedKryoRegistrationIdRange = Greater[100]
-
-  type DagSharedKryoRegistrationId = KryoRegistrationId[DagSharedKryoRegistrationIdRange]
-
-  val dagSharedKryoRegistrar: Map[Class[_], DagSharedKryoRegistrationId] = Map(
+  val dagSharedKryoRegistrar: Map[Class[_], ProtocolKryoRegistrationId] = Map(
     classOf[GlobalSnapshot] -> 600,
     classOf[StateChannelSnapshotBinary] -> 601,
     classOf[DAGBlock] -> 603,

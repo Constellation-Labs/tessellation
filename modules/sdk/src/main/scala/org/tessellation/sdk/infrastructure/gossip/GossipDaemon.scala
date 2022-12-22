@@ -12,6 +12,8 @@ import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.gossip._
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.{Peer, PeerId}
+import org.tessellation.schema.security.signature.Signed
+import org.tessellation.schema.security.{Hashed, SecurityProvider}
 import org.tessellation.sdk.config.types.GossipDaemonConfig
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.collateral.Collateral
@@ -20,8 +22,6 @@ import org.tessellation.sdk.infrastructure.gossip.RumorStorage
 import org.tessellation.sdk.infrastructure.gossip.RumorStorage.{AddSuccess, CounterTooHigh}
 import org.tessellation.sdk.infrastructure.gossip.p2p.GossipClient
 import org.tessellation.sdk.infrastructure.metrics.Metrics
-import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Hashed, SecurityProvider}
 
 import eu.timepit.refined.auto._
 import fs2.Stream

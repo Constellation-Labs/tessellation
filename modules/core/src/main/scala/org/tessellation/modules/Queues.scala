@@ -6,11 +6,11 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.dag.domain.block.DAGBlock
-import org.tessellation.domain.aci.StateChannelOutput
 import org.tessellation.schema.gossip.RumorRaw
+import org.tessellation.schema.security.Hashed
+import org.tessellation.schema.security.signature.Signed
+import org.tessellation.schema.statechannels.StateChannelOutput
 import org.tessellation.sdk.modules.SdkQueues
-import org.tessellation.security.Hashed
-import org.tessellation.security.signature.Signed
 
 object Queues {
 

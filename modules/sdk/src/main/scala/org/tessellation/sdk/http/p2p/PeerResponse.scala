@@ -5,9 +5,9 @@ import cats.effect.Async
 import cats.syntax.option._
 
 import org.tessellation.schema.peer.P2PContext
+import org.tessellation.schema.security.SecurityProvider
 import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.http.p2p.middleware.PeerAuthMiddleware
-import org.tessellation.security.SecurityProvider
 
 import org.http4s.Uri.{Authority, RegName, Scheme}
 import org.http4s._

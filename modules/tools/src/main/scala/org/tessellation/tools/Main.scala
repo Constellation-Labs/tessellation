@@ -14,19 +14,20 @@ import scala.math.Integral.Implicits._
 
 import org.tessellation.BuildInfo
 import org.tessellation.dag.dagSharedKryoRegistrar
-import org.tessellation.dag.snapshot.StateChannelSnapshotBinary
+import org.tessellation.schema.statechannels.StateChannelSnapshotBinary
 import org.tessellation.infrastructure.genesis.types.GenesisCSVAccount
 import org.tessellation.keytool.{KeyPairGenerator, KeyStoreUtils}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction._
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.hash.Hash
-import org.tessellation.security.key.ops._
-import org.tessellation.security.signature.Signed
+import org.tessellation.schema.security.SecurityProvider
+import org.tessellation.schema.security.hash.Hash
+import org.tessellation.schema.security.key.ops._
+import org.tessellation.schema.security.signature.Signed
 import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.tools.TransactionGenerator._
+import org.tessellation.schema.kryo.schemaKryoRegistrar
 import org.tessellation.tools.cli.method._
 
 import com.monovore.decline._
@@ -66,7 +67,7 @@ object Main
   override def main: Opts[IO[ExitCode]] =
     cli.method.opts.map { method =>
       SecurityProvider.forAsync[IO].use { implicit sp =>
-        KryoSerializer.forAsync[IO](sharedKryoRegistrar ++ dagSharedKryoRegistrar).use { implicit kryo =>
+        KryoSerializer.forAsync[IO](sharedKryoRegistrar ++ dagSharedKryoRegistrar ++ schemaKryoRegistrar).use { implicit kryo =>
           EmberClientBuilder.default[IO].build.use { client =>
             Random.scalaUtilRandom[IO].flatMap { implicit random =>
               (method match {

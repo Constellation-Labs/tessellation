@@ -2,7 +2,7 @@ package org.tessellation.sdk.domain.cluster.services
 
 import org.tessellation.schema.cluster.ClusterSessionToken
 import org.tessellation.schema.peer._
-import org.tessellation.security.signature.Signed
+import org.tessellation.schema.security.signature.Signed
 
 trait Cluster[F[_]] {
   def getRegistrationRequest: F[RegistrationRequest]

@@ -34,3 +34,4 @@ site/
 .bsp/
 scripts/
 /logs/
+.java-version

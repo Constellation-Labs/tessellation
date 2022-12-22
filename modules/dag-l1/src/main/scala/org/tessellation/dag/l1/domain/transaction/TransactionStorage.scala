@@ -25,9 +25,9 @@ import org.tessellation.dag.transaction.filter.Consecutive
 import org.tessellation.ext.collection.MapRefUtils._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
+import org.tessellation.schema.security.Hashed
+import org.tessellation.schema.security.hash.Hash
 import org.tessellation.schema.transaction._
-import org.tessellation.security.Hashed
-import org.tessellation.security.hash.Hash
 
 import eu.timepit.refined.types.numeric.NonNegLong
 import io.chrisdavenport.mapref.MapRef

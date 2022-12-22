@@ -5,11 +5,11 @@ import cats.effect.{IO, Resource}
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.security.SecurityProvider
+import org.tessellation.schema.security.hex.Hex
 import org.tessellation.sdk.config.types.CollateralConfig
 import org.tessellation.sdk.domain.collateral.LatestBalances
 import org.tessellation.sdk.infrastructure.Collateral
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.hex.Hex
 
 import eu.timepit.refined.auto._
 import weaver.MutableIOSuite

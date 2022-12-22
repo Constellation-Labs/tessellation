@@ -7,9 +7,9 @@ import cats.syntax.all._
 import org.tessellation.dag.transaction.TransactionValidator.TransactionValidationErrorOr
 import org.tessellation.ext.cats.syntax.validated._
 import org.tessellation.schema.address.Address
+import org.tessellation.schema.security.signature.SignedValidator.SignedValidationError
+import org.tessellation.schema.security.signature.{Signed, SignedValidator}
 import org.tessellation.schema.transaction.Transaction
-import org.tessellation.security.signature.SignedValidator.SignedValidationError
-import org.tessellation.security.signature.{Signed, SignedValidator}
 
 import derevo.cats.{eqv, show}
 import derevo.derive

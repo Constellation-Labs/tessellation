@@ -3,18 +3,13 @@ package org.tessellation.dag
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput._
 import org.tessellation.dag.l1.domain.consensus.block.CancellationReason
 import org.tessellation.dag.l1.domain.consensus.block.CancellationReason._
-import org.tessellation.ext.kryo._
+import org.tessellation.schema.kryo.ProtocolKryoRegistrationId
 
 import eu.timepit.refined.auto._
-import eu.timepit.refined.numeric.Interval
 
 package object l1 {
 
-  type DagL1KryoRegistrationIdRange = Interval.Closed[800, 899]
-
-  type DagL1KryoRegistrationId = KryoRegistrationId[DagL1KryoRegistrationIdRange]
-
-  val dagL1KryoRegistrar: Map[Class[_], DagL1KryoRegistrationId] = Map(
+  val dagL1KryoRegistrar: Map[Class[_], ProtocolKryoRegistrationId] = Map(
     classOf[PeerBlockConsensusInput] -> 800,
     classOf[Proposal] -> 801,
     classOf[BlockSignatureProposal] -> 802,

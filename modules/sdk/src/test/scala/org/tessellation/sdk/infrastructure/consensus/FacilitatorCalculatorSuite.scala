@@ -3,9 +3,9 @@ package org.tessellation.sdk.infrastructure.consensus
 import cats.syntax.option._
 
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.security.hash.Hash
+import org.tessellation.schema.security.hex.Hex
 import org.tessellation.sdk.infrastructure.consensus.declaration.Facility
-import org.tessellation.security.hash.Hash
-import org.tessellation.security.hex.Hex
 
 import weaver.FunSuite
 import weaver.scalacheck.Checkers

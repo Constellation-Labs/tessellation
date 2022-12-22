@@ -1,8 +1,8 @@
 package org.tessellation.sdk.infrastructure.consensus
 
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.security.hash.Hash
 import org.tessellation.sdk.infrastructure.consensus.declaration.kind.PeerDeclarationKind
-import org.tessellation.security.hash.Hash
 
 import derevo.cats.{eqv, show}
 import derevo.derive

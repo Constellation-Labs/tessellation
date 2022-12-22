@@ -5,8 +5,8 @@ import cats.data.{NonEmptyList, NonEmptySet}
 import org.tessellation.ext.cats.data.OrderBasedOrdering
 import org.tessellation.ext.codecs.NonEmptySetCodec
 import org.tessellation.schema._
+import org.tessellation.schema.security.signature.Signed
 import org.tessellation.schema.transaction.Transaction
-import org.tessellation.security.signature.Signed
 
 import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia.{decoder, encoder}

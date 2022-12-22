@@ -10,6 +10,7 @@ import org.tessellation.http.routes._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.security.SecurityProvider
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.AppEnvironment.{Dev, Mainnet, Testnet}
 import org.tessellation.sdk.config.types.HttpConfig
@@ -19,7 +20,6 @@ import org.tessellation.sdk.http.routes._
 import org.tessellation.sdk.infrastructure.consensus.ConsensusRoutes
 import org.tessellation.sdk.infrastructure.healthcheck.ping.PingHealthCheckRoutes
 import org.tessellation.sdk.infrastructure.metrics.Metrics
-import org.tessellation.security.SecurityProvider
 
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
 import org.http4s.server.Router

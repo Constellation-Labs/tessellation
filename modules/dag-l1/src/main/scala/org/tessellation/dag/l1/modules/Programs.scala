@@ -6,9 +6,9 @@ import cats.effect.std.Random
 import org.tessellation.dag.l1.domain.snapshot.programs.SnapshotProcessor
 import org.tessellation.dag.l1.http.p2p.P2PClient
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.security.SecurityProvider
 import org.tessellation.sdk.domain.cluster.programs.{Joining, L0PeerDiscovery, PeerDiscovery}
 import org.tessellation.sdk.modules.SdkPrograms
-import org.tessellation.security.SecurityProvider
 
 object Programs {
 

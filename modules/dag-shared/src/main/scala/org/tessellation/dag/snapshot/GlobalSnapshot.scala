@@ -15,10 +15,11 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.security.hash.{Hash, ProofsHash}
+import org.tessellation.schema.security.hex.Hex
+import org.tessellation.schema.security.signature.Signed
+import org.tessellation.schema.statechannels.StateChannelSnapshotBinary
 import org.tessellation.schema.transaction.RewardTransaction
-import org.tessellation.security.hash.{Hash, ProofsHash}
-import org.tessellation.security.hex.Hex
-import org.tessellation.security.signature.Signed
 import org.tessellation.syntax.sortedCollection._
 
 import derevo.cats.{eqv, show}

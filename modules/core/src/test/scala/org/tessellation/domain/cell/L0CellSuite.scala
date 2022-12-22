@@ -6,7 +6,7 @@ import cats.effect.std.Queue
 import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.dag.domain.block.generators._
 import org.tessellation.kernel.Cell
-import org.tessellation.security.signature.Signed
+import org.tessellation.schema.security.signature.Signed
 
 import eu.timepit.refined.auto._
 import weaver.SimpleMutableIOSuite

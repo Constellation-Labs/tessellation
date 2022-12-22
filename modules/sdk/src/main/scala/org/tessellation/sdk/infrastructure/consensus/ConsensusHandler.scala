@@ -8,12 +8,12 @@ import cats.syntax.semigroupk._
 
 import scala.reflect.runtime.universe.TypeTag
 
+import org.tessellation.schema.security.SecurityProvider
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
 import org.tessellation.sdk.infrastructure.consensus.declaration._
 import org.tessellation.sdk.infrastructure.consensus.message._
 import org.tessellation.sdk.infrastructure.consensus.registration.Deregistration
 import org.tessellation.sdk.infrastructure.gossip.RumorHandler
-import org.tessellation.security.SecurityProvider
 
 import io.circe.Decoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger

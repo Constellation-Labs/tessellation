@@ -33,7 +33,7 @@ import org.tessellation.kernel.{CellError, Ω}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.height.Height
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.security.{Hashed, SecurityProvider}
+import org.tessellation.schema.security.{Hashed, SecurityProvider}
 
 import fs2.{Pipe, Stream}
 import org.typelevel.log4cats.slf4j.Slf4jLogger

@@ -8,11 +8,11 @@ import cats.syntax.all._
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.schema.gossip._
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.security.Hashed
+import org.tessellation.schema.security.hash.Hash
+import org.tessellation.schema.security.signature.Signed
 import org.tessellation.sdk.config.types.RumorStorageConfig
 import org.tessellation.sdk.infrastructure.gossip.RumorStorage.AddResult
-import org.tessellation.security.Hashed
-import org.tessellation.security.hash.Hash
-import org.tessellation.security.signature.Signed
 
 import derevo.cats.{order, show}
 import derevo.derive

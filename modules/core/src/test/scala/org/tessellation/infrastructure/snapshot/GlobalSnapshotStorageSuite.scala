@@ -11,17 +11,17 @@ import org.tessellation.dag.dagSharedKryoRegistrar
 import org.tessellation.dag.snapshot.GlobalSnapshot
 import org.tessellation.dag.snapshot.epoch.EpochProgress
 import org.tessellation.ext.cats.syntax.next._
-import org.tessellation.ext.crypto._
 import org.tessellation.ext.kryo._
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.ext.crypto._
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.security.SecurityProvider
+import org.tessellation.schema.security.hex.Hex
+import org.tessellation.schema.security.signature.Signed
 import org.tessellation.schema.{address, balance}
 import org.tessellation.sdk.sdkKryoRegistrar
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.hex.Hex
-import org.tessellation.security.signature.Signed
 
 import better.files._
 import eu.timepit.refined.auto._

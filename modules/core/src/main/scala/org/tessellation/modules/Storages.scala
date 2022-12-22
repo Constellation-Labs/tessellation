@@ -11,12 +11,12 @@ import org.tessellation.domain.trust.storage.TrustStorage
 import org.tessellation.infrastructure.snapshot.{GlobalSnapshotLocalFileSystemStorage, GlobalSnapshotStorage}
 import org.tessellation.infrastructure.trust.storage.TrustStorage
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.security.hash.Hash
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tessellation.sdk.domain.collateral.LatestBalances
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.infrastructure.gossip.RumorStorage
 import org.tessellation.sdk.modules.SdkStorages
-import org.tessellation.security.hash.Hash
 
 object Storages {
 

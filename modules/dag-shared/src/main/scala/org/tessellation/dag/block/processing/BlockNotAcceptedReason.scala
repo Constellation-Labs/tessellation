@@ -6,8 +6,8 @@ import org.tessellation.dag.block.BlockValidator.BlockValidationError
 import org.tessellation.schema.BlockReference
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.BalanceArithmeticError
+import org.tessellation.schema.security.hash.Hash
 import org.tessellation.schema.transaction.{TransactionOrdinal, TransactionReference}
-import org.tessellation.security.hash.Hash
 
 import derevo.cats.{eqv, show}
 import derevo.derive

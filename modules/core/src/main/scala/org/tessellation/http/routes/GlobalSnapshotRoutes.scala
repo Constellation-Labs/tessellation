@@ -7,10 +7,10 @@ import cats.syntax.functor._
 import org.tessellation.dag.snapshot.GlobalSnapshot
 import org.tessellation.domain.snapshot.GlobalSnapshotStorage
 import org.tessellation.ext.codecs.BinaryCodec
-import org.tessellation.ext.http4s.SnapshotOrdinalVar
 import org.tessellation.ext.http4s.headers.negotiation.resolveEncoder
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.security.signature.Signed
+import org.tessellation.schema.ext.http4s.SnapshotOrdinalVar
+import org.tessellation.schema.security.signature.Signed
 
 import io.circe.Encoder
 import io.circe.shapes._

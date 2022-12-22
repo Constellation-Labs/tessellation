@@ -7,13 +7,13 @@ import cats.effect.Async
 import cats.effect.std.Random
 import cats.syntax.all._
 
-import org.tessellation.ext.crypto._
+import org.tessellation.schema.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction._
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.key.ops._
-import org.tessellation.security.signature.Signed
+import org.tessellation.schema.security.SecurityProvider
+import org.tessellation.schema.security.key.ops._
+import org.tessellation.schema.security.signature.Signed
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong}

@@ -5,7 +5,7 @@ import cats.data.{NonEmptyList, NonEmptySet}
 import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.schema.BlockReference
 import org.tessellation.schema.generators._
-import org.tessellation.security.signature.Signed
+import org.tessellation.schema.security.signature.Signed
 
 import org.scalacheck.{Arbitrary, Gen}
 

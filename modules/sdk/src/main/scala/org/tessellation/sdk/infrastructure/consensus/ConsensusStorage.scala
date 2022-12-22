@@ -18,8 +18,8 @@ import cats.{Eq, Order, Show}
 
 import scala.concurrent.duration.FiniteDuration
 
-import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.ext.crypto._
 import org.tessellation.schema.gossip.Ordinal
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.infrastructure.consensus.declaration.kind.PeerDeclarationKind

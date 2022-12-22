@@ -2,8 +2,8 @@ package org.tessellation.domain.snapshot
 
 import org.tessellation.dag.snapshot.GlobalSnapshot
 import org.tessellation.schema.SnapshotOrdinal
-import org.tessellation.security.hash.Hash
-import org.tessellation.security.signature.Signed
+import org.tessellation.schema.security.hash.Hash
+import org.tessellation.schema.security.signature.Signed
 
 trait GlobalSnapshotStorage[F[_]] {
 

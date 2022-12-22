@@ -15,8 +15,8 @@ import org.tessellation.dag.block.BlockValidator
 import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.BlockReference
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.signature.Signed
+import org.tessellation.schema.security.SecurityProvider
+import org.tessellation.schema.security.signature.Signed
 
 import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.NonNegLong

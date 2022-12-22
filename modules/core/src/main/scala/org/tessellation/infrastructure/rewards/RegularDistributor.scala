@@ -13,7 +13,7 @@ import cats.syntax.traverse._
 import org.tessellation.ext.refined._
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.balance.Amount
-import org.tessellation.security.SecurityProvider
+import org.tessellation.schema.security.SecurityProvider
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong

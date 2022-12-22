@@ -11,10 +11,10 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.gossip._
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.security.hash.Hash
+import org.tessellation.schema.security.signature.SignedValidator.SignedValidationError
+import org.tessellation.schema.security.signature.{Signed, SignedValidator}
 import org.tessellation.sdk.infrastructure.gossip.RumorValidator.RumorValidationErrorOr
-import org.tessellation.security.hash.Hash
-import org.tessellation.security.signature.SignedValidator.SignedValidationError
-import org.tessellation.security.signature.{Signed, SignedValidator}
 
 import derevo.cats.{eqv, show}
 import derevo.derive

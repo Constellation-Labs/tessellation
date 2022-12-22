@@ -11,13 +11,15 @@ import cats.syntax.show._
 
 import org.tessellation.cli.env.{KeyAlias, Password, StorePath}
 import org.tessellation.ext.cats.effect._
-import org.tessellation.ext.crypto._
 import org.tessellation.ext.kryo._
 import org.tessellation.keytool.KeyStoreUtils
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.cluster.ClusterId
+import org.tessellation.schema.ext.crypto._
 import org.tessellation.schema.generation.Generation
+import org.tessellation.schema.kryo.ProtocolKryoRegistrationIdRange
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.security.SecurityProvider
 import org.tessellation.sdk.cli.CliMethod
 import org.tessellation.sdk.http.p2p.SdkP2PClient
 import org.tessellation.sdk.infrastructure.cluster.services.Session
@@ -26,8 +28,7 @@ import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.infrastructure.seedlist.{Loader => SeedlistLoader}
 import org.tessellation.sdk.modules._
 import org.tessellation.sdk.resources.SdkResources
-import org.tessellation.sdk.{sdkKryoRegistrar, _}
-import org.tessellation.security.SecurityProvider
+import org.tessellation.sdk.sdkKryoRegistrar
 
 import com.monovore.decline.Opts
 import com.monovore.decline.effect.CommandIOApp
@@ -73,7 +74,7 @@ abstract class TessellationIOApp[A <: CliMethod](
       val alias = method.alias
       val password = method.password
 
-      val registrar: Map[Class[_], Int Refined Or[KryoRegistrationIdRange, SdkOrSharedOrKernelRegistrationIdRange]] =
+      val registrar: Map[Class[_], Int Refined Or[KryoRegistrationIdRange, ProtocolKryoRegistrationIdRange]] =
         kryoRegistrar.union(sdkKryoRegistrar)
 
       LoggerConfigurator.configureLogger[IO](cfg.environment) >>

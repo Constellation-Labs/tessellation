@@ -10,9 +10,9 @@ import cats.syntax.functor._
 
 import org.tessellation.dag.transaction.ContextualTransactionValidator
 import org.tessellation.dag.transaction.ContextualTransactionValidator.ContextualTransactionValidationError
+import org.tessellation.schema.security.Hashed
+import org.tessellation.schema.security.hash.Hash
 import org.tessellation.schema.transaction.Transaction
-import org.tessellation.security.Hashed
-import org.tessellation.security.hash.Hash
 
 trait TransactionService[F[_]] {
   def offer(transaction: Hashed[Transaction]): F[Either[NonEmptyList[ContextualTransactionValidationError], Hash]]

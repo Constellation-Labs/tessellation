@@ -9,18 +9,18 @@ import cats.{Applicative, MonadThrow}
 
 import scala.concurrent.duration._
 
-import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.cluster._
+import org.tessellation.schema.ext.crypto._
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer._
+import org.tessellation.schema.security.SecurityProvider
+import org.tessellation.schema.security.hash.Hash
+import org.tessellation.schema.security.signature.Signed
 import org.tessellation.sdk.config.types.HttpConfig
 import org.tessellation.sdk.domain.cluster.services.Cluster
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tessellation.sdk.domain.node.NodeStorage
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.hash.Hash
-import org.tessellation.security.signature.Signed
 
 import fs2.concurrent.SignallingRef
 

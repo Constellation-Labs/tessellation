@@ -6,10 +6,10 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.schema.peer.{JoinRequest, RegistrationRequest, SignRequest}
+import org.tessellation.schema.security.SecurityProvider
+import org.tessellation.schema.security.signature.Signed
 import org.tessellation.sdk.http.p2p.PeerResponse
 import org.tessellation.sdk.http.p2p.PeerResponse.PeerResponse
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.signature.Signed
 
 import org.http4s.Method._
 import org.http4s.Status

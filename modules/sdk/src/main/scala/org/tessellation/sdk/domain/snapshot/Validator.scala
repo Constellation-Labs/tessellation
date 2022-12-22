@@ -5,7 +5,7 @@ import cats.syntax.order._
 import org.tessellation.dag.snapshot.GlobalSnapshot
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
 import org.tessellation.schema.height.SubHeight
-import org.tessellation.security.Hashed
+import org.tessellation.schema.security.Hashed
 
 object Validator {
 

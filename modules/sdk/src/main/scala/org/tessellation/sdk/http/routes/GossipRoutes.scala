@@ -9,10 +9,10 @@ import cats.syntax.traverse._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.gossip._
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.security.signature.Signed
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.infrastructure.gossip.RumorStorage
 import org.tessellation.sdk.infrastructure.metrics.Metrics
-import org.tessellation.security.signature.Signed
 
 import fs2.{Chunk, Stream}
 import org.http4s._

@@ -6,12 +6,12 @@ import cats.syntax.functor._
 
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.security.SecurityProvider
+import org.tessellation.schema.security.hash.Hash
 import org.tessellation.sdk.config.types.SdkConfig
 import org.tessellation.sdk.domain.cluster.programs.{Joining, PeerDiscovery}
 import org.tessellation.sdk.domain.healthcheck.LocalHealthcheck
 import org.tessellation.sdk.http.p2p.clients.{ClusterClient, SignClient}
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.hash.Hash
 
 object SdkPrograms {
 

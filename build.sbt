@@ -55,97 +55,7 @@ lazy val root = (project in file("."))
   .settings(
     name := "tessellation"
   )
-  .aggregate(keytool, kernel, shared, core, testShared, wallet, dagShared, sdk, dagL1)
-
-lazy val kernel = (project in file("modules/kernel"))
-  .enablePlugins(AshScriptPlugin)
-  .dependsOn(shared, testShared % Test)
-  .settings(
-    name := "tessellation-kernel",
-    Defaults.itSettings,
-    scalafixCommonSettings,
-    commonSettings,
-    commonTestSettings,
-    makeBatScripts := Seq(),
-    libraryDependencies ++= Seq(
-      CompilerPlugin.kindProjector,
-      CompilerPlugin.semanticDB,
-      Libraries.drosteCore,
-      Libraries.fs2Core
-    )
-  )
-
-lazy val wallet = (project in file("modules/wallet"))
-  .enablePlugins(AshScriptPlugin)
-  .dependsOn(keytool, shared, testShared % Test)
-  .settings(
-    name := "tessellation-wallet",
-    Defaults.itSettings,
-    scalafixCommonSettings,
-    commonSettings,
-    commonTestSettings,
-    makeBatScripts := Seq(),
-    libraryDependencies ++= Seq(
-      CompilerPlugin.kindProjector,
-      CompilerPlugin.betterMonadicFor,
-      CompilerPlugin.semanticDB,
-      Libraries.circeFs2,
-      Libraries.cats,
-      Libraries.catsEffect,
-      Libraries.cirisCore,
-      Libraries.declineCore,
-      Libraries.declineEffect,
-      Libraries.declineRefined,
-      Libraries.fs2IO,
-      Libraries.refinedCore,
-      Libraries.refinedCats,
-      Libraries.log4cats,
-      Libraries.logback % Runtime,
-      Libraries.logstashLogbackEncoder % Runtime
-    )
-  )
-
-lazy val keytool = (project in file("modules/keytool"))
-  .enablePlugins(AshScriptPlugin)
-  .dependsOn(shared, testShared % Test)
-  .settings(
-    name := "tessellation-keytool",
-    Defaults.itSettings,
-    scalafixCommonSettings,
-    commonSettings,
-    commonTestSettings,
-    makeBatScripts := Seq(),
-    libraryDependencies ++= Seq(
-      CompilerPlugin.kindProjector,
-      CompilerPlugin.betterMonadicFor,
-      CompilerPlugin.semanticDB,
-      Libraries.bc,
-      Libraries.bcExtensions,
-      Libraries.cats,
-      Libraries.catsEffect,
-      Libraries.circeCore,
-      Libraries.circeGeneric,
-      Libraries.circeParser,
-      Libraries.circeRefined,
-      Libraries.cirisCore,
-      Libraries.comcast,
-      Libraries.derevoCore,
-      Libraries.derevoCats,
-      Libraries.derevoCirce,
-      Libraries.fs2IO,
-      Libraries.log4cats,
-      Libraries.logback % Runtime,
-      Libraries.logstashLogbackEncoder % Runtime,
-      Libraries.monocleCore,
-      Libraries.monocleMacro,
-      Libraries.newtype,
-      Libraries.declineCore,
-      Libraries.declineEffect,
-      Libraries.declineRefined,
-      Libraries.refinedCore,
-      Libraries.refinedCats
-    )
-  )
+  .aggregate(shared, testShared, keytool, kernel, core, wallet, dagShared, sdk, dagL1)
 
 lazy val shared = (project in file("modules/shared"))
   .enablePlugins(AshScriptPlugin)
@@ -202,6 +112,7 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.http4sCore
     )
   )
+
 lazy val testShared = (project in file("modules/test-shared"))
   .configs(IntegrationTest)
   .settings(
@@ -236,8 +147,118 @@ lazy val testShared = (project in file("modules/test-shared"))
     )
   )
 
+lazy val schema = (project in file("modules/schema"))
+  .enablePlugins(AshScriptPlugin)
+  .enablePlugins(BuildInfoPlugin)
+  .dependsOn(shared, testShared % Test)
+  .settings(
+    name := "tessellation-schema",
+    buildInfoKeys := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion),
+    buildInfoPackage := "org.tessellation",
+    Defaults.itSettings,
+    scalafixCommonSettings,
+    commonSettings,
+    commonTestSettings,
+    makeBatScripts := Seq(),
+    libraryDependencies ++= Seq(
+      CompilerPlugin.kindProjector,
+      CompilerPlugin.betterMonadicFor,
+      CompilerPlugin.semanticDB,
+    )
+  )
+
+lazy val kernel = (project in file("modules/kernel"))
+  .enablePlugins(AshScriptPlugin)
+  .dependsOn(schema % "compile->compile;test->test", testShared % Test)
+  .settings(
+    name := "tessellation-kernel",
+    Defaults.itSettings,
+    scalafixCommonSettings,
+    commonSettings,
+    commonTestSettings,
+    makeBatScripts := Seq(),
+    libraryDependencies ++= Seq(
+      CompilerPlugin.kindProjector,
+      CompilerPlugin.semanticDB,
+      Libraries.drosteCore,
+      Libraries.fs2Core
+    )
+  )
+
+lazy val keytool = (project in file("modules/keytool"))
+  .enablePlugins(AshScriptPlugin)
+  .dependsOn(schema)
+  .settings(
+    name := "tessellation-keytool",
+    Defaults.itSettings,
+    scalafixCommonSettings,
+    commonSettings,
+    commonTestSettings,
+    makeBatScripts := Seq(),
+    libraryDependencies ++= Seq(
+      CompilerPlugin.kindProjector,
+      CompilerPlugin.betterMonadicFor,
+      CompilerPlugin.semanticDB,
+      Libraries.bc,
+      Libraries.bcExtensions,
+      Libraries.cats,
+      Libraries.catsEffect,
+      Libraries.circeCore,
+      Libraries.circeGeneric,
+      Libraries.circeParser,
+      Libraries.circeRefined,
+      Libraries.cirisCore,
+      Libraries.comcast,
+      Libraries.derevoCore,
+      Libraries.derevoCats,
+      Libraries.derevoCirce,
+      Libraries.fs2IO,
+      Libraries.log4cats,
+      Libraries.logback % Runtime,
+      Libraries.logstashLogbackEncoder % Runtime,
+      Libraries.monocleCore,
+      Libraries.monocleMacro,
+      Libraries.newtype,
+      Libraries.declineCore,
+      Libraries.declineEffect,
+      Libraries.declineRefined,
+      Libraries.refinedCore,
+      Libraries.refinedCats
+    )
+  )
+
+lazy val wallet = (project in file("modules/wallet"))
+  .enablePlugins(AshScriptPlugin)
+  .dependsOn(keytool)
+  .settings(
+    name := "tessellation-wallet",
+    Defaults.itSettings,
+    scalafixCommonSettings,
+    commonSettings,
+    commonTestSettings,
+    makeBatScripts := Seq(),
+    libraryDependencies ++= Seq(
+      CompilerPlugin.kindProjector,
+      CompilerPlugin.betterMonadicFor,
+      CompilerPlugin.semanticDB,
+      Libraries.circeFs2,
+      Libraries.cats,
+      Libraries.catsEffect,
+      Libraries.cirisCore,
+      Libraries.declineCore,
+      Libraries.declineEffect,
+      Libraries.declineRefined,
+      Libraries.fs2IO,
+      Libraries.refinedCore,
+      Libraries.refinedCats,
+      Libraries.log4cats,
+      Libraries.logback % Runtime,
+      Libraries.logstashLogbackEncoder % Runtime
+    )
+  )
+
 lazy val sdk = (project in file("modules/sdk"))
-  .dependsOn(shared % "compile->compile;test->test", testShared % Test, keytool, kernel, dagShared)
+  .dependsOn(schema % "compile->compile;test->test", testShared % Test, keytool, dagShared)
   .configs(IntegrationTest)
   .settings(
     name := "tessellation-sdk",
@@ -286,7 +307,7 @@ lazy val sdk = (project in file("modules/sdk"))
   )
 
 lazy val dagShared = (project in file("modules/dag-shared"))
-  .dependsOn(shared % "compile->compile;test->test", testShared % Test, keytool % Test)
+  .dependsOn(schema % "compile->compile;test->test", keytool, testShared % Test)
   .settings(
     name := "tessellation-dag-shared",
     Defaults.itSettings,
@@ -306,7 +327,7 @@ lazy val dagShared = (project in file("modules/dag-shared"))
 lazy val dagL1 = (project in file("modules/dag-l1"))
   .enablePlugins(AshScriptPlugin)
   .enablePlugins(JavaAppPackaging)
-  .dependsOn(kernel, shared % "compile->compile;test->test", dagShared, sdk, testShared % Test)
+  .dependsOn(dagShared % "compile->compile;test->test", sdk, kernel, testShared % Test)
   .configs(IntegrationTest)
   .settings(
     name := "tessellation-dag-l1",
@@ -341,6 +362,7 @@ lazy val dagL1 = (project in file("modules/dag-l1"))
       Libraries.sqlite
     )
   )
+
 lazy val tools = (project in file("modules/tools"))
   .enablePlugins(AshScriptPlugin)
   .enablePlugins(JavaAppPackaging)
@@ -387,6 +409,7 @@ lazy val tools = (project in file("modules/tools"))
       Libraries.skunkCirce
     )
   )
+
 lazy val core = (project in file("modules/core"))
   .enablePlugins(AshScriptPlugin)
   .enablePlugins(JavaAppPackaging)

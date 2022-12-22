@@ -20,9 +20,9 @@ import org.tessellation.ext.cats.syntax.validated._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.BlockReference
 import org.tessellation.schema.address.Address
+import org.tessellation.schema.security.signature.SignedValidator.SignedValidationError
+import org.tessellation.schema.security.signature.{Signed, SignedValidator}
 import org.tessellation.schema.transaction.TransactionReference
-import org.tessellation.security.signature.SignedValidator.SignedValidationError
-import org.tessellation.security.signature.{Signed, SignedValidator}
 
 import derevo.cats.{eqv, show}
 import derevo.derive

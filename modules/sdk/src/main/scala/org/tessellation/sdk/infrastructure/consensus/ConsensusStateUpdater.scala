@@ -9,9 +9,13 @@ import cats.syntax.all._
 
 import scala.reflect.runtime.universe.TypeTag
 
-import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.ext.crypto._
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.security.SecurityProvider
+import org.tessellation.schema.security.hash.Hash
+import org.tessellation.schema.security.signature.Signed
+import org.tessellation.schema.security.signature.signature.{Signature, SignatureProof, verifySignatureProof}
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.infrastructure.consensus.declaration._
@@ -20,10 +24,6 @@ import org.tessellation.sdk.infrastructure.consensus.message._
 import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, TimeTrigger}
 import org.tessellation.sdk.infrastructure.consensus.update.UnlockConsensusUpdate
 import org.tessellation.sdk.infrastructure.metrics.Metrics
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.hash.Hash
-import org.tessellation.security.signature.Signed
-import org.tessellation.security.signature.signature.{Signature, SignatureProof, verifySignatureProof}
 import org.tessellation.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._

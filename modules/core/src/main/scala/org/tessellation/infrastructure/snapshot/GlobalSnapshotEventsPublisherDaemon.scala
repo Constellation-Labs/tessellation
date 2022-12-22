@@ -5,11 +5,11 @@ import cats.effect.std.{Queue, Supervisor}
 import cats.syntax.all._
 
 import org.tessellation.dag.domain.block.DAGBlock
-import org.tessellation.domain.aci.StateChannelOutput
+import org.tessellation.schema.security.signature.Signed
+import org.tessellation.schema.statechannels.StateChannelOutput
 import org.tessellation.sdk.domain.Daemon
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.infrastructure.consensus.message.ConsensusEvent
-import org.tessellation.security.signature.Signed
 
 import fs2.Stream
 import io.circe.disjunctionCodecs._

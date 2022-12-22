@@ -20,17 +20,19 @@ import scala.util.control.NoStackTrace
 import org.tessellation.dag.block.processing._
 import org.tessellation.dag.domain.block.DAGBlockAsActiveTip
 import org.tessellation.dag.snapshot._
-import org.tessellation.domain.aci.StateChannelOutput
 import org.tessellation.domain.rewards.Rewards
 import org.tessellation.domain.snapshot._
 import org.tessellation.ext.cats.syntax.next._
-import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
+import org.tessellation.schema.ext.crypto._
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.security.SecurityProvider
+import org.tessellation.schema.security.signature.Signed
+import org.tessellation.schema.statechannels.StateChannelOutput
 import org.tessellation.schema.transaction.RewardTransaction
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.AppEnvironment.Mainnet
@@ -38,8 +40,6 @@ import org.tessellation.sdk.domain.consensus.ConsensusFunctions
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions.InvalidArtifact
 import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import org.tessellation.sdk.infrastructure.metrics.Metrics
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.signature.Signed
 import org.tessellation.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._

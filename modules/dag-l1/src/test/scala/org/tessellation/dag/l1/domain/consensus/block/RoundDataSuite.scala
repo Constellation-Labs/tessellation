@@ -22,14 +22,14 @@ import org.tessellation.schema.BlockReference
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.height.Height
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.security.SecurityProvider
+import org.tessellation.schema.security.hash.ProofsHash
+import org.tessellation.schema.security.hex.Hex
+import org.tessellation.schema.security.key.ops.PublicKeyOps
+import org.tessellation.schema.security.signature.SignedValidator
+import org.tessellation.schema.security.signature.signature.SignatureProof
 import org.tessellation.schema.transaction.{TransactionFee, TransactionReference}
 import org.tessellation.sdk.sdkKryoRegistrar
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.hash.ProofsHash
-import org.tessellation.security.hex.Hex
-import org.tessellation.security.key.ops.PublicKeyOps
-import org.tessellation.security.signature.SignedValidator
-import org.tessellation.security.signature.signature.SignatureProof
 
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -103,11 +103,8 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
           )
         )
         result <- roundData.formBlock(txValidator)
-      } yield
-        expect.same(
-          DAGBlock(baseProposal.tips.value, txsA2.map(_.signed).toNes).some,
-          result
-        )
+      } yield expect.same(DAGBlock(baseProposal.tips.value, txsA2.map(_.signed).toNes).some, result)
+
   }
 
   test("formBlock should pick transactions correctly from the pool of transactions from all facilitators") {

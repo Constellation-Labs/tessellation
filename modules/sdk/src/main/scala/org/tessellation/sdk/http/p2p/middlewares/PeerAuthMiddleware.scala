@@ -12,12 +12,12 @@ import cats.syntax.option._
 
 import org.tessellation.schema.cluster.TokenValid
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.security.SecurityProvider
+import org.tessellation.schema.security.signature.Signing
 import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.domain.cluster.storage.SessionStorage
 import org.tessellation.sdk.domain.collateral.Collateral
 import org.tessellation.sdk.http.p2p.headers.{`X-Id`, `X-Session-Token`}
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.signature.Signing
 
 import fs2.{Chunk, Stream}
 import org.http4s.Status.Unauthorized

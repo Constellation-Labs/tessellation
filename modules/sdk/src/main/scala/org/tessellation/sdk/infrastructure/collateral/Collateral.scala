@@ -8,10 +8,10 @@ import cats.syntax.order._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.security.SecurityProvider
+import org.tessellation.schema.security.key.ops.PublicKeyOps
 import org.tessellation.sdk.config.types.CollateralConfig
 import org.tessellation.sdk.domain.collateral.{Collateral, LatestBalances}
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.key.ops.PublicKeyOps
 
 import eu.timepit.refined.auto._
 

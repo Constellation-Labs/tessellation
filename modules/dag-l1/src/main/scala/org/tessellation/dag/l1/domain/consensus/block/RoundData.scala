@@ -17,8 +17,8 @@ import org.tessellation.dag.transaction.TransactionValidator
 import org.tessellation.dag.transaction.filter.Consecutive
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.{Peer, PeerId}
-import org.tessellation.security.signature.Signed
-import org.tessellation.security.signature.signature.SignatureProof
+import org.tessellation.schema.security.signature.Signed
+import org.tessellation.schema.security.signature.signature.SignatureProof
 import org.tessellation.syntax.sortedCollection._
 
 import monocle.macros.syntax.lens._
