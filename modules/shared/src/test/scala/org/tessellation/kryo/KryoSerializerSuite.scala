@@ -11,7 +11,7 @@ import weaver.SimpleIOSuite
 import weaver.scalacheck.Checkers
 
 object KryoSerializerSuite extends SimpleIOSuite with Checkers {
-  type KryoSerializerSuiteRegistrationIdRange = Interval.Closed[100, 199]
+  type KryoSerializerSuiteRegistrationIdRange = Interval.Closed[1000, 1999]
 
   test("v1 bytes should deserialize successfully by v2 serializer") {
     val v1 = NoChangesV1(amount = 15, address = "anyAddress")
@@ -21,14 +21,14 @@ object KryoSerializerSuite extends SimpleIOSuite with Checkers {
 
     val serializerV1 =
       KryoSerializer.forAsync[IO](
-        Map[Class[_], KryoRegistrationId[KryoSerializerSuiteRegistrationIdRange]](classOf[NoChangesV1] -> 100)
+        Map[Class[_], KryoRegistrationId[KryoSerializerSuiteRegistrationIdRange]](classOf[NoChangesV1] -> 1000)
       )
     val serializerV2 =
       KryoSerializer
         .forAsync[IO](
           Map[Class[_], KryoRegistrationId[KryoSerializerSuiteRegistrationIdRange]](
-            classOf[NoChangesV1] -> 100,
-            classOf[BreakingChangesClassV2] -> 101
+            classOf[NoChangesV1] -> 1000,
+            classOf[BreakingChangesClassV2] -> 1001
           ),
           List(migration)
         )
@@ -49,10 +49,10 @@ object KryoSerializerSuite extends SimpleIOSuite with Checkers {
 
     val serializerV1 =
       KryoSerializer.forAsync[IO](
-        Map[Class[_], KryoRegistrationId[KryoSerializerSuiteRegistrationIdRange]](classOf[NoChangesV1] -> 100)
+        Map[Class[_], KryoRegistrationId[KryoSerializerSuiteRegistrationIdRange]](classOf[NoChangesV1] -> 1000)
       )
     val serializerV2 = KryoSerializer.forAsync[IO](
-      Map[Class[_], KryoRegistrationId[KryoSerializerSuiteRegistrationIdRange]](classOf[NonBreakingChangesV2] -> 100)
+      Map[Class[_], KryoRegistrationId[KryoSerializerSuiteRegistrationIdRange]](classOf[NonBreakingChangesV2] -> 1000)
     )
 
     for {

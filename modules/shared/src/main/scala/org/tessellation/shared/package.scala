@@ -1,7 +1,6 @@
 package org.tessellation
 
 import java.security.Signature
-import java.util.UUID
 
 import cats.data.NonEmptyList
 
@@ -28,7 +27,6 @@ package object shared {
   type SharedKryoRegistrationId = KryoRegistrationId[SharedKryoRegistrationIdRange]
 
   val sharedKryoRegistrar: Map[Class[_], SharedKryoRegistrationId] = Map(
-    classOf[UUID] -> 300,
     classOf[SignatureProof] -> 301,
     SignatureProof.OrderingInstance.getClass -> 302,
     classOf[Signature] -> 303,
