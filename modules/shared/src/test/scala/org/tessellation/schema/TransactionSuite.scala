@@ -59,7 +59,7 @@ object TransactionSuite extends ResourceSuite with Checkers {
   }
 
   test("Hash for a new Transaction schema should be the same as hash for old Transaction schema") { implicit kryo =>
-    val expectedHash = "1017a072225263aa502d9dcd22a04455f9b063cc19166356be50b4730afc44f6"
+    val expectedHash = Hash("1017a072225263aa502d9dcd22a04455f9b063cc19166356be50b4730afc44f6")
 
     val transaction = Transaction(
       Address("DAG53ho9ssY8KYQdjxsWPYgNbDJ1YqM2RaPDZebU"),

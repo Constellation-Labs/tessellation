@@ -29,7 +29,7 @@ object Main
       SecurityProvider.forAsync[IO].use { implicit sp =>
         method match {
           case GenerateWallet(keyStore, alias, password, distinguishedName, certificateValidityDays) =>
-            generateKeyStoreWithKeyPair[IO](keyStore, alias, password, distinguishedName, certificateValidityDays)
+            generateKeyStoreWithKeyPair[IO](keyStore, alias, password, distinguishedName, certificateValidityDays).void
               .handleErrorWith(err => logger.error(err)(s"Error while generating a keystore."))
               .as(ExitCode.Success)
           case MigrateExistingKeyStoreToStorePassOnly(
@@ -47,10 +47,11 @@ object Main
               keypass,
               distinguishedName,
               certificateValidityDays
-            ).handleErrorWith(err => logger.error(err)(s"Error while migrating the keystore."))
+            ).void
+              .handleErrorWith(err => logger.error(err)(s"Error while migrating the keystore."))
               .as(ExitCode.Success)
           case ExportPrivateKeyHex(keyStore, alias, storepass, keypass) =>
-            exportPrivateKeyAsHex[IO](keyStore, alias, storepass, keypass)
+            exportPrivateKeyAsHex[IO](keyStore, alias, storepass, keypass).void
               .handleErrorWith(err => logger.error(err)(s"Error while exporting private key as hex."))
               .as(ExitCode.Success)
         }
