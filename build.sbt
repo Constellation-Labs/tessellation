@@ -13,6 +13,10 @@ val scalafixCommonSettings = inConfig(IntegrationTest)(scalafixConfigSettings(In
 
 bloopExportJarClassifiers in Global := Some(Set("sources"))
 
+val ghTokenSource = TokenSource.GitConfig("github.token") || TokenSource.Environment("GITHUB_TOKEN")
+
+githubTokenSource := ghTokenSource
+
 lazy val commonSettings = Seq(
   scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info", "-language:reflectiveCalls"),
   scalafmtOnCompile := true,
@@ -20,7 +24,8 @@ lazy val commonSettings = Seq(
   resolvers ++= List(
     Resolver.sonatypeRepo("snapshots"),
     Resolver.githubPackages("abankowski", "http-request-signer")
-  )
+  ),
+  githubTokenSource := ghTokenSource
 )
 
 lazy val commonTestSettings = Seq(

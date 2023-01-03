@@ -1,18 +1,3 @@
-{ jdk ? "jdk11" }:
+{ system ? builtins.currentSystem or "unknown-system", shell ? "scala" }:
 
-let
-  pkgs = import nix/pkgs.nix { inherit jdk; };
-in
-  pkgs.mkShell {
-    name = "tessellation-nix";
-
-    buildInputs = [
-      pkgs.coursier
-      pkgs.${jdk}
-      pkgs.sbt
-    ];
-
-    shellHook = ''
-      set -o allexport; source .env; set +o allexport;
-    '';
-  }
+(builtins.getFlake ("git+file://" + toString ./.)).devShells.${system}.${shell}
