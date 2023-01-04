@@ -1,8 +1,7 @@
 package org.tessellation.modules
 
-import cats.Parallel
 import cats.effect.Async
-import cats.effect.std.{Random, Supervisor}
+import cats.effect.std.Supervisor
 import cats.syntax.functor._
 import cats.syntax.traverse._
 
@@ -11,17 +10,14 @@ import org.tessellation.infrastructure.healthcheck.HealthCheckDaemon
 import org.tessellation.infrastructure.snapshot.GlobalSnapshotEventsPublisherDaemon
 import org.tessellation.infrastructure.snapshot.daemon.DownloadDaemon
 import org.tessellation.infrastructure.trust.TrustDaemon
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.Daemon
 import org.tessellation.sdk.infrastructure.cluster.daemon.NodeStateDaemon
 import org.tessellation.sdk.infrastructure.collateral.daemon.CollateralDaemon
-import org.tessellation.sdk.infrastructure.metrics.Metrics
-import org.tessellation.security.SecurityProvider
 
 object Daemons {
 
-  def start[F[_]: Async: SecurityProvider: KryoSerializer: Random: Parallel: Metrics: Supervisor](
+  def start[F[_]: Async: Supervisor](
     storages: Storages[F],
     services: Services[F],
     programs: Programs[F],

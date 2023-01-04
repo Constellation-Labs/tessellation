@@ -10,7 +10,6 @@ import cats.syntax.validated._
 
 import org.tessellation.dag.transaction.TransactionValidator.TransactionValidationError
 import org.tessellation.ext.cats.syntax.validated._
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction.{Transaction, TransactionOrdinal, TransactionReference}
 import org.tessellation.security.hash.Hash
@@ -38,7 +37,7 @@ object ContextualTransactionValidator {
 
   }
 
-  def make[F[_]: Async: KryoSerializer](
+  def make[F[_]: Async](
     nonContextualValidator: TransactionValidator[F],
     context: TransactionValidationContext[F]
   ): ContextualTransactionValidator[F] =
