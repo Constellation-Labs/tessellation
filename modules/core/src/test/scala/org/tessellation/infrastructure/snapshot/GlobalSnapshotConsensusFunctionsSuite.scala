@@ -14,7 +14,6 @@ import org.tessellation.dag.dagSharedKryoRegistrar
 import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.dag.snapshot.epoch.EpochProgress
 import org.tessellation.dag.snapshot.{GlobalSnapshot, _}
-import org.tessellation.domain.aci.StateChannelOutput
 import org.tessellation.domain.rewards.Rewards
 import org.tessellation.domain.snapshot.GlobalSnapshotStorage
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
@@ -34,6 +33,7 @@ import org.tessellation.security.hash.Hash
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed.forAsyncKryo
+import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
 import org.tessellation.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._

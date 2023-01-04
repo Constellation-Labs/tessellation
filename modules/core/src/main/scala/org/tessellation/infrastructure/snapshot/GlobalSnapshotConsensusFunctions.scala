@@ -20,7 +20,6 @@ import scala.util.control.NoStackTrace
 import org.tessellation.dag.block.processing._
 import org.tessellation.dag.domain.block.DAGBlockAsActiveTip
 import org.tessellation.dag.snapshot._
-import org.tessellation.domain.aci.StateChannelOutput
 import org.tessellation.domain.rewards.Rewards
 import org.tessellation.domain.snapshot._
 import org.tessellation.ext.cats.syntax.next._
@@ -40,6 +39,7 @@ import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, 
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
+import org.tessellation.statechannel.StateChannelOutput
 import org.tessellation.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._

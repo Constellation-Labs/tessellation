@@ -19,6 +19,7 @@ import org.tessellation.schema.transaction.RewardTransaction
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.signature.Signed
+import org.tessellation.statechannel.StateChannelSnapshotBinary
 import org.tessellation.syntax.sortedCollection._
 
 import derevo.cats.{eqv, show}
