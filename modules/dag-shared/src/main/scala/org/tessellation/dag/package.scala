@@ -3,6 +3,7 @@ package org.tessellation
 import org.tessellation.dag.domain.block._
 import org.tessellation.dag.snapshot._
 import org.tessellation.ext.kryo._
+import org.tessellation.statechannel.StateChannelSnapshotBinary
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.numeric.Greater

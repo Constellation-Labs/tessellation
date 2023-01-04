@@ -1,6 +1,5 @@
-package org.tessellation.domain.aci
+package org.tessellation.statechannel
 
-import org.tessellation.dag.snapshot.StateChannelSnapshotBinary
 import org.tessellation.schema.address.Address
 import org.tessellation.security.signature.Signed
 

@@ -1,4 +1,4 @@
-package org.tessellation.dag.snapshot
+package org.tessellation.statechannel
 
 import cats.Show
 import cats.syntax.show._
@@ -15,7 +15,7 @@ case class StateChannelSnapshotBinary(
   lastSnapshotHash: Hash,
   content: Array[Byte]
 )
+
 object StateChannelSnapshotBinary {
   implicit val show: Show[StateChannelSnapshotBinary] = s => s"StateChannelSnapshotBinary(lastSnapshotHash=${s.lastSnapshotHash.show})"
-
 }
