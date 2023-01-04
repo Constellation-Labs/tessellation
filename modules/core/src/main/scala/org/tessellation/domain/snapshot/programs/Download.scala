@@ -5,7 +5,6 @@ import cats.syntax.applicativeError._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.domain.snapshot.GlobalSnapshotStorage
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.http.p2p.clients.GlobalSnapshotClient
 import org.tessellation.infrastructure.snapshot._
@@ -21,14 +20,12 @@ object Download {
     nodeStorage: NodeStorage[F],
     clusterStorage: ClusterStorage[F],
     globalSnapshotClient: GlobalSnapshotClient[F],
-    globalSnapshotStorage: GlobalSnapshotStorage[F],
     consensus: GlobalSnapshotConsensus[F]
   ): Download[F] =
     new Download[F](
       nodeStorage,
       clusterStorage,
       globalSnapshotClient,
-      globalSnapshotStorage,
       consensus
     ) {}
 }
@@ -37,7 +34,6 @@ sealed abstract class Download[F[_]: Async] private (
   nodeStorage: NodeStorage[F],
   clusterStorage: ClusterStorage[F],
   globalSnapshotClient: GlobalSnapshotClient[F],
-  globalSnapshotStorage: GlobalSnapshotStorage[F],
   consensus: GlobalSnapshotConsensus[F]
 ) {
   private def logger = Slf4jLogger.getLogger[F]

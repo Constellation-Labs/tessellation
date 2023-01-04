@@ -140,7 +140,7 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
 
   test("pull should favour transactions with higher fees when forming transaction chain") {
     testResources.use {
-      case (transactionStorage, _, _, key1, address1, key2, address2, sp, kp) =>
+      case (transactionStorage, _, _, key1, address1, _, address2, sp, kp) =>
         implicit val securityProvider = sp
         implicit val kryoPool = kp
 
