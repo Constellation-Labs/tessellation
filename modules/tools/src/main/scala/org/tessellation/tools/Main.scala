@@ -14,7 +14,6 @@ import scala.math.Integral.Implicits._
 
 import org.tessellation.BuildInfo
 import org.tessellation.dag.dagSharedKryoRegistrar
-import org.tessellation.dag.snapshot.StateChannelSnapshotBinary
 import org.tessellation.infrastructure.genesis.types.GenesisCSVAccount
 import org.tessellation.keytool.{KeyPairGenerator, KeyStoreUtils}
 import org.tessellation.kryo.KryoSerializer
@@ -26,6 +25,7 @@ import org.tessellation.security.hash.Hash
 import org.tessellation.security.key.ops._
 import org.tessellation.security.signature.Signed
 import org.tessellation.shared.sharedKryoRegistrar
+import org.tessellation.statechannel.StateChannelSnapshotBinary
 import org.tessellation.tools.TransactionGenerator._
 import org.tessellation.tools.cli.method._
 

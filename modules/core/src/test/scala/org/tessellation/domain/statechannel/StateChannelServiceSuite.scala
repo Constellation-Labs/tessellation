@@ -8,8 +8,6 @@ import cats.syntax.validated._
 
 import org.tessellation.dag.dagSharedKryoRegistrar
 import org.tessellation.dag.domain.block.DAGBlock
-import org.tessellation.dag.snapshot.StateChannelSnapshotBinary
-import org.tessellation.domain.aci.StateChannelOutput
 import org.tessellation.domain.cell.L0Cell
 import org.tessellation.domain.statechannel.StateChannelValidator.StateChannelValidationErrorOr
 import org.tessellation.ext.kryo._
@@ -21,6 +19,7 @@ import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed.forAsyncKryo
 import org.tessellation.shared.sharedKryoRegistrar
+import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
 
 import eu.timepit.refined.auto._
 import weaver.MutableIOSuite

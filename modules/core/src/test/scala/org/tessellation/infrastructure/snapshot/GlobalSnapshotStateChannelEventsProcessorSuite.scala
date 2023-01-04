@@ -11,8 +11,7 @@ import cats.syntax.validated._
 import scala.collection.immutable.SortedMap
 
 import org.tessellation.dag.dagSharedKryoRegistrar
-import org.tessellation.dag.snapshot.{GlobalSnapshotInfo, StateChannelSnapshotBinary}
-import org.tessellation.domain.aci.StateChannelOutput
+import org.tessellation.dag.snapshot.GlobalSnapshotInfo
 import org.tessellation.domain.statechannel.StateChannelValidator
 import org.tessellation.ext.crypto._
 import org.tessellation.ext.kryo._
@@ -24,6 +23,7 @@ import org.tessellation.security.hash.Hash
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.Signed.forAsyncKryo
 import org.tessellation.shared.sharedKryoRegistrar
+import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
 
 import weaver.MutableIOSuite
 

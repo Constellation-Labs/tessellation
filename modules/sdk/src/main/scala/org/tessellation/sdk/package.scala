@@ -1,7 +1,6 @@
 package org.tessellation
 
 import org.tessellation.ext.kryo._
-import org.tessellation.kernel._
 import org.tessellation.sdk.domain.healthcheck.consensus.types.HealthCheckRoundId
 import org.tessellation.sdk.infrastructure.consensus.declaration.{Facility, MajoritySignature, Proposal}
 import org.tessellation.sdk.infrastructure.consensus.message._
@@ -19,7 +18,7 @@ package object sdk {
   type SdkKryoRegistrationIdRange = Interval.Closed[500, 599]
 
   type SdkOrSharedOrKernelRegistrationIdRange =
-    SdkKryoRegistrationIdRange Or SharedKryoRegistrationIdRange Or KernelKryoRegistrationIdRange
+    SdkKryoRegistrationIdRange Or SharedKryoRegistrationIdRange
 
   type SdkKryoRegistrationId = KryoRegistrationId[SdkKryoRegistrationIdRange]
 
@@ -48,5 +47,5 @@ package object sdk {
       classOf[ConsensusPeerDeclaration[_, _]] -> 529,
       EventTrigger.getClass -> 530,
       TimeTrigger.getClass -> 531
-    ).union(sharedKryoRegistrar).union(kernelKryoRegistrar)
+    ).union(sharedKryoRegistrar)
 }

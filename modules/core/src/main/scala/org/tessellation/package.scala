@@ -6,10 +6,10 @@ import cats.effect.Async
 
 import scala.util.control.NoStackTrace
 
-import org.tessellation.domain.aci.StateChannelOutput
 import org.tessellation.ext.kryo._
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.security.SecurityProvider
+import org.tessellation.statechannel.StateChannelOutput
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.numeric.Interval

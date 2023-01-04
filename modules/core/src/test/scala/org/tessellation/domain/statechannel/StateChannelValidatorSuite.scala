@@ -6,8 +6,6 @@ import cats.effect.kernel.Resource
 import cats.syntax.validated._
 
 import org.tessellation.dag.dagSharedKryoRegistrar
-import org.tessellation.dag.snapshot.StateChannelSnapshotBinary
-import org.tessellation.domain.aci.StateChannelOutput
 import org.tessellation.domain.statechannel.StateChannelValidator
 import org.tessellation.domain.statechannel.StateChannelValidator.{InvalidSigned, NotSignedExclusivelyByStateChannelOwner}
 import org.tessellation.ext.kryo._
@@ -20,6 +18,7 @@ import org.tessellation.security.signature.Signed.forAsyncKryo
 import org.tessellation.security.signature.SignedValidator
 import org.tessellation.security.signature.SignedValidator.InvalidSignatures
 import org.tessellation.shared.sharedKryoRegistrar
+import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
 
 import eu.timepit.refined.auto._
 import weaver.MutableIOSuite
