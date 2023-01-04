@@ -22,7 +22,6 @@ object Programs {
         storages.node,
         storages.cluster,
         p2pClient.globalSnapshot,
-        storages.globalSnapshot,
         services.consensus
       )
 

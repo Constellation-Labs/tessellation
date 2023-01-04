@@ -6,12 +6,10 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.traverse._
 
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.gossip._
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.infrastructure.gossip.RumorStorage
-import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.signature.Signed
 
 import fs2.{Chunk, Stream}
@@ -20,7 +18,7 @@ import org.http4s.circe.CirceEntityCodec._
 import org.http4s.dsl._
 import org.http4s.server.Router
 
-final case class GossipRoutes[F[_]: Async: KryoSerializer: Metrics](
+final case class GossipRoutes[F[_]: Async](
   rumorStorage: RumorStorage[F],
   gossip: Gossip[F]
 ) extends Http4sDsl[F] {

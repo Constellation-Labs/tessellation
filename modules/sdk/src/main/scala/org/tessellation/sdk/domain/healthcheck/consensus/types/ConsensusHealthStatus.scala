@@ -17,8 +17,8 @@ trait ConsensusHealthStatus[K <: HealthCheckKey, A <: HealthCheckStatus] {
 }
 
 object ConsensusHealthStatus {
-  implicit def encoder[F[_]: Concurrent: KryoSerializer, K <: HealthCheckKey, A <: HealthCheckStatus]
-    : EntityEncoder[F, ConsensusHealthStatus[K, A]] = BinaryCodec.encoder[F, ConsensusHealthStatus[K, A]]
+  implicit def encoder[F[_]: KryoSerializer, K <: HealthCheckKey, A <: HealthCheckStatus]: EntityEncoder[F, ConsensusHealthStatus[K, A]] =
+    BinaryCodec.encoder[F, ConsensusHealthStatus[K, A]]
 
   implicit def decoder[F[_]: Concurrent: KryoSerializer, K <: HealthCheckKey, A <: HealthCheckStatus]
     : EntityDecoder[F, ConsensusHealthStatus[K, A]] = BinaryCodec.decoder[F, ConsensusHealthStatus[K, A]]
