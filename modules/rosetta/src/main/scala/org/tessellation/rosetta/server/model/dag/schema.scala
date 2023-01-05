@@ -12,9 +12,32 @@ object schema {
   case class GenericMetadata()
 
   @derive(eqv, show)
+  sealed trait SignatureType extends EnumEntry
+
+  object SignatureType extends Enum[SignatureType] with SignatureTypeEncoder {
+    val values = findValues
+
+    case object Ecdsa extends SignatureType
+    case object EcdsaRecovery extends SignatureType
+    case object Ed25519 extends SignatureType
+    case object Schnorr1 extends SignatureType
+    case object SchnorrPoseidon extends SignatureType
+  }
+
+  trait SignatureTypeEncoder {
+    implicit val encode: Encoder[SignatureType] =
+      Encoder.encodeString.contramap[SignatureType](_ match {
+        case SignatureType.EcdsaRecovery   => "ecdsa_recovery"
+        case SignatureType.Schnorr1        => "schnorr_1"
+        case SignatureType.SchnorrPoseidon => "schnorr_poseidon"
+        case signatureTypeValue            => signatureTypeValue.toString.toLowerCase
+      })
+  }
+
+  @derive(eqv, show)
   sealed trait ChainObjectStatus extends EnumEntry
 
-  object ChainObjectStatus extends Enum[ChainObjectStatus] with ChainObjectStatusCodecs {
+  object ChainObjectStatus extends Enum[ChainObjectStatus] with ChainObjectStatusEncoder {
     case object Unknown extends ChainObjectStatus
     case object Pending extends ChainObjectStatus
     case object Accepted extends ChainObjectStatus
@@ -22,9 +45,9 @@ object schema {
     override def values: IndexedSeq[ChainObjectStatus] = findValues
   }
 
-  trait ChainObjectStatusCodecs {
+  trait ChainObjectStatusEncoder {
     implicit val encode: Encoder[ChainObjectStatus] =
-      Encoder.forProduct1("status")(_.toString)
+      Encoder.encodeString.contramap[ChainObjectStatus](_.toString)
   }
 
   case class NetworkChainObjectStatus(value: ChainObjectStatus)
