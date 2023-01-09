@@ -10,12 +10,21 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         jreOverlay = f: p: {
-          jre = p.jdk11_headless;
+          jre = p.graalvm11-ce;
+        };
+
+        bloopOverlay = f: p: {
+          bloop =
+            if system == "aarch64-darwin"
+            then
+              let x86Packages = import nixpkgs { system = "x86_64-darwin"; }; in
+              x86Packages.bloop.override { inherit (f) jre; }
+            else p.bloop;
         };
 
         pkgs = import nixpkgs {
           inherit system;
-          overlays = [ jreOverlay ];
+          overlays = [ jreOverlay bloopOverlay ];
         };
       in
       {
@@ -29,6 +38,7 @@
               coursier
               jre
               sbt
+              bloop
             ];
 
             shellHook = ''
