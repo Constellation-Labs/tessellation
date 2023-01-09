@@ -29,7 +29,6 @@
               coursier
               jre
               sbt
-              bloop
             ];
 
             shellHook = ''

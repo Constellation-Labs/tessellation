@@ -34,3 +34,5 @@ site/
 .bsp/
 scripts/
 /logs/
+.envrc
+.direnv/
