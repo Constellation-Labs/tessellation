@@ -4,7 +4,7 @@ Date: 2022-05-19
 
 ## Status
 
-Accepted
+Superseded by [ADR#13](./0013-incremental-snapshots.md)
 
 ## Context
 
