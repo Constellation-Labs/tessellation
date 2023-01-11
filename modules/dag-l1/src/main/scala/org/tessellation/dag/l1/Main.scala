@@ -1,6 +1,7 @@
 package org.tessellation.dag.l1
 
 import cats.effect.{IO, Resource}
+import cats.syntax.applicativeError._
 import cats.syntax.semigroupk._
 
 import org.tessellation.BuildInfo
@@ -118,7 +119,9 @@ object Main
               storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
         }
       }.asResource
-      _ <- stateChannel.runtime.compile.drain.asResource
+      _ <- stateChannel.runtime.compile.drain.handleErrorWith { error =>
+        logger.error(error)("An error occured during state channel runtime") >> error.raiseError[IO, Unit]
+      }.asResource
     } yield ()
   }
 }
