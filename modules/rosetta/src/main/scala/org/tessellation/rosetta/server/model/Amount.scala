@@ -7,7 +7,7 @@
 
 package org.tessellation.rosetta.server.model
 
-import org.tessellation.rosetta.server.model.dag.schema.GenericMetadata
+import org.tessellation.rosetta.server.model.dag.metadataSchema.GenericMetadata
 
 case class Amount(
   /* Value of the transaction in atomic units represented as an arbitrary-sized signed integer. For example, 1 BTC would be represented by a value of 100000000. */

@@ -7,7 +7,7 @@
 
 package org.tessellation.rosetta.server.model
 
-import org.tessellation.rosetta.server.model.dag.schema.AccountCoinsResponseMetadata
+import org.tessellation.rosetta.server.model.dag.metadataSchema.AccountCoinsResponseMetadata
 
 case class AccountCoinsResponse(
   blockIdentifier: BlockIdentifier,

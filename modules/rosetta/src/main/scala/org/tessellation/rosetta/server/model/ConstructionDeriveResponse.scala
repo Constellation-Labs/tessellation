@@ -9,7 +9,9 @@ package org.tessellation.rosetta.server.model
 
 import org.tessellation.rosetta.server.model.dag.metadataSchema.GenericMetadata
 
-case class MempoolTransactionResponse(
-  transaction: Transaction,
+case class ConstructionDeriveResponse(
+  /* [DEPRECATED by `account_identifier` in `v1.4.4`] Address in network-specific format. */
+  address: Option[String],
+  accountIdentifier: Option[AccountIdentifier],
   metadata: Option[GenericMetadata]
 )

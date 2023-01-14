@@ -7,9 +7,11 @@
 
 package org.tessellation.rosetta.server.model
 
-import org.tessellation.rosetta.server.model.dag.metadataSchema.GenericMetadata
-
-case class MempoolTransactionResponse(
-  transaction: Transaction,
-  metadata: Option[GenericMetadata]
+case class NetworkStatusResponse(
+  currentBlockIdentifier: BlockIdentifier,
+  currentBlockTimestamp: Long,
+  genesisBlockIdentifier: BlockIdentifier,
+  oldestBlockIdentifier: Option[BlockIdentifier],
+  syncStatus: Option[SyncStatus],
+  peers: List[Peer]
 )

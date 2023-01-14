@@ -9,7 +9,7 @@ package org.tessellation.rosetta.server.model
 
 import org.tessellation.rosetta.server.model.dag.metadataSchema.GenericMetadata
 
-case class MempoolTransactionResponse(
-  transaction: Transaction,
+case class NetworkRequest(
+  networkIdentifier: NetworkIdentifier,
   metadata: Option[GenericMetadata]
 )

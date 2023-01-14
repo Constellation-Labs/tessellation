@@ -7,9 +7,11 @@
 
 package org.tessellation.rosetta.server.model
 
-import org.tessellation.rosetta.server.model.dag.metadataSchema.GenericMetadata
+import org.tessellation.rosetta.server.model.dag.metadataSchema.ConstructionPayloadsRequestMetadata
 
-case class MempoolTransactionResponse(
-  transaction: Transaction,
-  metadata: Option[GenericMetadata]
+case class ConstructionPayloadsRequest(
+  networkIdentifier: NetworkIdentifier,
+  operations: List[Operation],
+  metadata: Option[ConstructionPayloadsRequestMetadata],
+  publicKeys: Option[List[PublicKey]]
 )

@@ -7,7 +7,7 @@
 
 package org.tessellation.rosetta.server.model
 
-import org.tessellation.rosetta.server.model.dag.schema.GenericMetadata
+import org.tessellation.rosetta.server.model.dag.metadataSchema.GenericMetadata
 
 case class SubAccountIdentifier(
   /* The SubAccount address may be a cryptographic value or some other identifier (ex: bonded) that uniquely specifies a SubAccount. */
