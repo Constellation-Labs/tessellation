@@ -7,7 +7,7 @@
 
 package org.tessellation.rosetta.server.model
 
-import org.tessellation.rosetta.server.model.dag.schema.AccountIdentifierMetadata
+import org.tessellation.rosetta.server.model.dag.metadataSchema.AccountIdentifierMetadata
 
 case class AccountIdentifier(
   /* The address may be a cryptographic public key (or some encoding of it) or a provided username. */

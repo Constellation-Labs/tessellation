@@ -9,7 +9,10 @@ package org.tessellation.rosetta.server.model
 
 import org.tessellation.rosetta.server.model.dag.metadataSchema.GenericMetadata
 
-case class MempoolTransactionResponse(
-  transaction: Transaction,
+case class ConstructionParseResponse(
+  operations: List[Operation],
+  /* [DEPRECATED by `account_identifier_signers` in `v1.4.4`] All signers (addresses) of a particular transaction. If the transaction is unsigned, it should be empty. */
+  signers: Option[List[String]],
+  accountIdentifierSigners: Option[List[AccountIdentifier]],
   metadata: Option[GenericMetadata]
 )

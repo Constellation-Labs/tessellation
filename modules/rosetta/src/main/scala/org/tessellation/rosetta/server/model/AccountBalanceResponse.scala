@@ -7,7 +7,7 @@
 
 package org.tessellation.rosetta.server.model
 
-import org.tessellation.rosetta.server.model.dag.schema.AccountBalanceResponseMetadata
+import org.tessellation.rosetta.server.model.dag.metadataSchema.AccountBalanceResponseMetadata
 
 case class AccountBalanceResponse(
   blockIdentifier: BlockIdentifier,
