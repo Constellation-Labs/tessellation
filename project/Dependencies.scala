@@ -31,6 +31,7 @@ object Dependencies {
     val micrometer = "1.10.2"
     val monocle = "3.1.0"
     val mapref = "0.2.0-M2"
+    val openApiGenerator = "6.2.1"
     val newtype = "0.4.4"
     val refined = "0.10.1"
     val redis4cats = "1.3.0"
@@ -146,6 +147,9 @@ object Dependencies {
     val monocleMacro = "dev.optics" %% "monocle-macro" % V.monocle
 
     val micrometerPrometheusRegistry = "io.micrometer" % "micrometer-registry-prometheus" % V.micrometer
+
+    val openApiGeneratorCore = "org.openapitools" % "openapi-generator-core" % V.openApiGenerator
+    val openApiGeneratorCli = "org.openapitools" % "openapi-generator-cli" % V.openApiGenerator
 
     val refinedCore = "eu.timepit" %% "refined" % V.refined
     val refinedCats = "eu.timepit" %% "refined-cats" % V.refined

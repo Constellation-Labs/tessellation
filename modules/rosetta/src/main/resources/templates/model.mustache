@@ -1,0 +1,25 @@
+{{>licenseInfo}}
+package {{package}}
+
+import derevo.cats.{eqv, show}
+import derevo.circe.magnolia.{decoder, encoder}
+import derevo.derive
+
+{{#imports}}
+import {{import}}
+{{/imports}}
+
+{{#models}}
+{{#model}}
+@derive(eqv, show, encoder, decoder)
+case class {{classname}} (
+  {{#vars}}
+  {{#description}}
+  // {{{.}}}
+  {{/description}}
+  {{{name}}}: {{^required}}Option[{{/required}}{{dataType}}{{^required}}] = None{{/required}}{{^-last}},{{/-last}}
+  {{/vars}}
+)
+
+{{/model}}
+{{/models}}

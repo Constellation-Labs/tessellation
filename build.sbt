@@ -1,4 +1,5 @@
 import Dependencies._
+import Tasks.generateRosettaModels
 
 ThisBuild / scalaVersion := "2.13.10"
 ThisBuild / organization := "org.constellation"
@@ -309,7 +310,7 @@ lazy val dagShared = (project in file("modules/dag-shared"))
   )
 
 lazy val rosetta = (project in file("modules/rosetta"))
-  .dependsOn(shared % "compile->compile;test->test")
+  .dependsOn(shared % "compile->compile;test->test", dagShared)
   .settings(
     name := "tessellation-rosetta",
     Defaults.itSettings,
@@ -494,5 +495,16 @@ lazy val currencyL0 = (project in file("modules/currency-l0"))
       Libraries.refinedCats,
     )
   )
+
+/**
+  * Start Tasks
+  */
+lazy val generateRosettaClasses = taskKey[Unit]("Generates the needed Rosetta models.")
+
+generateRosettaClasses := generateRosettaModels
+
+/**
+  * End Tasks
+  */
 
 addCommandAlias("runLinter", ";scalafixAll --rules OrganizeImports")

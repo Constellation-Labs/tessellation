@@ -36,3 +36,4 @@ scripts/
 /logs/
 .envrc
 .direnv/
+modules/rosetta/src/main/scala/org/tessellation/rosetta/api
