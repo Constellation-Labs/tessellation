@@ -7,7 +7,6 @@ import cats.effect._
 import cats.effect.std.Random
 import cats.syntax.either._
 import cats.syntax.option._
-import cats.syntax.traverse._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
@@ -35,6 +34,7 @@ import org.tessellation.schema.transaction._
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.key.ops.PublicKeyOps
+import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed.forAsyncKryo
 import org.tessellation.security.{Hashed, SecurityProvider}
 
@@ -278,62 +278,63 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
         val parent3 = BlockReference(Height(6L), ProofsHash("parent3"))
         val parent4 = BlockReference(Height(5L), ProofsHash("parent4"))
 
+        val hashedDAGBlock = hashedDAGBlockForKeyPair(srcKey)
+
         for {
           correctTxs <- generateTransactions(srcAddress, srcKey, dstAddress, 7).map(_.toList)
           wrongTxs <- generateTransactions(dstAddress, dstKey, srcAddress, 1).map(_.toList)
 
-          aboveRangeBlock = DAGBlock(
+          aboveRangeBlock <- hashedDAGBlock(
             NonEmptyList.one(parent1),
             NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(6).signed))
           )
-          nonMajorityInRangeBlock = DAGBlock(
+          nonMajorityInRangeBlock <- hashedDAGBlock(
             NonEmptyList.one(parent2),
             NonEmptySet.fromSetUnsafe(SortedSet(wrongTxs.head.signed))
           )
-          majorityInRangeBlock = DAGBlock(
+          majorityInRangeBlock <- hashedDAGBlock(
             NonEmptyList.one(parent3),
             NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(5).signed))
           )
-          majorityAboveRangeActiveTipBlock = DAGBlock(
+          majorityAboveRangeActiveTipBlock <- hashedDAGBlock(
             NonEmptyList.one(parent3),
             NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(4).signed))
           )
-          majorityInRangeDeprecatedTipBlock = DAGBlock(
+          majorityInRangeDeprecatedTipBlock <- hashedDAGBlock(
             NonEmptyList.one(parent4),
             NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(2).signed))
           )
-          majorityInRangeActiveTipBlock = DAGBlock(
+          majorityInRangeActiveTipBlock <- hashedDAGBlock(
             NonEmptyList.one(parent4),
             NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(3).signed))
           )
 
-          blocks = List(
-            aboveRangeBlock,
-            nonMajorityInRangeBlock,
-            majorityInRangeBlock,
-            majorityAboveRangeActiveTipBlock,
-            majorityInRangeDeprecatedTipBlock,
-            majorityInRangeActiveTipBlock
-          )
-
-          hashedBlocks <- blocks.traverse(
-            forAsyncKryo(_, srcKey).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
-          )
           snapshotBalances = generateSnapshotBalances(Set(srcAddress))
           snapshotTxRefs = generateSnapshotLastAccTxRefs(Map(srcAddress -> correctTxs(5)))
           hashedSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
-              blocks = SortedSet(DAGBlockAsActiveTip(hashedBlocks(2).signed, NonNegLong(1L))),
+              blocks = SortedSet(DAGBlockAsActiveTip(majorityInRangeBlock.signed, NonNegLong(1L))),
               info = GlobalSnapshotInfo(SortedMap.empty, snapshotTxRefs, snapshotBalances),
               tips = SnapshotTips(
                 SortedSet(
                   DeprecatedTip(parent3, snapshotOrdinal9),
-                  DeprecatedTip(BlockReference(hashedBlocks(4).height, hashedBlocks(4).proofsHash), snapshotOrdinal9)
+                  DeprecatedTip(
+                    BlockReference(majorityInRangeDeprecatedTipBlock.height, majorityInRangeDeprecatedTipBlock.proofsHash),
+                    snapshotOrdinal9
+                  )
                 ),
                 SortedSet(
                   ActiveTip(parent1, 1L, snapshotOrdinal8),
-                  ActiveTip(BlockReference(hashedBlocks(3).height, hashedBlocks(3).proofsHash), 1L, snapshotOrdinal9),
-                  ActiveTip(BlockReference(hashedBlocks(5).height, hashedBlocks(5).proofsHash), 2L, snapshotOrdinal9)
+                  ActiveTip(
+                    BlockReference(majorityAboveRangeActiveTipBlock.height, majorityAboveRangeActiveTipBlock.proofsHash),
+                    1L,
+                    snapshotOrdinal9
+                  ),
+                  ActiveTip(
+                    BlockReference(majorityInRangeActiveTipBlock.height, majorityInRangeActiveTipBlock.proofsHash),
+                    2L,
+                    snapshotOrdinal9
+                  )
                 )
               )
             ),
@@ -341,12 +342,12 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
 
           // Inserting blocks in required state
-          _ <- blocksR(hashedBlocks.head.proofsHash).set(WaitingBlock(hashedBlocks.head.signed).some)
-          _ <- blocksR(hashedBlocks(1).proofsHash).set(WaitingBlock(hashedBlocks(1).signed).some)
-          _ <- blocksR(hashedBlocks(2).proofsHash).set(WaitingBlock(hashedBlocks(2).signed).some)
-          _ <- blocksR(hashedBlocks(3).proofsHash).set(WaitingBlock(hashedBlocks(3).signed).some)
-          _ <- blocksR(hashedBlocks(4).proofsHash).set(WaitingBlock(hashedBlocks(4).signed).some)
-          _ <- blocksR(hashedBlocks(5).proofsHash).set(WaitingBlock(hashedBlocks(5).signed).some)
+          _ <- blocksR(aboveRangeBlock.proofsHash).set(WaitingBlock(aboveRangeBlock.signed).some)
+          _ <- blocksR(nonMajorityInRangeBlock.proofsHash).set(WaitingBlock(nonMajorityInRangeBlock.signed).some)
+          _ <- blocksR(majorityInRangeBlock.proofsHash).set(WaitingBlock(majorityInRangeBlock.signed).some)
+          _ <- blocksR(majorityAboveRangeActiveTipBlock.proofsHash).set(WaitingBlock(majorityAboveRangeActiveTipBlock.signed).some)
+          _ <- blocksR(majorityInRangeDeprecatedTipBlock.proofsHash).set(WaitingBlock(majorityInRangeDeprecatedTipBlock.signed).some)
+          _ <- blocksR(majorityInRangeActiveTipBlock.proofsHash).set(WaitingBlock(majorityInRangeActiveTipBlock.signed).some)
 
           processingResult <- snapshotProcessor.process(hashedSnapshot)
 
@@ -367,28 +368,191 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   hashedSnapshot.hash,
                   hashedSnapshot.proofsHash
                 ),
-                Set(hashedBlocks(2).proofsHash),
-                Set(hashedBlocks(1).proofsHash)
+                Set(majorityInRangeBlock.proofsHash),
+                Set(nonMajorityInRangeBlock.proofsHash)
               ),
               Map(
-                hashedBlocks.head.proofsHash -> WaitingBlock(hashedBlocks.head.signed),
-                hashedBlocks(2).proofsHash -> MajorityBlock(
-                  BlockReference(hashedBlocks(2).height, hashedBlocks(2).proofsHash),
+                aboveRangeBlock.proofsHash -> WaitingBlock(aboveRangeBlock.signed),
+                majorityInRangeBlock.proofsHash -> MajorityBlock(
+                  BlockReference(majorityInRangeBlock.height, majorityInRangeBlock.proofsHash),
                   NonNegLong(1L),
                   Active
                 ),
-                hashedBlocks(3).proofsHash -> MajorityBlock(
-                  BlockReference(hashedBlocks(3).height, hashedBlocks(3).proofsHash),
+                majorityAboveRangeActiveTipBlock.proofsHash -> MajorityBlock(
+                  BlockReference(majorityAboveRangeActiveTipBlock.height, majorityAboveRangeActiveTipBlock.proofsHash),
                   NonNegLong(1L),
                   Active
                 ),
-                hashedBlocks(4).proofsHash -> MajorityBlock(
-                  BlockReference(hashedBlocks(4).height, hashedBlocks(4).proofsHash),
+                majorityInRangeDeprecatedTipBlock.proofsHash -> MajorityBlock(
+                  BlockReference(majorityInRangeDeprecatedTipBlock.height, majorityInRangeDeprecatedTipBlock.proofsHash),
                   0L,
                   Deprecated
                 ),
-                hashedBlocks(5).proofsHash -> MajorityBlock(
-                  BlockReference(hashedBlocks(5).height, hashedBlocks(5).proofsHash),
+                majorityInRangeActiveTipBlock.proofsHash -> MajorityBlock(
+                  BlockReference(majorityInRangeActiveTipBlock.height, majorityInRangeActiveTipBlock.proofsHash),
+                  2L,
+                  Active
+                ),
+                parent1.hash -> MajorityBlock(parent1, 1L, Active),
+                parent3.hash -> MajorityBlock(parent3, 0L, Deprecated)
+              ),
+              snapshotBalances,
+              Some(hashedSnapshot),
+              snapshotTxRefs.map { case (k, v) => k -> Majority(v) }
+            )
+          )
+    }
+  }
+
+  test("download should happen for the case when there are postponed blocks in the storage") {
+    testResources.use {
+      case (
+            snapshotProcessor,
+            sp,
+            kp,
+            srcKey,
+            dstKey,
+            srcAddress,
+            dstAddress,
+            peerId,
+            balancesR,
+            blocksR,
+            lastSnapR,
+            lastAccTxR
+          ) =>
+        implicit val securityProvider: SecurityProvider[IO] = sp
+        implicit val kryoPool: KryoSerializer[IO] = kp
+
+        val parent1 = BlockReference(Height(8L), ProofsHash("parent1"))
+        val parent2 = BlockReference(Height(2L), ProofsHash("parent2"))
+        val parent3 = BlockReference(Height(6L), ProofsHash("parent3"))
+        val parent4 = BlockReference(Height(5L), ProofsHash("parent4"))
+        val parent5 = BlockReference(Height(8L), ProofsHash("parent5"))
+
+        val hashedDAGBlock = hashedDAGBlockForKeyPair(srcKey)
+
+        for {
+          correctTxs <- generateTransactions(srcAddress, srcKey, dstAddress, 9).map(_.toList)
+          wrongTxs <- generateTransactions(dstAddress, dstKey, srcAddress, 1).map(_.toList)
+
+          aboveRangeBlock <- hashedDAGBlock(
+            NonEmptyList.one(parent5),
+            NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(7).signed))
+          )
+          aboveRangeRelatedToTipBlock <- hashedDAGBlock(
+            NonEmptyList.one(parent1),
+            NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(7).signed))
+          )
+          nonMajorityInRangeBlock <- hashedDAGBlock(
+            NonEmptyList.one(parent2),
+            NonEmptySet.fromSetUnsafe(SortedSet(wrongTxs.head.signed))
+          )
+          majorityInRangeBlock <- hashedDAGBlock(
+            NonEmptyList.one(parent3),
+            NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(5).signed))
+          )
+          aboveRangeRelatedBlock <- hashedDAGBlock(
+            NonEmptyList.one(BlockReference(majorityInRangeBlock.height, majorityInRangeBlock.proofsHash)),
+            NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(8).signed))
+          )
+          majorityAboveRangeActiveTipBlock <- hashedDAGBlock(
+            NonEmptyList.one(parent3),
+            NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(4).signed))
+          )
+          majorityInRangeDeprecatedTipBlock <- hashedDAGBlock(
+            NonEmptyList.one(parent4),
+            NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(2).signed))
+          )
+          majorityInRangeActiveTipBlock <- hashedDAGBlock(
+            NonEmptyList.one(parent4),
+            NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(3).signed))
+          )
+
+          snapshotBalances = generateSnapshotBalances(Set(srcAddress))
+          snapshotTxRefs = generateSnapshotLastAccTxRefs(Map(srcAddress -> correctTxs(5)))
+          hashedSnapshot <- forAsyncKryo(
+            generateSnapshot(peerId).copy(
+              blocks = SortedSet(DAGBlockAsActiveTip(majorityInRangeBlock.signed, NonNegLong(1L))),
+              info = GlobalSnapshotInfo(SortedMap.empty, snapshotTxRefs, snapshotBalances),
+              tips = SnapshotTips(
+                SortedSet(
+                  DeprecatedTip(parent3, snapshotOrdinal9),
+                  DeprecatedTip(
+                    BlockReference(majorityInRangeDeprecatedTipBlock.height, majorityInRangeDeprecatedTipBlock.proofsHash),
+                    snapshotOrdinal9
+                  )
+                ),
+                SortedSet(
+                  ActiveTip(parent1, 1L, snapshotOrdinal8),
+                  ActiveTip(
+                    BlockReference(majorityAboveRangeActiveTipBlock.height, majorityAboveRangeActiveTipBlock.proofsHash),
+                    1L,
+                    snapshotOrdinal9
+                  ),
+                  ActiveTip(
+                    BlockReference(majorityInRangeActiveTipBlock.height, majorityInRangeActiveTipBlock.proofsHash),
+                    2L,
+                    snapshotOrdinal9
+                  )
+                )
+              )
+            ),
+            srcKey
+          ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
+
+          // Inserting blocks in required state
+          _ <- blocksR(aboveRangeBlock.proofsHash).set(PostponedBlock(aboveRangeBlock.signed).some)
+          _ <- blocksR(aboveRangeRelatedToTipBlock.proofsHash).set(PostponedBlock(aboveRangeRelatedToTipBlock.signed).some)
+          _ <- blocksR(nonMajorityInRangeBlock.proofsHash).set(PostponedBlock(nonMajorityInRangeBlock.signed).some)
+          _ <- blocksR(majorityInRangeBlock.proofsHash).set(PostponedBlock(majorityInRangeBlock.signed).some)
+          _ <- blocksR(aboveRangeRelatedBlock.proofsHash).set(PostponedBlock(aboveRangeRelatedBlock.signed).some)
+          _ <- blocksR(majorityAboveRangeActiveTipBlock.proofsHash).set(PostponedBlock(majorityAboveRangeActiveTipBlock.signed).some)
+          _ <- blocksR(majorityInRangeDeprecatedTipBlock.proofsHash).set(PostponedBlock(majorityInRangeDeprecatedTipBlock.signed).some)
+          _ <- blocksR(majorityInRangeActiveTipBlock.proofsHash).set(PostponedBlock(majorityInRangeActiveTipBlock.signed).some)
+
+          processingResult <- snapshotProcessor.process(hashedSnapshot)
+
+          balancesAfter <- balancesR.get
+          blocksAfter <- blocksR.toMap
+          lastGlobalSnapshotAfter <- lastSnapR.get
+          lastAcceptedTxRAfter <- lastAccTxR.toMap
+        } yield
+          expect.same(
+            (processingResult, blocksAfter, balancesAfter, lastGlobalSnapshotAfter, lastAcceptedTxRAfter),
+            (
+              DownloadPerformed(
+                GlobalSnapshotReference(
+                  snapshotHeight6,
+                  snapshotSubHeight0,
+                  snapshotOrdinal10,
+                  lastSnapshotHash,
+                  hashedSnapshot.hash,
+                  hashedSnapshot.proofsHash
+                ),
+                Set(majorityInRangeBlock.proofsHash),
+                Set(nonMajorityInRangeBlock.proofsHash)
+              ),
+              Map(
+                aboveRangeBlock.proofsHash -> PostponedBlock(aboveRangeBlock.signed),
+                aboveRangeRelatedToTipBlock.proofsHash -> WaitingBlock(aboveRangeRelatedToTipBlock.signed),
+                majorityInRangeBlock.proofsHash -> MajorityBlock(
+                  BlockReference(majorityInRangeBlock.height, majorityInRangeBlock.proofsHash),
+                  NonNegLong(1L),
+                  Active
+                ),
+                aboveRangeRelatedBlock.proofsHash -> WaitingBlock(aboveRangeRelatedBlock.signed),
+                majorityAboveRangeActiveTipBlock.proofsHash -> MajorityBlock(
+                  BlockReference(majorityAboveRangeActiveTipBlock.height, majorityAboveRangeActiveTipBlock.proofsHash),
+                  NonNegLong(1L),
+                  Active
+                ),
+                majorityInRangeDeprecatedTipBlock.proofsHash -> MajorityBlock(
+                  BlockReference(majorityInRangeDeprecatedTipBlock.height, majorityInRangeDeprecatedTipBlock.proofsHash),
+                  0L,
+                  Deprecated
+                ),
+                majorityInRangeActiveTipBlock.proofsHash -> MajorityBlock(
+                  BlockReference(majorityInRangeActiveTipBlock.height, majorityInRangeActiveTipBlock.proofsHash),
                   2L,
                   Active
                 ),
@@ -477,43 +641,51 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
         val parent2 = BlockReference(Height(7L), ProofsHash("parent2"))
         val parent3 = BlockReference(Height(8L), ProofsHash("parent3"))
         val parent4 = BlockReference(Height(9L), ProofsHash("parent4"))
+        val parent5 = BlockReference(Height(9L), ProofsHash("parent5"))
+
+        val hashedDAGBlock = hashedDAGBlockForKeyPair(srcKey)
 
         for {
-          correctTxs <- generateTransactions(srcAddress, srcKey, dstAddress, 4).map(_.toList)
-          wrongTxs <- generateTransactions(dstAddress, dstKey, srcAddress, 1).map(_.toList)
+          correctTxs <- generateTransactions(srcAddress, srcKey, dstAddress, 5).map(_.toList)
+          wrongTxs <- generateTransactions(dstAddress, dstKey, srcAddress, 2).map(_.toList)
 
-          waitingInRangeBlock = DAGBlock(
+          waitingInRangeBlock <- hashedDAGBlock(
             NonEmptyList.one(parent1),
             NonEmptySet.fromSetUnsafe(SortedSet(wrongTxs.head.signed))
           )
-          majorityInRangeBlock = DAGBlock(
+          postponedInRangeBlock <- hashedDAGBlock(
+            NonEmptyList.one(parent1),
+            NonEmptySet.fromSetUnsafe(SortedSet(wrongTxs(1).signed))
+          )
+          majorityInRangeBlock <- hashedDAGBlock(
             NonEmptyList.one(parent2),
             NonEmptySet.fromSetUnsafe(SortedSet(correctTxs.head.signed))
           )
-          aboveRangeAcceptedBlock = DAGBlock(
+          inRangeRelatedTxnBlock <- hashedDAGBlock(
+            NonEmptyList.one(parent2),
+            NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(1).signed))
+          )
+          aboveRangeAcceptedBlock <- hashedDAGBlock(
             NonEmptyList.one(parent3),
             NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(2).signed))
           )
-          aboveRangeMajorityBlock = DAGBlock(
+          aboveRangeMajorityBlock <- hashedDAGBlock(
             NonEmptyList.one(parent3),
             NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(1).signed))
           )
-          waitingAboveRangeBlock = DAGBlock(
+          waitingAboveRangeBlock <- hashedDAGBlock(
             NonEmptyList.one(parent4),
             NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(3).signed))
           )
-
-          blocks = List(
-            waitingInRangeBlock, // 0
-            majorityInRangeBlock, // 1
-            aboveRangeAcceptedBlock, // 2
-            aboveRangeMajorityBlock, // 3
-            waitingAboveRangeBlock // 4
+          postponedAboveRangeRelatedToTipBlock <- hashedDAGBlock(
+            NonEmptyList.one(parent4),
+            NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(4).signed))
+          )
+          postponedAboveRangeRelatedTxnBlock <- hashedDAGBlock(
+            NonEmptyList.one(parent5),
+            NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(2).signed))
           )
 
-          hashedBlocks <- blocks.traverse(
-            forAsyncKryo(_, srcKey).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
-          )
           hashedLastSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
               tips = SnapshotTips(
@@ -534,7 +706,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               ordinal = snapshotOrdinal11,
               height = snapshotHeight8,
               lastSnapshotHash = hashedLastSnapshot.hash,
-              blocks = SortedSet(DAGBlockAsActiveTip(hashedBlocks(1).signed, 1L), DAGBlockAsActiveTip(hashedBlocks(3).signed, 2L)),
+              blocks =
+                SortedSet(DAGBlockAsActiveTip(majorityInRangeBlock.signed, 1L), DAGBlockAsActiveTip(aboveRangeMajorityBlock.signed, 2L)),
               tips = SnapshotTips(
                 SortedSet(
                   DeprecatedTip(parent3, snapshotOrdinal11)
@@ -553,11 +726,17 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           _ <- blocksR(parent3.hash).set(MajorityBlock(parent3, 1L, Active).some)
           _ <- blocksR(parent4.hash).set(MajorityBlock(parent4, 1L, Active).some)
           // Inserting blocks in required state
-          _ <- blocksR(hashedBlocks.head.proofsHash).set(WaitingBlock(hashedBlocks.head.signed).some)
-          _ <- blocksR(hashedBlocks(1).proofsHash).set(AcceptedBlock(hashedBlocks(1)).some)
-          _ <- blocksR(hashedBlocks(2).proofsHash).set(AcceptedBlock(hashedBlocks(2)).some)
-          _ <- blocksR(hashedBlocks(3).proofsHash).set(AcceptedBlock(hashedBlocks(3)).some)
-          _ <- blocksR(hashedBlocks(4).proofsHash).set(WaitingBlock(hashedBlocks(4).signed).some)
+          _ <- blocksR(waitingInRangeBlock.proofsHash).set(WaitingBlock(waitingInRangeBlock.signed).some)
+          _ <- blocksR(postponedInRangeBlock.proofsHash).set(PostponedBlock(postponedInRangeBlock.signed).some)
+          _ <- blocksR(majorityInRangeBlock.proofsHash).set(AcceptedBlock(majorityInRangeBlock).some)
+          _ <- blocksR(inRangeRelatedTxnBlock.proofsHash).set(PostponedBlock(inRangeRelatedTxnBlock.signed).some)
+          _ <- blocksR(aboveRangeAcceptedBlock.proofsHash).set(AcceptedBlock(aboveRangeAcceptedBlock).some)
+          _ <- blocksR(aboveRangeMajorityBlock.proofsHash).set(AcceptedBlock(aboveRangeMajorityBlock).some)
+          _ <- blocksR(waitingAboveRangeBlock.proofsHash).set(WaitingBlock(waitingAboveRangeBlock.signed).some)
+          _ <- blocksR(postponedAboveRangeRelatedToTipBlock.proofsHash).set(
+            PostponedBlock(postponedAboveRangeRelatedToTipBlock.signed).some
+          )
+          _ <- blocksR(postponedAboveRangeRelatedTxnBlock.proofsHash).set(PostponedBlock(postponedAboveRangeRelatedTxnBlock.signed).some)
 
           processingResult <- snapshotProcessor.process(hashedNextSnapshot)
 
@@ -578,23 +757,26 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   hashedNextSnapshot.hash,
                   hashedNextSnapshot.proofsHash
                 ),
-                Set(hashedBlocks.head.proofsHash)
+                Set(waitingInRangeBlock.proofsHash, postponedInRangeBlock.proofsHash, inRangeRelatedTxnBlock.proofsHash)
               ),
               Map(
                 parent3.hash -> MajorityBlock(parent3, 1L, Deprecated),
                 parent4.hash -> MajorityBlock(parent4, 1L, Active),
-                hashedBlocks(1).proofsHash -> MajorityBlock(
-                  BlockReference(hashedBlocks(1).height, hashedBlocks(1).proofsHash),
+                majorityInRangeBlock.proofsHash -> MajorityBlock(
+                  BlockReference(majorityInRangeBlock.height, majorityInRangeBlock.proofsHash),
                   1L,
                   Active
                 ),
-                hashedBlocks(2).proofsHash -> AcceptedBlock(hashedBlocks(2)),
-                hashedBlocks(3).proofsHash -> MajorityBlock(
-                  BlockReference(hashedBlocks(3).height, hashedBlocks(3).proofsHash),
+                aboveRangeAcceptedBlock.proofsHash -> AcceptedBlock(aboveRangeAcceptedBlock),
+                aboveRangeMajorityBlock.proofsHash -> MajorityBlock(
+                  BlockReference(aboveRangeMajorityBlock.height, aboveRangeMajorityBlock.proofsHash),
                   2L,
                   Active
                 ),
-                hashedBlocks(4).proofsHash -> WaitingBlock(hashedBlocks(4).signed)
+                waitingAboveRangeBlock.proofsHash -> WaitingBlock(waitingAboveRangeBlock.signed),
+                // inRangeRelatedTxnBlock.proofsHash -> WaitingBlock(inRangeRelatedTxnBlock.signed),
+                postponedAboveRangeRelatedToTipBlock.proofsHash -> PostponedBlock(postponedAboveRangeRelatedToTipBlock.signed),
+                postponedAboveRangeRelatedTxnBlock.proofsHash -> WaitingBlock(postponedAboveRangeRelatedTxnBlock.signed)
               ),
               Map.empty,
               Some(hashedNextSnapshot),
@@ -627,63 +809,67 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
         val parent2 = BlockReference(Height(7L), ProofsHash("parent2"))
         val parent3 = BlockReference(Height(8L), ProofsHash("parent3"))
         val parent4 = BlockReference(Height(9L), ProofsHash("parent4"))
+        val parent5 = BlockReference(Height(9L), ProofsHash("parent5"))
+
+        val hashedDAGBlock = hashedDAGBlockForKeyPair(srcKey)
 
         for {
-          correctTxs <- generateTransactions(srcAddress, srcKey, dstAddress, 6).map(_.toList)
-          wrongTxs <- generateTransactions(dstAddress, dstKey, srcAddress, 3).map(_.toList)
+          correctTxs <- generateTransactions(srcAddress, srcKey, dstAddress, 9).map(_.toList)
+          wrongTxs <- generateTransactions(dstAddress, dstKey, srcAddress, 4).map(_.toList)
 
-          waitingInRangeBlock = DAGBlock(
+          waitingInRangeBlock <- hashedDAGBlock(
             NonEmptyList.one(parent1),
             NonEmptySet.fromSetUnsafe(SortedSet(wrongTxs(2).signed))
           )
-          waitingMajorityInRangeBlock = DAGBlock(
+          postponedInRangeBlock <- hashedDAGBlock(
+            NonEmptyList.one(parent1),
+            NonEmptySet.fromSetUnsafe(SortedSet(wrongTxs(3).signed))
+          )
+          waitingMajorityInRangeBlock <- hashedDAGBlock(
             NonEmptyList.one(parent1),
             NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(4).signed))
           )
-          acceptedMajorityInRangeBlock = DAGBlock(
+          postponedMajorityInRangeBlock <- hashedDAGBlock(
+            NonEmptyList.one(parent1),
+            NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(6).signed))
+          )
+          acceptedMajorityInRangeBlock <- hashedDAGBlock(
             NonEmptyList.one(parent2),
             NonEmptySet.fromSetUnsafe(SortedSet(correctTxs.head.signed))
           )
-          majorityUnknownBlock = DAGBlock(
+          majorityUnknownBlock <- hashedDAGBlock(
             NonEmptyList.one(parent2),
             NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(2).signed))
           )
-          acceptedNonMajorityInRangeBlock = DAGBlock(
+          acceptedNonMajorityInRangeBlock <- hashedDAGBlock(
             NonEmptyList.one(parent2),
             NonEmptySet.fromSetUnsafe(SortedSet(wrongTxs.head.signed))
           )
-          aboveRangeAcceptedBlock = DAGBlock(
+          aboveRangeAcceptedBlock <- hashedDAGBlock(
             NonEmptyList.one(parent3),
             NonEmptySet.fromSetUnsafe(SortedSet(wrongTxs(1).signed))
           )
-          aboveRangeAcceptedMajorityBlock = DAGBlock(
+          aboveRangeAcceptedMajorityBlock <- hashedDAGBlock(
             NonEmptyList.one(parent3),
             NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(1).signed))
           )
-          aboveRangeUnknownMajorityBlock = DAGBlock(
+          aboveRangeUnknownMajorityBlock <- hashedDAGBlock(
             NonEmptyList.one(parent3),
             NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(3).signed))
           )
-          waitingAboveRangeBlock = DAGBlock(
+          waitingAboveRangeBlock <- hashedDAGBlock(
             NonEmptyList.one(parent4),
             NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(5).signed))
           )
-
-          blocks = List(
-            waitingInRangeBlock, // 0
-            waitingMajorityInRangeBlock, // 1
-            acceptedMajorityInRangeBlock, // 2
-            majorityUnknownBlock, // 3
-            acceptedNonMajorityInRangeBlock, // 4
-            aboveRangeAcceptedBlock, // 5
-            aboveRangeAcceptedMajorityBlock, // 6
-            aboveRangeUnknownMajorityBlock, // 7
-            waitingAboveRangeBlock // 8
+          postponedAboveRangeBlock <- hashedDAGBlock(
+            NonEmptyList.one(parent4),
+            NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(5).signed))
+          )
+          postponedAboveRangeNotRelatedBlock <- hashedDAGBlock(
+            NonEmptyList.one(parent5),
+            NonEmptySet.fromSetUnsafe(SortedSet(correctTxs(8).signed))
           )
 
-          hashedBlocks <- blocks.traverse(
-            forAsyncKryo(_, srcKey).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
-          )
           snapshotBalances = generateSnapshotBalances(Set(srcAddress))
           snapshotTxRefs = generateSnapshotLastAccTxRefs(Map(srcAddress -> correctTxs(4)))
           hashedLastSnapshot <- forAsyncKryo(
@@ -707,11 +893,12 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               height = snapshotHeight8,
               lastSnapshotHash = hashedLastSnapshot.hash,
               blocks = SortedSet(
-                DAGBlockAsActiveTip(hashedBlocks(1).signed, 1L),
-                DAGBlockAsActiveTip(hashedBlocks(2).signed, 2L),
-                DAGBlockAsActiveTip(hashedBlocks(3).signed, 1L),
-                DAGBlockAsActiveTip(hashedBlocks(6).signed, 0L),
-                DAGBlockAsActiveTip(hashedBlocks(7).signed, 0L)
+                DAGBlockAsActiveTip(waitingMajorityInRangeBlock.signed, 1L),
+                DAGBlockAsActiveTip(postponedMajorityInRangeBlock.signed, 1L),
+                DAGBlockAsActiveTip(acceptedMajorityInRangeBlock.signed, 2L),
+                DAGBlockAsActiveTip(majorityUnknownBlock.signed, 1L),
+                DAGBlockAsActiveTip(aboveRangeAcceptedMajorityBlock.signed, 0L),
+                DAGBlockAsActiveTip(aboveRangeUnknownMajorityBlock.signed, 0L)
               ),
               info = GlobalSnapshotInfo(SortedMap.empty, snapshotTxRefs, snapshotBalances),
               tips = SnapshotTips(
@@ -732,13 +919,17 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           _ <- blocksR(parent3.hash).set(MajorityBlock(parent3, 1L, Active).some)
           _ <- blocksR(parent4.hash).set(MajorityBlock(parent4, 1L, Active).some)
           // Inserting blocks in required state
-          _ <- blocksR(hashedBlocks.head.proofsHash).set(WaitingBlock(hashedBlocks.head.signed).some)
-          _ <- blocksR(hashedBlocks(1).proofsHash).set(WaitingBlock(hashedBlocks(1).signed).some)
-          _ <- blocksR(hashedBlocks(2).proofsHash).set(AcceptedBlock(hashedBlocks(2)).some)
-          _ <- blocksR(hashedBlocks(4).proofsHash).set(AcceptedBlock(hashedBlocks(4)).some)
-          _ <- blocksR(hashedBlocks(5).proofsHash).set(AcceptedBlock(hashedBlocks(5)).some)
-          _ <- blocksR(hashedBlocks(6).proofsHash).set(AcceptedBlock(hashedBlocks(6)).some)
-          _ <- blocksR(hashedBlocks(8).proofsHash).set(WaitingBlock(hashedBlocks(8).signed).some)
+          _ <- blocksR(waitingInRangeBlock.proofsHash).set(WaitingBlock(waitingInRangeBlock.signed).some)
+          _ <- blocksR(postponedInRangeBlock.proofsHash).set(PostponedBlock(postponedInRangeBlock.signed).some)
+          _ <- blocksR(waitingMajorityInRangeBlock.proofsHash).set(WaitingBlock(waitingMajorityInRangeBlock.signed).some)
+          _ <- blocksR(postponedMajorityInRangeBlock.proofsHash).set(PostponedBlock(postponedMajorityInRangeBlock.signed).some)
+          _ <- blocksR(acceptedMajorityInRangeBlock.proofsHash).set(AcceptedBlock(acceptedMajorityInRangeBlock).some)
+          _ <- blocksR(acceptedNonMajorityInRangeBlock.proofsHash).set(AcceptedBlock(acceptedNonMajorityInRangeBlock).some)
+          _ <- blocksR(aboveRangeAcceptedBlock.proofsHash).set(AcceptedBlock(aboveRangeAcceptedBlock).some)
+          _ <- blocksR(aboveRangeAcceptedMajorityBlock.proofsHash).set(AcceptedBlock(aboveRangeAcceptedMajorityBlock).some)
+          _ <- blocksR(waitingAboveRangeBlock.proofsHash).set(WaitingBlock(waitingAboveRangeBlock.signed).some)
+          _ <- blocksR(postponedAboveRangeBlock.proofsHash).set(PostponedBlock(postponedAboveRangeBlock.signed).some)
+          _ <- blocksR(postponedAboveRangeNotRelatedBlock.proofsHash).set(PostponedBlock(postponedAboveRangeNotRelatedBlock.signed).some)
 
           processingResult <- snapshotProcessor.process(hashedNextSnapshot)
 
@@ -759,40 +950,52 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   hashedNextSnapshot.hash,
                   hashedNextSnapshot.proofsHash
                 ),
-                addedBlocks = Set(hashedBlocks(1).proofsHash, hashedBlocks(3).proofsHash, hashedBlocks(7).proofsHash),
-                removedBlocks = Set(hashedBlocks(4).proofsHash),
-                removedObsoleteBlocks = Set(hashedBlocks.head.proofsHash)
+                addedBlocks = Set(
+                  waitingMajorityInRangeBlock.proofsHash,
+                  postponedMajorityInRangeBlock.proofsHash,
+                  majorityUnknownBlock.proofsHash,
+                  aboveRangeUnknownMajorityBlock.proofsHash
+                ),
+                removedBlocks = Set(acceptedNonMajorityInRangeBlock.proofsHash),
+                removedObsoleteBlocks = Set(waitingInRangeBlock.proofsHash, postponedInRangeBlock.proofsHash)
               ),
               Map(
                 parent3.hash -> MajorityBlock(parent3, 2L, Deprecated),
                 parent4.hash -> MajorityBlock(parent4, 1L, Active),
-                hashedBlocks(1).proofsHash -> MajorityBlock(
-                  BlockReference(hashedBlocks(1).height, hashedBlocks(1).proofsHash),
+                waitingMajorityInRangeBlock.proofsHash -> MajorityBlock(
+                  BlockReference(waitingMajorityInRangeBlock.height, waitingMajorityInRangeBlock.proofsHash),
                   1L,
                   Active
                 ),
-                hashedBlocks(2).proofsHash -> MajorityBlock(
-                  BlockReference(hashedBlocks(2).height, hashedBlocks(2).proofsHash),
+                postponedMajorityInRangeBlock.proofsHash -> MajorityBlock(
+                  BlockReference(postponedMajorityInRangeBlock.height, postponedMajorityInRangeBlock.proofsHash),
+                  1L,
+                  Active
+                ),
+                acceptedMajorityInRangeBlock.proofsHash -> MajorityBlock(
+                  BlockReference(acceptedMajorityInRangeBlock.height, acceptedMajorityInRangeBlock.proofsHash),
                   2L,
                   Active
                 ),
-                hashedBlocks(3).proofsHash -> MajorityBlock(
-                  BlockReference(hashedBlocks(3).height, hashedBlocks(3).proofsHash),
+                majorityUnknownBlock.proofsHash -> MajorityBlock(
+                  BlockReference(majorityUnknownBlock.height, majorityUnknownBlock.proofsHash),
                   1L,
                   Active
                 ),
-                hashedBlocks(5).proofsHash -> WaitingBlock(hashedBlocks(5).signed),
-                hashedBlocks(6).proofsHash -> MajorityBlock(
-                  BlockReference(hashedBlocks(6).height, hashedBlocks(6).proofsHash),
+                aboveRangeAcceptedBlock.proofsHash -> WaitingBlock(aboveRangeAcceptedBlock.signed),
+                aboveRangeAcceptedMajorityBlock.proofsHash -> MajorityBlock(
+                  BlockReference(aboveRangeAcceptedMajorityBlock.height, aboveRangeAcceptedMajorityBlock.proofsHash),
                   0L,
                   Active
                 ),
-                hashedBlocks(7).proofsHash -> MajorityBlock(
-                  BlockReference(hashedBlocks(7).height, hashedBlocks(7).proofsHash),
+                aboveRangeUnknownMajorityBlock.proofsHash -> MajorityBlock(
+                  BlockReference(aboveRangeUnknownMajorityBlock.height, aboveRangeUnknownMajorityBlock.proofsHash),
                   0L,
                   Active
                 ),
-                hashedBlocks(8).proofsHash -> WaitingBlock(hashedBlocks(8).signed)
+                waitingAboveRangeBlock.proofsHash -> WaitingBlock(waitingAboveRangeBlock.signed),
+                postponedAboveRangeBlock.proofsHash -> WaitingBlock(postponedAboveRangeBlock.signed),
+                postponedAboveRangeNotRelatedBlock.proofsHash -> PostponedBlock(postponedAboveRangeNotRelatedBlock.signed)
               ),
               snapshotBalances,
               Some(hashedNextSnapshot),
@@ -890,4 +1093,9 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           )
     }
   }
+
+  private def hashedDAGBlockForKeyPair(key: KeyPair)(implicit sc: SecurityProvider[IO], ks: KryoSerializer[IO]) =
+    (parent: NonEmptyList[BlockReference], transactions: NonEmptySet[Signed[Transaction]]) =>
+      forAsyncKryo(DAGBlock(parent, transactions), key).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
+
 }

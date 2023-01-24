@@ -25,7 +25,7 @@ object hash {
 
     def empty: Hash = Hash(s"%064d".format(0))
 
-    implicit val arbitrary: Arbitrary[Hash] = Arbitrary(Gen.resize(64, Gen.hexStr).map(Hash(_)))
+    implicit val arbitrary: Arbitrary[Hash] = Arbitrary(Gen.stringOfN(64, Gen.hexChar).map(Hash(_)))
   }
 
   @derive(encoder, decoder, ordering, order, show)

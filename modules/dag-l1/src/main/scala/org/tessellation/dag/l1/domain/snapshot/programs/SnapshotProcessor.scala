@@ -12,8 +12,8 @@ import scala.util.control.NoStackTrace
 
 import org.tessellation.dag.domain.block.{DAGBlock, DAGBlockAsActiveTip}
 import org.tessellation.dag.l1.domain.address.storage.AddressStorage
-import org.tessellation.dag.l1.domain.block.BlockStorage
 import org.tessellation.dag.l1.domain.block.BlockStorage.MajorityReconciliationData
+import org.tessellation.dag.l1.domain.block.{BlockRelations, BlockStorage}
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.dag.snapshot._
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
@@ -24,6 +24,7 @@ import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.sdk.domain.snapshot.storage.LastGlobalSnapshotStorage
 import org.tessellation.security.hash.ProofsHash
+import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hashed, SecurityProvider}
 
 import derevo.cats.show
@@ -46,20 +47,23 @@ object SnapshotProcessor {
     toMarkMajority: Set[(ProofsHash, NonNegLong)],
     tipsToDeprecate: Set[ProofsHash],
     tipsToRemove: Set[ProofsHash],
-    txRefsToMarkMajority: Map[Address, TransactionReference]
+    txRefsToMarkMajority: Map[Address, TransactionReference],
+    postponedToWaiting: Set[ProofsHash]
   ) extends Alignment
   case class AlignedAtNewHeight(
     toMarkMajority: Set[(ProofsHash, NonNegLong)],
     obsoleteToRemove: Set[ProofsHash],
     tipsToDeprecate: Set[ProofsHash],
     tipsToRemove: Set[ProofsHash],
-    txRefsToMarkMajority: Map[Address, TransactionReference]
+    txRefsToMarkMajority: Map[Address, TransactionReference],
+    postponedToWaiting: Set[ProofsHash]
   ) extends Alignment
   case class DownloadNeeded(
     toAdd: Set[(Hashed[DAGBlock], NonNegLong)],
     obsoleteToRemove: Set[ProofsHash],
     activeTips: Set[ActiveTip],
-    deprecatedTips: Set[BlockReference]
+    deprecatedTips: Set[BlockReference],
+    postponedToWaiting: Set[ProofsHash]
   ) extends Alignment
   case class RedownloadNeeded(
     toAdd: Set[(Hashed[DAGBlock], NonNegLong)],
@@ -68,7 +72,8 @@ object SnapshotProcessor {
     obsoleteToRemove: Set[ProofsHash],
     toReset: Set[ProofsHash],
     tipsToDeprecate: Set[ProofsHash],
-    tipsToRemove: Set[ProofsHash]
+    tipsToRemove: Set[ProofsHash],
+    postponedToWaiting: Set[ProofsHash]
   ) extends Alignment
   case class Ignore(
     lastHeight: Height,
@@ -120,13 +125,14 @@ sealed abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityPro
 
   def process(globalSnapshot: Hashed[GlobalSnapshot]): F[SnapshotProcessingResult] =
     checkAlignment(globalSnapshot).flatMap {
-      case AlignedAtNewOrdinal(toMarkMajority, tipsToDeprecate, tipsToRemove, txRefsToMarkMajority) =>
+      case AlignedAtNewOrdinal(toMarkMajority, tipsToDeprecate, tipsToRemove, txRefsToMarkMajority, postponedToWaiting) =>
         val adjustToMajority: F[Unit] =
           blockStorage
             .adjustToMajority(
               toMarkMajority = toMarkMajority,
               tipsToDeprecate = tipsToDeprecate,
-              tipsToRemove = tipsToRemove
+              tipsToRemove = tipsToRemove,
+              postponedToWaiting = postponedToWaiting
             )
 
         val markTxRefsAsMajority: F[Unit] =
@@ -144,14 +150,15 @@ sealed abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityPro
             )
           }
 
-      case AlignedAtNewHeight(toMarkMajority, obsoleteToRemove, tipsToDeprecate, tipsToRemove, txRefsToMarkMajority) =>
+      case AlignedAtNewHeight(toMarkMajority, obsoleteToRemove, tipsToDeprecate, tipsToRemove, txRefsToMarkMajority, postponedToWaiting) =>
         val adjustToMajority: F[Unit] =
           blockStorage
             .adjustToMajority(
               toMarkMajority = toMarkMajority,
               obsoleteToRemove = obsoleteToRemove,
               tipsToDeprecate = tipsToDeprecate,
-              tipsToRemove = tipsToRemove
+              tipsToRemove = tipsToRemove,
+              postponedToWaiting = postponedToWaiting
             )
 
         val markTxRefsAsMajority: F[Unit] =
@@ -169,13 +176,14 @@ sealed abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityPro
             )
           }
 
-      case DownloadNeeded(toAdd, obsoleteToRemove, activeTips, deprecatedTips) =>
+      case DownloadNeeded(toAdd, obsoleteToRemove, activeTips, deprecatedTips, relatedPostponed) =>
         val adjustToMajority: F[Unit] =
           blockStorage.adjustToMajority(
             toAdd = toAdd,
             obsoleteToRemove = obsoleteToRemove,
             activeTipsToAdd = activeTips,
-            deprecatedTipsToAdd = deprecatedTips
+            deprecatedTipsToAdd = deprecatedTips,
+            postponedToWaiting = relatedPostponed
           )
 
         val setBalances: F[Unit] =
@@ -206,7 +214,8 @@ sealed abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityPro
             obsoleteToRemove,
             toReset,
             tipsToDeprecate,
-            tipsToRemove
+            tipsToRemove,
+            postponedToWaiting
           ) =>
         val adjustToMajority: F[Unit] =
           blockStorage.adjustToMajority(
@@ -216,7 +225,8 @@ sealed abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityPro
             obsoleteToRemove = obsoleteToRemove,
             toReset = toReset,
             tipsToDeprecate = tipsToDeprecate,
-            tipsToRemove = tipsToRemove
+            tipsToRemove = tipsToRemove,
+            postponedToWaiting = postponedToWaiting
           )
 
         val setBalances: F[Unit] =
@@ -261,8 +271,10 @@ sealed abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityPro
       result <- lastGlobalSnapshotStorage.get.flatMap {
         case Some(last)
             if last.ordinal.next === globalSnapshot.ordinal && (last.height === globalSnapshot.height && last.subHeight.next === globalSnapshot.subHeight) && last.hash === globalSnapshot.lastSnapshotHash =>
-          blockStorage.getBlocksForMajorityReconciliation(last.height, globalSnapshot.height).flatMap {
-            case MajorityReconciliationData(deprecatedTips, activeTips, _, _, acceptedAbove) =>
+          val isDependent =
+            (block: Signed[DAGBlock]) => BlockRelations.dependsOn(acceptedInMajority.values.map(_._1).toSet, Set.empty)(block)
+          blockStorage.getBlocksForMajorityReconciliation(last.height, globalSnapshot.height, isDependent).flatMap {
+            case MajorityReconciliationData(deprecatedTips, activeTips, _, _, relatedPostponed, _, acceptedAbove) =>
               val onlyInMajority = acceptedInMajority -- acceptedAbove
               val toMarkMajority = acceptedInMajority.view.filterKeys(acceptedAbove.contains).mapValues(_._2)
               lazy val toAdd = onlyInMajority.values.toSet
@@ -272,12 +284,13 @@ sealed abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityPro
               val tipsToDeprecate = activeTips -- gsRemainedActive.map(_.block.hash)
               val areTipsAligned = deprecatedTipsToAdd == tipsToDeprecate
               lazy val txRefsToMarkMajority = extractMajorityTxRefs(acceptedInMajority, globalSnapshot)
+              lazy val postponedToWaiting = relatedPostponed -- toAdd.map(_._1.proofsHash) -- toReset
 
               if (!areTipsAligned)
                 MonadThrow[F].raiseError[Alignment](TipsGotMisaligned(deprecatedTipsToAdd, tipsToDeprecate))
               else if (onlyInMajority.isEmpty)
                 Applicative[F].pure[Alignment](
-                  AlignedAtNewOrdinal(toMarkMajority.toSet, tipsToDeprecate, tipsToRemove, txRefsToMarkMajority)
+                  AlignedAtNewOrdinal(toMarkMajority.toSet, tipsToDeprecate, tipsToRemove, txRefsToMarkMajority, postponedToWaiting)
                 )
               else
                 Applicative[F]
@@ -289,18 +302,23 @@ sealed abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityPro
                       Set.empty,
                       toReset,
                       tipsToDeprecate,
-                      tipsToRemove
+                      tipsToRemove,
+                      postponedToWaiting
                     )
                   )
           }
 
         case Some(last)
             if last.ordinal.next === globalSnapshot.ordinal && (last.height < globalSnapshot.height && globalSnapshot.subHeight === SubHeight.MinValue) && last.hash === globalSnapshot.lastSnapshotHash =>
-          blockStorage.getBlocksForMajorityReconciliation(last.height, globalSnapshot.height).flatMap {
+          val isDependent =
+            (block: Signed[DAGBlock]) => BlockRelations.dependsOn(acceptedInMajority.values.map(_._1).toSet, Set.empty)(block)
+          blockStorage.getBlocksForMajorityReconciliation(last.height, globalSnapshot.height, isDependent).flatMap {
             case MajorityReconciliationData(
                   deprecatedTips,
                   activeTips,
                   waitingInRange,
+                  postponedInRange,
+                  relatedPostponed,
                   acceptedInRange,
                   acceptedAbove
                 ) =>
@@ -310,12 +328,13 @@ sealed abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityPro
               val acceptedToRemove = acceptedInRange -- acceptedInMajority.keySet
               lazy val toAdd = onlyInMajority.values.toSet
               lazy val toReset = acceptedLocally -- toMarkMajority.keySet -- acceptedToRemove
-              val obsoleteToRemove = waitingInRange -- onlyInMajority.keySet
+              val obsoleteToRemove = waitingInRange ++ postponedInRange -- onlyInMajority.keySet
               val tipsToRemove = deprecatedTips -- gsDeprecatedTips.map(_.block.hash)
               val deprecatedTipsToAdd = gsDeprecatedTips.map(_.block.hash) -- deprecatedTips
               val tipsToDeprecate = activeTips -- gsRemainedActive.map(_.block.hash)
               val areTipsAligned = deprecatedTipsToAdd == tipsToDeprecate
               lazy val txRefsToMarkMajority = extractMajorityTxRefs(acceptedInMajority, globalSnapshot)
+              lazy val postponedToWaiting = relatedPostponed -- obsoleteToRemove -- toAdd.map(_._1.proofsHash) -- toReset
 
               if (!areTipsAligned)
                 MonadThrow[F].raiseError[Alignment](TipsGotMisaligned(deprecatedTipsToAdd, tipsToDeprecate))
@@ -326,7 +345,8 @@ sealed abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityPro
                     obsoleteToRemove,
                     tipsToDeprecate,
                     tipsToRemove,
-                    txRefsToMarkMajority
+                    txRefsToMarkMajority,
+                    postponedToWaiting
                   )
                 )
               else
@@ -338,7 +358,8 @@ sealed abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityPro
                     obsoleteToRemove,
                     toReset,
                     tipsToDeprecate,
-                    tipsToRemove
+                    tipsToRemove,
+                    postponedToWaiting
                   )
                 )
           }
@@ -349,17 +370,25 @@ sealed abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityPro
           )
 
         case None =>
-          blockStorage.getBlocksForMajorityReconciliation(Height.MinValue, globalSnapshot.height).flatMap {
-            case MajorityReconciliationData(_, _, waitingInRange, _, _) =>
-              val obsoleteToRemove = waitingInRange -- acceptedInMajority.keySet -- gsRemainedActive
-                .map(_.block.hash) -- gsDeprecatedTips.map(_.block.hash)
+          val isDependent = (block: Signed[DAGBlock]) =>
+            BlockRelations.dependsOn(
+              acceptedInMajority.values.map(_._1).toSet,
+              gsDeprecatedTips.map(_.block) ++ gsRemainedActive.map(_.block)
+            )(block)
+          blockStorage.getBlocksForMajorityReconciliation(Height.MinValue, globalSnapshot.height, isDependent).flatMap {
+            case MajorityReconciliationData(_, _, waitingInRange, postponedInRange, relatedPostponed, _, _) =>
+              val initialBlocksAndTips =
+                acceptedInMajority.keySet ++ gsRemainedActive.map(_.block.hash) ++ gsDeprecatedTips.map(_.block.hash)
+              val obsoleteToRemove = waitingInRange ++ postponedInRange -- initialBlocksAndTips
+              val postponedToWaiting = relatedPostponed -- postponedInRange -- initialBlocksAndTips
 
               Applicative[F].pure[Alignment](
                 DownloadNeeded(
                   acceptedInMajority.values.toSet,
                   obsoleteToRemove,
                   gsRemainedActive,
-                  gsDeprecatedTips.map(_.block)
+                  gsDeprecatedTips.map(_.block),
+                  postponedToWaiting
                 )
               )
           }

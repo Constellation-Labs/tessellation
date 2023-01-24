@@ -2,6 +2,8 @@ package org.tessellation.dag.domain.block
 
 import cats.data.{NonEmptyList, NonEmptySet}
 
+import scala.collection.immutable.SortedSet
+
 import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.schema.BlockReference
 import org.tessellation.schema.generators._
@@ -18,8 +20,9 @@ object generators {
     for {
       blockReferences <- blockReferencesGen
       signedTxn <- signedTransactionGen
-    } yield DAGBlock(blockReferences, NonEmptySet.of(signedTxn))
+    } yield DAGBlock(blockReferences, NonEmptySet.fromSetUnsafe(SortedSet(signedTxn)))
 
   val signedDAGBlockGen: Gen[Signed[DAGBlock]] = signedOf(dagBlockGen)
+  implicit val signedDAGBlockArbitrary = Arbitrary(signedDAGBlockGen)
 
 }
