@@ -48,7 +48,7 @@ object Validator {
   ): F[Boolean] =
     transactionStorage.countAllowedForConsensus.map(_ >= 1)
 
-  def canStartOwnConsensus[F[_]: Monad: Async](
+  def canStartOwnConsensus[F[_]: Async](
     consensusStorage: ConsensusStorage[F],
     nodeStorage: NodeStorage[F],
     clusterStorage: ClusterStorage[F],

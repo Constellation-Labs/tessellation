@@ -6,6 +6,7 @@ import org.tessellation.ext.cats.data.OrderBasedOrdering
 import org.tessellation.ext.codecs.NonEmptySetCodec
 import org.tessellation.schema._
 import org.tessellation.schema.transaction.Transaction
+import org.tessellation.security.Hashed
 import org.tessellation.security.signature.Signed
 
 import derevo.cats.{eqv, order, show}
@@ -37,4 +38,8 @@ object DAGBlock {
 
   implicit val transactionsDecoder: Decoder[NonEmptySet[Signed[Transaction]]] =
     NonEmptySetCodec.decoder[Signed[Transaction]]
+
+  implicit class HashedOps(hashedBlock: Hashed[DAGBlock]) {
+    def ownReference = BlockReference(hashedBlock.height, hashedBlock.proofsHash)
+  }
 }
