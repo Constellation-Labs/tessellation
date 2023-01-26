@@ -12,7 +12,6 @@ import cats.syntax.validated._
 import cats.{Functor, Order}
 
 import org.tessellation.dag.block.BlockValidator.{BlockValidationErrorOr, BlockValidationParams}
-import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.dag.transaction.TransactionChainValidator.{TransactionChainBroken, TransactionNel}
 import org.tessellation.dag.transaction.TransactionValidator.TransactionValidationError
 import org.tessellation.dag.transaction.{TransactionChainValidator, TransactionValidator}
@@ -20,6 +19,7 @@ import org.tessellation.ext.cats.syntax.validated._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.BlockReference
 import org.tessellation.schema.address.Address
+import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.security.signature.SignedValidator.SignedValidationError
 import org.tessellation.security.signature.{Signed, SignedValidator}

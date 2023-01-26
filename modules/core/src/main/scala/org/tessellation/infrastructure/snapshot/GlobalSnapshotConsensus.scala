@@ -9,9 +9,10 @@ import org.tessellation.config.types.SnapshotConfig
 import org.tessellation.dag.block.BlockValidator
 import org.tessellation.dag.block.processing.BlockAcceptanceManager
 import org.tessellation.domain.rewards.Rewards
-import org.tessellation.domain.snapshot.GlobalSnapshotStorage
+import org.tessellation.domain.snapshot.SnapshotStorage
 import org.tessellation.domain.statechannel.StateChannelValidator
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.GlobalSnapshot
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.config.AppEnvironment
@@ -36,7 +37,7 @@ object GlobalSnapshotConsensus {
     collateral: Amount,
     clusterStorage: ClusterStorage[F],
     nodeStorage: NodeStorage[F],
-    globalSnapshotStorage: GlobalSnapshotStorage[F],
+    globalSnapshotStorage: SnapshotStorage[F, GlobalSnapshot],
     blockValidator: BlockValidator[F],
     stateChannelValidator: StateChannelValidator[F],
     snapshotConfig: SnapshotConfig,
