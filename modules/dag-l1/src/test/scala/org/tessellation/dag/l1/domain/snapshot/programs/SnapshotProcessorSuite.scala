@@ -10,7 +10,6 @@ import cats.syntax.option._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import org.tessellation.dag.domain.block.{DAGBlock, DAGBlockAsActiveTip}
 import org.tessellation.dag.l1.domain.address.storage.AddressStorage
 import org.tessellation.dag.l1.domain.block.BlockStorage
 import org.tessellation.dag.l1.domain.block.BlockStorage._
@@ -19,8 +18,6 @@ import org.tessellation.dag.l1.domain.snapshot.storage.LastGlobalSnapshotStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage.{LastTransactionReferenceState, Majority}
 import org.tessellation.dag.l1.{Main, TransactionGenerator}
-import org.tessellation.dag.snapshot._
-import org.tessellation.dag.snapshot.epoch.EpochProgress
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.collection.MapRefUtils._
 import org.tessellation.keytool.KeyPairGenerator
@@ -28,6 +25,8 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
+import org.tessellation.schema.block.DAGBlock
+import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction._
@@ -72,7 +71,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]().asResource
             lastSnapR <- SignallingRef.of[IO, Option[Hashed[GlobalSnapshot]]](None).asResource
             lastAccTxR <- MapRef.ofConcurrentHashMap[IO, Address, LastTransactionReferenceState]().asResource
-            waitingTxsR <- MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[Transaction]]]().asResource
+            waitingTxsR <- MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[DAGTransaction]]]().asResource
             snapshotProcessor = {
               val addressStorage = new AddressStorage[IO] {
                 def getBalance(address: Address): IO[balance.Balance] =
@@ -186,7 +185,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           hashedSnapshot <- forAsyncKryo(
             generateSnapshot(peerId)
               .copy(
-                blocks = SortedSet(DAGBlockAsActiveTip(hashedBlock.signed, NonNegLong.MinValue)),
+                blocks = SortedSet(BlockAsActiveTip(hashedBlock.signed, NonNegLong.MinValue)),
                 info = GlobalSnapshotInfo(SortedMap.empty, snapshotTxRefs, snapshotBalances),
                 tips = SnapshotTips(
                   SortedSet(DeprecatedTip(parent1, snapshotOrdinal8)),
@@ -313,7 +312,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           snapshotTxRefs = generateSnapshotLastAccTxRefs(Map(srcAddress -> correctTxs(5)))
           hashedSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
-              blocks = SortedSet(DAGBlockAsActiveTip(majorityInRangeBlock.signed, NonNegLong(1L))),
+              blocks = SortedSet(BlockAsActiveTip(majorityInRangeBlock.signed, NonNegLong(1L))),
               info = GlobalSnapshotInfo(SortedMap.empty, snapshotTxRefs, snapshotBalances),
               tips = SnapshotTips(
                 SortedSet(
@@ -472,7 +471,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           snapshotTxRefs = generateSnapshotLastAccTxRefs(Map(srcAddress -> correctTxs(5)))
           hashedSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
-              blocks = SortedSet(DAGBlockAsActiveTip(majorityInRangeBlock.signed, NonNegLong(1L))),
+              blocks = SortedSet(BlockAsActiveTip(majorityInRangeBlock.signed, NonNegLong(1L))),
               info = GlobalSnapshotInfo(SortedMap.empty, snapshotTxRefs, snapshotBalances),
               tips = SnapshotTips(
                 SortedSet(
@@ -706,8 +705,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               ordinal = snapshotOrdinal11,
               height = snapshotHeight8,
               lastSnapshotHash = hashedLastSnapshot.hash,
-              blocks =
-                SortedSet(DAGBlockAsActiveTip(majorityInRangeBlock.signed, 1L), DAGBlockAsActiveTip(aboveRangeMajorityBlock.signed, 2L)),
+              blocks = SortedSet(BlockAsActiveTip(majorityInRangeBlock.signed, 1L), BlockAsActiveTip(aboveRangeMajorityBlock.signed, 2L)),
               tips = SnapshotTips(
                 SortedSet(
                   DeprecatedTip(parent3, snapshotOrdinal11)
@@ -893,12 +891,12 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               height = snapshotHeight8,
               lastSnapshotHash = hashedLastSnapshot.hash,
               blocks = SortedSet(
-                DAGBlockAsActiveTip(waitingMajorityInRangeBlock.signed, 1L),
-                DAGBlockAsActiveTip(postponedMajorityInRangeBlock.signed, 1L),
-                DAGBlockAsActiveTip(acceptedMajorityInRangeBlock.signed, 2L),
-                DAGBlockAsActiveTip(majorityUnknownBlock.signed, 1L),
-                DAGBlockAsActiveTip(aboveRangeAcceptedMajorityBlock.signed, 0L),
-                DAGBlockAsActiveTip(aboveRangeUnknownMajorityBlock.signed, 0L)
+                BlockAsActiveTip(waitingMajorityInRangeBlock.signed, 1L),
+                BlockAsActiveTip(postponedMajorityInRangeBlock.signed, 1L),
+                BlockAsActiveTip(acceptedMajorityInRangeBlock.signed, 2L),
+                BlockAsActiveTip(majorityUnknownBlock.signed, 1L),
+                BlockAsActiveTip(aboveRangeAcceptedMajorityBlock.signed, 0L),
+                BlockAsActiveTip(aboveRangeUnknownMajorityBlock.signed, 0L)
               ),
               info = GlobalSnapshotInfo(SortedMap.empty, snapshotTxRefs, snapshotBalances),
               tips = SnapshotTips(
@@ -1095,7 +1093,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
   }
 
   private def hashedDAGBlockForKeyPair(key: KeyPair)(implicit sc: SecurityProvider[IO], ks: KryoSerializer[IO]) =
-    (parent: NonEmptyList[BlockReference], transactions: NonEmptySet[Signed[Transaction]]) =>
+    (parent: NonEmptyList[BlockReference], transactions: NonEmptySet[Signed[DAGTransaction]]) =>
       forAsyncKryo(DAGBlock(parent, transactions), key).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
 
 }
