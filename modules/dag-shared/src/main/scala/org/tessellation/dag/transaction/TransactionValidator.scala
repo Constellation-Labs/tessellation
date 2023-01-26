@@ -7,7 +7,7 @@ import cats.syntax.all._
 import org.tessellation.dag.transaction.TransactionValidator.TransactionValidationErrorOr
 import org.tessellation.ext.cats.syntax.validated._
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.transaction.Transaction
+import org.tessellation.schema.transaction.DAGTransaction
 import org.tessellation.security.signature.SignedValidator.SignedValidationError
 import org.tessellation.security.signature.{Signed, SignedValidator}
 
@@ -17,7 +17,7 @@ import eu.timepit.refined.auto._
 
 trait TransactionValidator[F[_]] {
 
-  def validate(signedTransaction: Signed[Transaction]): F[TransactionValidationErrorOr[Signed[Transaction]]]
+  def validate(signedTransaction: Signed[DAGTransaction]): F[TransactionValidationErrorOr[Signed[DAGTransaction]]]
 
 }
 
@@ -29,8 +29,8 @@ object TransactionValidator {
     new TransactionValidator[F] {
 
       def validate(
-        signedTransaction: Signed[Transaction]
-      ): F[TransactionValidationErrorOr[Signed[Transaction]]] =
+        signedTransaction: Signed[DAGTransaction]
+      ): F[TransactionValidationErrorOr[Signed[DAGTransaction]]] =
         for {
           signaturesV <- signedValidator
             .validateSignatures(signedTransaction)
@@ -43,19 +43,19 @@ object TransactionValidator {
             .productR(differentSrcAndDstV)
 
       private def validateSourceAddressSignature(
-        signedTx: Signed[Transaction]
-      ): F[TransactionValidationErrorOr[Signed[Transaction]]] =
+        signedTx: Signed[DAGTransaction]
+      ): F[TransactionValidationErrorOr[Signed[DAGTransaction]]] =
         signedValidator
           .isSignedExclusivelyBy(signedTx, signedTx.source)
           .map(_.errorMap[TransactionValidationError](_ => NotSignedBySourceAddressOwner))
 
       private def validateDifferentSourceAndDestinationAddress(
-        signedTx: Signed[Transaction]
-      ): TransactionValidationErrorOr[Signed[Transaction]] =
+        signedTx: Signed[DAGTransaction]
+      ): TransactionValidationErrorOr[Signed[DAGTransaction]] =
         if (signedTx.source =!= signedTx.destination)
           signedTx.validNec[TransactionValidationError]
         else
-          SameSourceAndDestinationAddress(signedTx.source).invalidNec[Signed[Transaction]]
+          SameSourceAndDestinationAddress(signedTx.source).invalidNec[Signed[DAGTransaction]]
     }
 
   @derive(eqv, show)

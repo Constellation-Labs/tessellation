@@ -1,11 +1,10 @@
-package org.tessellation.dag.snapshot
+package org.tessellation.schema
 
 import cats.Order._
-import cats.kernel._
+import cats.kernel.{Next, Order, PartialOrder}
 import cats.syntax.semigroup._
 
 import org.tessellation.ext.derevo.ordering
-import org.tessellation.schema._
 
 import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia.{decoder, encoder}

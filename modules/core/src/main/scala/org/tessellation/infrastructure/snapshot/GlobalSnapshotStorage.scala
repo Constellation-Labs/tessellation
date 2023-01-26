@@ -14,15 +14,14 @@ import cats.syntax.show._
 import cats.syntax.traverse._
 import cats.{Applicative, ApplicativeError, MonadThrow}
 
-import org.tessellation.dag.snapshot.GlobalSnapshot
-import org.tessellation.domain.snapshot.GlobalSnapshotStorage
+import org.tessellation.domain.snapshot.SnapshotStorage
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.cats.syntax.partialPrevious._
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
+import org.tessellation.schema.{GlobalSnapshot, SnapshotOrdinal}
 import org.tessellation.sdk.domain.collateral.LatestBalances
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
@@ -54,7 +53,7 @@ object GlobalSnapshotStorage {
     globalSnapshotLocalFileSystemStorage: GlobalSnapshotLocalFileSystemStorage[F],
     inMemoryCapacity: NonNegLong,
     maybeRollbackHash: Option[Hash]
-  ): F[GlobalSnapshotStorage[F] with LatestBalances[F]] =
+  ): F[SnapshotStorage[F, GlobalSnapshot] with LatestBalances[F]] =
     maybeRollbackHash match {
       case Some(rollbackHash) =>
         GlobalSnapshotStorage
@@ -68,7 +67,7 @@ object GlobalSnapshotStorage {
     globalSnapshotLocalFileSystemStorage: GlobalSnapshotLocalFileSystemStorage[F],
     inMemoryCapacity: NonNegLong,
     rollbackHash: Hash
-  ): F[GlobalSnapshotStorage[F] with LatestBalances[F]] =
+  ): F[SnapshotStorage[F, GlobalSnapshot] with LatestBalances[F]] =
     globalSnapshotLocalFileSystemStorage
       .read(rollbackHash)
       .flatMap(ApplicativeError.liftFromOption(_, new Throwable("Rollback global snapshot not found!")))
@@ -95,11 +94,9 @@ object GlobalSnapshotStorage {
   private def make[F[_]: Async: KryoSerializer](
     globalSnapshotLocalFileSystemStorage: GlobalSnapshotLocalFileSystemStorage[F],
     inMemoryCapacity: NonNegLong
-  )(implicit S: Supervisor[F]): F[GlobalSnapshotStorage[F] with LatestBalances[F]] =
+  )(implicit S: Supervisor[F]): F[SnapshotStorage[F, GlobalSnapshot] with LatestBalances[F]] =
     makeResources().flatMap {
-      case (headRef, ordinalCache, hashCache, notPersistedCache, offloadQueue, logger) =>
-        implicit val l = logger
-
+      case (headRef, ordinalCache, hashCache, notPersistedCache, offloadQueue, _) =>
         make(headRef, ordinalCache, hashCache, notPersistedCache, offloadQueue, globalSnapshotLocalFileSystemStorage, inMemoryCapacity)
     }
 
@@ -111,7 +108,7 @@ object GlobalSnapshotStorage {
     offloadQueue: Queue[F, SnapshotOrdinal],
     globalSnapshotLocalFileSystemStorage: GlobalSnapshotLocalFileSystemStorage[F],
     inMemoryCapacity: NonNegLong
-  )(implicit S: Supervisor[F]): F[GlobalSnapshotStorage[F] with LatestBalances[F]] = {
+  )(implicit S: Supervisor[F]): F[SnapshotStorage[F, GlobalSnapshot] with LatestBalances[F]] = {
 
     def logger = Slf4jLogger.getLogger[F]
 
@@ -178,7 +175,7 @@ object GlobalSnapshotStorage {
       }
 
     S.supervise(offloadProcess).map { _ =>
-      new GlobalSnapshotStorage[F] with LatestBalances[F] {
+      new SnapshotStorage[F, GlobalSnapshot] with LatestBalances[F] {
         def prepend(snapshot: Signed[GlobalSnapshot]): F[Boolean] =
           headRef.modify {
             case None =>
