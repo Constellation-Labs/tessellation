@@ -26,7 +26,7 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
   type TestResources = (
     TransactionStorage[IO],
     MapRef[IO, Address, Option[LastTransactionReferenceState]],
-    MapRef[IO, Address, Option[NonEmptySet[Hashed[Transaction]]]],
+    MapRef[IO, Address, Option[NonEmptySet[Hashed[DAGTransaction]]]],
     KeyPair,
     Address,
     KeyPair,
@@ -40,7 +40,7 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
       KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ sdkKryoRegistrar).flatMap { implicit kp =>
         for {
           lastAccepted <- MapRef.ofConcurrentHashMap[IO, Address, LastTransactionReferenceState]().asResource
-          waitingTransactions <- MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[Transaction]]]().asResource
+          waitingTransactions <- MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[DAGTransaction]]]().asResource
           transactionStorage = new TransactionStorage[IO](lastAccepted, waitingTransactions)
           key1 <- KeyPairGenerator.makeKeyPair.asResource
           address1 = key1.getPublic.toAddress

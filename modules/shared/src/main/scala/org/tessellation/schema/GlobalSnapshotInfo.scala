@@ -1,4 +1,4 @@
-package org.tessellation.dag.snapshot
+package org.tessellation.schema
 
 import scala.collection.immutable.SortedMap
 

@@ -1,6 +1,5 @@
-package org.tessellation.dag.snapshot
+package org.tessellation.schema
 
-import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.security.Hashed
 import org.tessellation.security.hash.{Hash, ProofsHash}

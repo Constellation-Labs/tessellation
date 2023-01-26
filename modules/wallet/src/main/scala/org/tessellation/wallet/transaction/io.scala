@@ -2,7 +2,7 @@ package org.tessellation.wallet.transaction
 
 import cats.effect.Async
 
-import org.tessellation.schema.transaction.Transaction
+import org.tessellation.schema.transaction.DAGTransaction
 import org.tessellation.security.signature.Signed
 
 import _root_.io.circe.fs2._
@@ -12,16 +12,16 @@ import fs2.{Stream, text}
 
 object io {
 
-  def readFromJsonFile[F[_]: Files: Async](path: Path): F[Option[Signed[Transaction]]] =
+  def readFromJsonFile[F[_]: Files: Async](path: Path): F[Option[Signed[DAGTransaction]]] =
     Files[F]
       .readAll(path)
       .through(text.utf8.decode)
       .through(stringStreamParser)
-      .through(decoder[F, Signed[Transaction]])
+      .through(decoder[F, Signed[DAGTransaction]])
       .compile
       .last
 
-  def writeToJsonFile[F[_]: Files: Async](path: Path)(transaction: Signed[Transaction]): F[Unit] =
+  def writeToJsonFile[F[_]: Files: Async](path: Path)(transaction: Signed[DAGTransaction]): F[Unit] =
     Stream
       .emit(transaction)
       .covary[F]

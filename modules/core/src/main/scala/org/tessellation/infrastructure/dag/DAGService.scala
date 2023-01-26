@@ -3,19 +3,18 @@ package org.tessellation.infrastructure.dag
 import cats.effect.Async
 import cats.syntax.functor._
 
-import org.tessellation.dag.snapshot.GlobalSnapshot
 import org.tessellation.domain.dag.DAGService
-import org.tessellation.domain.snapshot.GlobalSnapshotStorage
-import org.tessellation.schema.SnapshotOrdinal
+import org.tessellation.domain.snapshot.SnapshotStorage
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
+import org.tessellation.schema.{GlobalSnapshot, SnapshotOrdinal}
 import org.tessellation.security.signature.Signed
 
 import io.estatico.newtype.ops._
 
 object DAGService {
 
-  def make[F[_]: Async](globalSnapshotStorage: GlobalSnapshotStorage[F]): DAGService[F] =
+  def make[F[_]: Async](globalSnapshotStorage: SnapshotStorage[F, GlobalSnapshot]): DAGService[F] =
     new DAGService[F] {
 
       private def getBalance(snapshot: Signed[GlobalSnapshot], address: Address): (Balance, SnapshotOrdinal) = {
