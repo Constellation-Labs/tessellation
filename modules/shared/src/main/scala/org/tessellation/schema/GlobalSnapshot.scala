@@ -25,6 +25,35 @@ import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.PosInt
 
 @derive(eqv, show, encoder, decoder)
+case class IncrementalGlobalSnapshot(
+  ordinal: SnapshotOrdinal,
+  height: Height,
+  subHeight: SubHeight,
+  lastSnapshotHash: Hash,
+  blocks: SortedSet[BlockAsActiveTip[DAGBlock]],
+  stateChannelSnapshots: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
+  rewards: SortedSet[RewardTransaction],
+  epochProgress: EpochProgress,
+  nextFacilitators: NonEmptyList[PeerId],
+  tips: SnapshotTips
+  // TODO: state hash
+) extends Snapshot[DAGTransaction, DAGBlock] {
+  def fromGlobalSnapshot(gs: GlobalSnapshot) =
+    IncrementalGlobalSnapshot(
+      gs.ordinal,
+      gs.height,
+      gs.subHeight,
+      gs.lastSnapshotHash,
+      gs.blocks,
+      gs.stateChannelSnapshots,
+      gs.rewards,
+      gs.epochProgress,
+      gs.nextFacilitators,
+      gs.tips
+    )
+}
+
+@derive(eqv, show, encoder, decoder)
 case class GlobalSnapshot(
   ordinal: SnapshotOrdinal,
   height: Height,
@@ -37,7 +66,22 @@ case class GlobalSnapshot(
   nextFacilitators: NonEmptyList[PeerId],
   info: GlobalSnapshotInfo,
   tips: SnapshotTips
-) extends Snapshot[DAGTransaction, DAGBlock] {}
+) extends Snapshot[DAGTransaction, DAGBlock] {
+
+  def toIncrementalSnapshot: IncrementalGlobalSnapshot =
+    IncrementalGlobalSnapshot(
+      ordinal,
+      height,
+      subHeight,
+      lastSnapshotHash,
+      blocks,
+      stateChannelSnapshots,
+      rewards,
+      epochProgress,
+      nextFacilitators,
+      tips
+    )
+}
 
 object GlobalSnapshot {
 
