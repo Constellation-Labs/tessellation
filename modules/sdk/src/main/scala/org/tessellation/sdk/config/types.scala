@@ -43,7 +43,14 @@ object types {
   case class ConsensusConfig(
     timeTriggerInterval: FiniteDuration,
     declarationTimeout: FiniteDuration,
-    lockDuration: FiniteDuration
+    lockDuration: FiniteDuration,
+    observation: ObservationConfig
+  )
+
+  case class ObservationConfig(
+    interval: FiniteDuration,
+    timeout: FiniteDuration,
+    offset: NonNegLong
   )
 
   case class HttpClientConfig(

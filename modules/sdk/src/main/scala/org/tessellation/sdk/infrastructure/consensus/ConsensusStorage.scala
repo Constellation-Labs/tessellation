@@ -1,8 +1,8 @@
 package org.tessellation.sdk.infrastructure.consensus
 
+import cats.Order
 import cats.effect.kernel.{Async, Ref}
 import cats.effect.std.Semaphore
-import cats.kernel.Next
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.contravariantSemigroupal._
@@ -14,7 +14,6 @@ import cats.syntax.option._
 import cats.syntax.order._
 import cats.syntax.traverse._
 import cats.syntax.traverseFilter._
-import cats.{Eq, Order, Show}
 
 import scala.concurrent.duration.FiniteDuration
 
@@ -72,43 +71,40 @@ trait ConsensusStorage[F[_], Event, Key, Artifact] {
     ack: Set[PeerId]
   ): F[ConsensusResources[Artifact]]
 
-  private[consensus] def setLastKeyAndStatus(key: Key, artifact: Finished[Artifact]): F[Unit]
+  private[consensus] def addWithdrawPeerDeclaration(peerId: PeerId, key: Key, kind: PeerDeclarationKind): F[ConsensusResources[Artifact]]
 
-  private[consensus] def setLastKey(key: Key): F[Unit]
+  private[consensus] def trySetInitialConsensusOutcome(data: ConsensusOutcome[Key, Artifact]): F[Boolean]
 
-  private[consensus] def getLastKey: F[Option[Key]]
+  private[consensus] def clearAndGetLastConsensusOutcome: F[Option[ConsensusOutcome[Key, Artifact]]]
 
-  private[consensus] def getLastKeyAndStatus: F[Option[(Key, Option[Finished[Artifact]])]]
+  def getLastConsensusOutcome: F[Option[ConsensusOutcome[Key, Artifact]]]
 
-  private[consensus] def tryUpdateLastKeyAndStatusWithCleanup(
-    oldKey: Key,
-    newKey: Key,
-    newArtifact: Finished[Artifact]
+  def getLastKey: F[Option[Key]]
+
+  private[consensus] def tryUpdateLastConsensusOutcomeWithCleanup(
+    previousLastKey: Key,
+    lastOutcome: ConsensusOutcome[Key, Artifact]
   ): F[Boolean]
 
   private[consensus] def getOwnRegistration: F[Option[Key]]
 
   private[consensus] def setOwnRegistration(from: Key): F[Unit]
 
-  def getRegisteredPeers(key: Key): F[List[PeerId]]
+  def getCandidates(key: Key): F[List[PeerId]]
 
   private[consensus] def registerPeer(peerId: PeerId, key: Key): F[Boolean]
-
-  private[consensus] def deregisterPeer(peerId: PeerId, key: Key): F[Boolean]
 
 }
 
 object ConsensusStorage {
 
-  def make[F[_]: Async: KryoSerializer, Event, Key: Show: Next: Order, Artifact <: AnyRef: Show: Eq](
-    lastKeyAndStatus: Option[(Key, Option[Finished[Artifact]])]
-  ): F[ConsensusStorage[F, Event, Key, Artifact]] =
+  def make[F[_]: Async: KryoSerializer, Event, Key: Order, Artifact <: AnyRef]: F[ConsensusStorage[F, Event, Key, Artifact]] =
     for {
       stateUpdateSemaphore <- Semaphore[F](1)
-      lastKeyAndStatusR <- Ref.of(lastKeyAndStatus)
+      lastOutcomeR <- Ref.of(none[ConsensusOutcome[Key, Artifact]])
       timeTriggerR <- Ref.of(none[FiniteDuration])
       ownRegistrationR <- Ref.of(Option.empty[Key])
-      peerRegistrationsR <- Ref.of(Map.empty[PeerId, PeerRegistration[Key]])
+      peerRegistrationsR <- Ref.of(Map.empty[PeerId, Key])
       eventsR <- MapRef.ofConcurrentHashMap[F, PeerId, PeerEvents[Event]]()
       statesR <- MapRef.ofConcurrentHashMap[F, Key, ConsensusState[Key, Artifact]]()
       resourcesR <- MapRef.ofConcurrentHashMap[F, Key, ConsensusResources[Artifact]]()
@@ -149,28 +145,33 @@ object ConsensusStorage {
             } yield maybeB
           }
 
-        def setLastKeyAndStatus(key: Key, artifact: Finished[Artifact]): F[Unit] =
-          lastKeyAndStatusR.set((key, artifact.some).some)
+        def trySetInitialConsensusOutcome(initialOutcome: ConsensusOutcome[Key, Artifact]): F[Boolean] =
+          lastOutcomeR.modify {
+            case s @ Some(_) => (s, false)
+            case None        => (initialOutcome.some, true)
+          }
 
-        def setLastKey(key: Key): F[Unit] =
-          lastKeyAndStatusR.set((key, none).some)
+        def clearAndGetLastConsensusOutcome: F[Option[ConsensusOutcome[Key, Artifact]]] =
+          lastOutcomeR.getAndSet(none)
+
+        def getLastConsensusOutcome: F[Option[ConsensusOutcome[Key, Artifact]]] =
+          lastOutcomeR.get
 
         def getLastKey: F[Option[Key]] =
-          lastKeyAndStatusR.get.map(_._1F)
+          lastOutcomeR.get.map(_.map(_.key))
 
-        def getLastKeyAndStatus: F[Option[(Key, Option[Finished[Artifact]])]] = lastKeyAndStatusR.get
-
-        private[consensus] def tryUpdateLastKeyAndStatusWithCleanup(
-          lastKey: Key,
-          newKey: Key,
-          newArtifact: Finished[Artifact]
+        private[consensus] def tryUpdateLastConsensusOutcomeWithCleanup(
+          previousLastKey: Key,
+          newLastOutcome: ConsensusOutcome[Key, Artifact]
         ): F[Boolean] =
-          lastKeyAndStatusR.modify {
-            case Some((actualLastKey, _)) if actualLastKey === lastKey =>
-              ((newKey, newArtifact.some).some, true)
+          lastOutcomeR.modify {
+            case Some(lastOutcome) if lastOutcome.key === previousLastKey =>
+              (newLastOutcome.some, true)
             case other @ _ =>
               (other, false)
-          }.flatTap(_ => cleanupStateAndResource(lastKey))
+          }.flatTap { result =>
+            cleanupStateAndResource(previousLastKey).whenA(result)
+          }
 
         private def cleanupStateAndResource(key: Key): F[Unit] =
           condModifyState[Unit](key) { _ =>
@@ -276,6 +277,16 @@ object ConsensusStorage {
               .modify(_.incl(kind))
           }
 
+        def addWithdrawPeerDeclaration(peerId: PeerId, key: Key, kind: PeerDeclarationKind): F[ConsensusResources[Artifact]] =
+          updateResources(key) { resources =>
+            resources
+              .focus(_.withdrawalsMap)
+              .at(peerId)
+              .modify { maybeKind =>
+                maybeKind.orElse(kind.some)
+              }
+          }
+
         def addArtifact(key: Key, artifact: Artifact): F[ConsensusResources[Artifact]] =
           artifact.hashF.flatMap { hash =>
             updateResources(key) { resources =>
@@ -308,50 +319,26 @@ object ConsensusStorage {
 
         def setOwnRegistration(key: Key): F[Unit] = ownRegistrationR.set(key.some)
 
-        def getRegisteredPeers(key: Key): F[List[PeerId]] =
+        def getCandidates(key: Key): F[List[PeerId]] =
           peerRegistrationsR.get.map { peerRegistrations =>
             peerRegistrations.toList.mapFilter {
-              case (peerId, Registered(at)) if key >= at => peerId.some
-              case _                                     => none[PeerId]
+              case (peerId, at) if key === at => peerId.some
+              case _                          => none[PeerId]
             }
           }
 
-        def registerPeer(peerId: PeerId, key: Key): F[Boolean] =
-          condReplacePeerRegistration(peerId, Registered(key)) {
-            case Registered(at)   => key >= at // `>` part allows for a registration after a quick restart, before peer got deregistered
-            case Deregistered(at) => key > at
-          }
-
-        def deregisterPeer(peerId: PeerId, key: Key): F[Boolean] =
-          condReplacePeerRegistration(peerId, Deregistered(key)) {
-            case Registered(at)   => key >= at
-            case Deregistered(at) => key === at
-          }
-
-        /** Replaces peer registration with `value` when `cond` evaluates to `true` or when registration doesn't exists for a given `peerId`
-          * @return
-          *   `true` if value has been replaced
-          */
-        private def condReplacePeerRegistration(
-          peerId: PeerId,
-          value: PeerRegistration[Key]
-        )(cond: PeerRegistration[Key] => Boolean): F[Boolean] =
+        def registerPeer(peerId: PeerId, newKey: Key): F[Boolean] =
           peerRegistrationsR.modify { peerRegistrations =>
-            val (resultInt, updated) = peerRegistrations
+            val result = peerRegistrations
               .focus()
               .at(peerId)
-              .modifyA { maybePeerRegistration =>
-                maybePeerRegistration
-                  .filterNot(cond)
-                  .map(curr => (0, curr.some))
-                  .getOrElse((1, value.some))
+              .modify { maybeKey =>
+                maybeKey
+                  .filter(_ > newKey)
+                  .getOrElse(newKey)
+                  .some
               }
-            (updated, resultInt === 1)
+            (result, result.get(peerId).exists(_ === newKey))
           }
       }
-
-  sealed trait PeerRegistration[Key]
-
-  case class Registered[Key](at: Key) extends PeerRegistration[Key]
-  case class Deregistered[Key](at: Key) extends PeerRegistration[Key]
 }

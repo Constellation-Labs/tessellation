@@ -9,6 +9,7 @@ import org.tessellation.sdk.infrastructure.consensus._
 import org.tessellation.sdk.infrastructure.consensus.declaration.kind
 import org.tessellation.sdk.infrastructure.consensus.declaration.kind.PeerDeclarationKind
 import org.tessellation.security.hash.Hash
+import org.tessellation.security.signature.Signed
 
 import org.scalacheck.Arbitrary.arbitrary
 import org.scalacheck.Gen
@@ -74,12 +75,14 @@ object UnlockConsensusUpdateSuite extends SimpleIOSuite with Checkers {
       key <- arbitrary[Key]
       lastKey <- arbitrary[Key]
       createdAt <- arbitrary[FiniteDuration]
+      lastSignedArtifact <- arbitrary[Signed[Artifact]]
+      facilitatorsHash <- arbitrary[Hash]
     } yield
       ConsensusState(
         key = key,
         lastKey = lastKey,
         facilitators = facilitators,
-        status = CollectingFacilities(none),
+        status = CollectingFacilities(none, lastSignedArtifact, facilitatorsHash),
         createdAt = createdAt,
         lockStatus = Closed
       )
@@ -93,10 +96,12 @@ object UnlockConsensusUpdateSuite extends SimpleIOSuite with Checkers {
     for {
       peerDeclarations <- arbitrary[Map[PeerId, PeerDeclarations]]
       artifacts <- arbitrary[Map[Hash, Artifact]]
+      withdrawals <- arbitrary[Map[PeerId, PeerDeclarationKind]]
     } yield
       ConsensusResources(
         peerDeclarationsMap = peerDeclarations,
         acksMap = acksMap,
+        withdrawalsMap = withdrawals,
         ackKinds = Set(kind.Facility),
         artifacts = artifacts
       )

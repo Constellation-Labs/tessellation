@@ -13,10 +13,11 @@ import derevo.derive
 case class ConsensusResources[A](
   peerDeclarationsMap: Map[PeerId, PeerDeclarations],
   acksMap: Map[(PeerId, PeerDeclarationKind), Set[PeerId]],
+  withdrawalsMap: Map[PeerId, PeerDeclarationKind],
   ackKinds: Set[PeerDeclarationKind],
   artifacts: Map[Hash, A]
 )
 
 object ConsensusResources {
-  def empty[A]: ConsensusResources[A] = ConsensusResources(Map.empty, Map.empty, Set.empty, Map.empty)
+  def empty[A]: ConsensusResources[A] = ConsensusResources(Map.empty, Map.empty, Map.empty, Set.empty, Map.empty)
 }

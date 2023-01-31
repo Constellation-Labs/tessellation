@@ -8,6 +8,7 @@ import org.tessellation.security.signature.signature.Signature
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
+import derevo.scalacheck.arbitrary
 
 object declaration {
 
@@ -16,7 +17,7 @@ object declaration {
   }
 
   @derive(eqv, show, encoder, decoder)
-  case class Facility(upperBound: Bound, facilitators: Set[PeerId], trigger: Option[ConsensusTrigger], facilitatorsHash: Hash)
+  case class Facility(upperBound: Bound, candidates: Set[PeerId], trigger: Option[ConsensusTrigger], facilitatorsHash: Hash)
       extends PeerDeclaration
 
   @derive(eqv, show, encoder, decoder)
@@ -27,7 +28,7 @@ object declaration {
 
   object kind {
 
-    @derive(eqv, show, encoder, decoder)
+    @derive(arbitrary, eqv, show, encoder, decoder)
     sealed trait PeerDeclarationKind
 
     @derive(eqv, show, encoder, decoder)
