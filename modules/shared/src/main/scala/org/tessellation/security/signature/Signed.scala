@@ -28,6 +28,8 @@ import org.tessellation.security.{Hashed, SecurityProvider}
 import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.{Decoder, Encoder}
 import io.estatico.newtype.ops._
+import org.scalacheck.Arbitrary
+import org.scalacheck.Arbitrary.arbitrary
 
 case class Signed[+A](value: A, proofs: NonEmptySet[SignatureProof])
 
@@ -48,6 +50,12 @@ object Signed {
   implicit def order[A: Order]: Order[Signed[A]] = Order.fromOrdering(ordering(Order[A].toOrdering))
 
   implicit def ordering[A: Ordering]: Ordering[Signed[A]] = new SignedOrdering[A]()
+
+  implicit def _arbitrary[A: Arbitrary]: Arbitrary[Signed[A]] =
+    Arbitrary(for {
+      value <- arbitrary[A]
+      proofs <- arbitrary[SortedSet[SignatureProof]] if proofs.nonEmpty
+    } yield Signed(value, NonEmptySet.fromSetUnsafe(proofs)))
 
   def forAsyncKryo[F[_]: Async: SecurityProvider: KryoSerializer, A <: AnyRef](
     data: A,
@@ -115,7 +123,7 @@ object Signed {
         .map(hash => ProofsHash(hash.coerce))
   }
 
-  final class SignedOrdering[A: Ordering] extends Ordering[Signed[A]] {
+  final class SignedOrdering[A](implicit evidence$25: Ordering[A]) extends Ordering[Signed[A]] {
 
     def compare(x: Signed[A], y: Signed[A]): Int =
       Order

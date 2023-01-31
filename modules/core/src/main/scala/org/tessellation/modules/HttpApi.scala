@@ -16,7 +16,6 @@ import org.tessellation.sdk.config.types.HttpConfig
 import org.tessellation.sdk.http.p2p.middleware.{PeerAuthMiddleware, `X-Id-Middleware`}
 import org.tessellation.sdk.http.routes
 import org.tessellation.sdk.http.routes._
-import org.tessellation.sdk.infrastructure.consensus.ConsensusRoutes
 import org.tessellation.sdk.infrastructure.healthcheck.ping.PingHealthCheckRoutes
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
@@ -79,7 +78,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
   private val stateChannelRoutes = StateChannelRoutes[F](services.stateChannel)
   private val globalSnapshotRoutes = GlobalSnapshotRoutes[F](storages.globalSnapshot)
   private val dagRoutes = DagRoutes[F](services.dag, mkDagCell)
-  private val consensusRoutes = new ConsensusRoutes[F, SnapshotOrdinal](services.cluster, services.consensus.storage, selfId)
+  private val consensusInfoRoutes = new ConsensusInfoRoutes[F, SnapshotOrdinal](services.cluster, services.consensus.storage, selfId)
+  private val consensusRoutes = services.consensus.routes.p2pRoutes
 
   private val healthcheckP2PRoutes = {
     val pingHealthcheckRoutes = PingHealthCheckRoutes[F](healthchecks.ping)
@@ -105,7 +105,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
               globalSnapshotRoutes.publicRoutes <+>
               dagRoutes.publicRoutes <+>
               nodeRoutes.publicRoutes <+>
-              consensusRoutes.publicRoutes
+              consensusInfoRoutes.publicRoutes
           }
         }
     }
@@ -123,7 +123,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
                 trustRoutes.p2pRoutes <+>
                 globalSnapshotRoutes.p2pRoutes <+>
                 healthcheckP2PRoutes <+>
-                consensusRoutes.p2pRoutes
+                consensusRoutes
             )
           )
         )

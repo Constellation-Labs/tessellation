@@ -37,7 +37,9 @@ object node {
     case object WaitingForDownload extends NodeState
     case object DownloadInProgress extends NodeState
 
+    case object WaitingForObserving extends NodeState
     case object Observing extends NodeState
+    case object WaitingForReady extends NodeState
     case object Ready extends NodeState
     case object Leaving extends NodeState
     case object Offline extends NodeState
@@ -45,7 +47,7 @@ object node {
     val all: Set[NodeState] = NodeState.values.toSet
 
     val toBroadcast: Set[NodeState] =
-      Set(WaitingForDownload, DownloadInProgress, Observing, Ready, Leaving, Offline)
+      Set(WaitingForDownload, DownloadInProgress, WaitingForObserving, Observing, Ready, Leaving, Offline)
 
     def is(states: Set[NodeState])(peer: Peer) = states.contains(peer.state)
 
@@ -68,11 +70,9 @@ object node {
 
     def observing(peers: Set[Peer]): Set[Peer] = peers.filter(peer => observing.contains(peer.state))
 
-    val inCluster: Set[NodeState] = Set(Observing, Ready, WaitingForDownload, DownloadInProgress)
+    val inCluster: Set[NodeState] = Set(WaitingForObserving, Observing, WaitingForReady, Ready, WaitingForDownload, DownloadInProgress)
 
     def inCluster(state: NodeState): Boolean = inCluster.contains(state)
-
-    val inConsensus: Set[NodeState] = Set(Observing, Ready)
   }
 
   trait NodeStateCodecs {

@@ -3,7 +3,6 @@ package org.tessellation.sdk.infrastructure.consensus
 import cats.Show
 import cats.effect.Async
 import cats.syntax.flatMap._
-import cats.syntax.functor._
 import cats.syntax.semigroupk._
 
 import scala.reflect.runtime.universe.TypeTag
@@ -11,12 +10,10 @@ import scala.reflect.runtime.universe.TypeTag
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
 import org.tessellation.sdk.infrastructure.consensus.declaration._
 import org.tessellation.sdk.infrastructure.consensus.message._
-import org.tessellation.sdk.infrastructure.consensus.registration.Deregistration
 import org.tessellation.sdk.infrastructure.gossip.RumorHandler
 import org.tessellation.security.SecurityProvider
 
 import io.circe.Decoder
-import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object ConsensusHandler {
 
@@ -27,8 +24,6 @@ object ConsensusHandler {
     manager: ConsensusManager[F, Key, Artifact],
     fns: ConsensusFunctions[F, Event, Key, Artifact]
   ): RumorHandler[F] = {
-
-    val logger = Slf4jLogger.getLogger[F]
 
     val eventHandler = RumorHandler.fromPeerRumorConsumer[F, ConsensusEvent[Event]]() { rumor =>
       if (fns.triggerPredicate(rumor.content.value))
@@ -66,9 +61,11 @@ object ConsensusHandler {
           manager.checkForStateUpdate(rumor.content.key)
       }
 
-    val deregistrationHandler = RumorHandler.fromPeerRumorConsumer[F, Deregistration[Key]]() { rumor =>
-      storage.deregisterPeer(rumor.origin, rumor.content.key).void
-    }
+    val withdrawPeerDeclarationHandler =
+      RumorHandler.fromPeerRumorConsumer[F, ConsensusWithdrawPeerDeclaration[Key]]() { rumor =>
+        storage.addWithdrawPeerDeclaration(rumor.origin, rumor.content.key, rumor.content.kind) >>=
+          manager.checkForStateUpdate(rumor.content.key)
+      }
 
     eventHandler <+>
       facilityHandler <+>
@@ -76,7 +73,7 @@ object ConsensusHandler {
       signatureHandler <+>
       peerDeclarationAckHandler <+>
       artifactHandler <+>
-      deregistrationHandler
+      withdrawPeerDeclarationHandler
   }
 
 }

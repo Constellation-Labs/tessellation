@@ -7,7 +7,6 @@ import cats.effect.std.{Random, Supervisor}
 import cats.kernel.Next
 import cats.syntax.flatMap._
 import cats.syntax.functor._
-import cats.syntax.option._
 import cats.{Eq, Order, Show}
 
 import scala.reflect.runtime.universe.TypeTag
@@ -44,44 +43,47 @@ object Consensus {
     clusterStorage: ClusterStorage[F],
     nodeStorage: NodeStorage[F],
     client: Client[F],
-    session: Session[F],
-    initKeyAndStatus: Option[(Key, Option[Finished[Artifact]])] = none
+    session: Session[F]
   ): F[Consensus[F, Event, Key, Artifact]] =
     for {
-      storage <- ConsensusStorage.make[F, Event, Key, Artifact](initKeyAndStatus)
-      facilitatorCalculator = FacilitatorCalculator.make(seedlist)
+      storage <- ConsensusStorage.make[F, Event, Key, Artifact]
       stateUpdater = ConsensusStateUpdater.make[F, Event, Key, Artifact](
         consensusFns,
         storage,
-        facilitatorCalculator,
         gossip,
         keyPair
       )
       stateCreator = ConsensusStateCreator.make[F, Event, Key, Artifact](
         consensusFns,
         storage,
-        facilitatorCalculator,
         gossip,
-        selfId
+        selfId,
+        seedlist
       )
-      consClient = ConsensusClient.make[F, Key](client, session)
+      stateRemover = ConsensusStateRemover.make[F, Event, Key, Artifact](
+        storage,
+        gossip
+      )
+      consClient = ConsensusClient.make[F, Key, Artifact](client, session)
       manager <- ConsensusManager.make[F, Event, Key, Artifact](
         consensusConfig,
         storage,
         stateCreator,
         stateUpdater,
+        stateRemover,
         nodeStorage,
         clusterStorage,
         consClient,
-        gossip
+        selfId
       )
       handler = ConsensusHandler.make[F, Event, Key, Artifact](storage, manager, consensusFns)
-
-    } yield new Consensus(handler, storage, manager)
+      routes = new ConsensusRoutes[F, Key, Artifact](storage)
+    } yield new Consensus(handler, storage, manager, routes)
 }
 
 sealed class Consensus[F[_]: Async, Event, Key, Artifact] private (
   val handler: RumorHandler[F],
   val storage: ConsensusStorage[F, Event, Key, Artifact],
-  val manager: ConsensusManager[F, Key, Artifact]
+  val manager: ConsensusManager[F, Key, Artifact],
+  val routes: ConsensusRoutes[F, Key, Artifact]
 ) {}

@@ -4,7 +4,6 @@ import java.security.KeyPair
 
 import cats.effect.kernel.Async
 import cats.effect.std.{Random, Supervisor}
-import cats.syntax.option._
 
 import org.tessellation.config.types.SnapshotConfig
 import org.tessellation.dag.block.BlockValidator
@@ -58,13 +57,12 @@ object GlobalSnapshotConsensus {
       gossip,
       selfId,
       keyPair,
-      snapshotConfig.consensusConfig,
+      snapshotConfig.consensus,
       seedlist,
       clusterStorage,
       nodeStorage,
       client,
-      session,
-      none
+      session
     )
 
 }

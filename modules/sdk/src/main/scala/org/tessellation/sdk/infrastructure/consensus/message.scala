@@ -20,6 +20,19 @@ object message {
   case class ConsensusPeerDeclarationAck[K](key: K, kind: PeerDeclarationKind, ack: Set[PeerId])
 
   @derive(eqv, show, encoder, decoder)
+  case class ConsensusWithdrawPeerDeclaration[K](key: K, kind: PeerDeclarationKind)
+
+  @derive(eqv, show, encoder, decoder)
   case class ConsensusArtifact[K, A](key: K, artifact: A)
+
+  @derive(eqv, show, encoder, decoder)
+  case class RegistrationResponse[Key](
+    maybeKey: Option[Key]
+  )
+
+  @derive(eqv, show, encoder, decoder)
+  case class GetConsensusOutcomeRequest[Key](
+    key: Key
+  )
 
 }

@@ -68,7 +68,7 @@ object Main
           cfg
         )
         .asResource
-      programs = Programs.make[IO](sdkPrograms, storages, services, p2pClient)
+      programs = Programs.make[IO](sdkPrograms, storages, services)
       healthChecks <- HealthChecks
         .make[IO](
           storages,
