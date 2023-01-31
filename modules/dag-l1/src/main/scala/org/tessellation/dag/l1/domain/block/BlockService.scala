@@ -1,7 +1,7 @@
 package org.tessellation.dag.l1.domain.block
 
+import cats.data.EitherT
 import cats.effect.Async
-import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
@@ -9,7 +9,7 @@ import cats.syntax.show._
 
 import scala.util.control.NoStackTrace
 
-import org.tessellation.dag.block.processing.{BlockAcceptanceContext, BlockAcceptanceManager, BlockNotAcceptedReason}
+import org.tessellation.dag.block.processing._
 import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.dag.l1.domain.address.storage.AddressStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
@@ -17,6 +17,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.{BlockReference, transaction}
+import org.tessellation.security.Hashed
 import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto._
@@ -38,21 +39,12 @@ object BlockService {
     new BlockService[F] {
 
       def accept(signedBlock: Signed[DAGBlock]): F[Unit] =
-        for {
-          hashedBlock <- signedBlock.toHashed
-          blockRef = BlockReference(hashedBlock.height, hashedBlock.proofsHash)
-
-          errorOrAccepted <- blockAcceptanceManager.acceptBlock(signedBlock, context)
-          (contextUpdate, _) <- errorOrAccepted.leftMap(BlockAcceptanceError(blockRef, _)).liftTo[F]
-
-          hashedTransactions <- signedBlock.transactions.toNonEmptyList
-            .sortBy(_.ordinal)
-            .traverse(_.toHashed)
-
-          _ <- hashedTransactions.traverse(transactionStorage.accept)
-          _ <- blockStorage.accept(hashedBlock)
-          _ <- addressStorage.updateBalances(contextUpdate.balances)
-        } yield ()
+        signedBlock.toHashed.flatMap { hashedBlock =>
+          EitherT(blockAcceptanceManager.acceptBlock(signedBlock, context))
+            .leftSemiflatMap(processAcceptanceError(hashedBlock))
+            .semiflatMap { case (contextUpdate, _) => processAcceptanceSuccess(hashedBlock)(contextUpdate) }
+            .rethrowT
+        }
 
       private val context: BlockAcceptanceContext[F] = new BlockAcceptanceContext[F] {
 
@@ -67,6 +59,24 @@ object BlockService {
 
         def getCollateral: Amount = collateral
       }
+
+      private def processAcceptanceSuccess(hashedBlock: Hashed[DAGBlock])(contextUpdate: BlockAcceptanceContextUpdate): F[Unit] = for {
+        hashedTransactions <- hashedBlock.signed.transactions.toNonEmptyList
+          .sortBy(_.ordinal)
+          .traverse(_.toHashed)
+
+        _ <- hashedTransactions.traverse(transactionStorage.accept)
+        _ <- blockStorage.accept(hashedBlock)
+        _ <- addressStorage.updateBalances(contextUpdate.balances)
+        isDependent = (block: Signed[DAGBlock]) => BlockRelations.dependsOn(hashedBlock)(block)
+        _ <- blockStorage.restoreDependent(isDependent)
+      } yield ()
+
+      private def processAcceptanceError(hashedBlock: Hashed[DAGBlock])(reason: BlockNotAcceptedReason): F[BlockAcceptanceError] =
+        blockStorage
+          .postpone(hashedBlock)
+          .as(BlockAcceptanceError(hashedBlock.ownReference, reason))
+
     }
 
   case class BlockAcceptanceError(blockReference: BlockReference, reason: BlockNotAcceptedReason) extends NoStackTrace {

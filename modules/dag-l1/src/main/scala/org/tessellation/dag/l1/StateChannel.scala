@@ -91,7 +91,7 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
     .filter(identity)
     .as(OwnRoundTrigger)
 
-  private val peerDiscovery: Stream[F, Unit] = Stream
+  private val l0PeerDiscovery: Stream[F, Unit] = Stream
     .awakeEvery(10.seconds)
     .evalMap { _ =>
       storages.lastGlobalSnapshotStorage.get.flatMap {
@@ -201,7 +201,6 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
                 services.block
                   .accept(signedBlock)
                   .handleErrorWith(logger.warn(_)(s"Failed acceptance of a block with ${hash.show}"))
-
           }
           .void
       )
@@ -242,7 +241,7 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
     blockConsensus
       .merge(blockAcceptance)
       .merge(globalSnapshotProcessing)
-      .merge(peerDiscovery)
+      .merge(l0PeerDiscovery)
 
 }
 
