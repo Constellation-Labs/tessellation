@@ -18,6 +18,8 @@ object metadataSchema {
 
   case class ConstructionDeriveResponseMetadata()
 
+  case class ConstructionMetadataRequestOptions()
+
   case class ConstructionMetadataResponseMetadata(
     lastTransactionHashReference: String,
     lastTransactionOrdinalReference: Long
