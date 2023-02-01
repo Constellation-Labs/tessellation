@@ -3,6 +3,7 @@ package org.tessellation.sdk.infrastructure.consensus
 import cats.Order
 import cats.effect.kernel.{Async, Ref}
 import cats.effect.std.Semaphore
+import cats.kernel.Next
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.contravariantSemigroupal._
@@ -17,10 +18,12 @@ import cats.syntax.traverseFilter._
 
 import scala.concurrent.duration.FiniteDuration
 
+import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.gossip.Ordinal
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.sdk.config.types.ConsensusConfig
 import org.tessellation.sdk.infrastructure.consensus.declaration.kind.PeerDeclarationKind
 import org.tessellation.sdk.infrastructure.consensus.declaration.{Facility, MajoritySignature, Proposal}
 
@@ -56,22 +59,26 @@ trait ConsensusStorage[F[_], Event, Key, Artifact] {
 
   private[consensus] def clearTimeTrigger: F[Unit]
 
-  private[consensus] def addArtifact(key: Key, artifact: Artifact): F[ConsensusResources[Artifact]]
+  private[consensus] def addArtifact(key: Key, artifact: Artifact): F[Option[ConsensusResources[Artifact]]]
 
-  private[consensus] def addFacility(peerId: PeerId, key: Key, facility: Facility): F[ConsensusResources[Artifact]]
+  private[consensus] def addFacility(peerId: PeerId, key: Key, facility: Facility): F[Option[ConsensusResources[Artifact]]]
 
-  private[consensus] def addProposal(peerId: PeerId, key: Key, proposal: Proposal): F[ConsensusResources[Artifact]]
+  private[consensus] def addProposal(peerId: PeerId, key: Key, proposal: Proposal): F[Option[ConsensusResources[Artifact]]]
 
-  private[consensus] def addSignature(peerId: PeerId, key: Key, signature: MajoritySignature): F[ConsensusResources[Artifact]]
+  private[consensus] def addSignature(peerId: PeerId, key: Key, signature: MajoritySignature): F[Option[ConsensusResources[Artifact]]]
 
   private[consensus] def addPeerDeclarationAck(
     peerId: PeerId,
     key: Key,
     kind: PeerDeclarationKind,
     ack: Set[PeerId]
-  ): F[ConsensusResources[Artifact]]
+  ): F[Option[ConsensusResources[Artifact]]]
 
-  private[consensus] def addWithdrawPeerDeclaration(peerId: PeerId, key: Key, kind: PeerDeclarationKind): F[ConsensusResources[Artifact]]
+  private[consensus] def addWithdrawPeerDeclaration(
+    peerId: PeerId,
+    key: Key,
+    kind: PeerDeclarationKind
+  ): F[Option[ConsensusResources[Artifact]]]
 
   private[consensus] def trySetInitialConsensusOutcome(data: ConsensusOutcome[Key, Artifact]): F[Boolean]
 
@@ -98,10 +105,22 @@ trait ConsensusStorage[F[_], Event, Key, Artifact] {
 
 object ConsensusStorage {
 
-  def make[F[_]: Async: KryoSerializer, Event, Key: Order, Artifact <: AnyRef]: F[ConsensusStorage[F, Event, Key, Artifact]] =
+  def make[F[_]: Async: KryoSerializer, Event, Key: Order: Next, Artifact <: AnyRef](
+    consensusConfig: ConsensusConfig
+  ): F[ConsensusStorage[F, Event, Key, Artifact]] = {
+    case class ConsensusOutcomeWrapper(
+      value: ConsensusOutcome[Key, Artifact],
+      maxDeclarationKey: Key
+    )
+
+    object ConsensusOutcomeWrapper {
+      def of(value: ConsensusOutcome[Key, Artifact]): ConsensusOutcomeWrapper =
+        ConsensusOutcomeWrapper(value, value.key.nextN(consensusConfig.declarationRangeLimit))
+    }
+
     for {
       stateUpdateSemaphore <- Semaphore[F](1)
-      lastOutcomeR <- Ref.of(none[ConsensusOutcome[Key, Artifact]])
+      lastOutcomeR <- Ref.of(none[ConsensusOutcomeWrapper])
       timeTriggerR <- Ref.of(none[FiniteDuration])
       ownRegistrationR <- Ref.of(Option.empty[Key])
       peerRegistrationsR <- Ref.of(Map.empty[PeerId, Key])
@@ -148,26 +167,26 @@ object ConsensusStorage {
         def trySetInitialConsensusOutcome(initialOutcome: ConsensusOutcome[Key, Artifact]): F[Boolean] =
           lastOutcomeR.modify {
             case s @ Some(_) => (s, false)
-            case None        => (initialOutcome.some, true)
+            case None        => (ConsensusOutcomeWrapper.of(initialOutcome).some, true)
           }
 
         def clearAndGetLastConsensusOutcome: F[Option[ConsensusOutcome[Key, Artifact]]] =
-          lastOutcomeR.getAndSet(none)
+          lastOutcomeR.getAndSet(none).map(_.map(_.value))
 
         def getLastConsensusOutcome: F[Option[ConsensusOutcome[Key, Artifact]]] =
-          lastOutcomeR.get
+          lastOutcomeR.get.map(_.map(_.value))
 
         def getLastKey: F[Option[Key]] =
-          lastOutcomeR.get.map(_.map(_.key))
+          lastOutcomeR.get.map(_.map(_.value.key))
 
         private[consensus] def tryUpdateLastConsensusOutcomeWithCleanup(
           previousLastKey: Key,
           newLastOutcome: ConsensusOutcome[Key, Artifact]
         ): F[Boolean] =
           lastOutcomeR.modify {
-            case Some(lastOutcome) if lastOutcome.key === previousLastKey =>
-              (newLastOutcome.some, true)
-            case other @ _ =>
+            case Some(lastOutcome) if lastOutcome.value.key === previousLastKey =>
+              (ConsensusOutcomeWrapper.of(newLastOutcome).some, true)
+            case other =>
               (other, false)
           }.flatTap { result =>
             cleanupStateAndResource(previousLastKey).whenA(result)
@@ -198,7 +217,7 @@ object ConsensusStorage {
               addEvents(peerId, peerEvents, updateTrigger = false)
           }.void
 
-        private def addEvents(peerId: PeerId, events: List[(Ordinal, Event)], updateTrigger: Boolean) =
+        private def addEvents(peerId: PeerId, events: List[(Ordinal, Event)], updateTrigger: Boolean): F[Unit] =
           eventsR(peerId).update { maybePeerEvents =>
             maybePeerEvents
               .getOrElse(PeerEvents.empty[Event])
@@ -250,22 +269,27 @@ object ConsensusStorage {
             }
           } yield bound.toMap
 
-        def addFacility(peerId: PeerId, key: Key, facility: Facility): F[ConsensusResources[Artifact]] =
+        def addFacility(peerId: PeerId, key: Key, facility: Facility): F[Option[ConsensusResources[Artifact]]] =
           updatePeerDeclaration(key, peerId) { peerDeclaration =>
             peerDeclaration.focus(_.facility).modify(_.orElse(facility.some))
           }
 
-        def addProposal(peerId: PeerId, key: Key, proposal: Proposal): F[ConsensusResources[Artifact]] =
+        def addProposal(peerId: PeerId, key: Key, proposal: Proposal): F[Option[ConsensusResources[Artifact]]] =
           updatePeerDeclaration(key, peerId) { peerDeclaration =>
             peerDeclaration.focus(_.proposal).modify(_.orElse(proposal.some))
           }
 
-        def addSignature(peerId: PeerId, key: Key, signature: MajoritySignature): F[ConsensusResources[Artifact]] =
+        def addSignature(peerId: PeerId, key: Key, signature: MajoritySignature): F[Option[ConsensusResources[Artifact]]] =
           updatePeerDeclaration(key, peerId) { peerDeclaration =>
             peerDeclaration.focus(_.signature).modify(_.orElse(signature.some))
           }
 
-        def addPeerDeclarationAck(peerId: PeerId, key: Key, kind: PeerDeclarationKind, ack: Set[PeerId]): F[ConsensusResources[Artifact]] =
+        def addPeerDeclarationAck(
+          peerId: PeerId,
+          key: Key,
+          kind: PeerDeclarationKind,
+          ack: Set[PeerId]
+        ): F[Option[ConsensusResources[Artifact]]] =
           updateResources(key) { resources =>
             resources
               .focus(_.acksMap)
@@ -277,7 +301,7 @@ object ConsensusStorage {
               .modify(_.incl(kind))
           }
 
-        def addWithdrawPeerDeclaration(peerId: PeerId, key: Key, kind: PeerDeclarationKind): F[ConsensusResources[Artifact]] =
+        def addWithdrawPeerDeclaration(peerId: PeerId, key: Key, kind: PeerDeclarationKind): F[Option[ConsensusResources[Artifact]]] =
           updateResources(key) { resources =>
             resources
               .focus(_.withdrawalsMap)
@@ -287,7 +311,7 @@ object ConsensusStorage {
               }
           }
 
-        def addArtifact(key: Key, artifact: Artifact): F[ConsensusResources[Artifact]] =
+        def addArtifact(key: Key, artifact: Artifact): F[Option[ConsensusResources[Artifact]]] =
           artifact.hashF.flatMap { hash =>
             updateResources(key) { resources =>
               resources
@@ -297,7 +321,9 @@ object ConsensusStorage {
             }
           }
 
-        private def updatePeerDeclaration(key: Key, peerId: PeerId)(f: PeerDeclarations => PeerDeclarations) =
+        private def updatePeerDeclaration(key: Key, peerId: PeerId)(
+          f: PeerDeclarations => PeerDeclarations
+        ): F[Option[ConsensusResources[Artifact]]] =
           updateResources(key) { resources =>
             resources
               .focus(_.peerDeclarationsMap)
@@ -307,10 +333,19 @@ object ConsensusStorage {
               }
           }
 
-        private def updateResources(key: Key)(f: ConsensusResources[Artifact] => ConsensusResources[Artifact]) =
-          resourcesR(key).updateAndGet { maybeResource =>
-            f(maybeResource.getOrElse(ConsensusResources.empty)).some
-          }.flatMap(_.liftTo[F](new RuntimeException("Should never happen")))
+        private def updateResources(
+          key: Key
+        )(f: ConsensusResources[Artifact] => ConsensusResources[Artifact]): F[Option[ConsensusResources[Artifact]]] =
+          lastOutcomeR.get.map { maybeOutcomeWrapper =>
+            maybeOutcomeWrapper.forall { outcomeWrapper =>
+              key >= outcomeWrapper.value.key && key <= outcomeWrapper.maxDeclarationKey
+            }
+          }.ifM(
+            resourcesR(key).updateAndGet { maybeResource =>
+              f(maybeResource.getOrElse(ConsensusResources.empty)).some
+            },
+            none.pure[F]
+          )
 
         private def cleanResources(key: Key): F[Unit] =
           resourcesR(key).set(none)
@@ -341,4 +376,5 @@ object ConsensusStorage {
             (result, result.get(peerId).exists(_ === newKey))
           }
       }
+  }
 }

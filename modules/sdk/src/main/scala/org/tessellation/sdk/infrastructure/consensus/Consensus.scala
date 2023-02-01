@@ -46,7 +46,7 @@ object Consensus {
     session: Session[F]
   ): F[Consensus[F, Event, Key, Artifact]] =
     for {
-      storage <- ConsensusStorage.make[F, Event, Key, Artifact]
+      storage <- ConsensusStorage.make[F, Event, Key, Artifact](consensusConfig)
       stateUpdater = ConsensusStateUpdater.make[F, Event, Key, Artifact](
         consensusFns,
         storage,
