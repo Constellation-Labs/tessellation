@@ -10,4 +10,5 @@ sealed trait BlockConsensusOutput extends Ω
 object BlockConsensusOutput {
   case class FinalBlock(hashedBlock: Hashed[DAGBlock]) extends BlockConsensusOutput
   case class CleanedConsensuses(ids: Set[RoundId]) extends BlockConsensusOutput
+  case object NoData extends BlockConsensusOutput
 }
