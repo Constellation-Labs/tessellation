@@ -20,16 +20,15 @@ import scala.concurrent.duration.DurationInt
 
 import org.tessellation.dag.l1.config.types.AppConfig
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput._
-import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusOutput.{CleanedConsensuses, FinalBlock}
+import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusOutput.{CleanedConsensuses, FinalBlock, NoData}
 import org.tessellation.dag.l1.domain.consensus.block.Validator.{canStartOwnConsensus, isPeerInputValid}
-import org.tessellation.dag.l1.domain.consensus.block.{BlockConsensusCell, BlockConsensusContext, BlockConsensusInput}
+import org.tessellation.dag.l1.domain.consensus.block._
 import org.tessellation.dag.l1.domain.snapshot.programs.SnapshotProcessor.SnapshotProcessingResult
 import org.tessellation.dag.l1.http.p2p.P2PClient
 import org.tessellation.dag.l1.modules._
 import org.tessellation.dag.snapshot.{GlobalSnapshot, GlobalSnapshotReference}
 import org.tessellation.ext.fs2.StreamOps
-import org.tessellation.kernel.Cell.NullTerminal
-import org.tessellation.kernel.{CellError, Ω}
+import org.tessellation.kernel.CellError
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.height.Height
 import org.tessellation.schema.peer.PeerId
@@ -117,7 +116,7 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
       .evalMap(
         new BlockConsensusCell[F](_, blockConsensusContext)
           .run()
-          .handleErrorWith(e => CellError(e.getMessage).asLeft[Ω].pure[F])
+          .handleErrorWith(e => CellError(e.getMessage).asLeft[BlockConsensusOutput].pure[F])
       )
       .flatMap {
         case Left(ce) =>
@@ -132,10 +131,7 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
             case CleanedConsensuses(ids) =>
               Stream.eval(logger.warn(s"Cleaned following timed-out consensuses: $ids")) >>
                 Stream.empty
-            case NullTerminal => Stream.empty
-            case other =>
-              Stream.eval(logger.warn(s"Unexpected ohm in block consensus occurred: $other")) >>
-                Stream.empty
+            case NoData => Stream.empty
           }
       }
 
