@@ -53,7 +53,8 @@ object types {
 
   case class HttpServerConfig(
     host: Host,
-    port: Port
+    port: Port,
+    shutdownTimeout: FiniteDuration
   )
 
   case class HttpConfig(
