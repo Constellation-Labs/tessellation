@@ -37,6 +37,7 @@ object MkHttpServer {
         .default[F]
         .withHost(cfg.host)
         .withPort(cfg.port)
+        .withShutdownTimeout(cfg.shutdownTimeout)
         .withHttpApp(httpApp)
         .build
         .evalTap(showEmberBanner[F](name))

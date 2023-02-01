@@ -2,6 +2,8 @@ package org.tessellation.currency.cli
 
 import cats.syntax.contravariantSemigroupal._
 
+import scala.concurrent.duration._
+
 import org.tessellation.sdk.cli.http._
 import org.tessellation.sdk.config.types.{HttpConfig, HttpServerConfig}
 
@@ -20,9 +22,9 @@ object http {
       HttpConfig(
         externalIp,
         client,
-        HttpServerConfig(host"0.0.0.0", publicPort),
-        HttpServerConfig(host"0.0.0.0", p2pPort),
-        HttpServerConfig(host"127.0.0.1", cliPort)
+        HttpServerConfig(host"0.0.0.0", publicPort, shutdownTimeout = 1.second),
+        HttpServerConfig(host"0.0.0.0", p2pPort, shutdownTimeout = 1.second),
+        HttpServerConfig(host"127.0.0.1", cliPort, shutdownTimeout = 1.second)
       )
     )
 
