@@ -2,8 +2,7 @@ package org.tessellation.sdk.infrastructure.consensus
 
 import cats.Show
 import cats.effect.Async
-import cats.syntax.flatMap._
-import cats.syntax.semigroupk._
+import cats.syntax.all._
 
 import scala.reflect.runtime.universe.TypeTag
 
@@ -33,38 +32,41 @@ object ConsensusHandler {
         storage.addEvent(rumor.origin, (rumor.ordinal, rumor.content.value))
     }
 
+    def checkForStateUpdate(key: Key)(maybeResources: Option[ConsensusResources[Artifact]]): F[Unit] =
+      maybeResources.traverse(manager.checkForStateUpdate(key)).void
+
     val facilityHandler =
       RumorHandler.fromPeerRumorConsumer[F, ConsensusPeerDeclaration[Key, Facility]]() { rumor =>
         storage.addFacility(rumor.origin, rumor.content.key, rumor.content.declaration) >>=
-          manager.checkForStateUpdate(rumor.content.key)
+          checkForStateUpdate(rumor.content.key)
       }
 
     val proposalHandler = RumorHandler.fromPeerRumorConsumer[F, ConsensusPeerDeclaration[Key, Proposal]]() { rumor =>
       storage.addProposal(rumor.origin, rumor.content.key, rumor.content.declaration) >>=
-        manager.checkForStateUpdate(rumor.content.key)
+        checkForStateUpdate(rumor.content.key)
     }
 
     val artifactHandler = RumorHandler.fromCommonRumorConsumer[F, ConsensusArtifact[Key, Artifact]] { rumor =>
       storage.addArtifact(rumor.content.key, rumor.content.artifact) >>=
-        manager.checkForStateUpdate(rumor.content.key)
+        checkForStateUpdate(rumor.content.key)
     }
 
     val signatureHandler =
       RumorHandler.fromPeerRumorConsumer[F, ConsensusPeerDeclaration[Key, MajoritySignature]]() { rumor =>
         storage.addSignature(rumor.origin, rumor.content.key, rumor.content.declaration) >>=
-          manager.checkForStateUpdate(rumor.content.key)
+          checkForStateUpdate(rumor.content.key)
       }
 
     val peerDeclarationAckHandler =
       RumorHandler.fromPeerRumorConsumer[F, ConsensusPeerDeclarationAck[Key]]() { rumor =>
         storage.addPeerDeclarationAck(rumor.origin, rumor.content.key, rumor.content.kind, rumor.content.ack) >>=
-          manager.checkForStateUpdate(rumor.content.key)
+          checkForStateUpdate(rumor.content.key)
       }
 
     val withdrawPeerDeclarationHandler =
       RumorHandler.fromPeerRumorConsumer[F, ConsensusWithdrawPeerDeclaration[Key]]() { rumor =>
         storage.addWithdrawPeerDeclaration(rumor.origin, rumor.content.key, rumor.content.kind) >>=
-          manager.checkForStateUpdate(rumor.content.key)
+          checkForStateUpdate(rumor.content.key)
       }
 
     eventHandler <+>

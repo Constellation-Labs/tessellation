@@ -43,6 +43,7 @@ object types {
   case class ConsensusConfig(
     timeTriggerInterval: FiniteDuration,
     declarationTimeout: FiniteDuration,
+    declarationRangeLimit: NonNegLong,
     lockDuration: FiniteDuration,
     observation: ObservationConfig
   )

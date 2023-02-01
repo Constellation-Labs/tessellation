@@ -21,6 +21,7 @@ object snapshot {
       consensus = ConsensusConfig(
         timeTriggerInterval = 43.seconds,
         declarationTimeout = 50.seconds,
+        declarationRangeLimit = 3L,
         lockDuration = 10.seconds,
         observation = ObservationConfig(
           interval = 10.seconds,
