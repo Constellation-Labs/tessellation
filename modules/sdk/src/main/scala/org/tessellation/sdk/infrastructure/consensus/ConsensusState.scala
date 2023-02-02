@@ -18,11 +18,11 @@ import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 
 @derive(eqv)
-case class ConsensusState[Key, Artifact](
+case class ConsensusState[Key, Artifact, Context](
   key: Key,
-  lastKey: Key,
+  lastOutcome: ConsensusOutcome[Key, Artifact, Context],
   facilitators: List[PeerId],
-  status: ConsensusStatus[Artifact],
+  status: ConsensusStatus[Artifact, Context],
   createdAt: FiniteDuration,
   removedFacilitators: Set[PeerId] = Set.empty,
   withdrawnFacilitators: Set[PeerId] = Set.empty,
@@ -31,7 +31,7 @@ case class ConsensusState[Key, Artifact](
 )
 
 object ConsensusState {
-  implicit def showInstance[K: Show, A]: Show[ConsensusState[K, A]] = { cs =>
+  implicit def showInstance[K: Show, A, C]: Show[ConsensusState[K, A, C]] = { cs =>
     s"""ConsensusState{
        |key=${cs.key.show},
        |lockStatus=${cs.lockStatus.show},
@@ -43,12 +43,12 @@ object ConsensusState {
        |}""".stripMargin.replace(",\n", ", ")
   }
 
-  implicit class ConsensusStateOps[K, A](value: ConsensusState[K, A]) {
+  implicit class ConsensusStateOps[K, A, C](value: ConsensusState[K, A, C]) {
     private val kindRelation: (Option[PeerDeclarationKind], Set[PeerDeclarationKind]) = value.status match {
-      case _: CollectingFacilities[A] => (Facility.some, Set.empty)
-      case _: CollectingProposals[A]  => (Proposal.some, Set(Facility))
-      case _: CollectingSignatures[A] => (MajoritySignature.some, Set(Facility, Proposal))
-      case _: Finished[A]             => (none, Set(Facility, Proposal, MajoritySignature))
+      case _: CollectingFacilities[A, C] => (Facility.some, Set.empty)
+      case _: CollectingProposals[A, C]  => (Proposal.some, Set(Facility))
+      case _: CollectingSignatures[A, C] => (MajoritySignature.some, Set(Facility, Proposal))
+      case _: Finished[A, C]             => (none, Set(Facility, Proposal, MajoritySignature))
     }
 
     def collectedKinds: Set[PeerDeclarationKind] = kindRelation._2
@@ -60,44 +60,46 @@ object ConsensusState {
 }
 
 @derive(eqv)
-sealed trait ConsensusStatus[Artifact]
+sealed trait ConsensusStatus[Artifact, Context]
 
-final case class CollectingFacilities[A](
+final case class CollectingFacilities[A, C](
   maybeTrigger: Option[ConsensusTrigger],
-  lastSignedArtifact: Signed[A],
   facilitatorsHash: Hash
-) extends ConsensusStatus[A]
-final case class CollectingProposals[A](
+) extends ConsensusStatus[A, C]
+
+final case class CollectingProposals[A, C](
   majorityTrigger: ConsensusTrigger,
   proposalInfo: ProposalInfo[A],
-  lastSignedArtifact: Signed[A],
   candidates: Set[PeerId],
   facilitatorsHash: Hash
-) extends ConsensusStatus[A]
-final case class CollectingSignatures[A](
+) extends ConsensusStatus[A, C]
+
+final case class CollectingSignatures[A, C](
   majorityArtifactHash: Hash,
+  context: C,
   majorityTrigger: ConsensusTrigger,
   candidates: Set[PeerId],
   facilitatorsHash: Hash
-) extends ConsensusStatus[A]
+) extends ConsensusStatus[A, C]
 
 @derive(encoder, decoder)
-final case class Finished[A](
+final case class Finished[A, C](
   signedMajorityArtifact: Signed[A],
+  context: C,
   majorityTrigger: ConsensusTrigger,
   candidates: Set[PeerId],
   facilitatorsHash: Hash
-) extends ConsensusStatus[A]
+) extends ConsensusStatus[A, C]
 
 object ConsensusStatus {
-  implicit def showInstance[A]: Show[ConsensusStatus[A]] = {
-    case CollectingFacilities(maybeTrigger, _, facilitatorsHash) =>
+  implicit def showInstance[A, C]: Show[ConsensusStatus[A, C]] = {
+    case CollectingFacilities(maybeTrigger, facilitatorsHash) =>
       s"CollectingFacilities{maybeTrigger=${maybeTrigger.show}, facilitatorsHash=${facilitatorsHash.show}}"
-    case CollectingProposals(majorityTrigger, maybeProposalInfo, _, candidates, facilitatorsHash) =>
+    case CollectingProposals(majorityTrigger, maybeProposalInfo, candidates, facilitatorsHash) =>
       s"CollectingProposals{majorityTrigger=${majorityTrigger.show}, maybeProposalInfo=${maybeProposalInfo.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}}"
-    case CollectingSignatures(majorityArtifactHash, majorityTrigger, candidates, facilitatorsHash) =>
+    case CollectingSignatures(majorityArtifactHash, _, majorityTrigger, candidates, facilitatorsHash) =>
       s"CollectingSignatures{majorityArtifactHash=${majorityArtifactHash.show}, ${majorityTrigger.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}}"
-    case Finished(_, majorityTrigger, candidates, facilitatorsHash) =>
+    case Finished(_, _, majorityTrigger, candidates, facilitatorsHash) =>
       s"Finished{majorityTrigger=${majorityTrigger.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}}"
   }
 }

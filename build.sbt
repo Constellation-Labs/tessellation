@@ -191,6 +191,7 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.derevoCirce,
       Libraries.derevoScalacheck,
       Libraries.doobieQuill,
+      Libraries.drosteCore,
       Libraries.enumeratumCore,
       Libraries.enumeratumCirce,
       Libraries.guava,

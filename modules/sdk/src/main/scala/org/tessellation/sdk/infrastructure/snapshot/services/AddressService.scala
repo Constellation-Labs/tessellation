@@ -1,73 +1,65 @@
 package org.tessellation.sdk.infrastructure.snapshot.services
 
-import cats.Functor
+import cats.Applicative
 import cats.syntax.functor._
 
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
-import org.tessellation.schema.snapshot.Snapshot
+import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo}
 import org.tessellation.sdk.domain.snapshot.services.AddressService
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
-import org.tessellation.security.signature.Signed
 
 import io.estatico.newtype.ops._
 
 object AddressService {
-  def make[F[_]: Functor, S <: Snapshot[_, _]](snapshotStorage: SnapshotStorage[F, S]): AddressService[F, S] = new AddressService[F, S] {
-    private def getBalance(snapshot: Signed[S], address: Address): (Balance, SnapshotOrdinal) = {
-      val balance = snapshot.value.info.balances.getOrElse(address, Balance.empty)
-      val ordinal = snapshot.value.ordinal
+  def make[F[_]: Applicative, S <: Snapshot[_, _], C <: SnapshotInfo](
+    snapshotStorage: SnapshotStorage[F, S, C]
+  ): AddressService[F, S] =
+    new AddressService[F, S] {
 
-      (balance, ordinal)
+      def getBalance(address: Address): F[Option[(Balance, SnapshotOrdinal)]] =
+        snapshotStorage.head.map(_.map {
+          case (snapshot, state) =>
+            val balance = state.balances.getOrElse(address, Balance.empty)
+            val ordinal = snapshot.value.ordinal
+
+            (balance, ordinal)
+        })
+
+      // INFO: No historical balances can be red from the current state, hence None returned to keep backward compatibility
+      def getBalance(ordinal: SnapshotOrdinal, address: Address): F[Option[(Balance, SnapshotOrdinal)]] =
+        Applicative[F].pure(None)
+
+      def getTotalSupply: F[Option[(BigInt, SnapshotOrdinal)]] =
+        snapshotStorage.head.map(_.map {
+          case (snapshot, state) =>
+            val empty = BigInt(Balance.empty.coerce.value)
+            val supply = state.balances.values
+              .foldLeft(empty) { (acc, b) =>
+                acc + BigInt(b.coerce.value)
+              }
+            val ordinal = snapshot.value.ordinal
+
+            (supply, ordinal)
+
+        })
+
+      // INFO: No historical balances can be red from the current state, hence None returned to keep backward compatibility
+      def getTotalSupply(ordinal: SnapshotOrdinal): F[Option[(BigInt, SnapshotOrdinal)]] =
+        Applicative[F].pure(None)
+
+      def getWalletCount: F[Option[(Int, SnapshotOrdinal)]] =
+        snapshotStorage.head.map(_.map {
+          case (snapshot, state) =>
+            val balance = state.balances.size
+            val ordinal = snapshot.value.ordinal
+
+            (balance, ordinal)
+        })
+
+      // INFO: No historical balances can be red from the current state, hence None returned to keep backward compatibility
+      def getWalletCount(ordinal: SnapshotOrdinal): F[Option[(Int, SnapshotOrdinal)]] =
+        Applicative[F].pure(None)
     }
-
-    def getBalance(address: Address): F[Option[(Balance, SnapshotOrdinal)]] =
-      snapshotStorage.head.map {
-        _.map(getBalance(_, address))
-      }
-
-    def getBalance(ordinal: SnapshotOrdinal, address: Address): F[Option[(Balance, SnapshotOrdinal)]] =
-      snapshotStorage.get(ordinal).map {
-        _.map(getBalance(_, address))
-      }
-
-    private def getTotalSupply(snapshot: Signed[S]): (BigInt, SnapshotOrdinal) = {
-      val empty = BigInt(Balance.empty.coerce.value)
-      val supply = snapshot.value.info.balances.values
-        .foldLeft(empty) { (acc, b) =>
-          acc + BigInt(b.coerce.value)
-        }
-      val ordinal = snapshot.value.ordinal
-
-      (supply, ordinal)
-    }
-
-    def getTotalSupply: F[Option[(BigInt, SnapshotOrdinal)]] =
-      snapshotStorage.head.map {
-        _.map(getTotalSupply)
-      }
-
-    def getTotalSupply(ordinal: SnapshotOrdinal): F[Option[(BigInt, SnapshotOrdinal)]] =
-      snapshotStorage.get(ordinal).map {
-        _.map(getTotalSupply)
-      }
-
-    private def getWalletCount(snapshot: Signed[S]): (Int, SnapshotOrdinal) = {
-      val wallets = snapshot.value.info.balances.size
-      val ordinal = snapshot.value.ordinal
-
-      (wallets, ordinal)
-    }
-
-    def getWalletCount: F[Option[(Int, SnapshotOrdinal)]] =
-      snapshotStorage.head.map {
-        _.map(getWalletCount)
-      }
-
-    def getWalletCount(ordinal: SnapshotOrdinal): F[Option[(Int, SnapshotOrdinal)]] =
-      snapshotStorage.get(ordinal).map {
-        _.map(getWalletCount)
-      }
-  }
 }

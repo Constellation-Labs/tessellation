@@ -6,7 +6,7 @@ import cats.effect.kernel.Async
 import cats.effect.std.{Random, Supervisor}
 
 import org.tessellation.currency.l0.snapshot.services.StateChannelSnapshotService
-import org.tessellation.currency.schema.currency.{CurrencyBlock, CurrencySnapshot, CurrencyTransaction}
+import org.tessellation.currency.schema.currency._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.balance.Amount
@@ -36,14 +36,15 @@ object CurrencySnapshotConsensus {
     collateral: Amount,
     clusterStorage: ClusterStorage[F],
     nodeStorage: NodeStorage[F],
+    snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
     blockValidator: BlockValidator[F, CurrencyTransaction, CurrencyBlock],
     snapshotConfig: SnapshotConfig,
     environment: AppEnvironment,
     client: Client[F],
     session: Session[F],
     stateChannelSnapshotService: StateChannelSnapshotService[F]
-  ): F[SnapshotConsensus[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshot, CurrencySnapshotEvent]] =
-    Consensus.make[F, CurrencySnapshotEvent, SnapshotOrdinal, CurrencySnapshot](
+  ): F[SnapshotConsensus[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshotArtifact, CurrencySnapshotContext, CurrencySnapshotEvent]] =
+    Consensus.make[F, CurrencySnapshotEvent, SnapshotOrdinal, CurrencySnapshotArtifact, CurrencySnapshotContext](
       CurrencySnapshotConsensusFunctions.make[F](
         stateChannelSnapshotService,
         BlockAcceptanceManager.make[F, CurrencyTransaction, CurrencyBlock](blockValidator),

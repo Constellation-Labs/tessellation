@@ -13,8 +13,8 @@ import org.http4s.circe.CirceEntityCodec._
 import org.http4s.dsl._
 import org.http4s.server.Router
 
-class ConsensusRoutes[F[_]: Async, Key: Order: Encoder: Decoder, Artifact: Encoder](
-  storage: ConsensusStorage[F, _, Key, Artifact]
+class ConsensusRoutes[F[_]: Async, Key: Order: Encoder: Decoder, Artifact: Encoder, Context: Encoder](
+  storage: ConsensusStorage[F, _, Key, Artifact, Context]
 ) extends Http4sDsl[F] {
 
   private val prefixPath = "/consensus"

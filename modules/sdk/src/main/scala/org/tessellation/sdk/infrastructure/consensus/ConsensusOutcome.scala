@@ -9,10 +9,10 @@ import derevo.derive
 /** Represents a finished consensus
   */
 @derive(eqv, encoder, decoder)
-case class ConsensusOutcome[Key, Artifact](
+case class ConsensusOutcome[Key, Artifact, Context](
   key: Key,
   facilitators: List[PeerId],
   removedFacilitators: Set[PeerId],
   withdrawnFacilitators: Set[PeerId],
-  status: Finished[Artifact]
+  status: Finished[Artifact, Context]
 )

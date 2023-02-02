@@ -12,14 +12,13 @@ import scala.collection.immutable.SortedMap
 
 import org.tessellation.domain.statechannel.StateChannelValidator
 import org.tessellation.ext.crypto._
-import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.GlobalSnapshotInfo
 import org.tessellation.schema.address.Address
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.Signed.forAsyncKryo
+import org.tessellation.security.{KeyPairGenerator, SecurityProvider}
 import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
 
