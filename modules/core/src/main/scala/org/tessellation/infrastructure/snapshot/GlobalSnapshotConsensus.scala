@@ -8,7 +8,6 @@ import cats.effect.std.{Random, Supervisor}
 import org.tessellation.domain.rewards.Rewards
 import org.tessellation.domain.statechannel.StateChannelValidator
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.GlobalSnapshot
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.peer.PeerId
@@ -39,7 +38,7 @@ object GlobalSnapshotConsensus {
     collateral: Amount,
     clusterStorage: ClusterStorage[F],
     nodeStorage: NodeStorage[F],
-    globalSnapshotStorage: SnapshotStorage[F, GlobalSnapshot],
+    globalSnapshotStorage: SnapshotStorage[F, GlobalSnapshotArtifact, GlobalSnapshotContext],
     blockValidator: BlockValidator[F, DAGTransaction, DAGBlock],
     stateChannelValidator: StateChannelValidator[F],
     snapshotConfig: SnapshotConfig,
@@ -47,8 +46,8 @@ object GlobalSnapshotConsensus {
     client: Client[F],
     session: Session[F],
     rewards: Rewards[F]
-  ): F[Consensus[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact]] =
-    Consensus.make[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact](
+  ): F[Consensus[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact, GlobalSnapshotContext]] =
+    Consensus.make[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact, GlobalSnapshotContext](
       GlobalSnapshotConsensusFunctions.make[F](
         globalSnapshotStorage,
         BlockAcceptanceManager.make[F, DAGTransaction, DAGBlock](blockValidator),

@@ -21,7 +21,7 @@ import org.tessellation.sdk.infrastructure.consensus.message.ConsensusWithdrawPe
 import io.circe.Encoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-trait ConsensusStateRemover[F[_], Key, Artifact] {
+trait ConsensusStateRemover[F[_], Key, Artifact, Context] {
 
   def withdrawFromConsensus(key: Key): F[Unit]
 
@@ -30,10 +30,10 @@ trait ConsensusStateRemover[F[_], Key, Artifact] {
 object ConsensusStateRemover {
   def make[F[
     _
-  ]: Async, Event, Key: Show: Next: TypeTag: Encoder, Artifact](
-    consensusStorage: ConsensusStorage[F, Event, Key, Artifact],
+  ]: Async, Event, Key: Show: Next: TypeTag: Encoder, Artifact, Context](
+    consensusStorage: ConsensusStorage[F, Event, Key, Artifact, Context],
     gossip: Gossip[F]
-  ): ConsensusStateRemover[F, Key, Artifact] = new ConsensusStateRemover[F, Key, Artifact] {
+  ): ConsensusStateRemover[F, Key, Artifact, Context] = new ConsensusStateRemover[F, Key, Artifact, Context] {
 
     private val logger = Slf4jLogger.getLoggerFromClass(ConsensusStateRemover.getClass)
 
@@ -46,22 +46,22 @@ object ConsensusStateRemover {
 
     private def toRemoveStateFn(
       key: Key,
-      fn: Either[Key, ConsensusState[Key, Artifact]] => F[Unit]
+      fn: Either[Key, ConsensusState[Key, Artifact, Context]] => F[Unit]
     ): ModifyStateFn[F[Unit]] = { maybeState =>
       val effect = fn(maybeState.toRight(key))
-      (none[ConsensusState[Key, Artifact]], effect).some.pure[F]
+      (none[ConsensusState[Key, Artifact, Context]], effect).some.pure[F]
     }
 
     private def evalEffect(maybeEffect: Option[F[Unit]]): F[Unit] =
       maybeEffect.traverse(identity).flatMap(_.liftTo[F](new Throwable("Should never happen")))
 
-    private def withdrawFromConsensus(keyOrState: Either[Key, ConsensusState[Key, Artifact]]): F[Unit] = {
+    private def withdrawFromConsensus(keyOrState: Either[Key, ConsensusState[Key, Artifact, Context]]): F[Unit] = {
       val (withdrawalKey, withdrawalKind) = keyOrState.map { state =>
         state.status match {
-          case _: CollectingFacilities[Artifact] => (state.key, Proposal)
-          case _: CollectingProposals[Artifact]  => (state.key, MajoritySignature)
-          case _: CollectingSignatures[Artifact] => (state.key.next, Facility)
-          case _: Finished[Artifact]             => (state.key.next, Facility)
+          case _: CollectingFacilities[Artifact, Context] => (state.key, Proposal)
+          case _: CollectingProposals[Artifact, Context]  => (state.key, MajoritySignature)
+          case _: CollectingSignatures[Artifact, Context] => (state.key.next, Facility)
+          case _: Finished[Artifact, Context]             => (state.key.next, Facility)
         }
       }.leftMap { key =>
         (key, Facility)

@@ -9,21 +9,19 @@ import cats.syntax.eq._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import org.tessellation.dag.dagSharedKryoRegistrar
-import org.tessellation.dag.snapshot.epoch.EpochProgress
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
-import org.tessellation.ext.kryo._
-import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
+import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.{GlobalSnapshot, GlobalSnapshotInfo, IncrementalGlobalSnapshot}
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Hashed, SecurityProvider}
+import org.tessellation.security.{Hashed, KeyPairGenerator, SecurityProvider}
 import org.tessellation.shared.sharedKryoRegistrar
 
 import eu.timepit.refined.auto._
@@ -36,7 +34,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
   type Res = (KryoSerializer[IO], SecurityProvider[IO])
 
   override def sharedResource: Resource[IO, Res] =
-    KryoSerializer.forAsync[IO](dagSharedKryoRegistrar.union(sharedKryoRegistrar)).flatMap { ks =>
+    KryoSerializer.forAsync[IO](sharedKryoRegistrar).flatMap { ks =>
       SecurityProvider.forAsync[IO].map((ks, _))
     }
 

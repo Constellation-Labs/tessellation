@@ -5,8 +5,12 @@ import cats.kernel.Eq
 import cats.syntax.eq._
 import cats.syntax.option._
 
+import org.tessellation.schema.{nonNegIntDecoder, nonNegIntEncoder}
 import org.tessellation.security.hash.Hash
 
+import derevo.cats.show
+import derevo.circe.magnolia.{decoder, encoder}
+import derevo.derive
 import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.NonNegInt
 
@@ -28,6 +32,7 @@ case class Proof(entries: NonEmptyList[ProofEntry]) {
       .isDefined
 }
 
+@derive(show, encoder, decoder)
 case class MerkleTree(leafCount: NonNegInt, nodes: NonEmptyList[Hash]) {
   def getRoot: Hash =
     nodes.last

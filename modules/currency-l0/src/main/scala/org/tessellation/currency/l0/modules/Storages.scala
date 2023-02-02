@@ -6,7 +6,7 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.currency.l0.snapshot.storages.LastSignedBinaryHashStorage
-import org.tessellation.currency.schema.currency.CurrencySnapshot
+import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.L0Peer
 import org.tessellation.sdk.config.types.SnapshotConfig
@@ -27,11 +27,11 @@ object Storages {
     globalL0Peer: L0Peer
   ): F[Storages[F]] =
     for {
-      snapshotLocalFileSystemStorage <- SnapshotLocalFileSystemStorage.make[F, CurrencySnapshot](
+      snapshotLocalFileSystemStorage <- SnapshotLocalFileSystemStorage.make[F, CurrencyIncrementalSnapshot](
         snapshotConfig.snapshotPath
       )
       snapshotStorage <- SnapshotStorage
-        .make[F, CurrencySnapshot](snapshotLocalFileSystemStorage, snapshotConfig.inMemoryCapacity)
+        .make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](snapshotLocalFileSystemStorage, snapshotConfig.inMemoryCapacity)
 
       globalL0ClusterStorage <- L0ClusterStorage.make[F](globalL0Peer)
       lastSignedBinaryHashStorage <- LastSignedBinaryHashStorage.make[F]
@@ -53,6 +53,6 @@ sealed abstract class Storages[F[_]] private (
   val node: NodeStorage[F],
   val session: SessionStorage[F],
   val rumor: RumorStorage[F],
-  val snapshot: SnapshotStorage[F, CurrencySnapshot] with LatestBalances[F],
+  val snapshot: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo] with LatestBalances[F],
   val lastSignedBinaryHash: LastSignedBinaryHashStorage[F]
 )

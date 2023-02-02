@@ -23,6 +23,7 @@ import org.tessellation.sdk.infrastructure.consensus.ConsensusManager
 import org.tessellation.security.SecurityProvider
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+import org.tessellation.currency.schema.currency.CurrencyIncrementalSnapshot
 
 trait GenesisService[F[_]] {
   def accept(genesis: CurrencySnapshot): F[Unit]
@@ -43,17 +44,22 @@ object GenesisService {
     private val logger = Slf4jLogger.getLogger
 
     override def accept(genesis: CurrencySnapshot): F[Unit] = for {
-      signedGenesis <- genesis.sign(keyPair)
-      _ <- snapshotStorage.prepend(signedGenesis)
+      hashedGenesis <- genesis.sign(keyPair).flatMap(_.toHashed[F])
+      firstIncrementalSnapshot <- CurrencySnapshot.mkFirstIncrementalSnapshot[F](hashedGenesis)
+      signedFirstIncrementalSnapshot <- firstIncrementalSnapshot.sign(keyPair)
+      _ <- snapshotStorage.prepend(signedFirstIncrementalSnapshot, hashedGenesis.info)
       _ <- collateral
         .hasCollateral(nodeId)
         .flatMap(OwnCollateralNotSatisfied.raiseError[F, Unit].unlessA)
       signedBinary <- stateChannelSnapshotService.createBinary(signedGenesis)
       signedBinaryHash <- signedBinary.hashF
       _ <- stateChannelSnapshotClient.send(signedBinary)(globalL0Peer)
-      _ <- lastSignedBinaryHashStorage.set(signedBinaryHash)
-      _ <- consensusManager.startFacilitatingAfter(genesis.ordinal, signedGenesis)
-      _ <- logger.info(s"Genesis binary ${signedBinaryHash.show} accepted and sent to Global L0")
+      signedIncrementalBinary <- stateChannelSnapshotService.createBinary(signedFirstIncrementalSnapshot)
+      signedIncrementalBinaryHash <- signedIncrementalBinary.hashF
+      _ <- stateChannelSnapshotClient.send(signedIncrementalBinary)(globalL0Peer)
+      _ <- lastSignedBinaryHashStorage.set(signedIncrementalBinaryHash)
+      _ <- consensusManager.startFacilitatingAfter(signedFirstIncrementalSnapshot.ordinal, signedFirstIncrementalSnapshot)
+      _ <- logger.info(s"Genesis binary ${signedBinaryHash.show} and ${signedIncrementalBinaryHash.show} accepted and sent to Global L0")
     } yield ()
   }
 }

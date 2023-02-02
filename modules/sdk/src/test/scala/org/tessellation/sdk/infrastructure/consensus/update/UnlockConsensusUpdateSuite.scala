@@ -8,6 +8,7 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.infrastructure.consensus._
 import org.tessellation.sdk.infrastructure.consensus.declaration.kind
 import org.tessellation.sdk.infrastructure.consensus.declaration.kind.PeerDeclarationKind
+import org.tessellation.sdk.infrastructure.consensus.trigger.TimeTrigger
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
@@ -20,9 +21,10 @@ object UnlockConsensusUpdateSuite extends SimpleIOSuite with Checkers {
 
   type Key = Int
   type Artifact = Unit
+  type Context = Unit
 
-  val unlockConsensusFn: ConsensusStateUpdateFn[UnlockConsensusUpdateSuite.F, Key, Artifact, Artifact] =
-    UnlockConsensusUpdate.make[F, Key, Artifact]
+  val unlockConsensusFn: ConsensusStateUpdateFn[UnlockConsensusUpdateSuite.F, Key, Artifact, Artifact, Context] =
+    UnlockConsensusUpdate.make[F, Key, Artifact, Context]
 
   override def checkConfig: CheckConfig = CheckConfig.default.copy(minimumSuccessful = 40)
 
@@ -56,7 +58,7 @@ object UnlockConsensusUpdateSuite extends SimpleIOSuite with Checkers {
     }
   }
 
-  def lockedStateAndResourcesGen: Gen[(ConsensusState[Key, Artifact], ConsensusResources[Artifact])] =
+  def lockedStateAndResourcesGen: Gen[(ConsensusState[Key, Artifact, Context], ConsensusResources[Artifact])] =
     for {
       facilitators <- facilitatorsGen
       state <- lockedStateGen(facilitators)
@@ -70,19 +72,26 @@ object UnlockConsensusUpdateSuite extends SimpleIOSuite with Checkers {
       .flatMap(size => Gen.containerOfN[Set, PeerId](size, arbitrary[PeerId]))
       .map(_.toList.sorted)
 
-  def lockedStateGen(facilitators: List[PeerId]): Gen[ConsensusState[Key, Artifact]] =
+  def lockedStateGen(facilitators: List[PeerId]): Gen[ConsensusState[Key, Artifact, Context]] =
     for {
       key <- arbitrary[Key]
       lastKey <- arbitrary[Key]
       createdAt <- arbitrary[FiniteDuration]
       lastSignedArtifact <- arbitrary[Signed[Artifact]]
+      lastContext <- arbitrary[Context]
       facilitatorsHash <- arbitrary[Hash]
     } yield
       ConsensusState(
         key = key,
-        lastKey = lastKey,
+        lastOutcome = ConsensusOutcome(
+          lastKey,
+          facilitators,
+          Set.empty,
+          Set.empty,
+          Finished(lastSignedArtifact, lastContext, TimeTrigger, facilitators.toSet, facilitatorsHash)
+        ),
         facilitators = facilitators,
-        status = CollectingFacilities(none, lastSignedArtifact, facilitatorsHash),
+        status = CollectingFacilities(none, facilitatorsHash),
         createdAt = createdAt,
         lockStatus = Closed
       )
