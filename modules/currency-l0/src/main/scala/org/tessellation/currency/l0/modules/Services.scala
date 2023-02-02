@@ -14,6 +14,12 @@ import org.tessellation.currency.l0.snapshot.services.{GenesisService, StateChan
 import org.tessellation.currency.l0.snapshot.{CurrencySnapshotConsensus, CurrencySnapshotEvent}
 import org.tessellation.currency.schema.currency.{CurrencyBlock, CurrencySnapshot, CurrencyTransaction}
 import org.tessellation.currency.schema.currency._
+import org.tessellation.currency.config.types.AppConfig
+import org.tessellation.currency.infrastructure.snapshot.{CurrencySnapshotConsensus, CurrencySnapshotEvent}
+import org.tessellation.currency.schema.currency.{CurrencyBlock, CurrencySnapshot, CurrencyTransaction}
+import org.tessellation.currency.config.types.AppConfig
+import org.tessellation.currency.infrastructure.snapshot.{CurrencySnapshotConsensus, CurrencySnapshotEvent}
+import org.tessellation.currency.schema.currency._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.PeerId
