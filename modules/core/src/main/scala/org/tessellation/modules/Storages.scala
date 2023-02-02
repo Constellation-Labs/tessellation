@@ -6,17 +6,16 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.domain.trust.storage.TrustStorage
-import org.tessellation.infrastructure.snapshot.GlobalSnapshotStorage
 import org.tessellation.infrastructure.trust.storage.TrustStorage
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.GlobalSnapshot
+import org.tessellation.schema.{GlobalSnapshotInfo, IncrementalGlobalSnapshot}
 import org.tessellation.sdk.config.types.SnapshotConfig
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tessellation.sdk.domain.collateral.LatestBalances
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.infrastructure.gossip.RumorStorage
-import org.tessellation.sdk.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage
+import org.tessellation.sdk.infrastructure.snapshot.storage.{SnapshotLocalFileSystemStorage, SnapshotStorage}
 import org.tessellation.sdk.modules.SdkStorages
 import org.tessellation.security.hash.Hash
 
@@ -29,11 +28,13 @@ object Storages {
   ): F[Storages[F]] =
     for {
       trustStorage <- TrustStorage.make[F]
-      globalSnapshotLocalFileSystemStorage <- SnapshotLocalFileSystemStorage.make[F, GlobalSnapshot](
+      globalSnapshotLocalFileSystemStorage <- SnapshotLocalFileSystemStorage.make[F, IncrementalGlobalSnapshot](
         snapshotConfig.snapshotPath
       )
-      globalSnapshotStorage <- GlobalSnapshotStorage
-        .make(globalSnapshotLocalFileSystemStorage, snapshotConfig.inMemoryCapacity, maybeRollbackHash)
+      globalSnapshotStorage <- SnapshotStorage.make[F, IncrementalGlobalSnapshot, GlobalSnapshotInfo](
+        globalSnapshotLocalFileSystemStorage,
+        snapshotConfig.inMemoryCapacity
+      )
     } yield
       new Storages[F](
         cluster = sdkStorages.cluster,
@@ -51,5 +52,5 @@ sealed abstract class Storages[F[_]] private (
   val session: SessionStorage[F],
   val rumor: RumorStorage[F],
   val trust: TrustStorage[F],
-  val globalSnapshot: SnapshotStorage[F, GlobalSnapshot] with LatestBalances[F]
+  val globalSnapshot: SnapshotStorage[F, IncrementalGlobalSnapshot, GlobalSnapshotInfo] with LatestBalances[F]
 )

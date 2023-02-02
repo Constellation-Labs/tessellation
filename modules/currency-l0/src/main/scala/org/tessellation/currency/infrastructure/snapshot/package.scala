@@ -1,6 +1,6 @@
 package org.tessellation.currency.infrastructure
 
-import org.tessellation.currency.schema.currency.{CurrencyBlock, CurrencySnapshot, CurrencyTransaction}
+import org.tessellation.currency.schema.currency._
 import org.tessellation.sdk.infrastructure.snapshot._
 import org.tessellation.security.signature.Signed
 
@@ -8,8 +8,11 @@ package object snapshot {
 
   type CurrencySnapshotEvent = Signed[CurrencyBlock]
 
-  type CurrencySnapshotArtifact = CurrencySnapshot
+  type CurrencySnapshotArtifact = CurrencyIncrementalSnapshot
 
-  type CurrencySnapshotConsensus[F[_]] = SnapshotConsensus[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshot, CurrencySnapshotEvent]
+  type CurrencySnapshotContext = CurrencySnapshotInfo
+
+  type CurrencySnapshotConsensus[F[_]] =
+    SnapshotConsensus[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshotArtifact, CurrencySnapshotContext, CurrencySnapshotEvent]
 
 }

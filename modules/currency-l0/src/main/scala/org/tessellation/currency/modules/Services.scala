@@ -8,7 +8,7 @@ import cats.syntax.functor._
 
 import org.tessellation.currency.config.types.AppConfig
 import org.tessellation.currency.infrastructure.snapshot.{CurrencySnapshotConsensus, CurrencySnapshotEvent}
-import org.tessellation.currency.schema.currency.{CurrencyBlock, CurrencySnapshot, CurrencyTransaction}
+import org.tessellation.currency.schema.currency._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
@@ -56,7 +56,7 @@ object Services {
           client,
           session
         )
-      addressService = AddressService.make[F, CurrencySnapshot](storages.snapshot)
+      addressService = AddressService.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](storages.snapshot)
       collateralService = Collateral.make[F](cfg.collateral, storages.snapshot)
     } yield
       new Services[F](
@@ -75,7 +75,14 @@ sealed abstract class Services[F[_]] private (
   val cluster: Cluster[F],
   val session: Session[F],
   val gossip: Gossip[F],
-  val consensus: SnapshotConsensus[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshot, CurrencySnapshotEvent],
-  val address: AddressService[F, CurrencySnapshot],
+  val consensus: SnapshotConsensus[
+    F,
+    CurrencyTransaction,
+    CurrencyBlock,
+    CurrencyIncrementalSnapshot,
+    CurrencySnapshotInfo,
+    CurrencySnapshotEvent
+  ],
+  val address: AddressService[F, CurrencyIncrementalSnapshot],
   val collateral: Collateral[F]
 )

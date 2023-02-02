@@ -32,13 +32,14 @@ abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
       CurrencyBlock,
       CurrencySnapshotEvent,
       CurrencySnapshotArtifact,
+      CurrencySnapshotContext,
       ConsensusTrigger
     ] {}
 
 object CurrencySnapshotConsensusFunctions {
 
   def make[F[_]: Async: KryoSerializer: SecurityProvider: Metrics](
-    snapshotStorage: SnapshotStorage[F, CurrencySnapshot],
+    snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
     blockAcceptanceManager: BlockAcceptanceManager[F, CurrencyTransaction, CurrencyBlock],
     collateral: Amount,
     environment: AppEnvironment
@@ -48,9 +49,9 @@ object CurrencySnapshotConsensusFunctions {
 
     def getRequiredCollateral: Amount = collateral
 
-    def consumeSignedMajorityArtifact(signedArtifact: Signed[CurrencySnapshot]): F[Unit] =
+    def consumeSignedMajorityArtifact(signedArtifact: Signed[CurrencyIncrementalSnapshot], context: CurrencySnapshotInfo): F[Unit] =
       snapshotStorage
-        .prepend(signedArtifact)
+        .prepend(signedArtifact, context)
         .ifM(
           Async[F].unit,
           logger.error("Cannot save CurrencySnapshot into the storage")
@@ -59,6 +60,7 @@ object CurrencySnapshotConsensusFunctions {
     def createProposalArtifact(
       lastKey: SnapshotOrdinal,
       lastArtifact: Signed[CurrencySnapshotArtifact],
+      lastContext: CurrencySnapshotContext,
       trigger: ConsensusTrigger,
       events: Set[CurrencySnapshotEvent]
     ): F[(CurrencySnapshotArtifact, Set[CurrencySnapshotEvent])] = {
@@ -75,8 +77,8 @@ object CurrencySnapshotConsensusFunctions {
 
         tipUsages = getTipsUsages(lastActiveTips, lastDeprecatedTips)
         context = BlockAcceptanceContext.fromStaticData(
-          lastArtifact.info.balances,
-          lastArtifact.info.lastTxRefs,
+          lastContext.balances,
+          lastContext.lastTxRefs,
           tipUsages,
           collateral
         )
@@ -91,13 +93,13 @@ object CurrencySnapshotConsensusFunctions {
 
         (height, subHeight) <- getHeightAndSubHeight(lastArtifact, deprecated, remainedActive, accepted)
 
-        updatedLastTxRefs = lastArtifact.info.lastTxRefs ++ acceptanceResult.contextUpdate.lastTxRefs
-        balances = lastArtifact.info.balances ++ acceptanceResult.contextUpdate.balances
+        updatedLastTxRefs = lastContext.lastTxRefs ++ acceptanceResult.contextUpdate.lastTxRefs
+        balances = lastContext.balances ++ acceptanceResult.contextUpdate.balances
         positiveBalances = balances.filter { case (_, balance) => balance =!= Balance.empty }
 
         returnedEvents = getReturnedEvents(acceptanceResult)
 
-        artifact = CurrencySnapshot(
+        artifact = CurrencyIncrementalSnapshot(
           currentOrdinal,
           height,
           subHeight,
@@ -107,10 +109,7 @@ object CurrencySnapshotConsensusFunctions {
             deprecated = deprecated,
             remainedActive = remainedActive
           ),
-          CurrencySnapshotInfo(
-            updatedLastTxRefs,
-            positiveBalances
-          )
+          lastArtifact.stateProof // TODO: incremental snapshots - new state proof
         )
       } yield (artifact, returnedEvents)
     }

@@ -21,8 +21,8 @@ import org.http4s.{EntityEncoder, HttpRoutes}
 import shapeless.HNil
 import shapeless.syntax.singleton._
 
-final case class SnapshotRoutes[F[_]: Async: KryoSerializer, S <: Snapshot[_, _]: Encoder](
-  snapshotStorage: SnapshotStorage[F, S],
+final case class SnapshotRoutes[F[_]: Async: KryoSerializer, S <: Snapshot[_, _]: Encoder, C](
+  snapshotStorage: SnapshotStorage[F, S, C],
   prefix: String
 ) extends Http4sDsl[F] {
 
@@ -34,14 +34,14 @@ final case class SnapshotRoutes[F[_]: Async: KryoSerializer, S <: Snapshot[_, _]
     case GET -> Root / "latest" / "ordinal" =>
       import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 
-      snapshotStorage.head.map(_.map(_.ordinal)).flatMap {
+      snapshotStorage.headSnapshot.map(_.map(_.ordinal)).flatMap {
         case Some(ordinal) => Ok(("value" ->> ordinal.value.value) :: HNil)
         case None          => NotFound()
       }
 
     case req @ GET -> Root / "latest" =>
       resolveEncoder[F, Signed[S]](req) { implicit enc =>
-        snapshotStorage.head.flatMap {
+        snapshotStorage.headSnapshot.flatMap {
           case Some(snapshot) => Ok(snapshot)
           case _              => NotFound()
         }

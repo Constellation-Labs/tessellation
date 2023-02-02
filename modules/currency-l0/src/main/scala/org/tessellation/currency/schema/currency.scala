@@ -1,17 +1,26 @@
 package org.tessellation.currency.schema
 
+import cats.MonadThrow
 import cats.data.{NonEmptyList, NonEmptySet}
+import cats.syntax.contravariantSemigroupal._
+import cats.syntax.functor._
+import cats.syntax.reducible._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import org.tessellation.ext.cats.data.OrderBasedOrdering
+import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
+import org.tessellation.ext.crypto._
 import org.tessellation.ext.derevo.ordering
+import org.tessellation.kryo.KryoSerializer
+import org.tessellation.merkletree.MerkleTree
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo}
 import org.tessellation.schema.transaction._
+import org.tessellation.security.Hashed
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.signature.Signed
 import org.tessellation.syntax.sortedCollection._
@@ -57,6 +66,13 @@ object currency {
     balances: SortedMap[Address, Balance]
   ) extends SnapshotInfo {}
 
+  object CurrencySnapshotInfo {
+    def stateProof[F[_]: MonadThrow: KryoSerializer](info: CurrencySnapshotInfo): F[MerkleTree] =
+      (info.lastTxRefs.hashF, info.balances.hashF).tupled
+        .map(_.toNonEmptyList)
+        .map(MerkleTree.from)
+  }
+
   @derive(eqv, show, encoder, decoder)
   case class CurrencySnapshot(
     ordinal: SnapshotOrdinal,
@@ -66,6 +82,17 @@ object currency {
     blocks: SortedSet[BlockAsActiveTip[CurrencyBlock]],
     tips: SnapshotTips,
     info: CurrencySnapshotInfo
+  ) extends Snapshot[CurrencyTransaction, CurrencyBlock] {}
+
+  @derive(eqv, show, encoder, decoder)
+  case class CurrencyIncrementalSnapshot(
+    ordinal: SnapshotOrdinal,
+    height: Height,
+    subHeight: SubHeight,
+    lastSnapshotHash: Hash,
+    blocks: SortedSet[BlockAsActiveTip[CurrencyBlock]],
+    tips: SnapshotTips,
+    stateProof: MerkleTree
   ) extends Snapshot[CurrencyTransaction, CurrencyBlock] {}
 
   object CurrencySnapshot {
@@ -79,6 +106,19 @@ object currency {
         SnapshotTips(SortedSet.empty, mkActiveTips(8)),
         CurrencySnapshotInfo(SortedMap.empty, SortedMap.from(balances))
       )
+
+    def mkFirstIncrementalSnapshot[F[_]: MonadThrow: KryoSerializer](genesis: Hashed[CurrencySnapshot]): F[CurrencyIncrementalSnapshot] =
+      CurrencySnapshotInfo.stateProof[F](genesis.info).map { stateProof =>
+        CurrencyIncrementalSnapshot(
+          genesis.ordinal.next,
+          genesis.height,
+          genesis.subHeight.next,
+          genesis.hash,
+          SortedSet.empty,
+          genesis.tips,
+          stateProof
+        )
+      }
 
     private def mkActiveTips(n: PosInt): SortedSet[ActiveTip] =
       List

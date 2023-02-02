@@ -76,7 +76,8 @@ package object shared {
     DAGBlock.OrderingInstanceAsActiveTip.getClass -> 611,
     classOf[DeprecatedTip] -> 612,
     DeprecatedTip.OrderingInstance.getClass -> 613,
-    classOf[Tips] -> 614
+    classOf[Tips] -> 614,
+    classOf[IncrementalGlobalSnapshot] -> 615
   )
 
 }

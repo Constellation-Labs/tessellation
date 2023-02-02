@@ -9,7 +9,7 @@ import org.tessellation.currency.cli.method
 import org.tessellation.currency.cli.method.{Run, RunGenesis, RunValidator}
 import org.tessellation.currency.http.P2PClient
 import org.tessellation.currency.modules._
-import org.tessellation.currency.schema.currency.{CurrencySnapshot, TokenSymbol}
+import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshot, TokenSymbol}
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.kryo._
 import org.tessellation.schema.address.Address
@@ -144,12 +144,23 @@ abstract class CurrencyL0App(
                 accounts.map(a => (a.address, a.balance)).toMap
               )
 
-              Signed.forAsyncKryo[IO, CurrencySnapshot](genesis, keyPair).flatMap { signedGenesis =>
-                storages.snapshot.prepend(signedGenesis) >>
-                  services.collateral
-                    .hasCollateral(sdk.nodeId)
-                    .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
-                  services.consensus.manager.startFacilitatingAfter(genesis.ordinal, signedGenesis)
+              Signed.forAsyncKryo[IO, CurrencySnapshot](genesis, keyPair).flatMap(_.toHashed[IO]).flatMap { hashedGenesis =>
+                CurrencySnapshot.mkFirstIncrementalSnapshot[IO](hashedGenesis).flatMap { firstIncrementalSnapshot =>
+                  Signed.forAsyncKryo[IO, CurrencyIncrementalSnapshot](firstIncrementalSnapshot, keyPair).flatMap {
+                    signedFirstIncrementalSnapshot =>
+                      storages.snapshot.prepend(signedFirstIncrementalSnapshot, hashedGenesis.info) >>
+                        services.collateral
+                          .hasCollateral(sdk.nodeId)
+                          .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
+                        services.consensus.manager
+                          .startFacilitatingAfter(
+                            signedFirstIncrementalSnapshot.ordinal,
+                            signedFirstIncrementalSnapshot,
+                            hashedGenesis.info
+                          )
+                  }
+                }
+
               }
             }
           } >>

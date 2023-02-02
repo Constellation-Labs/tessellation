@@ -15,7 +15,6 @@ import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.Propos
 import org.tessellation.dag.l1.domain.consensus.round.RoundId
 import org.tessellation.dag.transaction.TransactionGenerator
 import org.tessellation.ext.cats.effect.ResourceIO
-import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.BlockReference
 import org.tessellation.schema.address.Address
@@ -25,12 +24,12 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.{DAGTransaction, TransactionFee, TransactionReference}
 import org.tessellation.sdk.domain.transaction.TransactionValidator
 import org.tessellation.sdk.sdkKryoRegistrar
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.ProofsHash
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.SignedValidator
 import org.tessellation.security.signature.signature.SignatureProof
+import org.tessellation.security.{KeyPairGenerator, SecurityProvider}
 
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
