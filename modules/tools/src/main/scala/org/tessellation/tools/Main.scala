@@ -13,6 +13,8 @@ import scala.concurrent.duration._
 import scala.math.Integral.Implicits._
 
 import org.tessellation.security.KeyPairGenerator
+import org.tessellation.keytool.KeyStoreUtils
+import org.tessellation.infrastructure.genesis.types.GenesisCSVAccount
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
