@@ -5,11 +5,12 @@ import org.tessellation.schema.snapshot.Snapshot
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
-trait SnapshotStorage[F[_], S <: Snapshot[_, _]] {
+trait SnapshotStorage[F[_], S <: Snapshot[_, _], State] {
 
-  def prepend(snapshot: Signed[S]): F[Boolean]
+  def prepend(snapshot: Signed[S], state: State): F[Boolean]
 
-  def head: F[Option[Signed[S]]]
+  def head: F[Option[(Signed[S], State)]]
+  def headSnapshot: F[Option[Signed[S]]]
 
   def get(ordinal: SnapshotOrdinal): F[Option[Signed[S]]]
 

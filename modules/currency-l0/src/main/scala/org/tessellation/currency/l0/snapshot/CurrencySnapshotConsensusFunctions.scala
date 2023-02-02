@@ -29,6 +29,7 @@ abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
       CurrencyBlock,
       CurrencySnapshotEvent,
       CurrencySnapshotArtifact,
+      CurrencySnapshotContext,
       ConsensusTrigger
     ] {}
 
@@ -44,12 +45,13 @@ object CurrencySnapshotConsensusFunctions {
 
     def getRequiredCollateral: Amount = collateral
 
-    def consumeSignedMajorityArtifact(signedArtifact: Signed[CurrencySnapshot]): F[Unit] =
-      stateChannelSnapshotService.consume(signedArtifact)
+    def consumeSignedMajorityArtifact(signedArtifact: Signed[CurrencyIncrementalSnapshot], context: CurrencySnapshotContext): F[Unit] =
+      stateChannelSnapshotService.consume(signedArtifact, context)
 
     override def createProposalArtifact(
       lastKey: SnapshotOrdinal,
       lastSignedArtifact: Signed[CurrencySnapshotArtifact],
+      lastContext: CurrencySnapshotContext,
       trigger: ConsensusTrigger,
       events: Set[CurrencySnapshotEvent]
     ): F[(CurrencySnapshotArtifact, Set[CurrencySnapshotEvent])] = {
@@ -66,8 +68,8 @@ object CurrencySnapshotConsensusFunctions {
 
         tipUsages = getTipsUsages(lastActiveTips, lastDeprecatedTips)
         context = BlockAcceptanceContext.fromStaticData(
-          lastSignedArtifact.info.balances,
-          lastSignedArtifact.info.lastTxRefs,
+          lastContext.balances,
+          lastContext.lastTxRefs,
           tipUsages,
           collateral
         )
@@ -82,13 +84,13 @@ object CurrencySnapshotConsensusFunctions {
 
         (height, subHeight) <- getHeightAndSubHeight(lastSignedArtifact, deprecated, remainedActive, accepted)
 
-        updatedLastTxRefs = lastSignedArtifact.info.lastTxRefs ++ acceptanceResult.contextUpdate.lastTxRefs
-        balances = lastSignedArtifact.info.balances ++ acceptanceResult.contextUpdate.balances
+        updatedLastTxRefs = lastContext.lastTxRefs ++ acceptanceResult.contextUpdate.lastTxRefs
+        balances = lastContext.balances ++ acceptanceResult.contextUpdate.balances
         positiveBalances = balances.filter { case (_, balance) => balance =!= Balance.empty }
 
         returnedEvents = getReturnedEvents(acceptanceResult)
 
-        artifact = CurrencySnapshot(
+        artifact = CurrencyIncrementalSnapshot(
           currentOrdinal,
           height,
           subHeight,
@@ -98,10 +100,7 @@ object CurrencySnapshotConsensusFunctions {
             deprecated = deprecated,
             remainedActive = remainedActive
           ),
-          CurrencySnapshotInfo(
-            updatedLastTxRefs,
-            positiveBalances
-          )
+          lastArtifact.stateProof // TODO: incremental snapshots - new state proof
         )
       } yield (artifact, returnedEvents)
     }

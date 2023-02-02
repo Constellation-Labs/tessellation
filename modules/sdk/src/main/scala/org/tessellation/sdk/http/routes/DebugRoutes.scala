@@ -23,7 +23,7 @@ import org.http4s.server.Router
 
 final case class DebugRoutes[F[_]: Async](
   clusterStorage: ClusterStorage[F],
-  consensusService: SnapshotConsensus[F, _, _, _, _],
+  consensusService: SnapshotConsensus[F, _, _, _, _, _],
   gossipService: Gossip[F],
   sessionService: Session[F]
 ) extends Http4sDsl[F] {

@@ -12,7 +12,6 @@ import scala.collection.immutable.SortedSet
 import org.tessellation.config.types._
 import org.tessellation.domain.rewards.Rewards
 import org.tessellation.ext.kryo._
-import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.SnapshotOrdinal
@@ -21,8 +20,8 @@ import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.generators.{chooseNumRefined, transactionGen}
 import org.tessellation.schema.transaction.TransactionFee
 import org.tessellation.sdk.sdkKryoRegistrar
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.key.ops.PublicKeyOps
+import org.tessellation.security.{KeyPairGenerator, SecurityProvider}
 import org.tessellation.shared.sharedKryoRegistrar
 
 import eu.timepit.refined.auto._

@@ -23,7 +23,6 @@ object snapshot {
     val lastSnapshotHash: Hash
     val blocks: SortedSet[BlockAsActiveTip[B]]
     val tips: SnapshotTips
-    val info: SnapshotInfo
 
     def activeTips[F[_]: Async: KryoSerializer]: F[SortedSet[ActiveTip]] =
       blocks.toList.traverse { blockAsActiveTip =>

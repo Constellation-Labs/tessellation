@@ -7,14 +7,13 @@ import cats.syntax.validated._
 
 import org.tessellation.domain.statechannel.StateChannelValidator
 import org.tessellation.domain.statechannel.StateChannelValidator.{InvalidSigned, NotSignedExclusivelyByStateChannelOwner}
-import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.Signed.forAsyncKryo
 import org.tessellation.security.signature.SignedValidator
 import org.tessellation.security.signature.SignedValidator.InvalidSignatures
+import org.tessellation.security.{KeyPairGenerator, SecurityProvider}
 import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
 

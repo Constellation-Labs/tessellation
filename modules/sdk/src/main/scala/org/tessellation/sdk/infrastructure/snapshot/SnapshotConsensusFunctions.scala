@@ -18,7 +18,7 @@ import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.schema._
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.height.{Height, SubHeight}
-import org.tessellation.schema.snapshot.Snapshot
+import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo}
 import org.tessellation.schema.transaction.Transaction
 import org.tessellation.sdk.domain.block.processing.{BlockAcceptanceResult, deprecationThreshold}
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
@@ -35,30 +35,34 @@ case class InvalidHeight(lastHeight: Height, currentHeight: Height) extends NoSt
 case object NoTipsRemaining extends NoStackTrace
 case object ArtifactMismatch extends InvalidArtifact
 
-abstract class SnapshotConsensusFunctions[F[_]: Async: SecurityProvider, T <: Transaction, B <: Block[
-  T
-]: Order, Event, Artifact <: Snapshot[
-  T,
-  B
-]: Eq, Trigger <: ConsensusTrigger](implicit ordering: Ordering[BlockAsActiveTip[B]])
-    extends ConsensusFunctions[F, Event, SnapshotOrdinal, Artifact] {
+abstract class SnapshotConsensusFunctions[
+  F[_]: Async: SecurityProvider,
+  T <: Transaction,
+  B <: Block[T]: Order,
+  Event,
+  Artifact <: Snapshot[T, B]: Eq,
+  Context <: SnapshotInfo,
+  Trigger <: ConsensusTrigger
+](implicit ordering: Ordering[BlockAsActiveTip[B]])
+    extends ConsensusFunctions[F, Event, SnapshotOrdinal, Artifact, Context] {
 
   def getRequiredCollateral: Amount
 
   def triggerPredicate(event: Event): Boolean = true
 
-  def facilitatorFilter(lastSignedArtifact: Signed[Artifact], peerId: peer.PeerId): F[Boolean] =
+  def facilitatorFilter(lastSignedArtifact: Signed[Artifact], lastContext: Context, peerId: peer.PeerId): F[Boolean] =
     peerId.toAddress[F].map { address =>
-      lastSignedArtifact.info.balances.getOrElse(address, Balance.empty).satisfiesCollateral(getRequiredCollateral)
+      lastContext.balances.getOrElse(address, Balance.empty).satisfiesCollateral(getRequiredCollateral)
     }
 
-  def validateArtifact(lastSignedArtifact: Signed[Artifact], trigger: ConsensusTrigger)(
+  def validateArtifact(lastSignedArtifact: Signed[Artifact], lastContext: Context, trigger: ConsensusTrigger)(
     artifact: Artifact
   ): F[Either[InvalidArtifact, Artifact]] = {
     val events = artifact.blocks.unsorted.map(_.block.asInstanceOf[Event])
 
-    def recreatedArtifact: F[Artifact] = createProposalArtifact(lastSignedArtifact.ordinal, lastSignedArtifact, trigger, events)
-      .map(_._1)
+    def recreatedArtifact: F[Artifact] =
+      createProposalArtifact(lastSignedArtifact.ordinal, lastSignedArtifact, lastContext, trigger, events)
+        .map(_._1)
 
     recreatedArtifact
       .map(_ === artifact)

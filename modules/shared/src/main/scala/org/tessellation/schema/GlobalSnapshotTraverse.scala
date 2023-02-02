@@ -9,8 +9,9 @@ import cats.{Applicative, Monad, Traverse}
 import scala.collection.SortedMap
 import scala.collection.immutable.SortedSet
 
-import org.tessellation.dag.domain.block.DAGBlockAsActiveTip
+import org.tessellation.schema._
 import org.tessellation.schema.address.Address
+import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.transaction.RewardTransaction
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
@@ -42,7 +43,7 @@ trait GlobalSnapshotTraverse[F[_]] {
 object GlobalSnapshotTraverse {
 
   case class GlobalSnapshotTraverseStep(
-    blocks: SortedSet[DAGBlockAsActiveTip],
+    blocks: SortedSet[BlockAsActiveTip[DAGBlock]],
     stateChannelSnapshots: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
     rewards: SortedSet[RewardTransaction]
   )
@@ -79,7 +80,7 @@ object GlobalSnapshotTraverse {
         state: GlobalSnapshotInfo,
         step: GlobalSnapshotTraverseStep
       ): F[GlobalSnapshotInfo] =
-        state.pure[F] // TODO: apply step to aggregated state
+        state.pure[F] // TODO: incremental snapshots - apply step to aggregated state
 
       def computeState(latest: IncrementalGlobalSnapshot): F[GlobalSnapshotInfo] =
         scheme
