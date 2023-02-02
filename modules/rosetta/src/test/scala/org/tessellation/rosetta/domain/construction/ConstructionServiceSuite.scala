@@ -8,7 +8,6 @@ import cats.syntax.foldable._
 import cats.syntax.option._
 
 import org.tessellation.dag.transaction.TransactionGenerator
-import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.rosetta.domain._
 import org.tessellation.rosetta.domain.amount.{Amount, AmountValue}
@@ -22,6 +21,7 @@ import org.tessellation.schema.transaction.Transaction
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.{Hashed, SecurityProvider}
+import org.tessellation.security.{KeyPairGenerator, SecurityProvider}
 import org.tessellation.shared.sharedKryoRegistrar
 
 import eu.timepit.refined.auto._

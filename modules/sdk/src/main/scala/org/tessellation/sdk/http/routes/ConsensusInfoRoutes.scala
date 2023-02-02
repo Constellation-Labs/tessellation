@@ -19,7 +19,7 @@ import org.http4s.server.Router
 
 class ConsensusInfoRoutes[F[_]: Async, Key: Order: Encoder](
   cluster: Cluster[F],
-  consensusStorage: ConsensusStorage[F, _, Key, _],
+  consensusStorage: ConsensusStorage[F, _, Key, _, _],
   selfId: PeerId
 ) extends Http4sDsl[F] {
 
@@ -33,7 +33,7 @@ class ConsensusInfoRoutes[F[_]: Async, Key: Order: Encoder](
       }
   }
 
-  private def makeConsensusInfo(outcome: ConsensusOutcome[Key, _]): F[ConsensusInfo[Key]] =
+  private def makeConsensusInfo(outcome: ConsensusOutcome[Key, _, _]): F[ConsensusInfo[Key]] =
     filterClusterPeers(outcome.facilitators.toSet.incl(selfId))
       .map(ConsensusInfo(outcome.key, _))
 

@@ -24,7 +24,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait StateChannelSnapshotService[F[_]] {
 
-  def consume(signedArtifact: Signed[CurrencySnapshotArtifact]): F[Unit]
+  def consume(signedArtifact: Signed[CurrencySnapshotArtifact], context: CurrencySnapshotContext): F[Unit]
   def createBinary(snapshot: Signed[CurrencySnapshotArtifact]): F[Signed[StateChannelSnapshotBinary]]
 }
 
@@ -45,7 +45,7 @@ object StateChannelSnapshotService {
         binary <- StateChannelSnapshotBinary(lastSnapshotBinaryHash, bytes).sign(keyPair)
       } yield binary
 
-      def consume(signedArtifact: Signed[CurrencySnapshotArtifact]): F[Unit] = for {
+      def consume(signedArtifact: Signed[CurrencySnapshotArtifact], context: CurrencySnapshotContext): F[Unit] = for {
         binary <- createBinary(signedArtifact)
         binaryHash <- binary.hashF
         l0Peer <- globalL0ClusterStorage.getRandomPeer
@@ -57,7 +57,7 @@ object StateChannelSnapshotService {
           )
         _ <- lastSignedBinaryHashStorage.set(binaryHash)
         _ <- snapshotStorage
-          .prepend(signedArtifact)
+          .prepend(signedArtifact, context)
           .ifM(
             Applicative[F].unit,
             logger.error("Cannot save CurrencySnapshot into the storage")

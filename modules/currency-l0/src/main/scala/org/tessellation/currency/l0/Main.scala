@@ -9,8 +9,7 @@ import org.tessellation.currency.l0.cli.method
 import org.tessellation.currency.l0.cli.method.{Run, RunGenesis, RunValidator}
 import org.tessellation.currency.l0.http.P2PClient
 import org.tessellation.currency.l0.modules._
-import org.tessellation.currency.schema.currency.CurrencySnapshot
-import org.tessellation.currency.{BuildInfo, CurrencyKryoRegistrationIdRange, currencyKryoRegistrar}
+import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshot, TokenSymbol}
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.kryo._
 import org.tessellation.schema.cluster.ClusterId

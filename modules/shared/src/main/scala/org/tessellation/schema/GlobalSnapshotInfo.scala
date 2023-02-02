@@ -1,7 +1,15 @@
 package org.tessellation.schema
 
+import cats.MonadThrow
+import cats.syntax.contravariantSemigroupal._
+import cats.syntax.functor._
+import cats.syntax.reducible._
+
 import scala.collection.immutable.SortedMap
 
+import org.tessellation.ext.crypto._
+import org.tessellation.kryo.KryoSerializer
+import org.tessellation.merkletree.MerkleTree
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.snapshot.SnapshotInfo
@@ -18,3 +26,12 @@ case class GlobalSnapshotInfo(
   lastTxRefs: SortedMap[Address, TransactionReference],
   balances: SortedMap[Address, Balance]
 ) extends SnapshotInfo
+
+object GlobalSnapshotInfo {
+  def empty = GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.empty)
+
+  def stateProof[F[_]: MonadThrow: KryoSerializer](info: GlobalSnapshotInfo): F[MerkleTree] =
+    (info.lastStateChannelSnapshotHashes.hashF, info.lastTxRefs.hashF, info.balances.hashF).tupled
+      .map(_.toNonEmptyList)
+      .map(MerkleTree.from)
+}
