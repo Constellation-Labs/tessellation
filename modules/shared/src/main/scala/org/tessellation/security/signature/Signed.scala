@@ -54,8 +54,9 @@ object Signed {
   implicit def _arbitrary[A: Arbitrary]: Arbitrary[Signed[A]] =
     Arbitrary(for {
       value <- arbitrary[A]
-      proofs <- arbitrary[SortedSet[SignatureProof]] if proofs.nonEmpty
-    } yield Signed(value, NonEmptySet.fromSetUnsafe(proofs)))
+      head <- arbitrary[SignatureProof]
+      tail <- arbitrary[SortedSet[SignatureProof]]
+    } yield Signed(value, NonEmptySet(head, tail)))
 
   def forAsyncKryo[F[_]: Async: SecurityProvider: KryoSerializer, A <: AnyRef](
     data: A,
