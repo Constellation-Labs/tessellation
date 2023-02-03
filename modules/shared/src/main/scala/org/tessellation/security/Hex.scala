@@ -9,13 +9,15 @@ import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.security.key.{ECDSA, PublicKeyHexPrefix}
+import org.tessellation.security.key.{ECDSA, PublicKeyHexPrefix, secp256k}
 
 import derevo.cats.{eqv, order}
 import derevo.circe.magnolia._
 import derevo.derive
 import io.estatico.newtype.macros.newtype
 import io.estatico.newtype.ops._
+import org.bouncycastle.jce.ECNamedCurveTable
+import org.bouncycastle.jce.spec.ECPublicKeySpec
 import org.scalacheck.{Arbitrary, Gen}
 
 object hex {
@@ -50,6 +52,30 @@ object hex {
         pk <- Async[F].delay {
           kf.generatePublic(spec)
         }
+      } yield pk
+
+    def toPublicKeyByEC[F[_]: Async: SecurityProvider]: F[PublicKey] =
+      for {
+        curve <- Async[F].delay {
+          ECNamedCurveTable.getParameterSpec(secp256k)
+        }
+
+        encodedBytes = value.coerce[Hex].toBytes
+
+        spec <- Async[F].delay {
+          new ECPublicKeySpec(
+            curve.getCurve().decodePoint(encodedBytes),
+            curve
+          )
+        }
+
+        kf <- Async[F].delay {
+          KeyFactory.getInstance(ECDSA, SecurityProvider[F].provider)
+        }
+        pk <- Async[F].delay {
+          kf.generatePublic(spec)
+        }
+
       } yield pk
 
     def shortValue: String = value.take(8)
