@@ -10,15 +10,16 @@ import cats.{Applicative, MonadThrow}
 
 import scala.util.control.NoStackTrace
 
+import org.tessellation.dag.domain.block.{DAGBlock, DAGBlockAsActiveTip}
 import org.tessellation.dag.l1.domain.address.storage.AddressStorage
 import org.tessellation.dag.l1.domain.block.BlockStorage.MajorityReconciliationData
 import org.tessellation.dag.l1.domain.block.{BlockRelations, BlockStorage}
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
+import org.tessellation.dag.snapshot._
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.sdk.domain.snapshot.storage.LastGlobalSnapshotStorage
@@ -261,7 +262,7 @@ sealed abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityPro
   private def checkAlignment(globalSnapshot: GlobalSnapshot): F[Alignment] =
     for {
       acceptedInMajority <- globalSnapshot.blocks.toList.traverse {
-        case BlockAsActiveTip(block, usageCount) =>
+        case DAGBlockAsActiveTip(block, usageCount) =>
           block.toHashedWithSignatureCheck.flatMap(_.liftTo[F]).map(b => b.proofsHash -> (b, usageCount))
       }.map(_.toMap)
 

@@ -11,18 +11,19 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import org.tessellation.dag.block.processing._
 import org.tessellation.dag.dagSharedKryoRegistrar
+import org.tessellation.dag.domain.block.DAGBlock
+import org.tessellation.dag.snapshot.epoch.EpochProgress
+import org.tessellation.dag.snapshot.{GlobalSnapshot, _}
 import org.tessellation.domain.rewards.Rewards
-import org.tessellation.domain.snapshot.SnapshotStorage
+import org.tessellation.domain.snapshot.GlobalSnapshotStorage
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
 import org.tessellation.ext.kryo._
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
-import org.tessellation.schema.block.DAGBlock
-import org.tessellation.schema.epoch.EpochProgress
-import org.tessellation.schema.transaction.{DAGTransaction, RewardTransaction}
+import org.tessellation.schema.transaction.{RewardTransaction, Transaction}
+import org.tessellation.schema.{ID, SnapshotOrdinal}
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.infrastructure.consensus.trigger.EventTrigger
 import org.tessellation.sdk.infrastructure.metrics.Metrics
@@ -52,7 +53,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       }
     }
 
-  val gss: SnapshotStorage[IO, GlobalSnapshot] = new SnapshotStorage[IO, GlobalSnapshot] {
+  val gss: GlobalSnapshotStorage[IO] = new GlobalSnapshotStorage[IO] {
 
     override def prepend(snapshot: Signed[GlobalSnapshot]): IO[Boolean] = ???
 
@@ -100,7 +101,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
     override def feeDistribution(
       snapshotOrdinal: SnapshotOrdinal,
-      transactions: SortedSet[DAGTransaction],
+      transactions: SortedSet[Transaction],
       facilitators: NonEmptySet[ID.Id]
     ): IO[SortedSet[RewardTransaction]] = IO(SortedSet.empty)
 

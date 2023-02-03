@@ -1,4 +1,4 @@
-package org.tessellation.schema
+package org.tessellation.dag.snapshot
 
 import org.tessellation.security.hash.Hash
 

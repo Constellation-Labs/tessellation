@@ -29,7 +29,7 @@ object TransactionSuite extends ResourceSuite with Checkers {
       }
 
   test("Transaction's representation used for hashing should follow expected format") {
-    val transaction = DAGTransaction(
+    val transaction = Transaction(
       Address("DAG2EUdecqFwEGcgAcH1ac2wrsg8acrgGwrQabcd"),
       Address("DAG2EUdecqFwEGcgAcH1ac2wrsg8acrgGwrQefgh"),
       TransactionAmount(10L),
@@ -61,7 +61,7 @@ object TransactionSuite extends ResourceSuite with Checkers {
   test("Hash for a new Transaction schema should be the same as hash for old Transaction schema") { implicit kryo =>
     val expectedHash = Hash("1017a072225263aa502d9dcd22a04455f9b063cc19166356be50b4730afc44f6")
 
-    val transaction = DAGTransaction(
+    val transaction = Transaction(
       Address("DAG53ho9ssY8KYQdjxsWPYgNbDJ1YqM2RaPDZebU"),
       Address("DAG53ho9ssY8KYQdjxsWPYgNbDJ1YqM2RaPDZebU"),
       TransactionAmount(100000000L),

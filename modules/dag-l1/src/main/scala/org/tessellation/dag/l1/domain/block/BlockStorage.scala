@@ -15,10 +15,10 @@ import cats.syntax.traverseFilter._
 
 import scala.util.control.NoStackTrace
 
+import org.tessellation.dag.domain.block.{DAGBlock, Tips}
 import org.tessellation.dag.l1.domain.block.BlockStorage._
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
 import org.tessellation.ext.collection.MapRefUtils.MapRefOps
-import org.tessellation.schema.block.{DAGBlock, Tips}
 import org.tessellation.schema.height.Height
 import org.tessellation.schema.{ActiveTip, BlockReference}
 import org.tessellation.security.Hashed

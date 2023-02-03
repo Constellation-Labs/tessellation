@@ -3,9 +3,9 @@ package org.tessellation.domain.cell
 import cats.effect.IO
 import cats.effect.std.Queue
 
-import org.tessellation.dag.domain.block.generators.signedDAGBlockGen
+import org.tessellation.dag.domain.block.DAGBlock
+import org.tessellation.dag.domain.block.generators._
 import org.tessellation.kernel.Cell
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto._

@@ -1,6 +1,6 @@
 package org.tessellation.domain.cell
 
-import org.tessellation.schema.block.DAGBlock
+import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.security.signature.Signed
 import org.tessellation.statechannel.StateChannelOutput
 

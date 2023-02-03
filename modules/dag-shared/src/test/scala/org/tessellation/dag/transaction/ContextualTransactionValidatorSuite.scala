@@ -34,9 +34,9 @@ object ContextualTransactionValidatorSuite extends ResourceSuite with Checkers {
     KeyPair,
     Address,
     Address,
-    DAGTransaction,
-    (DAGTransaction, KeyPair) => IO[Signed[DAGTransaction]],
-    (Signed[DAGTransaction], KeyPair) => IO[Signed[DAGTransaction]]
+    Transaction,
+    (Transaction, KeyPair) => IO[Signed[Transaction]],
+    (Signed[Transaction], KeyPair) => IO[Signed[Transaction]]
   )
 
   override def sharedResource: Resource[IO, Res] =
@@ -54,15 +54,15 @@ object ContextualTransactionValidatorSuite extends ResourceSuite with Checkers {
           )
         }
 
-        def signTx(tx: DAGTransaction, keyPair: KeyPair) = forAsyncKryo(tx, keyPair)
-        def nextSignTx(tx: Signed[DAGTransaction], keyPair: KeyPair) = tx.signAlsoWith(keyPair)
+        def signTx(tx: Transaction, keyPair: KeyPair) = forAsyncKryo(tx, keyPair)
+        def nextSignTx(tx: Signed[Transaction], keyPair: KeyPair) = tx.signAlsoWith(keyPair)
 
         (KeyPairGenerator.makeKeyPair[IO], KeyPairGenerator.makeKeyPair[IO]).mapN {
           case (srcKey, dstKey) =>
             val src = srcKey.getPublic.toAddress
             val dst = dstKey.getPublic.toAddress
 
-            val tx = DAGTransaction(
+            val tx = Transaction(
               src,
               dst,
               TransactionAmount(PosLong(1L)),
@@ -82,7 +82,7 @@ object ContextualTransactionValidatorSuite extends ResourceSuite with Checkers {
   val initialReference: Address => TransactionReference = _ => TransactionReference.empty
 
   def setReference(hash: Hash) =
-    DAGTransaction._ParentHash.replace(hash).andThen(DAGTransaction._ParentOrdinal.replace(TransactionOrdinal(1L)))
+    Transaction._ParentHash.replace(hash).andThen(Transaction._ParentOrdinal.replace(TransactionOrdinal(1L)))
 
   test("should succeed when all values are correct") {
     case (txValidator, srcKey, _, _, _, tx, signTx, _) =>
@@ -187,7 +187,7 @@ object ContextualTransactionValidatorSuite extends ResourceSuite with Checkers {
     case (txValidator, srcKey, _, srcAddress, _, baseTx, signTx, _) =>
       val validator = txValidator(initialReference)
 
-      val tx = DAGTransaction._Destination.replace(srcAddress)(baseTx)
+      val tx = Transaction._Destination.replace(srcAddress)(baseTx)
 
       for {
         signedTx <- signTx(tx, srcKey)

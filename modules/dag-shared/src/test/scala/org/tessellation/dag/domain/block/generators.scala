@@ -4,8 +4,8 @@ import cats.data.{NonEmptyList, NonEmptySet}
 
 import scala.collection.immutable.SortedSet
 
+import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.schema.BlockReference
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.generators._
 import org.tessellation.security.signature.Signed
 

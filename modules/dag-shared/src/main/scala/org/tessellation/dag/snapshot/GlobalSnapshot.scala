@@ -1,4 +1,4 @@
-package org.tessellation.schema
+package org.tessellation.dag.snapshot
 
 import cats.data.NonEmptyList
 import cats.effect.Async
@@ -7,15 +7,15 @@ import cats.syntax.traverse._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
+import org.tessellation.dag.domain.block.DAGBlockAsActiveTip
+import org.tessellation.dag.snapshot.epoch.EpochProgress
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
-import org.tessellation.schema.block.DAGBlock
-import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.snapshot.Snapshot
-import org.tessellation.schema.transaction.{DAGTransaction, RewardTransaction}
+import org.tessellation.schema.transaction.RewardTransaction
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.signature.Signed
@@ -34,14 +34,14 @@ case class GlobalSnapshot(
   height: Height,
   subHeight: SubHeight,
   lastSnapshotHash: Hash,
-  blocks: SortedSet[BlockAsActiveTip[DAGBlock]],
+  blocks: SortedSet[DAGBlockAsActiveTip],
   stateChannelSnapshots: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
   rewards: SortedSet[RewardTransaction],
   epochProgress: EpochProgress,
   nextFacilitators: NonEmptyList[PeerId],
   info: GlobalSnapshotInfo,
   tips: SnapshotTips
-) extends Snapshot[DAGTransaction, DAGBlock] {
+) {
 
   def activeTips[F[_]: Async: KryoSerializer]: F[SortedSet[ActiveTip]] =
     blocks.toList.traverse { blockAsActiveTip =>
@@ -60,7 +60,7 @@ object GlobalSnapshot {
       Height.MinValue,
       SubHeight.MinValue,
       Coinbase.hash,
-      SortedSet.empty[BlockAsActiveTip[DAGBlock]],
+      SortedSet.empty,
       SortedMap.empty,
       SortedSet.empty,
       startingEpochProgress,

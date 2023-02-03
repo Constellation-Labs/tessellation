@@ -4,7 +4,7 @@ import cats.effect.Async
 import cats.effect.std.{Queue, Supervisor}
 import cats.syntax.all._
 
-import org.tessellation.schema.block.DAGBlock
+import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.sdk.domain.Daemon
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.infrastructure.consensus.message.ConsensusEvent

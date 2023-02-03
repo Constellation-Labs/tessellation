@@ -3,8 +3,8 @@ package org.tessellation.dag.l1.infrastructure.block.rumor
 import cats.effect.Async
 import cats.effect.std.Queue
 
+import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.gossip.CommonRumor
 import org.tessellation.sdk.infrastructure.gossip.RumorHandler
 import org.tessellation.security.signature.Signed

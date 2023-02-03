@@ -11,7 +11,7 @@ import org.tessellation.dag.l1.domain.transaction.{TransactionService, Transacti
 import org.tessellation.ext.http4s.{AddressVar, HashVar}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.http.{ErrorCause, ErrorResponse}
-import org.tessellation.schema.transaction.{DAGTransaction, TransactionStatus, TransactionView}
+import org.tessellation.schema.transaction.{Transaction, TransactionStatus, TransactionView}
 import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.security.signature.Signed
 
@@ -38,7 +38,7 @@ final case class Routes[F[_]: Async: KryoSerializer](
   private val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "transactions" =>
       for {
-        transaction <- req.as[Signed[DAGTransaction]]
+        transaction <- req.as[Signed[Transaction]]
         hashedTransaction <- transaction.toHashed[F]
         response <- transactionService
           .offer(hashedTransaction)

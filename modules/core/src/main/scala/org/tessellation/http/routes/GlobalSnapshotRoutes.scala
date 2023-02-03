@@ -4,13 +4,12 @@ import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.domain.snapshot.SnapshotStorage
+import org.tessellation.dag.snapshot.GlobalSnapshot
+import org.tessellation.domain.snapshot.GlobalSnapshotStorage
 import org.tessellation.ext.codecs.BinaryCodec
-import org.tessellation.ext.codecs.BinaryCodec.encoder
 import org.tessellation.ext.http4s.SnapshotOrdinalVar
 import org.tessellation.ext.http4s.headers.negotiation.resolveEncoder
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.GlobalSnapshot
 import org.tessellation.security.signature.Signed
 
 import io.circe.Encoder
@@ -22,9 +21,7 @@ import org.http4s.{EntityEncoder, HttpRoutes}
 import shapeless.HNil
 import shapeless.syntax.singleton._
 
-final case class GlobalSnapshotRoutes[F[_]: Async: KryoSerializer](
-  globalSnapshotStorage: SnapshotStorage[F, GlobalSnapshot]
-) extends Http4sDsl[F] {
+final case class GlobalSnapshotRoutes[F[_]: Async: KryoSerializer](globalSnapshotStorage: GlobalSnapshotStorage[F]) extends Http4sDsl[F] {
   private val prefixPath = "/global-snapshots"
 
   // first on the list is the default - used when `Accept: */*` is requested

@@ -13,13 +13,13 @@ import scala.collection.immutable.SortedSet
 
 import org.tessellation.dag.block.BlockValidator.BlockValidationError
 import org.tessellation.dag.dagSharedKryoRegistrar
+import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.dag.transaction.{TransactionChainValidator, TransactionValidator}
 import org.tessellation.ext.crypto._
 import org.tessellation.ext.kryo._
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.BlockReference
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.height.Height
 import org.tessellation.schema.transaction._
 import org.tessellation.security.SecurityProvider
@@ -64,8 +64,8 @@ object BlockValidatorSuite extends MutableIOSuite with Checkers {
       src = keys.head.getPublic.toAddress
       dst = keys.toList(1).getPublic.toAddress
       tx <- Signed
-        .forAsyncKryo[IO, DAGTransaction](
-          DAGTransaction(
+        .forAsyncKryo[IO, Transaction](
+          Transaction(
             src,
             dst,
             TransactionAmount(1L),

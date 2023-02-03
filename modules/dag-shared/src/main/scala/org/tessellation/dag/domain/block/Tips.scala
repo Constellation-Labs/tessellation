@@ -1,4 +1,4 @@
-package org.tessellation.schema.block
+package org.tessellation.dag.domain.block
 
 import cats.data.NonEmptyList
 

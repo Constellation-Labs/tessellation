@@ -1,6 +1,6 @@
 package org.tessellation.dag.l1.http.p2p
 
-import org.tessellation.schema.block.DAGBlock
+import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.sdk.http.p2p.PeerResponse
 import org.tessellation.sdk.http.p2p.PeerResponse.PeerResponse
 import org.tessellation.security.signature.Signed

@@ -7,10 +7,10 @@ import scala.concurrent.duration._
 import org.tessellation.cli.db
 import org.tessellation.cli.env.{KeyAlias, Password, StorePath}
 import org.tessellation.config.types._
+import org.tessellation.dag.snapshot.epoch.EpochProgress
 import org.tessellation.ext.decline.WithOpts
 import org.tessellation.ext.decline.decline._
 import org.tessellation.schema.balance.Amount
-import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.node.NodeState
 import org.tessellation.sdk.cli.{CliMethod, CollateralAmountOpts}
 import org.tessellation.sdk.config.AppEnvironment

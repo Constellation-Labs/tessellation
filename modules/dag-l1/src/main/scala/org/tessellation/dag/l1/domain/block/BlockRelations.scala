@@ -6,9 +6,9 @@ import cats.syntax.eq._
 import cats.syntax.functor._
 import cats.syntax.traverse._
 
+import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.BlockReference
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.security.Hashed
 import org.tessellation.security.signature.Signed

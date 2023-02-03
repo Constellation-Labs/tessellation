@@ -12,9 +12,9 @@ import cats.syntax.show._
 import cats.syntax.traverse._
 
 import org.tessellation.dag.block.BlockValidator
+import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.BlockReference
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 

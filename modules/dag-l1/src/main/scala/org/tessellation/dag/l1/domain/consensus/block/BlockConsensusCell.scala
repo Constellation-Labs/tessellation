@@ -14,6 +14,7 @@ import cats.syntax.traverse._
 import scala.concurrent.duration.FiniteDuration
 
 import org.tessellation.dag.block.BlockValidator.BlockValidationParams
+import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.dag.l1.domain.consensus.block.AlgebraCommand._
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusCell.{Algebra, Coalgebra}
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput._
@@ -29,9 +30,8 @@ import org.tessellation.ext.collection.MapRefUtils.MapRefOps
 import org.tessellation.kernel.Cell.NullTerminal
 import org.tessellation.kernel._
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.peer.{Peer, PeerId}
-import org.tessellation.schema.transaction.DAGTransaction
+import org.tessellation.schema.transaction.Transaction
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed._
 import org.tessellation.security.{Hashed, SecurityProvider}
@@ -510,7 +510,7 @@ object BlockConsensusCell {
           case _                                                           => None
         })
 
-    private def pullTransactions[F[_]: Async](ctx: BlockConsensusContext[F]): F[Set[Hashed[DAGTransaction]]] =
+    private def pullTransactions[F[_]: Async](ctx: BlockConsensusContext[F]): F[Set[Hashed[Transaction]]] =
       ctx.transactionStorage
         .pull(ctx.consensusConfig.pullTxsCount)
         .map(_.map(_.toList.toSet).getOrElse(Set.empty))
