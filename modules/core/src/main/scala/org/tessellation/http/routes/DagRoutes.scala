@@ -4,10 +4,10 @@ import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
+import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.domain.cell.{L0Cell, L0CellInput}
 import org.tessellation.domain.dag.DAGService
 import org.tessellation.ext.http4s.{AddressVar, SnapshotOrdinalVar}
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.security.signature.Signed
 
 import io.circe.shapes._

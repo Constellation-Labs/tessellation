@@ -217,7 +217,7 @@ object Main
       console.green(s"$counter transactions sent in ${minutes}m ${seconds}s")
     }
 
-  def printTx[F[_]: Applicative: Console](verbose: Boolean)(tx: Signed[DAGTransaction]): F[Unit] =
+  def printTx[F[_]: Applicative: Console](verbose: Boolean)(tx: Signed[Transaction]): F[Unit] =
     Applicative[F].whenA(verbose) {
       console.cyan(s"Transaction sent ordinal=${tx.ordinal} sourceAddress=${tx.source}")
     }
@@ -233,7 +233,7 @@ object Main
   }
 
   def postTransaction[F[_]: Async](client: Client[F], baseUrl: UrlString)(
-    tx: Signed[DAGTransaction]
+    tx: Signed[Transaction]
   ): F[Unit] = {
     val target = Uri.unsafeFromString(baseUrl.toString).addPath("transactions")
     val req = Request[F](method = Method.POST, uri = target).withEntity(tx)

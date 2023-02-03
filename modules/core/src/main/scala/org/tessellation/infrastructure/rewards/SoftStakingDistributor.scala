@@ -6,10 +6,10 @@ import cats.syntax.either._
 import scala.math.Ordered.orderingToOrdered
 
 import org.tessellation.config.types.SoftStakingAndTestnetConfig
+import org.tessellation.dag.snapshot.epoch.EpochProgress
 import org.tessellation.ext.refined._
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.balance.Amount
-import org.tessellation.schema.epoch.EpochProgress
 
 import eu.timepit.refined.types.numeric.NonNegLong
 import io.estatico.newtype.ops._

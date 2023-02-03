@@ -26,13 +26,13 @@ import org.tessellation.dag.l1.domain.consensus.block.{BlockConsensusCell, Block
 import org.tessellation.dag.l1.domain.snapshot.programs.SnapshotProcessor.SnapshotProcessingResult
 import org.tessellation.dag.l1.http.p2p.P2PClient
 import org.tessellation.dag.l1.modules._
+import org.tessellation.dag.snapshot.{GlobalSnapshot, GlobalSnapshotReference}
 import org.tessellation.ext.fs2.StreamOps
 import org.tessellation.kernel.Cell.NullTerminal
 import org.tessellation.kernel.{CellError, Ω}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.height.Height
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.{GlobalSnapshot, GlobalSnapshotReference}
 import org.tessellation.security.{Hashed, SecurityProvider}
 
 import fs2.{Pipe, Stream}

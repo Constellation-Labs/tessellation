@@ -8,13 +8,13 @@ import cats.syntax.semigroupk._
 
 import org.tessellation.cli.method._
 import org.tessellation.dag._
+import org.tessellation.dag.snapshot.GlobalSnapshot
 import org.tessellation.ext.cats.effect._
 import org.tessellation.ext.kryo._
 import org.tessellation.http.p2p.P2PClient
 import org.tessellation.infrastructure.genesis.{Loader => GenesisLoader}
 import org.tessellation.infrastructure.trust.handler.trustHandler
 import org.tessellation.modules._
-import org.tessellation.schema.GlobalSnapshot
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.node.NodeState
 import org.tessellation.sdk.app.{SDK, TessellationIOApp}

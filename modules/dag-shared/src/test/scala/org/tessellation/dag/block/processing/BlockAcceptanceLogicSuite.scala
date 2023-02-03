@@ -4,11 +4,11 @@ import cats.data.NonEmptyList
 import cats.effect.{IO, Resource}
 import cats.syntax.option._
 
-import org.tessellation.dag.domain.block.generators.signedDAGBlockGen
+import org.tessellation.dag.domain.block.DAGBlock
+import org.tessellation.dag.domain.block.generators._
 import org.tessellation.schema.BlockReference
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.security.SecurityProvider

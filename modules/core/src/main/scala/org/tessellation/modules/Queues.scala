@@ -5,7 +5,7 @@ import cats.effect.std.Queue
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.schema.block.DAGBlock
+import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.schema.gossip.RumorRaw
 import org.tessellation.sdk.modules.SdkQueues
 import org.tessellation.security.Hashed

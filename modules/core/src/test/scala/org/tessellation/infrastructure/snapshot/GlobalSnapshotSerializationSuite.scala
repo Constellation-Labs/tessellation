@@ -6,6 +6,7 @@ import cats.effect.{IO, Resource}
 import cats.syntax.all._
 
 import org.tessellation.dag.dagSharedKryoRegistrar
+import org.tessellation.dag.snapshot.GlobalSnapshot
 import org.tessellation.ext.crypto._
 import org.tessellation.ext.kryo._
 import org.tessellation.kryo.KryoSerializer

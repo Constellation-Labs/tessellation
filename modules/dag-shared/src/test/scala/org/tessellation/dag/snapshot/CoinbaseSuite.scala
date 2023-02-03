@@ -5,7 +5,6 @@ import cats.effect.{IO, Resource}
 import org.tessellation.dag.dagSharedKryoRegistrar
 import org.tessellation.ext.crypto.RefinedHashableF
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.Coinbase
 
 import suite.ResourceSuite
 import weaver.scalacheck.Checkers

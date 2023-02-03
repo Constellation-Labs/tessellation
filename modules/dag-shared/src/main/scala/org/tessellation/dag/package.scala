@@ -1,8 +1,8 @@
 package org.tessellation
 
+import org.tessellation.dag.domain.block._
+import org.tessellation.dag.snapshot._
 import org.tessellation.ext.kryo._
-import org.tessellation.schema.block.{DAGBlock, Tips}
-import org.tessellation.schema.{BlockAsActiveTip, GlobalSnapshot, GlobalSnapshotInfo}
 import org.tessellation.statechannel.StateChannelSnapshotBinary
 
 import eu.timepit.refined.auto._
@@ -20,8 +20,8 @@ package object dag {
     classOf[DAGBlock] -> 603,
     DAGBlock.OrderingInstance.getClass -> 604,
     classOf[GlobalSnapshotInfo] -> 606,
-    classOf[BlockAsActiveTip[_]] -> 610,
-    DAGBlock.OrderingInstanceAsActiveTip.getClass -> 611,
+    classOf[DAGBlockAsActiveTip] -> 610,
+    DAGBlockAsActiveTip.OrderingInstance.getClass -> 611,
     classOf[Tips] -> 614
   )
 }

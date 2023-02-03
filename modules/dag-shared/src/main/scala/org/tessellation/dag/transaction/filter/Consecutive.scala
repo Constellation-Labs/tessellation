@@ -12,19 +12,19 @@ import cats.{Applicative, Id, Order}
 import scala.annotation.tailrec
 
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.transaction.{DAGTransaction, TransactionReference}
+import org.tessellation.schema.transaction.{Transaction, TransactionReference}
 import org.tessellation.security.Hashed
 import org.tessellation.security.signature.Signed
 
 object Consecutive {
-  val signedTxOrder: Order[Signed[DAGTransaction]] =
-    Order.whenEqual(Order.by(-_.fee.value.value), Order[Signed[DAGTransaction]])
+  val signedTxOrder: Order[Signed[Transaction]] =
+    Order.whenEqual(Order.by(-_.fee.value.value), Order[Signed[Transaction]])
 
-  val hashedTxOrder: Order[Hashed[DAGTransaction]] = signedTxOrder.contramap(_.signed)
+  val hashedTxOrder: Order[Hashed[Transaction]] = signedTxOrder.contramap(_.signed)
 
-  def take[F[_]: Async: KryoSerializer](txs: List[Signed[DAGTransaction]]): F[List[Signed[DAGTransaction]]] = {
+  def take[F[_]: Async: KryoSerializer](txs: List[Signed[Transaction]]): F[List[Signed[Transaction]]] = {
     val headTx =
-      txs.sorted(Order.whenEqual(Order.by[Signed[DAGTransaction], Long](_.ordinal.value.value), signedTxOrder).toOrdering).headOption
+      txs.sorted(Order.whenEqual(Order.by[Signed[Transaction], Long](_.ordinal.value.value), signedTxOrder).toOrdering).headOption
 
     headTx match {
       case None => Applicative[F].pure(List.empty)
@@ -32,7 +32,7 @@ object Consecutive {
         TransactionReference
           .of(headTx)
           .flatMap { headTxReference =>
-            takeGeneric[F, TransactionReference, Signed[DAGTransaction]](
+            takeGeneric[F, TransactionReference, Signed[Transaction]](
               signedTx => TransactionReference.of(signedTx),
               _.parent,
               txs.diff(Seq(headTx)),
@@ -43,10 +43,10 @@ object Consecutive {
   }
 
   def take(
-    txs: List[Hashed[DAGTransaction]],
+    txs: List[Hashed[Transaction]],
     lastAcceptedTxRef: TransactionReference
-  ): List[Hashed[DAGTransaction]] =
-    takeGeneric[Id, TransactionReference, Hashed[DAGTransaction]](
+  ): List[Hashed[Transaction]] =
+    takeGeneric[Id, TransactionReference, Hashed[Transaction]](
       hashedTx => Id(TransactionReference.of(hashedTx)),
       _.parent,
       txs,

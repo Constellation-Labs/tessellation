@@ -11,13 +11,13 @@ import org.tessellation.dag.block.BlockValidator
 import org.tessellation.dag.block.BlockValidator.NotEnoughParents
 import org.tessellation.dag.block.processing.UsageCount
 import org.tessellation.dag.dagSharedKryoRegistrar
-import org.tessellation.dag.domain.block.generators.signedDAGBlockGen
+import org.tessellation.dag.domain.block.DAGBlock
+import org.tessellation.dag.domain.block.generators._
 import org.tessellation.dag.transaction.TransactionChainValidator
 import org.tessellation.ext.kryo._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.BlockReference
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.height.Height
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.signature.Signed

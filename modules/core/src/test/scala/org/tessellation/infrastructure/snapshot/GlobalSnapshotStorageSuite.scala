@@ -8,15 +8,16 @@ import cats.syntax.option._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import org.tessellation.dag.dagSharedKryoRegistrar
+import org.tessellation.dag.snapshot.GlobalSnapshot
+import org.tessellation.dag.snapshot.epoch.EpochProgress
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
 import org.tessellation.ext.kryo._
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.{GlobalSnapshot, address, balance}
+import org.tessellation.schema.{address, balance}
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hex.Hex
@@ -28,11 +29,11 @@ import fs2.io.file.Path
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
 
-object SnapshotStorageSuite extends MutableIOSuite with Checkers {
+object GlobalSnapshotStorageSuite extends MutableIOSuite with Checkers {
 
   type Res = (Supervisor[IO], KryoSerializer[IO], SecurityProvider[IO])
 
-  override def sharedResource: Resource[IO, SnapshotStorageSuite.Res] =
+  override def sharedResource: Resource[IO, GlobalSnapshotStorageSuite.Res] =
     Supervisor[IO].flatMap { supervisor =>
       KryoSerializer.forAsync[IO](dagSharedKryoRegistrar.union(sdkKryoRegistrar)).flatMap { ks =>
         SecurityProvider.forAsync[IO].map((supervisor, ks, _))

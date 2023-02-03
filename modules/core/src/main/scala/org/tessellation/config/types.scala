@@ -3,9 +3,9 @@ package org.tessellation.config
 import scala.collection.immutable.SortedMap
 import scala.concurrent.duration.FiniteDuration
 
+import org.tessellation.dag.snapshot.epoch.EpochProgress
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
-import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types._
 

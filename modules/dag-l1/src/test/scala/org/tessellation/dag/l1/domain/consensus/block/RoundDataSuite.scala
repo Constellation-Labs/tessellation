@@ -10,6 +10,7 @@ import cats.syntax.option._
 
 import scala.concurrent.duration.FiniteDuration
 
+import org.tessellation.dag.domain.block.{DAGBlock, Tips}
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.Proposal
 import org.tessellation.dag.l1.domain.consensus.round.RoundId
 import org.tessellation.dag.l1.{Main, TransactionGenerator}
@@ -19,7 +20,6 @@ import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.BlockReference
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.block.{DAGBlock, Tips}
 import org.tessellation.schema.height.Height
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.{TransactionFee, TransactionReference}

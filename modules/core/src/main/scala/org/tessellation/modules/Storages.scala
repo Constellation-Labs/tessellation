@@ -6,12 +6,11 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.config.types.SnapshotConfig
-import org.tessellation.domain.snapshot.SnapshotStorage
+import org.tessellation.domain.snapshot.GlobalSnapshotStorage
 import org.tessellation.domain.trust.storage.TrustStorage
 import org.tessellation.infrastructure.snapshot.{GlobalSnapshotLocalFileSystemStorage, GlobalSnapshotStorage}
 import org.tessellation.infrastructure.trust.storage.TrustStorage
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.GlobalSnapshot
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tessellation.sdk.domain.collateral.LatestBalances
 import org.tessellation.sdk.domain.node.NodeStorage
@@ -50,5 +49,5 @@ sealed abstract class Storages[F[_]] private (
   val session: SessionStorage[F],
   val rumor: RumorStorage[F],
   val trust: TrustStorage[F],
-  val globalSnapshot: SnapshotStorage[F, GlobalSnapshot] with LatestBalances[F]
+  val globalSnapshot: GlobalSnapshotStorage[F] with LatestBalances[F]
 )

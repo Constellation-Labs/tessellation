@@ -242,7 +242,7 @@ lazy val testShared = (project in file("modules/test-shared"))
   )
 
 lazy val sdk = (project in file("modules/sdk"))
-  .dependsOn(shared % "compile->compile;test->test", testShared % Test, keytool, kernel)
+  .dependsOn(shared % "compile->compile;test->test", testShared % Test, keytool, kernel, dagShared)
   .configs(IntegrationTest)
   .settings(
     name := "tessellation-sdk",
@@ -491,7 +491,7 @@ lazy val currencyL0 = (project in file("modules/currency-l0"))
       CompilerPlugin.betterMonadicFor,
       CompilerPlugin.semanticDB,
       Libraries.refinedCore,
-      Libraries.refinedCats
+      Libraries.refinedCats,
     )
   )
 

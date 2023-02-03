@@ -1,7 +1,8 @@
 package org.tessellation.sdk.domain.snapshot.storage
 
+import org.tessellation.dag.snapshot.GlobalSnapshot
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.height.Height
-import org.tessellation.schema.{GlobalSnapshot, SnapshotOrdinal}
 import org.tessellation.security.Hashed
 
 trait LastGlobalSnapshotStorage[F[_]] {

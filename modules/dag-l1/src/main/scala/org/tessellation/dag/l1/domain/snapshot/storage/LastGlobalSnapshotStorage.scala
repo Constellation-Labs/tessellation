@@ -1,5 +1,6 @@
 package org.tessellation.dag.l1.domain.snapshot.storage
 
+import cats.effect.Ref
 import cats.effect.kernel.Async
 import cats.syntax.eq._
 import cats.syntax.flatMap._
@@ -7,11 +8,12 @@ import cats.syntax.functor._
 import cats.syntax.option._
 import cats.{Applicative, MonadThrow}
 
+import org.tessellation.dag.snapshot.GlobalSnapshot
 import org.tessellation.ext.cats.syntax.next._
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.height.Height
-import org.tessellation.schema.{GlobalSnapshot, SnapshotOrdinal}
 import org.tessellation.sdk.domain.collateral.LatestBalances
 import org.tessellation.sdk.domain.snapshot.storage.LastGlobalSnapshotStorage
 import org.tessellation.security.Hashed
@@ -21,7 +23,7 @@ import fs2.concurrent.SignallingRef
 
 object LastGlobalSnapshotStorage {
 
-  def make[F[_]: Async]: F[LastGlobalSnapshotStorage[F] with LatestBalances[F]] =
+  def make[F[_]: Async: Ref.Make]: F[LastGlobalSnapshotStorage[F] with LatestBalances[F]] =
     SignallingRef.of[F, Option[Hashed[GlobalSnapshot]]](None).map(make(_))
 
   def make[F[_]: MonadThrow](

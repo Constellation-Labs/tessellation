@@ -8,6 +8,7 @@ import cats.syntax.option._
 import cats.syntax.traverse._
 
 import org.tessellation.dag.block.processing._
+import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.dag.domain.block.generators._
 import org.tessellation.dag.l1.Main
 import org.tessellation.dag.l1.domain.address.storage.AddressStorage
@@ -20,7 +21,6 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.transaction._
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.Hashed
@@ -70,7 +70,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
     }
 
     Random.scalaUtilRandom.flatMap { implicit r =>
-      MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[DAGTransaction]]]().map { waitingTxsR =>
+      MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[Transaction]]]().map { waitingTxsR =>
         val blockStorage = new BlockStorage[IO](blocksR)
         val transactionStorage = new TransactionStorage[IO](lastAccTxR, waitingTxsR)
         BlockService.make[IO](blockAcceptanceManager, addressStorage, blockStorage, transactionStorage, Amount.empty)

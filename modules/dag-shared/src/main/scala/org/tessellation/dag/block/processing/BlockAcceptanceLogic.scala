@@ -13,12 +13,12 @@ import cats.syntax.semigroup._
 import cats.syntax.traverse._
 import cats.syntax.traverseFilter._
 
+import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.dag.transaction.TransactionChainValidator.TransactionNel
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance, BalanceArithmeticError}
-import org.tessellation.schema.block.DAGBlock
-import org.tessellation.schema.transaction.{DAGTransaction, TransactionReference}
+import org.tessellation.schema.transaction.{Transaction, TransactionReference}
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 
@@ -86,7 +86,7 @@ object BlockAcceptanceLogic {
         }
 
     def processLastTxRefs(
-      txChains: Map[Address, NonEmptyList[Signed[DAGTransaction]]],
+      txChains: Map[Address, NonEmptyList[Signed[Transaction]]],
       context: BlockAcceptanceContext[F],
       contextUpdate: BlockAcceptanceContextUpdate
     ): EitherT[F, BlockNotAcceptedReason, BlockAcceptanceContextUpdate] =

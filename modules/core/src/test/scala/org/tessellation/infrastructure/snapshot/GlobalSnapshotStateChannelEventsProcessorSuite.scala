@@ -11,12 +11,12 @@ import cats.syntax.validated._
 import scala.collection.immutable.SortedMap
 
 import org.tessellation.dag.dagSharedKryoRegistrar
+import org.tessellation.dag.snapshot.GlobalSnapshotInfo
 import org.tessellation.domain.statechannel.StateChannelValidator
 import org.tessellation.ext.crypto._
 import org.tessellation.ext.kryo._
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.GlobalSnapshotInfo
 import org.tessellation.schema.address.Address
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash

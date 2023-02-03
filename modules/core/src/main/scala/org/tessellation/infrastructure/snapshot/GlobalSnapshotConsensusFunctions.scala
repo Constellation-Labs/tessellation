@@ -18,6 +18,8 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
 
 import org.tessellation.dag.block.processing._
+import org.tessellation.dag.domain.block.DAGBlockAsActiveTip
+import org.tessellation.dag.snapshot._
 import org.tessellation.domain.rewards.Rewards
 import org.tessellation.domain.snapshot._
 import org.tessellation.ext.cats.syntax.next._
@@ -26,7 +28,6 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.RewardTransaction
@@ -51,7 +52,7 @@ trait GlobalSnapshotConsensusFunctions[F[_]]
 object GlobalSnapshotConsensusFunctions {
 
   def make[F[_]: Async: KryoSerializer: SecurityProvider: Metrics](
-    globalSnapshotStorage: SnapshotStorage[F, GlobalSnapshot],
+    globalSnapshotStorage: GlobalSnapshotStorage[F],
     blockAcceptanceManager: BlockAcceptanceManager[F],
     stateChannelEventsProcessor: GlobalSnapshotStateChannelEventsProcessor[F],
     collateral: Amount,
@@ -216,10 +217,10 @@ object GlobalSnapshotConsensusFunctions {
       lastDeprecated: SortedSet[DeprecatedTip],
       acceptanceResult: BlockAcceptanceResult,
       currentOrdinal: SnapshotOrdinal
-    ): (SortedSet[DeprecatedTip], SortedSet[ActiveTip], SortedSet[BlockAsActiveTip[DAGBlock]]) = {
+    ): (SortedSet[DeprecatedTip], SortedSet[ActiveTip], SortedSet[DAGBlockAsActiveTip]) = {
       val usagesUpdate = acceptanceResult.contextUpdate.parentUsages
       val accepted =
-        acceptanceResult.accepted.map { case (block, usages) => BlockAsActiveTip(block, usages) }.toSortedSet
+        acceptanceResult.accepted.map { case (block, usages) => DAGBlockAsActiveTip(block, usages) }.toSortedSet
       val (remainedActive, newlyDeprecated) = lastActive.partitionMap { at =>
         val maybeUpdatedUsage = usagesUpdate.get(at.block)
         Either.cond(
@@ -238,7 +239,7 @@ object GlobalSnapshotConsensusFunctions {
       lastGS: GlobalSnapshot,
       deprecated: Set[DeprecatedTip],
       remainedActive: Set[ActiveTip],
-      accepted: Set[BlockAsActiveTip[DAGBlock]]
+      accepted: Set[DAGBlockAsActiveTip]
     ): F[(Height, SubHeight)] = {
       val tipHeights = (deprecated.map(_.block.height) ++ remainedActive.map(_.block.height) ++ accepted
         .map(_.block.height)).toList

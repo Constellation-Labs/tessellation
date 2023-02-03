@@ -7,12 +7,12 @@ import cats.effect.std.Queue
 import cats.syntax.validated._
 
 import org.tessellation.dag.dagSharedKryoRegistrar
+import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.domain.cell.L0Cell
 import org.tessellation.domain.statechannel.StateChannelValidator.StateChannelValidationErrorOr
 import org.tessellation.ext.kryo._
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.key.ops.PublicKeyOps

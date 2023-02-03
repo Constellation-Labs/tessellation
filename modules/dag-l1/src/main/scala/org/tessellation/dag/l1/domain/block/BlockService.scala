@@ -9,13 +9,13 @@ import cats.syntax.show._
 
 import scala.util.control.NoStackTrace
 
-import org.tessellation.dag.block.processing.{BlockAcceptanceContext, BlockAcceptanceManager, BlockNotAcceptedReason, _}
+import org.tessellation.dag.block.processing._
+import org.tessellation.dag.domain.block.DAGBlock
 import org.tessellation.dag.l1.domain.address.storage.AddressStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.{BlockReference, transaction}
 import org.tessellation.security.Hashed
 import org.tessellation.security.signature.Signed

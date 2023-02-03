@@ -7,9 +7,10 @@ import cats.syntax.contravariantSemigroupal._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
+import org.tessellation.dag.snapshot.GlobalSnapshot
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.{GlobalSnapshot, SnapshotOrdinal}
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 import org.tessellation.storage.LocalFileSystemStorage
