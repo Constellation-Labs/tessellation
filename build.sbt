@@ -309,18 +309,26 @@ lazy val dagShared = (project in file("modules/dag-shared"))
   )
 
 lazy val rosetta = (project in file("modules/rosetta"))
-  .dependsOn(shared % "compile->compile;test->test")
+  .dependsOn(kernel, shared % "compile->compile;test->test", dagShared % "compile->compile;test->test", sdk, testShared % Test)
   .settings(
     name := "tessellation-rosetta",
     Defaults.itSettings,
     scalafixCommonSettings,
     commonSettings,
     commonTestSettings,
+    dockerSettings,
     makeBatScripts := Seq(),
-    libraryDependencies := Seq(
+    libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
       CompilerPlugin.betterMonadicFor,
-      CompilerPlugin.semanticDB
+      CompilerPlugin.semanticDB,
+      Libraries.cats,
+      Libraries.catsEffect,
+      Libraries.derevoCats,
+      Libraries.derevoCirce,
+      Libraries.derevoCore,
+      Libraries.newtype,
+      Libraries.refinedCore
     )
   )
 
