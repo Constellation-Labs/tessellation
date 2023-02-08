@@ -129,7 +129,6 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         }
       }
     }
-  }
   // val gscf = GlobalSnapshotConsensusFunctions.make(gss, bam, scProcessor, collateral, rewards, env)
 
   // KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>

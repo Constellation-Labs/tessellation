@@ -14,9 +14,6 @@ import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.{GlobalSnapshot, address, balance}
 import org.tessellation.sdk.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage
-import org.tessellation.schema.height.{Height, SubHeight}
-import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.{GlobalSnapshot, address, balance, _}
 import org.tessellation.sdk.infrastructure.snapshot.storage.{SnapshotLocalFileSystemStorage, SnapshotStorage}
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.SecurityProvider
