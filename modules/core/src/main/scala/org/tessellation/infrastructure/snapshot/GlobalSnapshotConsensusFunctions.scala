@@ -155,28 +155,6 @@ object GlobalSnapshotConsensusFunctions {
         lastActiveTips <- lastArtifact.activeTips
         lastDeprecatedTips = lastArtifact.tips.deprecated
 
-        tipUsages = getTipsUsages(lastActiveTips, lastDeprecatedTips)
-        blockAcceptanceContext = BlockAcceptanceContext.fromStaticData(
-          context.balances,
-          context.lastTxRefs,
-          tipUsages,
-          collateral
-        )
-        acceptanceResult <- blockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, blockAcceptanceContext)
-
-        (deprecated, remainedActive, accepted) = getUpdatedTips(
-          lastActiveTips,
-          lastDeprecatedTips,
-          acceptanceResult,
-          currentOrdinal
-        )
-
-        (height, subHeight) <- getHeightAndSubHeight(lastArtifact, deprecated, remainedActive, accepted)
-
-        // updatedLastTxRefs = lastArtifact.info.lastTxRefs ++ acceptanceResult.contextUpdate.lastTxRefs
-        // balances = lastArtifact.info.balances ++ acceptanceResult.contextUpdate.balances
-        // positiveBalances = balances.filter { case (_, balance) => balance =!= Balance.empty }
-
         facilitators = lastArtifact.proofs.map(_.id)
         transactions = lastArtifact.value.blocks.flatMap(_.block.transactions.toSortedSet).map(_.value)
 
@@ -205,6 +183,8 @@ object GlobalSnapshotConsensusFunctions {
           context.balances,
           rewardTxsForAcceptance
         )
+
+        (height, subHeight) <- getHeightAndSubHeight(lastArtifact, deprecated, remainedActive, accepted)
 
         returnedDAGEvents = getReturnedDAGEvents(acceptanceResult)
         stateProof <- GlobalSnapshotInfo.stateProof(snapshotInfo)
