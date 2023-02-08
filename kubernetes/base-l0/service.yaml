@@ -8,8 +8,10 @@ spec:
     - port: 9000
       name: public
     - port: 9001
-      name: p2p
+      name: direct-p2p
     - port: 9002
       name: cli
+    - port: 8080
+      name: p2p
   selector:
     node: initial-validator

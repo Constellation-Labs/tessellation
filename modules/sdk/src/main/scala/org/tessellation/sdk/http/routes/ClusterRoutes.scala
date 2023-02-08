@@ -1,9 +1,7 @@
 package org.tessellation.sdk.http.routes
 
 import cats.effect.Async
-import cats.syntax.applicativeError._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
+import cats.syntax.all._
 
 import org.tessellation.schema.cluster._
 import org.tessellation.schema.peer.JoinRequest
@@ -13,7 +11,6 @@ import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.collateral.Collateral
 import org.tessellation.sdk.ext.http4s.refined.RefinedRequestDecoder
 
-import com.comcast.ip4s.Host
 import io.circe.shapes._
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
@@ -58,23 +55,16 @@ final case class ClusterRoutes[F[_]: Async](
   private val p2pPublic: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "join" =>
       req.decodeR[JoinRequest] { joinRequest =>
-        req.remoteAddr
-          .flatMap(_.asIpv4)
-          .map(_.toString)
-          .flatMap(Host.fromString)
-          .fold(BadRequest())(host =>
-            joining
-              .joinRequest(collateral.hasCollateral)(joinRequest, host)
-              .flatMap(_ => Ok())
-              .recoverWith {
-                case PeerAlreadyConnected(id, _, _, _) => Conflict(s"Peer id=${id} already connected.")
-                case SessionDoesNotExist               => Conflict("Peer does not have an active session.")
-                case CollateralNotSatisfied            => Conflict("Collateral is not satisfied.")
-                case NodeNotInCluster                  => Conflict("Node is not part of the cluster.")
-                case _                                 => InternalServerError("Unknown error.")
-              }
-          )
-
+        joining
+          .joinRequest(collateral.hasCollateral)(joinRequest, joinRequest.registrationRequest.ip)
+          .flatMap(_ => Ok())
+          .recoverWith {
+            case PeerAlreadyConnected(id, _, _, _) => Conflict(s"Peer id=${id} already connected.")
+            case SessionDoesNotExist               => Conflict("Peer does not have an active session.")
+            case CollateralNotSatisfied            => Conflict("Collateral is not satisfied.")
+            case NodeNotInCluster                  => Conflict("Node is not part of the cluster.")
+            case _                                 => InternalServerError("Unknown error.")
+          }
       }
   }
 
