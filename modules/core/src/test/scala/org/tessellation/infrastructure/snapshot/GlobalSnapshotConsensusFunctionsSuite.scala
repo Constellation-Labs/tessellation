@@ -83,7 +83,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     def process(
       lastGlobalSnapshotInfo: GlobalSnapshotInfo,
       events: List[StateChannelEvent]
-    ): IO[(SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set[GlobalSnapshotEvent])] = IO(
+    ): IO[(SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set[StateChannelEvent])] = IO(
       (events.groupByNel(_.address).view.mapValues(_.map(_.snapshot)).toSortedMap, Set.empty)
     )
   }

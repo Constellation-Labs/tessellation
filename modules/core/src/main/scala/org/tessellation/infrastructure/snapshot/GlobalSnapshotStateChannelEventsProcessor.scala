@@ -32,7 +32,7 @@ trait GlobalSnapshotStateChannelEventsProcessor[F[_]] {
   def process(
     lastGlobalSnapshotInfo: GlobalSnapshotInfo,
     events: List[StateChannelEvent]
-  ): F[(SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set[GlobalSnapshotEvent])]
+  ): F[(SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set[StateChannelEvent])]
 }
 
 object GlobalSnapshotStateChannelEventsProcessor {
@@ -42,7 +42,7 @@ object GlobalSnapshotStateChannelEventsProcessor {
       def process(
         lastGlobalSnapshotInfo: GlobalSnapshotInfo,
         events: List[StateChannelEvent]
-      ): F[(SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set[GlobalSnapshotEvent])] =
+      ): F[(SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set[StateChannelEvent])] =
         events
           .traverse(event => stateChannelValidator.validate(event).map(_.errorMap(error => (event.address, error))))
           .map(_.partitionMap(_.toEither))
@@ -54,7 +54,7 @@ object GlobalSnapshotStateChannelEventsProcessor {
       private def processStateChannelEvents(
         lastGlobalSnapshotInfo: GlobalSnapshotInfo,
         events: List[StateChannelEvent]
-      ): (SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set[GlobalSnapshotEvent]) = {
+      ): (SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set[StateChannelEvent]) = {
 
         val lshToSnapshot: Map[(Address, Hash), StateChannelEvent] = events.map { e =>
           (e.address, e.snapshot.value.lastSnapshotHash) -> e
@@ -95,7 +95,7 @@ object GlobalSnapshotStateChannelEventsProcessor {
           }
           .toSortedMap
 
-        (result, Set.empty[GlobalSnapshotEvent])
+        (result, Set.empty[StateChannelEvent])
       }
     }
 
