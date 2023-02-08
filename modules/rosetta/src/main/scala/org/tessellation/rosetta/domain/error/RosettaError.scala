@@ -35,6 +35,13 @@ object RosettaError extends IntEnum[RosettaError] with RosettaErrorEncoder {
       extends RosettaError(value = 3, message = "Invalid request body", retriable = false, details = RosettaErrorDetails(reason).some)
   case object InvalidNetworkIdentifier extends RosettaError(value = 4, message = "Invalid network identifier", retriable = false)
   case object InvalidPublicKey extends RosettaError(value = 5, message = "Invalid public key", retriable = false)
+  case object MalformedTransaction
+      extends RosettaError(
+        value = 6,
+        message = "Malformed transaction",
+        retriable = false,
+        description = Some("Unable to decode the transaction.")
+      )
 }
 
 trait RosettaErrorEncoder {
@@ -51,6 +58,7 @@ case class RosettaErrorJson(
   retriable: Boolean,
   details: Option[RosettaErrorDetails]
 )
+
 object RosettaErrorJson {
   def apply(r: RosettaError): RosettaErrorJson = RosettaErrorJson(r.value, r.message, r.description, r.retriable, r.details)
 }

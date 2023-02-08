@@ -10,6 +10,7 @@ import cats.syntax.option._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
+import org.tessellation.dag.l1.Main
 import org.tessellation.dag.l1.domain.address.storage.AddressStorage
 import org.tessellation.dag.l1.domain.block.BlockStorage
 import org.tessellation.dag.l1.domain.block.BlockStorage._
@@ -17,7 +18,7 @@ import org.tessellation.dag.l1.domain.snapshot.programs.SnapshotProcessor._
 import org.tessellation.dag.l1.domain.snapshot.storage.LastGlobalSnapshotStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage.{LastTransactionReferenceState, Majority}
-import org.tessellation.dag.l1.{Main, TransactionGenerator}
+import org.tessellation.dag.transaction.TransactionGenerator
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.collection.MapRefUtils._
 import org.tessellation.keytool.KeyPairGenerator

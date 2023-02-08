@@ -6,8 +6,9 @@ import cats.data.{NonEmptyList, NonEmptySet}
 import cats.effect.{IO, Resource}
 import cats.syntax.option._
 
+import org.tessellation.dag.l1.Main
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage.{Accepted, LastTransactionReferenceState, Majority}
-import org.tessellation.dag.l1.{Main, TransactionGenerator}
+import org.tessellation.dag.transaction.TransactionGenerator
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
