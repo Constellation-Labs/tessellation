@@ -5,6 +5,7 @@ import java.security.Signature
 import cats.data.NonEmptyList
 
 import org.tessellation.ext.kryo._
+import org.tessellation.merkletree.MerkleTree
 import org.tessellation.schema._
 import org.tessellation.schema.address.{Address, AddressCache}
 import org.tessellation.schema.block.{DAGBlock, Tips}
@@ -77,7 +78,8 @@ package object shared {
     classOf[DeprecatedTip] -> 612,
     DeprecatedTip.OrderingInstance.getClass -> 613,
     classOf[Tips] -> 614,
-    classOf[IncrementalGlobalSnapshot] -> 615
+    classOf[IncrementalGlobalSnapshot] -> 615,
+    classOf[MerkleTree] -> 616
   )
 
 }

@@ -43,8 +43,28 @@ case class IncrementalGlobalSnapshot(
   nextFacilitators: NonEmptyList[PeerId],
   tips: SnapshotTips,
   stateProof: MerkleTree
-  // TODO: incremental snapshots - state hash
 ) extends Snapshot[DAGTransaction, DAGBlock] {}
+
+object IncrementalGlobalSnapshot {
+  def fromGlobalSnapshot[F[_]: MonadThrow: KryoSerializer](snapshot: GlobalSnapshot): F[IncrementalGlobalSnapshot] =
+    GlobalSnapshotInfo
+      .stateProof[F](snapshot.info)
+      .map { stateProof =>
+        IncrementalGlobalSnapshot(
+          snapshot.ordinal,
+          snapshot.height,
+          snapshot.subHeight,
+          snapshot.lastSnapshotHash,
+          snapshot.blocks,
+          snapshot.stateChannelSnapshots,
+          snapshot.rewards,
+          snapshot.epochProgress,
+          snapshot.nextFacilitators,
+          snapshot.tips,
+          stateProof
+        )
+      }
+}
 
 @derive(eqv, show, encoder, decoder)
 case class GlobalSnapshot(
