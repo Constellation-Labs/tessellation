@@ -41,6 +41,12 @@ object CurrencySnapshotConsensusFunctions {
     collateral: Amount
   ): CurrencySnapshotConsensusFunctions[F] = new CurrencySnapshotConsensusFunctions[F] {
 
+    def createContext(
+      lastSnapshotContext: CurrencySnapshotInfo,
+      lastSnapshot: CurrencySnapshotArtifact,
+      snapshot: Signed[CurrencySnapshotArtifact]
+    ): F[CurrencySnapshotInfo] = ???
+
     private val logger = Slf4jLogger.getLoggerFromClass(CurrencySnapshotConsensusFunctions.getClass)
 
     def getRequiredCollateral: Amount = collateral
