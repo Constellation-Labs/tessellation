@@ -1,4 +1,4 @@
-package org.tessellation.dag.l1
+package org.tessellation.dag.transaction
 
 import java.security.KeyPair
 
