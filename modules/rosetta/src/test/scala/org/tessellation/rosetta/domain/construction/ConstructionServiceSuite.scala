@@ -4,13 +4,19 @@ import cats.effect.{IO, Resource}
 import cats.syntax.contravariantSemigroupal._
 import cats.syntax.either._
 import cats.syntax.foldable._
+import cats.syntax.option._
 
 import org.tessellation.dag.transaction.TransactionGenerator
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.rosetta.domain._
+import org.tessellation.rosetta.domain.amount.{Amount, AmountValue}
+import org.tessellation.rosetta.domain.currency.{Currency, CurrencyDecimal, CurrencySymbol}
 import org.tessellation.rosetta.domain.error.{InvalidPublicKey, MalformedTransaction}
+import org.tessellation.rosetta.domain.operation.OperationType.Transfer
+import org.tessellation.rosetta.domain.operation.{Operation, OperationIdentifier, OperationIndex}
 import org.tessellation.schema.address.Address
+import org.tessellation.schema.generators.addressGen
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.key.ops.PublicKeyOps
@@ -106,5 +112,48 @@ object ConstructionServiceSuite extends MutableIOSuite with Checkers with Transa
       .map(
         expect.eql(Left(MalformedTransaction), _)
       )
+  }
+
+  test("returns the accountIdentifiers for negative operations") { res =>
+    implicit val (sp, k) = res
+
+    val cs = ConstructionService.make[IO]()
+
+    forall(addressGen) { address =>
+      val operation = Operation(
+        OperationIdentifier(OperationIndex(1L)),
+        none,
+        Transfer,
+        none,
+        AccountIdentifier(address, none).some,
+        Amount(AmountValue(-1L), Currency(CurrencySymbol("DAG"), CurrencyDecimal(8L))).some
+      )
+
+      val result = cs
+        .getAccountIdentifiers(List(operation))
+        .map(_.head.address)
+
+      expect.eql(address.some, result)
+    }
+  }
+
+  test("returns no accountIdentifiers for non-negative operations") { res =>
+    implicit val (sp, k) = res
+
+    val cs = ConstructionService.make[IO]()
+
+    forall(addressGen) { address =>
+      val operation = Operation(
+        OperationIdentifier(OperationIndex(1L)),
+        none,
+        Transfer,
+        none,
+        AccountIdentifier(address, none).some,
+        Amount(AmountValue(1L), Currency(CurrencySymbol("DAG"), CurrencyDecimal(8L))).some
+      )
+
+      val accountIdentifiers = cs.getAccountIdentifiers(List(operation))
+      expect.eql(none, accountIdentifiers)
+    }
   }
 }

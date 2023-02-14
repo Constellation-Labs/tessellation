@@ -2,7 +2,7 @@ package org.tessellation.rosetta.http.routes
 
 import cats.effect.Async
 
-import org.tessellation.rosetta.domain.api.construction.{ConstructionDerive, ConstructionHash}
+import org.tessellation.rosetta.domain.api.construction.{ConstructionDerive, ConstructionHash, ConstructionPreprocess}
 import org.tessellation.rosetta.domain.construction.ConstructionService
 import org.tessellation.rosetta.ext.http4s.refined._
 import org.tessellation.sdk.config.AppEnvironment
@@ -35,6 +35,14 @@ final class ConstructionRoutes[F[_]: Async](
           .bimap(_.toRosettaError, ConstructionHash.Response(_))
           .asRosettaResponse
           .handleUnknownError
+      }
+
+    case req @ POST -> Root / "preprocess" =>
+      req.decodeRosettaWithNetworkValidation[ConstructionPreprocess.Request](appEnvironment, _.networkIdentifier) { preprocessReq =>
+        val accountIdentifiers = constructionService
+          .getAccountIdentifiers(preprocessReq.operations)
+
+        Ok(ConstructionPreprocess.Response(accountIdentifiers)).handleUnknownError
       }
   }
 
