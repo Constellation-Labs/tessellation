@@ -22,7 +22,6 @@ import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.transaction._
 import org.tessellation.sdk.domain.block.processing._
-import org.tessellation.sdk.domain.block.processing.processing._
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.Hashed
 import org.tessellation.security.hash.ProofsHash

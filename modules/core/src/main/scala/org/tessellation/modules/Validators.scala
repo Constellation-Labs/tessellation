@@ -9,6 +9,7 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.DAGTransaction
 import org.tessellation.sdk.domain.block.processing.BlockValidator
 import org.tessellation.sdk.domain.transaction.{TransactionChainValidator, TransactionValidator}
+import org.tessellation.sdk.infrastructure.block.processing.BlockValidator
 import org.tessellation.sdk.infrastructure.gossip.RumorValidator
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.SignedValidator

@@ -28,7 +28,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.schema.transaction.DAGTransaction
-import org.tessellation.sdk.domain.block.processing.BlockValidator.BlockValidationParams
+import org.tessellation.sdk.domain.block.processing.BlockValidationParams
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed._
 import org.tessellation.security.{Hashed, SecurityProvider}

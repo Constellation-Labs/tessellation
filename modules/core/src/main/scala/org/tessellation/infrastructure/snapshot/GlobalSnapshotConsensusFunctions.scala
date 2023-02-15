@@ -31,8 +31,7 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.{DAGTransaction, RewardTransaction}
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.AppEnvironment.Mainnet
-import org.tessellation.sdk.domain.block.processing._
-import org.tessellation.sdk.domain.block.processing.processing.deprecationThreshold
+import org.tessellation.sdk.domain.block.processing.{deprecationThreshold, _}
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions.InvalidArtifact
 import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}

@@ -4,7 +4,7 @@ import cats.data.EitherT
 
 import org.tessellation.schema.Block
 import org.tessellation.schema.transaction.Transaction
-import org.tessellation.sdk.domain.block.processing.processing.{TxChains, UsageCount}
+import org.tessellation.sdk.domain.block.processing.{TxChains, UsageCount}
 import org.tessellation.security.signature.Signed
 
 trait BlockAcceptanceLogic[F[_], T <: Transaction, B <: Block[T]] {
