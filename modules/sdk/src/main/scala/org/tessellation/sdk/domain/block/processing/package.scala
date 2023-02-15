@@ -1,4 +1,4 @@
-package org.tessellation.sdk.domain.block.processing
+package org.tessellation.sdk.domain.block
 
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction.Transaction
@@ -7,7 +7,7 @@ import org.tessellation.sdk.domain.transaction.TransactionChainValidator.Transac
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 
-object processing {
+package object processing {
   type UsageCount = NonNegLong
   type TxChains[T <: Transaction] = Map[Address, TransactionNel[T]]
 

@@ -2,7 +2,7 @@ package org.tessellation.sdk.domain.block.processing
 
 import org.tessellation.schema.Block
 import org.tessellation.schema.transaction.Transaction
-import org.tessellation.sdk.domain.block.processing.processing.TxChains
+import org.tessellation.sdk.domain.block.processing.TxChains
 import org.tessellation.security.signature.Signed
 
 import derevo.cats.{eqv, show}

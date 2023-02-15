@@ -1,4 +1,4 @@
-package org.tessellation.sdk.domain.block.processing
+package org.tessellation.sdk.infrastructure.block.processing
 
 import cats.data.{EitherT, NonEmptyList}
 import cats.effect.kernel.Ref
@@ -15,10 +15,9 @@ import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.height.Height
 import org.tessellation.schema.transaction.DAGTransaction
 import org.tessellation.sdk.domain.block.generators.signedDAGBlockGen
-import org.tessellation.sdk.domain.block.processing.BlockValidator.NotEnoughParents
-import org.tessellation.sdk.domain.block.processing._
-import org.tessellation.sdk.domain.block.processing.processing.{UsageCount, initUsageCount}
+import org.tessellation.sdk.domain.block.processing.{UsageCount, initUsageCount, _}
 import org.tessellation.sdk.domain.transaction.TransactionChainValidator
+import org.tessellation.sdk.infrastructure.block.processing.BlockAcceptanceManager
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.signature.Signed
 import org.tessellation.shared.{dagSharedKryoRegistrar, sharedKryoRegistrar}
@@ -92,8 +91,8 @@ object BlockAcceptanceManagerSuite extends MutableIOSuite with Checkers {
 
         override def validate(
           signedBlock: Signed[DAGBlock],
-          params: BlockValidator.BlockValidationParams
-        ): IO[BlockValidator.BlockValidationErrorOr[
+          params: BlockValidationParams
+        ): IO[BlockValidationErrorOr[
           (Signed[DAGBlock], Map[Address, TransactionChainValidator.TransactionNel[DAGTransaction]])
         ]] = signedBlock.parent.head match {
           case `invalidParent` => IO.pure(NotEnoughParents(0, 0).invalidNec)

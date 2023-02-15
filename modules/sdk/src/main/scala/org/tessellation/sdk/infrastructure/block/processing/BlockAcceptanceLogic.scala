@@ -19,7 +19,6 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance, BalanceArithmeticError}
 import org.tessellation.schema.transaction.{Transaction, TransactionReference}
 import org.tessellation.sdk.domain.block.processing._
-import org.tessellation.sdk.domain.block.processing.processing._
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 
