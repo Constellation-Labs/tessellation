@@ -9,14 +9,15 @@ import cats.syntax.show._
 
 import scala.util.control.NoStackTrace
 
-import org.tessellation.dag.block.processing.{BlockAcceptanceContext, BlockAcceptanceManager, BlockNotAcceptedReason, _}
 import org.tessellation.dag.l1.domain.address.storage.AddressStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.block.DAGBlock
+import org.tessellation.schema.transaction.DAGTransaction
 import org.tessellation.schema.{BlockReference, transaction}
+import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.security.Hashed
 import org.tessellation.security.signature.Signed
 
@@ -30,7 +31,7 @@ trait BlockService[F[_]] {
 object BlockService {
 
   def make[F[_]: Async: KryoSerializer](
-    blockAcceptanceManager: BlockAcceptanceManager[F],
+    blockAcceptanceManager: BlockAcceptanceManager[F, DAGTransaction, DAGBlock],
     addressStorage: AddressStorage[F],
     blockStorage: BlockStorage[F],
     transactionStorage: TransactionStorage[F],

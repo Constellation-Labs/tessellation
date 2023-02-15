@@ -1,13 +1,9 @@
 package org.tessellation.schema
 
 import cats.data.NonEmptyList
-import cats.effect.Async
-import cats.syntax.functor._
-import cats.syntax.traverse._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.block.DAGBlock
@@ -41,16 +37,7 @@ case class GlobalSnapshot(
   nextFacilitators: NonEmptyList[PeerId],
   info: GlobalSnapshotInfo,
   tips: SnapshotTips
-) extends Snapshot[DAGTransaction, DAGBlock] {
-
-  def activeTips[F[_]: Async: KryoSerializer]: F[SortedSet[ActiveTip]] =
-    blocks.toList.traverse { blockAsActiveTip =>
-      BlockReference
-        .of(blockAsActiveTip.block)
-        .map(blockRef => ActiveTip(blockRef, blockAsActiveTip.usageCount, ordinal))
-    }.map(_.toSortedSet.union(tips.remainedActive))
-
-}
+) extends Snapshot[DAGTransaction, DAGBlock] {}
 
 object GlobalSnapshot {
 

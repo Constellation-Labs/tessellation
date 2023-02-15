@@ -13,7 +13,6 @@ import cats.{Applicative, Id}
 
 import scala.concurrent.duration.FiniteDuration
 
-import org.tessellation.dag.block.BlockValidator.BlockValidationParams
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusCell._
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput._
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusOutput.{CleanedConsensuses, FinalBlock, NoData}
@@ -29,6 +28,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.schema.transaction.DAGTransaction
+import org.tessellation.sdk.domain.block.processing.BlockValidator.BlockValidationParams
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed._
 import org.tessellation.security.{Hashed, SecurityProvider}

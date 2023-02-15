@@ -17,7 +17,6 @@ import cats.syntax.traverse._
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
 
-import org.tessellation.dag.block.processing._
 import org.tessellation.domain.rewards.Rewards
 import org.tessellation.domain.snapshot._
 import org.tessellation.ext.cats.syntax.next._
@@ -29,9 +28,11 @@ import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.transaction.RewardTransaction
+import org.tessellation.schema.transaction.{DAGTransaction, RewardTransaction}
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.AppEnvironment.Mainnet
+import org.tessellation.sdk.domain.block.processing._
+import org.tessellation.sdk.domain.block.processing.processing.deprecationThreshold
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions.InvalidArtifact
 import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
@@ -45,6 +46,9 @@ import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
+case class InvalidHeight(lastHeight: Height, currentHeight: Height) extends NoStackTrace
+case object NoTipsRemaining extends NoStackTrace
+case object ArtifactMismatch extends InvalidArtifact
 trait GlobalSnapshotConsensusFunctions[F[_]]
     extends ConsensusFunctions[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact] {}
 
@@ -52,7 +56,7 @@ object GlobalSnapshotConsensusFunctions {
 
   def make[F[_]: Async: KryoSerializer: SecurityProvider: Metrics](
     globalSnapshotStorage: SnapshotStorage[F, GlobalSnapshot],
-    blockAcceptanceManager: BlockAcceptanceManager[F],
+    blockAcceptanceManager: BlockAcceptanceManager[F, DAGTransaction, DAGBlock],
     stateChannelEventsProcessor: GlobalSnapshotStateChannelEventsProcessor[F],
     collateral: Amount,
     rewards: Rewards[F],
@@ -214,7 +218,7 @@ object GlobalSnapshotConsensusFunctions {
     private def getUpdatedTips(
       lastActive: SortedSet[ActiveTip],
       lastDeprecated: SortedSet[DeprecatedTip],
-      acceptanceResult: BlockAcceptanceResult,
+      acceptanceResult: BlockAcceptanceResult[DAGBlock],
       currentOrdinal: SnapshotOrdinal
     ): (SortedSet[DeprecatedTip], SortedSet[ActiveTip], SortedSet[BlockAsActiveTip[DAGBlock]]) = {
       val usagesUpdate = acceptanceResult.contextUpdate.parentUsages
@@ -257,17 +261,12 @@ object GlobalSnapshotConsensusFunctions {
     }
 
     private def getReturnedDAGEvents(
-      acceptanceResult: BlockAcceptanceResult
+      acceptanceResult: BlockAcceptanceResult[DAGBlock]
     ): Set[GlobalSnapshotEvent] =
       acceptanceResult.notAccepted.mapFilter {
         case (signedBlock, _: BlockAwaitReason) => signedBlock.asRight[StateChannelEvent].some
         case _                                  => none
       }.toSet
-
-    case class InvalidHeight(lastHeight: Height, currentHeight: Height) extends NoStackTrace
-    case object NoTipsRemaining extends NoStackTrace
-
-    case object ArtifactMismatch extends InvalidArtifact
 
     object metrics {
 

@@ -14,7 +14,6 @@ import eu.timepit.refined.boolean.Or
 import eu.timepit.refined.numeric.Interval
 
 package object sdk {
-
   type SdkKryoRegistrationIdRange = Interval.Closed[500, 599]
 
   type SdkOrSharedOrKernelRegistrationIdRange =

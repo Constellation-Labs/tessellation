@@ -3,7 +3,7 @@ package org.tessellation.domain.cell
 import cats.effect.IO
 import cats.effect.std.Queue
 
-import org.tessellation.dag.domain.block.generators.signedDAGBlockGen
+import org.tessellation.block.generators.signedDAGBlockGen
 import org.tessellation.kernel.Cell
 import org.tessellation.schema.block.DAGBlock
 import org.tessellation.security.signature.Signed

@@ -7,8 +7,7 @@ import cats.syntax.either._
 import cats.syntax.option._
 import cats.syntax.traverse._
 
-import org.tessellation.dag.block.processing._
-import org.tessellation.dag.domain.block.generators._
+import org.tessellation.block.generators._
 import org.tessellation.dag.l1.Main
 import org.tessellation.dag.l1.domain.address.storage.AddressStorage
 import org.tessellation.dag.l1.domain.block.BlockStorage
@@ -22,6 +21,8 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.transaction._
+import org.tessellation.sdk.domain.block.processing._
+import org.tessellation.sdk.domain.block.processing.processing._
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.Hashed
 import org.tessellation.security.hash.ProofsHash
@@ -45,9 +46,12 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
     notAcceptanceReason: Option[BlockNotAcceptedReason] = None
   )(implicit K: KryoSerializer[IO]) = {
 
-    val blockAcceptanceManager = new BlockAcceptanceManager[IO]() {
+    val blockAcceptanceManager = new BlockAcceptanceManager[IO, DAGTransaction, DAGBlock]() {
 
-      override def acceptBlocksIteratively(blocks: List[Signed[DAGBlock]], context: BlockAcceptanceContext[IO]): IO[BlockAcceptanceResult] =
+      override def acceptBlocksIteratively(
+        blocks: List[Signed[DAGBlock]],
+        context: BlockAcceptanceContext[IO]
+      ): IO[BlockAcceptanceResult[DAGBlock]] =
         ???
 
       override def acceptBlock(

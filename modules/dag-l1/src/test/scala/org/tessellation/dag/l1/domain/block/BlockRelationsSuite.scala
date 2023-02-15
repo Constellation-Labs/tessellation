@@ -2,7 +2,7 @@ package org.tessellation.dag.l1.domain.block
 
 import cats.effect.{IO, Resource}
 
-import org.tessellation.dag.domain.block.generators._
+import org.tessellation.block.generators._
 import org.tessellation.dag.l1.Main
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.block.DAGBlock

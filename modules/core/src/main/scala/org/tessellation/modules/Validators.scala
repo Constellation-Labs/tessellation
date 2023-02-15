@@ -2,11 +2,13 @@ package org.tessellation.modules
 
 import cats.effect.Async
 
-import org.tessellation.dag.block.BlockValidator
-import org.tessellation.dag.transaction.{TransactionChainValidator, TransactionValidator}
 import org.tessellation.domain.statechannel.StateChannelValidator
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.transaction.DAGTransaction
+import org.tessellation.sdk.domain.block.processing.BlockValidator
+import org.tessellation.sdk.domain.transaction.{TransactionChainValidator, TransactionValidator}
 import org.tessellation.sdk.infrastructure.gossip.RumorValidator
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.SignedValidator
@@ -17,9 +19,9 @@ object Validators {
     seedlist: Option[Set[PeerId]]
   ) = {
     val signedValidator = SignedValidator.make[F]
-    val transactionChainValidator = TransactionChainValidator.make[F]
-    val transactionValidator = TransactionValidator.make[F](signedValidator)
-    val blockValidator = BlockValidator.make[F](signedValidator, transactionChainValidator, transactionValidator)
+    val transactionChainValidator = TransactionChainValidator.make[F, DAGTransaction]
+    val transactionValidator = TransactionValidator.make[F, DAGTransaction](signedValidator)
+    val blockValidator = BlockValidator.make[F, DAGTransaction, DAGBlock](signedValidator, transactionChainValidator, transactionValidator)
     val rumorValidator = RumorValidator.make[F](seedlist, signedValidator)
     val stateChannelValidator = StateChannelValidator.make[F](signedValidator)
 
@@ -36,9 +38,9 @@ object Validators {
 
 sealed abstract class Validators[F[_]] private (
   val signedValidator: SignedValidator[F],
-  val transactionChainValidator: TransactionChainValidator[F],
-  val transactionValidator: TransactionValidator[F],
-  val blockValidator: BlockValidator[F],
+  val transactionChainValidator: TransactionChainValidator[F, DAGTransaction],
+  val transactionValidator: TransactionValidator[F, DAGTransaction],
+  val blockValidator: BlockValidator[F, DAGTransaction, DAGBlock],
   val rumorValidator: RumorValidator[F],
   val stateChannelValidator: StateChannelValidator[F]
 )

@@ -5,7 +5,6 @@ import java.nio.file.{Paths => JPaths}
 import cats.effect.{IO, Resource}
 import cats.syntax.all._
 
-import org.tessellation.dag.dagSharedKryoRegistrar
 import org.tessellation.ext.crypto._
 import org.tessellation.ext.kryo._
 import org.tessellation.kryo.KryoSerializer
@@ -13,6 +12,7 @@ import org.tessellation.schema._
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
+import org.tessellation.shared.dagSharedKryoRegistrar
 
 import eu.timepit.refined.auto._
 import fs2.io.file.{Files, Path}

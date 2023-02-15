@@ -7,7 +7,6 @@ import cats.syntax.applicativeError._
 import cats.syntax.semigroupk._
 
 import org.tessellation.cli.method._
-import org.tessellation.dag._
 import org.tessellation.ext.cats.effect._
 import org.tessellation.ext.kryo._
 import org.tessellation.http.p2p.P2PClient
@@ -22,10 +21,12 @@ import org.tessellation.sdk.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import org.tessellation.sdk.resources.MkHttpServer
 import org.tessellation.sdk.resources.MkHttpServer.ServerName
 import org.tessellation.security.signature.Signed
+import org.tessellation.shared.{DagSharedKryoRegistrationIdRange, dagSharedKryoRegistrar}
 
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
 import eu.timepit.refined.boolean.Or
+import eu.timepit.refined.internal.BuildInfo
 
 object Main
     extends TessellationIOApp[Run](

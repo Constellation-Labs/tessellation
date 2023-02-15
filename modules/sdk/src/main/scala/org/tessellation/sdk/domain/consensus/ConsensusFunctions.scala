@@ -25,7 +25,6 @@ trait ConsensusFunctions[F[_], Event, Key, Artifact] {
   ): F[(Artifact, Set[Event])]
 
   def consumeSignedMajorityArtifact(signedArtifact: Signed[Artifact]): F[Unit]
-
 }
 
 object ConsensusFunctions {
