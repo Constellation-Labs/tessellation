@@ -12,11 +12,12 @@ import scala.concurrent.duration.FiniteDuration
 
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.{BlockSignatureProposal, CancelledBlockCreationRound, Proposal}
 import org.tessellation.dag.l1.domain.consensus.round.RoundId
-import org.tessellation.dag.transaction.TransactionValidator
-import org.tessellation.dag.transaction.filter.Consecutive
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.block.{DAGBlock, Tips}
 import org.tessellation.schema.peer.{Peer, PeerId}
+import org.tessellation.schema.transaction.DAGTransaction
+import org.tessellation.sdk.domain.transaction.TransactionValidator
+import org.tessellation.sdk.domain.transaction.filter.Consecutive
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.SignatureProof
 import org.tessellation.syntax.sortedCollection._
@@ -55,7 +56,7 @@ case class RoundData(
   def addPeerCancellation(cancellation: CancelledBlockCreationRound): RoundData =
     this.focus(_.peerCancellations).modify(_ + (cancellation.senderId -> cancellation.reason))
 
-  def formBlock[F[_]: Async: KryoSerializer](validator: TransactionValidator[F]): F[Option[DAGBlock]] =
+  def formBlock[F[_]: Async: KryoSerializer](validator: TransactionValidator[F, DAGTransaction]): F[Option[DAGBlock]] =
     (ownProposal.transactions ++ peerProposals.values.flatMap(_.transactions)).toList
       .traverse(validator.validate)
       .flatMap { validatedTxs =>

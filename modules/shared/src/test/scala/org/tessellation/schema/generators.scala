@@ -4,7 +4,7 @@ import cats.data.NonEmptySet
 
 import scala.collection.immutable.SortedSet
 
-import org.tessellation.generators._
+import org.tessellation.generators.nesGen
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.address.{Address, DAGAddressRefined}
 import org.tessellation.schema.balance.Balance

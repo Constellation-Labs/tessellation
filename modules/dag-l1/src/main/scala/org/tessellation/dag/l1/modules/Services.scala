@@ -2,12 +2,14 @@ package org.tessellation.dag.l1.modules
 
 import cats.effect.kernel.Async
 
-import org.tessellation.dag.block.processing.BlockAcceptanceManager
 import org.tessellation.dag.l1.config.types.AppConfig
 import org.tessellation.dag.l1.domain.block.BlockService
 import org.tessellation.dag.l1.domain.transaction.TransactionService
 import org.tessellation.dag.l1.http.p2p.P2PClient
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.block.DAGBlock
+import org.tessellation.schema.transaction.DAGTransaction
+import org.tessellation.sdk.domain.block.processing.BlockAcceptanceManager
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.collateral.Collateral
 import org.tessellation.sdk.domain.gossip.Gossip
@@ -29,7 +31,7 @@ object Services {
     new Services[F](
       localHealthcheck = sdkServices.localHealthcheck,
       block = BlockService.make[F](
-        BlockAcceptanceManager.make[F](validators.block),
+        BlockAcceptanceManager.make[F, DAGTransaction, DAGBlock](validators.block),
         storages.address,
         storages.block,
         storages.transaction,

@@ -7,7 +7,6 @@ import cats.syntax.option._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import org.tessellation.dag.dagSharedKryoRegistrar
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
 import org.tessellation.ext.kryo._
@@ -21,6 +20,7 @@ import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.signature.Signed
+import org.tessellation.shared.dagSharedKryoRegistrar
 
 import better.files._
 import eu.timepit.refined.auto._

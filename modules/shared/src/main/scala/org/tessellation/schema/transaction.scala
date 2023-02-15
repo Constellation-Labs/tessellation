@@ -66,7 +66,7 @@ object transaction {
     val _Hash: Lens[TransactionReference, Hash] = GenLens[TransactionReference](_.hash)
     val _Ordinal: Lens[TransactionReference, TransactionOrdinal] = GenLens[TransactionReference](_.ordinal)
 
-    def of[F[_]: Async: KryoSerializer](signedTransaction: Signed[DAGTransaction]): F[TransactionReference] =
+    def of[F[_]: Async: KryoSerializer, T <: Transaction](signedTransaction: Signed[T]): F[TransactionReference] =
       signedTransaction.value.hashF.map(TransactionReference(signedTransaction.ordinal, _))
 
     def of(hashedTransaction: Hashed[Transaction]): TransactionReference =

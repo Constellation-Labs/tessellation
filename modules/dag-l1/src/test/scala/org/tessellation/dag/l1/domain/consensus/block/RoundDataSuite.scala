@@ -13,7 +13,7 @@ import scala.concurrent.duration.FiniteDuration
 import org.tessellation.dag.l1.Main
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.Proposal
 import org.tessellation.dag.l1.domain.consensus.round.RoundId
-import org.tessellation.dag.transaction.{TransactionGenerator, TransactionValidator}
+import org.tessellation.dag.l1.TransactionGenerator
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
@@ -22,7 +22,8 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.block.{DAGBlock, Tips}
 import org.tessellation.schema.height.Height
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.transaction.{TransactionFee, TransactionReference}
+import org.tessellation.schema.transaction.{DAGTransaction, TransactionFee, TransactionReference}
+import org.tessellation.sdk.domain.transaction.TransactionValidator
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.ProofsHash
@@ -38,7 +39,8 @@ import weaver.scalacheck.Checkers
 
 object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenerator {
 
-  override type Res = (KryoSerializer[IO], SecurityProvider[IO], KeyPair, KeyPair, Address, Address, TransactionValidator[IO])
+  override type Res =
+    (KryoSerializer[IO], SecurityProvider[IO], KeyPair, KeyPair, Address, Address, TransactionValidator[IO, DAGTransaction])
 
   override def sharedResource: Resource[IO, Res] =
     KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ sdkKryoRegistrar).flatMap { implicit kp =>
@@ -49,7 +51,7 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
           srcAddress = srcKey.getPublic.toAddress
           dstAddress = dstKey.getPublic.toAddress
           signedValidator = SignedValidator.make
-          txValidator = TransactionValidator.make(signedValidator)
+          txValidator = TransactionValidator.make[F, DAGTransaction](signedValidator)
         } yield (kp, sp, srcKey, dstKey, srcAddress, dstAddress, txValidator)
       }
     }

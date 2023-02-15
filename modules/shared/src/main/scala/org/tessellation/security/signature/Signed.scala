@@ -12,7 +12,7 @@ import cats.syntax.functor._
 import cats.syntax.list._
 import cats.syntax.order._
 import cats.syntax.show._
-import cats.{Order, Show}
+import cats.{Eq, Order, Show}
 
 import scala.collection.immutable.SortedSet
 import scala.util.control.NoStackTrace
@@ -46,6 +46,8 @@ object Signed {
   implicit def decoder[A: Decoder]: Decoder[Signed[A]] = deriveDecoder
 
   implicit def autoUnwrap[T](t: Signed[T]): T = t.value
+
+  implicit def eq[A: Eq]: Eq[Signed[A]] = (a, b) => Eq[A].eqv(a, b)
 
   implicit def order[A: Order]: Order[Signed[A]] = Order.fromOrdering(ordering(Order[A].toOrdering))
 

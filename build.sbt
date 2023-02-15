@@ -60,7 +60,7 @@ lazy val root = (project in file("."))
   .settings(
     name := "tessellation"
   )
-  .aggregate(keytool, kernel, shared, core, testShared, wallet, dagShared, sdk, dagL1, rosetta)
+  .aggregate(keytool, kernel, shared, core, testShared, wallet, sdk, dagL1, rosetta)
 
 lazy val kernel = (project in file("modules/kernel"))
   .enablePlugins(AshScriptPlugin)
@@ -290,26 +290,8 @@ lazy val sdk = (project in file("modules/sdk"))
     )
   )
 
-lazy val dagShared = (project in file("modules/dag-shared"))
-  .dependsOn(shared % "compile->compile;test->test", testShared % Test, keytool % Test)
-  .settings(
-    name := "tessellation-dag-shared",
-    Defaults.itSettings,
-    scalafixCommonSettings,
-    commonSettings,
-    commonTestSettings,
-    makeBatScripts := Seq(),
-    libraryDependencies := Seq(
-      CompilerPlugin.kindProjector,
-      CompilerPlugin.betterMonadicFor,
-      CompilerPlugin.semanticDB,
-      Libraries.logback % Runtime,
-      Libraries.logstashLogbackEncoder % Runtime
-    )
-  )
-
 lazy val rosetta = (project in file("modules/rosetta"))
-  .dependsOn(kernel, shared % "compile->compile;test->test", dagShared % "compile->compile;test->test", sdk, testShared % Test)
+  .dependsOn(kernel, shared % "compile->compile;test->test", sdk, testShared % Test)
   .settings(
     name := "tessellation-rosetta",
     Defaults.itSettings,
@@ -335,7 +317,7 @@ lazy val rosetta = (project in file("modules/rosetta"))
 lazy val dagL1 = (project in file("modules/dag-l1"))
   .enablePlugins(AshScriptPlugin)
   .enablePlugins(JavaAppPackaging)
-  .dependsOn(kernel, shared % "compile->compile;test->test", dagShared % "compile->compile;test->test", sdk, testShared % Test)
+  .dependsOn(kernel, shared % "compile->compile;test->test", sdk, testShared % Test)
   .configs(IntegrationTest)
   .settings(
     name := "tessellation-dag-l1",
@@ -419,7 +401,7 @@ lazy val tools = (project in file("modules/tools"))
 lazy val core = (project in file("modules/core"))
   .enablePlugins(AshScriptPlugin)
   .enablePlugins(JavaAppPackaging)
-  .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test, dagShared % "compile->compile;test->test", sdk)
+  .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test, sdk)
   .settings(
     name := "tessellation-core",
     Defaults.itSettings,
@@ -485,7 +467,7 @@ lazy val core = (project in file("modules/core"))
 lazy val currencyL0 = (project in file("modules/currency-l0"))
   .enablePlugins(AshScriptPlugin)
   .enablePlugins(JavaAppPackaging)
-  .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test, dagShared % "compile->compile;test->test", sdk)
+  .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test, sdk)
   .settings(
     name := "tessellation-currency-l0",
     Defaults.itSettings,

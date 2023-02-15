@@ -4,8 +4,6 @@ import cats.effect.{IO, Resource}
 import cats.syntax.applicativeError._
 import cats.syntax.semigroupk._
 
-import org.tessellation.BuildInfo
-import org.tessellation.dag._
 import org.tessellation.dag.l1.cli.method.{Run, RunInitialValidator, RunValidator}
 import org.tessellation.dag.l1.http.p2p.P2PClient
 import org.tessellation.dag.l1.infrastructure.block.rumor.handler.blockRumorHandler
@@ -19,10 +17,12 @@ import org.tessellation.sdk.app.{SDK, TessellationIOApp}
 import org.tessellation.sdk.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import org.tessellation.sdk.resources.MkHttpServer
 import org.tessellation.sdk.resources.MkHttpServer.ServerName
+import org.tessellation.shared.{DagSharedKryoRegistrationIdRange, dagSharedKryoRegistrar}
 
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
 import eu.timepit.refined.boolean.Or
+import eu.timepit.refined.internal.BuildInfo
 
 object Main
     extends TessellationIOApp[Run](

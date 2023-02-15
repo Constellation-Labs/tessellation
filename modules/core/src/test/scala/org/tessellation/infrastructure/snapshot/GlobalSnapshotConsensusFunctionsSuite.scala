@@ -9,8 +9,6 @@ import cats.syntax.list._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import org.tessellation.dag.block.processing._
-import org.tessellation.dag.dagSharedKryoRegistrar
 import org.tessellation.domain.rewards.Rewards
 import org.tessellation.domain.snapshot.SnapshotStorage
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
@@ -24,6 +22,8 @@ import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.transaction.{DAGTransaction, RewardTransaction}
 import org.tessellation.sdk.config.AppEnvironment
+import org.tessellation.sdk.domain.block.processing._
+import org.tessellation.sdk.domain.block.processing.processing._
 import org.tessellation.sdk.infrastructure.consensus.trigger.EventTrigger
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.sdkKryoRegistrar
@@ -32,6 +32,7 @@ import org.tessellation.security.hash.Hash
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed.forAsyncKryo
+import org.tessellation.shared.dagSharedKryoRegistrar
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
 import org.tessellation.syntax.sortedCollection._
 
@@ -64,10 +65,13 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
   }
 
-  val bam: BlockAcceptanceManager[IO] = new BlockAcceptanceManager[IO] {
+  val bam: BlockAcceptanceManager[IO, DAGTransaction, DAGBlock] = new BlockAcceptanceManager[IO, DAGTransaction, DAGBlock] {
 
-    override def acceptBlocksIteratively(blocks: List[Signed[DAGBlock]], context: BlockAcceptanceContext[IO]): IO[BlockAcceptanceResult] =
-      BlockAcceptanceResult(
+    override def acceptBlocksIteratively(
+      blocks: List[Signed[DAGBlock]],
+      context: BlockAcceptanceContext[IO]
+    ): IO[BlockAcceptanceResult[DAGBlock]] =
+      BlockAcceptanceResult[DAGBlock](
         BlockAcceptanceContextUpdate.empty,
         List.empty,
         List.empty

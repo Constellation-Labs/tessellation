@@ -29,5 +29,5 @@ object Queues {
 sealed abstract class Queues[F[_]] private {
   val rumor: Queue[F, Hashed[RumorRaw]]
   val stateChannelOutput: Queue[F, StateChannelOutput]
-  val l1Output: Queue[F, Signed[DAGBlock]]
+  val l1Output: Queue[F, Signed[DAGBlock]] // TODO: Currency: Abstract to Block[_]
 }
