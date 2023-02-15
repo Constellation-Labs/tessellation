@@ -1,6 +1,6 @@
 package org.tessellation.infrastructure.rewards
 
-import cats.arrow.FunctionK.lift
+import cats.arrow.FunctionK.liftFunction
 import cats.data._
 import cats.effect.Async
 import cats.effect.std.Random
@@ -28,17 +28,14 @@ import org.tessellation.syntax.sortedCollection._
 import eu.timepit.refined.auto._
 import eu.timepit.refined.numeric.Positive
 import eu.timepit.refined.refineV
-import eu.timepit.refined.types.numeric.NonNegLong
 import io.estatico.newtype.ops.toCoercibleIdOps
 
 object Rewards {
 
   def make[F[_]: Async](
     rewardsPerEpoch: SortedMap[EpochProgress, Amount],
-    softStaking: SoftStakingDistributor[Either[ArithmeticException, *]],
-    dtm: DTMDistributor[Either[ArithmeticException, *]],
-    stardust: StardustCollectiveDistributor[Either[ArithmeticException, *]],
-    regular: RegularDistributor[F]
+    programsDistributor: ProgramsDistributor[Either[ArithmeticException, *]],
+    facilitatorDistributor: FacilitatorDistributor[F]
   ): Rewards[F] =
     new Rewards[F] {
 
@@ -49,14 +46,14 @@ object Rewards {
       ): F[SortedSet[RewardTransaction]] = {
 
         val totalFee = transactions.toList
-          .map(_.fee)
-          .foldM(NonNegLong.MinValue) { case (acc, fee) => acc + fee.value }
+          .map(_.fee.coerce)
+          .sumAll
           .map(Amount(_))
           .liftTo[F]
 
         Random.scalaUtilRandomSeedLong(snapshotOrdinal.value).flatMap { randomizer =>
           totalFee.flatMap { amount =>
-            regular
+            facilitatorDistributor
               .distribute(randomizer, facilitators)
               .run(amount)
               .flatTap(validateState(amount))
@@ -67,28 +64,20 @@ object Rewards {
       def mintedDistribution(
         epochProgress: EpochProgress,
         facilitators: NonEmptySet[Id]
-      ): F[SortedSet[RewardTransaction]] = {
-        val amount = getAmountByEpoch(epochProgress, rewardsPerEpoch)
+      ): F[SortedSet[RewardTransaction]] =
+        Random.scalaUtilRandomSeedLong(epochProgress.coerce).flatMap { random =>
+          val allRewardsState = for {
+            programRewards <- programsDistributor.distribute().mapK[F](liftFunction(_.liftTo[F]))
+            facilitatorRewards <- facilitatorDistributor.distribute(random, facilitators)
+          } yield programRewards ++ facilitatorRewards
 
-        val programRewardsState = for {
-          stardustCollective <- stardust.distribute()
-          dtmRewards <- dtm.distribute()
-          softStakingRewards <- softStaking.distribute(epochProgress, facilitators)
-        } yield dtmRewards ++ softStakingRewards ++ stardustCollective
+          val mintedAmount = getAmountByEpoch(epochProgress, rewardsPerEpoch)
 
-        def eitherToF[A](either: Either[ArithmeticException, A]): F[A] = either.liftTo[F]
-
-        val allRewardsState = for {
-          programRewards <- programRewardsState.mapK[F](lift(eitherToF))
-          randomizer <- StateT.liftF(Random.scalaUtilRandomSeedLong(epochProgress.coerce))
-          regularRewards <- regular.distribute(randomizer, facilitators)
-        } yield programRewards ++ regularRewards
-
-        allRewardsState
-          .run(amount)
-          .flatTap(validateState(amount))
-          .map(toTransactions)
-      }
+          allRewardsState
+            .run(mintedAmount)
+            .flatTap(validateState(mintedAmount))
+            .map(toTransactions)
+        }
 
       private def validateState(totalPool: Amount)(state: (Amount, List[(Address, Amount)])): F[Unit] = {
         val (remaining, _) = state

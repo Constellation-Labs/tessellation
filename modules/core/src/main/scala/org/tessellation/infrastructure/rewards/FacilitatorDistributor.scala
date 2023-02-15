@@ -19,13 +19,13 @@ import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 import io.estatico.newtype.ops._
 
-trait RegularDistributor[F[_]] {
+trait FacilitatorDistributor[F[_]] {
   def distribute(random: Random[F], facilitators: NonEmptySet[Id]): DistributionState[F]
 }
 
-object RegularDistributor {
+object FacilitatorDistributor {
 
-  def make[F[_]: Async: SecurityProvider]: RegularDistributor[F] =
+  def make[F[_]: Async: SecurityProvider]: FacilitatorDistributor[F] =
     (random, facilitators) =>
       StateT { amount =>
         facilitators.toList
@@ -33,7 +33,7 @@ object RegularDistributor {
           .flatMap(random.shuffleList)
           .map { addresses =>
             for {
-              (bottomAmount, reminder) <- amount.value /% NonNegLong.unsafeFrom(addresses.length.toLong)
+              (bottomAmount, reminder) <- amount.coerce /% NonNegLong.unsafeFrom(addresses.length.toLong)
               topAmount <- bottomAmount + 1L
 
               (topRewards, bottomRewards) = addresses
@@ -42,9 +42,9 @@ object RegularDistributor {
 
               allRewards = topRewards ++ bottomRewards
 
-              rewardsSum <- allRewards.foldM(NonNegLong.MinValue) { case (acc, (_, amount)) => acc + amount.coerce }
-              remainingRewards <- amount.coerce - rewardsSum
-            } yield (Amount(remainingRewards), allRewards)
+              rewardsSum <- allRewards.map(_._2.coerce).sumAll
+              remainingAmount <- amount.coerce - rewardsSum
+            } yield (Amount(remainingAmount), allRewards)
           }
           .map(_.liftTo[F])
           .flatten

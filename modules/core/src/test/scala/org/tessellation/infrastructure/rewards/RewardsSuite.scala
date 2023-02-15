@@ -44,6 +44,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
 
   val config: RewardsConfig = RewardsConfig()
   val totalSupply: Amount = Amount(1599999999_74784000L) // approx because of rounding
+  val expectedWeightsSum: Weight = Weight(100L)
 
   val lowerBound: NonNegLong = EpochProgress.MinValue.value
   val upperBound: NonNegLong = config.rewardsPerEpoch.keySet.max.value
@@ -60,23 +61,18 @@ object RewardsSuite extends MutableIOSuite with Checkers {
   val overflowEpochProgressGen: Gen[EpochProgress] =
     chooseNumRefined(lowerBoundNoMinting, NonNegLong.MaxValue).map(EpochProgress(_))
 
-  val softStakeGen: Gen[NonNegLong] = chooseNumRefined(NonNegLong.MinValue, NonNegLong(1_000_000))
-  val testnetGen: Gen[NonNegLong] = chooseNumRefined(NonNegLong.MinValue, NonNegLong(1_000_000))
-
   def facilitatorsGen(implicit genIdFn: GenIdFn): Gen[NonEmptySet[Id]] = Gen
     .nonEmptyListOf(
       Gen.delay(genIdFn())
     )
     .map(_.toNel.get.toNes)
 
-  def makeRewards(config: RewardsConfig, softStakeCount: NonNegLong, testnetCount: NonNegLong)(
+  def makeRewards(config: RewardsConfig)(
     implicit sp: SecurityProvider[IO]
   ): Rewards[F] = {
-    val softStaking = SoftStakingDistributor.make(config.softStaking.copy(softStakeCount = softStakeCount, testnetCount = testnetCount))
-    val dtm = DTMDistributor.make(config.dtm)
-    val stardust = StardustCollectiveDistributor.make(config.stardust)
-    val regular = RegularDistributor.make
-    Rewards.make[IO](config.rewardsPerEpoch, softStaking, dtm, stardust, regular)
+    val programsDistributor = ProgramsDistributor.make(config.programs)
+    val regularDistributor = FacilitatorDistributor.make
+    Rewards.make[IO](config.rewardsPerEpoch, programsDistributor, regularDistributor)
   }
 
   test("fee rewards sum up to the total fee") { res =>
@@ -94,7 +90,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
     forall(gen) {
       case (epochProgress, facilitators, txs) =>
         for {
-          rewards <- makeRewards(config, 0L, 0L).pure[F]
+          rewards <- makeRewards(config).pure[F]
           expectedSum = txs.toList.map(_.fee.value.toLong).sum
           txs <- rewards.feeDistribution(epochProgress, txs, facilitators)
           sum = txs.toList.map(_.amount.value.toLong).sum
@@ -113,20 +109,25 @@ object RewardsSuite extends MutableIOSuite with Checkers {
     expect(Amount(NonNegLong.unsafeFrom(sum)) === totalSupply)
   }
 
+  pureTest("all program weights sum up to the expected value") {
+    val weightSum = config.programs.weights.toList.map(_._2.value.value).sum +
+      config.programs.remainingWeight.value
+
+    expect.eql(expectedWeightsSum.value.value, weightSum)
+  }
+
   test("generated reward transactions sum up to the total snapshot reward") { res =>
     implicit val (_, sp, makeIdFn) = res
 
     val gen = for {
       epochProgress <- meaningfulEpochProgressGen
       facilitators <- facilitatorsGen
-      softStakeCount <- softStakeGen
-      testnetCount <- testnetGen
-    } yield (epochProgress, facilitators, softStakeCount, testnetCount)
+    } yield (epochProgress, facilitators)
 
     forall(gen) {
-      case (epochProgress, facilitators, softStakeCount, testnetCount) =>
+      case (epochProgress, facilitators) =>
         for {
-          rewards <- makeRewards(config, softStakeCount, testnetCount).pure[F]
+          rewards <- makeRewards(config).pure[F]
           txs <- rewards.mintedDistribution(epochProgress, facilitators)
           sum = txs.toList.map(_.amount.value.toLong).sum
           expected = rewards.getAmountByEpoch(epochProgress, config.rewardsPerEpoch).value.toLong
@@ -141,14 +142,12 @@ object RewardsSuite extends MutableIOSuite with Checkers {
     val gen = for {
       epochProgress <- overflowEpochProgressGen
       facilitators <- facilitatorsGen
-      softStakeCount <- softStakeGen
-      testnetCount <- testnetGen
-    } yield (epochProgress, facilitators, softStakeCount, testnetCount)
+    } yield (epochProgress, facilitators)
 
     forall(gen) {
-      case (epochProgress, facilitators, softStakeCount, testnetCount) =>
+      case (epochProgress, facilitators) =>
         for {
-          rewards <- makeRewards(config, softStakeCount, testnetCount).pure[F]
+          rewards <- makeRewards(config).pure[F]
           txs <- rewards.mintedDistribution(epochProgress, facilitators)
         } yield expect(txs.isEmpty)
     }

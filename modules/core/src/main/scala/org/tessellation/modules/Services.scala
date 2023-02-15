@@ -48,10 +48,8 @@ object Services {
       rewards <- Rewards
         .make[F](
           cfg.rewards.rewardsPerEpoch,
-          SoftStakingDistributor.make(cfg.rewards.softStaking),
-          DTMDistributor.make(cfg.rewards.dtm),
-          StardustCollectiveDistributor.make(cfg.rewards.stardust),
-          RegularDistributor.make
+          ProgramsDistributor.make(cfg.rewards.programs),
+          FacilitatorDistributor.make
         )
         .pure[F]
       consensus <- GlobalSnapshotConsensus
