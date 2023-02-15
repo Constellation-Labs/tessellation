@@ -1,9 +1,10 @@
 package org.tessellation.ext
 
+import _root_.cats._
 import _root_.cats.syntax.bifunctor._
 import _root_.cats.syntax.either._
+import _root_.cats.syntax.foldable._
 import _root_.cats.syntax.order._
-import _root_.cats.{Eq, Order, Show}
 import eu.timepit.refined.api.{Refined, Validate}
 import eu.timepit.refined.auto._
 import eu.timepit.refined.cats._
@@ -21,7 +22,7 @@ package object refined {
       Either.catchOnly[ArithmeticException](NonNegLong.unsafeFrom(Math.addExact(a, b)))
 
     def -(b: NonNegLong): Either[ArithmeticException, NonNegLong] =
-      Either.catchOnly[ArithmeticException](NonNegLong.unsafeFrom(Math.subtractExact(a, b)))
+      Either.cond(a >= b, NonNegLong.unsafeFrom(a.value - b.value), new ArithmeticException("cannot subtract greater number from smaller"))
 
     def *(b: NonNegLong): Either[ArithmeticException, NonNegLong] =
       Either.catchOnly[ArithmeticException](NonNegLong.unsafeFrom(Math.multiplyExact(a, b)))
@@ -41,6 +42,13 @@ package object refined {
         (a.value /% b.value).bimap(NonNegLong.unsafeFrom, NonNegLong.unsafeFrom),
         new ArithmeticException("division by zero")
       )
+  }
+
+  implicit class FoldableNonNegLongOps[G[_]: Foldable](xs: G[NonNegLong]) {
+    def sumAll: Either[ArithmeticException, NonNegLong] =
+      xs.foldM(NonNegLong.MinValue) { (acc, weight) =>
+        acc + weight
+      }
   }
 
   // For exemplary validator definition look into DAGAddressRefined object
