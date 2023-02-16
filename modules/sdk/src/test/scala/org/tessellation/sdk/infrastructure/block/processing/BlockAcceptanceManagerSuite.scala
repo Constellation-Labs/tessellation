@@ -7,7 +7,6 @@ import cats.syntax.bifunctor._
 import cats.syntax.either._
 import cats.syntax.validated._
 
-import org.tessellation.ext.kryo._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.BlockReference
 import org.tessellation.schema.address.Address
@@ -20,7 +19,7 @@ import org.tessellation.sdk.domain.transaction.TransactionChainValidator
 import org.tessellation.sdk.infrastructure.block.processing.BlockAcceptanceManager
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.signature.Signed
-import org.tessellation.shared.{dagSharedKryoRegistrar, sharedKryoRegistrar}
+import org.tessellation.shared.sharedKryoRegistrar
 
 import eu.timepit.refined.auto._
 import org.scalacheck.Gen
@@ -38,7 +37,7 @@ object BlockAcceptanceManagerSuite extends MutableIOSuite with Checkers {
   type Res = KryoSerializer[IO]
 
   override def sharedResource: Resource[IO, BlockAcceptanceManagerSuite.Res] =
-    KryoSerializer.forAsync[IO](dagSharedKryoRegistrar.union(sharedKryoRegistrar))
+    KryoSerializer.forAsync[IO](sharedKryoRegistrar)
 
   def mkBlockAcceptanceManager(acceptInitiallyAwaiting: Boolean = true)(implicit kryo: KryoSerializer[IO]) =
     Ref[F].of[Map[Signed[DAGBlock], Boolean]](Map.empty.withDefaultValue(false)).map { state =>

@@ -25,7 +25,6 @@ import org.tessellation.security.signature.Signed
 import eu.timepit.refined.auto._
 import eu.timepit.refined.cats._
 
-// TODO: Move to infrastructure
 object BlockAcceptanceLogic {
 
   def make[F[_]: Async: KryoSerializer: SecurityProvider, T <: Transaction, B <: Block[T]]: BlockAcceptanceLogic[F, T, B] =

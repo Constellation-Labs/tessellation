@@ -22,7 +22,7 @@ import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.key.ops._
 import org.tessellation.security.signature.Signed
-import org.tessellation.shared.{dagSharedKryoRegistrar, sharedKryoRegistrar}
+import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.statechannel.StateChannelSnapshotBinary
 import org.tessellation.tools.TransactionGenerator._
 import org.tessellation.tools.cli.method._
@@ -64,7 +64,7 @@ object Main
   override def main: Opts[IO[ExitCode]] =
     cli.method.opts.map { method =>
       SecurityProvider.forAsync[IO].use { implicit sp =>
-        KryoSerializer.forAsync[IO](sharedKryoRegistrar ++ dagSharedKryoRegistrar).use { implicit kryo =>
+        KryoSerializer.forAsync[IO](sharedKryoRegistrar).use { implicit kryo =>
           EmberClientBuilder.default[IO].build.use { client =>
             Random.scalaUtilRandom[IO].flatMap { implicit random =>
               (method match {

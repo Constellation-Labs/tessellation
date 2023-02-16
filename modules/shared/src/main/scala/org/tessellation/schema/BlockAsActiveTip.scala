@@ -20,6 +20,4 @@ object BlockAsActiveTip {
     Order.by[BlockAsActiveTip[B], Signed[B]](_.block),
     Order.by[BlockAsActiveTip[B], NonNegLong](_.usageCount)
   )
-
-  implicit def ordering[B <: Block[_]](implicit o: Order[BlockAsActiveTip[B]]) = o.toOrdering
 }

@@ -5,9 +5,7 @@ import cats.syntax.contravariantSemigroupal._
 import cats.syntax.either._
 import cats.syntax.foldable._
 
-import org.tessellation.dag.dagSharedKryoRegistrar
 import org.tessellation.dag.transaction.TransactionGenerator
-import org.tessellation.ext.kryo.MapRegistrationId
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.rosetta.domain._
@@ -29,7 +27,7 @@ object ConstructionServiceSuite extends MutableIOSuite with Checkers with Transa
 
   override def sharedResource: Resource[IO, Res] =
     KryoSerializer
-      .forAsync[IO](dagSharedKryoRegistrar.union(sharedKryoRegistrar))
+      .forAsync[IO](sharedKryoRegistrar)
       .flatMap(kryo => SecurityProvider.forAsync[IO].map(securityProvider => (securityProvider, kryo)))
 
   test("derives public key") { res =>

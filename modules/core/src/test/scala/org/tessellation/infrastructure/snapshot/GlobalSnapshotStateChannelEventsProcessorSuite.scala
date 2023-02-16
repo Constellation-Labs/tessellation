@@ -12,7 +12,6 @@ import scala.collection.immutable.SortedMap
 
 import org.tessellation.domain.statechannel.StateChannelValidator
 import org.tessellation.ext.crypto._
-import org.tessellation.ext.kryo._
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.GlobalSnapshotInfo
@@ -21,7 +20,7 @@ import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.Signed.forAsyncKryo
-import org.tessellation.shared.{dagSharedKryoRegistrar, sharedKryoRegistrar}
+import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
 
 import weaver.MutableIOSuite
@@ -31,7 +30,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
   type Res = (KryoSerializer[IO], SecurityProvider[IO])
 
   override def sharedResource: Resource[IO, GlobalSnapshotStateChannelEventsProcessorSuite.Res] =
-    KryoSerializer.forAsync[IO](dagSharedKryoRegistrar.union(sharedKryoRegistrar)).flatMap { ks =>
+    KryoSerializer.forAsync[IO](sharedKryoRegistrar).flatMap { ks =>
       SecurityProvider.forAsync[IO].map((ks, _))
     }
 

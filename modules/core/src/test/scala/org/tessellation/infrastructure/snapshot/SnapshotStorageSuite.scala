@@ -20,7 +20,7 @@ import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.signature.Signed
-import org.tessellation.shared.dagSharedKryoRegistrar
+import org.tessellation.shared.sharedKryoRegistrar
 
 import better.files._
 import eu.timepit.refined.auto._
@@ -34,7 +34,7 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
 
   override def sharedResource: Resource[IO, SnapshotStorageSuite.Res] =
     Supervisor[IO].flatMap { supervisor =>
-      KryoSerializer.forAsync[IO](dagSharedKryoRegistrar.union(sdkKryoRegistrar)).flatMap { ks =>
+      KryoSerializer.forAsync[IO](sharedKryoRegistrar.union(sdkKryoRegistrar)).flatMap { ks =>
         SecurityProvider.forAsync[IO].map((supervisor, ks, _))
       }
     }

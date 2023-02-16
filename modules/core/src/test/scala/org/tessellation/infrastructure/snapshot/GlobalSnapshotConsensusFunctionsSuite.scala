@@ -12,7 +12,6 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import org.tessellation.domain.rewards.Rewards
 import org.tessellation.domain.snapshot.SnapshotStorage
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
-import org.tessellation.ext.kryo._
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
@@ -31,7 +30,6 @@ import org.tessellation.security.hash.Hash
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed.forAsyncKryo
-import org.tessellation.shared.dagSharedKryoRegistrar
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
 import org.tessellation.syntax.sortedCollection._
 
@@ -45,7 +43,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
   override def sharedResource: Resource[IO, Res] =
     Supervisor[IO].flatMap { supervisor =>
-      KryoSerializer.forAsync[IO](dagSharedKryoRegistrar.union(sdkKryoRegistrar)).flatMap { ks =>
+      KryoSerializer.forAsync[IO](sdkKryoRegistrar).flatMap { ks =>
         SecurityProvider.forAsync[IO].flatMap { sp =>
           Metrics.forAsync[IO](Seq.empty).map((supervisor, ks, sp, _))
         }
