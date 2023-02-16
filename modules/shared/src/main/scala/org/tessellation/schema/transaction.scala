@@ -86,7 +86,7 @@ object transaction {
     fee: TransactionFee
   )
 
-  trait Transaction extends Fiber[TransactionReference, TransactionData] with Encodable {
+  sealed trait Transaction extends Fiber[TransactionReference, TransactionData] with Encodable {
     val source: Address
     val destination: Address
     val amount: TransactionAmount

@@ -24,21 +24,6 @@ import eu.timepit.refined.numeric.Greater
 
 package object shared {
 
-  type DagSharedKryoRegistrationIdRange = Greater[100]
-
-  type DagSharedKryoRegistrationId = KryoRegistrationId[DagSharedKryoRegistrationIdRange]
-
-  val dagSharedKryoRegistrar: Map[Class[_], DagSharedKryoRegistrationId] = Map(
-    classOf[GlobalSnapshot] -> 600,
-    classOf[StateChannelSnapshotBinary] -> 601,
-    classOf[DAGBlock] -> 603,
-    DAGBlock.OrderingInstance.getClass -> 604,
-    classOf[GlobalSnapshotInfo] -> 606,
-    classOf[BlockAsActiveTip[_]] -> 610,
-    DAGBlock.OrderingInstanceAsActiveTip.getClass -> 611,
-    classOf[Tips] -> 614
-  )
-
   type SharedKryoRegistrationIdRange = Greater[100]
 
   type SharedKryoRegistrationId = KryoRegistrationId[SharedKryoRegistrationIdRange]
@@ -77,13 +62,21 @@ package object shared {
     classOf[SignedOrdering[_]] -> 335,
     Address.OrderingInstance.getClass -> 336,
     NodeState.Observing.getClass -> 337,
+    classOf[GlobalSnapshot] -> 600,
+    classOf[StateChannelSnapshotBinary] -> 601,
     classOf[SnapshotOrdinal] -> 602,
+    classOf[DAGBlock] -> 603,
+    DAGBlock.OrderingInstance.getClass -> 604,
     classOf[BlockReference] -> 605,
+    classOf[GlobalSnapshotInfo] -> 606,
     classOf[SnapshotTips] -> 607,
     classOf[ActiveTip] -> 608,
     ActiveTip.OrderingInstance.getClass -> 609,
+    classOf[BlockAsActiveTip[DAGBlock]] -> 610,
+    DAGBlock.OrderingInstanceAsActiveTip.getClass -> 611,
     classOf[DeprecatedTip] -> 612,
-    DeprecatedTip.OrderingInstance.getClass -> 613
+    DeprecatedTip.OrderingInstance.getClass -> 613,
+    classOf[Tips] -> 614
   )
 
 }

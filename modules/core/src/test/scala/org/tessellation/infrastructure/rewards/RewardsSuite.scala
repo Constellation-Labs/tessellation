@@ -23,7 +23,7 @@ import org.tessellation.schema.transaction.TransactionFee
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.key.ops.PublicKeyOps
-import org.tessellation.shared.dagSharedKryoRegistrar
+import org.tessellation.shared.sharedKryoRegistrar
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.cats._
@@ -37,7 +37,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
   type Res = (KryoSerializer[IO], SecurityProvider[IO], GenIdFn)
 
   override def sharedResource: Resource[IO, Res] = for {
-    kryo <- KryoSerializer.forAsync[IO](dagSharedKryoRegistrar.union(sdkKryoRegistrar))
+    kryo <- KryoSerializer.forAsync[IO](sharedKryoRegistrar.union(sdkKryoRegistrar))
     implicit0(sp: SecurityProvider[IO]) <- SecurityProvider.forAsync[IO]
     mkKeyPair = () => KeyPairGenerator.makeKeyPair.map(_.getPublic.toId).unsafeRunSync()
   } yield (kryo, sp, mkKeyPair)

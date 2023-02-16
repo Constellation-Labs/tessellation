@@ -1,5 +1,6 @@
 package org.tessellation.sdk.infrastructure.block.processing
 
+import cats.Eq
 import cats.data.Validated.{Invalid, Valid}
 import cats.effect.Async
 import cats.syntax.applicative._
@@ -10,8 +11,6 @@ import cats.syntax.foldable._
 import cats.syntax.functor._
 import cats.syntax.show._
 import cats.syntax.traverse._
-
-import scala.tools.nsc.tasty.SafeEq
 
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.transaction.Transaction
@@ -28,11 +27,11 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object BlockAcceptanceManager {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider, T <: Transaction, B <: Block[T]: Ordering](
+  def make[F[_]: Async: KryoSerializer: SecurityProvider, T <: Transaction: Eq, B <: Block[T]: Eq: Ordering](
     blockValidator: BlockValidator[F, T, B]
   ): BlockAcceptanceManager[F, T, B] = make(BlockAcceptanceLogic.make[F, T, B], blockValidator)
 
-  def make[F[_]: Async: KryoSerializer, T <: Transaction, B <: Block[T]: Ordering](
+  def make[F[_]: Async: KryoSerializer, T <: Transaction: Eq, B <: Block[T]: Eq: Ordering](
     logic: BlockAcceptanceLogic[F, T, B],
     blockValidator: BlockValidator[F, T, B]
   ): BlockAcceptanceManager[F, T, B] =

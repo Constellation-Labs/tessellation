@@ -17,7 +17,7 @@ import org.tessellation.sdk.app.{SDK, TessellationIOApp}
 import org.tessellation.sdk.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import org.tessellation.sdk.resources.MkHttpServer
 import org.tessellation.sdk.resources.MkHttpServer.ServerName
-import org.tessellation.shared.{DagSharedKryoRegistrationIdRange, dagSharedKryoRegistrar}
+import org.tessellation.shared.{SharedKryoRegistrationIdRange, sharedKryoRegistrar}
 
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
@@ -33,10 +33,10 @@ object Main
     ) {
   val opts: Opts[Run] = cli.method.opts
 
-  type KryoRegistrationIdRange = DagL1KryoRegistrationIdRange Or DagSharedKryoRegistrationIdRange
+  type KryoRegistrationIdRange = DagL1KryoRegistrationIdRange Or SharedKryoRegistrationIdRange
 
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
-    dagL1KryoRegistrar.union(dagSharedKryoRegistrar)
+    dagL1KryoRegistrar.union(sharedKryoRegistrar)
 
   def run(method: Run, sdk: SDK[IO]): Resource[IO, Unit] = {
     import sdk._

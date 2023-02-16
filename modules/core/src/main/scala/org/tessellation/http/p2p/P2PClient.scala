@@ -25,7 +25,7 @@ object P2PClient {
       sdkP2PClient.gossip,
       sdkP2PClient.node,
       TrustClient.make[F](client, session),
-      GlobalSnapshotClient.make[F](client, session) // TODO: Currency: Add CurrencySnapshot client
+      GlobalSnapshotClient.make[F](client, session)
     ) {}
 }
 

@@ -12,7 +12,6 @@ import org.tessellation.schema._
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
-import org.tessellation.shared.dagSharedKryoRegistrar
 
 import eu.timepit.refined.auto._
 import fs2.io.file.{Files, Path}
@@ -34,7 +33,7 @@ object GlobalSnapshotSerializationSuite extends MutableIOSuite with Checkers {
   type Res = KryoSerializer[IO]
 
   def sharedResource: Resource[IO, KryoSerializer[IO]] =
-    KryoSerializer.forAsync[IO](dagSharedKryoRegistrar.union(sdkKryoRegistrar))
+    KryoSerializer.forAsync[IO](sdkKryoRegistrar)
 
   test("snapshot is successfully deserialized and serialized with kryo") { implicit kryo =>
     for {
