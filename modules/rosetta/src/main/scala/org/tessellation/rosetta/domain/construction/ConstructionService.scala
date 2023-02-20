@@ -6,21 +6,31 @@ import cats.syntax.applicativeError._
 import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+import cats.syntax.option._
 
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.rosetta.domain._
+import org.tessellation.rosetta.domain.amount.{Amount, AmountValue}
+import org.tessellation.rosetta.domain.api.construction.ConstructionParse
+import org.tessellation.rosetta.domain.currency.DAG
 import org.tessellation.rosetta.domain.error.{ConstructionError, InvalidPublicKey, MalformedTransaction}
-import org.tessellation.rosetta.domain.operation.Operation
+import org.tessellation.rosetta.domain.operation._
+import org.tessellation.rosetta.domain.{AccountIdentifier, RosettaPublicKey, TransactionIdentifier}
 import org.tessellation.schema.transaction.Transaction
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.key.ops._
 import org.tessellation.security.signature.Signed
 
+import eu.timepit.refined.auto._
+import eu.timepit.refined.boolean.Not
+import eu.timepit.refined.generic.Equal
+import eu.timepit.refined.refineV
+
 trait ConstructionService[F[_]] {
   def derive(publicKey: RosettaPublicKey): EitherT[F, ConstructionError, AccountIdentifier]
   def getAccountIdentifiers(operations: List[Operation]): Option[NonEmptyList[AccountIdentifier]]
   def getTransactionIdentifier(hex: Hex): EitherT[F, ConstructionError, TransactionIdentifier]
+  def parseTransaction(hex: Hex, isSigned: Boolean): EitherT[F, ConstructionError, ConstructionParse.ParseResult]
 }
 
 object ConstructionService {
@@ -48,5 +58,53 @@ object ConstructionService {
 
       NonEmptyList.fromList(accountIdentifiers)
     }
+
+    def transactionToOperations(transaction: Transaction): Either[ConstructionError, NonEmptyList[Operation]] = {
+      type Refinement = Not[Equal[0L]]
+
+      val negativeTransfer = refineV[Refinement](-transaction.amount.value.value).map(
+        (transaction.source, _, OperationIndex(0L))
+      )
+      val positiveTransfer = refineV[Refinement](+transaction.amount.value.value).map(
+        (transaction.destination, _, OperationIndex(1L))
+      )
+
+      NonEmptyList.of(negativeTransfer, positiveTransfer).traverse {
+        case (Right((address, amount, operationIndex))) =>
+          Operation(
+            OperationIdentifier(operationIndex),
+            none,
+            OperationType.Transfer,
+            none,
+            AccountIdentifier(address, none).some,
+            Amount(AmountValue(amount), DAG).some
+          ).asRight[ConstructionError]
+        case _ => Left(MalformedTransaction)
+      }
+    }
+
+    def parseSignedTransaction(hex: Hex): EitherT[F, ConstructionError, ConstructionParse.ParseResult] = {
+      val result = for {
+        signedTransaction <- KryoSerializer[F].deserialize[Signed[Transaction]](hex.toBytes).toEitherT
+        operations <- transactionToOperations(signedTransaction).toEitherT
+        proofs <- signedTransaction.proofs.toNonEmptyList.traverse(_.id.hex.toPublicKey).attemptT
+        accountIds = proofs.map(_.toAddress).map(AccountIdentifier(_, none))
+      } yield ConstructionParse.ParseResult(operations, accountIds.some)
+
+      result.leftMap(_ => MalformedTransaction)
+    }
+
+    def parseUnsignedTransaction(hex: Hex): EitherT[F, ConstructionError, ConstructionParse.ParseResult] =
+      for {
+        unsignedTransaction <- KryoSerializer[F].deserialize[Transaction](hex.toBytes).toEitherT.leftMap(_ => MalformedTransaction)
+        operations <- transactionToOperations(unsignedTransaction).toEitherT
+      } yield ConstructionParse.ParseResult(operations, none)
+
+    def parseTransaction(hex: Hex, isSigned: Boolean): EitherT[F, ConstructionError, ConstructionParse.ParseResult] =
+      if (isSigned) {
+        parseSignedTransaction(hex)
+      } else {
+        parseUnsignedTransaction(hex)
+      }
   }
 }

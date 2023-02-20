@@ -1,5 +1,6 @@
 package org.tessellation.rosetta.domain.construction
 
+import cats.data.EitherT
 import cats.effect.{IO, Resource}
 import cats.syntax.contravariantSemigroupal._
 import cats.syntax.either._
@@ -11,18 +12,20 @@ import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.rosetta.domain._
 import org.tessellation.rosetta.domain.amount.{Amount, AmountValue}
-import org.tessellation.rosetta.domain.currency.{Currency, CurrencyDecimal, CurrencySymbol}
-import org.tessellation.rosetta.domain.error.{InvalidPublicKey, MalformedTransaction}
+import org.tessellation.rosetta.domain.api.construction.ConstructionParse
+import org.tessellation.rosetta.domain.error.{ConstructionError, InvalidPublicKey, MalformedTransaction}
 import org.tessellation.rosetta.domain.operation.OperationType.Transfer
 import org.tessellation.rosetta.domain.operation.{Operation, OperationIdentifier, OperationIndex}
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.generators.addressGen
-import org.tessellation.security.SecurityProvider
+import org.tessellation.schema.transaction.Transaction
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.key.ops.PublicKeyOps
+import org.tessellation.security.{Hashed, SecurityProvider}
 import org.tessellation.shared.sharedKryoRegistrar
 
 import eu.timepit.refined.auto._
+import eu.timepit.refined.cats._
 import eu.timepit.refined.types.all.PosInt
 import weaver._
 import weaver.scalacheck.Checkers
@@ -35,6 +38,50 @@ object ConstructionServiceSuite extends MutableIOSuite with Checkers with Transa
     KryoSerializer
       .forAsync[IO](sharedKryoRegistrar)
       .flatMap(kryo => SecurityProvider.forAsync[IO].map(securityProvider => (securityProvider, kryo)))
+
+  def generateTestTransactions(wantSignedTransaction: Boolean)(implicit S: SecurityProvider[IO], K: KryoSerializer[IO]) = {
+    val getSignedTransaction = (transaction: Hashed[Transaction]) => transaction.signed
+    val getUnsignedTransaction = (transaction: Hashed[Transaction]) => transaction.signed.value
+
+    def txs(transactionConverter: Hashed[Transaction] => AnyRef) =
+      (KeyPairGenerator.makeKeyPair[IO], KeyPairGenerator.makeKeyPair[IO]).tupled.flatMap {
+        case (srcKey, dstKey) =>
+          val srcAddress = srcKey.getPublic.toAddress
+          val dstAddress = dstKey.getPublic.toAddress
+          val txCount = PosInt(100)
+
+          generateTransactions(srcAddress, srcKey, dstAddress, txCount)
+            .flatMap(_.traverse { hashedTransaction =>
+              KryoSerializer[F]
+                .serialize(transactionConverter(hashedTransaction))
+                .map(Hex.fromBytes(_))
+                .map((_, hashedTransaction.hash, hashedTransaction))
+                .liftTo[IO]
+            })
+      }
+
+    if (wantSignedTransaction) {
+      txs(getSignedTransaction)
+    } else {
+      txs(getUnsignedTransaction)
+    }
+  }
+
+  def testParseTransactions(
+    isSignedTransaction: Boolean,
+    testCaseCallbackHandler: (EitherT[F, ConstructionError, ConstructionParse.ParseResult], Hashed[Transaction]) => F[Expectations]
+  ) = sharedResource.use { res =>
+    implicit val (sp, k) = res
+
+    val cs = ConstructionService.make[IO]()
+
+    generateTestTransactions(wantSignedTransaction = isSignedTransaction)
+      .flatMap(_.traverse {
+        case (hex, _, transaction) =>
+          testCaseCallbackHandler(cs.parseTransaction(hex, isSignedTransaction), transaction)
+      })
+      .map(_.fold)
+  }
 
   test("derives public key") { res =>
     implicit val (sp, k) = res
@@ -72,28 +119,12 @@ object ConstructionServiceSuite extends MutableIOSuite with Checkers with Transa
 
     val cs = ConstructionService.make[IO]()
 
-    def txs = (KeyPairGenerator.makeKeyPair[IO], KeyPairGenerator.makeKeyPair[IO]).tupled.flatMap {
-      case (srcKey, dstKey) =>
-        val srcAddress = srcKey.getPublic.toAddress
-        val dstAddress = dstKey.getPublic.toAddress
-        val txCount = PosInt(100)
-
-        generateTransactions(srcAddress, srcKey, dstAddress, txCount)
-          .flatMap(_.traverse { hashedTransaction =>
-            KryoSerializer[F]
-              .serialize(hashedTransaction.signed)
-              .map(Hex.fromBytes(_))
-              .map((_, hashedTransaction.hash))
-              .liftTo[IO]
-          })
-    }
-
-    txs
+    generateTestTransactions(wantSignedTransaction = true)
       .flatMap(_.traverse {
-        case (hex, hash) =>
+        case (hex, hash, _) =>
           cs.getTransactionIdentifier(hex)
             .rethrowT
-            .map(expect.eql(_, TransactionIdentifier(hash)))
+            .map(expect.eql(TransactionIdentifier(hash), _))
       })
       .map(_.fold)
   }
@@ -126,7 +157,7 @@ object ConstructionServiceSuite extends MutableIOSuite with Checkers with Transa
         Transfer,
         none,
         AccountIdentifier(address, none).some,
-        Amount(AmountValue(-1L), Currency(CurrencySymbol("DAG"), CurrencyDecimal(8L))).some
+        Amount(AmountValue(-1L), currency.Currency(currency.CurrencySymbol("DAG"), currency.CurrencyDecimal(8L))).some
       )
 
       val result = cs
@@ -149,11 +180,121 @@ object ConstructionServiceSuite extends MutableIOSuite with Checkers with Transa
         Transfer,
         none,
         AccountIdentifier(address, none).some,
-        Amount(AmountValue(1L), Currency(CurrencySymbol("DAG"), CurrencyDecimal(8L))).some
+        Amount(AmountValue(1L), currency.Currency(currency.CurrencySymbol("DAG"), currency.CurrencyDecimal(8L))).some
       )
 
       val accountIdentifiers = cs.getAccountIdentifiers(List(operation))
       expect.eql(none, accountIdentifiers)
     }
+  }
+
+  test("returns operations for a valid signed transaction hex") { res =>
+    implicit val (sp, k) = res
+
+    val cs = ConstructionService.make[IO]()
+
+    generateTestTransactions(wantSignedTransaction = true)
+      .flatMap(_.traverse {
+        case (hex, _, _) =>
+          cs.parseTransaction(hex, true)
+            .rethrowT
+            .map(result => expect.eql(Amount(AmountValue(-1L), currency.DAG).some, result.operations.head.amount))
+      })
+      .map(_.fold)
+  }
+
+  test("returns operations for a valid unsigned transaction hex") { res =>
+    implicit val (sp, k) = res
+
+    val cs = ConstructionService.make[IO]()
+
+    generateTestTransactions(wantSignedTransaction = false)
+      .flatMap(_.traverse {
+        case (hex, _, _) =>
+          cs.parseTransaction(hex, false)
+            .rethrowT
+            .map(result => expect.eql(Amount(AmountValue(-1L), currency.DAG).some, result.operations.head.amount))
+      })
+      .map(_.fold)
+  }
+
+  test("parse signed transaction returns one positive and one negative operation only") {
+    val testCase = (parseResult: EitherT[F, ConstructionError, ConstructionParse.ParseResult], _: Hashed[Transaction]) =>
+      parseResult.rethrowT
+        .map(result => expect.eql(2, result.operations.length))
+
+    testParseTransactions(isSignedTransaction = true, testCaseCallbackHandler = testCase)
+  }
+
+  test("parse signed transaction returns a negative operation that takes from source address") {
+    val testCase = (parseResult: EitherT[F, ConstructionError, ConstructionParse.ParseResult], transaction: Hashed[Transaction]) =>
+      parseResult.rethrowT
+        .map(result => expect.eql(AccountIdentifier(transaction.source, none).some, result.operations.head.account))
+
+    testParseTransactions(isSignedTransaction = true, testCaseCallbackHandler = testCase)
+  }
+
+  test("parse signed transaction returns a negative operation with a negative amount") {
+    val testCase = (parseResult: EitherT[F, ConstructionError, ConstructionParse.ParseResult], _: Hashed[Transaction]) =>
+      parseResult.rethrowT
+        .map(result => expect.eql(Amount(AmountValue(-1L), currency.DAG).some, result.operations.head.amount))
+
+    testParseTransactions(isSignedTransaction = true, testCaseCallbackHandler = testCase)
+  }
+
+  test("parse signed transaction returns a positive operation that gives to the destination address") {
+    val testCase = (parseResult: EitherT[F, ConstructionError, ConstructionParse.ParseResult], transaction: Hashed[Transaction]) =>
+      parseResult.rethrowT
+        .map(result => expect.eql(AccountIdentifier(transaction.destination, none).some, result.operations.tail.head.account))
+
+    testParseTransactions(isSignedTransaction = true, testCaseCallbackHandler = testCase)
+  }
+
+  test("parse signed transaction returns a positive operation with a positive amount") {
+    val testCase = (parseResult: EitherT[F, ConstructionError, ConstructionParse.ParseResult], _: Hashed[Transaction]) =>
+      parseResult.rethrowT
+        .map(result => expect.eql(Amount(AmountValue(1L), currency.DAG).some, result.operations.tail.head.amount))
+
+    testParseTransactions(isSignedTransaction = true, testCaseCallbackHandler = testCase)
+  }
+
+  test("parse unsigned transaction returns one positive and one negative operation only") {
+    val testCase = (parseResult: EitherT[F, ConstructionError, ConstructionParse.ParseResult], _: Hashed[Transaction]) =>
+      parseResult.rethrowT
+        .map(result => expect.eql(2, result.operations.length))
+
+    testParseTransactions(isSignedTransaction = false, testCaseCallbackHandler = testCase)
+  }
+
+  test("parse unsigned transaction returns a negative operation that takes from source address") {
+    val testCase = (parseResult: EitherT[F, ConstructionError, ConstructionParse.ParseResult], transaction: Hashed[Transaction]) =>
+      parseResult.rethrowT
+        .map(result => expect.eql(AccountIdentifier(transaction.source, none).some, result.operations.head.account))
+
+    testParseTransactions(isSignedTransaction = false, testCaseCallbackHandler = testCase)
+  }
+
+  test("parse unsigned transaction returns a negative operation with a negative amount") {
+    val testCase = (parseResult: EitherT[F, ConstructionError, ConstructionParse.ParseResult], _: Hashed[Transaction]) =>
+      parseResult.rethrowT
+        .map(result => expect.eql(Amount(AmountValue(-1L), currency.DAG).some, result.operations.head.amount))
+
+    testParseTransactions(isSignedTransaction = false, testCaseCallbackHandler = testCase)
+  }
+
+  test("parse unsigned transaction returns a positive operation that gives to the destination address") {
+    val testCase = (parseResult: EitherT[F, ConstructionError, ConstructionParse.ParseResult], transaction: Hashed[Transaction]) =>
+      parseResult.rethrowT
+        .map(result => expect.eql(AccountIdentifier(transaction.destination, none).some, result.operations.tail.head.account))
+
+    testParseTransactions(isSignedTransaction = false, testCaseCallbackHandler = testCase)
+  }
+
+  test("parse unsigned transaction returns a positive operation with a positive amount") {
+    val testCase = (parseResult: EitherT[F, ConstructionError, ConstructionParse.ParseResult], _: Hashed[Transaction]) =>
+      parseResult.rethrowT
+        .map(result => expect.eql(Amount(AmountValue(1L), currency.DAG).some, result.operations.tail.head.amount))
+
+    testParseTransactions(isSignedTransaction = false, testCaseCallbackHandler = testCase)
   }
 }
