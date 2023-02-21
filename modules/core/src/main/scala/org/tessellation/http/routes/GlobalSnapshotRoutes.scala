@@ -4,12 +4,12 @@ import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.domain.snapshot.SnapshotStorage
 import org.tessellation.ext.codecs.BinaryCodec
-import org.tessellation.ext.http4s.SnapshotOrdinalVar
 import org.tessellation.ext.http4s.headers.negotiation.resolveEncoder
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.GlobalSnapshot
+import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
+import org.tessellation.sdk.ext.http4s.SnapshotOrdinalVar
 import org.tessellation.security.signature.Signed
 
 import io.circe.Encoder

@@ -14,7 +14,6 @@ import cats.syntax.show._
 import cats.syntax.traverse._
 import cats.{Applicative, ApplicativeError, MonadThrow}
 
-import org.tessellation.domain.snapshot.SnapshotStorage
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.cats.syntax.partialPrevious._
 import org.tessellation.ext.crypto._
@@ -23,6 +22,7 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.{GlobalSnapshot, SnapshotOrdinal}
 import org.tessellation.sdk.domain.collateral.LatestBalances
+import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 

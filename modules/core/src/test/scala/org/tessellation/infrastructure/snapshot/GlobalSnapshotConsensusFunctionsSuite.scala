@@ -10,7 +10,6 @@ import cats.syntax.list._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import org.tessellation.domain.rewards.Rewards
-import org.tessellation.domain.snapshot.SnapshotStorage
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
@@ -22,6 +21,7 @@ import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.transaction.{DAGTransaction, RewardTransaction}
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.domain.block.processing._
+import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.infrastructure.consensus.trigger.EventTrigger
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.sdkKryoRegistrar

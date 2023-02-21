@@ -12,7 +12,6 @@ import cats.syntax.order._
 import cats.syntax.show._
 import cats.syntax.traverse._
 
-import org.tessellation.effects.GenUUID
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID.Id
@@ -26,6 +25,7 @@ import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tessellation.sdk.domain.healthcheck.LocalHealthcheck
 import org.tessellation.sdk.domain.node.NodeStorage
+import org.tessellation.sdk.effects.GenUUID
 import org.tessellation.sdk.http.p2p.clients.SignClient
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash

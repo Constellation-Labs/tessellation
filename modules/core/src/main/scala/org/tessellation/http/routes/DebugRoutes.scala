@@ -3,11 +3,11 @@ package org.tessellation.http.routes
 import cats.effect.Async
 import cats.syntax.all._
 
-import org.tessellation.ext.http4s.SnapshotOrdinalVar
 import org.tessellation.modules.{Services, Storages}
 import org.tessellation.schema.cluster.SessionAlreadyExists
 import org.tessellation.schema.node.InvalidNodeStateTransition
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.sdk.ext.http4s.SnapshotOrdinalVar
 import org.tessellation.sdk.infrastructure.consensus.declaration.PeerDeclaration
 import org.tessellation.sdk.infrastructure.consensus.{ConsensusResources, PeerDeclarations}
 

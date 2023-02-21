@@ -6,7 +6,6 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.config.types.SnapshotConfig
-import org.tessellation.domain.snapshot.SnapshotStorage
 import org.tessellation.domain.trust.storage.TrustStorage
 import org.tessellation.infrastructure.snapshot.{GlobalSnapshotLocalFileSystemStorage, GlobalSnapshotStorage}
 import org.tessellation.infrastructure.trust.storage.TrustStorage
@@ -15,6 +14,7 @@ import org.tessellation.schema.GlobalSnapshot
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tessellation.sdk.domain.collateral.LatestBalances
 import org.tessellation.sdk.domain.node.NodeStorage
+import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.infrastructure.gossip.RumorStorage
 import org.tessellation.sdk.modules.SdkStorages
 import org.tessellation.security.hash.Hash

@@ -14,10 +14,8 @@ import cats.syntax.order._
 import cats.syntax.traverse._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
-import scala.util.control.NoStackTrace
 
 import org.tessellation.domain.rewards.Rewards
-import org.tessellation.domain.snapshot._
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
@@ -31,18 +29,16 @@ import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.AppEnvironment.Mainnet
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions.InvalidArtifact
+import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import org.tessellation.sdk.infrastructure.metrics.Metrics
+import org.tessellation.sdk.snapshot._
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 import org.tessellation.statechannel.StateChannelOutput
 
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
-
-case class InvalidHeight(lastHeight: Height, currentHeight: Height) extends NoStackTrace
-case object NoTipsRemaining extends NoStackTrace
-case object ArtifactMismatch extends InvalidArtifact
 abstract class GlobalSnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
     extends SnapshotConsensusFunctions[F, DAGTransaction, DAGBlock, GlobalSnapshotEvent, GlobalSnapshotArtifact, ConsensusTrigger] {}
 

@@ -4,10 +4,10 @@ import cats.effect.Async
 import cats.syntax.functor._
 
 import org.tessellation.domain.dag.DAGService
-import org.tessellation.domain.snapshot.SnapshotStorage
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.{GlobalSnapshot, SnapshotOrdinal}
+import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.security.signature.Signed
 
 import io.estatico.newtype.ops._
