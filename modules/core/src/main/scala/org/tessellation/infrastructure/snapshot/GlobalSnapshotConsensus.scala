@@ -7,7 +7,6 @@ import cats.effect.std.{Random, Supervisor}
 
 import org.tessellation.config.types.SnapshotConfig
 import org.tessellation.domain.rewards.Rewards
-import org.tessellation.domain.snapshot.SnapshotStorage
 import org.tessellation.domain.statechannel.StateChannelValidator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.GlobalSnapshot
@@ -21,6 +20,7 @@ import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.node.NodeStorage
+import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.infrastructure.block.processing.BlockAcceptanceManager
 import org.tessellation.sdk.infrastructure.consensus.Consensus
 import org.tessellation.sdk.infrastructure.metrics.Metrics

@@ -5,11 +5,11 @@ import cats.effect.std.{Random, Supervisor}
 import cats.syntax.functor._
 
 import org.tessellation.dag.l1.http.p2p.P2PClient
-import org.tessellation.effects.GenUUID
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.config.types.HealthCheckConfig
 import org.tessellation.sdk.domain.cluster.services.Session
+import org.tessellation.sdk.effects.GenUUID
 import org.tessellation.sdk.infrastructure.healthcheck.ping.{PingHealthCheckConsensus, PingHealthCheckConsensusDriver}
 
 import org.http4s.client.Client

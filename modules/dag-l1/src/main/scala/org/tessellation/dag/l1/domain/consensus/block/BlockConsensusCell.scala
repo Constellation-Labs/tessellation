@@ -21,7 +21,6 @@ import org.tessellation.dag.l1.domain.consensus.block.Validator.isReadyForBlockC
 import org.tessellation.dag.l1.domain.consensus.block.http.p2p.clients.BlockConsensusClient
 import org.tessellation.dag.l1.domain.consensus.round.RoundId
 import org.tessellation.dag.l1.domain.transaction.{TransactionStorage, transactionLoggerName}
-import org.tessellation.effects.GenUUID
 import org.tessellation.ext.collection.MapRefUtils.MapRefOps
 import org.tessellation.kernel._
 import org.tessellation.kryo.KryoSerializer
@@ -29,6 +28,7 @@ import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.schema.transaction.DAGTransaction
 import org.tessellation.sdk.domain.block.processing.BlockValidationParams
+import org.tessellation.sdk.effects.GenUUID
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed._
 import org.tessellation.security.{Hashed, SecurityProvider}

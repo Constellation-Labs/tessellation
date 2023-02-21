@@ -1,18 +1,20 @@
 package org.tessellation.sdk
 
 import org.tessellation.schema.snapshot.Snapshot
+import org.tessellation.schema.transaction.Transaction
 import org.tessellation.schema.{Block, SnapshotOrdinal}
 import org.tessellation.sdk.infrastructure.consensus.Consensus
 import org.tessellation.security.signature.Signed
 
 package object snapshot {
 
-  type SnapshotEvent = Signed[Block[_]]
+  type SnapshotEvent[T <: Transaction, B <: Block[T]] = Signed[B]
 
   type SnapshotKey = SnapshotOrdinal
 
-  type SnapshotArtifact[S <: Snapshot[_, _]] = S
+  type SnapshotArtifact[T <: Transaction, B <: Block[T], S <: Snapshot[T, B]] = S
 
-  type SnapshotConsensus[F[_], S <: Snapshot[_, _]] = Consensus[F, SnapshotEvent, SnapshotKey, SnapshotArtifact[S]]
+  type SnapshotConsensus[F[_], T <: Transaction, B <: Block[T], S <: Snapshot[T, B]] =
+    Consensus[F, SnapshotEvent[T, B], SnapshotKey, SnapshotArtifact[T, B, S]]
 
 }

@@ -86,7 +86,7 @@ object transaction {
     fee: TransactionFee
   )
 
-  sealed trait Transaction extends Fiber[TransactionReference, TransactionData] with Encodable {
+  trait Transaction extends Fiber[TransactionReference, TransactionData] with Encodable {
     val source: Address
     val destination: Address
     val amount: TransactionAmount
@@ -94,6 +94,9 @@ object transaction {
     val parent: TransactionReference
     val salt: TransactionSalt
     val ordinal: TransactionOrdinal
+
+    def reference = parent
+    def data = TransactionData(source, destination, amount, fee)
   }
 
   @derive(decoder, encoder, order, show)
@@ -106,9 +109,6 @@ object transaction {
     salt: TransactionSalt
   ) extends Transaction {
     import DAGTransaction._
-
-    def reference = parent
-    def data = TransactionData(source, destination, amount, fee)
 
     // WARN: Transactions hash needs to be calculated with Kryo instance having setReferences=true, to be backward compatible
     override def toEncode: String =

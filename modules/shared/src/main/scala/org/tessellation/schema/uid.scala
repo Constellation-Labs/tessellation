@@ -3,8 +3,8 @@ package org.tessellation.schema
 import cats.Functor
 import cats.syntax.functor._
 
-import org.tessellation.effects.GenUUID
 import org.tessellation.optics.IsUUID
+import org.tessellation.sdk.effects.GenUUID
 
 object uid {
 

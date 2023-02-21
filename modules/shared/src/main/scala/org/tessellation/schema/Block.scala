@@ -11,9 +11,13 @@ import org.tessellation.security.signature.Signed
 case class ParentBlockReference(parents: NonEmptyList[BlockReference])
 case class BlockData[A <: Transaction](transactions: NonEmptySet[Signed[A]])
 
-trait Block[A <: Transaction] extends Fiber[ParentBlockReference, BlockData[A]] {
+trait Block[T <: Transaction] extends Fiber[ParentBlockReference, BlockData[T]] {
   val parent: NonEmptyList[BlockReference]
-  val transactions: NonEmptySet[Signed[A]]
+  val transactions: NonEmptySet[Signed[T]]
 
   val height: Height = parent.maximum.height.next
+
+  def reference: ParentBlockReference = ParentBlockReference(parent)
+
+  def data: BlockData[T] = BlockData(transactions)
 }

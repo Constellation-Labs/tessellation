@@ -18,10 +18,7 @@ import io.circe.Decoder
 case class DAGBlock(
   parent: NonEmptyList[BlockReference],
   transactions: NonEmptySet[Signed[DAGTransaction]]
-) extends Block[DAGTransaction] {
-  def reference: ParentBlockReference = ParentBlockReference(parent)
-  def data: BlockData[DAGTransaction] = BlockData(transactions)
-}
+) extends Block[DAGTransaction] {}
 
 object DAGBlock {
 

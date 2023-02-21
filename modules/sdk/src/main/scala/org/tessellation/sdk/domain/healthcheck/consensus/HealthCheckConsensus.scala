@@ -16,7 +16,6 @@ import cats.{Applicative, Show}
 
 import scala.reflect.runtime.universe.TypeTag
 
-import org.tessellation.effects.GenUUID
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.config.types.HealthCheckConfig
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
@@ -26,6 +25,7 @@ import org.tessellation.sdk.domain.healthcheck.consensus.types.ConsensusRounds.I
 import org.tessellation.sdk.domain.healthcheck.consensus.types._
 import org.tessellation.sdk.domain.healthcheck.consensus.types.types.RoundId
 import org.tessellation.sdk.domain.healthcheck.services.HealthCheck
+import org.tessellation.sdk.effects.GenUUID
 
 import io.circe.Encoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger
