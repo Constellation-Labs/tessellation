@@ -52,6 +52,7 @@ object types {
   case class SnapshotConfig(
     consensus: ConsensusConfig,
     snapshotPath: Path,
+    incrementalSnapshotPath: Path,
     inMemoryCapacity: NonNegLong
   )
 

@@ -101,23 +101,23 @@ object GlobalSnapshotConsensusFunctions {
     }
 
     def createContext(
-      lastSnapshotContext: GlobalSnapshotContext,
-      lastSnapshot: IncrementalGlobalSnapshot,
-      snapshot: Signed[IncrementalGlobalSnapshot]
+      context: GlobalSnapshotContext,
+      lastArtifact: IncrementalGlobalSnapshot,
+      signedArtifact: Signed[IncrementalGlobalSnapshot]
     ): F[GlobalSnapshotInfo] = for {
-      lastActiveTips <- lastSnapshot.activeTips
-      lastDeprecatedTips = lastSnapshot.tips.deprecated
+      lastActiveTips <- lastArtifact.activeTips
+      lastDeprecatedTips = lastArtifact.tips.deprecated
 
-      blocksForAcceptance = snapshot.blocks.toList.map(_.block)
+      blocksForAcceptance = signedArtifact.blocks.toList.map(_.block)
 
-      scEvents = snapshot.stateChannelSnapshots.toList.flatMap {
+      scEvents = signedArtifact.stateChannelSnapshots.toList.flatMap {
         case (address, stateChannelBinaries) => stateChannelBinaries.map(StateChannelOutput(address, _)).toList
       }
       (acceptanceResult, scSnapshots, returnedSCEvents, acceptedRewardTxs, snapshotInfo) <- accept(
         blocksForAcceptance,
         scEvents,
-        snapshot.rewards,
-        lastSnapshotContext,
+        signedArtifact.rewards,
+        context,
         lastActiveTips,
         lastDeprecatedTips
       )
@@ -125,7 +125,7 @@ object GlobalSnapshotConsensusFunctions {
         .raiseError[F, Unit]
         .whenA(acceptanceResult.notAccepted.nonEmpty)
       _ <- CannotApplyStateChannelsError(returnedSCEvents).raiseError[F, Unit].whenA(returnedSCEvents.nonEmpty)
-      diffRewards = acceptedRewardTxs -- lastSnapshot.rewards
+      diffRewards = acceptedRewardTxs -- signedArtifact.rewards
       _ <- CannotApplyRewardsError(diffRewards).raiseError[F, Unit].whenA(diffRewards.nonEmpty)
 
     } yield snapshotInfo
@@ -182,6 +182,7 @@ object GlobalSnapshotConsensusFunctions {
         (height, subHeight) <- getHeightAndSubHeight(lastArtifact, deprecated, remainedActive, accepted)
 
         returnedDAGEvents = getReturnedDAGEvents(acceptanceResult)
+        stateProof <- GlobalSnapshotInfo.stateProof(snapshotInfo)
 
         globalSnapshot = IncrementalGlobalSnapshot(
           currentOrdinal,
@@ -197,7 +198,7 @@ object GlobalSnapshotConsensusFunctions {
             deprecated = deprecated,
             remainedActive = remainedActive
           ),
-          lastArtifact.stateProof // TODO: incremental snapshots - new state proof
+          stateProof
         )
         returnedEvents = returnedSCEvents.map(_.asLeft[DAGEvent]).union(returnedDAGEvents)
       } yield (globalSnapshot, returnedEvents)

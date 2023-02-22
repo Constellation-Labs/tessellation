@@ -10,6 +10,7 @@ import org.tessellation.cli.method._
 import org.tessellation.ext.cats.effect._
 import org.tessellation.ext.kryo._
 import org.tessellation.http.p2p.P2PClient
+import org.tessellation.infrastructure.snapshot.{GlobalSnapshotLoader, GlobalSnapshotTraverse}
 import org.tessellation.infrastructure.trust.handler.trustHandler
 import org.tessellation.modules._
 import org.tessellation.schema.cluster.ClusterId
@@ -49,8 +50,7 @@ object Main
     for {
       queues <- Queues.make[IO](sdkQueues).asResource
       p2pClient = P2PClient.make[IO](sdkP2PClient, sdkResources.client, sdkServices.session)
-      maybeRollbackHash = Option(method).collect { case rr: RunRollback => rr.rollbackHash }
-      storages <- Storages.make[IO](sdkStorages, cfg.snapshot, maybeRollbackHash).asResource
+      storages <- Storages.make[IO](sdkStorages, cfg.snapshot).asResource
       validators = Validators.make[IO](seedlist)
       services <- Services
         .make[IO](
@@ -122,27 +122,33 @@ object Main
         case _: RunValidator =>
           gossipDaemon.startAsRegularValidator >>
             storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
-        case _: RunRollback =>
+        case m: RunRollback =>
           storages.node.tryModifyState(
             NodeState.Initial,
             NodeState.RollbackInProgress,
             NodeState.RollbackDone
           ) {
-
-            storages.globalSnapshot.head.flatMap {
-              ApplicativeError.liftFromOption[IO](_, new Throwable(s"Rollback performed but snapshot not found!")).flatMap {
-                case (snapshot, state) =>
-                  services.collateral
-                    .hasCollateral(sdk.nodeId)
-                    .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
-                    services.consensus.manager.startFacilitatingAfter(snapshot.ordinal, snapshot, state)
-              }
-            }
-          } >>
-            gossipDaemon.startAsInitialValidator >>
-            services.cluster.createSession >>
-            services.session.createSession >>
-            storages.node.setNodeState(NodeState.Ready)
+            storages.incrementalGlobalSnapshotLocalFileSystemStorage
+              .read(m.rollbackHash)
+              .flatMap(ApplicativeError.liftFromOption[IO](_, new Throwable(s"Rollback performed but snapshot not found!")))
+              .flatMap { snapshot =>
+                GlobalSnapshotLoader.make[IO](storages.incrementalGlobalSnapshotLocalFileSystemStorage, cfg.snapshot.snapshotPath).flatMap {
+                  loader =>
+                    val snapshotTraverse = GlobalSnapshotTraverse.make[IO](loader.readGlobalSnapshot, services.consensus.consensusFns)
+                    snapshotTraverse.computeState(snapshot).flatMap { snapshotInfo =>
+                      storages.globalSnapshot.prepend(snapshot, snapshotInfo) >>
+                        services.collateral
+                          .hasCollateral(sdk.nodeId)
+                          .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
+                        services.consensus.manager.startFacilitatingAfter(snapshot.ordinal, snapshot, snapshotInfo)
+                    }
+                }
+              } >>
+              gossipDaemon.startAsInitialValidator >>
+              services.cluster.createSession >>
+              services.session.createSession >>
+              storages.node.setNodeState(NodeState.Ready)
+          }
         case m: RunGenesis =>
           storages.node.tryModifyState(
             NodeState.Initial,
