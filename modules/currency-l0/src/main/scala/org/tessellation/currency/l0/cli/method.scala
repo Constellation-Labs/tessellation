@@ -63,6 +63,39 @@ object method {
 
   }
 
+  case class RunRollback(
+    keyStore: StorePath,
+    alias: KeyAlias,
+    password: Password,
+    httpConfig: HttpConfig,
+    environment: AppEnvironment,
+    snapshotConfig: SnapshotConfig,
+    seedlistPath: Option[Path],
+    collateralAmount: Option[Amount],
+    rollbackHash: Hash
+  ) extends Run
+
+  object RunRollback extends WithOpts[RunRollback] {
+
+    val seedlistPathOpts: Opts[Option[Path]] = Opts.option[Path]("seedlist", "").orNone
+
+    val rollbackHashOpts: Opts[Hash] = Opts.argument[Hash]("rollbackHash")
+
+    val opts: Opts[RunRollback] = Opts.subcommand("run-rollback", "Run rollback mode") {
+      (
+        StorePath.opts,
+        KeyAlias.opts,
+        Password.opts,
+        http.opts,
+        AppEnvironment.opts,
+        snapshot.opts,
+        seedlistPathOpts,
+        CollateralAmountOpts.opts,
+        rollbackHashOpts
+      ).mapN(RunRollback.apply)
+    }
+  }
+
   case class RunGenesis(
     keyStore: StorePath,
     alias: KeyAlias,
