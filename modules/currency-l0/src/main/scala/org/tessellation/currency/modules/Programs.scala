@@ -1,9 +1,8 @@
 package org.tessellation.currency.modules
 
 import cats.effect.Async
-
-import org.tessellation.currency.domain.snapshot.programs.Download
 import org.tessellation.sdk.domain.cluster.programs.{Joining, PeerDiscovery}
+import org.tessellation.sdk.infrastructure.snapshot.programs.Download
 import org.tessellation.sdk.modules.SdkPrograms
 
 object Programs {

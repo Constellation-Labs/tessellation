@@ -3,8 +3,8 @@ package org.tessellation.modules
 import cats.effect.Async
 
 import org.tessellation.domain.cluster.programs.TrustPush
-import org.tessellation.domain.snapshot.programs.Download
 import org.tessellation.sdk.domain.cluster.programs.{Joining, PeerDiscovery}
+import org.tessellation.sdk.infrastructure.snapshot.programs.Download
 import org.tessellation.sdk.modules.SdkPrograms
 
 object Programs {
