@@ -143,9 +143,9 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
     globalSnapshot: Hashed[GlobalSnapshot],
     incrementalSnapshots: List[Hashed[IncrementalGlobalSnapshot]]
   )(implicit K: KryoSerializer[IO], S: SecurityProvider[IO], M: Metrics[IO]) = {
-    def loadGlobalSnapshot(hash: Hash): IO[Either[GlobalSnapshot, Signed[IncrementalGlobalSnapshot]]] =
+    def loadGlobalSnapshot(hash: Hash): IO[Either[Signed[GlobalSnapshot], Signed[IncrementalGlobalSnapshot]]] =
       hash match {
-        case h if h === globalSnapshot.hash => Left(globalSnapshot.signed.value).pure[IO]
+        case h if h === globalSnapshot.hash => Left(globalSnapshot.signed).pure[IO]
         case _ => Right(incrementalSnapshots.map(snapshot => (snapshot.hash, snapshot)).toMap.get(hash).get.signed).pure[IO]
       }
 
@@ -192,7 +192,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
     val globalSnapshotConsensusFunctions =
       GlobalSnapshotConsensusFunctions
         .make[IO](globalSnapshotStorage, blockAcceptanceManager, stateChannelProcessor, Amount.empty, rewards, AppEnvironment.Dev)
-    GlobalSnapshotTraverse.make(loadGlobalSnapshot, globalSnapshotConsensusFunctions)
+    GlobalSnapshotTraverse.make[IO](loadGlobalSnapshot, globalSnapshotConsensusFunctions)
   }
 
   test("can compute state for given incremental global snapshot") { res =>

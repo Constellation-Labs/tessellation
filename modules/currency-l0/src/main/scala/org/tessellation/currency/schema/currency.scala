@@ -95,6 +95,23 @@ object currency {
     stateProof: MerkleTree
   ) extends Snapshot[CurrencyTransaction, CurrencyBlock] {}
 
+  object CurrencyIncrementalSnapshot {
+    def fromCurrencySnapshot[F[_]: MonadThrow: KryoSerializer](snapshot: CurrencySnapshot): F[CurrencyIncrementalSnapshot] =
+      CurrencySnapshotInfo
+        .stateProof[F](snapshot.info)
+        .map { stateProof =>
+          CurrencyIncrementalSnapshot(
+            snapshot.ordinal,
+            snapshot.height,
+            snapshot.subHeight,
+            snapshot.lastSnapshotHash,
+            snapshot.blocks,
+            snapshot.tips,
+            stateProof
+          )
+        }
+  }
+
   object CurrencySnapshot {
     def mkGenesis(balances: Map[Address, Balance]): CurrencySnapshot =
       CurrencySnapshot(

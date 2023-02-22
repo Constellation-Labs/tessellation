@@ -1,13 +1,15 @@
 package org.tessellation.currency
 
+import cats.ApplicativeError
 import cats.effect.{IO, Resource}
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.semigroupk._
 
 import org.tessellation.currency.cli.method
-import org.tessellation.currency.cli.method.{Run, RunGenesis, RunValidator}
+import org.tessellation.currency.cli.method._
 import org.tessellation.currency.http.P2PClient
+import org.tessellation.currency.infrastructure.snapshot.{CurrencySnapshotLoader, CurrencySnapshotTraverse}
 import org.tessellation.currency.modules._
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshot, TokenSymbol}
 import org.tessellation.ext.cats.effect.ResourceIO
@@ -20,6 +22,7 @@ import org.tessellation.sdk.cli.CliMethod
 import org.tessellation.sdk.domain.collateral.OwnCollateralNotSatisfied
 import org.tessellation.sdk.infrastructure.genesis.{Loader => GenesisLoader}
 import org.tessellation.sdk.infrastructure.gossip.{GossipDaemon, RumorHandlers}
+import org.tessellation.sdk.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage
 import org.tessellation.sdk.resources.MkHttpServer
 import org.tessellation.sdk.resources.MkHttpServer.ServerName
 import org.tessellation.sdk.{SdkOrSharedOrKernelRegistrationIdRange, sdkKryoRegistrar}
@@ -133,6 +136,33 @@ abstract class CurrencyL0App(
         case _: RunValidator =>
           gossipDaemon.startAsRegularValidator >>
             storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
+        case m: RunRollback =>
+          storages.node.tryModifyState(
+            NodeState.Initial,
+            NodeState.RollbackInProgress,
+            NodeState.RollbackDone
+          ) {
+            storages.incrementalSnapshotLocalFileSystemStorage
+              .read(m.rollbackHash)
+              .flatMap(ApplicativeError.liftFromOption[IO](_, new Throwable(s"Rollback performed but snapshot not found!")))
+              .flatMap { snapshot =>
+                CurrencySnapshotLoader.make[IO](storages.incrementalSnapshotLocalFileSystemStorage, cfg.snapshot.snapshotPath).flatMap {
+                  loader =>
+                    val snapshotTraverse = CurrencySnapshotTraverse.make[IO](loader.readCurrencySnapshot, services.consensus.consensusFns)
+                    snapshotTraverse.computeState(snapshot).flatMap { snapshotInfo =>
+                      storages.snapshot.prepend(snapshot, snapshotInfo) >>
+                        services.collateral
+                          .hasCollateral(sdk.nodeId)
+                          .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
+                        services.consensus.manager.startFacilitatingAfter(snapshot.ordinal, snapshot, snapshotInfo)
+                    }
+                }
+              } >>
+              gossipDaemon.startAsInitialValidator >>
+              services.cluster.createSession >>
+              services.session.createSession >>
+              storages.node.setNodeState(NodeState.Ready)
+          }
         case m: RunGenesis =>
           storages.node.tryModifyState(
             NodeState.Initial,
@@ -145,22 +175,24 @@ abstract class CurrencyL0App(
               )
 
               Signed.forAsyncKryo[IO, CurrencySnapshot](genesis, keyPair).flatMap(_.toHashed[IO]).flatMap { hashedGenesis =>
-                CurrencySnapshot.mkFirstIncrementalSnapshot[IO](hashedGenesis).flatMap { firstIncrementalSnapshot =>
-                  Signed.forAsyncKryo[IO, CurrencyIncrementalSnapshot](firstIncrementalSnapshot, keyPair).flatMap {
-                    signedFirstIncrementalSnapshot =>
-                      storages.snapshot.prepend(signedFirstIncrementalSnapshot, hashedGenesis.info) >>
-                        services.collateral
-                          .hasCollateral(sdk.nodeId)
-                          .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
-                        services.consensus.manager
-                          .startFacilitatingAfter(
-                            signedFirstIncrementalSnapshot.ordinal,
-                            signedFirstIncrementalSnapshot,
-                            hashedGenesis.info
-                          )
-                  }
+                SnapshotLocalFileSystemStorage.make[IO, CurrencySnapshot](cfg.snapshot.snapshotPath).flatMap { currencySnapshotStorage =>
+                  currencySnapshotStorage.write(hashedGenesis.signed) >>
+                    CurrencySnapshot.mkFirstIncrementalSnapshot[IO](hashedGenesis).flatMap { firstIncrementalSnapshot =>
+                      Signed.forAsyncKryo[IO, CurrencyIncrementalSnapshot](firstIncrementalSnapshot, keyPair).flatMap {
+                        signedFirstIncrementalSnapshot =>
+                          storages.snapshot.prepend(signedFirstIncrementalSnapshot, hashedGenesis.info) >>
+                            services.collateral
+                              .hasCollateral(sdk.nodeId)
+                              .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
+                            services.consensus.manager
+                              .startFacilitatingAfter(
+                                signedFirstIncrementalSnapshot.ordinal,
+                                signedFirstIncrementalSnapshot,
+                                hashedGenesis.info
+                              )
+                      }
+                    }
                 }
-
               }
             }
           } >>
