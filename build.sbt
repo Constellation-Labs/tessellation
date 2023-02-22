@@ -466,6 +466,7 @@ lazy val core = (project in file("modules/core"))
 
 lazy val currencyL0 = (project in file("modules/currency-l0"))
   .enablePlugins(AshScriptPlugin)
+  .enablePlugins(BuildInfoPlugin)
   .enablePlugins(JavaAppPackaging)
   .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test, sdk)
   .settings(

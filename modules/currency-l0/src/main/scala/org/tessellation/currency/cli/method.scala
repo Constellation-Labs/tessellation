@@ -5,7 +5,7 @@ import cats.syntax.contravariantSemigroupal._
 import scala.concurrent.duration._
 
 import org.tessellation.cli.env.{KeyAlias, Password, StorePath}
-import org.tessellation.currency.config.types.{AppConfig, SnapshotConfig}
+import org.tessellation.currency.config.types.AppConfig
 import org.tessellation.ext.decline.WithOpts
 import org.tessellation.ext.decline.decline._
 import org.tessellation.schema.balance.Amount
@@ -13,7 +13,6 @@ import org.tessellation.schema.node.NodeState
 import org.tessellation.sdk.cli.{CliMethod, CollateralAmountOpts}
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types._
-import org.tessellation.security.hash.Hash
 
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
@@ -87,18 +86,6 @@ object method {
       ).mapN(RunGenesis.apply)
     }
   }
-
-  case class RunRollback(
-    keyStore: StorePath,
-    alias: KeyAlias,
-    password: Password,
-    httpConfig: HttpConfig,
-    environment: AppEnvironment,
-    snapshotConfig: SnapshotConfig,
-    seedlistPath: Option[Path],
-    collateralAmount: Option[Amount],
-    rollbackHash: Hash
-  ) extends Run
 
   case class RunValidator(
     keyStore: StorePath,

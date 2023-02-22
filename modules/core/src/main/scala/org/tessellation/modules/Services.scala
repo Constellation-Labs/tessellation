@@ -10,21 +10,22 @@ import cats.syntax.functor._
 
 import org.tessellation.config.types.AppConfig
 import org.tessellation.domain.cell.L0Cell
-import org.tessellation.domain.dag.DAGService
 import org.tessellation.domain.rewards.Rewards
 import org.tessellation.domain.statechannel.StateChannelService
-import org.tessellation.infrastructure.dag.DAGService
 import org.tessellation.infrastructure.rewards._
 import org.tessellation.infrastructure.snapshot._
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.GlobalSnapshot
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.collateral.Collateral
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.healthcheck.LocalHealthcheck
+import org.tessellation.sdk.domain.snapshot.services.AddressService
 import org.tessellation.sdk.infrastructure.Collateral
 import org.tessellation.sdk.infrastructure.consensus.Consensus
 import org.tessellation.sdk.infrastructure.metrics.Metrics
+import org.tessellation.sdk.infrastructure.snapshot.services.AddressService
 import org.tessellation.sdk.modules.SdkServices
 import org.tessellation.security.SecurityProvider
 
@@ -70,7 +71,7 @@ object Services {
           session,
           rewards
         )
-      dagService = DAGService.make[F](storages.globalSnapshot)
+      addressService = AddressService.make[F, GlobalSnapshot](storages.globalSnapshot)
       collateralService = Collateral.make[F](cfg.collateral, storages.globalSnapshot)
       stateChannelService = StateChannelService
         .make[F](L0Cell.mkL0Cell(queues.l1Output, queues.stateChannelOutput), validators.stateChannelValidator)
@@ -81,7 +82,7 @@ object Services {
         session = sdkServices.session,
         gossip = sdkServices.gossip,
         consensus = consensus,
-        dag = dagService,
+        address = addressService,
         collateral = collateralService,
         rewards = rewards,
         stateChannel = stateChannelService
@@ -94,7 +95,7 @@ sealed abstract class Services[F[_]] private (
   val session: Session[F],
   val gossip: Gossip[F],
   val consensus: Consensus[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact],
-  val dag: DAGService[F],
+  val address: AddressService[F, GlobalSnapshot],
   val collateral: Collateral[F],
   val rewards: Rewards[F],
   val stateChannel: StateChannelService[F]

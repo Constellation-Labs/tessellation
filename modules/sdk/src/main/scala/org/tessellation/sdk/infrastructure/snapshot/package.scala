@@ -1,4 +1,4 @@
-package org.tessellation.sdk
+package org.tessellation.sdk.infrastructure
 
 import org.tessellation.schema.snapshot.Snapshot
 import org.tessellation.schema.transaction.Transaction
