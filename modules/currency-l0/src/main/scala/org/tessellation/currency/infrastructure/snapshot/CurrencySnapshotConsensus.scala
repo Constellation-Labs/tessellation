@@ -1,10 +1,8 @@
 package org.tessellation.currency.infrastructure.snapshot
 
 import java.security.KeyPair
-
 import cats.effect.kernel.Async
 import cats.effect.std.{Random, Supervisor}
-
 import org.tessellation.currency.schema.currency.{CurrencyBlock, CurrencySnapshot, CurrencyTransaction}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.balance.Amount
@@ -22,8 +20,8 @@ import org.tessellation.sdk.infrastructure.consensus.Consensus
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.infrastructure.snapshot.SnapshotConsensus
 import org.tessellation.security.SecurityProvider
-
 import org.http4s.client.Client
+import org.tessellation.schema.SnapshotOrdinal
 
 object CurrencySnapshotConsensus {
 
@@ -41,8 +39,8 @@ object CurrencySnapshotConsensus {
     environment: AppEnvironment,
     client: Client[F],
     session: Session[F]
-  ): F[SnapshotConsensus[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshot]] =
-    Consensus.make[F, CurrencySnapshotEvent, CurrencySnapshotKey, CurrencySnapshotArtifact](
+  ): F[SnapshotConsensus[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshot, CurrencySnapshotEvent]] =
+    Consensus.make[F, CurrencySnapshotEvent, SnapshotOrdinal, CurrencySnapshotArtifact](
       CurrencySnapshotConsensusFunctions.make[F](
         snapshotStorage,
         BlockAcceptanceManager.make[F, CurrencyTransaction, CurrencyBlock](blockValidator),

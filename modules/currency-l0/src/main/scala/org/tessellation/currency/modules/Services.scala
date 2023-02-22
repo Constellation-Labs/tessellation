@@ -5,7 +5,7 @@ import cats.effect.std.{Random, Supervisor}
 import cats.syntax.functor._
 import org.http4s.client.Client
 import org.tessellation.currency.config.types.AppConfig
-import org.tessellation.currency.infrastructure.snapshot.CurrencySnapshotConsensus
+import org.tessellation.currency.infrastructure.snapshot.{CurrencySnapshotConsensus, CurrencySnapshotEvent}
 import org.tessellation.currency.schema.currency.{CurrencyBlock, CurrencySnapshot, CurrencyTransaction}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
@@ -73,7 +73,7 @@ sealed abstract class Services[F[_]] private (
   val cluster: Cluster[F],
   val session: Session[F],
   val gossip: Gossip[F],
-  val consensus: SnapshotConsensus[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshot],
+  val consensus: SnapshotConsensus[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshot, CurrencySnapshotEvent],
   val address: AddressService[F, CurrencySnapshot],
   val collateral: Collateral[F]
 )

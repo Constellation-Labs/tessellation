@@ -60,7 +60,7 @@ object CurrencySnapshotConsensusFunctions {
         )
 
     def createProposalArtifact(
-      lastKey: CurrencySnapshotKey,
+      lastKey: SnapshotOrdinal,
       lastArtifact: Signed[CurrencySnapshotArtifact],
       trigger: ConsensusTrigger,
       events: Set[CurrencySnapshotEvent]

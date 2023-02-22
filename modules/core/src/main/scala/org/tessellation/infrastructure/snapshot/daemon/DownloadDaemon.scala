@@ -5,10 +5,10 @@ import cats.effect.std.Supervisor
 import cats.syntax.eq._
 import cats.syntax.functor._
 
-import org.tessellation.domain.snapshot.programs.Download
 import org.tessellation.schema.node.NodeState
 import org.tessellation.sdk.domain.Daemon
 import org.tessellation.sdk.domain.node.NodeStorage
+import org.tessellation.sdk.infrastructure.snapshot.programs.Download
 
 trait DownloadDaemon[F[_]] extends Daemon[F] {}
 
