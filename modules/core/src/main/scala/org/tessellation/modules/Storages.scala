@@ -17,22 +17,20 @@ import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.infrastructure.gossip.RumorStorage
 import org.tessellation.sdk.infrastructure.snapshot.storage.{SnapshotLocalFileSystemStorage, SnapshotStorage}
 import org.tessellation.sdk.modules.SdkStorages
-import org.tessellation.security.hash.Hash
 
 object Storages {
 
   def make[F[_]: Async: KryoSerializer: Supervisor](
     sdkStorages: SdkStorages[F],
-    snapshotConfig: SnapshotConfig,
-    maybeRollbackHash: Option[Hash]
+    snapshotConfig: SnapshotConfig
   ): F[Storages[F]] =
     for {
       trustStorage <- TrustStorage.make[F]
-      globalSnapshotLocalFileSystemStorage <- SnapshotLocalFileSystemStorage.make[F, IncrementalGlobalSnapshot](
-        snapshotConfig.snapshotPath
+      incrementalGlobalSnapshotLocalFileSystemStorage <- SnapshotLocalFileSystemStorage.make[F, IncrementalGlobalSnapshot](
+        snapshotConfig.incrementalSnapshotPath
       )
       globalSnapshotStorage <- SnapshotStorage.make[F, IncrementalGlobalSnapshot, GlobalSnapshotInfo](
-        globalSnapshotLocalFileSystemStorage,
+        incrementalGlobalSnapshotLocalFileSystemStorage,
         snapshotConfig.inMemoryCapacity
       )
     } yield
@@ -42,7 +40,8 @@ object Storages {
         session = sdkStorages.session,
         rumor = sdkStorages.rumor,
         trust = trustStorage,
-        globalSnapshot = globalSnapshotStorage
+        globalSnapshot = globalSnapshotStorage,
+        incrementalGlobalSnapshotLocalFileSystemStorage = incrementalGlobalSnapshotLocalFileSystemStorage
       ) {}
 }
 
@@ -52,5 +51,6 @@ sealed abstract class Storages[F[_]] private (
   val session: SessionStorage[F],
   val rumor: RumorStorage[F],
   val trust: TrustStorage[F],
-  val globalSnapshot: SnapshotStorage[F, IncrementalGlobalSnapshot, GlobalSnapshotInfo] with LatestBalances[F]
+  val globalSnapshot: SnapshotStorage[F, IncrementalGlobalSnapshot, GlobalSnapshotInfo] with LatestBalances[F],
+  val incrementalGlobalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, IncrementalGlobalSnapshot]
 )

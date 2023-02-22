@@ -28,7 +28,7 @@ object Storages {
   ): F[Storages[F]] =
     for {
       snapshotLocalFileSystemStorage <- SnapshotLocalFileSystemStorage.make[F, CurrencyIncrementalSnapshot](
-        snapshotConfig.snapshotPath
+        snapshotConfig.incrementalSnapshotPath
       )
       snapshotStorage <- SnapshotStorage
         .make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](snapshotLocalFileSystemStorage, snapshotConfig.inMemoryCapacity)
@@ -42,8 +42,9 @@ object Storages {
         node = sdkStorages.node,
         session = sdkStorages.session,
         rumor = sdkStorages.rumor,
+        lastSignedBinaryHash = lastSignedBinaryHashStorage,
         snapshot = snapshotStorage,
-        lastSignedBinaryHash = lastSignedBinaryHashStorage
+        incrementalSnapshotLocalFileSystemStorage = snapshotLocalFileSystemStorage
       ) {}
 }
 
@@ -53,6 +54,7 @@ sealed abstract class Storages[F[_]] private (
   val node: NodeStorage[F],
   val session: SessionStorage[F],
   val rumor: RumorStorage[F],
+  val lastSignedBinaryHash: LastSignedBinaryHashStorage[F],
   val snapshot: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo] with LatestBalances[F],
-  val lastSignedBinaryHash: LastSignedBinaryHashStorage[F]
+  val incrementalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, CurrencyIncrementalSnapshot]
 )
