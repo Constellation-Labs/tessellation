@@ -7,13 +7,15 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.{GlobalSnapshot, GlobalSnapshotInfo, IncrementalGlobalSnapshot}
+import org.tessellation.schema._
+import org.tessellation.sdk.domain.consensus.ConsensusFunctions
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
 import higherkindness.droste._
 import higherkindness.droste.data._
 import higherkindness.droste.util.DefaultTraverse
+
 sealed trait StackF[A]
 
 case class More[A](a: A, step: Signed[IncrementalGlobalSnapshot]) extends StackF[A]
@@ -37,8 +39,8 @@ trait GlobalSnapshotTraverse[F[_]] {
 object GlobalSnapshotTraverse {
 
   def loadGlobalSnapshotCoalgebra[F[_]: Monad](
-    loadGlobalSnapshotFn: Hash => F[Either[GlobalSnapshot, Signed[IncrementalGlobalSnapshot]]]
-  ): CoalgebraM[F, StackF, Either[GlobalSnapshot, Signed[IncrementalGlobalSnapshot]]] = CoalgebraM {
+    loadGlobalSnapshotFn: Hash => F[Either[Signed[GlobalSnapshot], Signed[IncrementalGlobalSnapshot]]]
+  ): CoalgebraM[F, StackF, Either[Signed[GlobalSnapshot], Signed[IncrementalGlobalSnapshot]]] = CoalgebraM {
     case Left(globalSnapshot) => Applicative[F].pure(Done(globalSnapshot))
     case Right(incrementalGlobalSnapshot) =>
       def prevHash = incrementalGlobalSnapshot.lastSnapshotHash
@@ -63,8 +65,8 @@ object GlobalSnapshotTraverse {
   }
 
   def make[F[_]: MonadThrow: KryoSerializer](
-    loadGlobalSnapshotFn: Hash => F[Either[GlobalSnapshot, Signed[IncrementalGlobalSnapshot]]],
-    snapshotInfoFunctions: GlobalSnapshotConsensusFunctions[F]
+    loadGlobalSnapshotFn: Hash => F[Either[Signed[GlobalSnapshot], Signed[IncrementalGlobalSnapshot]]],
+    snapshotInfoFunctions: ConsensusFunctions[F, GlobalSnapshotEvent, SnapshotOrdinal, GlobalSnapshotArtifact, GlobalSnapshotContext]
   ): GlobalSnapshotTraverse[F] =
     new GlobalSnapshotTraverse[F] {
 
@@ -74,7 +76,7 @@ object GlobalSnapshotTraverse {
             computeStateAlgebra(snapshotInfoFunctions.createContext).gather(Gather.histo),
             loadGlobalSnapshotCoalgebra(loadGlobalSnapshotFn).scatter(Scatter.ana)
           )
-          .apply(latest.asRight[GlobalSnapshot])
+          .apply(latest.asRight[Signed[GlobalSnapshot]])
     }
 
 }

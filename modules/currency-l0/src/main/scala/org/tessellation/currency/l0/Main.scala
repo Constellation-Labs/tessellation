@@ -2,6 +2,7 @@ package org.tessellation.currency.l0
 
 import java.util.UUID
 
+import cats.ApplicativeError
 import cats.effect.{IO, Resource}
 import cats.syntax.semigroupk._
 
@@ -9,6 +10,7 @@ import org.tessellation.currency.l0.cli.method
 import org.tessellation.currency.l0.cli.method.{Run, RunGenesis, RunValidator}
 import org.tessellation.currency.l0.http.P2PClient
 import org.tessellation.currency.l0.modules._
+import org.tessellation.currency.infrastructure.snapshot.{CurrencySnapshotLoader, CurrencySnapshotTraverse}
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshot, TokenSymbol}
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.kryo._
@@ -17,6 +19,7 @@ import org.tessellation.schema.node.NodeState
 import org.tessellation.sdk.app.{SDK, TessellationIOApp}
 import org.tessellation.sdk.infrastructure.genesis.{Loader => GenesisLoader}
 import org.tessellation.sdk.infrastructure.gossip.{GossipDaemon, RumorHandlers}
+import org.tessellation.sdk.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage
 import org.tessellation.sdk.resources.MkHttpServer
 import org.tessellation.sdk.resources.MkHttpServer.ServerName
 import org.tessellation.sdk.{SdkOrSharedOrKernelRegistrationIdRange, sdkKryoRegistrar}
