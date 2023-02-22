@@ -33,10 +33,6 @@ object Storages {
         incrementalGlobalSnapshotLocalFileSystemStorage,
         snapshotConfig.inMemoryCapacity
       )
-      globalSnapshotStorage <- SnapshotStorage.make[F, IncrementalGlobalSnapshot, GlobalSnapshotInfo](
-        globalSnapshotLocalFileSystemStorage,
-        snapshotConfig.inMemoryCapacity
-      )
     } yield
       new Storages[F](
         cluster = sdkStorages.cluster,
