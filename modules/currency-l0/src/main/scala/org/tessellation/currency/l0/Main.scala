@@ -11,6 +11,8 @@ import org.tessellation.currency.l0.cli.method.{Run, RunGenesis, RunValidator}
 import org.tessellation.currency.l0.http.P2PClient
 import org.tessellation.currency.l0.modules._
 import org.tessellation.currency.infrastructure.snapshot.{CurrencySnapshotLoader, CurrencySnapshotTraverse}
+import org.tessellation.currency.http.P2PClient
+import org.tessellation.currency.modules._
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshot, TokenSymbol}
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.kryo._
@@ -122,6 +124,33 @@ object Main
           gossipDaemon.startAsRegularValidator >>
             programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
             storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
+        case m: RunRollback =>
+          storages.node.tryModifyState(
+            NodeState.Initial,
+            NodeState.RollbackInProgress,
+            NodeState.RollbackDone
+          ) {
+            storages.incrementalSnapshotLocalFileSystemStorage
+              .read(m.rollbackHash)
+              .flatMap(ApplicativeError.liftFromOption[IO](_, new Throwable(s"Rollback performed but snapshot not found!")))
+              .flatMap { snapshot =>
+                CurrencySnapshotLoader.make[IO](storages.incrementalSnapshotLocalFileSystemStorage, cfg.snapshot.snapshotPath).flatMap {
+                  loader =>
+                    val snapshotTraverse = CurrencySnapshotTraverse.make[IO](loader.readCurrencySnapshot, services.consensus.consensusFns)
+                    snapshotTraverse.computeState(snapshot).flatMap { snapshotInfo =>
+                      storages.snapshot.prepend(snapshot, snapshotInfo) >>
+                        services.collateral
+                          .hasCollateral(sdk.nodeId)
+                          .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
+                        services.consensus.manager.startFacilitatingAfter(snapshot.ordinal, snapshot, snapshotInfo)
+                    }
+                }
+              } >>
+              gossipDaemon.startAsInitialValidator >>
+              services.cluster.createSession >>
+              services.session.createSession >>
+              storages.node.setNodeState(NodeState.Ready)
+          }
         case m: RunGenesis =>
           storages.node.tryModifyState(
             NodeState.Initial,
