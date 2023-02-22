@@ -20,7 +20,6 @@ import eu.timepit.refined.auto._
 import fs2.io.file.Path
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
-
 object SnapshotStorageSuite extends MutableIOSuite with Checkers {
 
   type Res = (Supervisor[IO], KryoSerializer[IO], SecurityProvider[IO])

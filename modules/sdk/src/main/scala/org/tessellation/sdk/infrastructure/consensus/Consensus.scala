@@ -79,12 +79,13 @@ object Consensus {
       )
       handler = ConsensusHandler.make[F, Event, Key, Artifact, Context](storage, manager, consensusFns)
       routes = new ConsensusRoutes[F, Key, Artifact, Context](storage)
-    } yield new Consensus(handler, storage, manager, routes)
+    } yield new Consensus(handler, storage, manager, routes, consensusFns)
 }
 
 sealed class Consensus[F[_]: Async, Event, Key, Artifact, Context] private (
   val handler: RumorHandler[F],
   val storage: ConsensusStorage[F, Event, Key, Artifact, Context],
   val manager: ConsensusManager[F, Key, Artifact, Context],
-  val routes: ConsensusRoutes[F, Key, Artifact, Context]
+  val routes: ConsensusRoutes[F, Key, Artifact, Context],
+  val consensusFns: ConsensusFunctions[F, Event, Key, Artifact, Context]
 ) {}
