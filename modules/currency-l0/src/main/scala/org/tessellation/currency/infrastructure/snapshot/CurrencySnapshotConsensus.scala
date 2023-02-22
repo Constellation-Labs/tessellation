@@ -5,12 +5,12 @@ import java.security.KeyPair
 import cats.effect.kernel.Async
 import cats.effect.std.{Random, Supervisor}
 
-import org.tessellation.currency.config.types.SnapshotConfig
 import org.tessellation.currency.schema.currency.{CurrencyBlock, CurrencySnapshot, CurrencyTransaction}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.config.AppEnvironment
+import org.tessellation.sdk.config.types.SnapshotConfig
 import org.tessellation.sdk.domain.block.processing.BlockValidator
 import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
@@ -20,7 +20,7 @@ import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.infrastructure.block.processing.BlockAcceptanceManager
 import org.tessellation.sdk.infrastructure.consensus.Consensus
 import org.tessellation.sdk.infrastructure.metrics.Metrics
-import org.tessellation.sdk.snapshot.SnapshotConsensus
+import org.tessellation.sdk.infrastructure.snapshot.SnapshotConsensus
 import org.tessellation.security.SecurityProvider
 
 import org.http4s.client.Client

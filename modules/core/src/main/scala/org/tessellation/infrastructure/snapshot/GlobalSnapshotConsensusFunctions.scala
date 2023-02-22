@@ -32,7 +32,7 @@ import org.tessellation.sdk.domain.consensus.ConsensusFunctions.InvalidArtifact
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import org.tessellation.sdk.infrastructure.metrics.Metrics
-import org.tessellation.sdk.snapshot._
+import org.tessellation.sdk.infrastructure.snapshot._
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 import org.tessellation.statechannel.StateChannelOutput

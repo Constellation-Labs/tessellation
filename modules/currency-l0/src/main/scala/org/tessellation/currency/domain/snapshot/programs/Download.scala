@@ -6,7 +6,7 @@ import cats.syntax.flatMap._
 import org.tessellation.currency.schema.currency.{CurrencyBlock, CurrencySnapshot, CurrencyTransaction}
 import org.tessellation.schema.node.NodeState
 import org.tessellation.sdk.domain.node.NodeStorage
-import org.tessellation.sdk.snapshot.SnapshotConsensus
+import org.tessellation.sdk.infrastructure.snapshot.SnapshotConsensus
 
 object Download {
 

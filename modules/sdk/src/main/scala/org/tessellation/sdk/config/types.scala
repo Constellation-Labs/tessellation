@@ -7,6 +7,7 @@ import org.tessellation.schema.node.NodeState
 
 import com.comcast.ip4s.{Host, Port}
 import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong}
+import fs2.io.file.Path
 
 object types {
 
@@ -46,6 +47,12 @@ object types {
     declarationRangeLimit: NonNegLong,
     lockDuration: FiniteDuration,
     observation: ObservationConfig
+  )
+
+  case class SnapshotConfig(
+    consensus: ConsensusConfig,
+    snapshotPath: Path,
+    inMemoryCapacity: NonNegLong
   )
 
   case class ObservationConfig(

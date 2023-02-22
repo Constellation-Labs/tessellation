@@ -5,9 +5,10 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.domain.cell.{L0Cell, L0CellInput}
-import org.tessellation.domain.dag.DAGService
 import org.tessellation.ext.http4s.AddressVar
+import org.tessellation.schema.GlobalSnapshot
 import org.tessellation.schema.block.DAGBlock
+import org.tessellation.sdk.domain.snapshot.services.AddressService
 import org.tessellation.sdk.ext.http4s.SnapshotOrdinalVar
 import org.tessellation.security.signature.Signed
 
@@ -19,12 +20,12 @@ import org.http4s.server.Router
 import shapeless._
 import shapeless.syntax.singleton._
 
-final case class DagRoutes[F[_]: Async](dagService: DAGService[F], mkDagCell: L0Cell.Mk[F]) extends Http4sDsl[F] {
+final case class DagRoutes[F[_]: Async](addressService: AddressService[F, GlobalSnapshot], mkDagCell: L0Cell.Mk[F]) extends Http4sDsl[F] {
   private[routes] val prefixPath = "/dag"
 
   private val httpRoutes: HttpRoutes[F] = HttpRoutes.of[F] {
     case GET -> Root / AddressVar(address) / "balance" =>
-      dagService
+      addressService
         .getBalance(address)
         .flatMap {
           case Some((balance, ordinal)) =>
@@ -33,35 +34,35 @@ final case class DagRoutes[F[_]: Async](dagService: DAGService[F], mkDagCell: L0
         }
 
     case GET -> Root / "total-supply" =>
-      dagService.getTotalSupply.flatMap {
+      addressService.getTotalSupply.flatMap {
         case Some((supply, ordinal)) =>
           Ok(("total" ->> supply) :: ("ordinal" ->> ordinal.value.value) :: HNil)
         case _ => NotFound()
       }
 
     case GET -> Root / "wallet-count" =>
-      dagService.getWalletCount.flatMap {
+      addressService.getWalletCount.flatMap {
         case Some((wallets, ordinal)) =>
           Ok(("count" ->> wallets) :: ("ordinal" ->> ordinal.value.value) :: HNil)
         case _ => NotFound()
       }
 
     case GET -> Root / SnapshotOrdinalVar(ordinal) / AddressVar(address) / "balance" =>
-      dagService.getBalance(ordinal, address).flatMap {
+      addressService.getBalance(ordinal, address).flatMap {
         case Some((balance, ordinal)) =>
           Ok(("balance" ->> balance) :: ("ordinal" ->> ordinal.value.value) :: HNil)
         case _ => NotFound()
       }
 
     case GET -> Root / SnapshotOrdinalVar(ordinal) / "total-supply" =>
-      dagService.getTotalSupply(ordinal).flatMap {
+      addressService.getTotalSupply(ordinal).flatMap {
         case Some((supply, ordinal)) =>
           Ok(("total" ->> supply) :: ("ordinal" ->> ordinal.value.value) :: HNil)
         case _ => NotFound()
       }
 
     case GET -> Root / SnapshotOrdinalVar(ordinal) / "wallet-count" =>
-      dagService.getWalletCount(ordinal).flatMap {
+      addressService.getWalletCount(ordinal).flatMap {
         case Some((wallets, ordinal)) =>
           Ok(("count" ->> wallets) :: ("ordinal" ->> ordinal.value.value) :: HNil)
         case _ => NotFound()

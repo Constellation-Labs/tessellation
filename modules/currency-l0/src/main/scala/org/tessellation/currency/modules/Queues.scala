@@ -17,8 +17,8 @@ object Queues {
       l1OutputQueue <- Queue.unbounded[F, Signed[CurrencyBlock]]
     } yield
       new Queues[F] {
-        val rumor = sdkQueues.rumor
-        val l1Output = l1OutputQueue
+        val rumor: Queue[F, Hashed[RumorRaw]] = sdkQueues.rumor
+        val l1Output: Queue[F, Signed[CurrencyBlock]] = l1OutputQueue
       }
 }
 

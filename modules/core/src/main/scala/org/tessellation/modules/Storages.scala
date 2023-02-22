@@ -5,12 +5,12 @@ import cats.effect.std.Supervisor
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.config.types.SnapshotConfig
 import org.tessellation.domain.trust.storage.TrustStorage
 import org.tessellation.infrastructure.snapshot.{GlobalSnapshotLocalFileSystemStorage, GlobalSnapshotStorage}
 import org.tessellation.infrastructure.trust.storage.TrustStorage
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.GlobalSnapshot
+import org.tessellation.sdk.config.types.SnapshotConfig
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tessellation.sdk.domain.collateral.LatestBalances
 import org.tessellation.sdk.domain.node.NodeStorage
@@ -29,7 +29,7 @@ object Storages {
     for {
       trustStorage <- TrustStorage.make[F]
       globalSnapshotLocalFileSystemStorage <- GlobalSnapshotLocalFileSystemStorage.make(
-        snapshotConfig.globalSnapshotPath
+        snapshotConfig.snapshotPath
       )
       globalSnapshotStorage <- GlobalSnapshotStorage
         .make[F](globalSnapshotLocalFileSystemStorage, snapshotConfig.inMemoryCapacity, maybeRollbackHash)

@@ -77,7 +77,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
   private val trustRoutes = TrustRoutes[F](storages.trust, programs.trustPush)
   private val stateChannelRoutes = StateChannelRoutes[F](services.stateChannel)
   private val globalSnapshotRoutes = GlobalSnapshotRoutes[F](storages.globalSnapshot)
-  private val dagRoutes = DagRoutes[F](services.dag, mkDagCell)
+  private val dagRoutes = DagRoutes[F](services.address, mkDagCell)
   private val consensusInfoRoutes = new ConsensusInfoRoutes[F, SnapshotOrdinal](services.cluster, services.consensus.storage, selfId)
   private val consensusRoutes = services.consensus.routes.p2pRoutes
 

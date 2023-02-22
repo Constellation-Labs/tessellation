@@ -1,4 +1,4 @@
-package org.tessellation.sdk.snapshot
+package org.tessellation.sdk.infrastructure.snapshot
 
 import cats.effect.Async
 import cats.syntax.bifunctor._

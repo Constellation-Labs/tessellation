@@ -16,6 +16,7 @@ import org.tessellation.schema.GlobalSnapshot
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.node.NodeState
 import org.tessellation.sdk.app.{SDK, TessellationIOApp}
+import org.tessellation.sdk.domain.collateral.OwnCollateralNotSatisfied
 import org.tessellation.sdk.infrastructure.genesis.{Loader => GenesisLoader}
 import org.tessellation.sdk.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import org.tessellation.sdk.resources.MkHttpServer

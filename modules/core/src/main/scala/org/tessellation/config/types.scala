@@ -13,7 +13,6 @@ import ciris.Secret
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric._
 import eu.timepit.refined.types.string.NonEmptyString
-import fs2.io.file.Path
 import io.estatico.newtype.macros.newtype
 
 object types {
@@ -42,12 +41,6 @@ object types {
 
   case class TrustConfig(
     daemon: TrustDaemonConfig
-  )
-
-  case class SnapshotConfig(
-    consensus: ConsensusConfig,
-    globalSnapshotPath: Path,
-    inMemoryCapacity: NonNegLong
   )
 
   @newtype

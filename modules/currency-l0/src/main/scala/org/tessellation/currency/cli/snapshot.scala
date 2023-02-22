@@ -2,9 +2,8 @@ package org.tessellation.currency.cli
 
 import scala.concurrent.duration.DurationInt
 
-import org.tessellation.currency.config.types.SnapshotConfig
 import org.tessellation.ext.decline.decline._
-import org.tessellation.sdk.config.types.{ConsensusConfig, ObservationConfig}
+import org.tessellation.sdk.config.types.{ConsensusConfig, ObservationConfig, SnapshotConfig}
 
 import com.monovore.decline._
 import eu.timepit.refined.auto._

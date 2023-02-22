@@ -5,7 +5,6 @@ import java.security.KeyPair
 import cats.effect.kernel.Async
 import cats.effect.std.{Random, Supervisor}
 
-import org.tessellation.config.types.SnapshotConfig
 import org.tessellation.domain.rewards.Rewards
 import org.tessellation.domain.statechannel.StateChannelValidator
 import org.tessellation.kryo.KryoSerializer
@@ -15,6 +14,7 @@ import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.DAGTransaction
 import org.tessellation.sdk.config.AppEnvironment
+import org.tessellation.sdk.config.types.SnapshotConfig
 import org.tessellation.sdk.domain.block.processing.BlockValidator
 import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
