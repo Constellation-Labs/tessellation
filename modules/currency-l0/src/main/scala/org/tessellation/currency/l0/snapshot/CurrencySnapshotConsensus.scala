@@ -25,6 +25,7 @@ import org.tessellation.sdk.infrastructure.snapshot.SnapshotConsensus
 import org.tessellation.security.SecurityProvider
 
 import org.http4s.client.Client
+import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 
 object CurrencySnapshotConsensus {
 

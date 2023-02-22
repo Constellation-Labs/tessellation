@@ -17,6 +17,7 @@ import org.tessellation.schema.peer.L0Peer
 import org.tessellation.sdk.cli._
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types._
+import org.tessellation.security.hash.Hash
 
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto._

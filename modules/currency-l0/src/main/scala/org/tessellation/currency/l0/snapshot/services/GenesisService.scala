@@ -9,7 +9,7 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.show._
 
-import org.tessellation.currency.l0.snapshot.CurrencySnapshotArtifact
+import org.tessellation.currency.l0.snapshot.{CurrencySnapshotArtifact, CurrencySnapshotContext}
 import org.tessellation.currency.l0.snapshot.storages.LastSignedBinaryHashStorage
 import org.tessellation.currency.schema.currency.CurrencySnapshot
 import org.tessellation.ext.crypto._
@@ -24,6 +24,7 @@ import org.tessellation.security.SecurityProvider
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import org.tessellation.currency.schema.currency.CurrencyIncrementalSnapshot
+import org.tessellation.currency.schema.currency.CurrencySnapshotInfo
 
 trait GenesisService[F[_]] {
   def accept(genesis: CurrencySnapshot): F[Unit]
@@ -35,11 +36,11 @@ object GenesisService {
     collateral: Collateral[F],
     lastSignedBinaryHashStorage: LastSignedBinaryHashStorage[F],
     stateChannelSnapshotService: StateChannelSnapshotService[F],
-    snapshotStorage: SnapshotStorage[F, CurrencySnapshot],
+    snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
     stateChannelSnapshotClient: StateChannelSnapshotClient[F],
     globalL0Peer: L0Peer,
     nodeId: PeerId,
-    consensusManager: ConsensusManager[F, SnapshotOrdinal, CurrencySnapshotArtifact]
+    consensusManager: ConsensusManager[F, SnapshotOrdinal, CurrencySnapshotArtifact, CurrencySnapshotContext]
   ): GenesisService[F] = new GenesisService[F] {
     private val logger = Slf4jLogger.getLogger
 
@@ -51,14 +52,18 @@ object GenesisService {
       _ <- collateral
         .hasCollateral(nodeId)
         .flatMap(OwnCollateralNotSatisfied.raiseError[F, Unit].unlessA)
-      signedBinary <- stateChannelSnapshotService.createBinary(signedGenesis)
+      signedBinary <- stateChannelSnapshotService.createGenesisBinary(hashedGenesis.signed)
       signedBinaryHash <- signedBinary.hashF
       _ <- stateChannelSnapshotClient.send(signedBinary)(globalL0Peer)
       signedIncrementalBinary <- stateChannelSnapshotService.createBinary(signedFirstIncrementalSnapshot)
       signedIncrementalBinaryHash <- signedIncrementalBinary.hashF
       _ <- stateChannelSnapshotClient.send(signedIncrementalBinary)(globalL0Peer)
       _ <- lastSignedBinaryHashStorage.set(signedIncrementalBinaryHash)
-      _ <- consensusManager.startFacilitatingAfter(signedFirstIncrementalSnapshot.ordinal, signedFirstIncrementalSnapshot)
+      _ <- consensusManager.startFacilitatingAfter(
+        signedFirstIncrementalSnapshot.ordinal,
+        signedFirstIncrementalSnapshot,
+        hashedGenesis.info
+      )
       _ <- logger.info(s"Genesis binary ${signedBinaryHash.show} and ${signedIncrementalBinaryHash.show} accepted and sent to Global L0")
     } yield ()
   }
