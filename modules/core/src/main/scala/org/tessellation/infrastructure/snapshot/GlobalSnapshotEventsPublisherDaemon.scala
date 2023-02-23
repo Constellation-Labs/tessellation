@@ -7,7 +7,7 @@ import cats.syntax.all._
 import org.tessellation.schema.block.DAGBlock
 import org.tessellation.sdk.domain.Daemon
 import org.tessellation.sdk.domain.gossip.Gossip
-import org.tessellation.sdk.infrastructure.consensus.message.ConsensusEvent
+import org.tessellation.sdk.infrastructure.snapshot.daemon.SnapshotEventsPublisherDaemon
 import org.tessellation.security.signature.Signed
 import org.tessellation.statechannel.StateChannelOutput
 
@@ -20,8 +20,8 @@ object GlobalSnapshotEventsPublisherDaemon {
     stateChannelOutputs: Queue[F, StateChannelOutput],
     l1OutputQueue: Queue[F, Signed[DAGBlock]],
     gossip: Gossip[F]
-  ): Daemon[F] = Daemon.spawn {
-    Stream
+  ): Daemon[F] = {
+    val events: Stream[F, GlobalSnapshotEvent] = Stream
       .fromQueueUnterminated(stateChannelOutputs)
       .map(_.asLeft[DAGEvent])
       .merge(
@@ -29,10 +29,13 @@ object GlobalSnapshotEventsPublisherDaemon {
           .fromQueueUnterminated(l1OutputQueue)
           .map(_.asRight[StateChannelEvent])
       )
-      .map(ConsensusEvent(_))
-      .evalMap(gossip.spread[ConsensusEvent[GlobalSnapshotEvent]])
-      .compile
-      .drain
+
+    SnapshotEventsPublisherDaemon
+      .make(
+        gossip,
+        events
+      )
+      .spawn
   }
 
 }
