@@ -23,6 +23,7 @@ import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.{GlobalSnapshot, SnapshotOrdinal}
 import org.tessellation.sdk.domain.collateral.LatestBalances
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
+import org.tessellation.sdk.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
@@ -50,7 +51,7 @@ object GlobalSnapshotStorage {
   }
 
   def make[F[_]: Async: KryoSerializer: Supervisor](
-    globalSnapshotLocalFileSystemStorage: GlobalSnapshotLocalFileSystemStorage[F],
+    globalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalSnapshot],
     inMemoryCapacity: NonNegLong,
     maybeRollbackHash: Option[Hash]
   ): F[SnapshotStorage[F, GlobalSnapshot] with LatestBalances[F]] =
@@ -64,7 +65,7 @@ object GlobalSnapshotStorage {
     }
 
   private def make[F[_]: Async: KryoSerializer: Supervisor](
-    globalSnapshotLocalFileSystemStorage: GlobalSnapshotLocalFileSystemStorage[F],
+    globalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalSnapshot],
     inMemoryCapacity: NonNegLong,
     rollbackHash: Hash
   ): F[SnapshotStorage[F, GlobalSnapshot] with LatestBalances[F]] =
@@ -92,7 +93,7 @@ object GlobalSnapshotStorage {
       }
 
   private def make[F[_]: Async: KryoSerializer](
-    globalSnapshotLocalFileSystemStorage: GlobalSnapshotLocalFileSystemStorage[F],
+    globalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalSnapshot],
     inMemoryCapacity: NonNegLong
   )(implicit S: Supervisor[F]): F[SnapshotStorage[F, GlobalSnapshot] with LatestBalances[F]] =
     makeResources().flatMap {
@@ -106,7 +107,7 @@ object GlobalSnapshotStorage {
     hashCache: MapRef[F, Hash, Option[Signed[GlobalSnapshot]]],
     notPersistedCache: Ref[F, Set[SnapshotOrdinal]],
     offloadQueue: Queue[F, SnapshotOrdinal],
-    globalSnapshotLocalFileSystemStorage: GlobalSnapshotLocalFileSystemStorage[F],
+    globalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalSnapshot],
     inMemoryCapacity: NonNegLong
   )(implicit S: Supervisor[F]): F[SnapshotStorage[F, GlobalSnapshot] with LatestBalances[F]] = {
 

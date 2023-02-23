@@ -16,6 +16,7 @@ import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.{GlobalSnapshot, address, balance}
+import org.tessellation.sdk.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hex.Hex
@@ -40,7 +41,7 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
     }
 
   def mkStorage(tmpDir: File)(implicit K: KryoSerializer[IO], S: Supervisor[IO]) =
-    GlobalSnapshotLocalFileSystemStorage.make[IO](Path(tmpDir.pathAsString)).flatMap {
+    SnapshotLocalFileSystemStorage.make[IO, GlobalSnapshot](Path(tmpDir.pathAsString)).flatMap {
       GlobalSnapshotStorage.make[IO](_, 5L, None)
     }
 

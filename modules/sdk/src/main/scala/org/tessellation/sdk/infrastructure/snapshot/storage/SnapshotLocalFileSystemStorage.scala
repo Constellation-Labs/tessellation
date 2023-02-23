@@ -1,4 +1,4 @@
-package org.tessellation.infrastructure.snapshot
+package org.tessellation.sdk.infrastructure.snapshot.storage
 
 import cats.Applicative
 import cats.effect.Async
@@ -9,19 +9,19 @@ import cats.syntax.functor._
 
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.{GlobalSnapshot, SnapshotOrdinal}
+import org.tessellation.schema.SnapshotOrdinal
+import org.tessellation.schema.snapshot.Snapshot
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 import org.tessellation.storage.LocalFileSystemStorage
 
-import eu.timepit.refined.auto._
 import fs2.io.file.Path
 import io.estatico.newtype.ops._
 
-final class GlobalSnapshotLocalFileSystemStorage[F[_]: Async: KryoSerializer] private (path: Path)
-    extends LocalFileSystemStorage[F, Signed[GlobalSnapshot]](path) {
+final class SnapshotLocalFileSystemStorage[F[_]: Async: KryoSerializer, S <: Snapshot[_, _]] private (path: Path)
+    extends LocalFileSystemStorage[F, Signed[S]](path) {
 
-  def write(snapshot: Signed[GlobalSnapshot]): F[Unit] = {
+  def write(snapshot: Signed[S]): F[Unit] = {
     val ordinalName = toOrdinalName(snapshot.value)
 
     toHashName(snapshot.value).flatMap { hashName =>
@@ -37,23 +37,23 @@ final class GlobalSnapshotLocalFileSystemStorage[F[_]: Async: KryoSerializer] pr
 
   }
 
-  def read(ordinal: SnapshotOrdinal): F[Option[Signed[GlobalSnapshot]]] =
+  def read(ordinal: SnapshotOrdinal): F[Option[Signed[S]]] =
     read(toOrdinalName(ordinal))
 
-  def read(hash: Hash): F[Option[Signed[GlobalSnapshot]]] =
+  def read(hash: Hash): F[Option[Signed[S]]] =
     read(hash.coerce[String])
 
-  private def toOrdinalName(snapshot: GlobalSnapshot): String = toOrdinalName(snapshot.ordinal)
+  private def toOrdinalName(snapshot: S): String = toOrdinalName(snapshot.ordinal)
   private def toOrdinalName(ordinal: SnapshotOrdinal): String = ordinal.value.value.toString
 
-  private def toHashName(snapshot: GlobalSnapshot): F[String] = snapshot.hashF.map(_.coerce[String])
+  private def toHashName(snapshot: S): F[String] = snapshot.hashF.map(_.coerce[String])
 
 }
 
-object GlobalSnapshotLocalFileSystemStorage {
+object SnapshotLocalFileSystemStorage {
 
-  def make[F[_]: Async: KryoSerializer](path: Path): F[GlobalSnapshotLocalFileSystemStorage[F]] =
-    Applicative[F].pure(new GlobalSnapshotLocalFileSystemStorage[F](path)).flatTap { storage =>
+  def make[F[_]: Async: KryoSerializer, S <: Snapshot[_, _]](path: Path): F[SnapshotLocalFileSystemStorage[F, S]] =
+    Applicative[F].pure(new SnapshotLocalFileSystemStorage[F, S](path)).flatTap { storage =>
       storage.createDirectoryIfNotExists().rethrowT
     }
 }
