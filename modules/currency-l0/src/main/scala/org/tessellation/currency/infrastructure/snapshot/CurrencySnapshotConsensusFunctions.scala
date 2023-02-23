@@ -145,25 +145,4 @@ object CurrencySnapshotConsensusFunctions {
         case (signedBlock, _: BlockAwaitReason) => signedBlock.some
         case _                                  => none
       }.toSet
-
-    object metrics {
-
-      def globalSnapshot(signedGS: Signed[GlobalSnapshot]): F[Unit] = {
-        val activeTipsCount = signedGS.tips.remainedActive.size + signedGS.blocks.size
-        val deprecatedTipsCount = signedGS.tips.deprecated.size
-        val transactionCount = signedGS.blocks.map(_.block.transactions.size).sum
-        val scSnapshotCount = signedGS.stateChannelSnapshots.view.values.map(_.size).sum
-
-        Metrics[F].updateGauge("dag_global_snapshot_ordinal", signedGS.ordinal.value) >>
-          Metrics[F].updateGauge("dag_global_snapshot_height", signedGS.height.value) >>
-          Metrics[F].updateGauge("dag_global_snapshot_signature_count", signedGS.proofs.size) >>
-          Metrics[F]
-            .updateGauge("dag_global_snapshot_tips_count", deprecatedTipsCount, Seq(("tip_type", "deprecated"))) >>
-          Metrics[F].updateGauge("dag_global_snapshot_tips_count", activeTipsCount, Seq(("tip_type", "active"))) >>
-          Metrics[F].incrementCounterBy("dag_global_snapshot_blocks_total", signedGS.blocks.size) >>
-          Metrics[F].incrementCounterBy("dag_global_snapshot_transactions_total", transactionCount) >>
-          Metrics[F].incrementCounterBy("dag_global_snapshot_state_channel_snapshots_total", scSnapshotCount)
-      }
-    }
-  }
 }

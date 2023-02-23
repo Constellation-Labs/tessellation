@@ -24,7 +24,7 @@ import shapeless.syntax.singleton._
 final case class SnapshotRoutes[F[_]: Async: KryoSerializer](
   snapshotStorage: SnapshotStorage[F, CurrencySnapshot]
 ) extends Http4sDsl[F] {
-  private val prefixPath = "/global-snapshots"
+  private val prefixPath = "/snapshots"
 
   // first on the list is the default - used when `Accept: */*` is requested
   implicit def binaryAndJsonEncoders[A <: AnyRef: Encoder]: List[EntityEncoder[F, A]] =
