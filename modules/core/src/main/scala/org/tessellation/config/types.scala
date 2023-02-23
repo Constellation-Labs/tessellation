@@ -59,7 +59,7 @@ object types {
       Address("DAG8VT7bxjs1XXBAzJGYJDaeyNxuThikHeUTp9XY") -> Weight(5L), // stardust tax secondary
       Address("DAG77VVVRvdZiYxZ2hCtkHz68h85ApT5b2xzdTkn") -> Weight(20L), // soft staking
       Address("DAG0qE5tkz6cMUD5M2dkqgfV4TQCzUUdAP5MFM9P") -> Weight(1L), // testnet
-      Address("DAG0Njmo6JZ3FhkLsipJSppepUHPuTXcSifARfvK") -> Weight(65L) // data pool
+      Address("DAG3RXBWBJq1Bf38rawASakLHKYMbRhsDckaGvGu") -> Weight(65L) // data pool
     ),
     remainingWeight: Weight = Weight(4L) // facilitators
   )
