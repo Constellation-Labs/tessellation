@@ -7,8 +7,10 @@ import scala.util.control.NoStackTrace
 
 import io.circe._
 import io.circe.syntax._
+import org.http4s.Uri.Path
 import org.http4s._
 import org.http4s.circe._
+import org.http4s.headers.Location
 import weaver.scalacheck.Checkers
 import weaver.{Expectations, SimpleIOSuite}
 
@@ -32,6 +34,12 @@ trait HttpSuite extends SimpleIOSuite with Checkers {
     routes.run(req).value.map {
       case Some(resp) => expect.same(resp.status, expectedStatus)
       case None       => failure("route not found")
+    }
+
+  def expectLocationHeader(routes: HttpRoutes[IO], req: Request[IO])(path: Path): IO[Expectations] =
+    routes.run(req).value.map {
+      case Some(res) => expect.same(res.headers.get[Location], Some(Location(Uri(path = path))))
+      case None      => failure("""route not found"""")
     }
 
   def expectHttpFailure(routes: HttpRoutes[IO], req: Request[IO]): IO[Expectations] =
