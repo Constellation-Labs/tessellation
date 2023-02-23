@@ -9,9 +9,9 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.config.types.HealthCheckConfig
 import org.tessellation.sdk.domain.cluster.services.Session
+import org.tessellation.sdk.domain.healthcheck.{HealthChecks => HealthChecksTrigger}
 import org.tessellation.sdk.effects.GenUUID
 import org.tessellation.sdk.infrastructure.healthcheck.ping.{PingHealthCheckConsensus, PingHealthCheckConsensusDriver}
-import org.tessellation.sdk.domain.healthcheck.{HealthChecks => HealthChecksTrigger}
 
 import org.http4s.client.Client
 

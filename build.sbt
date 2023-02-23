@@ -471,6 +471,8 @@ lazy val currencyL0 = (project in file("modules/currency-l0"))
   .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test, sdk)
   .settings(
     name := "tessellation-currency-l0",
+    buildInfoKeys := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion),
+    buildInfoPackage := "org.tessellation.currency",
     Defaults.itSettings,
     scalafixCommonSettings,
     commonSettings,

@@ -1,11 +1,10 @@
 package org.tessellation.currency.modules
 
+import java.security.PrivateKey
+
 import cats.effect.Async
 import cats.syntax.semigroupk._
-import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
-import org.http4s.server.Router
-import org.http4s.server.middleware.{CORS, RequestLogger, ResponseLogger}
-import org.http4s.{HttpApp, HttpRoutes}
+
 import org.tessellation.currency.domain.cell.{L0Cell, L0CellInput}
 import org.tessellation.currency.schema.currency.{CurrencyBlock, CurrencySnapshot, CurrencyTransaction}
 import org.tessellation.kryo.KryoSerializer
@@ -22,7 +21,10 @@ import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 
-import java.security.PrivateKey
+import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
+import org.http4s.server.Router
+import org.http4s.server.middleware.{CORS, RequestLogger, ResponseLogger}
+import org.http4s.{HttpApp, HttpRoutes}
 
 object HttpApi {
 
