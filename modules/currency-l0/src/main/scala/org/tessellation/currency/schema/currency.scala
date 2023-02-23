@@ -15,12 +15,18 @@ import org.tessellation.security.signature.Signed
 import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
+import eu.timepit.refined.api.Refined
 import eu.timepit.refined.auto._
+import eu.timepit.refined.string.MatchesRegex
 import eu.timepit.refined.types.numeric.PosInt
+import io.estatico.newtype.macros.newtype
 import org.tessellation.schema.balance.Balance
 import org.tessellation.syntax.sortedCollection._
 
 object currency {
+
+  @newtype
+  case class TokenSymbol(symbol: String Refined MatchesRegex["[A-Z]+"])
 
   @derive(decoder, encoder, order, ordering, show)
   case class CurrencyTransaction(
