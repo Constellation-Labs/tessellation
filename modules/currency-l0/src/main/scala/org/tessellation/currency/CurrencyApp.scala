@@ -1,31 +1,33 @@
 package org.tessellation.currency
 
 import cats.effect.{IO, Resource}
-import cats.syntax.applicativeError._
 import cats.syntax.applicative._
+import cats.syntax.applicativeError._
 import cats.syntax.semigroupk._
+
 import org.tessellation.currency.cli.method
 import org.tessellation.currency.cli.method.{Run, RunGenesis, RunValidator}
 import org.tessellation.currency.http.P2PClient
 import org.tessellation.currency.modules._
+import org.tessellation.currency.schema.currency.{CurrencySnapshot, TokenSymbol}
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.kryo._
-import org.tessellation.schema.cluster.ClusterId
-import org.tessellation.sdk.app.{SDK, TessellationIOApp}
-import org.tessellation.sdk.infrastructure.genesis.{Loader => GenesisLoader}
-import org.tessellation.sdk.infrastructure.gossip.{GossipDaemon, RumorHandlers}
-import org.tessellation.sdk.{SdkOrSharedOrKernelRegistrationIdRange, sdkKryoRegistrar}
-import com.monovore.decline.Opts
-import eu.timepit.refined.boolean.Or
-import eu.timepit.refined.auto._
-import org.tessellation.currency.schema.currency.{CurrencySnapshot, TokenSymbol}
 import org.tessellation.schema.address.Address
+import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.node.NodeState
+import org.tessellation.sdk.app.{SDK, TessellationIOApp}
 import org.tessellation.sdk.cli.CliMethod
 import org.tessellation.sdk.domain.collateral.OwnCollateralNotSatisfied
+import org.tessellation.sdk.infrastructure.genesis.{Loader => GenesisLoader}
+import org.tessellation.sdk.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import org.tessellation.sdk.resources.MkHttpServer
 import org.tessellation.sdk.resources.MkHttpServer.ServerName
+import org.tessellation.sdk.{SdkOrSharedOrKernelRegistrationIdRange, sdkKryoRegistrar}
 import org.tessellation.security.signature.Signed
+
+import com.monovore.decline.Opts
+import eu.timepit.refined.auto._
+import eu.timepit.refined.boolean.Or
 
 abstract class CurrencyApp[A <: CliMethod](
   header: String,

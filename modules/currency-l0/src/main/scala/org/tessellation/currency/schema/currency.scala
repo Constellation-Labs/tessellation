@@ -3,15 +3,19 @@ package org.tessellation.currency.schema
 import cats.data.{NonEmptyList, NonEmptySet}
 
 import scala.collection.immutable.{SortedMap, SortedSet}
+
 import org.tessellation.ext.cats.data.OrderBasedOrdering
 import org.tessellation.ext.derevo.ordering
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
+import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.height.Height
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo}
 import org.tessellation.schema.transaction._
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.signature.Signed
+import org.tessellation.syntax.sortedCollection._
+
 import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
@@ -20,8 +24,6 @@ import eu.timepit.refined.auto._
 import eu.timepit.refined.string.MatchesRegex
 import eu.timepit.refined.types.numeric.PosInt
 import io.estatico.newtype.macros.newtype
-import org.tessellation.schema.balance.Balance
-import org.tessellation.syntax.sortedCollection._
 
 object currency {
 

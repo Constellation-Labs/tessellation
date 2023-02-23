@@ -1,9 +1,11 @@
 package org.tessellation.currency.modules
 
+import java.security.KeyPair
+
 import cats.effect.kernel.Async
 import cats.effect.std.{Random, Supervisor}
 import cats.syntax.functor._
-import org.http4s.client.Client
+
 import org.tessellation.currency.config.types.AppConfig
 import org.tessellation.currency.infrastructure.snapshot.{CurrencySnapshotConsensus, CurrencySnapshotEvent}
 import org.tessellation.currency.schema.currency.{CurrencyBlock, CurrencySnapshot, CurrencyTransaction}
@@ -21,7 +23,7 @@ import org.tessellation.sdk.infrastructure.snapshot.services.AddressService
 import org.tessellation.sdk.modules.SdkServices
 import org.tessellation.security.SecurityProvider
 
-import java.security.KeyPair
+import org.http4s.client.Client
 
 object Services {
 

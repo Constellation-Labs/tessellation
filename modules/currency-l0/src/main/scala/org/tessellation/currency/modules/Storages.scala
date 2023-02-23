@@ -4,6 +4,7 @@ import cats.effect.kernel.Async
 import cats.effect.std.Supervisor
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+
 import org.tessellation.currency.schema.currency.CurrencySnapshot
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.sdk.config.types.SnapshotConfig
