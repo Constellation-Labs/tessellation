@@ -6,10 +6,10 @@ import cats.syntax.functor._
 import cats.syntax.traverse._
 import org.tessellation.currency.infrastructure.healthcheck.HealthCheckDaemon
 import org.tessellation.currency.infrastructure.snapshot.CurrencySnapshotEventsPublisherDaemon
-import org.tessellation.currency.infrastructure.snapshot.daemon.DownloadDaemon
 import org.tessellation.sdk.domain.Daemon
 import org.tessellation.sdk.infrastructure.cluster.daemon.NodeStateDaemon
 import org.tessellation.sdk.infrastructure.collateral.daemon.CollateralDaemon
+import org.tessellation.sdk.infrastructure.snapshot.daemon.DownloadDaemon
 
 object Daemons {
 

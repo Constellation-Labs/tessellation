@@ -19,24 +19,25 @@ import com.monovore.decline.Opts
 import eu.timepit.refined.boolean.Or
 import org.tessellation.currency.schema.currency.CurrencySnapshot
 import org.tessellation.schema.node.NodeState
+import org.tessellation.sdk.cli.CliMethod
 import org.tessellation.sdk.domain.collateral.OwnCollateralNotSatisfied
 import org.tessellation.sdk.resources.MkHttpServer
 import org.tessellation.sdk.resources.MkHttpServer.ServerName
 import org.tessellation.security.signature.Signed
 
-abstract class CurrencyApp(
+abstract class CurrencyApp[A <: CliMethod](
   header: String,
   clusterId: ClusterId,
   helpFlag: Boolean,
   version: String,
   tokenSymbol: String
-) extends TessellationIOApp[Run](clusterId.toString, header, clusterId, helpFlag, version) {
-  val opts: Opts[Run] = method.opts
-
+) extends TessellationIOApp[A](clusterId.toString, header, clusterId, helpFlag, version) {
   type KryoRegistrationIdRange = CurrencyKryoRegistrationIdRange Or SdkOrSharedOrKernelRegistrationIdRange
 
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
     currencyKryoRegistrar.union(sdkKryoRegistrar)
+
+  def run(method: A, sdk: SDK[IO]): Resource[IO, Unit]
 }
 
 abstract class CurrencyL0App(
@@ -45,7 +46,9 @@ abstract class CurrencyL0App(
   helpFlag: Boolean,
   version: String,
   tokenSymbol: String
-) extends CurrencyApp(header, clusterId, helpFlag, version, tokenSymbol) {
+) extends CurrencyApp[Run](header, clusterId, helpFlag, version, tokenSymbol) {
+
+  val opts: Opts[Run] = method.opts
   def run(method: Run, sdk: SDK[IO]): Resource[IO, Unit] = {
     import sdk._
 
