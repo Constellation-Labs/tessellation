@@ -1,12 +1,13 @@
 package org.tessellation.currency.modules
 
-import java.security.PrivateKey
-
 import cats.effect.Async
 import cats.syntax.semigroupk._
-
-import org.tessellation.currency.domain.cell.L0Cell
-import org.tessellation.currency.http.routes.{CurrencyRoutes, DebugRoutes}
+import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
+import org.http4s.server.Router
+import org.http4s.server.middleware.{CORS, RequestLogger, ResponseLogger}
+import org.http4s.{HttpApp, HttpRoutes}
+import org.tessellation.currency.domain.cell.{L0Cell, L0CellInput}
+import org.tessellation.currency.schema.currency.{CurrencyBlock, CurrencySnapshot, CurrencyTransaction}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.peer.PeerId
@@ -19,11 +20,9 @@ import org.tessellation.sdk.http.routes._
 import org.tessellation.sdk.infrastructure.healthcheck.ping.PingHealthCheckRoutes
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
+import org.tessellation.security.signature.Signed
 
-import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
-import org.http4s.server.Router
-import org.http4s.server.middleware.{CORS, RequestLogger, ResponseLogger}
-import org.http4s.{HttpApp, HttpRoutes}
+import java.security.PrivateKey
 
 object HttpApi {
 
@@ -66,15 +65,16 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
   httpCfg: HttpConfig
 ) {
 
-  private val mkDagCell: L0Cell.Mk[F] = L0Cell.mkL0Cell(queues.l1Output)
+  private val mkCell = (block: Signed[CurrencyBlock]) => L0Cell.mkL0Cell(queues.l1Output).apply(L0CellInput.HandleL1Block(block))
 
+  private val snapshotRoutes = SnapshotRoutes[F, CurrencySnapshot](storages.snapshot, "/snapshots")
   private val clusterRoutes =
     ClusterRoutes[F](programs.joining, programs.peerDiscovery, storages.cluster, services.cluster, services.collateral)
   private val nodeRoutes = NodeRoutes[F](storages.node, storages.session, storages.cluster, nodeVersion, httpCfg, selfId)
 
   private val registrationRoutes = RegistrationRoutes[F](services.cluster)
   private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip)
-  private val currencyRoutes = CurrencyRoutes[F](services.address, mkDagCell)
+  private val currencyRoutes = routes.CurrencyRoutes[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshot](services.address, mkCell)
   private val consensusInfoRoutes = new ConsensusInfoRoutes[F, SnapshotOrdinal](services.cluster, services.consensus.storage, selfId)
   private val consensusRoutes = services.consensus.routes.p2pRoutes
 
@@ -84,7 +84,12 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
     Router("healthcheck" -> pingHealthcheckRoutes.p2pRoutes)
   }
 
-  private val debugRoutes = DebugRoutes[F](storages, services).routes
+  private val debugRoutes = DebugRoutes[F](
+    storages.cluster,
+    services.consensus,
+    services.gossip,
+    services.session
+  ).routes
 
   private val metricRoutes = routes.MetricRoutes[F]().routes
   private val targetRoutes = routes.TargetRoutes[F](services.cluster).routes
@@ -97,6 +102,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
             (if (environment == Testnet || environment == Dev) debugRoutes else HttpRoutes.empty) <+>
               metricRoutes <+>
               targetRoutes <+>
+              snapshotRoutes.publicRoutes <+>
               clusterRoutes.publicRoutes <+>
               currencyRoutes.publicRoutes <+>
               nodeRoutes.publicRoutes <+>
@@ -112,7 +118,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
         PeerAuthMiddleware.requestVerifierMiddleware(
           PeerAuthMiddleware.requestTokenVerifierMiddleware(services.session)(
             PeerAuthMiddleware.requestCollateralVerifierMiddleware(services.collateral)(
-              clusterRoutes.p2pRoutes <+>
+              snapshotRoutes.p2pRoutes <+>
+                clusterRoutes.p2pRoutes <+>
                 nodeRoutes.p2pRoutes <+>
                 gossipRoutes.p2pRoutes <+>
                 healthcheckP2PRoutes <+>
