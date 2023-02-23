@@ -6,7 +6,7 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.domain.trust.storage.TrustStorage
-import org.tessellation.infrastructure.snapshot.{GlobalSnapshotLocalFileSystemStorage, GlobalSnapshotStorage}
+import org.tessellation.infrastructure.snapshot.GlobalSnapshotStorage
 import org.tessellation.infrastructure.trust.storage.TrustStorage
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.GlobalSnapshot
@@ -16,6 +16,7 @@ import org.tessellation.sdk.domain.collateral.LatestBalances
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.infrastructure.gossip.RumorStorage
+import org.tessellation.sdk.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage
 import org.tessellation.sdk.modules.SdkStorages
 import org.tessellation.security.hash.Hash
 
@@ -28,11 +29,11 @@ object Storages {
   ): F[Storages[F]] =
     for {
       trustStorage <- TrustStorage.make[F]
-      globalSnapshotLocalFileSystemStorage <- GlobalSnapshotLocalFileSystemStorage.make(
+      globalSnapshotLocalFileSystemStorage <- SnapshotLocalFileSystemStorage.make[F, GlobalSnapshot](
         snapshotConfig.snapshotPath
       )
       globalSnapshotStorage <- GlobalSnapshotStorage
-        .make[F](globalSnapshotLocalFileSystemStorage, snapshotConfig.inMemoryCapacity, maybeRollbackHash)
+        .make(globalSnapshotLocalFileSystemStorage, snapshotConfig.inMemoryCapacity, maybeRollbackHash)
     } yield
       new Storages[F](
         cluster = sdkStorages.cluster,

@@ -4,8 +4,6 @@ import cats.effect.kernel.Async
 import cats.effect.std.Supervisor
 import cats.syntax.flatMap._
 import cats.syntax.functor._
-
-import org.tessellation.currency.infrastructure.snapshot.{CurrencySnapshotLocalFileSystemStorage, CurrencySnapshotStorage}
 import org.tessellation.currency.schema.currency.CurrencySnapshot
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.sdk.config.types.SnapshotConfig
@@ -14,6 +12,7 @@ import org.tessellation.sdk.domain.collateral.LatestBalances
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.infrastructure.gossip.RumorStorage
+import org.tessellation.sdk.infrastructure.snapshot.storage.{SnapshotLocalFileSystemStorage, SnapshotStorage}
 import org.tessellation.sdk.modules.SdkStorages
 
 object Storages {
@@ -23,11 +22,11 @@ object Storages {
     snapshotConfig: SnapshotConfig
   ): F[Storages[F]] =
     for {
-      snapshotLocalFileSystemStorage <- CurrencySnapshotLocalFileSystemStorage.make(
+      snapshotLocalFileSystemStorage <- SnapshotLocalFileSystemStorage.make[F, CurrencySnapshot](
         snapshotConfig.snapshotPath
       )
-      snapshotStorage <- CurrencySnapshotStorage
-        .make[F](snapshotLocalFileSystemStorage, snapshotConfig.inMemoryCapacity)
+      snapshotStorage <- SnapshotStorage
+        .make[F, CurrencySnapshot](snapshotLocalFileSystemStorage, snapshotConfig.inMemoryCapacity)
     } yield
       new Storages[F](
         cluster = sdkStorages.cluster,

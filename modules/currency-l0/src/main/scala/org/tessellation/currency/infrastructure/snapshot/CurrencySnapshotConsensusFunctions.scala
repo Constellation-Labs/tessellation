@@ -145,4 +145,5 @@ object CurrencySnapshotConsensusFunctions {
         case (signedBlock, _: BlockAwaitReason) => signedBlock.some
         case _                                  => none
       }.toSet
+  }
 }
