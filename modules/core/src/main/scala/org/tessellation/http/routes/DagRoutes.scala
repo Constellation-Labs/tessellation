@@ -14,7 +14,6 @@ final case class DagRoutes[F[_]: Async]() extends Http4sDsl[F] {
 
   private val httpRoutes: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ _ =>
-      println(req.uri.path)
       redirectResponse(req)
         .map(_.pure[F])
         .getOrElse(NotFound())

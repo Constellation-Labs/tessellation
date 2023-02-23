@@ -1,4 +1,4 @@
-package org.tessellation.currency.cli
+package org.tessellation.sdk.cli
 
 import scala.concurrent.duration.DurationInt
 
@@ -15,7 +15,7 @@ object snapshot {
     .env[Path]("CL_SNAPSHOT_STORED_PATH", help = "Path to store created snapshot")
     .withDefault(Path("data/snapshot"))
 
-  val opts = snapshotPath.map { snapshotPath =>
+  val opts: Opts[SnapshotConfig] = snapshotPath.map { snapshotPath =>
     SnapshotConfig(
       consensus = ConsensusConfig(
         timeTriggerInterval = 43.seconds,

@@ -12,7 +12,7 @@ import org.tessellation.ext.decline.decline._
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.node.NodeState
-import org.tessellation.sdk.cli.{CliMethod, CollateralAmountOpts}
+import org.tessellation.sdk.cli.{CliMethod, CollateralAmountOpts, snapshot}
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types._
 import org.tessellation.security.hash.Hash
@@ -93,7 +93,7 @@ object method {
       .map(EpochProgress(_))
       .withDefault(EpochProgress.MinValue)
 
-    val opts = Opts.subcommand("run-genesis", "Run genesis mode") {
+    val opts: Opts[RunGenesis] = Opts.subcommand("run-genesis", "Run genesis mode") {
       (
         StorePath.opts,
         KeyAlias.opts,
@@ -106,7 +106,7 @@ object method {
         seedlistPathOpts,
         CollateralAmountOpts.opts,
         startingEpochProgressOpts
-      ).mapN(RunGenesis.apply(_, _, _, _, _, _, _, _, _, _, _))
+      ).mapN(RunGenesis.apply)
     }
   }
 
@@ -129,7 +129,7 @@ object method {
 
     val rollbackHashOpts: Opts[Hash] = Opts.argument[Hash]("rollbackHash")
 
-    val opts = Opts.subcommand("run-rollback", "Run rollback mode") {
+    val opts: Opts[RunRollback] = Opts.subcommand("run-rollback", "Run rollback mode") {
       (
         StorePath.opts,
         KeyAlias.opts,
@@ -141,7 +141,7 @@ object method {
         seedlistPathOpts,
         CollateralAmountOpts.opts,
         rollbackHashOpts
-      ).mapN(RunRollback.apply(_, _, _, _, _, _, _, _, _, _))
+      ).mapN(RunRollback.apply)
     }
   }
 
@@ -161,7 +161,7 @@ object method {
 
     val seedlistPathOpts: Opts[Option[Path]] = Opts.option[Path]("seedlist", "").orNone
 
-    val opts = Opts.subcommand("run-validator", "Run validator mode") {
+    val opts: Opts[RunValidator] = Opts.subcommand("run-validator", "Run validator mode") {
       (
         StorePath.opts,
         KeyAlias.opts,
@@ -172,7 +172,7 @@ object method {
         snapshot.opts,
         seedlistPathOpts,
         CollateralAmountOpts.opts
-      ).mapN(RunValidator.apply(_, _, _, _, _, _, _, _, _))
+      ).mapN(RunValidator.apply)
     }
   }
 
