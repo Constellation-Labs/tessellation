@@ -4,11 +4,12 @@ import cats.effect.Async
 import cats.effect.std.Supervisor
 import cats.syntax.functor._
 import cats.syntax.traverse._
-import org.tessellation.currency.infrastructure.healthcheck.HealthCheckDaemon
+import org.tessellation.sdk.domain.healthcheck.HealthChecks
 import org.tessellation.currency.infrastructure.snapshot.CurrencySnapshotEventsPublisherDaemon
 import org.tessellation.sdk.domain.Daemon
 import org.tessellation.sdk.infrastructure.cluster.daemon.NodeStateDaemon
 import org.tessellation.sdk.infrastructure.collateral.daemon.CollateralDaemon
+import org.tessellation.sdk.infrastructure.healthcheck.daemon.HealthCheckDaemon
 import org.tessellation.sdk.infrastructure.snapshot.daemon.DownloadDaemon
 
 object Daemons {

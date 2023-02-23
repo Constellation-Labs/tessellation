@@ -6,13 +6,13 @@ import cats.syntax.functor._
 import cats.syntax.traverse._
 
 import org.tessellation.config.types.AppConfig
-import org.tessellation.infrastructure.healthcheck.HealthCheckDaemon
 import org.tessellation.infrastructure.snapshot.GlobalSnapshotEventsPublisherDaemon
 import org.tessellation.infrastructure.trust.TrustDaemon
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.Daemon
 import org.tessellation.sdk.infrastructure.cluster.daemon.NodeStateDaemon
 import org.tessellation.sdk.infrastructure.collateral.daemon.CollateralDaemon
+import org.tessellation.sdk.infrastructure.healthcheck.daemon.HealthCheckDaemon
 import org.tessellation.sdk.infrastructure.snapshot.daemon.DownloadDaemon
 
 object Daemons {

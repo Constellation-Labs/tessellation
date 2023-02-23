@@ -1,4 +1,4 @@
-package org.tessellation.infrastructure.healthcheck
+package org.tessellation.sdk.infrastructure.healthcheck.daemon
 
 import cats.effect.Async
 import cats.effect.std.Supervisor
@@ -6,8 +6,8 @@ import cats.syntax.functor._
 
 import scala.concurrent.duration._
 
-import org.tessellation.modules.HealthChecks
 import org.tessellation.sdk.domain.Daemon
+import org.tessellation.sdk.domain.healthcheck.HealthChecks
 
 import fs2._
 
@@ -24,7 +24,7 @@ object HealthCheckDaemon {
       Stream
         .awakeEvery(10.seconds)
         .evalTap { _ =>
-          healthChecks.ping.trigger()
+          healthChecks.trigger()
         }
         .compile
         .drain

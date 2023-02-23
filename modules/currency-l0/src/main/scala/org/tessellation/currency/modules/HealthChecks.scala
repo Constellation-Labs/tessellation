@@ -11,6 +11,7 @@ import org.tessellation.sdk.config.types.HealthCheckConfig
 import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.effects.GenUUID
 import org.tessellation.sdk.infrastructure.healthcheck.ping.{PingHealthCheckConsensus, PingHealthCheckConsensusDriver}
+import org.tessellation.sdk.domain.healthcheck.{HealthChecks => HealthChecksTrigger}
 
 import org.http4s.client.Client
 
@@ -39,11 +40,13 @@ object HealthChecks {
     )
 
     ping.map {
-      new HealthChecks(_) {}
+      new HealthChecks(_) {
+        def trigger(): F[Unit] = ping.trigger()
+      }
     }
   }
 }
 
 sealed abstract class HealthChecks[F[_]] private (
   val ping: PingHealthCheckConsensus[F]
-)
+) extends HealthChecksTrigger[F]
