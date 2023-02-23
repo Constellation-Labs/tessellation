@@ -46,7 +46,7 @@ object currency {
   @derive(encoder, decoder, eqv, show)
   case class CurrencySnapshotInfo(
     lastTxRefs: SortedMap[Address, TransactionReference],
-    balances: SortedMap[Address, balance.Balance]
+    balances: SortedMap[Address, Balance]
   ) extends SnapshotInfo {}
 
   @derive(eqv, show, encoder, decoder)

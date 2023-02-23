@@ -4,7 +4,6 @@ import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import org.tessellation.currency.domain.cell.{L0Cell, L0CellInput}
-import org.tessellation.currency.domain.dag.CurrencyService
 import org.tessellation.currency.schema.currency.{CurrencyBlock, CurrencySnapshot}
 import org.tessellation.ext.http4s.AddressVar
 import org.tessellation.sdk.ext.http4s.SnapshotOrdinalVar
@@ -18,7 +17,7 @@ import org.tessellation.sdk.domain.snapshot.services.AddressService
 import shapeless._
 import shapeless.syntax.singleton._
 
-final case class CurrencyRoutes[F[_]: Async](addressService: AddressService[F, CurrencySnapshot], mkDagCell: L0Cell.Mk[F])
+final case class CurrencyRoutes[F[_]: Async](addressService: AddressService[F, CurrencySnapshot], mkCell: L0Cell.Mk[F])
     extends Http4sDsl[F] {
   private[routes] val prefixPath = "/dag"
 
@@ -72,8 +71,8 @@ final case class CurrencyRoutes[F[_]: Async](addressService: AddressService[F, C
     case req @ POST -> Root / "l1-output" =>
       req
         .as[Signed[CurrencyBlock]]
-        .map(L0CellInput.HandleL1Block(_))
-        .map(mkDagCell)
+        .map(L0CellInput.HandleL1Block)
+        .map(mkCell)
         .flatMap(_.run())
         .flatMap(_ => Ok())
   }

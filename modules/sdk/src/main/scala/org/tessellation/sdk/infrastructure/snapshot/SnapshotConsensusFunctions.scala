@@ -29,6 +29,7 @@ import eu.timepit.refined.types.numeric.NonNegLong
 case class InvalidHeight(lastHeight: Height, currentHeight: Height) extends NoStackTrace
 case object NoTipsRemaining extends NoStackTrace
 case object ArtifactMismatch extends InvalidArtifact
+
 abstract class SnapshotConsensusFunctions[F[_]: Async: SecurityProvider, T <: Transaction, B <: Block[
   T
 ]: Order, Event, Artifact <: Snapshot[

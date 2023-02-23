@@ -28,6 +28,7 @@ import org.tessellation.security.signature.Signed
 import eu.timepit.refined.auto._
 import org.tessellation.sdk.infrastructure.snapshot.{InvalidHeight, NoTipsRemaining, SnapshotConsensusFunctions}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+
 abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
     extends SnapshotConsensusFunctions[
       F,

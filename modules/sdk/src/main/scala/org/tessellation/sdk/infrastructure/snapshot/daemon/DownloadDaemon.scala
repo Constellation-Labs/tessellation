@@ -1,9 +1,10 @@
-package org.tessellation.currency.infrastructure.snapshot.daemon
+package org.tessellation.sdk.infrastructure.snapshot.daemon
 
 import cats.effect.Async
 import cats.effect.std.Supervisor
 import cats.syntax.eq._
 import cats.syntax.functor._
+
 import org.tessellation.schema.node.NodeState
 import org.tessellation.sdk.domain.Daemon
 import org.tessellation.sdk.domain.node.NodeStorage
