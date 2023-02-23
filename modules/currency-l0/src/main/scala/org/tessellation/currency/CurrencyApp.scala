@@ -17,7 +17,9 @@ import org.tessellation.sdk.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import org.tessellation.sdk.{SdkOrSharedOrKernelRegistrationIdRange, sdkKryoRegistrar}
 import com.monovore.decline.Opts
 import eu.timepit.refined.boolean.Or
-import org.tessellation.currency.schema.currency.CurrencySnapshot
+import eu.timepit.refined.auto._
+import org.tessellation.currency.schema.currency.{CurrencySnapshot, TokenSymbol}
+import org.tessellation.schema.address.Address
 import org.tessellation.schema.node.NodeState
 import org.tessellation.sdk.cli.CliMethod
 import org.tessellation.sdk.domain.collateral.OwnCollateralNotSatisfied
@@ -30,7 +32,8 @@ abstract class CurrencyApp[A <: CliMethod](
   clusterId: ClusterId,
   helpFlag: Boolean,
   version: String,
-  tokenSymbol: String
+  symbol: TokenSymbol,
+  identifier: Address
 ) extends TessellationIOApp[A](clusterId.toString, header, clusterId, helpFlag, version) {
   type KryoRegistrationIdRange = CurrencyKryoRegistrationIdRange Or SdkOrSharedOrKernelRegistrationIdRange
 
@@ -45,8 +48,9 @@ abstract class CurrencyL0App(
   clusterId: ClusterId,
   helpFlag: Boolean,
   version: String,
-  tokenSymbol: String
-) extends CurrencyApp[Run](header, clusterId, helpFlag, version, tokenSymbol) {
+  symbol: TokenSymbol,
+  identifier: Address
+) extends CurrencyApp[Run](header, clusterId, helpFlag, version, symbol, identifier) {
 
   val opts: Opts[Run] = method.opts
   def run(method: Run, sdk: SDK[IO]): Resource[IO, Unit] = {
