@@ -57,13 +57,13 @@ object GlobalSnapshotStateChannelEventsProcessor {
       ): (SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set[GlobalSnapshotEvent]) = {
 
         val lshToSnapshot: Map[(Address, Hash), StateChannelEvent] = events.map { e =>
-          (e.address, e.snapshot.value.lastSnapshotHash) -> e
+          (e.address, e.snapshotBinary.value.lastSnapshotHash) -> e
         }.foldLeft(Map.empty[(Address, Hash), StateChannelEvent]) { (acc, entry) =>
           entry match {
             case (k, newEvent) =>
               acc.updatedWith(k) { maybeEvent =>
                 maybeEvent
-                  .filter(event => Hash.fromBytes(event.snapshot.content) < Hash.fromBytes(newEvent.snapshot.content))
+                  .filter(event => Hash.fromBytes(event.snapshotBinary.content) < Hash.fromBytes(newEvent.snapshotBinary.content))
                   .orElse(newEvent.some)
               }
           }
@@ -86,12 +86,12 @@ object GlobalSnapshotStateChannelEventsProcessor {
                   .map { go =>
                     for {
                       head <- Eval.now(go)
-                      tail <- go.snapshot.hash.fold(_ => Eval.now(List.empty), unfold)
+                      tail <- go.snapshotBinary.hash.fold(_ => Eval.now(List.empty), unfold)
                     } yield head :: tail
                   }
                   .getOrElse(Eval.now(List.empty))
 
-              unfold(initLsh).value.toNel.map(address -> _.map(_.snapshot).reverse)
+              unfold(initLsh).value.toNel.map(address -> _.map(_.snapshotBinary).reverse)
           }
           .toSortedMap
 

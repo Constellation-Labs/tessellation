@@ -507,14 +507,10 @@ lazy val currencyL0 = (project in file("modules/currency-l0"))
     scalafixCommonSettings,
     commonSettings,
     commonTestSettings,
-    dockerSettings,
-    makeBatScripts := Seq(),
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
       CompilerPlugin.betterMonadicFor,
-      CompilerPlugin.semanticDB,
-      Libraries.refinedCore,
-      Libraries.refinedCats
+      CompilerPlugin.semanticDB
     )
   )
 

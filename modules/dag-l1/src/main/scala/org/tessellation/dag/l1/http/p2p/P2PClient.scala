@@ -4,8 +4,9 @@ import cats.effect.Async
 
 import org.tessellation.dag.l1.domain.consensus.block.http.p2p.clients.BlockConsensusClient
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.Block
 import org.tessellation.schema.transaction.Transaction
+import org.tessellation.schema.{Block, GlobalSnapshot}
+import org.tessellation.sdk.domain.http.p2p.SnapshotClient
 import org.tessellation.sdk.http.p2p.SdkP2PClient
 import org.tessellation.sdk.http.p2p.clients._
 import org.tessellation.sdk.infrastructure.gossip.p2p.GossipClient
@@ -41,5 +42,5 @@ sealed abstract class P2PClient[F[_], T <: Transaction, B <: Block[T]] private (
   val l0CurrencyCluster: L0CurrencyClusterClient[F, B],
   val gossip: GossipClient[F],
   val blockConsensus: BlockConsensusClient[F, T],
-  val l0GlobalSnapshotClient: L0GlobalSnapshotClient[F]
+  val l0GlobalSnapshotClient: SnapshotClient[F, GlobalSnapshot]
 )

@@ -89,7 +89,7 @@ object currency {
         SnapshotOrdinal.MinValue,
         Height.MinValue,
         SubHeight.MinValue,
-        Hash(""),
+        Hash.empty,
         SortedSet.empty,
         SnapshotTips(SortedSet.empty, mkActiveTips(8)),
         CurrencySnapshotInfo(SortedMap.empty, SortedMap.from(balances))

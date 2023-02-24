@@ -86,7 +86,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       lastGlobalSnapshotInfo: GlobalSnapshotInfo,
       events: List[StateChannelEvent]
     ): IO[(SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set[GlobalSnapshotEvent])] = IO(
-      (events.groupByNel(_.address).view.mapValues(_.map(_.snapshot)).toSortedMap, Set.empty)
+      (events.groupByNel(_.address).view.mapValues(_.map(_.snapshotBinary)).toSortedMap, Set.empty)
     )
   }
 
@@ -125,7 +125,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
             lastArtifact =>
               gscf.validateArtifact(signedGenesis, EventTrigger)(lastArtifact._1).map { result =>
                 expect.same(result.isRight, true) && expect
-                  .same(result.map(_.stateChannelSnapshots(scEvent.address)), Right(NonEmptyList.one(scEvent.snapshot)))
+                  .same(result.map(_.stateChannelSnapshots(scEvent.address)), Right(NonEmptyList.one(scEvent.snapshotBinary)))
               }
           }
         }

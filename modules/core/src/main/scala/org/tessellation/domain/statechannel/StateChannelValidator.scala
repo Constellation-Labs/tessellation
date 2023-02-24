@@ -28,9 +28,9 @@ object StateChannelValidator {
 
     override def validate(stateChannelOutput: StateChannelOutput): F[StateChannelValidationErrorOr[StateChannelOutput]] = for {
       signaturesV <- signedValidator
-        .validateSignatures(stateChannelOutput.snapshot)
+        .validateSignatures(stateChannelOutput.snapshotBinary)
         .map(_.errorMap[StateChannelValidationError](InvalidSigned))
-      addressSignatureV <- validateSourceAddressSignature(stateChannelOutput.address, stateChannelOutput.snapshot)
+      addressSignatureV <- validateSourceAddressSignature(stateChannelOutput.address, stateChannelOutput.snapshotBinary)
     } yield signaturesV.productR(addressSignatureV).map(_ => stateChannelOutput)
 
     private def validateSourceAddressSignature(

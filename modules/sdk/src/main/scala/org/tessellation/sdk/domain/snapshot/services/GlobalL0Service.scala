@@ -12,8 +12,8 @@ import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.{GlobalSnapshot, SnapshotOrdinal}
 import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
+import org.tessellation.sdk.domain.http.p2p.SnapshotClient
 import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
-import org.tessellation.sdk.http.p2p.clients.L0GlobalSnapshotClient
 import org.tessellation.security.{Hashed, SecurityProvider}
 
 import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
@@ -27,7 +27,7 @@ trait GlobalL0Service[F[_]] {
 object GlobalL0Service {
 
   def make[F[_]: Async: KryoSerializer: SecurityProvider](
-    l0GlobalSnapshotClient: L0GlobalSnapshotClient[F],
+    l0GlobalSnapshotClient: SnapshotClient[F, GlobalSnapshot],
     globalL0ClusterStorage: L0ClusterStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalSnapshot],
     singlePullLimit: Option[PosLong]

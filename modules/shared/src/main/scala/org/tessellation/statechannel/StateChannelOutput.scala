@@ -9,5 +9,5 @@ import derevo.derive
 @derive(encoder, decoder)
 case class StateChannelOutput(
   address: Address,
-  snapshot: Signed[StateChannelSnapshotBinary]
+  snapshotBinary: Signed[StateChannelSnapshotBinary]
 )
