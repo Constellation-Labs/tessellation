@@ -52,7 +52,7 @@ abstract class SnapshotConsensusFunctions[F[_]: Async: SecurityProvider, T <: Tr
       lastSignedArtifact.info.balances.getOrElse(address, Balance.empty).satisfiesCollateral(getRequiredCollateral)
     }
 
-  def validateArtifact(lastSignedArtifact: Signed[Artifact], trigger: Trigger)(
+  def validateArtifact(lastSignedArtifact: Signed[Artifact], trigger: ConsensusTrigger)(
     artifact: Artifact
   ): F[Either[InvalidArtifact, Artifact]] = {
     val events = artifact.blocks.unsorted.map(_.block.asInstanceOf[Event])
