@@ -23,11 +23,10 @@ import shapeless._
 import shapeless.syntax.singleton._
 
 final case class CurrencyRoutes[F[_]: Async, T <: Transaction, B <: Block[T]: Decoder, S <: Snapshot[T, B]](
+  prefixPath: String,
   addressService: AddressService[F, S],
   mkCell: Signed[B] => Cell[F, StackF, _, Either[CellError, Ω], _]
 ) extends Http4sDsl[F] {
-  private[routes] val prefixPath = "/currency"
-
   import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 
   private val httpRoutes: HttpRoutes[F] = HttpRoutes.of[F] {
