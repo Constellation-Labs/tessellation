@@ -81,8 +81,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
   private val trustRoutes = TrustRoutes[F](storages.trust, programs.trustPush)
   private val stateChannelRoutes = StateChannelRoutes[F](services.stateChannel)
   private val snapshotRoutes = SnapshotRoutes[F, GlobalSnapshot](storages.globalSnapshot, "/global-snapshots")
-  private val dagRoutes = DagRoutes[F]()
-  private val currencyRoutes = CurrencyRoutes[F, DAGTransaction, DAGBlock, GlobalSnapshot](services.address, mkDagCell)
+  private val dagRoutes = CurrencyRoutes[F, DAGTransaction, DAGBlock, GlobalSnapshot]("/dag", services.address, mkDagCell)
   private val consensusInfoRoutes = new ConsensusInfoRoutes[F, SnapshotOrdinal](services.cluster, services.consensus.storage, selfId)
   private val consensusRoutes = services.consensus.routes.p2pRoutes
 
@@ -113,7 +112,6 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
               (if (environment == Mainnet) HttpRoutes.empty else stateChannelRoutes.publicRoutes) <+>
               clusterRoutes.publicRoutes <+>
               snapshotRoutes.publicRoutes <+>
-              currencyRoutes.publicRoutes <+>
               dagRoutes.publicRoutes <+>
               nodeRoutes.publicRoutes <+>
               consensusInfoRoutes.publicRoutes
