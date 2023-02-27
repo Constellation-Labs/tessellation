@@ -1,9 +1,7 @@
 package org.tessellation.infrastructure.snapshot
 
-import cats.Applicative
 import cats.effect.Async
 import cats.syntax.applicative._
-import cats.syntax.applicativeError._
 import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.foldable._
@@ -23,7 +21,6 @@ import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.block.DAGBlock
-import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.transaction.{DAGTransaction, RewardTransaction}
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.AppEnvironment.Mainnet
@@ -186,28 +183,6 @@ object GlobalSnapshotConsensusFunctions {
           .map(balance => (updatedBalances.updated(tx.destination, balance), acceptedTxs + tx))
           .getOrElse(acc)
       }
-
-    private def getHeightAndSubHeight(
-      lastGS: GlobalSnapshot,
-      deprecated: Set[DeprecatedTip],
-      remainedActive: Set[ActiveTip],
-      accepted: Set[BlockAsActiveTip[DAGBlock]]
-    ): F[(Height, SubHeight)] = {
-      val tipHeights = (deprecated.map(_.block.height) ++ remainedActive.map(_.block.height) ++ accepted
-        .map(_.block.height)).toList
-
-      for {
-        height <- tipHeights.minimumOption.liftTo[F](NoTipsRemaining)
-
-        _ <-
-          if (height < lastGS.height)
-            InvalidHeight(lastGS.height, height).raiseError
-          else
-            Applicative[F].unit
-
-        subHeight = if (height === lastGS.height) lastGS.subHeight.next else SubHeight.MinValue
-      } yield (height, subHeight)
-    }
 
     private def getReturnedDAGEvents(
       acceptanceResult: BlockAcceptanceResult[DAGBlock]
