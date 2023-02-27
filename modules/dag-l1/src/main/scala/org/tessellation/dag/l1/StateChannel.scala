@@ -2,7 +2,6 @@ package org.tessellation.dag.l1
 
 import java.security.KeyPair
 
-import cats.Applicative
 import cats.data.NonEmptyList
 import cats.effect.Async
 import cats.effect.std.{Random, Semaphore}
@@ -15,8 +14,10 @@ import cats.syntax.order._
 import cats.syntax.show._
 import cats.syntax.traverse._
 import cats.syntax.traverseFilter._
+import cats.{Applicative, Order}
 
 import scala.concurrent.duration.DurationInt
+import scala.reflect.runtime.universe.TypeTag
 
 import org.tessellation.dag.l1.config.types.AppConfig
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput._
@@ -29,33 +30,42 @@ import org.tessellation.dag.l1.modules._
 import org.tessellation.ext.fs2.StreamOps
 import org.tessellation.kernel.CellError
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.Block.BlockConstructor
+import org.tessellation.schema._
 import org.tessellation.schema.height.Height
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.{GlobalSnapshot, GlobalSnapshotReference}
+import org.tessellation.schema.snapshot.Snapshot
+import org.tessellation.schema.transaction.Transaction
 import org.tessellation.security.{Hashed, SecurityProvider}
 
 import fs2.{Pipe, Stream}
+import io.circe.Encoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
+class StateChannel[
+  F[_]: Async: KryoSerializer: SecurityProvider: Random,
+  T <: Transaction: Encoder: Order: Ordering,
+  B <: Block[T]: Encoder: TypeTag,
+  S <: Snapshot[T, B]
+](
   appConfig: AppConfig,
   blockAcceptanceS: Semaphore[F],
   blockCreationS: Semaphore[F],
   blockStoringS: Semaphore[F],
   keyPair: KeyPair,
-  p2PClient: P2PClient[F],
-  programs: Programs[F],
-  queues: Queues[F],
+  p2PClient: P2PClient[F, T, B],
+  programs: Programs[F, T, B, S],
+  queues: Queues[F, T, B],
   selfId: PeerId,
-  services: Services[F],
-  storages: Storages[F],
-  validators: Validators[F]
-) {
+  services: Services[F, T, B],
+  storages: Storages[F, T, B, S],
+  validators: Validators[F, T, B]
+)(implicit blockConstructor: BlockConstructor[T, B]) {
 
   private implicit val logger = Slf4jLogger.getLogger[F]
 
   private val blockConsensusContext =
-    BlockConsensusContext[F](
+    BlockConsensusContext[F, T, B](
       p2PClient.blockConsensus,
       storages.block,
       validators.block,
@@ -93,7 +103,7 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
   private val l0PeerDiscovery: Stream[F, Unit] = Stream
     .awakeEvery(10.seconds)
     .evalMap { _ =>
-      storages.lastGlobalSnapshotStorage.get.flatMap {
+      storages.lastSnapshot.get.flatMap {
         _.fold(Applicative[F].unit) { latestSnapshot =>
           programs.l0PeerDiscovery.discover(latestSnapshot.signed.proofs.map(_.id).map(PeerId._Id.reverseGet))
         }
@@ -103,20 +113,20 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
   private val ownerBlockConsensusInputs: Stream[F, OwnerBlockConsensusInput] =
     inspectionTriggerInput.merge(ownRoundTriggerInput)
 
-  private val peerBlockConsensusInputs: Stream[F, PeerBlockConsensusInput] = Stream
+  private val peerBlockConsensusInputs: Stream[F, PeerBlockConsensusInput[T]] = Stream
     .fromQueueUnterminated(queues.peerBlockConsensusInput)
     .evalFilter(isPeerInputValid(_))
     .map(_.value)
 
-  private val blockConsensusInputs: Stream[F, BlockConsensusInput] =
+  private val blockConsensusInputs: Stream[F, BlockConsensusInput[T]] =
     ownerBlockConsensusInputs.merge(peerBlockConsensusInputs)
 
-  private val runConsensus: Pipe[F, BlockConsensusInput, FinalBlock] =
+  private val runConsensus: Pipe[F, BlockConsensusInput[T], FinalBlock[B]] =
     _.evalTap(input => logger.debug(s"Received block consensus input to process: ${input.show}"))
       .evalMap(
-        new BlockConsensusCell[F](_, blockConsensusContext)
+        new BlockConsensusCell[F, T, B](_, blockConsensusContext)
           .run()
-          .handleErrorWith(e => CellError(e.getMessage).asLeft[BlockConsensusOutput].pure[F])
+          .handleErrorWith(e => CellError(e.getMessage).asLeft[BlockConsensusOutput[B]].pure[F])
       )
       .flatMap {
         case Left(ce) =>
@@ -135,14 +145,14 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
           }
       }
 
-  private val gossipBlock: Pipe[F, FinalBlock, FinalBlock] =
+  private val gossipBlock: Pipe[F, FinalBlock[B], FinalBlock[B]] =
     _.evalTap { fb =>
       services.gossip
         .spreadCommon(fb.hashedBlock.signed)
         .handleErrorWith(e => logger.warn(e)("Block gossip spread failed!"))
     }
 
-  private val peerBlocks: Stream[F, FinalBlock] = Stream
+  private val peerBlocks: Stream[F, FinalBlock[B]] = Stream
     .fromQueueUnterminated(queues.peerBlock)
     .evalMap(_.toHashedWithSignatureCheck)
     .evalTap {
@@ -153,9 +163,9 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
       case Right(hashedBlock) => FinalBlock(hashedBlock)
     }
 
-  private val storeBlock: Pipe[F, FinalBlock, Unit] =
+  private val storeBlock: Pipe[F, FinalBlock[B], Unit] =
     _.evalMapLocked(blockStoringS) { fb =>
-      storages.lastGlobalSnapshotStorage.getHeight.map(_.getOrElse(Height.MinValue)).flatMap { lastSnapshotHeight =>
+      storages.lastSnapshot.getHeight.map(_.getOrElse(Height.MinValue)).flatMap { lastSnapshotHeight =>
         if (lastSnapshotHeight < fb.hashedBlock.height)
           storages.block.store(fb.hashedBlock).handleErrorWith(e => logger.debug(e)("Block storing failed."))
         else
@@ -165,7 +175,7 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
       }
     }
 
-  private val sendBlockToL0: Pipe[F, FinalBlock, FinalBlock] =
+  private val sendBlockToL0: Pipe[F, FinalBlock[B], FinalBlock[B]] =
     _.evalTap { fb =>
       for {
         l0PeerOpt <- storages.l0Cluster.getPeers
@@ -175,7 +185,7 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
           .map(peers => peers.headOption)
 
         _ <- l0PeerOpt.fold(logger.warn("No available L0 peer")) { l0Peer =>
-          p2PClient.l0DAGCluster
+          p2PClient.l0CurrencyCluster
             .sendL1Output(fb.hashedBlock.signed)(l0Peer)
             .ifM(Applicative[F].unit, logger.warn("Sending block to L0 failed."))
         }
@@ -204,10 +214,10 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
 
   private val globalSnapshotProcessing: Stream[F, Unit] = Stream
     .awakeEvery(10.seconds)
-    .evalMap(_ => services.l0.pullGlobalSnapshots)
+    .evalMap(_ => services.globalL0.pullGlobalSnapshots)
     .evalTap {
       _.traverse { s =>
-        logger.info(s"Pulled following global snapshot: ${GlobalSnapshotReference.fromHashedGlobalSnapshot(s).show}")
+        logger.info(s"Pulled following global snapshot: ${SnapshotReference.fromHashedSnapshot(s).show}")
       }
     }
     .evalMapLocked(NonEmptyList.of(blockAcceptanceS, blockCreationS, blockStoringS)) { snapshots =>
@@ -243,23 +253,28 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
 
 object StateChannel {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider: Random](
+  def make[
+    F[_]: Async: KryoSerializer: SecurityProvider: Random,
+    T <: Transaction: Encoder: Order: Ordering,
+    B <: Block[T]: Encoder: TypeTag,
+    S <: Snapshot[T, B]
+  ](
     appConfig: AppConfig,
     keyPair: KeyPair,
-    p2PClient: P2PClient[F],
-    programs: Programs[F],
-    queues: Queues[F],
+    p2PClient: P2PClient[F, T, B],
+    programs: Programs[F, T, B, S],
+    queues: Queues[F, T, B],
     selfId: PeerId,
-    services: Services[F],
-    storages: Storages[F],
-    validators: Validators[F]
-  ): F[StateChannel[F]] =
+    services: Services[F, T, B],
+    storages: Storages[F, T, B, S],
+    validators: Validators[F, T, B]
+  )(implicit blockConstructor: BlockConstructor[T, B]): F[StateChannel[F, T, B, S]] =
     for {
       blockAcceptanceS <- Semaphore(1)
       blockCreationS <- Semaphore(1)
       blockStoringS <- Semaphore(1)
     } yield
-      new StateChannel[F](
+      new StateChannel[F, T, B, S](
         appConfig,
         blockAcceptanceS,
         blockCreationS,

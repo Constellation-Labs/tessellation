@@ -12,11 +12,11 @@ import scala.util.control.NoStackTrace
 import org.tessellation.dag.l1.domain.address.storage.AddressStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.Block.HashedOps
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
-import org.tessellation.schema.block.DAGBlock
-import org.tessellation.schema.transaction.DAGTransaction
-import org.tessellation.schema.{BlockReference, transaction}
+import org.tessellation.schema.transaction.Transaction
+import org.tessellation.schema.{Block, BlockReference, transaction}
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.security.Hashed
 import org.tessellation.security.signature.Signed
@@ -24,22 +24,22 @@ import org.tessellation.security.signature.Signed
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 
-trait BlockService[F[_]] {
-  def accept(signedBlock: Signed[DAGBlock]): F[Unit]
+trait BlockService[F[_], T <: Transaction, B <: Block[T]] {
+  def accept(signedBlock: Signed[B]): F[Unit]
 }
 
 object BlockService {
 
-  def make[F[_]: Async: KryoSerializer](
-    blockAcceptanceManager: BlockAcceptanceManager[F, DAGTransaction, DAGBlock],
+  def make[F[_]: Async: KryoSerializer, T <: Transaction, B <: Block[T]](
+    blockAcceptanceManager: BlockAcceptanceManager[F, T, B],
     addressStorage: AddressStorage[F],
-    blockStorage: BlockStorage[F],
-    transactionStorage: TransactionStorage[F],
+    blockStorage: BlockStorage[F, B],
+    transactionStorage: TransactionStorage[F, T],
     collateral: Amount
-  ): BlockService[F] =
-    new BlockService[F] {
+  ): BlockService[F, T, B] =
+    new BlockService[F, T, B] {
 
-      def accept(signedBlock: Signed[DAGBlock]): F[Unit] =
+      def accept(signedBlock: Signed[B]): F[Unit] =
         signedBlock.toHashed.flatMap { hashedBlock =>
           EitherT(blockAcceptanceManager.acceptBlock(signedBlock, context))
             .leftSemiflatMap(processAcceptanceError(hashedBlock))
@@ -61,7 +61,7 @@ object BlockService {
         def getCollateral: Amount = collateral
       }
 
-      private def processAcceptanceSuccess(hashedBlock: Hashed[DAGBlock])(contextUpdate: BlockAcceptanceContextUpdate): F[Unit] = for {
+      private def processAcceptanceSuccess(hashedBlock: Hashed[B])(contextUpdate: BlockAcceptanceContextUpdate): F[Unit] = for {
         hashedTransactions <- hashedBlock.signed.transactions.toNonEmptyList
           .sortBy(_.ordinal)
           .traverse(_.toHashed)
@@ -69,11 +69,11 @@ object BlockService {
         _ <- hashedTransactions.traverse(transactionStorage.accept)
         _ <- blockStorage.accept(hashedBlock)
         _ <- addressStorage.updateBalances(contextUpdate.balances)
-        isDependent = (block: Signed[DAGBlock]) => BlockRelations.dependsOn(hashedBlock)(block)
+        isDependent = (block: Signed[B]) => BlockRelations.dependsOn[F, T, B](hashedBlock)(block)
         _ <- blockStorage.restoreDependent(isDependent)
       } yield ()
 
-      private def processAcceptanceError(hashedBlock: Hashed[DAGBlock])(reason: BlockNotAcceptedReason): F[BlockAcceptanceError] =
+      private def processAcceptanceError(hashedBlock: Hashed[B])(reason: BlockNotAcceptedReason): F[BlockAcceptanceError] =
         blockStorage
           .postpone(hashedBlock)
           .as(BlockAcceptanceError(hashedBlock.ownReference, reason))

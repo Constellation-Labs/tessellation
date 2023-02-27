@@ -25,7 +25,7 @@ import weaver.SimpleIOSuite
 object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
 
   type TestResources = (
-    TransactionStorage[IO],
+    TransactionStorage[IO, DAGTransaction],
     MapRef[IO, Address, Option[LastTransactionReferenceState]],
     MapRef[IO, Address, Option[NonEmptySet[Hashed[DAGTransaction]]]],
     KeyPair,
@@ -42,7 +42,7 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
         for {
           lastAccepted <- MapRef.ofConcurrentHashMap[IO, Address, LastTransactionReferenceState]().asResource
           waitingTransactions <- MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[DAGTransaction]]]().asResource
-          transactionStorage = new TransactionStorage[IO](lastAccepted, waitingTransactions)
+          transactionStorage = new TransactionStorage[IO, DAGTransaction](lastAccepted, waitingTransactions)
           key1 <- KeyPairGenerator.makeKeyPair.asResource
           address1 = key1.getPublic.toAddress
           key2 <- KeyPairGenerator.makeKeyPair.asResource

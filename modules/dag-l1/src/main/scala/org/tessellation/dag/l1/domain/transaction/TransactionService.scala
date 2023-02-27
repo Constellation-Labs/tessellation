@@ -8,25 +8,25 @@ import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.schema.transaction.DAGTransaction
+import org.tessellation.schema.transaction.Transaction
 import org.tessellation.sdk.domain.transaction.ContextualTransactionValidator
 import org.tessellation.sdk.domain.transaction.ContextualTransactionValidator.ContextualTransactionValidationError
 import org.tessellation.security.Hashed
 import org.tessellation.security.hash.Hash
 
-trait TransactionService[F[_]] {
-  def offer(transaction: Hashed[DAGTransaction]): F[Either[NonEmptyList[ContextualTransactionValidationError], Hash]]
+trait TransactionService[F[_], T <: Transaction] {
+  def offer(transaction: Hashed[T]): F[Either[NonEmptyList[ContextualTransactionValidationError], Hash]]
 }
 
 object TransactionService {
 
-  def make[F[_]: Async](
-    transactionStorage: TransactionStorage[F],
-    contextualTransactionValidator: ContextualTransactionValidator[F]
-  ): TransactionService[F] = new TransactionService[F] {
+  def make[F[_]: Async, T <: Transaction](
+    transactionStorage: TransactionStorage[F, T],
+    contextualTransactionValidator: ContextualTransactionValidator[F, T]
+  ): TransactionService[F, T] = new TransactionService[F, T] {
 
     def offer(
-      transaction: Hashed[DAGTransaction]
+      transaction: Hashed[T]
     ): F[Either[NonEmptyList[ContextualTransactionValidationError], Hash]] =
       contextualTransactionValidator.validate(transaction.signed).flatMap {
         case Valid(_) =>

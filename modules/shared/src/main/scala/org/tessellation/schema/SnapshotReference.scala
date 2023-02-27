@@ -1,6 +1,7 @@
 package org.tessellation.schema
 
 import org.tessellation.schema.height.{Height, SubHeight}
+import org.tessellation.schema.snapshot.Snapshot
 import org.tessellation.security.Hashed
 import org.tessellation.security.hash.{Hash, ProofsHash}
 
@@ -8,7 +9,7 @@ import derevo.cats.show
 import derevo.derive
 
 @derive(show)
-case class GlobalSnapshotReference(
+case class SnapshotReference(
   height: Height,
   subHeight: SubHeight,
   ordinal: SnapshotOrdinal,
@@ -17,10 +18,10 @@ case class GlobalSnapshotReference(
   proofsHash: ProofsHash
 )
 
-object GlobalSnapshotReference {
+object SnapshotReference {
 
-  def fromHashedGlobalSnapshot(snapshot: Hashed[GlobalSnapshot]): GlobalSnapshotReference =
-    GlobalSnapshotReference(
+  def fromHashedSnapshot(snapshot: Hashed[Snapshot[_, _]]): SnapshotReference =
+    SnapshotReference(
       snapshot.height,
       snapshot.subHeight,
       snapshot.ordinal,

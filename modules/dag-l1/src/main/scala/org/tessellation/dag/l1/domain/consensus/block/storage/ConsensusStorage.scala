@@ -6,19 +6,21 @@ import cats.syntax.functor._
 
 import org.tessellation.dag.l1.domain.consensus.block.RoundData
 import org.tessellation.dag.l1.domain.consensus.round.RoundId
+import org.tessellation.schema.Block
+import org.tessellation.schema.transaction.Transaction
 
 import io.chrisdavenport.mapref.MapRef
 
-class ConsensusStorage[F[_]](
-  val ownConsensus: Ref[F, Option[RoundData]],
-  val peerConsensuses: MapRef[F, RoundId, Option[RoundData]]
+class ConsensusStorage[F[_], T <: Transaction, B <: Block[T]](
+  val ownConsensus: Ref[F, Option[RoundData[T, B]]],
+  val peerConsensuses: MapRef[F, RoundId, Option[RoundData[T, B]]]
 )
 
 object ConsensusStorage {
 
-  def make[F[_]: Sync]: F[ConsensusStorage[F]] =
+  def make[F[_]: Sync, T <: Transaction, B <: Block[T]]: F[ConsensusStorage[F, T, B]] =
     for {
-      peerConsensuses <- MapRef.ofConcurrentHashMap[F, RoundId, RoundData]()
-      ownConsensus <- Ref.of[F, Option[RoundData]](None)
+      peerConsensuses <- MapRef.ofConcurrentHashMap[F, RoundId, RoundData[T, B]]()
+      ownConsensus <- Ref.of[F, Option[RoundData[T, B]]](None)
     } yield new ConsensusStorage(ownConsensus, peerConsensuses)
 }

@@ -37,15 +37,14 @@ object currency {
     amount: TransactionAmount,
     fee: TransactionFee,
     parent: TransactionReference,
-    salt: TransactionSalt,
-    ordinal: TransactionOrdinal
-  ) extends Transaction {}
+    salt: TransactionSalt
+  ) extends Transaction
 
   @derive(show, eqv, encoder, decoder, order, ordering)
   case class CurrencyBlock(
     parent: NonEmptyList[BlockReference],
     transactions: NonEmptySet[Signed[CurrencyTransaction]]
-  ) extends Block[CurrencyTransaction] {}
+  ) extends Block[CurrencyTransaction]
 
   object CurrencyBlock {
     implicit object OrderingInstanceAsActiveTip extends OrderBasedOrdering[BlockAsActiveTip[CurrencyBlock]]

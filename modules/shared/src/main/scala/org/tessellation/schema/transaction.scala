@@ -87,28 +87,17 @@ object transaction {
   )
 
   trait Transaction extends Fiber[TransactionReference, TransactionData] with Encodable {
+    import Transaction._
+
     val source: Address
     val destination: Address
     val amount: TransactionAmount
     val fee: TransactionFee
     val parent: TransactionReference
     val salt: TransactionSalt
-    val ordinal: TransactionOrdinal
 
     def reference = parent
     def data = TransactionData(source, destination, amount, fee)
-  }
-
-  @derive(decoder, encoder, order, show)
-  case class DAGTransaction(
-    source: Address,
-    destination: Address,
-    amount: TransactionAmount,
-    fee: TransactionFee,
-    parent: TransactionReference,
-    salt: TransactionSalt
-  ) extends Transaction {
-    import DAGTransaction._
 
     // WARN: Transactions hash needs to be calculated with Kryo instance having setReferences=true, to be backward compatible
     override def toEncode: String =
@@ -125,14 +114,27 @@ object transaction {
           )
         )
 
-    val ordinal: TransactionOrdinal = _ParentOrdinal.get(this).next
+    val ordinal: TransactionOrdinal = parent.ordinal.next
   }
+
+  object Transaction {
+
+    def runLengthEncoding(hashes: Seq[String]): String = hashes.fold("")((acc, hash) => s"$acc${hash.length}$hash")
+  }
+
+  @derive(decoder, encoder, order, show)
+  case class DAGTransaction(
+    source: Address,
+    destination: Address,
+    amount: TransactionAmount,
+    fee: TransactionFee,
+    parent: TransactionReference,
+    salt: TransactionSalt
+  ) extends Transaction
 
   object DAGTransaction {
 
     implicit object OrderingInstance extends OrderBasedOrdering[DAGTransaction]
-
-    def runLengthEncoding(hashes: Seq[String]): String = hashes.fold("")((acc, hash) => s"$acc${hash.length}$hash")
 
     val _Source: Lens[DAGTransaction, Address] = GenLens[DAGTransaction](_.source)
     val _Destination: Lens[DAGTransaction, Address] = GenLens[DAGTransaction](_.destination)
@@ -155,9 +157,9 @@ object transaction {
     implicit object OrderingInstance extends OrderBasedOrdering[RewardTransaction]
   }
 
-  @derive(decoder, encoder, show)
-  case class TransactionView(
-    transaction: DAGTransaction,
+  @derive(encoder)
+  case class TransactionView[T <: Transaction](
+    transaction: T,
     hash: Hash,
     status: TransactionStatus
   )

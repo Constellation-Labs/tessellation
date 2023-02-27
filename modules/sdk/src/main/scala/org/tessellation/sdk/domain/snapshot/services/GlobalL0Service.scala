@@ -12,32 +12,32 @@ import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.{GlobalSnapshot, SnapshotOrdinal}
 import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
-import org.tessellation.sdk.domain.snapshot.storage.LastGlobalSnapshotStorage
+import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.sdk.http.p2p.clients.L0GlobalSnapshotClient
 import org.tessellation.security.{Hashed, SecurityProvider}
 
 import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-trait L0Service[F[_]] {
+trait GlobalL0Service[F[_]] {
   def pullGlobalSnapshots: F[List[Hashed[GlobalSnapshot]]]
   def pullGlobalSnapshot(ordinal: SnapshotOrdinal): F[Option[Hashed[GlobalSnapshot]]]
 }
 
-object L0Service {
+object GlobalL0Service {
 
   def make[F[_]: Async: KryoSerializer: SecurityProvider](
     l0GlobalSnapshotClient: L0GlobalSnapshotClient[F],
-    l0ClusterStorage: L0ClusterStorage[F],
-    lastSnapshotStorage: LastGlobalSnapshotStorage[F],
+    globalL0ClusterStorage: L0ClusterStorage[F],
+    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalSnapshot],
     singlePullLimit: Option[PosLong]
-  ): L0Service[F] =
-    new L0Service[F] {
+  ): GlobalL0Service[F] =
+    new GlobalL0Service[F] {
 
       private val logger = Slf4jLogger.getLogger[F]
 
       def pullGlobalSnapshot(ordinal: SnapshotOrdinal): F[Option[Hashed[GlobalSnapshot]]] =
-        l0ClusterStorage.getRandomPeer.flatMap { l0Peer =>
+        globalL0ClusterStorage.getRandomPeer.flatMap { l0Peer =>
           l0GlobalSnapshotClient
             .get(ordinal)(l0Peer)
             .flatMap(_.toHashedWithSignatureCheck)
@@ -51,8 +51,8 @@ object L0Service {
 
       def pullGlobalSnapshots: F[List[Hashed[GlobalSnapshot]]] = {
         for {
-          lastStoredOrdinal <- lastSnapshotStorage.getOrdinal
-          l0Peer <- l0ClusterStorage.getRandomPeer
+          lastStoredOrdinal <- lastGlobalSnapshotStorage.getOrdinal
+          l0Peer <- globalL0ClusterStorage.getRandomPeer
 
           pulled <- l0GlobalSnapshotClient.getLatestOrdinal
             .run(l0Peer)
