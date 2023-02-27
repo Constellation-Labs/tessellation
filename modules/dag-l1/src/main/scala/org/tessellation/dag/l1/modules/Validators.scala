@@ -3,10 +3,11 @@ package org.tessellation.dag.l1.modules
 import cats.effect.Async
 
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.Block
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.transaction.DAGTransaction
+import org.tessellation.schema.snapshot.Snapshot
+import org.tessellation.schema.transaction.Transaction
 import org.tessellation.sdk.domain.block.processing.BlockValidator
 import org.tessellation.sdk.domain.transaction.{ContextualTransactionValidator, TransactionChainValidator, TransactionValidator}
 import org.tessellation.sdk.infrastructure.block.processing.BlockValidator
@@ -16,22 +17,22 @@ import org.tessellation.security.signature.SignedValidator
 
 object Validators {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider](
-    storages: Storages[F],
+  def make[F[_]: Async: KryoSerializer: SecurityProvider, T <: Transaction, B <: Block[T], S <: Snapshot[T, B]](
+    storages: Storages[F, T, B, S],
     seedlist: Option[Set[PeerId]]
-  ): Validators[F] = {
+  ): Validators[F, T, B] = {
     val signedValidator = SignedValidator.make[F]
-    val transactionChainValidator = TransactionChainValidator.make[F, DAGTransaction]
-    val transactionValidator = TransactionValidator.make[F, DAGTransaction](signedValidator)
+    val transactionChainValidator = TransactionChainValidator.make[F, T]
+    val transactionValidator = TransactionValidator.make[F, T](signedValidator)
     val blockValidator =
-      BlockValidator.make[F, DAGTransaction, DAGBlock](signedValidator, transactionChainValidator, transactionValidator)
-    val contextualTransactionValidator = ContextualTransactionValidator.make[F](
+      BlockValidator.make[F, T, B](signedValidator, transactionChainValidator, transactionValidator)
+    val contextualTransactionValidator = ContextualTransactionValidator.make[F, T](
       transactionValidator,
       (address: Address) => storages.transaction.getLastAcceptedReference(address)
     )
     val rumorValidator = RumorValidator.make[F](seedlist, signedValidator)
 
-    new Validators[F](
+    new Validators[F, T, B](
       signedValidator,
       blockValidator,
       transactionValidator,
@@ -41,10 +42,10 @@ object Validators {
   }
 }
 
-sealed abstract class Validators[F[_]] private (
+sealed abstract class Validators[F[_], T <: Transaction, B <: Block[T]] private (
   val signed: SignedValidator[F],
-  val block: BlockValidator[F, DAGTransaction, DAGBlock],
-  val transaction: TransactionValidator[F, DAGTransaction],
-  val transactionContextual: ContextualTransactionValidator[F],
+  val block: BlockValidator[F, T, B],
+  val transaction: TransactionValidator[F, T],
+  val transactionContextual: ContextualTransactionValidator[F, T],
   val rumorValidator: RumorValidator[F]
 )

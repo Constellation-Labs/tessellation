@@ -11,7 +11,7 @@ import org.tessellation.schema.block.{DAGBlock, Tips}
 import org.tessellation.schema.gossip._
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.SignRequest
-import org.tessellation.schema.transaction.{DAGTransaction, RewardTransaction, TransactionReference}
+import org.tessellation.schema.transaction._
 import org.tessellation.schema.trust.PublicTrust
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed.SignedOrdering
@@ -72,7 +72,7 @@ package object shared {
     classOf[SnapshotTips] -> 607,
     classOf[ActiveTip] -> 608,
     ActiveTip.OrderingInstance.getClass -> 609,
-    classOf[BlockAsActiveTip[DAGBlock]] -> 610,
+    classOf[BlockAsActiveTip[_]] -> 610,
     DAGBlock.OrderingInstanceAsActiveTip.getClass -> 611,
     classOf[DeprecatedTip] -> 612,
     DeprecatedTip.OrderingInstance.getClass -> 613,

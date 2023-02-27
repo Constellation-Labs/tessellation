@@ -6,14 +6,18 @@ import cats.syntax.semigroupk._
 
 import org.tessellation.BuildInfo
 import org.tessellation.dag.l1.cli.method.{Run, RunInitialValidator, RunValidator}
+import org.tessellation.dag.l1.domain.snapshot.programs.DAGSnapshotProcessor
 import org.tessellation.dag.l1.http.p2p.P2PClient
 import org.tessellation.dag.l1.infrastructure.block.rumor.handler.blockRumorHandler
 import org.tessellation.dag.l1.modules._
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.kryo._
+import org.tessellation.schema.GlobalSnapshot
+import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.node.NodeState.SessionStarted
+import org.tessellation.schema.transaction.DAGTransaction
 import org.tessellation.sdk.app.{SDK, TessellationIOApp}
 import org.tessellation.sdk.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import org.tessellation.sdk.resources.MkHttpServer
@@ -44,14 +48,28 @@ object Main
     val cfg = method.appConfig
 
     for {
-      queues <- Queues.make[IO](sdkQueues).asResource
-      storages <- Storages.make[IO](sdkStorages, method.l0Peer).asResource
-      validators = Validators.make[IO](storages, seedlist)
-      p2pClient = P2PClient.make(sdkP2PClient, sdkResources.client)
-      services = Services.make[IO](storages, validators, sdkServices, p2pClient, cfg)
-      programs = Programs.make(sdkPrograms, p2pClient, storages)
+      queues <- Queues.make[IO, DAGTransaction, DAGBlock](sdkQueues).asResource
+      storages <- Storages.make[IO, DAGTransaction, DAGBlock, GlobalSnapshot](sdkStorages, method.l0Peer).asResource
+      validators = Validators.make[IO, DAGTransaction, DAGBlock, GlobalSnapshot](storages, seedlist)
+      p2pClient = P2PClient.make[IO, DAGTransaction, DAGBlock](sdkP2PClient, sdkResources.client, currencyPathPrefix = "dag")
+      services = Services.make[IO, DAGTransaction, DAGBlock, GlobalSnapshot](
+        storages,
+        storages.lastSnapshot,
+        storages.l0Cluster,
+        validators,
+        sdkServices,
+        p2pClient,
+        cfg
+      )
+      snapshotProcessor = DAGSnapshotProcessor.make(
+        storages.address,
+        storages.block,
+        storages.lastSnapshot,
+        storages.transaction
+      )
+      programs = Programs.make(sdkPrograms, p2pClient, storages, snapshotProcessor)
       healthChecks <- HealthChecks
-        .make[IO](
+        .make[IO, DAGTransaction, DAGBlock, GlobalSnapshot](
           storages,
           services,
           programs,
@@ -71,13 +89,23 @@ object Main
         .asResource
 
       api = HttpApi
-        .make[IO](storages, queues, keyPair.getPrivate, services, programs, healthChecks, sdk.nodeId, BuildInfo.version, cfg.http)
+        .make[IO, DAGTransaction, DAGBlock, GlobalSnapshot](
+          storages,
+          queues,
+          keyPair.getPrivate,
+          services,
+          programs,
+          healthChecks,
+          sdk.nodeId,
+          BuildInfo.version,
+          cfg.http
+        )
       _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
       _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)
       _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.http.cliHttp, api.cliApp)
 
       stateChannel <- StateChannel
-        .make[IO](
+        .make[IO, DAGTransaction, DAGBlock, GlobalSnapshot](
           cfg,
           keyPair,
           p2pClient,

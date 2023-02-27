@@ -40,7 +40,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
     KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ sdkKryoRegistrar)
 
   def mkBlockService(
-    blocksR: MapRef[IO, ProofsHash, Option[StoredBlock]],
+    blocksR: MapRef[IO, ProofsHash, Option[StoredBlock[DAGBlock]]],
     lastAccTxR: MapRef[IO, Address, Option[TransactionStorage.LastTransactionReferenceState]],
     notAcceptanceReason: Option[BlockNotAcceptedReason] = None
   )(implicit K: KryoSerializer[IO]) = {
@@ -74,9 +74,10 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
 
     Random.scalaUtilRandom.flatMap { implicit r =>
       MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[DAGTransaction]]]().map { waitingTxsR =>
-        val blockStorage = new BlockStorage[IO](blocksR)
-        val transactionStorage = new TransactionStorage[IO](lastAccTxR, waitingTxsR)
-        BlockService.make[IO](blockAcceptanceManager, addressStorage, blockStorage, transactionStorage, Amount.empty)
+        val blockStorage = new BlockStorage[IO, DAGBlock](blocksR)
+        val transactionStorage = new TransactionStorage[IO, DAGTransaction](lastAccTxR, waitingTxsR)
+        BlockService
+          .make[IO, DAGTransaction, DAGBlock](blockAcceptanceManager, addressStorage, blockStorage, transactionStorage, Amount.empty)
       }
 
     }
@@ -87,7 +88,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
     forall(signedDAGBlockGen) { block =>
       for {
         hashedBlock <- block.toHashed[IO]
-        blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]()
+        blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock[DAGBlock]]()
         _ <- blocksR(hashedBlock.proofsHash).set(Some(WaitingBlock(hashedBlock.signed)))
         _ <- addParents(blocksR, block)
         lastAccTxR <- setUpLastTxnR(Some(block))
@@ -100,7 +101,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
         expect.same(
           block.parent.toList
             .map(parent => parent.hash -> MajorityBlock(parent, 2L, Active))
-            .toMap + (hashedBlock.proofsHash -> AcceptedBlock(hashedBlock)),
+            .toMap + (hashedBlock.proofsHash -> AcceptedBlock[DAGBlock](hashedBlock)),
           blocksRes
         )
     }
@@ -112,7 +113,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
       for {
         hashedBlock <- block.toHashed[IO]
         hashedNotRelatedBlock <- notRelatedBlock.toHashed[IO]
-        blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]()
+        blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock[DAGBlock]]()
         _ <- blocksR(hashedBlock.proofsHash).set(Some(WaitingBlock(hashedBlock.signed)))
         _ <- blocksR(hashedNotRelatedBlock.proofsHash).set(Some(PostponedBlock(hashedNotRelatedBlock.signed)))
         _ <- addParents(blocksR, block)
@@ -125,8 +126,8 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
       } yield
         expect.same(
           Map(
-            hashedBlock.proofsHash -> AcceptedBlock(hashedBlock),
-            hashedNotRelatedBlock.proofsHash -> PostponedBlock(hashedNotRelatedBlock.signed)
+            hashedBlock.proofsHash -> AcceptedBlock[DAGBlock](hashedBlock),
+            hashedNotRelatedBlock.proofsHash -> PostponedBlock[DAGBlock](hashedNotRelatedBlock.signed)
           ) ++
             block.parent.toList
               .map(parent => parent.hash -> MajorityBlock(parent, 2L, Active)),
@@ -143,7 +144,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
         hashedRelatedBlock <- notRelatedBlock
           .copy(value = notRelatedBlock.value.copy(parent = NonEmptyList.of(hashedBlock.ownReference)))
           .toHashed[IO]
-        blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]()
+        blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock[DAGBlock]]()
         _ <- blocksR(hashedBlock.proofsHash).set(Some(WaitingBlock(hashedBlock.signed)))
         _ <- blocksR(hashedRelatedBlock.proofsHash).set(Some(PostponedBlock(hashedRelatedBlock.signed)))
         _ <- addParents(blocksR, block)
@@ -156,8 +157,8 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
       } yield
         expect.same(
           Map(
-            hashedBlock.proofsHash -> AcceptedBlock(hashedBlock),
-            hashedRelatedBlock.proofsHash -> WaitingBlock(hashedRelatedBlock.signed)
+            hashedBlock.proofsHash -> AcceptedBlock[DAGBlock](hashedBlock),
+            hashedRelatedBlock.proofsHash -> WaitingBlock[DAGBlock](hashedRelatedBlock.signed)
           ) ++
             block.parent.toList
               .map(parent => parent.hash -> MajorityBlock(parent, 2L, Active)),
@@ -171,7 +172,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
     forall(signedDAGBlockGen) { block =>
       for {
         hashedBlock <- block.toHashed[IO]
-        blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]()
+        blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock[DAGBlock]]()
         _ <- blocksR(hashedBlock.proofsHash).set(Some(WaitingBlock(hashedBlock.signed)))
         _ <- addParents(blocksR, block)
         lastAccTxR <- setUpLastTxnR(Some(block))
@@ -185,7 +186,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
           (
             block.parent.toList
               .map(parent => parent.hash -> MajorityBlock(parent, 1L, Active))
-              .toMap + (hashedBlock.proofsHash -> PostponedBlock(hashedBlock.signed)),
+              .toMap + (hashedBlock.proofsHash -> PostponedBlock[DAGBlock](hashedBlock.signed)),
             Left(
               BlockService
                 .BlockAcceptanceError(BlockReference(hashedBlock.height, hashedBlock.proofsHash), ParentNotFound(block.parent.head))
@@ -202,7 +203,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
       for {
         hashedBlock <- block.toHashed[IO]
         hashedNotRelatedBlock <- notRelatedBlock.toHashed[IO]
-        blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]()
+        blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock[DAGBlock]]()
         _ <- blocksR(hashedBlock.proofsHash).set(Some(WaitingBlock(hashedBlock.signed)))
         _ <- blocksR(hashedNotRelatedBlock.proofsHash).set(Some(PostponedBlock(hashedNotRelatedBlock.signed)))
         _ <- addParents(blocksR, block)
@@ -216,8 +217,8 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
         expect.same(
           (
             Map(
-              hashedBlock.proofsHash -> PostponedBlock(hashedBlock.signed),
-              hashedNotRelatedBlock.proofsHash -> PostponedBlock(hashedNotRelatedBlock.signed)
+              hashedBlock.proofsHash -> PostponedBlock[DAGBlock](hashedBlock.signed),
+              hashedNotRelatedBlock.proofsHash -> PostponedBlock[DAGBlock](hashedNotRelatedBlock.signed)
             ) ++
               block.parent.toList
                 .map(parent => parent.hash -> MajorityBlock(parent, 1L, Active))
@@ -232,7 +233,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
     )
   }
 
-  private def addParents(blocksR: MapRef[IO, ProofsHash, Option[StoredBlock]], block: Signed[DAGBlock]) =
+  private def addParents(blocksR: MapRef[IO, ProofsHash, Option[StoredBlock[DAGBlock]]], block: Signed[DAGBlock]) =
     block.parent.toList.traverse(parent => blocksR(parent.hash).set(Some(MajorityBlock(parent, 1L, Active))))
 
   private def setUpLastTxnR(maybeBlock: Option[Signed[DAGBlock]]) = for {

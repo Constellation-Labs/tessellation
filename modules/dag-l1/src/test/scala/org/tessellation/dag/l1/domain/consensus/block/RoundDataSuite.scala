@@ -63,10 +63,10 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
   val peerIdB = PeerId(Hex("peerB"))
   val peerIdC = PeerId(Hex("peerC"))
   val tips = Tips(NonEmptyList.of(BlockReference(Height(1L), ProofsHash("0000"))))
-  val baseProposal = Proposal(roundId, peerIdA, peerIdA, Set.empty, Set.empty, tips)
+  val baseProposal = Proposal[DAGTransaction](roundId, peerIdA, peerIdA, Set.empty, Set.empty, tips)
 
   val baseRoundData =
-    RoundData(
+    RoundData[DAGTransaction, DAGBlock](
       roundId,
       FiniteDuration(1000L, TimeUnit.MINUTES),
       Set.empty,
@@ -101,7 +101,7 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
           ownProposal = baseRoundData.ownProposal.copy(transactions = txsA.toList.map(_.signed).toSet),
           peerProposals = Map(
             peerIdB -> baseProposal.copy(senderId = peerIdB, transactions = txsA2.toList.map(_.signed).toSet),
-            peerIdC -> baseProposal.copy(senderId = peerIdC, transactions = Set.empty)
+            peerIdC -> baseProposal.copy[DAGTransaction](senderId = peerIdC, transactions = Set.empty)
           )
         )
         result <- roundData.formBlock(txValidator)
@@ -125,7 +125,7 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
           ownProposal = baseRoundData.ownProposal.copy(transactions = txsA.toList.map(_.signed).toSet),
           peerProposals = Map(
             peerIdB -> baseProposal.copy(senderId = peerIdB, transactions = txsA2.toList.map(_.signed).toSet),
-            peerIdC -> baseProposal.copy(senderId = peerIdC, transactions = Set.empty)
+            peerIdC -> baseProposal.copy[DAGTransaction](senderId = peerIdC, transactions = Set.empty)
           )
         )
         result <- roundData.formBlock(txValidator)
@@ -149,7 +149,7 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
           ownProposal = baseRoundData.ownProposal.copy(transactions = txsA.toList.map(_.signed).toSet),
           peerProposals = Map(
             peerIdB -> baseProposal.copy(senderId = peerIdB, transactions = txsA2.toList.map(_.signed).toSet),
-            peerIdC -> baseProposal.copy(senderId = peerIdC, transactions = Set.empty)
+            peerIdC -> baseProposal.copy[DAGTransaction](senderId = peerIdC, transactions = Set.empty)
           )
         )
         result <- roundData.formBlock(txValidator)
@@ -173,8 +173,8 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
         roundData = baseRoundData.copy(
           ownProposal = baseRoundData.ownProposal.copy(transactions = txs),
           peerProposals = Map(
-            peerIdB -> baseProposal.copy(senderId = peerIdB, transactions = Set.empty),
-            peerIdC -> baseProposal.copy(senderId = peerIdC, transactions = Set.empty)
+            peerIdB -> baseProposal.copy[DAGTransaction](senderId = peerIdB, transactions = Set.empty),
+            peerIdC -> baseProposal.copy[DAGTransaction](senderId = peerIdC, transactions = Set.empty)
           )
         )
         result <- roundData.formBlock(txValidator)

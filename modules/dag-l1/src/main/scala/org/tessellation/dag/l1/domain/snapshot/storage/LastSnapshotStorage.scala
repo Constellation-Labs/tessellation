@@ -8,28 +8,29 @@ import cats.syntax.option._
 import cats.{Applicative, MonadThrow}
 
 import org.tessellation.ext.cats.syntax.next._
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.height.Height
-import org.tessellation.schema.{GlobalSnapshot, SnapshotOrdinal}
+import org.tessellation.schema.snapshot.Snapshot
 import org.tessellation.sdk.domain.collateral.LatestBalances
-import org.tessellation.sdk.domain.snapshot.storage.LastGlobalSnapshotStorage
+import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.security.Hashed
 
 import fs2.Stream
 import fs2.concurrent.SignallingRef
 
-object LastGlobalSnapshotStorage {
+object LastSnapshotStorage {
 
-  def make[F[_]: Async]: F[LastGlobalSnapshotStorage[F] with LatestBalances[F]] =
-    SignallingRef.of[F, Option[Hashed[GlobalSnapshot]]](None).map(make(_))
+  def make[F[_]: Async, S <: Snapshot[_, _]]: F[LastSnapshotStorage[F, S] with LatestBalances[F]] =
+    SignallingRef.of[F, Option[Hashed[S]]](None).map(make(_))
 
-  def make[F[_]: MonadThrow](
-    snapshotR: SignallingRef[F, Option[Hashed[GlobalSnapshot]]]
-  ): LastGlobalSnapshotStorage[F] with LatestBalances[F] =
-    new LastGlobalSnapshotStorage[F] with LatestBalances[F] {
+  def make[F[_]: MonadThrow, S <: Snapshot[_, _]](
+    snapshotR: SignallingRef[F, Option[Hashed[S]]]
+  ): LastSnapshotStorage[F, S] with LatestBalances[F] =
+    new LastSnapshotStorage[F, S] with LatestBalances[F] {
 
-      def set(snapshot: Hashed[GlobalSnapshot]): F[Unit] =
+      def set(snapshot: Hashed[S]): F[Unit] =
         snapshotR.modify {
           case Some(current) if current.hash === snapshot.lastSnapshotHash && current.ordinal.next === snapshot.ordinal =>
             (snapshot.some, Applicative[F].unit)
@@ -37,7 +38,7 @@ object LastGlobalSnapshotStorage {
             (other, MonadThrow[F].raiseError[Unit](new Throwable("Failure during setting new global snapshot!")))
         }.flatten
 
-      def setInitial(snapshot: Hashed[GlobalSnapshot]): F[Unit] =
+      def setInitial(snapshot: Hashed[S]): F[Unit] =
         snapshotR.modify {
           case None => (snapshot.some, Applicative[F].unit)
           case other =>
@@ -47,7 +48,7 @@ object LastGlobalSnapshotStorage {
             )
         }.flatten
 
-      def get: F[Option[Hashed[GlobalSnapshot]]] =
+      def get: F[Option[Hashed[S]]] =
         snapshotR.get
 
       def getOrdinal: F[Option[SnapshotOrdinal]] =
@@ -60,7 +61,7 @@ object LastGlobalSnapshotStorage {
 
       def getLatestBalancesStream: Stream[F, Map[Address, Balance]] =
         snapshotR.discrete
-          .flatMap(_.fold[Stream[F, Hashed[GlobalSnapshot]]](Stream.empty)(Stream(_)))
+          .flatMap(_.fold[Stream[F, Hashed[S]]](Stream.empty)(Stream(_)))
           .map(_.info.balances)
     }
 }

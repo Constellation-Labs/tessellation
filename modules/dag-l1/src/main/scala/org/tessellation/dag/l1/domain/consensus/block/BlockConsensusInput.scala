@@ -6,38 +6,46 @@ import org.tessellation.dag.l1.domain.consensus.round.RoundId
 import org.tessellation.kernel.Ω
 import org.tessellation.schema.block.Tips
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.transaction.DAGTransaction
+import org.tessellation.schema.transaction.Transaction
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.Signature
 
-import derevo.circe.magnolia.{decoder, encoder}
-import derevo.derive
+import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
+import io.circe.{Decoder, Encoder}
 
-sealed trait BlockConsensusInput extends Ω
+sealed trait BlockConsensusInput[+T <: Transaction] extends Ω
 
 object BlockConsensusInput {
-  sealed trait OwnerBlockConsensusInput extends BlockConsensusInput
+  sealed trait OwnerBlockConsensusInput extends BlockConsensusInput[Nothing]
+  case object OwnRoundTrigger extends OwnerBlockConsensusInput
+  case object InspectionTrigger extends OwnerBlockConsensusInput
 
-  @derive(encoder, decoder)
-  sealed trait PeerBlockConsensusInput extends BlockConsensusInput {
+  sealed trait PeerBlockConsensusInput[+T <: Transaction] extends BlockConsensusInput[T] {
     val senderId: PeerId
     val owner: PeerId
   }
-  case object OwnRoundTrigger extends OwnerBlockConsensusInput
-  case object InspectionTrigger extends OwnerBlockConsensusInput
-  case class Proposal(
+
+  object PeerBlockConsensusInput {
+    implicit def encoder[T <: Transaction: Encoder]: Encoder[PeerBlockConsensusInput[T]] = deriveEncoder
+    implicit def decoder[T <: Transaction: Decoder]: Decoder[PeerBlockConsensusInput[T]] = deriveDecoder
+  }
+
+  case class Proposal[T <: Transaction](
     roundId: RoundId,
     senderId: PeerId,
     owner: PeerId,
     facilitators: Set[PeerId],
-    transactions: Set[Signed[DAGTransaction]],
+    transactions: Set[Signed[T]],
     tips: Tips
-  ) extends PeerBlockConsensusInput
-  case class BlockSignatureProposal(roundId: RoundId, senderId: PeerId, owner: PeerId, signature: Signature) extends PeerBlockConsensusInput
-  case class CancelledBlockCreationRound(roundId: RoundId, senderId: PeerId, owner: PeerId, reason: CancellationReason)
-      extends PeerBlockConsensusInput
+  ) extends PeerBlockConsensusInput[T]
 
-  implicit val showBlockConsensusInput: Show[BlockConsensusInput] = {
+  case class BlockSignatureProposal(roundId: RoundId, senderId: PeerId, owner: PeerId, signature: Signature)
+      extends PeerBlockConsensusInput[Nothing]
+
+  case class CancelledBlockCreationRound(roundId: RoundId, senderId: PeerId, owner: PeerId, reason: CancellationReason)
+      extends PeerBlockConsensusInput[Nothing]
+
+  implicit def showBlockConsensusInput[T <: Transaction]: Show[BlockConsensusInput[T]] = {
     case OwnRoundTrigger   => "OwnRoundTrigger"
     case InspectionTrigger => "InspectionTrigger"
     case Proposal(roundId, senderId, _, _, txs, _) =>

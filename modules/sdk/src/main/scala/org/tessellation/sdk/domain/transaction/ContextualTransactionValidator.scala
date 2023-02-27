@@ -10,7 +10,7 @@ import cats.syntax.validated._
 
 import org.tessellation.ext.cats.syntax.validated._
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.transaction.{DAGTransaction, TransactionOrdinal, TransactionReference}
+import org.tessellation.schema.transaction.{Transaction, TransactionOrdinal, TransactionReference}
 import org.tessellation.sdk.domain.transaction.TransactionValidator.TransactionValidationError
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
@@ -19,13 +19,13 @@ import derevo.cats.{eqv, show}
 import derevo.derive
 import eu.timepit.refined.auto._
 
-trait ContextualTransactionValidator[F[_]] {
+trait ContextualTransactionValidator[F[_], T <: Transaction] {
 
   import ContextualTransactionValidator._
 
   def validate(
-    signedTransaction: Signed[DAGTransaction]
-  ): F[ContextualTransactionValidationErrorOr[Signed[DAGTransaction]]]
+    signedTransaction: Signed[T]
+  ): F[ContextualTransactionValidationErrorOr[Signed[T]]]
 
 }
 
@@ -37,15 +37,15 @@ object ContextualTransactionValidator {
 
   }
 
-  def make[F[_]: Async](
-    nonContextualValidator: TransactionValidator[F, DAGTransaction],
+  def make[F[_]: Async, T <: Transaction](
+    nonContextualValidator: TransactionValidator[F, T],
     context: TransactionValidationContext[F]
-  ): ContextualTransactionValidator[F] =
-    new ContextualTransactionValidator[F] {
+  ): ContextualTransactionValidator[F, T] =
+    new ContextualTransactionValidator[F, T] {
 
       def validate(
-        signedTransaction: Signed[DAGTransaction]
-      ): F[ContextualTransactionValidationErrorOr[Signed[DAGTransaction]]] =
+        signedTransaction: Signed[T]
+      ): F[ContextualTransactionValidationErrorOr[Signed[T]]] =
         for {
           nonContextuallyV <- validateNonContextually(signedTransaction)
           lastTxRefV <- validateLastTransactionRef(signedTransaction)
@@ -54,15 +54,15 @@ object ContextualTransactionValidator {
             .productR(lastTxRefV)
 
       private def validateNonContextually(
-        signedTx: Signed[DAGTransaction]
-      ): F[ContextualTransactionValidationErrorOr[Signed[DAGTransaction]]] =
+        signedTx: Signed[T]
+      ): F[ContextualTransactionValidationErrorOr[Signed[T]]] =
         nonContextualValidator
           .validate(signedTx)
           .map(_.errorMap(NonContextualValidationError))
 
       private def validateLastTransactionRef(
-        signedTx: Signed[DAGTransaction]
-      ): F[ContextualTransactionValidationErrorOr[Signed[DAGTransaction]]] =
+        signedTx: Signed[T]
+      ): F[ContextualTransactionValidationErrorOr[Signed[T]]] =
         context.getLastTransactionRef(signedTx.source).map { lastTxRef =>
           if (signedTx.parent.ordinal > lastTxRef.ordinal)
             signedTx.validNec[ContextualTransactionValidationError]
