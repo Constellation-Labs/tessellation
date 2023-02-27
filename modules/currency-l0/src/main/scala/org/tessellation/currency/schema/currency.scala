@@ -9,7 +9,7 @@ import org.tessellation.ext.derevo.ordering
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
-import org.tessellation.schema.height.Height
+import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo}
 import org.tessellation.schema.transaction._
 import org.tessellation.security.hash.{Hash, ProofsHash}
@@ -61,6 +61,7 @@ object currency {
   case class CurrencySnapshot(
     ordinal: SnapshotOrdinal,
     height: Height,
+    subHeight: SubHeight,
     lastSnapshotHash: Hash,
     blocks: SortedSet[BlockAsActiveTip[CurrencyBlock]],
     tips: SnapshotTips,
@@ -72,6 +73,7 @@ object currency {
       CurrencySnapshot(
         SnapshotOrdinal.MinValue,
         Height.MinValue,
+        SubHeight.MinValue,
         Hash(""),
         SortedSet.empty,
         SnapshotTips(SortedSet.empty, mkActiveTips(8)),
