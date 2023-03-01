@@ -16,6 +16,8 @@ package object currency {
     classOf[CurrencyBlock] -> 901,
     classOf[CurrencySnapshotInfo] -> 902,
     classOf[CurrencySnapshot] -> 903,
-    CurrencyBlock.OrderingInstanceAsActiveTip.getClass -> 904
+    CurrencyBlock.OrderingInstanceAsActiveTip.getClass -> 904,
+    CurrencyTransaction.OrderingInstance.getClass -> 905,
+    CurrencyBlock.OrderingInstance.getClass -> 906
   )
 }

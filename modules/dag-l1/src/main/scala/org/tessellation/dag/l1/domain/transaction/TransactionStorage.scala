@@ -5,6 +5,7 @@ import cats.data.{NonEmptyList, NonEmptySet}
 import cats.effect.Async
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
+import cats.syntax.contravariantSemigroupal._
 import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.foldable._
@@ -39,6 +40,9 @@ class TransactionStorage[F[_]: Async, T <: Transaction: Order: Ordering](
 
   private val logger = Slf4jLogger.getLogger[F]
   private val transactionLogger = Slf4jLogger.getLoggerFromName[F](transactionLoggerName)
+
+  def getState(): F[(Map[Address, LastTransactionReferenceState], Map[Address, NonEmptySet[Hashed[T]]])] =
+    (lastAccepted.toMap, waitingTransactions.toMap).mapN((_, _))
 
   def getLastAcceptedReference(source: Address): F[TransactionReference] =
     lastAccepted(source).get.map(_.map(_.ref).getOrElse(TransactionReference.empty))
@@ -218,6 +222,15 @@ object TransactionStorage {
       lastAccepted <- MapRef.ofConcurrentHashMap[F, Address, LastTransactionReferenceState]()
       waitingTransactions <- MapRef.ofConcurrentHashMap[F, Address, NonEmptySet[Hashed[T]]]()
     } yield new TransactionStorage[F, T](lastAccepted, waitingTransactions)
+
+  def make[F[_]: Async: KryoSerializer, A <: Transaction: Order: Ordering](
+    lastAccepted: Map[Address, LastTransactionReferenceState],
+    waitingTransactions: Map[Address, NonEmptySet[Hashed[A]]]
+  ): F[TransactionStorage[F, A]] =
+    (
+      MapRef.ofSingleImmutableMap(lastAccepted),
+      MapRef.ofSingleImmutableMap(waitingTransactions)
+    ).mapN(new TransactionStorage(_, _))
 
   sealed trait TransactionAcceptanceError extends NoStackTrace
   case class ParentNotAccepted(

@@ -42,6 +42,9 @@ class BlockStorage[
     case _: MajorityBlock[_]  => "Majority"
   }
 
+  def getState(): F[Map[ProofsHash, StoredBlock[B]]] =
+    blocks.toMap
+
   private[block] def accept(hashedBlock: Hashed[B]): F[Unit] =
     blocks(hashedBlock.proofsHash).modify {
       case Some(WaitingBlock(_)) => (AcceptedBlock[B](hashedBlock).some, hashedBlock.asRight)
@@ -67,6 +70,7 @@ class BlockStorage[
     deprecatedTipsToAdd: Set[BlockReference] = Set.empty,
     postponedToWaiting: Set[ProofsHash] = Set.empty
   ): F[Unit] = {
+
     def addMajorityBlocks: F[Unit] =
       toAdd.toList.traverse {
         case (block, initialUsages) =>
@@ -278,6 +282,9 @@ object BlockStorage {
 
   def make[F[_]: Sync: Random, B <: Block[_]]: F[BlockStorage[F, B]] =
     MapRef.ofConcurrentHashMap[F, ProofsHash, StoredBlock[B]]().map(new BlockStorage[F, B](_))
+
+  def make[F[_]: Sync: Random, B <: Block[_]](blocks: Map[ProofsHash, StoredBlock[B]]): F[BlockStorage[F, B]] =
+    MapRef.ofSingleImmutableMap(blocks).map(new BlockStorage[F, B](_))
 
   sealed trait StoredBlock[B <: Block[_]]
   case class WaitingBlock[B <: Block[_]](block: Signed[B]) extends StoredBlock[B]

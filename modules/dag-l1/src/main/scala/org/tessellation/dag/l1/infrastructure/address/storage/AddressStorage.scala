@@ -14,10 +14,16 @@ object AddressStorage {
   def make[F[_]: Async]: F[AddressStorage[F]] =
     Ref.of[F, Map[Address, Balance]](Map.empty).map(make(_))
 
+  def make[F[_]: Async](balances: Map[Address, Balance]): F[AddressStorage[F]] =
+    Ref.of[F, Map[Address, Balance]](balances).map(make(_))
+
   def make[F[_]: Async](balances: Ref[F, Map[Address, Balance]]): AddressStorage[F] =
     new AddressStorage[F] {
+      def getState: F[Map[Address, Balance]] =
+        balances.get
+
       def getBalance(address: Address): F[Balance] =
-        balances.get.map(_.get(address).getOrElse(Balance.empty))
+        balances.get.map(_.getOrElse(address, Balance.empty))
 
       def updateBalances(addressBalances: Map[Address, Balance]): F[Unit] =
         balances.update(_ ++ addressBalances)

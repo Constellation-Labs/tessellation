@@ -25,6 +25,9 @@ object LastSnapshotStorage {
   def make[F[_]: Async, S <: Snapshot[_, _]]: F[LastSnapshotStorage[F, S] with LatestBalances[F]] =
     SignallingRef.of[F, Option[Hashed[S]]](None).map(make(_))
 
+  def make[F[_]: Async, S <: Snapshot[_, _]](snapshot: Option[Hashed[S]]): F[LastSnapshotStorage[F, S]] =
+    SignallingRef.of[F, Option[Hashed[S]]](snapshot).map(make(_))
+
   def make[F[_]: MonadThrow, S <: Snapshot[_, _]](
     snapshotR: SignallingRef[F, Option[Hashed[S]]]
   ): LastSnapshotStorage[F, S] with LatestBalances[F] =

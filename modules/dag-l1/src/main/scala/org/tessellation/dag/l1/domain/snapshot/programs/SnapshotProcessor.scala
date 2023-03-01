@@ -1,5 +1,6 @@
 package org.tessellation.dag.l1.domain.snapshot.programs
 
+import cats.data.NonEmptyList
 import cats.effect.Async
 import cats.syntax.either._
 import cats.syntax.flatMap._
@@ -402,6 +403,8 @@ object SnapshotProcessor {
     removedBlocks: Set[ProofsHash],
     removedObsoleteBlocks: Set[ProofsHash]
   ) extends SnapshotProcessingResult
+  case class BatchResult(globalSnapshotResult: SnapshotProcessingResult, results: NonEmptyList[SnapshotProcessingResult])
+      extends SnapshotProcessingResult
   case class SnapshotIgnored(
     reference: SnapshotReference
   ) extends SnapshotProcessingResult
