@@ -8,9 +8,9 @@ import org.tessellation.dag.l1.domain.block.BlockService
 import org.tessellation.dag.l1.domain.transaction.TransactionService
 import org.tessellation.dag.l1.http.p2p.P2PClient
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.snapshot.Snapshot
+import org.tessellation.schema.Block
+import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo}
 import org.tessellation.schema.transaction.Transaction
-import org.tessellation.schema.{Block, GlobalSnapshot}
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.sdk.domain.collateral.Collateral
@@ -25,16 +25,22 @@ import org.tessellation.security.SecurityProvider
 
 object Services {
 
-  def make[F[_]: Async: SecurityProvider: KryoSerializer, T <: Transaction: Eq, B <: Block[T]: Eq: Ordering, S <: Snapshot[T, B]](
-    storages: Storages[F, T, B, S],
-    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalSnapshot],
+  def make[
+    F[_]: Async: SecurityProvider: KryoSerializer,
+    T <: Transaction: Eq,
+    B <: Block[T]: Eq: Ordering,
+    S <: Snapshot[T, B],
+    SI <: SnapshotInfo
+  ](
+    storages: Storages[F, T, B, S, SI],
+    lastGlobalSnapshotStorage: LastSnapshotStorage[F, S, SI],
     globalL0Cluster: L0ClusterStorage[F],
     validators: Validators[F, T, B],
     sdkServices: SdkServices[F],
-    p2PClient: P2PClient[F, T, B],
+    p2PClient: P2PClient[F, T, B, S, SI],
     cfg: AppConfig
-  ): Services[F, T, B] =
-    new Services[F, T, B](
+  ): Services[F, T, B, S, SI] =
+    new Services[F, T, B, S, SI](
       localHealthcheck = sdkServices.localHealthcheck,
       block = BlockService.make[F, T, B](
         BlockAcceptanceManager.make[F, T, B](validators.block),
@@ -46,19 +52,19 @@ object Services {
       cluster = sdkServices.cluster,
       gossip = sdkServices.gossip,
       globalL0 = GlobalL0Service
-        .make[F](p2PClient.l0GlobalSnapshotClient, globalL0Cluster, lastGlobalSnapshotStorage, None),
+        .make[F, T, B, S, SI](p2PClient.l0GlobalSnapshotClient, globalL0Cluster, lastGlobalSnapshotStorage, None),
       session = sdkServices.session,
       transaction = TransactionService.make[F, T](storages.transaction, validators.transactionContextual),
       collateral = Collateral.make[F](cfg.collateral, storages.lastSnapshot)
     ) {}
 }
 
-sealed abstract class Services[F[_], T <: Transaction, B <: Block[T]] private (
+sealed abstract class Services[F[_], T <: Transaction, B <: Block[T], S <: Snapshot[T, B], SI <: SnapshotInfo] private (
   val localHealthcheck: LocalHealthcheck[F],
   val block: BlockService[F, T, B],
   val cluster: Cluster[F],
   val gossip: Gossip[F],
-  val globalL0: GlobalL0Service[F],
+  val globalL0: GlobalL0Service[F, T, B, S, SI],
   val session: Session[F],
   val transaction: TransactionService[F, T],
   val collateral: Collateral[F]
