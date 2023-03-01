@@ -18,7 +18,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.height.{Height, SubHeight}
-import org.tessellation.schema.snapshot.Snapshot
+import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo}
 import org.tessellation.schema.transaction.{Transaction, TransactionReference}
 import org.tessellation.sdk.domain.snapshot.Validator
 import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
@@ -31,17 +31,21 @@ import derevo.derive
 import eu.timepit.refined.types.numeric.NonNegLong
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider, T <: Transaction, B <: Block[T], S <: Snapshot[T, B]] {
+abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider, T <: Transaction, B <: Block[T], S <: Snapshot[
+  T,
+  B
+], SI <: SnapshotInfo] {
   import SnapshotProcessor._
 
-  def process(globalSnapshot: Hashed[GlobalSnapshot]): F[SnapshotProcessingResult]
+  def process(snapshot: Hashed[S], state: SI): F[SnapshotProcessingResult]
 
   def processAlignment(
     snapshot: Hashed[S],
+    state: SI,
     alignment: Alignment,
     blockStorage: BlockStorage[F, B],
     transactionStorage: TransactionStorage[F, T],
-    lastSnapshotStorage: LastSnapshotStorage[F, S],
+    lastSnapshotStorage: LastSnapshotStorage[F, S, SI],
     addressStorage: AddressStorage[F]
   ): F[SnapshotProcessingResult] =
     alignment match {
@@ -59,7 +63,7 @@ abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider, 
           transactionStorage.markMajority(txRefsToMarkMajority)
 
         val setSnapshot: F[Unit] =
-          lastSnapshotStorage.set(snapshot)
+          lastSnapshotStorage.set(snapshot, state)
 
         adjustToMajority >>
           markTxRefsAsMajority >>
@@ -85,7 +89,7 @@ abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider, 
           transactionStorage.markMajority(txRefsToMarkMajority)
 
         val setSnapshot: F[Unit] =
-          lastSnapshotStorage.set(snapshot)
+          lastSnapshotStorage.set(snapshot, state)
 
         adjustToMajority >>
           markTxRefsAsMajority >>
@@ -108,13 +112,13 @@ abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider, 
 
         val setBalances: F[Unit] =
           addressStorage.clean >>
-            addressStorage.updateBalances(snapshot.info.balances)
+            addressStorage.updateBalances(state.balances)
 
         val setTransactionRefs: F[Unit] =
-          transactionStorage.setLastAccepted(snapshot.info.lastTxRefs)
+          transactionStorage.setLastAccepted(state.lastTxRefs)
 
         val setInitialSnapshot: F[Unit] =
-          lastSnapshotStorage.setInitial(snapshot)
+          lastSnapshotStorage.setInitial(snapshot, state)
 
         adjustToMajority >>
           setBalances >>
@@ -151,13 +155,13 @@ abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider, 
 
         val setBalances: F[Unit] =
           addressStorage.clean >>
-            addressStorage.updateBalances(snapshot.info.balances)
+            addressStorage.updateBalances(state.balances)
 
         val setTransactionRefs: F[Unit] =
-          transactionStorage.setLastAccepted(snapshot.info.lastTxRefs)
+          transactionStorage.setLastAccepted(state.lastTxRefs)
 
         val setSnapshot: F[Unit] =
-          lastSnapshotStorage.set(snapshot)
+          lastSnapshotStorage.set(snapshot, state)
 
         adjustToMajority >>
           setBalances >>
@@ -182,8 +186,9 @@ abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider, 
 
   def checkAlignment(
     snapshot: S,
+    state: SI,
     blockStorage: BlockStorage[F, B],
-    lastSnapshotStorage: LastSnapshotStorage[F, S]
+    lastSnapshotStorage: LastSnapshotStorage[F, S, SI]
   ): F[Alignment] =
     for {
       acceptedInMajority <- snapshot.blocks.toList.traverse {
@@ -210,7 +215,7 @@ abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider, 
                   val deprecatedTipsToAdd = snapshotDeprecatedTips.map(_.block.hash) -- deprecatedTips
                   val tipsToDeprecate = activeTips -- snapshotRemainedActive.map(_.block.hash)
                   val areTipsAligned = deprecatedTipsToAdd == tipsToDeprecate
-                  lazy val txRefsToMarkMajority = extractMajorityTxRefs(acceptedInMajority, snapshot)
+                  lazy val txRefsToMarkMajority = extractMajorityTxRefs(acceptedInMajority, state)
                   lazy val postponedToWaiting = relatedPostponed -- toAdd.map(_._1.proofsHash) -- toReset
 
                   if (!areTipsAligned)
@@ -260,7 +265,7 @@ abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider, 
                   val deprecatedTipsToAdd = snapshotDeprecatedTips.map(_.block.hash) -- deprecatedTips
                   val tipsToDeprecate = activeTips -- snapshotRemainedActive.map(_.block.hash)
                   val areTipsAligned = deprecatedTipsToAdd == tipsToDeprecate
-                  lazy val txRefsToMarkMajority = extractMajorityTxRefs(acceptedInMajority, snapshot)
+                  lazy val txRefsToMarkMajority = extractMajorityTxRefs(acceptedInMajority, state)
                   lazy val postponedToWaiting = relatedPostponed -- obsoleteToRemove -- toAdd.map(_._1.proofsHash) -- toReset
 
                   if (!areTipsAligned)
@@ -326,7 +331,7 @@ abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider, 
 
   private def extractMajorityTxRefs(
     acceptedInMajority: Map[ProofsHash, (Hashed[B], NonNegLong)],
-    snapshot: Snapshot[T, B]
+    state: SI
   ): Map[Address, TransactionReference] = {
     val sourceAddresses =
       acceptedInMajority.values
@@ -334,7 +339,7 @@ abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider, 
         .map(_.source)
         .toSet
 
-    snapshot.info.lastTxRefs.view.filterKeys(sourceAddresses.contains).toMap
+    state.lastTxRefs.view.filterKeys(sourceAddresses.contains).toMap
   }
 
   sealed trait Alignment

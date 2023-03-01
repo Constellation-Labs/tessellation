@@ -86,8 +86,7 @@ object BlockAcceptanceManager {
               case (validList, invalidList) =>
                 blockValidator.validate(block).map {
                   case Valid(blockAndTxChains) => (blockAndTxChains :: validList, invalidList)
-                  case Invalid(errors) =>
-                    (validList, (block, ValidationFailed(errors.toNonEmptyList)) :: invalidList)
+                  case Invalid(errors)         => (validList, (block, ValidationFailed(errors.toNonEmptyList)) :: invalidList)
                 }
             }
           }
