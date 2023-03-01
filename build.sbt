@@ -60,7 +60,7 @@ lazy val root = (project in file("."))
   .settings(
     name := "tessellation"
   )
-  .aggregate(keytool, kernel, shared, core, testShared, wallet, sdk, dagL1, rosetta, currencyL0)
+  .aggregate(keytool, kernel, shared, core, testShared, wallet, sdk, dagL1, rosetta, currencyL0, currencyShared)
 
 lazy val kernel = (project in file("modules/kernel"))
   .enablePlugins(AshScriptPlugin)
@@ -464,11 +464,27 @@ lazy val core = (project in file("modules/core"))
     )
   )
 
+lazy val currencyShared = (project in file("modules/currency-shared"))
+  .dependsOn(shared)
+  .settings(
+    name := "tessellation-currency-shared",
+    Defaults.itSettings,
+    scalafixCommonSettings,
+    commonSettings,
+    commonTestSettings,
+    dockerSettings,
+    libraryDependencies ++= Seq(
+      CompilerPlugin.kindProjector,
+      CompilerPlugin.betterMonadicFor,
+      CompilerPlugin.semanticDB
+    )
+  )
+
 lazy val currencyL0 = (project in file("modules/currency-l0"))
   .enablePlugins(AshScriptPlugin)
   .enablePlugins(BuildInfoPlugin)
   .enablePlugins(JavaAppPackaging)
-  .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test, sdk)
+  .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test, sdk, currencyShared)
   .settings(
     name := "tessellation-currency-l0",
     buildInfoKeys := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion),
