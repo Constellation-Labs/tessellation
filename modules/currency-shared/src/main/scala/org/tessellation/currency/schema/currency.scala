@@ -5,7 +5,8 @@ import cats.data.{NonEmptyList, NonEmptySet}
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import org.tessellation.ext.cats.data.OrderBasedOrdering
-import org.tessellation.ext.derevo.ordering
+import org.tessellation.ext.codecs.NonEmptySetCodec
+import org.tessellation.schema.Block.BlockConstructor
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
@@ -23,6 +24,7 @@ import eu.timepit.refined.api.Refined
 import eu.timepit.refined.auto._
 import eu.timepit.refined.string.MatchesRegex
 import eu.timepit.refined.types.numeric.PosInt
+import io.circe.Decoder
 import io.estatico.newtype.macros.newtype
 
 object currency {
@@ -30,7 +32,7 @@ object currency {
   @newtype
   case class TokenSymbol(symbol: String Refined MatchesRegex["[A-Z]+"])
 
-  @derive(decoder, encoder, order, ordering, show)
+  @derive(decoder, encoder, order, show)
   case class CurrencyTransaction(
     source: Address,
     destination: Address,
@@ -40,14 +42,28 @@ object currency {
     salt: TransactionSalt
   ) extends Transaction
 
-  @derive(show, eqv, encoder, decoder, order, ordering)
+  object CurrencyTransaction {
+    implicit object OrderingInstance extends OrderBasedOrdering[CurrencyTransaction]
+  }
+
+  @derive(show, eqv, encoder, decoder, order)
   case class CurrencyBlock(
     parent: NonEmptyList[BlockReference],
     transactions: NonEmptySet[Signed[CurrencyTransaction]]
   ) extends Block[CurrencyTransaction]
 
   object CurrencyBlock {
+
+    implicit object OrderingInstance extends OrderBasedOrdering[CurrencyBlock]
+
+    implicit val transactionsDecoder: Decoder[NonEmptySet[Signed[CurrencyTransaction]]] =
+      NonEmptySetCodec.decoder[Signed[CurrencyTransaction]]
     implicit object OrderingInstanceAsActiveTip extends OrderBasedOrdering[BlockAsActiveTip[CurrencyBlock]]
+
+    implicit val blockConstructor = new BlockConstructor[CurrencyTransaction, CurrencyBlock] {
+      def create(parents: NonEmptyList[BlockReference], transactions: NonEmptySet[Signed[CurrencyTransaction]]): CurrencyBlock =
+        CurrencyBlock(parents, transactions)
+    }
   }
 
   @derive(encoder, decoder, eqv, show)

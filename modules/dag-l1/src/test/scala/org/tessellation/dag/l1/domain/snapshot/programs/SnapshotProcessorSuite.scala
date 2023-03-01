@@ -75,6 +75,9 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             waitingTxsR <- MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[DAGTransaction]]]().asResource
             snapshotProcessor = {
               val addressStorage = new AddressStorage[IO] {
+                def getState: IO[Map[Address, Balance]] =
+                  balancesR.get
+
                 def getBalance(address: Address): IO[balance.Balance] =
                   balancesR.get.map(b => b(address))
 

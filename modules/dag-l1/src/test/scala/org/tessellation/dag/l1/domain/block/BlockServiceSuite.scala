@@ -64,6 +64,8 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
 
     val addressStorage = new AddressStorage[IO] {
 
+      override def getState: IO[Map[Address, Balance]] = ???
+
       override def getBalance(address: Address): IO[balance.Balance] = ???
 
       override def updateBalances(addressBalances: Map[Address, Balance]): IO[Unit] = IO.unit
