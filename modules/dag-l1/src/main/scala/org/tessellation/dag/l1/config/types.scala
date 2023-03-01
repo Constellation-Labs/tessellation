@@ -12,7 +12,6 @@ object types {
   case class AppConfig(
     environment: AppEnvironment,
     http: HttpConfig,
-    db: DBConfig,
     gossip: GossipConfig,
     consensus: ConsensusConfig,
     healthCheck: HealthCheckConfig,

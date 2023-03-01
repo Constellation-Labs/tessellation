@@ -5,7 +5,7 @@ import cats.syntax.contravariantSemigroupal._
 import scala.concurrent.duration.{DurationDouble, DurationInt}
 
 import org.tessellation.cli.env.{KeyAlias, Password, StorePath}
-import org.tessellation.dag.l1.config.types.{AppConfig, DBConfig}
+import org.tessellation.dag.l1.config.types.AppConfig
 import org.tessellation.dag.l1.domain.consensus.block.config.ConsensusConfig
 import org.tessellation.ext.decline.decline._
 import org.tessellation.schema.balance.Amount
@@ -22,7 +22,6 @@ import fs2.io.file.Path
 object method {
 
   sealed trait Run extends CliMethod {
-    val dbConfig: DBConfig
     val l0Peer: L0Peer
 
     val stateAfterJoining: NodeState = NodeState.Ready
@@ -30,7 +29,6 @@ object method {
     val appConfig: AppConfig = AppConfig(
       environment = environment,
       http = httpConfig,
-      db = dbConfig,
       gossip = GossipConfig(
         storage = RumorStorageConfig(
           peerRumorsCapacity = 50L,
@@ -67,7 +65,6 @@ object method {
     password: Password,
     environment: AppEnvironment,
     httpConfig: HttpConfig,
-    dbConfig: DBConfig,
     l0Peer: L0Peer,
     seedlistPath: Option[Path],
     collateralAmount: Option[Amount]
@@ -83,11 +80,10 @@ object method {
         Password.opts,
         AppEnvironment.opts,
         http.opts,
-        db.opts,
         L0PeerOpts.opts,
         seedlistPathOpts,
         CollateralAmountOpts.opts
-      ).mapN(RunInitialValidator(_, _, _, _, _, _, _, _, _))
+      ).mapN(RunInitialValidator(_, _, _, _, _, _, _, _))
     }
   }
 
@@ -97,7 +93,6 @@ object method {
     password: Password,
     environment: AppEnvironment,
     httpConfig: HttpConfig,
-    dbConfig: DBConfig,
     l0Peer: L0Peer,
     seedlistPath: Option[Path],
     collateralAmount: Option[Amount]
@@ -113,11 +108,10 @@ object method {
         Password.opts,
         AppEnvironment.opts,
         http.opts,
-        db.opts,
         L0PeerOpts.opts,
         seedlistPathOpts,
         CollateralAmountOpts.opts
-      ).mapN(RunValidator(_, _, _, _, _, _, _, _, _))
+      ).mapN(RunValidator(_, _, _, _, _, _, _, _))
     }
   }
 
