@@ -5,7 +5,7 @@ import cats.syntax.contravariantSemigroupal._
 import scala.concurrent.duration._
 
 import org.tessellation.cli.env.{KeyAlias, Password, StorePath}
-import org.tessellation.currency.cli.L0TokenIdentifierOpts
+import org.tessellation.currency.cli.{GlobalL0PeerOpts, L0TokenIdentifierOpts}
 import org.tessellation.currency.l0.cli.http.{opts => httpOpts}
 import org.tessellation.currency.l0.config.types.AppConfig
 import org.tessellation.ext.decline.WithOpts
@@ -93,7 +93,7 @@ object method {
         genesisPathOpts,
         seedlistPathOpts,
         CollateralAmountOpts.opts,
-        L0PeerOpts.opts,
+        GlobalL0PeerOpts.opts,
         L0TokenIdentifierOpts.opts
       ).mapN(RunGenesis.apply)
     }
@@ -126,7 +126,7 @@ object method {
         snapshot.opts,
         seedlistPathOpts,
         CollateralAmountOpts.opts,
-        L0PeerOpts.opts,
+        GlobalL0PeerOpts.opts,
         L0TokenIdentifierOpts.opts
       ).mapN(RunValidator.apply)
     }
