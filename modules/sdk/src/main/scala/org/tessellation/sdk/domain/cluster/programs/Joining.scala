@@ -232,12 +232,13 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
         Responsive
       )
 
-      _ <- localHealthcheck.cancel(registrationRequest.id)
-
-      _ <- clusterStorage.addPeer(peer)
-
-      // Note: Changing state from SessionStarted to Ready state will execute once for first peer, then all consecutive joins should be ignored
-      _ <- nodeStorage.tryModifyState(NodeState.SessionStarted, stateAfterJoining).handleError(_ => ())
+      _ <- clusterStorage
+        .addPeer(peer)
+        .ifM(
+          localHealthcheck.cancel(registrationRequest.id),
+          PeerAlreadyJoinedWithDifferentRegistrationData(registrationRequest.id).raiseError[F, Unit]
+        )
+      _ <- nodeStorage.tryModifyStateGetResult(NodeState.SessionStarted, stateAfterJoining)
     } yield peer
 
   private def validateSeedlist(peer: PeerToJoin): F[Unit] =
@@ -256,10 +257,11 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
       existingPeer <- clusterStorage.getPeer(registrationRequest.id)
 
       _ <- existingPeer match {
-        case Some(peer) if peer.session < registrationRequest.session => Applicative[F].unit
-        case None                                                     => Applicative[F].unit
+        case Some(peer) if peer.session <= registrationRequest.session => Applicative[F].unit
+        case None                                                      => Applicative[F].unit
         case _ =>
-          PeerAlreadyConnected(registrationRequest.id, ip, registrationRequest.p2pPort, registrationRequest.session).raiseError[F, Unit]
+          PeerAlreadyJoinedWithNewerSession(registrationRequest.id, ip, registrationRequest.p2pPort, registrationRequest.session)
+            .raiseError[F, Unit]
       }
 
       ownClusterId = clusterStorage.getClusterId
