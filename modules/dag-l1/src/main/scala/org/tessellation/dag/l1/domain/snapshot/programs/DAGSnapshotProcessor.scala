@@ -11,6 +11,7 @@ import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.transaction.DAGTransaction
 import org.tessellation.schema.{GlobalSnapshotInfo, IncrementalGlobalSnapshot}
 import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
+import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hashed, SecurityProvider}
 
 object DAGSnapshotProcessor {
@@ -25,8 +26,21 @@ object DAGSnapshotProcessor {
 
       import SnapshotProcessor._
 
-      def process(snapshot: Hashed[IncrementalGlobalSnapshot], state: GlobalSnapshotInfo): F[SnapshotProcessingResult] =
-        checkAlignment(snapshot, state, blockStorage, lastGlobalSnapshotStorage)
-          .flatMap(processAlignment(snapshot, state, _, blockStorage, transactionStorage, lastGlobalSnapshotStorage, addressStorage))
+      def process(
+        snapshot: Either[(Hashed[IncrementalGlobalSnapshot], GlobalSnapshotInfo), Hashed[IncrementalGlobalSnapshot]]
+      ): F[SnapshotProcessingResult] =
+        checkAlignment(snapshot, blockStorage, lastGlobalSnapshotStorage)
+          .flatMap(processAlignment(_, blockStorage, transactionStorage, lastGlobalSnapshotStorage, addressStorage))
+
+      def applySnapshotFn(
+        lastState: GlobalSnapshotInfo,
+        lastSnapshot: IncrementalGlobalSnapshot,
+        snapshot: Signed[IncrementalGlobalSnapshot]
+      ): F[GlobalSnapshotInfo] = applyGlobalSnapshotFn(lastState, lastSnapshot, snapshot)
+      def applyGlobalSnapshotFn(
+        lastGlobalState: GlobalSnapshotInfo,
+        lastGlobalSnapshot: IncrementalGlobalSnapshot,
+        globalSnapshot: Signed[IncrementalGlobalSnapshot]
+      ): F[GlobalSnapshotInfo] = ???
     }
 }

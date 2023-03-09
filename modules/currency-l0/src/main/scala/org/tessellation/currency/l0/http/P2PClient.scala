@@ -26,7 +26,8 @@ object P2PClient {
       sdkP2PClient.cluster,
       sdkP2PClient.gossip,
       sdkP2PClient.node,
-      StateChannelSnapshotClient.make(client, identifier)
+      StateChannelSnapshotClient.make(client, identifier),
+      L0GlobalSnapshotClient.make[F](client)
     ) {}
 }
 
@@ -35,5 +36,6 @@ sealed abstract class P2PClient[F[_]] private (
   val cluster: ClusterClient[F],
   val gossip: GossipClient[F],
   val node: NodeClient[F],
-  val stateChannelSnapshotClient: StateChannelSnapshotClient[F]
+  val stateChannelSnapshotClient: StateChannelSnapshotClient[F],
+  val globalSnapshot: L0GlobalSnapshotClient[F]
 )

@@ -56,6 +56,7 @@ object Main
       p2pClient = P2PClient.make[IO, DAGTransaction, DAGBlock, IncrementalGlobalSnapshot, GlobalSnapshotInfo](
         sdkP2PClient,
         sdkResources.client,
+        sdkServices.session,
         currencyPathPrefix = "dag"
       )
       services = Services.make[IO, DAGTransaction, DAGBlock, IncrementalGlobalSnapshot, GlobalSnapshotInfo](

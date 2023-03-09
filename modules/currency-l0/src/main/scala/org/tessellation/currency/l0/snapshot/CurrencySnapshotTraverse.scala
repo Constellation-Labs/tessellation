@@ -1,4 +1,4 @@
-package org.tessellation.currency.infrastructure.snapshot
+package org.tessellation.currency.l0.snapshot
 
 import cats._
 import cats.syntax.applicative._
@@ -16,7 +16,6 @@ import org.tessellation.security.signature.Signed
 import higherkindness.droste._
 import higherkindness.droste.data._
 import higherkindness.droste.util.DefaultTraverse
-import org.tessellation.currency.schema.currency.CurrencyBlock
 
 sealed trait StackF[A]
 
@@ -68,7 +67,7 @@ object CurrencySnapshotTraverse {
 
   def make[F[_]: MonadThrow: KryoSerializer](
     loadSnapshotFn: Hash => F[Either[Signed[CurrencySnapshot], Signed[CurrencyIncrementalSnapshot]]],
-    snapshotInfoFunctions: ConsensusFunctions[F, Signed[CurrencyBlock], SnapshotOrdinal, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
+    snapshotInfoFunctions: ConsensusFunctions[F, CurrencySnapshotEvent, SnapshotOrdinal, CurrencySnapshotArtifact, CurrencySnapshotContext]
   ): CurrencySnapshotTraverse[F] =
     new CurrencySnapshotTraverse[F] {
 

@@ -8,8 +8,9 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.show._
 
-import org.tessellation.currency.l0.snapshot.{CurrencySnapshotArtifact, CurrencySnapshotContext}
 import org.tessellation.currency.l0.snapshot.storages.LastSignedBinaryHashStorage
+import org.tessellation.currency.l0.snapshot.{CurrencySnapshotArtifact, CurrencySnapshotContext}
+import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshot, CurrencySnapshotInfo}
 import org.tessellation.ext.crypto._
 import org.tessellation.ext.kryo._
 import org.tessellation.kryo.KryoSerializer
@@ -21,8 +22,6 @@ import org.tessellation.security.signature.Signed
 import org.tessellation.statechannel.StateChannelSnapshotBinary
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
-import org.tessellation.currency.schema.currency.CurrencySnapshot
-import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 
 trait StateChannelSnapshotService[F[_]] {
 
