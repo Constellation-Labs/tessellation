@@ -17,7 +17,6 @@ import org.tessellation.schema.peer.L0Peer
 import org.tessellation.sdk.cli._
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types._
-import org.tessellation.security.hash.Hash
 
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
@@ -61,39 +60,6 @@ object method {
 
     val stateAfterJoining: NodeState = NodeState.WaitingForDownload
 
-  }
-
-  case class RunRollback(
-    keyStore: StorePath,
-    alias: KeyAlias,
-    password: Password,
-    httpConfig: HttpConfig,
-    environment: AppEnvironment,
-    snapshotConfig: SnapshotConfig,
-    seedlistPath: Option[Path],
-    collateralAmount: Option[Amount],
-    rollbackHash: Hash
-  ) extends Run
-
-  object RunRollback extends WithOpts[RunRollback] {
-
-    val seedlistPathOpts: Opts[Option[Path]] = Opts.option[Path]("seedlist", "").orNone
-
-    val rollbackHashOpts: Opts[Hash] = Opts.argument[Hash]("rollbackHash")
-
-    val opts: Opts[RunRollback] = Opts.subcommand("run-rollback", "Run rollback mode") {
-      (
-        StorePath.opts,
-        KeyAlias.opts,
-        Password.opts,
-        http.opts,
-        AppEnvironment.opts,
-        snapshot.opts,
-        seedlistPathOpts,
-        CollateralAmountOpts.opts,
-        rollbackHashOpts
-      ).mapN(RunRollback.apply)
-    }
   }
 
   case class RunGenesis(

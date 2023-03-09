@@ -218,21 +218,29 @@ class StateChannel[
   private val globalSnapshotProcessing: Stream[F, Unit] = Stream
     .awakeEvery(10.seconds)
     .evalMap(_ => services.globalL0.pullGlobalSnapshots)
-    .evalTap {
-      _.traverse {
-        case ((snapshot, _)) =>
-          logger.info(s"Pulled following global snapshot: ${SnapshotReference.fromHashedSnapshot(snapshot).show}")
+    .evalTap { snapshots =>
+      def log(snapshot: Hashed[IncrementalGlobalSnapshot]) =
+        logger.info(s"Pulled following global snapshot: ${SnapshotReference.fromHashedSnapshot(snapshot).show}")
+
+      snapshots match {
+        case Left((snapshot, _)) => log(snapshot)
+        case Right(snapshots)    => snapshots.traverse(log).void
       }
     }
     .evalMapLocked(NonEmptyList.of(blockAcceptanceS, blockCreationS, blockStoringS)) { snapshots =>
-      (snapshots, List.empty[SnapshotProcessingResult]).tailRecM {
-        case ((snapshot, state) :: nextSnapshots, aggResults) =>
-          programs.snapshotProcessor
-            .process(snapshot, state)
-            .map(result => (nextSnapshots, aggResults :+ result).asLeft[List[SnapshotProcessingResult]])
+      snapshots match {
+        case Left((snapshot, state)) =>
+          programs.snapshotProcessor.process((snapshot, state).asLeft[Hashed[IncrementalGlobalSnapshot]]).map(List(_))
+        case Right(snapshots) =>
+          (snapshots, List.empty[SnapshotProcessingResult]).tailRecM {
+            case (snapshot :: nextSnapshots, aggResults) =>
+              programs.snapshotProcessor
+                .process(snapshot.asRight[(Hashed[IncrementalGlobalSnapshot], GlobalSnapshotInfo)])
+                .map(result => (nextSnapshots, aggResults :+ result).asLeft[List[SnapshotProcessingResult]])
 
-        case (Nil, aggResults) =>
-          aggResults.asRight[(List[(Hashed[S], SI)], List[SnapshotProcessingResult])].pure[F]
+            case (Nil, aggResults) =>
+              aggResults.asRight[(List[Hashed[IncrementalGlobalSnapshot]], List[SnapshotProcessingResult])].pure[F]
+          }
       }
     }
     .evalMap {

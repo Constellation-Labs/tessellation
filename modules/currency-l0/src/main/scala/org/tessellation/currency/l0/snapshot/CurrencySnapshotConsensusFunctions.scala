@@ -13,24 +13,24 @@ import cats.syntax.show._
 import scala.collection.immutable.SortedSet
 import scala.util.control.NoStackTrace
 
-import org.tessellation.currency.l0.snapshot.services.StateChannelSnapshotService
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
-import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.balance.Amount
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.domain.block.processing._
+import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.infrastructure.consensus.trigger.ConsensusTrigger
+import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.infrastructure.snapshot.SnapshotConsensusFunctions
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 
-import eu.timepit.refined.auto._
 import derevo.cats.{eqv, show}
 import derevo.derive
+import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
@@ -46,10 +46,11 @@ abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
 
 object CurrencySnapshotConsensusFunctions {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider](
-    stateChannelSnapshotService: StateChannelSnapshotService[F],
+  def make[F[_]: Async: KryoSerializer: SecurityProvider: Metrics](
+    snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
     blockAcceptanceManager: BlockAcceptanceManager[F, CurrencyTransaction, CurrencyBlock],
-    collateral: Amount
+    collateral: Amount,
+    environment: AppEnvironment
   ): CurrencySnapshotConsensusFunctions[F] = new CurrencySnapshotConsensusFunctions[F] {
 
     def createContext(
@@ -77,26 +78,31 @@ object CurrencySnapshotConsensusFunctions {
 
     def getRequiredCollateral: Amount = collateral
 
-    def consumeSignedMajorityArtifact(signedArtifact: Signed[CurrencyIncrementalSnapshot], context: CurrencySnapshotContext): F[Unit] =
-      stateChannelSnapshotService.consume(signedArtifact, context)
+    def consumeSignedMajorityArtifact(signedArtifact: Signed[CurrencyIncrementalSnapshot], context: CurrencySnapshotInfo): F[Unit] =
+      snapshotStorage
+        .prepend(signedArtifact, context)
+        .ifM(
+          Async[F].unit,
+          logger.error("Cannot save CurrencySnapshot into the storage")
+        )
 
-    override def createProposalArtifact(
+    def createProposalArtifact(
       lastKey: SnapshotOrdinal,
-      lastSignedArtifact: Signed[CurrencySnapshotArtifact],
+      lastArtifact: Signed[CurrencySnapshotArtifact],
       lastContext: CurrencySnapshotContext,
       trigger: ConsensusTrigger,
       events: Set[CurrencySnapshotEvent]
     ): F[(CurrencySnapshotArtifact, Set[CurrencySnapshotEvent])] = {
 
       val blocksForAcceptance = events
-        .filter(_.height > lastSignedArtifact.height)
+        .filter(_.height > lastArtifact.height)
         .toList
 
       for {
-        lastArtifactHash <- lastSignedArtifact.value.hashF
-        currentOrdinal = lastSignedArtifact.ordinal.next
-        lastActiveTips <- lastSignedArtifact.activeTips
-        lastDeprecatedTips = lastSignedArtifact.tips.deprecated
+        lastArtifactHash <- lastArtifact.value.hashF
+        currentOrdinal = lastArtifact.ordinal.next
+        lastActiveTips <- lastArtifact.activeTips
+        lastDeprecatedTips = lastArtifact.tips.deprecated
 
         (acceptanceResult, snapshotInfo) <- accept(
           blocksForAcceptance,
@@ -112,7 +118,7 @@ object CurrencySnapshotConsensusFunctions {
           currentOrdinal
         )
 
-        (height, subHeight) <- getHeightAndSubHeight(lastSignedArtifact, deprecated, remainedActive, accepted)
+        (height, subHeight) <- getHeightAndSubHeight(lastArtifact, deprecated, remainedActive, accepted)
 
         returnedEvents = getReturnedEvents(acceptanceResult)
         stateProof <- CurrencySnapshotInfo.stateProof(snapshotInfo)
