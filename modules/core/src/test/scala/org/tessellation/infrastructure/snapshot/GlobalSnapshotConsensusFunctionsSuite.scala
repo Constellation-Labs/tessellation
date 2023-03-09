@@ -115,20 +115,20 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
   // test("validateArtifact - returns artifact for correct data") { res =>
   // implicit val (_, ks, sp, m) = res
 
-    KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>
-      val genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
-      Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair).flatMap { signedGenesis =>
-        mkStateChannelEvent().flatMap { scEvent =>
-          gscf.createProposalArtifact(SnapshotOrdinal.MinValue, signedGenesis, EventTrigger, Set(scEvent.asLeft[DAGEvent])).flatMap {
-            lastArtifact =>
-              gscf.validateArtifact(signedGenesis, EventTrigger)(lastArtifact._1).map { result =>
-                expect.same(result.isRight, true) && expect
-                  .same(result.map(_.stateChannelSnapshots(scEvent.address)), Right(NonEmptyList.one(scEvent.snapshotBinary)))
-              }
-          }
+  KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>
+    val genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
+    Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair).flatMap { signedGenesis =>
+      mkStateChannelEvent().flatMap { scEvent =>
+        gscf.createProposalArtifact(SnapshotOrdinal.MinValue, signedGenesis, EventTrigger, Set(scEvent.asLeft[DAGEvent])).flatMap {
+          lastArtifact =>
+            gscf.validateArtifact(signedGenesis, EventTrigger)(lastArtifact._1).map { result =>
+              expect.same(result.isRight, true) && expect
+                .same(result.map(_.stateChannelSnapshots(scEvent.address)), Right(NonEmptyList.one(scEvent.snapshotBinary)))
+            }
         }
       }
     }
+  }
   // val gscf = GlobalSnapshotConsensusFunctions.make(gss, bam, scProcessor, collateral, rewards, env)
 
   // KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>

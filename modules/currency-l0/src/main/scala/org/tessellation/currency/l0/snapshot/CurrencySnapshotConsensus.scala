@@ -18,6 +18,7 @@ import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.node.NodeStorage
+import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.infrastructure.block.processing.BlockAcceptanceManager
 import org.tessellation.sdk.infrastructure.consensus.Consensus
 import org.tessellation.sdk.infrastructure.metrics.Metrics
@@ -25,7 +26,6 @@ import org.tessellation.sdk.infrastructure.snapshot.SnapshotConsensus
 import org.tessellation.security.SecurityProvider
 
 import org.http4s.client.Client
-import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 
 object CurrencySnapshotConsensus {
 
@@ -47,9 +47,11 @@ object CurrencySnapshotConsensus {
   ): F[SnapshotConsensus[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshotArtifact, CurrencySnapshotContext, CurrencySnapshotEvent]] =
     Consensus.make[F, CurrencySnapshotEvent, SnapshotOrdinal, CurrencySnapshotArtifact, CurrencySnapshotContext](
       CurrencySnapshotConsensusFunctions.make[F](
-        stateChannelSnapshotService,
+        snapshotStorage,
+        // stateChannelSnapshotService,
         BlockAcceptanceManager.make[F, CurrencyTransaction, CurrencyBlock](blockValidator),
-        collateral
+        collateral,
+        environment
       ),
       gossip,
       selfId,

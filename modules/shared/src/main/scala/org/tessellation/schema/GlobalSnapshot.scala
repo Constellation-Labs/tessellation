@@ -94,7 +94,7 @@ object GlobalSnapshot {
       SortedSet.empty,
       startingEpochProgress,
       nextFacilitators,
-      GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.from(balances)),
+      GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.from(balances), SortedMap.empty),
       SnapshotTips(
         SortedSet.empty[DeprecatedTip],
         mkActiveTips(8)
