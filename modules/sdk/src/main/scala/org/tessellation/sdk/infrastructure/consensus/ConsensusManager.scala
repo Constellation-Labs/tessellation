@@ -26,7 +26,7 @@ import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
-import retry.RetryPolicies.{constantDelay, limitRetries}
+import retry.RetryPolicies.{constantDelay, fullJitter, limitRetries}
 import retry.syntax.all._
 
 object ConsensusManager {
@@ -45,6 +45,7 @@ object ConsensusManager {
     val logger = Slf4jLogger.getLoggerFromClass[F](ConsensusManager.getClass)
 
     val observationRetryPolicy = limitRetries[F](5).join(constantDelay(30.seconds))
+    val collectRegistrationRetryPolicy = limitRetries(3).join(fullJitter(2.seconds))
 
     def collectRegistration(peer: Peer): F[Unit] =
       for {
@@ -279,7 +280,13 @@ object ConsensusManager {
           .filter(_.isResponsive)
           .parEvalMapUnbounded { peer =>
             collectRegistration(peer)
-              .handleErrorWith(err => logger.error(err)(s"Error exchanging registration with peer ${peer.show}"))
+              .retryingOnAllErrors(
+                collectRegistrationRetryPolicy,
+                (err, retryDetails) =>
+                  logger
+                    .error(err)(s"Error collecting consensus registration {peerId=${peer.id.show}, attempt=${retryDetails.retriesSoFar}}")
+              )
+              .handleErrorWith(err => logger.error(err)(s"Unable to collect registration from peer ${peer.show}"))
           }
           .compile
           .drain

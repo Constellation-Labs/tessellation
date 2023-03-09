@@ -45,7 +45,9 @@ object cluster {
   }
 
   case class NodeStateDoesNotAllowForJoining(nodeState: NodeState) extends NoStackTrace
-  case class PeerAlreadyConnected(id: PeerId, host: Host, p2pPort: Port, session: SessionToken) extends NoStackTrace
+  case class PeerAlreadyJoinedWithNewerSession(id: PeerId, host: Host, p2pPort: Port, session: SessionToken) extends NoStackTrace
+
+  case class PeerAlreadyJoinedWithDifferentRegistrationData(id: PeerId) extends NoStackTrace
   case class PeerNotInSeedlist(id: PeerId) extends NoStackTrace
 
   @derive(decoder, encoder, order, show)
