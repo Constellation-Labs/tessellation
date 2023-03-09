@@ -49,13 +49,13 @@ object PeerDiscoverySuite extends SimpleIOSuite with Checkers {
 
       override def getPeer(id: PeerId): IO[Option[Peer]] = ???
 
-      override def addPeer(peer: Peer): IO[Unit] = ???
+      override def addPeer(peer: Peer): IO[Boolean] = ???
 
       override def hasPeerId(id: PeerId): IO[Boolean] = ???
 
       override def hasPeerHostPort(host: Host, p2pPort: Port): IO[Boolean] = ???
 
-      override def setPeerState(id: PeerId, state: node.NodeState): IO[Unit] = ???
+      override def updatePeerState(id: PeerId, state: node.NodeState): IO[Boolean] = ???
 
       override def removePeer(id: PeerId): IO[Unit] = ???
 
