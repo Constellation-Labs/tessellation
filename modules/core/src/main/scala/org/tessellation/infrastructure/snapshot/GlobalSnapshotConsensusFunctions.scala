@@ -179,11 +179,6 @@ object GlobalSnapshotConsensusFunctions {
           currentOrdinal
         )
 
-        (updatedBalancesByRewards, acceptedRewardTxs) = acceptRewardTxs(
-          context.balances,
-          rewardTxsForAcceptance
-        )
-
         (height, subHeight) <- getHeightAndSubHeight(lastArtifact, deprecated, remainedActive, accepted)
 
         returnedDAGEvents = getReturnedDAGEvents(acceptanceResult)
@@ -238,7 +233,12 @@ object GlobalSnapshotConsensusFunctions {
         scSnapshots,
         returnedSCEvents,
         acceptedRewardTxs,
-        GlobalSnapshotInfo(updatedLastStateChannelSnapshotHashes, transactionsRefs, updatedBalancesByRewards)
+        GlobalSnapshotInfo(
+          updatedLastStateChannelSnapshotHashes,
+          transactionsRefs,
+          updatedBalancesByRewards,
+          SortedMap.empty // TODO: currency
+        )
       )
 
     private def acceptBlocks(

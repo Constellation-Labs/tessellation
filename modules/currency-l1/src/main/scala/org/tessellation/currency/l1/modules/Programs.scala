@@ -8,7 +8,7 @@ import org.tessellation.dag.l1.http.p2p.P2PClient
 import org.tessellation.dag.l1.modules.{Programs => BasePrograms}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.Block
-import org.tessellation.schema.snapshot.Snapshot
+import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo}
 import org.tessellation.schema.transaction.Transaction
 import org.tessellation.sdk.domain.cluster.programs.L0PeerDiscovery
 import org.tessellation.sdk.modules.SdkPrograms
@@ -20,17 +20,18 @@ object Programs {
     F[_]: Async: KryoSerializer: SecurityProvider: Random,
     T <: Transaction,
     B <: Block[T],
-    S <: Snapshot[T, B]
+    S <: Snapshot[T, B],
+    SI <: SnapshotInfo
   ](
     sdkPrograms: SdkPrograms[F],
-    p2pClient: P2PClient[F, T, B],
-    storages: Storages[F, T, B, S],
-    snapshotProcessorProgram: SnapshotProcessor[F, T, B, S]
-  ): Programs[F, T, B, S] = {
+    p2pClient: P2PClient[F, T, B, S, SI],
+    storages: Storages[F, T, B, S, SI],
+    snapshotProcessorProgram: SnapshotProcessor[F, T, B, S, SI]
+  ): Programs[F, T, B, S, SI] = {
     val l0PeerDiscoveryProgram = L0PeerDiscovery.make(p2pClient.l0Cluster, storages.l0Cluster)
     val globalL0PeerDiscoveryProgram = L0PeerDiscovery.make(p2pClient.l0Cluster, storages.globalL0Cluster)
 
-    new Programs[F, T, B, S] {
+    new Programs[F, T, B, S, SI] {
       val peerDiscovery = sdkPrograms.peerDiscovery
       val l0PeerDiscovery = l0PeerDiscoveryProgram
       val globalL0PeerDiscovery = globalL0PeerDiscoveryProgram
@@ -40,6 +41,6 @@ object Programs {
   }
 }
 
-trait Programs[F[_], T <: Transaction, B <: Block[T], S <: Snapshot[T, B]] extends BasePrograms[F, T, B, S] {
+trait Programs[F[_], T <: Transaction, B <: Block[T], S <: Snapshot[T, B], SI <: SnapshotInfo] extends BasePrograms[F, T, B, S, SI] {
   val globalL0PeerDiscovery: L0PeerDiscovery[F]
 }
