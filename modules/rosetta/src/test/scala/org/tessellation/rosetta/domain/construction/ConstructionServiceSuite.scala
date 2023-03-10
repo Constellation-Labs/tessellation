@@ -297,4 +297,5 @@ object ConstructionServiceSuite extends MutableIOSuite with Checkers with Transa
 
     testParseTransactions(isSignedTransaction = false, testCaseCallbackHandler = testCase)
   }
+
 }

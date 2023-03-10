@@ -1,11 +1,15 @@
 package org.tessellation.rosetta.http.routes
 
+import cats.data.{EitherT, NonEmptyList}
 import cats.effect.Async
+import cats.syntax.either._
 
 import org.tessellation.rosetta.domain.api.construction._
 import org.tessellation.rosetta.domain.construction.ConstructionService
+import org.tessellation.rosetta.domain.error.{ConstructionError, UnsupportedOperation}
 import org.tessellation.rosetta.ext.http4s.refined._
 import org.tessellation.sdk.config.AppEnvironment
+import org.tessellation.security.hex.Hex
 
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec._
@@ -57,6 +61,20 @@ final class ConstructionRoutes[F[_]: Async](
             .asRosettaResponse
         }
         .handleUnknownError
+
+    case req @ POST -> Root / "combine" =>
+      req
+        .decodeRosettaWithNetworkValidation[ConstructionCombine.Request](appEnvironment, _.networkIdentifier) { combineReq =>
+          val combinedHex = combineReq.signatures match {
+            case NonEmptyList(head, Nil) =>
+              constructionService
+                .combineTransaction(combineReq.unsignedTransaction, head)
+            case _ => EitherT.fromEither(UnsupportedOperation.asInstanceOf[ConstructionError].asLeft[Hex])
+          }
+
+          combinedHex.bimap(_.toRosettaError, ConstructionCombine.Response(_)).asRosettaResponse.handleUnknownError
+        }
+
   }
 
   val routes: HttpRoutes[F] = Router(

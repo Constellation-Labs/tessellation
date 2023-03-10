@@ -13,9 +13,11 @@ object ConstructionError {
     def toRosettaError: RosettaError = ce match {
       case InvalidPublicKey     => RosettaError.InvalidPublicKey
       case MalformedTransaction => RosettaError.MalformedTransaction
+      case UnsupportedOperation => RosettaError.UnsupportedOperation
     }
   }
 }
 
 case object InvalidPublicKey extends ConstructionError
 case object MalformedTransaction extends ConstructionError
+case object UnsupportedOperation extends ConstructionError
