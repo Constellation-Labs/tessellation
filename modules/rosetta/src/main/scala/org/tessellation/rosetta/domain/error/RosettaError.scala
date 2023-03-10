@@ -42,6 +42,13 @@ object RosettaError extends IntEnum[RosettaError] with RosettaErrorEncoder {
         retriable = false,
         description = Some("Unable to decode the transaction.")
       )
+  case object UnsupportedOperation
+      extends RosettaError(
+        value = 7,
+        message = "Unsupported operation",
+        retriable = false,
+        description = Some("The operation is not supported.")
+      )
 }
 
 trait RosettaErrorEncoder {

@@ -3,11 +3,11 @@ package org.tessellation.rosetta.domain
 import org.tessellation.ext.derevo.magnoliaCustomizable.snakeCaseConfiguration
 import org.tessellation.security.hex.Hex
 
-import derevo.circe.magnolia.{customizableDecoder, customizableEncoder}
+import derevo.circe.magnolia.customizableDecoder
 import derevo.derive
 import enumeratum.values._
 
-@derive(customizableDecoder, customizableEncoder)
+@derive(customizableDecoder)
 case class RosettaPublicKey(
   hexBytes: Hex,
   curveType: CurveType

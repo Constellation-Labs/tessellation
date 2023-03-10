@@ -1,6 +1,6 @@
 package org.tessellation.rosetta.domain.construction
 
-import cats.data.{EitherT, NonEmptyList}
+import cats.data.{EitherT, NonEmptyList, NonEmptySet}
 import cats.effect.Async
 import cats.syntax.applicativeError._
 import cats.syntax.either._
@@ -9,17 +9,18 @@ import cats.syntax.functor._
 import cats.syntax.option._
 
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.rosetta.domain._
 import org.tessellation.rosetta.domain.amount.{Amount, AmountValue}
 import org.tessellation.rosetta.domain.api.construction.ConstructionParse
 import org.tessellation.rosetta.domain.currency.DAG
-import org.tessellation.rosetta.domain.error.{ConstructionError, InvalidPublicKey, MalformedTransaction}
+import org.tessellation.rosetta.domain.error._
 import org.tessellation.rosetta.domain.operation._
-import org.tessellation.rosetta.domain.{AccountIdentifier, RosettaPublicKey, TransactionIdentifier}
-import org.tessellation.schema.transaction.Transaction
+import org.tessellation.schema.transaction.{DAGTransaction, Transaction}
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.key.ops._
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.signature.signature.{Signature, SignatureProof}
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.boolean.Not
@@ -31,6 +32,7 @@ trait ConstructionService[F[_]] {
   def getAccountIdentifiers(operations: List[Operation]): Option[NonEmptyList[AccountIdentifier]]
   def getTransactionIdentifier(hex: Hex): EitherT[F, ConstructionError, TransactionIdentifier]
   def parseTransaction(hex: Hex, isSigned: Boolean): EitherT[F, ConstructionError, ConstructionParse.ParseResult]
+  def combineTransaction(hex: Hex, signature: RosettaSignature): EitherT[F, ConstructionError, Hex]
 }
 
 object ConstructionService {
@@ -106,5 +108,25 @@ object ConstructionService {
       } else {
         parseUnsignedTransaction(hex)
       }
+
+    def combineTransaction(hex: Hex, signature: RosettaSignature): EitherT[F, ConstructionError, Hex] =
+      EitherT
+        .fromEither(KryoSerializer[F].deserialize[DAGTransaction](hex.toBytes))
+        .leftMap(_ => MalformedTransaction)
+        .flatMap { transaction =>
+          EitherT {
+            signature.publicKey.hexBytes.toPublicKeyByEC
+              .map(pk => SignatureProof(pk.toId, Signature(signature.hexBytes)).asRight[ConstructionError])
+          }.flatMap { proof =>
+            EitherT
+              .fromEither(
+                KryoSerializer[F]
+                  .serialize(Signed[DAGTransaction](transaction, NonEmptySet.of(proof)))
+              )
+              .leftMap(_ => MalformedTransaction.asInstanceOf[ConstructionError])
+              .map(Hex.fromBytes(_))
+          }
+        }
+
   }
 }
