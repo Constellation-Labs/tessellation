@@ -5,6 +5,7 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.ext.codecs.BinaryCodec
+import org.tessellation.ext.http4s.HashVar
 import org.tessellation.ext.http4s.headers.negotiation.resolveEncoder
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.snapshot.Snapshot
@@ -58,6 +59,14 @@ final case class SnapshotRoutes[F[_]: Async: KryoSerializer, S <: Snapshot[_, _]
     case req @ GET -> Root / SnapshotOrdinalVar(ordinal) =>
       resolveEncoder[F, Signed[S]](req) { implicit enc =>
         snapshotStorage.get(ordinal).flatMap {
+          case Some(snapshot) => Ok(snapshot)
+          case _              => NotFound()
+        }
+      }
+
+    case req @ GET -> Root / HashVar(hash) =>
+      resolveEncoder[F, Signed[S]](req) { implicit enc =>
+        snapshotStorage.get(hash).flatMap {
           case Some(snapshot) => Ok(snapshot)
           case _              => NotFound()
         }

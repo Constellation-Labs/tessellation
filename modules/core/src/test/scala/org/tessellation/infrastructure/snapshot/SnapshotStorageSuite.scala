@@ -7,17 +7,10 @@ import cats.syntax.option._
 import org.tessellation.ext.crypto._
 import org.tessellation.ext.kryo._
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema._
 import org.tessellation.schema.epoch.EpochProgress
-import org.tessellation.sdk.infrastructure.snapshot.storage.{SnapshotLocalFileSystemStorage, SnapshotStorage}
-import org.tessellation.schema.height.{Height, SubHeight}
-import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.{GlobalSnapshot, address, balance}
-import org.tessellation.sdk.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage
+import org.tessellation.schema.{GlobalSnapshot, address, balance, _}
 import org.tessellation.sdk.infrastructure.snapshot.storage.{SnapshotLocalFileSystemStorage, SnapshotStorage}
 import org.tessellation.sdk.sdkKryoRegistrar
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.hex.Hex
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.{KeyPairGenerator, SecurityProvider}
 import org.tessellation.shared.sharedKryoRegistrar
@@ -52,21 +45,6 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
         IncrementalGlobalSnapshot.fromGlobalSnapshot(genesis).flatMap { snapshot =>
           Signed.forAsyncKryo[IO, IncrementalGlobalSnapshot](snapshot, keyPair).map((genesis, _))
         }
-        def snapshot =
-          IncrementalGlobalSnapshot(
-            genesis.value.ordinal.next,
-            Height.MinValue,
-            SubHeight.MinValue,
-            genesis.value.hash.toOption.get,
-            SortedSet.empty,
-            SortedMap.empty,
-            SortedSet.empty,
-            genesis.value.epochProgress,
-            NonEmptyList.of(PeerId(Hex("peer1"))),
-            genesis.tips
-          )
-
-        Signed.forAsyncKryo[IO, IncrementalGlobalSnapshot](snapshot, keyPair).map((genesis, _))
       }
     }
 

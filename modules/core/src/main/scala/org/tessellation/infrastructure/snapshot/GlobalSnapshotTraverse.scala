@@ -8,7 +8,7 @@ import cats.syntax.functor._
 
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
-import org.tessellation.sdk.domain.consensus.ConsensusFunctions
+import org.tessellation.sdk.domain.snapshot.SnapshotContextFunctions
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
@@ -66,7 +66,7 @@ object GlobalSnapshotTraverse {
 
   def make[F[_]: MonadThrow: KryoSerializer](
     loadGlobalSnapshotFn: Hash => F[Either[Signed[GlobalSnapshot], Signed[IncrementalGlobalSnapshot]]],
-    snapshotInfoFunctions: ConsensusFunctions[F, GlobalSnapshotEvent, SnapshotOrdinal, GlobalSnapshotArtifact, GlobalSnapshotContext]
+    snapshotInfoFunctions: SnapshotContextFunctions[F, GlobalSnapshotArtifact, GlobalSnapshotContext]
   ): GlobalSnapshotTraverse[F] =
     new GlobalSnapshotTraverse[F] {
 

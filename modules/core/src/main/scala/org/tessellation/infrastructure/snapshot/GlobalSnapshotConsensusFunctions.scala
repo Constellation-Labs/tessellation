@@ -2,7 +2,6 @@ package org.tessellation.infrastructure.snapshot
 
 import cats.effect.Async
 import cats.syntax.applicative._
-import cats.syntax.applicativeError._
 import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.foldable._
@@ -10,21 +9,15 @@ import cats.syntax.functor._
 import cats.syntax.functorFilter._
 import cats.syntax.option._
 import cats.syntax.order._
-import cats.syntax.show._
-import cats.syntax.traverse._
-
-import scala.collection.immutable.{SortedMap, SortedSet}
-import scala.util.control.NoStackTrace
 
 import org.tessellation.domain.rewards.Rewards
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
-import org.tessellation.schema.address.Address
-import org.tessellation.schema.balance.{Amount, Balance}
+import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.block.DAGBlock
-import org.tessellation.schema.transaction.{DAGTransaction, RewardTransaction}
+import org.tessellation.schema.transaction.DAGTransaction
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.AppEnvironment.Mainnet
 import org.tessellation.sdk.domain.block.processing._
@@ -37,8 +30,6 @@ import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 import org.tessellation.statechannel.StateChannelOutput
 
-import derevo.cats.{eqv, show}
-import derevo.derive
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 abstract class GlobalSnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
@@ -56,8 +47,7 @@ object GlobalSnapshotConsensusFunctions {
 
   def make[F[_]: Async: KryoSerializer: SecurityProvider: Metrics](
     globalSnapshotStorage: SnapshotStorage[F, GlobalSnapshotArtifact, GlobalSnapshotContext],
-    blockAcceptanceManager: BlockAcceptanceManager[F, DAGTransaction, DAGBlock],
-    stateChannelEventsProcessor: GlobalSnapshotStateChannelEventsProcessor[F],
+    globalSnapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     collateral: Amount,
     rewards: Rewards[F],
     environment: AppEnvironment
@@ -100,36 +90,6 @@ object GlobalSnapshotConsensusFunctions {
         )
     }
 
-    def createContext(
-      context: GlobalSnapshotContext,
-      lastArtifact: IncrementalGlobalSnapshot,
-      signedArtifact: Signed[IncrementalGlobalSnapshot]
-    ): F[GlobalSnapshotInfo] = for {
-      lastActiveTips <- lastArtifact.activeTips
-      lastDeprecatedTips = lastArtifact.tips.deprecated
-
-      blocksForAcceptance = signedArtifact.blocks.toList.map(_.block)
-
-      scEvents = signedArtifact.stateChannelSnapshots.toList.flatMap {
-        case (address, stateChannelBinaries) => stateChannelBinaries.map(StateChannelOutput(address, _)).toList
-      }
-      (acceptanceResult, scSnapshots, returnedSCEvents, acceptedRewardTxs, snapshotInfo) <- accept(
-        blocksForAcceptance,
-        scEvents,
-        signedArtifact.rewards,
-        context,
-        lastActiveTips,
-        lastDeprecatedTips
-      )
-      _ <- CannotApplyBlocksError(acceptanceResult.notAccepted.map { case (_, reason) => reason })
-        .raiseError[F, Unit]
-        .whenA(acceptanceResult.notAccepted.nonEmpty)
-      _ <- CannotApplyStateChannelsError(returnedSCEvents).raiseError[F, Unit].whenA(returnedSCEvents.nonEmpty)
-      diffRewards = acceptedRewardTxs -- signedArtifact.rewards
-      _ <- CannotApplyRewardsError(diffRewards).raiseError[F, Unit].whenA(diffRewards.nonEmpty)
-
-    } yield snapshotInfo
-
     def createProposalArtifact(
       lastKey: GlobalSnapshotKey,
       lastArtifact: Signed[GlobalSnapshotArtifact],
@@ -164,7 +124,7 @@ object GlobalSnapshotConsensusFunctions {
             case TimeTrigger  => rewards.mintedDistribution(lastArtifact.epochProgress, facilitators).map(_ ++ feeRewardTxs)
           }
         }
-        (acceptanceResult, scSnapshots, returnedSCEvents, acceptedRewardTxs, snapshotInfo) <- accept(
+        (acceptanceResult, scSnapshots, returnedSCEvents, acceptedRewardTxs, snapshotInfo) <- globalSnapshotAcceptanceManager.accept(
           blocksForAcceptance,
           scEvents,
           rewardTxsForAcceptance,
@@ -204,84 +164,6 @@ object GlobalSnapshotConsensusFunctions {
       } yield (globalSnapshot, returnedEvents)
     }
 
-    private def accept(
-      blocksForAcceptance: List[Signed[DAGBlock]],
-      scEvents: List[StateChannelEvent],
-      rewards: SortedSet[RewardTransaction],
-      lastSnapshotContext: GlobalSnapshotContext,
-      lastActiveTips: SortedSet[ActiveTip],
-      lastDeprecatedTips: SortedSet[DeprecatedTip]
-    ) = for {
-      acceptanceResult <- acceptBlocks(blocksForAcceptance, lastSnapshotContext, lastActiveTips, lastDeprecatedTips)
-
-      (scSnapshots, currencySnapshots, returnedSCEvents) <- stateChannelEventsProcessor.process(lastSnapshotContext, scEvents)
-      sCSnapshotHashes <- scSnapshots.toList.traverse { case (address, nel) => nel.head.hashF.map(address -> _) }
-        .map(_.toMap)
-      updatedLastStateChannelSnapshotHashes = lastSnapshotContext.lastStateChannelSnapshotHashes ++ sCSnapshotHashes
-      updatedLastCurrencySnapshots = lastSnapshotContext.lastCurrencySnapshots ++ currencySnapshots
-
-      transactionsRefs = lastSnapshotContext.lastTxRefs ++ acceptanceResult.contextUpdate.lastTxRefs
-
-      (updatedBalancesByRewards, acceptedRewardTxs) = updateBalancesWithRewards(
-        lastSnapshotContext,
-        acceptanceResult.contextUpdate.balances,
-        rewards
-      )
-
-    } yield
-      (
-        acceptanceResult,
-        scSnapshots,
-        returnedSCEvents,
-        acceptedRewardTxs,
-        GlobalSnapshotInfo(
-          updatedLastStateChannelSnapshotHashes,
-          transactionsRefs,
-          updatedBalancesByRewards,
-          updatedLastCurrencySnapshots
-        )
-      )
-
-    private def acceptBlocks(
-      blocksForAcceptance: List[Signed[DAGBlock]],
-      lastSnapshotContext: GlobalSnapshotContext,
-      lastActiveTips: SortedSet[ActiveTip],
-      lastDeprecatedTips: SortedSet[DeprecatedTip]
-    ) = {
-      val tipUsages = getTipsUsages(lastActiveTips, lastDeprecatedTips)
-      val context = BlockAcceptanceContext.fromStaticData(
-        lastSnapshotContext.balances,
-        lastSnapshotContext.lastTxRefs,
-        tipUsages,
-        collateral
-      )
-
-      blockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context)
-    }
-
-    private def updateBalancesWithRewards(
-      lastSnapshotInfo: GlobalSnapshotContext,
-      acceptedBalances: Map[Address, Balance],
-      rewardsForAcceptance: SortedSet[RewardTransaction]
-    ) = {
-      val balances = lastSnapshotInfo.balances ++ acceptedBalances
-      acceptRewardTxs(balances, rewardsForAcceptance)
-    }
-
-    private def acceptRewardTxs(
-      balances: SortedMap[Address, Balance],
-      txs: SortedSet[RewardTransaction]
-    ): (SortedMap[Address, Balance], SortedSet[RewardTransaction]) =
-      txs.foldLeft((balances, SortedSet.empty[RewardTransaction])) { (acc, tx) =>
-        val (updatedBalances, acceptedTxs) = acc
-
-        updatedBalances
-          .getOrElse(tx.destination, Balance.empty)
-          .plus(tx.amount)
-          .map(balance => (updatedBalances.updated(tx.destination, balance), acceptedTxs + tx))
-          .getOrElse(acc)
-      }
-
     private def getReturnedDAGEvents(
       acceptanceResult: BlockAcceptanceResult[DAGBlock]
     ): Set[GlobalSnapshotEvent] =
@@ -311,24 +193,4 @@ object GlobalSnapshotConsensusFunctions {
     }
   }
 
-  @derive(eqv, show)
-  case class CannotApplyBlocksError(reasons: List[BlockNotAcceptedReason]) extends NoStackTrace {
-
-    override def getMessage: String =
-      s"Cannot build global snapshot ${reasons.show}"
-  }
-
-  @derive(eqv)
-  case class CannotApplyStateChannelsError(returnedStateChannels: Set[StateChannelEvent]) extends NoStackTrace {
-
-    override def getMessage: String =
-      s"Cannot build global snapshot because of returned StateChannels for addresses: ${returnedStateChannels.map(_.address).show}"
-  }
-
-  @derive(eqv, show)
-  case class CannotApplyRewardsError(notAcceptedRewards: SortedSet[RewardTransaction]) extends NoStackTrace {
-
-    override def getMessage: String =
-      s"Cannot build global snapshot because of not accepted rewards: ${notAcceptedRewards.show}"
-  }
 }
