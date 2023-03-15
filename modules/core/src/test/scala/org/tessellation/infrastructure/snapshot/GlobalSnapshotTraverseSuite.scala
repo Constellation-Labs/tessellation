@@ -12,15 +12,10 @@ import cats.syntax.traverse._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import org.tessellation.domain.rewards.Rewards
 import org.tessellation.domain.statechannel.StateChannelValidator
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.cats.syntax.next._
-import org.tessellation.infrastructure.snapshot.{
-  GlobalSnapshotConsensusFunctions,
-  GlobalSnapshotStateChannelEventsProcessor,
-  GlobalSnapshotTraverse
-}
+import org.tessellation.infrastructure.snapshot._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
@@ -30,8 +25,6 @@ import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.{DAGTransaction, TransactionReference}
-import org.tessellation.sdk.config.AppEnvironment
-import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.domain.transaction.{TransactionChainValidator, TransactionValidator}
 import org.tessellation.sdk.infrastructure.block.processing.{BlockAcceptanceLogic, BlockAcceptanceManager, BlockValidator}
 import org.tessellation.sdk.infrastructure.metrics.Metrics
@@ -50,7 +43,6 @@ import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
 import org.scalacheck.Gen
 import weaver._
 import weaver.scalacheck.Checkers
-// import org.tessellation.sdk.infrastructure.snapshot.storage.SnapshotStorage
 
 object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
   type GenKeyPairFn = () => KeyPair
@@ -149,36 +141,6 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         case _ => Right(incrementalSnapshots.map(snapshot => (snapshot.hash, snapshot)).toMap.get(hash).get.signed).pure[IO]
       }
 
-    val globalSnapshotStorage = new SnapshotStorage[IO, IncrementalGlobalSnapshot, GlobalSnapshotInfo] {
-
-      override def prepend(snapshot: Signed[IncrementalGlobalSnapshot], initialState: GlobalSnapshotInfo): IO[Boolean] = ???
-
-      override def head: IO[Option[(Signed[IncrementalGlobalSnapshot], GlobalSnapshotInfo)]] = ???
-
-      override def headSnapshot: IO[Option[Signed[IncrementalGlobalSnapshot]]] = ???
-
-      override def get(ordinal: SnapshotOrdinal): IO[Option[Signed[IncrementalGlobalSnapshot]]] = ???
-
-      override def get(hash: Hash): IO[Option[Signed[IncrementalGlobalSnapshot]]] = ???
-
-    }
-
-    val rewards = new Rewards[IO] {
-
-      override def mintedDistribution(
-        epochProgress: EpochProgress,
-        facilitators: NonEmptySet[ID.Id]
-      ): IO[SortedSet[transaction.RewardTransaction]] = ???
-
-      override def feeDistribution(
-        snapshotOrdinal: SnapshotOrdinal,
-        transactions: SortedSet[DAGTransaction],
-        facilitators: NonEmptySet[ID.Id]
-      ): IO[SortedSet[transaction.RewardTransaction]] = ???
-
-      override def getAmountByEpoch(epochProgress: EpochProgress, rewardsPerEpoch: SortedMap[EpochProgress, Amount]): Amount = ???
-
-    }
     val signedValidator = SignedValidator.make[IO]
     val blockValidator =
       BlockValidator.make[IO, DAGTransaction, DAGBlock](
@@ -189,10 +151,9 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
     val blockAcceptanceManager = BlockAcceptanceManager.make(BlockAcceptanceLogic.make[IO, DAGTransaction, DAGBlock], blockValidator)
     val stateChannelValidator = StateChannelValidator.make[IO](signedValidator)
     val stateChannelProcessor = GlobalSnapshotStateChannelEventsProcessor.make[IO](stateChannelValidator)
-    val globalSnapshotConsensusFunctions =
-      GlobalSnapshotConsensusFunctions
-        .make[IO](globalSnapshotStorage, blockAcceptanceManager, stateChannelProcessor, Amount.empty, rewards, AppEnvironment.Dev)
-    GlobalSnapshotTraverse.make[IO](loadGlobalSnapshot, globalSnapshotConsensusFunctions)
+    val snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make[IO](blockAcceptanceManager, stateChannelProcessor, Amount.empty)
+    val snapshotContextFunctions = GlobalSnapshotContextFunctions.make[IO](snapshotAcceptanceManager)
+    GlobalSnapshotTraverse.make[IO](loadGlobalSnapshot, snapshotContextFunctions)
   }
 
   test("can compute state for given incremental global snapshot") { res =>
@@ -200,7 +161,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
 
     mkSnapshots(List.empty, balances).flatMap { snapshots =>
       gst(snapshots._1, snapshots._2.toList).computeState(snapshots._2.head.signed)
-    }.map(state => expect.eql(GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.from(balances)), state))
+    }.map(state => expect.eql(GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.from(balances), SortedMap.empty), state))
   }
 
   test("computed state contains last refs and preserve total amount of balances when no fees or rewards ") { res =>

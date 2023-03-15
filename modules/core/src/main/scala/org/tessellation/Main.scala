@@ -134,7 +134,7 @@ object Main
               .flatMap { snapshot =>
                 GlobalSnapshotLoader.make[IO](storages.incrementalGlobalSnapshotLocalFileSystemStorage, cfg.snapshot.snapshotPath).flatMap {
                   loader =>
-                    val snapshotTraverse = GlobalSnapshotTraverse.make[IO](loader.readGlobalSnapshot, services.consensus.consensusFns)
+                    val snapshotTraverse = GlobalSnapshotTraverse.make[IO](loader.readGlobalSnapshot, services.snapshotContextFunctions)
                     snapshotTraverse.computeState(snapshot).flatMap { snapshotInfo =>
                       storages.globalSnapshot.prepend(snapshot, snapshotInfo) >>
                         services.collateral
