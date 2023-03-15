@@ -1,6 +1,7 @@
 package org.tessellation.dag.l1.domain.snapshot.programs
 
 import cats.effect.Async
+import cats.syntax.applicative._
 import cats.syntax.flatMap._
 
 import org.tessellation.dag.l1.domain.address.storage.AddressStorage
@@ -37,6 +38,7 @@ object DAGSnapshotProcessor {
         lastSnapshot: IncrementalGlobalSnapshot,
         snapshot: Signed[IncrementalGlobalSnapshot]
       ): F[GlobalSnapshotInfo] = applyGlobalSnapshotFn(lastState, lastSnapshot, snapshot)
+
       def applyGlobalSnapshotFn(
         lastGlobalState: GlobalSnapshotInfo,
         lastGlobalSnapshot: IncrementalGlobalSnapshot,

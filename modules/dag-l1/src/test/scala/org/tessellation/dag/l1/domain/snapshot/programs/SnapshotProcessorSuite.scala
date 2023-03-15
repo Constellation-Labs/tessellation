@@ -610,7 +610,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           _ <- lastSnapR.set((hashedLastSnapshot, GlobalSnapshotInfo.empty).some)
 
           processingResult <- snapshotProcessor.process(
-            (hashedNextSnapshot, GlobalSnapshotInfo.empty).asLeft[Hashed[IncrementalGlobalSnapshot]]
+            hashedNextSnapshot.asRight[(Hashed[IncrementalGlobalSnapshot], GlobalSnapshotInfo)]
           )
 
           balancesAfter <- balancesR.get
@@ -763,7 +763,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           )
 
           processingResult <- snapshotProcessor.process(
-            (hashedNextSnapshot, GlobalSnapshotInfo.empty).asLeft[Hashed[IncrementalGlobalSnapshot]]
+            hashedNextSnapshot.asRight[(Hashed[IncrementalGlobalSnapshot], GlobalSnapshotInfo)]
           )
 
           balancesAfter <- balancesR.get
@@ -975,7 +975,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             PostponedBlock[DAGBlock](postponedAboveRangeNotRelatedBlock.signed).some
           )
 
-          processingResult <- snapshotProcessor.process((hashedNextSnapshot, snapshotInfo).asLeft[Hashed[IncrementalGlobalSnapshot]])
+          processingResult <- snapshotProcessor.process(hashedNextSnapshot.asRight[(Hashed[IncrementalGlobalSnapshot], GlobalSnapshotInfo)])
 
           balancesAfter <- balancesR.get
           blocksAfter <- blocksR.toMap
@@ -1071,7 +1071,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           _ <- lastSnapR.set((hashedLastSnapshot, GlobalSnapshotInfo.empty).some)
           processingResult <- snapshotProcessor
-            .process((hashedNextSnapshot, GlobalSnapshotInfo.empty).asLeft[Hashed[IncrementalGlobalSnapshot]])
+            .process(hashedNextSnapshot.asRight[(Hashed[IncrementalGlobalSnapshot], GlobalSnapshotInfo)])
             .map(_.asRight[Throwable])
             .handleErrorWith(e => IO.pure(e.asLeft[SnapshotProcessingResult]))
           lastSnapshotAfter <- lastSnapR.get.map(_.get)
@@ -1125,7 +1125,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           _ <- blocksR(parent2.hash).set(MajorityBlock[DAGBlock](parent2, 1L, Active).some)
 
           processingResult <- snapshotProcessor
-            .process((hashedNextSnapshot, GlobalSnapshotInfo.empty).asLeft[Hashed[IncrementalGlobalSnapshot]])
+            .process(hashedNextSnapshot.asRight[(Hashed[IncrementalGlobalSnapshot], GlobalSnapshotInfo)])
             .map(_.asRight[Throwable])
             .handleErrorWith(e => IO.pure(e.asLeft[SnapshotProcessingResult]))
           lastSnapshotAfter <- lastSnapR.get.map(_.get)
