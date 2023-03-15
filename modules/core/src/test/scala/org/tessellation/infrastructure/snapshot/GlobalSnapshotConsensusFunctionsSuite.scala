@@ -4,11 +4,14 @@ import cats.data.{NonEmptyList, NonEmptySet}
 import cats.effect.std.Supervisor
 import cats.effect.{IO, Resource}
 import cats.syntax.applicative._
+import cats.syntax.either._
 import cats.syntax.list._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
+import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import org.tessellation.domain.rewards.Rewards
+import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
@@ -19,6 +22,7 @@ import org.tessellation.schema.transaction.{DAGTransaction, RewardTransaction}
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
+import org.tessellation.sdk.infrastructure.consensus.trigger.EventTrigger
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.hash.Hash
@@ -83,8 +87,14 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     def process(
       lastGlobalSnapshotInfo: GlobalSnapshotInfo,
       events: List[StateChannelEvent]
-    ): IO[(SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set[GlobalSnapshotEvent])] = IO(
-      (events.groupByNel(_.address).view.mapValues(_.map(_.snapshotBinary)).toSortedMap, Set.empty)
+    ): IO[
+      (
+        SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
+        SortedMap[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)],
+        Set[StateChannelEvent]
+      )
+    ] = IO(
+      (events.groupByNel(_.address).view.mapValues(_.map(_.snapshotBinary)).toSortedMap, SortedMap.empty, Set.empty)
     )
   }
 
@@ -108,73 +118,80 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
   }
 
+  def mkGlobalSnapshotConsensusFunctions()(implicit ks: KryoSerializer[IO], sp: SecurityProvider[IO], m: Metrics[IO]) = {
+    val snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make[IO](bam, scProcessor, collateral)
+    GlobalSnapshotConsensusFunctions.make[IO](gss, snapshotAcceptanceManager, collateral, rewards, env)
+  }
+
   val env: AppEnvironment = AppEnvironment.Testnet
 
-  // TODO: incremental snapshots
+  test("validateArtifact - returns artifact for correct data") { res =>
+    implicit val (_, ks, sp, m) = res
 
-  // test("validateArtifact - returns artifact for correct data") { res =>
-  // implicit val (_, ks, sp, m) = res
+    val gscf = mkGlobalSnapshotConsensusFunctions()
 
-  KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>
-    val genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
-    Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair).flatMap { signedGenesis =>
-      mkStateChannelEvent().flatMap { scEvent =>
-        gscf.createProposalArtifact(SnapshotOrdinal.MinValue, signedGenesis, EventTrigger, Set(scEvent.asLeft[DAGEvent])).flatMap {
-          lastArtifact =>
-            gscf.validateArtifact(signedGenesis, EventTrigger)(lastArtifact._1).map { result =>
-              expect.same(result.isRight, true) && expect
-                .same(result.map(_.stateChannelSnapshots(scEvent.address)), Right(NonEmptyList.one(scEvent.snapshotBinary)))
+    KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>
+      val genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
+      Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair).flatMap { signedGenesis =>
+        IncrementalGlobalSnapshot.fromGlobalSnapshot(signedGenesis.value).flatMap { lastArtifact =>
+          Signed.forAsyncKryo[IO, IncrementalGlobalSnapshot](lastArtifact, keyPair).flatMap { signedLastArtifact =>
+            mkStateChannelEvent().flatMap { scEvent =>
+              gscf
+                .createProposalArtifact(
+                  SnapshotOrdinal.MinValue,
+                  signedLastArtifact,
+                  signedGenesis.value.info,
+                  EventTrigger,
+                  Set(scEvent.asLeft[DAGEvent])
+                )
+                .flatMap { proposalArtifact =>
+                  gscf.validateArtifact(signedLastArtifact, signedGenesis.value.info, EventTrigger)(proposalArtifact._1).map { result =>
+                    expect.same(result.isRight, true) && expect
+                      .same(result.map(_.stateChannelSnapshots(scEvent.address)), Right(NonEmptyList.one(scEvent.snapshotBinary)))
+                  }
+                }
             }
+          }
         }
       }
     }
   }
-  // val gscf = GlobalSnapshotConsensusFunctions.make(gss, bam, scProcessor, collateral, rewards, env)
 
-  // KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>
-  // val genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
-  // Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair).flatMap { signedGenesis =>
-  // mkStateChannelEvent().flatMap { scEvent =>
-  // gscf
-  // .createProposalArtifact(
-  // SnapshotOrdinal.MinValue,
-  // signedGenesis,
-  // GlobalSnapshotInfo.empty,
-  // EventTrigger,
-  // Set(scEvent.asLeft[DAGEvent])
-  // )
-  // .flatMap { lastArtifact =>
-  // gscf.validateArtifact(signedGenesis, EventTrigger)(lastArtifact._1).map { result =>
-  // expect.same(result.isRight, true) && expect
-  // .same(result.map(_.stateChannelSnapshots(scEvent.address)), Right(NonEmptyList.one(scEvent.snapshot)))
-  // }
-  // }
-  // }
-  // }
-  // }
-  // }
+  test("validateArtifact - returns invalid artifact error for incorrect data") { res =>
+    implicit val (_, ks, sp, m) = res
 
-  // test("validateArtifact - returns invalid artifact error for incorrect data") { res =>
-  // implicit val (_, ks, sp, m) = res
+    val gscf = mkGlobalSnapshotConsensusFunctions()
 
-  // val gscf = GlobalSnapshotConsensusFunctions.make(gss, bam, scProcessor, collateral, rewards, env)
-
-  // KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>
-  // val genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
-  // Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair).flatMap { signedGenesis =>
-  // mkStateChannelEvent().flatMap {
-  // case scEvent =>
-  // gscf.createProposalArtifact(SnapshotOrdinal.MinValue, signedGenesis, EventTrigger, Set(scEvent.asLeft[DAGEvent])).flatMap {
-  // lastArtifact =>
-  // gscf.validateArtifact(signedGenesis, EventTrigger)(lastArtifact._1.copy(ordinal = lastArtifact._1.ordinal.next)).map {
-  // result =>
-  // expect.same(result.isLeft, true)
-  // }
-  // }
-  // }
-  // }
-  // }
-  // }
+    KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>
+      val genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
+      Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair).flatMap { signedGenesis =>
+        IncrementalGlobalSnapshot.fromGlobalSnapshot(signedGenesis.value).flatMap { lastArtifact =>
+          Signed.forAsyncKryo[IO, IncrementalGlobalSnapshot](lastArtifact, keyPair).flatMap { signedLastArtifact =>
+            mkStateChannelEvent().flatMap {
+              case scEvent =>
+                gscf
+                  .createProposalArtifact(
+                    SnapshotOrdinal.MinValue,
+                    signedLastArtifact,
+                    signedGenesis.value.info,
+                    EventTrigger,
+                    Set(scEvent.asLeft[DAGEvent])
+                  )
+                  .flatMap { proposalArtifact =>
+                    gscf
+                      .validateArtifact(signedLastArtifact, signedGenesis.value.info, EventTrigger)(
+                        proposalArtifact._1.copy(ordinal = proposalArtifact._1.ordinal.next)
+                      )
+                      .map { result =>
+                        expect.same(result.isLeft, true)
+                      }
+                  }
+            }
+          }
+        }
+      }
+    }
+  }
 
   def mkStateChannelEvent()(implicit S: SecurityProvider[IO], K: KryoSerializer[IO]) = for {
     keyPair <- KeyPairGenerator.makeKeyPair[IO]

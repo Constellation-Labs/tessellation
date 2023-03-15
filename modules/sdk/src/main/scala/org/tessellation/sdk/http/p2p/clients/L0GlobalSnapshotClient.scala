@@ -7,6 +7,7 @@ import org.tessellation.schema.{GlobalSnapshotInfo, IncrementalGlobalSnapshot, S
 import org.tessellation.sdk.http.p2p.PeerResponse
 import org.tessellation.sdk.http.p2p.PeerResponse.PeerResponse
 import org.tessellation.security.SecurityProvider
+import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
 import io.circe.Decoder
@@ -20,6 +21,7 @@ trait L0GlobalSnapshotClient[
   def getLatestOrdinal: PeerResponse[F, SnapshotOrdinal]
   def getLatest: PeerResponse[F, (Signed[IncrementalGlobalSnapshot], GlobalSnapshotInfo)]
   def get(ordinal: SnapshotOrdinal): PeerResponse[F, Signed[IncrementalGlobalSnapshot]]
+  def get(hash: Hash): PeerResponse[F, Signed[IncrementalGlobalSnapshot]]
 }
 
 object L0GlobalSnapshotClient {
@@ -47,6 +49,12 @@ object L0GlobalSnapshotClient {
         import org.tessellation.ext.codecs.BinaryCodec.decoder
 
         PeerResponse[F, Signed[IncrementalGlobalSnapshot]](s"global-snapshots/${ordinal.value.value}")(client)
+      }
+
+      def get(hash: Hash): PeerResponse[F, Signed[IncrementalGlobalSnapshot]] = {
+        import org.tessellation.ext.codecs.BinaryCodec.decoder
+
+        PeerResponse[F, Signed[IncrementalGlobalSnapshot]](s"global-snapshots/$hash")(client)
       }
     }
 }
