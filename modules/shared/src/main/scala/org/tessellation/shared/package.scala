@@ -69,7 +69,7 @@ package object shared {
     classOf[DAGBlock] -> 603,
     DAGBlock.OrderingInstance.getClass -> 604,
     classOf[BlockReference] -> 605,
-    classOf[GlobalSnapshotInfo] -> 606,
+    classOf[GlobalSnapshotInfoV1] -> 606,
     classOf[SnapshotTips] -> 607,
     classOf[ActiveTip] -> 608,
     ActiveTip.OrderingInstance.getClass -> 609,
@@ -79,7 +79,8 @@ package object shared {
     DeprecatedTip.OrderingInstance.getClass -> 613,
     classOf[Tips] -> 614,
     classOf[IncrementalGlobalSnapshot] -> 615,
-    classOf[MerkleTree] -> 616
+    classOf[MerkleTree] -> 616,
+    classOf[GlobalSnapshotInfo] -> 617
   )
 
 }
