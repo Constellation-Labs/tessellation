@@ -20,8 +20,7 @@ import org.tessellation.schema.generators.addressGen
 import org.tessellation.schema.transaction.Transaction
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.key.ops.PublicKeyOps
-import org.tessellation.security.{Hashed, SecurityProvider}
-import org.tessellation.security.KeyPairGenerator
+import org.tessellation.security.{Hashed, KeyPairGenerator, SecurityProvider}
 import org.tessellation.shared.sharedKryoRegistrar
 
 import eu.timepit.refined.auto._

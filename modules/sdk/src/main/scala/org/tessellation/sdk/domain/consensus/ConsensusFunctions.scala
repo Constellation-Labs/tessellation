@@ -17,12 +17,6 @@ trait ConsensusFunctions[F[_], Event, Key, Artifact, Context] {
     artifact: Artifact
   ): F[Either[InvalidArtifact, Artifact]]
 
-  def createContext(
-    context: Context,
-    lastArtifact: Artifact,
-    signedArtifact: Signed[Artifact]
-  ): F[Context]
-
   def createProposalArtifact(
     lastKey: Key,
     lastArtifact: Signed[Artifact],

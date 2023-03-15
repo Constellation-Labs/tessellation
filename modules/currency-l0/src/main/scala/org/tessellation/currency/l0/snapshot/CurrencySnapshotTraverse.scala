@@ -8,8 +8,7 @@ import cats.syntax.functor._
 
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshot, CurrencySnapshotInfo}
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema._
-import org.tessellation.sdk.domain.consensus.ConsensusFunctions
+import org.tessellation.sdk.domain.snapshot.SnapshotContextFunctions
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
@@ -67,7 +66,7 @@ object CurrencySnapshotTraverse {
 
   def make[F[_]: MonadThrow: KryoSerializer](
     loadSnapshotFn: Hash => F[Either[Signed[CurrencySnapshot], Signed[CurrencyIncrementalSnapshot]]],
-    snapshotInfoFunctions: ConsensusFunctions[F, CurrencySnapshotEvent, SnapshotOrdinal, CurrencySnapshotArtifact, CurrencySnapshotContext]
+    snapshotInfoFunctions: SnapshotContextFunctions[F, CurrencySnapshotArtifact, CurrencySnapshotContext]
   ): CurrencySnapshotTraverse[F] =
     new CurrencySnapshotTraverse[F] {
 
