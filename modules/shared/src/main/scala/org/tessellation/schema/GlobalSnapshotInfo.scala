@@ -27,14 +27,14 @@ case class GlobalSnapshotInfo(
   lastStateChannelSnapshotHashes: SortedMap[Address, Hash],
   lastTxRefs: SortedMap[Address, TransactionReference],
   balances: SortedMap[Address, Balance],
-  lastCurrencySnapshots: SortedMap[Address, (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]
+  lastCurrencySnapshots: SortedMap[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)]
 ) extends SnapshotInfo
 
 object GlobalSnapshotInfo {
   def empty = GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.empty, SortedMap.empty)
 
   def stateProof[F[_]: MonadThrow: KryoSerializer](info: GlobalSnapshotInfo): F[MerkleTree] =
-    (info.lastStateChannelSnapshotHashes.hashF, info.lastTxRefs.hashF, info.balances.hashF).tupled
+    (info.lastStateChannelSnapshotHashes.hashF, info.lastTxRefs.hashF, info.balances.hashF, info.lastCurrencySnapshots.hashF).tupled
       .map(_.toNonEmptyList)
       .map(MerkleTree.from)
 }

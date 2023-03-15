@@ -214,10 +214,11 @@ object GlobalSnapshotConsensusFunctions {
     ) = for {
       acceptanceResult <- acceptBlocks(blocksForAcceptance, lastSnapshotContext, lastActiveTips, lastDeprecatedTips)
 
-      (scSnapshots, returnedSCEvents) <- stateChannelEventsProcessor.process(lastSnapshotContext, scEvents)
+      (scSnapshots, currencySnapshots, returnedSCEvents) <- stateChannelEventsProcessor.process(lastSnapshotContext, scEvents)
       sCSnapshotHashes <- scSnapshots.toList.traverse { case (address, nel) => nel.head.hashF.map(address -> _) }
         .map(_.toMap)
       updatedLastStateChannelSnapshotHashes = lastSnapshotContext.lastStateChannelSnapshotHashes ++ sCSnapshotHashes
+      updatedLastCurrencySnapshots = lastSnapshotContext.lastCurrencySnapshots ++ currencySnapshots
 
       transactionsRefs = lastSnapshotContext.lastTxRefs ++ acceptanceResult.contextUpdate.lastTxRefs
 
@@ -237,7 +238,7 @@ object GlobalSnapshotConsensusFunctions {
           updatedLastStateChannelSnapshotHashes,
           transactionsRefs,
           updatedBalancesByRewards,
-          SortedMap.empty // TODO: currency
+          updatedLastCurrencySnapshots
         )
       )
 

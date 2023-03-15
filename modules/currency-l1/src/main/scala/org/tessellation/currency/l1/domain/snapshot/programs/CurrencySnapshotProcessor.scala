@@ -200,7 +200,7 @@ object CurrencySnapshotProcessor {
           .map {
             _.toList.flatMap(binary =>
               KryoSerializer[F].deserialize[Signed[CurrencyIncrementalSnapshot]](binary.content).toOption
-            ) // TODO: deserialization as full or incremental snapshot
+            ) // TODO: currency - deserialization as full or incremental snapshot
           }
           .flatMap(NonEmptyList.fromList)
           .map(_.traverse(_.toHashedWithSignatureCheck))
