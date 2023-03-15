@@ -4,6 +4,7 @@ import cats.Eval
 import cats.data.NonEmptyList
 import cats.effect.Async
 import cats.syntax.applicative._
+import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.functorFilter._
@@ -14,6 +15,7 @@ import cats.syntax.traverse._
 
 import scala.collection.immutable.SortedMap
 
+import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshot, CurrencySnapshotInfo}
 import org.tessellation.domain.statechannel.StateChannelValidator
 import org.tessellation.ext.cats.syntax.validated._
 import org.tessellation.ext.crypto._
@@ -32,7 +34,13 @@ trait GlobalSnapshotStateChannelEventsProcessor[F[_]] {
   def process(
     lastGlobalSnapshotInfo: GlobalSnapshotInfo,
     events: List[StateChannelEvent]
-  ): F[(SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set[StateChannelEvent])]
+  ): F[
+    (
+      SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
+      SortedMap[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)],
+      Set[StateChannelEvent]
+    )
+  ]
 }
 
 object GlobalSnapshotStateChannelEventsProcessor {
@@ -42,7 +50,13 @@ object GlobalSnapshotStateChannelEventsProcessor {
       def process(
         lastGlobalSnapshotInfo: GlobalSnapshotInfo,
         events: List[StateChannelEvent]
-      ): F[(SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set[StateChannelEvent])] =
+      ): F[
+        (
+          SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
+          SortedMap[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)],
+          Set[StateChannelEvent]
+        )
+      ] =
         events
           .traverse(event => stateChannelValidator.validate(event).map(_.errorMap(error => (event.address, error))))
           .map(_.partitionMap(_.toEither))
@@ -50,6 +64,64 @@ object GlobalSnapshotStateChannelEventsProcessor {
             case (invalid, _) => logger.warn(s"Invalid state channels events: ${invalid}").whenA(invalid.nonEmpty)
           }
           .map { case (_, validatedEvents) => processStateChannelEvents(lastGlobalSnapshotInfo, validatedEvents) }
+          .flatMap {
+            case (scSnapshots, returnedSCEvents) =>
+              processCurrencySnapshots(lastGlobalSnapshotInfo, scSnapshots).map((scSnapshots, _, returnedSCEvents))
+          }
+
+      private def applyCurrencySnapshot(
+        lastState: CurrencySnapshotInfo,
+        lastSnapshot: CurrencyIncrementalSnapshot,
+        snapshot: Signed[CurrencyIncrementalSnapshot]
+      ): F[CurrencySnapshotInfo] = ???
+
+      private def processCurrencySnapshots(
+        lastGlobalSnapshotInfo: GlobalSnapshotInfo,
+        events: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]]
+      ): F[SortedMap[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)]] =
+        events
+          .foldLeft(SortedMap.empty[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)].pure[F]) {
+            case (aggF, (address, binaries)) =>
+              aggF.flatMap { agg =>
+                type SuccessT = (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)
+                type LeftT =
+                  (Option[(Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)], List[Signed[StateChannelSnapshotBinary]])
+                type RightT = Option[SuccessT]
+
+                (lastGlobalSnapshotInfo.lastCurrencySnapshots.get(address), binaries.toList)
+                  .tailRecM[F, RightT] {
+                    case (state, Nil) => state.asRight[LeftT].pure[F]
+
+                    case (None, head :: tail) =>
+                      KryoSerializer[F]
+                        .deserialize[Signed[CurrencySnapshot]](head.value.content)
+                        .toOption
+                        .map { snapshot =>
+                          ((none[Signed[CurrencyIncrementalSnapshot]], snapshot.info).some, tail).asLeft[RightT]
+                        }
+                        .getOrElse((none[SuccessT], tail).asLeft[RightT])
+                        .pure[F]
+
+                    case (Some((maybeLastSnapshot, lastState)), head :: tail) =>
+                      KryoSerializer[F]
+                        .deserialize[Signed[CurrencyIncrementalSnapshot]](head.value.content)
+                        .toOption
+                        .map { snapshot =>
+                          maybeLastSnapshot
+                            .map(applyCurrencySnapshot(lastState, _, snapshot))
+                            .getOrElse(lastState.pure[F])
+                            .map { state =>
+                              ((snapshot.some, state).some, tail).asLeft[RightT]
+                            }
+                        }
+                        .getOrElse(((maybeLastSnapshot, lastState).some, tail).asLeft[RightT].pure[F])
+                  }
+                  .map {
+                    _.map(updated => agg + (address -> updated)).getOrElse(agg)
+                  }
+
+              }
+          }
 
       private def processStateChannelEvents(
         lastGlobalSnapshotInfo: GlobalSnapshotInfo,
