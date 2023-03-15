@@ -77,7 +77,7 @@ case class GlobalSnapshot(
   rewards: SortedSet[RewardTransaction],
   epochProgress: EpochProgress,
   nextFacilitators: NonEmptyList[PeerId],
-  info: GlobalSnapshotInfo,
+  info: GlobalSnapshotInfoV1,
   tips: SnapshotTips
 ) extends Snapshot[DAGTransaction, DAGBlock] {}
 
@@ -94,7 +94,7 @@ object GlobalSnapshot {
       SortedSet.empty,
       startingEpochProgress,
       nextFacilitators,
-      GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.from(balances), SortedMap.empty),
+      GlobalSnapshotInfoV1(SortedMap.empty, SortedMap.empty, SortedMap.from(balances)),
       SnapshotTips(
         SortedSet.empty[DeprecatedTip],
         mkActiveTips(8)

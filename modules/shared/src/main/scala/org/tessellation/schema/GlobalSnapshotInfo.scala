@@ -23,6 +23,23 @@ import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 
 @derive(encoder, decoder, eqv, show)
+case class GlobalSnapshotInfoV1(
+  lastStateChannelSnapshotHashes: SortedMap[Address, Hash],
+  lastTxRefs: SortedMap[Address, TransactionReference],
+  balances: SortedMap[Address, Balance]
+) extends SnapshotInfo
+
+object GlobalSnapshotInfoV1 {
+  implicit def toGlobalSnapshotInfo(gsi: GlobalSnapshotInfoV1): GlobalSnapshotInfo =
+    GlobalSnapshotInfo(
+      gsi.lastStateChannelSnapshotHashes,
+      gsi.lastTxRefs,
+      gsi.balances,
+      SortedMap.empty
+    )
+}
+
+@derive(encoder, decoder, eqv, show)
 case class GlobalSnapshotInfo(
   lastStateChannelSnapshotHashes: SortedMap[Address, Hash],
   lastTxRefs: SortedMap[Address, TransactionReference],

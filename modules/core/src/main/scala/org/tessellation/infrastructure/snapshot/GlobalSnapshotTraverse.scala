@@ -55,7 +55,7 @@ object GlobalSnapshotTraverse {
       Signed[IncrementalGlobalSnapshot]
     ) => F[GlobalSnapshotInfo]
   ): GAlgebraM[F, StackF, Attr[StackF, GlobalSnapshotInfo], GlobalSnapshotInfo] = GAlgebraM {
-    case Done(globalSnapshot) => globalSnapshot.info.pure[F]
+    case Done(globalSnapshot) => GlobalSnapshotInfoV1.toGlobalSnapshotInfo(globalSnapshot.info).pure[F]
     case More(info :< Done(globalSnapshot), incrementalSnapshot) =>
       IncrementalGlobalSnapshot.fromGlobalSnapshot[F](globalSnapshot).flatMap {
         applyGlobalSnapshotFn(info, _, incrementalSnapshot)

@@ -253,7 +253,7 @@ abstract class SnapshotProcessor[
                       )
                     )
                 }
-              case _ => (new Throwable("unexpected state")).raiseError[F, Alignment]
+              case _ => (new Throwable("unexpected state: latest snapshot found")).raiseError[F, Alignment]
             }
           case Right(snapshot) =>
             val SnapshotTips(snapshotDeprecatedTips, snapshotRemainedActive) = snapshot.tips
@@ -386,7 +386,7 @@ abstract class SnapshotProcessor[
                       )
                     )
                 }
-              case None => (new Throwable("unexpected state")).raiseError[F, Alignment]
+              case None => (new Throwable("unexpected state: latest snapshot not found")).raiseError[F, Alignment]
 
             }
         }
