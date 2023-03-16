@@ -22,15 +22,15 @@ import derevo.cats.{eqv, show}
 import derevo.derive
 import eu.timepit.refined.auto._
 
-abstract class GlobalSnapshotContextFunctions[F[_]] extends SnapshotContextFunctions[F, IncrementalGlobalSnapshot, GlobalSnapshotContext]
+abstract class GlobalSnapshotContextFunctions[F[_]] extends SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotContext]
 
 object GlobalSnapshotContextFunctions {
   def make[F[_]: Async: KryoSerializer](snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F]) =
     new GlobalSnapshotContextFunctions[F] {
       def createContext(
         context: GlobalSnapshotContext,
-        lastArtifact: IncrementalGlobalSnapshot,
-        signedArtifact: Signed[IncrementalGlobalSnapshot]
+        lastArtifact: GlobalIncrementalSnapshot,
+        signedArtifact: Signed[GlobalIncrementalSnapshot]
       ): F[GlobalSnapshotInfo] = for {
         lastActiveTips <- lastArtifact.activeTips
         lastDeprecatedTips = lastArtifact.tips.deprecated

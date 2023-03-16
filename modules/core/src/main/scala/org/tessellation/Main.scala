@@ -15,7 +15,7 @@ import org.tessellation.infrastructure.trust.handler.trustHandler
 import org.tessellation.modules._
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.node.NodeState
-import org.tessellation.schema.{GlobalSnapshot, IncrementalGlobalSnapshot}
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshot}
 import org.tessellation.sdk.app.{SDK, TessellationIOApp}
 import org.tessellation.sdk.domain.collateral.OwnCollateralNotSatisfied
 import org.tessellation.sdk.infrastructure.genesis.{Loader => GenesisLoader}
@@ -163,7 +163,7 @@ object Main
 
               Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair).flatMap(_.toHashed[IO]).flatMap { hashedGenesis =>
                 GlobalSnapshot.mkFirstIncrementalSnapshot[IO](hashedGenesis).flatMap { firstIncrementalSnapshot =>
-                  Signed.forAsyncKryo[IO, IncrementalGlobalSnapshot](firstIncrementalSnapshot, keyPair).flatMap {
+                  Signed.forAsyncKryo[IO, GlobalIncrementalSnapshot](firstIncrementalSnapshot, keyPair).flatMap {
                     signedFirstIncrementalSnapshot =>
                       storages.globalSnapshot.prepend(signedFirstIncrementalSnapshot, hashedGenesis.info) >>
                         services.collateral.hasCollateral(sdk.nodeId).flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>

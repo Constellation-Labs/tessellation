@@ -18,7 +18,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.DAGTransaction
-import org.tessellation.schema.{GlobalSnapshotInfo, IncrementalGlobalSnapshot}
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.collateral.Collateral
 import org.tessellation.sdk.domain.gossip.Gossip
@@ -78,7 +78,7 @@ object Services {
           session,
           rewards
         )
-      addressService = AddressService.make[F, IncrementalGlobalSnapshot, GlobalSnapshotInfo](storages.globalSnapshot)
+      addressService = AddressService.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](storages.globalSnapshot)
       collateralService = Collateral.make[F](cfg.collateral, storages.globalSnapshot)
       stateChannelService = StateChannelService
         .make[F](L0Cell.mkL0Cell(queues.l1Output, queues.stateChannelOutput), validators.stateChannelValidator)
@@ -104,7 +104,7 @@ sealed abstract class Services[F[_]] private (
   val session: Session[F],
   val gossip: Gossip[F],
   val consensus: Consensus[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact, GlobalSnapshotContext],
-  val address: AddressService[F, IncrementalGlobalSnapshot],
+  val address: AddressService[F, GlobalIncrementalSnapshot],
   val collateral: Collateral[F],
   val rewards: Rewards[F],
   val stateChannel: StateChannelService[F],

@@ -40,7 +40,7 @@ object CurrencySnapshotLoader {
         .map(_.asRight[Signed[CurrencySnapshot]])
         .orElse(getFull.map(_.asLeft[Signed[CurrencyIncrementalSnapshot]]))
 
-      getSnapshot.getOrRaise(new Throwable("Cannot find neither GlobalSnapshot nor IncrementalGlobalSnapshot."))
+      getSnapshot.getOrRaise(new Throwable("Cannot find neither GlobalSnapshot nor GlobalIncrementalSnapshot."))
 
     }
 

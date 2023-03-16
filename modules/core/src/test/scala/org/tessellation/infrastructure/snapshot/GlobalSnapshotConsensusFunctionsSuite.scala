@@ -50,17 +50,17 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       }
     }
 
-  val gss: SnapshotStorage[IO, IncrementalGlobalSnapshot, GlobalSnapshotInfo] =
-    new SnapshotStorage[IO, IncrementalGlobalSnapshot, GlobalSnapshotInfo] {
+  val gss: SnapshotStorage[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo] =
+    new SnapshotStorage[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo] {
 
-      override def prepend(snapshot: Signed[IncrementalGlobalSnapshot], state: GlobalSnapshotInfo): IO[Boolean] = ???
+      override def prepend(snapshot: Signed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): IO[Boolean] = ???
 
-      override def head: IO[Option[(Signed[IncrementalGlobalSnapshot], GlobalSnapshotInfo)]] = ???
-      override def headSnapshot: IO[Option[Signed[IncrementalGlobalSnapshot]]] = ???
+      override def head: IO[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = ???
+      override def headSnapshot: IO[Option[Signed[GlobalIncrementalSnapshot]]] = ???
 
-      override def get(ordinal: SnapshotOrdinal): IO[Option[Signed[IncrementalGlobalSnapshot]]] = ???
+      override def get(ordinal: SnapshotOrdinal): IO[Option[Signed[GlobalIncrementalSnapshot]]] = ???
 
-      override def get(hash: Hash): IO[Option[Signed[IncrementalGlobalSnapshot]]] = ???
+      override def get(hash: Hash): IO[Option[Signed[GlobalIncrementalSnapshot]]] = ???
 
     }
 
@@ -133,8 +133,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>
       val genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
       Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair).flatMap { signedGenesis =>
-        IncrementalGlobalSnapshot.fromGlobalSnapshot(signedGenesis.value).flatMap { lastArtifact =>
-          Signed.forAsyncKryo[IO, IncrementalGlobalSnapshot](lastArtifact, keyPair).flatMap { signedLastArtifact =>
+        GlobalIncrementalSnapshot.fromGlobalSnapshot(signedGenesis.value).flatMap { lastArtifact =>
+          Signed.forAsyncKryo[IO, GlobalIncrementalSnapshot](lastArtifact, keyPair).flatMap { signedLastArtifact =>
             mkStateChannelEvent().flatMap { scEvent =>
               gscf
                 .createProposalArtifact(
@@ -165,8 +165,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>
       val genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
       Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair).flatMap { signedGenesis =>
-        IncrementalGlobalSnapshot.fromGlobalSnapshot(signedGenesis.value).flatMap { lastArtifact =>
-          Signed.forAsyncKryo[IO, IncrementalGlobalSnapshot](lastArtifact, keyPair).flatMap { signedLastArtifact =>
+        GlobalIncrementalSnapshot.fromGlobalSnapshot(signedGenesis.value).flatMap { lastArtifact =>
+          Signed.forAsyncKryo[IO, GlobalIncrementalSnapshot](lastArtifact, keyPair).flatMap { signedLastArtifact =>
             mkStateChannelEvent().flatMap {
               case scEvent =>
                 gscf

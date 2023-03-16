@@ -31,7 +31,7 @@ import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.PosInt
 
 @derive(eqv, show, encoder, decoder)
-case class IncrementalGlobalSnapshot(
+case class GlobalIncrementalSnapshot(
   ordinal: SnapshotOrdinal,
   height: Height,
   subHeight: SubHeight,
@@ -45,12 +45,12 @@ case class IncrementalGlobalSnapshot(
   stateProof: MerkleTree
 ) extends Snapshot[DAGTransaction, DAGBlock] {}
 
-object IncrementalGlobalSnapshot {
-  def fromGlobalSnapshot[F[_]: MonadThrow: KryoSerializer](snapshot: GlobalSnapshot): F[IncrementalGlobalSnapshot] =
+object GlobalIncrementalSnapshot {
+  def fromGlobalSnapshot[F[_]: MonadThrow: KryoSerializer](snapshot: GlobalSnapshot): F[GlobalIncrementalSnapshot] =
     GlobalSnapshotInfo
       .stateProof[F](snapshot.info)
       .map { stateProof =>
-        IncrementalGlobalSnapshot(
+        GlobalIncrementalSnapshot(
           snapshot.ordinal,
           snapshot.height,
           snapshot.subHeight,
@@ -101,9 +101,9 @@ object GlobalSnapshot {
       )
     )
 
-  def mkFirstIncrementalSnapshot[F[_]: MonadThrow: KryoSerializer](genesis: Hashed[GlobalSnapshot]): F[IncrementalGlobalSnapshot] =
+  def mkFirstIncrementalSnapshot[F[_]: MonadThrow: KryoSerializer](genesis: Hashed[GlobalSnapshot]): F[GlobalIncrementalSnapshot] =
     GlobalSnapshotInfo.stateProof[F](genesis.info).map { stateProof =>
-      IncrementalGlobalSnapshot(
+      GlobalIncrementalSnapshot(
         genesis.ordinal.next,
         genesis.height,
         genesis.subHeight.next,
