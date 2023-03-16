@@ -10,7 +10,7 @@ import org.tessellation.dag.l1.http.p2p.P2PClient
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo}
 import org.tessellation.schema.transaction.Transaction
-import org.tessellation.schema.{Block, GlobalSnapshotInfo, IncrementalGlobalSnapshot}
+import org.tessellation.schema.{Block, GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.sdk.domain.collateral.Collateral
@@ -33,7 +33,7 @@ object Services {
     SI <: SnapshotInfo
   ](
     storages: Storages[F, T, B, S, SI],
-    lastGlobalSnapshotStorage: LastSnapshotStorage[F, IncrementalGlobalSnapshot, GlobalSnapshotInfo],
+    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     globalL0Cluster: L0ClusterStorage[F],
     validators: Validators[F, T, B],
     sdkServices: SdkServices[F],

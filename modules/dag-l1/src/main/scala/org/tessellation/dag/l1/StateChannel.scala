@@ -217,7 +217,7 @@ class StateChannel[
     .awakeEvery(10.seconds)
     .evalMap(_ => services.globalL0.pullGlobalSnapshots)
     .evalTap { snapshots =>
-      def log(snapshot: Hashed[IncrementalGlobalSnapshot]) =
+      def log(snapshot: Hashed[GlobalIncrementalSnapshot]) =
         logger.info(s"Pulled following global snapshot: ${SnapshotReference.fromHashedSnapshot(snapshot).show}")
 
       snapshots match {
@@ -228,16 +228,16 @@ class StateChannel[
     .evalMapLocked(NonEmptyList.of(blockAcceptanceS, blockCreationS, blockStoringS)) { snapshots =>
       snapshots match {
         case Left((snapshot, state)) =>
-          programs.snapshotProcessor.process((snapshot, state).asLeft[Hashed[IncrementalGlobalSnapshot]]).map(List(_))
+          programs.snapshotProcessor.process((snapshot, state).asLeft[Hashed[GlobalIncrementalSnapshot]]).map(List(_))
         case Right(snapshots) =>
           (snapshots, List.empty[SnapshotProcessingResult]).tailRecM {
             case (snapshot :: nextSnapshots, aggResults) =>
               programs.snapshotProcessor
-                .process(snapshot.asRight[(Hashed[IncrementalGlobalSnapshot], GlobalSnapshotInfo)])
+                .process(snapshot.asRight[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)])
                 .map(result => (nextSnapshots, aggResults :+ result).asLeft[List[SnapshotProcessingResult]])
 
             case (Nil, aggResults) =>
-              aggResults.asRight[(List[Hashed[IncrementalGlobalSnapshot]], List[SnapshotProcessingResult])].pure[F]
+              aggResults.asRight[(List[Hashed[GlobalIncrementalSnapshot]], List[SnapshotProcessingResult])].pure[F]
           }
       }
     }

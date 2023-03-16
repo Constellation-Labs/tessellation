@@ -43,13 +43,13 @@ abstract class SnapshotProcessor[
   import SnapshotProcessor._
 
   def process(
-    snapshot: Either[(Hashed[IncrementalGlobalSnapshot], GlobalSnapshotInfo), Hashed[IncrementalGlobalSnapshot]]
+    snapshot: Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), Hashed[GlobalIncrementalSnapshot]]
   ): F[SnapshotProcessingResult]
 
   def applyGlobalSnapshotFn(
     lastGlobalState: GlobalSnapshotInfo,
-    lastGlobalSnapshot: IncrementalGlobalSnapshot,
-    globalSnapshot: Signed[IncrementalGlobalSnapshot]
+    lastGlobalSnapshot: GlobalIncrementalSnapshot,
+    globalSnapshot: Signed[GlobalIncrementalSnapshot]
   ): F[GlobalSnapshotInfo]
 
   def applySnapshotFn(lastState: SI, lastSnapshot: S, snapshot: Signed[S]): F[SI]
