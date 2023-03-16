@@ -18,7 +18,7 @@ import higherkindness.droste.util.DefaultTraverse
 
 sealed trait StackF[A]
 
-case class More[A](a: A, step: Signed[IncrementalGlobalSnapshot]) extends StackF[A]
+case class More[A](a: A, step: Signed[GlobalIncrementalSnapshot]) extends StackF[A]
 case class Done[A](result: GlobalSnapshot) extends StackF[A]
 
 object StackF {
@@ -33,14 +33,14 @@ object StackF {
 }
 
 trait GlobalSnapshotTraverse[F[_]] {
-  def computeState(latest: Signed[IncrementalGlobalSnapshot]): F[GlobalSnapshotInfo]
+  def computeState(latest: Signed[GlobalIncrementalSnapshot]): F[GlobalSnapshotInfo]
 }
 
 object GlobalSnapshotTraverse {
 
   def loadGlobalSnapshotCoalgebra[F[_]: Monad](
-    loadGlobalSnapshotFn: Hash => F[Either[Signed[GlobalSnapshot], Signed[IncrementalGlobalSnapshot]]]
-  ): CoalgebraM[F, StackF, Either[Signed[GlobalSnapshot], Signed[IncrementalGlobalSnapshot]]] = CoalgebraM {
+    loadGlobalSnapshotFn: Hash => F[Either[Signed[GlobalSnapshot], Signed[GlobalIncrementalSnapshot]]]
+  ): CoalgebraM[F, StackF, Either[Signed[GlobalSnapshot], Signed[GlobalIncrementalSnapshot]]] = CoalgebraM {
     case Left(globalSnapshot) => Applicative[F].pure(Done(globalSnapshot))
     case Right(incrementalGlobalSnapshot) =>
       def prevHash = incrementalGlobalSnapshot.lastSnapshotHash
@@ -51,13 +51,13 @@ object GlobalSnapshotTraverse {
   def computeStateAlgebra[F[_]: MonadThrow: KryoSerializer](
     applyGlobalSnapshotFn: (
       GlobalSnapshotInfo,
-      IncrementalGlobalSnapshot,
-      Signed[IncrementalGlobalSnapshot]
+      GlobalIncrementalSnapshot,
+      Signed[GlobalIncrementalSnapshot]
     ) => F[GlobalSnapshotInfo]
   ): GAlgebraM[F, StackF, Attr[StackF, GlobalSnapshotInfo], GlobalSnapshotInfo] = GAlgebraM {
     case Done(globalSnapshot) => GlobalSnapshotInfoV1.toGlobalSnapshotInfo(globalSnapshot.info).pure[F]
     case More(info :< Done(globalSnapshot), incrementalSnapshot) =>
-      IncrementalGlobalSnapshot.fromGlobalSnapshot[F](globalSnapshot).flatMap {
+      GlobalIncrementalSnapshot.fromGlobalSnapshot[F](globalSnapshot).flatMap {
         applyGlobalSnapshotFn(info, _, incrementalSnapshot)
       }
     case More(info :< More(_ :< _, previousIncrementalSnapshot), incrementalSnapshot) =>
@@ -65,12 +65,12 @@ object GlobalSnapshotTraverse {
   }
 
   def make[F[_]: MonadThrow: KryoSerializer](
-    loadGlobalSnapshotFn: Hash => F[Either[Signed[GlobalSnapshot], Signed[IncrementalGlobalSnapshot]]],
+    loadGlobalSnapshotFn: Hash => F[Either[Signed[GlobalSnapshot], Signed[GlobalIncrementalSnapshot]]],
     snapshotInfoFunctions: SnapshotContextFunctions[F, GlobalSnapshotArtifact, GlobalSnapshotContext]
   ): GlobalSnapshotTraverse[F] =
     new GlobalSnapshotTraverse[F] {
 
-      def computeState(latest: Signed[IncrementalGlobalSnapshot]): F[GlobalSnapshotInfo] =
+      def computeState(latest: Signed[GlobalIncrementalSnapshot]): F[GlobalSnapshotInfo] =
         scheme
           .ghyloM(
             computeStateAlgebra(snapshotInfoFunctions.createContext).gather(Gather.histo),

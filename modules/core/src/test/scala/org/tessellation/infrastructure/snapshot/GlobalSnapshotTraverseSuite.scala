@@ -61,13 +61,13 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
   def mkSnapshots(dags: List[List[BlockAsActiveTip[DAGBlock]]], initBalances: Map[Address, Balance])(
     implicit K: KryoSerializer[IO],
     S: SecurityProvider[IO]
-  ): IO[(Hashed[GlobalSnapshot], NonEmptyList[Hashed[IncrementalGlobalSnapshot]])] =
+  ): IO[(Hashed[GlobalSnapshot], NonEmptyList[Hashed[GlobalIncrementalSnapshot]])] =
     KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>
       Signed
         .forAsyncKryo[IO, GlobalSnapshot](GlobalSnapshot.mkGenesis(initBalances, EpochProgress.MinValue), keyPair)
         .flatMap(_.toHashed)
         .flatMap { genesis =>
-          IncrementalGlobalSnapshot.fromGlobalSnapshot(genesis).flatMap { incremental =>
+          GlobalIncrementalSnapshot.fromGlobalSnapshot(genesis).flatMap { incremental =>
             mkSnapshot(genesis.hash, incremental, keyPair, SortedSet.empty).flatMap { snap1 =>
               dags
                 .foldLeftM(NonEmptyList.of(snap1)) {
@@ -80,13 +80,13 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         }
     }
 
-  def mkSnapshot(lastHash: Hash, reference: IncrementalGlobalSnapshot, keyPair: KeyPair, blocks: SortedSet[BlockAsActiveTip[DAGBlock]])(
+  def mkSnapshot(lastHash: Hash, reference: GlobalIncrementalSnapshot, keyPair: KeyPair, blocks: SortedSet[BlockAsActiveTip[DAGBlock]])(
     implicit K: KryoSerializer[IO],
     S: SecurityProvider[IO]
   ) =
     for {
       activeTips <- reference.activeTips
-      snapshot = IncrementalGlobalSnapshot(
+      snapshot = GlobalIncrementalSnapshot(
         reference.ordinal.next,
         Height.MinValue,
         SubHeight.MinValue,
@@ -99,7 +99,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         reference.tips.copy(remainedActive = activeTips),
         reference.stateProof
       )
-      signed <- Signed.forAsyncKryo[IO, IncrementalGlobalSnapshot](snapshot, keyPair)
+      signed <- Signed.forAsyncKryo[IO, GlobalIncrementalSnapshot](snapshot, keyPair)
       hashed <- signed.toHashed
     } yield hashed
 
@@ -133,9 +133,9 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
 
   def gst(
     globalSnapshot: Hashed[GlobalSnapshot],
-    incrementalSnapshots: List[Hashed[IncrementalGlobalSnapshot]]
+    incrementalSnapshots: List[Hashed[GlobalIncrementalSnapshot]]
   )(implicit K: KryoSerializer[IO], S: SecurityProvider[IO], M: Metrics[IO]) = {
-    def loadGlobalSnapshot(hash: Hash): IO[Either[Signed[GlobalSnapshot], Signed[IncrementalGlobalSnapshot]]] =
+    def loadGlobalSnapshot(hash: Hash): IO[Either[Signed[GlobalSnapshot], Signed[GlobalIncrementalSnapshot]]] =
       hash match {
         case h if h === globalSnapshot.hash => Left(globalSnapshot.signed).pure[IO]
         case _ => Right(incrementalSnapshots.map(snapshot => (snapshot.hash, snapshot)).toMap.get(hash).get.signed).pure[IO]

@@ -38,7 +38,7 @@ object GlobalSnapshotLoaderSuite extends MutableIOSuite with Checkers {
       }
 
   def mkLoader(tmpDir: File)(implicit K: KryoSerializer[IO]) = for {
-    incrementalFileStorage <- SnapshotLocalFileSystemStorage.make[IO, IncrementalGlobalSnapshot](Path((tmpDir / "incremental").toString()))
+    incrementalFileStorage <- SnapshotLocalFileSystemStorage.make[IO, GlobalIncrementalSnapshot](Path((tmpDir / "incremental").toString()))
     globalFileStorage <- SnapshotLocalFileSystemStorage.make[IO, GlobalSnapshot](Path((tmpDir / "global").toString()))
     loader = GlobalSnapshotLoader.make[IO](incrementalFileStorage, globalFileStorage)
   } yield (incrementalFileStorage, globalFileStorage, loader)
@@ -46,11 +46,11 @@ object GlobalSnapshotLoaderSuite extends MutableIOSuite with Checkers {
   def mkSnapshots(
     implicit K: KryoSerializer[IO],
     S: SecurityProvider[IO]
-  ): IO[(Signed[GlobalSnapshot], Signed[IncrementalGlobalSnapshot])] =
+  ): IO[(Signed[GlobalSnapshot], Signed[GlobalIncrementalSnapshot])] =
     KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>
       Signed.forAsyncKryo[IO, GlobalSnapshot](GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue), keyPair).flatMap { genesis =>
-        IncrementalGlobalSnapshot.fromGlobalSnapshot(genesis).flatMap { snapshot =>
-          Signed.forAsyncKryo[IO, IncrementalGlobalSnapshot](snapshot, keyPair).map((genesis, _))
+        GlobalIncrementalSnapshot.fromGlobalSnapshot(genesis).flatMap { snapshot =>
+          Signed.forAsyncKryo[IO, GlobalIncrementalSnapshot](snapshot, keyPair).map((genesis, _))
         }
       }
     }
@@ -109,7 +109,7 @@ object GlobalSnapshotLoaderSuite extends MutableIOSuite with Checkers {
     }
   }
 
-  test("throw an exception when file cannot be deserialized neither as IncrementalGlobalSnapshot nor GlobalSnapshot") { res =>
+  test("throw an exception when file cannot be deserialized neither as GlobalIncrementalSnapshot nor GlobalSnapshot") { res =>
     implicit val (kryo, sp) = res
     File.temporaryDirectory() { tmpDir =>
       mkLoader(tmpDir).flatMap {
