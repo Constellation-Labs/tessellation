@@ -32,18 +32,18 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
     }
 
   def mkStorage(tmpDir: File)(implicit K: KryoSerializer[IO], S: Supervisor[IO]) =
-    SnapshotLocalFileSystemStorage.make[IO, IncrementalGlobalSnapshot](Path(tmpDir.pathAsString)).flatMap {
-      SnapshotStorage.make[IO, IncrementalGlobalSnapshot, GlobalSnapshotInfo](_, 5L)
+    SnapshotLocalFileSystemStorage.make[IO, GlobalIncrementalSnapshot](Path(tmpDir.pathAsString)).flatMap {
+      SnapshotStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](_, 5L)
     }
 
   def mkSnapshots(
     implicit K: KryoSerializer[IO],
     S: SecurityProvider[IO]
-  ): IO[(Signed[GlobalSnapshot], Signed[IncrementalGlobalSnapshot])] =
+  ): IO[(Signed[GlobalSnapshot], Signed[GlobalIncrementalSnapshot])] =
     KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>
       Signed.forAsyncKryo[IO, GlobalSnapshot](GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue), keyPair).flatMap { genesis =>
-        IncrementalGlobalSnapshot.fromGlobalSnapshot(genesis).flatMap { snapshot =>
-          Signed.forAsyncKryo[IO, IncrementalGlobalSnapshot](snapshot, keyPair).map((genesis, _))
+        GlobalIncrementalSnapshot.fromGlobalSnapshot(genesis).flatMap { snapshot =>
+          Signed.forAsyncKryo[IO, GlobalIncrementalSnapshot](snapshot, keyPair).map((genesis, _))
         }
       }
     }

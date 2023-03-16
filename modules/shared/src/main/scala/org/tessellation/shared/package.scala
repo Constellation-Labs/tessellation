@@ -78,7 +78,7 @@ package object shared {
     classOf[DeprecatedTip] -> 612,
     DeprecatedTip.OrderingInstance.getClass -> 613,
     classOf[Tips] -> 614,
-    classOf[IncrementalGlobalSnapshot] -> 615,
+    classOf[GlobalIncrementalSnapshot] -> 615,
     classOf[MerkleTree] -> 616,
     classOf[GlobalSnapshotInfo] -> 617
   )

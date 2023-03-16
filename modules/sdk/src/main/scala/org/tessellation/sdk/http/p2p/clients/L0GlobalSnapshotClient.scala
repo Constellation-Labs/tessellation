@@ -3,7 +3,7 @@ package org.tessellation.sdk.http.p2p.clients
 import cats.effect.Async
 
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.{GlobalSnapshotInfo, IncrementalGlobalSnapshot, SnapshotOrdinal}
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import org.tessellation.sdk.http.p2p.PeerResponse
 import org.tessellation.sdk.http.p2p.PeerResponse.PeerResponse
 import org.tessellation.security.SecurityProvider
@@ -19,9 +19,9 @@ trait L0GlobalSnapshotClient[
   F[_]
 ] {
   def getLatestOrdinal: PeerResponse[F, SnapshotOrdinal]
-  def getLatest: PeerResponse[F, (Signed[IncrementalGlobalSnapshot], GlobalSnapshotInfo)]
-  def get(ordinal: SnapshotOrdinal): PeerResponse[F, Signed[IncrementalGlobalSnapshot]]
-  def get(hash: Hash): PeerResponse[F, Signed[IncrementalGlobalSnapshot]]
+  def getLatest: PeerResponse[F, (Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]
+  def get(ordinal: SnapshotOrdinal): PeerResponse[F, Signed[GlobalIncrementalSnapshot]]
+  def get(hash: Hash): PeerResponse[F, Signed[GlobalIncrementalSnapshot]]
 }
 
 object L0GlobalSnapshotClient {
@@ -39,22 +39,22 @@ object L0GlobalSnapshotClient {
         PeerResponse[F, SnapshotOrdinal]("global-snapshots/latest/ordinal")(client)
       }
 
-      def getLatest: PeerResponse[F, (Signed[IncrementalGlobalSnapshot], GlobalSnapshotInfo)] = {
+      def getLatest: PeerResponse[F, (Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] = {
         import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
 
-        PeerResponse[F, (Signed[IncrementalGlobalSnapshot], GlobalSnapshotInfo)]("global-snapshots/latest/combined")(client)
+        PeerResponse[F, (Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]("global-snapshots/latest/combined")(client)
       }
 
-      def get(ordinal: SnapshotOrdinal): PeerResponse[F, Signed[IncrementalGlobalSnapshot]] = {
+      def get(ordinal: SnapshotOrdinal): PeerResponse[F, Signed[GlobalIncrementalSnapshot]] = {
         import org.tessellation.ext.codecs.BinaryCodec.decoder
 
-        PeerResponse[F, Signed[IncrementalGlobalSnapshot]](s"global-snapshots/${ordinal.value.value}")(client)
+        PeerResponse[F, Signed[GlobalIncrementalSnapshot]](s"global-snapshots/${ordinal.value.value}")(client)
       }
 
-      def get(hash: Hash): PeerResponse[F, Signed[IncrementalGlobalSnapshot]] = {
+      def get(hash: Hash): PeerResponse[F, Signed[GlobalIncrementalSnapshot]] = {
         import org.tessellation.ext.codecs.BinaryCodec.decoder
 
-        PeerResponse[F, Signed[IncrementalGlobalSnapshot]](s"global-snapshots/$hash")(client)
+        PeerResponse[F, Signed[GlobalIncrementalSnapshot]](s"global-snapshots/$hash")(client)
       }
     }
 }

@@ -16,7 +16,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.L0Peer
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo}
 import org.tessellation.schema.transaction.Transaction
-import org.tessellation.schema.{Block, GlobalSnapshotInfo, IncrementalGlobalSnapshot}
+import org.tessellation.schema.{Block, GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.sdk.infrastructure.cluster.storage.L0ClusterStorage
@@ -41,7 +41,7 @@ object Storages {
       l0ClusterStorage <- L0ClusterStorage.make[F](l0Peer)
       globalL0ClusterStorage <- L0ClusterStorage.make[F](globalL0Peer)
       lastCurrencySnapshotStorage <- LastSnapshotStorage.make[F, S, SI]
-      lastGlobalSnapshotStorage <- LastSnapshotStorage.make[F, IncrementalGlobalSnapshot, GlobalSnapshotInfo]
+      lastGlobalSnapshotStorage <- LastSnapshotStorage.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
       transactionStorage <- TransactionStorage.make[F, T]
       addressStorage <- AddressStorage.make[F]
     } yield
@@ -65,5 +65,5 @@ sealed abstract class Storages[F[_], T <: Transaction: Order: Ordering, B <: Blo
     extends BaseStorages[F, T, B, S, SI] {
 
   val globalL0Cluster: L0ClusterStorage[F]
-  val lastGlobalSnapshot: LastSnapshotStorage[F, IncrementalGlobalSnapshot, GlobalSnapshotInfo]
+  val lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
 }

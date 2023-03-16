@@ -8,7 +8,7 @@ import cats.syntax.functor._
 import org.tessellation.domain.trust.storage.TrustStorage
 import org.tessellation.infrastructure.trust.storage.TrustStorage
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.{GlobalSnapshotInfo, IncrementalGlobalSnapshot}
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import org.tessellation.sdk.config.types.SnapshotConfig
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tessellation.sdk.domain.collateral.LatestBalances
@@ -26,10 +26,10 @@ object Storages {
   ): F[Storages[F]] =
     for {
       trustStorage <- TrustStorage.make[F]
-      incrementalGlobalSnapshotLocalFileSystemStorage <- SnapshotLocalFileSystemStorage.make[F, IncrementalGlobalSnapshot](
+      incrementalGlobalSnapshotLocalFileSystemStorage <- SnapshotLocalFileSystemStorage.make[F, GlobalIncrementalSnapshot](
         snapshotConfig.incrementalSnapshotPath
       )
-      globalSnapshotStorage <- SnapshotStorage.make[F, IncrementalGlobalSnapshot, GlobalSnapshotInfo](
+      globalSnapshotStorage <- SnapshotStorage.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
         incrementalGlobalSnapshotLocalFileSystemStorage,
         snapshotConfig.inMemoryCapacity
       )
@@ -51,6 +51,6 @@ sealed abstract class Storages[F[_]] private (
   val session: SessionStorage[F],
   val rumor: RumorStorage[F],
   val trust: TrustStorage[F],
-  val globalSnapshot: SnapshotStorage[F, IncrementalGlobalSnapshot, GlobalSnapshotInfo] with LatestBalances[F],
-  val incrementalGlobalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, IncrementalGlobalSnapshot]
+  val globalSnapshot: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo] with LatestBalances[F],
+  val incrementalGlobalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot]
 )

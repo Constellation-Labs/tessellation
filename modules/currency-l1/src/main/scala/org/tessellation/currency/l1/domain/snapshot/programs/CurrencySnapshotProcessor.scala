@@ -16,7 +16,7 @@ import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.dag.l1.infrastructure.address.storage.AddressStorage
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.{GlobalSnapshotInfo, IncrementalGlobalSnapshot, SnapshotReference}
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotReference}
 import org.tessellation.sdk.domain.snapshot.Validator
 import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.security.signature.Signed
@@ -35,13 +35,13 @@ object CurrencySnapshotProcessor {
     identifier: Address,
     addressStorage: AddressStorage[F],
     blockStorage: BlockStorage[F, CurrencyBlock],
-    lastGlobalSnapshotStorage: LastSnapshotStorage[F, IncrementalGlobalSnapshot, GlobalSnapshotInfo],
+    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     lastCurrencySnapshotStorage: LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
     transactionStorage: TransactionStorage[F, CurrencyTransaction]
   ): CurrencySnapshotProcessor[F] =
     new CurrencySnapshotProcessor[F] {
       def process(
-        snapshot: Either[(Hashed[IncrementalGlobalSnapshot], GlobalSnapshotInfo), Hashed[IncrementalGlobalSnapshot]]
+        snapshot: Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), Hashed[GlobalIncrementalSnapshot]]
       ): F[SnapshotProcessingResult] =
         snapshot match {
           case Left((globalSnapshot, globalState)) =>
@@ -78,8 +78,8 @@ object CurrencySnapshotProcessor {
 
       def applyGlobalSnapshotFn(
         lastState: GlobalSnapshotInfo,
-        lastSnapshot: IncrementalGlobalSnapshot,
-        snapshot: Signed[IncrementalGlobalSnapshot]
+        lastSnapshot: GlobalIncrementalSnapshot,
+        snapshot: Signed[GlobalIncrementalSnapshot]
       ): F[GlobalSnapshotInfo] = ???
 
       def applySnapshotFn(
@@ -89,7 +89,7 @@ object CurrencySnapshotProcessor {
       ): F[CurrencySnapshotInfo] = ???
 
       private def processCurrencySnapshots(
-        globalSnapshot: Hashed[IncrementalGlobalSnapshot],
+        globalSnapshot: Hashed[GlobalIncrementalSnapshot],
         globalState: GlobalSnapshotInfo,
         globalSnapshotReference: SnapshotReference,
         setGlobalSnapshot: F[SnapshotProcessingResult]
@@ -193,7 +193,7 @@ object CurrencySnapshotProcessor {
       // We are extracting all currency snapshots, but we don't assume that all the state channel binaries need to be
       // currency snapshots. Binary that fails to deserialize as currency snapshot are ignored here.
       private def fetchCurrencySnapshots(
-        globalSnapshot: IncrementalGlobalSnapshot
+        globalSnapshot: GlobalIncrementalSnapshot
       ): F[Option[ValidatedNel[InvalidSignatureForHash[CurrencyIncrementalSnapshot], NonEmptyList[Hashed[CurrencyIncrementalSnapshot]]]]] =
         globalSnapshot.stateChannelSnapshots
           .get(identifier)
