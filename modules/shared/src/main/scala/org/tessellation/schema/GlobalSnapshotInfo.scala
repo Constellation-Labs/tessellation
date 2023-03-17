@@ -1,9 +1,9 @@
 package org.tessellation.schema
 
 import cats.MonadThrow
-import cats.syntax.contravariantSemigroupal._
+import cats.data.NonEmptyList
 import cats.syntax.functor._
-import cats.syntax.reducible._
+import cats.syntax.traverse._
 
 import scala.collection.immutable.SortedMap
 
@@ -27,7 +27,9 @@ case class GlobalSnapshotInfoV1(
   lastStateChannelSnapshotHashes: SortedMap[Address, Hash],
   lastTxRefs: SortedMap[Address, TransactionReference],
   balances: SortedMap[Address, Balance]
-) extends SnapshotInfo
+) extends SnapshotInfo {
+  def stateProof[F[_]: MonadThrow: KryoSerializer]: F[MerkleTree] = GlobalSnapshotInfoV1.toGlobalSnapshotInfo(this).stateProof
+}
 
 object GlobalSnapshotInfoV1 {
   implicit def toGlobalSnapshotInfo(gsi: GlobalSnapshotInfoV1): GlobalSnapshotInfo =
@@ -45,13 +47,14 @@ case class GlobalSnapshotInfo(
   lastTxRefs: SortedMap[Address, TransactionReference],
   balances: SortedMap[Address, Balance],
   lastCurrencySnapshots: SortedMap[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)]
-) extends SnapshotInfo
+) extends SnapshotInfo {
+  def stateProof[F[_]: MonadThrow: KryoSerializer]: F[MerkleTree] =
+    NonEmptyList
+      .of(lastStateChannelSnapshotHashes.hashF, lastTxRefs.hashF, balances.hashF, lastCurrencySnapshots.hashF)
+      .sequence
+      .map(MerkleTree.from)
+}
 
 object GlobalSnapshotInfo {
   def empty = GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.empty, SortedMap.empty)
-
-  def stateProof[F[_]: MonadThrow: KryoSerializer](info: GlobalSnapshotInfo): F[MerkleTree] =
-    (info.lastStateChannelSnapshotHashes.hashF, info.lastTxRefs.hashF, info.balances.hashF, info.lastCurrencySnapshots.hashF).tupled
-      .map(_.toNonEmptyList)
-      .map(MerkleTree.from)
 }

@@ -15,7 +15,7 @@ import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.snapshot.Snapshot
+import org.tessellation.schema.snapshot.{FullSnapshot, IncrementalSnapshot}
 import org.tessellation.schema.transaction.{DAGTransaction, RewardTransaction}
 import org.tessellation.security.Hashed
 import org.tessellation.security.hash.{Hash, ProofsHash}
@@ -43,27 +43,25 @@ case class GlobalIncrementalSnapshot(
   nextFacilitators: NonEmptyList[PeerId],
   tips: SnapshotTips,
   stateProof: MerkleTree
-) extends Snapshot[DAGTransaction, DAGBlock] {}
+) extends IncrementalSnapshot[DAGTransaction, DAGBlock]
 
 object GlobalIncrementalSnapshot {
   def fromGlobalSnapshot[F[_]: MonadThrow: KryoSerializer](snapshot: GlobalSnapshot): F[GlobalIncrementalSnapshot] =
-    GlobalSnapshotInfo
-      .stateProof[F](snapshot.info)
-      .map { stateProof =>
-        GlobalIncrementalSnapshot(
-          snapshot.ordinal,
-          snapshot.height,
-          snapshot.subHeight,
-          snapshot.lastSnapshotHash,
-          snapshot.blocks,
-          snapshot.stateChannelSnapshots,
-          snapshot.rewards,
-          snapshot.epochProgress,
-          snapshot.nextFacilitators,
-          snapshot.tips,
-          stateProof
-        )
-      }
+    snapshot.info.stateProof.map { stateProof =>
+      GlobalIncrementalSnapshot(
+        snapshot.ordinal,
+        snapshot.height,
+        snapshot.subHeight,
+        snapshot.lastSnapshotHash,
+        snapshot.blocks,
+        snapshot.stateChannelSnapshots,
+        snapshot.rewards,
+        snapshot.epochProgress,
+        snapshot.nextFacilitators,
+        snapshot.tips,
+        stateProof
+      )
+    }
 }
 
 @derive(eqv, show, encoder, decoder)
@@ -79,7 +77,7 @@ case class GlobalSnapshot(
   nextFacilitators: NonEmptyList[PeerId],
   info: GlobalSnapshotInfoV1,
   tips: SnapshotTips
-) extends Snapshot[DAGTransaction, DAGBlock] {}
+) extends FullSnapshot[DAGTransaction, DAGBlock, GlobalSnapshotInfoV1] {}
 
 object GlobalSnapshot {
 
@@ -102,7 +100,7 @@ object GlobalSnapshot {
     )
 
   def mkFirstIncrementalSnapshot[F[_]: MonadThrow: KryoSerializer](genesis: Hashed[GlobalSnapshot]): F[GlobalIncrementalSnapshot] =
-    GlobalSnapshotInfo.stateProof[F](genesis.info).map { stateProof =>
+    genesis.info.stateProof.map { stateProof =>
       GlobalIncrementalSnapshot(
         genesis.ordinal.next,
         genesis.height,

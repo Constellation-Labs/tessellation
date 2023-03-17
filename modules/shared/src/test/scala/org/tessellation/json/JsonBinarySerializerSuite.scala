@@ -48,7 +48,7 @@ object JsonBinarySerializerSuite extends MutableIOSuite {
     hash: Hash,
     currencySnapshotInfo: CurrencySnapshotInfo
   ): F[Signed[CurrencyIncrementalSnapshot]] =
-    CurrencySnapshotInfo.stateProof[F](currencySnapshotInfo).map { sp =>
+    currencySnapshotInfo.stateProof[F].map { sp =>
       Signed(
         CurrencyIncrementalSnapshot(
           SnapshotOrdinal(NonNegLong(56L)),

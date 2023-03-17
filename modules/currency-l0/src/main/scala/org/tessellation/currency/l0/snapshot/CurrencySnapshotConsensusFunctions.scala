@@ -91,7 +91,7 @@ object CurrencySnapshotConsensusFunctions {
         (height, subHeight) <- getHeightAndSubHeight(lastArtifact, deprecated, remainedActive, accepted)
 
         returnedEvents = getReturnedEvents(acceptanceResult)
-        stateProof <- CurrencySnapshotInfo.stateProof(snapshotInfo)
+        stateProof <- snapshotInfo.stateProof
 
         artifact = CurrencyIncrementalSnapshot(
           currentOrdinal,
