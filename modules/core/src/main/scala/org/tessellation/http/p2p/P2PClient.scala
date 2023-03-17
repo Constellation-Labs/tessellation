@@ -7,7 +7,7 @@ import org.tessellation.sdk.infrastructure.gossip.p2p.GossipClient
 object P2PClient {
 
   def make[F[_]](
-    sdkP2PClient: SdkP2PClient[F],
+    sdkP2PClient: SdkP2PClient[F]
   ): P2PClient[F] =
     new P2PClient[F](
       sdkP2PClient.sign,
