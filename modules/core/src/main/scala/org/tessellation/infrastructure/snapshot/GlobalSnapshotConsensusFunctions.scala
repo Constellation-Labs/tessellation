@@ -143,7 +143,7 @@ object GlobalSnapshotConsensusFunctions {
         (height, subHeight) <- getHeightAndSubHeight(lastArtifact, deprecated, remainedActive, accepted)
 
         returnedDAGEvents = getReturnedDAGEvents(acceptanceResult)
-        stateProof <- GlobalSnapshotInfo.stateProof(snapshotInfo)
+        stateProof <- snapshotInfo.stateProof
 
         globalSnapshot = GlobalIncrementalSnapshot(
           currentOrdinal,

@@ -1,5 +1,6 @@
 package org.tessellation.schema
 
+import cats.MonadThrow
 import cats.effect.Async
 import cats.syntax.functor._
 import cats.syntax.traverse._
@@ -7,6 +8,7 @@ import cats.syntax.traverse._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.merkletree.MerkleTree
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.height.{Height, SubHeight}
@@ -15,6 +17,14 @@ import org.tessellation.security.hash.Hash
 import org.tessellation.syntax.sortedCollection._
 
 object snapshot {
+
+  trait FullSnapshot[T <: Transaction, B <: Block[T], SI <: SnapshotInfo] extends Snapshot[T, B] {
+    val info: SI
+  }
+
+  trait IncrementalSnapshot[T <: Transaction, B <: Block[T]] extends Snapshot[T, B] {
+    val stateProof: MerkleTree
+  }
 
   trait Snapshot[T <: Transaction, B <: Block[T]] {
     val ordinal: SnapshotOrdinal
@@ -35,6 +45,8 @@ object snapshot {
   trait SnapshotInfo {
     val lastTxRefs: SortedMap[Address, TransactionReference]
     val balances: SortedMap[Address, Balance]
+
+    def stateProof[F[_]: MonadThrow: KryoSerializer]: F[MerkleTree]
   }
 
 }

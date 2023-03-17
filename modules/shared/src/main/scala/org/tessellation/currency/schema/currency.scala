@@ -2,9 +2,8 @@ package org.tessellation.currency.schema
 
 import cats.MonadThrow
 import cats.data.{NonEmptyList, NonEmptySet}
-import cats.syntax.contravariantSemigroupal._
 import cats.syntax.functor._
-import cats.syntax.reducible._
+import cats.syntax.traverse._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
@@ -19,7 +18,7 @@ import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.height.{Height, SubHeight}
-import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo}
+import org.tessellation.schema.snapshot.{FullSnapshot, IncrementalSnapshot, SnapshotInfo}
 import org.tessellation.schema.transaction._
 import org.tessellation.security.Hashed
 import org.tessellation.security.hash.{Hash, ProofsHash}
@@ -79,13 +78,11 @@ object currency {
   case class CurrencySnapshotInfo(
     lastTxRefs: SortedMap[Address, TransactionReference],
     balances: SortedMap[Address, Balance]
-  ) extends SnapshotInfo {}
-
-  object CurrencySnapshotInfo {
-    def stateProof[F[_]: MonadThrow: KryoSerializer](info: CurrencySnapshotInfo): F[MerkleTree] =
-      (info.lastTxRefs.hashF, info.balances.hashF).tupled
-        .map(_.toNonEmptyList)
-        .map(MerkleTree.from)
+  ) extends SnapshotInfo {
+    def stateProof[F[_]: MonadThrow: KryoSerializer]: F[MerkleTree] = NonEmptyList
+      .of(lastTxRefs.hashF, balances.hashF)
+      .sequence
+      .map(MerkleTree.from)
   }
 
   @derive(eqv, show, encoder, decoder)
@@ -97,7 +94,7 @@ object currency {
     blocks: SortedSet[BlockAsActiveTip[CurrencyBlock]],
     tips: SnapshotTips,
     info: CurrencySnapshotInfo
-  ) extends Snapshot[CurrencyTransaction, CurrencyBlock] {}
+  ) extends FullSnapshot[CurrencyTransaction, CurrencyBlock, CurrencySnapshotInfo]
 
   @derive(eqv, show, encoder, decoder)
   case class CurrencyIncrementalSnapshot(
@@ -108,23 +105,21 @@ object currency {
     blocks: SortedSet[BlockAsActiveTip[CurrencyBlock]],
     tips: SnapshotTips,
     stateProof: MerkleTree
-  ) extends Snapshot[CurrencyTransaction, CurrencyBlock] {}
+  ) extends IncrementalSnapshot[CurrencyTransaction, CurrencyBlock]
 
   object CurrencyIncrementalSnapshot {
     def fromCurrencySnapshot[F[_]: MonadThrow: KryoSerializer](snapshot: CurrencySnapshot): F[CurrencyIncrementalSnapshot] =
-      CurrencySnapshotInfo
-        .stateProof[F](snapshot.info)
-        .map { stateProof =>
-          CurrencyIncrementalSnapshot(
-            snapshot.ordinal,
-            snapshot.height,
-            snapshot.subHeight,
-            snapshot.lastSnapshotHash,
-            snapshot.blocks,
-            snapshot.tips,
-            stateProof
-          )
-        }
+      snapshot.info.stateProof[F].map { stateProof =>
+        CurrencyIncrementalSnapshot(
+          snapshot.ordinal,
+          snapshot.height,
+          snapshot.subHeight,
+          snapshot.lastSnapshotHash,
+          snapshot.blocks,
+          snapshot.tips,
+          stateProof
+        )
+      }
   }
 
   object CurrencySnapshot {
@@ -140,7 +135,7 @@ object currency {
       )
 
     def mkFirstIncrementalSnapshot[F[_]: MonadThrow: KryoSerializer](genesis: Hashed[CurrencySnapshot]): F[CurrencyIncrementalSnapshot] =
-      CurrencySnapshotInfo.stateProof[F](genesis.info).map { stateProof =>
+      genesis.info.stateProof[F].map { stateProof =>
         CurrencyIncrementalSnapshot(
           genesis.ordinal.next,
           genesis.height,
