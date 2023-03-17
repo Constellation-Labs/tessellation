@@ -5,6 +5,7 @@ import cats.syntax.eq._
 
 import org.tessellation.security.hash.Hash
 
+import eu.timepit.refined.auto._
 import org.scalacheck.Gen
 import weaver._
 import weaver.scalacheck.Checkers
@@ -100,5 +101,25 @@ object MerkleTreeSuite extends SimpleIOSuite with Checkers {
 
     expect(mt1 =!= mt2)
     expect(mt1.getRoot =!= mt2.getRoot)
+  }
+
+  pureTest("ensure that calculation is stable") {
+    val hashes = NonEmptyList.of(Hash("a"), Hash("b"), Hash("c"), Hash("d"))
+    val expected = MerkleTree(
+      4,
+      NonEmptyList.of(
+        Hash("022a6979e6dab7aa5ae4c3e5e45f7e977112a7e63593820dbec1ec738a24f93c"),
+        Hash("57eb35615d47f34ec714cacdf5fd74608a5e8e102724e80b24b287c0c27b6a31"),
+        Hash("597fcb31282d34654c200d3418fca5705c648ebf326ec73d8ddef11841f876d8"),
+        Hash("d070dc5b8da9aea7dc0f5ad4c29d89965200059c9a0ceca3abd5da2492dcb71d"),
+        Hash("4c64254e6636add7f281ff49278beceb26378bd0021d1809974994e6e233ec35"),
+        Hash("40e2511a6323177e537acb2e90886e0da1f84656fd6334b89f60d742a3967f09"),
+        Hash("9dc1674ae1ee61c90ba50b6261e8f9a47f7ea07d92612158edfe3c2a37c6d74c")
+      )
+    )
+
+    val result = MerkleTree.from(hashes)
+
+    expect(result === expected)
   }
 }
