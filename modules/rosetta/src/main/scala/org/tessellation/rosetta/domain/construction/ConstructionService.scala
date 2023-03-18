@@ -8,6 +8,7 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
 
+import org.tessellation.json.JsonBinarySerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.rosetta.domain._
 import org.tessellation.rosetta.domain.amount.{Amount, AmountValue}
@@ -15,7 +16,7 @@ import org.tessellation.rosetta.domain.api.construction.ConstructionParse
 import org.tessellation.rosetta.domain.currency.DAG
 import org.tessellation.rosetta.domain.error._
 import org.tessellation.rosetta.domain.operation._
-import org.tessellation.schema.transaction.{DAGTransaction, Transaction}
+import org.tessellation.schema.transaction.DAGTransaction
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.key.ops._
@@ -45,14 +46,15 @@ object ConstructionService {
         .attemptT
         .leftMap(_ => InvalidPublicKey)
 
-    def getTransactionIdentifier(hex: Hex): EitherT[F, ConstructionError, TransactionIdentifier] = KryoSerializer[F]
-      .deserialize[Signed[Transaction]](hex.toBytes)
-      .liftTo[F]
-      .flatMap(_.toHashed[F])
-      .map(_.hash)
-      .map(TransactionIdentifier(_))
-      .attemptT
-      .leftMap(_ => MalformedTransaction)
+    def getTransactionIdentifier(hex: Hex): EitherT[F, ConstructionError, TransactionIdentifier] =
+      JsonBinarySerializer
+        .deserialize[Signed[DAGTransaction]](hex.toBytes)
+        .liftTo[F]
+        .flatMap(_.toHashed[F])
+        .map(_.hash)
+        .map(TransactionIdentifier(_))
+        .attemptT
+        .leftMap(_ => MalformedTransaction)
 
     def getAccountIdentifiers(operations: List[Operation]): Option[NonEmptyList[AccountIdentifier]] = {
       val accountIdentifiers =
@@ -61,7 +63,7 @@ object ConstructionService {
       NonEmptyList.fromList(accountIdentifiers)
     }
 
-    def transactionToOperations(transaction: Transaction): Either[ConstructionError, NonEmptyList[Operation]] = {
+    def transactionToOperations(transaction: DAGTransaction): Either[ConstructionError, NonEmptyList[Operation]] = {
       type Refinement = Not[Equal[0L]]
 
       val negativeTransfer = refineV[Refinement](-transaction.amount.value.value).map(
@@ -72,7 +74,7 @@ object ConstructionService {
       )
 
       NonEmptyList.of(negativeTransfer, positiveTransfer).traverse {
-        case (Right((address, amount, operationIndex))) =>
+        case Right((address, amount, operationIndex)) =>
           Operation(
             OperationIdentifier(operationIndex),
             none,
@@ -87,7 +89,9 @@ object ConstructionService {
 
     def parseSignedTransaction(hex: Hex): EitherT[F, ConstructionError, ConstructionParse.ParseResult] = {
       val result = for {
-        signedTransaction <- KryoSerializer[F].deserialize[Signed[Transaction]](hex.toBytes).toEitherT
+        signedTransaction <- JsonBinarySerializer
+          .deserialize[Signed[DAGTransaction]](hex.toBytes)
+          .toEitherT
         operations <- transactionToOperations(signedTransaction).toEitherT
         proofs <- signedTransaction.proofs.toNonEmptyList.traverse(_.id.hex.toPublicKey).attemptT
         accountIds = proofs.map(_.toAddress).map(AccountIdentifier(_, none))
@@ -98,7 +102,10 @@ object ConstructionService {
 
     def parseUnsignedTransaction(hex: Hex): EitherT[F, ConstructionError, ConstructionParse.ParseResult] =
       for {
-        unsignedTransaction <- KryoSerializer[F].deserialize[Transaction](hex.toBytes).toEitherT.leftMap(_ => MalformedTransaction)
+        unsignedTransaction <- JsonBinarySerializer
+          .deserialize[DAGTransaction](hex.toBytes)
+          .toEitherT
+          .leftMap(_ => MalformedTransaction)
         operations <- transactionToOperations(unsignedTransaction).toEitherT
       } yield ConstructionParse.ParseResult(operations, none)
 

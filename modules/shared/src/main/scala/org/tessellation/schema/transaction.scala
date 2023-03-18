@@ -133,7 +133,6 @@ object transaction {
   ) extends Transaction
 
   object DAGTransaction {
-
     implicit object OrderingInstance extends OrderBasedOrdering[DAGTransaction]
 
     val _Source: Lens[DAGTransaction, Address] = GenLens[DAGTransaction](_.source)
