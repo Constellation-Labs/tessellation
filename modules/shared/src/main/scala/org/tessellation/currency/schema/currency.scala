@@ -104,4 +104,3 @@ object currency {
         .toSortedSet
   }
 }
-
