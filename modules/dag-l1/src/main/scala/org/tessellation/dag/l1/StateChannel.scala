@@ -177,19 +177,21 @@ class StateChannel[
 
   private val sendBlockToL0: Pipe[F, FinalBlock[B], FinalBlock[B]] =
     _.evalTap { fb =>
-      for {
-        l0PeerOpt <- storages.l0Cluster.getPeers
-          .map(_.toNonEmptyList.toList)
-          .flatMap(_.filterA(p => services.collateral.hasCollateral(p.id)))
-          .flatMap(peers => Random[F].shuffleList(peers))
-          .map(peers => peers.headOption)
-
-        _ <- l0PeerOpt.fold(logger.warn("No available L0 peer")) { l0Peer =>
-          p2PClient.l0CurrencyCluster
-            .sendL1Output(fb.hashedBlock.signed)(l0Peer)
-            .ifM(Applicative[F].unit, logger.warn("Sending block to L0 failed."))
+      storages.l0Cluster.getPeers
+        .map(_.toNonEmptyList.toList)
+        .flatMap(_.filterA(p => services.collateral.hasCollateral(p.id)))
+        .flatMap(peers => Random[F].shuffleList(peers))
+        .map(peers => peers.headOption)
+        .flatMap { maybeL0Peer =>
+          maybeL0Peer.fold(logger.warn("No available L0 peer")) { l0Peer =>
+            p2PClient.l0CurrencyCluster
+              .sendL1Output(fb.hashedBlock.signed)(l0Peer)
+              .ifM(Applicative[F].unit, logger.warn("Sending block to L0 failed."))
+          }
         }
-      } yield ()
+        .handleErrorWith { err =>
+          logger.error(err)("Error sending block to L0")
+        }
     }
 
   private val blockAcceptance: Stream[F, Unit] = Stream
