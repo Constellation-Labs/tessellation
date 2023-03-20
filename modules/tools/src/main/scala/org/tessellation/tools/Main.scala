@@ -12,17 +12,16 @@ import cats.syntax.all._
 import scala.concurrent.duration._
 import scala.math.Integral.Implicits._
 
-import org.tessellation.security.KeyPairGenerator
 import org.tessellation.keytool.KeyStoreUtils
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction._
 import org.tessellation.sdk.domain.genesis.types.GenesisCSVAccount
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.key.ops._
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{KeyPairGenerator, SecurityProvider}
 import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.statechannel.StateChannelSnapshotBinary
 import org.tessellation.tools.TransactionGenerator._
@@ -41,7 +40,6 @@ import org.http4s._
 import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder}
 import org.http4s.client.Client
 import org.http4s.ember.client.EmberClientBuilder
-import org.tessellation.keytool.KeyStoreUtils
 
 object Main
     extends CommandIOApp(

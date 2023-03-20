@@ -6,9 +6,9 @@ import cats.effect.kernel.Async
 import cats.syntax.all._
 
 import org.tessellation.domain.cell.{L0Cell, L0CellInput}
-import org.tessellation.domain.statechannel.StateChannelValidator.StateChannelValidationError
+import org.tessellation.sdk.domain.statechannel.StateChannelValidator
+import org.tessellation.sdk.domain.statechannel.StateChannelValidator.StateChannelValidationError
 import org.tessellation.statechannel.StateChannelOutput
-
 trait StateChannelService[F[_]] {
   def process(stateChannel: StateChannelOutput): F[Either[NonEmptyList[StateChannelValidationError], Unit]]
 }

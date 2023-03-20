@@ -74,7 +74,8 @@ trait CliMethod {
     gossipConfig,
     httpConfig,
     leavingDelay,
-    stateAfterJoining
+    stateAfterJoining,
+    collateralConfig(environment, collateralAmount)
   )
 
 }

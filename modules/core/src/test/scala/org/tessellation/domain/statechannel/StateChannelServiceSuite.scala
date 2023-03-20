@@ -7,9 +7,9 @@ import cats.effect.std.Queue
 import cats.syntax.validated._
 
 import org.tessellation.domain.cell.L0Cell
-import org.tessellation.domain.statechannel.StateChannelValidator.StateChannelValidationErrorOr
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.block.DAGBlock
+import org.tessellation.sdk.domain.statechannel.StateChannelValidator
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.Signed
@@ -20,7 +20,6 @@ import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBi
 
 import eu.timepit.refined.auto._
 import weaver.MutableIOSuite
-
 object StateChannelServiceSuite extends MutableIOSuite {
 
   type Res = (KryoSerializer[IO], SecurityProvider[IO])
@@ -56,7 +55,7 @@ object StateChannelServiceSuite extends MutableIOSuite {
   def mkService(failed: Option[StateChannelValidator.StateChannelValidationError] = None) = {
     val validator = new StateChannelValidator[IO] {
       def validate(output: StateChannelOutput) =
-        IO.pure(failed.fold[StateChannelValidationErrorOr[StateChannelOutput]](output.validNec)(_.invalidNec))
+        IO.pure(failed.fold[StateChannelValidator.StateChannelValidationErrorOr[StateChannelOutput]](output.validNec)(_.invalidNec))
     }
 
     for {
