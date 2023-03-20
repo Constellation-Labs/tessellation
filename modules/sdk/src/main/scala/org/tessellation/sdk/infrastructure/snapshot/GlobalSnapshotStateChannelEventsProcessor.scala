@@ -1,4 +1,4 @@
-package org.tessellation.infrastructure.snapshot
+package org.tessellation.sdk.infrastructure.snapshot
 
 import cats.Eval
 import cats.data.NonEmptyList
@@ -16,15 +16,15 @@ import cats.syntax.traverse._
 import scala.collection.immutable.SortedMap
 
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshot, CurrencySnapshotInfo}
-import org.tessellation.domain.statechannel.StateChannelValidator
 import org.tessellation.ext.cats.syntax.validated._
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.GlobalSnapshotInfo
 import org.tessellation.schema.address.Address
+import org.tessellation.sdk.domain.statechannel.StateChannelValidator
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
-import org.tessellation.statechannel.StateChannelSnapshotBinary
+import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
 import org.tessellation.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._
@@ -33,28 +33,31 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 trait GlobalSnapshotStateChannelEventsProcessor[F[_]] {
   def process(
     lastGlobalSnapshotInfo: GlobalSnapshotInfo,
-    events: List[StateChannelEvent]
+    events: List[StateChannelOutput]
   ): F[
     (
       SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
       SortedMap[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)],
-      Set[StateChannelEvent]
+      Set[StateChannelOutput]
     )
   ]
 }
 
 object GlobalSnapshotStateChannelEventsProcessor {
-  def make[F[_]: Async: KryoSerializer](stateChannelValidator: StateChannelValidator[F]) =
+  def make[F[_]: Async: KryoSerializer](
+    stateChannelValidator: StateChannelValidator[F],
+    currencySnapshotContextFns: CurrencySnapshotContextFunctions[F]
+  ) =
     new GlobalSnapshotStateChannelEventsProcessor[F] {
       private val logger = Slf4jLogger.getLoggerFromClass[F](GlobalSnapshotStateChannelEventsProcessor.getClass)
       def process(
         lastGlobalSnapshotInfo: GlobalSnapshotInfo,
-        events: List[StateChannelEvent]
+        events: List[StateChannelOutput]
       ): F[
         (
           SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
           SortedMap[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)],
-          Set[StateChannelEvent]
+          Set[StateChannelOutput]
         )
       ] =
         events
@@ -73,7 +76,7 @@ object GlobalSnapshotStateChannelEventsProcessor {
         lastState: CurrencySnapshotInfo,
         lastSnapshot: CurrencyIncrementalSnapshot,
         snapshot: Signed[CurrencyIncrementalSnapshot]
-      ): F[CurrencySnapshotInfo] = ???
+      ): F[CurrencySnapshotInfo] = currencySnapshotContextFns.createContext(lastState, lastSnapshot, snapshot)
 
       private def processCurrencySnapshots(
         lastGlobalSnapshotInfo: GlobalSnapshotInfo,
@@ -125,12 +128,12 @@ object GlobalSnapshotStateChannelEventsProcessor {
 
       private def processStateChannelEvents(
         lastGlobalSnapshotInfo: GlobalSnapshotInfo,
-        events: List[StateChannelEvent]
-      ): (SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set[StateChannelEvent]) = {
+        events: List[StateChannelOutput]
+      ): (SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set[StateChannelOutput]) = {
 
-        val lshToSnapshot: Map[(Address, Hash), StateChannelEvent] = events.map { e =>
+        val lshToSnapshot: Map[(Address, Hash), StateChannelOutput] = events.map { e =>
           (e.address, e.snapshotBinary.value.lastSnapshotHash) -> e
-        }.foldLeft(Map.empty[(Address, Hash), StateChannelEvent]) { (acc, entry) =>
+        }.foldLeft(Map.empty[(Address, Hash), StateChannelOutput]) { (acc, entry) =>
           entry match {
             case (k, newEvent) =>
               acc.updatedWith(k) { maybeEvent =>
@@ -152,7 +155,7 @@ object GlobalSnapshotStateChannelEventsProcessor {
           }
           .mapFilter {
             case (address, initLsh) =>
-              def unfold(lsh: Hash): Eval[List[StateChannelEvent]] =
+              def unfold(lsh: Hash): Eval[List[StateChannelOutput]] =
                 lshToSnapshot
                   .get((address, lsh))
                   .map { go =>
@@ -167,7 +170,7 @@ object GlobalSnapshotStateChannelEventsProcessor {
           }
           .toSortedMap
 
-        (result, Set.empty[StateChannelEvent])
+        (result, Set.empty[StateChannelOutput])
       }
     }
 

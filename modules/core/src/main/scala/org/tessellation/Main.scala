@@ -49,15 +49,14 @@ object Main
 
     for {
       queues <- Queues.make[IO](sdkQueues).asResource
-      p2pClient = P2PClient.make[IO](sdkP2PClient, sdkResources.client, sdkServices.session)
+      p2pClient = P2PClient.make[IO](sdkP2PClient)
       storages <- Storages.make[IO](sdkStorages, cfg.snapshot).asResource
-      validators = Validators.make[IO](seedlist)
       services <- Services
         .make[IO](
           sdkServices,
           queues,
           storages,
-          validators,
+          sdk.sdkValidators,
           sdkResources.client,
           sdkServices.session,
           sdk.seedlist,
@@ -110,7 +109,7 @@ object Main
         storages.cluster,
         p2pClient.gossip,
         rumorHandler,
-        validators.rumorValidator,
+        sdk.sdkValidators.rumorValidator,
         services.localHealthcheck,
         nodeId,
         generation,

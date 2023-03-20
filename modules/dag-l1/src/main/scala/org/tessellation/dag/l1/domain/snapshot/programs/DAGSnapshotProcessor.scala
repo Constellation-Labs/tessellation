@@ -10,6 +10,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.transaction.DAGTransaction
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
+import org.tessellation.sdk.domain.snapshot.SnapshotContextFunctions
 import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hashed, SecurityProvider}
@@ -20,7 +21,8 @@ object DAGSnapshotProcessor {
     addressStorage: AddressStorage[F],
     blockStorage: BlockStorage[F, DAGBlock],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
-    transactionStorage: TransactionStorage[F, DAGTransaction]
+    transactionStorage: TransactionStorage[F, DAGTransaction],
+    globalSnapshotContextFns: SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
   ): SnapshotProcessor[F, DAGTransaction, DAGBlock, GlobalIncrementalSnapshot, GlobalSnapshotInfo] =
     new SnapshotProcessor[F, DAGTransaction, DAGBlock, GlobalIncrementalSnapshot, GlobalSnapshotInfo] {
 
@@ -42,6 +44,6 @@ object DAGSnapshotProcessor {
         lastGlobalState: GlobalSnapshotInfo,
         lastGlobalSnapshot: GlobalIncrementalSnapshot,
         globalSnapshot: Signed[GlobalIncrementalSnapshot]
-      ): F[GlobalSnapshotInfo] = ???
+      ): F[GlobalSnapshotInfo] = globalSnapshotContextFns.createContext(lastGlobalState, lastGlobalSnapshot, globalSnapshot)
     }
 }

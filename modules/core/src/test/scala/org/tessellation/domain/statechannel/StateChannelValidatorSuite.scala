@@ -5,9 +5,8 @@ import cats.effect.IO
 import cats.effect.kernel.Resource
 import cats.syntax.validated._
 
-import org.tessellation.domain.statechannel.StateChannelValidator
-import org.tessellation.domain.statechannel.StateChannelValidator.{InvalidSigned, NotSignedExclusivelyByStateChannelOwner}
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.sdk.domain.statechannel.StateChannelValidator
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.Signed.forAsyncKryo
@@ -60,7 +59,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       result <- validator.validate(scOutput)
     } yield
       expect.same(
-        InvalidSigned(InvalidSignatures(signedSCBinary.proofs)).invalidNec,
+        StateChannelValidator.InvalidSigned(InvalidSignatures(signedSCBinary.proofs)).invalidNec,
         result
       )
   }
@@ -78,7 +77,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       result <- validator.validate(scOutput)
     } yield
       expect.same(
-        NotSignedExclusivelyByStateChannelOwner.invalidNec,
+        StateChannelValidator.NotSignedExclusivelyByStateChannelOwner.invalidNec,
         result
       )
   }
@@ -97,7 +96,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       result <- validator.validate(scOutput)
     } yield
       expect.same(
-        NotSignedExclusivelyByStateChannelOwner.invalidNec,
+        StateChannelValidator.NotSignedExclusivelyByStateChannelOwner.invalidNec,
         result
       )
   }

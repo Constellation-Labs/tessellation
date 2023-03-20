@@ -14,6 +14,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
 import org.tessellation.sdk.domain.gossip.Gossip
+import org.tessellation.sdk.domain.snapshot.SnapshotContextFunctions
 import org.tessellation.sdk.infrastructure.consensus.declaration._
 import org.tessellation.sdk.infrastructure.consensus.declaration.kind.PeerDeclarationKind
 import org.tessellation.sdk.infrastructure.consensus.message._
@@ -68,6 +69,7 @@ object ConsensusStateUpdater {
     consensusFns: ConsensusFunctions[F, Event, Key, Artifact, Context],
     consensusStorage: ConsensusStorage[F, Event, Key, Artifact, Context],
     gossip: Gossip[F],
+    snapshotContextFns: SnapshotContextFunctions[F, Artifact, Context],
     keyPair: KeyPair
   ): ConsensusStateUpdater[F, Key, Artifact, Context] = new ConsensusStateUpdater[F, Key, Artifact, Context] {
 
@@ -306,23 +308,31 @@ object ConsensusStateUpdater {
                           .whenA(allSignatures.size =!= validSignatures.size)
                       }
                 }.flatMap { maybeOnlyValidSignatures =>
-                  state.facilitators.hashF.map { facilitatorsHash =>
-                    for {
-                      validSignatures <- maybeOnlyValidSignatures
-                      validSignaturesNel <- NonEmptySet.fromSet(validSignatures.toSortedSet)
-                      majorityArtifact <- resources.artifacts.get(majorityHash)
-                      signedArtifact = Signed(majorityArtifact, validSignaturesNel)
-                      newState = state.copy(status =
-                        Finished[Artifact, Context](
-                          signedArtifact,
-                          context, // TODO: incremental snapshots - new context
-                          majorityTrigger,
-                          candidates,
-                          facilitatorsHash
-                        )
-                      )
-                      effect = consensusFns.consumeSignedMajorityArtifact(signedArtifact, context)
-                    } yield (newState, effect)
+                  state.facilitators.hashF.flatMap { facilitatorsHash =>
+                    maybeOnlyValidSignatures.flatMap { validSignatures =>
+                      NonEmptySet.fromSet(validSignatures.toSortedSet).flatMap { validSignaturesNel =>
+                        resources.artifacts.get(majorityHash).map { majorityArtifact =>
+                          val signedArtifact = Signed(majorityArtifact, validSignaturesNel)
+
+                          snapshotContextFns
+                            .createContext(context, state.lastOutcome.status.signedMajorityArtifact.value, signedArtifact)
+                            .map { newContext =>
+                              val newState = state.copy(status =
+                                Finished[Artifact, Context](
+                                  signedArtifact,
+                                  newContext,
+                                  majorityTrigger,
+                                  candidates,
+                                  facilitatorsHash
+                                )
+                              )
+                              val effect = consensusFns.consumeSignedMajorityArtifact(signedArtifact, context)
+
+                              (newState, effect)
+                            }
+                        }
+                      }
+                    }.sequence
                   }
                 }
               }
