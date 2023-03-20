@@ -10,12 +10,20 @@ import cats.syntax.validated._
 
 import scala.collection.immutable.SortedMap
 
-import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
-import org.tessellation.domain.statechannel.StateChannelValidator
+import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.GlobalSnapshotInfo
 import org.tessellation.schema.address.Address
+import org.tessellation.schema.balance.Amount
+import org.tessellation.sdk.domain.statechannel.StateChannelValidator
+import org.tessellation.sdk.infrastructure.block.processing.BlockAcceptanceManager
+import org.tessellation.sdk.infrastructure.snapshot.{
+  CurrencySnapshotAcceptanceManager,
+  CurrencySnapshotContextFunctions,
+  GlobalSnapshotStateChannelEventsProcessor
+}
+import org.tessellation.sdk.modules.SdkValidators
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.Signed
@@ -24,8 +32,8 @@ import org.tessellation.security.{KeyPairGenerator, SecurityProvider}
 import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
 
+import eu.timepit.refined.auto._
 import weaver.MutableIOSuite
-
 object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
 
   type Res = (KryoSerializer[IO], SecurityProvider[IO])
@@ -35,12 +43,20 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       SecurityProvider.forAsync[IO].map((ks, _))
     }
 
-  def mkProcessor(failed: Option[(Address, StateChannelValidator.StateChannelValidationError)] = None)(implicit K: KryoSerializer[IO]) = {
+  def mkProcessor(
+    failed: Option[(Address, StateChannelValidator.StateChannelValidationError)] = None
+  )(implicit K: KryoSerializer[IO], S: SecurityProvider[IO]) = {
     val validator = new StateChannelValidator[IO] {
       def validate(output: StateChannelOutput) =
         IO.pure(failed.filter(f => f._1 == output.address).map(_._2.invalidNec).getOrElse(output.validNec))
     }
-    GlobalSnapshotStateChannelEventsProcessor.make[IO](validator)
+    val validators = SdkValidators.make[IO](None)
+    val currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
+      BlockAcceptanceManager.make[IO, CurrencyTransaction, CurrencyBlock](validators.currencyBlockValidator),
+      Amount(0L)
+    )
+    val currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotAcceptanceManager)
+    GlobalSnapshotStateChannelEventsProcessor.make[IO](validator, currencySnapshotContextFns)
   }
 
   test("return new sc event") { res =>

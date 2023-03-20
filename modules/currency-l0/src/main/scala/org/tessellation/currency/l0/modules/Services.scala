@@ -64,7 +64,8 @@ object Services {
           cfg.environment,
           client,
           session,
-          stateChannelSnapshotService
+          stateChannelSnapshotService,
+          sdkServices.currencySnapshotContextFns
         )
       addressService = AddressService.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](storages.snapshot)
       collateralService = Collateral.make[F](cfg.collateral, storages.snapshot)

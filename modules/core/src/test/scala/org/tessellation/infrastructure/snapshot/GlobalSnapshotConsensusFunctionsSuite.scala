@@ -24,6 +24,7 @@ import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.infrastructure.consensus.trigger.EventTrigger
 import org.tessellation.sdk.infrastructure.metrics.Metrics
+import org.tessellation.sdk.infrastructure.snapshot.{GlobalSnapshotAcceptanceManager, GlobalSnapshotStateChannelEventsProcessor}
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.key.ops.PublicKeyOps

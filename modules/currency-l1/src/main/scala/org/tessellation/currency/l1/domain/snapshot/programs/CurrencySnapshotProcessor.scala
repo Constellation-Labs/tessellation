@@ -17,8 +17,8 @@ import org.tessellation.dag.l1.infrastructure.address.storage.AddressStorage
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotReference}
-import org.tessellation.sdk.domain.snapshot.Validator
 import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
+import org.tessellation.sdk.domain.snapshot.{SnapshotContextFunctions, Validator}
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed.InvalidSignatureForHash
 import org.tessellation.security.{Hashed, SecurityProvider}
@@ -37,7 +37,9 @@ object CurrencySnapshotProcessor {
     blockStorage: BlockStorage[F, CurrencyBlock],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     lastCurrencySnapshotStorage: LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
-    transactionStorage: TransactionStorage[F, CurrencyTransaction]
+    transactionStorage: TransactionStorage[F, CurrencyTransaction],
+    globalSnapshotContextFns: SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
+    currencySnapshotContextFns: SnapshotContextFunctions[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
   ): CurrencySnapshotProcessor[F] =
     new CurrencySnapshotProcessor[F] {
       def process(
@@ -80,13 +82,13 @@ object CurrencySnapshotProcessor {
         lastState: GlobalSnapshotInfo,
         lastSnapshot: GlobalIncrementalSnapshot,
         snapshot: Signed[GlobalIncrementalSnapshot]
-      ): F[GlobalSnapshotInfo] = ???
+      ): F[GlobalSnapshotInfo] = globalSnapshotContextFns.createContext(lastState, lastSnapshot, snapshot)
 
       def applySnapshotFn(
         lastState: CurrencySnapshotInfo,
         lastSnapshot: CurrencyIncrementalSnapshot,
         snapshot: Signed[CurrencyIncrementalSnapshot]
-      ): F[CurrencySnapshotInfo] = ???
+      ): F[CurrencySnapshotInfo] = currencySnapshotContextFns.createContext(lastState, lastSnapshot, snapshot)
 
       private def processCurrencySnapshots(
         globalSnapshot: Hashed[GlobalIncrementalSnapshot],

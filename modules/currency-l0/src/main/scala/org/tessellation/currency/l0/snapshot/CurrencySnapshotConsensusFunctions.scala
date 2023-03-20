@@ -1,8 +1,6 @@
 package org.tessellation.currency.l0.snapshot
 
 import cats.effect.Async
-import cats.syntax.applicative._
-import cats.syntax.applicativeError._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.functorFilter._
@@ -13,15 +11,14 @@ import cats.syntax.show._
 import scala.collection.immutable.SortedSet
 import scala.util.control.NoStackTrace
 
+import org.tessellation.currency.l0.snapshot.services.StateChannelSnapshotService
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.balance.Amount
-import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.domain.block.processing._
-import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.infrastructure.consensus.trigger.ConsensusTrigger
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.infrastructure.snapshot.SnapshotConsensusFunctions
@@ -47,44 +44,17 @@ abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
 object CurrencySnapshotConsensusFunctions {
 
   def make[F[_]: Async: KryoSerializer: SecurityProvider: Metrics](
-    snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
+    stateChannelSnapshotService: StateChannelSnapshotService[F],
     blockAcceptanceManager: BlockAcceptanceManager[F, CurrencyTransaction, CurrencyBlock],
-    collateral: Amount,
-    environment: AppEnvironment
+    collateral: Amount
   ): CurrencySnapshotConsensusFunctions[F] = new CurrencySnapshotConsensusFunctions[F] {
 
-    def createContext(
-      lastSnapshotContext: CurrencySnapshotInfo,
-      lastSnapshot: CurrencySnapshotArtifact,
-      snapshot: Signed[CurrencySnapshotArtifact]
-    ): F[CurrencySnapshotInfo] = for {
-      lastActiveTips <- lastSnapshot.activeTips
-      lastDeprecatedTips = lastSnapshot.tips.deprecated
-
-      blocksForAcceptance = snapshot.blocks.toList.map(_.block)
-
-      (acceptanceResult, snapshotInfo) <- accept(
-        blocksForAcceptance,
-        lastSnapshotContext,
-        lastActiveTips,
-        lastDeprecatedTips
-      )
-      _ <- CannotApplyBlocksError(acceptanceResult.notAccepted.map { case (_, reason) => reason })
-        .raiseError[F, Unit]
-        .whenA(acceptanceResult.notAccepted.nonEmpty)
-
-    } yield snapshotInfo
     private val logger = Slf4jLogger.getLoggerFromClass(CurrencySnapshotConsensusFunctions.getClass)
 
     def getRequiredCollateral: Amount = collateral
 
     def consumeSignedMajorityArtifact(signedArtifact: Signed[CurrencyIncrementalSnapshot], context: CurrencySnapshotInfo): F[Unit] =
-      snapshotStorage
-        .prepend(signedArtifact, context)
-        .ifM(
-          Async[F].unit,
-          logger.error("Cannot save CurrencySnapshot into the storage")
-        )
+      stateChannelSnapshotService.consume(signedArtifact, context)
 
     def createProposalArtifact(
       lastKey: SnapshotOrdinal,
