@@ -50,13 +50,19 @@ object GenesisService {
       _ <- collateral
         .hasCollateral(nodeId)
         .flatMap(OwnCollateralNotSatisfied.raiseError[F, Unit].unlessA)
+
       signedBinary <- stateChannelSnapshotService.createGenesisBinary(hashedGenesis.signed)
       signedBinaryHash <- signedBinary.hashF
       _ <- stateChannelSnapshotClient.send(signedBinary)(globalL0Peer)
+
+      _ <- lastSignedBinaryHashStorage.set(signedBinaryHash)
+
       signedIncrementalBinary <- stateChannelSnapshotService.createBinary(signedFirstIncrementalSnapshot)
       signedIncrementalBinaryHash <- signedIncrementalBinary.hashF
       _ <- stateChannelSnapshotClient.send(signedIncrementalBinary)(globalL0Peer)
+
       _ <- lastSignedBinaryHashStorage.set(signedIncrementalBinaryHash)
+
       _ <- consensusManager.startFacilitatingAfter(
         signedFirstIncrementalSnapshot.ordinal,
         signedFirstIncrementalSnapshot,

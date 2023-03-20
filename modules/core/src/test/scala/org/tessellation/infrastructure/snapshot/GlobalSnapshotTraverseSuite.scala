@@ -12,7 +12,7 @@ import cats.syntax.traverse._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import org.tessellation.domain.statechannel.StateChannelValidator
+import org.tessellation.currency.schema.currency.{CurrencyBlock, CurrencyTransaction}
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.infrastructure.snapshot._
@@ -25,9 +25,12 @@ import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.{DAGTransaction, TransactionReference}
+import org.tessellation.sdk.domain.statechannel.StateChannelValidator
 import org.tessellation.sdk.domain.transaction.{TransactionChainValidator, TransactionValidator}
 import org.tessellation.sdk.infrastructure.block.processing.{BlockAcceptanceLogic, BlockAcceptanceManager, BlockValidator}
 import org.tessellation.sdk.infrastructure.metrics.Metrics
+import org.tessellation.sdk.infrastructure.snapshot._
+import org.tessellation.sdk.modules.SdkValidators
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.key.ops.PublicKeyOps
@@ -150,7 +153,13 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       )
     val blockAcceptanceManager = BlockAcceptanceManager.make(BlockAcceptanceLogic.make[IO, DAGTransaction, DAGBlock], blockValidator)
     val stateChannelValidator = StateChannelValidator.make[IO](signedValidator)
-    val stateChannelProcessor = GlobalSnapshotStateChannelEventsProcessor.make[IO](stateChannelValidator)
+    val validators = SdkValidators.make[IO](None)
+    val currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
+      BlockAcceptanceManager.make[IO, CurrencyTransaction, CurrencyBlock](validators.currencyBlockValidator),
+      Amount(0L)
+    )
+    val currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotAcceptanceManager)
+    val stateChannelProcessor = GlobalSnapshotStateChannelEventsProcessor.make[IO](stateChannelValidator, currencySnapshotContextFns)
     val snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make[IO](blockAcceptanceManager, stateChannelProcessor, Amount.empty)
     val snapshotContextFunctions = GlobalSnapshotContextFunctions.make[IO](snapshotAcceptanceManager)
     GlobalSnapshotTraverse.make[IO](loadGlobalSnapshot, snapshotContextFunctions)

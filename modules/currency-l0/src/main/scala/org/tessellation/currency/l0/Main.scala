@@ -11,7 +11,6 @@ import org.tessellation.currency.l0.cli.method.{Run, RunGenesis, RunValidator}
 import org.tessellation.currency.l0.http.P2PClient
 import org.tessellation.currency.l0.modules._
 import org.tessellation.currency.schema.currency.CurrencySnapshot
-import org.tessellation.currency.{CurrencyKryoRegistrationIdRange, currencyKryoRegistrar}
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.kryo._
 import org.tessellation.schema.cluster.ClusterId
@@ -24,7 +23,6 @@ import org.tessellation.sdk.resources.MkHttpServer.ServerName
 import org.tessellation.sdk.{SdkOrSharedOrKernelRegistrationIdRange, sdkKryoRegistrar}
 
 import com.monovore.decline.Opts
-import eu.timepit.refined.boolean.Or
 
 object Main
     extends TessellationIOApp[Run](
@@ -36,10 +34,10 @@ object Main
 
   val opts: Opts[Run] = method.opts
 
-  type KryoRegistrationIdRange = CurrencyKryoRegistrationIdRange Or SdkOrSharedOrKernelRegistrationIdRange
+  type KryoRegistrationIdRange = SdkOrSharedOrKernelRegistrationIdRange
 
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
-    currencyKryoRegistrar.union(sdkKryoRegistrar)
+    sdkKryoRegistrar
 
   def run(method: Run, sdk: SDK[IO]): Resource[IO, Unit] = {
     import sdk._

@@ -115,6 +115,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                           session = Session.make[IO](storages.session, storages.node, storages.cluster)
                           p2pClient = SdkP2PClient.make[IO](res.client, session)
                           queues <- SdkQueues.make[IO].asResource
+                          validators = SdkValidators.make[IO](_seedlist)
                           services <- SdkServices
                             .make[IO](
                               cfg,
@@ -125,9 +126,11 @@ abstract class TessellationIOApp[A <: CliMethod](
                               queues,
                               session,
                               p2pClient.node,
+                              validators,
                               _seedlist,
                               _restartSignal,
-                              versionHash
+                              versionHash,
+                              cfg.collateral
                             )
                             .asResource
 
@@ -162,6 +165,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                             val sdkStorages = storages
                             val sdkServices = services
                             val sdkPrograms = programs
+                            val sdkValidators = validators
 
                             def restartSignal = _restartSignal
                           }

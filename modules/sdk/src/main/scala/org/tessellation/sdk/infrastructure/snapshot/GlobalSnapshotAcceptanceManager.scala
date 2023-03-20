@@ -1,4 +1,4 @@
-package org.tessellation.infrastructure.snapshot
+package org.tessellation.sdk.infrastructure.snapshot
 
 import cats.data.NonEmptyList
 import cats.effect.Async
@@ -17,7 +17,7 @@ import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.transaction.{DAGTransaction, RewardTransaction}
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.security.signature.Signed
-import org.tessellation.statechannel.StateChannelSnapshotBinary
+import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
@@ -25,16 +25,16 @@ import eu.timepit.refined.types.numeric.NonNegLong
 trait GlobalSnapshotAcceptanceManager[F[_]] {
   def accept(
     blocksForAcceptance: List[Signed[DAGBlock]],
-    scEvents: List[StateChannelEvent],
+    scEvents: List[StateChannelOutput],
     rewards: SortedSet[RewardTransaction],
-    lastSnapshotContext: GlobalSnapshotContext,
+    lastSnapshotContext: GlobalSnapshotInfo,
     lastActiveTips: SortedSet[ActiveTip],
     lastDeprecatedTips: SortedSet[DeprecatedTip]
   ): F[
     (
       BlockAcceptanceResult[DAGBlock],
       SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
-      Set[StateChannelEvent],
+      Set[StateChannelOutput],
       SortedSet[RewardTransaction],
       GlobalSnapshotInfo
     )
@@ -50,9 +50,9 @@ object GlobalSnapshotAcceptanceManager {
 
     def accept(
       blocksForAcceptance: List[Signed[DAGBlock]],
-      scEvents: List[StateChannelEvent],
+      scEvents: List[StateChannelOutput],
       rewards: SortedSet[RewardTransaction],
-      lastSnapshotContext: GlobalSnapshotContext,
+      lastSnapshotContext: GlobalSnapshotInfo,
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip]
     ) = for {
@@ -66,9 +66,8 @@ object GlobalSnapshotAcceptanceManager {
 
       transactionsRefs = lastSnapshotContext.lastTxRefs ++ acceptanceResult.contextUpdate.lastTxRefs
 
-      (updatedBalancesByRewards, acceptedRewardTxs) = updateBalancesWithRewards(
-        lastSnapshotContext,
-        acceptanceResult.contextUpdate.balances,
+      (updatedBalancesByRewards, acceptedRewardTxs) = acceptRewardTxs(
+        lastSnapshotContext.balances ++ acceptanceResult.contextUpdate.balances,
         rewards
       )
 
@@ -88,7 +87,7 @@ object GlobalSnapshotAcceptanceManager {
 
     private def acceptBlocks(
       blocksForAcceptance: List[Signed[DAGBlock]],
-      lastSnapshotContext: GlobalSnapshotContext,
+      lastSnapshotContext: GlobalSnapshotInfo,
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip]
     ) = {
@@ -101,15 +100,6 @@ object GlobalSnapshotAcceptanceManager {
       )
 
       blockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context)
-    }
-
-    private def updateBalancesWithRewards(
-      lastSnapshotInfo: GlobalSnapshotContext,
-      acceptedBalances: Map[Address, Balance],
-      rewardsForAcceptance: SortedSet[RewardTransaction]
-    ) = {
-      val balances = lastSnapshotInfo.balances ++ acceptedBalances
-      acceptRewardTxs(balances, rewardsForAcceptance)
     }
 
     private def acceptRewardTxs(
