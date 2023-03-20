@@ -1,4 +1,4 @@
-package org.tessellation.infrastructure.snapshot
+package org.tessellation.sdk.infrastructure.snapshot
 
 import cats.effect.Async
 import cats.syntax.applicative._
@@ -22,13 +22,13 @@ import derevo.cats.{eqv, show}
 import derevo.derive
 import eu.timepit.refined.auto._
 
-abstract class GlobalSnapshotContextFunctions[F[_]] extends SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotContext]
+abstract class GlobalSnapshotContextFunctions[F[_]] extends SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
 
 object GlobalSnapshotContextFunctions {
   def make[F[_]: Async: KryoSerializer](snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F]) =
     new GlobalSnapshotContextFunctions[F] {
       def createContext(
-        context: GlobalSnapshotContext,
+        context: GlobalSnapshotInfo,
         lastArtifact: GlobalIncrementalSnapshot,
         signedArtifact: Signed[GlobalIncrementalSnapshot]
       ): F[GlobalSnapshotInfo] = for {
@@ -66,7 +66,7 @@ object GlobalSnapshotContextFunctions {
   }
 
   @derive(eqv)
-  case class CannotApplyStateChannelsError(returnedStateChannels: Set[StateChannelEvent]) extends NoStackTrace {
+  case class CannotApplyStateChannelsError(returnedStateChannels: Set[StateChannelOutput]) extends NoStackTrace {
 
     override def getMessage: String =
       s"Cannot build global snapshot because of returned StateChannels for addresses: ${returnedStateChannels.map(_.address).show}"

@@ -72,7 +72,8 @@ object Main
         storages.address,
         storages.block,
         storages.lastSnapshot,
-        storages.transaction
+        storages.transaction,
+        sdkServices.globalSnapshotContextFns
       )
       programs = Programs.make(sdkPrograms, p2pClient, storages, snapshotProcessor)
       healthChecks <- HealthChecks

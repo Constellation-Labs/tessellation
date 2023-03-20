@@ -29,7 +29,12 @@ import org.tessellation.sdk.infrastructure.block.processing.BlockAcceptanceManag
 import org.tessellation.sdk.infrastructure.consensus.Consensus
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.infrastructure.snapshot.services.AddressService
-import org.tessellation.sdk.modules.SdkServices
+import org.tessellation.sdk.infrastructure.snapshot.{
+  GlobalSnapshotAcceptanceManager,
+  GlobalSnapshotContextFunctions,
+  GlobalSnapshotStateChannelEventsProcessor
+}
+import org.tessellation.sdk.modules.{SdkServices, SdkValidators}
 import org.tessellation.security.SecurityProvider
 
 import org.http4s.client.Client
@@ -40,7 +45,7 @@ object Services {
     sdkServices: SdkServices[F],
     queues: Queues[F],
     storages: Storages[F],
-    validators: Validators[F],
+    validators: SdkValidators[F],
     client: Client[F],
     session: Session[F],
     seedlist: Option[Set[PeerId]],
@@ -58,7 +63,7 @@ object Services {
         .pure[F]
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
         BlockAcceptanceManager.make[F, DAGTransaction, DAGBlock](validators.blockValidator),
-        GlobalSnapshotStateChannelEventsProcessor.make[F](validators.stateChannelValidator),
+        GlobalSnapshotStateChannelEventsProcessor.make[F](validators.stateChannelValidator, sdkServices.currencySnapshotContextFns),
         cfg.collateral.amount
       )
       consensus <- GlobalSnapshotConsensus
@@ -76,7 +81,8 @@ object Services {
           cfg.environment,
           client,
           session,
-          rewards
+          rewards,
+          sdkServices.globalSnapshotContextFns
         )
       addressService = AddressService.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](storages.globalSnapshot)
       collateralService = Collateral.make[F](cfg.collateral, storages.globalSnapshot)

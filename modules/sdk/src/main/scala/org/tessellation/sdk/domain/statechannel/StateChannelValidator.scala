@@ -1,12 +1,12 @@
-package org.tessellation.domain.statechannel
+package org.tessellation.sdk.domain.statechannel
 
 import cats.data.ValidatedNec
 import cats.effect.kernel.Async
 import cats.syntax.all._
 
-import org.tessellation.domain.statechannel.StateChannelValidator.StateChannelValidationErrorOr
 import org.tessellation.ext.cats.syntax.validated._
 import org.tessellation.schema.address.Address
+import org.tessellation.sdk.domain.statechannel.StateChannelValidator.StateChannelValidationErrorOr
 import org.tessellation.security.signature.SignedValidator.SignedValidationError
 import org.tessellation.security.signature.{Signed, SignedValidator}
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}

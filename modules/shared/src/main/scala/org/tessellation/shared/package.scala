@@ -4,6 +4,7 @@ import java.security.Signature
 
 import cats.data.NonEmptyList
 
+import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.kryo._
 import org.tessellation.merkletree.MerkleTree
 import org.tessellation.schema._
@@ -80,7 +81,15 @@ package object shared {
     classOf[Tips] -> 614,
     classOf[GlobalIncrementalSnapshot] -> 615,
     classOf[MerkleTree] -> 616,
-    classOf[GlobalSnapshotInfo] -> 617
+    classOf[GlobalSnapshotInfo] -> 617,
+    classOf[CurrencyTransaction] -> 618,
+    classOf[CurrencyBlock] -> 619,
+    classOf[CurrencySnapshotInfo] -> 620,
+    classOf[CurrencySnapshot] -> 621,
+    classOf[CurrencyIncrementalSnapshot] -> 622,
+    CurrencyBlock.OrderingInstanceAsActiveTip.getClass -> 623,
+    CurrencyTransaction.OrderingInstance.getClass -> 624,
+    CurrencyBlock.OrderingInstance.getClass -> 625
   )
 
 }

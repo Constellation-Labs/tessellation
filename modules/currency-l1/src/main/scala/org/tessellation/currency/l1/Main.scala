@@ -14,7 +14,6 @@ import org.tessellation.currency.l1.cli.method.{Run, RunInitialValidator, RunVal
 import org.tessellation.currency.l1.domain.snapshot.programs.CurrencySnapshotProcessor
 import org.tessellation.currency.l1.modules.{Programs, Storages}
 import org.tessellation.currency.schema.currency._
-import org.tessellation.currency.{CurrencyKryoRegistrationIdRange, currencyKryoRegistrar}
 import org.tessellation.dag.l1.http.p2p.P2PClient
 import org.tessellation.dag.l1.infrastructure.block.rumor.handler.blockRumorHandler
 import org.tessellation.dag.l1.modules._
@@ -45,10 +44,10 @@ object Main
 
   val opts: Opts[Run] = cli.method.opts
 
-  type KryoRegistrationIdRange = CurrencyKryoRegistrationIdRange Or SdkOrSharedOrKernelRegistrationIdRange Or DagL1KryoRegistrationIdRange
+  type KryoRegistrationIdRange = SdkOrSharedOrKernelRegistrationIdRange Or DagL1KryoRegistrationIdRange
 
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
-    currencyKryoRegistrar.union(sdkKryoRegistrar).union(dagL1KryoRegistrar)
+    sdkKryoRegistrar.union(dagL1KryoRegistrar)
 
   def run(method: Run, sdk: SDK[IO]): Resource[IO, Unit] = {
     import sdk._
@@ -88,7 +87,9 @@ object Main
         storages.block,
         storages.lastGlobalSnapshot,
         storages.lastSnapshot,
-        storages.transaction
+        storages.transaction,
+        sdkServices.globalSnapshotContextFns,
+        sdkServices.currencySnapshotContextFns
       )
       programs = Programs.make[IO, CurrencyTransaction, CurrencyBlock, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
         sdkPrograms,
