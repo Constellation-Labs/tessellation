@@ -14,6 +14,7 @@ import org.tessellation.dag.l1.domain.snapshot.programs.SnapshotProcessor._
 import org.tessellation.dag.l1.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.dag.l1.infrastructure.address.storage.AddressStorage
+import org.tessellation.json.JsonBinarySerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotReference}
@@ -201,7 +202,7 @@ object CurrencySnapshotProcessor {
           .get(identifier)
           .map {
             _.toList.flatMap(binary =>
-              KryoSerializer[F].deserialize[Signed[CurrencyIncrementalSnapshot]](binary.content).toOption
+              JsonBinarySerializer.deserialize[Signed[CurrencyIncrementalSnapshot]](binary.content).toOption
             ) // TODO: currency - deserialization as full or incremental snapshot
           }
           .flatMap(NonEmptyList.fromList)
