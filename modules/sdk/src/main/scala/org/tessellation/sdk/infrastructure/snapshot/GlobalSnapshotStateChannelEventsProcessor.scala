@@ -6,6 +6,7 @@ import cats.effect.Async
 import cats.syntax.applicative._
 import cats.syntax.either._
 import cats.syntax.flatMap._
+import cats.syntax.foldable._
 import cats.syntax.functor._
 import cats.syntax.functorFilter._
 import cats.syntax.list._
@@ -18,6 +19,7 @@ import scala.collection.immutable.SortedMap
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshot, CurrencySnapshotInfo}
 import org.tessellation.ext.cats.syntax.validated._
 import org.tessellation.ext.crypto._
+import org.tessellation.json.JsonBinarySerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.GlobalSnapshotInfo
 import org.tessellation.schema.address.Address
@@ -82,48 +84,46 @@ object GlobalSnapshotStateChannelEventsProcessor {
         lastGlobalSnapshotInfo: GlobalSnapshotInfo,
         events: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]]
       ): F[SortedMap[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)]] =
-        events
-          .foldLeft(SortedMap.empty[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)].pure[F]) {
-            case (aggF, (address, binaries)) =>
-              aggF.flatMap { agg =>
-                type SuccessT = (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)
-                type LeftT =
-                  (Option[(Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)], List[Signed[StateChannelSnapshotBinary]])
-                type RightT = Option[SuccessT]
+        events.toList
+          .foldLeftM(SortedMap.empty[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)]) {
+            case (agg, (address, binaries)) =>
+              type SuccessT = (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)
+              type LeftT =
+                (Option[(Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)], List[Signed[StateChannelSnapshotBinary]])
+              type RightT = Option[SuccessT]
 
-                (lastGlobalSnapshotInfo.lastCurrencySnapshots.get(address), binaries.toList)
-                  .tailRecM[F, RightT] {
-                    case (state, Nil) => state.asRight[LeftT].pure[F]
+              (lastGlobalSnapshotInfo.lastCurrencySnapshots.get(address), binaries.toList)
+                .tailRecM[F, RightT] {
+                  case (state, Nil) => state.asRight[LeftT].pure[F]
 
-                    case (None, head :: tail) =>
-                      KryoSerializer[F]
-                        .deserialize[Signed[CurrencySnapshot]](head.value.content)
-                        .toOption
-                        .map { snapshot =>
-                          ((none[Signed[CurrencyIncrementalSnapshot]], snapshot.info).some, tail).asLeft[RightT]
-                        }
-                        .getOrElse((none[SuccessT], tail).asLeft[RightT])
-                        .pure[F]
+                  case (None, head :: tail) =>
+                    JsonBinarySerializer
+                      .deserialize[Signed[CurrencySnapshot]](head.value.content)
+                      .toOption
+                      .map { snapshot =>
+                        ((none[Signed[CurrencyIncrementalSnapshot]], snapshot.info).some, tail).asLeft[RightT]
+                      }
+                      .getOrElse((none[SuccessT], tail).asLeft[RightT])
+                      .pure[F]
 
-                    case (Some((maybeLastSnapshot, lastState)), head :: tail) =>
-                      KryoSerializer[F]
-                        .deserialize[Signed[CurrencyIncrementalSnapshot]](head.value.content)
-                        .toOption
-                        .map { snapshot =>
-                          maybeLastSnapshot
-                            .map(applyCurrencySnapshot(lastState, _, snapshot))
-                            .getOrElse(lastState.pure[F])
-                            .map { state =>
-                              ((snapshot.some, state).some, tail).asLeft[RightT]
-                            }
-                        }
-                        .getOrElse(((maybeLastSnapshot, lastState).some, tail).asLeft[RightT].pure[F])
-                  }
-                  .map {
-                    _.map(updated => agg + (address -> updated)).getOrElse(agg)
-                  }
+                  case (Some((maybeLastSnapshot, lastState)), head :: tail) =>
+                    JsonBinarySerializer
+                      .deserialize[Signed[CurrencyIncrementalSnapshot]](head.value.content)
+                      .toOption
+                      .map { snapshot =>
+                        maybeLastSnapshot
+                          .map(applyCurrencySnapshot(lastState, _, snapshot))
+                          .getOrElse(lastState.pure[F])
+                          .map { state =>
+                            ((snapshot.some, state).some, tail).asLeft[RightT]
+                          }
+                      }
+                      .getOrElse(((maybeLastSnapshot, lastState).some, tail).asLeft[RightT].pure[F])
+                }
+                .map {
+                  _.map(updated => agg + (address -> updated)).getOrElse(agg)
+                }
 
-              }
           }
 
       private def processStateChannelEvents(
