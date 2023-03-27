@@ -13,7 +13,6 @@ import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.{KeyPairGenerator, SecurityProvider}
 import org.tessellation.shared.sharedKryoRegistrar
-import org.tessellation.storage.LocalFileSystemStorage
 
 import better.files._
 import eu.timepit.refined.auto._
@@ -63,13 +62,13 @@ object GlobalSnapshotLoaderSuite extends MutableIOSuite with Checkers {
       Signed.forAsyncKryo[IO, TestObject](TestObject("test"), keyPair)
     }
 
-  test("throw an exception when there is no snapshot's file") { res =>
+  test("return none when there is no snapshot's file") { res =>
     implicit val (kryo, _) = res
     File.temporaryDirectory() { tmpDir =>
       mkLoader(tmpDir).flatMap {
         case (_, _, loader) =>
-          loader.readGlobalSnapshot(Hash.empty).attempt.map { result =>
-            expect.eql(true, result.isLeft)
+          loader.readGlobalSnapshot(Hash.empty).map { result =>
+            expect.eql(None, result)
           }
       }
     }
@@ -84,8 +83,8 @@ object GlobalSnapshotLoaderSuite extends MutableIOSuite with Checkers {
             case (_, incremental) =>
               val incrementalHash = incremental.value.hash.toOption.get
               incrementalStorage.write(incrementalHash.value, incremental) >>
-                loader.readGlobalSnapshot(incrementalHash).map { result =>
-                  expect.same(Right(incremental), result)
+                loader.readGlobalIncrementalSnapshot(incrementalHash).map { result =>
+                  expect.same(Some(incremental), result)
                 }
           }
       }
@@ -102,25 +101,8 @@ object GlobalSnapshotLoaderSuite extends MutableIOSuite with Checkers {
               val genesisHash = genesis.value.hash.toOption.get
               globalFileStorage.write(genesisHash.value, genesis) >>
                 loader.readGlobalSnapshot(genesisHash).map { result =>
-                  expect.same(Left(genesis), result)
+                  expect.same(Some(genesis), result)
                 }
-          }
-      }
-    }
-  }
-
-  test("throw an exception when file cannot be deserialized neither as GlobalIncrementalSnapshot nor GlobalSnapshot") { res =>
-    implicit val (kryo, sp) = res
-    File.temporaryDirectory() { tmpDir =>
-      mkLoader(tmpDir).flatMap {
-        case (_, _, loader) =>
-          mkTestObject.flatMap { testObject =>
-            val objectFileSystem = new LocalFileSystemStorage[IO, Object](Path(tmpDir.pathAsString)) {}
-            val objectHash = Hash.empty
-            objectFileSystem.write(objectHash.value, testObject) >>
-              loader.readGlobalSnapshot(objectHash).attempt.map { result =>
-                expect.eql(true, result.isLeft)
-              }
           }
       }
     }

@@ -1,6 +1,5 @@
 package org.tessellation
 
-import cats.ApplicativeError
 import cats.effect._
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
@@ -127,27 +126,29 @@ object Main
             NodeState.RollbackInProgress,
             NodeState.RollbackDone
           ) {
-            storages.incrementalGlobalSnapshotLocalFileSystemStorage
-              .read(m.rollbackHash)
-              .flatMap(ApplicativeError.liftFromOption[IO](_, new Throwable(s"Rollback performed but snapshot not found!")))
-              .flatMap { snapshot =>
-                GlobalSnapshotLoader.make[IO](storages.incrementalGlobalSnapshotLocalFileSystemStorage, cfg.snapshot.snapshotPath).flatMap {
-                  loader =>
-                    val snapshotTraverse = GlobalSnapshotTraverse.make[IO](loader.readGlobalSnapshot, services.snapshotContextFunctions)
-                    snapshotTraverse.computeState(snapshot).flatMap { snapshotInfo =>
-                      storages.globalSnapshot.prepend(snapshot, snapshotInfo) >>
-                        services.collateral
-                          .hasCollateral(sdk.nodeId)
-                          .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
-                        services.consensus.manager.startFacilitatingAfter(snapshot.ordinal, snapshot, snapshotInfo)
-                    }
+            GlobalSnapshotLoader.make[IO](storages.incrementalGlobalSnapshotLocalFileSystemStorage, cfg.snapshot.snapshotPath).flatMap {
+              loader =>
+                val snapshotTraverse = GlobalSnapshotTraverse
+                  .make[IO](
+                    loader.readGlobalIncrementalSnapshot(_),
+                    loader.readGlobalSnapshot(_),
+                    services.snapshotContextFunctions,
+                    m.rollbackHash
+                  )
+                snapshotTraverse.loadChain().flatMap {
+                  case (snapshotInfo, snapshot) =>
+                    storages.globalSnapshot.prepend(snapshot, snapshotInfo) >>
+                      services.collateral
+                        .hasCollateral(sdk.nodeId)
+                        .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
+                      services.consensus.manager.startFacilitatingAfter(snapshot.ordinal, snapshot, snapshotInfo)
                 }
-              } >>
-              gossipDaemon.startAsInitialValidator >>
-              services.cluster.createSession >>
-              services.session.createSession >>
-              storages.node.setNodeState(NodeState.Ready)
-          }
+            }
+          } >>
+            gossipDaemon.startAsInitialValidator >>
+            services.cluster.createSession >>
+            services.session.createSession >>
+            storages.node.setNodeState(NodeState.Ready)
         case m: RunGenesis =>
           storages.node.tryModifyState(
             NodeState.Initial,
