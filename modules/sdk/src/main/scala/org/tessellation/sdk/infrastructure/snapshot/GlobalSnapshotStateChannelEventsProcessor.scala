@@ -87,23 +87,23 @@ object GlobalSnapshotStateChannelEventsProcessor {
         events.toList
           .foldLeftM(SortedMap.empty[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)]) {
             case (agg, (address, binaries)) =>
-              type SuccessT = (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)
-              type LeftT =
+              type Success = (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)
+              type Agg =
                 (Option[(Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)], List[Signed[StateChannelSnapshotBinary]])
-              type RightT = Option[SuccessT]
+              type Result = Option[Success]
 
               (lastGlobalSnapshotInfo.lastCurrencySnapshots.get(address), binaries.toList)
-                .tailRecM[F, RightT] {
-                  case (state, Nil) => state.asRight[LeftT].pure[F]
+                .tailRecM[F, Result] {
+                  case (state, Nil) => state.asRight[Agg].pure[F]
 
                   case (None, head :: tail) =>
                     JsonBinarySerializer
                       .deserialize[Signed[CurrencySnapshot]](head.value.content)
                       .toOption
                       .map { snapshot =>
-                        ((none[Signed[CurrencyIncrementalSnapshot]], snapshot.info).some, tail).asLeft[RightT]
+                        ((none[Signed[CurrencyIncrementalSnapshot]], snapshot.info).some, tail).asLeft[Result]
                       }
-                      .getOrElse((none[SuccessT], tail).asLeft[RightT])
+                      .getOrElse((none[Success], tail).asLeft[Result])
                       .pure[F]
 
                   case (Some((maybeLastSnapshot, lastState)), head :: tail) =>
@@ -115,10 +115,10 @@ object GlobalSnapshotStateChannelEventsProcessor {
                           .map(applyCurrencySnapshot(lastState, _, snapshot))
                           .getOrElse(lastState.pure[F])
                           .map { state =>
-                            ((snapshot.some, state).some, tail).asLeft[RightT]
+                            ((snapshot.some, state).some, tail).asLeft[Result]
                           }
                       }
-                      .getOrElse(((maybeLastSnapshot, lastState).some, tail).asLeft[RightT].pure[F])
+                      .getOrElse(((maybeLastSnapshot, lastState).some, tail).asLeft[Result].pure[F])
                 }
                 .map {
                   _.map(updated => agg + (address -> updated)).getOrElse(agg)
