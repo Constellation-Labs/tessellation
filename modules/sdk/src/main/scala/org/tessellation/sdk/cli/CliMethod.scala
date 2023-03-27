@@ -12,6 +12,7 @@ import org.tessellation.sdk.config.AppEnvironment.Mainnet
 import org.tessellation.sdk.config.types._
 
 import eu.timepit.refined.auto._
+import fs2.io.file.Path
 
 trait CliMethod {
 
@@ -22,6 +23,8 @@ trait CliMethod {
   val environment: AppEnvironment
 
   val seedlistPath: Option[SeedListPath]
+
+  val trustRatingsPath: Option[Path]
 
   val httpConfig: HttpConfig
 

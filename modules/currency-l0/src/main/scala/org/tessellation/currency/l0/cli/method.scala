@@ -9,12 +9,12 @@ import org.tessellation.currency.cli.{GlobalL0PeerOpts, L0TokenIdentifierOpts}
 import org.tessellation.currency.l0.cli.http.{opts => httpOpts}
 import org.tessellation.currency.l0.config.types.AppConfig
 import org.tessellation.ext.decline.WithOpts
-import org.tessellation.ext.decline.decline._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.L0Peer
 import org.tessellation.sdk.cli._
+import org.tessellation.sdk.cli.opts.{genesisPathOpts, trustRatingsPathOpts}
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types._
 
@@ -73,12 +73,11 @@ object method {
     seedlistPath: Option[SeedListPath],
     collateralAmount: Option[Amount],
     globalL0Peer: L0Peer,
-    identifier: Address
+    identifier: Address,
+    trustRatingsPath: Option[Path]
   ) extends Run
 
   object RunGenesis extends WithOpts[RunGenesis] {
-
-    private val genesisPathOpts: Opts[Path] = Opts.argument[Path]("genesis")
 
     val opts: Opts[RunGenesis] = Opts.subcommand("run-genesis", "Run genesis mode") {
       (
@@ -92,7 +91,8 @@ object method {
         SeedListPath.opts,
         CollateralAmountOpts.opts,
         GlobalL0PeerOpts.opts,
-        L0TokenIdentifierOpts.opts
+        L0TokenIdentifierOpts.opts,
+        trustRatingsPathOpts
       ).mapN(RunGenesis.apply)
     }
   }
@@ -107,7 +107,8 @@ object method {
     seedlistPath: Option[SeedListPath],
     collateralAmount: Option[Amount],
     globalL0Peer: L0Peer,
-    identifier: Address
+    identifier: Address,
+    trustRatingsPath: Option[Path]
   ) extends Run
 
   object RunValidator extends WithOpts[RunValidator] {
@@ -123,7 +124,8 @@ object method {
         SeedListPath.opts,
         CollateralAmountOpts.opts,
         GlobalL0PeerOpts.opts,
-        L0TokenIdentifierOpts.opts
+        L0TokenIdentifierOpts.opts,
+        trustRatingsPathOpts
       ).mapN(RunValidator.apply)
     }
   }
@@ -138,7 +140,8 @@ object method {
     seedlistPath: Option[SeedListPath],
     collateralAmount: Option[Amount],
     globalL0Peer: L0Peer,
-    identifier: Address
+    identifier: Address,
+    trustRatingsPath: Option[Path]
   ) extends Run
 
   object RunRollback extends WithOpts[RunRollback] {
@@ -154,7 +157,8 @@ object method {
         SeedListPath.opts,
         CollateralAmountOpts.opts,
         GlobalL0PeerOpts.opts,
-        L0TokenIdentifierOpts.opts
+        L0TokenIdentifierOpts.opts,
+        trustRatingsPathOpts
       ).mapN(RunRollback.apply)
     }
   }

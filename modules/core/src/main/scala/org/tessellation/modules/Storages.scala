@@ -8,6 +8,7 @@ import cats.syntax.functor._
 import org.tessellation.domain.trust.storage.TrustStorage
 import org.tessellation.infrastructure.trust.storage.TrustStorage
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.trust.PeerObservationAdjustmentUpdateBatch
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import org.tessellation.sdk.config.types.SnapshotConfig
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
@@ -22,10 +23,11 @@ object Storages {
 
   def make[F[_]: Async: KryoSerializer: Supervisor](
     sdkStorages: SdkStorages[F],
-    snapshotConfig: SnapshotConfig
+    snapshotConfig: SnapshotConfig,
+    trustUpdates: Option[PeerObservationAdjustmentUpdateBatch]
   ): F[Storages[F]] =
     for {
-      trustStorage <- TrustStorage.make[F]
+      trustStorage <- TrustStorage.make[F](trustUpdates)
       incrementalGlobalSnapshotLocalFileSystemStorage <- SnapshotLocalFileSystemStorage.make[F, GlobalIncrementalSnapshot](
         snapshotConfig.incrementalSnapshotPath
       )

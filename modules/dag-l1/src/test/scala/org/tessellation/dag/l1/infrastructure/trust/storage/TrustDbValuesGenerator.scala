@@ -1,6 +1,5 @@
 package org.tessellation.dag.l1.infrastructure.trust.storage
 
-import org.tessellation.schema.TrustValueRefinement.TrustValueRefinement
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.trust._
 

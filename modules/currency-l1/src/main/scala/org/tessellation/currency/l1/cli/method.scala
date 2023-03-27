@@ -13,12 +13,14 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.L0Peer
+import org.tessellation.sdk.cli.opts.trustRatingsPathOpts
 import org.tessellation.sdk.cli.{CliMethod, CollateralAmountOpts, L0PeerOpts}
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types._
 
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto.autoRefineV
+import fs2.io.file.Path
 
 object method {
 
@@ -72,7 +74,8 @@ object method {
     globalL0Peer: L0Peer,
     identifier: Address,
     seedlistPath: Option[SeedListPath],
-    collateralAmount: Option[Amount]
+    collateralAmount: Option[Amount],
+    trustRatingsPath: Option[Path]
   ) extends Run
 
   object RunInitialValidator {
@@ -88,8 +91,9 @@ object method {
         GlobalL0PeerOpts.opts,
         L0TokenIdentifierOpts.opts,
         SeedListPath.opts,
-        CollateralAmountOpts.opts
-      ).mapN(RunInitialValidator(_, _, _, _, _, _, _, _, _, _))
+        CollateralAmountOpts.opts,
+        trustRatingsPathOpts
+      ).mapN(RunInitialValidator.apply)
     }
   }
 
@@ -103,7 +107,8 @@ object method {
     globalL0Peer: L0Peer,
     identifier: Address,
     seedlistPath: Option[SeedListPath],
-    collateralAmount: Option[Amount]
+    collateralAmount: Option[Amount],
+    trustRatingsPath: Option[Path]
   ) extends Run
 
   object RunValidator {
@@ -119,8 +124,9 @@ object method {
         GlobalL0PeerOpts.opts,
         L0TokenIdentifierOpts.opts,
         SeedListPath.opts,
-        CollateralAmountOpts.opts
-      ).mapN(RunValidator(_, _, _, _, _, _, _, _, _, _))
+        CollateralAmountOpts.opts,
+        trustRatingsPathOpts
+      ).mapN(RunValidator.apply)
     }
   }
 
