@@ -1,82 +1,60 @@
 package org.tessellation.infrastructure.snapshot
 
 import cats._
-import cats.syntax.applicative._
-import cats.syntax.either._
+import cats.data.NonEmptyChain
 import cats.syntax.flatMap._
+import cats.syntax.foldable._
 import cats.syntax.functor._
+import cats.syntax.option._
+import cats.syntax.show._
+import cats.syntax.traverse._
 
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.sdk.domain.snapshot.SnapshotContextFunctions
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
-import higherkindness.droste._
-import higherkindness.droste.data._
-import higherkindness.droste.util.DefaultTraverse
-
-sealed trait StackF[A]
-
-case class More[A](a: A, step: Signed[GlobalIncrementalSnapshot]) extends StackF[A]
-case class Done[A](result: GlobalSnapshot) extends StackF[A]
-
-object StackF {
-
-  implicit val traverse: Traverse[StackF] = new DefaultTraverse[StackF] {
-    override def traverse[G[_]: Applicative, A, B](fa: StackF[A])(f: A => G[B]): G[StackF[B]] =
-      fa match {
-        case More(a, step) => f(a).map(More(_, step))
-        case Done(r)       => (Done(r): StackF[B]).pure[G]
-      }
-  }
-}
-
 trait GlobalSnapshotTraverse[F[_]] {
-  def computeState(latest: Signed[GlobalIncrementalSnapshot]): F[GlobalSnapshotInfo]
+  def loadChain(): F[(GlobalSnapshotInfo, Signed[GlobalIncrementalSnapshot])]
 }
 
 object GlobalSnapshotTraverse {
 
-  def loadGlobalSnapshotCoalgebra[F[_]: Monad](
-    loadGlobalSnapshotFn: Hash => F[Either[Signed[GlobalSnapshot], Signed[GlobalIncrementalSnapshot]]]
-  ): CoalgebraM[F, StackF, Either[Signed[GlobalSnapshot], Signed[GlobalIncrementalSnapshot]]] = CoalgebraM {
-    case Left(globalSnapshot) => Applicative[F].pure(Done(globalSnapshot))
-    case Right(incrementalGlobalSnapshot) =>
-      def prevHash = incrementalGlobalSnapshot.lastSnapshotHash
-
-      loadGlobalSnapshotFn(prevHash).map(More(_, incrementalGlobalSnapshot))
-  }
-
-  def computeStateAlgebra[F[_]: MonadThrow: KryoSerializer](
-    applyGlobalSnapshotFn: (
-      GlobalSnapshotInfo,
-      GlobalIncrementalSnapshot,
-      Signed[GlobalIncrementalSnapshot]
-    ) => F[GlobalSnapshotInfo]
-  ): GAlgebraM[F, StackF, Attr[StackF, GlobalSnapshotInfo], GlobalSnapshotInfo] = GAlgebraM {
-    case Done(globalSnapshot) => GlobalSnapshotInfoV1.toGlobalSnapshotInfo(globalSnapshot.info).pure[F]
-    case More(info :< Done(globalSnapshot), incrementalSnapshot) =>
-      GlobalIncrementalSnapshot.fromGlobalSnapshot[F](globalSnapshot).flatMap {
-        applyGlobalSnapshotFn(info, _, incrementalSnapshot)
-      }
-    case More(info :< More(_ :< _, previousIncrementalSnapshot), incrementalSnapshot) =>
-      applyGlobalSnapshotFn(info, previousIncrementalSnapshot, incrementalSnapshot)
-  }
-
-  def make[F[_]: MonadThrow: KryoSerializer](
-    loadGlobalSnapshotFn: Hash => F[Either[Signed[GlobalSnapshot], Signed[GlobalIncrementalSnapshot]]],
-    snapshotInfoFunctions: SnapshotContextFunctions[F, GlobalSnapshotArtifact, GlobalSnapshotContext]
+  def make[F[_]: MonadThrow](
+    loadInc: Hash => F[Option[Signed[GlobalIncrementalSnapshot]]],
+    loadFull: Hash => F[Option[Signed[GlobalSnapshot]]],
+    contextFns: SnapshotContextFunctions[F, GlobalSnapshotArtifact, GlobalSnapshotContext],
+    rollbackHash: Hash
   ): GlobalSnapshotTraverse[F] =
     new GlobalSnapshotTraverse[F] {
 
-      def computeState(latest: Signed[GlobalIncrementalSnapshot]): F[GlobalSnapshotInfo] =
-        scheme
-          .ghyloM(
-            computeStateAlgebra(snapshotInfoFunctions.createContext).gather(Gather.histo),
-            loadGlobalSnapshotCoalgebra(loadGlobalSnapshotFn).scatter(Scatter.ana)
-          )
-          .apply(latest.asRight[Signed[GlobalSnapshot]])
+      def loadChain(): F[(GlobalSnapshotInfo, Signed[GlobalIncrementalSnapshot])] = {
+        def loadFullOrErr(h: Hash) = loadFull(h).flatMap(_.liftTo[F](new Throwable(s"Global snapshot not found, hash=${h.show}")))
+        def loadIncOrErr(h: Hash) = loadInc(h).flatMap(_.liftTo[F](new Throwable(s"Incremental snapshot not found, hash=${h.show}")))
+
+        def hashChain(h: Hash): F[NonEmptyChain[Hash]] =
+          loadInc(h).flatMap {
+            _.traverse { inc =>
+              hashChain(inc.lastSnapshotHash).map(_.append(h))
+            }.map(_.getOrElse(NonEmptyChain.one(h)))
+          }
+
+        for {
+          rollbackInc <- loadIncOrErr(rollbackHash)
+          (globalHash, incHashesNec) <- hashChain(rollbackInc.lastSnapshotHash).map { nec =>
+            (nec.head, NonEmptyChain.fromChainAppend(nec.tail, rollbackHash))
+          }
+          global <- loadFullOrErr(globalHash)
+          firstInc <- loadIncOrErr(incHashesNec.head)
+
+          (info, lastInc) <- incHashesNec.tail.foldLeftM((GlobalSnapshotInfoV1.toGlobalSnapshotInfo(global.info), firstInc)) {
+            (acc, hash) =>
+              loadIncOrErr(hash).flatMap { inc =>
+                contextFns.createContext(acc._1, acc._2, inc).map(_ -> inc)
+              }
+          }
+        } yield (info, lastInc)
+      }
     }
 
 }
