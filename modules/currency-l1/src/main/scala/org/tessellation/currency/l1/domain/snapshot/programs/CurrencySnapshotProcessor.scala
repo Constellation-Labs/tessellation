@@ -101,9 +101,9 @@ object CurrencySnapshotProcessor {
           case Some(Validated.Valid(hashedSnapshots)) =>
             prepareIntermediateStorages(addressStorage, blockStorage, lastCurrencySnapshotStorage, transactionStorage).flatMap {
               case (as, bs, lcss, ts) =>
-                type SuccessT = NonEmptyList[Alignment]
-                type LeftT = (NonEmptyList[Hashed[CurrencyIncrementalSnapshot]], List[Alignment])
-                type RightT = Option[SuccessT]
+                type Success = NonEmptyList[Alignment]
+                type Agg = (NonEmptyList[Hashed[CurrencyIncrementalSnapshot]], List[Alignment])
+                type Result = Option[Success]
 
                 lastCurrencySnapshotStorage.getCombined.flatMap {
                   case None =>
@@ -115,7 +115,7 @@ object CurrencySnapshotProcessor {
                         checkAlignment(toPass, bs, lcss).map { alignment =>
                           NonEmptyList.one(alignment).some
                         }
-                      case None => (new Throwable("unexpected state")).raiseError[F, Option[SuccessT]]
+                      case None => (new Throwable("unexpected state")).raiseError[F, Option[Success]]
                     }
 
                   case Some((_, _)) =>
@@ -125,18 +125,18 @@ object CurrencySnapshotProcessor {
 
                         checkAlignment(toPass, bs, lcss).flatMap {
                           case _: Ignore =>
-                            Applicative[F].pure(none[SuccessT].asRight[LeftT])
+                            Applicative[F].pure(none[Success].asRight[Agg])
                           case alignment =>
                             processAlignment(alignment, bs, ts, lcss, as).as {
                               val updatedAgg = agg :+ alignment
 
                               NonEmptyList.fromList(nextSnapshots) match {
                                 case Some(next) =>
-                                  (next, updatedAgg).asLeft[RightT]
+                                  (next, updatedAgg).asLeft[Result]
                                 case None =>
                                   NonEmptyList
                                     .fromList(updatedAgg)
-                                    .asRight[LeftT]
+                                    .asRight[Agg]
                               }
                             }
                         }
