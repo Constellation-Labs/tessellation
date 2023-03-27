@@ -10,6 +10,7 @@ import org.tessellation.infrastructure.snapshot.GlobalSnapshotStorage
 import org.tessellation.infrastructure.trust.storage.TrustStorage
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.GlobalSnapshot
+import org.tessellation.schema.trust.PeerObservationAdjustmentUpdateBatch
 import org.tessellation.sdk.config.types.SnapshotConfig
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tessellation.sdk.domain.collateral.LatestBalances
@@ -25,10 +26,11 @@ object Storages {
   def make[F[_]: Async: KryoSerializer: Supervisor](
     sdkStorages: SdkStorages[F],
     snapshotConfig: SnapshotConfig,
-    maybeRollbackHash: Option[Hash]
+    maybeRollbackHash: Option[Hash],
+    trustUpdates: Option[PeerObservationAdjustmentUpdateBatch]
   ): F[Storages[F]] =
     for {
-      trustStorage <- TrustStorage.make[F]
+      trustStorage <- TrustStorage.make[F](trustUpdates)
       globalSnapshotLocalFileSystemStorage <- SnapshotLocalFileSystemStorage.make[F, GlobalSnapshot](
         snapshotConfig.snapshotPath
       )

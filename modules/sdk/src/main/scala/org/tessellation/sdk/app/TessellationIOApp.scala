@@ -18,12 +18,14 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.trust.PeerObservationAdjustmentUpdateBatch
 import org.tessellation.sdk.cli.CliMethod
 import org.tessellation.sdk.http.p2p.SdkP2PClient
 import org.tessellation.sdk.infrastructure.cluster.services.Session
 import org.tessellation.sdk.infrastructure.logs.LoggerConfigurator
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.infrastructure.seedlist.{Loader => SeedlistLoader}
+import org.tessellation.sdk.infrastructure.trust.TrustRatingCsvLoader
 import org.tessellation.sdk.modules._
 import org.tessellation.sdk.resources.SdkResources
 import org.tessellation.sdk.{sdkKryoRegistrar, _}
@@ -104,6 +106,9 @@ abstract class TessellationIOApp[A <: CliMethod](
                           _seedlist <- method.seedlistPath
                             .fold(none[Set[PeerId]].pure[IO])(SeedlistLoader.make[IO].load(_).map(_.some))
                             .asResource
+                          _trustRatings <- method.trustRatingsPath
+                            .fold(none[PeerObservationAdjustmentUpdateBatch].pure[IO])(TrustRatingCsvLoader.make[IO].load(_).map(_.some))
+                            .asResource
                           _ <- _seedlist
                             .map(_.size)
                             .fold(logger.info(s"Seedlist disabled.")) { size =>
@@ -155,6 +160,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                             val keyPair = _keyPair
                             val seedlist = _seedlist
                             val generation = _generation
+                            val trustRatings = _trustRatings
 
                             val sdkResources = res
                             val sdkP2PClient = p2pClient

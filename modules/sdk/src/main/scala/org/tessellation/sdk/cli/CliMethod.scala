@@ -22,6 +22,8 @@ trait CliMethod {
 
   val seedlistPath: Option[Path]
 
+  val trustRatingsPath: Option[Path]
+
   val httpConfig: HttpConfig
 
   val stateAfterJoining: NodeState

@@ -7,6 +7,7 @@ import cats.effect.std.{Random, Supervisor}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.trust.PeerObservationAdjustmentUpdateBatch
 import org.tessellation.sdk.http.p2p.SdkP2PClient
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.modules._
@@ -26,6 +27,7 @@ trait SDK[F[_]] {
   lazy val nodeId = PeerId.fromPublic(keyPair.getPublic)
   val generation: Generation
   val seedlist: Option[Set[PeerId]]
+  val trustRatings: Option[PeerObservationAdjustmentUpdateBatch]
 
   val sdkResources: SdkResources[F]
   val sdkP2PClient: SdkP2PClient[F]

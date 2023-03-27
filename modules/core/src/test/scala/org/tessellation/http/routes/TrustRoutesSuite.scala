@@ -11,11 +11,11 @@ import org.tessellation.ext.kryo._
 import org.tessellation.infrastructure.trust.storage.TrustStorage
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.generators._
-import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.trust.{InternalTrustUpdate, InternalTrustUpdateBatch, TrustInfo}
+import org.tessellation.schema.trust.{PeerObservationAdjustmentUpdate, PeerObservationAdjustmentUpdateBatch}
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.sdkKryoRegistrar
 
+import eu.timepit.refined.auto._
 import io.circe.Encoder
 import org.http4s.Method._
 import org.http4s._
@@ -34,15 +34,14 @@ object TrustRoutesSuite extends HttpSuite {
       .forAsync[IO](sdkKryoRegistrar.union(coreKryoRegistrar))
       .use { implicit kryoPool =>
         for {
-          trust <- Ref[IO].of(Map.empty[PeerId, TrustInfo])
-          ts = TrustStorage.make[IO](trust)
+          ts <- TrustStorage.make[IO]
           gossip = new Gossip[IO] {
             override def spread[A: TypeTag: Encoder](rumorContent: A): IO[Unit] = IO.unit
             override def spreadCommon[A: TypeTag: Encoder](rumorContent: A): IO[Unit] = IO.unit
           }
           tp = TrustPush.make[IO](ts, gossip)
           _ <- ts.updateTrust(
-            InternalTrustUpdateBatch(List(InternalTrustUpdate(peer.id, 0.5)))
+            PeerObservationAdjustmentUpdateBatch(List(PeerObservationAdjustmentUpdate(peer.id, 0.5)))
           )
           routes = TrustRoutes[IO](ts, tp).p2pRoutes
         } yield expectHttpStatus(routes, req)(Status.Ok)
