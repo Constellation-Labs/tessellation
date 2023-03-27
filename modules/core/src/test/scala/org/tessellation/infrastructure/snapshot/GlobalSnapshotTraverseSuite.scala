@@ -136,12 +136,19 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
 
   def gst(
     globalSnapshot: Hashed[GlobalSnapshot],
-    incrementalSnapshots: List[Hashed[GlobalIncrementalSnapshot]]
-  )(implicit K: KryoSerializer[IO], S: SecurityProvider[IO], M: Metrics[IO]) = {
-    def loadGlobalSnapshot(hash: Hash): IO[Either[Signed[GlobalSnapshot], Signed[GlobalIncrementalSnapshot]]] =
+    incrementalSnapshots: List[Hashed[GlobalIncrementalSnapshot]],
+    rollbackHash: Hash
+  )(implicit K: KryoSerializer[IO], S: SecurityProvider[IO]) = {
+    def loadGlobalSnapshot(hash: Hash): IO[Option[Signed[GlobalSnapshot]]] =
       hash match {
-        case h if h === globalSnapshot.hash => Left(globalSnapshot.signed).pure[IO]
-        case _ => Right(incrementalSnapshots.map(snapshot => (snapshot.hash, snapshot)).toMap.get(hash).get.signed).pure[IO]
+        case h if h === globalSnapshot.hash => Some(globalSnapshot.signed).pure[IO]
+        case _                              => None.pure[IO]
+      }
+    def loadGlobalIncrementalSnapshot(hash: Hash): IO[Option[Signed[GlobalIncrementalSnapshot]]] =
+      hash match {
+        case h if h =!= globalSnapshot.hash =>
+          Some(incrementalSnapshots.map(snapshot => (snapshot.hash, snapshot)).toMap.get(hash).get.signed).pure[IO]
+        case _ => None.pure[IO]
       }
 
     val signedValidator = SignedValidator.make[IO]
@@ -162,15 +169,15 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
     val stateChannelProcessor = GlobalSnapshotStateChannelEventsProcessor.make[IO](stateChannelValidator, currencySnapshotContextFns)
     val snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make[IO](blockAcceptanceManager, stateChannelProcessor, Amount.empty)
     val snapshotContextFunctions = GlobalSnapshotContextFunctions.make[IO](snapshotAcceptanceManager)
-    GlobalSnapshotTraverse.make[IO](loadGlobalSnapshot, snapshotContextFunctions)
+    GlobalSnapshotTraverse.make[IO](loadGlobalIncrementalSnapshot, loadGlobalSnapshot, snapshotContextFunctions, rollbackHash)
   }
 
   test("can compute state for given incremental global snapshot") { res =>
     implicit val (kryo, sp, metrics, _) = res
 
     mkSnapshots(List.empty, balances).flatMap { snapshots =>
-      gst(snapshots._1, snapshots._2.toList).computeState(snapshots._2.head.signed)
-    }.map(state => expect.eql(GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.from(balances), SortedMap.empty), state))
+      gst(snapshots._1, snapshots._2.toList, snapshots._2.head.hash).loadChain()
+    }.map(state => expect.eql(GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.from(balances), SortedMap.empty), state._1))
   }
 
   test("computed state contains last refs and preserve total amount of balances when no fees or rewards ") { res =>
@@ -183,8 +190,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           chunkedDags,
           addresses.map(address => address -> Balance(NonNegLong(1000L))).toMap
         )
-        traverser = gst(global, incrementals.toList)
-        info <- traverser.computeState(incrementals.last.signed)
+        traverser = gst(global, incrementals.toList, incrementals.last.hash)
+        (info, _) <- traverser.loadChain()
         totalBalance = info.balances.values.map(Balance.toAmount(_)).reduce(_.plus(_).toOption.get)
         lastTxRefs <- lastTxns.traverse(TransactionReference.of(_))
       } yield expect.eql((info.lastTxRefs, Amount(NonNegLong.unsafeFrom(addresses.size * 1000L))), (lastTxRefs, totalBalance))
@@ -202,8 +209,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           chunkedDags,
           addresses.map(address => address -> Balance(NonNegLong(1000L))).toMap
         )
-        traverser = gst(global, incrementals.toList)
-        info <- traverser.computeState(incrementals.last.signed)
+        traverser = gst(global, incrementals.toList, incrementals.last.hash)
+        (info, _) <- traverser.loadChain()
         totalBalance = info.balances.values.map(Balance.toAmount(_)).reduce(_.plus(_).toOption.get)
         lastTxRefs <- lastTxns.traverse(TransactionReference.of(_))
       } yield
