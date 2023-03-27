@@ -2,7 +2,7 @@ package org.tessellation.security.signature
 
 import cats.Order
 import cats.data.NonEmptySet._
-import cats.data.{NonEmptySet, ValidatedNec}
+import cats.data.{NonEmptyList, NonEmptySet, ValidatedNec}
 import cats.effect.Async
 import cats.syntax.all._
 
@@ -37,7 +37,7 @@ trait SignedValidator[F[_]] {
 
   def isSignedExclusivelyBy[A <: AnyRef](
     signed: Signed[A],
-    minSignatureCount: Address
+    signerAddress: Address
   ): F[SignedValidationErrorOr[Signed[A]]]
 
 }
@@ -59,7 +59,7 @@ object SignedValidator {
     def validateUniqueSigners[A <: AnyRef](
       signed: Signed[A]
     ): SignedValidationErrorOr[Signed[A]] =
-      duplicatedValues(signed.proofs.map(_.id)).toNel
+      duplicatedValues(signed.proofs.toNonEmptyList.map(_.id)).toNel
         .map(_.toNes)
         .map(DuplicateSigners)
         .toInvalidNec(signed)
@@ -89,8 +89,8 @@ object SignedValidator {
         signed.validNec[SignedValidationError].pure[F]
       )
 
-    private def duplicatedValues[B: Order](values: NonEmptySet[B]): List[B] =
-      values.groupBy(identity).toNel.toList.mapFilter {
+    private def duplicatedValues[B: Order](values: NonEmptyList[B]): List[B] =
+      values.groupBy(identity).toList.mapFilter {
         case (value, occurrences) =>
           if (occurrences.tail.nonEmpty)
             value.some
