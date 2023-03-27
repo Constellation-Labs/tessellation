@@ -51,7 +51,7 @@ object Main
       p2pClient = P2PClient.make[IO](sdkP2PClient, sdkResources.client, sdkServices.session)
       queues <- Queues.make[IO](sdkQueues).asResource
       maybeRollbackHash = Option(method).collect { case rr: RunRollback => rr.rollbackHash }
-      storages <- Storages.make[IO](sdkStorages, cfg.snapshot, maybeRollbackHash).asResource
+      storages <- Storages.make[IO](sdkStorages, cfg.snapshot, maybeRollbackHash, trustRatings).asResource
       validators = Validators.make[IO](seedlist)
       services <- Services
         .make[IO](

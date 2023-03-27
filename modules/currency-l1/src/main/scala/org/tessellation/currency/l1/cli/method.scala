@@ -9,11 +9,11 @@ import org.tessellation.currency.cli.{GlobalL0PeerOpts, L0TokenIdentifierOpts}
 import org.tessellation.dag.l1.cli.http
 import org.tessellation.dag.l1.config.types.AppConfig
 import org.tessellation.dag.l1.domain.consensus.block.config.ConsensusConfig
-import org.tessellation.ext.decline.decline._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.L0Peer
+import org.tessellation.sdk.cli.opts.{seedlistPathOpts, trustRatingsPathOpts}
 import org.tessellation.sdk.cli.{CliMethod, CollateralAmountOpts, L0PeerOpts}
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types._
@@ -74,11 +74,11 @@ object method {
     globalL0Peer: L0Peer,
     identifier: Address,
     seedlistPath: Option[Path],
-    collateralAmount: Option[Amount]
+    collateralAmount: Option[Amount],
+    trustRatingsPath: Option[Path]
   ) extends Run
 
   object RunInitialValidator {
-    val seedlistPathOpts: Opts[Option[Path]] = Opts.option[Path]("seedlist", "").orNone
 
     val opts = Opts.subcommand("run-initial-validator", "Run initial validator mode") {
       (
@@ -91,8 +91,9 @@ object method {
         GlobalL0PeerOpts.opts,
         L0TokenIdentifierOpts.opts,
         seedlistPathOpts,
-        CollateralAmountOpts.opts
-      ).mapN(RunInitialValidator(_, _, _, _, _, _, _, _, _, _))
+        CollateralAmountOpts.opts,
+        trustRatingsPathOpts
+      ).mapN(RunInitialValidator.apply)
     }
   }
 
@@ -106,11 +107,11 @@ object method {
     globalL0Peer: L0Peer,
     identifier: Address,
     seedlistPath: Option[Path],
-    collateralAmount: Option[Amount]
+    collateralAmount: Option[Amount],
+    trustRatingsPath: Option[Path]
   ) extends Run
 
   object RunValidator {
-    val seedlistPathOpts: Opts[Option[Path]] = Opts.option[Path]("seedlist", "").orNone
 
     val opts = Opts.subcommand("run-validator", "Run validator mode") {
       (
@@ -123,8 +124,9 @@ object method {
         GlobalL0PeerOpts.opts,
         L0TokenIdentifierOpts.opts,
         seedlistPathOpts,
-        CollateralAmountOpts.opts
-      ).mapN(RunValidator(_, _, _, _, _, _, _, _, _, _))
+        CollateralAmountOpts.opts,
+        trustRatingsPathOpts
+      ).mapN(RunValidator.apply)
     }
   }
 

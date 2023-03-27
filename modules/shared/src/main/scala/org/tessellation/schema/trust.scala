@@ -3,27 +3,30 @@ package org.tessellation.schema
 import cats.Show
 import cats.syntax.either._
 
-import org.tessellation.schema.TrustValueRefinement.TrustValueRefinement
 import org.tessellation.schema.peer.PeerId
 
-import derevo.cats.show
+import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import eu.timepit.refined.api.Refined
 import eu.timepit.refined.auto._
+import eu.timepit.refined.cats._
+import eu.timepit.refined.numeric.Interval
 import eu.timepit.refined.refineV
+import io.circe.refined._
 import io.estatico.newtype.macros.newtype
 import io.getquill.MappedEncoding
 
 object trust {
 
-  type TrustValue = Double Refined TrustValueRefinement
+  type TrustValueRefinement = Interval.Closed[-1.0, 1.0]
+  type TrustValueRefined = Double Refined TrustValueRefinement
 
-  implicit def showTrustValue: Show[TrustValue] = s => s"TrustValue(value=${s.value})"
+  implicit def showTrustValue: Show[TrustValueRefined] = s => s"TrustValue(value=${s.value})"
 
   @derive(show)
   @newtype
-  case class Score(value: TrustValue)
+  case class Score(value: TrustValueRefined)
 
   object Score {
 
@@ -40,7 +43,7 @@ object trust {
 
   @derive(show)
   @newtype
-  case class Rating(value: TrustValue)
+  case class Rating(value: TrustValueRefined)
 
   object Rating {
 
@@ -57,7 +60,7 @@ object trust {
 
   @derive(show)
   @newtype
-  case class ObservationAdjustment(value: TrustValue)
+  case class ObservationAdjustment(value: TrustValueRefined)
 
   object ObservationAdjustment {
 
@@ -81,11 +84,11 @@ object trust {
     observationAdjustment: Option[ObservationAdjustment]
   )
 
-  @derive(decoder, encoder, show)
-  case class InternalTrustUpdate(id: PeerId, trust: Double)
+  @derive(decoder, encoder, show, eqv)
+  case class PeerObservationAdjustmentUpdate(id: PeerId, trust: TrustValueRefined)
 
-  @derive(decoder, encoder, show)
-  case class InternalTrustUpdateBatch(updates: List[InternalTrustUpdate])
+  @derive(decoder, encoder, show, eqv)
+  case class PeerObservationAdjustmentUpdateBatch(updates: List[PeerObservationAdjustmentUpdate])
 
   @derive(decoder, encoder, show)
   case class TrustInfo(

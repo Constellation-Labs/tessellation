@@ -12,6 +12,7 @@ import org.tessellation.ext.decline.decline._
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.node.NodeState
+import org.tessellation.sdk.cli.opts.{genesisPathOpts, seedlistPathOpts, trustRatingsPathOpts}
 import org.tessellation.sdk.cli.{CliMethod, CollateralAmountOpts, snapshot}
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types._
@@ -79,14 +80,11 @@ object method {
     genesisPath: Path,
     seedlistPath: Option[Path],
     collateralAmount: Option[Amount],
-    startingEpochProgress: EpochProgress
+    startingEpochProgress: EpochProgress,
+    trustRatingsPath: Option[Path]
   ) extends Run
 
   object RunGenesis extends WithOpts[RunGenesis] {
-
-    val genesisPathOpts: Opts[Path] = Opts.argument[Path]("genesis")
-
-    val seedlistPathOpts: Opts[Option[Path]] = Opts.option[Path]("seedlist", "").orNone
 
     val startingEpochProgressOpts: Opts[EpochProgress] = Opts
       .option[NonNegLong]("startingEpochProgress", "Set starting progress for rewarding at the specific epoch")
@@ -105,7 +103,8 @@ object method {
         genesisPathOpts,
         seedlistPathOpts,
         CollateralAmountOpts.opts,
-        startingEpochProgressOpts
+        startingEpochProgressOpts,
+        trustRatingsPathOpts
       ).mapN(RunGenesis.apply)
     }
   }
@@ -120,12 +119,11 @@ object method {
     snapshotConfig: SnapshotConfig,
     seedlistPath: Option[Path],
     collateralAmount: Option[Amount],
-    rollbackHash: Hash
+    rollbackHash: Hash,
+    trustRatingsPath: Option[Path]
   ) extends Run
 
   object RunRollback extends WithOpts[RunRollback] {
-
-    val seedlistPathOpts: Opts[Option[Path]] = Opts.option[Path]("seedlist", "").orNone
 
     val rollbackHashOpts: Opts[Hash] = Opts.argument[Hash]("rollbackHash")
 
@@ -140,7 +138,8 @@ object method {
         snapshot.opts,
         seedlistPathOpts,
         CollateralAmountOpts.opts,
-        rollbackHashOpts
+        rollbackHashOpts,
+        trustRatingsPathOpts
       ).mapN(RunRollback.apply)
     }
   }
@@ -154,12 +153,11 @@ object method {
     environment: AppEnvironment,
     snapshotConfig: SnapshotConfig,
     seedlistPath: Option[Path],
-    collateralAmount: Option[Amount]
+    collateralAmount: Option[Amount],
+    trustRatingsPath: Option[Path]
   ) extends Run
 
   object RunValidator extends WithOpts[RunValidator] {
-
-    val seedlistPathOpts: Opts[Option[Path]] = Opts.option[Path]("seedlist", "").orNone
 
     val opts: Opts[RunValidator] = Opts.subcommand("run-validator", "Run validator mode") {
       (
@@ -171,7 +169,8 @@ object method {
         AppEnvironment.opts,
         snapshot.opts,
         seedlistPathOpts,
-        CollateralAmountOpts.opts
+        CollateralAmountOpts.opts,
+        trustRatingsPathOpts
       ).mapN(RunValidator.apply)
     }
   }
