@@ -186,7 +186,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
 
   def mkStateChannelOutput(keyPair: KeyPair, hash: Option[Hash] = None)(implicit S: SecurityProvider[IO], K: KryoSerializer[IO]) = for {
     content <- Random.scalaUtilRandom[IO].flatMap(_.nextString(10))
-    binary <- StateChannelSnapshotBinary(hash.getOrElse(Hash.empty), content.getBytes).pure[IO]
+    binary <- StateChannelSnapshotBinary(hash.getOrElse(Hash.empty), content.getBytes, SnapshotFee.MinValue).pure[IO]
     signedSC <- forAsyncKryo(binary, keyPair)
   } yield StateChannelOutput(keyPair.getPublic.toAddress, signedSC)
 

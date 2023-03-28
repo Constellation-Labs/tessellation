@@ -8,6 +8,7 @@ import cats.syntax.validated._
 
 import scala.collection.immutable.SortedSet
 
+import org.tessellation.currency.schema.currency.SnapshotFee
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.address.Address
@@ -35,7 +36,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       SecurityProvider.forAsync[IO].map((ks, _))
     }
 
-  private val testStateChannel = StateChannelSnapshotBinary(Hash.empty, "test".getBytes)
+  private val testStateChannel = StateChannelSnapshotBinary(Hash.empty, "test".getBytes, SnapshotFee.MinValue)
 
   test("should succeed when state channel is signed correctly and binary size is within allowed maximum") { res =>
     implicit val (kryo, sp) = res
@@ -115,7 +116,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
   test("should fail when binary size exceeds max allowed size") { res =>
     implicit val (kryo, sp) = res
 
-    val validator = mkValidator(maxBinarySizeInBytes = 425)
+    val validator = mkValidator(maxBinarySizeInBytes = 443)
 
     val signedSCBinary = Signed(
       testStateChannel,
@@ -124,25 +125,25 @@ object StateChannelValidatorSuite extends MutableIOSuite {
           SignatureProof(
             Id(
               Hex(
-                "5ba2acdc046d9561f6310dafe0156ea7ec8c6fe3d9fdf9f19981accd52b56a807e61861593a067f2e3d27be0353155e88d5571975ac10fd033223a9c0e68e52c"
+                "c4960e903a9d05662b83332a9ee7059ec214e6d587ae5d80f97924bb1519be7ed60116887ce90cff6134697df3faebdfb6a6a04c06a7270b90685532d2fa85e1"
               )
             ),
             Signature(
               Hex(
-                "3045022100bdb17bf6c65dd885a8ad5db4643fc9744c9dcbad0acc56024347f3cc61eeca8d022047c83e0a5f4d82d3150266e5b2ea335d7595a19627df7ee1256ea8bec9ab76a2"
+                "304402201cf4a09b3a693f2627ca94df9715bb8b119c8518e79128b88d4d6531f01dac5502204f377d700ebb8f336f8eedb1a9dde9f2aacca4132612d6528aea4ec2570d89f3"
               )
             )
           )
         )
       )
     )
-    val scOutput = StateChannelOutput(Address("DAG1cjrte5wTNmZvZ3hAfAyayDzGcfxFGB2XCwPf"), signedSCBinary)
+    val scOutput = StateChannelOutput(Address("DAG7EJu17WPtbKMP5kNBWGpp3iVtmNwDeS6E4ge8"), signedSCBinary)
 
     validator
       .validate(scOutput)
       .map(
         expect.same(
-          StateChannelValidator.BinaryExceedsMaxAllowedSize(425, 426).invalidNec,
+          StateChannelValidator.BinaryExceedsMaxAllowedSize(443, 444).invalidNec,
           _
         )
       )
