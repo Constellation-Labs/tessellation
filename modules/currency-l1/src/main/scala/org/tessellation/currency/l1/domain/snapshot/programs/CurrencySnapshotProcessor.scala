@@ -28,7 +28,14 @@ import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 sealed abstract class CurrencySnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider]
-    extends SnapshotProcessor[F, CurrencyTransaction, CurrencyBlock, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
+    extends SnapshotProcessor[
+      F,
+      CurrencyTransaction,
+      CurrencyBlock,
+      CurrencySnapshotStateProof,
+      CurrencyIncrementalSnapshot,
+      CurrencySnapshotInfo
+    ]
 
 object CurrencySnapshotProcessor {
 

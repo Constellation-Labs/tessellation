@@ -35,6 +35,7 @@ abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
       F,
       CurrencyTransaction,
       CurrencyBlock,
+      CurrencySnapshotStateProof,
       CurrencySnapshotEvent,
       CurrencySnapshotArtifact,
       CurrencySnapshotContext,

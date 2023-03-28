@@ -34,7 +34,7 @@ import org.tessellation.schema.Block.BlockConstructor
 import org.tessellation.schema._
 import org.tessellation.schema.height.Height
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo}
+import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.schema.transaction.Transaction
 import org.tessellation.security.{Hashed, SecurityProvider}
 
@@ -46,20 +46,21 @@ class StateChannel[
   F[_]: Async: KryoSerializer: SecurityProvider: Random,
   T <: Transaction: Encoder: Order: Ordering,
   B <: Block[T]: Encoder: TypeTag,
+  P <: StateProof,
   S <: Snapshot[T, B],
-  SI <: SnapshotInfo
+  SI <: SnapshotInfo[P]
 ](
   appConfig: AppConfig,
   blockAcceptanceS: Semaphore[F],
   blockCreationS: Semaphore[F],
   blockStoringS: Semaphore[F],
   keyPair: KeyPair,
-  p2PClient: P2PClient[F, T, B, S, SI],
-  programs: Programs[F, T, B, S, SI],
+  p2PClient: P2PClient[F, T, B],
+  programs: Programs[F, T, B, P, S, SI],
   queues: Queues[F, T, B],
   selfId: PeerId,
-  services: Services[F, T, B, S, SI],
-  storages: Storages[F, T, B, S, SI],
+  services: Services[F, T, B, P, S, SI],
+  storages: Storages[F, T, B, P, S, SI],
   validators: Validators[F, T, B]
 )(implicit blockConstructor: BlockConstructor[T, B]) {
 
@@ -269,25 +270,26 @@ object StateChannel {
     F[_]: Async: KryoSerializer: SecurityProvider: Random,
     T <: Transaction: Encoder: Order: Ordering,
     B <: Block[T]: Encoder: TypeTag,
+    P <: StateProof,
     S <: Snapshot[T, B],
-    SI <: SnapshotInfo
+    SI <: SnapshotInfo[P]
   ](
     appConfig: AppConfig,
     keyPair: KeyPair,
-    p2PClient: P2PClient[F, T, B, S, SI],
-    programs: Programs[F, T, B, S, SI],
+    p2PClient: P2PClient[F, T, B],
+    programs: Programs[F, T, B, P, S, SI],
     queues: Queues[F, T, B],
     selfId: PeerId,
-    services: Services[F, T, B, S, SI],
-    storages: Storages[F, T, B, S, SI],
+    services: Services[F, T, B, P, S, SI],
+    storages: Storages[F, T, B, P, S, SI],
     validators: Validators[F, T, B]
-  )(implicit blockConstructor: BlockConstructor[T, B]): F[StateChannel[F, T, B, S, SI]] =
+  )(implicit blockConstructor: BlockConstructor[T, B]): F[StateChannel[F, T, B, P, S, SI]] =
     for {
       blockAcceptanceS <- Semaphore(1)
       blockCreationS <- Semaphore(1)
       blockStoringS <- Semaphore(1)
     } yield
-      new StateChannel[F, T, B, S, SI](
+      new StateChannel[F, T, B, P, S, SI](
         appConfig,
         blockAcceptanceS,
         blockCreationS,

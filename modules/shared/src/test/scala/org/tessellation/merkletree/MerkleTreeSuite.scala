@@ -20,7 +20,7 @@ object MerkleTreeSuite extends SimpleIOSuite with Checkers {
     val hash = Hash("a")
     val mt = MerkleTree.from(NonEmptyList.one(hash))
 
-    val expected = MerkleTree.hashLeaf(hash)
+    val expected = MerkleRoot(mt.leafCount, MerkleTree.hashLeaf(hash))
 
     expect(mt.getRoot === expected)
   }

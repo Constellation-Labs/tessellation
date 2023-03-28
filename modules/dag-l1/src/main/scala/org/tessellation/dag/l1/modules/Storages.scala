@@ -15,7 +15,7 @@ import org.tessellation.dag.l1.infrastructure.address.storage.AddressStorage
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.Block
 import org.tessellation.schema.peer.L0Peer
-import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo}
+import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.schema.transaction.Transaction
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, L0ClusterStorage, SessionStorage}
 import org.tessellation.sdk.domain.collateral.LatestBalances
@@ -27,10 +27,13 @@ import org.tessellation.sdk.modules.SdkStorages
 
 object Storages {
 
-  def make[F[_]: Async: Random: KryoSerializer, T <: Transaction: Order: Ordering, B <: Block[T], S <: Snapshot[T, B], SI <: SnapshotInfo](
+  def make[F[_]: Async: Random: KryoSerializer, T <: Transaction: Order: Ordering, B <: Block[T], P <: StateProof, S <: Snapshot[
+    T,
+    B
+  ], SI <: SnapshotInfo[P]](
     sdkStorages: SdkStorages[F],
     l0Peer: L0Peer
-  ): F[Storages[F, T, B, S, SI]] =
+  ): F[Storages[F, T, B, P, S, SI]] =
     for {
       blockStorage <- BlockStorage.make[F, B]
       consensusStorage <- ConsensusStorage.make[F, T, B]
@@ -39,7 +42,7 @@ object Storages {
       transactionStorage <- TransactionStorage.make[F, T]
       addressStorage <- AddressStorage.make[F]
     } yield
-      new Storages[F, T, B, S, SI] {
+      new Storages[F, T, B, P, S, SI] {
         val address = addressStorage
         val block = blockStorage
         val consensus = consensusStorage
@@ -53,7 +56,7 @@ object Storages {
       }
 }
 
-trait Storages[F[_], T <: Transaction, B <: Block[T], S <: Snapshot[T, B], SI <: SnapshotInfo] {
+trait Storages[F[_], T <: Transaction, B <: Block[T], P <: StateProof, S <: Snapshot[T, B], SI <: SnapshotInfo[P]] {
   val address: AddressStorage[F]
   val block: BlockStorage[F, B]
   val consensus: ConsensusStorage[F, T, B]

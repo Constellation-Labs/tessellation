@@ -1,19 +1,19 @@
 package org.tessellation.schema
 
 import cats.MonadThrow
-import cats.data.NonEmptyList
+import cats.syntax.contravariantSemigroupal._
 import cats.syntax.functor._
-import cats.syntax.traverse._
 
 import scala.collection.immutable.SortedMap
 
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.merkletree.MerkleTree
+import org.tessellation.merkletree.syntax._
+import org.tessellation.merkletree.{MerkleRoot, Proof}
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
-import org.tessellation.schema.snapshot.SnapshotInfo
+import org.tessellation.schema.snapshot.{SnapshotInfo, StateProof}
 import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
@@ -27,8 +27,9 @@ case class GlobalSnapshotInfoV1(
   lastStateChannelSnapshotHashes: SortedMap[Address, Hash],
   lastTxRefs: SortedMap[Address, TransactionReference],
   balances: SortedMap[Address, Balance]
-) extends SnapshotInfo {
-  def stateProof[F[_]: MonadThrow: KryoSerializer]: F[MerkleTree] = GlobalSnapshotInfoV1.toGlobalSnapshotInfo(this).stateProof
+) extends SnapshotInfo[GlobalSnapshotStateProof] {
+  def stateProof[F[_]: MonadThrow: KryoSerializer]: F[GlobalSnapshotStateProof] =
+    GlobalSnapshotInfoV1.toGlobalSnapshotInfo(this).stateProof[F]
 }
 
 object GlobalSnapshotInfoV1 {
@@ -37,8 +38,23 @@ object GlobalSnapshotInfoV1 {
       gsi.lastStateChannelSnapshotHashes,
       gsi.lastTxRefs,
       gsi.balances,
+      SortedMap.empty,
       SortedMap.empty
     )
+}
+
+@derive(encoder, decoder, eqv, show)
+case class GlobalSnapshotStateProof(
+  lastStateChannelSnapshotHashesProof: Hash,
+  lastTxRefsProof: Hash,
+  balancesProof: Hash,
+  lastCurrencySnapshotsProof: Option[MerkleRoot]
+) extends StateProof
+
+object GlobalSnapshotStateProof {
+  def apply: ((Hash, Hash, Hash, Option[MerkleRoot])) => GlobalSnapshotStateProof = {
+    case (x1, x2, x3, x4) => GlobalSnapshotStateProof.apply(x1, x2, x3, x4)
+  }
 }
 
 @derive(encoder, decoder, eqv, show)
@@ -46,15 +62,18 @@ case class GlobalSnapshotInfo(
   lastStateChannelSnapshotHashes: SortedMap[Address, Hash],
   lastTxRefs: SortedMap[Address, TransactionReference],
   balances: SortedMap[Address, Balance],
-  lastCurrencySnapshots: SortedMap[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)]
-) extends SnapshotInfo {
-  def stateProof[F[_]: MonadThrow: KryoSerializer]: F[MerkleTree] =
-    NonEmptyList
-      .of(lastStateChannelSnapshotHashes.hashF, lastTxRefs.hashF, balances.hashF, lastCurrencySnapshots.hashF)
-      .sequence
-      .map(MerkleTree.from)
+  lastCurrencySnapshots: SortedMap[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)],
+  lastCurrencySnapshotsProofs: SortedMap[Address, Proof]
+) extends SnapshotInfo[GlobalSnapshotStateProof] {
+  def stateProof[F[_]: MonadThrow: KryoSerializer]: F[GlobalSnapshotStateProof] =
+    (
+      lastStateChannelSnapshotHashes.hashF,
+      lastTxRefs.hashF,
+      balances.hashF,
+      lastCurrencySnapshots.merkleTree[F].map(_.map(_.getRoot))
+    ).mapN(GlobalSnapshotStateProof.apply)
 }
 
 object GlobalSnapshotInfo {
-  def empty = GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.empty, SortedMap.empty)
+  def empty = GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.empty, SortedMap.empty, SortedMap.empty)
 }
