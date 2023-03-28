@@ -101,7 +101,8 @@ object currency {
     lastSnapshotHash: Hash,
     blocks: SortedSet[BlockAsActiveTip[CurrencyBlock]],
     tips: SnapshotTips,
-    info: CurrencySnapshotInfo
+    info: CurrencySnapshotInfo,
+    data: Option[Array[Byte]] = None
   ) extends FullSnapshot[CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencySnapshotInfo]
 
   @derive(eqv, show, encoder, decoder)
@@ -112,7 +113,8 @@ object currency {
     lastSnapshotHash: Hash,
     blocks: SortedSet[BlockAsActiveTip[CurrencyBlock]],
     tips: SnapshotTips,
-    stateProof: CurrencySnapshotStateProof
+    stateProof: CurrencySnapshotStateProof,
+    data: Option[Array[Byte]] = None
   ) extends IncrementalSnapshot[CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof]
 
   object CurrencyIncrementalSnapshot {
