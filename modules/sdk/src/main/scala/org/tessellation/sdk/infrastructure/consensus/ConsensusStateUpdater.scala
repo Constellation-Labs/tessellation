@@ -235,7 +235,7 @@ object ConsensusStateUpdater {
                           hash <- artifact.hashF
                           effect = gossip.spread(ConsensusPeerDeclaration(state.key, Proposal(hash, facilitatorsHash))) *>
                             gossip.spreadCommon(ConsensusArtifact(state.key, artifact))
-                          newState: ConsensusState[Key, Artifact, Context] =
+                          newState =
                             state.copy(status =
                               CollectingProposals[Artifact, Context](
                                 majorityTrigger,

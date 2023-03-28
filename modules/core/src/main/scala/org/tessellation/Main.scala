@@ -9,7 +9,7 @@ import org.tessellation.cli.method._
 import org.tessellation.ext.cats.effect._
 import org.tessellation.ext.kryo._
 import org.tessellation.http.p2p.P2PClient
-import org.tessellation.infrastructure.snapshot.{GlobalSnapshotLoader, GlobalSnapshotTraverse}
+import org.tessellation.infrastructure.snapshot.GlobalSnapshotTraverse
 import org.tessellation.infrastructure.trust.handler.trustHandler
 import org.tessellation.modules._
 import org.tessellation.schema.cluster.ClusterId
@@ -19,6 +19,7 @@ import org.tessellation.sdk.app.{SDK, TessellationIOApp}
 import org.tessellation.sdk.domain.collateral.OwnCollateralNotSatisfied
 import org.tessellation.sdk.infrastructure.genesis.{Loader => GenesisLoader}
 import org.tessellation.sdk.infrastructure.gossip.{GossipDaemon, RumorHandlers}
+import org.tessellation.sdk.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage
 import org.tessellation.sdk.resources.MkHttpServer
 import org.tessellation.sdk.resources.MkHttpServer.ServerName
 import org.tessellation.security.signature.Signed
@@ -126,23 +127,22 @@ object Main
             NodeState.RollbackInProgress,
             NodeState.RollbackDone
           ) {
-            GlobalSnapshotLoader.make[IO](storages.incrementalGlobalSnapshotLocalFileSystemStorage, cfg.snapshot.snapshotPath).flatMap {
-              loader =>
-                val snapshotTraverse = GlobalSnapshotTraverse
-                  .make[IO](
-                    loader.readGlobalIncrementalSnapshot(_),
-                    loader.readGlobalSnapshot(_),
-                    services.snapshotContextFunctions,
-                    m.rollbackHash
-                  )
-                snapshotTraverse.loadChain().flatMap {
-                  case (snapshotInfo, snapshot) =>
-                    storages.globalSnapshot.prepend(snapshot, snapshotInfo) >>
-                      services.collateral
-                        .hasCollateral(sdk.nodeId)
-                        .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
-                      services.consensus.manager.startFacilitatingAfter(snapshot.ordinal, snapshot, snapshotInfo)
-                }
+            SnapshotLocalFileSystemStorage.make[IO, GlobalSnapshot](cfg.snapshot.snapshotPath).flatMap { fullGlobalSnapshotStorage =>
+              val snapshotTraverse = GlobalSnapshotTraverse
+                .make[IO](
+                  storages.incrementalGlobalSnapshotLocalFileSystemStorage.read(_),
+                  fullGlobalSnapshotStorage.read(_),
+                  services.snapshotContextFunctions,
+                  m.rollbackHash
+                )
+              snapshotTraverse.loadChain().flatMap {
+                case (snapshotInfo, snapshot) =>
+                  storages.globalSnapshot.prepend(snapshot, snapshotInfo) >>
+                    services.collateral
+                      .hasCollateral(sdk.nodeId)
+                      .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
+                    services.consensus.manager.startFacilitatingAfter(snapshot.ordinal, snapshot, snapshotInfo)
+              }
             }
           } >>
             gossipDaemon.startAsInitialValidator >>
