@@ -9,7 +9,6 @@ import org.tessellation.cli.method._
 import org.tessellation.ext.cats.effect._
 import org.tessellation.ext.kryo._
 import org.tessellation.http.p2p.P2PClient
-import org.tessellation.infrastructure.snapshot.GlobalSnapshotTraverse
 import org.tessellation.infrastructure.trust.handler.trustHandler
 import org.tessellation.modules._
 import org.tessellation.schema.cluster.ClusterId
@@ -65,7 +64,7 @@ object Main
           cfg
         )
         .asResource
-      programs = Programs.make[IO](sdkPrograms, storages, services)
+      programs = Programs.make[IO](sdkPrograms, storages, services, keyPair, cfg)
       healthChecks <- HealthChecks
         .make[IO](
           storages,
@@ -127,24 +126,16 @@ object Main
             NodeState.RollbackInProgress,
             NodeState.RollbackDone
           ) {
-            SnapshotLocalFileSystemStorage.make[IO, GlobalSnapshot](cfg.snapshot.snapshotPath).flatMap { fullGlobalSnapshotStorage =>
-              val snapshotTraverse = GlobalSnapshotTraverse
-                .make[IO](
-                  storages.incrementalGlobalSnapshotLocalFileSystemStorage.read(_),
-                  fullGlobalSnapshotStorage.read(_),
-                  services.snapshotContextFunctions,
-                  m.rollbackHash
-                )
-              snapshotTraverse.loadChain().flatMap {
-                case (snapshotInfo, snapshot) =>
-                  storages.globalSnapshot.prepend(snapshot, snapshotInfo) >>
-                    services.collateral
-                      .hasCollateral(sdk.nodeId)
-                      .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
-                    services.consensus.manager.startFacilitatingAfter(snapshot.ordinal, snapshot, snapshotInfo)
-              }
+            programs.rollbackLoader.load(m.rollbackHash).flatMap {
+              case (snapshotInfo, snapshot) =>
+                storages.globalSnapshot
+                  .prepend(snapshot, snapshotInfo) >>
+                  services.consensus.manager.startFacilitatingAfter(snapshot.ordinal, snapshot, snapshotInfo)
             }
           } >>
+            services.collateral
+              .hasCollateral(sdk.nodeId)
+              .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
             gossipDaemon.startAsInitialValidator >>
             services.cluster.createSession >>
             services.session.createSession >>
@@ -162,19 +153,25 @@ object Main
               )
 
               Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair).flatMap(_.toHashed[IO]).flatMap { hashedGenesis =>
-                GlobalSnapshot.mkFirstIncrementalSnapshot[IO](hashedGenesis).flatMap { firstIncrementalSnapshot =>
-                  Signed.forAsyncKryo[IO, GlobalIncrementalSnapshot](firstIncrementalSnapshot, keyPair).flatMap {
-                    signedFirstIncrementalSnapshot =>
-                      storages.globalSnapshot.prepend(signedFirstIncrementalSnapshot, hashedGenesis.info) >>
-                        services.collateral.hasCollateral(sdk.nodeId).flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
-                        services.consensus.manager
-                          .startFacilitatingAfter(
-                            signedFirstIncrementalSnapshot.ordinal,
-                            signedFirstIncrementalSnapshot,
-                            hashedGenesis.info
-                          )
+                SnapshotLocalFileSystemStorage.make[IO, GlobalSnapshot](cfg.snapshot.snapshotPath).flatMap {
+                  fullGlobalSnapshotLocalFileSystemStorage =>
+                    fullGlobalSnapshotLocalFileSystemStorage.write(hashedGenesis.signed) >>
+                      GlobalSnapshot.mkFirstIncrementalSnapshot[IO](hashedGenesis).flatMap { firstIncrementalSnapshot =>
+                        Signed.forAsyncKryo[IO, GlobalIncrementalSnapshot](firstIncrementalSnapshot, keyPair).flatMap {
+                          signedFirstIncrementalSnapshot =>
+                            storages.globalSnapshot.prepend(signedFirstIncrementalSnapshot, hashedGenesis.info) >>
+                              services.collateral
+                                .hasCollateral(sdk.nodeId)
+                                .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
+                              services.consensus.manager
+                                .startFacilitatingAfter(
+                                  signedFirstIncrementalSnapshot.ordinal,
+                                  signedFirstIncrementalSnapshot,
+                                  hashedGenesis.info
+                                )
 
-                  }
+                        }
+                      }
                 }
               }
             }
