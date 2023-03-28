@@ -7,7 +7,7 @@ import cats.syntax.all._
 
 import scala.concurrent.duration._
 
-import org.tessellation.ext.cats.effect.ResourceIO
+import org.tessellation.ext.cats.effect.ResourceF
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.cluster.ClusterId

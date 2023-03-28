@@ -3,8 +3,10 @@ package org.tessellation.currency.l1
 import java.util.UUID
 
 import cats.Applicative
-import cats.effect.IO
 import cats.effect.kernel.Resource
+import cats.effect.std.Supervisor
+import cats.effect.{Async, IO}
+import cats.syntax.flatMap._
 import cats.syntax.semigroupk._
 
 import scala.concurrent.duration._
@@ -19,7 +21,7 @@ import org.tessellation.dag.l1.http.p2p.P2PClient
 import org.tessellation.dag.l1.infrastructure.block.rumor.handler.blockRumorHandler
 import org.tessellation.dag.l1.modules._
 import org.tessellation.dag.l1.{DagL1KryoRegistrationIdRange, StateChannel, dagL1KryoRegistrar}
-import org.tessellation.ext.cats.effect.ResourceIO
+import org.tessellation.ext.cats.effect.ResourceF
 import org.tessellation.ext.kryo.{KryoRegistrationId, MapRegistrationId}
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.node.NodeState
@@ -35,21 +37,7 @@ import com.monovore.decline.Opts
 import eu.timepit.refined.boolean.Or
 import fs2.Stream
 
-object Main
-    extends TessellationIOApp[Run](
-      s"Currency-l1",
-      s"Currency L1 node",
-      ClusterId(UUID.fromString("517c3a05-9219-471b-a54c-21b7d72f4ae5")),
-      version = BuildInfo.version
-    ) {
-
-  val opts: Opts[Run] = cli.method.opts
-
-  type KryoRegistrationIdRange = CurrencyKryoRegistrationIdRange Or SdkOrSharedOrKernelRegistrationIdRange Or DagL1KryoRegistrationIdRange
-
-  val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
-    currencyKryoRegistrar.union(sdkKryoRegistrar).union(dagL1KryoRegistrar)
-
+object Main extends CurrencyL1App("", "") {
   def run(method: Run, sdk: SDK[IO]): Resource[IO, Unit] = {
     import sdk._
 
@@ -144,34 +132,62 @@ object Main
         cfg.gossip.daemon,
         services.collateral
       )
-      _ <- {
-        method match {
-          case cfg: RunInitialValidator =>
-            gossipDaemon.startAsInitialValidator >>
-              programs.l0PeerDiscovery.discoverFrom(cfg.l0Peer) >>
-              programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
-              storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
-              services.cluster.createSession >>
-              services.session.createSession >>
-              storages.node.tryModifyState(SessionStarted, NodeState.Ready)
 
-          case cfg: RunValidator =>
-            gossipDaemon.startAsRegularValidator >>
-              programs.l0PeerDiscovery.discoverFrom(cfg.l0Peer) >>
-              programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
-              storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
-        }
-      }.asResource
-      globalL0PeerDiscovery = Stream
-        .awakeEvery[IO](10.seconds)
-        .evalMap { _ =>
-          storages.lastGlobalSnapshot.get.flatMap {
-            _.fold(Applicative[IO].unit) { latestSnapshot =>
-              programs.globalL0PeerDiscovery.discover(latestSnapshot.signed.proofs.map(_.id).map(PeerId._Id.reverseGet))
-            }
-          }
-        }
-      _ <- stateChannel.runtime.merge(globalL0PeerDiscovery).compile.drain.asResource
+      _ <- run(method, gossipDaemon, programs, storages, services, stateChannel)
     } yield ()
   }
+}
+
+abstract class CurrencyL1App(name: String, header: String)
+    extends TessellationIOApp[Run](
+      s"Currency-l1 - $name",
+      s"Currency L1 node - $header",
+      ClusterId(UUID.fromString("517c3a05-9219-471b-a54c-21b7d72f4ae5")),
+      version = BuildInfo.version
+    ) {
+
+  val opts: Opts[Run] = cli.method.opts
+
+  type KryoRegistrationIdRange = CurrencyKryoRegistrationIdRange Or SdkOrSharedOrKernelRegistrationIdRange Or DagL1KryoRegistrationIdRange
+
+  val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
+    currencyKryoRegistrar.union(sdkKryoRegistrar).union(dagL1KryoRegistrar)
+
+  final def run[F[_]: Supervisor: Async](
+    method: Run,
+    gossipDaemon: GossipDaemon[F],
+    programs: Programs[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshot],
+    storages: Storages[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshot],
+    services: Services[F, CurrencyTransaction, CurrencyBlock],
+    stateChannel: StateChannel[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshot]
+  ): Resource[F, Unit] = for {
+    _ <- {
+      method match {
+        case cfg: RunInitialValidator =>
+          gossipDaemon.startAsInitialValidator >>
+            programs.l0PeerDiscovery.discoverFrom(cfg.l0Peer) >>
+            programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
+            storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
+            services.cluster.createSession >>
+            services.session.createSession >>
+            storages.node.tryModifyState(SessionStarted, NodeState.Ready)
+
+        case cfg: RunValidator =>
+          gossipDaemon.startAsRegularValidator >>
+            programs.l0PeerDiscovery.discoverFrom(cfg.l0Peer) >>
+            programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
+            storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
+      }
+    }.asResource
+    globalL0PeerDiscovery = Stream
+      .awakeEvery[F](10.seconds)
+      .evalMap { _ =>
+        storages.lastGlobalSnapshot.get.flatMap {
+          _.fold(Applicative[F].unit) { latestSnapshot =>
+            programs.globalL0PeerDiscovery.discover(latestSnapshot.signed.proofs.map(_.id).map(PeerId._Id.reverseGet))
+          }
+        }
+      }
+    _ <- stateChannel.runtime.merge(globalL0PeerDiscovery).compile.drain.asResource
+  } yield ()
 }

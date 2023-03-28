@@ -14,7 +14,7 @@ import org.tessellation.dag.l1.Main
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.Proposal
 import org.tessellation.dag.l1.domain.consensus.round.RoundId
 import org.tessellation.dag.transaction.TransactionGenerator
-import org.tessellation.ext.cats.effect.ResourceIO
+import org.tessellation.ext.cats.effect._
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.BlockReference

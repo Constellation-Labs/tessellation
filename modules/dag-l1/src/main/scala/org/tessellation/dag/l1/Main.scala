@@ -10,7 +10,7 @@ import org.tessellation.dag.l1.domain.snapshot.programs.DAGSnapshotProcessor
 import org.tessellation.dag.l1.http.p2p.P2PClient
 import org.tessellation.dag.l1.infrastructure.block.rumor.handler.blockRumorHandler
 import org.tessellation.dag.l1.modules._
-import org.tessellation.ext.cats.effect.ResourceIO
+import org.tessellation.ext.cats.effect.ResourceF
 import org.tessellation.ext.kryo._
 import org.tessellation.schema.GlobalSnapshot
 import org.tessellation.schema.block.DAGBlock

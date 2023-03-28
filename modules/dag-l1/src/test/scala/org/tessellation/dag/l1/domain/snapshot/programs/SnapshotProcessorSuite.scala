@@ -19,7 +19,7 @@ import org.tessellation.dag.l1.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage.{LastTransactionReferenceState, Majority}
 import org.tessellation.dag.transaction.TransactionGenerator
-import org.tessellation.ext.cats.effect.ResourceIO
+import org.tessellation.ext.cats.effect.ResourceF
 import org.tessellation.ext.collection.MapRefUtils._
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer

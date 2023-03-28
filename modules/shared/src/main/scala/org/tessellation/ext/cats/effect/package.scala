@@ -1,9 +1,9 @@
 package org.tessellation.ext.cats
 
-import _root_.cats.effect.{IO, Resource}
+import _root_.cats.effect.Resource
 
 package object effect {
-  implicit class ResourceIO[A](value: IO[A]) {
-    def asResource: Resource[IO, A] = Resource.eval(value)
+  implicit class ResourceF[F[_], A](value: F[A]) {
+    def asResource: Resource[F, A] = Resource.eval(value)
   }
 }

@@ -9,7 +9,7 @@ import cats.syntax.option._
 import org.tessellation.dag.l1.Main
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage.{Accepted, LastTransactionReferenceState, Majority}
 import org.tessellation.dag.transaction.TransactionGenerator
-import org.tessellation.ext.cats.effect.ResourceIO
+import org.tessellation.ext.cats.effect.ResourceF
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
