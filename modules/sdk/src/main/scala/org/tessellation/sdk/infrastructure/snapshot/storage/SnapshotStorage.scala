@@ -124,13 +124,24 @@ object SnapshotStorage {
         hashCache(hash).set(snapshot.some) >>
           ordinalCache(snapshot.ordinal).set(hash.some) >>
           snapshotLocalFileSystemStorage.write(snapshot).handleErrorWith { e =>
-            logger.error(e)(s"Failed writing snapshot to disk! hash=$hash ordinal=${snapshot.ordinal}") >>
-              notPersistedCache.update(current => current + snapshot.ordinal)
+            snapshotExists(snapshot).ifM(
+              logger.info(s"Snapshot is already saved on disk. hash=$hash ordinal=${snapshot.ordinal}"),
+              logger.error(e)(s"Failed writing snapshot to disk! hash=$hash ordinal=${snapshot.ordinal}") >>
+                notPersistedCache.update(current => current + snapshot.ordinal)
+            )
           } >>
           snapshot.ordinal
             .partialPreviousN(inMemoryCapacity)
             .fold(Applicative[F].unit)(offloadQueue.offer)
       }
+
+    def snapshotExists(snapshot: Signed[S]): F[Boolean] =
+      snapshot.toHashed
+        .flatMap(hashed =>
+          List(snapshotLocalFileSystemStorage.read(hashed.hash), snapshotLocalFileSystemStorage.read(snapshot.value.ordinal))
+            .traverse(_.flatMap(_.traverse(_.toHashed).map(_.fold(false)(_.hash === hashed.hash))))
+        )
+        .map(_.reduce(_ && _))
 
     supervisor.supervise(offloadProcess).map { _ =>
       new SnapshotStorage[F, S, C] with LatestBalances[F] {
