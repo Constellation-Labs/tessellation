@@ -5,6 +5,8 @@ import cats.effect.kernel.Async
 import cats.syntax.all._
 
 import org.tessellation.ext.cats.syntax.validated._
+import org.tessellation.ext.kryo._
+import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.sdk.domain.statechannel.StateChannelValidator.StateChannelValidationErrorOr
 import org.tessellation.security.signature.SignedValidator.SignedValidationError
@@ -22,8 +24,9 @@ trait StateChannelValidator[F[_]] {
 
 object StateChannelValidator {
 
-  def make[F[_]: Async](
-    signedValidator: SignedValidator[F]
+  def make[F[_]: Async: KryoSerializer](
+    signedValidator: SignedValidator[F],
+    maxBinarySizeInBytes: Long = 50 * 1024
   ): StateChannelValidator[F] = new StateChannelValidator[F] {
 
     override def validate(stateChannelOutput: StateChannelOutput): F[StateChannelValidationErrorOr[StateChannelOutput]] = for {
@@ -31,7 +34,8 @@ object StateChannelValidator {
         .validateSignatures(stateChannelOutput.snapshotBinary)
         .map(_.errorMap[StateChannelValidationError](InvalidSigned))
       addressSignatureV <- validateSourceAddressSignature(stateChannelOutput.address, stateChannelOutput.snapshotBinary)
-    } yield signaturesV.productR(addressSignatureV).map(_ => stateChannelOutput)
+      snapshotSizeV <- validateSnapshotSize(stateChannelOutput.snapshotBinary)
+    } yield signaturesV.productR(addressSignatureV).product(snapshotSizeV).map(_ => stateChannelOutput)
 
     private def validateSourceAddressSignature(
       address: Address,
@@ -40,12 +44,26 @@ object StateChannelValidator {
       signedValidator
         .isSignedExclusivelyBy(signedSC, address)
         .map(_.errorMap[StateChannelValidationError](_ => NotSignedExclusivelyByStateChannelOwner))
+
+    private def validateSnapshotSize(
+      signedSC: Signed[StateChannelSnapshotBinary]
+    ): F[StateChannelValidationErrorOr[Signed[StateChannelSnapshotBinary]]] =
+      signedSC.toBinaryF.map { binary =>
+        val actualSize = binary.size
+        val isWithinLimit = actualSize <= maxBinarySizeInBytes
+
+        if (isWithinLimit)
+          signedSC.validNec
+        else
+          BinaryExceedsMaxAllowedSize(maxBinarySizeInBytes, actualSize).invalidNec
+      }
   }
 
   @derive(eqv, show)
   sealed trait StateChannelValidationError
   case class InvalidSigned(error: SignedValidationError) extends StateChannelValidationError
   case object NotSignedExclusivelyByStateChannelOwner extends StateChannelValidationError
+  case class BinaryExceedsMaxAllowedSize(maxSize: Long, was: Int) extends StateChannelValidationError
 
   type StateChannelValidationErrorOr[A] = ValidatedNec[StateChannelValidationError, A]
 
