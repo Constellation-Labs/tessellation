@@ -13,7 +13,10 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
+import org.tessellation.sdk.http.p2p.PeerResponse
 import org.tessellation.sdk.http.p2p.clients.L0GlobalSnapshotClient
+import org.tessellation.security.hash.Hash
+import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hashed, SecurityProvider}
 
 import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
@@ -23,6 +26,7 @@ trait GlobalL0Service[F[_]] {
   def pullLatestSnapshot: F[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]
   def pullGlobalSnapshots: F[Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), List[Hashed[GlobalIncrementalSnapshot]]]]
   def pullGlobalSnapshot(ordinal: SnapshotOrdinal): F[Option[Hashed[GlobalIncrementalSnapshot]]]
+  def pullGlobalSnapshot(hash: Hash): F[Option[Hashed[GlobalIncrementalSnapshot]]]
 }
 
 object GlobalL0Service {
@@ -47,16 +51,27 @@ object GlobalL0Service {
           }
         }
 
+      def pullGlobalSnapshot(hash: Hash): F[Option[Hashed[GlobalIncrementalSnapshot]]] =
+        pullGlobalSnapshot(l0GlobalSnapshotClient.get(hash)).handleErrorWith { e =>
+          logger
+            .warn(e)(s"Failure pulling single snapshot with hash=$hash")
+            .map(_ => none[Hashed[GlobalIncrementalSnapshot]])
+        }
+
       def pullGlobalSnapshot(ordinal: SnapshotOrdinal): F[Option[Hashed[GlobalIncrementalSnapshot]]] =
-        globalL0ClusterStorage.getRandomPeer.flatMap { l0Peer =>
-          l0GlobalSnapshotClient
-            .get(ordinal)(l0Peer)
-            .flatMap(_.toHashedWithSignatureCheck.flatMap(_.liftTo[F]))
-            .map(_.some)
-        }.handleErrorWith { e =>
+        pullGlobalSnapshot(l0GlobalSnapshotClient.get(ordinal)).handleErrorWith { e =>
           logger
             .warn(e)(s"Failure pulling single snapshot with ordinal=$ordinal")
             .map(_ => none[Hashed[GlobalIncrementalSnapshot]])
+        }
+
+      private def pullGlobalSnapshot(
+        peerResponse: PeerResponse.PeerResponse[F, Signed[GlobalIncrementalSnapshot]]
+      ): F[Option[Hashed[GlobalIncrementalSnapshot]]] =
+        globalL0ClusterStorage.getRandomPeer.flatMap { l0Peer =>
+          peerResponse(l0Peer)
+            .flatMap(_.toHashedWithSignatureCheck.flatMap(_.liftTo[F]))
+            .map(_.some)
         }
 
       def pullGlobalSnapshots: F[Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), List[Hashed[GlobalIncrementalSnapshot]]]] =
