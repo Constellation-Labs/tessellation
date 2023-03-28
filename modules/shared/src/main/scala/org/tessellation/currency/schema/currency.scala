@@ -15,7 +15,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.Block.BlockConstructor
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.balance.Balance
+import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.snapshot._
 import org.tessellation.schema.transaction._
@@ -30,7 +30,7 @@ import derevo.derive
 import eu.timepit.refined.api.Refined
 import eu.timepit.refined.auto._
 import eu.timepit.refined.string.MatchesRegex
-import eu.timepit.refined.types.numeric.PosInt
+import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
 import io.circe.Decoder
 import io.estatico.newtype.macros.newtype
 
@@ -91,6 +91,16 @@ object currency {
   ) extends SnapshotInfo[CurrencySnapshotStateProof] {
     def stateProof[F[_]: MonadThrow: KryoSerializer]: F[CurrencySnapshotStateProof] =
       (lastTxRefs.hashF, balances.hashF).tupled.map(CurrencySnapshotStateProof.apply)
+  }
+
+  @derive(decoder, encoder, order, show)
+  @newtype
+  case class SnapshotFee(value: NonNegLong)
+
+  object SnapshotFee {
+    implicit def toAmount(fee: SnapshotFee): Amount = Amount(fee.value)
+
+    val MinValue: SnapshotFee = SnapshotFee(0L)
   }
 
   @derive(eqv, show, encoder, decoder)

@@ -9,7 +9,7 @@ import cats.syntax.list._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
+import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo, SnapshotFee}
 import org.tessellation.domain.rewards.Rewards
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.kryo.KryoSerializer
@@ -196,7 +196,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
   def mkStateChannelEvent()(implicit S: SecurityProvider[IO], K: KryoSerializer[IO]) = for {
     keyPair <- KeyPairGenerator.makeKeyPair[IO]
-    binary = StateChannelSnapshotBinary(Hash.empty, "test".getBytes)
+    binary = StateChannelSnapshotBinary(Hash.empty, "test".getBytes, SnapshotFee.MinValue)
     signedSC <- forAsyncKryo(binary, keyPair)
   } yield StateChannelOutput(keyPair.getPublic.toAddress, signedSC)
 
