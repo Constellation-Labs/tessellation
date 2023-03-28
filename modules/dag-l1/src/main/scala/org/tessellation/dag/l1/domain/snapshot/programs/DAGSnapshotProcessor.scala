@@ -9,7 +9,7 @@ import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.transaction.DAGTransaction
-import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalSnapshotStateProof}
 import org.tessellation.sdk.domain.snapshot.SnapshotContextFunctions
 import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.security.signature.Signed
@@ -23,8 +23,8 @@ object DAGSnapshotProcessor {
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     transactionStorage: TransactionStorage[F, DAGTransaction],
     globalSnapshotContextFns: SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
-  ): SnapshotProcessor[F, DAGTransaction, DAGBlock, GlobalIncrementalSnapshot, GlobalSnapshotInfo] =
-    new SnapshotProcessor[F, DAGTransaction, DAGBlock, GlobalIncrementalSnapshot, GlobalSnapshotInfo] {
+  ): SnapshotProcessor[F, DAGTransaction, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo] =
+    new SnapshotProcessor[F, DAGTransaction, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo] {
 
       import SnapshotProcessor._
 

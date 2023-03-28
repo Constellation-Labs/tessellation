@@ -24,7 +24,6 @@ import org.tessellation.dag.transaction.TransactionGenerator
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.collection.MapRefUtils._
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.merkletree.MerkleTree
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
@@ -54,7 +53,7 @@ import weaver.SimpleIOSuite
 object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
   type TestResources = (
-    SnapshotProcessor[IO, DAGTransaction, DAGBlock, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
+    SnapshotProcessor[IO, DAGTransaction, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     SecurityProvider[IO],
     KryoSerializer[IO],
     (KeyPair, KeyPair, KeyPair),
@@ -179,7 +178,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
       EpochProgress.MinValue,
       NonEmptyList.one(peerId),
       SnapshotTips(SortedSet.empty, SortedSet.empty),
-      MerkleTree.from(NonEmptyList.one(Hash("")))
+      GlobalSnapshotStateProof(Hash.empty, Hash.empty, Hash.empty, None)
     )
 
   def generateGlobalSnapshotInfo: GlobalSnapshotInfo = GlobalSnapshotInfo.empty
@@ -226,7 +225,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               ),
             srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
-          snapshotInfo = GlobalSnapshotInfo(SortedMap.empty, snapshotTxRefs, snapshotBalances, SortedMap.empty)
+          snapshotInfo = GlobalSnapshotInfo(SortedMap.empty, snapshotTxRefs, snapshotBalances, SortedMap.empty, SortedMap.empty)
           balancesBefore <- balancesR.get
           blocksBefore <- blocksR.toMap
           lastGlobalSnapshotBefore <- lastSnapR.get
@@ -374,7 +373,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             ),
             srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
-          snapshotInfo = GlobalSnapshotInfo(SortedMap.empty, snapshotTxRefs, snapshotBalances, SortedMap.empty)
+          snapshotInfo = GlobalSnapshotInfo(SortedMap.empty, snapshotTxRefs, snapshotBalances, SortedMap.empty, SortedMap.empty)
 
           // Inserting blocks in required state
           _ <- blocksR(aboveRangeBlock.proofsHash).set(WaitingBlock[DAGBlock](aboveRangeBlock.signed).some)
@@ -542,7 +541,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             ),
             srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
-          snapshotInfo = GlobalSnapshotInfo(SortedMap.empty, snapshotTxRefs, snapshotBalances, SortedMap.empty)
+          snapshotInfo = GlobalSnapshotInfo(SortedMap.empty, snapshotTxRefs, snapshotBalances, SortedMap.empty, SortedMap.empty)
 
           // Inserting blocks in required state
           _ <- blocksR(aboveRangeBlock.proofsHash).set(PostponedBlock[DAGBlock](aboveRangeBlock.signed).some)
@@ -711,7 +710,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
         val hashedDAGBlock = hashedDAGBlockForKeyPair(keys)
 
         val snapshotBalances = generateSnapshotBalances(Set(srcAddress))
-        val snapshotInfo = GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, snapshotBalances, SortedMap.empty)
+        val snapshotInfo = GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, snapshotBalances, SortedMap.empty, SortedMap.empty)
 
         for {
           correctTxs <- generateTransactions(srcAddress, srcKey, dstAddress, 5).map(_.toList)
@@ -1030,7 +1029,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             ),
             srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
-          snapshotInfo = GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, snapshotBalances, SortedMap.empty)
+          snapshotInfo = GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, snapshotBalances, SortedMap.empty, SortedMap.empty)
           newSnapshotInfo <- globalSnapshotContextFns.createContext(
             snapshotInfo,
             hashedLastSnapshot.signed.value,

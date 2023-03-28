@@ -8,7 +8,6 @@ import cats.syntax.traverse._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.merkletree.MerkleTree
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.height.{Height, SubHeight}
@@ -18,12 +17,17 @@ import org.tessellation.syntax.sortedCollection._
 
 object snapshot {
 
-  trait FullSnapshot[T <: Transaction, B <: Block[T], SI <: SnapshotInfo] extends Snapshot[T, B] {
+  trait StateProof {
+    val lastTxRefsProof: Hash
+    val balancesProof: Hash
+  }
+
+  trait FullSnapshot[T <: Transaction, B <: Block[T], P <: StateProof, SI <: SnapshotInfo[P]] extends Snapshot[T, B] {
     val info: SI
   }
 
-  trait IncrementalSnapshot[T <: Transaction, B <: Block[T]] extends Snapshot[T, B] {
-    val stateProof: MerkleTree
+  trait IncrementalSnapshot[T <: Transaction, B <: Block[T], P <: StateProof] extends Snapshot[T, B] {
+    val stateProof: P
   }
 
   trait Snapshot[T <: Transaction, B <: Block[T]] {
@@ -42,11 +46,11 @@ object snapshot {
       }.map(_.toSortedSet.union(tips.remainedActive))
   }
 
-  trait SnapshotInfo {
+  trait SnapshotInfo[P <: StateProof] {
     val lastTxRefs: SortedMap[Address, TransactionReference]
     val balances: SortedMap[Address, Balance]
 
-    def stateProof[F[_]: MonadThrow: KryoSerializer]: F[MerkleTree]
+    def stateProof[F[_]: MonadThrow: KryoSerializer]: F[P]
   }
 
 }

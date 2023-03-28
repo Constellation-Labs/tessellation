@@ -18,7 +18,7 @@ import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.schema._
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.height.{Height, SubHeight}
-import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo}
+import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.schema.transaction.Transaction
 import org.tessellation.sdk.domain.block.processing.{BlockAcceptanceResult, deprecationThreshold}
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
@@ -39,9 +39,10 @@ abstract class SnapshotConsensusFunctions[
   F[_]: Async: SecurityProvider,
   T <: Transaction,
   B <: Block[T]: Order,
+  P <: StateProof,
   Event,
   Artifact <: Snapshot[T, B]: Eq,
-  Context <: SnapshotInfo,
+  Context <: SnapshotInfo[P],
   Trigger <: ConsensusTrigger
 ](implicit ordering: Ordering[BlockAsActiveTip[B]])
     extends ConsensusFunctions[F, Event, SnapshotOrdinal, Artifact, Context] {
