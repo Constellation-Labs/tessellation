@@ -8,7 +8,6 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.merkletree.MerkleTree
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.block.DAGBlock
@@ -42,8 +41,8 @@ case class GlobalIncrementalSnapshot(
   epochProgress: EpochProgress,
   nextFacilitators: NonEmptyList[PeerId],
   tips: SnapshotTips,
-  stateProof: MerkleTree
-) extends IncrementalSnapshot[DAGTransaction, DAGBlock]
+  stateProof: GlobalSnapshotStateProof
+) extends IncrementalSnapshot[DAGTransaction, DAGBlock, GlobalSnapshotStateProof]
 
 object GlobalIncrementalSnapshot {
   def fromGlobalSnapshot[F[_]: MonadThrow: KryoSerializer](snapshot: GlobalSnapshot): F[GlobalIncrementalSnapshot] =
@@ -77,7 +76,7 @@ case class GlobalSnapshot(
   nextFacilitators: NonEmptyList[PeerId],
   info: GlobalSnapshotInfoV1,
   tips: SnapshotTips
-) extends FullSnapshot[DAGTransaction, DAGBlock, GlobalSnapshotInfoV1] {}
+) extends FullSnapshot[DAGTransaction, DAGBlock, GlobalSnapshotStateProof, GlobalSnapshotInfoV1] {}
 
 object GlobalSnapshot {
 

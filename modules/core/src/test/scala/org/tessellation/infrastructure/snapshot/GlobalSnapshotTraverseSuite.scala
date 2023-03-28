@@ -177,7 +177,9 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
 
     mkSnapshots(List.empty, balances).flatMap { snapshots =>
       gst(snapshots._1, snapshots._2.toList, snapshots._2.head.hash).loadChain()
-    }.map(state => expect.eql(GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.from(balances), SortedMap.empty), state._1))
+    }.map(state =>
+      expect.eql(GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.from(balances), SortedMap.empty, SortedMap.empty), state._1)
+    )
   }
 
   test("computed state contains last refs and preserve total amount of balances when no fees or rewards ") { res =>

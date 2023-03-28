@@ -38,6 +38,7 @@ abstract class GlobalSnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
       F,
       DAGTransaction,
       DAGBlock,
+      GlobalSnapshotStateProof,
       GlobalSnapshotEvent,
       GlobalSnapshotArtifact,
       GlobalSnapshotContext,

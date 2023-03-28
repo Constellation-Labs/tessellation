@@ -20,7 +20,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.height.{Height, SubHeight}
-import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo}
+import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.schema.transaction.{Transaction, TransactionReference}
 import org.tessellation.sdk.domain.snapshot.Validator
 import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
@@ -37,8 +37,9 @@ abstract class SnapshotProcessor[
   F[_]: Async: KryoSerializer: SecurityProvider,
   T <: Transaction,
   B <: Block[T],
+  P <: StateProof,
   S <: Snapshot[T, B]: Eq,
-  SI <: SnapshotInfo
+  SI <: SnapshotInfo[P]
 ] {
   import SnapshotProcessor._
 

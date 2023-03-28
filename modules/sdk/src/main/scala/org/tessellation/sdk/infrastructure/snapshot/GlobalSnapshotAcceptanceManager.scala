@@ -10,6 +10,8 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.merkletree.Proof
+import org.tessellation.merkletree.syntax._
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
@@ -71,6 +73,17 @@ object GlobalSnapshotAcceptanceManager {
         rewards
       )
 
+      maybeMerkleTree <- updatedLastCurrencySnapshots.merkleTree[F]
+      updatedLastCurrencySnapshotProofs <- maybeMerkleTree.traverse { merkleTree =>
+        updatedLastCurrencySnapshots.toList.traverse {
+          case (address, state) =>
+            (address, state).hashF
+              .map(merkleTree.findPath(_))
+              .map(_.get) // NOTE: path must exists, otherwise it's an unexpected state and should throw
+              .map((address, _))
+        }
+      }.map(_.map(SortedMap.from(_)).getOrElse(SortedMap.empty[Address, Proof]))
+
     } yield
       (
         acceptanceResult,
@@ -81,7 +94,8 @@ object GlobalSnapshotAcceptanceManager {
           updatedLastStateChannelSnapshotHashes,
           transactionsRefs,
           updatedBalancesByRewards,
-          updatedLastCurrencySnapshots
+          updatedLastCurrencySnapshots,
+          updatedLastCurrencySnapshotProofs
         )
       )
 

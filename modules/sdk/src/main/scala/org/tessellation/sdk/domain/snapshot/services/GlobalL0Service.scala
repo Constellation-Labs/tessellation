@@ -10,7 +10,7 @@ import cats.syntax.option._
 
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
+import org.tessellation.schema._
 import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.sdk.http.p2p.clients.L0GlobalSnapshotClient

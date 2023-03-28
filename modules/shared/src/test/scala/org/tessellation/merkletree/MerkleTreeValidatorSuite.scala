@@ -36,11 +36,12 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
       SortedMap.empty,
       SortedMap.empty,
       SortedMap(Address("DAG2AUdecqFwEGcgAcH1ac2wrsg8acrgGwrQojzw") -> Balance(100L)),
+      SortedMap.empty,
       SortedMap.empty
     )
     for {
       snapshot <- globalIncrementalSnapshot(globalSnapshotInfo)
-      result <- MerkleTreeValidator.validate(snapshot, globalSnapshotInfo)
+      result <- StateProofValidator.validate(snapshot, globalSnapshotInfo)
     } yield expect.same(Validated.Valid(()), result)
   }
 
@@ -49,13 +50,14 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
       SortedMap.empty,
       SortedMap.empty,
       SortedMap(Address("DAG2AUdecqFwEGcgAcH1ac2wrsg8acrgGwrQojzw") -> Balance(100L)),
+      SortedMap.empty,
       SortedMap.empty
     )
 
     for {
       snapshot <- globalIncrementalSnapshot(globalSnapshotInfo)
-      result <- MerkleTreeValidator.validate(snapshot, GlobalSnapshotInfo.empty)
-    } yield expect.same(Validated.Invalid(MerkleTreeValidator.MerkleTreeBroken(SnapshotOrdinal(NonNegLong(1L)), snapshot.hash)), result)
+      result <- StateProofValidator.validate(snapshot, GlobalSnapshotInfo.empty)
+    } yield expect.same(Validated.Invalid(StateProofValidator.StateBroken(SnapshotOrdinal(NonNegLong(1L)), snapshot.hash)), result)
   }
 
   private def globalIncrementalSnapshot[F[_]: Async: KryoSerializer](

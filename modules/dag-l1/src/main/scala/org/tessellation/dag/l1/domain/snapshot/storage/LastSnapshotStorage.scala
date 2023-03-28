@@ -22,13 +22,15 @@ import fs2.concurrent.SignallingRef
 
 object LastSnapshotStorage {
 
-  def make[F[_]: Async, S <: Snapshot[_, _], SI <: SnapshotInfo]: F[LastSnapshotStorage[F, S, SI] with LatestBalances[F]] =
+  def make[F[_]: Async, S <: Snapshot[_, _], SI <: SnapshotInfo[_]]: F[LastSnapshotStorage[F, S, SI] with LatestBalances[F]] =
     SignallingRef.of[F, Option[(Hashed[S], SI)]](None).map(make(_))
 
-  def make[F[_]: Async, S <: Snapshot[_, _], SI <: SnapshotInfo](snapshot: Option[(Hashed[S], SI)]): F[LastSnapshotStorage[F, S, SI]] =
+  def make[F[_]: Async, S <: Snapshot[_, _], SI <: SnapshotInfo[_]](
+    snapshot: Option[(Hashed[S], SI)]
+  ): F[LastSnapshotStorage[F, S, SI]] =
     SignallingRef.of[F, Option[(Hashed[S], SI)]](snapshot).map(make(_))
 
-  def make[F[_]: MonadThrow, S <: Snapshot[_, _], SI <: SnapshotInfo](
+  def make[F[_]: MonadThrow, S <: Snapshot[_, _], SI <: SnapshotInfo[_]](
     snapshotR: SignallingRef[F, Option[(Hashed[S], SI)]]
   ): LastSnapshotStorage[F, S, SI] with LatestBalances[F] =
     new LastSnapshotStorage[F, S, SI] with LatestBalances[F] {
