@@ -6,6 +6,7 @@ import cats.effect.kernel.Resource
 import cats.effect.std.Queue
 import cats.syntax.validated._
 
+import org.tessellation.currency.schema.currency.SnapshotFee
 import org.tessellation.domain.cell.L0Cell
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.block.DAGBlock
@@ -20,6 +21,7 @@ import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBi
 
 import eu.timepit.refined.auto._
 import weaver.MutableIOSuite
+
 object StateChannelServiceSuite extends MutableIOSuite {
 
   type Res = (KryoSerializer[IO], SecurityProvider[IO])
@@ -66,7 +68,7 @@ object StateChannelServiceSuite extends MutableIOSuite {
 
   def mkStateChannelOutput()(implicit S: SecurityProvider[IO], K: KryoSerializer[IO]) = for {
     keyPair <- KeyPairGenerator.makeKeyPair[IO]
-    binary = StateChannelSnapshotBinary(Hash.empty, "test".getBytes)
+    binary = StateChannelSnapshotBinary(Hash.empty, "test".getBytes, SnapshotFee.MinValue)
     signedSC <- forAsyncKryo(binary, keyPair)
 
   } yield StateChannelOutput(keyPair.getPublic.toAddress, signedSC)

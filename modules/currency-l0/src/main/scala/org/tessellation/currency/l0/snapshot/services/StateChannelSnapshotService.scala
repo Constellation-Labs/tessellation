@@ -10,7 +10,7 @@ import cats.syntax.show._
 
 import org.tessellation.currency.l0.snapshot.storages.LastSignedBinaryHashStorage
 import org.tessellation.currency.l0.snapshot.{CurrencySnapshotArtifact, CurrencySnapshotContext}
-import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshot, CurrencySnapshotInfo}
+import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.crypto._
 import org.tessellation.json.JsonBinarySerializer
 import org.tessellation.kryo.KryoSerializer
@@ -44,13 +44,13 @@ object StateChannelSnapshotService {
       def createGenesisBinary(snapshot: Signed[CurrencySnapshot]): F[Signed[StateChannelSnapshotBinary]] = for {
         lastSnapshotBinaryHash <- lastSignedBinaryHashStorage.get
         bytes = JsonBinarySerializer.serialize(snapshot)
-        binary <- StateChannelSnapshotBinary(lastSnapshotBinaryHash, bytes).sign(keyPair)
+        binary <- StateChannelSnapshotBinary(lastSnapshotBinaryHash, bytes, SnapshotFee.MinValue).sign(keyPair)
       } yield binary
 
       def createBinary(snapshot: Signed[CurrencySnapshotArtifact]): F[Signed[StateChannelSnapshotBinary]] = for {
         lastSnapshotBinaryHash <- lastSignedBinaryHashStorage.get
         bytes = JsonBinarySerializer.serialize(snapshot)
-        binary <- StateChannelSnapshotBinary(lastSnapshotBinaryHash, bytes).sign(keyPair)
+        binary <- StateChannelSnapshotBinary(lastSnapshotBinaryHash, bytes, SnapshotFee.MinValue).sign(keyPair)
       } yield binary
 
       def consume(signedArtifact: Signed[CurrencySnapshotArtifact], context: CurrencySnapshotContext): F[Unit] = for {
