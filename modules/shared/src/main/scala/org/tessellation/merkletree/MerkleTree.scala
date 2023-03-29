@@ -21,18 +21,24 @@ case class ProofEntry(target: Hash, sibling: Either[Hash, Hash])
 @derive(eqv, show, encoder, decoder)
 case class Proof(entries: NonEmptyList[ProofEntry]) {
   def verify(candidate: Hash): Boolean =
-    entries
-      .foldLeft(candidate.some.map(MerkleTree.hashLeaf)) {
-        case (Some(curr), pe) =>
-          val (lsib, rsib) = pe.sibling match {
-            case Left(sib)  => (sib, curr)
-            case Right(sib) => (curr, sib)
+    entries.toList match {
+      case x :: Nil =>
+        val leaf = MerkleTree.hashLeaf(candidate)
+        x.target === leaf && x.sibling === Right(leaf)
+      case _ =>
+        entries
+          .foldLeft(candidate.some.map(MerkleTree.hashLeaf)) {
+            case (Some(curr), pe) =>
+              val (lsib, rsib) = pe.sibling match {
+                case Left(sib)  => (sib, curr)
+                case Right(sib) => (curr, sib)
+              }
+              val hash = MerkleTree.hashIntermediate(lsib, rsib)
+              Option.when(hash == pe.target)(hash)
+            case (None, _) => None
           }
-          val hash = MerkleTree.hashIntermediate(lsib, rsib)
-          Option.when(hash == pe.target)(hash)
-        case (None, _) => None
-      }
-      .isDefined
+          .isDefined
+    }
 }
 
 @derive(show, encoder, decoder, eqv)
@@ -84,7 +90,10 @@ case class MerkleTree(leafCount: NonNegInt, nodes: NonEmptyList[Hash]) {
 
         }
 
-      NonEmptyList.fromList(go()).map(Proof(_))
+      nodes.toList match {
+        case x :: Nil => Some(Proof(NonEmptyList.one(ProofEntry(x, Right(x)))))
+        case _        => NonEmptyList.fromList(go()).map(Proof(_))
+      }
     }
 }
 
