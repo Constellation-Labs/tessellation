@@ -17,6 +17,7 @@ import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.height.{Height, SubHeight}
+import org.tessellation.schema.semver.SnapshotVersion
 import org.tessellation.schema.snapshot._
 import org.tessellation.schema.transaction._
 import org.tessellation.security.Hashed
@@ -112,7 +113,8 @@ object currency {
     blocks: SortedSet[BlockAsActiveTip[CurrencyBlock]],
     tips: SnapshotTips,
     info: CurrencySnapshotInfo,
-    data: Option[Array[Byte]] = None
+    data: Option[Array[Byte]] = None,
+    version: SnapshotVersion = SnapshotVersion("0.0.1")
   ) extends FullSnapshot[CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencySnapshotInfo]
 
   @derive(eqv, show, encoder, decoder)
@@ -124,7 +126,8 @@ object currency {
     blocks: SortedSet[BlockAsActiveTip[CurrencyBlock]],
     tips: SnapshotTips,
     stateProof: CurrencySnapshotStateProof,
-    data: Option[Array[Byte]] = None
+    data: Option[Array[Byte]] = None,
+    version: SnapshotVersion = SnapshotVersion("0.0.1")
   ) extends IncrementalSnapshot[CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof]
 
   object CurrencyIncrementalSnapshot {
