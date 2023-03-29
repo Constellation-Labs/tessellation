@@ -60,7 +60,7 @@ object method {
         pullTxsCount = 100L
       ),
       healthCheck = healthCheckConfig(false),
-      collateral = collateralConfig(environment, collateralAmount)
+      collateral = CollateralConfig(collateralAmount.getOrElse(Amount.empty))
     )
   }
 

@@ -54,7 +54,7 @@ object method {
       ),
       healthCheck = healthCheckConfig(false),
       snapshot = snapshotConfig,
-      collateral = collateralConfig(environment, collateralAmount),
+      collateral = CollateralConfig(collateralAmount.getOrElse(Amount.empty)),
       globalL0Peer = globalL0Peer
     )
 
