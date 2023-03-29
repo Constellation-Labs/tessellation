@@ -25,10 +25,11 @@ object MerkleTreeSuite extends SimpleIOSuite with Checkers {
     expect(mt.getRoot === expected)
   }
 
-  pureTest("cannot find path for one leaf") {
+  pureTest("path for one leaf is the leaf itself") {
     val mt = MerkleTree.from(NonEmptyList.one(Hash("a")))
+    val leaf = MerkleTree.hashLeaf(Hash("a"))
 
-    expect.eql(true, mt.findPath(0).isEmpty)
+    expect.eql(Some(Proof(NonEmptyList.one(ProofEntry(leaf, Right(leaf))))), mt.findPath(0))
   }
 
   test("can find path when tree has many leaves") {
@@ -48,6 +49,13 @@ object MerkleTreeSuite extends SimpleIOSuite with Checkers {
         expect.eql(true, mt.findPath(11).isEmpty)
         expect.eql(true, mt.findPath(-1).isEmpty)
     }
+  }
+
+  pureTest("can verify path for one leaf") {
+    val mt = MerkleTree.from(NonEmptyList.one(Hash("a")))
+    val path = mt.findPath(0)
+
+    expect.eql(true, path.get.verify(Hash("a")))
   }
 
   test("can verify good path") {
