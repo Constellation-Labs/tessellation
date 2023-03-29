@@ -14,6 +14,7 @@ import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.semver.SnapshotVersion
 import org.tessellation.schema.snapshot.{FullSnapshot, IncrementalSnapshot}
 import org.tessellation.schema.transaction.{DAGTransaction, RewardTransaction}
 import org.tessellation.security.Hashed
@@ -41,7 +42,8 @@ case class GlobalIncrementalSnapshot(
   epochProgress: EpochProgress,
   nextFacilitators: NonEmptyList[PeerId],
   tips: SnapshotTips,
-  stateProof: GlobalSnapshotStateProof
+  stateProof: GlobalSnapshotStateProof,
+  version: SnapshotVersion = SnapshotVersion("0.0.1")
 ) extends IncrementalSnapshot[DAGTransaction, DAGBlock, GlobalSnapshotStateProof]
 
 object GlobalIncrementalSnapshot {
