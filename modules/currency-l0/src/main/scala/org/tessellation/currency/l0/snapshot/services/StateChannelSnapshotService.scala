@@ -4,6 +4,7 @@ import java.security.KeyPair
 
 import cats.Applicative
 import cats.effect.Async
+import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.show._
@@ -43,13 +44,13 @@ object StateChannelSnapshotService {
 
       def createGenesisBinary(snapshot: Signed[CurrencySnapshot]): F[Signed[StateChannelSnapshotBinary]] = for {
         lastSnapshotBinaryHash <- lastSignedBinaryHashStorage.get
-        bytes = JsonBinarySerializer.serialize(snapshot)
+        bytes <- JsonBinarySerializer.serialize(snapshot).liftTo[F]
         binary <- StateChannelSnapshotBinary(lastSnapshotBinaryHash, bytes, SnapshotFee.MinValue).sign(keyPair)
       } yield binary
 
       def createBinary(snapshot: Signed[CurrencySnapshotArtifact]): F[Signed[StateChannelSnapshotBinary]] = for {
         lastSnapshotBinaryHash <- lastSignedBinaryHashStorage.get
-        bytes = JsonBinarySerializer.serialize(snapshot)
+        bytes <- JsonBinarySerializer.serialize(snapshot).liftTo[F]
         binary <- StateChannelSnapshotBinary(lastSnapshotBinaryHash, bytes, SnapshotFee.MinValue).sign(keyPair)
       } yield binary
 
