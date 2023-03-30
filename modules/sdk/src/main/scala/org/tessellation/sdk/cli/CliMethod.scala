@@ -28,6 +28,8 @@ trait CliMethod {
 
   val collateralAmount: Option[Amount]
 
+  val trustRatingsPath: Option[Path]
+
   val collateralConfig = (environment: AppEnvironment, amount: Option[Amount]) =>
     CollateralConfig(
       amount = amount
