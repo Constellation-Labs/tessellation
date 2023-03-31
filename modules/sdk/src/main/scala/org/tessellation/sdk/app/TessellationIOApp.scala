@@ -76,20 +76,28 @@ abstract class TessellationIOApp[A <: CliMethod](
       val registrar: Map[Class[_], Int Refined Or[KryoRegistrationIdRange, SdkOrSharedOrKernelRegistrationIdRange]] =
         kryoRegistrar.union(sdkKryoRegistrar)
 
-      LoggerConfigurator.configureLogger[IO](cfg.environment) >>
-        logger.info(s"App environment: ${cfg.environment}") >>
-        logger.info(s"App version: ${version.show}") >>
-        Random.scalaUtilRandom[IO].flatMap { _random =>
-          SecurityProvider.forAsync[IO].use { implicit _securityProvider =>
-            loadKeyPair[IO](keyStore, alias, password).flatMap { _keyPair =>
-              val selfId = PeerId.fromPublic(_keyPair.getPublic)
+      Random.scalaUtilRandom[IO].flatMap { _random =>
+        SecurityProvider.forAsync[IO].use { implicit _securityProvider =>
+          loadKeyPair[IO](keyStore, alias, password).flatMap { _keyPair =>
+            val selfId = PeerId.fromPublic(_keyPair.getPublic)
+            IO {
+              Map(
+                "application_name" -> name,
+                "self_id" -> selfId.show,
+                "external_ip" -> cfg.httpConfig.externalIp.show
+              ).foreach {
+                case (k, v) => System.setProperty(k, v)
+              }
+            } >>
+              LoggerConfigurator.configureLogger[IO](cfg.environment) >>
+              logger.info(s"App environment: ${cfg.environment}") >>
+              logger.info(s"App version: ${version.show}") >>
               KryoSerializer.forAsync[IO](registrar).use { implicit _kryoPool =>
                 Metrics.forAsync[IO](Seq(("application", name))).use { implicit _metrics =>
                   SignallingRef.of[IO, Unit](()).flatMap { _restartSignal =>
                     def mkSDK =
                       Supervisor[IO].flatMap { implicit _supervisor =>
                         for {
-                          _ <- IO(System.setProperty("self_id", selfId.show)).asResource
                           _ <- logger.info(s"Self peerId: ${selfId}").asResource
                           _generation <- Generation.make[IO].asResource
                           versionHash <- version.hash.liftTo[IO].asResource
@@ -176,9 +184,9 @@ abstract class TessellationIOApp[A <: CliMethod](
                   }
                 }
               }
-            }
           }
         }
+      }
     }
 
   private def loadKeyPair[F[_]: Async: SecurityProvider](
