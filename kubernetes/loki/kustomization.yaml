@@ -4,6 +4,6 @@ resources:
   - deployment.yaml
   - service.yaml
 configMapGenerator:
-  - name: promtail-config
+  - name: loki-config
     files:
-      - promtail/config.yaml
+      - config.yaml

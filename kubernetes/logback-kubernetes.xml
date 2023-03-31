@@ -10,6 +10,6 @@
     <root level="INFO">
         <appender-ref ref="STDOUT" />
         <appender-ref ref="APP" />
-        <appender-ref ref="JSON" />
+        <appender-ref ref="APP_JSON" />
     </root>
 </configuration>
