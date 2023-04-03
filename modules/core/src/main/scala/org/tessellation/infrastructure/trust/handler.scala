@@ -1,6 +1,5 @@
 package org.tessellation.infrastructure.trust
 
-import cats.Applicative
 import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.show._
@@ -23,8 +22,7 @@ object handler {
     RumorHandler.fromPeerRumorConsumer[F, PublicTrust](IgnoreSelfOrigin) {
       case PeerRumor(origin, _, trust) =>
         logger.info(s"Received trust=${trust} from id=${origin.show}") >> {
-          // Placeholder for updating trust scores
-          Applicative[F].unit
+          trustStorage.updatePeerPublicTrustInfo(origin, trust)
         }
     }
   }
