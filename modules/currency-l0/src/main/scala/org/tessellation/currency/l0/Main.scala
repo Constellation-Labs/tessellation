@@ -7,16 +7,14 @@ import cats.syntax.semigroupk._
 
 import org.tessellation.BuildInfo
 import org.tessellation.currency.l0.cli.method
-import org.tessellation.currency.l0.cli.method.{Run, RunGenesis, RunValidator}
+import org.tessellation.currency.l0.cli.method._
 import org.tessellation.currency.l0.http.P2PClient
 import org.tessellation.currency.l0.modules._
-import org.tessellation.currency.schema.currency.CurrencySnapshot
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.kryo._
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.node.NodeState
 import org.tessellation.sdk.app.{SDK, TessellationIOApp}
-import org.tessellation.sdk.infrastructure.genesis.{Loader => GenesisLoader}
 import org.tessellation.sdk.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import org.tessellation.sdk.resources.MkHttpServer
 import org.tessellation.sdk.resources.MkHttpServer.ServerName
@@ -65,7 +63,7 @@ object Main
           method.identifier
         )
         .asResource
-      programs = Programs.make[IO](sdkPrograms, storages, services, p2pClient)
+      programs = Programs.make[IO](keyPair, sdk.nodeId, method.identifier, cfg.globalL0Peer, sdkPrograms, storages, services, p2pClient)
       healthChecks <- HealthChecks
         .make[IO](
           storages,
@@ -119,23 +117,24 @@ object Main
           gossipDaemon.startAsRegularValidator >>
             programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
             storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
+
+        case _: RunRollback =>
+          storages.node.tryModifyState(
+            NodeState.Initial,
+            NodeState.RollbackInProgress,
+            NodeState.RollbackDone
+          )(programs.rollback.rollback) >> gossipDaemon.startAsInitialValidator >>
+            services.cluster.createSession >>
+            services.session.createSession >>
+            programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
+            storages.node.setNodeState(NodeState.Ready)
+
         case m: RunGenesis =>
           storages.node.tryModifyState(
             NodeState.Initial,
             NodeState.LoadingGenesis,
             NodeState.GenesisReady
-          ) {
-            GenesisLoader
-              .make[IO]
-              .load(m.genesisPath)
-              .flatMap { accounts =>
-                val genesis = CurrencySnapshot.mkGenesis(
-                  accounts.map(a => (a.address, a.balance)).toMap
-                )
-                services.genesis.accept(genesis)
-              }
-          } >>
-            gossipDaemon.startAsInitialValidator >>
+          )(programs.genesis.accept(m.genesisPath)) >> gossipDaemon.startAsInitialValidator >>
             services.cluster.createSession >>
             services.session.createSession >>
             programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>

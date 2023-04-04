@@ -53,7 +53,7 @@ object Services {
       val cluster = sdkServices.cluster
       val gossip = sdkServices.gossip
       val globalL0 = GlobalL0Service
-        .make[F](p2PClient.l0GlobalSnapshotClient, globalL0Cluster, lastGlobalSnapshotStorage, None)
+        .make[F](p2PClient.l0GlobalSnapshot, globalL0Cluster, lastGlobalSnapshotStorage, None)
       val session = sdkServices.session
       val transaction = TransactionService.make[F, T](storages.transaction, validators.transactionContextual)
       val collateral = Collateral.make[F](cfg.collateral, storages.lastSnapshot)
