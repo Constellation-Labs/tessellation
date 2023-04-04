@@ -22,8 +22,9 @@ import org.tessellation.security.signature.Signed
 import org.tessellation.statechannel.StateChannelSnapshotBinary
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+import org.tessellation.sdk.domain.consensus.ArtifactService
 
-trait StateChannelSnapshotService[F[_]] {
+trait StateChannelSnapshotService[F[_]] extends ArtifactService[F, CurrencySnapshotArtifact, CurrencySnapshotContext] {
 
   def consume(signedArtifact: Signed[CurrencySnapshotArtifact], context: CurrencySnapshotContext): F[Unit]
   def createGenesisBinary(snapshot: Signed[CurrencySnapshot]): F[Signed[StateChannelSnapshotBinary]]

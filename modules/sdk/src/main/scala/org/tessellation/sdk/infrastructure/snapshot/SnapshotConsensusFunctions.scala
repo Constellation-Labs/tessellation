@@ -22,7 +22,7 @@ import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.schema.transaction.Transaction
 import org.tessellation.sdk.domain.block.processing.{BlockAcceptanceResult, deprecationThreshold}
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
-import org.tessellation.sdk.domain.consensus.ConsensusFunctions.InvalidArtifact
+import org.tessellation.sdk.domain.consensus.ConsensusValidator.InvalidArtifact
 import org.tessellation.sdk.infrastructure.consensus.trigger.ConsensusTrigger
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
@@ -42,8 +42,7 @@ abstract class SnapshotConsensusFunctions[
   P <: StateProof,
   Event,
   Artifact <: Snapshot[T, B]: Eq,
-  Context <: SnapshotInfo[P],
-  Trigger <: ConsensusTrigger
+  Context <: SnapshotInfo[P]
 ](implicit ordering: Ordering[BlockAsActiveTip[B]])
     extends ConsensusFunctions[F, Event, SnapshotOrdinal, Artifact, Context] {
 
@@ -56,22 +55,9 @@ abstract class SnapshotConsensusFunctions[
       lastContext.balances.getOrElse(address, Balance.empty).satisfiesCollateral(getRequiredCollateral)
     }
 
-  def validateArtifact(lastSignedArtifact: Signed[Artifact], lastContext: Context, trigger: ConsensusTrigger)(
-    artifact: Artifact
-  ): F[Either[InvalidArtifact, Artifact]] = {
-    val events = artifact.blocks.unsorted.map(_.block.asInstanceOf[Event])
+  def extractEvents(artifact: Artifact): Set[Event]
 
-    def recreatedArtifact: F[Artifact] =
-      createProposalArtifact(lastSignedArtifact.ordinal, lastSignedArtifact, lastContext, trigger, events)
-        .map(_._1)
-
-    recreatedArtifact
-      .map(_ === artifact)
-      .ifF(
-        artifact.asRight[InvalidArtifact],
-        ArtifactMismatch.asLeft[Artifact]
-      )
-  }
+  def extractTrigger(lastArtifact: Artifact, artifact: Artifact): ConsensusTrigger
 
   protected def getUpdatedTips(
     lastActive: SortedSet[ActiveTip],

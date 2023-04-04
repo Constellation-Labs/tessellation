@@ -32,6 +32,7 @@ import derevo.cats.show
 import derevo.derive
 import eu.timepit.refined.types.numeric.NonNegLong
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+import org.tessellation.sdk.domain.consensus.ConsensusValidator
 
 abstract class SnapshotProcessor[
   F[_]: Async: KryoSerializer: SecurityProvider,
@@ -49,11 +50,11 @@ abstract class SnapshotProcessor[
 
   def applyGlobalSnapshotFn(
     lastGlobalState: GlobalSnapshotInfo,
-    lastGlobalSnapshot: GlobalIncrementalSnapshot,
+    lastGlobalSnapshot: Signed[GlobalIncrementalSnapshot],
     globalSnapshot: Signed[GlobalIncrementalSnapshot]
-  ): F[GlobalSnapshotInfo]
+  ): F[Either[ConsensusValidator.InvalidArtifact, (GlobalIncrementalSnapshot, GlobalSnapshotInfo)]]
 
-  def applySnapshotFn(lastState: SI, lastSnapshot: S, snapshot: Signed[S]): F[SI]
+  def applySnapshotFn(lastState: SI, lastSnapshot: Signed[S], snapshot: Signed[S]): F[Either[ConsensusValidator.InvalidArtifact, (S, SI)]]
 
   def processAlignment(
     alignment: Alignment,
@@ -265,7 +266,7 @@ abstract class SnapshotProcessor[
                     val isDependent =
                       (block: Signed[B]) => BlockRelations.dependsOn[F, T, B](acceptedInMajority.values.map(_._1).toSet)(block)
 
-                    applySnapshotFn(lastState, lastSnapshot, snapshot.signed).flatMap { state =>
+                    applySnapshotFn(lastState, lastSnapshot.signed, snapshot.signed).flatMap { state =>
                       blockStorage.getBlocksForMajorityReconciliation(lastSnapshot.height, snapshot.height, isDependent).flatMap {
                         case MajorityReconciliationData(deprecatedTips, activeTips, _, _, relatedPostponed, _, acceptedAbove) =>
                           val onlyInMajority = acceptedInMajority -- acceptedAbove
@@ -316,7 +317,7 @@ abstract class SnapshotProcessor[
                     val isDependent =
                       (block: Signed[B]) => BlockRelations.dependsOn[F, T, B](acceptedInMajority.values.map(_._1).toSet)(block)
 
-                    applySnapshotFn(lastState, lastSnapshot, snapshot.signed).flatMap { state =>
+                    applySnapshotFn(lastState, lastSnapshot.signed, snapshot.signed).flatMap { state =>
                       blockStorage.getBlocksForMajorityReconciliation(lastSnapshot.height, snapshot.height, isDependent).flatMap {
                         case MajorityReconciliationData(
                               deprecatedTips,

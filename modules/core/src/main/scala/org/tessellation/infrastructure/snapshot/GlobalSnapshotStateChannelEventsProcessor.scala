@@ -1,4 +1,4 @@
-package org.tessellation.sdk.infrastructure.snapshot
+
 
 import cats.Eval
 import cats.data.NonEmptyList
@@ -28,6 +28,7 @@ import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
 import org.tessellation.syntax.sortedCollection._
+import org.tessellation.currency.l0.snapshot.CurrencySnapshotConsensusFunctions
 
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -48,7 +49,7 @@ trait GlobalSnapshotStateChannelEventsProcessor[F[_]] {
 object GlobalSnapshotStateChannelEventsProcessor {
   def make[F[_]: Async: KryoSerializer](
     stateChannelValidator: StateChannelValidator[F],
-    currencySnapshotContextFns: CurrencySnapshotContextFunctions[F]
+    currencySnapshotContextFns: CurrencySnapshotConsensusFunctions[F]
   ) =
     new GlobalSnapshotStateChannelEventsProcessor[F] {
       private val logger = Slf4jLogger.getLoggerFromClass[F](GlobalSnapshotStateChannelEventsProcessor.getClass)

@@ -23,6 +23,13 @@ import org.tessellation.security.SecurityProvider
 
 import io.circe.disjunctionCodecs._
 import org.http4s.client.Client
+import org.tessellation.sdk.domain.block.processing.BlockValidator
+import org.tessellation.sdk.domain.statechannel.StateChannelValidator
+import org.tessellation.schema.transaction.DAGTransaction
+import org.tessellation.schema.block.DAGBlock
+import org.tessellation.sdk.domain.consensus.ArtifactService
+import org.tessellation.sdk.infrastructure.block.processing.BlockAcceptanceManager
+import org.tessellation.sdk.infrastructure.snapshot.GlobalSnapshotStateChannelEventsProcessor
 
 object GlobalSnapshotConsensus {
 
@@ -34,23 +41,29 @@ object GlobalSnapshotConsensus {
     collateral: Amount,
     clusterStorage: ClusterStorage[F],
     nodeStorage: NodeStorage[F],
-    globalSnapshotStorage: SnapshotStorage[F, GlobalSnapshotArtifact, GlobalSnapshotContext],
-    snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
+    blockValidator: BlockValidator[F, DAGTransaction, DAGBlock],
+    stateChannelValidator: StateChannelValidator[F],
     snapshotConfig: SnapshotConfig,
     environment: AppEnvironment,
     client: Client[F],
     session: Session[F],
     rewards: Rewards[F],
-    globalSnapshotContextFns: GlobalSnapshotContextFunctions[F]
-  ): F[Consensus[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact, GlobalSnapshotContext]] =
+    snapshotService: ArtifactService[F, GlobalSnapshotArtifact, GlobalSnapshotContext]
+  ): F[Consensus[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact, GlobalSnapshotContext]] = {
+    val currencySnapshotConsensusFunctions = CurrencySnapshotConsensusFunctions.make[F](
+      BlockAcceptanceManager.make[F, CurrencyTransaction, CurrencyBlock]
+    )
+    val globalSnapshotConsensusFunctions = GlobalSnapshotConsensusFunctions.make[F](
+      BlockAcceptanceManager.make[F, DAGTransaction, DAGBlock](blockValidator),
+      GlobalSnapshotStateChannelEventsProcessor.make[F](stateChannelValidator, currencySnapshotConsensusFunctions),
+      collateral,
+      rewards,
+      environment
+    )
+    val globalSnapshotConsensusValidator = SnapshotConsensusValidator.make[F](globalSnapshotConsensusFunctions)
     Consensus.make[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact, GlobalSnapshotContext](
-      GlobalSnapshotConsensusFunctions.make[F](
-        globalSnapshotStorage,
-        snapshotAcceptanceManager,
-        collateral,
-        rewards,
-        environment
-      ),
+      snapshotService,
+      globalSnapshotConsensusFunctions,
       gossip,
       selfId,
       keyPair,
@@ -59,8 +72,8 @@ object GlobalSnapshotConsensus {
       clusterStorage,
       nodeStorage,
       client,
-      session,
-      globalSnapshotContextFns
+      session
     )
+  }
 
 }

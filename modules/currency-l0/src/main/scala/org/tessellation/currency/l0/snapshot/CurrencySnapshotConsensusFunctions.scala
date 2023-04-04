@@ -29,6 +29,7 @@ import derevo.cats.{eqv, show}
 import derevo.derive
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+import org.tessellation.sdk.infrastructure.consensus.trigger.TimeTrigger
 
 abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
     extends SnapshotConsensusFunctions[
@@ -38,14 +39,12 @@ abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
       CurrencySnapshotStateProof,
       CurrencySnapshotEvent,
       CurrencySnapshotArtifact,
-      CurrencySnapshotContext,
-      ConsensusTrigger
+      CurrencySnapshotContext
     ] {}
 
 object CurrencySnapshotConsensusFunctions {
 
   def make[F[_]: Async: KryoSerializer: SecurityProvider: Metrics](
-    stateChannelSnapshotService: StateChannelSnapshotService[F],
     blockAcceptanceManager: BlockAcceptanceManager[F, CurrencyTransaction, CurrencyBlock],
     collateral: Amount
   ): CurrencySnapshotConsensusFunctions[F] = new CurrencySnapshotConsensusFunctions[F] {
@@ -54,16 +53,13 @@ object CurrencySnapshotConsensusFunctions {
 
     def getRequiredCollateral: Amount = collateral
 
-    def consumeSignedMajorityArtifact(signedArtifact: Signed[CurrencyIncrementalSnapshot], context: CurrencySnapshotInfo): F[Unit] =
-      stateChannelSnapshotService.consume(signedArtifact, context)
-
     def createProposalArtifact(
       lastKey: SnapshotOrdinal,
       lastArtifact: Signed[CurrencySnapshotArtifact],
       lastContext: CurrencySnapshotContext,
       trigger: ConsensusTrigger,
       events: Set[CurrencySnapshotEvent]
-    ): F[(CurrencySnapshotArtifact, Set[CurrencySnapshotEvent])] = {
+    ): F[(CurrencySnapshotArtifact, CurrencySnapshotContext, Set[CurrencySnapshotEvent])] = {
 
       val blocksForAcceptance = events
         .filter(_.height > lastArtifact.height)
@@ -106,8 +102,12 @@ object CurrencySnapshotConsensusFunctions {
           ),
           stateProof
         )
-      } yield (artifact, returnedEvents)
+      } yield (artifact, snapshotInfo, returnedEvents)
     }
+
+    def extractEvents(artifact: CurrencySnapshotArtifact): Set[CurrencySnapshotEvent] =
+      artifact.blocks.unsorted.map(_.block.asInstanceOf[CurrencySnapshotEvent])
+    def extractTrigger(lastArtifact: CurrencySnapshotArtifact, artifact: CurrencySnapshotArtifact): ConsensusTrigger = TimeTrigger
 
     private def accept(
       blocksForAcceptance: List[CurrencySnapshotEvent],

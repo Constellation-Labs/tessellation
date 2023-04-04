@@ -17,9 +17,11 @@ import org.tessellation.sdk.config.types.ConsensusConfig
 import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
+import org.tessellation.sdk.domain.consensus.ConsensusValidator
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.domain.snapshot.SnapshotContextFunctions
+import org.tessellation.sdk.domain.consensus.ArtifactService
 import org.tessellation.sdk.infrastructure.gossip.RumorHandler
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
@@ -36,7 +38,9 @@ object Consensus {
     Artifact <: AnyRef: Eq: TypeTag: Encoder: Decoder,
     Context <: AnyRef: Eq: TypeTag: Encoder: Decoder
   ](
+    artifactService: ArtifactService[F, Artifact, Context],
     consensusFns: ConsensusFunctions[F, Event, Key, Artifact, Context],
+    consensusValidator: ConsensusValidator[F, Artifact, Context],
     gossip: Gossip[F],
     selfId: PeerId,
     keyPair: KeyPair,
@@ -45,16 +49,16 @@ object Consensus {
     clusterStorage: ClusterStorage[F],
     nodeStorage: NodeStorage[F],
     client: Client[F],
-    session: Session[F],
-    snapshotContextFns: SnapshotContextFunctions[F, Artifact, Context]
+    session: Session[F]
   ): F[Consensus[F, Event, Key, Artifact, Context]] =
     for {
       storage <- ConsensusStorage.make[F, Event, Key, Artifact, Context](consensusConfig)
       stateUpdater = ConsensusStateUpdater.make[F, Event, Key, Artifact, Context](
+        artifactService,
         consensusFns,
+        consensusValidator,
         storage,
         gossip,
-        snapshotContextFns,
         keyPair
       )
       stateCreator = ConsensusStateCreator.make[F, Event, Key, Artifact, Context](

@@ -118,11 +118,9 @@ abstract class TessellationIOApp[A <: CliMethod](
                               queues,
                               session,
                               p2pClient.node,
-                              validators,
                               _seedlist,
                               _restartSignal,
-                              versionHash,
-                              cfg.collateral
+                              versionHash
                             )
                             .asResource
 

@@ -40,11 +40,9 @@ object SdkServices {
     queues: SdkQueues[F],
     session: Session[F],
     nodeClient: NodeClient[F],
-    validators: SdkValidators[F],
     seedlist: Option[Set[PeerId]],
     restartSignal: SignallingRef[F, Unit],
-    versionHash: Hash,
-    collateral: CollateralConfig
+    versionHash: Hash
   ): F[SdkServices[F]] = {
 
     val cluster = Cluster
@@ -64,25 +62,12 @@ object SdkServices {
     for {
       localHealthcheck <- LocalHealthcheck.make[F](nodeClient, storages.cluster)
       gossip <- Gossip.make[F](queues.rumor, nodeId, generation, keyPair)
-      currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
-        BlockAcceptanceManager.make[F, CurrencyTransaction, CurrencyBlock](validators.currencyBlockValidator),
-        collateral.amount
-      )
-      currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotAcceptanceManager)
-      globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
-        BlockAcceptanceManager.make[F, DAGTransaction, DAGBlock](validators.blockValidator),
-        GlobalSnapshotStateChannelEventsProcessor.make[F](validators.stateChannelValidator, currencySnapshotContextFns),
-        collateral.amount
-      )
-      globalSnapshotContextFns = GlobalSnapshotContextFunctions.make(globalSnapshotAcceptanceManager)
     } yield
       new SdkServices[F](
         localHealthcheck = localHealthcheck,
         cluster = cluster,
         session = session,
-        gossip = gossip,
-        globalSnapshotContextFns = globalSnapshotContextFns,
-        currencySnapshotContextFns = currencySnapshotContextFns
+        gossip = gossip
       ) {}
   }
 }
@@ -91,7 +76,5 @@ sealed abstract class SdkServices[F[_]] private (
   val localHealthcheck: LocalHealthcheck[F],
   val cluster: Cluster[F],
   val session: Session[F],
-  val gossip: Gossip[F],
-  val globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
-  val currencySnapshotContextFns: CurrencySnapshotContextFunctions[F]
+  val gossip: Gossip[F]
 )

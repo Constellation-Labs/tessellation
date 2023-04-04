@@ -40,6 +40,7 @@ import org.http4s._
 import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder}
 import org.http4s.client.Client
 import org.http4s.ember.client.EmberClientBuilder
+import org.tessellation.currency.schema.currency.SnapshotFee
 
 object Main
     extends CommandIOApp(
@@ -92,7 +93,7 @@ object Main
       key <- generateKeys(1).map(_.head)
       address = key.getPublic.toAddress
       _ <- console.green(s"Generated address: $address")
-      snapshot = StateChannelSnapshotBinary(Hash.empty, "test".getBytes)
+      snapshot = StateChannelSnapshotBinary(Hash.empty, "test".getBytes, SnapshotFee(0L))
       signedSnapshot <- Signed.forAsyncKryo(snapshot, key)
       hashed <- signedSnapshot.toHashed
       _ <- console.green(s"Snapshot hash: ${hashed.hash.show}, proofs hash: ${hashed.proofsHash.show}")

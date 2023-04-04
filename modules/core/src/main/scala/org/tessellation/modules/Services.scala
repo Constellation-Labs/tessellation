@@ -61,11 +61,6 @@ object Services {
           FacilitatorDistributor.make
         )
         .pure[F]
-      snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
-        BlockAcceptanceManager.make[F, DAGTransaction, DAGBlock](validators.blockValidator),
-        GlobalSnapshotStateChannelEventsProcessor.make[F](validators.stateChannelValidator, sdkServices.currencySnapshotContextFns),
-        cfg.collateral.amount
-      )
       consensus <- GlobalSnapshotConsensus
         .make[F](
           sdkServices.gossip,
@@ -76,7 +71,8 @@ object Services {
           storages.cluster,
           storages.node,
           storages.globalSnapshot,
-          snapshotAcceptanceManager,
+          validators.blockValidator,
+          validators.stateChannelValidator,
           cfg.snapshot,
           cfg.environment,
           client,

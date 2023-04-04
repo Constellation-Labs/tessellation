@@ -13,6 +13,7 @@ import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
+import org.tessellation.sdk.domain.consensus.ConsensusValidator
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.snapshot.SnapshotContextFunctions
 import org.tessellation.sdk.infrastructure.consensus.declaration._
@@ -30,6 +31,7 @@ import org.tessellation.syntax.sortedCollection._
 import eu.timepit.refined.auto._
 import io.circe.Encoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+import org.tessellation.sdk.domain.consensus.ArtifactService
 
 trait ConsensusStateUpdater[F[_], Key, Artifact, Context] {
 
@@ -66,10 +68,11 @@ object ConsensusStateUpdater {
   def make[F[
     _
   ]: Async: KryoSerializer: SecurityProvider: Metrics, Event, Key: Show: Order: TypeTag: Encoder, Artifact <: AnyRef: Eq: TypeTag: Encoder, Context <: AnyRef: Eq: TypeTag](
+    artifactService: ArtifactService[F, Artifact, Context],
     consensusFns: ConsensusFunctions[F, Event, Key, Artifact, Context],
+    consensusValidator: ConsensusValidator[F, Artifact, Context],
     consensusStorage: ConsensusStorage[F, Event, Key, Artifact, Context],
     gossip: Gossip[F],
-    snapshotContextFns: SnapshotContextFunctions[F, Artifact, Context],
     keyPair: KeyPair
   ): ConsensusStateUpdater[F, Key, Artifact, Context] = new ConsensusStateUpdater[F, Key, Artifact, Context] {
 
@@ -219,7 +222,7 @@ object ConsensusStateUpdater {
                         for {
                           peerEvents <- consensusStorage.pullEvents(bound)
                           events = peerEvents.toList.flatMap(_._2).map(_._2).toSet
-                          (artifact, returnedEvents) <- consensusFns
+                          (artifact, context, returnedEvents) <- consensusFns
                             .createProposalArtifact(
                               state.key,
                               state.lastOutcome.status.signedMajorityArtifact,
@@ -260,33 +263,34 @@ object ConsensusStateUpdater {
                     state.lastOutcome.status.context,
                     majorityTrigger,
                     resources
-                  )(allProposals).flatMap { maybeMajorityHash =>
+                  )(allProposals).flatMap { validatedMajority =>
                     state.facilitators.hashF.flatMap { facilitatorsHash =>
-                      maybeMajorityHash.traverse { majorityHash =>
-                        val newState =
-                          state.copy(status =
-                            CollectingSignatures[Artifact, Context](
-                              majorityHash,
-                              state.lastOutcome.status.context,
-                              majorityTrigger,
-                              candidates,
-                              facilitatorsHash
+                      validatedMajority.traverse {
+                        case (majorityHash, newContext) =>
+                          val newState =
+                            state.copy(status =
+                              CollectingSignatures[Artifact, Context](
+                                majorityHash,
+                                newContext,
+                                majorityTrigger,
+                                candidates,
+                                facilitatorsHash
+                              )
                             )
+                          val effect = Signature.fromHash(keyPair.getPrivate, majorityHash).flatMap { signature =>
+                            gossip.spread(ConsensusPeerDeclaration(state.key, MajoritySignature(signature, facilitatorsHash)))
+                          } >> Metrics[F].recordDistribution(
+                            "dag_consensus_proposal_affinity",
+                            proposalAffinity(allProposals, proposalInfo.proposalArtifactHash)
                           )
-                        val effect = Signature.fromHash(keyPair.getPrivate, majorityHash).flatMap { signature =>
-                          gossip.spread(ConsensusPeerDeclaration(state.key, MajoritySignature(signature, facilitatorsHash)))
-                        } >> Metrics[F].recordDistribution(
-                          "dag_consensus_proposal_affinity",
-                          proposalAffinity(allProposals, proposalInfo.proposalArtifactHash)
-                        )
-                        (newState, effect).pure[F]
+                          (newState, effect).pure[F]
                       }
                     }
                   }
                 }
               }
 
-            case CollectingSignatures(majorityHash, context, majorityTrigger, candidates, ownFacilitatorsHash) =>
+            case CollectingSignatures(majorityHash, newContext, majorityTrigger, candidates, ownFacilitatorsHash) =>
               val maybeAllSignatures =
                 state.facilitators.sorted.traverse { peerId =>
                   resources.peerDeclarationsMap
@@ -308,31 +312,27 @@ object ConsensusStateUpdater {
                           .whenA(allSignatures.size =!= validSignatures.size)
                       }
                 }.flatMap { maybeOnlyValidSignatures =>
-                  state.facilitators.hashF.flatMap { facilitatorsHash =>
+                  state.facilitators.hashF.map { facilitatorsHash =>
                     maybeOnlyValidSignatures.flatMap { validSignatures =>
                       NonEmptySet.fromSet(validSignatures.toSortedSet).flatMap { validSignaturesNel =>
                         resources.artifacts.get(majorityHash).map { majorityArtifact =>
                           val signedArtifact = Signed(majorityArtifact, validSignaturesNel)
 
-                          snapshotContextFns
-                            .createContext(context, state.lastOutcome.status.signedMajorityArtifact.value, signedArtifact)
-                            .map { newContext =>
-                              val newState = state.copy(status =
-                                Finished[Artifact, Context](
-                                  signedArtifact,
-                                  newContext,
-                                  majorityTrigger,
-                                  candidates,
-                                  facilitatorsHash
-                                )
-                              )
-                              val effect = consensusFns.consumeSignedMajorityArtifact(signedArtifact, context)
+                          val newState = state.copy(status =
+                            Finished[Artifact, Context](
+                              signedArtifact,
+                              newContext,
+                              majorityTrigger,
+                              candidates,
+                              facilitatorsHash
+                            )
+                          )
+                          val effect = artifactService.consume(signedArtifact, newContext)
 
-                              (newState, effect)
-                            }
+                          (newState, effect)
                         }
                       }
-                    }.sequence
+                    }
                   }
                 }
               }
@@ -379,27 +379,27 @@ object ConsensusStateUpdater {
       lastContext: Context,
       trigger: ConsensusTrigger,
       resources: ConsensusResources[Artifact]
-    )(proposals: List[Hash]): F[Option[Hash]] = {
+    )(proposals: List[Hash]): F[Option[(Hash, Context)]] = {
       val sortedProposals = proposals.foldMap(a => Map(a -> 1)).toList.map(_.swap).sorted.reverse
 
-      def go(proposals: List[(Int, Hash)]): F[Option[Hash]] =
+      def go(proposals: List[(Int, Hash)]): F[Option[(Hash, Context)]] =
         proposals match {
           case (occurrences, majorityHash) :: tail =>
             resources.artifacts
               .get(majorityHash)
               .traverse { artifact =>
-                consensusFns.validateArtifact(lastSignedArtifact, lastContext, trigger)(artifact)
+                consensusValidator.validateArtifact(lastSignedArtifact, lastContext)(artifact)
               }
               .flatMap {
                 _.flatTraverse {
                   _.fold(
                     cause =>
                       logger.warn(cause)(s"Found invalid majority hash=${majorityHash.show} with occurrences=$occurrences") >> go(tail),
-                    _ => majorityHash.some.pure[F]
+                    right => (majorityHash, right._2).some.pure[F]
                   )
                 }
               }
-          case Nil => none[Hash].pure[F]
+          case Nil => none[(Hash, Context)].pure[F]
         }
 
       go(sortedProposals)

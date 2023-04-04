@@ -22,10 +22,11 @@ import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.infrastructure.block.processing.BlockAcceptanceManager
 import org.tessellation.sdk.infrastructure.consensus.Consensus
 import org.tessellation.sdk.infrastructure.metrics.Metrics
-import org.tessellation.sdk.infrastructure.snapshot.{CurrencySnapshotContextFunctions, SnapshotConsensus}
+import org.tessellation.sdk.infrastructure.snapshot.SnapshotConsensus
 import org.tessellation.security.SecurityProvider
 
 import org.http4s.client.Client
+import org.tessellation.sdk.infrastructure.snapshot.SnapshotConsensusValidator
 
 object CurrencySnapshotConsensus {
 
@@ -37,21 +38,34 @@ object CurrencySnapshotConsensus {
     collateral: Amount,
     clusterStorage: ClusterStorage[F],
     nodeStorage: NodeStorage[F],
-    snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
     blockValidator: BlockValidator[F, CurrencyTransaction, CurrencyBlock],
     snapshotConfig: SnapshotConfig,
     environment: AppEnvironment,
     client: Client[F],
     session: Session[F],
-    stateChannelSnapshotService: StateChannelSnapshotService[F],
-    currencySnapshotContextFns: CurrencySnapshotContextFunctions[F]
-  ): F[SnapshotConsensus[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshotArtifact, CurrencySnapshotContext, CurrencySnapshotEvent]] =
+    stateChannelSnapshotService: StateChannelSnapshotService[F]
+  ): F[
+    SnapshotConsensus[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshotArtifact, CurrencySnapshotContext, CurrencySnapshotEvent]
+  ] = {
+    val currencySnapshotConsensuFunctions = CurrencySnapshotConsensusFunctions.make[F](
+      BlockAcceptanceManager.make[F, CurrencyTransaction, CurrencyBlock](blockValidator),
+      collateral
+    )
+    val currencySnapshotConsensusValidator = SnapshotConsensusValidator.make[
+      F,
+      CurrencyTransaction,
+      CurrencyBlock,
+      CurrencySnapshotStateProof,
+      CurrencySnapshotEvent,
+      CurrencySnapshotArtifact,
+      CurrencySnapshotContext
+    ](
+      currencySnapshotConsensuFunctions
+    )
     Consensus.make[F, CurrencySnapshotEvent, SnapshotOrdinal, CurrencySnapshotArtifact, CurrencySnapshotContext](
-      CurrencySnapshotConsensusFunctions.make[F](
-        stateChannelSnapshotService,
-        BlockAcceptanceManager.make[F, CurrencyTransaction, CurrencyBlock](blockValidator),
-        collateral
-      ),
+      stateChannelSnapshotService,
+      currencySnapshotConsensuFunctions,
+      currencySnapshotConsensusValidator,
       gossip,
       selfId,
       keyPair,
@@ -60,8 +74,8 @@ object CurrencySnapshotConsensus {
       clusterStorage,
       nodeStorage,
       client,
-      session,
-      currencySnapshotContextFns
+      session
     )
+  }
 
 }

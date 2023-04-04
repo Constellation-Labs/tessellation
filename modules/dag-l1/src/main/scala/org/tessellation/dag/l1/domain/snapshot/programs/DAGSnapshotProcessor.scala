@@ -10,10 +10,11 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.transaction.DAGTransaction
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalSnapshotStateProof}
-import org.tessellation.sdk.domain.snapshot.SnapshotContextFunctions
 import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hashed, SecurityProvider}
+import org.tessellation.sdk.infrastructure.snapshot.SnapshotConsensusFunctions
+import org.tessellation.sdk.domain.consensus.ConsensusValidator
 
 object DAGSnapshotProcessor {
 
@@ -22,7 +23,7 @@ object DAGSnapshotProcessor {
     blockStorage: BlockStorage[F, DAGBlock],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     transactionStorage: TransactionStorage[F, DAGTransaction],
-    globalSnapshotContextFns: SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
+    snapshotConsensusValidator: ConsensusValidator[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
   ): SnapshotProcessor[F, DAGTransaction, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo] =
     new SnapshotProcessor[F, DAGTransaction, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo] {
 
@@ -36,14 +37,14 @@ object DAGSnapshotProcessor {
 
       def applySnapshotFn(
         lastState: GlobalSnapshotInfo,
-        lastSnapshot: GlobalIncrementalSnapshot,
+        lastSnapshot: Signed[GlobalIncrementalSnapshot],
         snapshot: Signed[GlobalIncrementalSnapshot]
-      ): F[GlobalSnapshotInfo] = applyGlobalSnapshotFn(lastState, lastSnapshot, snapshot)
+      ): F[Either[ConsensusValidator.InvalidArtifact, (GlobalIncrementalSnapshot, GlobalSnapshotInfo)]] = applyGlobalSnapshotFn(lastState, lastSnapshot, snapshot)
 
       def applyGlobalSnapshotFn(
         lastGlobalState: GlobalSnapshotInfo,
-        lastGlobalSnapshot: GlobalIncrementalSnapshot,
+        lastGlobalSnapshot: Signed[GlobalIncrementalSnapshot],
         globalSnapshot: Signed[GlobalIncrementalSnapshot]
-      ): F[GlobalSnapshotInfo] = globalSnapshotContextFns.createContext(lastGlobalState, lastGlobalSnapshot, globalSnapshot)
+      ): F[Either[ConsensusValidator.InvalidArtifact, (GlobalIncrementalSnapshot, GlobalSnapshotInfo)]] = snapshotConsensusValidator.validateArtifact(lastGlobalSnapshot, lastGlobalState)(globalSnapshot)
     }
 }
