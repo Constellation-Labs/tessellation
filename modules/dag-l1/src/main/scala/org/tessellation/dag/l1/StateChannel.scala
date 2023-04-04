@@ -228,21 +228,19 @@ class StateChannel[
         case Right(snapshots)    => snapshots.traverse(log).void
       }
     }
-    .evalMapLocked(NonEmptyList.of(blockAcceptanceS, blockCreationS, blockStoringS)) { snapshots =>
-      snapshots match {
-        case Left((snapshot, state)) =>
-          programs.snapshotProcessor.process((snapshot, state).asLeft[Hashed[GlobalIncrementalSnapshot]]).map(List(_))
-        case Right(snapshots) =>
-          (snapshots, List.empty[SnapshotProcessingResult]).tailRecM {
-            case (snapshot :: nextSnapshots, aggResults) =>
-              programs.snapshotProcessor
-                .process(snapshot.asRight[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)])
-                .map(result => (nextSnapshots, aggResults :+ result).asLeft[List[SnapshotProcessingResult]])
+    .evalMapLocked(NonEmptyList.of(blockAcceptanceS, blockCreationS, blockStoringS)) {
+      case Left((snapshot, state)) =>
+        programs.snapshotProcessor.process((snapshot, state).asLeft[Hashed[GlobalIncrementalSnapshot]]).map(List(_))
+      case Right(snapshots) =>
+        (snapshots, List.empty[SnapshotProcessingResult]).tailRecM {
+          case (snapshot :: nextSnapshots, aggResults) =>
+            programs.snapshotProcessor
+              .process(snapshot.asRight[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)])
+              .map(result => (nextSnapshots, aggResults :+ result).asLeft[List[SnapshotProcessingResult]])
 
-            case (Nil, aggResults) =>
-              aggResults.asRight[(List[Hashed[GlobalIncrementalSnapshot]], List[SnapshotProcessingResult])].pure[F]
-          }
-      }
+          case (Nil, aggResults) =>
+            aggResults.asRight[(List[Hashed[GlobalIncrementalSnapshot]], List[SnapshotProcessingResult])].pure[F]
+        }
     }
     .evalMap {
       _.traverse(result => logger.info(s"Snapshot processing result: ${result.show}")).void

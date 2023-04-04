@@ -9,7 +9,6 @@ import cats.syntax.functor._
 import org.tessellation.dag.l1.domain.address.storage.AddressStorage
 import org.tessellation.dag.l1.domain.block.BlockStorage
 import org.tessellation.dag.l1.domain.consensus.block.storage.ConsensusStorage
-import org.tessellation.dag.l1.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.dag.l1.infrastructure.address.storage.AddressStorage
 import org.tessellation.kryo.KryoSerializer
@@ -23,6 +22,7 @@ import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.sdk.infrastructure.cluster.storage.L0ClusterStorage
 import org.tessellation.sdk.infrastructure.gossip.RumorStorage
+import org.tessellation.sdk.infrastructure.snapshot.storage.LastSnapshotStorage
 import org.tessellation.sdk.modules.SdkStorages
 
 object Storages {

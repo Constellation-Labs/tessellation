@@ -49,5 +49,5 @@ sealed abstract class P2PClient[
   val l0CurrencyCluster: L0CurrencyClusterClient[F, B],
   val gossip: GossipClient[F],
   val blockConsensus: BlockConsensusClient[F, T],
-  val l0GlobalSnapshotClient: L0GlobalSnapshotClient[F]
+  val l0GlobalSnapshot: L0GlobalSnapshotClient[F]
 )

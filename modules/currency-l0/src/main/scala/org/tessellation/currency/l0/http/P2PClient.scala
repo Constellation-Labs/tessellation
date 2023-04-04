@@ -36,6 +36,6 @@ sealed abstract class P2PClient[F[_]] private (
   val cluster: ClusterClient[F],
   val gossip: GossipClient[F],
   val node: NodeClient[F],
-  val stateChannelSnapshotClient: StateChannelSnapshotClient[F],
-  val globalSnapshot: L0GlobalSnapshotClient[F]
+  val stateChannelSnapshot: StateChannelSnapshotClient[F],
+  val l0GlobalSnapshot: L0GlobalSnapshotClient[F]
 )

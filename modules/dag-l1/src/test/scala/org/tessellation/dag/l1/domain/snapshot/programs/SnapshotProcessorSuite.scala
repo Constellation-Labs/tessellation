@@ -17,7 +17,6 @@ import org.tessellation.dag.l1.domain.address.storage.AddressStorage
 import org.tessellation.dag.l1.domain.block.BlockStorage
 import org.tessellation.dag.l1.domain.block.BlockStorage._
 import org.tessellation.dag.l1.domain.snapshot.programs.SnapshotProcessor._
-import org.tessellation.dag.l1.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage.{Accepted, LastTransactionReferenceState, Majority}
 import org.tessellation.dag.transaction.TransactionGenerator
@@ -34,6 +33,7 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction._
 import org.tessellation.sdk.infrastructure.block.processing.BlockAcceptanceManager
 import org.tessellation.sdk.infrastructure.snapshot._
+import org.tessellation.sdk.infrastructure.snapshot.storage.LastSnapshotStorage
 import org.tessellation.sdk.modules.SdkValidators
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.hash.{Hash, ProofsHash}

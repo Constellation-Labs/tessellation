@@ -1,4 +1,4 @@
-package org.tessellation.currency.l0.snapshot.services
+package org.tessellation.currency.l0.snapshot.programs
 
 import java.security.KeyPair
 
@@ -9,6 +9,7 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.show._
 
+import org.tessellation.currency.l0.snapshot.services.StateChannelSnapshotService
 import org.tessellation.currency.l0.snapshot.storages.LastSignedBinaryHashStorage
 import org.tessellation.currency.l0.snapshot.{CurrencySnapshotArtifact, CurrencySnapshotContext}
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshot, CurrencySnapshotInfo}
@@ -20,15 +21,18 @@ import org.tessellation.sdk.domain.collateral.{Collateral, OwnCollateralNotSatis
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.http.p2p.clients.StateChannelSnapshotClient
 import org.tessellation.sdk.infrastructure.consensus.ConsensusManager
+import org.tessellation.sdk.infrastructure.genesis.{Loader => GenesisLoader}
 import org.tessellation.security.SecurityProvider
 
+import fs2.io.file.Path
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-trait GenesisService[F[_]] {
+trait Genesis[F[_]] {
+  def accept(path: Path): F[Unit]
   def accept(genesis: CurrencySnapshot): F[Unit]
 }
 
-object GenesisService {
+object Genesis {
   def make[F[_]: Async: KryoSerializer: SecurityProvider](
     keyPair: KeyPair,
     collateral: Collateral[F],
@@ -39,7 +43,7 @@ object GenesisService {
     globalL0Peer: L0Peer,
     nodeId: PeerId,
     consensusManager: ConsensusManager[F, SnapshotOrdinal, CurrencySnapshotArtifact, CurrencySnapshotContext]
-  ): GenesisService[F] = new GenesisService[F] {
+  ): Genesis[F] = new Genesis[F] {
     private val logger = Slf4jLogger.getLogger
 
     override def accept(genesis: CurrencySnapshot): F[Unit] = for {
@@ -47,6 +51,7 @@ object GenesisService {
       firstIncrementalSnapshot <- CurrencySnapshot.mkFirstIncrementalSnapshot[F](hashedGenesis)
       signedFirstIncrementalSnapshot <- firstIncrementalSnapshot.sign(keyPair)
       _ <- snapshotStorage.prepend(signedFirstIncrementalSnapshot, hashedGenesis.info)
+
       _ <- collateral
         .hasCollateral(nodeId)
         .flatMap(OwnCollateralNotSatisfied.raiseError[F, Unit].unlessA)
@@ -70,5 +75,13 @@ object GenesisService {
       )
       _ <- logger.info(s"Genesis binary ${signedBinaryHash.show} and ${signedIncrementalBinaryHash.show} accepted and sent to Global L0")
     } yield ()
+
+    def accept(path: Path): F[Unit] =
+      GenesisLoader
+        .make[F]
+        .load(path)
+        .map(_.map(a => (a.address, a.balance)).toMap)
+        .map(CurrencySnapshot.mkGenesis)
+        .flatMap(accept)
   }
 }

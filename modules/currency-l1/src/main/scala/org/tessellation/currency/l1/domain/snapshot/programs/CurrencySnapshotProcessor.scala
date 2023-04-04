@@ -11,7 +11,6 @@ import org.tessellation.dag.l1.domain.address.storage.AddressStorage
 import org.tessellation.dag.l1.domain.block.BlockStorage
 import org.tessellation.dag.l1.domain.snapshot.programs.SnapshotProcessor
 import org.tessellation.dag.l1.domain.snapshot.programs.SnapshotProcessor._
-import org.tessellation.dag.l1.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.dag.l1.infrastructure.address.storage.AddressStorage
 import org.tessellation.json.JsonBinarySerializer
@@ -20,6 +19,7 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotReference}
 import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.sdk.domain.snapshot.{SnapshotContextFunctions, Validator}
+import org.tessellation.sdk.infrastructure.snapshot.storage.LastSnapshotStorage
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed.InvalidSignatureForHash
 import org.tessellation.security.{Hashed, SecurityProvider}

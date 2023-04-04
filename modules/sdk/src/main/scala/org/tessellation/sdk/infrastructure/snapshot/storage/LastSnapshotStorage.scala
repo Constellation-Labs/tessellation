@@ -1,4 +1,4 @@
-package org.tessellation.dag.l1.domain.snapshot.storage
+package org.tessellation.sdk.infrastructure.snapshot.storage
 
 import cats.effect.kernel.Async
 import cats.syntax.eq._

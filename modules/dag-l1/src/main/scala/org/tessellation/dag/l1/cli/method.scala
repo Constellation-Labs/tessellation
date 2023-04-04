@@ -4,10 +4,9 @@ import cats.syntax.contravariantSemigroupal._
 
 import scala.concurrent.duration.{DurationDouble, DurationInt}
 
-import org.tessellation.cli.env.{KeyAlias, Password, StorePath}
+import org.tessellation.cli.env._
 import org.tessellation.dag.l1.config.types.AppConfig
 import org.tessellation.dag.l1.domain.consensus.block.config.ConsensusConfig
-import org.tessellation.ext.decline.decline._
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.L0Peer
@@ -17,7 +16,6 @@ import org.tessellation.sdk.config.types._
 
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto.autoRefineV
-import fs2.io.file.Path
 
 object method {
 
@@ -66,12 +64,11 @@ object method {
     environment: AppEnvironment,
     httpConfig: HttpConfig,
     l0Peer: L0Peer,
-    seedlistPath: Option[Path],
+    seedlistPath: Option[SeedListPath],
     collateralAmount: Option[Amount]
   ) extends Run
 
   object RunInitialValidator {
-    val seedlistPathOpts: Opts[Option[Path]] = Opts.option[Path]("seedlist", "").orNone
 
     val opts = Opts.subcommand("run-initial-validator", "Run initial validator mode") {
       (
@@ -81,7 +78,7 @@ object method {
         AppEnvironment.opts,
         http.opts,
         L0PeerOpts.opts,
-        seedlistPathOpts,
+        SeedListPath.opts,
         CollateralAmountOpts.opts
       ).mapN(RunInitialValidator(_, _, _, _, _, _, _, _))
     }
@@ -94,12 +91,11 @@ object method {
     environment: AppEnvironment,
     httpConfig: HttpConfig,
     l0Peer: L0Peer,
-    seedlistPath: Option[Path],
+    seedlistPath: Option[SeedListPath],
     collateralAmount: Option[Amount]
   ) extends Run
 
   object RunValidator {
-    val seedlistPathOpts: Opts[Option[Path]] = Opts.option[Path]("seedlist", "").orNone
 
     val opts = Opts.subcommand("run-validator", "Run validator mode") {
       (
@@ -109,7 +105,7 @@ object method {
         AppEnvironment.opts,
         http.opts,
         L0PeerOpts.opts,
-        seedlistPathOpts,
+        SeedListPath.opts,
         CollateralAmountOpts.opts
       ).mapN(RunValidator(_, _, _, _, _, _, _, _))
     }

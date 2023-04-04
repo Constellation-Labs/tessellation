@@ -10,7 +10,7 @@ import cats.syntax.functor._
 
 import org.tessellation.currency.l0.config.types.AppConfig
 import org.tessellation.currency.l0.http.P2PClient
-import org.tessellation.currency.l0.snapshot.services.{GenesisService, StateChannelSnapshotService}
+import org.tessellation.currency.l0.snapshot.services.StateChannelSnapshotService
 import org.tessellation.currency.l0.snapshot.{CurrencySnapshotConsensus, CurrencySnapshotEvent}
 import org.tessellation.currency.schema.currency._
 import org.tessellation.kryo.KryoSerializer
@@ -20,7 +20,7 @@ import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.collateral.Collateral
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.healthcheck.LocalHealthcheck
-import org.tessellation.sdk.domain.snapshot.services.AddressService
+import org.tessellation.sdk.domain.snapshot.services.{AddressService, GlobalL0Service}
 import org.tessellation.sdk.infrastructure.Collateral
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.infrastructure.snapshot.SnapshotConsensus
@@ -47,7 +47,7 @@ object Services {
   ): F[Services[F]] =
     for {
       stateChannelSnapshotService <- StateChannelSnapshotService
-        .make[F](keyPair, storages.lastSignedBinaryHash, p2PClient.stateChannelSnapshotClient, storages.globalL0Cluster, storages.snapshot)
+        .make[F](keyPair, storages.lastSignedBinaryHash, p2PClient.stateChannelSnapshot, storages.globalL0Cluster, storages.snapshot)
         .pure[F]
       consensus <- CurrencySnapshotConsensus
         .make[F](
@@ -69,17 +69,8 @@ object Services {
         )
       addressService = AddressService.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](storages.snapshot)
       collateralService = Collateral.make[F](cfg.collateral, storages.snapshot)
-      genesisService = GenesisService.make[F](
-        keyPair,
-        collateralService,
-        storages.lastSignedBinaryHash,
-        stateChannelSnapshotService,
-        storages.snapshot,
-        p2PClient.stateChannelSnapshotClient,
-        cfg.globalL0Peer,
-        selfId,
-        consensus.manager
-      )
+      globalL0Service = GlobalL0Service
+        .make[F](p2PClient.l0GlobalSnapshot, storages.globalL0Cluster, storages.lastGlobalSnapshot, None)
     } yield
       new Services[F](
         localHealthcheck = sdkServices.localHealthcheck,
@@ -90,7 +81,7 @@ object Services {
         address = addressService,
         collateral = collateralService,
         stateChannelSnapshot = stateChannelSnapshotService,
-        genesis = genesisService
+        globalL0 = globalL0Service
       ) {}
 }
 
@@ -110,5 +101,5 @@ sealed abstract class Services[F[_]] private (
   val address: AddressService[F, CurrencyIncrementalSnapshot],
   val collateral: Collateral[F],
   val stateChannelSnapshot: StateChannelSnapshotService[F],
-  val genesis: GenesisService[F]
+  val globalL0: GlobalL0Service[F]
 )
