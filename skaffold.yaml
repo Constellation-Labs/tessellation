@@ -38,6 +38,7 @@ deploy:
       - kubernetes/l1-cluster
       - kubernetes/grafana
       - kubernetes/prometheus
+      - kubernetes/loki
       - kubernetes/nginx
   logs:
     prefix: podAndContainer
