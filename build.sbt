@@ -60,7 +60,7 @@ lazy val root = (project in file("."))
   .settings(
     name := "tessellation"
   )
-  .aggregate(keytool, kernel, shared, core, testShared, wallet, sdk, dagL1, rosetta, currencyL0, currencyL1)
+  .aggregate(keytool, kernel, shared, core, testShared, wallet, sdk, dagL1, rosetta, currencyL0, currencyL1, tools)
 
 lazy val kernel = (project in file("modules/kernel"))
   .enablePlugins(AshScriptPlugin)

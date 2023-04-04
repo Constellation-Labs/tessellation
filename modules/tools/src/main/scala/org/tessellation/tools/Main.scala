@@ -12,6 +12,7 @@ import cats.syntax.all._
 import scala.concurrent.duration._
 import scala.math.Integral.Implicits._
 
+import org.tessellation.currency.schema.currency.SnapshotFee
 import org.tessellation.keytool.KeyStoreUtils
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
@@ -92,7 +93,7 @@ object Main
       key <- generateKeys(1).map(_.head)
       address = key.getPublic.toAddress
       _ <- console.green(s"Generated address: $address")
-      snapshot = StateChannelSnapshotBinary(Hash.empty, "test".getBytes)
+      snapshot = StateChannelSnapshotBinary(Hash.empty, "test".getBytes, SnapshotFee.MinValue)
       signedSnapshot <- Signed.forAsyncKryo(snapshot, key)
       hashed <- signedSnapshot.toHashed
       _ <- console.green(s"Snapshot hash: ${hashed.hash.show}, proofs hash: ${hashed.proofsHash.show}")
