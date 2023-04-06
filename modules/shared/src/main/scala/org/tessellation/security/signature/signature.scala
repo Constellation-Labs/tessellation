@@ -1,6 +1,5 @@
 package org.tessellation.security.signature
 
-import java.nio.charset.StandardCharsets
 import java.security.{KeyPair, PrivateKey}
 
 import cats.Applicative
@@ -39,7 +38,7 @@ object signature {
   object Signature {
 
     def fromHash[F[_]: Async: SecurityProvider](privateKey: PrivateKey, hash: Hash): F[Signature] =
-      signData(hash.value.getBytes(StandardCharsets.UTF_8))(privateKey).map(raw => Signature(Hex.fromBytes(raw)))
+      signData(hash.getBytes)(privateKey).map(raw => Signature(Hex.fromBytes(raw)))
 
   }
 
@@ -69,7 +68,7 @@ object signature {
     val verifyResult = for {
       signatureBytes <- Async[F].delay(signatureProof.signature.coerce.toBytes)
       publicKey <- signatureProof.id.hex.toPublicKey
-      result <- verifySignature(hash.value.getBytes(StandardCharsets.UTF_8), signatureBytes)(publicKey)
+      result <- verifySignature(hash.getBytes, signatureBytes)(publicKey)
     } yield result
 
     verifyResult.handleErrorWith { err =>

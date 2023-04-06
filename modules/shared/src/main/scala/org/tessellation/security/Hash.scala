@@ -1,5 +1,7 @@
 package org.tessellation.security
 
+import java.nio.charset.StandardCharsets
+
 import org.tessellation.ext.derevo.ordering
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.security.hash.Hash
@@ -16,7 +18,9 @@ object hash {
 
   @derive(encoder, decoder, ordering, order, show)
   @newtype
-  case class Hash(value: String)
+  case class Hash(value: String) {
+    def getBytes: Array[Byte] = value.getBytes(StandardCharsets.UTF_8)
+  }
 
   object Hash {
 
