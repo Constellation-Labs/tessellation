@@ -75,6 +75,18 @@ final class ConstructionRoutes[F[_]: Async](
           combinedHex.bimap(_.toRosettaError, ConstructionCombine.Response(_)).asRosettaResponse.handleUnknownError
         }
 
+    case req @ POST -> Root / "payloads" =>
+      req
+        .decodeRosettaWithNetworkValidation[ConstructionPayloads.Request](appEnvironment, _.networkIdentifier) { payloadsReq =>
+          constructionService
+            .getPayloads(payloadsReq.operations, payloadsReq.metadata)
+            .bimap(
+              _.toRosettaError,
+              ConstructionPayloads.Response.fromPayloadsResult
+            )
+            .asRosettaResponse
+        }
+        .handleUnknownError
   }
 
   val routes: HttpRoutes[F] = Router(

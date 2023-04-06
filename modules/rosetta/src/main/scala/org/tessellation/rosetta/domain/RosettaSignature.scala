@@ -1,11 +1,10 @@
 package org.tessellation.rosetta.domain
 
 import org.tessellation.ext.derevo.magnoliaCustomizable.snakeCaseConfiguration
-import org.tessellation.rosetta.domain.AccountIdentifier
 import org.tessellation.security.hex.Hex
 
 import derevo.cats.{eqv, show}
-import derevo.circe.magnolia.customizableDecoder
+import derevo.circe.magnolia.{customizableDecoder, customizableEncoder}
 import derevo.derive
 import enumeratum.values.{StringEnumEntry, _}
 
@@ -17,7 +16,7 @@ case class RosettaSignature(
   hexBytes: Hex
 )
 
-@derive(customizableDecoder)
+@derive(customizableDecoder, customizableEncoder, eqv, show)
 case class SigningPayload(
   accountIdentifier: AccountIdentifier,
   hexBytes: Hex,

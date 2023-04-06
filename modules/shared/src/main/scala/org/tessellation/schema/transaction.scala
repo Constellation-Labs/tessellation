@@ -13,7 +13,7 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Encodable, Hashed}
+import org.tessellation.security.{Encodable, Hashed, SecureRandom}
 
 import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia.{decoder, encoder}
@@ -77,6 +77,14 @@ object transaction {
   @derive(decoder, encoder, order, show)
   @newtype
   case class TransactionSalt(value: Long)
+
+  object TransactionSalt {
+    def generate[F[_]: Async]: F[TransactionSalt] =
+      SecureRandom
+        .get[F]
+        .map(_.nextLong())
+        .map(TransactionSalt.apply)
+  }
 
   @derive(decoder, encoder, order, show)
   case class TransactionData(

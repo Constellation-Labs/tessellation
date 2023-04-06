@@ -49,6 +49,13 @@ object RosettaError extends IntEnum[RosettaError] with RosettaErrorEncoder {
         retriable = false,
         description = Some("The operation is not supported.")
       )
+  case class InternalError(reason: String, canRetry: Boolean)
+      extends RosettaError(
+        value = 8,
+        message = "Internal error",
+        retriable = canRetry,
+        description = reason.some
+      )
 }
 
 trait RosettaErrorEncoder {
