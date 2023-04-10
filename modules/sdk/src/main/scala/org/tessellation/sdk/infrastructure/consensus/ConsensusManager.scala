@@ -10,6 +10,8 @@ import cats.syntax.all._
 import scala.concurrent.duration._
 
 import org.tessellation.ext.cats.syntax.next._
+import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.node.NodeState._
 import org.tessellation.schema.peer.Peer.toP2PContext
@@ -17,6 +19,8 @@ import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.sdk.config.types.ConsensusConfig
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.node.NodeStorage
+import org.tessellation.sdk.http.p2p.clients.GlobalSnapshotClient
+import org.tessellation.sdk.domain.http.p2p.SnapshotClient
 import org.tessellation.sdk.infrastructure.consensus.message.GetConsensusOutcomeRequest
 import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import org.tessellation.sdk.infrastructure.metrics.Metrics
@@ -27,6 +31,8 @@ import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import retry.RetryPolicies.{constantDelay, fullJitter, limitRetries}
 import retry.syntax.all._
+import org.http4s.client.Client
+import org.tessellation.schema.GlobalSnapshot
 
 trait ConsensusManager[F[_], Key, Artifact] {
 
@@ -41,7 +47,7 @@ trait ConsensusManager[F[_], Key, Artifact] {
 
 object ConsensusManager {
 
-  def make[F[_]: Async: Random: Metrics, Event, Key: Show: Order: Next, Artifact: Eq](
+  def make[F[_]: Async: Random: Metrics: KryoSerializer, Event, Key: Show: Order: Next, Artifact: Eq](
     config: ConsensusConfig,
     consensusStorage: ConsensusStorage[F, Event, Key, Artifact],
     consensusStateCreator: ConsensusStateCreator[F, Key, Artifact],
@@ -50,7 +56,8 @@ object ConsensusManager {
     nodeStorage: NodeStorage[F],
     clusterStorage: ClusterStorage[F],
     consensusClient: ConsensusClient[F, Key, Artifact],
-    selfId: PeerId
+    selfId: PeerId,
+    snapshotClient: SnapshotClient[F, GlobalSnapshot],
   )(implicit S: Supervisor[F]): F[ConsensusManager[F, Key, Artifact]] = {
     val logger = Slf4jLogger.getLoggerFromClass[F](ConsensusManager.getClass)
 
@@ -78,7 +85,9 @@ object ConsensusManager {
           def getObservedOutcome: F[ConsensusOutcome[Key, Artifact]] = for {
             readyPeers <- clusterStorage.getResponsivePeers
               .map(_.filter(_.state === Ready))
-            selectedPeer <- Random[F].elementOf(readyPeers)
+            peersToQuery <- getPeerSublist(readyPeers.toList)
+            peerCandidates <- filterPeerList(peersToQuery)
+            selectedPeer <- Random[F].elementOf(peerCandidates)
             observedOutcome <- observePeer(selectedPeer)
           } yield observedOutcome
 
@@ -177,6 +186,42 @@ object ConsensusManager {
           internalCheckForStateUpdate(key, resources)
             .handleErrorWith(logger.error(_)(s"Error checking for consensus state update {key=${key.show}}"))
         }.void
+
+      private def filterPeerList(peers: List[Peer]): F[List[Peer]] = {
+        // type PeerSnapshot = (SnapshotOrdinal, Hash, Peer)
+        // val groupFn: PeerSnapshot => (SnapshotOrdinal, Hash) = v => (v._1, v._2)
+        // val groupFn: SnapshotOrdinal => SnapshotOrdinal = v => v
+
+        val majorityOrdinal = peers
+          .traverse(snapshotClient.getLatestOrdinal(_)
+          /*
+            gsClient.getLatest(peer).flatMap { signedSnapshot =>
+              signedSnapshot.toHashed.map(_.hash).map((signedSnapshot.value.ordinal, _, peer))
+            }
+           */
+          )
+          .map(_.groupBy(snapshotOrdinal => snapshotOrdinal))
+          .map(_.maxBy(_._2.size)._1)
+
+        majorityOrdinal.map { ordinal =>
+          peers.traverse { peer =>
+            snapshotClient.get(ordinal).run(peer).map { signedSnapshot =>
+              signedSnapshot.toHashed.map(_.hash).map((_, peer))
+            }
+          }
+        }
+      }
+
+      private def getPeerSublist(peers: List[Peer]) = {
+        val maxSublistPercent = 0.25
+        val maxSublistSize = Math.max((peers.size * maxSublistPercent).toInt, 1)
+
+        Random[F].nextIntBounded(maxSublistSize).flatMap { peerCount =>
+          Random[F]
+            .shuffleList(peers.toList)
+            .map(_.take(peerCount))
+        }
+      }
 
       private def internalFacilitateWith(
         trigger: Option[ConsensusTrigger]
