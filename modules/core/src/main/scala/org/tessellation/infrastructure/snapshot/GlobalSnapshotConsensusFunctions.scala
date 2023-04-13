@@ -1,7 +1,6 @@
 package org.tessellation.infrastructure.snapshot
 
 import cats.effect.Async
-import cats.syntax.applicative._
 import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.foldable._
@@ -10,7 +9,7 @@ import cats.syntax.functorFilter._
 import cats.syntax.option._
 import cats.syntax.order._
 
-import org.tessellation.domain.rewards.Rewards
+import org.tessellation.domain.rewards.EpochRewards
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
@@ -25,7 +24,7 @@ import org.tessellation.sdk.domain.consensus.ConsensusFunctions.InvalidArtifact
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import org.tessellation.sdk.infrastructure.metrics.Metrics
-import org.tessellation.sdk.infrastructure.snapshot.{GlobalSnapshotAcceptanceManager, _}
+import org.tessellation.sdk.infrastructure.snapshot._
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 import org.tessellation.statechannel.StateChannelOutput
@@ -51,7 +50,7 @@ object GlobalSnapshotConsensusFunctions {
     globalSnapshotStorage: SnapshotStorage[F, GlobalSnapshotArtifact, GlobalSnapshotContext],
     globalSnapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     collateral: Amount,
-    rewards: Rewards[F],
+    rewards: EpochRewards[F],
     environment: AppEnvironment
   ): GlobalSnapshotConsensusFunctions[F] = new GlobalSnapshotConsensusFunctions[F] {
 
@@ -113,15 +112,8 @@ object GlobalSnapshotConsensusFunctions {
         lastActiveTips <- lastArtifact.activeTips
         lastDeprecatedTips = lastArtifact.tips.deprecated
 
-        facilitators = lastArtifact.proofs.map(_.id)
-        transactions = lastArtifact.value.blocks.flatMap(_.block.transactions.toSortedSet).map(_.value)
+        rewardTxsForAcceptance <- rewards.distribute(lastArtifact, trigger)
 
-        rewardTxsForAcceptance <- rewards.feeDistribution(lastArtifact.ordinal, transactions, facilitators).flatMap { feeRewardTxs =>
-          trigger match {
-            case EventTrigger => feeRewardTxs.pure[F]
-            case TimeTrigger  => rewards.mintedDistribution(lastArtifact.epochProgress, facilitators).map(_ ++ feeRewardTxs)
-          }
-        }
         (acceptanceResult, scSnapshots, returnedSCEvents, acceptedRewardTxs, snapshotInfo) <- globalSnapshotAcceptanceManager.accept(
           blocksForAcceptance,
           scEvents,
