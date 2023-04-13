@@ -1,6 +1,7 @@
 package org.tessellation.schema
 
 import cats.data.NonEmptySet
+import cats.syntax.order._
 
 import scala.collection.immutable.SortedSet
 
@@ -90,7 +91,13 @@ object generators {
     Arbitrary.arbitrary[NonNegLong].map(Balance(_))
 
   val transactionAmountGen: Gen[TransactionAmount] = Arbitrary.arbitrary[PosLong].map(TransactionAmount(_))
-  val transactionFeeGen: Gen[TransactionFee] = Arbitrary.arbitrary[NonNegLong].map(TransactionFee(_))
+
+  // total supply is lower than Long.MaxValue so generated fee needs to be limited to avoid cases which won't happen
+  val feeMaxVal: TransactionFee = TransactionFee(NonNegLong(99999999_00000000L))
+
+  val transactionFeeGen: Gen[TransactionFee] =
+    Arbitrary.arbitrary[NonNegLong].map(TransactionFee(_)).retryUntil(_ < feeMaxVal)
+
   val transactionOrdinalGen: Gen[TransactionOrdinal] = Arbitrary.arbitrary[NonNegLong].map(TransactionOrdinal(_))
 
   val transactionReferenceGen: Gen[TransactionReference] =

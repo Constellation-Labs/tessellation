@@ -5,7 +5,7 @@ import java.security.KeyPair
 import cats.effect.kernel.Async
 import cats.effect.std.{Random, Supervisor}
 
-import org.tessellation.domain.rewards.Rewards
+import org.tessellation.domain.rewards.EpochRewards
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.peer.PeerId
@@ -40,7 +40,7 @@ object GlobalSnapshotConsensus {
     environment: AppEnvironment,
     client: Client[F],
     session: Session[F],
-    rewards: Rewards[F]
+    rewards: EpochRewards[F],
   ): F[Consensus[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact, GlobalSnapshotContext]] =
     Consensus.make[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact, GlobalSnapshotContext](
       GlobalSnapshotConsensusFunctions.make[F](
