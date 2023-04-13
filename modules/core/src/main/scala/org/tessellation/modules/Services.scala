@@ -10,7 +10,7 @@ import cats.syntax.functor._
 
 import org.tessellation.config.types.AppConfig
 import org.tessellation.domain.cell.L0Cell
-import org.tessellation.domain.rewards.Rewards
+import org.tessellation.domain.rewards.EpochRewards
 import org.tessellation.domain.statechannel.StateChannelService
 import org.tessellation.infrastructure.rewards._
 import org.tessellation.infrastructure.snapshot._
@@ -54,7 +54,7 @@ object Services {
     cfg: AppConfig
   ): F[Services[F]] =
     for {
-      rewards <- Rewards
+      rewards <- EpochRewards
         .make[F](
           cfg.rewards.rewardsPerEpoch,
           ProgramsDistributor.make(cfg.rewards.programs),
@@ -112,7 +112,7 @@ sealed abstract class Services[F[_]] private (
   val consensus: Consensus[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact, GlobalSnapshotContext],
   val address: AddressService[F, GlobalIncrementalSnapshot],
   val collateral: Collateral[F],
-  val rewards: Rewards[F],
+  val rewards: EpochRewards[F],
   val stateChannel: StateChannelService[F],
   val snapshotContextFunctions: GlobalSnapshotContextFunctions[F]
 )
