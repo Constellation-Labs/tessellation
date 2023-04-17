@@ -1,14 +1,17 @@
 package org.tessellation.cli
 
 import cats.syntax.contravariantSemigroupal._
+import cats.syntax.eq._
 
 import scala.concurrent.duration._
 
 import org.tessellation.cli.db
 import org.tessellation.cli.env.{KeyAlias, Password, StorePath}
+import org.tessellation.cli.incremental._
 import org.tessellation.config.types._
 import org.tessellation.ext.decline.WithOpts
 import org.tessellation.ext.decline.decline._
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.node.NodeState
@@ -120,7 +123,8 @@ object method {
     snapshotConfig: SnapshotConfig,
     seedlistPath: Option[Path],
     collateralAmount: Option[Amount],
-    rollbackHash: Hash
+    rollbackHash: Hash,
+    lastFullGlobalSnapshotOrdinal: SnapshotOrdinal
   ) extends Run
 
   object RunRollback extends WithOpts[RunRollback] {
@@ -140,8 +144,28 @@ object method {
         snapshot.opts,
         seedlistPathOpts,
         CollateralAmountOpts.opts,
-        rollbackHashOpts
-      ).mapN(RunRollback.apply)
+        rollbackHashOpts,
+        lastFullGlobalSnapshotOrdinalOpts
+      ).mapN {
+        case (
+              storePath,
+              keyAlias,
+              password,
+              db,
+              http,
+              environment,
+              snapshot,
+              seedlistPath,
+              collateralAmount,
+              rollbackHash,
+              lastGlobalSnapshot
+            ) =>
+          val lastGS =
+            (if (environment === AppEnvironment.Dev) lastGlobalSnapshot else lastFullGlobalSnapshot.get(environment))
+              .getOrElse(SnapshotOrdinal.MinValue)
+
+          RunRollback(storePath, keyAlias, password, db, http, environment, snapshot, seedlistPath, collateralAmount, rollbackHash, lastGS)
+      }
     }
   }
 

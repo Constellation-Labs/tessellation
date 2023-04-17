@@ -1,5 +1,7 @@
 package org.tessellation.sdk.cli
 
+import cats.syntax.eq._
+
 import scala.concurrent.duration._
 
 import org.tessellation.cli.env._
@@ -31,7 +33,7 @@ trait CliMethod {
   val collateralConfig = (environment: AppEnvironment, amount: Option[Amount]) =>
     CollateralConfig(
       amount = amount
-        .filter(_ => environment != Mainnet)
+        .filter(_ => environment =!= Mainnet)
         .getOrElse(Amount(250_000_00000000L))
     )
 
