@@ -75,15 +75,25 @@ final class ConstructionRoutes[F[_]: Async](
           combinedHex.bimap(_.toRosettaError, ConstructionCombine.Response(_)).asRosettaResponse.handleUnknownError
         }
 
+    case req @ POST -> Root / "metadata" =>
+      req
+        .decodeRosettaWithNetworkValidation[ConstructionMetadata.Request](appEnvironment, _.networkIdentifier) { metadataReq =>
+          constructionService
+            .getMetadata(metadataReq.publicKeys)
+            .bimap(
+              _.toRosettaError,
+              ConstructionMetadata.Response.fromMetadataResult
+            )
+            .asRosettaResponse
+        }
+        .handleUnknownError
+
     case req @ POST -> Root / "payloads" =>
       req
         .decodeRosettaWithNetworkValidation[ConstructionPayloads.Request](appEnvironment, _.networkIdentifier) { payloadsReq =>
           constructionService
-            .getPayloads(payloadsReq.operations, payloadsReq.metadata)
-            .bimap(
-              _.toRosettaError,
-              ConstructionPayloads.Response.fromPayloadsResult
-            )
+            .getPayloads(payloadsReq.operations, ConstructionMetadata.MetadataResult.fromResponse(payloadsReq.metadata))
+            .leftMap(_.toRosettaError)
             .asRosettaResponse
         }
         .handleUnknownError

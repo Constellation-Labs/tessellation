@@ -11,6 +11,7 @@ sealed trait ConstructionError extends NoStackTrace
 object ConstructionError {
   implicit class ConstructionErrorOps(ce: ConstructionError) {
     def toRosettaError: RosettaError = ce match {
+      case ExactlyOnePublicKeyRequired         => RosettaError.InvalidRequestBody("Exactly one public key required")
       case InvalidNumberOfOperations(required) => RosettaError.InvalidRequestBody(s"Exactly $required operations are required.")
       case InvalidOperationAmount(amount) =>
         RosettaError.InternalError(s"Unable to construct transaction amount from $amount.", canRetry = true)
@@ -26,6 +27,7 @@ object ConstructionError {
   }
 }
 
+case object ExactlyOnePublicKeyRequired extends ConstructionError
 case class InvalidNumberOfOperations(numberOfOperationsRequired: Int) extends ConstructionError
 case class InvalidOperationAmount(amount: Long) extends ConstructionError
 case object InvalidPublicKey extends ConstructionError
@@ -33,5 +35,5 @@ case object InvalidSuggestedFee extends ConstructionError
 case object MalformedTransaction extends ConstructionError
 case object MissingAccountIdentifier extends ConstructionError
 case object NegationPairMismatch extends ConstructionError
-case object UnsupportedOperation extends ConstructionError
 case class SerializationError(reason: String) extends ConstructionError
+case object UnsupportedOperation extends ConstructionError
