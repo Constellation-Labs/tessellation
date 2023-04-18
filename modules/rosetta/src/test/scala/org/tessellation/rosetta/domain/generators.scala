@@ -2,11 +2,13 @@ package org.tessellation.rosetta.domain
 
 import cats.syntax.option._
 
-import org.tessellation.rosetta.domain.amount.{AmountValuePredicate, _}
-import org.tessellation.rosetta.domain.api.construction.ConstructionMetadata.{Metadata, MetadataResult}
+import org.tessellation.generators.nesGen
+import org.tessellation.rosetta.domain.amount._
+import org.tessellation.rosetta.domain.api.construction.ConstructionMetadata.MetadataResult
 import org.tessellation.rosetta.domain.currency.DAG
 import org.tessellation.rosetta.domain.operation._
 import org.tessellation.schema.generators._
+import org.tessellation.security.hex.Hex
 
 import eu.timepit.refined.api.Refined
 import eu.timepit.refined.auto._
@@ -44,5 +46,8 @@ object generators extends NumericInstances {
     for {
       lastRef <- transactionReferenceGen
       fee <- Gen.option(positiveAmountGen)
-    } yield MetadataResult(Metadata(lastRef), fee)
+    } yield MetadataResult(lastRef, fee)
+
+  val rosettaPublicKeyGen: Gen[RosettaPublicKey] =
+    nesGen(nes => RosettaPublicKey(Hex(nes), curveType = CurveType.SECP256K1))
 }
