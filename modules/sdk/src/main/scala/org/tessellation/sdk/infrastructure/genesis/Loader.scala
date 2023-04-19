@@ -10,6 +10,7 @@ import org.tessellation.sdk.domain.genesis.types.GenesisCSVAccount
 import fs2.data.csv._
 import fs2.io.file.{Files, Path}
 import fs2.text
+
 object Loader {
 
   def make[F[_]: Async]: Loader[F] =

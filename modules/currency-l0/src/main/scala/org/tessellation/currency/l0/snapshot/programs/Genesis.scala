@@ -18,10 +18,10 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.peer.{L0Peer, PeerId}
 import org.tessellation.sdk.domain.collateral.{Collateral, OwnCollateralNotSatisfied}
+import org.tessellation.sdk.domain.consensus.ConsensusManager
+import org.tessellation.sdk.domain.genesis.{Loader => GenesisLoader}
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.http.p2p.clients.StateChannelSnapshotClient
-import org.tessellation.sdk.infrastructure.consensus.ConsensusManager
-import org.tessellation.sdk.infrastructure.genesis.{Loader => GenesisLoader}
 import org.tessellation.security.SecurityProvider
 
 import fs2.io.file.Path
@@ -42,7 +42,8 @@ object Genesis {
     stateChannelSnapshotClient: StateChannelSnapshotClient[F],
     globalL0Peer: L0Peer,
     nodeId: PeerId,
-    consensusManager: ConsensusManager[F, SnapshotOrdinal, CurrencySnapshotArtifact, CurrencySnapshotContext]
+    consensusManager: ConsensusManager[F, SnapshotOrdinal, CurrencySnapshotArtifact, CurrencySnapshotContext],
+    genesisLoader: GenesisLoader[F]
   ): Genesis[F] = new Genesis[F] {
     private val logger = Slf4jLogger.getLogger
 
@@ -77,8 +78,7 @@ object Genesis {
     } yield ()
 
     def accept(path: Path): F[Unit] =
-      GenesisLoader
-        .make[F]
+      genesisLoader
         .load(path)
         .map(_.map(a => (a.address, a.balance)).toMap)
         .map(CurrencySnapshot.mkGenesis)
