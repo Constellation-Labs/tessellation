@@ -3,7 +3,7 @@ package org.tessellation.sdk.infrastructure.consensus
 import cats._
 import cats.data.Ior.{Both, Right}
 import cats.effect._
-import cats.effect.std.Supervisor
+import cats.effect.std.{Random, Supervisor}
 import cats.kernel.Next
 import cats.syntax.all._
 
@@ -25,8 +25,8 @@ import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
-import retry.RetryPolicies.{constantDelay, fullJitter, limitRetries}
 import retry.RetryDetails
+import retry.RetryPolicies.{constantDelay, fullJitter, limitRetries}
 import retry.syntax.all._
 
 trait ConsensusManager[F[_], Key, Artifact, Context] {
@@ -45,7 +45,7 @@ trait ConsensusManager[F[_], Key, Artifact, Context] {
 
 object ConsensusManager {
 
-  def make[F[_]: Async: Metrics, Event, Key: Show: Order: Next, Artifact: Eq, Context: Eq](
+  def make[F[_]: Async: Metrics: Random, Event, Key: Show: Order: Next, Artifact: Eq, Context: Eq](
     config: ConsensusConfig,
     consensusStorage: ConsensusStorage[F, Event, Key, Artifact, Context],
     consensusStateCreator: ConsensusStateCreator[F, Key, Artifact, Context],
@@ -128,7 +128,6 @@ object ConsensusManager {
             logger.error(err)(s"Error when trying to observe consensus outcome {attempt=${retryDetails.retriesSoFar}}")
 
           for {
-            _ <- nodeStorage.tryModifyState(WaitingForObserving, Observing)
             maybeOutcome <- fetchOutcomeFromRandomPeer
             outcome <- maybeOutcome.liftTo[F](new Throwable(s"Outcome not observed, giving up {key=${key.show}"))
             _ <- consensusStorage

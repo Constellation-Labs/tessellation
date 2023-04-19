@@ -72,6 +72,9 @@ object method {
 
     val stateChannelSeedlistConfig: StateChannelSeedlistConfig =
       StateChannelSeedlistConfig(seedlist = StateChannelSeedlist.get(environment))
+
+    val lastFullGlobalSnapshotOrdinal: SnapshotOrdinal
+
   }
 
   case class RunGenesis(
@@ -87,7 +90,10 @@ object method {
     collateralAmount: Option[Amount],
     startingEpochProgress: EpochProgress,
     trustRatingsPath: Option[Path]
-  ) extends Run
+  ) extends Run {
+
+    val lastFullGlobalSnapshotOrdinal = SnapshotOrdinal.MinValue
+  }
 
   object RunGenesis extends WithOpts[RunGenesis] {
 
@@ -194,7 +200,8 @@ object method {
     snapshotConfig: SnapshotConfig,
     seedlistPath: Option[SeedListPath],
     collateralAmount: Option[Amount],
-    trustRatingsPath: Option[Path]
+    trustRatingsPath: Option[Path],
+    lastFullGlobalSnapshotOrdinal: SnapshotOrdinal
   ) extends Run
 
   object RunValidator extends WithOpts[RunValidator] {
@@ -210,8 +217,40 @@ object method {
         snapshot.opts,
         SeedListPath.opts,
         CollateralAmountOpts.opts,
-        trustRatingsPathOpts
-      ).mapN(RunValidator.apply)
+        trustRatingsPathOpts,
+        lastFullGlobalSnapshotOrdinalOpts
+      ).mapN {
+        case (
+              storePath,
+              keyAlias,
+              password,
+              db,
+              http,
+              environment,
+              snapshot,
+              seedlistPath,
+              collateralAmount,
+              trustRatingsPath,
+              lastGlobalSnapshot
+            ) =>
+          val lastGS =
+            (if (environment === AppEnvironment.Dev) lastGlobalSnapshot else lastFullGlobalSnapshot.get(environment))
+              .getOrElse(SnapshotOrdinal.MinValue)
+
+          RunValidator(
+            storePath,
+            keyAlias,
+            password,
+            db,
+            http,
+            environment,
+            snapshot,
+            seedlistPath,
+            collateralAmount,
+            trustRatingsPath,
+            lastGS
+          )
+      }
     }
   }
 

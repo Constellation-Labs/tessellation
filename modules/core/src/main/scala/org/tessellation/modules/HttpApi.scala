@@ -3,6 +3,7 @@ package org.tessellation.modules
 import java.security.PrivateKey
 
 import cats.effect.Async
+import cats.syntax.option._
 import cats.syntax.semigroupk._
 
 import org.tessellation.domain.cell.{L0Cell, L0CellInput}
@@ -81,7 +82,11 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
   private val trustRoutes = TrustRoutes[F](storages.trust, programs.trustPush)
   private val stateChannelRoutes = StateChannelRoutes[F](services.stateChannel)
   private val snapshotRoutes =
-    SnapshotRoutes[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](storages.globalSnapshot, "/global-snapshots")
+    SnapshotRoutes[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
+      storages.globalSnapshot,
+      storages.fullGlobalSnapshot.some,
+      "/global-snapshots"
+    )
   private val dagRoutes = CurrencyRoutes[F, DAGTransaction, DAGBlock, GlobalIncrementalSnapshot]("/dag", services.address, mkDagCell)
   private val consensusInfoRoutes = new ConsensusInfoRoutes[F, SnapshotOrdinal](services.cluster, services.consensus.storage, selfId)
   private val consensusRoutes = services.consensus.routes.p2pRoutes

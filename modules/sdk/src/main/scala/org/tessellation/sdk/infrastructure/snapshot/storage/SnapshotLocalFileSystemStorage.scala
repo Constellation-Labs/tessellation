@@ -15,6 +15,7 @@ import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 import org.tessellation.storage.LocalFileSystemStorage
 
+import better.files.File
 import fs2.io.file.Path
 import io.estatico.newtype.ops._
 
@@ -37,11 +38,47 @@ final class SnapshotLocalFileSystemStorage[F[_]: Async: KryoSerializer, S <: Sna
 
   }
 
+  def writeUnderOrdinal(snapshot: Signed[S]): F[Unit] = {
+    val ordinalName = toOrdinalName(snapshot.value)
+
+    write(ordinalName, snapshot)
+  }
+
   def read(ordinal: SnapshotOrdinal): F[Option[Signed[S]]] =
     read(toOrdinalName(ordinal))
 
   def read(hash: Hash): F[Option[Signed[S]]] =
     read(hash.coerce[String])
+
+  def exists(hash: Hash): F[Boolean] =
+    exists(hash.coerce[String])
+
+  def delete(ordinal: SnapshotOrdinal): F[Unit] =
+    delete(toOrdinalName(ordinal))
+
+  def getPath(hash: Hash): F[File] =
+    getPath(hash.coerce[String])
+
+  def getPath(snapshot: Signed[S]): F[File] =
+    toHashName(snapshot.value).flatMap { hashName =>
+      getPath(hashName)
+    }
+
+  def move(hash: Hash, to: File): F[Unit] =
+    move(hash.coerce[String], to)
+
+  def move(snapshot: Signed[S], to: File): F[Unit] =
+    toHashName(snapshot.value).flatMap { hashName =>
+      move(hashName, to)
+    }
+
+  def moveByOrdinal(snapshot: Signed[S], to: File): F[Unit] =
+    move(toOrdinalName(snapshot), to)
+
+  def link(snapshot: Signed[S]): F[Unit] =
+    toHashName(snapshot).flatMap { hashName =>
+      link(hashName, toOrdinalName(snapshot))
+    }
 
   private def toOrdinalName(snapshot: S): String = toOrdinalName(snapshot.ordinal)
   private def toOrdinalName(ordinal: SnapshotOrdinal): String = ordinal.value.value.toString

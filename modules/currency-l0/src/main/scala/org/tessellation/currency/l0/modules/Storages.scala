@@ -29,7 +29,7 @@ object Storages {
   ): F[Storages[F]] =
     for {
       snapshotLocalFileSystemStorage <- SnapshotLocalFileSystemStorage.make[F, CurrencyIncrementalSnapshot](
-        snapshotConfig.incrementalSnapshotPath
+        snapshotConfig.incrementalPersistedSnapshotPath
       )
       snapshotStorage <- SnapshotStorage
         .make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](snapshotLocalFileSystemStorage, snapshotConfig.inMemoryCapacity)

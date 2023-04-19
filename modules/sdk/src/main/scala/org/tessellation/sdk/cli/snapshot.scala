@@ -19,16 +19,22 @@ object snapshot {
     .env[Path]("CL_SNAPSHOT_STORED_PATH", help = "Path to store created snapshot")
     .withDefault(Path("data/snapshot"))
 
-  val incrementalSnapshotPath: Opts[Path] = Opts
+  val incrementalPersistedSnapshotPath: Opts[Path] = Opts
     .env[Path]("CL_INCREMENTAL_SNAPSHOT_STORED_PATH", help = "Path to store created incremental snapshot")
     .withDefault(Path("data/incremental_snapshot"))
 
-  val opts = (snapshotPath, incrementalSnapshotPath).tupled.mapValidated {
-    case (snapshotPath, incrementalSnapshotPath) if snapshotPath =!= incrementalSnapshotPath =>
-      (snapshotPath, incrementalSnapshotPath).validNel[String]
-    case _ => "Paths for global snapshot and incremental snapshot must be different.".invalidNel[(Path, Path)]
+  val incrementalTmpSnapshotPath: Opts[Path] = Opts
+    .env[Path]("CL_INCREMENTAL_SNAPSHOT_TMP_STORED_PATH", help = "Path to tmp storage of incremental snapshot")
+    .withDefault(Path("data/incremental_snapshot_tmp"))
+
+  val opts = (snapshotPath, incrementalPersistedSnapshotPath, incrementalTmpSnapshotPath).tupled.mapValidated {
+    case (snapshotPath, incrementalPersistedSnapshotPath, incrementalTmpSnapshotPath)
+        if snapshotPath =!= incrementalPersistedSnapshotPath && incrementalPersistedSnapshotPath =!= incrementalTmpSnapshotPath =>
+      (snapshotPath, incrementalPersistedSnapshotPath, incrementalTmpSnapshotPath).validNel[String]
+    case _ =>
+      "Paths for global snapshot and incremental snapshot (both persisted and tmp) must be different.".invalidNel[(Path, Path, Path)]
   }.map {
-    case (snapshotPath, incrementalSnapshotPath) =>
+    case (snapshotPath, incrementalPersistedSnapshotPath, incrementalTmpSnapshotPath) =>
       SnapshotConfig(
         consensus = ConsensusConfig(
           timeTriggerInterval = 43.seconds,
@@ -37,7 +43,8 @@ object snapshot {
           lockDuration = 10.seconds
         ),
         snapshotPath = snapshotPath,
-        incrementalSnapshotPath = incrementalSnapshotPath,
+        incrementalTmpSnapshotPath = incrementalTmpSnapshotPath,
+        incrementalPersistedSnapshotPath = incrementalPersistedSnapshotPath,
         inMemoryCapacity = 10L
       )
   }

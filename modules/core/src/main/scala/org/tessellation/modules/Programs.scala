@@ -7,13 +7,15 @@ import cats.effect.std.Random
 
 import org.tessellation.config.types.AppConfig
 import org.tessellation.domain.cluster.programs.TrustPush
+import org.tessellation.domain.snapshot.programs.Download
+import org.tessellation.http.p2p.P2PClient
 import org.tessellation.infrastructure.snapshot.programs.RollbackLoader
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.sdk.domain.cluster.programs.{Joining, PeerDiscovery}
 import org.tessellation.sdk.domain.snapshot.PeerSelect
-import org.tessellation.sdk.http.p2p.clients.L0GlobalSnapshotClient
-import org.tessellation.sdk.infrastructure.snapshot.MajorityPeerSelect
-import org.tessellation.sdk.infrastructure.snapshot.programs.Download
+import org.tessellation.sdk.domain.snapshot.programs.Download
+import org.tessellation.sdk.infrastructure.snapshot.{GlobalSnapshotContextFunctions, MajorityPeerSelect}
 import org.tessellation.sdk.modules.SdkPrograms
 import org.tessellation.security.SecurityProvider
 
@@ -25,12 +27,19 @@ object Programs {
     services: Services[F],
     keyPair: KeyPair,
     config: AppConfig,
-    l0GlobalSnapshotClient: L0GlobalSnapshotClient[F]
+    lastFullGlobalSnapshotOrdinal: SnapshotOrdinal,
+    p2pClient: P2PClient[F],
+    globalSnapshotContextFns: GlobalSnapshotContextFunctions[F]
   ): Programs[F] = {
     val trustPush = TrustPush.make(storages.trust, services.gossip)
-    val peerSelect: PeerSelect[F] = MajorityPeerSelect.make(storages.cluster, l0GlobalSnapshotClient)
-    val download = Download
-      .make(
+    val peerSelect: PeerSelect[F] = MajorityPeerSelect.make(storages.cluster, p2pClient.globalSnapshot)
+    val download: Download[F] = Download
+      .make[F](
+        storages.snapshotDownload,
+        p2pClient,
+        storages.cluster,
+        lastFullGlobalSnapshotOrdinal,
+        globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
         storages.node,
         services.consensus,
         peerSelect

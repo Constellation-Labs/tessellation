@@ -72,6 +72,14 @@ abstract class LocalFileSystemStorage[F[_]: KryoSerializer, A <: AnyRef: ClassTa
       case (src, dst) => F.blocking(src.linkTo(dst)).void
     }.flatten
 
+  def move(fileName: String, to: File): F[Unit] =
+    dir.map(_ / fileName).flatMap { src =>
+      F.blocking(src.moveTo(to)).void
+    }
+
+  def getPath(fileName: String): F[File] =
+    dir.map(_ / fileName)
+
   def delete(fileName: String): F[Unit] =
     dir
       .map(_ / fileName)
