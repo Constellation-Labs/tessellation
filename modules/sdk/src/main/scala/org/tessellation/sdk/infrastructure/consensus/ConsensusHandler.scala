@@ -6,7 +6,7 @@ import cats.syntax.all._
 
 import scala.reflect.runtime.universe.TypeTag
 
-import org.tessellation.sdk.domain.consensus.ConsensusFunctions
+import org.tessellation.sdk.domain.consensus.{ConsensusFunctions, ConsensusManager}
 import org.tessellation.sdk.infrastructure.consensus.declaration._
 import org.tessellation.sdk.infrastructure.consensus.message._
 import org.tessellation.sdk.infrastructure.gossip.RumorHandler

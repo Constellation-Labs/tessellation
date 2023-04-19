@@ -16,6 +16,7 @@ import org.tessellation.schema.peer.Peer.toP2PContext
 import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.sdk.config.types.ConsensusConfig
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
+import org.tessellation.sdk.domain.consensus.ConsensusManager
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.infrastructure.consensus.message.GetConsensusOutcomeRequest
 import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
@@ -27,17 +28,6 @@ import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import retry.RetryPolicies.{constantDelay, limitRetries}
 import retry.syntax.all._
-
-trait ConsensusManager[F[_], Key, Artifact, Context] {
-
-  def startObserving: F[Unit]
-  def startFacilitatingAfter(lastKey: Key, lastArtifact: Signed[Artifact], lastContext: Context): F[Unit]
-
-  def withdrawFromConsensus: F[Unit]
-  private[consensus] def facilitateOnEvent: F[Unit]
-  private[consensus] def checkForStateUpdate(key: Key)(resources: ConsensusResources[Artifact]): F[Unit]
-
-}
 
 object ConsensusManager {
 

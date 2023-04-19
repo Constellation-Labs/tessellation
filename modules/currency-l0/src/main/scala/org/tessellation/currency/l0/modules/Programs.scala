@@ -11,6 +11,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.{L0Peer, PeerId}
 import org.tessellation.sdk.domain.cluster.programs.{Joining, L0PeerDiscovery, PeerDiscovery}
+import org.tessellation.sdk.infrastructure.genesis.{Loader => GenesisLoader}
 import org.tessellation.sdk.infrastructure.snapshot.programs.Download
 import org.tessellation.sdk.modules.SdkPrograms
 import org.tessellation.security.SecurityProvider
@@ -38,6 +39,8 @@ object Programs {
       storages.globalL0Cluster
     )
 
+    val genesisLoader = GenesisLoader.make
+
     val genesis = Genesis.make(
       keyPair,
       services.collateral,
@@ -47,7 +50,8 @@ object Programs {
       p2pClient.stateChannelSnapshot,
       globalL0Peer,
       nodeId,
-      services.consensus.manager
+      services.consensus.manager,
+      genesisLoader
     )
 
     val rollback = Rollback.make(
