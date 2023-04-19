@@ -4,6 +4,7 @@ import java.security.KeyPair
 
 import cats.effect.Async
 
+import org.tessellation.currency.l0.snapshot.CurrencySnapshotClient
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.sdk.http.p2p.SdkP2PClient
@@ -27,7 +28,8 @@ object P2PClient {
       sdkP2PClient.gossip,
       sdkP2PClient.node,
       StateChannelSnapshotClient.make(client, identifier),
-      L0GlobalSnapshotClient.make[F](client)
+      L0GlobalSnapshotClient.make[F](client),
+      CurrencySnapshotClient.make[F](client)
     ) {}
 }
 
@@ -37,5 +39,6 @@ sealed abstract class P2PClient[F[_]] private (
   val gossip: GossipClient[F],
   val node: NodeClient[F],
   val stateChannelSnapshot: StateChannelSnapshotClient[F],
-  val l0GlobalSnapshot: L0GlobalSnapshotClient[F]
+  val l0GlobalSnapshot: L0GlobalSnapshotClient[F],
+  val currencySnapshot: CurrencySnapshotClient[F]
 )

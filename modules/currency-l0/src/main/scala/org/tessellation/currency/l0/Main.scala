@@ -63,7 +63,17 @@ object Main
           method.identifier
         )
         .asResource
-      programs = Programs.make[IO](keyPair, sdk.nodeId, method.identifier, cfg.globalL0Peer, sdkPrograms, storages, services, p2pClient)
+      programs = Programs.make[IO](
+        keyPair,
+        sdk.nodeId,
+        method.identifier,
+        cfg.globalL0Peer,
+        sdkPrograms,
+        storages,
+        services,
+        p2pClient,
+        services.snapshotContextFunctions
+      )
       healthChecks <- HealthChecks
         .make[IO](
           storages,

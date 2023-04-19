@@ -5,11 +5,13 @@ import cats.effect.std.Supervisor
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
+import org.tessellation.domain.snapshot.storages.SnapshotDownloadStorage
 import org.tessellation.domain.trust.storage.TrustStorage
+import org.tessellation.infrastructure.snapshot.SnapshotDownloadStorage
 import org.tessellation.infrastructure.trust.storage.TrustStorage
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.trust.PeerObservationAdjustmentUpdateBatch
-import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshot, GlobalSnapshotInfo}
 import org.tessellation.sdk.config.types.SnapshotConfig
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tessellation.sdk.domain.collateral.LatestBalances
@@ -28,13 +30,25 @@ object Storages {
   ): F[Storages[F]] =
     for {
       trustStorage <- TrustStorage.make[F](trustUpdates)
-      incrementalGlobalSnapshotLocalFileSystemStorage <- SnapshotLocalFileSystemStorage.make[F, GlobalIncrementalSnapshot](
-        snapshotConfig.incrementalSnapshotPath
+      incrementalGlobalSnapshotTmpLocalFileSystemStorage <- SnapshotLocalFileSystemStorage.make[F, GlobalIncrementalSnapshot](
+        snapshotConfig.incrementalTmpSnapshotPath
+      )
+      incrementalGlobalSnapshotPersistedLocalFileSystemStorage <- SnapshotLocalFileSystemStorage.make[F, GlobalIncrementalSnapshot](
+        snapshotConfig.incrementalPersistedSnapshotPath
+      )
+      fullGlobalSnapshotLocalFileSystemStorage <- SnapshotLocalFileSystemStorage.make[F, GlobalSnapshot](
+        snapshotConfig.snapshotPath
       )
       globalSnapshotStorage <- SnapshotStorage.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
-        incrementalGlobalSnapshotLocalFileSystemStorage,
+        incrementalGlobalSnapshotPersistedLocalFileSystemStorage,
         snapshotConfig.inMemoryCapacity
       )
+      snapshotDownloadStorage = SnapshotDownloadStorage
+        .make[F](
+          incrementalGlobalSnapshotTmpLocalFileSystemStorage,
+          incrementalGlobalSnapshotPersistedLocalFileSystemStorage,
+          fullGlobalSnapshotLocalFileSystemStorage
+        )
     } yield
       new Storages[F](
         cluster = sdkStorages.cluster,
@@ -43,7 +57,9 @@ object Storages {
         rumor = sdkStorages.rumor,
         trust = trustStorage,
         globalSnapshot = globalSnapshotStorage,
-        incrementalGlobalSnapshotLocalFileSystemStorage = incrementalGlobalSnapshotLocalFileSystemStorage
+        fullGlobalSnapshot = fullGlobalSnapshotLocalFileSystemStorage,
+        incrementalGlobalSnapshotLocalFileSystemStorage = incrementalGlobalSnapshotPersistedLocalFileSystemStorage,
+        snapshotDownload = snapshotDownloadStorage
       ) {}
 }
 
@@ -54,5 +70,7 @@ sealed abstract class Storages[F[_]] private (
   val rumor: RumorStorage[F],
   val trust: TrustStorage[F],
   val globalSnapshot: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo] with LatestBalances[F],
-  val incrementalGlobalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot]
+  val fullGlobalSnapshot: SnapshotLocalFileSystemStorage[F, GlobalSnapshot],
+  val incrementalGlobalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
+  val snapshotDownload: SnapshotDownloadStorage[F]
 )

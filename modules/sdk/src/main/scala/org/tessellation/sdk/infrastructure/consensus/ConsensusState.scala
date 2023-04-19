@@ -1,6 +1,7 @@
 package org.tessellation.sdk.infrastructure.consensus
 
 import cats.Show
+import cats.kernel.Eq
 import cats.syntax.eq._
 import cats.syntax.option._
 import cats.syntax.show._
@@ -81,7 +82,7 @@ final case class CollectingSignatures[A, C](
   facilitatorsHash: Hash
 ) extends ConsensusStatus[A, C]
 
-@derive(eqv, encoder, decoder)
+@derive(encoder, decoder)
 final case class Finished[A, C](
   signedMajorityArtifact: Signed[A],
   context: C,
@@ -89,6 +90,10 @@ final case class Finished[A, C](
   candidates: Set[PeerId],
   facilitatorsHash: Hash
 ) extends ConsensusStatus[A, C]
+
+object Finished {
+  implicit def eq[A: Eq, C: Eq]: Eq[Finished[A, C]] = Eq.allEqual[Finished[A, C]]
+}
 
 object ConsensusStatus {
   implicit def showInstance[A, C]: Show[ConsensusStatus[A, C]] = {

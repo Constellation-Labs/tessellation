@@ -54,7 +54,8 @@ object types {
   case class SnapshotConfig(
     consensus: ConsensusConfig,
     snapshotPath: Path,
-    incrementalSnapshotPath: Path,
+    incrementalTmpSnapshotPath: Path,
+    incrementalPersistedSnapshotPath: Path,
     inMemoryCapacity: NonNegLong
   )
 

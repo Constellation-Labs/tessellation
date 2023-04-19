@@ -23,8 +23,8 @@ import org.tessellation.sdk.domain.healthcheck.LocalHealthcheck
 import org.tessellation.sdk.domain.snapshot.services.{AddressService, GlobalL0Service}
 import org.tessellation.sdk.infrastructure.Collateral
 import org.tessellation.sdk.infrastructure.metrics.Metrics
-import org.tessellation.sdk.infrastructure.snapshot.SnapshotConsensus
 import org.tessellation.sdk.infrastructure.snapshot.services.AddressService
+import org.tessellation.sdk.infrastructure.snapshot.{CurrencySnapshotContextFunctions, SnapshotConsensus}
 import org.tessellation.sdk.modules.SdkServices
 import org.tessellation.security.SecurityProvider
 
@@ -82,7 +82,8 @@ object Services {
         address = addressService,
         collateral = collateralService,
         stateChannelSnapshot = stateChannelSnapshotService,
-        globalL0 = globalL0Service
+        globalL0 = globalL0Service,
+        snapshotContextFunctions = sdkServices.currencySnapshotContextFns
       ) {}
 }
 
@@ -102,5 +103,6 @@ sealed abstract class Services[F[_]] private (
   val address: AddressService[F, CurrencyIncrementalSnapshot],
   val collateral: Collateral[F],
   val stateChannelSnapshot: StateChannelSnapshotService[F],
-  val globalL0: GlobalL0Service[F]
+  val globalL0: GlobalL0Service[F],
+  val snapshotContextFunctions: CurrencySnapshotContextFunctions[F]
 )

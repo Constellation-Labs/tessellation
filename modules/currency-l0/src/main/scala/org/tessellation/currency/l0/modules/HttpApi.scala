@@ -69,7 +69,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
 
   private val mkCell = (block: Signed[CurrencyBlock]) => L0Cell.mkL0Cell(queues.l1Output).apply(L0CellInput.HandleL1Block(block))
 
-  private val snapshotRoutes = SnapshotRoutes[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](storages.snapshot, "/snapshots")
+  private val snapshotRoutes = SnapshotRoutes[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](storages.snapshot, None, "/snapshots")
   private val clusterRoutes =
     ClusterRoutes[F](programs.joining, programs.peerDiscovery, storages.cluster, services.cluster, services.collateral)
   private val nodeRoutes = NodeRoutes[F](storages.node, storages.session, storages.cluster, nodeVersion, httpCfg, selfId)

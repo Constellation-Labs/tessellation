@@ -48,7 +48,7 @@ object Main
 
     for {
       queues <- Queues.make[IO](sdkQueues).asResource
-      p2pClient = P2PClient.make[IO](sdkP2PClient)
+      p2pClient = P2PClient.make[IO](sdkP2PClient, sdkResources.client)
       storages <- Storages.make[IO](sdkStorages, cfg.snapshot, trustRatings).asResource
       services <- Services
         .make[IO](
@@ -64,7 +64,16 @@ object Main
           cfg
         )
         .asResource
-      programs = Programs.make[IO](sdkPrograms, storages, services, keyPair, cfg, p2pClient.l0GlobalSnapshot)
+      programs = Programs.make[IO](
+        sdkPrograms,
+        storages,
+        services,
+        keyPair,
+        cfg,
+        method.lastFullGlobalSnapshotOrdinal,
+        p2pClient,
+        services.snapshotContextFunctions
+      )
       healthChecks <- HealthChecks
         .make[IO](
           storages,
