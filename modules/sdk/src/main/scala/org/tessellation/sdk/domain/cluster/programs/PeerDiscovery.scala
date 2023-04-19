@@ -4,7 +4,6 @@ import cats.effect.{Async, Ref}
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.order._
-import cats.syntax.traverse._
 
 import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
@@ -44,29 +43,20 @@ sealed abstract class PeerDiscovery[F[_]: Async] private (
 
   def discoverFrom(peer: Peer): F[Set[Peer]] =
     for {
-      _ <- removePeer(peer)
+      peersQueue <- cache.updateAndGet(_ - peer)
+      peersQueueIds = peersQueue.map(_.id)
 
       peers <- clusterClient.getDiscoveryPeers.run(peer)
       knownPeers <- clusterStorage.getResponsivePeers
-      peersQueue <- getPeers
 
       unknownPeers = peers.filterNot { p =>
-        p.id === nodeId || p.id === peer.id || knownPeers.filter(kp => kp.id === p.id && kp.session >= p.session).nonEmpty || peersQueue
-          .map(_.id)
-          .contains(p.id)
+        p.id === nodeId ||
+        p.id === peer.id ||
+        knownPeers.exists(kp => kp.id === p.id && kp.session >= p.session) ||
+        peersQueueIds.contains(p.id)
       }
-      _ <- unknownPeers.toList
-        .traverse(addNextPeer)
+
+      _ <- cache.update(_ ++ unknownPeers)
     } yield unknownPeers
-
-  private def addNextPeer(peer: Peer): F[Unit] =
-    cache.modify { c =>
-      (c + peer, ())
-    }
-
-  private def removePeer(peer: Peer): F[Unit] =
-    cache.modify { c =>
-      (c - peer, ())
-    }
 
 }
