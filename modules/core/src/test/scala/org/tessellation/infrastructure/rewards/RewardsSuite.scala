@@ -9,16 +9,17 @@ import cats.syntax.list._
 
 import scala.collection.immutable.SortedSet
 
-import org.tessellation.block.generators.signedDAGBlockGen
 import org.tessellation.config.types._
-import org.tessellation.domain.rewards.EpochRewards
 import org.tessellation.ext.kryo._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema._
 import org.tessellation.schema.balance.Amount
+import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.epoch.EpochProgress
-import org.tessellation.schema.generators.{chooseNumRefined, signatureGen}
+import org.tessellation.schema.generators.{chooseNumRefined, signatureGen, signedTransactionGen}
+import org.tessellation.schema.transaction.DAGTransaction
+import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.infrastructure.consensus.trigger.{EventTrigger, TimeTrigger}
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.key.ops.PublicKeyOps
@@ -36,7 +37,7 @@ import org.scalacheck.Gen
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
 
-object EpochRewardsSuite extends MutableIOSuite with Checkers {
+object RewardsSuite extends MutableIOSuite with Checkers {
   type GenIdFn = () => Id
   type Res = (KryoSerializer[IO], SecurityProvider[IO], GenIdFn)
 
@@ -74,46 +75,43 @@ object EpochRewardsSuite extends MutableIOSuite with Checkers {
     proofs <- Gen.nonEmptyListOf(SignatureProof(id, signature))
   } yield proofs.toNel.get.toNes
 
-  def snapshotWithTransactionsGen(implicit genIdFn: GenIdFn, ks: KryoSerializer[IO]): Gen[Signed[GlobalIncrementalSnapshot]] = for {
+  def snapshotWithoutTransactionsGen(implicit genIdFn: GenIdFn, ks: KryoSerializer[IO]): Gen[Signed[GlobalIncrementalSnapshot]] = for {
     proofs <- signatureProofsGen
     epochProgress <- epochProgressGen
-    blocks <- Gen
-      .listOf(
-        signedDAGBlockGen
-          .map(BlockAsActiveTip(_, NonNegLong.MinValue))
-      )
-      .map(_.map(_.focus(_.block.proofs).replace(proofs)).toSortedSet)
     snapshot = Signed(GlobalSnapshot.mkGenesis(Map.empty, epochProgress), proofs)
-      .focus(_.value.blocks)
-      .replace(blocks)
     incremental = Signed(GlobalIncrementalSnapshot.fromGlobalSnapshot(snapshot).unsafeRunSync(), proofs)
   } yield incremental
 
-  def snapshotWithoutTransactionsGen(implicit genIdFn: GenIdFn, ks: KryoSerializer[IO]): Gen[Signed[GlobalIncrementalSnapshot]] = for {
-    snapshot <- snapshotWithTransactionsGen
-    snapshotWithoutTxs = snapshot
-      .focus(_.value.blocks)
-      .replace(SortedSet.empty)
-  } yield snapshotWithoutTxs
-
   def makeRewards(config: RewardsConfig)(
     implicit sp: SecurityProvider[IO]
-  ): EpochRewards[F] = {
+  ): Rewards[F, DAGTransaction, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot] = {
     val programsDistributor = ProgramsDistributor.make(config.programs)
     val regularDistributor = FacilitatorDistributor.make
-    EpochRewards.make[IO](config.rewardsPerEpoch, programsDistributor, regularDistributor)
+    Rewards.make[IO](config.rewardsPerEpoch, programsDistributor, regularDistributor)
   }
+
+  def getAmountByEpoch(epochProgress: EpochProgress): Amount =
+    config.rewardsPerEpoch
+      .minAfter(epochProgress)
+      .map { case (_, reward) => reward }
+      .getOrElse(Amount.empty)
 
   test("event trigger reward transactions sum up to the total fee") { res =>
     implicit val (ks, sp, makeIdFn) = res
 
-    forall(snapshotWithTransactionsGen) { snapshot =>
-      for {
-        rewards <- makeRewards(config).pure[F]
-        expectedSum = snapshot.blocks.flatMap(_.block.transactions.toSortedSet).toList.map(_.fee.value.toLong).sum
-        txs <- rewards.distribute(snapshot, EventTrigger)
-        sum = txs.toList.map(_.amount.value.toLong).sum
-      } yield expect(sum === expectedSum)
+    val gen = for {
+      snapshot <- snapshotWithoutTransactionsGen
+      txs <- Gen.listOf(signedTransactionGen).map(_.toSortedSet)
+    } yield (snapshot, txs)
+
+    forall(gen) {
+      case (snapshot, txs) =>
+        for {
+          rewards <- makeRewards(config).pure[F]
+          expectedSum = txs.toList.map(_.fee.value.toLong).sum
+          rewardTxs <- rewards.distribute(snapshot, txs, EventTrigger)
+          sum = rewardTxs.toList.map(_.amount.value.toLong).sum
+        } yield expect(sum === expectedSum)
     }
   }
 
@@ -147,9 +145,9 @@ object EpochRewardsSuite extends MutableIOSuite with Checkers {
       case (epochProgress, snapshot) =>
         for {
           rewards <- makeRewards(config).pure[F]
-          txs <- rewards.distribute(snapshot, TimeTrigger)
+          txs <- rewards.distribute(snapshot, SortedSet.empty, TimeTrigger)
           sum = txs.toList.map(_.amount.value.toLong).sum
-          expected = rewards.getAmountByEpoch(epochProgress, config.rewardsPerEpoch).value.toLong
+          expected = getAmountByEpoch(epochProgress).value.toLong
         } yield expect(sum == expected)
     }
   }
@@ -159,18 +157,19 @@ object EpochRewardsSuite extends MutableIOSuite with Checkers {
 
     val gen = for {
       epochProgress <- meaningfulEpochProgressGen
-      snapshot <- snapshotWithTransactionsGen
-    } yield (epochProgress, snapshot.focus(_.value.epochProgress).replace(epochProgress))
+      snapshot <- snapshotWithoutTransactionsGen
+      txs <- Gen.listOf(signedTransactionGen).map(_.toSortedSet)
+    } yield (epochProgress, snapshot.focus(_.value.epochProgress).replace(epochProgress), txs)
 
     forall(gen) {
-      case (epochProgress, snapshot) =>
+      case (epochProgress, lastSnapshot, txs) =>
         for {
           rewards <- makeRewards(config).pure[F]
-          txs <- rewards.distribute(snapshot, TimeTrigger)
-          sum = txs.toList.map(_.amount.value.toLong).sum
-          expectedMinted = rewards.getAmountByEpoch(epochProgress, config.rewardsPerEpoch).value.toLong
-          expectedFee = snapshot.blocks.flatMap(_.block.transactions.toSortedSet).toList.map(_.fee.value.toLong).sum
-        } yield expect(sum == expectedMinted + expectedFee)
+          rewardTransactions <- rewards.distribute(lastSnapshot, txs, TimeTrigger)
+          rewardsSum = rewardTransactions.toList.map(_.amount.value.toLong).sum
+          expectedMintedSum = getAmountByEpoch(epochProgress).value.toLong
+          expectedFeeSum = txs.toList.map(_.fee.value.toLong).sum
+        } yield expect(rewardsSum == expectedMintedSum + expectedFeeSum)
     }
   }
 
@@ -185,7 +184,7 @@ object EpochRewardsSuite extends MutableIOSuite with Checkers {
     forall(gen) { snapshot =>
       for {
         rewards <- makeRewards(config).pure[F]
-        txs <- rewards.distribute(snapshot, TimeTrigger)
+        txs <- rewards.distribute(snapshot, SortedSet.empty, TimeTrigger)
       } yield expect(txs.isEmpty)
     }
   }

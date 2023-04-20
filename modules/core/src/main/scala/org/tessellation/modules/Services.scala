@@ -10,7 +10,6 @@ import cats.syntax.functor._
 
 import org.tessellation.config.types.AppConfig
 import org.tessellation.domain.cell.L0Cell
-import org.tessellation.domain.rewards.EpochRewards
 import org.tessellation.domain.statechannel.StateChannelService
 import org.tessellation.infrastructure.rewards._
 import org.tessellation.infrastructure.snapshot._
@@ -18,11 +17,12 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.DAGTransaction
-import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalSnapshotStateProof}
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.collateral.Collateral
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.healthcheck.LocalHealthcheck
+import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.domain.snapshot.services.AddressService
 import org.tessellation.sdk.infrastructure.Collateral
 import org.tessellation.sdk.infrastructure.block.processing.BlockAcceptanceManager
@@ -54,7 +54,7 @@ object Services {
     cfg: AppConfig
   ): F[Services[F]] =
     for {
-      rewards <- EpochRewards
+      rewards <- Rewards
         .make[F](
           cfg.rewards.rewardsPerEpoch,
           ProgramsDistributor.make(cfg.rewards.programs),
@@ -111,7 +111,7 @@ sealed abstract class Services[F[_]] private (
   val consensus: Consensus[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact, GlobalSnapshotContext],
   val address: AddressService[F, GlobalIncrementalSnapshot],
   val collateral: Collateral[F],
-  val rewards: EpochRewards[F],
+  val rewards: Rewards[F, DAGTransaction, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot],
   val stateChannel: StateChannelService[F],
   val snapshotContextFunctions: GlobalSnapshotContextFunctions[F]
 )
