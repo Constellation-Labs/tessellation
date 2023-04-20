@@ -1,7 +1,6 @@
 package org.tessellation.schema
 
 import cats.data.NonEmptySet
-import cats.syntax.order._
 
 import scala.collection.immutable.SortedSet
 
@@ -22,6 +21,7 @@ import org.tessellation.security.signature.signature.{Signature, SignatureProof}
 
 import com.comcast.ip4s.{Host, Port}
 import eu.timepit.refined.api.{RefType, Validate}
+import eu.timepit.refined.auto._
 import eu.timepit.refined.refineV
 import eu.timepit.refined.scalacheck.numeric._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
@@ -96,7 +96,7 @@ object generators {
   val feeMaxVal: TransactionFee = TransactionFee(NonNegLong(99999999_00000000L))
 
   val transactionFeeGen: Gen[TransactionFee] =
-    Arbitrary.arbitrary[NonNegLong].map(TransactionFee(_)).retryUntil(_ < feeMaxVal)
+    chooseRefinedNum(NonNegLong(0L), feeMaxVal.value).map(TransactionFee(_))
 
   val transactionOrdinalGen: Gen[TransactionOrdinal] = Arbitrary.arbitrary[NonNegLong].map(TransactionOrdinal(_))
 

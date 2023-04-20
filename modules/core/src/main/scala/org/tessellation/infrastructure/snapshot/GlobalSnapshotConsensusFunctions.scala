@@ -9,7 +9,6 @@ import cats.syntax.functorFilter._
 import cats.syntax.option._
 import cats.syntax.order._
 
-import org.tessellation.domain.rewards.EpochRewards
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
@@ -21,6 +20,7 @@ import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.AppEnvironment.Mainnet
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions.InvalidArtifact
+import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import org.tessellation.sdk.infrastructure.metrics.Metrics
@@ -28,6 +28,7 @@ import org.tessellation.sdk.infrastructure.snapshot._
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 import org.tessellation.statechannel.StateChannelOutput
+import org.tessellation.syntax.sortedCollection.sortedSetSyntax
 
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -50,7 +51,7 @@ object GlobalSnapshotConsensusFunctions {
     globalSnapshotStorage: SnapshotStorage[F, GlobalSnapshotArtifact, GlobalSnapshotContext],
     globalSnapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     collateral: Amount,
-    rewards: EpochRewards[F],
+    rewards: Rewards[F, DAGTransaction, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot],
     environment: AppEnvironment
   ): GlobalSnapshotConsensusFunctions[F] = new GlobalSnapshotConsensusFunctions[F] {
 
@@ -116,7 +117,9 @@ object GlobalSnapshotConsensusFunctions {
         lastActiveTips <- lastArtifact.activeTips
         lastDeprecatedTips = lastArtifact.tips.deprecated
 
-        rewardTxsForAcceptance <- rewards.distribute(lastArtifact, trigger)
+        transactionsForAcceptance = blocksForAcceptance.flatMap(_.value.transactions.toSortedSet).toSortedSet
+
+        rewardTxsForAcceptance <- rewards.distribute(lastArtifact, transactionsForAcceptance, trigger)
 
         (acceptanceResult, scSnapshots, returnedSCEvents, acceptedRewardTxs, snapshotInfo) <- globalSnapshotAcceptanceManager.accept(
           blocksForAcceptance,
