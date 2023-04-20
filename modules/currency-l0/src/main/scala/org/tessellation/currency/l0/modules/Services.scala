@@ -10,7 +10,7 @@ import cats.syntax.functor._
 
 import org.tessellation.currency.l0.config.types.AppConfig
 import org.tessellation.currency.l0.http.P2PClient
-import org.tessellation.currency.l0.snapshot.services.StateChannelSnapshotService
+import org.tessellation.currency.l0.snapshot.services.{Rewards, StateChannelSnapshotService}
 import org.tessellation.currency.l0.snapshot.{CurrencySnapshotConsensus, CurrencySnapshotEvent}
 import org.tessellation.currency.schema.currency._
 import org.tessellation.kryo.KryoSerializer
@@ -22,9 +22,10 @@ import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.healthcheck.LocalHealthcheck
 import org.tessellation.sdk.domain.snapshot.services.{AddressService, GlobalL0Service}
 import org.tessellation.sdk.infrastructure.Collateral
+import org.tessellation.sdk.infrastructure.block.processing.BlockAcceptanceManager
 import org.tessellation.sdk.infrastructure.metrics.Metrics
-import org.tessellation.sdk.infrastructure.snapshot.SnapshotConsensus
 import org.tessellation.sdk.infrastructure.snapshot.services.AddressService
+import org.tessellation.sdk.infrastructure.snapshot.{CurrencySnapshotAcceptanceManager, SnapshotConsensus}
 import org.tessellation.sdk.modules.SdkServices
 import org.tessellation.security.SecurityProvider
 
@@ -49,6 +50,11 @@ object Services {
       stateChannelSnapshotService <- StateChannelSnapshotService
         .make[F](keyPair, storages.lastSignedBinaryHash, p2PClient.stateChannelSnapshot, storages.globalL0Cluster, storages.snapshot)
         .pure[F]
+      snapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
+        BlockAcceptanceManager.make[F, CurrencyTransaction, CurrencyBlock](validators.blockValidator),
+        cfg.collateral.amount
+      )
+      rewards = Rewards.make[F]
       consensus <- CurrencySnapshotConsensus
         .make[F](
           sdkServices.gossip,
@@ -58,13 +64,12 @@ object Services {
           cfg.collateral.amount,
           storages.cluster,
           storages.node,
-          storages.snapshot,
-          validators.blockValidator,
+          snapshotAcceptanceManager,
           cfg.snapshot,
-          cfg.environment,
           client,
           session,
           stateChannelSnapshotService,
+          rewards,
           sdkServices.currencySnapshotContextFns
         )
       addressService = AddressService.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](storages.snapshot)

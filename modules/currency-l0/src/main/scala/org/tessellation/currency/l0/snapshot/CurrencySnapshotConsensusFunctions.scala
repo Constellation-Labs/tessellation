@@ -6,10 +6,6 @@ import cats.syntax.functor._
 import cats.syntax.functorFilter._
 import cats.syntax.option._
 import cats.syntax.order._
-import cats.syntax.show._
-
-import scala.collection.immutable.SortedSet
-import scala.util.control.NoStackTrace
 
 import org.tessellation.currency.l0.snapshot.services.StateChannelSnapshotService
 import org.tessellation.currency.schema.currency._
@@ -19,14 +15,14 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.balance.Amount
 import org.tessellation.sdk.domain.block.processing._
+import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.infrastructure.consensus.trigger.ConsensusTrigger
 import org.tessellation.sdk.infrastructure.metrics.Metrics
-import org.tessellation.sdk.infrastructure.snapshot.SnapshotConsensusFunctions
+import org.tessellation.sdk.infrastructure.snapshot.{CurrencySnapshotAcceptanceManager, SnapshotConsensusFunctions}
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
+import org.tessellation.syntax.sortedCollection.sortedSetSyntax
 
-import derevo.cats.{eqv, show}
-import derevo.derive
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -46,8 +42,9 @@ object CurrencySnapshotConsensusFunctions {
 
   def make[F[_]: Async: KryoSerializer: SecurityProvider: Metrics](
     stateChannelSnapshotService: StateChannelSnapshotService[F],
-    blockAcceptanceManager: BlockAcceptanceManager[F, CurrencyTransaction, CurrencyBlock],
-    collateral: Amount
+    collateral: Amount,
+    rewards: Rewards[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot],
+    currencySnapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F]
   ): CurrencySnapshotConsensusFunctions[F] = new CurrencySnapshotConsensusFunctions[F] {
 
     private val logger = Slf4jLogger.getLoggerFromClass(CurrencySnapshotConsensusFunctions.getClass)
@@ -75,8 +72,13 @@ object CurrencySnapshotConsensusFunctions {
         lastActiveTips <- lastArtifact.activeTips
         lastDeprecatedTips = lastArtifact.tips.deprecated
 
-        (acceptanceResult, snapshotInfo) <- accept(
+        transactionsForAcceptance = blocksForAcceptance.flatMap(_.value.transactions.toSortedSet).toSortedSet
+
+        rewardTxsForAcceptance <- rewards.distribute(lastArtifact, transactionsForAcceptance, trigger)
+
+        (acceptanceResult, acceptedRewardTxs, snapshotInfo) <- currencySnapshotAcceptanceManager.accept(
           blocksForAcceptance,
+          rewardTxsForAcceptance,
           lastContext,
           lastActiveTips,
           lastDeprecatedTips
@@ -100,6 +102,7 @@ object CurrencySnapshotConsensusFunctions {
           subHeight,
           lastArtifactHash,
           accepted,
+          acceptedRewardTxs,
           SnapshotTips(
             deprecated = deprecated,
             remainedActive = remainedActive
@@ -109,35 +112,6 @@ object CurrencySnapshotConsensusFunctions {
       } yield (artifact, returnedEvents)
     }
 
-    private def accept(
-      blocksForAcceptance: List[CurrencySnapshotEvent],
-      lastSnapshotContext: CurrencySnapshotContext,
-      lastActiveTips: SortedSet[ActiveTip],
-      lastDeprecatedTips: SortedSet[DeprecatedTip]
-    ) = for {
-      acceptanceResult <- acceptBlocks(blocksForAcceptance, lastSnapshotContext, lastActiveTips, lastDeprecatedTips)
-
-      transactionsRefs = lastSnapshotContext.lastTxRefs ++ acceptanceResult.contextUpdate.lastTxRefs
-      updatedBalances = lastSnapshotContext.balances ++ acceptanceResult.contextUpdate.balances
-    } yield (acceptanceResult, CurrencySnapshotInfo(transactionsRefs, updatedBalances))
-
-    private def acceptBlocks(
-      blocksForAcceptance: List[CurrencySnapshotEvent],
-      lastSnapshotContext: CurrencySnapshotContext,
-      lastActiveTips: SortedSet[ActiveTip],
-      lastDeprecatedTips: SortedSet[DeprecatedTip]
-    ) = {
-      val tipUsages = getTipsUsages(lastActiveTips, lastDeprecatedTips)
-      val context = BlockAcceptanceContext.fromStaticData(
-        lastSnapshotContext.balances,
-        lastSnapshotContext.lastTxRefs,
-        tipUsages,
-        collateral
-      )
-
-      blockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context)
-    }
-
     private def getReturnedEvents(
       acceptanceResult: BlockAcceptanceResult[CurrencyBlock]
     ): Set[CurrencySnapshotEvent] =
@@ -145,12 +119,5 @@ object CurrencySnapshotConsensusFunctions {
         case (signedBlock, _: BlockAwaitReason) => signedBlock.some
         case _                                  => none
       }.toSet
-  }
-
-  @derive(eqv, show)
-  case class CannotApplyBlocksError(reasons: List[BlockNotAcceptedReason]) extends NoStackTrace {
-
-    override def getMessage: String =
-      s"Cannot build currency snapshot ${reasons.show}"
   }
 }

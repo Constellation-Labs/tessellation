@@ -34,8 +34,9 @@ object CurrencySnapshotContextFunctions {
 
         blocksForAcceptance = signedArtifact.blocks.toList.map(_.block)
 
-        (acceptanceResult, snapshotInfo) <- snapshotAcceptanceManager.accept(
+        (acceptanceResult, acceptedRewardTxs, snapshotInfo) <- snapshotAcceptanceManager.accept(
           blocksForAcceptance,
+          signedArtifact.rewards,
           context,
           lastActiveTips,
           lastDeprecatedTips

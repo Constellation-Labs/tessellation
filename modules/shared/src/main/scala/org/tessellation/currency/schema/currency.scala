@@ -111,6 +111,7 @@ object currency {
     subHeight: SubHeight,
     lastSnapshotHash: Hash,
     blocks: SortedSet[BlockAsActiveTip[CurrencyBlock]],
+    rewards: SortedSet[RewardTransaction],
     tips: SnapshotTips,
     info: CurrencySnapshotInfo,
     data: Option[Array[Byte]] = None,
@@ -124,6 +125,7 @@ object currency {
     subHeight: SubHeight,
     lastSnapshotHash: Hash,
     blocks: SortedSet[BlockAsActiveTip[CurrencyBlock]],
+    rewards: SortedSet[RewardTransaction],
     tips: SnapshotTips,
     stateProof: CurrencySnapshotStateProof,
     data: Option[Array[Byte]] = None,
@@ -139,6 +141,7 @@ object currency {
           snapshot.subHeight,
           snapshot.lastSnapshotHash,
           snapshot.blocks,
+          snapshot.rewards,
           snapshot.tips,
           stateProof
         )
@@ -153,6 +156,7 @@ object currency {
         SubHeight.MinValue,
         Hash.empty,
         SortedSet.empty,
+        SortedSet.empty,
         SnapshotTips(SortedSet.empty, mkActiveTips(8)),
         CurrencySnapshotInfo(SortedMap.empty, SortedMap.from(balances))
       )
@@ -164,6 +168,7 @@ object currency {
           genesis.height,
           genesis.subHeight.next,
           genesis.hash,
+          SortedSet.empty,
           SortedSet.empty,
           genesis.tips,
           stateProof
