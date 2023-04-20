@@ -10,7 +10,6 @@ import cats.syntax.list._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo, SnapshotFee}
-import org.tessellation.domain.rewards.EpochRewards
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
@@ -21,6 +20,7 @@ import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.transaction.{DAGTransaction, RewardTransaction}
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.domain.block.processing._
+import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger}
 import org.tessellation.sdk.infrastructure.metrics.Metrics
@@ -101,12 +101,16 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
   val collateral: Amount = Amount.empty
 
-  val rewards: EpochRewards[F] = new EpochRewards[IO] {
-    override def distribute(artifact: Signed[GlobalSnapshotArtifact], trigger: ConsensusTrigger): IO[SortedSet[RewardTransaction]] =
-      IO(SortedSet.empty)
+  val rewards: Rewards[F, DAGTransaction, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot] =
+    new Rewards[F, DAGTransaction, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot] {
+      override def distribute(
+        artifact: Signed[GlobalSnapshotArtifact],
+        transactions: SortedSet[Signed[DAGTransaction]],
+        trigger: ConsensusTrigger
+      ): IO[SortedSet[RewardTransaction]] =
+        IO(SortedSet.empty)
 
-    override def getAmountByEpoch(epochProgress: EpochProgress, rewardsPerEpoch: SortedMap[EpochProgress, Amount]): Amount = Amount.empty
-  }
+    }
 
   def mkGlobalSnapshotConsensusFunctions()(implicit ks: KryoSerializer[IO], sp: SecurityProvider[IO], m: Metrics[IO]) = {
     val snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make[IO](bam, scProcessor, collateral)
