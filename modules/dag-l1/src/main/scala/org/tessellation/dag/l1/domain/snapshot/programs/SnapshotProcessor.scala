@@ -21,7 +21,7 @@ import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
-import org.tessellation.schema.transaction.{Transaction, TransactionReference}
+import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.sdk.domain.snapshot.Validator
 import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.security.hash.ProofsHash
@@ -35,10 +35,8 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 abstract class SnapshotProcessor[
   F[_]: Async: KryoSerializer: SecurityProvider,
-  T <: Transaction,
-  B <: Block[T],
   P <: StateProof,
-  S <: Snapshot[T, B]: Eq,
+  S <: Snapshot: Eq,
   SI <: SnapshotInfo[P]
 ] {
   import SnapshotProcessor._
@@ -57,8 +55,8 @@ abstract class SnapshotProcessor[
 
   def processAlignment(
     alignment: Alignment,
-    blockStorage: BlockStorage[F, B],
-    transactionStorage: TransactionStorage[F, T],
+    blockStorage: BlockStorage[F],
+    transactionStorage: TransactionStorage[F],
     lastSnapshotStorage: LastSnapshotStorage[F, S, SI],
     addressStorage: AddressStorage[F]
   ): F[SnapshotProcessingResult] =
@@ -211,7 +209,7 @@ abstract class SnapshotProcessor[
 
   def checkAlignment(
     snapshotWithState: Either[(Hashed[S], SI), Hashed[S]],
-    blockStorage: BlockStorage[F, B],
+    blockStorage: BlockStorage[F],
     lastSnapshotStorage: LastSnapshotStorage[F, S, SI]
   ): F[Alignment] = {
     snapshotWithState
@@ -229,8 +227,8 @@ abstract class SnapshotProcessor[
             val SnapshotTips(snapshotDeprecatedTips, snapshotRemainedActive) = snapshot.tips
             lastSnapshotStorage.getCombined.flatMap {
               case None =>
-                val isDependent = (block: Signed[B]) =>
-                  BlockRelations.dependsOn[F, T, B](
+                val isDependent = (block: Signed[Block]) =>
+                  BlockRelations.dependsOn[F](
                     acceptedInMajority.values.map(_._1).toSet,
                     snapshotDeprecatedTips.map(_.block) ++ snapshotRemainedActive.map(_.block)
                   )(block)
@@ -263,7 +261,7 @@ abstract class SnapshotProcessor[
                 Validator.compare[S](lastSnapshot, snapshot.signed.value) match {
                   case Validator.NextSubHeight =>
                     val isDependent =
-                      (block: Signed[B]) => BlockRelations.dependsOn[F, T, B](acceptedInMajority.values.map(_._1).toSet)(block)
+                      (block: Signed[Block]) => BlockRelations.dependsOn[F](acceptedInMajority.values.map(_._1).toSet)(block)
 
                     applySnapshotFn(lastState, lastSnapshot, snapshot.signed).flatMap { state =>
                       blockStorage.getBlocksForMajorityReconciliation(lastSnapshot.height, snapshot.height, isDependent).flatMap {
@@ -314,7 +312,7 @@ abstract class SnapshotProcessor[
 
                   case Validator.NextHeight =>
                     val isDependent =
-                      (block: Signed[B]) => BlockRelations.dependsOn[F, T, B](acceptedInMajority.values.map(_._1).toSet)(block)
+                      (block: Signed[Block]) => BlockRelations.dependsOn[F](acceptedInMajority.values.map(_._1).toSet)(block)
 
                     applySnapshotFn(lastState, lastSnapshot, snapshot.signed).flatMap { state =>
                       blockStorage.getBlocksForMajorityReconciliation(lastSnapshot.height, snapshot.height, isDependent).flatMap {
@@ -396,7 +394,7 @@ abstract class SnapshotProcessor[
   }
 
   private def extractMajorityTxRefs(
-    acceptedInMajority: Map[ProofsHash, (Hashed[B], NonNegLong)],
+    acceptedInMajority: Map[ProofsHash, (Hashed[Block], NonNegLong)],
     state: SI
   ): Map[Address, TransactionReference] = {
     val sourceAddresses =
@@ -434,7 +432,7 @@ abstract class SnapshotProcessor[
   case class DownloadNeeded(
     snapshot: Hashed[S],
     state: SI,
-    toAdd: Set[(Hashed[B], NonNegLong)],
+    toAdd: Set[(Hashed[Block], NonNegLong)],
     obsoleteToRemove: Set[ProofsHash],
     activeTips: Set[ActiveTip],
     deprecatedTips: Set[BlockReference],
@@ -444,7 +442,7 @@ abstract class SnapshotProcessor[
   case class RedownloadNeeded(
     snapshot: Hashed[S],
     state: SI,
-    toAdd: Set[(Hashed[B], NonNegLong)],
+    toAdd: Set[(Hashed[Block], NonNegLong)],
     toMarkMajority: Set[(ProofsHash, NonNegLong)],
     acceptedToRemove: Set[ProofsHash],
     obsoleteToRemove: Set[ProofsHash],

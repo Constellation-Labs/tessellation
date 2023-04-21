@@ -14,7 +14,6 @@ import org.tessellation.currency.l0.snapshot.services.StateChannelSnapshotServic
 import org.tessellation.currency.l0.snapshot.{CurrencySnapshotConsensus, CurrencySnapshotEvent}
 import org.tessellation.currency.schema.currency._
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.collateral.Collateral
@@ -42,8 +41,7 @@ object Services {
     seedlist: Option[Set[PeerId]],
     selfId: PeerId,
     keyPair: KeyPair,
-    cfg: AppConfig,
-    identifier: Address
+    cfg: AppConfig
   ): F[Services[F]] =
     for {
       stateChannelSnapshotService <- StateChannelSnapshotService
@@ -58,10 +56,8 @@ object Services {
           cfg.collateral.amount,
           storages.cluster,
           storages.node,
-          storages.snapshot,
           validators.blockValidator,
           cfg.snapshot,
-          cfg.environment,
           client,
           session,
           stateChannelSnapshotService,
@@ -92,8 +88,6 @@ sealed abstract class Services[F[_]] private (
   val gossip: Gossip[F],
   val consensus: SnapshotConsensus[
     F,
-    CurrencyTransaction,
-    CurrencyBlock,
     CurrencyIncrementalSnapshot,
     CurrencySnapshotInfo,
     CurrencySnapshotEvent

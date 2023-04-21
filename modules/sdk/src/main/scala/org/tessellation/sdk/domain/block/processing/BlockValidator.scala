@@ -5,7 +5,7 @@ import cats.data.{NonEmptyList, ValidatedNec}
 import cats.syntax.functor._
 
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.transaction.{Transaction, TransactionReference}
+import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.schema.{Block, BlockReference}
 import org.tessellation.sdk.domain.transaction.TransactionChainValidator.{TransactionChainBroken, TransactionNel}
 import org.tessellation.sdk.domain.transaction.TransactionValidator.TransactionValidationError
@@ -17,25 +17,25 @@ import derevo.derive
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.PosInt
 
-trait BlockValidator[F[_], T <: Transaction, B <: Block[T]] {
+trait BlockValidator[F[_]] {
 
   type BlockValidationErrorOr[A] = ValidatedNec[BlockValidationError, A]
 
   def validate(
-    signedBlock: Signed[B],
+    signedBlock: Signed[Block],
     params: BlockValidationParams = BlockValidationParams.default
-  ): F[BlockValidationErrorOr[(Signed[B], Map[Address, TransactionNel[T]])]]
+  ): F[BlockValidationErrorOr[(Signed[Block], Map[Address, TransactionNel])]]
 
   def validateGetBlock(
-    signedBlock: Signed[B],
+    signedBlock: Signed[Block],
     params: BlockValidationParams = BlockValidationParams.default
-  )(implicit ev: Functor[F]): F[BlockValidationErrorOr[Signed[B]]] =
+  )(implicit ev: Functor[F]): F[BlockValidationErrorOr[Signed[Block]]] =
     validate(signedBlock, params).map(_.map(_._1))
 
   def validateGetTxChains(
-    signedBlock: Signed[B],
+    signedBlock: Signed[Block],
     params: BlockValidationParams = BlockValidationParams.default
-  )(implicit ev: Functor[F]): F[BlockValidationErrorOr[Map[Address, TransactionNel[T]]]] =
+  )(implicit ev: Functor[F]): F[BlockValidationErrorOr[Map[Address, TransactionNel]]] =
     validate(signedBlock, params).map(_.map(_._2))
 }
 

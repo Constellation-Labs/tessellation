@@ -22,7 +22,7 @@ import org.http4s.{EntityEncoder, HttpRoutes}
 import shapeless.HNil
 import shapeless.syntax.singleton._
 
-final case class SnapshotRoutes[F[_]: Async: KryoSerializer, S <: Snapshot[_, _]: Encoder, C: Encoder](
+final case class SnapshotRoutes[F[_]: Async: KryoSerializer, S <: Snapshot: Encoder, C: Encoder](
   snapshotStorage: SnapshotStorage[F, S, C],
   prefix: String
 ) extends Http4sDsl[F] {

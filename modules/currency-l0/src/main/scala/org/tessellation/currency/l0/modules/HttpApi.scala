@@ -8,8 +8,8 @@ import cats.syntax.semigroupk._
 import org.tessellation.currency.l0.cell.{L0Cell, L0CellInput}
 import org.tessellation.currency.schema.currency._
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.{Block, SnapshotOrdinal}
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.AppEnvironment.{Dev, Testnet}
 import org.tessellation.sdk.config.types.HttpConfig
@@ -67,7 +67,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
   httpCfg: HttpConfig
 ) {
 
-  private val mkCell = (block: Signed[CurrencyBlock]) => L0Cell.mkL0Cell(queues.l1Output).apply(L0CellInput.HandleL1Block(block))
+  private val mkCell = (block: Signed[Block]) => L0Cell.mkL0Cell(queues.l1Output).apply(L0CellInput.HandleL1Block(block))
 
   private val snapshotRoutes = SnapshotRoutes[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](storages.snapshot, "/snapshots")
   private val clusterRoutes =
@@ -77,7 +77,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
   private val registrationRoutes = RegistrationRoutes[F](services.cluster)
   private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip)
   private val currencyRoutes =
-    CurrencyRoutes[F, CurrencyTransaction, CurrencyBlock, CurrencyIncrementalSnapshot]("/currency", services.address, mkCell)
+    CurrencyRoutes[F, CurrencyIncrementalSnapshot]("/currency", services.address, mkCell)
   private val consensusInfoRoutes = new ConsensusInfoRoutes[F, SnapshotOrdinal](services.cluster, services.consensus.storage, selfId)
   private val consensusRoutes = services.consensus.routes.p2pRoutes
 

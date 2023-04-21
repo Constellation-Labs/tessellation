@@ -59,8 +59,7 @@ object Main
           sdk.seedlist,
           sdk.nodeId,
           keyPair,
-          cfg,
-          method.identifier
+          cfg
         )
         .asResource
       programs = Programs.make[IO](keyPair, sdk.nodeId, method.identifier, cfg.globalL0Peer, sdkPrograms, storages, services, p2pClient)

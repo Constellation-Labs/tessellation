@@ -18,7 +18,7 @@ import org.tessellation.storage.LocalFileSystemStorage
 import fs2.io.file.Path
 import io.estatico.newtype.ops._
 
-final class SnapshotLocalFileSystemStorage[F[_]: Async: KryoSerializer, S <: Snapshot[_, _]] private (path: Path)
+final class SnapshotLocalFileSystemStorage[F[_]: Async: KryoSerializer, S <: Snapshot] private (path: Path)
     extends LocalFileSystemStorage[F, Signed[S]](path) {
 
   def write(snapshot: Signed[S]): F[Unit] = {
@@ -52,7 +52,7 @@ final class SnapshotLocalFileSystemStorage[F[_]: Async: KryoSerializer, S <: Sna
 
 object SnapshotLocalFileSystemStorage {
 
-  def make[F[_]: Async: KryoSerializer, S <: Snapshot[_, _]](path: Path): F[SnapshotLocalFileSystemStorage[F, S]] =
+  def make[F[_]: Async: KryoSerializer, S <: Snapshot](path: Path): F[SnapshotLocalFileSystemStorage[F, S]] =
     Applicative[F].pure(new SnapshotLocalFileSystemStorage[F, S](path)).flatTap { storage =>
       storage.createDirectoryIfNotExists().rethrowT
     }

@@ -15,9 +15,7 @@ import org.tessellation.domain.statechannel.StateChannelService
 import org.tessellation.infrastructure.rewards._
 import org.tessellation.infrastructure.snapshot._
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.transaction.DAGTransaction
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.collateral.Collateral
@@ -62,7 +60,7 @@ object Services {
         )
         .pure[F]
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
-        BlockAcceptanceManager.make[F, DAGTransaction, DAGBlock](validators.blockValidator),
+        BlockAcceptanceManager.make[F](validators.blockValidator),
         GlobalSnapshotStateChannelEventsProcessor.make[F](validators.stateChannelValidator, sdkServices.currencySnapshotContextFns),
         cfg.collateral.amount
       )

@@ -7,14 +7,14 @@ import org.tessellation.security.signature.Signed
 
 package object snapshot {
 
-  type SnapshotEvent = Signed[Block[_]]
+  type SnapshotEvent = Signed[Block]
 
   type SnapshotKey = SnapshotOrdinal
 
-  type SnapshotArtifact[S <: Snapshot[_, _]] = S
+  type SnapshotArtifact[S <: Snapshot] = S
 
   type SnapshotContext[C <: SnapshotInfo[_]] = C
 
-  type SnapshotConsensus[F[_], S <: Snapshot[_, _], C <: SnapshotInfo[_]] = Consensus[F, SnapshotEvent, SnapshotKey, SnapshotArtifact[S], C]
+  type SnapshotConsensus[F[_], S <: Snapshot, C <: SnapshotInfo[_]] = Consensus[F, SnapshotEvent, SnapshotKey, SnapshotArtifact[S], C]
 
 }

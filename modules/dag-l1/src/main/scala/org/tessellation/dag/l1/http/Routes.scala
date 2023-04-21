@@ -1,6 +1,5 @@
 package org.tessellation.dag.l1.http
 
-import cats.Show
 import cats.effect.Async
 import cats.effect.std.{Queue, Supervisor}
 import cats.syntax.flatMap._
@@ -18,7 +17,6 @@ import org.tessellation.security.signature.Signed
 
 import io.circe.shapes._
 import io.circe.syntax.EncoderOps
-import io.circe.{Decoder, Encoder}
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder}
 import org.http4s.circe._
@@ -27,11 +25,11 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 import shapeless._
 import shapeless.syntax.singleton._
 
-final case class Routes[F[_]: Async: KryoSerializer, T <: Transaction: Decoder: Encoder: Show](
-  transactionService: TransactionService[F, T],
-  transactionStorage: TransactionStorage[F, T],
+final case class Routes[F[_]: Async: KryoSerializer](
+  transactionService: TransactionService[F],
+  transactionStorage: TransactionStorage[F],
   l0ClusterStorage: L0ClusterStorage[F],
-  peerBlockConsensusInputQueue: Queue[F, Signed[PeerBlockConsensusInput[T]]]
+  peerBlockConsensusInputQueue: Queue[F, Signed[PeerBlockConsensusInput]]
 )(implicit S: Supervisor[F])
     extends Http4sDsl[F] {
 
@@ -40,7 +38,7 @@ final case class Routes[F[_]: Async: KryoSerializer, T <: Transaction: Decoder: 
   private val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "transactions" =>
       for {
-        transaction <- req.as[Signed[T]]
+        transaction <- req.as[Signed[Transaction]]
         hashedTransaction <- transaction.toHashed[F]
         response <- transactionService
           .offer(hashedTransaction)
@@ -75,7 +73,7 @@ final case class Routes[F[_]: Async: KryoSerializer, T <: Transaction: Decoder: 
   private val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "consensus" / "data" =>
       for {
-        peerBlockConsensusInput <- req.as[Signed[PeerBlockConsensusInput[T]]]
+        peerBlockConsensusInput <- req.as[Signed[PeerBlockConsensusInput]]
         _ <- S.supervise(peerBlockConsensusInputQueue.offer(peerBlockConsensusInput))
         response <- Ok()
       } yield response

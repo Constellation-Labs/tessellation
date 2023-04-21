@@ -22,7 +22,7 @@ import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.epoch.EpochProgress
-import org.tessellation.schema.transaction.{DAGTransaction, RewardTransaction, TransactionAmount}
+import org.tessellation.schema.transaction.{RewardTransaction, Transaction, TransactionAmount}
 import org.tessellation.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._
@@ -41,7 +41,7 @@ object Rewards {
 
       def feeDistribution(
         snapshotOrdinal: SnapshotOrdinal,
-        transactions: SortedSet[DAGTransaction],
+        transactions: SortedSet[Transaction],
         facilitators: NonEmptySet[Id]
       ): F[SortedSet[RewardTransaction]] = {
 

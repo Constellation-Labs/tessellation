@@ -2,7 +2,6 @@ package org.tessellation.currency.l0.modules
 
 import cats.effect.Async
 
-import org.tessellation.currency.schema.currency.{CurrencyBlock, CurrencyTransaction}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.block.processing.BlockValidator
@@ -18,10 +17,10 @@ object Validators {
     seedlist: Option[Set[PeerId]]
   ): Validators[F] = {
     val signedValidator = SignedValidator.make[F]
-    val transactionChainValidator = TransactionChainValidator.make[F, CurrencyTransaction]
-    val transactionValidator = TransactionValidator.make[F, CurrencyTransaction](signedValidator)
+    val transactionChainValidator = TransactionChainValidator.make[F]
+    val transactionValidator = TransactionValidator.make[F](signedValidator)
     val blockValidator =
-      BlockValidator.make[F, CurrencyTransaction, CurrencyBlock](signedValidator, transactionChainValidator, transactionValidator)
+      BlockValidator.make[F](signedValidator, transactionChainValidator, transactionValidator)
     val rumorValidator = RumorValidator.make[F](seedlist, signedValidator)
 
     new Validators[F](
@@ -36,8 +35,8 @@ object Validators {
 
 sealed abstract class Validators[F[_]] private (
   val signedValidator: SignedValidator[F],
-  val transactionChainValidator: TransactionChainValidator[F, CurrencyTransaction],
-  val transactionValidator: TransactionValidator[F, CurrencyTransaction],
-  val blockValidator: BlockValidator[F, CurrencyTransaction, CurrencyBlock],
+  val transactionChainValidator: TransactionChainValidator[F],
+  val transactionValidator: TransactionValidator[F],
+  val blockValidator: BlockValidator[F],
   val rumorValidator: RumorValidator[F]
 )

@@ -15,7 +15,7 @@ import org.tessellation.rosetta.domain.api.construction.ConstructionParse
 import org.tessellation.rosetta.domain.currency.DAG
 import org.tessellation.rosetta.domain.error._
 import org.tessellation.rosetta.domain.operation._
-import org.tessellation.schema.transaction.{DAGTransaction, Transaction}
+import org.tessellation.schema.transaction.Transaction
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.key.ops._
@@ -111,7 +111,7 @@ object ConstructionService {
 
     def combineTransaction(hex: Hex, signature: RosettaSignature): EitherT[F, ConstructionError, Hex] =
       EitherT
-        .fromEither(KryoSerializer[F].deserialize[DAGTransaction](hex.toBytes))
+        .fromEither(KryoSerializer[F].deserialize[Transaction](hex.toBytes))
         .leftMap(_ => MalformedTransaction)
         .flatMap { transaction =>
           EitherT {
@@ -121,7 +121,7 @@ object ConstructionService {
             EitherT
               .fromEither(
                 KryoSerializer[F]
-                  .serialize(Signed[DAGTransaction](transaction, NonEmptySet.of(proof)))
+                  .serialize(Signed[Transaction](transaction, NonEmptySet.of(proof)))
               )
               .leftMap(_ => MalformedTransaction.asInstanceOf[ConstructionError])
               .map(Hex.fromBytes(_))

@@ -3,33 +3,41 @@ package org.tessellation.schema
 import cats.data.{NonEmptyList, NonEmptySet}
 import cats.syntax.reducible._
 
+import org.tessellation.ext.cats.data.OrderBasedOrdering
 import org.tessellation.ext.cats.syntax.next._
+import org.tessellation.ext.codecs.NonEmptySetCodec
 import org.tessellation.schema.height.Height
 import org.tessellation.schema.transaction.Transaction
 import org.tessellation.security.Hashed
 import org.tessellation.security.signature.Signed
 
+import derevo.cats.{eqv, order, show}
+import derevo.circe.magnolia.{decoder, encoder}
+import derevo.derive
+import io.circe.Decoder
+
 case class ParentBlockReference(parents: NonEmptyList[BlockReference])
-case class BlockData[T <: Transaction](transactions: NonEmptySet[Signed[T]])
+case class BlockData(transactions: NonEmptySet[Signed[Transaction]])
 
-trait Block[T <: Transaction] extends Fiber[ParentBlockReference, BlockData[T]] {
-  val parent: NonEmptyList[BlockReference]
-  val transactions: NonEmptySet[Signed[T]]
-
+@derive(show, eqv, encoder, decoder, order)
+case class Block(
+  parent: NonEmptyList[BlockReference],
+  transactions: NonEmptySet[Signed[Transaction]]
+) extends Fiber[ParentBlockReference, BlockData] {
   val height: Height = parent.maximum.height.next
 
   def reference: ParentBlockReference = ParentBlockReference(parent)
 
-  def data: BlockData[T] = BlockData(transactions)
+  def data: BlockData = BlockData(transactions)
 }
 
 object Block {
+  implicit object OrderingInstance extends OrderBasedOrdering[Block]
 
-  implicit class HashedOps(hashedBlock: Hashed[Block[_]]) {
+  implicit class HashedOps(hashedBlock: Hashed[Block]) {
     def ownReference = BlockReference(hashedBlock.height, hashedBlock.proofsHash)
   }
 
-  trait BlockConstructor[T <: Transaction, B <: Block[T]] {
-    def create(parents: NonEmptyList[BlockReference], transactions: NonEmptySet[Signed[T]]): B
-  }
+  implicit val transactionsDecoder: Decoder[NonEmptySet[Signed[Transaction]]] =
+    NonEmptySetCodec.decoder[Signed[Transaction]]
 }

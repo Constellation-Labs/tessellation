@@ -18,7 +18,7 @@ import org.http4s.client.Client
 
 object L0SnapshotClient {
 
-  def make[F[_]: Async: SecurityProvider: KryoSerializer, S <: Snapshot[_, _]](client: Client[F]): SnapshotClient[F, S] =
+  def make[F[_]: Async: SecurityProvider: KryoSerializer, S <: Snapshot](client: Client[F]): SnapshotClient[F, S] =
     new SnapshotClient[F, S] {
 
       def getLatestOrdinal: PeerResponse[F, SnapshotOrdinal] = {

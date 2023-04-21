@@ -11,7 +11,7 @@ object Download {
 
   def make[F[_]: Async](
     nodeStorage: NodeStorage[F],
-    consensus: SnapshotConsensus[F, _, _, _, _, _]
+    consensus: SnapshotConsensus[F, _, _, _]
   ): Download[F] =
     new Download[F](
       nodeStorage,
@@ -21,7 +21,7 @@ object Download {
 
 sealed abstract class Download[F[_]: Async] private (
   nodeStorage: NodeStorage[F],
-  consensus: SnapshotConsensus[F, _, _, _, _, _]
+  consensus: SnapshotConsensus[F, _, _, _]
 ) {
 
   def download(): F[Unit] =

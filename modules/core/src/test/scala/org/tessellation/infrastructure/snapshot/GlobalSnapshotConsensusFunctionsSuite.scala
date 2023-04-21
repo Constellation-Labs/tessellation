@@ -16,9 +16,8 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.epoch.EpochProgress
-import org.tessellation.schema.transaction.{DAGTransaction, RewardTransaction}
+import org.tessellation.schema.transaction.{RewardTransaction, Transaction}
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
@@ -65,20 +64,20 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
     }
 
-  val bam: BlockAcceptanceManager[IO, DAGTransaction, DAGBlock] = new BlockAcceptanceManager[IO, DAGTransaction, DAGBlock] {
+  val bam: BlockAcceptanceManager[IO] = new BlockAcceptanceManager[IO] {
 
     override def acceptBlocksIteratively(
-      blocks: List[Signed[DAGBlock]],
+      blocks: List[Signed[Block]],
       context: BlockAcceptanceContext[IO]
-    ): IO[BlockAcceptanceResult[DAGBlock]] =
-      BlockAcceptanceResult[DAGBlock](
+    ): IO[BlockAcceptanceResult] =
+      BlockAcceptanceResult(
         BlockAcceptanceContextUpdate.empty,
         List.empty,
         List.empty
       ).pure[IO]
 
     override def acceptBlock(
-      block: Signed[DAGBlock],
+      block: Signed[Block],
       context: BlockAcceptanceContext[IO]
     ): IO[Either[BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)]] = ???
 
@@ -110,7 +109,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
     override def feeDistribution(
       snapshotOrdinal: SnapshotOrdinal,
-      transactions: SortedSet[DAGTransaction],
+      transactions: SortedSet[Transaction],
       facilitators: NonEmptySet[ID.Id]
     ): IO[SortedSet[RewardTransaction]] = IO(SortedSet.empty)
 

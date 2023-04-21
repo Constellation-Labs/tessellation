@@ -9,7 +9,7 @@ import cats.syntax.validated._
 import org.tessellation.currency.schema.currency.SnapshotFee
 import org.tessellation.domain.cell.L0Cell
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.block.DAGBlock
+import org.tessellation.schema.Block
 import org.tessellation.sdk.domain.statechannel.StateChannelValidator
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.key.ops.PublicKeyOps
@@ -61,7 +61,7 @@ object StateChannelServiceSuite extends MutableIOSuite {
     }
 
     for {
-      dagQueue <- Queue.unbounded[IO, Signed[DAGBlock]]
+      dagQueue <- Queue.unbounded[IO, Signed[Block]]
       scQueue <- Queue.unbounded[IO, StateChannelOutput]
     } yield StateChannelService.make[IO](L0Cell.mkL0Cell[IO](dagQueue, scQueue), validator)
   }

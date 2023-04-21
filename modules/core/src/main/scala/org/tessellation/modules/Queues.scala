@@ -5,7 +5,7 @@ import cats.effect.std.Queue
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.schema.block.DAGBlock
+import org.tessellation.schema.Block
 import org.tessellation.schema.gossip.RumorRaw
 import org.tessellation.sdk.modules.SdkQueues
 import org.tessellation.security.Hashed
@@ -17,7 +17,7 @@ object Queues {
   def make[F[_]: Concurrent](sdkQueues: SdkQueues[F]): F[Queues[F]] =
     for {
       stateChannelOutputQueue <- Queue.unbounded[F, StateChannelOutput]
-      l1OutputQueue <- Queue.unbounded[F, Signed[DAGBlock]]
+      l1OutputQueue <- Queue.unbounded[F, Signed[Block]]
     } yield
       new Queues[F] {
         val rumor = sdkQueues.rumor
@@ -29,5 +29,5 @@ object Queues {
 sealed abstract class Queues[F[_]] private {
   val rumor: Queue[F, Hashed[RumorRaw]]
   val stateChannelOutput: Queue[F, StateChannelOutput]
-  val l1Output: Queue[F, Signed[DAGBlock]]
+  val l1Output: Queue[F, Signed[Block]]
 }

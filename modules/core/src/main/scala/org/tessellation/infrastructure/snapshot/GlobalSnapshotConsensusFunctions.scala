@@ -16,8 +16,6 @@ import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.balance.Amount
-import org.tessellation.schema.block.DAGBlock
-import org.tessellation.schema.transaction.DAGTransaction
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.AppEnvironment.Mainnet
 import org.tessellation.sdk.domain.block.processing._
@@ -36,8 +34,6 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 abstract class GlobalSnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
     extends SnapshotConsensusFunctions[
       F,
-      DAGTransaction,
-      DAGBlock,
       GlobalSnapshotStateProof,
       GlobalSnapshotEvent,
       GlobalSnapshotArtifact,
@@ -167,7 +163,7 @@ object GlobalSnapshotConsensusFunctions {
     }
 
     private def getReturnedDAGEvents(
-      acceptanceResult: BlockAcceptanceResult[DAGBlock]
+      acceptanceResult: BlockAcceptanceResult
     ): Set[GlobalSnapshotEvent] =
       acceptanceResult.notAccepted.mapFilter {
         case (signedBlock, _: BlockAwaitReason) => signedBlock.asRight[StateChannelEvent].some
