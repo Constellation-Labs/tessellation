@@ -81,8 +81,7 @@ object Services {
           cfg.environment,
           client,
           session,
-          rewards,
-          sdkServices.globalSnapshotContextFns
+          rewards
         )
       addressService = AddressService.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](storages.globalSnapshot)
       collateralService = Collateral.make[F](cfg.collateral, storages.globalSnapshot)

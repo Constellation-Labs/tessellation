@@ -18,7 +18,7 @@ import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.infrastructure.consensus.Consensus
 import org.tessellation.sdk.infrastructure.metrics.Metrics
-import org.tessellation.sdk.infrastructure.snapshot.{GlobalSnapshotAcceptanceManager, GlobalSnapshotContextFunctions}
+import org.tessellation.sdk.infrastructure.snapshot.GlobalSnapshotAcceptanceManager
 import org.tessellation.security.SecurityProvider
 
 import io.circe.disjunctionCodecs._
@@ -40,8 +40,7 @@ object GlobalSnapshotConsensus {
     environment: AppEnvironment,
     client: Client[F],
     session: Session[F],
-    rewards: Rewards[F],
-    globalSnapshotContextFns: GlobalSnapshotContextFunctions[F]
+    rewards: Rewards[F]
   ): F[Consensus[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact, GlobalSnapshotContext]] =
     Consensus.make[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact, GlobalSnapshotContext](
       GlobalSnapshotConsensusFunctions.make[F](
@@ -59,8 +58,7 @@ object GlobalSnapshotConsensus {
       clusterStorage,
       nodeStorage,
       client,
-      session,
-      globalSnapshotContextFns
+      session
     )
 
 }

@@ -63,7 +63,7 @@ object CurrencySnapshotConsensusFunctions {
       lastContext: CurrencySnapshotContext,
       trigger: ConsensusTrigger,
       events: Set[CurrencySnapshotEvent]
-    ): F[(CurrencySnapshotArtifact, Set[CurrencySnapshotEvent])] = {
+    ): F[(CurrencySnapshotArtifact, CurrencySnapshotContext, Set[CurrencySnapshotEvent])] = {
 
       val blocksForAcceptance = events
         .filter(_.height > lastArtifact.height)
@@ -106,7 +106,11 @@ object CurrencySnapshotConsensusFunctions {
           ),
           stateProof
         )
-      } yield (artifact, returnedEvents)
+        context = CurrencySnapshotInfo(
+          lastTxRefs = lastContext.lastTxRefs ++ acceptanceResult.contextUpdate.lastTxRefs,
+          balances = lastContext.balances ++ acceptanceResult.contextUpdate.balances
+        )
+      } yield (artifact, context, returnedEvents)
     }
 
     private def accept(

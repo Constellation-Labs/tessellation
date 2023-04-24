@@ -145,11 +145,15 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
                   EventTrigger,
                   Set(scEvent.asLeft[DAGEvent])
                 )
-                .flatMap { proposalArtifact =>
-                  gscf.validateArtifact(signedLastArtifact, signedGenesis.value.info, EventTrigger)(proposalArtifact._1).map { result =>
-                    expect.same(result.isRight, true) && expect
-                      .same(result.map(_.stateChannelSnapshots(scEvent.address)), Right(NonEmptyList.one(scEvent.snapshotBinary)))
-                  }
+                .flatMap {
+                  case (artifact, _, _) =>
+                    gscf.validateArtifact(signedLastArtifact, signedGenesis.value.info, EventTrigger, artifact).map { result =>
+                      expect.same(result.isRight, true) && expect
+                        .same(
+                          result.map(_._1.stateChannelSnapshots(scEvent.address)),
+                          Right(NonEmptyList.one(scEvent.snapshotBinary))
+                        )
+                    }
                 }
             }
           }
@@ -168,25 +172,27 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair).flatMap { signedGenesis =>
         GlobalIncrementalSnapshot.fromGlobalSnapshot(signedGenesis.value).flatMap { lastArtifact =>
           Signed.forAsyncKryo[IO, GlobalIncrementalSnapshot](lastArtifact, keyPair).flatMap { signedLastArtifact =>
-            mkStateChannelEvent().flatMap {
-              case scEvent =>
-                gscf
-                  .createProposalArtifact(
-                    SnapshotOrdinal.MinValue,
-                    signedLastArtifact,
-                    signedGenesis.value.info,
-                    EventTrigger,
-                    Set(scEvent.asLeft[DAGEvent])
-                  )
-                  .flatMap { proposalArtifact =>
-                    gscf
-                      .validateArtifact(signedLastArtifact, signedGenesis.value.info, EventTrigger)(
-                        proposalArtifact._1.copy(ordinal = proposalArtifact._1.ordinal.next)
-                      )
-                      .map { result =>
-                        expect.same(result.isLeft, true)
-                      }
-                  }
+            mkStateChannelEvent().flatMap { scEvent =>
+              gscf
+                .createProposalArtifact(
+                  SnapshotOrdinal.MinValue,
+                  signedLastArtifact,
+                  signedGenesis.value.info,
+                  EventTrigger,
+                  Set(scEvent.asLeft[DAGEvent])
+                )
+                .flatMap { proposalArtifact =>
+                  gscf
+                    .validateArtifact(
+                      signedLastArtifact,
+                      signedGenesis.value.info,
+                      EventTrigger,
+                      proposalArtifact._1.copy(ordinal = proposalArtifact._1.ordinal.next)
+                    )
+                    .map { result =>
+                      expect.same(result.isLeft, true)
+                    }
+                }
             }
           }
         }
