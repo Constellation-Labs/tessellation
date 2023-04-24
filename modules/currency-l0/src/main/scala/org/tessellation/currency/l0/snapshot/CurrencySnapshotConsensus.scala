@@ -22,7 +22,7 @@ import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.infrastructure.block.processing.BlockAcceptanceManager
 import org.tessellation.sdk.infrastructure.consensus.Consensus
 import org.tessellation.sdk.infrastructure.metrics.Metrics
-import org.tessellation.sdk.infrastructure.snapshot.{CurrencySnapshotContextFunctions, SnapshotConsensus}
+import org.tessellation.sdk.infrastructure.snapshot.SnapshotConsensus
 import org.tessellation.security.SecurityProvider
 
 import org.http4s.client.Client
@@ -43,8 +43,7 @@ object CurrencySnapshotConsensus {
     environment: AppEnvironment,
     client: Client[F],
     session: Session[F],
-    stateChannelSnapshotService: StateChannelSnapshotService[F],
-    currencySnapshotContextFns: CurrencySnapshotContextFunctions[F]
+    stateChannelSnapshotService: StateChannelSnapshotService[F]
   ): F[SnapshotConsensus[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshotArtifact, CurrencySnapshotContext, CurrencySnapshotEvent]] =
     Consensus.make[F, CurrencySnapshotEvent, SnapshotOrdinal, CurrencySnapshotArtifact, CurrencySnapshotContext](
       CurrencySnapshotConsensusFunctions.make[F](
@@ -60,8 +59,7 @@ object CurrencySnapshotConsensus {
       clusterStorage,
       nodeStorage,
       client,
-      session,
-      currencySnapshotContextFns
+      session
     )
 
 }

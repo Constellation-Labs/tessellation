@@ -56,21 +56,21 @@ abstract class SnapshotConsensusFunctions[
       lastContext.balances.getOrElse(address, Balance.empty).satisfiesCollateral(getRequiredCollateral)
     }
 
-  def validateArtifact(lastSignedArtifact: Signed[Artifact], lastContext: Context, trigger: ConsensusTrigger)(
+  def validateArtifact(
+    lastSignedArtifact: Signed[Artifact],
+    lastContext: Context,
+    trigger: ConsensusTrigger,
     artifact: Artifact
-  ): F[Either[InvalidArtifact, Artifact]] = {
+  ): F[Either[InvalidArtifact, (Artifact, Context)]] = {
     val events = artifact.blocks.unsorted.map(_.block.asInstanceOf[Event])
 
-    def recreatedArtifact: F[Artifact] =
-      createProposalArtifact(lastSignedArtifact.ordinal, lastSignedArtifact, lastContext, trigger, events)
-        .map(_._1)
-
-    recreatedArtifact
-      .map(_ === artifact)
-      .ifF(
-        artifact.asRight[InvalidArtifact],
-        ArtifactMismatch.asLeft[Artifact]
-      )
+    createProposalArtifact(lastSignedArtifact.ordinal, lastSignedArtifact, lastContext, trigger, events).map {
+      case (recreatedArtifact, context, _) =>
+        if (recreatedArtifact === artifact)
+          (artifact, context).asRight[InvalidArtifact]
+        else
+          ArtifactMismatch.asLeft[(Artifact, Context)]
+    }
   }
 
   protected def getUpdatedTips(

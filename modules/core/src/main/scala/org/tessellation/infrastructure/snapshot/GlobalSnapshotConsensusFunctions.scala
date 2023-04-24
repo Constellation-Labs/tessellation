@@ -68,28 +68,24 @@ object GlobalSnapshotConsensusFunctions {
         )
 
     override def validateArtifact(
-      lastSignedArtifact: Signed[GlobalIncrementalSnapshot],
-      lastContext: GlobalSnapshotInfo,
-      trigger: ConsensusTrigger
-    )(
-      artifact: GlobalIncrementalSnapshot
-    ): F[Either[InvalidArtifact, GlobalIncrementalSnapshot]] = {
+      lastSignedArtifact: Signed[GlobalSnapshotArtifact],
+      lastContext: GlobalSnapshotContext,
+      trigger: ConsensusTrigger,
+      artifact: GlobalSnapshotArtifact
+    ): F[Either[InvalidArtifact, (GlobalSnapshotArtifact, GlobalSnapshotContext)]] = {
       val dagEvents = artifact.blocks.unsorted.map(_.block.asRight[StateChannelOutput])
       val scEvents = artifact.stateChannelSnapshots.toList.flatMap {
         case (address, stateChannelBinaries) => stateChannelBinaries.map(StateChannelOutput(address, _).asLeft[DAGEvent]).toList
       }
       val events = dagEvents ++ scEvents
 
-      def recreatedArtifact: F[GlobalIncrementalSnapshot] =
-        createProposalArtifact(lastSignedArtifact.ordinal, lastSignedArtifact, lastContext, trigger, events)
-          .map(_._1)
-
-      recreatedArtifact
-        .map(_ === artifact)
-        .ifF(
-          artifact.asRight[InvalidArtifact],
-          ArtifactMismatch.asLeft[GlobalIncrementalSnapshot]
-        )
+      createProposalArtifact(lastSignedArtifact.ordinal, lastSignedArtifact, lastContext, trigger, events).map {
+        case (recreatedArtifact, context, _) =>
+          if (recreatedArtifact === artifact)
+            (artifact, context).asRight[InvalidArtifact]
+          else
+            ArtifactMismatch.asLeft[(GlobalSnapshotArtifact, GlobalSnapshotContext)]
+      }
     }
 
     def createProposalArtifact(
@@ -98,7 +94,7 @@ object GlobalSnapshotConsensusFunctions {
       snapshotContext: GlobalSnapshotContext,
       trigger: ConsensusTrigger,
       events: Set[GlobalSnapshotEvent]
-    ): F[(GlobalSnapshotArtifact, Set[GlobalSnapshotEvent])] = {
+    ): F[(GlobalSnapshotArtifact, GlobalSnapshotContext, Set[GlobalSnapshotEvent])] = {
       val (scEvents: List[StateChannelEvent], dagEvents: List[DAGEvent]) = events.filter { event =>
         if (environment == Mainnet) event.isRight else true
       }.toList.partitionMap(identity)
@@ -163,7 +159,7 @@ object GlobalSnapshotConsensusFunctions {
           stateProof
         )
         returnedEvents = returnedSCEvents.map(_.asLeft[DAGEvent]).union(returnedDAGEvents)
-      } yield (globalSnapshot, returnedEvents)
+      } yield (globalSnapshot, snapshotInfo, returnedEvents)
     }
 
     private def getReturnedDAGEvents(

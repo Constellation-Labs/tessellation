@@ -19,7 +19,6 @@ import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.node.NodeStorage
-import org.tessellation.sdk.domain.snapshot.SnapshotContextFunctions
 import org.tessellation.sdk.infrastructure.gossip.RumorHandler
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
@@ -45,8 +44,7 @@ object Consensus {
     clusterStorage: ClusterStorage[F],
     nodeStorage: NodeStorage[F],
     client: Client[F],
-    session: Session[F],
-    snapshotContextFns: SnapshotContextFunctions[F, Artifact, Context]
+    session: Session[F]
   ): F[Consensus[F, Event, Key, Artifact, Context]] =
     for {
       storage <- ConsensusStorage.make[F, Event, Key, Artifact, Context](consensusConfig)
@@ -54,7 +52,6 @@ object Consensus {
         consensusFns,
         storage,
         gossip,
-        snapshotContextFns,
         keyPair
       )
       stateCreator = ConsensusStateCreator.make[F, Event, Key, Artifact, Context](

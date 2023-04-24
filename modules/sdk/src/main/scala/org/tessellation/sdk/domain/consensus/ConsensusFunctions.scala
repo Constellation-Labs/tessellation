@@ -13,17 +13,20 @@ trait ConsensusFunctions[F[_], Event, Key, Artifact, Context] {
 
   def facilitatorFilter(lastSignedArtifact: Signed[Artifact], lastContext: Context, peerId: PeerId): F[Boolean]
 
-  def validateArtifact(lastSignedArtifact: Signed[Artifact], lastContext: Context, trigger: ConsensusTrigger)(
+  def validateArtifact(
+    lastSignedArtifact: Signed[Artifact],
+    lastContext: Context,
+    trigger: ConsensusTrigger,
     artifact: Artifact
-  ): F[Either[InvalidArtifact, Artifact]]
+  ): F[Either[InvalidArtifact, (Artifact, Context)]]
 
   def createProposalArtifact(
     lastKey: Key,
     lastArtifact: Signed[Artifact],
-    context: Context,
+    lastContext: Context,
     trigger: ConsensusTrigger,
     events: Set[Event]
-  ): F[(Artifact, Set[Event])]
+  ): F[(Artifact, Context, Set[Event])]
 
   def consumeSignedMajorityArtifact(signedArtifact: Signed[Artifact], context: Context): F[Unit]
 }
