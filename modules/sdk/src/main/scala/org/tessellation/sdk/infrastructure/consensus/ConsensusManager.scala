@@ -3,7 +3,7 @@ package org.tessellation.sdk.infrastructure.consensus
 import cats._
 import cats.data.Ior.{Both, Right}
 import cats.effect._
-import cats.effect.std.{Random, Supervisor}
+import cats.effect.std.Supervisor
 import cats.kernel.Next
 import cats.syntax.all._
 
@@ -31,7 +31,7 @@ import retry.syntax.all._
 
 object ConsensusManager {
 
-  def make[F[_]: Async: Random: Metrics, Event, Key: Show: Order: Next, Artifact: Eq, Context: Eq](
+  def make[F[_]: Async: Metrics, Event, Key: Show: Order: Next, Artifact: Eq, Context: Eq](
     config: ConsensusConfig,
     consensusStorage: ConsensusStorage[F, Event, Key, Artifact, Context],
     consensusStateCreator: ConsensusStateCreator[F, Key, Artifact, Context],
@@ -61,17 +61,9 @@ object ConsensusManager {
 
     val manager = new ConsensusManager[F, Key, Artifact, Context] {
 
-      def startObserving: F[Unit] =
+      def startObserving(peerToObserve: Peer): F[Unit] =
         S.supervise {
-
-          def getObservedOutcome: F[ConsensusOutcome[Key, Artifact, Context]] = for {
-            readyPeers <- clusterStorage.getResponsivePeers
-              .map(_.filter(_.state === Ready))
-            selectedPeer <- Random[F].elementOf(readyPeers)
-            observedOutcome <- observePeer(selectedPeer)
-          } yield observedOutcome
-
-          getObservedOutcome
+          observePeer(peerToObserve)
             .retryingOnAllErrors(
               observationRetryPolicy,
               (err, retryDetails) =>

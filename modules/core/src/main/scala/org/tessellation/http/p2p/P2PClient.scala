@@ -13,7 +13,8 @@ object P2PClient {
       sdkP2PClient.sign,
       sdkP2PClient.cluster,
       sdkP2PClient.gossip,
-      sdkP2PClient.node
+      sdkP2PClient.node,
+      sdkP2PClient.l0GlobalSnapshotClient
     ) {}
 }
 
@@ -21,5 +22,6 @@ sealed abstract class P2PClient[F[_]] private (
   val sign: SignClient[F],
   val cluster: ClusterClient[F],
   val gossip: GossipClient[F],
-  val node: NodeClient[F]
+  val node: NodeClient[F],
+  val l0GlobalSnapshotClient: L0GlobalSnapshotClient[F]
 )

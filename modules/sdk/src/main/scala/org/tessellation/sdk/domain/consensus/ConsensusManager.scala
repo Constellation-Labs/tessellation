@@ -1,11 +1,12 @@
 package org.tessellation.sdk.domain.consensus
 
+import org.tessellation.schema.peer.Peer
 import org.tessellation.sdk.infrastructure.consensus.ConsensusResources
 import org.tessellation.security.signature.Signed
 
 trait ConsensusManager[F[_], Key, Artifact, Context] {
 
-  def startObserving: F[Unit]
+  def startObserving(peerToObserve: Peer): F[Unit]
   def startFacilitatingAfter(lastKey: Key, lastArtifact: Signed[Artifact], lastContext: Context): F[Unit]
 
   def withdrawFromConsensus: F[Unit]
