@@ -60,6 +60,7 @@ object method {
 
     val stateAfterJoining: NodeState = NodeState.WaitingForDownload
 
+    val stateChannelSeedlistConfig: StateChannelSeedlistConfig = StateChannelSeedlistConfig(None)
   }
 
   case class RunGenesis(

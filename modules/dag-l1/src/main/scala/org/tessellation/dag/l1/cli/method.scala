@@ -57,6 +57,8 @@ object method {
       healthCheck = healthCheckConfig(false),
       collateral = collateralConfig(environment, collateralAmount)
     )
+
+    val stateChannelSeedlistConfig: StateChannelSeedlistConfig = StateChannelSeedlistConfig(None)
   }
 
   case class RunInitialValidator(

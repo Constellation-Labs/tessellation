@@ -26,6 +26,7 @@ object StateChannelValidator {
 
   def make[F[_]: Async: KryoSerializer](
     signedValidator: SignedValidator[F],
+    stateChannelSeedlist: Option[Set[Address]],
     maxBinarySizeInBytes: Long = 50 * 1024
   ): StateChannelValidator[F] = new StateChannelValidator[F] {
 
@@ -35,7 +36,8 @@ object StateChannelValidator {
         .map(_.errorMap[StateChannelValidationError](InvalidSigned))
       addressSignatureV <- validateSourceAddressSignature(stateChannelOutput.address, stateChannelOutput.snapshotBinary)
       snapshotSizeV <- validateSnapshotSize(stateChannelOutput.snapshotBinary)
-    } yield signaturesV.productR(addressSignatureV).product(snapshotSizeV).map(_ => stateChannelOutput)
+      stateChannelAddressV = validateStateChannelAddress(stateChannelOutput.address)
+    } yield signaturesV.productR(addressSignatureV).product(snapshotSizeV).product(stateChannelAddressV).map(_ => stateChannelOutput)
 
     private def validateSourceAddressSignature(
       address: Address,
@@ -57,6 +59,12 @@ object StateChannelValidator {
         else
           BinaryExceedsMaxAllowedSize(maxBinarySizeInBytes, actualSize).invalidNec
       }
+
+    private def validateStateChannelAddress(address: Address): StateChannelValidationErrorOr[Address] =
+      if (stateChannelSeedlist.forall(_.contains(address)))
+        address.validNec
+      else
+        StateChannelAddressNotAllowed(address).invalidNec
   }
 
   @derive(eqv, show)
@@ -64,6 +72,8 @@ object StateChannelValidator {
   case class InvalidSigned(error: SignedValidationError) extends StateChannelValidationError
   case object NotSignedExclusivelyByStateChannelOwner extends StateChannelValidationError
   case class BinaryExceedsMaxAllowedSize(maxSize: Long, was: Int) extends StateChannelValidationError
+
+  case class StateChannelAddressNotAllowed(address: Address) extends StateChannelValidationError
 
   type StateChannelValidationErrorOr[A] = ValidatedNec[StateChannelValidationError, A]
 

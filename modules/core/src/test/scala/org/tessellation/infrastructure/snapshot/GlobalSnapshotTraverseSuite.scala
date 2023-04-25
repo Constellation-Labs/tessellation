@@ -159,8 +159,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         TransactionValidator.make[IO, DAGTransaction](signedValidator)
       )
     val blockAcceptanceManager = BlockAcceptanceManager.make(BlockAcceptanceLogic.make[IO, DAGTransaction, DAGBlock], blockValidator)
-    val stateChannelValidator = StateChannelValidator.make[IO](signedValidator)
-    val validators = SdkValidators.make[IO](None)
+    val stateChannelValidator = StateChannelValidator.make[IO](signedValidator, Some(Set.empty[Address]))
+    val validators = SdkValidators.make[IO](None, Some(Set.empty[Address]))
     val currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
       BlockAcceptanceManager.make[IO, CurrencyTransaction, CurrencyBlock](validators.currencyBlockValidator),
       Amount(0L)

@@ -4,6 +4,7 @@ import cats.data.NonEmptySet
 import cats.data.Validated.Valid
 import cats.effect.IO
 import cats.effect.kernel.Resource
+import cats.syntax.option._
 import cats.syntax.validated._
 
 import scala.collection.immutable.SortedSet
@@ -41,12 +42,12 @@ object StateChannelValidatorSuite extends MutableIOSuite {
   test("should succeed when state channel is signed correctly and binary size is within allowed maximum") { res =>
     implicit val (kryo, sp) = res
 
-    val validator = mkValidator()
-
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      address = keyPair.getPublic.toAddress
       signedSCBinary <- forAsyncKryo(testStateChannel, keyPair)
-      scOutput = StateChannelOutput(keyPair.getPublic().toAddress, signedSCBinary)
+      scOutput = StateChannelOutput(address, signedSCBinary)
+      validator = mkValidator(Set(address).some)
       result <- validator.validate(scOutput)
     } yield expect.same(Valid(scOutput), result)
 
@@ -55,11 +56,10 @@ object StateChannelValidatorSuite extends MutableIOSuite {
   test("should fail when the signature is wrong") { res =>
     implicit val (kryo, sp) = res
 
-    val validator = mkValidator()
-
     for {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
       keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
+      address = keyPair2.getPublic.toAddress
       signedSCBinary <- forAsyncKryo(testStateChannel, keyPair1).map(signed =>
         signed.copy(proofs =
           NonEmptySet.fromSetUnsafe(
@@ -67,7 +67,8 @@ object StateChannelValidatorSuite extends MutableIOSuite {
           )
         )
       )
-      scOutput = StateChannelOutput(keyPair2.getPublic().toAddress, signedSCBinary)
+      scOutput = StateChannelOutput(address, signedSCBinary)
+      validator = mkValidator(Set(address).some)
       result <- validator.validate(scOutput)
     } yield
       expect.same(
@@ -79,13 +80,13 @@ object StateChannelValidatorSuite extends MutableIOSuite {
   test("should fail when the signature doesn't match address") { res =>
     implicit val (kryo, sp) = res
 
-    val validator = mkValidator()
-
     for {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
       keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
+      address = keyPair2.getPublic.toAddress
       signedSCBinary <- forAsyncKryo(testStateChannel, keyPair1)
-      scOutput = StateChannelOutput(keyPair2.getPublic().toAddress, signedSCBinary)
+      scOutput = StateChannelOutput(address, signedSCBinary)
+      validator = mkValidator(Set(address).some)
       result <- validator.validate(scOutput)
     } yield
       expect.same(
@@ -97,14 +98,14 @@ object StateChannelValidatorSuite extends MutableIOSuite {
   test("should fail when there is more than one signature") { res =>
     implicit val (kryo, sp) = res
 
-    val validator = mkValidator()
-
     for {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
+      address = keyPair1.getPublic.toAddress
       keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
       signedSCBinary <- forAsyncKryo(testStateChannel, keyPair1)
       doubleSigned <- signedSCBinary.signAlsoWith(keyPair2)
-      scOutput = StateChannelOutput(keyPair1.getPublic().toAddress, doubleSigned)
+      scOutput = StateChannelOutput(address, doubleSigned)
+      validator = mkValidator(Set(address).some)
       result <- validator.validate(scOutput)
     } yield
       expect.same(
@@ -115,8 +116,6 @@ object StateChannelValidatorSuite extends MutableIOSuite {
 
   test("should fail when binary size exceeds max allowed size") { res =>
     implicit val (kryo, sp) = res
-
-    val validator = mkValidator(maxBinarySizeInBytes = 443)
 
     val signedSCBinary = Signed(
       testStateChannel,
@@ -137,7 +136,9 @@ object StateChannelValidatorSuite extends MutableIOSuite {
         )
       )
     )
-    val scOutput = StateChannelOutput(Address("DAG7EJu17WPtbKMP5kNBWGpp3iVtmNwDeS6E4ge8"), signedSCBinary)
+    val address = Address("DAG7EJu17WPtbKMP5kNBWGpp3iVtmNwDeS6E4ge8")
+    val scOutput = StateChannelOutput(address, signedSCBinary)
+    val validator = mkValidator(Set(address).some, maxBinarySizeInBytes = 443)
 
     validator
       .validate(scOutput)
@@ -149,7 +150,40 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       )
   }
 
-  private def mkValidator(maxBinarySizeInBytes: Long = 1024)(implicit S: SecurityProvider[IO], K: KryoSerializer[IO]) =
-    StateChannelValidator.make[IO](SignedValidator.make[IO], maxBinarySizeInBytes)
+  test("should fail when the state channel address is not on the seedlist") { res =>
+    implicit val (kryo, sp) = res
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      address = keyPair.getPublic.toAddress
+      signedSCBinary <- forAsyncKryo(testStateChannel, keyPair)
+      scOutput = StateChannelOutput(address, signedSCBinary)
+      validator = mkValidator(Set.empty[Address].some)
+      result <- validator.validate(scOutput)
+    } yield
+      expect.same(
+        StateChannelValidator.StateChannelAddressNotAllowed(address).invalidNec,
+        result
+      )
+  }
+
+  test("should succeed when the state channel seedlist check is disabled") { res =>
+    implicit val (kryo, sp) = res
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      address = keyPair.getPublic.toAddress
+      signedSCBinary <- forAsyncKryo(testStateChannel, keyPair)
+      scOutput = StateChannelOutput(address, signedSCBinary)
+      validator = mkValidator(None)
+      result <- validator.validate(scOutput)
+    } yield expect.same(Valid(scOutput), result)
+  }
+
+  private def mkValidator(stateChannelSeedlist: Option[Set[Address]], maxBinarySizeInBytes: Long = 1024)(
+    implicit S: SecurityProvider[IO],
+    K: KryoSerializer[IO]
+  ) =
+    StateChannelValidator.make[IO](SignedValidator.make[IO], stateChannelSeedlist, maxBinarySizeInBytes)
 
 }

@@ -120,7 +120,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                           session = Session.make[IO](storages.session, storages.node, storages.cluster)
                           p2pClient = SdkP2PClient.make[IO](res.client, session)
                           queues <- SdkQueues.make[IO].asResource
-                          validators = SdkValidators.make[IO](_seedlist)
+                          validators = SdkValidators.make[IO](_seedlist, cfg.stateChannelSeedlist.seedlist)
                           services <- SdkServices
                             .make[IO](
                               cfg,

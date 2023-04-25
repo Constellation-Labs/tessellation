@@ -81,7 +81,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             lastAccTxR <- MapRef.ofConcurrentHashMap[IO, Address, LastTransactionReferenceState]().asResource
             waitingTxsR <- MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[DAGTransaction]]]().asResource
             transactionStorage = new TransactionStorage[IO, DAGTransaction](lastAccTxR, waitingTxsR)
-            validators = SdkValidators.make[IO](None)
+            validators = SdkValidators.make[IO](None, Some(Set.empty))
             currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
               BlockAcceptanceManager.make[IO, CurrencyTransaction, CurrencyBlock](validators.currencyBlockValidator),
               Amount(0L)
