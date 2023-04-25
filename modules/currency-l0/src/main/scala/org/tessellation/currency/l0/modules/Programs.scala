@@ -11,7 +11,9 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.{L0Peer, PeerId}
 import org.tessellation.sdk.domain.cluster.programs.{Joining, L0PeerDiscovery, PeerDiscovery}
+import org.tessellation.sdk.domain.snapshot.PeerSelect
 import org.tessellation.sdk.infrastructure.genesis.{Loader => GenesisLoader}
+import org.tessellation.sdk.infrastructure.snapshot.MajorityPeerSelect
 import org.tessellation.sdk.infrastructure.snapshot.programs.Download
 import org.tessellation.sdk.modules.SdkPrograms
 import org.tessellation.security.SecurityProvider
@@ -28,10 +30,12 @@ object Programs {
     services: Services[F],
     p2pClient: P2PClient[F]
   ): Programs[F] = {
+    val peerSelect: PeerSelect[F] = MajorityPeerSelect.make(storages.cluster, p2pClient.l0GlobalSnapshot)
     val download = Download
       .make(
         storages.node,
-        services.consensus
+        services.consensus,
+        peerSelect
       )
 
     val globalL0PeerDiscovery = L0PeerDiscovery.make(
