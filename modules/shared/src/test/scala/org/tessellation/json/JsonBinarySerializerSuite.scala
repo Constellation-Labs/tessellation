@@ -56,6 +56,7 @@ object JsonBinarySerializerSuite extends MutableIOSuite {
           SubHeight(1L),
           hash,
           SortedSet.empty,
+          SortedSet.empty,
           SnapshotTips(
             SortedSet(
               DeprecatedTip(BlockReference(Height(122L), ProofsHash("aaaa")), SnapshotOrdinal(55L)),

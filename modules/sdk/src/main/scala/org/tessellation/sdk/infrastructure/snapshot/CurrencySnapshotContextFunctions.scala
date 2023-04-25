@@ -13,6 +13,7 @@ import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, C
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.sdk.domain.snapshot.SnapshotContextFunctions
+import org.tessellation.sdk.infrastructure.snapshot.GlobalSnapshotContextFunctions.CannotApplyRewardsError
 import org.tessellation.security.signature.Signed
 
 import derevo.cats.{eqv, show}
@@ -34,15 +35,18 @@ object CurrencySnapshotContextFunctions {
 
         blocksForAcceptance = signedArtifact.blocks.toList.map(_.block)
 
-        (acceptanceResult, snapshotInfo) <- snapshotAcceptanceManager.accept(
+        (acceptanceResult, acceptedRewardTxs, snapshotInfo) <- snapshotAcceptanceManager.accept(
           blocksForAcceptance,
           context,
           lastActiveTips,
-          lastDeprecatedTips
+          lastDeprecatedTips,
+          _ => signedArtifact.rewards.pure[F]
         )
         _ <- CannotApplyBlocksError(acceptanceResult.notAccepted.map { case (_, reason) => reason })
           .raiseError[F, Unit]
           .whenA(acceptanceResult.notAccepted.nonEmpty)
+        diffRewards = acceptedRewardTxs -- signedArtifact.rewards
+        _ <- CannotApplyRewardsError(diffRewards).raiseError[F, Unit].whenA(diffRewards.nonEmpty)
 
       } yield snapshotInfo
     }

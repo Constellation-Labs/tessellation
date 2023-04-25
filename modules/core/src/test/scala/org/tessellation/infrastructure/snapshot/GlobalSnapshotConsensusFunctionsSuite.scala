@@ -14,10 +14,10 @@ import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.balance.Amount
+import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.epoch.EpochProgress
-import org.tessellation.schema.transaction.{DAGTransaction, RewardTransaction}
+import org.tessellation.schema.transaction.DAGTransaction
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.sdk.domain.rewards.Rewards
@@ -102,15 +102,12 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
   val collateral: Amount = Amount.empty
 
   val rewards: Rewards[F, DAGTransaction, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot] =
-    new Rewards[F, DAGTransaction, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot] {
-      override def distribute(
-        artifact: Signed[GlobalSnapshotArtifact],
-        transactions: SortedSet[Signed[DAGTransaction]],
-        trigger: ConsensusTrigger
-      ): IO[SortedSet[RewardTransaction]] =
-        IO(SortedSet.empty)
-
-    }
+    (
+      artifact: Signed[GlobalSnapshotArtifact],
+      balances: SortedMap[Address, Balance],
+      transactions: SortedSet[Signed[DAGTransaction]],
+      trigger: ConsensusTrigger
+    ) => IO(SortedSet.empty)
 
   def mkGlobalSnapshotConsensusFunctions()(implicit ks: KryoSerializer[IO], sp: SecurityProvider[IO], m: Metrics[IO]) = {
     val snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make[IO](bam, scProcessor, collateral)

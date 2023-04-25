@@ -17,7 +17,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import org.tessellation.ext.refined._
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.balance.Amount
+import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.transaction.{DAGTransaction, RewardTransaction, TransactionAmount}
@@ -47,16 +47,17 @@ object Rewards {
           .getOrElse(Amount.empty)
 
       def distribute(
-        artifact: Signed[GlobalIncrementalSnapshot],
-        transactions: SortedSet[Signed[DAGTransaction]],
+        lastArtifact: Signed[GlobalIncrementalSnapshot],
+        lastBalances: SortedMap[Address, Balance],
+        acceptedTransactions: SortedSet[Signed[DAGTransaction]],
         trigger: ConsensusTrigger
       ): F[SortedSet[RewardTransaction]] = {
-        val facilitators = artifact.proofs.map(_.id)
+        val facilitators = lastArtifact.proofs.map(_.id)
 
-        feeDistribution(artifact.ordinal, transactions, facilitators).flatMap { feeRewardTxs =>
+        feeDistribution(lastArtifact.ordinal, acceptedTransactions, facilitators).flatMap { feeRewardTxs =>
           trigger match {
             case EventTrigger => feeRewardTxs.pure[F]
-            case TimeTrigger  => mintedDistribution(artifact.epochProgress, facilitators).map(_ ++ feeRewardTxs)
+            case TimeTrigger  => mintedDistribution(lastArtifact.epochProgress, facilitators).map(_ ++ feeRewardTxs)
           }
         }
       }

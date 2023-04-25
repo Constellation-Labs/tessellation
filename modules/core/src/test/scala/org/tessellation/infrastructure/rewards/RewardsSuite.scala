@@ -7,7 +7,7 @@ import cats.syntax.applicative._
 import cats.syntax.eq._
 import cats.syntax.list._
 
-import scala.collection.immutable.SortedSet
+import scala.collection.immutable.{SortedMap, SortedSet}
 
 import org.tessellation.config.types._
 import org.tessellation.ext.kryo._
@@ -109,7 +109,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
         for {
           rewards <- makeRewards(config).pure[F]
           expectedSum = txs.toList.map(_.fee.value.toLong).sum
-          rewardTxs <- rewards.distribute(snapshot, txs, EventTrigger)
+          rewardTxs <- rewards.distribute(snapshot, SortedMap.empty, txs, EventTrigger)
           sum = rewardTxs.toList.map(_.amount.value.toLong).sum
         } yield expect(sum === expectedSum)
     }
@@ -145,7 +145,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
       case (epochProgress, snapshot) =>
         for {
           rewards <- makeRewards(config).pure[F]
-          txs <- rewards.distribute(snapshot, SortedSet.empty, TimeTrigger)
+          txs <- rewards.distribute(snapshot, SortedMap.empty, SortedSet.empty, TimeTrigger)
           sum = txs.toList.map(_.amount.value.toLong).sum
           expected = getAmountByEpoch(epochProgress).value.toLong
         } yield expect(sum == expected)
@@ -165,7 +165,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
       case (epochProgress, lastSnapshot, txs) =>
         for {
           rewards <- makeRewards(config).pure[F]
-          rewardTransactions <- rewards.distribute(lastSnapshot, txs, TimeTrigger)
+          rewardTransactions <- rewards.distribute(lastSnapshot, SortedMap.empty, txs, TimeTrigger)
           rewardsSum = rewardTransactions.toList.map(_.amount.value.toLong).sum
           expectedMintedSum = getAmountByEpoch(epochProgress).value.toLong
           expectedFeeSum = txs.toList.map(_.fee.value.toLong).sum
@@ -184,7 +184,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
     forall(gen) { snapshot =>
       for {
         rewards <- makeRewards(config).pure[F]
-        txs <- rewards.distribute(snapshot, SortedSet.empty, TimeTrigger)
+        txs <- rewards.distribute(snapshot, SortedMap.empty, SortedSet.empty, TimeTrigger)
       } yield expect(txs.isEmpty)
     }
   }
