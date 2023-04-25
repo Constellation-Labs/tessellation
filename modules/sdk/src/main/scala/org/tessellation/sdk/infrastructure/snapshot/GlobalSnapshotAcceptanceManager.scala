@@ -20,6 +20,7 @@ import org.tessellation.schema.transaction.{DAGTransaction, RewardTransaction}
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.security.signature.Signed
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
+import org.tessellation.syntax.sortedCollection.sortedSetSyntax
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
@@ -28,10 +29,10 @@ trait GlobalSnapshotAcceptanceManager[F[_]] {
   def accept(
     blocksForAcceptance: List[Signed[DAGBlock]],
     scEvents: List[StateChannelOutput],
-    rewards: SortedSet[RewardTransaction],
     lastSnapshotContext: GlobalSnapshotInfo,
     lastActiveTips: SortedSet[ActiveTip],
-    lastDeprecatedTips: SortedSet[DeprecatedTip]
+    lastDeprecatedTips: SortedSet[DeprecatedTip],
+    calculateRewardsFn: SortedSet[Signed[DAGTransaction]] => F[SortedSet[RewardTransaction]]
   ): F[
     (
       BlockAcceptanceResult[DAGBlock],
@@ -53,10 +54,10 @@ object GlobalSnapshotAcceptanceManager {
     def accept(
       blocksForAcceptance: List[Signed[DAGBlock]],
       scEvents: List[StateChannelOutput],
-      rewards: SortedSet[RewardTransaction],
       lastSnapshotContext: GlobalSnapshotInfo,
       lastActiveTips: SortedSet[ActiveTip],
-      lastDeprecatedTips: SortedSet[DeprecatedTip]
+      lastDeprecatedTips: SortedSet[DeprecatedTip],
+      calculateRewardsFn: SortedSet[Signed[DAGTransaction]] => F[SortedSet[RewardTransaction]]
     ) = for {
       acceptanceResult <- acceptBlocks(blocksForAcceptance, lastSnapshotContext, lastActiveTips, lastDeprecatedTips)
 
@@ -67,6 +68,10 @@ object GlobalSnapshotAcceptanceManager {
       updatedLastCurrencySnapshots = lastSnapshotContext.lastCurrencySnapshots ++ currencySnapshots
 
       transactionsRefs = lastSnapshotContext.lastTxRefs ++ acceptanceResult.contextUpdate.lastTxRefs
+
+      acceptedTransactions = acceptanceResult.accepted.flatMap { case (block, _) => block.value.transactions.toSortedSet }.toSortedSet
+
+      rewards <- calculateRewardsFn(acceptedTransactions)
 
       (updatedBalancesByRewards, acceptedRewardTxs) = acceptRewardTxs(
         lastSnapshotContext.balances ++ acceptanceResult.contextUpdate.balances,

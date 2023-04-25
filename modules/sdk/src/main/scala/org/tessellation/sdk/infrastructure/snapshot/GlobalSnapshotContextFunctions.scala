@@ -43,10 +43,10 @@ object GlobalSnapshotContextFunctions {
         (acceptanceResult, scSnapshots, returnedSCEvents, acceptedRewardTxs, snapshotInfo) <- snapshotAcceptanceManager.accept(
           blocksForAcceptance,
           scEvents,
-          signedArtifact.rewards,
           context,
           lastActiveTips,
-          lastDeprecatedTips
+          lastDeprecatedTips,
+          _ => signedArtifact.rewards.pure[F]
         )
         _ <- CannotApplyBlocksError(acceptanceResult.notAccepted.map { case (_, reason) => reason })
           .raiseError[F, Unit]

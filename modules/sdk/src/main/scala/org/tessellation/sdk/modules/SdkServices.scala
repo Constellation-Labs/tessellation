@@ -82,7 +82,8 @@ object SdkServices {
         session = session,
         gossip = gossip,
         globalSnapshotContextFns = globalSnapshotContextFns,
-        currencySnapshotContextFns = currencySnapshotContextFns
+        currencySnapshotContextFns = currencySnapshotContextFns,
+        currencySnapshotAcceptanceManager = currencySnapshotAcceptanceManager
       ) {}
   }
 }
@@ -93,5 +94,6 @@ sealed abstract class SdkServices[F[_]] private (
   val session: Session[F],
   val gossip: Gossip[F],
   val globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
-  val currencySnapshotContextFns: CurrencySnapshotContextFunctions[F]
+  val currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
+  val currencySnapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F]
 )

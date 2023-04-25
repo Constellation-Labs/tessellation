@@ -28,7 +28,6 @@ import org.tessellation.sdk.infrastructure.snapshot._
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 import org.tessellation.statechannel.StateChannelOutput
-import org.tessellation.syntax.sortedCollection.sortedSetSyntax
 
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -113,17 +112,13 @@ object GlobalSnapshotConsensusFunctions {
         lastActiveTips <- lastArtifact.activeTips
         lastDeprecatedTips = lastArtifact.tips.deprecated
 
-        transactionsForAcceptance = blocksForAcceptance.flatMap(_.value.transactions.toSortedSet).toSortedSet
-
-        rewardTxsForAcceptance <- rewards.distribute(lastArtifact, transactionsForAcceptance, trigger)
-
         (acceptanceResult, scSnapshots, returnedSCEvents, acceptedRewardTxs, snapshotInfo) <- globalSnapshotAcceptanceManager.accept(
           blocksForAcceptance,
           scEvents,
-          rewardTxsForAcceptance,
           snapshotContext,
           lastActiveTips,
-          lastDeprecatedTips
+          lastDeprecatedTips,
+          rewards.distribute(lastArtifact, snapshotContext.balances, _, trigger)
         )
         (deprecated, remainedActive, accepted) = getUpdatedTips(
           lastActiveTips,
