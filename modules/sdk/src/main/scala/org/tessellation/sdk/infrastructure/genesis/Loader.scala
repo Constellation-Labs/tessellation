@@ -22,7 +22,7 @@ object Loader {
           decodeWithoutHeaders[GenesisCSVAccount]()
         )
         .map(_.toGenesisAccount)
-        .map(_.bimap(e => new RuntimeException(e), identity))
+        .map(_.leftMap(new RuntimeException(_)))
         .rethrow
         .compile
         .toList

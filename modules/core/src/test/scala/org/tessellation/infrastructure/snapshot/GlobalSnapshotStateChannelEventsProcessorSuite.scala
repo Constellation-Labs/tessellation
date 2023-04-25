@@ -44,13 +44,14 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
     }
 
   def mkProcessor(
+    stateChannelSeedlist: Set[Address],
     failed: Option[(Address, StateChannelValidator.StateChannelValidationError)] = None
   )(implicit K: KryoSerializer[IO], S: SecurityProvider[IO]) = {
     val validator = new StateChannelValidator[IO] {
       def validate(output: StateChannelOutput) =
         IO.pure(failed.filter(f => f._1 == output.address).map(_._2.invalidNec).getOrElse(output.validNec))
     }
-    val validators = SdkValidators.make[IO](None)
+    val validators = SdkValidators.make[IO](None, Some(stateChannelSeedlist))
     val currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
       BlockAcceptanceManager.make[IO, CurrencyTransaction, CurrencyBlock](validators.currencyBlockValidator),
       Amount(0L)
@@ -67,7 +68,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       address = keyPair.getPublic().toAddress
       output <- mkStateChannelOutput(keyPair)
       snapshotInfo = mkGlobalSnapshotInfo()
-      service = mkProcessor()
+      service = mkProcessor(Set(address))
       expected = (
         SortedMap((address, NonEmptyList.one(output.snapshotBinary))),
         SortedMap.empty[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)],
@@ -88,7 +89,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       output1Hash <- output1.snapshotBinary.hashF
       output2 <- mkStateChannelOutput(keyPair, Some(output1Hash))
       snapshotInfo = mkGlobalSnapshotInfo()
-      service = mkProcessor()
+      service = mkProcessor(Set(address))
       expected = (
         SortedMap((address, NonEmptyList.of(output2.snapshotBinary, output1.snapshotBinary))),
         SortedMap.empty[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)],
@@ -109,7 +110,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       output1Hash <- output1.snapshotBinary.hashF
       output2 <- mkStateChannelOutput(keyPair, Some(output1Hash))
       snapshotInfo = mkGlobalSnapshotInfo(SortedMap((address, output1Hash)))
-      service = mkProcessor()
+      service = mkProcessor(Set(address))
       expected = (
         SortedMap((address, NonEmptyList.of(output2.snapshotBinary))),
         SortedMap.empty[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)],
@@ -129,7 +130,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       output1 <- mkStateChannelOutput(keyPair)
       output2 <- mkStateChannelOutput(keyPair, Some(Hash.fromBytes("incorrect".getBytes())))
       snapshotInfo = mkGlobalSnapshotInfo(SortedMap((address, Hash.fromBytes(output1.snapshotBinary.content))))
-      service = mkProcessor()
+      service = mkProcessor(Set(address))
       expected = (
         SortedMap.empty[Address, NonEmptyList[StateChannelSnapshotBinary]],
         SortedMap.empty[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)],
@@ -151,7 +152,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       address2 = keyPair2.getPublic().toAddress
       output2 <- mkStateChannelOutput(keyPair2)
       snapshotInfo = mkGlobalSnapshotInfo()
-      service = mkProcessor()
+      service = mkProcessor(Set(address1, address2))
       expected = (
         SortedMap((address1, NonEmptyList.of(output1.snapshotBinary)), (address2, NonEmptyList.of(output2.snapshotBinary))),
         SortedMap.empty[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)],
@@ -173,7 +174,10 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       address2 = keyPair2.getPublic().toAddress
       output2 <- mkStateChannelOutput(keyPair2)
       snapshotInfo = mkGlobalSnapshotInfo()
-      service = mkProcessor(Some(address1 -> StateChannelValidator.NotSignedExclusivelyByStateChannelOwner))
+      service = mkProcessor(
+        Set(address1, address2),
+        Some(address1 -> StateChannelValidator.NotSignedExclusivelyByStateChannelOwner)
+      )
       expected = (
         SortedMap((address2, NonEmptyList.of(output2.snapshotBinary))),
         SortedMap.empty[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)],

@@ -2,6 +2,7 @@ package org.tessellation.sdk.config
 
 import scala.concurrent.duration.FiniteDuration
 
+import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.node.NodeState
 
@@ -17,7 +18,8 @@ object types {
     httpConfig: HttpConfig,
     leavingDelay: FiniteDuration,
     stateAfterJoining: NodeState,
-    collateral: CollateralConfig
+    collateral: CollateralConfig,
+    stateChannelSeedlist: StateChannelSeedlistConfig
   )
 
   case class RumorStorageConfig(
@@ -98,5 +100,9 @@ object types {
 
   case class CollateralConfig(
     amount: Amount
+  )
+
+  case class StateChannelSeedlistConfig(
+    seedlist: Option[Set[Address]]
   )
 }

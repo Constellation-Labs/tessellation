@@ -5,8 +5,8 @@ import cats.syntax.eq._
 
 import scala.concurrent.duration._
 
-import org.tessellation.cli.db
 import org.tessellation.cli.env._
+import org.tessellation.cli.http
 import org.tessellation.cli.incremental._
 import org.tessellation.config.types._
 import org.tessellation.ext.decline.WithOpts
@@ -15,8 +15,8 @@ import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.node.NodeState
+import org.tessellation.sdk.cli._
 import org.tessellation.sdk.cli.opts.{genesisPathOpts, trustRatingsPathOpts}
-import org.tessellation.sdk.cli.{CliMethod, CollateralAmountOpts, snapshot}
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types._
 import org.tessellation.security.hash.Hash
@@ -70,6 +70,8 @@ object method {
 
     val stateAfterJoining: NodeState = NodeState.WaitingForDownload
 
+    val stateChannelSeedlistConfig: StateChannelSeedlistConfig =
+      StateChannelSeedlistConfig(seedlist = StateChannelSeedlist.get(environment))
   }
 
   case class RunGenesis(

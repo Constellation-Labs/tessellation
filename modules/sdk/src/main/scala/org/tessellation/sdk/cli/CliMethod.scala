@@ -32,6 +32,8 @@ trait CliMethod {
 
   val collateralAmount: Option[Amount]
 
+  val stateChannelSeedlistConfig: StateChannelSeedlistConfig
+
   val collateralConfig = (environment: AppEnvironment, amount: Option[Amount]) =>
     CollateralConfig(
       amount = amount
@@ -79,7 +81,8 @@ trait CliMethod {
     httpConfig,
     leavingDelay,
     stateAfterJoining,
-    collateralConfig(environment, collateralAmount)
+    collateralConfig(environment, collateralAmount),
+    stateChannelSeedlistConfig
   )
 
 }
