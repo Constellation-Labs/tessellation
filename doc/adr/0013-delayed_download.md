@@ -1,4 +1,4 @@
-# 13. Synchronous Peer Discovery
+# 13. Delayed Download
 
 Date: 2023-04-19
 
