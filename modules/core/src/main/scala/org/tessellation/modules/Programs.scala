@@ -33,7 +33,8 @@ object Programs {
       .make(
         storages.node,
         services.consensus,
-        peerSelect
+        peerSelect,
+        () => storages.cluster.getPeers
       )
     val rollbackLoader = RollbackLoader.make(
       keyPair,

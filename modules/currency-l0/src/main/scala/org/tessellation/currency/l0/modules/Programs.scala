@@ -35,7 +35,8 @@ object Programs {
       .make(
         storages.node,
         services.consensus,
-        peerSelect
+        peerSelect,
+        () => storages.cluster.getPeers
       )
 
     val globalL0PeerDiscovery = L0PeerDiscovery.make(
