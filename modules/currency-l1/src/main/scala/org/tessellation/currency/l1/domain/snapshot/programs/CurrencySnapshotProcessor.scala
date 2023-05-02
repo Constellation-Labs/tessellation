@@ -213,6 +213,7 @@ object CurrencySnapshotProcessor {
             ) // TODO: currency - deserialization as full or incremental snapshot
           }
           .flatMap(NonEmptyList.fromList)
+          .map(_.sortBy(_.value.ordinal))
           .map(_.traverse(_.toHashedWithSignatureCheck))
           .sequence
           .map(_.map(_.traverse(_.toValidatedNel)))
