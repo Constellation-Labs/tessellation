@@ -1,8 +1,10 @@
 package org.tessellation.sdk.infrastructure.snapshot
 
+import cats.MonadThrow
 import cats.data.NonEmptyList
 import cats.effect.Async
 import cats.effect.std.Random
+import cats.effect.syntax.concurrent._
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.eq._
@@ -24,6 +26,8 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object MajorityPeerSelect {
 
+  val maxConcurrentPeerInquiries = 10
+
   case object NoPeersToSelect extends NoStackTrace
 
   def make[F[_]: Async: KryoSerializer: Random](
@@ -33,7 +37,9 @@ object MajorityPeerSelect {
 
     val logger = Slf4jLogger.getLoggerFromClass[F](MajorityPeerSelect.getClass)
 
-    def select: F[Peer] = storage.getResponsivePeers
+    def select: F[Peer] = selectPeer
+
+    def selectPeer: F[Peer] = storage.getResponsivePeers
       .map(_.filter(_.state === Ready))
       .flatMap(getPeerSublist)
       .flatMap { peers =>
@@ -50,18 +56,24 @@ object MajorityPeerSelect {
 
     def filterPeerList(peers: NonEmptyList[Peer]): F[NonEmptyList[Peer]] =
       peers
-        .traverse(snapshotClient.getLatestOrdinal(_))
-        .map {
-          _.groupBy(identity).maxBy { case (_, ordinals) => ordinals.size }
+        .parTraverseN(maxConcurrentPeerInquiries)(snapshotClient.getLatestOrdinal(_))
+        .map { latestOrdinals =>
+          val (majorityOrdinal, _) = latestOrdinals.groupBy(identity).maxBy { case (_, ordinals) => ordinals.size }
+          majorityOrdinal
         }
-        .flatMap {
-          case (majorityOrdinal, _) =>
-            peers.traverse(snapshotClient.get(majorityOrdinal).run(_).flatMap(_.toHashed.map(_.hash)))
+        .flatMap { majorityOrdinal =>
+          peers.parTraverseN(maxConcurrentPeerInquiries)(snapshotClient.get(majorityOrdinal).run(_).attempt)
         }
-        .map(_.zip(peers))
-        .map(_.groupMap { case (hash, _) => hash } { case (_, ps) => ps })
-        .map(_.maxBy { case (_, peers) => peers.size })
-        .map { case (_, peerCandidates) => peerCandidates }
+        .flatMap { maybeSnapshots =>
+          MonadThrow[F].fromOption(
+            maybeSnapshots.collect { case Right(snapshot) => snapshot }.toNel,
+            NoPeersToSelect
+          )
+        }
+        .flatMap(_.traverse(_.toHashed.map(_.hash)))
+        .map(_.zip(peers).groupMap { case (hash, _) => hash } { case (_, ps) => ps })
+        .map(_.values.toList.sortWith(_.size > _.size))
+        .map(_.head)
 
     def getPeerSublist(peers: Set[Peer]): F[List[Peer]] = {
       val maxSublistPercent = 0.25
