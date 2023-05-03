@@ -13,12 +13,12 @@ object Download {
   def make[F[_]: Async](
     nodeStorage: NodeStorage[F],
     consensus: SnapshotConsensus[F, _, _, _, _, _],
-    peerSelecter: PeerSelect[F]
+    peerSelect: PeerSelect[F]
   ): Download[F] =
     new Download[F](
       nodeStorage,
       consensus,
-      peerSelecter
+      peerSelect
     ) {}
 }
 

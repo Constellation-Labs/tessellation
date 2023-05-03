@@ -30,5 +30,5 @@ sealed abstract class SdkP2PClient[F[_]] private (
   val gossip: GossipClient[F],
   val node: NodeClient[F],
   val trust: TrustClient[F],
-  val l0GlobalSnapshotClient: L0GlobalSnapshotClient[F]
+  val l0GlobalSnapshot: L0GlobalSnapshotClient[F]
 )
