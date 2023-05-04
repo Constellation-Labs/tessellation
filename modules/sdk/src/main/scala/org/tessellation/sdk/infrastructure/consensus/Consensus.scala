@@ -16,7 +16,7 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.config.types.ConsensusConfig
 import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
-import org.tessellation.sdk.domain.consensus.{ConsensusFunctions, ConsensusManager}
+import org.tessellation.sdk.domain.consensus.ConsensusFunctions
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.infrastructure.gossip.RumorHandler

@@ -21,7 +21,7 @@ class ConsensusRoutes[F[_]: Async, Key: Order: Encoder: Decoder, Artifact: Encod
 
   private val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
     case GET -> Root / "registration" =>
-      storage.getOwnRegistration.map(RegistrationResponse(_)).flatMap(Ok(_))
+      storage.getOwnRegistrationKey.map(RegistrationResponse(_)).flatMap(Ok(_))
     case GET -> Root / "latest" / "outcome" =>
       storage.getLastConsensusOutcome.flatMap(Ok(_))
     case req @ POST -> Root / "specific" / "outcome" => // POST used instead of GET because `Key` can't be used be in path
