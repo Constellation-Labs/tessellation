@@ -18,10 +18,10 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.peer.{L0Peer, PeerId}
 import org.tessellation.sdk.domain.collateral.{Collateral, OwnCollateralNotSatisfied}
-import org.tessellation.sdk.domain.consensus.ConsensusManager
 import org.tessellation.sdk.domain.genesis.{Loader => GenesisLoader}
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.http.p2p.clients.StateChannelSnapshotClient
+import org.tessellation.sdk.infrastructure.consensus.ConsensusManager
 import org.tessellation.security.SecurityProvider
 
 import fs2.io.file.Path
@@ -69,7 +69,7 @@ object Genesis {
 
       _ <- lastSignedBinaryHashStorage.set(signedIncrementalBinaryHash)
 
-      _ <- consensusManager.startFacilitatingAfter(
+      _ <- consensusManager.startFacilitatingAfterRollback(
         signedFirstIncrementalSnapshot.ordinal,
         signedFirstIncrementalSnapshot,
         hashedGenesis.info
