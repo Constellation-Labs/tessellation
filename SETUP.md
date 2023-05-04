@@ -59,7 +59,7 @@ On Mac OS, _SBT_ provides instructions [here](https://www.scala-sbt.org/1.x/docs
 3. [Skaffold CLI](https://skaffold.dev/docs/install/#standalone-binary)
 4. [AWS CLI version 2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
 
-## Kubernetes cluster setup 
+## Kubernetes cluster setup
 
 ### Update your kubeconfig
 
@@ -82,6 +82,7 @@ kubectl config set-context --current --namespace=$IAM_USER
 ```
 kubectl get pods
 ```
+
 Should return:
 
 ```
@@ -126,7 +127,7 @@ Should list existing l0-validator images.
 ## Build images and start cluster
 
 ```
-skaffold dev --trigger manual --tail false
+skaffold dev --trigger manual --tail=false
 ```
 
 You should see docker images successfully uploaded to the container registry
@@ -148,15 +149,16 @@ export http_proxy=8080
 curl <pod-ip-address>:9000/cluster/info
 ```
 
-##  Using profiles
+## Using profiles
 
 ### Profile activation
 
 Activate profiles using option `-p`. Profiles can also be manually deactivated by prefixing the profile name with `-`.
+
 ```
 skaffold dev -p foo,-bar
 ```
 
 ### Profiles
 
-* chaos - inject chaos experiments into the cluster (like a failure of some number of pods) 
+- chaos - inject chaos experiments into the cluster (like a failure of some number of pods)
