@@ -97,9 +97,13 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context] {
     lastOutcome: ConsensusOutcome[Key, Artifact, Context]
   ): F[Boolean]
 
-  private[consensus] def getOwnRegistration: F[Option[Key]]
+  private[consensus] def getOwnRegistrationKey: F[Option[Key]]
 
-  private[consensus] def setOwnRegistration(from: Key): F[Unit]
+  private[consensus] def getObservationKey: F[Option[Key]]
+
+  private[consensus] def trySetObservationKey(from: Key): F[Boolean]
+
+  private[consensus] def clearObservationKey: F[Unit]
 
   def getCandidates(key: Key): F[List[PeerId]]
 
@@ -126,7 +130,7 @@ object ConsensusStorage {
       stateUpdateSemaphore <- Semaphore[F](1)
       lastOutcomeR <- Ref.of(none[ConsensusOutcomeWrapper])
       timeTriggerR <- Ref.of(none[FiniteDuration])
-      ownRegistrationR <- Ref.of(Option.empty[Key])
+      observationKeyR <- Ref.of(Option.empty[Key])
       peerRegistrationsR <- Ref.of(Map.empty[PeerId, Key])
       eventsR <- MapRef.ofConcurrentHashMap[F, PeerId, PeerEvents[Event]]()
       statesR <- MapRef.ofConcurrentHashMap[F, Key, ConsensusState[Key, Artifact, Context]]()
@@ -360,9 +364,13 @@ object ConsensusStorage {
         private def cleanResources(key: Key): F[Unit] =
           resourcesR(key).set(none)
 
-        def getOwnRegistration: F[Option[Key]] = ownRegistrationR.get
+        def getOwnRegistrationKey: F[Option[Key]] = observationKeyR.get.map(_.map(_.next))
 
-        def setOwnRegistration(key: Key): F[Unit] = ownRegistrationR.set(key.some)
+        def getObservationKey: F[Option[Key]] = observationKeyR.get
+
+        def trySetObservationKey(key: Key): F[Boolean] = observationKeyR.getAndUpdate(_.orElse(key.some)).map(_.isEmpty)
+
+        def clearObservationKey: F[Unit] = observationKeyR.set(none)
 
         def getCandidates(key: Key): F[List[PeerId]] =
           peerRegistrationsR.get.map { peerRegistrations =>

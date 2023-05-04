@@ -17,9 +17,9 @@ import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.collateral.{Collateral, OwnCollateralNotSatisfied}
-import org.tessellation.sdk.domain.consensus.ConsensusManager
 import org.tessellation.sdk.domain.snapshot.services.GlobalL0Service
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
+import org.tessellation.sdk.infrastructure.consensus.ConsensusManager
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -67,7 +67,7 @@ object Rollback {
 
       _ <- lastSignedBinaryHashStorage.set(lastBinaryHash)
 
-      _ <- consensusManager.startFacilitatingAfter(
+      _ <- consensusManager.startFacilitatingAfterRollback(
         lastIncremental.ordinal,
         lastIncremental,
         lastInfo

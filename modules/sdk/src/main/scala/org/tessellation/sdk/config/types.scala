@@ -46,8 +46,7 @@ object types {
     timeTriggerInterval: FiniteDuration,
     declarationTimeout: FiniteDuration,
     declarationRangeLimit: NonNegLong,
-    lockDuration: FiniteDuration,
-    observation: ObservationConfig
+    lockDuration: FiniteDuration
   )
 
   case class SnapshotConfig(
@@ -55,12 +54,6 @@ object types {
     snapshotPath: Path,
     incrementalSnapshotPath: Path,
     inMemoryCapacity: NonNegLong
-  )
-
-  case class ObservationConfig(
-    interval: FiniteDuration,
-    timeout: FiniteDuration,
-    offset: NonNegLong
   )
 
   case class HttpClientConfig(

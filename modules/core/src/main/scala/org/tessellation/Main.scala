@@ -130,7 +130,7 @@ object Main
               case (snapshotInfo, snapshot) =>
                 storages.globalSnapshot
                   .prepend(snapshot, snapshotInfo) >>
-                  services.consensus.manager.startFacilitatingAfter(snapshot.ordinal, snapshot, snapshotInfo)
+                  services.consensus.manager.startFacilitatingAfterRollback(snapshot.ordinal, snapshot, snapshotInfo)
             }
           } >>
             services.collateral
@@ -164,7 +164,7 @@ object Main
                                 .hasCollateral(sdk.nodeId)
                                 .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
                               services.consensus.manager
-                                .startFacilitatingAfter(
+                                .startFacilitatingAfterRollback(
                                   signedFirstIncrementalSnapshot.ordinal,
                                   signedFirstIncrementalSnapshot,
                                   hashedGenesis.info
