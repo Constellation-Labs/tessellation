@@ -57,13 +57,15 @@ On Mac OS, _SBT_ provides instructions [here](https://www.scala-sbt.org/1.x/docs
 1. [sbt](https://www.scala-sbt.org/)
 2. [Docker Desktop](https://www.docker.com/get-started/) with [Kubernetes](https://docs.docker.com/desktop/kubernetes/) enabled
 3. [Skaffold CLI](https://skaffold.dev/docs/install/#standalone-binary)
-4. [AWS CLI version 2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
+4. [Install Keybase](https://keybase.io/)
+5. [AWS CLI version 2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
 
 ## Kubernetes cluster setup
 
 ### Update your kubeconfig
 
 ```
+aws configure   # requires AWS Access Key(s)
 aws eks --region us-west-1 update-kubeconfig --name eks-dev
 kubectl config rename-context $(kubectl config current-context) eks-dev
 ```
@@ -99,7 +101,8 @@ brew install docker-credential-helper-ecr
 
 ### Update Docker config
 
-Add this to your `~/.docker/config.json`
+Add this to your `~/.docker/config.json` -- if there is already a config.json file then only add
+the credHelpers property.
 
 ```json
 {
