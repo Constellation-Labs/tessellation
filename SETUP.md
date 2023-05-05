@@ -64,6 +64,7 @@ On Mac OS, _SBT_ provides instructions [here](https://www.scala-sbt.org/1.x/docs
 ### Update your kubeconfig
 
 ```
+aws configure   # requires AWS Access Key(s)
 aws eks --region us-west-1 update-kubeconfig --name eks-dev
 kubectl config rename-context $(kubectl config current-context) eks-dev
 ```
@@ -99,7 +100,8 @@ brew install docker-credential-helper-ecr
 
 ### Update Docker config
 
-Add this to your `~/.docker/config.json`
+Add this to your `~/.docker/config.json` -- if there is already a config.json file then only add
+the credHelpers property.
 
 ```json
 {
