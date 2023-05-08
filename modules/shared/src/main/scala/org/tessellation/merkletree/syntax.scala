@@ -9,12 +9,11 @@ import scala.collection.immutable.SortedMap
 
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.address.Address
 
 object syntax extends SortedMapOps
 
 trait SortedMapOps {
-  implicit class SortedMapOpsImpl[A](a: SortedMap[Address, A]) {
+  implicit class SortedMapOpsImpl[K, V](a: SortedMap[K, V]) {
     def merkleTree[F[_]: MonadThrow: KryoSerializer]: F[Option[MerkleTree]] =
       a.toList
         .traverse(_.hashF)

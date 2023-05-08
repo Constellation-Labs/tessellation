@@ -95,6 +95,7 @@ object MerkleTreeSuite extends SimpleIOSuite with Checkers {
     val mt2 = MerkleTree.from(doubled)
 
     expect(mt1 =!= mt2)
+    expect(mt1.getRoot =!= mt2.getRoot)
   }
 
   pureTest("second preimage attack") {

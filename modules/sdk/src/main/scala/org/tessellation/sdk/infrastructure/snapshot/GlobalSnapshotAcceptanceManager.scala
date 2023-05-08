@@ -1,5 +1,6 @@
 package org.tessellation.sdk.infrastructure.snapshot
 
+import cats.MonadThrow
 import cats.data.NonEmptyList
 import cats.effect.Async
 import cats.syntax.flatMap._
@@ -7,6 +8,7 @@ import cats.syntax.functor._
 import cats.syntax.traverse._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
+import scala.util.control.NoStackTrace
 
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
@@ -45,6 +47,9 @@ trait GlobalSnapshotAcceptanceManager[F[_]] {
 }
 
 object GlobalSnapshotAcceptanceManager {
+
+  case object InvalidMerkleTree extends NoStackTrace
+
   def make[F[_]: Async: KryoSerializer](
     blockAcceptanceManager: BlockAcceptanceManager[F, DAGTransaction, DAGBlock],
     stateChannelEventsProcessor: GlobalSnapshotStateChannelEventsProcessor[F],
@@ -84,7 +89,7 @@ object GlobalSnapshotAcceptanceManager {
           case (address, state) =>
             (address, state).hashF
               .map(merkleTree.findPath(_))
-              .map(_.get) // NOTE: path must exists, otherwise it's an unexpected state and should throw
+              .flatMap(MonadThrow[F].fromOption(_, InvalidMerkleTree))
               .map((address, _))
         }
       }.map(_.map(SortedMap.from(_)).getOrElse(SortedMap.empty[Address, Proof]))
