@@ -92,7 +92,7 @@ object GlobalSnapshotStateChannelEventsProcessor {
                 (Option[(Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)], List[Signed[StateChannelSnapshotBinary]])
               type Result = Option[Success]
 
-              (lastGlobalSnapshotInfo.lastCurrencySnapshots.get(address), binaries.toList)
+              (lastGlobalSnapshotInfo.lastCurrencySnapshots.get(address), binaries.toList.reverse)
                 .tailRecM[F, Result] {
                   case (state, Nil) => state.asRight[Agg].pure[F]
 
