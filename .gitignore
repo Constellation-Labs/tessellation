@@ -36,3 +36,4 @@ scripts/
 /logs/
 .envrc
 .direnv/
+data/incremental_snapshot/
