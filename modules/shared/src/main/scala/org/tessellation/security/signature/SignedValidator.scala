@@ -1,6 +1,7 @@
 package org.tessellation.security.signature
 
 import cats.Order
+import cats.Order._
 import cats.data.NonEmptySet._
 import cats.data.{NonEmptyList, NonEmptySet, ValidatedNec}
 import cats.effect.Async
@@ -9,6 +10,7 @@ import cats.syntax.all._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.address.Address
+import org.tessellation.schema.peer.PeerId
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.SignedValidator.SignedValidationErrorOr
@@ -39,6 +41,8 @@ trait SignedValidator[F[_]] {
     signed: Signed[A],
     signerAddress: Address
   ): F[SignedValidationErrorOr[Signed[A]]]
+
+  def validateSignaturesWithSeedlist[A <: AnyRef](seedlist: Option[Set[PeerId]], signed: Signed[A]): SignedValidationErrorOr[Signed[A]]
 
 }
 
@@ -89,6 +93,16 @@ object SignedValidator {
         signed.validNec[SignedValidationError].pure[F]
       )
 
+    def validateSignaturesWithSeedlist[A <: AnyRef](seedlist: Option[Set[PeerId]], signed: Signed[A]): SignedValidationErrorOr[Signed[A]] =
+      seedlist.flatMap { peers =>
+        signed.proofs
+          .map(_.id.toPeerId)
+          .toSortedSet
+          .diff(peers)
+          .map(_.toId)
+          .toNes
+      }.map(SignersNotInSeedlist).toInvalidNec(signed)
+
     private def duplicatedValues[B: Order](values: NonEmptyList[B]): List[B] =
       values.groupBy(identity).toList.mapFilter {
         case (value, occurrences) =>
@@ -105,6 +119,7 @@ object SignedValidator {
   case class NotEnoughSignatures(signatureCount: Long, minSignatureCount: PosInt) extends SignedValidationError
   case class DuplicateSigners(signers: NonEmptySet[Id]) extends SignedValidationError
   case class MissingSigners(signers: NonEmptySet[Id]) extends SignedValidationError
+  case class SignersNotInSeedlist(signers: NonEmptySet[Id]) extends SignedValidationError
   case object NotSignedExclusivelyByAddressOwner extends SignedValidationError
 
   type SignedValidationErrorOr[A] = ValidatedNec[SignedValidationError, A]

@@ -1,6 +1,5 @@
 package org.tessellation.sdk.infrastructure.gossip
 
-import cats.Order._
 import cats.data.NonEmptySet._
 import cats.data.{NonEmptySet, Validated, ValidatedNec}
 import cats.effect.Async
@@ -57,14 +56,7 @@ object RumorValidator {
       signedValidator.validateSignatures(signedRumor).map(_.errorMap(InvalidSigned))
 
     def validateSeedlist(signedRumor: Signed[RumorRaw]): RumorValidationErrorOr[Signed[RumorRaw]] =
-      seedlist.flatMap { peers =>
-        signedRumor.proofs
-          .map(_.id.toPeerId)
-          .toSortedSet
-          .diff(peers)
-          .map(_.toId)
-          .toNes
-      }.map(SignersNotInSeedlist).toInvalidNec(signedRumor)
+      signedValidator.validateSignaturesWithSeedlist(seedlist, signedRumor).errorMap(SignersNotInSeedlist)
 
   }
 
@@ -72,7 +64,7 @@ object RumorValidator {
   sealed trait RumorValidationError
   case class InvalidHash(calculatedHash: Hash, receivedHash: Hash) extends RumorValidationError
   case class InvalidSigned(error: SignedValidationError) extends RumorValidationError
-  case class SignersNotInSeedlist(signers: NonEmptySet[Id]) extends RumorValidationError
+  case class SignersNotInSeedlist(error: SignedValidationError) extends RumorValidationError
   case class NotSignedByOrigin(origin: PeerId, signers: NonEmptySet[Id]) extends RumorValidationError
 
   type RumorValidationErrorOr[A] = ValidatedNec[RumorValidationError, A]

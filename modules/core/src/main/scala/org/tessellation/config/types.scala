@@ -25,7 +25,8 @@ object types {
     healthCheck: HealthCheckConfig,
     snapshot: SnapshotConfig,
     collateral: CollateralConfig,
-    rewards: RewardsConfig
+    rewards: RewardsConfig,
+    stateChannelOrdinalDelay: Option[PosLong]
   )
 
   case class DBConfig(

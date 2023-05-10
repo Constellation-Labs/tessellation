@@ -28,7 +28,6 @@ object method {
     val snapshotConfig: SnapshotConfig
 
     val globalL0Peer: L0Peer
-    val identifier: Address
 
     val appConfig: AppConfig = AppConfig(
       environment = environment,
@@ -60,7 +59,10 @@ object method {
 
     val stateAfterJoining: NodeState = NodeState.WaitingForDownload
 
-    val stateChannelSeedlistConfig: StateChannelSeedlistConfig = StateChannelSeedlistConfig(None)
+    val stateChannelAllowanceLists = None
+
+    val l0SeedlistPath = None
+
   }
 
   case class RunGenesis(
@@ -74,7 +76,6 @@ object method {
     seedlistPath: Option[SeedListPath],
     collateralAmount: Option[Amount],
     globalL0Peer: L0Peer,
-    identifier: Address,
     trustRatingsPath: Option[Path]
   ) extends Run
 
@@ -92,7 +93,6 @@ object method {
         SeedListPath.opts,
         CollateralAmountOpts.opts,
         GlobalL0PeerOpts.opts,
-        L0TokenIdentifierOpts.opts,
         trustRatingsPathOpts
       ).mapN(RunGenesis.apply)
     }

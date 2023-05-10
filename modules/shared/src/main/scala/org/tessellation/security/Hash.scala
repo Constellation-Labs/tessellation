@@ -6,7 +6,7 @@ import org.tessellation.ext.derevo.ordering
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.security.hash.Hash
 
-import com.google.common.hash.Hashing
+import com.google.common.hash.{HashCode, Hashing}
 import derevo.cats.{order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
@@ -24,8 +24,11 @@ object hash {
 
   object Hash {
 
+    def hashCodeFromBytes(bytes: Array[Byte]): HashCode =
+      Hashing.sha256().hashBytes(bytes)
+
     def fromBytes(bytes: Array[Byte]): Hash =
-      Hash(Hashing.sha256().hashBytes(bytes).toString)
+      Hash(hashCodeFromBytes(bytes).toString)
 
     def empty: Hash = Hash(s"%064d".format(0))
 

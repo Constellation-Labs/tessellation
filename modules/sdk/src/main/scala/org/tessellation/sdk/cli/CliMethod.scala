@@ -1,12 +1,15 @@
 package org.tessellation.sdk.cli
 
+import cats.data.NonEmptySet
 import cats.syntax.eq._
 
 import scala.concurrent.duration._
 
 import org.tessellation.cli.env._
+import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.node.NodeState
+import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.AppEnvironment.Mainnet
 import org.tessellation.sdk.config.types._
@@ -24,6 +27,10 @@ trait CliMethod {
 
   val seedlistPath: Option[SeedListPath]
 
+  val l0SeedlistPath: Option[SeedListPath]
+
+  val stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]]
+
   val trustRatingsPath: Option[Path]
 
   val httpConfig: HttpConfig
@@ -31,8 +38,6 @@ trait CliMethod {
   val stateAfterJoining: NodeState
 
   val collateralAmount: Option[Amount]
-
-  val stateChannelSeedlistConfig: StateChannelSeedlistConfig
 
   val collateralConfig = (environment: AppEnvironment, amount: Option[Amount]) =>
     CollateralConfig(
@@ -81,8 +86,7 @@ trait CliMethod {
     httpConfig,
     leavingDelay,
     stateAfterJoining,
-    collateralConfig(environment, collateralAmount),
-    stateChannelSeedlistConfig
+    collateralConfig(environment, collateralAmount)
   )
 
 }

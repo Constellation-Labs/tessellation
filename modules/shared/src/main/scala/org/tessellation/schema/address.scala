@@ -4,6 +4,7 @@ import org.tessellation.ext.cats.data.OrderBasedOrdering
 import org.tessellation.ext.refined._
 import org.tessellation.schema.balance.Balance
 import org.tessellation.security.Base58
+import org.tessellation.security.hash.Hash
 
 import derevo.cats.{order, show}
 import derevo.circe.magnolia._
@@ -13,8 +14,6 @@ import eu.timepit.refined.cats._
 import eu.timepit.refined.refineV
 import io.circe._
 import io.estatico.newtype.macros.newtype
-import io.estatico.newtype.ops._
-import io.getquill.MappedEncoding
 
 object address {
 
@@ -23,18 +22,20 @@ object address {
   case class Address(value: DAGAddress)
 
   object Address {
-    implicit object OrderingInstance extends OrderBasedOrdering[Address]
 
-    implicit val quillEncode: MappedEncoding[Address, String] = MappedEncoding[Address, String](_.coerce.value)
-    implicit val quillDecode: MappedEncoding[String, Address] =
-      MappedEncoding[String, Address](
-        refineV[DAGAddressRefined].apply[String](_) match {
-          // TODO: don't like it though an example with java.util.UUID.fromString in Quills docs suggests you can throw
-          //  like this, should be possible to do it better
-          case Left(e)  => throw new Throwable(e)
-          case Right(a) => Address(a)
-        }
-      )
+    def fromBytes(bytes: Array[Byte]): Address = {
+      val hashCode = Hash.hashCodeFromBytes(bytes)
+      val encoded = Base58.encode(hashCode.asBytes().toIndexedSeq)
+      val end = encoded.slice(encoded.length - 36, encoded.length)
+      val validInt = end.filter(Character.isDigit)
+      val ints = validInt.map(_.toString.toInt)
+      val sum = ints.sum
+      val par = sum % 9
+      val res2: DAGAddress = refineV[DAGAddressRefined].unsafeFrom(s"DAG$par$end")
+      Address(res2)
+    }
+
+    implicit object OrderingInstance extends OrderBasedOrdering[Address]
 
     implicit val decodeDAGAddress: Decoder[DAGAddress] =
       decoderOf[String, DAGAddressRefined]

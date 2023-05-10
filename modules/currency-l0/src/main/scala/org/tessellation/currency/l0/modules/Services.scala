@@ -48,7 +48,14 @@ object Services {
   ): F[Services[F]] =
     for {
       stateChannelSnapshotService <- StateChannelSnapshotService
-        .make[F](keyPair, storages.lastSignedBinaryHash, p2PClient.stateChannelSnapshot, storages.globalL0Cluster, storages.snapshot)
+        .make[F](
+          keyPair,
+          storages.lastBinaryHash,
+          p2PClient.stateChannelSnapshot,
+          storages.globalL0Cluster,
+          storages.snapshot,
+          storages.identifierStorage
+        )
         .pure[F]
 
       rewards = maybeRewards.getOrElse(NoopRewards.make[F])

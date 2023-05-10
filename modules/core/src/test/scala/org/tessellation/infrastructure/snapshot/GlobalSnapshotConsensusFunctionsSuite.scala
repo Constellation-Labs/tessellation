@@ -88,6 +88,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
   val scProcessor = new GlobalSnapshotStateChannelEventsProcessor[IO] {
     def process(
+      ordinal: SnapshotOrdinal,
       lastGlobalSnapshotInfo: GlobalSnapshotInfo,
       events: List[StateChannelEvent]
     ): IO[

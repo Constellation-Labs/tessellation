@@ -11,6 +11,7 @@ import org.tessellation.cli.incremental._
 import org.tessellation.config.types._
 import org.tessellation.ext.decline.WithOpts
 import org.tessellation.ext.decline.decline._
+import org.tessellation.infrastructure.statechannel.StateChannelAllowanceLists
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.epoch.EpochProgress
@@ -65,13 +66,15 @@ object method {
       healthCheck = healthCheckConfig(false),
       snapshot = snapshotConfig,
       collateral = collateralConfig(environment, collateralAmount),
-      rewards = RewardsConfig()
+      rewards = RewardsConfig(),
+      stateChannelOrdinalDelay = None
     )
 
-    val stateAfterJoining: NodeState = NodeState.WaitingForDownload
+    val stateChannelAllowanceLists = StateChannelAllowanceLists.get(environment)
 
-    val stateChannelSeedlistConfig: StateChannelSeedlistConfig =
-      StateChannelSeedlistConfig(seedlist = StateChannelSeedlist.get(environment))
+    val l0SeedlistPath = seedlistPath
+
+    val stateAfterJoining: NodeState = NodeState.WaitingForDownload
 
     val lastFullGlobalSnapshotOrdinal: SnapshotOrdinal
 

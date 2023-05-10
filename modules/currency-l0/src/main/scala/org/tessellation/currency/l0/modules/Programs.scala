@@ -8,7 +8,6 @@ import cats.effect.std.Random
 import org.tessellation.currency.l0.http.P2PClient
 import org.tessellation.currency.l0.snapshot.programs.{Download, Genesis, Rollback}
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.{L0Peer, PeerId}
 import org.tessellation.sdk.domain.cluster.programs.{Joining, L0PeerDiscovery, PeerDiscovery}
 import org.tessellation.sdk.domain.snapshot.PeerSelect
@@ -23,7 +22,6 @@ object Programs {
   def make[F[_]: Async: Random: KryoSerializer: SecurityProvider](
     keyPair: KeyPair,
     nodeId: PeerId,
-    identifier: Address,
     globalL0Peer: L0Peer,
     sdkPrograms: SdkPrograms[F],
     storages: Storages[F],
@@ -52,21 +50,22 @@ object Programs {
     val genesis = Genesis.make(
       keyPair,
       services.collateral,
-      storages.lastSignedBinaryHash,
+      storages.lastBinaryHash,
       services.stateChannelSnapshot,
       storages.snapshot,
       p2pClient.stateChannelSnapshot,
       globalL0Peer,
       nodeId,
       services.consensus.manager,
-      genesisLoader
+      genesisLoader,
+      storages.identifierStorage
     )
 
     val rollback = Rollback.make(
       nodeId,
-      identifier,
       services.globalL0,
-      storages.lastSignedBinaryHash,
+      storages.identifierStorage,
+      storages.lastBinaryHash,
       storages.snapshot,
       services.collateral,
       services.consensus.manager

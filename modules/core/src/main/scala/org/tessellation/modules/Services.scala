@@ -2,6 +2,7 @@ package org.tessellation.modules
 
 import java.security.KeyPair
 
+import cats.data.NonEmptySet
 import cats.effect.kernel.Async
 import cats.effect.std.{Random, Supervisor}
 import cats.syntax.applicative._
@@ -14,6 +15,7 @@ import org.tessellation.domain.statechannel.StateChannelService
 import org.tessellation.infrastructure.rewards._
 import org.tessellation.infrastructure.snapshot._
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.address.Address
 import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.DAGTransaction
@@ -25,18 +27,13 @@ import org.tessellation.sdk.domain.healthcheck.LocalHealthcheck
 import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.domain.snapshot.services.AddressService
 import org.tessellation.sdk.infrastructure.Collateral
-import org.tessellation.sdk.infrastructure.block.processing.BlockAcceptanceManager
 import org.tessellation.sdk.infrastructure.consensus.Consensus
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.infrastructure.snapshot.services.AddressService
-import org.tessellation.sdk.infrastructure.snapshot.{
-  GlobalSnapshotAcceptanceManager,
-  GlobalSnapshotContextFunctions,
-  GlobalSnapshotStateChannelEventsProcessor
-}
 import org.tessellation.sdk.modules.{SdkServices, SdkValidators}
 import org.tessellation.security.SecurityProvider
 
+import eu.timepit.refined.auto._
 import org.http4s.client.Client
 
 object Services {
@@ -49,6 +46,7 @@ object Services {
     client: Client[F],
     session: Session[F],
     seedlist: Option[Set[PeerId]],
+    stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
     selfId: PeerId,
     keyPair: KeyPair,
     cfg: AppConfig
@@ -61,11 +59,7 @@ object Services {
           FacilitatorDistributor.make
         )
         .pure[F]
-      snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
-        BlockAcceptanceManager.make[F, DAGTransaction, DAGBlock](validators.blockValidator),
-        GlobalSnapshotStateChannelEventsProcessor.make[F](validators.stateChannelValidator, sdkServices.currencySnapshotContextFns),
-        cfg.collateral.amount
-      )
+
       consensus <- GlobalSnapshotConsensus
         .make[F](
           sdkServices.gossip,
@@ -76,9 +70,12 @@ object Services {
           storages.cluster,
           storages.node,
           storages.globalSnapshot,
-          snapshotAcceptanceManager,
+          validators,
+          sdkServices,
           cfg.snapshot,
           cfg.environment,
+          cfg.stateChannelOrdinalDelay,
+          stateChannelAllowanceLists,
           client,
           session,
           rewards
@@ -87,7 +84,6 @@ object Services {
       collateralService = Collateral.make[F](cfg.collateral, storages.globalSnapshot)
       stateChannelService = StateChannelService
         .make[F](L0Cell.mkL0Cell(queues.l1Output, queues.stateChannelOutput), validators.stateChannelValidator)
-      snapshotContextFunctions = GlobalSnapshotContextFunctions.make(snapshotAcceptanceManager)
     } yield
       new Services[F](
         localHealthcheck = sdkServices.localHealthcheck,
@@ -98,8 +94,7 @@ object Services {
         address = addressService,
         collateral = collateralService,
         rewards = rewards,
-        stateChannel = stateChannelService,
-        snapshotContextFunctions = snapshotContextFunctions
+        stateChannel = stateChannelService
       ) {}
 }
 
@@ -112,6 +107,5 @@ sealed abstract class Services[F[_]] private (
   val address: AddressService[F, GlobalIncrementalSnapshot],
   val collateral: Collateral[F],
   val rewards: Rewards[F, DAGTransaction, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot],
-  val stateChannel: StateChannelService[F],
-  val snapshotContextFunctions: GlobalSnapshotContextFunctions[F]
+  val stateChannel: StateChannelService[F]
 )
