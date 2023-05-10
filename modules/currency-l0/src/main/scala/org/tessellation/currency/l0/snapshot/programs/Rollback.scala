@@ -10,11 +10,11 @@ import cats.syntax.show._
 
 import scala.util.control.NoStackTrace
 
-import org.tessellation.currency.l0.snapshot.storages.LastSignedBinaryHashStorage
+import org.tessellation.currency.l0.node.IdentifierStorage
+import org.tessellation.currency.l0.snapshot.storages.LastBinaryHashStorage
 import org.tessellation.currency.l0.snapshot.{CurrencySnapshotArtifact, CurrencySnapshotContext}
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import org.tessellation.schema.SnapshotOrdinal
-import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.collateral.{Collateral, OwnCollateralNotSatisfied}
 import org.tessellation.sdk.domain.snapshot.services.GlobalL0Service
@@ -34,9 +34,9 @@ trait Rollback[F[_]] {
 object Rollback {
   def make[F[_]: Async](
     nodeId: PeerId,
-    identifier: Address,
     globalL0Service: GlobalL0Service[F],
-    lastSignedBinaryHashStorage: LastSignedBinaryHashStorage[F],
+    identifierStorage: IdentifierStorage[F],
+    lastBinaryHashStorage: LastBinaryHashStorage[F],
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
     collateral: Collateral[F],
     consensusManager: ConsensusManager[F, SnapshotOrdinal, CurrencySnapshotArtifact, CurrencySnapshotContext]
@@ -46,6 +46,7 @@ object Rollback {
     def rollback: F[Unit] = for {
       (globalSnapshot, globalSnapshotInfo) <- globalL0Service.pullLatestSnapshot
 
+      identifier <- identifierStorage.get
       lastBinaryHash <- globalSnapshotInfo.lastStateChannelSnapshotHashes
         .get(identifier)
         .toOptionT
@@ -63,7 +64,7 @@ object Rollback {
         .hasCollateral(nodeId)
         .flatMap(OwnCollateralNotSatisfied.raiseError[F, Unit].unlessA)
 
-      _ <- lastSignedBinaryHashStorage.set(lastBinaryHash)
+      _ <- lastBinaryHashStorage.set(lastBinaryHash)
 
       _ <- consensusManager.startFacilitatingAfterRollback(
         lastIncremental.ordinal,

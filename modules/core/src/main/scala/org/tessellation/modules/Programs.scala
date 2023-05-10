@@ -48,7 +48,7 @@ object Programs {
       keyPair,
       config.snapshot,
       storages.incrementalGlobalSnapshotLocalFileSystemStorage,
-      services.snapshotContextFunctions
+      globalSnapshotContextFns
     )
 
     new Programs[F](sdkPrograms.peerDiscovery, sdkPrograms.joining, trustPush, download, rollbackLoader) {}

@@ -114,6 +114,7 @@ object GlobalSnapshotConsensusFunctions {
 
         (acceptanceResult, scSnapshots, returnedSCEvents, acceptedRewardTxs, snapshotInfo, stateProof) <- globalSnapshotAcceptanceManager
           .accept(
+            currentOrdinal,
             blocksForAcceptance,
             scEvents,
             snapshotContext,

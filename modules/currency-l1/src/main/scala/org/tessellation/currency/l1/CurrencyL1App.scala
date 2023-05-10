@@ -8,6 +8,7 @@ import cats.syntax.semigroupk._
 import scala.concurrent.duration._
 
 import org.tessellation.BuildInfo
+import org.tessellation.currency.l1.cli.method
 import org.tessellation.currency.l1.cli.method.{Run, RunInitialValidator, RunValidator}
 import org.tessellation.currency.l1.domain.snapshot.programs.CurrencySnapshotProcessor
 import org.tessellation.currency.l1.modules.{Programs, Storages}
@@ -44,7 +45,7 @@ abstract class CurrencyL1App(
       version = version
     ) {
 
-  val opts: Opts[Run] = cli.method.opts
+  val opts: Opts[Run] = method.opts
 
   type KryoRegistrationIdRange = SdkOrSharedOrKernelRegistrationIdRange Or DagL1KryoRegistrationIdRange
 

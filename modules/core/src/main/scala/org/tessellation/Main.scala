@@ -59,6 +59,7 @@ object Main
           sdkResources.client,
           sdkServices.session,
           sdk.seedlist,
+          method.stateChannelAllowanceLists,
           sdk.nodeId,
           keyPair,
           cfg
@@ -72,7 +73,7 @@ object Main
         cfg,
         method.lastFullGlobalSnapshotOrdinal,
         p2pClient,
-        services.snapshotContextFunctions
+        sdkServices.globalSnapshotContextFns
       )
       healthChecks <- HealthChecks
         .make[IO](

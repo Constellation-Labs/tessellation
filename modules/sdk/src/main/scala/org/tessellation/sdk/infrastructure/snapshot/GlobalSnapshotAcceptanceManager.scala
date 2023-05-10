@@ -29,6 +29,7 @@ import eu.timepit.refined.types.numeric.NonNegLong
 
 trait GlobalSnapshotAcceptanceManager[F[_]] {
   def accept(
+    ordinal: SnapshotOrdinal,
     blocksForAcceptance: List[Signed[DAGBlock]],
     scEvents: List[StateChannelOutput],
     lastSnapshotContext: GlobalSnapshotInfo,
@@ -58,6 +59,7 @@ object GlobalSnapshotAcceptanceManager {
   ) = new GlobalSnapshotAcceptanceManager[F] {
 
     def accept(
+      ordinal: SnapshotOrdinal,
       blocksForAcceptance: List[Signed[DAGBlock]],
       scEvents: List[StateChannelOutput],
       lastSnapshotContext: GlobalSnapshotInfo,
@@ -67,8 +69,8 @@ object GlobalSnapshotAcceptanceManager {
     ) = for {
       acceptanceResult <- acceptBlocks(blocksForAcceptance, lastSnapshotContext, lastActiveTips, lastDeprecatedTips)
 
-      (scSnapshots, currencySnapshots, returnedSCEvents) <- stateChannelEventsProcessor.process(lastSnapshotContext, scEvents)
-      sCSnapshotHashes <- scSnapshots.toList.traverse { case (address, nel) => nel.head.hashF.map(address -> _) }
+      (scSnapshots, currencySnapshots, returnedSCEvents) <- stateChannelEventsProcessor.process(ordinal, lastSnapshotContext, scEvents)
+      sCSnapshotHashes <- scSnapshots.toList.traverse { case (address, nel) => nel.head.toHashed.map(address -> _.hash) }
         .map(_.toMap)
       updatedLastStateChannelSnapshotHashes = lastSnapshotContext.lastStateChannelSnapshotHashes ++ sCSnapshotHashes
       updatedLastCurrencySnapshots = lastSnapshotContext.lastCurrencySnapshots ++ currencySnapshots

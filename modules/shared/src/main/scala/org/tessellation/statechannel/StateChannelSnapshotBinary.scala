@@ -4,6 +4,7 @@ import cats.Show
 import cats.syntax.show._
 
 import org.tessellation.currency.schema.currency.SnapshotFee
+import org.tessellation.schema.address.Address
 import org.tessellation.schema.arrayOrder
 import org.tessellation.security.hash.Hash
 
@@ -19,6 +20,12 @@ case class StateChannelSnapshotBinary(
 )
 
 object StateChannelSnapshotBinary {
+
+  implicit class StateChannelSnapshotBinaryOps(stateChannelSnapshotBinary: StateChannelSnapshotBinary) {
+
+    def toAddress: Address = Address.fromBytes(stateChannelSnapshotBinary.content)
+  }
+
   implicit val show: Show[StateChannelSnapshotBinary] = s =>
     s"StateChannelSnapshotBinary(lastSnapshotHash=${s.lastSnapshotHash.show}, fee=${s.fee.show})"
 }

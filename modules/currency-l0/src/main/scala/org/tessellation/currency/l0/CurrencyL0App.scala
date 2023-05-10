@@ -56,7 +56,7 @@ abstract class CurrencyL0App(
 
     for {
       queues <- Queues.make[IO](sdkQueues).asResource
-      p2pClient = P2PClient.make[IO](sdkP2PClient, sdkResources.client, method.identifier, sdkServices.session)
+      p2pClient = P2PClient.make[IO](sdkP2PClient, sdkResources.client, sdkServices.session)
       storages <- Storages.make[IO](sdkStorages, cfg.snapshot, method.globalL0Peer).asResource
       validators = Validators.make[IO](seedlist)
       services <- Services
@@ -77,7 +77,6 @@ abstract class CurrencyL0App(
       programs = Programs.make[IO](
         keyPair,
         sdk.nodeId,
-        method.identifier,
         cfg.globalL0Peer,
         sdkPrograms,
         storages,
@@ -134,17 +133,19 @@ abstract class CurrencyL0App(
       )
 
       _ <- (method match {
-        case _: RunValidator =>
-          gossipDaemon.startAsRegularValidator >>
+        case rv: RunValidator =>
+          storages.identifierStorage.setInitial(rv.identifier) >>
+            gossipDaemon.startAsRegularValidator >>
             programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
             storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
 
-        case _: RunRollback =>
-          storages.node.tryModifyState(
-            NodeState.Initial,
-            NodeState.RollbackInProgress,
-            NodeState.RollbackDone
-          )(programs.rollback.rollback) >> gossipDaemon.startAsInitialValidator >>
+        case rr: RunRollback =>
+          storages.identifierStorage.setInitial(rr.identifier) >>
+            storages.node.tryModifyState(
+              NodeState.Initial,
+              NodeState.RollbackInProgress,
+              NodeState.RollbackDone
+            )(programs.rollback.rollback) >> gossipDaemon.startAsInitialValidator >>
             services.cluster.createSession >>
             services.session.createSession >>
             programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>

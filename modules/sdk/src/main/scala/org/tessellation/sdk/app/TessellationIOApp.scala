@@ -106,6 +106,9 @@ abstract class TessellationIOApp[A <: CliMethod](
                           _seedlist <- method.seedlistPath
                             .fold(none[Set[PeerId]].pure[IO])(SeedlistLoader.make[IO].load(_).map(_.some))
                             .asResource
+                          _l0Seedlist <- method.l0SeedlistPath
+                            .fold(none[Set[PeerId]].pure[IO])(SeedlistLoader.make[IO].load(_).map(_.some))
+                            .asResource
                           _trustRatings <- method.trustRatingsPath
                             .fold(none[PeerObservationAdjustmentUpdateBatch].pure[IO])(TrustRatingCsvLoader.make[IO].load(_).map(_.some))
                             .asResource
@@ -120,7 +123,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                           session = Session.make[IO](storages.session, storages.node, storages.cluster)
                           p2pClient = SdkP2PClient.make[IO](res.client, session)
                           queues <- SdkQueues.make[IO].asResource
-                          validators = SdkValidators.make[IO](_seedlist, cfg.stateChannelSeedlist.seedlist)
+                          validators = SdkValidators.make[IO](_l0Seedlist, _seedlist, method.stateChannelAllowanceLists)
                           services <- SdkServices
                             .make[IO](
                               cfg,
@@ -135,7 +138,8 @@ abstract class TessellationIOApp[A <: CliMethod](
                               _seedlist,
                               _restartSignal,
                               versionHash,
-                              cfg.collateral
+                              cfg.collateral,
+                              method.stateChannelAllowanceLists
                             )
                             .asResource
 

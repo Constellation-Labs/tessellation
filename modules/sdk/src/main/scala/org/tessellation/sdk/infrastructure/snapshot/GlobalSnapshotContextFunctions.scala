@@ -41,6 +41,7 @@ object GlobalSnapshotContextFunctions {
           case (address, stateChannelBinaries) => stateChannelBinaries.map(StateChannelOutput(address, _)).toList
         }
         (acceptanceResult, scSnapshots, returnedSCEvents, acceptedRewardTxs, snapshotInfo, _) <- snapshotAcceptanceManager.accept(
+          signedArtifact.ordinal,
           blocksForAcceptance,
           scEvents,
           context,

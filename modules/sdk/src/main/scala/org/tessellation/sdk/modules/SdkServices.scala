@@ -2,6 +2,7 @@ package org.tessellation.sdk.modules
 
 import java.security.KeyPair
 
+import cats.data.NonEmptySet
 import cats.effect.Async
 import cats.effect.std.Supervisor
 import cats.syntax.flatMap._
@@ -9,6 +10,7 @@ import cats.syntax.functor._
 
 import org.tessellation.currency.schema.currency.{CurrencyBlock, CurrencyTransaction}
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.address.Address
 import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.peer.PeerId
@@ -44,7 +46,8 @@ object SdkServices {
     seedlist: Option[Set[PeerId]],
     restartSignal: SignallingRef[F, Unit],
     versionHash: Hash,
-    collateral: CollateralConfig
+    collateral: CollateralConfig,
+    stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]]
   ): F[SdkServices[F]] = {
 
     val cluster = Cluster
@@ -69,9 +72,11 @@ object SdkServices {
         collateral.amount
       )
       currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotAcceptanceManager)
+      globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make(None, stateChannelAllowanceLists)
       globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
         BlockAcceptanceManager.make[F, DAGTransaction, DAGBlock](validators.blockValidator),
-        GlobalSnapshotStateChannelEventsProcessor.make[F](validators.stateChannelValidator, currencySnapshotContextFns),
+        GlobalSnapshotStateChannelEventsProcessor
+          .make[F](validators.stateChannelValidator, globalSnapshotStateChannelManager, currencySnapshotContextFns),
         collateral.amount
       )
       globalSnapshotContextFns = GlobalSnapshotContextFunctions.make(globalSnapshotAcceptanceManager)

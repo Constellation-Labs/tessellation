@@ -4,12 +4,8 @@ import java.security.{PrivateKey, PublicKey}
 
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.address._
-import org.tessellation.security._
-import org.tessellation.security.hash.Hash
 import org.tessellation.security.hex.Hex
 
-import com.google.common.hash.HashCode
-import eu.timepit.refined.refineV
 import io.estatico.newtype.ops._
 
 object ops {
@@ -29,23 +25,7 @@ object ops {
 
   implicit class PublicKeyOps(publicKey: PublicKey) {
 
-    def toHash: Hash = {
-      val hashCode = HashCode.fromString(Hash.fromBytes(publicKey.getEncoded).coerce)
-      val bytes = hashCode.asBytes().toIndexedSeq
-      val encoded = Base58.encode(bytes)
-      Hash(encoded)
-    }
-
-    def toAddress: Address = {
-      val hash = toHash.coerce
-      val end = hash.slice(hash.length - 36, hash.length)
-      val validInt = end.filter(Character.isDigit)
-      val ints = validInt.map(_.toString.toInt)
-      val sum = ints.sum
-      val par = sum % 9
-      val res2: DAGAddress = refineV[DAGAddressRefined].unsafeFrom(s"DAG$par$end")
-      Address(res2)
-    }
+    def toAddress: Address = Address.fromBytes(publicKey.getEncoded())
 
     def toId: Id = Id(toHex)
 

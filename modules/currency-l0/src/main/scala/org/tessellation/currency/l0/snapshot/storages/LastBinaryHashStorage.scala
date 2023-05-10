@@ -6,16 +6,16 @@ import cats.syntax.functor._
 
 import org.tessellation.security.hash.Hash
 
-trait LastSignedBinaryHashStorage[F[_]] {
+trait LastBinaryHashStorage[F[_]] {
   def set(hash: Hash): F[Unit]
 
   def get: F[Hash]
 }
 
-object LastSignedBinaryHashStorage {
+object LastBinaryHashStorage {
 
-  def make[F[_]: Ref.Make: Functor]: F[LastSignedBinaryHashStorage[F]] = Ref.of[F, Hash](Hash.empty).map { lastHashR =>
-    new LastSignedBinaryHashStorage[F] {
+  def make[F[_]: Ref.Make: Functor]: F[LastBinaryHashStorage[F]] = Ref.of[F, Hash](Hash.empty).map { lastHashR =>
+    new LastBinaryHashStorage[F] {
       def set(hash: Hash): F[Unit] = lastHashR.set(hash)
 
       def get: F[Hash] = lastHashR.get
