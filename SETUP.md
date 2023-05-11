@@ -59,13 +59,17 @@ On Mac OS, _SBT_ provides instructions [here](https://www.scala-sbt.org/1.x/docs
 3. [Skaffold CLI](https://skaffold.dev/docs/install/#standalone-binary)
 4. [AWS CLI version 2](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
 
+## AWS setup
+```
+aws configure   # requires AWS Access Key(s)
+aws eks --region us-west-1 update-kubeconfig --name eks-dev
+```
+
 ## Kubernetes cluster setup
 
 ### Update your kubeconfig
 
 ```
-aws configure   # requires AWS Access Key(s)
-aws eks --region us-west-1 update-kubeconfig --name eks-dev
 kubectl config rename-context $(kubectl config current-context) eks-dev
 ```
 
