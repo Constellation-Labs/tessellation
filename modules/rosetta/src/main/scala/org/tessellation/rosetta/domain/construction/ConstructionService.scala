@@ -42,7 +42,7 @@ trait ConstructionService[F[_]] {
 object ConstructionService {
   def make[F[_]: Async: SecurityProvider: KryoSerializer](
     getLastAcceptedReference: Address => F[TransactionReference],
-    saltGen: () => F[TransactionSalt]
+    salt: F[TransactionSalt]
   ): ConstructionService[F] = new ConstructionService[F] {
     def derive(publicKey: RosettaPublicKey): EitherT[F, ConstructionError, AccountIdentifier] =
       publicKey.hexBytes
@@ -106,7 +106,7 @@ object ConstructionService {
       metadataResult: MetadataResult
     ): EitherT[F, ConstructionError, PayloadsResult] =
       EitherT(
-        saltGen().map(transactionSalt =>
+        salt.map(transactionSalt =>
           for {
             (positiveOperation, negativeOperation) <- getPayloadOperations(operations)
 

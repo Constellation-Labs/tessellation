@@ -52,9 +52,9 @@ object ConstructionServiceSuite extends MutableIOSuite with Checkers with Transa
 
   def mkConstructionService(
     getLastRef: Address => IO[TransactionReference] = _ => TransactionReference.empty.pure[IO],
-    saltGen: () => IO[TransactionSalt] = () => IO.pure(TransactionSalt(0L))
+    salt: IO[TransactionSalt] = IO.pure(TransactionSalt(0L))
   )(implicit S: SecurityProvider[IO], K: KryoSerializer[IO]): ConstructionService[IO] =
-    ConstructionService.make[IO](getLastRef, saltGen)
+    ConstructionService.make[IO](getLastRef, salt)
 
   def generateTestTransactions(wantSignedTransaction: Boolean)(implicit S: SecurityProvider[IO], K: KryoSerializer[IO]) = {
     val getSignedTransaction = (transaction: Hashed[DAGTransaction]) => transaction.signed
@@ -453,7 +453,7 @@ object ConstructionServiceSuite extends MutableIOSuite with Checkers with Transa
           NonEmptyList.one(SigningPayload(AccountIdentifier(negOp.account.address, none), txSignBytes, SignatureType.ECDSA))
         ).asRight[ConstructionError]
 
-        val cs = mkConstructionService(saltGen = () => salt.pure[IO])
+        val cs = mkConstructionService(salt = salt.pure[IO])
         cs.getPayloads(NonEmptyList.of(negOp, posOp), metadataResult)
           .value
           .map(result => expect.eql(expected, result))
