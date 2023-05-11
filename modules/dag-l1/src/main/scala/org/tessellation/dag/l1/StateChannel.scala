@@ -34,7 +34,7 @@ import org.tessellation.schema.Block.BlockConstructor
 import org.tessellation.schema._
 import org.tessellation.schema.height.Height
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.snapshot.Snapshot
+import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.schema.transaction.Transaction
 import org.tessellation.security.{Hashed, SecurityProvider}
 
@@ -46,7 +46,9 @@ class StateChannel[
   F[_]: Async: KryoSerializer: SecurityProvider: Random,
   T <: Transaction: Encoder: Order: Ordering,
   B <: Block[T]: Encoder: TypeTag,
-  S <: Snapshot[T, B]
+  P <: StateProof,
+  S <: Snapshot[T, B],
+  SI <: SnapshotInfo[P]
 ](
   appConfig: AppConfig,
   blockAcceptanceS: Semaphore[F],
@@ -54,11 +56,11 @@ class StateChannel[
   blockStoringS: Semaphore[F],
   keyPair: KeyPair,
   p2PClient: P2PClient[F, T, B],
-  programs: Programs[F, T, B, S],
+  programs: Programs[F, T, B, P, S, SI],
   queues: Queues[F, T, B],
   selfId: PeerId,
-  services: Services[F, T, B],
-  storages: Storages[F, T, B, S],
+  services: Services[F, T, B, P, S, SI],
+  storages: Storages[F, T, B, P, S, SI],
   validators: Validators[F, T, B]
 )(implicit blockConstructor: BlockConstructor[T, B]) {
 
@@ -217,21 +219,28 @@ class StateChannel[
   private val globalSnapshotProcessing: Stream[F, Unit] = Stream
     .awakeEvery(10.seconds)
     .evalMap(_ => services.globalL0.pullGlobalSnapshots)
-    .evalTap {
-      _.traverse { s =>
-        logger.info(s"Pulled following global snapshot: ${SnapshotReference.fromHashedSnapshot(s).show}")
+    .evalTap { snapshots =>
+      def log(snapshot: Hashed[GlobalIncrementalSnapshot]) =
+        logger.info(s"Pulled following global snapshot: ${SnapshotReference.fromHashedSnapshot(snapshot).show}")
+
+      snapshots match {
+        case Left((snapshot, _)) => log(snapshot)
+        case Right(snapshots)    => snapshots.traverse(log).void
       }
     }
-    .evalMapLocked(NonEmptyList.of(blockAcceptanceS, blockCreationS, blockStoringS)) { snapshots =>
-      (snapshots, List.empty[SnapshotProcessingResult]).tailRecM {
-        case (snapshot :: nextSnapshots, aggResults) =>
-          programs.snapshotProcessor
-            .process(snapshot)
-            .map(result => (nextSnapshots, aggResults :+ result).asLeft[List[SnapshotProcessingResult]])
+    .evalMapLocked(NonEmptyList.of(blockAcceptanceS, blockCreationS, blockStoringS)) {
+      case Left((snapshot, state)) =>
+        programs.snapshotProcessor.process((snapshot, state).asLeft[Hashed[GlobalIncrementalSnapshot]]).map(List(_))
+      case Right(snapshots) =>
+        (snapshots, List.empty[SnapshotProcessingResult]).tailRecM {
+          case (snapshot :: nextSnapshots, aggResults) =>
+            programs.snapshotProcessor
+              .process(snapshot.asRight[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)])
+              .map(result => (nextSnapshots, aggResults :+ result).asLeft[List[SnapshotProcessingResult]])
 
-        case (Nil, aggResults) =>
-          aggResults.asRight[(List[Hashed[GlobalSnapshot]], List[SnapshotProcessingResult])].pure[F]
-      }
+          case (Nil, aggResults) =>
+            aggResults.asRight[(List[Hashed[GlobalIncrementalSnapshot]], List[SnapshotProcessingResult])].pure[F]
+        }
     }
     .evalMap {
       _.traverse(result => logger.info(s"Snapshot processing result: ${result.show}")).void
@@ -259,24 +268,26 @@ object StateChannel {
     F[_]: Async: KryoSerializer: SecurityProvider: Random,
     T <: Transaction: Encoder: Order: Ordering,
     B <: Block[T]: Encoder: TypeTag,
-    S <: Snapshot[T, B]
+    P <: StateProof,
+    S <: Snapshot[T, B],
+    SI <: SnapshotInfo[P]
   ](
     appConfig: AppConfig,
     keyPair: KeyPair,
     p2PClient: P2PClient[F, T, B],
-    programs: Programs[F, T, B, S],
+    programs: Programs[F, T, B, P, S, SI],
     queues: Queues[F, T, B],
     selfId: PeerId,
-    services: Services[F, T, B],
-    storages: Storages[F, T, B, S],
+    services: Services[F, T, B, P, S, SI],
+    storages: Storages[F, T, B, P, S, SI],
     validators: Validators[F, T, B]
-  )(implicit blockConstructor: BlockConstructor[T, B]): F[StateChannel[F, T, B, S]] =
+  )(implicit blockConstructor: BlockConstructor[T, B]): F[StateChannel[F, T, B, P, S, SI]] =
     for {
       blockAcceptanceS <- Semaphore(1)
       blockCreationS <- Semaphore(1)
       blockStoringS <- Semaphore(1)
     } yield
-      new StateChannel[F, T, B, S](
+      new StateChannel[F, T, B, P, S, SI](
         appConfig,
         blockAcceptanceS,
         blockCreationS,

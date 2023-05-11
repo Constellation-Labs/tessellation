@@ -4,13 +4,16 @@ import java.security.Signature
 
 import cats.data.NonEmptyList
 
+import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.kryo._
+import org.tessellation.merkletree.{MerkleRoot, Proof, ProofEntry}
 import org.tessellation.schema._
 import org.tessellation.schema.address.{Address, AddressCache}
 import org.tessellation.schema.block.{DAGBlock, Tips}
 import org.tessellation.schema.gossip._
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.SignRequest
+import org.tessellation.schema.snapshot.StateProof
 import org.tessellation.schema.transaction._
 import org.tessellation.schema.trust.PublicTrust
 import org.tessellation.security.signature.Signed
@@ -68,7 +71,7 @@ package object shared {
     classOf[DAGBlock] -> 603,
     DAGBlock.OrderingInstance.getClass -> 604,
     classOf[BlockReference] -> 605,
-    classOf[GlobalSnapshotInfo] -> 606,
+    classOf[GlobalSnapshotInfoV1] -> 606,
     classOf[SnapshotTips] -> 607,
     classOf[ActiveTip] -> 608,
     ActiveTip.OrderingInstance.getClass -> 609,
@@ -76,7 +79,23 @@ package object shared {
     DAGBlock.OrderingInstanceAsActiveTip.getClass -> 611,
     classOf[DeprecatedTip] -> 612,
     DeprecatedTip.OrderingInstance.getClass -> 613,
-    classOf[Tips] -> 614
+    classOf[Tips] -> 614,
+    classOf[GlobalIncrementalSnapshot] -> 615,
+    classOf[MerkleRoot] -> 616,
+    classOf[GlobalSnapshotInfo] -> 617,
+    classOf[CurrencyTransaction] -> 618,
+    classOf[CurrencyBlock] -> 619,
+    classOf[CurrencySnapshotInfo] -> 620,
+    classOf[CurrencySnapshot] -> 621,
+    classOf[CurrencyIncrementalSnapshot] -> 622,
+    CurrencyBlock.OrderingInstanceAsActiveTip.getClass -> 623,
+    CurrencyTransaction.OrderingInstance.getClass -> 624,
+    CurrencyBlock.OrderingInstance.getClass -> 625,
+    classOf[Proof] -> 626,
+    classOf[ProofEntry] -> 627,
+    classOf[GlobalSnapshotStateProof] -> 628,
+    classOf[CurrencySnapshotStateProof] -> 629,
+    classOf[StateProof] -> 630
   )
 
 }

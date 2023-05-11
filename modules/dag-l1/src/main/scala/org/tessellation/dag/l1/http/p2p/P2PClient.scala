@@ -4,9 +4,8 @@ import cats.effect.Async
 
 import org.tessellation.dag.l1.domain.consensus.block.http.p2p.clients.BlockConsensusClient
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.Block
 import org.tessellation.schema.transaction.Transaction
-import org.tessellation.schema.{Block, GlobalSnapshot}
-import org.tessellation.sdk.domain.http.p2p.SnapshotClient
 import org.tessellation.sdk.http.p2p.SdkP2PClient
 import org.tessellation.sdk.http.p2p.clients._
 import org.tessellation.sdk.infrastructure.gossip.p2p.GossipClient
@@ -17,7 +16,11 @@ import org.http4s.client._
 
 object P2PClient {
 
-  def make[F[_]: Async: SecurityProvider: KryoSerializer, T <: Transaction: Encoder, B <: Block[T]: Encoder](
+  def make[
+    F[_]: Async: SecurityProvider: KryoSerializer,
+    T <: Transaction: Encoder,
+    B <: Block[T]: Encoder
+  ](
     sdkP2PClient: SdkP2PClient[F],
     client: Client[F],
     currencyPathPrefix: String
@@ -30,11 +33,15 @@ object P2PClient {
       L0CurrencyClusterClient.make(currencyPathPrefix, client),
       sdkP2PClient.gossip,
       BlockConsensusClient.make(client),
-      L0GlobalSnapshotClient.make(client)
+      L0GlobalSnapshotClient.make[F](client)
     ) {}
 }
 
-sealed abstract class P2PClient[F[_], T <: Transaction, B <: Block[T]] private (
+sealed abstract class P2PClient[
+  F[_],
+  T <: Transaction,
+  B <: Block[T]
+] private (
   val sign: SignClient[F],
   val node: NodeClient[F],
   val cluster: ClusterClient[F],
@@ -42,5 +49,5 @@ sealed abstract class P2PClient[F[_], T <: Transaction, B <: Block[T]] private (
   val l0CurrencyCluster: L0CurrencyClusterClient[F, B],
   val gossip: GossipClient[F],
   val blockConsensus: BlockConsensusClient[F, T],
-  val l0GlobalSnapshotClient: SnapshotClient[F, GlobalSnapshot]
+  val l0GlobalSnapshot: L0GlobalSnapshotClient[F]
 )

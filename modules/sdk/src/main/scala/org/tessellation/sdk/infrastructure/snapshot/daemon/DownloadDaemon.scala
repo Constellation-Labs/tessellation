@@ -8,7 +8,7 @@ import cats.syntax.functor._
 import org.tessellation.schema.node.NodeState
 import org.tessellation.sdk.domain.Daemon
 import org.tessellation.sdk.domain.node.NodeStorage
-import org.tessellation.sdk.infrastructure.snapshot.programs.Download
+import org.tessellation.sdk.domain.snapshot.programs.Download
 
 trait DownloadDaemon[F[_]] extends Daemon[F] {}
 
@@ -21,7 +21,7 @@ object DownloadDaemon {
       nodeStorage.nodeStates
         .filter(_ === NodeState.WaitingForDownload)
         .evalTap { _ =>
-          download.download()
+          download.download
         }
         .compile
         .drain

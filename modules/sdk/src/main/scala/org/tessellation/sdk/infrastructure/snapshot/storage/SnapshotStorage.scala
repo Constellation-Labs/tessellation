@@ -21,7 +21,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
-import org.tessellation.schema.snapshot.Snapshot
+import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo}
 import org.tessellation.sdk.domain.collateral.LatestBalances
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.security.hash.Hash
@@ -35,8 +35,8 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object SnapshotStorage {
 
-  private def makeResources[F[_]: Async, S <: Snapshot[_, _]]() = {
-    def mkHeadRef = SignallingRef.of[F, Option[Signed[S]]](none)
+  private def makeResources[F[_]: Async, S <: Snapshot[_, _], C <: SnapshotInfo[_]]() = {
+    def mkHeadRef = SignallingRef.of[F, Option[(Signed[S], C)]](none)
     def mkOrdinalCache = MapRef.ofSingleImmutableMap[F, SnapshotOrdinal, Hash](Map.empty)
     def mkHashCache = MapRef.ofSingleImmutableMap[F, Hash, Signed[S]](Map.empty)
     def mkNotPersistedCache = Ref.of(Set.empty[SnapshotOrdinal])
@@ -49,24 +49,24 @@ object SnapshotStorage {
     }
   }
 
-  def make[F[_]: Async: KryoSerializer, S <: Snapshot[_, _]](
+  def make[F[_]: Async: KryoSerializer, S <: Snapshot[_, _], C <: SnapshotInfo[_]](
     snapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, S],
     inMemoryCapacity: NonNegLong
-  )(implicit supervisor: Supervisor[F]): F[SnapshotStorage[F, S] with LatestBalances[F]] =
-    makeResources[F, S]().flatMap {
+  )(implicit supervisor: Supervisor[F]): F[SnapshotStorage[F, S, C] with LatestBalances[F]] =
+    makeResources[F, S, C]().flatMap {
       case (headRef, ordinalCache, hashCache, notPersistedCache, offloadQueue, _) =>
         make(headRef, ordinalCache, hashCache, notPersistedCache, offloadQueue, snapshotLocalFileSystemStorage, inMemoryCapacity)
     }
 
-  def make[F[_]: Async: KryoSerializer, S <: Snapshot[_, _]](
-    headRef: SignallingRef[F, Option[Signed[S]]],
+  def make[F[_]: Async: KryoSerializer, S <: Snapshot[_, _], C <: SnapshotInfo[_]](
+    headRef: SignallingRef[F, Option[(Signed[S], C)]],
     ordinalCache: MapRef[F, SnapshotOrdinal, Option[Hash]],
     hashCache: MapRef[F, Hash, Option[Signed[S]]],
     notPersistedCache: Ref[F, Set[SnapshotOrdinal]],
     offloadQueue: Queue[F, SnapshotOrdinal],
     snapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, S],
     inMemoryCapacity: NonNegLong
-  )(implicit supervisor: Supervisor[F]): F[SnapshotStorage[F, S] with LatestBalances[F]] = {
+  )(implicit supervisor: Supervisor[F]): F[SnapshotStorage[F, S, C] with LatestBalances[F]] = {
 
     def logger = Slf4jLogger.getLogger[F]
 
@@ -124,30 +124,41 @@ object SnapshotStorage {
         hashCache(hash).set(snapshot.some) >>
           ordinalCache(snapshot.ordinal).set(hash.some) >>
           snapshotLocalFileSystemStorage.write(snapshot).handleErrorWith { e =>
-            logger.error(e)(s"Failed writing snapshot to disk! hash=$hash ordinal=${snapshot.ordinal}") >>
-              notPersistedCache.update(current => current + snapshot.ordinal)
+            snapshotExists(snapshot).ifM(
+              logger.info(s"Snapshot is already saved on disk. hash=$hash ordinal=${snapshot.ordinal}"),
+              logger.error(e)(s"Failed writing snapshot to disk! hash=$hash ordinal=${snapshot.ordinal}") >>
+                notPersistedCache.update(current => current + snapshot.ordinal)
+            )
           } >>
           snapshot.ordinal
             .partialPreviousN(inMemoryCapacity)
             .fold(Applicative[F].unit)(offloadQueue.offer)
       }
 
+    def snapshotExists(snapshot: Signed[S]): F[Boolean] =
+      snapshot.toHashed
+        .flatMap(hashed =>
+          List(snapshotLocalFileSystemStorage.read(hashed.hash), snapshotLocalFileSystemStorage.read(snapshot.value.ordinal))
+            .traverse(_.flatMap(_.traverse(_.toHashed).map(_.fold(false)(_.hash === hashed.hash))))
+        )
+        .map(_.reduce(_ && _))
+
     supervisor.supervise(offloadProcess).map { _ =>
-      new SnapshotStorage[F, S] with LatestBalances[F] {
-        def prepend(snapshot: Signed[S]): F[Boolean] =
+      new SnapshotStorage[F, S, C] with LatestBalances[F] {
+        def prepend(snapshot: Signed[S], state: C): F[Boolean] =
           headRef.modify {
             case None =>
-              (snapshot.some, enqueue(snapshot).map(_ => true))
-            case Some(current) =>
+              ((snapshot, state).some, enqueue(snapshot).map(_ => true))
+            case Some((current, currentState)) =>
               isNextSnapshot(current, snapshot) match {
                 case Left(e) =>
-                  (current.some, e.raiseError[F, Boolean])
+                  ((current, currentState).some, e.raiseError[F, Boolean])
                 case Right(isNext) if isNext =>
-                  (snapshot.some, enqueue(snapshot).map(_ => true))
+                  ((snapshot, state).some, enqueue(snapshot).map(_ => true))
 
                 case _ =>
                   (
-                    current.some,
+                    (current, currentState).some,
                     logger
                       .debug(s"Trying to prepend ${snapshot.ordinal.show} but the current snapshot is: ${current.ordinal.show}")
                       .as(false)
@@ -155,7 +166,8 @@ object SnapshotStorage {
               }
           }.flatten
 
-        def head: F[Option[Signed[S]]] = headRef.get
+        def head: F[Option[(Signed[S], C)]] = headRef.get
+        def headSnapshot: F[Option[Signed[S]]] = headRef.get.map(_.map(_._1))
 
         def get(ordinal: SnapshotOrdinal): F[Option[Signed[S]]] =
           ordinalCache(ordinal).get.flatMap {
@@ -170,12 +182,13 @@ object SnapshotStorage {
           }
 
         def getLatestBalances: F[Option[Map[Address, Balance]]] =
-          head.map(_.map(_.info.balances))
+          headRef.get.map(_.map(_._2.balances))
 
         def getLatestBalancesStream: Stream[F, Map[Address, Balance]] =
           headRef.discrete
-            .flatMap(_.fold[Stream[F, Signed[S]]](Stream.empty)(Stream(_)))
-            .map(_.info.balances)
+            .map(_.map(_._2))
+            .flatMap(_.fold[Stream[F, C]](Stream.empty)(Stream(_)))
+            .map(_.balances)
 
         private def isNextSnapshot(
           current: Signed[S],

@@ -6,7 +6,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.Block
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.snapshot.Snapshot
+import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.schema.transaction.Transaction
 import org.tessellation.sdk.domain.block.processing.BlockValidator
 import org.tessellation.sdk.domain.transaction.{ContextualTransactionValidator, TransactionChainValidator, TransactionValidator}
@@ -17,8 +17,15 @@ import org.tessellation.security.signature.SignedValidator
 
 object Validators {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider, T <: Transaction, B <: Block[T], S <: Snapshot[T, B]](
-    storages: Storages[F, T, B, S],
+  def make[
+    F[_]: Async: KryoSerializer: SecurityProvider,
+    T <: Transaction,
+    B <: Block[T],
+    P <: StateProof,
+    S <: Snapshot[T, B],
+    SI <: SnapshotInfo[P]
+  ](
+    storages: Storages[F, T, B, P, S, SI],
     seedlist: Option[Set[PeerId]]
   ): Validators[F, T, B] = {
     val signedValidator = SignedValidator.make[F]

@@ -1,17 +1,23 @@
 package org.tessellation.schema
 
+import cats.MonadThrow
 import cats.data.NonEmptyList
+import cats.syntax.functor._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
+import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
+import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.snapshot.Snapshot
+import org.tessellation.schema.semver.SnapshotVersion
+import org.tessellation.schema.snapshot.{FullSnapshot, IncrementalSnapshot}
 import org.tessellation.schema.transaction.{DAGTransaction, RewardTransaction}
+import org.tessellation.security.Hashed
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.signature.Signed
@@ -25,6 +31,41 @@ import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.PosInt
 
 @derive(eqv, show, encoder, decoder)
+case class GlobalIncrementalSnapshot(
+  ordinal: SnapshotOrdinal,
+  height: Height,
+  subHeight: SubHeight,
+  lastSnapshotHash: Hash,
+  blocks: SortedSet[BlockAsActiveTip[DAGBlock]],
+  stateChannelSnapshots: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
+  rewards: SortedSet[RewardTransaction],
+  epochProgress: EpochProgress,
+  nextFacilitators: NonEmptyList[PeerId],
+  tips: SnapshotTips,
+  stateProof: GlobalSnapshotStateProof,
+  version: SnapshotVersion = SnapshotVersion("0.0.1")
+) extends IncrementalSnapshot[DAGTransaction, DAGBlock, GlobalSnapshotStateProof]
+
+object GlobalIncrementalSnapshot {
+  def fromGlobalSnapshot[F[_]: MonadThrow: KryoSerializer](snapshot: GlobalSnapshot): F[GlobalIncrementalSnapshot] =
+    snapshot.info.stateProof.map { stateProof =>
+      GlobalIncrementalSnapshot(
+        snapshot.ordinal,
+        snapshot.height,
+        snapshot.subHeight,
+        snapshot.lastSnapshotHash,
+        snapshot.blocks,
+        snapshot.stateChannelSnapshots,
+        snapshot.rewards,
+        snapshot.epochProgress,
+        snapshot.nextFacilitators,
+        snapshot.tips,
+        stateProof
+      )
+    }
+}
+
+@derive(eqv, show, encoder, decoder)
 case class GlobalSnapshot(
   ordinal: SnapshotOrdinal,
   height: Height,
@@ -35,9 +76,9 @@ case class GlobalSnapshot(
   rewards: SortedSet[RewardTransaction],
   epochProgress: EpochProgress,
   nextFacilitators: NonEmptyList[PeerId],
-  info: GlobalSnapshotInfo,
+  info: GlobalSnapshotInfoV1,
   tips: SnapshotTips
-) extends Snapshot[DAGTransaction, DAGBlock] {}
+) extends FullSnapshot[DAGTransaction, DAGBlock, GlobalSnapshotStateProof, GlobalSnapshotInfoV1] {}
 
 object GlobalSnapshot {
 
@@ -52,12 +93,29 @@ object GlobalSnapshot {
       SortedSet.empty,
       startingEpochProgress,
       nextFacilitators,
-      GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.from(balances)),
+      GlobalSnapshotInfoV1(SortedMap.empty, SortedMap.empty, SortedMap.from(balances)),
       SnapshotTips(
         SortedSet.empty[DeprecatedTip],
         mkActiveTips(8)
       )
     )
+
+  def mkFirstIncrementalSnapshot[F[_]: MonadThrow: KryoSerializer](genesis: Hashed[GlobalSnapshot]): F[GlobalIncrementalSnapshot] =
+    genesis.info.stateProof.map { stateProof =>
+      GlobalIncrementalSnapshot(
+        genesis.ordinal.next,
+        genesis.height,
+        genesis.subHeight.next,
+        genesis.hash,
+        SortedSet.empty,
+        SortedMap.empty,
+        SortedSet.empty,
+        genesis.epochProgress.next,
+        nextFacilitators,
+        genesis.tips,
+        stateProof
+      )
+    }
 
   val nextFacilitators: NonEmptyList[PeerId] =
     NonEmptyList

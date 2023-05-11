@@ -1,26 +1,18 @@
 package org.tessellation.infrastructure.snapshot
 
-import cats.data.NonEmptyList
 import cats.effect.std.Supervisor
 import cats.effect.{IO, Resource}
 import cats.syntax.option._
 
-import scala.collection.immutable.{SortedMap, SortedSet}
-
-import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
 import org.tessellation.ext.kryo._
-import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.epoch.EpochProgress
-import org.tessellation.schema.height.{Height, SubHeight}
-import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.{GlobalSnapshot, address, balance}
-import org.tessellation.sdk.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage
+import org.tessellation.schema.{GlobalSnapshot, address, balance, _}
+import org.tessellation.sdk.infrastructure.snapshot.storage.{SnapshotLocalFileSystemStorage, SnapshotStorage}
 import org.tessellation.sdk.sdkKryoRegistrar
-import org.tessellation.security.SecurityProvider
-import org.tessellation.security.hex.Hex
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{KeyPairGenerator, SecurityProvider}
 import org.tessellation.shared.sharedKryoRegistrar
 
 import better.files._
@@ -28,7 +20,6 @@ import eu.timepit.refined.auto._
 import fs2.io.file.Path
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
-
 object SnapshotStorageSuite extends MutableIOSuite with Checkers {
 
   type Res = (Supervisor[IO], KryoSerializer[IO], SecurityProvider[IO])
@@ -41,32 +32,19 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
     }
 
   def mkStorage(tmpDir: File)(implicit K: KryoSerializer[IO], S: Supervisor[IO]) =
-    SnapshotLocalFileSystemStorage.make[IO, GlobalSnapshot](Path(tmpDir.pathAsString)).flatMap {
-      GlobalSnapshotStorage.make[IO](_, 5L, None)
+    SnapshotLocalFileSystemStorage.make[IO, GlobalIncrementalSnapshot](Path(tmpDir.pathAsString)).flatMap {
+      SnapshotStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](_, 5L)
     }
 
   def mkSnapshots(
     implicit K: KryoSerializer[IO],
     S: SecurityProvider[IO]
-  ): IO[(Signed[GlobalSnapshot], Signed[GlobalSnapshot])] =
+  ): IO[(Signed[GlobalSnapshot], Signed[GlobalIncrementalSnapshot])] =
     KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>
       Signed.forAsyncKryo[IO, GlobalSnapshot](GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue), keyPair).flatMap { genesis =>
-        def snapshot =
-          GlobalSnapshot(
-            genesis.value.ordinal.next,
-            Height.MinValue,
-            SubHeight.MinValue,
-            genesis.value.hash.toOption.get,
-            SortedSet.empty,
-            SortedMap.empty,
-            SortedSet.empty,
-            genesis.value.epochProgress,
-            NonEmptyList.of(PeerId(Hex("peer1"))),
-            genesis.info,
-            genesis.tips
-          )
-
-        Signed.forAsyncKryo[IO, GlobalSnapshot](snapshot, keyPair).map((genesis, _))
+        GlobalIncrementalSnapshot.fromGlobalSnapshot(genesis).flatMap { snapshot =>
+          Signed.forAsyncKryo[IO, GlobalIncrementalSnapshot](snapshot, keyPair).map((genesis, _))
+        }
       }
     }
 
@@ -76,7 +54,7 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
     File.temporaryDirectory() { tmpDir =>
       mkStorage(tmpDir).flatMap { storage =>
         storage.head.map {
-          expect.same(_, none)
+          expect.eql(none, _)
         }
       }
     }
@@ -89,10 +67,9 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
       mkStorage(tmpDir).flatMap { storage =>
         mkSnapshots.flatMap {
           case (genesis, snapshot) =>
-            storage.prepend(genesis) >>
-              storage.prepend(snapshot) >>
-              storage.head.map {
-                expect.same(_, snapshot.some)
+            storage.prepend(snapshot, genesis.info) >>
+              storage.headSnapshot.map {
+                expect.eql(snapshot.some, _)
               }
         }
       }
@@ -106,8 +83,7 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
       mkStorage(tmpDir).flatMap { storage =>
         mkSnapshots.flatMap {
           case (genesis, snapshot) =>
-            storage.prepend(genesis) >>
-              storage.prepend(snapshot).map(expect.same(_, true))
+            storage.prepend(snapshot, genesis.info).map(expect.eql(true, _))
         }
       }
     }
@@ -119,8 +95,8 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
     File.temporaryDirectory() { tmpDir =>
       mkStorage(tmpDir).flatMap { storage =>
         mkSnapshots.flatMap {
-          case (_, snapshot) =>
-            storage.prepend(snapshot).map(expect.same(_, true))
+          case (genesis, snapshot) =>
+            storage.prepend(snapshot, genesis.info).map(expect.same(true, _))
         }
       }
     }
@@ -132,9 +108,9 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
     File.temporaryDirectory() { tmpDir =>
       mkStorage(tmpDir).flatMap { storage =>
         mkSnapshots.flatMap {
-          case (genesis, _) =>
-            storage.prepend(genesis) >>
-              storage.get(genesis.ordinal).map(expect.same(_, genesis.some))
+          case (genesis, snapshot) =>
+            storage.prepend(snapshot, genesis.info) >>
+              storage.get(snapshot.ordinal).map(expect.eql(snapshot.some, _))
         }
       }
     }
@@ -146,10 +122,10 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
     File.temporaryDirectory() { tmpDir =>
       mkStorage(tmpDir).flatMap { storage =>
         mkSnapshots.flatMap {
-          case (genesis, _) =>
-            storage.prepend(genesis) >>
-              genesis.value.hashF.flatMap { hash =>
-                storage.get(hash).map(expect.same(_, genesis.some))
+          case (genesis, snapshot) =>
+            storage.prepend(snapshot, genesis.info) >>
+              snapshot.value.hashF.flatMap { hash =>
+                storage.get(hash).map(expect.eql(snapshot.some, _))
               }
         }
       }
@@ -162,8 +138,8 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
     File.temporaryDirectory() { tmpDir =>
       mkStorage(tmpDir).flatMap { storage =>
         mkSnapshots.flatMap {
-          case (genesis, _) =>
-            storage.prepend(genesis) >>
+          case (genesis, snapshot) =>
+            storage.prepend(snapshot, genesis.info) >>
               storage.getLatestBalancesStream.take(1).compile.toList.map {
                 expect.same(_, List(Map.empty[address.Address, balance.Balance]))
               }
@@ -178,8 +154,8 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
     File.temporaryDirectory() { tmpDir =>
       mkStorage(tmpDir).flatMap { storage =>
         mkSnapshots.flatMap {
-          case (genesis, _) =>
-            storage.prepend(genesis) >>
+          case (genesis, snapshot) =>
+            storage.prepend(snapshot, genesis.info) >>
               storage.getLatestBalancesStream.take(1).compile.toList >>
               storage.getLatestBalancesStream.take(1).compile.toList.map {
                 expect.same(_, List(Map.empty[address.Address, balance.Balance]))

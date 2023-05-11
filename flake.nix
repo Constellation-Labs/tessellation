@@ -22,9 +22,22 @@
             else p.bloop;
         };
 
+        nativeOverlay = f: p: {
+          scala-cli-native = p.symlinkJoin
+            {
+              name = "scala-cli-native";
+              paths = [ p.scala-cli ];
+              buildInputs = [ p.makeWrapper ];
+              postBuild = ''
+                wrapProgram $out/bin/scala-cli \
+                  --prefix LLVM_BIN : "${p.llvmPackages.clang}/bin"
+              '';
+            };
+        };
+
         pkgs = import nixpkgs {
           inherit system;
-          overlays = [ jreOverlay bloopOverlay ];
+          overlays = [ jreOverlay bloopOverlay nativeOverlay ];
         };
       in
       {
@@ -39,6 +52,7 @@
               jre
               sbt
               bloop
+              scala-cli-native
             ];
 
             shellHook = ''

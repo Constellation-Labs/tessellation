@@ -3,6 +3,7 @@ package org.tessellation.modules
 import java.security.PrivateKey
 
 import cats.effect.Async
+import cats.syntax.option._
 import cats.syntax.semigroupk._
 
 import org.tessellation.domain.cell.{L0Cell, L0CellInput}
@@ -11,7 +12,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.DAGTransaction
-import org.tessellation.schema.{GlobalSnapshot, SnapshotOrdinal}
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.AppEnvironment.{Dev, Mainnet, Testnet}
 import org.tessellation.sdk.config.types.HttpConfig
@@ -80,8 +81,13 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
   private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip)
   private val trustRoutes = TrustRoutes[F](storages.trust, programs.trustPush)
   private val stateChannelRoutes = StateChannelRoutes[F](services.stateChannel)
-  private val snapshotRoutes = SnapshotRoutes[F, GlobalSnapshot](storages.globalSnapshot, "/global-snapshots")
-  private val dagRoutes = CurrencyRoutes[F, DAGTransaction, DAGBlock, GlobalSnapshot]("/dag", services.address, mkDagCell)
+  private val snapshotRoutes =
+    SnapshotRoutes[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
+      storages.globalSnapshot,
+      storages.fullGlobalSnapshot.some,
+      "/global-snapshots"
+    )
+  private val dagRoutes = CurrencyRoutes[F, DAGTransaction, DAGBlock, GlobalIncrementalSnapshot]("/dag", services.address, mkDagCell)
   private val consensusInfoRoutes = new ConsensusInfoRoutes[F, SnapshotOrdinal](services.cluster, services.consensus.storage, selfId)
   private val consensusRoutes = services.consensus.routes.p2pRoutes
 

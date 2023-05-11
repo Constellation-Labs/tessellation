@@ -8,7 +8,7 @@ import org.tessellation.dag.l1.http.p2p.P2PClient
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.Block
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.snapshot.Snapshot
+import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.schema.transaction.Transaction
 import org.tessellation.sdk.config.types.HealthCheckConfig
 import org.tessellation.sdk.domain.cluster.services.Session
@@ -19,10 +19,17 @@ import org.http4s.client.Client
 
 object HealthChecks {
 
-  def make[F[_]: Async: KryoSerializer: GenUUID: Random: Supervisor, T <: Transaction, B <: Block[T], S <: Snapshot[T, B]](
-    storages: Storages[F, T, B, S],
-    services: Services[F, T, B],
-    programs: Programs[F, T, B, S],
+  def make[
+    F[_]: Async: KryoSerializer: GenUUID: Random: Supervisor,
+    T <: Transaction,
+    B <: Block[T],
+    P <: StateProof,
+    S <: Snapshot[T, B],
+    SI <: SnapshotInfo[P]
+  ](
+    storages: Storages[F, T, B, P, S, SI],
+    services: Services[F, T, B, P, S, SI],
+    programs: Programs[F, T, B, P, S, SI],
     p2pClient: P2PClient[F, T, B],
     client: Client[F],
     session: Session[F],

@@ -9,7 +9,7 @@ import cats.syntax.traverse._
 import org.tessellation.dag.l1.infrastructure.healthcheck.HealthCheckDaemon
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.Block
-import org.tessellation.schema.snapshot.Snapshot
+import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.schema.transaction.Transaction
 import org.tessellation.sdk.domain.Daemon
 import org.tessellation.sdk.infrastructure.cluster.daemon.NodeStateDaemon
@@ -23,10 +23,12 @@ object Daemons {
     F[_]: Async: SecurityProvider: KryoSerializer: Random: Parallel: Metrics: Supervisor,
     T <: Transaction,
     B <: Block[T],
-    S <: Snapshot[T, B]
+    P <: StateProof,
+    S <: Snapshot[T, B],
+    SI <: SnapshotInfo[P]
   ](
-    storages: Storages[F, T, B, S],
-    services: Services[F, T, B],
+    storages: Storages[F, T, B, P, S, SI],
+    services: Services[F, T, B, P, S, SI],
     healthChecks: HealthChecks[F]
   ): F[Unit] =
     List[Daemon[F]](

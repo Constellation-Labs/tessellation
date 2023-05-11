@@ -10,82 +10,112 @@ import cats.syntax.option._
 
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.{GlobalSnapshot, SnapshotOrdinal}
+import org.tessellation.schema._
 import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
-import org.tessellation.sdk.domain.http.p2p.SnapshotClient
 import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
+import org.tessellation.sdk.http.p2p.PeerResponse
+import org.tessellation.sdk.http.p2p.clients.L0GlobalSnapshotClient
+import org.tessellation.security.hash.Hash
+import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hashed, SecurityProvider}
 
 import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait GlobalL0Service[F[_]] {
-  def pullGlobalSnapshots: F[List[Hashed[GlobalSnapshot]]]
-  def pullGlobalSnapshot(ordinal: SnapshotOrdinal): F[Option[Hashed[GlobalSnapshot]]]
+  def pullLatestSnapshot: F[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]
+  def pullGlobalSnapshots: F[Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), List[Hashed[GlobalIncrementalSnapshot]]]]
+  def pullGlobalSnapshot(ordinal: SnapshotOrdinal): F[Option[Hashed[GlobalIncrementalSnapshot]]]
+  def pullGlobalSnapshot(hash: Hash): F[Option[Hashed[GlobalIncrementalSnapshot]]]
 }
 
 object GlobalL0Service {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider](
-    l0GlobalSnapshotClient: SnapshotClient[F, GlobalSnapshot],
+  def make[
+    F[_]: Async: KryoSerializer: SecurityProvider
+  ](
+    l0GlobalSnapshotClient: L0GlobalSnapshotClient[F],
     globalL0ClusterStorage: L0ClusterStorage[F],
-    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalSnapshot],
+    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     singlePullLimit: Option[PosLong]
   ): GlobalL0Service[F] =
     new GlobalL0Service[F] {
 
       private val logger = Slf4jLogger.getLogger[F]
 
-      def pullGlobalSnapshot(ordinal: SnapshotOrdinal): F[Option[Hashed[GlobalSnapshot]]] =
+      def pullLatestSnapshot: F[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] =
         globalL0ClusterStorage.getRandomPeer.flatMap { l0Peer =>
-          l0GlobalSnapshotClient
-            .get(ordinal)(l0Peer)
-            .flatMap(_.toHashedWithSignatureCheck)
-            .flatMap(_.liftTo[F])
-            .map(_.some)
-        }.handleErrorWith { e =>
-          logger
-            .warn(e)(s"Failure pulling single snapshot with ordinal=$ordinal")
-            .map(_ => none[Hashed[GlobalSnapshot]])
+          l0GlobalSnapshotClient.getLatest(l0Peer).flatMap {
+            case ((snapshot, state)) =>
+              snapshot.toHashedWithSignatureCheck.flatMap(_.liftTo[F]).map((_, state))
+          }
         }
 
-      def pullGlobalSnapshots: F[List[Hashed[GlobalSnapshot]]] = {
-        for {
-          lastStoredOrdinal <- lastGlobalSnapshotStorage.getOrdinal
-          l0Peer <- globalL0ClusterStorage.getRandomPeer
+      def pullGlobalSnapshot(hash: Hash): F[Option[Hashed[GlobalIncrementalSnapshot]]] =
+        pullGlobalSnapshot(l0GlobalSnapshotClient.get(hash)).handleErrorWith { e =>
+          logger
+            .warn(e)(s"Failure pulling single snapshot with hash=$hash")
+            .map(_ => none[Hashed[GlobalIncrementalSnapshot]])
+        }
 
-          pulled <- l0GlobalSnapshotClient.getLatestOrdinal
-            .run(l0Peer)
-            .map { lastOrdinal =>
-              val nextOrdinal = lastStoredOrdinal.map(_.next).getOrElse(lastOrdinal)
-              val lastOrdinalCap = lastOrdinal.value.value
-                .min(singlePullLimit.map(nextOrdinal.value.value + _.value).getOrElse(lastOrdinal.value.value))
+      def pullGlobalSnapshot(ordinal: SnapshotOrdinal): F[Option[Hashed[GlobalIncrementalSnapshot]]] =
+        pullGlobalSnapshot(l0GlobalSnapshotClient.get(ordinal)).handleErrorWith { e =>
+          logger
+            .warn(e)(s"Failure pulling single snapshot with ordinal=$ordinal")
+            .map(_ => none[Hashed[GlobalIncrementalSnapshot]])
+        }
 
-              nextOrdinal.value.value to lastOrdinalCap
+      private def pullGlobalSnapshot(
+        peerResponse: PeerResponse.PeerResponse[F, Signed[GlobalIncrementalSnapshot]]
+      ): F[Option[Hashed[GlobalIncrementalSnapshot]]] =
+        globalL0ClusterStorage.getRandomPeer.flatMap { l0Peer =>
+          peerResponse(l0Peer)
+            .flatMap(_.toHashedWithSignatureCheck.flatMap(_.liftTo[F]))
+            .map(_.some)
+        }
+
+      def pullGlobalSnapshots: F[Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), List[Hashed[GlobalIncrementalSnapshot]]]] =
+        lastGlobalSnapshotStorage.getOrdinal.flatMap {
+          _.fold {
+            pullLatestSnapshot.map(_.asLeft[List[Hashed[GlobalIncrementalSnapshot]]])
+          } { lastStoredOrdinal =>
+            def pulled = globalL0ClusterStorage.getRandomPeer.flatMap { l0Peer =>
+              l0GlobalSnapshotClient.getLatestOrdinal
+                .run(l0Peer)
+                .map { lastOrdinal =>
+                  val nextOrdinal = lastStoredOrdinal.next
+                  val lastOrdinalCap = lastOrdinal.value.value
+                    .min(singlePullLimit.map(nextOrdinal.value.value + _.value).getOrElse(lastOrdinal.value.value))
+
+                  nextOrdinal.value.value to lastOrdinalCap
+                }
+                .map(_.toList.map(o => SnapshotOrdinal(NonNegLong.unsafeFrom(o))))
+                .flatMap { ordinals =>
+                  (ordinals, List.empty[Hashed[GlobalIncrementalSnapshot]]).tailRecM {
+                    case (ordinal :: nextOrdinals, snapshots) =>
+                      l0GlobalSnapshotClient
+                        .get(ordinal)(l0Peer)
+                        .flatMap(_.toHashedWithSignatureCheck.flatMap(_.liftTo[F]))
+                        .map(s => (nextOrdinals, snapshots :+ s).asLeft[List[Hashed[GlobalIncrementalSnapshot]]])
+                        .handleErrorWith { e =>
+                          logger
+                            .warn(e)(s"Failure pulling snapshot with ordinal=$ordinal")
+                            .map(_ => snapshots.asRight[(List[SnapshotOrdinal], List[Hashed[GlobalIncrementalSnapshot]])])
+                        }
+
+                    case (Nil, snapshots) =>
+                      Applicative[F].pure(snapshots.asRight[(List[SnapshotOrdinal], List[Hashed[GlobalIncrementalSnapshot]])])
+                  }
+                }
             }
-            .map(_.toList.map(o => SnapshotOrdinal(NonNegLong.unsafeFrom(o))))
-            .flatMap { ordinals =>
-              (ordinals, List.empty[Hashed[GlobalSnapshot]]).tailRecM {
-                case (ordinal :: nextOrdinals, snapshots) =>
-                  l0GlobalSnapshotClient
-                    .get(ordinal)(l0Peer)
-                    .flatMap(_.toHashedWithSignatureCheck)
-                    .flatMap(_.liftTo[F])
-                    .map(s => (nextOrdinals, snapshots :+ s).asLeft[List[Hashed[GlobalSnapshot]]])
-                    .handleErrorWith { e =>
-                      logger
-                        .warn(e)(s"Failure pulling snapshot with ordinal=$ordinal")
-                        .map(_ => snapshots.asRight[(List[SnapshotOrdinal], List[Hashed[GlobalSnapshot]])])
-                    }
 
-                case (Nil, snapshots) =>
-                  Applicative[F].pure(snapshots.asRight[(List[SnapshotOrdinal], List[Hashed[GlobalSnapshot]])])
-              }
-            }
-        } yield pulled
-      }.handleErrorWith { e =>
-        logger.warn(e)(s"Failure pulling global snapshots!") >>
-          Applicative[F].pure(List.empty[Hashed[GlobalSnapshot]])
-      }
+            pulled.map(_.asRight[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)])
+          }
+        }.handleErrorWith { e =>
+          logger.warn(e)(s"Failure pulling global snapshots!") >>
+            Applicative[F].pure(
+              List.empty[Hashed[GlobalIncrementalSnapshot]].asRight[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]
+            )
+        }
     }
 }

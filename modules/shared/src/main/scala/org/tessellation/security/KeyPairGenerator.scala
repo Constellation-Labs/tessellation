@@ -1,4 +1,4 @@
-package org.tessellation.keytool
+package org.tessellation.security
 
 import java.security.spec.ECGenParameterSpec
 import java.security.{KeyPair, KeyPairGenerator => JKeyPairGenerator}

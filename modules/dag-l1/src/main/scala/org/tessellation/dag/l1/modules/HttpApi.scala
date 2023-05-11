@@ -11,7 +11,7 @@ import org.tessellation.dag.l1.http.Routes
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.Block
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.snapshot.Snapshot
+import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.schema.transaction.Transaction
 import org.tessellation.sdk.config.types.HttpConfig
 import org.tessellation.sdk.http.p2p.middleware.{PeerAuthMiddleware, `X-Id-Middleware`}
@@ -32,32 +32,36 @@ object HttpApi {
     F[_]: Async: KryoSerializer: SecurityProvider: Metrics: Supervisor,
     T <: Transaction: Decoder: Encoder: Show,
     B <: Block[T],
-    S <: Snapshot[T, B]
+    P <: StateProof,
+    S <: Snapshot[T, B],
+    SI <: SnapshotInfo[P]
   ](
-    storages: Storages[F, T, B, S],
+    storages: Storages[F, T, B, P, S, SI],
     queues: Queues[F, T, B],
     privateKey: PrivateKey,
-    services: Services[F, T, B],
-    programs: Programs[F, T, B, S],
+    services: Services[F, T, B, P, S, SI],
+    programs: Programs[F, T, B, P, S, SI],
     healthchecks: HealthChecks[F],
     selfId: PeerId,
     nodeVersion: String,
     httpCfg: HttpConfig
-  ): HttpApi[F, T, B, S] =
-    new HttpApi[F, T, B, S](storages, queues, privateKey, services, programs, healthchecks, selfId, nodeVersion, httpCfg) {}
+  ): HttpApi[F, T, B, P, S, SI] =
+    new HttpApi[F, T, B, P, S, SI](storages, queues, privateKey, services, programs, healthchecks, selfId, nodeVersion, httpCfg) {}
 }
 
 sealed abstract class HttpApi[
   F[_]: Async: KryoSerializer: SecurityProvider: Metrics: Supervisor,
   T <: Transaction: Decoder: Encoder: Show,
   B <: Block[T],
-  S <: Snapshot[T, B]
+  P <: StateProof,
+  S <: Snapshot[T, B],
+  SI <: SnapshotInfo[P]
 ] private (
-  storages: Storages[F, T, B, S],
+  storages: Storages[F, T, B, P, S, SI],
   queues: Queues[F, T, B],
   privateKey: PrivateKey,
-  services: Services[F, T, B],
-  programs: Programs[F, T, B, S],
+  services: Services[F, T, B, P, S, SI],
+  programs: Programs[F, T, B, P, S, SI],
   healthchecks: HealthChecks[F],
   selfId: PeerId,
   nodeVersion: String,

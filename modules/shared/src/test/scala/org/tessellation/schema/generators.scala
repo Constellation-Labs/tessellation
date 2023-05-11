@@ -21,6 +21,7 @@ import org.tessellation.security.signature.signature.{Signature, SignatureProof}
 
 import com.comcast.ip4s.{Host, Port}
 import eu.timepit.refined.api.{RefType, Validate}
+import eu.timepit.refined.auto._
 import eu.timepit.refined.refineV
 import eu.timepit.refined.scalacheck.numeric._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
@@ -90,7 +91,13 @@ object generators {
     Arbitrary.arbitrary[NonNegLong].map(Balance(_))
 
   val transactionAmountGen: Gen[TransactionAmount] = Arbitrary.arbitrary[PosLong].map(TransactionAmount(_))
-  val transactionFeeGen: Gen[TransactionFee] = Arbitrary.arbitrary[NonNegLong].map(TransactionFee(_))
+
+  // total supply is lower than Long.MaxValue so generated fee needs to be limited to avoid cases which won't happen
+  val feeMaxVal: TransactionFee = TransactionFee(NonNegLong(99999999_00000000L))
+
+  val transactionFeeGen: Gen[TransactionFee] =
+    chooseRefinedNum(NonNegLong(0L), feeMaxVal.value).map(TransactionFee(_))
+
   val transactionOrdinalGen: Gen[TransactionOrdinal] = Arbitrary.arbitrary[NonNegLong].map(TransactionOrdinal(_))
 
   val transactionReferenceGen: Gen[TransactionReference] =

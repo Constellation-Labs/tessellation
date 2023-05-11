@@ -8,10 +8,11 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.show._
 
-import org.tessellation.currency.l0.snapshot.CurrencySnapshotArtifact
 import org.tessellation.currency.l0.snapshot.storages.LastSignedBinaryHashStorage
+import org.tessellation.currency.l0.snapshot.{CurrencySnapshotArtifact, CurrencySnapshotContext}
+import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.crypto._
-import org.tessellation.ext.kryo._
+import org.tessellation.json.JsonBinarySerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
@@ -24,7 +25,8 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait StateChannelSnapshotService[F[_]] {
 
-  def consume(signedArtifact: Signed[CurrencySnapshotArtifact]): F[Unit]
+  def consume(signedArtifact: Signed[CurrencySnapshotArtifact], context: CurrencySnapshotContext): F[Unit]
+  def createGenesisBinary(snapshot: Signed[CurrencySnapshot]): F[Signed[StateChannelSnapshotBinary]]
   def createBinary(snapshot: Signed[CurrencySnapshotArtifact]): F[Signed[StateChannelSnapshotBinary]]
 }
 
@@ -34,18 +36,24 @@ object StateChannelSnapshotService {
     lastSignedBinaryHashStorage: LastSignedBinaryHashStorage[F],
     stateChannelSnapshotClient: StateChannelSnapshotClient[F],
     globalL0ClusterStorage: L0ClusterStorage[F],
-    snapshotStorage: SnapshotStorage[F, CurrencySnapshotArtifact]
+    snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
   ): StateChannelSnapshotService[F] =
     new StateChannelSnapshotService[F] {
       private val logger = Slf4jLogger.getLogger
 
-      def createBinary(snapshot: Signed[CurrencySnapshotArtifact]): F[Signed[StateChannelSnapshotBinary]] = for {
+      def createGenesisBinary(snapshot: Signed[CurrencySnapshot]): F[Signed[StateChannelSnapshotBinary]] = for {
         lastSnapshotBinaryHash <- lastSignedBinaryHashStorage.get
-        bytes <- snapshot.toBinaryF
-        binary <- StateChannelSnapshotBinary(lastSnapshotBinaryHash, bytes).sign(keyPair)
+        bytes = JsonBinarySerializer.serialize(snapshot)
+        binary <- StateChannelSnapshotBinary(lastSnapshotBinaryHash, bytes, SnapshotFee.MinValue).sign(keyPair)
       } yield binary
 
-      def consume(signedArtifact: Signed[CurrencySnapshotArtifact]): F[Unit] = for {
+      def createBinary(snapshot: Signed[CurrencySnapshotArtifact]): F[Signed[StateChannelSnapshotBinary]] = for {
+        lastSnapshotBinaryHash <- lastSignedBinaryHashStorage.get
+        bytes = JsonBinarySerializer.serialize(snapshot)
+        binary <- StateChannelSnapshotBinary(lastSnapshotBinaryHash, bytes, SnapshotFee.MinValue).sign(keyPair)
+      } yield binary
+
+      def consume(signedArtifact: Signed[CurrencySnapshotArtifact], context: CurrencySnapshotContext): F[Unit] = for {
         binary <- createBinary(signedArtifact)
         binaryHash <- binary.hashF
         l0Peer <- globalL0ClusterStorage.getRandomPeer
@@ -57,7 +65,7 @@ object StateChannelSnapshotService {
           )
         _ <- lastSignedBinaryHashStorage.set(binaryHash)
         _ <- snapshotStorage
-          .prepend(signedArtifact)
+          .prepend(signedArtifact, context)
           .ifM(
             Applicative[F].unit,
             logger.error("Cannot save CurrencySnapshot into the storage")

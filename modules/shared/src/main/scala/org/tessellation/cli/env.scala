@@ -10,8 +10,6 @@ import io.estatico.newtype.ops._
 
 object env {
 
-  sealed trait EnvOpt
-
   @newtype
   case class Password(value: Secret[String])
 
@@ -56,5 +54,12 @@ object env {
     val opts: Opts[StorePath] = Opts
       .env[Path]("CL_KEYSTORE", help = "Keystore path")
       .map(_.coerce)
+  }
+
+  @newtype
+  case class SeedListPath(value: Path)
+
+  object SeedListPath {
+    val opts: Opts[Option[SeedListPath]] = Opts.option[SeedListPath]("seedlist", "").orNone
   }
 }

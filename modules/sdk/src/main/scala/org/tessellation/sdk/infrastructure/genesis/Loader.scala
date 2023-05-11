@@ -10,6 +10,7 @@ import org.tessellation.sdk.domain.genesis.types.GenesisCSVAccount
 import fs2.data.csv._
 import fs2.io.file.{Files, Path}
 import fs2.text
+
 object Loader {
 
   def make[F[_]: Async]: Loader[F] =
@@ -21,7 +22,7 @@ object Loader {
           decodeWithoutHeaders[GenesisCSVAccount]()
         )
         .map(_.toGenesisAccount)
-        .map(_.bimap(e => new RuntimeException(e), identity))
+        .map(_.leftMap(new RuntimeException(_)))
         .rethrow
         .compile
         .toList

@@ -2,6 +2,8 @@ package org.tessellation.dag.l1.domain.snapshot.programs
 
 import cats.data.NonEmptyList
 import cats.effect.Async
+import cats.kernel.Eq
+import cats.syntax.applicativeError._
 import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
@@ -18,7 +20,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.height.{Height, SubHeight}
-import org.tessellation.schema.snapshot.Snapshot
+import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.schema.transaction.{Transaction, TransactionReference}
 import org.tessellation.sdk.domain.snapshot.Validator
 import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
@@ -31,21 +33,37 @@ import derevo.derive
 import eu.timepit.refined.types.numeric.NonNegLong
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider, T <: Transaction, B <: Block[T], S <: Snapshot[T, B]] {
+abstract class SnapshotProcessor[
+  F[_]: Async: KryoSerializer: SecurityProvider,
+  T <: Transaction,
+  B <: Block[T],
+  P <: StateProof,
+  S <: Snapshot[T, B]: Eq,
+  SI <: SnapshotInfo[P]
+] {
   import SnapshotProcessor._
 
-  def process(globalSnapshot: Hashed[GlobalSnapshot]): F[SnapshotProcessingResult]
+  def process(
+    snapshot: Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), Hashed[GlobalIncrementalSnapshot]]
+  ): F[SnapshotProcessingResult]
+
+  def applyGlobalSnapshotFn(
+    lastGlobalState: GlobalSnapshotInfo,
+    lastGlobalSnapshot: GlobalIncrementalSnapshot,
+    globalSnapshot: Signed[GlobalIncrementalSnapshot]
+  ): F[GlobalSnapshotInfo]
+
+  def applySnapshotFn(lastState: SI, lastSnapshot: S, snapshot: Signed[S]): F[SI]
 
   def processAlignment(
-    snapshot: Hashed[S],
     alignment: Alignment,
     blockStorage: BlockStorage[F, B],
     transactionStorage: TransactionStorage[F, T],
-    lastSnapshotStorage: LastSnapshotStorage[F, S],
+    lastSnapshotStorage: LastSnapshotStorage[F, S, SI],
     addressStorage: AddressStorage[F]
   ): F[SnapshotProcessingResult] =
     alignment match {
-      case AlignedAtNewOrdinal(toMarkMajority, tipsToDeprecate, tipsToRemove, txRefsToMarkMajority, postponedToWaiting) =>
+      case AlignedAtNewOrdinal(snapshot, state, toMarkMajority, tipsToDeprecate, tipsToRemove, txRefsToMarkMajority, postponedToWaiting) =>
         val adjustToMajority: F[Unit] =
           blockStorage
             .adjustToMajority(
@@ -59,7 +77,7 @@ abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider, 
           transactionStorage.markMajority(txRefsToMarkMajority)
 
         val setSnapshot: F[Unit] =
-          lastSnapshotStorage.set(snapshot)
+          lastSnapshotStorage.set(snapshot, state)
 
         adjustToMajority >>
           markTxRefsAsMajority >>
@@ -70,7 +88,16 @@ abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider, 
             )
           }
 
-      case AlignedAtNewHeight(toMarkMajority, obsoleteToRemove, tipsToDeprecate, tipsToRemove, txRefsToMarkMajority, postponedToWaiting) =>
+      case AlignedAtNewHeight(
+            snapshot,
+            state,
+            toMarkMajority,
+            obsoleteToRemove,
+            tipsToDeprecate,
+            tipsToRemove,
+            txRefsToMarkMajority,
+            postponedToWaiting
+          ) =>
         val adjustToMajority: F[Unit] =
           blockStorage
             .adjustToMajority(
@@ -85,7 +112,7 @@ abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider, 
           transactionStorage.markMajority(txRefsToMarkMajority)
 
         val setSnapshot: F[Unit] =
-          lastSnapshotStorage.set(snapshot)
+          lastSnapshotStorage.set(snapshot, state)
 
         adjustToMajority >>
           markTxRefsAsMajority >>
@@ -96,7 +123,7 @@ abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider, 
             )
           }
 
-      case DownloadNeeded(toAdd, obsoleteToRemove, activeTips, deprecatedTips, relatedPostponed) =>
+      case DownloadNeeded(snapshot, state, toAdd, obsoleteToRemove, activeTips, deprecatedTips, relatedPostponed) =>
         val adjustToMajority: F[Unit] =
           blockStorage.adjustToMajority(
             toAdd = toAdd,
@@ -108,13 +135,13 @@ abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider, 
 
         val setBalances: F[Unit] =
           addressStorage.clean >>
-            addressStorage.updateBalances(snapshot.info.balances)
+            addressStorage.updateBalances(state.balances)
 
         val setTransactionRefs: F[Unit] =
-          transactionStorage.setLastAccepted(snapshot.info.lastTxRefs)
+          transactionStorage.setLastAccepted(state.lastTxRefs)
 
         val setInitialSnapshot: F[Unit] =
-          lastSnapshotStorage.setInitial(snapshot)
+          lastSnapshotStorage.setInitial(snapshot, state)
 
         adjustToMajority >>
           setBalances >>
@@ -128,6 +155,8 @@ abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider, 
           }
 
       case RedownloadNeeded(
+            snapshot,
+            state,
             toAdd,
             toMarkMajority,
             acceptedToRemove,
@@ -151,13 +180,13 @@ abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider, 
 
         val setBalances: F[Unit] =
           addressStorage.clean >>
-            addressStorage.updateBalances(snapshot.info.balances)
+            addressStorage.updateBalances(state.balances)
 
         val setTransactionRefs: F[Unit] =
-          transactionStorage.setLastAccepted(snapshot.info.lastTxRefs)
+          transactionStorage.setLastAccepted(state.lastTxRefs)
 
         val setSnapshot: F[Unit] =
-          lastSnapshotStorage.set(snapshot)
+          lastSnapshotStorage.set(snapshot, state)
 
         adjustToMajority >>
           setBalances >>
@@ -171,7 +200,7 @@ abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider, 
             )
           }
 
-      case Ignore(lastHeight, lastSubHeight, lastOrdinal, processingHeight, processingSubHeight, processingOrdinal) =>
+      case Ignore(snapshot, lastHeight, lastSubHeight, lastOrdinal, processingHeight, processingSubHeight, processingOrdinal) =>
         Slf4jLogger
           .getLogger[F]
           .warn(
@@ -181,152 +210,194 @@ abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider, 
     }
 
   def checkAlignment(
-    snapshot: S,
+    snapshotWithState: Either[(Hashed[S], SI), Hashed[S]],
     blockStorage: BlockStorage[F, B],
-    lastSnapshotStorage: LastSnapshotStorage[F, S]
-  ): F[Alignment] =
-    for {
-      acceptedInMajority <- snapshot.blocks.toList.traverse {
+    lastSnapshotStorage: LastSnapshotStorage[F, S, SI]
+  ): F[Alignment] = {
+    snapshotWithState
+      .fold({ case (snapshot, _) => snapshot }, identity)
+      .blocks
+      .toList
+      .traverse {
         case BlockAsActiveTip(block, usageCount) =>
           block.toHashedWithSignatureCheck.flatMap(_.liftTo[F]).map(b => b.proofsHash -> (b, usageCount))
-      }.map(_.toMap)
-
-      SnapshotTips(snapshotDeprecatedTips, snapshotRemainedActive) = snapshot.tips
-
-      result <- lastSnapshotStorage.get.flatMap {
-        case Some(last) =>
-          Validator.compare[S](last, snapshot) match {
-            case Validator.NextSubHeight =>
-              val isDependent =
-                (block: Signed[B]) => BlockRelations.dependsOn[F, T, B](acceptedInMajority.values.map(_._1).toSet)(block)
-
-              blockStorage.getBlocksForMajorityReconciliation(last.height, snapshot.height, isDependent).flatMap {
-                case MajorityReconciliationData(deprecatedTips, activeTips, _, _, relatedPostponed, _, acceptedAbove) =>
-                  val onlyInMajority = acceptedInMajority -- acceptedAbove
-                  val toMarkMajority = acceptedInMajority.view.filterKeys(acceptedAbove.contains).mapValues(_._2)
-                  lazy val toAdd = onlyInMajority.values.toSet
-                  lazy val toReset = acceptedAbove -- toMarkMajority.keySet
-                  val tipsToRemove = deprecatedTips -- snapshotDeprecatedTips.map(_.block.hash)
-                  val deprecatedTipsToAdd = snapshotDeprecatedTips.map(_.block.hash) -- deprecatedTips
-                  val tipsToDeprecate = activeTips -- snapshotRemainedActive.map(_.block.hash)
-                  val areTipsAligned = deprecatedTipsToAdd == tipsToDeprecate
-                  lazy val txRefsToMarkMajority = extractMajorityTxRefs(acceptedInMajority, snapshot)
-                  lazy val postponedToWaiting = relatedPostponed -- toAdd.map(_._1.proofsHash) -- toReset
-
-                  if (!areTipsAligned)
-                    MonadThrow[F].raiseError[Alignment](TipsGotMisaligned(deprecatedTipsToAdd, tipsToDeprecate))
-                  else if (onlyInMajority.isEmpty)
-                    Applicative[F].pure[Alignment](
-                      AlignedAtNewOrdinal(toMarkMajority.toSet, tipsToDeprecate, tipsToRemove, txRefsToMarkMajority, postponedToWaiting)
-                    )
-                  else
-                    Applicative[F]
-                      .pure[Alignment](
-                        RedownloadNeeded(
-                          toAdd,
-                          toMarkMajority.toSet,
-                          Set.empty,
-                          Set.empty,
-                          toReset,
-                          tipsToDeprecate,
-                          tipsToRemove,
-                          postponedToWaiting
-                        )
-                      )
-              }
-
-            case Validator.NextHeight =>
-              val isDependent =
-                (block: Signed[B]) => BlockRelations.dependsOn[F, T, B](acceptedInMajority.values.map(_._1).toSet)(block)
-
-              blockStorage.getBlocksForMajorityReconciliation(last.height, snapshot.height, isDependent).flatMap {
-                case MajorityReconciliationData(
-                      deprecatedTips,
-                      activeTips,
-                      waitingInRange,
-                      postponedInRange,
-                      relatedPostponed,
-                      acceptedInRange,
-                      acceptedAbove
-                    ) =>
-                  val acceptedLocally = acceptedInRange ++ acceptedAbove
-                  val onlyInMajority = acceptedInMajority -- acceptedLocally
-                  val toMarkMajority = acceptedInMajority.view.filterKeys(acceptedLocally.contains).mapValues(_._2)
-                  val acceptedToRemove = acceptedInRange -- acceptedInMajority.keySet
-                  lazy val toAdd = onlyInMajority.values.toSet
-                  lazy val toReset = acceptedLocally -- toMarkMajority.keySet -- acceptedToRemove
-                  val obsoleteToRemove = waitingInRange ++ postponedInRange -- onlyInMajority.keySet
-                  val tipsToRemove = deprecatedTips -- snapshotDeprecatedTips.map(_.block.hash)
-                  val deprecatedTipsToAdd = snapshotDeprecatedTips.map(_.block.hash) -- deprecatedTips
-                  val tipsToDeprecate = activeTips -- snapshotRemainedActive.map(_.block.hash)
-                  val areTipsAligned = deprecatedTipsToAdd == tipsToDeprecate
-                  lazy val txRefsToMarkMajority = extractMajorityTxRefs(acceptedInMajority, snapshot)
-                  lazy val postponedToWaiting = relatedPostponed -- obsoleteToRemove -- toAdd.map(_._1.proofsHash) -- toReset
-
-                  if (!areTipsAligned)
-                    MonadThrow[F].raiseError[Alignment](TipsGotMisaligned(deprecatedTipsToAdd, tipsToDeprecate))
-                  else if (onlyInMajority.isEmpty && acceptedToRemove.isEmpty)
-                    Applicative[F].pure[Alignment](
-                      AlignedAtNewHeight(
-                        toMarkMajority.toSet,
-                        obsoleteToRemove,
-                        tipsToDeprecate,
-                        tipsToRemove,
-                        txRefsToMarkMajority,
-                        postponedToWaiting
-                      )
-                    )
-                  else
-                    Applicative[F].pure[Alignment](
-                      RedownloadNeeded(
-                        toAdd,
-                        toMarkMajority.toSet,
-                        acceptedToRemove,
-                        obsoleteToRemove,
-                        toReset,
-                        tipsToDeprecate,
-                        tipsToRemove,
-                        postponedToWaiting
-                      )
-                    )
-              }
-
-            case Validator.NotNext =>
-              Applicative[F].pure[Alignment](
-                Ignore(last.height, last.subHeight, last.ordinal, snapshot.height, snapshot.subHeight, snapshot.ordinal)
-              )
-          }
-
-        case None =>
-          val isDependent = (block: Signed[B]) =>
-            BlockRelations.dependsOn[F, T, B](
-              acceptedInMajority.values.map(_._1).toSet,
-              snapshotDeprecatedTips.map(_.block) ++ snapshotRemainedActive.map(_.block)
-            )(block)
-
-          blockStorage.getBlocksForMajorityReconciliation(Height.MinValue, snapshot.height, isDependent).flatMap {
-            case MajorityReconciliationData(_, _, waitingInRange, postponedInRange, relatedPostponed, _, _) =>
-              val initialBlocksAndTips =
-                acceptedInMajority.keySet ++ snapshotRemainedActive.map(_.block.hash) ++ snapshotDeprecatedTips.map(_.block.hash)
-              val obsoleteToRemove = waitingInRange ++ postponedInRange -- initialBlocksAndTips
-              val postponedToWaiting = relatedPostponed -- postponedInRange -- initialBlocksAndTips
-
-              Applicative[F].pure[Alignment](
-                DownloadNeeded(
-                  acceptedInMajority.values.toSet,
-                  obsoleteToRemove,
-                  snapshotRemainedActive,
-                  snapshotDeprecatedTips.map(_.block),
-                  postponedToWaiting
-                )
-              )
-          }
       }
-    } yield result
+      .map(_.toMap)
+      .flatMap { acceptedInMajority =>
+        snapshotWithState match {
+          case Left((snapshot, state)) =>
+            val SnapshotTips(snapshotDeprecatedTips, snapshotRemainedActive) = snapshot.tips
+            lastSnapshotStorage.getCombined.flatMap {
+              case None =>
+                val isDependent = (block: Signed[B]) =>
+                  BlockRelations.dependsOn[F, T, B](
+                    acceptedInMajority.values.map(_._1).toSet,
+                    snapshotDeprecatedTips.map(_.block) ++ snapshotRemainedActive.map(_.block)
+                  )(block)
+
+                blockStorage.getBlocksForMajorityReconciliation(Height.MinValue, snapshot.height, isDependent).flatMap {
+                  case MajorityReconciliationData(_, _, waitingInRange, postponedInRange, relatedPostponed, _, _) =>
+                    val initialBlocksAndTips =
+                      acceptedInMajority.keySet ++ snapshotRemainedActive.map(_.block.hash) ++ snapshotDeprecatedTips.map(_.block.hash)
+                    val obsoleteToRemove = waitingInRange ++ postponedInRange -- initialBlocksAndTips
+                    val postponedToWaiting = relatedPostponed -- postponedInRange -- initialBlocksAndTips
+
+                    Applicative[F].pure[Alignment](
+                      DownloadNeeded(
+                        snapshot,
+                        state,
+                        acceptedInMajority.values.toSet,
+                        obsoleteToRemove,
+                        snapshotRemainedActive,
+                        snapshotDeprecatedTips.map(_.block),
+                        postponedToWaiting
+                      )
+                    )
+                }
+              case _ => (new Throwable("unexpected state: latest snapshot found")).raiseError[F, Alignment]
+            }
+          case Right(snapshot) =>
+            val SnapshotTips(snapshotDeprecatedTips, snapshotRemainedActive) = snapshot.tips
+            lastSnapshotStorage.getCombined.flatMap {
+              case Some((lastSnapshot, lastState)) =>
+                Validator.compare[S](lastSnapshot, snapshot.signed.value) match {
+                  case Validator.NextSubHeight =>
+                    val isDependent =
+                      (block: Signed[B]) => BlockRelations.dependsOn[F, T, B](acceptedInMajority.values.map(_._1).toSet)(block)
+
+                    applySnapshotFn(lastState, lastSnapshot, snapshot.signed).flatMap { state =>
+                      blockStorage.getBlocksForMajorityReconciliation(lastSnapshot.height, snapshot.height, isDependent).flatMap {
+                        case MajorityReconciliationData(deprecatedTips, activeTips, _, _, relatedPostponed, _, acceptedAbove) =>
+                          val onlyInMajority = acceptedInMajority -- acceptedAbove
+                          val toMarkMajority = acceptedInMajority.view.filterKeys(acceptedAbove.contains).mapValues(_._2)
+                          lazy val toAdd = onlyInMajority.values.toSet
+                          lazy val toReset = acceptedAbove -- toMarkMajority.keySet
+                          val tipsToRemove = deprecatedTips -- snapshotDeprecatedTips.map(_.block.hash)
+                          val deprecatedTipsToAdd = snapshotDeprecatedTips.map(_.block.hash) -- deprecatedTips
+                          val tipsToDeprecate = activeTips -- snapshotRemainedActive.map(_.block.hash)
+                          val areTipsAligned = deprecatedTipsToAdd == tipsToDeprecate
+                          lazy val txRefsToMarkMajority = extractMajorityTxRefs(acceptedInMajority, state)
+                          lazy val postponedToWaiting = relatedPostponed -- toAdd.map(_._1.proofsHash) -- toReset
+
+                          if (!areTipsAligned)
+                            MonadThrow[F].raiseError[Alignment](TipsGotMisaligned(deprecatedTipsToAdd, tipsToDeprecate))
+                          else if (onlyInMajority.isEmpty)
+                            Applicative[F].pure[Alignment](
+                              AlignedAtNewOrdinal(
+                                snapshot,
+                                state,
+                                toMarkMajority.toSet,
+                                tipsToDeprecate,
+                                tipsToRemove,
+                                txRefsToMarkMajority,
+                                postponedToWaiting
+                              )
+                            )
+                          else
+                            Applicative[F]
+                              .pure[Alignment](
+                                RedownloadNeeded(
+                                  snapshot,
+                                  state,
+                                  toAdd,
+                                  toMarkMajority.toSet,
+                                  Set.empty,
+                                  Set.empty,
+                                  toReset,
+                                  tipsToDeprecate,
+                                  tipsToRemove,
+                                  postponedToWaiting
+                                )
+                              )
+                      }
+                    }
+
+                  case Validator.NextHeight =>
+                    val isDependent =
+                      (block: Signed[B]) => BlockRelations.dependsOn[F, T, B](acceptedInMajority.values.map(_._1).toSet)(block)
+
+                    applySnapshotFn(lastState, lastSnapshot, snapshot.signed).flatMap { state =>
+                      blockStorage.getBlocksForMajorityReconciliation(lastSnapshot.height, snapshot.height, isDependent).flatMap {
+                        case MajorityReconciliationData(
+                              deprecatedTips,
+                              activeTips,
+                              waitingInRange,
+                              postponedInRange,
+                              relatedPostponed,
+                              acceptedInRange,
+                              acceptedAbove
+                            ) =>
+                          val acceptedLocally = acceptedInRange ++ acceptedAbove
+                          val onlyInMajority = acceptedInMajority -- acceptedLocally
+                          val toMarkMajority = acceptedInMajority.view.filterKeys(acceptedLocally.contains).mapValues(_._2)
+                          val acceptedToRemove = acceptedInRange -- acceptedInMajority.keySet
+                          lazy val toAdd = onlyInMajority.values.toSet
+                          lazy val toReset = acceptedLocally -- toMarkMajority.keySet -- acceptedToRemove
+                          val obsoleteToRemove = waitingInRange ++ postponedInRange -- onlyInMajority.keySet
+                          val tipsToRemove = deprecatedTips -- snapshotDeprecatedTips.map(_.block.hash)
+                          val deprecatedTipsToAdd = snapshotDeprecatedTips.map(_.block.hash) -- deprecatedTips
+                          val tipsToDeprecate = activeTips -- snapshotRemainedActive.map(_.block.hash)
+                          val areTipsAligned = deprecatedTipsToAdd == tipsToDeprecate
+                          lazy val txRefsToMarkMajority = extractMajorityTxRefs(acceptedInMajority, state)
+                          lazy val postponedToWaiting = relatedPostponed -- obsoleteToRemove -- toAdd.map(_._1.proofsHash) -- toReset
+
+                          if (!areTipsAligned)
+                            MonadThrow[F].raiseError[Alignment](TipsGotMisaligned(deprecatedTipsToAdd, tipsToDeprecate))
+                          else if (onlyInMajority.isEmpty && acceptedToRemove.isEmpty)
+                            Applicative[F].pure[Alignment](
+                              AlignedAtNewHeight(
+                                snapshot,
+                                state,
+                                toMarkMajority.toSet,
+                                obsoleteToRemove,
+                                tipsToDeprecate,
+                                tipsToRemove,
+                                txRefsToMarkMajority,
+                                postponedToWaiting
+                              )
+                            )
+                          else
+                            Applicative[F].pure[Alignment](
+                              RedownloadNeeded(
+                                snapshot,
+                                state,
+                                toAdd,
+                                toMarkMajority.toSet,
+                                acceptedToRemove,
+                                obsoleteToRemove,
+                                toReset,
+                                tipsToDeprecate,
+                                tipsToRemove,
+                                postponedToWaiting
+                              )
+                            )
+                      }
+                    }
+
+                  case Validator.NotNext =>
+                    Applicative[F].pure[Alignment](
+                      Ignore(
+                        snapshot,
+                        lastSnapshot.height,
+                        lastSnapshot.subHeight,
+                        lastSnapshot.ordinal,
+                        snapshot.height,
+                        snapshot.subHeight,
+                        snapshot.ordinal
+                      )
+                    )
+                }
+              case None => (new Throwable("unexpected state: latest snapshot not found")).raiseError[F, Alignment]
+
+            }
+        }
+
+      }
+  }
 
   private def extractMajorityTxRefs(
     acceptedInMajority: Map[ProofsHash, (Hashed[B], NonNegLong)],
-    snapshot: Snapshot[T, B]
+    state: SI
   ): Map[Address, TransactionReference] = {
     val sourceAddresses =
       acceptedInMajority.values
@@ -334,12 +405,14 @@ abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider, 
         .map(_.source)
         .toSet
 
-    snapshot.info.lastTxRefs.view.filterKeys(sourceAddresses.contains).toMap
+    state.lastTxRefs.view.filterKeys(sourceAddresses.contains).toMap
   }
 
   sealed trait Alignment
 
   case class AlignedAtNewOrdinal(
+    snapshot: Hashed[S],
+    state: SI,
     toMarkMajority: Set[(ProofsHash, NonNegLong)],
     tipsToDeprecate: Set[ProofsHash],
     tipsToRemove: Set[ProofsHash],
@@ -348,6 +421,8 @@ abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider, 
   ) extends Alignment
 
   case class AlignedAtNewHeight(
+    snapshot: Hashed[S],
+    state: SI,
     toMarkMajority: Set[(ProofsHash, NonNegLong)],
     obsoleteToRemove: Set[ProofsHash],
     tipsToDeprecate: Set[ProofsHash],
@@ -357,6 +432,8 @@ abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider, 
   ) extends Alignment
 
   case class DownloadNeeded(
+    snapshot: Hashed[S],
+    state: SI,
     toAdd: Set[(Hashed[B], NonNegLong)],
     obsoleteToRemove: Set[ProofsHash],
     activeTips: Set[ActiveTip],
@@ -365,6 +442,8 @@ abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider, 
   ) extends Alignment
 
   case class RedownloadNeeded(
+    snapshot: Hashed[S],
+    state: SI,
     toAdd: Set[(Hashed[B], NonNegLong)],
     toMarkMajority: Set[(ProofsHash, NonNegLong)],
     acceptedToRemove: Set[ProofsHash],
@@ -376,6 +455,7 @@ abstract class SnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider, 
   ) extends Alignment
 
   case class Ignore(
+    snapshot: Hashed[S],
     lastHeight: Height,
     lastSubHeight: SubHeight,
     lastOrdinal: SnapshotOrdinal,

@@ -4,13 +4,13 @@ import cats.syntax.contravariantSemigroupal._
 
 import scala.concurrent.duration.{DurationDouble, DurationInt}
 
-import org.tessellation.cli.env.{KeyAlias, Password, StorePath}
+import org.tessellation.cli.env._
 import org.tessellation.dag.l1.config.types.AppConfig
 import org.tessellation.dag.l1.domain.consensus.block.config.ConsensusConfig
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.L0Peer
-import org.tessellation.sdk.cli.opts.{seedlistPathOpts, trustRatingsPathOpts}
+import org.tessellation.sdk.cli.opts.trustRatingsPathOpts
 import org.tessellation.sdk.cli.{CliMethod, CollateralAmountOpts, L0PeerOpts}
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types._
@@ -57,6 +57,8 @@ object method {
       healthCheck = healthCheckConfig(false),
       collateral = collateralConfig(environment, collateralAmount)
     )
+
+    val stateChannelSeedlistConfig: StateChannelSeedlistConfig = StateChannelSeedlistConfig(None)
   }
 
   case class RunInitialValidator(
@@ -66,7 +68,7 @@ object method {
     environment: AppEnvironment,
     httpConfig: HttpConfig,
     l0Peer: L0Peer,
-    seedlistPath: Option[Path],
+    seedlistPath: Option[SeedListPath],
     collateralAmount: Option[Amount],
     trustRatingsPath: Option[Path]
   ) extends Run
@@ -81,7 +83,7 @@ object method {
         AppEnvironment.opts,
         http.opts,
         L0PeerOpts.opts,
-        seedlistPathOpts,
+        SeedListPath.opts,
         CollateralAmountOpts.opts,
         trustRatingsPathOpts
       ).mapN(RunInitialValidator.apply)
@@ -95,7 +97,7 @@ object method {
     environment: AppEnvironment,
     httpConfig: HttpConfig,
     l0Peer: L0Peer,
-    seedlistPath: Option[Path],
+    seedlistPath: Option[SeedListPath],
     collateralAmount: Option[Amount],
     trustRatingsPath: Option[Path]
   ) extends Run
@@ -110,7 +112,7 @@ object method {
         AppEnvironment.opts,
         http.opts,
         L0PeerOpts.opts,
-        seedlistPathOpts,
+        SeedListPath.opts,
         CollateralAmountOpts.opts,
         trustRatingsPathOpts
       ).mapN(RunValidator.apply)

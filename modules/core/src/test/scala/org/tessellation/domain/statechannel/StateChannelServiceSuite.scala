@@ -6,16 +6,16 @@ import cats.effect.kernel.Resource
 import cats.effect.std.Queue
 import cats.syntax.validated._
 
+import org.tessellation.currency.schema.currency.SnapshotFee
 import org.tessellation.domain.cell.L0Cell
-import org.tessellation.domain.statechannel.StateChannelValidator.StateChannelValidationErrorOr
-import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.block.DAGBlock
-import org.tessellation.security.SecurityProvider
+import org.tessellation.sdk.domain.statechannel.StateChannelValidator
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed.forAsyncKryo
+import org.tessellation.security.{KeyPairGenerator, SecurityProvider}
 import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
 
@@ -57,7 +57,7 @@ object StateChannelServiceSuite extends MutableIOSuite {
   def mkService(failed: Option[StateChannelValidator.StateChannelValidationError] = None) = {
     val validator = new StateChannelValidator[IO] {
       def validate(output: StateChannelOutput) =
-        IO.pure(failed.fold[StateChannelValidationErrorOr[StateChannelOutput]](output.validNec)(_.invalidNec))
+        IO.pure(failed.fold[StateChannelValidator.StateChannelValidationErrorOr[StateChannelOutput]](output.validNec)(_.invalidNec))
     }
 
     for {
@@ -68,7 +68,7 @@ object StateChannelServiceSuite extends MutableIOSuite {
 
   def mkStateChannelOutput()(implicit S: SecurityProvider[IO], K: KryoSerializer[IO]) = for {
     keyPair <- KeyPairGenerator.makeKeyPair[IO]
-    binary = StateChannelSnapshotBinary(Hash.empty, "test".getBytes)
+    binary = StateChannelSnapshotBinary(Hash.empty, "test".getBytes, SnapshotFee.MinValue)
     signedSC <- forAsyncKryo(binary, keyPair)
 
   } yield StateChannelOutput(keyPair.getPublic.toAddress, signedSC)

@@ -10,6 +10,7 @@ import cats.syntax.functor._
 import cats.syntax.option._
 
 import org.tessellation.ext.crypto._
+import org.tessellation.json.JsonBinarySerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.rosetta.domain._
 import org.tessellation.rosetta.domain.amount.Amount
@@ -51,14 +52,15 @@ object ConstructionService {
         .attemptT
         .leftMap(_ => InvalidPublicKey)
 
-    def getTransactionIdentifier(hex: Hex): EitherT[F, ConstructionError, TransactionIdentifier] = KryoSerializer[F]
-      .deserialize[Signed[Transaction]](hex.toBytes)
-      .liftTo[F]
-      .flatMap(_.toHashed[F])
-      .map(_.hash)
-      .map(TransactionIdentifier(_))
-      .attemptT
-      .leftMap(_ => MalformedTransaction)
+    def getTransactionIdentifier(hex: Hex): EitherT[F, ConstructionError, TransactionIdentifier] =
+      JsonBinarySerializer
+        .deserialize[Signed[DAGTransaction]](hex.toBytes)
+        .liftTo[F]
+        .flatMap(_.toHashed[F])
+        .map(_.hash)
+        .map(TransactionIdentifier(_))
+        .attemptT
+        .leftMap(_ => MalformedTransaction)
 
     def getAccountIdentifiers(operations: List[Operation]): Option[NonEmptyList[AccountIdentifier]] = {
       val accountIdentifiers =
@@ -76,21 +78,16 @@ object ConstructionService {
 
     def combineTransaction(hex: Hex, signature: RosettaSignature): EitherT[F, ConstructionError, Hex] =
       EitherT
-        .fromEither(KryoSerializer[F].deserialize[DAGTransaction](hex.toBytes))
+        .fromEither(JsonBinarySerializer.deserialize[DAGTransaction](hex.toBytes))
         .leftMap(_ => MalformedTransaction)
         .flatMap { transaction =>
           EitherT {
             signature.publicKey.hexBytes.toPublicKeyByEC
               .map(pk => SignatureProof(pk.toId, Signature(signature.hexBytes)).asRight[ConstructionError])
-          }.flatMap { proof =>
-            EitherT
-              .fromEither(
-                KryoSerializer[F]
-                  .serialize(Signed[DAGTransaction](transaction, NonEmptySet.of(proof)))
-              )
-              .leftMap(_ => MalformedTransaction.asInstanceOf[ConstructionError])
-              .map(Hex.fromBytes(_))
+          }.map { proof =>
+            JsonBinarySerializer.serialize(Signed[DAGTransaction](transaction, NonEmptySet.of(proof)))
           }
+            .map(Hex.fromBytes(_))
         }
 
     def getMetadata(publicKeys: NonEmptyList[RosettaPublicKey]): EitherT[F, ConstructionError, MetadataResult] =
@@ -135,10 +132,7 @@ object ConstructionService {
                 salt = transactionSalt
               )
 
-            serializedTxn <-
-              KryoSerializer[F]
-                .serialize(unsignedTx)
-                .leftMap(e => SerializationError(e.getMessage))
+            serializedTxn = JsonBinarySerializer.serialize(unsignedTx)
 
             unsignedTxHash <- unsignedTx.hash.leftMap[ConstructionError](e => SerializationError(e.getMessage))
             signedBytes = Hex.fromBytes(unsignedTxHash.getBytes)
@@ -169,7 +163,7 @@ object ConstructionService {
 
     private def parseSignedTransaction(hex: Hex): EitherT[F, ConstructionError, ConstructionParse.ParseResult] = {
       val result = for {
-        signedTransaction <- KryoSerializer[F].deserialize[Signed[Transaction]](hex.toBytes).toEitherT
+        signedTransaction <- JsonBinarySerializer.deserialize[Signed[DAGTransaction]](hex.toBytes).toEitherT
         operations = transactionToOperations(signedTransaction)
         proofs <- signedTransaction.proofs.toNonEmptyList.traverse(_.id.hex.toPublicKey).attemptT
         accountIds = proofs.map(_.toAddress).map(AccountIdentifier(_, none))
@@ -180,8 +174,8 @@ object ConstructionService {
 
     private def parseUnsignedTransaction(hex: Hex): EitherT[F, ConstructionError, ConstructionParse.ParseResult] =
       EitherT.fromEither(
-        KryoSerializer[F]
-          .deserialize[Transaction](hex.toBytes)
+        JsonBinarySerializer
+          .deserialize[DAGTransaction](hex.toBytes)
           .map(t => ConstructionParse.ParseResult(transactionToOperations(t), none))
           .leftMap(_ => MalformedTransaction)
       )

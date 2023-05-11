@@ -5,25 +5,23 @@ import java.security.KeyPair
 import cats.effect.kernel.Async
 import cats.effect.std.{Random, Supervisor}
 
-import org.tessellation.domain.rewards.Rewards
-import org.tessellation.domain.statechannel.StateChannelValidator
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.GlobalSnapshot
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.DAGTransaction
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotStateProof}
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types.SnapshotConfig
-import org.tessellation.sdk.domain.block.processing.BlockValidator
 import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.node.NodeStorage
+import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
-import org.tessellation.sdk.infrastructure.block.processing.BlockAcceptanceManager
 import org.tessellation.sdk.infrastructure.consensus.Consensus
 import org.tessellation.sdk.infrastructure.metrics.Metrics
+import org.tessellation.sdk.infrastructure.snapshot.GlobalSnapshotAcceptanceManager
 import org.tessellation.security.SecurityProvider
 
 import io.circe.disjunctionCodecs._
@@ -39,20 +37,18 @@ object GlobalSnapshotConsensus {
     collateral: Amount,
     clusterStorage: ClusterStorage[F],
     nodeStorage: NodeStorage[F],
-    globalSnapshotStorage: SnapshotStorage[F, GlobalSnapshot],
-    blockValidator: BlockValidator[F, DAGTransaction, DAGBlock],
-    stateChannelValidator: StateChannelValidator[F],
+    globalSnapshotStorage: SnapshotStorage[F, GlobalSnapshotArtifact, GlobalSnapshotContext],
+    snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     snapshotConfig: SnapshotConfig,
     environment: AppEnvironment,
     client: Client[F],
     session: Session[F],
-    rewards: Rewards[F]
-  ): F[Consensus[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact]] =
-    Consensus.make[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact](
+    rewards: Rewards[F, DAGTransaction, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot]
+  ): F[Consensus[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact, GlobalSnapshotContext]] =
+    Consensus.make[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact, GlobalSnapshotContext](
       GlobalSnapshotConsensusFunctions.make[F](
         globalSnapshotStorage,
-        BlockAcceptanceManager.make[F, DAGTransaction, DAGBlock](blockValidator),
-        GlobalSnapshotStateChannelEventsProcessor.make[F](stateChannelValidator),
+        snapshotAcceptanceManager,
         collateral,
         rewards,
         environment

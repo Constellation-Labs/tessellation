@@ -2,6 +2,7 @@ package org.tessellation.sdk.config
 
 import scala.concurrent.duration.FiniteDuration
 
+import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.node.NodeState
 
@@ -16,7 +17,9 @@ object types {
     gossipConfig: GossipConfig,
     httpConfig: HttpConfig,
     leavingDelay: FiniteDuration,
-    stateAfterJoining: NodeState
+    stateAfterJoining: NodeState,
+    collateral: CollateralConfig,
+    stateChannelSeedlist: StateChannelSeedlistConfig
   )
 
   case class RumorStorageConfig(
@@ -45,20 +48,15 @@ object types {
     timeTriggerInterval: FiniteDuration,
     declarationTimeout: FiniteDuration,
     declarationRangeLimit: NonNegLong,
-    lockDuration: FiniteDuration,
-    observation: ObservationConfig
+    lockDuration: FiniteDuration
   )
 
   case class SnapshotConfig(
     consensus: ConsensusConfig,
     snapshotPath: Path,
+    incrementalTmpSnapshotPath: Path,
+    incrementalPersistedSnapshotPath: Path,
     inMemoryCapacity: NonNegLong
-  )
-
-  case class ObservationConfig(
-    interval: FiniteDuration,
-    timeout: FiniteDuration,
-    offset: NonNegLong
   )
 
   case class HttpClientConfig(
@@ -96,5 +94,9 @@ object types {
 
   case class CollateralConfig(
     amount: Amount
+  )
+
+  case class StateChannelSeedlistConfig(
+    seedlist: Option[Set[Address]]
   )
 }
