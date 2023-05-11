@@ -1,5 +1,7 @@
 package org.tessellation.rosetta.domain
 
+import cats.syntax.eq._
+
 import org.tessellation.ext.derevo.magnoliaCustomizable.snakeCaseConfiguration
 import org.tessellation.rosetta.domain.amount.Amount
 
@@ -38,6 +40,9 @@ object operation {
     case object Pending extends OperationStatus(value = "Pending")
     case object Rejected extends OperationStatus(value = "Rejected")
     case object Unknown extends OperationStatus(value = "Unknown")
+
+    def isSuccessful(status: OperationStatus): Boolean =
+      status === Accepted
   }
 
   @derive(eqv, show)

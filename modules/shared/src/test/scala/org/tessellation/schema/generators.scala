@@ -134,4 +134,6 @@ object generators {
 
   val signedTransactionGen: Gen[Signed[DAGTransaction]] = signedOf(transactionGen)
 
+  val snapshotOrdinalGen: Gen[SnapshotOrdinal] =
+    Arbitrary.arbitrary[NonNegLong].map(SnapshotOrdinal(_))
 }
