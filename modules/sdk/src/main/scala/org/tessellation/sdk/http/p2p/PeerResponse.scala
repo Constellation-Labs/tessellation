@@ -54,7 +54,7 @@ object PeerResponse {
     )(implicit decoder: EntityDecoder[F, A], F: Async[F], S: SecurityProvider[F]): PeerResponse[F, A] =
       Kleisli.apply { peer =>
         val verified = PeerAuthMiddleware.responseVerifierMiddleware[F](peer.id)(client)
-        verified.expect[A](getBaseUri(peer))
+        verified.expect[A](uri(getBaseUri(peer)))
       }
 
     def apply(
@@ -73,7 +73,7 @@ object PeerResponse {
       client: Client[F]
     )(implicit F: Async[F], S: SecurityProvider[F]): PeerResponse[F, Boolean] =
       Kleisli.apply[F, P2PContext, Boolean] { peer =>
-        val req = Request[F](method = method, uri = getBaseUri(peer))
+        val req = Request[F](method = method, uri = uri(getBaseUri(peer)))
         val verified = PeerAuthMiddleware.responseVerifierMiddleware[F](peer.id)(client)
 
         verified.successful(req)
