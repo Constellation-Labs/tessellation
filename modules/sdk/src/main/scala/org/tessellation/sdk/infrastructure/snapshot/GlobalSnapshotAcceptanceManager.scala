@@ -41,7 +41,8 @@ trait GlobalSnapshotAcceptanceManager[F[_]] {
       SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
       Set[StateChannelOutput],
       SortedSet[RewardTransaction],
-      GlobalSnapshotInfo
+      GlobalSnapshotInfo,
+      GlobalSnapshotStateProof
     )
   ]
 }
@@ -94,19 +95,24 @@ object GlobalSnapshotAcceptanceManager {
         }
       }.map(_.map(SortedMap.from(_)).getOrElse(SortedMap.empty[Address, Proof]))
 
+      gsi = GlobalSnapshotInfo(
+        updatedLastStateChannelSnapshotHashes,
+        transactionsRefs,
+        updatedBalancesByRewards,
+        updatedLastCurrencySnapshots,
+        updatedLastCurrencySnapshotProofs
+      )
+
+      stateProof <- gsi.stateProof(maybeMerkleTree)
+
     } yield
       (
         acceptanceResult,
         scSnapshots,
         returnedSCEvents,
         acceptedRewardTxs,
-        GlobalSnapshotInfo(
-          updatedLastStateChannelSnapshotHashes,
-          transactionsRefs,
-          updatedBalancesByRewards,
-          updatedLastCurrencySnapshots,
-          updatedLastCurrencySnapshotProofs
-        )
+        gsi,
+        stateProof
       )
 
     private def acceptBlocks(

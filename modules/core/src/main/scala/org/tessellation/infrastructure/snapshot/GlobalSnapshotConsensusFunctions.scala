@@ -112,14 +112,15 @@ object GlobalSnapshotConsensusFunctions {
         lastActiveTips <- lastArtifact.activeTips
         lastDeprecatedTips = lastArtifact.tips.deprecated
 
-        (acceptanceResult, scSnapshots, returnedSCEvents, acceptedRewardTxs, snapshotInfo) <- globalSnapshotAcceptanceManager.accept(
-          blocksForAcceptance,
-          scEvents,
-          snapshotContext,
-          lastActiveTips,
-          lastDeprecatedTips,
-          rewards.distribute(lastArtifact, snapshotContext.balances, _, trigger)
-        )
+        (acceptanceResult, scSnapshots, returnedSCEvents, acceptedRewardTxs, snapshotInfo, stateProof) <- globalSnapshotAcceptanceManager
+          .accept(
+            blocksForAcceptance,
+            scEvents,
+            snapshotContext,
+            lastActiveTips,
+            lastDeprecatedTips,
+            rewards.distribute(lastArtifact, snapshotContext.balances, _, trigger)
+          )
         (deprecated, remainedActive, accepted) = getUpdatedTips(
           lastActiveTips,
           lastDeprecatedTips,
@@ -130,7 +131,6 @@ object GlobalSnapshotConsensusFunctions {
         (height, subHeight) <- getHeightAndSubHeight(lastArtifact, deprecated, remainedActive, accepted)
 
         returnedDAGEvents = getReturnedDAGEvents(acceptanceResult)
-        stateProof <- snapshotInfo.stateProof
 
         globalSnapshot = GlobalIncrementalSnapshot(
           currentOrdinal,

@@ -71,7 +71,7 @@ object CurrencySnapshotConsensusFunctions {
         lastActiveTips <- lastArtifact.activeTips
         lastDeprecatedTips = lastArtifact.tips.deprecated
 
-        (acceptanceResult, acceptedRewardTxs, snapshotInfo) <- currencySnapshotAcceptanceManager.accept(
+        (acceptanceResult, acceptedRewardTxs, snapshotInfo, stateProof) <- currencySnapshotAcceptanceManager.accept(
           blocksForAcceptance,
           lastContext,
           lastActiveTips,
@@ -89,7 +89,6 @@ object CurrencySnapshotConsensusFunctions {
         (height, subHeight) <- getHeightAndSubHeight(lastArtifact, deprecated, remainedActive, accepted)
 
         returnedEvents = getReturnedEvents(acceptanceResult)
-        stateProof <- snapshotInfo.stateProof
 
         artifact = CurrencyIncrementalSnapshot(
           currentOrdinal,

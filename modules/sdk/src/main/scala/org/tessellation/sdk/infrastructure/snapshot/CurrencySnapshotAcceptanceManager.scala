@@ -6,6 +6,7 @@ import cats.syntax.functor._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
+import org.tessellation.currency.schema.currency
 import org.tessellation.currency.schema.currency.{CurrencyBlock, CurrencySnapshotInfo, CurrencyTransaction}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
@@ -30,7 +31,8 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
     (
       BlockAcceptanceResult[CurrencyBlock],
       SortedSet[RewardTransaction],
-      CurrencySnapshotInfo
+      CurrencySnapshotInfo,
+      currency.CurrencySnapshotStateProof
     )
   ]
 }
@@ -61,7 +63,10 @@ object CurrencySnapshotAcceptanceManager {
         rewards
       )
 
-    } yield (acceptanceResult, acceptedRewardTxs, CurrencySnapshotInfo(transactionsRefs, updatedBalancesByRewards))
+      csi = CurrencySnapshotInfo(transactionsRefs, updatedBalancesByRewards)
+      stateProof <- csi.stateProof
+
+    } yield (acceptanceResult, acceptedRewardTxs, csi, stateProof)
 
     private def acceptBlocks(
       blocksForAcceptance: List[Signed[CurrencyBlock]],

@@ -2,7 +2,7 @@ package org.tessellation.schema
 
 import cats.MonadThrow
 import cats.syntax.contravariantSemigroupal._
-import cats.syntax.functor._
+import cats.syntax.flatMap._
 
 import scala.collection.immutable.SortedMap
 
@@ -10,7 +10,7 @@ import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, C
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.merkletree.syntax._
-import org.tessellation.merkletree.{MerkleRoot, Proof}
+import org.tessellation.merkletree.{MerkleRoot, MerkleTree, Proof}
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.snapshot.{SnapshotInfo, StateProof}
@@ -66,12 +66,15 @@ case class GlobalSnapshotInfo(
   lastCurrencySnapshotsProofs: SortedMap[Address, Proof]
 ) extends SnapshotInfo[GlobalSnapshotStateProof] {
   def stateProof[F[_]: MonadThrow: KryoSerializer]: F[GlobalSnapshotStateProof] =
+    lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
+
+  def stateProof[F[_]: MonadThrow: KryoSerializer](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProof] =
     (
       lastStateChannelSnapshotHashes.hashF,
       lastTxRefs.hashF,
-      balances.hashF,
-      lastCurrencySnapshots.merkleTree[F].map(_.map(_.getRoot))
-    ).mapN(GlobalSnapshotStateProof.apply)
+      balances.hashF
+    ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot)))
+
 }
 
 object GlobalSnapshotInfo {
