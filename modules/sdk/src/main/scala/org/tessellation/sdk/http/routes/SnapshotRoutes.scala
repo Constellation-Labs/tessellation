@@ -91,6 +91,16 @@ final case class SnapshotRoutes[F[_]: Async: KryoSerializer, S <: Snapshot[_, _]
           }
         }.getOrElse(NotFound())
 
+    case GET -> Root / SnapshotOrdinalVar(ordinal) / "hash" =>
+      import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
+
+      snapshotStorage
+        .getHash(ordinal)
+        .flatMap {
+          case None           => NotFound()
+          case Some(snapshot) => Ok(snapshot)
+        }
+
     case req @ GET -> Root / HashVar(hash) =>
       resolveEncoder[F, Signed[S]](req) { implicit enc =>
         snapshotStorage.get(hash).flatMap {

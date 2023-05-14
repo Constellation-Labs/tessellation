@@ -19,7 +19,7 @@ object SdkP2PClient {
       GossipClient.make[F](client, session),
       NodeClient.make[F](client, session),
       TrustClient.make[F](client, session),
-      L0GlobalSnapshotClient.make[F](client)
+      L0GlobalSnapshotClient.make[F](client, session)
     ) {}
 
 }

@@ -1,7 +1,5 @@
 package org.tessellation.currency.l0.http
 
-import java.security.KeyPair
-
 import cats.effect.Async
 
 import org.tessellation.currency.l0.snapshot.CurrencySnapshotClient
@@ -19,7 +17,6 @@ object P2PClient {
   def make[F[_]: Async: SecurityProvider: KryoSerializer](
     sdkP2PClient: SdkP2PClient[F],
     client: Client[F],
-    keyPair: KeyPair,
     identifier: Address
   ): P2PClient[F] =
     new P2PClient[F](
@@ -28,7 +25,7 @@ object P2PClient {
       sdkP2PClient.gossip,
       sdkP2PClient.node,
       StateChannelSnapshotClient.make(client, identifier),
-      L0GlobalSnapshotClient.make[F](client),
+      sdkP2PClient.l0GlobalSnapshot,
       CurrencySnapshotClient.make[F](client)
     ) {}
 }
