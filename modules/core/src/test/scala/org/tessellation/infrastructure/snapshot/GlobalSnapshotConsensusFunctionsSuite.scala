@@ -63,6 +63,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
       override def get(hash: Hash): IO[Option[Signed[GlobalIncrementalSnapshot]]] = ???
 
+      override def getHash(ordinal: SnapshotOrdinal): F[Option[Hash]] = ???
+
     }
 
   val bam: BlockAcceptanceManager[IO, DAGTransaction, DAGBlock] = new BlockAcceptanceManager[IO, DAGTransaction, DAGBlock] {

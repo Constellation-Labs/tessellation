@@ -5,7 +5,6 @@ import cats.data.NonEmptyList
 import cats.effect.Async
 import cats.effect.std.Random
 import cats.effect.syntax.concurrent._
-import cats.syntax.applicativeError._
 import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
@@ -74,10 +73,10 @@ object MajorityPeerSelect {
       ordinalDistribution = peerOrdinals.groupMap { case (_, ordinal) => ordinal } { case (peer, _) => peer }
       (majorityOrdinal, _) = latestOrdinals.groupBy(identity).maxBy { case (_, ordinals) => ordinals.size }
       peerDistribution <- peers
-        .parTraverseN(maxConcurrentPeerInquiries)(peer => getSnapshotHashByPeer(peer, majorityOrdinal).attempt)
-        .flatMap { peerSnapshotHashes =>
+        .parTraverseN(maxConcurrentPeerInquiries)(getSnapshotHashByPeer(_, majorityOrdinal))
+        .flatMap { maybePeerSnapshotHashes =>
           MonadThrow[F].fromOption(
-            peerSnapshotHashes.collect { case Right(peerSnapshot) => peerSnapshot }.toNel,
+            maybePeerSnapshotHashes.toList.flatten.toNel,
             NoPeersToSelect
           )
         }
@@ -103,7 +102,7 @@ object MajorityPeerSelect {
         .map(_.take(Math.max(sampleSize, minSampleSize)))
     }
 
-    def getSnapshotHashByPeer(peer: Peer, ordinal: SnapshotOrdinal): F[(Peer, Hash)] =
-      snapshotClient.get(ordinal).run(peer).flatMap(_.toHashed).map(snapshot => (peer, snapshot.hash))
+    def getSnapshotHashByPeer(peer: Peer, ordinal: SnapshotOrdinal): F[Option[(Peer, Hash)]] =
+      snapshotClient.getHash(ordinal).run(peer).map(_.map((peer, _)))
   }
 }

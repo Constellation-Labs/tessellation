@@ -181,6 +181,10 @@ object SnapshotStorage {
             case None    => snapshotLocalFileSystemStorage.read(hash)
           }
 
+        def getHash(ordinal: SnapshotOrdinal): F[Option[Hash]] = get(ordinal).flatMap {
+          _.traverse(_.toHashed.map(_.hash))
+        }
+
         def getLatestBalances: F[Option[Map[Address, Balance]]] =
           headRef.get.map(_.map(_._2.balances))
 

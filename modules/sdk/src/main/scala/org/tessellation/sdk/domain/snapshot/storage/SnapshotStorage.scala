@@ -15,5 +15,6 @@ trait SnapshotStorage[F[_], S <: Snapshot[_, _], State] {
   def get(ordinal: SnapshotOrdinal): F[Option[Signed[S]]]
 
   def get(hash: Hash): F[Option[Signed[S]]]
+  def getHash(ordinal: SnapshotOrdinal): F[Option[Hash]]
 
 }
