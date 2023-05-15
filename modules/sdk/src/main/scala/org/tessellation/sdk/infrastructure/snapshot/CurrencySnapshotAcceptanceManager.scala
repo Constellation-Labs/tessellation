@@ -11,8 +11,8 @@ import org.tessellation.currency.schema.currency.CurrencySnapshotInfo
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.balance.{Amount, Balance}
-import org.tessellation.schema.transaction.RewardTransaction
+import org.tessellation.schema.balance.Balance
+import org.tessellation.schema.transaction.{RewardTransaction, Transaction}
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.security.signature.Signed
 import org.tessellation.syntax.sortedCollection.sortedSetSyntax
@@ -26,7 +26,7 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
     lastSnapshotContext: CurrencySnapshotInfo,
     lastActiveTips: SortedSet[ActiveTip],
     lastDeprecatedTips: SortedSet[DeprecatedTip],
-    calculateRewardsFn: SortedSet[Signed[CurrencyTransaction]] => F[SortedSet[RewardTransaction]]
+    calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]]
   ): F[
     (
       BlockAcceptanceResult,
@@ -39,8 +39,7 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
 
 object CurrencySnapshotAcceptanceManager {
   def make[F[_]: Async: KryoSerializer](
-    blockAcceptanceManager: BlockAcceptanceManager[F],
-    collateral: Amount
+    blockAcceptanceManager: BlockAcceptanceManager[F]
   ) = new CurrencySnapshotAcceptanceManager[F] {
 
     def accept(
@@ -48,7 +47,7 @@ object CurrencySnapshotAcceptanceManager {
       lastSnapshotContext: CurrencySnapshotInfo,
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip],
-      calculateRewardsFn: SortedSet[Signed[CurrencyTransaction]] => F[SortedSet[RewardTransaction]]
+      calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]]
     ) = for {
       acceptanceResult <- acceptBlocks(blocksForAcceptance, lastSnapshotContext, lastActiveTips, lastDeprecatedTips)
 
@@ -78,8 +77,7 @@ object CurrencySnapshotAcceptanceManager {
       val context = BlockAcceptanceContext.fromStaticData(
         lastSnapshotContext.balances,
         lastSnapshotContext.lastTxRefs,
-        tipUsages,
-        collateral
+        tipUsages
       )
 
       blockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context)

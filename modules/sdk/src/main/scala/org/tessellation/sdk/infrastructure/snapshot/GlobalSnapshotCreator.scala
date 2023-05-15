@@ -14,53 +14,58 @@ import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.merkletree.Proof
 import org.tessellation.merkletree.syntax._
 import org.tessellation.schema.address.Address
+import org.tessellation.sdk.infrastructure.snapshot.CurrencyDataCreator.CurrencyDataCreationResult
+import org.tessellation.sdk.infrastructure.snapshot.GlobalSnapshotCreator.GlobalSnapshotCreationResult
 
 import scala.collection.immutable.SortedMap
 import scala.util.control.NoStackTrace
 
-trait GlobalSnapshotProcessor[F[_]] {
+trait GlobalSnapshotCreator[F[_]] {
 
   def createGlobalSnapshot(
     lastSnapshot: Signed[GlobalIncrementalSnapshot],
-    lastInfo: GlobalSnapshotInfo,
+    lastState: GlobalSnapshotInfo,
     blocks: Set[Signed[Block]],
+    stateChannelSnapshots: Set[StateChannelOutput],
     mintRewards: Boolean
-  ): F[(GlobalIncrementalSnapshot, GlobalSnapshotInfo, Set[Signed[Block]])]
-
-  def validateConsecutiveSnapshot(
-    lastSnapshot: Signed[GlobalIncrementalSnapshot],
-    lastInfo: GlobalSnapshotInfo,
-    snapshot: GlobalIncrementalSnapshot
-  ): F[Either[String, (GlobalIncrementalSnapshot, GlobalSnapshotInfo, Set[Signed[Block]])]]
+  ): F[GlobalSnapshotCreationResult]
 
 }
 
-object GlobalSnapshotProcessor {
+object GlobalSnapshotCreator {
+
+  case class GlobalSnapshotCreationResult(
+    snapshot: GlobalIncrementalSnapshot,
+    state: GlobalSnapshotInfo,
+    awaitingBlocks: Set[Signed[Block]],
+    rejectedBlocks: Set[Signed[Block]],
+    awaitingStateChannelSnapshots: Set[StateChannelOutput]
+  )
 
   case object InvalidMerkleTree extends NoStackTrace
 
   def make[F[_]: Async: KryoSerializer](
-    commonSnapshotCreator: CurrencyDataProcessor[F],
+    currencyDataCreator: CurrencyDataCreator[F],
     stateChannelEventsProcessor: GlobalSnapshotStateChannelEventsProcessor[F]
-  ): GlobalSnapshotProcessor[F] =
-    new GlobalSnapshotProcessor[F] {
+  ): GlobalSnapshotCreator[F] =
+    new GlobalSnapshotCreator[F] {
       def createGlobalSnapshot(
         lastSnapshot: Signed[GlobalIncrementalSnapshot],
-        lastInfo: GlobalSnapshotInfo,
+        lastState: GlobalSnapshotInfo,
         blocks: Set[Signed[Block]],
         stateChannelSnapshots: Set[StateChannelOutput],
         mintRewards: Boolean
-      ): F[(GlobalIncrementalSnapshot, GlobalSnapshotInfo, Set[Signed[Block]])] =
+      ): F[GlobalSnapshotCreationResult] =
         for {
 
-          (scSnapshots, currencySnapshots, returnedSCSnapshots) <- stateChannelEventsProcessor.process(
-            lastInfo,
+          (scSnapshots, currencySnapshots, returnedStateChannelSnapshots) <- stateChannelEventsProcessor.process(
+            lastState,
             stateChannelSnapshots.toList
           )
           sCSnapshotHashes <- scSnapshots.toList.traverse { case (address, nel) => nel.head.hashF.map(address -> _) }
             .map(_.toMap)
-          lastStateChannelSnapshotHashes = lastInfo.lastStateChannelSnapshotHashes ++ sCSnapshotHashes
-          lastCurrencySnapshots = lastInfo.lastCurrencySnapshots ++ currencySnapshots
+          lastStateChannelSnapshotHashes = lastState.lastStateChannelSnapshotHashes ++ sCSnapshotHashes
+          lastCurrencySnapshots = lastState.lastCurrencySnapshots ++ currencySnapshots
 
           maybeMerkleTree <- lastCurrencySnapshots.merkleTree[F]
           lastCurrencySnapshotProofs <- maybeMerkleTree.traverse { merkleTree =>
@@ -73,9 +78,9 @@ object GlobalSnapshotProcessor {
             }
           }.map(_.map(SortedMap.from(_)).getOrElse(SortedMap.empty[Address, Proof]))
 
-          (data, dataInfo, returnedBlocks) <- commonSnapshotCreator.createCurrencyData(
-            lastSnapshot.data,
-            lastInfo.data,
+          dataCreationResult <- currencyDataCreator.createCurrencyData(
+            lastSnapshot.currencyData,
+            lastState.currencyData,
             lastSnapshot.ordinal,
             lastSnapshot.proofs.map(_.id),
             blocks,
@@ -85,7 +90,7 @@ object GlobalSnapshotProcessor {
           lastSnapshotHash <- lastSnapshot.value.hashF
 
           info = GlobalSnapshotInfo(
-            dataInfo,
+            dataCreationResult.info,
             lastStateChannelSnapshotHashes,
             lastCurrencySnapshots,
             lastCurrencySnapshotProofs
@@ -96,21 +101,20 @@ object GlobalSnapshotProcessor {
           snapshot = GlobalIncrementalSnapshot(
             lastSnapshot.ordinal.next,
             lastSnapshotHash,
-            data,
+            dataCreationResult.data,
             scSnapshots,
             GlobalSnapshot.nextFacilitators,
-            stateProof,
+            stateProof
           )
 
-
-
-        } yield ()
-
-      def validateConsecutiveSnapshot(
-        lastSnapshot: Signed[GlobalIncrementalSnapshot],
-        lastInfo: GlobalSnapshotInfo,
-        snapshot: GlobalIncrementalSnapshot
-      ): F[Either[String, (GlobalIncrementalSnapshot, GlobalSnapshotInfo, Set[Signed[Block]])]] = ???
+        } yield
+          GlobalSnapshotCreationResult(
+            snapshot,
+            info,
+            dataCreationResult.awaitingBlocks,
+            dataCreationResult.rejectedBlocks,
+            returnedStateChannelSnapshots
+          )
     }
 
 }

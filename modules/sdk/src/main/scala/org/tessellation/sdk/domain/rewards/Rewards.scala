@@ -1,20 +1,19 @@
 package org.tessellation.sdk.domain.rewards
 
-import scala.collection.immutable.{SortedMap, SortedSet}
+import cats.data.NonEmptySet
 
-import org.tessellation.schema.Block
-import org.tessellation.schema.address.Address
-import org.tessellation.schema.balance.Balance
-import org.tessellation.schema.snapshot.{IncrementalSnapshot, StateProof}
+import scala.collection.immutable.SortedSet
+
+import org.tessellation.schema.CurrencyData
+import org.tessellation.schema.ID.Id
 import org.tessellation.schema.transaction.{RewardTransaction, Transaction}
-import org.tessellation.sdk.infrastructure.consensus.trigger.ConsensusTrigger
 import org.tessellation.security.signature.Signed
 
-trait Rewards[F[_], T <: Transaction, B <: Block[T], P <: StateProof, S <: IncrementalSnapshot[T, B, P]] {
+trait Rewards[F[_]] {
   def distribute(
-    lastArtifact: Signed[S],
-    lastBalances: SortedMap[Address, Balance],
-    acceptedTransactions: SortedSet[Signed[T]],
-    trigger: ConsensusTrigger
+    lastSnapshot: CurrencyData,
+    lastSigners: NonEmptySet[Id],
+    acceptedTransactions: SortedSet[Signed[Transaction]],
+    mint: Boolean
   ): F[SortedSet[RewardTransaction]]
 }

@@ -35,9 +35,11 @@ case class GlobalSnapshotInfoV1(
 object GlobalSnapshotInfoV1 {
   implicit def toGlobalSnapshotInfo(gsi: GlobalSnapshotInfoV1): GlobalSnapshotInfo =
     GlobalSnapshotInfo(
+      CurrencyDataInfo(
+        gsi.lastTxRefs,
+        gsi.balances
+      ),
       gsi.lastStateChannelSnapshotHashes,
-      gsi.lastTxRefs,
-      gsi.balances,
       SortedMap.empty,
       SortedMap.empty
     )
@@ -59,24 +61,23 @@ object GlobalSnapshotStateProof {
 
 @derive(encoder, decoder, eqv, show)
 case class GlobalSnapshotInfo(
+  currencyData: CurrencyDataInfo,
   lastStateChannelSnapshotHashes: SortedMap[Address, Hash],
-  lastTxRefs: SortedMap[Address, TransactionReference],
-  balances: SortedMap[Address, Balance],
   lastCurrencySnapshots: SortedMap[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)],
   lastCurrencySnapshotsProofs: SortedMap[Address, Proof]
-) extends SnapshotInfo[GlobalSnapshotStateProof] {
+) {
   def stateProof[F[_]: MonadThrow: KryoSerializer]: F[GlobalSnapshotStateProof] =
     lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
 
   def stateProof[F[_]: MonadThrow: KryoSerializer](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProof] =
     (
       lastStateChannelSnapshotHashes.hashF,
-      lastTxRefs.hashF,
-      balances.hashF
+      currencyData.lastTxRefs.hashF,
+      currencyData.balances.hashF
     ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot)))
 
 }
 
 object GlobalSnapshotInfo {
-  def empty = GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.empty, SortedMap.empty, SortedMap.empty)
+  def empty = GlobalSnapshotInfo(CurrencyDataInfo(SortedMap.empty, SortedMap.empty), SortedMap.empty, SortedMap.empty, SortedMap.empty)
 }

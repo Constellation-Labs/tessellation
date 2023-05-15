@@ -6,7 +6,6 @@ import cats.effect.Async
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
-
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID.Id
@@ -19,24 +18,24 @@ import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.security.signature.Signed
 import org.tessellation.syntax.sortedCollection.sortedSetSyntax
-
 import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.NonNegLong
+import org.tessellation.sdk.infrastructure.snapshot.CurrencyDataCreator.CurrencyDataCreationResult
 
-trait CurrencyDataProcessor[F[_]] {
+trait CurrencyDataCreator[F[_]] {
 
   def createCurrencyData(
-                          lastCurrencyData: CurrencyData,
-                          lastCurrencyInfo: CurrencyDataInfo,
-                          lastOrdinal: SnapshotOrdinal,
-                          lastSigners: NonEmptySet[Id],
-                          blocks: Set[Signed[Block]],
-                          mintRewards: Boolean
-  ): F[(CurrencyData, CurrencyDataInfo, Set[Signed[Block]])]
+    lastCurrencyData: CurrencyData,
+    lastCurrencyInfo: CurrencyDataInfo,
+    lastOrdinal: SnapshotOrdinal,
+    lastSigners: NonEmptySet[Id],
+    blocks: Set[Signed[Block]],
+    mintRewards: Boolean
+  ): F[CurrencyDataCreationResult]
 
 }
 
-object CurrencyDataProcessor {
+object CurrencyDataCreator {
 
   case class CurrencyDataCreationResult(
     data: CurrencyData,
@@ -48,15 +47,15 @@ object CurrencyDataProcessor {
   def make[F[_]: Async: KryoSerializer](
     blockAcceptanceManager: BlockAcceptanceManager[F],
     rewards: Rewards[F]
-  ): CurrencyDataProcessor[F] = new CurrencyDataProcessor[F] {
+  ): CurrencyDataCreator[F] = new CurrencyDataCreator[F] {
     def createCurrencyData(
-                            lastCurrencyData: CurrencyData,
-                            lastCurrencyInfo: CurrencyDataInfo,
-                            lastOrdinal: SnapshotOrdinal,
-                            lastSigners: NonEmptySet[Id],
-                            blocks: Set[Signed[Block]],
-                            mintRewards: Boolean
-    ): F[(CurrencyData, CurrencyDataInfo, Set[Signed[Block]])] =
+      lastCurrencyData: CurrencyData,
+      lastCurrencyInfo: CurrencyDataInfo,
+      lastOrdinal: SnapshotOrdinal,
+      lastSigners: NonEmptySet[Id],
+      blocks: Set[Signed[Block]],
+      mintRewards: Boolean
+    ): F[CurrencyDataCreationResult] =
       for {
         lastActiveTips <- lastCurrencyData.activeTips(lastOrdinal)
         lastDeprecatedTips = lastCurrencyData.tips.deprecated
@@ -102,16 +101,12 @@ object CurrencyDataProcessor {
           else
             lastCurrencyData.epochProgress
 
-        (awaitingBlocks, rejectedBlocks)  = blockAcceptanceResult.notAccepted.toSet.partitionMap {
-          case (b, _: BlockAwaitReason) => b.asRight
+        (awaitingBlocks, rejectedBlocks) = blockAcceptanceResult.notAccepted.partitionMap {
+          case (b, _: BlockAwaitReason)     => b.asRight
           case (b, _: BlockRejectionReason) => b.asLeft
         }
-//        awaitingBlocks = blockAcceptanceResult.notAccepted.mapFilter {
-//          case (signedBlock, _: BlockAwaitReason) => signedBlock.some
-//          case _                                  => none
-//        }.toSet
 
-        commonSnapshot = CurrencyData(
+        data = CurrencyData(
           height,
           subHeight,
           acceptedBlocks,
@@ -120,16 +115,16 @@ object CurrencyDataProcessor {
           epochProgress
         )
 
-        commonSnapshotInfo = CurrencyDataInfo(
+        dataInfo = CurrencyDataInfo(
           updatedLastTxRefs,
           updatedBalancesByRewardTxs
         )
       } yield
         CurrencyDataCreationResult(
-          commonSnapshot,
-          commonSnapshotInfo,
-          awaitingBlocks,
-          rejectedBlocks
+          data,
+          dataInfo,
+          awaitingBlocks.toSet,
+          rejectedBlocks.toSet
         )
 
     private def getTipsUsages(

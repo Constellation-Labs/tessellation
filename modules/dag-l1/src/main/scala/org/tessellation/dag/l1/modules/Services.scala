@@ -40,11 +40,10 @@ object Services {
     new Services[F, P, S, SI] {
       val localHealthcheck = sdkServices.localHealthcheck
       val block = BlockService.make[F](
-        BlockAcceptanceManager.make[F](validators.block),
+        BlockAcceptanceManager.make[F](validators.block, cfg.collateral.amount),
         storages.address,
         storages.block,
-        storages.transaction,
-        cfg.collateral.amount
+        storages.transaction
       )
       val cluster = sdkServices.cluster
       val gossip = sdkServices.gossip

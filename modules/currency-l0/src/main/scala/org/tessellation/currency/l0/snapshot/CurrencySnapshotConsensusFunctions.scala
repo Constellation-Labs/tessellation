@@ -41,7 +41,7 @@ object CurrencySnapshotConsensusFunctions {
     stateChannelSnapshotService: StateChannelSnapshotService[F],
     currencySnapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F],
     collateral: Amount,
-    rewards: Rewards[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot]
+    rewards: Rewards[F]
   ): CurrencySnapshotConsensusFunctions[F] = new CurrencySnapshotConsensusFunctions[F] {
 
     private val logger = Slf4jLogger.getLoggerFromClass(CurrencySnapshotConsensusFunctions.getClass)
@@ -74,7 +74,8 @@ object CurrencySnapshotConsensusFunctions {
           lastContext,
           lastActiveTips,
           lastDeprecatedTips,
-          rewards.distribute(lastArtifact, lastContext.balances, _, trigger)
+          null // TODO
+//          rewards.distribute(lastArtifact, lastContext.balances, _, trigger)
         )
 
         (deprecated, remainedActive, accepted) = getUpdatedTips(

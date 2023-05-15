@@ -27,7 +27,7 @@ import eu.timepit.refined.cats._
 
 object BlockAcceptanceLogic {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider]: BlockAcceptanceLogic[F] =
+  def make[F[_]: Async: KryoSerializer: SecurityProvider](collateral: Amount): BlockAcceptanceLogic[F] =
     new BlockAcceptanceLogic[F] {
 
       def acceptBlock(
@@ -181,29 +181,29 @@ object BlockAcceptanceLogic {
           }
       }
 
-    }
+      def processSignatures(
+        signedBlock: Signed[Block],
+        context: BlockAcceptanceContext[F]
+      ): EitherT[F, BlockNotAcceptedReason, Unit] =
+        EitherT(
+          signedBlock.proofs
+            .map(_.id.toPeerId)
+            .toList
+            .traverse(_.toAddress)
+            .flatMap(
+              _.filterA(address =>
+                context.getBalance(address).map { balances =>
+                  !balances.getOrElse(Balance.empty).satisfiesCollateral(collateral)
+                }
+              )
+            )
+            .map(list =>
+              NonEmptyList
+                .fromList(list)
+                .map(nel => SigningPeerBelowCollateral(nel).asLeft[Unit])
+                .getOrElse(().asRight[BlockNotAcceptedReason])
+            )
+        )
 
-  def processSignatures[F[_]: Async: SecurityProvider](
-    signedBlock: Signed[Block],
-    context: BlockAcceptanceContext[F]
-  ): EitherT[F, BlockNotAcceptedReason, Unit] =
-    EitherT(
-      signedBlock.proofs
-        .map(_.id.toPeerId)
-        .toList
-        .traverse(_.toAddress)
-        .flatMap(
-          _.filterA(address =>
-            context.getBalance(address).map { balances =>
-              !balances.getOrElse(Balance.empty).satisfiesCollateral(context.getCollateral)
-            }
-          )
-        )
-        .map(list =>
-          NonEmptyList
-            .fromList(list)
-            .map(nel => SigningPeerBelowCollateral(nel).asLeft[Unit])
-            .getOrElse(().asRight[BlockNotAcceptedReason])
-        )
-    )
+    }
 }

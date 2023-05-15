@@ -22,8 +22,8 @@ object SnapshotReference {
 
   def fromHashedSnapshot(snapshot: Hashed[Snapshot]): SnapshotReference =
     SnapshotReference(
-      snapshot.height,
-      snapshot.subHeight,
+      snapshot.currencyData.height,
+      snapshot.currencyData.subHeight,
       snapshot.ordinal,
       snapshot.lastSnapshotHash,
       snapshot.hash,

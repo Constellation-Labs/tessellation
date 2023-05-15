@@ -44,7 +44,7 @@ object Download {
     clusterStorage: ClusterStorage[F],
     currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
     nodeStorage: NodeStorage[F],
-    consensus: SnapshotConsensus[F, _, _, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, _],
+    consensus: SnapshotConsensus[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, _],
     peerSelect: PeerSelect[F]
   ): Download[F] = new Download[F] {
 

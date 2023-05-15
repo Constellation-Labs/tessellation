@@ -3,19 +3,10 @@ package org.tessellation.domain.snapshot.programs
 import cats.Applicative
 import cats.effect.Async
 import cats.effect.std.Random
-import cats.syntax.applicative._
-import cats.syntax.applicativeError._
-import cats.syntax.either._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
-import cats.syntax.option._
-import cats.syntax.order._
-import cats.syntax.semigroup._
-import cats.syntax.show._
+import cats.syntax.all._
 
 import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
-
 import org.tessellation.domain.snapshot.storages.SnapshotDownloadStorage
 import org.tessellation.ext.cats.kernel.PartialPrevious
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
@@ -29,11 +20,10 @@ import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.domain.snapshot.PeerSelect
 import org.tessellation.sdk.domain.snapshot.programs.Download
-import org.tessellation.sdk.infrastructure.snapshot.{GlobalSnapshotContextFunctions, SnapshotConsensus}
+import org.tessellation.sdk.infrastructure.snapshot.{GlobalSnapshotContextFunctions, GlobalSnapshotValidator, SnapshotConsensus}
 import org.tessellation.security.Hashed
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
-
 import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.NonNegLong
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -46,9 +36,10 @@ object Download {
     p2pClient: P2PClient[F],
     clusterStorage: ClusterStorage[F],
     lastFullGlobalSnapshotOrdinal: SnapshotOrdinal,
-    globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
+    globalSnapshotValidator: GlobalSnapshotValidator[F],
+//    globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
     nodeStorage: NodeStorage[F],
-    consensus: SnapshotConsensus[F, _, _, GlobalIncrementalSnapshot, GlobalSnapshotContext, _],
+    consensus: SnapshotConsensus[F, GlobalIncrementalSnapshot, GlobalSnapshotContext, _],
     peerSelect: PeerSelect[F]
   ): Download[F] = new Download[F] {
 
@@ -120,9 +111,9 @@ object Download {
         val (lastSnapshot, lastContext) = result
 
         fetchSnapshot(none, lastSnapshot.ordinal.next).flatMap { snapshot =>
-          globalSnapshotContextFns
-            .createContext(lastContext, lastSnapshot.value, snapshot)
-            .handleErrorWith(_ => InvalidChain.raiseError[F, GlobalSnapshotContext])
+          globalSnapshotValidator
+            .validateSignedSnapshot(lastSnapshot, lastContext, snapshot)
+            .flatMap(_.leftMap(_ => InvalidChain).liftTo[F])
             .flatTap { _ =>
               snapshotStorage.writePersisted(snapshot)
             }

@@ -8,9 +8,11 @@ import cats.syntax.functor._
 import cats.syntax.option._
 import cats.syntax.show._
 import cats.syntax.traverse._
+import cats.syntax.validated._
 
 import org.tessellation.schema._
 import org.tessellation.sdk.domain.snapshot.SnapshotContextFunctions
+import org.tessellation.sdk.infrastructure.snapshot.GlobalSnapshotValidator
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
@@ -23,7 +25,8 @@ object GlobalSnapshotTraverse {
   def make[F[_]: MonadThrow](
     loadInc: Hash => F[Option[Signed[GlobalIncrementalSnapshot]]],
     loadFull: Hash => F[Option[Signed[GlobalSnapshot]]],
-    contextFns: SnapshotContextFunctions[F, GlobalSnapshotArtifact, GlobalSnapshotContext],
+    validator: GlobalSnapshotValidator[F],
+//    contextFns: SnapshotContextFunctions[F, GlobalSnapshotArtifact, GlobalSnapshotContext],
     rollbackHash: Hash
   ): GlobalSnapshotTraverse[F] =
     new GlobalSnapshotTraverse[F] {
@@ -50,7 +53,10 @@ object GlobalSnapshotTraverse {
           (info, lastInc) <- incHashesNec.tail.foldLeftM((GlobalSnapshotInfoV1.toGlobalSnapshotInfo(global.info), firstInc)) {
             (acc, hash) =>
               loadIncOrErr(hash).flatMap { inc =>
-                contextFns.createContext(acc._1, acc._2, inc).map(_ -> inc)
+                validator
+                  .validateSignedSnapshot(acc._2, acc._1, inc)
+                  .flatMap(_.leftMap(e => new Throwable(s"Error in consecutive snapshot: ${e.show}")).liftTo[F])
+                  .map(_.swap)
               }
           }
         } yield (info, lastInc)

@@ -10,6 +10,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshot, CurrencySnapshotInfo}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
+import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.hex.Hex
@@ -52,17 +53,20 @@ object JsonBinarySerializerSuite extends MutableIOSuite {
       Signed(
         CurrencyIncrementalSnapshot(
           SnapshotOrdinal(NonNegLong(56L)),
-          Height(123L),
-          SubHeight(1L),
           hash,
-          SortedSet.empty,
-          SortedSet.empty,
-          SnapshotTips(
-            SortedSet(
-              DeprecatedTip(BlockReference(Height(122L), ProofsHash("aaaa")), SnapshotOrdinal(55L)),
-              DeprecatedTip(BlockReference(Height(122L), ProofsHash("cccc")), SnapshotOrdinal(55L))
+          CurrencyData(
+            Height(123L),
+            SubHeight(1L),
+            SortedSet.empty,
+            SortedSet.empty,
+            SnapshotTips(
+              SortedSet(
+                DeprecatedTip(BlockReference(Height(122L), ProofsHash("aaaa")), SnapshotOrdinal(55L)),
+                DeprecatedTip(BlockReference(Height(122L), ProofsHash("cccc")), SnapshotOrdinal(55L))
+              ),
+              SortedSet(ActiveTip(BlockReference(Height(122L), ProofsHash("bbbb")), 2L, SnapshotOrdinal(55L)))
             ),
-            SortedSet(ActiveTip(BlockReference(Height(122L), ProofsHash("bbbb")), 2L, SnapshotOrdinal(55L)))
+            EpochProgress(123L)
           ),
           stateProof = sp
         ),

@@ -15,8 +15,9 @@ object Validator {
   def compare[S <: Snapshot](previous: Hashed[S], next: S): ComparisonResult = {
     val isLastSnapshotHashCorrect = previous.hash === next.lastSnapshotHash
     lazy val isNextOrdinal = previous.ordinal.next === next.ordinal
-    lazy val isNextHeight = previous.height < next.height && next.subHeight === SubHeight.MinValue
-    lazy val isNextSubHeight = previous.height === next.height && previous.subHeight.next === next.subHeight
+    lazy val isNextHeight = previous.currencyData.height < next.currencyData.height && next.currencyData.subHeight === SubHeight.MinValue
+    lazy val isNextSubHeight =
+      previous.currencyData.height === next.currencyData.height && previous.currencyData.subHeight.next === next.currencyData.subHeight
 
     if (isLastSnapshotHashCorrect && isNextOrdinal && isNextHeight)
       NextHeight

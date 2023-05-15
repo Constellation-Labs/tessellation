@@ -12,6 +12,7 @@ import cats.syntax.show._
 import cats.syntax.traverse._
 
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.{Block, BlockReference}
 import org.tessellation.sdk.domain.block.processing.{TxChains, _}
 import org.tessellation.sdk.infrastructure.block.processing.BlockAcceptanceLogic
@@ -26,8 +27,9 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 object BlockAcceptanceManager {
 
   def make[F[_]: Async: KryoSerializer: SecurityProvider](
-    blockValidator: BlockValidator[F]
-  ): BlockAcceptanceManager[F] = make(BlockAcceptanceLogic.make[F], blockValidator)
+    blockValidator: BlockValidator[F],
+    collateral: Amount
+  ): BlockAcceptanceManager[F] = make(BlockAcceptanceLogic.make[F](collateral), blockValidator)
 
   def make[F[_]: Async: KryoSerializer](
     logic: BlockAcceptanceLogic[F],

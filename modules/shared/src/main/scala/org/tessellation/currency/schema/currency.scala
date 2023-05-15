@@ -12,10 +12,11 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
+import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.semver.SnapshotVersion
 import org.tessellation.schema.snapshot._
-import org.tessellation.schema.transaction._
+import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.security.Hashed
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.syntax.sortedCollection._
@@ -42,11 +43,15 @@ object currency {
 
   @derive(encoder, decoder, eqv, show)
   case class CurrencySnapshotInfo(
-    lastTxRefs: SortedMap[Address, TransactionReference],
-    balances: SortedMap[Address, Balance]
-  ) extends SnapshotInfo[CurrencySnapshotStateProof] {
+    currencyData: CurrencyDataInfo
+  ) {
     def stateProof[F[_]: MonadThrow: KryoSerializer]: F[CurrencySnapshotStateProof] =
-      (lastTxRefs.hashF, balances.hashF).tupled.map(CurrencySnapshotStateProof.apply)
+      (currencyData.lastTxRefs.hashF, currencyData.balances.hashF).tupled.map(CurrencySnapshotStateProof.apply)
+  }
+
+  object CurrencySnapshotInfo {
+    def apply(lastTxRefs: SortedMap[Address, TransactionReference], balances: SortedMap[Address, Balance]): CurrencySnapshotInfo =
+      CurrencySnapshotInfo(CurrencyDataInfo(lastTxRefs, balances))
   }
 
   @derive(decoder, encoder, order, show)
@@ -62,42 +67,30 @@ object currency {
   @derive(eqv, show, encoder, decoder)
   case class CurrencySnapshot(
     ordinal: SnapshotOrdinal,
-    height: Height,
-    subHeight: SubHeight,
     lastSnapshotHash: Hash,
-    blocks: SortedSet[BlockAsActiveTip],
-    rewards: SortedSet[RewardTransaction],
-    tips: SnapshotTips,
+    currencyData: CurrencyData,
     info: CurrencySnapshotInfo,
     data: Option[Array[Byte]] = None,
     version: SnapshotVersion = SnapshotVersion("0.0.1")
-  ) extends FullSnapshot[CurrencySnapshotStateProof, CurrencySnapshotInfo]
+  ) extends Snapshot
 
   @derive(eqv, show, encoder, decoder)
   case class CurrencyIncrementalSnapshot(
     ordinal: SnapshotOrdinal,
-    height: Height,
-    subHeight: SubHeight,
     lastSnapshotHash: Hash,
-    blocks: SortedSet[BlockAsActiveTip],
-    rewards: SortedSet[RewardTransaction],
-    tips: SnapshotTips,
+    currencyData: CurrencyData,
     stateProof: CurrencySnapshotStateProof,
     data: Option[Array[Byte]] = None,
     version: SnapshotVersion = SnapshotVersion("0.0.1")
-  ) extends IncrementalSnapshot[CurrencySnapshotStateProof]
+  ) extends Snapshot
 
   object CurrencyIncrementalSnapshot {
     def fromCurrencySnapshot[F[_]: MonadThrow: KryoSerializer](snapshot: CurrencySnapshot): F[CurrencyIncrementalSnapshot] =
       snapshot.info.stateProof[F].map { stateProof =>
         CurrencyIncrementalSnapshot(
           snapshot.ordinal,
-          snapshot.height,
-          snapshot.subHeight,
           snapshot.lastSnapshotHash,
-          snapshot.blocks,
-          snapshot.rewards,
-          snapshot.tips,
+          snapshot.currencyData,
           stateProof
         )
       }
@@ -107,12 +100,15 @@ object currency {
     def mkGenesis(balances: Map[Address, Balance]): CurrencySnapshot =
       CurrencySnapshot(
         SnapshotOrdinal.MinValue,
-        Height.MinValue,
-        SubHeight.MinValue,
         Hash.empty,
-        SortedSet.empty,
-        SortedSet.empty,
-        SnapshotTips(SortedSet.empty, mkActiveTips(8)),
+        CurrencyData(
+          Height.MinValue,
+          SubHeight.MinValue,
+          SortedSet.empty,
+          SortedSet.empty,
+          SnapshotTips(SortedSet.empty, mkActiveTips(8)),
+          EpochProgress.MinValue
+        ),
         CurrencySnapshotInfo(SortedMap.empty, SortedMap.from(balances))
       )
 
@@ -120,12 +116,8 @@ object currency {
       genesis.info.stateProof[F].map { stateProof =>
         CurrencyIncrementalSnapshot(
           genesis.ordinal.next,
-          genesis.height,
-          genesis.subHeight.next,
           genesis.hash,
-          SortedSet.empty,
-          SortedSet.empty,
-          genesis.tips,
+          genesis.currencyData,
           stateProof
         )
       }

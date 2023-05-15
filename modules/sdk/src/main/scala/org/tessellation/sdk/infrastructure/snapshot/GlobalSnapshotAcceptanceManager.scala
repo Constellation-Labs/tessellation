@@ -16,8 +16,8 @@ import org.tessellation.merkletree.Proof
 import org.tessellation.merkletree.syntax._
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.balance.{Amount, Balance}
-import org.tessellation.schema.transaction.RewardTransaction
+import org.tessellation.schema.balance.Balance
+import org.tessellation.schema.transaction.{RewardTransaction, Transaction}
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.security.signature.Signed
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
@@ -33,7 +33,7 @@ trait GlobalSnapshotAcceptanceManager[F[_]] {
     lastSnapshotContext: GlobalSnapshotInfo,
     lastActiveTips: SortedSet[ActiveTip],
     lastDeprecatedTips: SortedSet[DeprecatedTip],
-    calculateRewardsFn: SortedSet[Signed[DAGTransaction]] => F[SortedSet[RewardTransaction]]
+    calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]]
   ): F[
     (
       BlockAcceptanceResult,
@@ -52,8 +52,7 @@ object GlobalSnapshotAcceptanceManager {
 
   def make[F[_]: Async: KryoSerializer](
     blockAcceptanceManager: BlockAcceptanceManager[F],
-    stateChannelEventsProcessor: GlobalSnapshotStateChannelEventsProcessor[F],
-    collateral: Amount
+    stateChannelEventsProcessor: GlobalSnapshotStateChannelEventsProcessor[F]
   ) = new GlobalSnapshotAcceptanceManager[F] {
 
     def accept(
@@ -62,7 +61,7 @@ object GlobalSnapshotAcceptanceManager {
       lastSnapshotContext: GlobalSnapshotInfo,
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip],
-      calculateRewardsFn: SortedSet[Signed[DAGTransaction]] => F[SortedSet[RewardTransaction]]
+      calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]]
     ) = for {
       acceptanceResult <- acceptBlocks(blocksForAcceptance, lastSnapshotContext, lastActiveTips, lastDeprecatedTips)
 
@@ -124,8 +123,7 @@ object GlobalSnapshotAcceptanceManager {
       val context = BlockAcceptanceContext.fromStaticData(
         lastSnapshotContext.balances,
         lastSnapshotContext.lastTxRefs,
-        tipUsages,
-        collateral
+        tipUsages
       )
 
       blockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context)

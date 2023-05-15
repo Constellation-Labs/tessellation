@@ -14,7 +14,7 @@ import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.Block.HashedOps
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.balance.{Amount, Balance}
+import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.{Block, BlockReference, transaction}
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.security.Hashed
@@ -33,8 +33,7 @@ object BlockService {
     blockAcceptanceManager: BlockAcceptanceManager[F],
     addressStorage: AddressStorage[F],
     blockStorage: BlockStorage[F],
-    transactionStorage: TransactionStorage[F],
-    collateral: Amount
+    transactionStorage: TransactionStorage[F]
   ): BlockService[F] =
     new BlockService[F] {
 
@@ -56,8 +55,6 @@ object BlockService {
 
         def getParentUsage(blockReference: BlockReference): F[Option[NonNegLong]] =
           blockStorage.getUsages(blockReference.hash)
-
-        def getCollateral: Amount = collateral
       }
 
       private def processAcceptanceSuccess(hashedBlock: Hashed[Block])(contextUpdate: BlockAcceptanceContextUpdate): F[Unit] = for {

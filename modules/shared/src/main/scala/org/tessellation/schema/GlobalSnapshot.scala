@@ -14,7 +14,7 @@ import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.semver.SnapshotVersion
-import org.tessellation.schema.snapshot.{FullSnapshot, IncrementalSnapshot}
+import org.tessellation.schema.snapshot.Snapshot
 import org.tessellation.schema.transaction.RewardTransaction
 import org.tessellation.security.Hashed
 import org.tessellation.security.hash.{Hash, ProofsHash}
@@ -32,33 +32,30 @@ import eu.timepit.refined.types.numeric.PosInt
 @derive(eqv, show, encoder, decoder)
 case class GlobalIncrementalSnapshot(
   ordinal: SnapshotOrdinal,
-  height: Height,
-  subHeight: SubHeight,
   lastSnapshotHash: Hash,
-  blocks: SortedSet[BlockAsActiveTip],
+  currencyData: CurrencyData,
   stateChannelSnapshots: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
-  rewards: SortedSet[RewardTransaction],
-  epochProgress: EpochProgress,
   nextFacilitators: NonEmptyList[PeerId],
-  tips: SnapshotTips,
   stateProof: GlobalSnapshotStateProof,
   version: SnapshotVersion = SnapshotVersion("0.0.1")
-) extends IncrementalSnapshot[GlobalSnapshotStateProof]
+) extends Snapshot
 
 object GlobalIncrementalSnapshot {
   def fromGlobalSnapshot[F[_]: MonadThrow: KryoSerializer](snapshot: GlobalSnapshot): F[GlobalIncrementalSnapshot] =
     snapshot.info.stateProof.map { stateProof =>
       GlobalIncrementalSnapshot(
         snapshot.ordinal,
-        snapshot.height,
-        snapshot.subHeight,
         snapshot.lastSnapshotHash,
-        snapshot.blocks,
+        CurrencyData(
+          snapshot.height,
+          snapshot.subHeight,
+          snapshot.blocks,
+          snapshot.rewards,
+          snapshot.tips,
+          snapshot.epochProgress
+        ),
         snapshot.stateChannelSnapshots,
-        snapshot.rewards,
-        snapshot.epochProgress,
         snapshot.nextFacilitators,
-        snapshot.tips,
         stateProof
       )
     }
@@ -77,7 +74,9 @@ case class GlobalSnapshot(
   nextFacilitators: NonEmptyList[PeerId],
   info: GlobalSnapshotInfoV1,
   tips: SnapshotTips
-) extends FullSnapshot[GlobalSnapshotStateProof, GlobalSnapshotInfoV1] {}
+) extends Snapshot {
+  def currencyData: CurrencyData = CurrencyData(height, subHeight, blocks, rewards, tips, epochProgress)
+}
 
 object GlobalSnapshot {
 
@@ -103,15 +102,17 @@ object GlobalSnapshot {
     genesis.info.stateProof.map { stateProof =>
       GlobalIncrementalSnapshot(
         genesis.ordinal.next,
-        genesis.height,
-        genesis.subHeight.next,
         genesis.hash,
-        SortedSet.empty,
+        CurrencyData(
+          genesis.height,
+          genesis.subHeight.next,
+          SortedSet.empty,
+          SortedSet.empty,
+          genesis.tips,
+          genesis.epochProgress
+        ),
         SortedMap.empty,
-        SortedSet.empty,
-        genesis.epochProgress.next,
         nextFacilitators,
-        genesis.tips,
         stateProof
       )
     }

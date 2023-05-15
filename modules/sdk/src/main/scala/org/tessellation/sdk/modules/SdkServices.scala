@@ -62,14 +62,12 @@ object SdkServices {
       localHealthcheck <- LocalHealthcheck.make[F](nodeClient, storages.cluster)
       gossip <- Gossip.make[F](queues.rumor, nodeId, generation, keyPair)
       currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
-        BlockAcceptanceManager.make[F](validators.currencyBlockValidator),
-        collateral.amount
+        BlockAcceptanceManager.make[F](validators.currencyBlockValidator, collateral.amount)
       )
       currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotAcceptanceManager)
       globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
-        BlockAcceptanceManager.make[F](validators.blockValidator),
-        GlobalSnapshotStateChannelEventsProcessor.make[F](validators.stateChannelValidator, currencySnapshotContextFns),
-        collateral.amount
+        BlockAcceptanceManager.make[F](validators.blockValidator, collateral.amount),
+        GlobalSnapshotStateChannelEventsProcessor.make[F](validators.stateChannelValidator, currencySnapshotContextFns)
       )
       globalSnapshotContextFns = GlobalSnapshotContextFunctions.make(globalSnapshotAcceptanceManager)
     } yield

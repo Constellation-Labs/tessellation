@@ -17,8 +17,7 @@ import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 
 @derive(eqv, show, encoder, decoder)
-case class CommonSnapshot(
-  ordinal: SnapshotOrdinal,
+case class CurrencyData(
   height: Height,
   subHeight: SubHeight,
   blocks: SortedSet[BlockAsActiveTip],
@@ -26,7 +25,7 @@ case class CommonSnapshot(
   tips: SnapshotTips,
   epochProgress: EpochProgress
 ) {
-  def activeTips[F[_]: Async: KryoSerializer]: F[SortedSet[ActiveTip]] =
+  def activeTips[F[_]: Async: KryoSerializer](ordinal: SnapshotOrdinal): F[SortedSet[ActiveTip]] =
     blocks.toList.traverse { blockAsActiveTip =>
       BlockReference
         .of(blockAsActiveTip.block)

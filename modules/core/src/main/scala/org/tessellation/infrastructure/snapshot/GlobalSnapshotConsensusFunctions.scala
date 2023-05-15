@@ -1,14 +1,15 @@
 package org.tessellation.infrastructure.snapshot
 
 import cats.effect.Async
-import cats.syntax.either._
-import cats.syntax.flatMap._
-import cats.syntax.foldable._
-import cats.syntax.functor._
-import cats.syntax.functorFilter._
-import cats.syntax.option._
-import cats.syntax.order._
-
+//import cats.syntax.either._
+//import cats.syntax.flatMap._
+//import cats.syntax.foldable._
+//import cats.syntax.functor._
+//import cats.syntax.functorFilter._
+//import cats.syntax.option._
+//import cats.syntax.order._
+//import cats.syntax.validated._
+import cats.syntax.all._
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
@@ -26,33 +27,24 @@ import org.tessellation.sdk.infrastructure.snapshot._
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 import org.tessellation.statechannel.StateChannelOutput
-
 import eu.timepit.refined.auto._
+import org.tessellation.sdk.domain.consensus.ConsensusFunctions
+import org.tessellation.sdk.infrastructure.consensus.trigger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-abstract class GlobalSnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
-    extends SnapshotConsensusFunctions[
-      F,
-      GlobalSnapshotStateProof,
-      GlobalSnapshotEvent,
-      GlobalSnapshotArtifact,
-      GlobalSnapshotContext,
-      ConsensusTrigger
-    ] {}
+trait GlobalSnapshotConsensusFunctions[F[_]]
+    extends ConsensusFunctions[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact, GlobalSnapshotContext]
 
 object GlobalSnapshotConsensusFunctions {
 
   def make[F[_]: Async: KryoSerializer: SecurityProvider: Metrics](
     globalSnapshotStorage: SnapshotStorage[F, GlobalSnapshotArtifact, GlobalSnapshotContext],
-    globalSnapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
-    collateral: Amount,
-    rewards: Rewards[F, DAGTransaction, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot],
-    environment: AppEnvironment
+    environment: AppEnvironment,
+    globalSnapshotCreator: GlobalSnapshotCreator[F],
+    globalSnapshotValidator: GlobalSnapshotValidator[F]
   ): GlobalSnapshotConsensusFunctions[F] = new GlobalSnapshotConsensusFunctions[F] {
 
     private val logger = Slf4jLogger.getLoggerFromClass(GlobalSnapshotConsensusFunctions.getClass)
-
-    def getRequiredCollateral: Amount = collateral
 
     def consumeSignedMajorityArtifact(signedArtifact: Signed[GlobalSnapshotArtifact], context: GlobalSnapshotContext): F[Unit] =
       globalSnapshotStorage
@@ -62,25 +54,32 @@ object GlobalSnapshotConsensusFunctions {
           logger.error("Cannot save GlobalSnapshot into the storage")
         )
 
-    override def validateArtifact(
+    def validateArtifact(
       lastSignedArtifact: Signed[GlobalSnapshotArtifact],
       lastContext: GlobalSnapshotContext,
       trigger: ConsensusTrigger,
       artifact: GlobalSnapshotArtifact
     ): F[Either[InvalidArtifact, (GlobalSnapshotArtifact, GlobalSnapshotContext)]] = {
-      val dagEvents = artifact.blocks.unsorted.map(_.block.asRight[StateChannelOutput])
-      val scEvents = artifact.stateChannelSnapshots.toList.flatMap {
-        case (address, stateChannelBinaries) => stateChannelBinaries.map(StateChannelOutput(address, _).asLeft[DAGEvent]).toList
+      val expectedEpochProgress = trigger match {
+        case EventTrigger => lastSignedArtifact.currencyData.epochProgress
+        case TimeTrigger  => lastSignedArtifact.currencyData.epochProgress.next
       }
-      val events = dagEvents ++ scEvents
 
-      createProposalArtifact(lastSignedArtifact.ordinal, lastSignedArtifact, lastContext, trigger, events).map {
-        case (recreatedArtifact, context, _) =>
-          if (recreatedArtifact === artifact)
-            (artifact, context).asRight[InvalidArtifact]
-          else
-            ArtifactMismatch.asLeft[(GlobalSnapshotArtifact, GlobalSnapshotContext)]
-      }
+      globalSnapshotValidator
+        .validateSnapshot(lastSignedArtifact, lastContext, artifact)
+        .flatMap(
+          _.toEither.leftTraverse { errNec =>
+            logger.info(s"Artifact validation error ${errNec.show}").as(ArtifactMismatch)
+          }.map {
+            _.flatMap {
+              case o @ (snapshot, _) =>
+                if (snapshot.currencyData.epochProgress === expectedEpochProgress)
+                  o.asRight
+                else
+                  ArtifactMismatch.asLeft
+            }
+          }
+        )
     }
 
     def createProposalArtifact(
@@ -90,91 +89,61 @@ object GlobalSnapshotConsensusFunctions {
       trigger: ConsensusTrigger,
       events: Set[GlobalSnapshotEvent]
     ): F[(GlobalSnapshotArtifact, GlobalSnapshotContext, Set[GlobalSnapshotEvent])] = {
-      val (scEvents: List[StateChannelEvent], dagEvents: List[DAGEvent]) = events.filter { event =>
+      val (scEvents: Set[StateChannelEvent], dagEvents: Set[DAGEvent]) = events.filter { event =>
         if (environment == Mainnet) event.isRight else true
-      }.toList.partitionMap(identity)
+      }.partitionMap(identity)
 
       val blocksForAcceptance = dagEvents
-        .filter(_.height > lastArtifact.height)
+        .filter(_.height > lastArtifact.currencyData.height)
 
-      for {
-        lastArtifactHash <- lastArtifact.value.hashF
-        currentOrdinal = lastArtifact.ordinal.next
-        currentEpochProgress = trigger match {
-          case EventTrigger => lastArtifact.epochProgress
-          case TimeTrigger  => lastArtifact.epochProgress.next
-        }
+      val mintRewards = trigger match {
+        case EventTrigger => false
+        case TimeTrigger  => true
+      }
 
-        lastActiveTips <- lastArtifact.activeTips
-        lastDeprecatedTips = lastArtifact.tips.deprecated
+      globalSnapshotCreator
+        .createGlobalSnapshot(
+          lastArtifact,
+          snapshotContext,
+          blocksForAcceptance,
+          scEvents,
+          mintRewards
+        )
+        .map { creationResult =>
+          val returnedEvents = creationResult.awaitingBlocks.map(_.asRight[StateChannelEvent]) ++
+            creationResult.awaitingStateChannelSnapshots.map(_.asLeft[DAGEvent])
 
-        (acceptanceResult, scSnapshots, returnedSCEvents, acceptedRewardTxs, snapshotInfo, stateProof) <- globalSnapshotAcceptanceManager
-          .accept(
-            blocksForAcceptance,
-            scEvents,
-            snapshotContext,
-            lastActiveTips,
-            lastDeprecatedTips,
-            rewards.distribute(lastArtifact, snapshotContext.balances, _, trigger)
+          (
+            creationResult.snapshot,
+            creationResult.state,
+            returnedEvents
           )
-        (deprecated, remainedActive, accepted) = getUpdatedTips(
-          lastActiveTips,
-          lastDeprecatedTips,
-          acceptanceResult,
-          currentOrdinal
-        )
-
-        (height, subHeight) <- getHeightAndSubHeight(lastArtifact, deprecated, remainedActive, accepted)
-
-        returnedDAGEvents = getReturnedDAGEvents(acceptanceResult)
-
-        globalSnapshot = GlobalIncrementalSnapshot(
-          currentOrdinal,
-          height,
-          subHeight,
-          lastArtifactHash,
-          accepted,
-          scSnapshots,
-          acceptedRewardTxs,
-          currentEpochProgress,
-          GlobalSnapshot.nextFacilitators,
-          SnapshotTips(
-            deprecated = deprecated,
-            remainedActive = remainedActive
-          ),
-          stateProof
-        )
-        returnedEvents = returnedSCEvents.map(_.asLeft[DAGEvent]).union(returnedDAGEvents)
-      } yield (globalSnapshot, snapshotInfo, returnedEvents)
+        }
     }
-
-    private def getReturnedDAGEvents(
-      acceptanceResult: BlockAcceptanceResult
-    ): Set[GlobalSnapshotEvent] =
-      acceptanceResult.notAccepted.mapFilter {
-        case (signedBlock, _: BlockAwaitReason) => signedBlock.asRight[StateChannelEvent].some
-        case _                                  => none
-      }.toSet
 
     object metrics {
 
       def globalSnapshot(signedGS: Signed[GlobalIncrementalSnapshot]): F[Unit] = {
-        val activeTipsCount = signedGS.tips.remainedActive.size + signedGS.blocks.size
-        val deprecatedTipsCount = signedGS.tips.deprecated.size
-        val transactionCount = signedGS.blocks.map(_.block.transactions.size).sum
+        val activeTipsCount = signedGS.currencyData.tips.remainedActive.size + signedGS.currencyData.blocks.size
+        val deprecatedTipsCount = signedGS.currencyData.tips.deprecated.size
+        val transactionCount = signedGS.currencyData.blocks.map(_.block.transactions.size).sum
         val scSnapshotCount = signedGS.stateChannelSnapshots.view.values.map(_.size).sum
 
         Metrics[F].updateGauge("dag_global_snapshot_ordinal", signedGS.ordinal.value) >>
-          Metrics[F].updateGauge("dag_global_snapshot_height", signedGS.height.value) >>
+          Metrics[F].updateGauge("dag_global_snapshot_height", signedGS.currencyData.height.value) >>
           Metrics[F].updateGauge("dag_global_snapshot_signature_count", signedGS.proofs.size) >>
           Metrics[F]
             .updateGauge("dag_global_snapshot_tips_count", deprecatedTipsCount, Seq(("tip_type", "deprecated"))) >>
           Metrics[F].updateGauge("dag_global_snapshot_tips_count", activeTipsCount, Seq(("tip_type", "active"))) >>
-          Metrics[F].incrementCounterBy("dag_global_snapshot_blocks_total", signedGS.blocks.size) >>
+          Metrics[F].incrementCounterBy("dag_global_snapshot_blocks_total", signedGS.currencyData.blocks.size) >>
           Metrics[F].incrementCounterBy("dag_global_snapshot_transactions_total", transactionCount) >>
           Metrics[F].incrementCounterBy("dag_global_snapshot_state_channel_snapshots_total", scSnapshotCount)
       }
     }
+
+    def triggerPredicate(event: GlobalSnapshotEvent): Boolean = true
+
+    override def facilitatorFilter(lastSignedArtifact: Signed[GlobalSnapshotArtifact], lastContext: GlobalSnapshotContext, peerId: peer.PeerId): F[Boolean] = ???
   }
 
 }

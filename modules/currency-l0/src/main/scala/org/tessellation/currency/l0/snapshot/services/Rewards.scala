@@ -1,24 +1,23 @@
 package org.tessellation.currency.l0.snapshot.services
 
+import cats.data.NonEmptySet
 import cats.effect.Async
 import cats.syntax.applicative._
 
-import scala.collection.immutable.{SortedMap, SortedSet}
+import scala.collection.immutable.SortedSet
 
-import org.tessellation.currency.schema.currency._
-import org.tessellation.schema.address.Address
-import org.tessellation.schema.balance.Balance
-import org.tessellation.schema.transaction.RewardTransaction
+import org.tessellation.schema.CurrencyData
+import org.tessellation.schema.ID.Id
+import org.tessellation.schema.transaction.{RewardTransaction, Transaction}
 import org.tessellation.sdk.domain.rewards.Rewards
-import org.tessellation.sdk.infrastructure.consensus.trigger
 import org.tessellation.security.signature.Signed
 
 object Rewards {
-  def make[F[_]: Async]: Rewards[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot] =
+  def make[F[_]: Async]: Rewards[F] =
     (
-      _: Signed[CurrencyIncrementalSnapshot],
-      _: SortedMap[Address, Balance],
-      _: SortedSet[Signed[CurrencyTransaction]],
-      _: trigger.ConsensusTrigger
+      _: CurrencyData,
+      _: NonEmptySet[Id],
+      _: SortedSet[Signed[Transaction]],
+      _: Boolean
     ) => SortedSet.empty[RewardTransaction].pure[F]
 }
