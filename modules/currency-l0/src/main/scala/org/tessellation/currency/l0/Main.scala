@@ -59,8 +59,7 @@ object Main
           sdk.seedlist,
           sdk.nodeId,
           keyPair,
-          cfg,
-          method.identifier
+          cfg
         )
         .asResource
       programs = Programs.make[IO](

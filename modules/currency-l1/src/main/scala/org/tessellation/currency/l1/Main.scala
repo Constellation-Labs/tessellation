@@ -55,26 +55,26 @@ object Main
     val cfg = method.appConfig
 
     for {
-      queues <- Queues.make[IO, CurrencyTransaction, CurrencyBlock](sdkQueues).asResource
+      queues <- Queues.make[IO](sdkQueues).asResource
       storages <- Storages
-        .make[IO, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
+        .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
           sdkStorages,
           method.l0Peer,
           method.globalL0Peer
         )
         .asResource
       validators = Validators
-        .make[IO, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
+        .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
           storages,
           seedlist
         )
-      p2pClient = P2PClient.make[IO, CurrencyTransaction, CurrencyBlock](
+      p2pClient = P2PClient.make[IO](
         sdkP2PClient,
         sdkResources.client,
         currencyPathPrefix = "currency"
       )
       services = Services
-        .make[IO, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
+        .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
           storages,
           storages.lastGlobalSnapshot,
           storages.globalL0Cluster,
@@ -94,14 +94,14 @@ object Main
         sdkServices.currencySnapshotContextFns
       )
       programs = Programs
-        .make[IO, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
+        .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
           sdkPrograms,
           p2pClient,
           storages,
           snapshotProcessor
         )
       healthChecks <- HealthChecks
-        .make[IO, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
+        .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
           storages,
           services,
           programs,
@@ -114,14 +114,14 @@ object Main
         .asResource
 
       rumorHandler = RumorHandlers.make[IO](storages.cluster, healthChecks.ping, services.localHealthcheck).handlers <+>
-        blockRumorHandler[IO, CurrencyBlock](queues.peerBlock)
+        blockRumorHandler[IO](queues.peerBlock)
 
       _ <- Daemons
         .start(storages, services, healthChecks)
         .asResource
 
       api = HttpApi
-        .make[IO, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
+        .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
           storages,
           queues,
           keyPair.getPrivate,
@@ -137,7 +137,7 @@ object Main
       _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.http.cliHttp, api.cliApp)
 
       stateChannel <- StateChannel
-        .make[IO, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
+        .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
           cfg,
           keyPair,
           p2pClient,

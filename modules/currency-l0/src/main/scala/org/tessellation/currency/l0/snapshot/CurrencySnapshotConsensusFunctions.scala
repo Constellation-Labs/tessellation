@@ -28,8 +28,6 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
     extends SnapshotConsensusFunctions[
       F,
-      CurrencyTransaction,
-      CurrencyBlock,
       CurrencySnapshotStateProof,
       CurrencySnapshotEvent,
       CurrencySnapshotArtifact,
@@ -111,7 +109,7 @@ object CurrencySnapshotConsensusFunctions {
     }
 
     private def getReturnedEvents(
-      acceptanceResult: BlockAcceptanceResult[CurrencyBlock]
+      acceptanceResult: BlockAcceptanceResult
     ): Set[CurrencySnapshotEvent] =
       acceptanceResult.notAccepted.mapFilter {
         case (signedBlock, _: BlockAwaitReason) => signedBlock.some

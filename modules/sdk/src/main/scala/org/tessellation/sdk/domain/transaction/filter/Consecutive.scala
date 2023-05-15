@@ -17,14 +17,14 @@ import org.tessellation.security.Hashed
 import org.tessellation.security.signature.Signed
 
 object Consecutive {
-  def signedTxOrder[T <: Transaction: Order]: Order[Signed[T]] =
-    Order.whenEqual(Order.by(-_.fee.value.value), Order[Signed[T]])
+  def signedTxOrder: Order[Signed[Transaction]] =
+    Order.whenEqual(Order.by(-_.fee.value.value), Order[Signed[Transaction]])
 
-  def hashedTxOrder[T <: Transaction: Order]: Order[Hashed[T]] = signedTxOrder.contramap(_.signed)
+  def hashedTxOrder: Order[Hashed[Transaction]] = signedTxOrder.contramap(_.signed)
 
-  def take[F[_]: Async: KryoSerializer, T <: Transaction: Order](txs: List[Signed[T]]): F[List[Signed[T]]] = {
+  def take[F[_]: Async: KryoSerializer](txs: List[Signed[Transaction]]): F[List[Signed[Transaction]]] = {
     val headTx =
-      txs.sorted(Order.whenEqual(Order.by[Signed[T], Long](_.ordinal.value.value), signedTxOrder).toOrdering).headOption
+      txs.sorted(Order.whenEqual(Order.by[Signed[Transaction], Long](_.ordinal.value.value), signedTxOrder).toOrdering).headOption
 
     headTx match {
       case None => Applicative[F].pure(List.empty)
@@ -32,7 +32,7 @@ object Consecutive {
         TransactionReference
           .of(headTx)
           .flatMap { headTxReference =>
-            takeGeneric[F, TransactionReference, Signed[T]](
+            takeGeneric[F, TransactionReference, Signed[Transaction]](
               signedTx => TransactionReference.of(signedTx),
               _.parent,
               txs.diff(Seq(headTx)),
@@ -42,11 +42,11 @@ object Consecutive {
     }
   }
 
-  def take[T <: Transaction: Order](
-    txs: List[Hashed[T]],
+  def take(
+    txs: List[Hashed[Transaction]],
     lastAcceptedTxRef: TransactionReference
-  ): List[Hashed[T]] =
-    takeGeneric[Id, TransactionReference, Hashed[T]](
+  ): List[Hashed[Transaction]] =
+    takeGeneric[Id, TransactionReference, Hashed[Transaction]](
       hashedTx => Id(TransactionReference.of(hashedTx)),
       _.parent,
       txs,

@@ -9,7 +9,7 @@ import org.tessellation.ext.kryo._
 import org.tessellation.merkletree.{MerkleRoot, Proof, ProofEntry}
 import org.tessellation.schema._
 import org.tessellation.schema.address.{Address, AddressCache}
-import org.tessellation.schema.block.{DAGBlock, Tips}
+import org.tessellation.schema.block.Tips
 import org.tessellation.schema.gossip._
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.SignRequest
@@ -56,8 +56,8 @@ package object shared {
     classOf[PublicTrust] -> 326,
     classOf[Ordinal] -> 327,
     classOf[CommonRumorRaw] -> 328,
-    classOf[DAGTransaction] -> 329,
-    DAGTransaction.OrderingInstance.getClass -> 330,
+    classOf[Transaction] -> 329,
+    Transaction.OrderingInstance.getClass -> 330,
     classOf[TransactionReference] -> 331,
     classOf[Refined[_, _]] -> 332,
     classOf[RewardTransaction] -> 333,
@@ -68,29 +68,24 @@ package object shared {
     classOf[GlobalSnapshot] -> 600,
     classOf[StateChannelSnapshotBinary] -> 601,
     classOf[SnapshotOrdinal] -> 602,
-    classOf[DAGBlock] -> 603,
-    DAGBlock.OrderingInstance.getClass -> 604,
+    classOf[Block] -> 603,
+    Block.OrderingInstance.getClass -> 604,
     classOf[BlockReference] -> 605,
     classOf[GlobalSnapshotInfoV1] -> 606,
     classOf[SnapshotTips] -> 607,
     classOf[ActiveTip] -> 608,
     ActiveTip.OrderingInstance.getClass -> 609,
-    classOf[BlockAsActiveTip[_]] -> 610,
-    DAGBlock.OrderingInstanceAsActiveTip.getClass -> 611,
+    classOf[BlockAsActiveTip] -> 610,
+    BlockAsActiveTip.OrderingInstance.getClass -> 611,
     classOf[DeprecatedTip] -> 612,
     DeprecatedTip.OrderingInstance.getClass -> 613,
     classOf[Tips] -> 614,
     classOf[GlobalIncrementalSnapshot] -> 615,
     classOf[MerkleRoot] -> 616,
     classOf[GlobalSnapshotInfo] -> 617,
-    classOf[CurrencyTransaction] -> 618,
-    classOf[CurrencyBlock] -> 619,
     classOf[CurrencySnapshotInfo] -> 620,
     classOf[CurrencySnapshot] -> 621,
     classOf[CurrencyIncrementalSnapshot] -> 622,
-    CurrencyBlock.OrderingInstanceAsActiveTip.getClass -> 623,
-    CurrencyTransaction.OrderingInstance.getClass -> 624,
-    CurrencyBlock.OrderingInstance.getClass -> 625,
     classOf[Proof] -> 626,
     classOf[ProofEntry] -> 627,
     classOf[GlobalSnapshotStateProof] -> 628,

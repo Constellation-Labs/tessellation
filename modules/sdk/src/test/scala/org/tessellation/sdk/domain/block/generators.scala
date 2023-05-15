@@ -4,9 +4,8 @@ import cats.data.{NonEmptyList, NonEmptySet}
 
 import scala.collection.immutable.SortedSet
 
-import org.tessellation.schema.BlockReference
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.generators.{signedOf, signedTransactionGen}
+import org.tessellation.schema.{Block, BlockReference}
 import org.tessellation.security.signature.Signed
 
 import org.scalacheck.{Arbitrary, Gen}
@@ -16,13 +15,13 @@ object generators {
   val blockReferencesGen: Gen[NonEmptyList[BlockReference]] =
     Gen.nonEmptyListOf(Arbitrary.arbitrary[BlockReference]).map(NonEmptyList.fromListUnsafe(_))
 
-  val dagBlockGen: Gen[DAGBlock] =
+  val blockGen: Gen[Block] =
     for {
       blockReferences <- blockReferencesGen
       signedTxn <- signedTransactionGen
-    } yield DAGBlock(blockReferences, NonEmptySet.fromSetUnsafe(SortedSet(signedTxn)))
+    } yield Block(blockReferences, NonEmptySet.fromSetUnsafe(SortedSet(signedTxn)))
 
-  val signedDAGBlockGen: Gen[Signed[DAGBlock]] = signedOf(dagBlockGen)
+  val signedDAGBlockGen: Gen[Signed[Block]] = signedOf(blockGen)
   implicit val signedDAGBlockArbitrary = Arbitrary(signedDAGBlockGen)
 
 }

@@ -1,6 +1,5 @@
 package org.tessellation.sdk.infrastructure.block.processing
 
-import cats.Eq
 import cats.data.Validated.{Invalid, Valid}
 import cats.effect.Async
 import cats.syntax.applicative._
@@ -13,7 +12,6 @@ import cats.syntax.show._
 import cats.syntax.traverse._
 
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.transaction.Transaction
 import org.tessellation.schema.{Block, BlockReference}
 import org.tessellation.sdk.domain.block.processing.{TxChains, _}
 import org.tessellation.sdk.infrastructure.block.processing.BlockAcceptanceLogic
@@ -27,53 +25,52 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object BlockAcceptanceManager {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider, T <: Transaction: Eq, B <: Block[T]: Eq: Ordering](
-    blockValidator: BlockValidator[F, T, B]
-  ): BlockAcceptanceManager[F, T, B] = make(BlockAcceptanceLogic.make[F, T, B], blockValidator)
+  def make[F[_]: Async: KryoSerializer: SecurityProvider](
+    blockValidator: BlockValidator[F]
+  ): BlockAcceptanceManager[F] = make(BlockAcceptanceLogic.make[F], blockValidator)
 
-  def make[F[_]: Async: KryoSerializer, T <: Transaction: Eq, B <: Block[T]: Eq: Ordering](
-    logic: BlockAcceptanceLogic[F, T, B],
-    blockValidator: BlockValidator[F, T, B]
-  ): BlockAcceptanceManager[F, T, B] =
-    new BlockAcceptanceManager[F, T, B] {
+  def make[F[_]: Async: KryoSerializer](
+    logic: BlockAcceptanceLogic[F],
+    blockValidator: BlockValidator[F]
+  ): BlockAcceptanceManager[F] =
+    new BlockAcceptanceManager[F] {
       private val logger = Slf4jLogger.getLoggerFromClass[F](BlockAcceptanceManager.getClass)
 
       def acceptBlocksIteratively(
-        blocks: List[Signed[B]],
+        blocks: List[Signed[Block]],
         context: BlockAcceptanceContext[F]
-      ): F[BlockAcceptanceResult[B]] = {
+      ): F[BlockAcceptanceResult] = {
 
         def go(
-          initState: BlockAcceptanceState[T, B],
-          toProcess: List[(Signed[B], TxChains[T])]
-        ): F[BlockAcceptanceState[T, B]] =
+          initState: BlockAcceptanceState,
+          toProcess: List[(Signed[Block], TxChains)]
+        ): F[BlockAcceptanceState] =
           for {
-            currState <- toProcess.foldLeftM[F, BlockAcceptanceState[T, B]](initState.copy(awaiting = List.empty)) {
-              (acc, blockAndTxChains) =>
-                blockAndTxChains match {
-                  case (block, txChains) =>
-                    logic
-                      .acceptBlock(block, txChains, context, acc.contextUpdate)
-                      .map {
-                        case (contextUpdate, blockUsages) =>
-                          acc
-                            .focus(_.contextUpdate)
-                            .replace(contextUpdate)
-                            .focus(_.accepted)
-                            .modify((block, blockUsages) :: _)
-                      }
-                      .leftMap {
-                        case reason: BlockRejectionReason =>
-                          acc
-                            .focus(_.rejected)
-                            .modify(_ :+ (block, reason))
-                        case reason: BlockAwaitReason =>
-                          acc
-                            .focus(_.awaiting)
-                            .modify(_ :+ (blockAndTxChains, reason))
-                      }
-                      .merge
-                }
+            currState <- toProcess.foldLeftM[F, BlockAcceptanceState](initState.copy(awaiting = List.empty)) { (acc, blockAndTxChains) =>
+              blockAndTxChains match {
+                case (block, txChains) =>
+                  logic
+                    .acceptBlock(block, txChains, context, acc.contextUpdate)
+                    .map {
+                      case (contextUpdate, blockUsages) =>
+                        acc
+                          .focus(_.contextUpdate)
+                          .replace(contextUpdate)
+                          .focus(_.accepted)
+                          .modify((block, blockUsages) :: _)
+                    }
+                    .leftMap {
+                      case reason: BlockRejectionReason =>
+                        acc
+                          .focus(_.rejected)
+                          .modify(_ :+ (block, reason))
+                      case reason: BlockAwaitReason =>
+                        acc
+                          .focus(_.awaiting)
+                          .modify(_ :+ (blockAndTxChains, reason))
+                    }
+                    .merge
+              }
             }
             result <-
               if (initState === currState) currState.pure[F]
@@ -81,7 +78,7 @@ object BlockAcceptanceManager {
           } yield result
 
         blocks.sorted
-          .foldLeftM((List.empty[(Signed[B], TxChains[T])], List.empty[(Signed[B], ValidationFailed)])) { (acc, block) =>
+          .foldLeftM((List.empty[(Signed[Block], TxChains)], List.empty[(Signed[Block], ValidationFailed)])) { (acc, block) =>
             acc match {
               case (validList, invalidList) =>
                 blockValidator.validate(block).map {
@@ -102,7 +99,7 @@ object BlockAcceptanceManager {
       }
 
       def acceptBlock(
-        block: Signed[B],
+        block: Signed[Block],
         context: BlockAcceptanceContext[F]
       ): F[Either[BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, NonNegLong)]] =
         blockValidator.validate(block).flatMap {
@@ -117,14 +114,14 @@ object BlockAcceptanceManager {
             .value
         }
 
-      private def logAcceptedBlock(tuple: (Signed[B], NonNegLong)): F[Unit] = {
+      private def logAcceptedBlock(tuple: (Signed[Block], NonNegLong)): F[Unit] = {
         val (signedBlock, blockUsages) = tuple
         BlockReference.of(signedBlock).flatMap { blockRef =>
           logger.info(s"Accepted block: ${blockRef.show}, usages: ${blockUsages.show}")
         }
       }
 
-      private def logNotAcceptedBlock(tuple: (Signed[B], BlockNotAcceptedReason)): F[Unit] = {
+      private def logNotAcceptedBlock(tuple: (Signed[Block], BlockNotAcceptedReason)): F[Unit] = {
         val (signedBlock, reason) = tuple
         BlockReference.of(signedBlock).flatMap { blockRef =>
           reason match {

@@ -12,7 +12,7 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.semver.SnapshotVersion
-import org.tessellation.schema.transaction.{Transaction, TransactionReference}
+import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.security.hash.Hash
 import org.tessellation.syntax.sortedCollection._
 
@@ -27,21 +27,21 @@ object snapshot {
     val balancesProof: Hash
   }
 
-  trait FullSnapshot[T <: Transaction, B <: Block[T], P <: StateProof, SI <: SnapshotInfo[P]] extends Snapshot[T, B] {
+  trait FullSnapshot[P <: StateProof, SI <: SnapshotInfo[P]] extends Snapshot {
     val info: SI
   }
 
-  trait IncrementalSnapshot[T <: Transaction, B <: Block[T], P <: StateProof] extends Snapshot[T, B] {
+  trait IncrementalSnapshot[P <: StateProof] extends Snapshot {
     val stateProof: P
     val version: SnapshotVersion
   }
 
-  trait Snapshot[T <: Transaction, B <: Block[T]] {
+  trait Snapshot {
     val ordinal: SnapshotOrdinal
     val height: Height
     val subHeight: SubHeight
     val lastSnapshotHash: Hash
-    val blocks: SortedSet[BlockAsActiveTip[B]]
+    val blocks: SortedSet[BlockAsActiveTip]
     val tips: SnapshotTips
 
     def activeTips[F[_]: Async: KryoSerializer]: F[SortedSet[ActiveTip]] =

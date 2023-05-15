@@ -5,7 +5,7 @@ import org.tessellation.schema.snapshot.Snapshot
 import org.tessellation.sdk.http.p2p.PeerResponse.PeerResponse
 import org.tessellation.security.signature.Signed
 
-trait SnapshotClient[F[_], S <: Snapshot[_, _]] {
+trait SnapshotClient[F[_], S <: Snapshot] {
   def getLatestOrdinal: PeerResponse[F, SnapshotOrdinal]
   def get(ordinal: SnapshotOrdinal): PeerResponse[F, Signed[S]]
 }

@@ -1,23 +1,19 @@
 package org.tessellation.schema
 
-import cats.Order
-
+import org.tessellation.ext.cats.data.OrderBasedOrdering
 import org.tessellation.security.signature.Signed
 
-import derevo.cats.show
+import derevo.cats.{order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import eu.timepit.refined.types.numeric.NonNegLong
 
-@derive(show, encoder, decoder)
-case class BlockAsActiveTip[B <: Block[_]](
-  block: Signed[B],
+@derive(show, encoder, decoder, order)
+case class BlockAsActiveTip(
+  block: Signed[Block],
   usageCount: NonNegLong
 )
 
 object BlockAsActiveTip {
-  implicit def order[B <: Block[_]: Order]: Order[BlockAsActiveTip[B]] = Order.whenEqual(
-    Order.by[BlockAsActiveTip[B], Signed[B]](_.block),
-    Order.by[BlockAsActiveTip[B], NonNegLong](_.usageCount)
-  )
+  implicit object OrderingInstance extends OrderBasedOrdering[BlockAsActiveTip]
 }

@@ -13,7 +13,7 @@ import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import io.estatico.newtype.ops._
 
 object AddressService {
-  def make[F[_]: Applicative, S <: Snapshot[_, _], C <: SnapshotInfo[_]](
+  def make[F[_]: Applicative, S <: Snapshot, C <: SnapshotInfo[_]](
     snapshotStorage: SnapshotStorage[F, S, C]
   ): AddressService[F, S] =
     new AddressService[F, S] {

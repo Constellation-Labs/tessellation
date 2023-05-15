@@ -8,9 +8,9 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.currency.l0.cell.AlgebraCommand.NoAction
-import org.tessellation.currency.schema.currency.CurrencyBlock
 import org.tessellation.kernel.Cell.NullTerminal
 import org.tessellation.kernel._
+import org.tessellation.schema.Block
 import org.tessellation.security.signature.Signed
 
 import higherkindness.droste.{AlgebraM, CoalgebraM, scheme}
@@ -23,12 +23,12 @@ import L0CellInput.HandleL1Block
 sealed trait L0CellInput
 
 object L0CellInput {
-  case class HandleL1Block(data: Signed[CurrencyBlock]) extends L0CellInput
+  case class HandleL1Block(data: Signed[Block]) extends L0CellInput
 }
 
 class L0Cell[F[_]: Async](
   data: L0CellInput,
-  l1OutputQueue: Queue[F, Signed[CurrencyBlock]]
+  l1OutputQueue: Queue[F, Signed[Block]]
 ) extends Cell[F, StackF, L0CellInput, Either[CellError, Ω], CoalgebraCommand](
       data,
       scheme.hyloM(
@@ -57,7 +57,7 @@ object L0Cell {
   type Mk[F[_]] = L0CellInput => L0Cell[F]
 
   def mkL0Cell[F[_]: Async](
-    l1OutputQueue: Queue[F, Signed[CurrencyBlock]]
+    l1OutputQueue: Queue[F, Signed[Block]]
   ): Mk[F] =
     data => new L0Cell(data, l1OutputQueue)
 
@@ -66,14 +66,14 @@ object L0Cell {
 
   object Algebra {
 
-    def enqueueL1BlockData[F[_]: Async](queue: Queue[F, Signed[CurrencyBlock]])(data: Signed[CurrencyBlock]): AlgebraR[F] =
+    def enqueueL1BlockData[F[_]: Async](queue: Queue[F, Signed[Block]])(data: Signed[Block]): AlgebraR[F] =
       queue.offer(data) >>
         NullTerminal.asRight[CellError].widen[Ω].pure[F]
   }
 
   object Coalgebra {
 
-    def processL1Block[F[_]: Async](data: Signed[CurrencyBlock]): CoalgebraR[F] = {
+    def processL1Block[F[_]: Async](data: Signed[Block]): CoalgebraR[F] = {
       def res: StackF[CoalgebraCommand] = Done(AlgebraCommand.EnqueueL1BlockData(data).asRight[CellError])
 
       res.pure[F]

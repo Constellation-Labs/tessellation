@@ -12,7 +12,6 @@ import cats.syntax.traverse._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import org.tessellation.currency.schema.currency.{CurrencyBlock, CurrencyTransaction}
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.infrastructure.snapshot._
@@ -20,11 +19,10 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.transaction.{DAGTransaction, TransactionReference}
+import org.tessellation.schema.transaction.{Transaction, TransactionReference}
 import org.tessellation.sdk.domain.statechannel.StateChannelValidator
 import org.tessellation.sdk.domain.transaction.{TransactionChainValidator, TransactionValidator}
 import org.tessellation.sdk.infrastructure.block.processing.{BlockAcceptanceLogic, BlockAcceptanceManager, BlockValidator}
@@ -39,7 +37,7 @@ import org.tessellation.security.{Hashed, KeyPairGenerator, SecurityProvider}
 import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.syntax.sortedCollection._
 import org.tessellation.tools.TransactionGenerator._
-import org.tessellation.tools.{DAGBlockGenerator, TransactionGenerator}
+import org.tessellation.tools.{BlockGenerator, TransactionGenerator}
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
@@ -61,7 +59,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
 
   val balances: Map[Address, Balance] = Map(Address("DAG8Yy2enxizZdWoipKKZg6VXwk7rY2Z54mJqUdC") -> Balance(NonNegLong(10L)))
 
-  def mkSnapshots(dags: List[List[BlockAsActiveTip[DAGBlock]]], initBalances: Map[Address, Balance])(
+  def mkSnapshots(dags: List[List[BlockAsActiveTip]], initBalances: Map[Address, Balance])(
     implicit K: KryoSerializer[IO],
     S: SecurityProvider[IO]
   ): IO[(Hashed[GlobalSnapshot], NonEmptyList[Hashed[GlobalIncrementalSnapshot]])] =
@@ -83,7 +81,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         }
     }
 
-  def mkSnapshot(lastHash: Hash, reference: GlobalIncrementalSnapshot, keyPair: KeyPair, blocks: SortedSet[BlockAsActiveTip[DAGBlock]])(
+  def mkSnapshot(lastHash: Hash, reference: GlobalIncrementalSnapshot, keyPair: KeyPair, blocks: SortedSet[BlockAsActiveTip])(
     implicit K: KryoSerializer[IO],
     S: SecurityProvider[IO]
   ) =
@@ -106,7 +104,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       hashed <- signed.toHashed
     } yield hashed
 
-  type DAGS = (List[Address], Long, SortedMap[Address, Signed[DAGTransaction]], List[List[BlockAsActiveTip[DAGBlock]]])
+  type DAGS = (List[Address], Long, SortedMap[Address, Signed[Transaction]], List[List[BlockAsActiveTip]])
 
   def mkBlocks(feeValue: NonNegLong, numberOfAddresses: Int, txnsChunksRanges: List[(Int, Int)], blocksChunksRanges: List[(Int, Int)])(
     implicit K: KryoSerializer[IO],
@@ -124,13 +122,13 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       .toList
     lastTxns = txns.groupBy(_.source).view.mapValues(_.last).toMap.toSortedMap
     transactionsChain = txnsChunksRanges
-      .foldLeft[List[List[Signed[DAGTransaction]]]](Nil) { case (acc, (start, end)) => txns.slice(start, end) :: acc }
+      .foldLeft[List[List[Signed[Transaction]]]](Nil) { case (acc, (start, end)) => txns.slice(start, end) :: acc }
       .map(txns => NonEmptySet.fromSetUnsafe(SortedSet.from(txns)))
       .reverse
     blockSigningKeyPairs <- NonEmptyList.of("", "", "").traverse(_ => KeyPairGenerator.makeKeyPair[IO])
-    dags <- DAGBlockGenerator.createDAGs(transactionsChain, initialReferences(), blockSigningKeyPairs).compile.toList
+    dags <- BlockGenerator.createDAGs(transactionsChain, initialReferences(), blockSigningKeyPairs).compile.toList
     chaunkedDags = blocksChunksRanges
-      .foldLeft[List[List[BlockAsActiveTip[DAGBlock]]]](Nil) { case (acc, (start, end)) => dags.slice(start, end) :: acc }
+      .foldLeft[List[List[BlockAsActiveTip]]](Nil) { case (acc, (start, end)) => dags.slice(start, end) :: acc }
       .reverse
   } yield (addresses, txnsSize, lastTxns, chaunkedDags)
 
@@ -153,16 +151,16 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
 
     val signedValidator = SignedValidator.make[IO]
     val blockValidator =
-      BlockValidator.make[IO, DAGTransaction, DAGBlock](
+      BlockValidator.make[IO](
         signedValidator,
-        TransactionChainValidator.make[IO, DAGTransaction],
-        TransactionValidator.make[IO, DAGTransaction](signedValidator)
+        TransactionChainValidator.make[IO],
+        TransactionValidator.make[IO](signedValidator)
       )
-    val blockAcceptanceManager = BlockAcceptanceManager.make(BlockAcceptanceLogic.make[IO, DAGTransaction, DAGBlock], blockValidator)
+    val blockAcceptanceManager = BlockAcceptanceManager.make(BlockAcceptanceLogic.make[IO], blockValidator)
     val stateChannelValidator = StateChannelValidator.make[IO](signedValidator, Some(Set.empty[Address]))
     val validators = SdkValidators.make[IO](None, Some(Set.empty[Address]))
     val currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
-      BlockAcceptanceManager.make[IO, CurrencyTransaction, CurrencyBlock](validators.currencyBlockValidator),
+      BlockAcceptanceManager.make[IO](validators.currencyBlockValidator),
       Amount(0L)
     )
     val currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotAcceptanceManager)

@@ -20,7 +20,7 @@ case class SnapshotReference(
 
 object SnapshotReference {
 
-  def fromHashedSnapshot(snapshot: Hashed[Snapshot[_, _]]): SnapshotReference =
+  def fromHashedSnapshot(snapshot: Hashed[Snapshot]): SnapshotReference =
     SnapshotReference(
       snapshot.height,
       snapshot.subHeight,

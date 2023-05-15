@@ -4,12 +4,11 @@ import cats.data.NonEmptyList
 import cats.effect.{IO, Resource}
 import cats.syntax.option._
 
-import org.tessellation.schema.BlockReference
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.TransactionReference
+import org.tessellation.schema.{Block, BlockReference}
 import org.tessellation.sdk.domain.block.generators.signedDAGBlockGen
 import org.tessellation.sdk.domain.block.processing.{BlockAcceptanceContext, SigningPeerBelowCollateral}
 import org.tessellation.security.SecurityProvider
@@ -64,42 +63,42 @@ object BlockAcceptanceLogicSuite extends MutableIOSuite with Checkers {
     }
 
   test("accept block with signers with collateral") { implicit sc =>
-    forall(dagBlockWithSigningPeer(Seq(peer1))) { block =>
+    forall(blockWithSigningPeer(Seq(peer1))) { block =>
       BlockAcceptanceLogic
-        .processSignatures[IO, DAGBlock](block, mkContext(Balance(250_000L)))
+        .processSignatures[IO](block, mkContext(Balance(250_000L)))
         .value
         .map(expect.same(_, Right(())))
     }
   }
 
   test("reject block with signers without collateral") { implicit sc =>
-    forall(dagBlockWithSigningPeer(Seq(peer1))) { block =>
+    forall(blockWithSigningPeer(Seq(peer1))) { block =>
       BlockAcceptanceLogic
-        .processSignatures[IO, DAGBlock](block, mkContext(Balance(249_999L)))
+        .processSignatures[IO](block, mkContext(Balance(249_999L)))
         .value
         .map(expect.same(_, Left(SigningPeerBelowCollateral(NonEmptyList.of(address1)))))
     }
   }
 
   test("reject block with signers without balance") { implicit sc =>
-    forall(dagBlockWithSigningPeer(Seq(peerWithoutBalance))) { block =>
+    forall(blockWithSigningPeer(Seq(peerWithoutBalance))) { block =>
       BlockAcceptanceLogic
-        .processSignatures[IO, DAGBlock](block, mkContext(Balance(250_000L)))
+        .processSignatures[IO](block, mkContext(Balance(250_000L)))
         .value
         .map(expect.same(_, Left(SigningPeerBelowCollateral(NonEmptyList.of(addressWithoutBalance)))))
     }
   }
 
   test("accept block with signers without balance when collateral is 0") { implicit sc =>
-    forall(dagBlockWithSigningPeer(Seq(peer1))) { block =>
+    forall(blockWithSigningPeer(Seq(peer1))) { block =>
       BlockAcceptanceLogic
-        .processSignatures[IO, DAGBlock](block, mkContext(Balance(250_000L), Amount(0L)))
+        .processSignatures[IO](block, mkContext(Balance(250_000L), Amount(0L)))
         .value
         .map(expect.same(_, Right(())))
     }
   }
 
-  def dagBlockWithSigningPeer(peers: Seq[PeerId]): Gen[Signed[DAGBlock]] =
+  def blockWithSigningPeer(peers: Seq[PeerId]): Gen[Signed[Block]] =
     signedDAGBlockGen.map(_.copy(proofs = buildProofs(peers)))
 
   def buildProofs(peerIds: Seq[PeerId]) =

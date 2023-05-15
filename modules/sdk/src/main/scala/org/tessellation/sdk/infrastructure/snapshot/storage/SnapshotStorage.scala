@@ -35,7 +35,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object SnapshotStorage {
 
-  private def makeResources[F[_]: Async, S <: Snapshot[_, _], C <: SnapshotInfo[_]]() = {
+  private def makeResources[F[_]: Async, S <: Snapshot, C <: SnapshotInfo[_]]() = {
     def mkHeadRef = SignallingRef.of[F, Option[(Signed[S], C)]](none)
     def mkOrdinalCache = MapRef.ofSingleImmutableMap[F, SnapshotOrdinal, Hash](Map.empty)
     def mkHashCache = MapRef.ofSingleImmutableMap[F, Hash, Signed[S]](Map.empty)
@@ -49,7 +49,7 @@ object SnapshotStorage {
     }
   }
 
-  def make[F[_]: Async: KryoSerializer, S <: Snapshot[_, _], C <: SnapshotInfo[_]](
+  def make[F[_]: Async: KryoSerializer, S <: Snapshot, C <: SnapshotInfo[_]](
     snapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, S],
     inMemoryCapacity: NonNegLong
   )(implicit supervisor: Supervisor[F]): F[SnapshotStorage[F, S, C] with LatestBalances[F]] =
@@ -58,7 +58,7 @@ object SnapshotStorage {
         make(headRef, ordinalCache, hashCache, notPersistedCache, offloadQueue, snapshotLocalFileSystemStorage, inMemoryCapacity)
     }
 
-  def make[F[_]: Async: KryoSerializer, S <: Snapshot[_, _], C <: SnapshotInfo[_]](
+  def make[F[_]: Async: KryoSerializer, S <: Snapshot, C <: SnapshotInfo[_]](
     headRef: SignallingRef[F, Option[(Signed[S], C)]],
     ordinalCache: MapRef[F, SnapshotOrdinal, Option[Hash]],
     hashCache: MapRef[F, Hash, Option[Signed[S]]],

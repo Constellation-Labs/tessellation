@@ -9,7 +9,7 @@ import cats.syntax.functor._
 import cats.syntax.option._
 import cats.syntax.show._
 import cats.syntax.traverse._
-import cats.{Applicative, Id, Order}
+import cats.{Applicative, Id}
 
 import scala.concurrent.duration.FiniteDuration
 
@@ -25,7 +25,6 @@ import org.tessellation.ext.collection.MapRefUtils.MapRefOps
 import org.tessellation.kernel._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.Block
-import org.tessellation.schema.Block.BlockConstructor
 import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.schema.transaction.Transaction
 import org.tessellation.sdk.domain.block.processing.BlockValidationParams
@@ -35,23 +34,19 @@ import org.tessellation.security.signature.Signed._
 import org.tessellation.security.{Hashed, SecurityProvider}
 
 import eu.timepit.refined.auto.{autoRefineV, autoUnwrap}
-import io.circe.Encoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 class BlockConsensusCell[
-  F[_]: Async: SecurityProvider: KryoSerializer: Random,
-  T <: Transaction: Encoder: Order: Ordering,
-  B <: Block[T]
+  F[_]: Async: SecurityProvider: KryoSerializer: Random
 ](
-  data: BlockConsensusInput[T],
-  ctx: BlockConsensusContext[F, T, B]
-)(implicit blockConstructor: BlockConstructor[T, B])
-    extends Cell[F, Id, BlockConsensusInput[T], Either[CellError, BlockConsensusOutput[B]], BlockConsensusInput[T]](
+  data: BlockConsensusInput,
+  ctx: BlockConsensusContext[F]
+) extends Cell[F, Id, BlockConsensusInput, Either[CellError, BlockConsensusOutput], BlockConsensusInput](
       data,
       {
         case OwnRoundTrigger                                => startOwnRound(ctx)
         case InspectionTrigger                              => inspectConsensuses(ctx)
-        case proposal: Proposal[T]                          => processProposal(proposal, ctx)
+        case proposal: Proposal                             => processProposal(proposal, ctx)
         case blockSignatureProposal: BlockSignatureProposal => persistBlockSignatureProposal(blockSignatureProposal, ctx)
         case cancellation: CancelledBlockCreationRound      => processCancellation(cancellation, ctx)
       },
@@ -66,12 +61,12 @@ object BlockConsensusCell {
 
   private def getTime[F[_]: Clock](): F[FiniteDuration] = Clock[F].monotonic
 
-  private def deriveConsensusPeerIds[T <: Transaction](proposal: Proposal[T], selfId: PeerId): Set[PeerId] =
+  private def deriveConsensusPeerIds(proposal: Proposal, selfId: PeerId): Set[PeerId] =
     proposal.facilitators + proposal.senderId + proposal.owner - selfId
 
-  private def returnTransactions[F[_]: Async: KryoSerializer, T <: Transaction](
-    ownProposal: Proposal[T],
-    transactionStorage: TransactionStorage[F, T]
+  private def returnTransactions[F[_]: Async: KryoSerializer](
+    ownProposal: Proposal,
+    transactionStorage: TransactionStorage[F]
   ): F[Unit] =
     ownProposal.transactions.toList
       .traverse(_.toHashed[F])
@@ -84,13 +79,13 @@ object BlockConsensusCell {
         transactionStorage.put
       }
 
-  private def cleanUpRoundData[F[_]: Async, T <: Transaction, B <: Block[T]](
-    ownProposal: Proposal[T],
-    ctx: BlockConsensusContext[F, T, B]
+  private def cleanUpRoundData[F[_]: Async](
+    ownProposal: Proposal,
+    ctx: BlockConsensusContext[F]
   ): F[Unit] = {
-    def clean: Option[RoundData[T, B]] => (Option[RoundData[T, B]], Unit) = {
-      case Some(roundData: RoundData[T, B]) if roundData.roundId == ownProposal.roundId => (none[RoundData[T, B]], ())
-      case current                                                                      => (current, ())
+    def clean: Option[RoundData] => (Option[RoundData], Unit) = {
+      case Some(roundData: RoundData) if roundData.roundId == ownProposal.roundId => (none[RoundData], ())
+      case current                                                                => (current, ())
     }
 
     (ownProposal.owner == ctx.selfId)
@@ -101,61 +96,61 @@ object BlockConsensusCell {
       )
   }
 
-  private def cancelRound[F[_]: Async: KryoSerializer, T <: Transaction, B <: Block[T]](
-    ownProposal: Proposal[T],
-    ctx: BlockConsensusContext[F, T, B]
+  private def cancelRound[F[_]: Async: KryoSerializer](
+    ownProposal: Proposal,
+    ctx: BlockConsensusContext[F]
   ): F[Unit] =
     for {
       _ <- returnTransactions(ownProposal, ctx.transactionStorage)
       _ <- cleanUpRoundData(ownProposal, ctx)
     } yield ()
 
-  private def broadcast[F[_]: Async, T <: Transaction: Encoder](
-    data: Signed[PeerBlockConsensusInput[T]],
+  private def broadcast[F[_]: Async](
+    data: Signed[PeerBlockConsensusInput],
     peers: Set[Peer],
-    blockConsensusClient: BlockConsensusClient[F, T]
+    blockConsensusClient: BlockConsensusClient[F]
   ): F[Unit] =
     peers.toList
       .traverse(blockConsensusClient.sendConsensusData(data)(_))
       .void
 
-  private def tryPersistRoundData[T <: Transaction, B <: Block[T]](
-    roundData: RoundData[T, B]
-  ): Option[RoundData[T, B]] => (Option[RoundData[T, B]], Option[RoundData[T, B]]) = {
+  private def tryPersistRoundData(
+    roundData: RoundData
+  ): Option[RoundData] => (Option[RoundData], Option[RoundData]) = {
     case existing @ Some(_) => (existing, None)
     case None               => (roundData.some, roundData.some)
   }
 
-  private def sendOwnProposal[F[_]: Async: SecurityProvider: KryoSerializer, T <: Transaction: Encoder, B <: Block[T]](
-    ownProposal: Proposal[T],
+  private def sendOwnProposal[F[_]: Async: SecurityProvider: KryoSerializer](
+    ownProposal: Proposal,
     peers: Set[Peer],
-    context: BlockConsensusContext[F, T, B]
+    context: BlockConsensusContext[F]
   ): F[Unit] =
     for {
-      signedProposal <- Signed.forAsyncKryo[F, PeerBlockConsensusInput[T]](ownProposal, context.keyPair)
+      signedProposal <- Signed.forAsyncKryo[F, PeerBlockConsensusInput](ownProposal, context.keyPair)
       _ <- broadcast(signedProposal, peers, context.blockConsensusClient)
     } yield ()
 
-  def persistInitialOwnRoundData[F[_]: Async: SecurityProvider: KryoSerializer, T <: Transaction: Encoder, B <: Block[T]](
-    roundData: RoundData[T, B],
-    ctx: BlockConsensusContext[F, T, B]
-  ): F[Either[CellError, BlockConsensusOutput[B]]] =
+  def persistInitialOwnRoundData[F[_]: Async: SecurityProvider: KryoSerializer](
+    roundData: RoundData,
+    ctx: BlockConsensusContext[F]
+  ): F[Either[CellError, BlockConsensusOutput]] =
     ctx.consensusStorage.ownConsensus
       .modify(tryPersistRoundData(roundData))
       .flatMap {
         case Some(RoundData(_, _, peers, _, ownProposal, _, _, _, _, _, _)) =>
           sendOwnProposal(ownProposal, peers, ctx)
-            .map(_ => NoData.asRight[CellError].widen[BlockConsensusOutput[B]])
+            .map(_ => NoData.asRight[CellError].widen[BlockConsensusOutput])
         case None =>
           returnTransactions(roundData.ownProposal, ctx.transactionStorage)
-            .map(_ => CellError("Another own round already in progress! Transactions returned.").asLeft[BlockConsensusOutput[B]])
+            .map(_ => CellError("Another own round already in progress! Transactions returned.").asLeft[BlockConsensusOutput])
       }
 
-  def persistInitialPeerRoundData[F[_]: Async: SecurityProvider: KryoSerializer, T <: Transaction: Encoder, B <: Block[T]](
-    roundData: RoundData[T, B],
-    peerProposal: Proposal[T],
-    ctx: BlockConsensusContext[F, T, B]
-  ): F[Either[CellError, BlockConsensusOutput[B]]] =
+  def persistInitialPeerRoundData[F[_]: Async: SecurityProvider: KryoSerializer](
+    roundData: RoundData,
+    peerProposal: Proposal,
+    ctx: BlockConsensusContext[F]
+  ): F[Either[CellError, BlockConsensusOutput]] =
     ctx.consensusStorage
       .peerConsensuses(roundData.roundId)
       .modify(tryPersistRoundData(roundData))
@@ -172,7 +167,7 @@ object BlockConsensusCell {
           } yield ()
       } >> persistProposal(peerProposal, ctx)
 
-  private def canPersistProposal(roundData: RoundData[_, _], proposal: Proposal[_]): Boolean = {
+  private def canPersistProposal(roundData: RoundData, proposal: Proposal): Boolean = {
     val sameRoundId = roundData.roundId == proposal.roundId
     lazy val peerExists = roundData.peers.exists(_.id == proposal.senderId)
     lazy val noProposalYet = !roundData.peerProposals.contains(proposal.senderId)
@@ -180,33 +175,33 @@ object BlockConsensusCell {
     sameRoundId && peerExists && noProposalYet
   }
 
-  private def tryPersistProposal[T <: Transaction, B <: Block[T]](
-    proposal: Proposal[T]
-  ): Option[RoundData[T, B]] => (Option[RoundData[T, B]], Option[RoundData[T, B]]) = {
+  private def tryPersistProposal(
+    proposal: Proposal
+  ): Option[RoundData] => (Option[RoundData], Option[RoundData]) = {
     case Some(roundData) if canPersistProposal(roundData, proposal) =>
       val updated = roundData.addPeerProposal(proposal)
       (updated.some, updated.some)
     case other => (other, None)
   }
 
-  private def canPersistOwnBlock[T <: Transaction, B <: Block[T]](roundData: RoundData[T, B], proposal: Proposal[T]): Boolean =
+  private def canPersistOwnBlock(roundData: RoundData, proposal: Proposal): Boolean =
     roundData.ownBlock.isEmpty && roundData.roundId == proposal.roundId
 
-  private def tryPersistOwnBlock[T <: Transaction, B <: Block[T]](
-    signedBlock: Signed[B],
-    proposal: Proposal[T]
-  ): Option[RoundData[T, B]] => (Option[RoundData[T, B]], Option[RoundData[T, B]]) = {
+  private def tryPersistOwnBlock(
+    signedBlock: Signed[Block],
+    proposal: Proposal
+  ): Option[RoundData] => (Option[RoundData], Option[RoundData]) = {
     case Some(roundData) if canPersistOwnBlock(roundData, proposal) =>
       val updated = roundData.setOwnBlock(signedBlock)
       (updated.some, updated.some)
     case other => (other, None)
   }
 
-  private def sendBlockProposal[F[_]: Async: SecurityProvider: KryoSerializer, T <: Transaction: Encoder, B <: Block[T]](
-    signedBlock: Signed[B],
-    roundData: RoundData[T, B],
-    ctx: BlockConsensusContext[F, T, B]
-  ): F[Either[CellError, BlockConsensusOutput[B]]] =
+  private def sendBlockProposal[F[_]: Async: SecurityProvider: KryoSerializer](
+    signedBlock: Signed[Block],
+    roundData: RoundData,
+    ctx: BlockConsensusContext[F]
+  ): F[Either[CellError, BlockConsensusOutput]] =
     for {
       _ <- Applicative[F].unit
       blockSignatureProposal = BlockSignatureProposal(
@@ -216,15 +211,15 @@ object BlockConsensusCell {
         signedBlock.proofs.head.signature
       )
       signedBlockSignatureProposal <- Signed
-        .forAsyncKryo[F, PeerBlockConsensusInput[T]](blockSignatureProposal, ctx.keyPair)
+        .forAsyncKryo[F, PeerBlockConsensusInput](blockSignatureProposal, ctx.keyPair)
       _ <- broadcast(signedBlockSignatureProposal, roundData.peers, ctx.blockConsensusClient)
-    } yield NoData.asRight[CellError].widen[BlockConsensusOutput[B]]
+    } yield NoData.asRight[CellError].widen[BlockConsensusOutput]
 
-  private def processValidBlock[F[_]: Async: SecurityProvider: KryoSerializer, T <: Transaction: Encoder, B <: Block[T]](
-    proposal: Proposal[T],
-    signedBlock: Signed[B],
-    ctx: BlockConsensusContext[F, T, B]
-  ): F[Either[CellError, BlockConsensusOutput[B]]] =
+  private def processValidBlock[F[_]: Async: SecurityProvider: KryoSerializer](
+    proposal: Proposal,
+    signedBlock: Signed[Block],
+    ctx: BlockConsensusContext[F]
+  ): F[Either[CellError, BlockConsensusOutput]] =
     (proposal.owner == ctx.selfId)
       .pure[F]
       .ifM(
@@ -237,18 +232,18 @@ object BlockConsensusCell {
         case Some(roundData) =>
           sendBlockProposal(signedBlock, roundData, ctx)
         case None =>
-          CellError("Tried to persist own signed block but the update failed!").asLeft[BlockConsensusOutput[B]].pure[F]
+          CellError("Tried to persist own signed block but the update failed!").asLeft[BlockConsensusOutput].pure[F]
       }
 
-  private def gotAllProposals[T <: Transaction, B <: Block[T]](roundData: RoundData[T, B]): Boolean =
+  private def gotAllProposals(roundData: RoundData): Boolean =
     roundData.peers.map(_.id) == roundData.peerProposals.keySet
 
   private val validationParams: BlockValidationParams = BlockValidationParams.default.copy(minSignatureCount = 1)
 
-  def persistProposal[F[_]: Async: SecurityProvider: KryoSerializer, T <: Transaction: Encoder, B <: Block[T]](
-    proposal: Proposal[T],
-    ctx: BlockConsensusContext[F, T, B]
-  ): F[Either[CellError, BlockConsensusOutput[B]]] = (proposal.owner == ctx.selfId)
+  def persistProposal[F[_]: Async: SecurityProvider: KryoSerializer](
+    proposal: Proposal,
+    ctx: BlockConsensusContext[F]
+  ): F[Either[CellError, BlockConsensusOutput]] = (proposal.owner == ctx.selfId)
     .pure[F]
     .ifM(
       ctx.consensusStorage.ownConsensus.modify(tryPersistProposal(proposal)),
@@ -288,12 +283,12 @@ object BlockConsensusCell {
             )
             processCancellation(cancellation, ctx)
         }
-      case _ => NoData.asRight[CellError].widen[BlockConsensusOutput[B]].pure[F]
+      case _ => NoData.asRight[CellError].widen[BlockConsensusOutput].pure[F]
 
     }
 
-  private def canPersistBlockSignatureProposal[T <: Transaction, B <: Block[T]](
-    roundData: RoundData[T, B],
+  private def canPersistBlockSignatureProposal(
+    roundData: RoundData,
     blockSignatureProposal: BlockSignatureProposal
   ): Boolean = {
     val sameRoundId = roundData.roundId == blockSignatureProposal.roundId
@@ -303,22 +298,22 @@ object BlockConsensusCell {
     sameRoundId && peerExists && noBlockYet
   }
 
-  private def gotAllSignatures[T <: Transaction, B <: Block[T]](roundData: RoundData[T, B]): Boolean =
+  private def gotAllSignatures(roundData: RoundData): Boolean =
     roundData.peers.map(_.id) == roundData.peerBlockSignatures.keySet
 
-  private def tryPersistBlockSignatureProposal[T <: Transaction, B <: Block[T]](
+  private def tryPersistBlockSignatureProposal(
     blockSignatureProposal: BlockSignatureProposal
-  ): Option[RoundData[T, B]] => (Option[RoundData[T, B]], Option[RoundData[T, B]]) = {
+  ): Option[RoundData] => (Option[RoundData], Option[RoundData]) = {
     case Some(roundData) if canPersistBlockSignatureProposal(roundData, blockSignatureProposal) =>
       val updated = roundData.addPeerBlockSignature(blockSignatureProposal)
       (updated.some, updated.some)
     case other => (other, None)
   }
 
-  def persistBlockSignatureProposal[F[_]: Async: SecurityProvider: KryoSerializer, T <: Transaction, B <: Block[T]](
+  def persistBlockSignatureProposal[F[_]: Async: SecurityProvider: KryoSerializer](
     blockSignatureProposal: BlockSignatureProposal,
-    ctx: BlockConsensusContext[F, T, B]
-  ): F[Either[CellError, BlockConsensusOutput[B]]] =
+    ctx: BlockConsensusContext[F]
+  ): F[Either[CellError, BlockConsensusOutput]] =
     (blockSignatureProposal.owner == ctx.selfId)
       .pure[F]
       .ifM(
@@ -337,22 +332,22 @@ object BlockConsensusCell {
             result <- finalBlock.toHashedWithSignatureCheck.flatMap {
               case Left(_) =>
                 cancelRound(roundData.ownProposal, ctx)
-                  .map(_ => CellError("Round cancelled after final block turned out to be invalid!").asLeft[BlockConsensusOutput[B]])
+                  .map(_ => CellError("Round cancelled after final block turned out to be invalid!").asLeft[BlockConsensusOutput])
 
               case Right(hashedBlock) =>
                 cleanUpRoundData(roundData.ownProposal, ctx)
-                  .map(_ => FinalBlock[B](hashedBlock).asRight[CellError].widen[BlockConsensusOutput[B]])
+                  .map(_ => FinalBlock(hashedBlock).asRight[CellError].widen[BlockConsensusOutput])
             }
           } yield result
         case _ =>
-          NoData.asRight[CellError].widen[BlockConsensusOutput[B]].pure[F]
+          NoData.asRight[CellError].widen[BlockConsensusOutput].pure[F]
       }
 
-  def informAboutInabilityToParticipate[F[_]: Async: SecurityProvider: KryoSerializer, T <: Transaction: Encoder, B <: Block[T]](
-    proposal: Proposal[T],
+  def informAboutInabilityToParticipate[F[_]: Async: SecurityProvider: KryoSerializer](
+    proposal: Proposal,
     reason: CancellationReason,
-    ctx: BlockConsensusContext[F, T, B]
-  ): F[Either[CellError, BlockConsensusOutput[B]]] =
+    ctx: BlockConsensusContext[F]
+  ): F[Either[CellError, BlockConsensusOutput]] =
     for {
       peersToInform <- ctx.clusterStorage.getResponsivePeers
         .map(_.filter(peer => deriveConsensusPeerIds(proposal, ctx.selfId).contains(peer.id)))
@@ -363,12 +358,12 @@ object BlockConsensusCell {
         reason
       )
       signedCancellationMessage <- Signed
-        .forAsyncKryo[F, PeerBlockConsensusInput[T]](cancellation, ctx.keyPair)
+        .forAsyncKryo[F, PeerBlockConsensusInput](cancellation, ctx.keyPair)
       _ <- broadcast(signedCancellationMessage, peersToInform, ctx.blockConsensusClient)
-    } yield NoData.asRight[CellError].widen[BlockConsensusOutput[B]]
+    } yield NoData.asRight[CellError].widen[BlockConsensusOutput]
 
-  private def canPersistCancellation[T <: Transaction, B <: Block[T]](
-    roundData: RoundData[T, B],
+  private def canPersistCancellation(
+    roundData: RoundData,
     cancellation: CancelledBlockCreationRound,
     selfId: PeerId
   ): Boolean = {
@@ -379,10 +374,10 @@ object BlockConsensusCell {
     sameRoundId && (peerExists || myCancellation)
   }
 
-  private def persistCancellationMessage[T <: Transaction, B <: Block[T]](
+  private def persistCancellationMessage(
     cancellation: CancelledBlockCreationRound,
     selfId: PeerId
-  ): Option[RoundData[T, B]] => (Option[RoundData[T, B]], Option[(RoundData[T, B], Option[CancelledBlockCreationRound])]) = {
+  ): Option[RoundData] => (Option[RoundData], Option[(RoundData, Option[CancelledBlockCreationRound])]) = {
     case Some(roundData) if canPersistCancellation(roundData, cancellation, selfId) =>
       (roundData, cancellation.senderId) match {
         case (roundData @ RoundData(_, _, _, _, _, _, Some(_), _, _, _, _), `selfId`) =>
@@ -404,17 +399,17 @@ object BlockConsensusCell {
     case other => (other, None)
   }
 
-  private def canFinalizeRoundCancellation[T <: Transaction, B <: Block[T]](roundData: RoundData[T, B]): Boolean = {
+  private def canFinalizeRoundCancellation(roundData: RoundData): Boolean = {
     val ownCancellationPresent = roundData.ownCancellation.nonEmpty
     lazy val peerCancellationsPresent = roundData.peers.map(_.id) == roundData.peerCancellations.keySet
 
     ownCancellationPresent && peerCancellationsPresent
   }
 
-  def processCancellation[F[_]: Async: SecurityProvider: KryoSerializer, T <: Transaction: Encoder, B <: Block[T]](
+  def processCancellation[F[_]: Async: SecurityProvider: KryoSerializer](
     cancellation: CancelledBlockCreationRound,
-    ctx: BlockConsensusContext[F, T, B]
-  ): F[Either[CellError, BlockConsensusOutput[B]]] =
+    ctx: BlockConsensusContext[F]
+  ): F[Either[CellError, BlockConsensusOutput]] =
     for {
       maybeUpdated <- (cancellation.owner == ctx.selfId)
         .pure[F]
@@ -428,7 +423,7 @@ object BlockConsensusCell {
         case Some((roundData, Some(myCancellation))) =>
           for {
             signedCancellationMessage <- Signed
-              .forAsyncKryo[F, PeerBlockConsensusInput[T]](myCancellation, ctx.keyPair)
+              .forAsyncKryo[F, PeerBlockConsensusInput](myCancellation, ctx.keyPair)
             _ <- broadcast(signedCancellationMessage, roundData.peers, ctx.blockConsensusClient)
           } yield ()
         case _ => Applicative[F].unit
@@ -436,27 +431,27 @@ object BlockConsensusCell {
       result <- maybeUpdated match {
         case Some((roundData, _)) if canFinalizeRoundCancellation(roundData) =>
           cancelRound(roundData.ownProposal, ctx)
-            .map(_ => CellError("Round cancelled after all peers agreed!").asLeft[BlockConsensusOutput[B]])
+            .map(_ => CellError("Round cancelled after all peers agreed!").asLeft[BlockConsensusOutput])
         case Some((_, Some(myCancellation))) =>
           CellError(
             s"Round is being cancelled! Own round cancellation request got processed. Reason: ${myCancellation.reason}"
-          ).asLeft[BlockConsensusOutput[B]].pure[F]
+          ).asLeft[BlockConsensusOutput].pure[F]
         case Some(_) =>
-          CellError(s"Round is being cancelled! Round cancellation request got processed.").asLeft[BlockConsensusOutput[B]].pure[F]
-        case None => NoData.asRight[CellError].widen[BlockConsensusOutput[B]].pure[F]
+          CellError(s"Round is being cancelled! Round cancellation request got processed.").asLeft[BlockConsensusOutput].pure[F]
+        case None => NoData.asRight[CellError].widen[BlockConsensusOutput].pure[F]
       }
     } yield result
 
-  def cancelTimedOutRounds[F[_]: Async: KryoSerializer, T <: Transaction, B <: Block[T]](
-    toCancel: Set[Proposal[T]],
-    ctx: BlockConsensusContext[F, T, B]
-  ): F[Either[CellError, BlockConsensusOutput[B]]] =
+  def cancelTimedOutRounds[F[_]: Async: KryoSerializer](
+    toCancel: Set[Proposal],
+    ctx: BlockConsensusContext[F]
+  ): F[Either[CellError, BlockConsensusOutput]] =
     toCancel.toList
       .traverse(cancelRound(_, ctx))
       .map(_ => CleanedConsensuses(toCancel.map(_.roundId)).asRight[CellError])
 
-  private def pullNewConsensusPeers[F[_]: Async: Random, T <: Transaction, B <: Block[T]](
-    ctx: BlockConsensusContext[F, T, B]
+  private def pullNewConsensusPeers[F[_]: Async: Random](
+    ctx: BlockConsensusContext[F]
   ): F[Option[Set[Peer]]] =
     ctx.clusterStorage.getResponsivePeers
       .map(_.filter(p => isReadyForBlockConsensus(p.state)))
@@ -466,16 +461,16 @@ object BlockConsensusCell {
         case _                                                           => None
       })
 
-  private def pullTransactions[F[_]: Async, T <: Transaction, B <: Block[T]](
-    ctx: BlockConsensusContext[F, T, B]
-  ): F[Set[Hashed[T]]] =
+  private def pullTransactions[F[_]: Async](
+    ctx: BlockConsensusContext[F]
+  ): F[Set[Hashed[Transaction]]] =
     ctx.transactionStorage
       .pull(ctx.consensusConfig.pullTxsCount)
       .map(_.map(_.toList.toSet).getOrElse(Set.empty))
 
-  def startOwnRound[F[_]: Async: Random: SecurityProvider: KryoSerializer, T <: Transaction: Encoder: Order: Ordering, B <: Block[T]](
-    ctx: BlockConsensusContext[F, T, B]
-  )(implicit blockConstructor: BlockConstructor[T, B]): F[Either[CellError, BlockConsensusOutput[B]]] =
+  def startOwnRound[F[_]: Async: Random: SecurityProvider: KryoSerializer](
+    ctx: BlockConsensusContext[F]
+  ): F[Either[CellError, BlockConsensusOutput]] =
     for {
       roundId <- GenUUID.forSync[F].make.map(RoundId(_))
       maybePeers <- pullNewConsensusPeers(ctx)
@@ -493,22 +488,22 @@ object BlockConsensusCell {
               transactions.map(_.signed),
               tips
             )
-            roundData = RoundData[T, B](roundId, startedAt, peers, ctx.selfId, proposal, tips = tips)
+            roundData = RoundData(roundId, startedAt, peers, ctx.selfId, proposal, tips = tips)
             result <- persistInitialOwnRoundData(roundData, ctx)
           } yield result
 
         case (Some(_), None) =>
-          CellError("Missing tips!").asLeft[BlockConsensusOutput[B]].pure[F]
+          CellError("Missing tips!").asLeft[BlockConsensusOutput].pure[F]
         case (None, Some(_)) =>
-          CellError("Missing peers!").asLeft[BlockConsensusOutput[B]].pure[F]
+          CellError("Missing peers!").asLeft[BlockConsensusOutput].pure[F]
         case (None, None) =>
-          CellError("Missing both peers and tips!").asLeft[BlockConsensusOutput[B]].pure[F]
+          CellError("Missing both peers and tips!").asLeft[BlockConsensusOutput].pure[F]
       }
     } yield result
 
-  def inspectConsensuses[F[_]: Async: KryoSerializer, T <: Transaction, B <: Block[T]](
-    ctx: BlockConsensusContext[F, T, B]
-  ): F[Either[CellError, BlockConsensusOutput[B]]] =
+  def inspectConsensuses[F[_]: Async: KryoSerializer](
+    ctx: BlockConsensusContext[F]
+  ): F[Either[CellError, BlockConsensusOutput]] =
     for {
       ownConsensus <- ctx.consensusStorage.ownConsensus.get.map(_.toSet)
       peerConsensuses <- ctx.consensusStorage.peerConsensuses.toMap.map(_.values.toSet)
@@ -520,13 +515,13 @@ object BlockConsensusCell {
         .pure[F]
         .ifM(
           cancelTimedOutRounds(toCancel, ctx),
-          NoData.asRight[CellError].widen[BlockConsensusOutput[B]].pure[F]
+          NoData.asRight[CellError].widen[BlockConsensusOutput].pure[F]
         )
     } yield result
 
-  private def fetchConsensusPeers[F[_]: Async, T <: Transaction, B <: Block[T]](
-    proposal: Proposal[T],
-    ctx: BlockConsensusContext[F, T, B]
+  private def fetchConsensusPeers[F[_]: Async](
+    proposal: Proposal,
+    ctx: BlockConsensusContext[F]
   ): F[Option[Set[Peer]]] =
     for {
       knownPeers <- ctx.clusterStorage.getResponsivePeers
@@ -542,10 +537,10 @@ object BlockConsensusCell {
           none[Set[Peer]].pure[F]
     } yield result
 
-  def processProposal[F[_]: Async: SecurityProvider: KryoSerializer, T <: Transaction: Encoder: Order: Ordering, B <: Block[T]](
-    proposal: Proposal[T],
-    ctx: BlockConsensusContext[F, T, B]
-  )(implicit blockConstructor: BlockConstructor[T, B]): F[Either[CellError, BlockConsensusOutput[B]]] =
+  def processProposal[F[_]: Async: SecurityProvider: KryoSerializer](
+    proposal: Proposal,
+    ctx: BlockConsensusContext[F]
+  ): F[Either[CellError, BlockConsensusOutput]] =
     for {
       maybeRoundData <- ctx.consensusStorage.ownConsensus.get.flatMap {
         case Some(ownRoundData) if ownRoundData.roundId == proposal.roundId => Option(ownRoundData).pure[F]

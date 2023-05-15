@@ -54,7 +54,7 @@ object ConstructionService {
 
     def getTransactionIdentifier(hex: Hex): EitherT[F, ConstructionError, TransactionIdentifier] =
       JsonBinarySerializer
-        .deserialize[Signed[DAGTransaction]](hex.toBytes)
+        .deserialize[Signed[Transaction]](hex.toBytes)
         .liftTo[F]
         .flatMap(_.toHashed[F])
         .map(_.hash)
@@ -78,14 +78,14 @@ object ConstructionService {
 
     def combineTransaction(hex: Hex, signature: RosettaSignature): EitherT[F, ConstructionError, Hex] =
       EitherT
-        .fromEither(JsonBinarySerializer.deserialize[DAGTransaction](hex.toBytes))
+        .fromEither(JsonBinarySerializer.deserialize[Transaction](hex.toBytes))
         .leftMap(_ => MalformedTransaction)
         .flatMap { transaction =>
           EitherT {
             signature.publicKey.hexBytes.toPublicKeyByEC
               .map(pk => SignatureProof(pk.toId, Signature(signature.hexBytes)).asRight[ConstructionError])
           }.map { proof =>
-            JsonBinarySerializer.serialize(Signed[DAGTransaction](transaction, NonEmptySet.of(proof)))
+            JsonBinarySerializer.serialize(Signed[Transaction](transaction, NonEmptySet.of(proof)))
           }
             .map(Hex.fromBytes(_))
         }
@@ -123,7 +123,7 @@ object ConstructionService {
               }
 
             unsignedTx =
-              DAGTransaction(
+              Transaction(
                 source = sourceAddress,
                 destination = positiveOperation.account.address,
                 amount = transactionAmount,
@@ -163,7 +163,7 @@ object ConstructionService {
 
     private def parseSignedTransaction(hex: Hex): EitherT[F, ConstructionError, ConstructionParse.ParseResult] = {
       val result = for {
-        signedTransaction <- JsonBinarySerializer.deserialize[Signed[DAGTransaction]](hex.toBytes).toEitherT
+        signedTransaction <- JsonBinarySerializer.deserialize[Signed[Transaction]](hex.toBytes).toEitherT
         operations = transactionToOperations(signedTransaction)
         proofs <- signedTransaction.proofs.toNonEmptyList.traverse(_.id.hex.toPublicKey).attemptT
         accountIds = proofs.map(_.toAddress).map(AccountIdentifier(_, none))
@@ -175,7 +175,7 @@ object ConstructionService {
     private def parseUnsignedTransaction(hex: Hex): EitherT[F, ConstructionError, ConstructionParse.ParseResult] =
       EitherT.fromEither(
         JsonBinarySerializer
-          .deserialize[DAGTransaction](hex.toBytes)
+          .deserialize[Transaction](hex.toBytes)
           .map(t => ConstructionParse.ParseResult(transactionToOperations(t), none))
           .leftMap(_ => MalformedTransaction)
       )

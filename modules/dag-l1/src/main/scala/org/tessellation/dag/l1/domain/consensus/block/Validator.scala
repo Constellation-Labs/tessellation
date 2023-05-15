@@ -11,11 +11,9 @@ import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.PeerBl
 import org.tessellation.dag.l1.domain.consensus.block.storage.ConsensusStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.Block
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.node.NodeState.Ready
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.transaction.Transaction
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.security.SecurityProvider
@@ -39,23 +37,23 @@ object Validator {
       .map(_.filter(p => isReadyForBlockConsensus(p.state)))
       .map(_.size >= peersCount)
 
-  private def enoughTipsForConsensus[F[_]: Monad, B <: Block[_]](
-    blockStorage: BlockStorage[F, B],
+  private def enoughTipsForConsensus[F[_]: Monad](
+    blockStorage: BlockStorage[F],
     tipsCount: PosInt
   ): F[Boolean] =
     blockStorage.getTips(tipsCount).map(_.isDefined)
 
-  private def atLeastOneTransaction[F[_]: Monad, T <: Transaction](
-    transactionStorage: TransactionStorage[F, T]
+  private def atLeastOneTransaction[F[_]: Monad](
+    transactionStorage: TransactionStorage[F]
   ): F[Boolean] =
     transactionStorage.countAllowedForConsensus.map(_ >= 1)
 
-  def canStartOwnConsensus[F[_]: Async, T <: Transaction, B <: Block[T]](
-    consensusStorage: ConsensusStorage[F, T, B],
+  def canStartOwnConsensus[F[_]: Async](
+    consensusStorage: ConsensusStorage[F],
     nodeStorage: NodeStorage[F],
     clusterStorage: ClusterStorage[F],
-    blockStorage: BlockStorage[F, B],
-    transactionStorage: TransactionStorage[F, T],
+    blockStorage: BlockStorage[F],
+    transactionStorage: TransactionStorage[F],
     peersCount: PosInt,
     tipsCount: PosInt
   ): F[Boolean] =
@@ -80,8 +78,8 @@ object Validator {
         }
     } yield res
 
-  def isPeerInputValid[F[_]: Async: KryoSerializer: SecurityProvider, T <: Transaction](
-    input: Signed[PeerBlockConsensusInput[T]]
+  def isPeerInputValid[F[_]: Async: KryoSerializer: SecurityProvider](
+    input: Signed[PeerBlockConsensusInput]
   ): F[Boolean] =
     for {
       hasValidSignature <- input.hasValidSignature

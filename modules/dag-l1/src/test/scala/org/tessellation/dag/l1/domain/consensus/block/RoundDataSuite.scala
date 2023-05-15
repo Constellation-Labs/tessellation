@@ -16,12 +16,12 @@ import org.tessellation.dag.l1.domain.consensus.round.RoundId
 import org.tessellation.dag.transaction.TransactionGenerator
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.BlockReference
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.block.{DAGBlock, Tips}
+import org.tessellation.schema.block.Tips
 import org.tessellation.schema.height.Height
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.transaction.{DAGTransaction, TransactionFee, TransactionReference}
+import org.tessellation.schema.transaction.{TransactionFee, TransactionReference}
+import org.tessellation.schema.{Block, BlockReference}
 import org.tessellation.sdk.domain.transaction.TransactionValidator
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.hash.ProofsHash
@@ -39,7 +39,7 @@ import weaver.scalacheck.Checkers
 object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenerator {
 
   override type Res =
-    (KryoSerializer[IO], SecurityProvider[IO], KeyPair, KeyPair, Address, Address, TransactionValidator[IO, DAGTransaction])
+    (KryoSerializer[IO], SecurityProvider[IO], KeyPair, KeyPair, Address, Address, TransactionValidator[IO])
 
   override def sharedResource: Resource[IO, Res] =
     KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ sdkKryoRegistrar).flatMap { implicit kp =>
@@ -50,7 +50,7 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
           srcAddress = srcKey.getPublic.toAddress
           dstAddress = dstKey.getPublic.toAddress
           signedValidator = SignedValidator.make
-          txValidator = TransactionValidator.make[F, DAGTransaction](signedValidator)
+          txValidator = TransactionValidator.make[F](signedValidator)
         } yield (kp, sp, srcKey, dstKey, srcAddress, dstAddress, txValidator)
       }
     }
@@ -62,10 +62,10 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
   val peerIdB = PeerId(Hex("peerB"))
   val peerIdC = PeerId(Hex("peerC"))
   val tips = Tips(NonEmptyList.of(BlockReference(Height(1L), ProofsHash("0000"))))
-  val baseProposal = Proposal[DAGTransaction](roundId, peerIdA, peerIdA, Set.empty, Set.empty, tips)
+  val baseProposal = Proposal(roundId, peerIdA, peerIdA, Set.empty, Set.empty, tips)
 
   val baseRoundData =
-    RoundData[DAGTransaction, DAGBlock](
+    RoundData(
       roundId,
       FiniteDuration(1000L, TimeUnit.MINUTES),
       Set.empty,
@@ -100,13 +100,13 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
           ownProposal = baseRoundData.ownProposal.copy(transactions = txsA.toList.map(_.signed).toSet),
           peerProposals = Map(
             peerIdB -> baseProposal.copy(senderId = peerIdB, transactions = txsA2.toList.map(_.signed).toSet),
-            peerIdC -> baseProposal.copy[DAGTransaction](senderId = peerIdC, transactions = Set.empty)
+            peerIdC -> baseProposal.copy(senderId = peerIdC, transactions = Set.empty)
           )
         )
         result <- roundData.formBlock(txValidator)
       } yield
         expect.same(
-          DAGBlock(baseProposal.tips.value, txsA2.map(_.signed).toNes).some,
+          Block(baseProposal.tips.value, txsA2.map(_.signed).toNes).some,
           result
         )
   }
@@ -124,13 +124,13 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
           ownProposal = baseRoundData.ownProposal.copy(transactions = txsA.toList.map(_.signed).toSet),
           peerProposals = Map(
             peerIdB -> baseProposal.copy(senderId = peerIdB, transactions = txsA2.toList.map(_.signed).toSet),
-            peerIdC -> baseProposal.copy[DAGTransaction](senderId = peerIdC, transactions = Set.empty)
+            peerIdC -> baseProposal.copy(senderId = peerIdC, transactions = Set.empty)
           )
         )
         result <- roundData.formBlock(txValidator)
       } yield
         expect.same(
-          DAGBlock(baseProposal.tips.value, (txsA.map(_.signed) ++ txsA2.map(_.signed).toList).toNes).some,
+          Block(baseProposal.tips.value, (txsA.map(_.signed) ++ txsA2.map(_.signed).toList).toNes).some,
           result
         )
   }
@@ -148,13 +148,13 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
           ownProposal = baseRoundData.ownProposal.copy(transactions = txsA.toList.map(_.signed).toSet),
           peerProposals = Map(
             peerIdB -> baseProposal.copy(senderId = peerIdB, transactions = txsA2.toList.map(_.signed).toSet),
-            peerIdC -> baseProposal.copy[DAGTransaction](senderId = peerIdC, transactions = Set.empty)
+            peerIdC -> baseProposal.copy(senderId = peerIdC, transactions = Set.empty)
           )
         )
         result <- roundData.formBlock(txValidator)
       } yield
         expect.same(
-          DAGBlock(baseProposal.tips.value, (NonEmptyList.one(txsA.head.signed) ++ txsA2.map(_.signed).toList).toNes).some,
+          Block(baseProposal.tips.value, (NonEmptyList.one(txsA.head.signed) ++ txsA2.map(_.signed).toList).toNes).some,
           result
         )
   }
@@ -172,14 +172,14 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
         roundData = baseRoundData.copy(
           ownProposal = baseRoundData.ownProposal.copy(transactions = txs),
           peerProposals = Map(
-            peerIdB -> baseProposal.copy[DAGTransaction](senderId = peerIdB, transactions = Set.empty),
-            peerIdC -> baseProposal.copy[DAGTransaction](senderId = peerIdC, transactions = Set.empty)
+            peerIdB -> baseProposal.copy(senderId = peerIdB, transactions = Set.empty),
+            peerIdC -> baseProposal.copy(senderId = peerIdC, transactions = Set.empty)
           )
         )
         result <- roundData.formBlock(txValidator)
       } yield
         expect.same(
-          DAGBlock(baseProposal.tips.value, NonEmptyList.one(txsA.head.signed).toNes).some,
+          Block(baseProposal.tips.value, NonEmptyList.one(txsA.head.signed).toNes).some,
           result
         )
   }

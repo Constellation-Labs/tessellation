@@ -28,24 +28,17 @@ import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 sealed abstract class CurrencySnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider]
-    extends SnapshotProcessor[
-      F,
-      CurrencyTransaction,
-      CurrencyBlock,
-      CurrencySnapshotStateProof,
-      CurrencyIncrementalSnapshot,
-      CurrencySnapshotInfo
-    ]
+    extends SnapshotProcessor[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
 
 object CurrencySnapshotProcessor {
 
   def make[F[_]: Async: Random: KryoSerializer: SecurityProvider](
     identifier: Address,
     addressStorage: AddressStorage[F],
-    blockStorage: BlockStorage[F, CurrencyBlock],
+    blockStorage: BlockStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     lastCurrencySnapshotStorage: LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
-    transactionStorage: TransactionStorage[F, CurrencyTransaction],
+    transactionStorage: TransactionStorage[F],
     globalSnapshotContextFns: SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     currencySnapshotContextFns: SnapshotContextFunctions[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
   ): CurrencySnapshotProcessor[F] =
@@ -179,18 +172,18 @@ object CurrencySnapshotProcessor {
 
       private def prepareIntermediateStorages(
         addressStorage: AddressStorage[F],
-        blockStorage: BlockStorage[F, CurrencyBlock],
+        blockStorage: BlockStorage[F],
         lastCurrencySnapshotStorage: LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
-        transactionStorage: TransactionStorage[F, CurrencyTransaction]
+        transactionStorage: TransactionStorage[F]
       ): F[
         (
           AddressStorage[F],
-          BlockStorage[F, CurrencyBlock],
+          BlockStorage[F],
           LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
-          TransactionStorage[F, CurrencyTransaction]
+          TransactionStorage[F]
         )
       ] = {
-        val bs = blockStorage.getState().flatMap(BlockStorage.make[F, CurrencyBlock](_))
+        val bs = blockStorage.getState().flatMap(BlockStorage.make[F](_))
         val lcss =
           lastCurrencySnapshotStorage.getCombined.flatMap(LastSnapshotStorage.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](_))
         val as = addressStorage.getState.flatMap(AddressStorage.make(_))

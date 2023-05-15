@@ -108,7 +108,7 @@ object generators {
 
   val transactionSaltGen: Gen[TransactionSalt] = Gen.long.map(TransactionSalt(_))
 
-  val transactionGen: Gen[DAGTransaction] =
+  val transactionGen: Gen[Transaction] =
     for {
       src <- addressGen
       dst <- addressGen
@@ -116,7 +116,7 @@ object generators {
       txnFee <- transactionFeeGen
       txnReference <- transactionReferenceGen
       txnSalt <- transactionSaltGen
-    } yield DAGTransaction(src, dst, txnAmount, txnFee, txnReference, txnSalt)
+    } yield Transaction(src, dst, txnAmount, txnFee, txnReference, txnSalt)
 
   val signatureGen: Gen[Signature] = nesGen(str => Signature(Hex(str)))
 
@@ -132,7 +132,7 @@ object generators {
       signatureProof <- Gen.listOfN(3, signatureProofGen).map(l => NonEmptySet.fromSetUnsafe(SortedSet.from(l)))
     } yield Signed(txn, signatureProof)
 
-  val signedTransactionGen: Gen[Signed[DAGTransaction]] = signedOf(transactionGen)
+  val signedTransactionGen: Gen[Signed[Transaction]] = signedOf(transactionGen)
 
   val snapshotOrdinalGen: Gen[SnapshotOrdinal] =
     Arbitrary.arbitrary[NonNegLong].map(SnapshotOrdinal(_))

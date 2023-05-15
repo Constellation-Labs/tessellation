@@ -7,7 +7,7 @@ import cats.syntax.functor._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import org.tessellation.currency.schema.currency
-import org.tessellation.currency.schema.currency.{CurrencyBlock, CurrencySnapshotInfo, CurrencyTransaction}
+import org.tessellation.currency.schema.currency.CurrencySnapshotInfo
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
@@ -22,14 +22,14 @@ import eu.timepit.refined.types.numeric.NonNegLong
 
 trait CurrencySnapshotAcceptanceManager[F[_]] {
   def accept(
-    blocksForAcceptance: List[Signed[CurrencyBlock]],
+    blocksForAcceptance: List[Signed[Block]],
     lastSnapshotContext: CurrencySnapshotInfo,
     lastActiveTips: SortedSet[ActiveTip],
     lastDeprecatedTips: SortedSet[DeprecatedTip],
     calculateRewardsFn: SortedSet[Signed[CurrencyTransaction]] => F[SortedSet[RewardTransaction]]
   ): F[
     (
-      BlockAcceptanceResult[CurrencyBlock],
+      BlockAcceptanceResult,
       SortedSet[RewardTransaction],
       CurrencySnapshotInfo,
       currency.CurrencySnapshotStateProof
@@ -39,12 +39,12 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
 
 object CurrencySnapshotAcceptanceManager {
   def make[F[_]: Async: KryoSerializer](
-    blockAcceptanceManager: BlockAcceptanceManager[F, CurrencyTransaction, CurrencyBlock],
+    blockAcceptanceManager: BlockAcceptanceManager[F],
     collateral: Amount
   ) = new CurrencySnapshotAcceptanceManager[F] {
 
     def accept(
-      blocksForAcceptance: List[Signed[CurrencyBlock]],
+      blocksForAcceptance: List[Signed[Block]],
       lastSnapshotContext: CurrencySnapshotInfo,
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip],
@@ -69,7 +69,7 @@ object CurrencySnapshotAcceptanceManager {
     } yield (acceptanceResult, acceptedRewardTxs, csi, stateProof)
 
     private def acceptBlocks(
-      blocksForAcceptance: List[Signed[CurrencyBlock]],
+      blocksForAcceptance: List[Signed[Block]],
       lastSnapshotContext: CurrencySnapshotInfo,
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip]
