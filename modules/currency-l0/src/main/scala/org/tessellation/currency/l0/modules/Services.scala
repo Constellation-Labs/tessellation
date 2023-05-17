@@ -8,13 +8,13 @@ import cats.syntax.applicative._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
+import org.tessellation.currency.BaseDataApplicationL0Service
 import org.tessellation.currency.l0.config.types.AppConfig
 import org.tessellation.currency.l0.http.P2PClient
 import org.tessellation.currency.l0.snapshot.services.{Rewards, StateChannelSnapshotService}
 import org.tessellation.currency.l0.snapshot.{CurrencySnapshotConsensus, CurrencySnapshotEvent}
 import org.tessellation.currency.schema.currency._
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.collateral.Collateral
@@ -36,14 +36,13 @@ object Services {
     p2PClient: P2PClient[F],
     sdkServices: SdkServices[F],
     storages: Storages[F],
-    validators: Validators[F],
     client: Client[F],
     session: Session[F],
     seedlist: Option[Set[PeerId]],
     selfId: PeerId,
     keyPair: KeyPair,
     cfg: AppConfig,
-    identifier: Address
+    maybeDataApplication: Option[BaseDataApplicationL0Service[F]]
   ): F[Services[F]] =
     for {
       stateChannelSnapshotService <- StateChannelSnapshotService
@@ -66,7 +65,8 @@ object Services {
           client,
           session,
           stateChannelSnapshotService,
-          sdkServices.currencySnapshotAcceptanceManager
+          sdkServices.currencySnapshotAcceptanceManager,
+          maybeDataApplication
         )
       addressService = AddressService.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](storages.snapshot)
       collateralService = Collateral.make[F](cfg.collateral, storages.snapshot)

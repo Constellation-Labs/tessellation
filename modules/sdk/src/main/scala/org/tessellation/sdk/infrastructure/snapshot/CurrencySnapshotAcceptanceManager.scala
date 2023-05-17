@@ -6,8 +6,7 @@ import cats.syntax.functor._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import org.tessellation.currency.schema.currency
-import org.tessellation.currency.schema.currency.{CurrencyBlock, CurrencySnapshotInfo, CurrencyTransaction}
+import org.tessellation.currency.schema.currency._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
@@ -32,7 +31,7 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
       BlockAcceptanceResult[CurrencyBlock],
       SortedSet[RewardTransaction],
       CurrencySnapshotInfo,
-      currency.CurrencySnapshotStateProof
+      CurrencySnapshotStateProof
     )
   ]
 }

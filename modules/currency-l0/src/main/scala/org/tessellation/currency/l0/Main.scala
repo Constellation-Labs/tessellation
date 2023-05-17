@@ -4,8 +4,10 @@ import java.util.UUID
 
 import cats.effect.{IO, Resource}
 import cats.syntax.semigroupk._
+import cats.syntax.traverse._
 
 import org.tessellation.BuildInfo
+import org.tessellation.currency._
 import org.tessellation.currency.l0.cli.method
 import org.tessellation.currency.l0.cli.method._
 import org.tessellation.currency.l0.http.P2PClient
@@ -37,6 +39,8 @@ object Main
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
     sdkKryoRegistrar
 
+  val dataApplication: Option[BaseDataApplicationL0Service[IO]] = None
+
   def run(method: Run, sdk: SDK[IO]): Resource[IO, Unit] = {
     import sdk._
 
@@ -52,14 +56,13 @@ object Main
           p2pClient,
           sdkServices,
           storages,
-          validators,
           sdkResources.client,
           sdkServices.session,
           sdk.seedlist,
           sdk.nodeId,
           keyPair,
           cfg,
-          method.identifier
+          dataApplication
         )
         .asResource
       programs = Programs.make[IO](
@@ -88,7 +91,7 @@ object Main
       rumorHandler = RumorHandlers.make[IO](storages.cluster, healthChecks.ping, services.localHealthcheck).handlers <+>
         services.consensus.handler
       _ <- Daemons
-        .start(storages, services, programs, queues, healthChecks)
+        .start(storages, services, programs, queues, healthChecks, dataApplication)
         .asResource
       api = HttpApi
         .make[IO](
@@ -143,7 +146,11 @@ object Main
             NodeState.Initial,
             NodeState.LoadingGenesis,
             NodeState.GenesisReady
-          )(programs.genesis.accept(m.genesisPath)) >> gossipDaemon.startAsInitialValidator >>
+          ) {
+            dataApplication
+              .traverse(_.serializedGenesis)
+              .flatMap(programs.genesis.accept(m.genesisPath, _))
+          } >> gossipDaemon.startAsInitialValidator >>
             services.cluster.createSession >>
             services.session.createSession >>
             programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>

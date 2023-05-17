@@ -7,7 +7,9 @@ import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
+import org.tessellation.currency.dataApplication.DataApplicationBlock
 import org.tessellation.currency.l0.cell.AlgebraCommand.NoAction
+import org.tessellation.currency.l0.snapshot.CurrencySnapshotEvent
 import org.tessellation.currency.schema.currency.CurrencyBlock
 import org.tessellation.kernel.Cell.NullTerminal
 import org.tessellation.kernel._
@@ -28,7 +30,7 @@ object L0CellInput {
 
 class L0Cell[F[_]: Async](
   data: L0CellInput,
-  l1OutputQueue: Queue[F, Signed[CurrencyBlock]]
+  l1OutputQueue: Queue[F, CurrencySnapshotEvent]
 ) extends Cell[F, StackF, L0CellInput, Either[CellError, Ω], CoalgebraCommand](
       data,
       scheme.hyloM(
@@ -57,7 +59,7 @@ object L0Cell {
   type Mk[F[_]] = L0CellInput => L0Cell[F]
 
   def mkL0Cell[F[_]: Async](
-    l1OutputQueue: Queue[F, Signed[CurrencyBlock]]
+    l1OutputQueue: Queue[F, CurrencySnapshotEvent]
   ): Mk[F] =
     data => new L0Cell(data, l1OutputQueue)
 
@@ -66,8 +68,8 @@ object L0Cell {
 
   object Algebra {
 
-    def enqueueL1BlockData[F[_]: Async](queue: Queue[F, Signed[CurrencyBlock]])(data: Signed[CurrencyBlock]): AlgebraR[F] =
-      queue.offer(data) >>
+    def enqueueL1BlockData[F[_]: Async](queue: Queue[F, CurrencySnapshotEvent])(data: Signed[CurrencyBlock]): AlgebraR[F] =
+      queue.offer(data.asLeft[Signed[DataApplicationBlock]]) >>
         NullTerminal.asRight[CellError].widen[Ω].pure[F]
   }
 
