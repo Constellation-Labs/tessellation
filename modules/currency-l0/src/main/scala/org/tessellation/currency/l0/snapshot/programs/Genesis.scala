@@ -28,7 +28,7 @@ import fs2.io.file.Path
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait Genesis[F[_]] {
-  def accept(path: Path): F[Unit]
+  def accept(path: Path, dataApplication: Option[Array[Byte]] = None): F[Unit]
   def accept(genesis: CurrencySnapshot): F[Unit]
 }
 
@@ -77,11 +77,11 @@ object Genesis {
       _ <- logger.info(s"Genesis binary ${signedBinaryHash.show} and ${signedIncrementalBinaryHash.show} accepted and sent to Global L0")
     } yield ()
 
-    def accept(path: Path): F[Unit] =
+    def accept(path: Path, dataApplication: Option[Array[Byte]] = None): F[Unit] =
       genesisLoader
         .load(path)
         .map(_.map(a => (a.address, a.balance)).toMap)
-        .map(CurrencySnapshot.mkGenesis)
+        .map(CurrencySnapshot.mkGenesis(_, dataApplication))
         .flatMap(accept)
   }
 }

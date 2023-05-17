@@ -7,6 +7,7 @@ import cats.effect.std.{Random, Supervisor}
 
 import org.tessellation.currency.l0.snapshot.services.StateChannelSnapshotService
 import org.tessellation.currency.schema.currency._
+import org.tessellation.currency.{BaseDataApplicationL0Service, DataUpdate}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.balance.Amount
@@ -22,6 +23,8 @@ import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.infrastructure.snapshot.{CurrencySnapshotAcceptanceManager, SnapshotConsensus}
 import org.tessellation.security.SecurityProvider
 
+import io.circe.Decoder
+import io.circe.disjunctionCodecs._
 import org.http4s.client.Client
 
 object CurrencySnapshotConsensus {
@@ -39,14 +42,22 @@ object CurrencySnapshotConsensus {
     client: Client[F],
     session: Session[F],
     stateChannelSnapshotService: StateChannelSnapshotService[F],
-    snapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F]
-  ): F[SnapshotConsensus[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshotArtifact, CurrencySnapshotContext, CurrencySnapshotEvent]] =
+    snapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F],
+    maybeDataApplication: Option[BaseDataApplicationL0Service[F]]
+  ): F[
+    SnapshotConsensus[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshotArtifact, CurrencySnapshotContext, CurrencySnapshotEvent]
+  ] = {
+    def noopDecoder: Decoder[DataUpdate] = Decoder.failedWithMessage[DataUpdate]("not implemented")
+
+    implicit def daDecoder: Decoder[DataUpdate] = maybeDataApplication.map(_.dataDecoder).getOrElse(noopDecoder)
+
     Consensus.make[F, CurrencySnapshotEvent, SnapshotOrdinal, CurrencySnapshotArtifact, CurrencySnapshotContext](
       CurrencySnapshotConsensusFunctions.make[F](
         stateChannelSnapshotService,
         snapshotAcceptanceManager,
         collateral,
-        rewards
+        rewards,
+        maybeDataApplication
       ),
       gossip,
       selfId,
@@ -58,5 +69,5 @@ object CurrencySnapshotConsensus {
       client,
       session
     )
-
+  }
 }
