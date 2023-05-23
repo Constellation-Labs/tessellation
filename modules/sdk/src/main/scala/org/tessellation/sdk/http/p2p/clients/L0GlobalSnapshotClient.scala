@@ -14,8 +14,7 @@ import org.tessellation.security.signature.Signed
 
 import io.circe.Decoder
 import io.circe.magnolia.derivation.decoder.semiauto._
-import io.circe.refined._
-import org.http4s.Method.POST
+import org.http4s.Method.GET
 import org.http4s.Uri
 import org.http4s.client.Client
 
@@ -65,7 +64,7 @@ object L0GlobalSnapshotClient {
       def getHash(ordinal: SnapshotOrdinal): PeerResponse[F, Option[Hash]] = {
         import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
 
-        PeerResponse(s"global-snapshots/${ordinal.value.value}/hash", POST)(client, session) { (req, client) =>
+        PeerResponse(s"global-snapshots/${ordinal.value.value}/hash", GET)(client, session) { (req, client) =>
           client.expectOption[Hash](req)
         }
       }
