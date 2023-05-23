@@ -43,9 +43,8 @@ object Main
     val cfg = method.appConfig
 
     for {
-      _ <- Resource.unit
-      p2pClient = P2PClient.make[IO](sdkP2PClient, sdkResources.client, method.identifier)
       queues <- Queues.make[IO](sdkQueues).asResource
+      p2pClient = P2PClient.make[IO](sdkP2PClient, sdkResources.client, method.identifier, sdkServices.session)
       storages <- Storages.make[IO](sdkStorages, cfg.snapshot, method.globalL0Peer).asResource
       validators = Validators.make[IO](seedlist)
       services <- Services

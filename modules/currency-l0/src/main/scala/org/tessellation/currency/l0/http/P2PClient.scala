@@ -5,6 +5,7 @@ import cats.effect.Async
 import org.tessellation.currency.l0.snapshot.CurrencySnapshotClient
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
+import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.http.p2p.SdkP2PClient
 import org.tessellation.sdk.http.p2p.clients._
 import org.tessellation.sdk.infrastructure.gossip.p2p.GossipClient
@@ -17,7 +18,8 @@ object P2PClient {
   def make[F[_]: Async: SecurityProvider: KryoSerializer](
     sdkP2PClient: SdkP2PClient[F],
     client: Client[F],
-    identifier: Address
+    identifier: Address,
+    session: Session[F]
   ): P2PClient[F] =
     new P2PClient[F](
       L0ClusterClient.make(client),
@@ -26,7 +28,7 @@ object P2PClient {
       sdkP2PClient.node,
       StateChannelSnapshotClient.make(client, identifier),
       sdkP2PClient.l0GlobalSnapshot,
-      CurrencySnapshotClient.make[F](client)
+      CurrencySnapshotClient.make[F](client, session)
     ) {}
 }
 

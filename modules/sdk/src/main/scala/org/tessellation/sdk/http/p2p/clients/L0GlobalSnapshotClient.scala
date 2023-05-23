@@ -5,7 +5,6 @@ import cats.effect.Async
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.snapshot.SnapshotMetadata
-import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.http.p2p.PeerResponse
 import org.tessellation.sdk.http.p2p.PeerResponse.PeerResponse
 import org.tessellation.security.SecurityProvider
@@ -32,7 +31,7 @@ object L0GlobalSnapshotClient {
 
   def make[
     F[_]: Async: SecurityProvider: KryoSerializer
-  ](client: Client[F], session: Session[F]): L0GlobalSnapshotClient[F] =
+  ](client: Client[F]): L0GlobalSnapshotClient[F] =
     new L0GlobalSnapshotClient[F] {
 
       def getLatestOrdinal: PeerResponse[F, SnapshotOrdinal] = {
@@ -64,7 +63,7 @@ object L0GlobalSnapshotClient {
       def getHash(ordinal: SnapshotOrdinal): PeerResponse[F, Option[Hash]] = {
         import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
 
-        PeerResponse(s"global-snapshots/${ordinal.value.value}/hash", GET)(client, session) { (req, client) =>
+        PeerResponse(s"global-snapshots/${ordinal.value.value}/hash", GET)(client) { (req, client) =>
           client.expectOption[Hash](req)
         }
       }
