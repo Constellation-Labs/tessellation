@@ -6,6 +6,7 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.config.types.TrustDaemonConfig
+import org.tessellation.domain.cluster.programs.TrustPush
 import org.tessellation.domain.trust.storage.TrustStorage
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.trust.TrustInfo
@@ -18,6 +19,7 @@ object TrustDaemon {
   def make[F[_]: Async](
     cfg: TrustDaemonConfig,
     trustStorage: TrustStorage[F],
+    trustPush: TrustPush[F],
     selfPeerId: PeerId
   )(implicit S: Supervisor[F]): TrustDaemon[F] = new TrustDaemon[F] {
 
@@ -34,6 +36,7 @@ object TrustDaemon {
         _ <- Temporal[F].sleep(cfg.interval)
         predictedTrust <- trustStorage.getTrust.map(calculatePredictedTrust)
         _ <- trustStorage.updatePredictedTrust(predictedTrust)
+        _ <- trustPush.publishOrdinalUpdates
       } yield ()
 
   }

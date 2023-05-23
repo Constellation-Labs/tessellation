@@ -4,6 +4,7 @@ import java.security.KeyPair
 
 import cats.effect.Async
 import cats.effect.std.Random
+import cats.syntax.functor._
 
 import org.tessellation.config.types.AppConfig
 import org.tessellation.domain.cluster.programs.TrustPush
@@ -30,8 +31,8 @@ object Programs {
     lastFullGlobalSnapshotOrdinal: SnapshotOrdinal,
     p2pClient: P2PClient[F],
     globalSnapshotContextFns: GlobalSnapshotContextFunctions[F]
-  ): Programs[F] = {
-    val trustPush = TrustPush.make(storages.trust, services.gossip)
+  ): F[Programs[F]] = {
+    val trustPush = TrustPush.make(storages.trust, storages.snapshotOrdinalTrust, services.gossip)
     val peerSelect: PeerSelect[F] = MajorityPeerSelect.make(storages.cluster, p2pClient.globalSnapshot)
     val download: Download[F] = Download
       .make[F](
@@ -51,7 +52,9 @@ object Programs {
       services.snapshotContextFunctions
     )
 
-    new Programs[F](sdkPrograms.peerDiscovery, sdkPrograms.joining, trustPush, download, rollbackLoader) {}
+    trustPush.map {
+      new Programs[F](sdkPrograms.peerDiscovery, sdkPrograms.joining, _, download, rollbackLoader) {}
+    }
   }
 }
 

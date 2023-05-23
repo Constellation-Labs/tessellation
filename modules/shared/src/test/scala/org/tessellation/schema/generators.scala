@@ -20,7 +20,7 @@ import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.{Signature, SignatureProof}
 
 import com.comcast.ip4s.{Host, Port}
-import eu.timepit.refined.api.{RefType, Validate}
+import eu.timepit.refined.api.{RefType, Refined, Validate}
 import eu.timepit.refined.auto._
 import eu.timepit.refined.refineV
 import eu.timepit.refined.scalacheck.numeric._
@@ -135,5 +135,5 @@ object generators {
   val signedTransactionGen: Gen[Signed[DAGTransaction]] = signedOf(transactionGen)
 
   val snapshotOrdinalGen: Gen[SnapshotOrdinal] =
-    Arbitrary.arbitrary[NonNegLong].map(SnapshotOrdinal(_))
+    Gen.chooseNum[Long](0L, 100L).map(n => SnapshotOrdinal.MinValue.plus(Refined.unsafeApply(n)))
 }

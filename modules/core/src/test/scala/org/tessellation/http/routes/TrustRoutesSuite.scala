@@ -1,14 +1,16 @@
 package org.tessellation.http.routes
 
 import cats.effect._
-import cats.effect.unsafe.implicits.global
+import cats.effect.unsafe.implicits._
+import cats.syntax.applicative._
+import cats.syntax.option._
 
 import scala.reflect.runtime.universe.TypeTag
 
 import org.tessellation.coreKryoRegistrar
 import org.tessellation.domain.cluster.programs.TrustPush
 import org.tessellation.ext.kryo._
-import org.tessellation.infrastructure.trust.storage.TrustStorage
+import org.tessellation.infrastructure.trust.storage.{InMemorySnapshotOrdinalTrustStorage, TrustStorage}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.generators._
 import org.tessellation.schema.trust.{PeerObservationAdjustmentUpdate, PeerObservationAdjustmentUpdateBatch}
@@ -24,22 +26,26 @@ import org.http4s.syntax.literals._
 import suite.HttpSuite
 
 object TrustRoutesSuite extends HttpSuite {
+
   test("GET trust succeeds") {
     val req = GET(uri"/trust")
-    val peer = (for {
+    val (peer, snapshotOrdinal) = (for {
       peers <- peersGen()
-    } yield peers.head).sample.get
+      ordinal <- snapshotOrdinalGen
+    } yield (peers.head, ordinal)).sample.get
 
     KryoSerializer
       .forAsync[IO](sdkKryoRegistrar.union(coreKryoRegistrar))
       .use { implicit kryoPool =>
         for {
           ts <- TrustStorage.make[IO]
+          ordinalTrustStorage <- InMemorySnapshotOrdinalTrustStorage.make(snapshotOrdinal.some.pure[IO])
           gossip = new Gossip[IO] {
             override def spread[A: TypeTag: Encoder](rumorContent: A): IO[Unit] = IO.unit
+
             override def spreadCommon[A: TypeTag: Encoder](rumorContent: A): IO[Unit] = IO.unit
           }
-          tp = TrustPush.make[IO](ts, gossip)
+          tp <- TrustPush.make[IO](ts, ordinalTrustStorage, gossip)
           _ <- ts.updateTrust(
             PeerObservationAdjustmentUpdateBatch(List(PeerObservationAdjustmentUpdate(peer.id, 0.5)))
           )

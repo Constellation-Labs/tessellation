@@ -29,7 +29,7 @@ object Daemons {
     List[Daemon[F]](
       NodeStateDaemon.make(storages.node, services.gossip),
       DownloadDaemon.make(storages.node, programs.download),
-      TrustDaemon.make(cfg.trust.daemon, storages.trust, nodeId),
+      TrustDaemon.make(cfg.trust.daemon, storages.trust, programs.trustPush, nodeId),
       HealthCheckDaemon.make(healthChecks),
       GlobalSnapshotEventsPublisherDaemon.make(queues.stateChannelOutput, queues.l1Output, services.gossip),
       CollateralDaemon.make(services.collateral, storages.globalSnapshot, storages.cluster)

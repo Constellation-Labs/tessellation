@@ -90,7 +90,7 @@ object trust {
   @derive(decoder, encoder, show, eqv)
   case class PeerObservationAdjustmentUpdateBatch(updates: List[PeerObservationAdjustmentUpdate])
 
-  @derive(decoder, encoder, show)
+  @derive(decoder, encoder, show, eqv)
   case class TrustInfo(
     trustLabel: Option[Double] = None,
     predictedTrust: Option[Double] = None,
@@ -98,14 +98,27 @@ object trust {
     peerLabels: Map[PeerId, Double] = Map.empty
   ) {
 
+    val isEmpty: Boolean = trustLabel.isEmpty && predictedTrust.isEmpty && observationAdjustmentTrust.isEmpty
+
     val publicTrust: Option[Double] =
       trustLabel
         .map(t => Math.max(-1, t + observationAdjustmentTrust.getOrElse(0d)))
         .orElse(observationAdjustmentTrust.map(t => Math.max(-1, t)))
   }
 
+  @derive(decoder, encoder, show, eqv)
+  case class SnapshotOrdinalTrustInfo(
+    trustInfo: TrustInfo,
+    ordinal: SnapshotOrdinal
+  )
+
   @derive(decoder, encoder, show)
   case class PublicTrust(
     labels: Map[PeerId, Double]
+  )
+
+  @derive(decoder, encoder, eqv, show)
+  case class SnapshotOrdinalPublicTrust(
+    labels: Map[PeerId, (SnapshotOrdinal, Option[Double])]
   )
 }

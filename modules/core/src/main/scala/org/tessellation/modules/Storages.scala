@@ -6,9 +6,9 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.domain.snapshot.storages.SnapshotDownloadStorage
-import org.tessellation.domain.trust.storage.TrustStorage
+import org.tessellation.domain.trust.storage.{SnapshotOrdinalTrustStorage, TrustStorage}
 import org.tessellation.infrastructure.snapshot.SnapshotDownloadStorage
-import org.tessellation.infrastructure.trust.storage.TrustStorage
+import org.tessellation.infrastructure.trust.storage.{InMemorySnapshotOrdinalTrustStorage, TrustStorage}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.trust.PeerObservationAdjustmentUpdateBatch
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshot, GlobalSnapshotInfo}
@@ -49,6 +49,9 @@ object Storages {
           incrementalGlobalSnapshotPersistedLocalFileSystemStorage,
           fullGlobalSnapshotLocalFileSystemStorage
         )
+      snapshotOrdinalTrustStorage <- InMemorySnapshotOrdinalTrustStorage.make(
+        globalSnapshotStorage.headSnapshot.map(_.map(_.ordinal))
+      )
     } yield
       new Storages[F](
         cluster = sdkStorages.cluster,
@@ -59,7 +62,8 @@ object Storages {
         globalSnapshot = globalSnapshotStorage,
         fullGlobalSnapshot = fullGlobalSnapshotLocalFileSystemStorage,
         incrementalGlobalSnapshotLocalFileSystemStorage = incrementalGlobalSnapshotPersistedLocalFileSystemStorage,
-        snapshotDownload = snapshotDownloadStorage
+        snapshotDownload = snapshotDownloadStorage,
+        snapshotOrdinalTrust = snapshotOrdinalTrustStorage
       ) {}
 }
 
@@ -72,5 +76,6 @@ sealed abstract class Storages[F[_]] private (
   val globalSnapshot: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo] with LatestBalances[F],
   val fullGlobalSnapshot: SnapshotLocalFileSystemStorage[F, GlobalSnapshot],
   val incrementalGlobalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
-  val snapshotDownload: SnapshotDownloadStorage[F]
+  val snapshotDownload: SnapshotDownloadStorage[F],
+  val snapshotOrdinalTrust: SnapshotOrdinalTrustStorage[F]
 )
