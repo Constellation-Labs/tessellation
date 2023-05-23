@@ -6,6 +6,7 @@ import org.tessellation.currency.schema.currency._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.snapshot.SnapshotMetadata
+import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.http.p2p.PeerResponse
 import org.tessellation.sdk.http.p2p.PeerResponse.PeerResponse
 import org.tessellation.security.SecurityProvider
@@ -29,7 +30,7 @@ object CurrencySnapshotClient {
 
   def make[
     F[_]: Async: SecurityProvider: KryoSerializer
-  ](client: Client[F]): CurrencySnapshotClient[F] =
+  ](client: Client[F], session: Session[F]): CurrencySnapshotClient[F] =
     new CurrencySnapshotClient[F] {
 
       def getLatestOrdinal: PeerResponse[F, SnapshotOrdinal] = {
@@ -37,31 +38,31 @@ object CurrencySnapshotClient {
 
         implicit val decoder: Decoder[SnapshotOrdinal] = deriveMagnoliaDecoder[SnapshotOrdinal]
 
-        PeerResponse[F, SnapshotOrdinal]("snapshots/latest/ordinal")(client)
+        PeerResponse[F, SnapshotOrdinal]("snapshots/latest/ordinal")(client, session)
       }
 
       def getLatestMetadata: PeerResponse[F, SnapshotMetadata] = {
         import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
 
-        PeerResponse[F, SnapshotMetadata]("snapshots/latest/metadata")(client)
+        PeerResponse[F, SnapshotMetadata]("snapshots/latest/metadata")(client, session)
       }
 
       def getLatest: PeerResponse[F, (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)] = {
         import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
 
-        PeerResponse[F, (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]("snapshots/latest/combined")(client)
+        PeerResponse[F, (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]("snapshots/latest/combined")(client, session)
       }
 
       def get(ordinal: SnapshotOrdinal): PeerResponse[F, Signed[CurrencyIncrementalSnapshot]] = {
         import org.tessellation.ext.codecs.BinaryCodec.decoder
 
-        PeerResponse[F, Signed[CurrencyIncrementalSnapshot]](s"snapshots/${ordinal.value.value}")(client)
+        PeerResponse[F, Signed[CurrencyIncrementalSnapshot]](s"snapshots/${ordinal.value.value}")(client, session)
       }
 
       def get(hash: Hash): PeerResponse[F, Signed[CurrencyIncrementalSnapshot]] = {
         import org.tessellation.ext.codecs.BinaryCodec.decoder
 
-        PeerResponse[F, Signed[CurrencyIncrementalSnapshot]](s"snapshots/$hash")(client)
+        PeerResponse[F, Signed[CurrencyIncrementalSnapshot]](s"snapshots/$hash")(client, session)
       }
 
     }
