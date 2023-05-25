@@ -18,8 +18,7 @@ object SdkP2PClient {
       ClusterClient.make[F](client, session),
       GossipClient.make[F](client, session),
       NodeClient.make[F](client, session),
-      TrustClient.make[F](client, session),
-      L0GlobalSnapshotClient.make[F](client)
+      TrustClient.make[F](client, session)
     ) {}
 
 }
@@ -29,6 +28,5 @@ sealed abstract class SdkP2PClient[F[_]] private (
   val cluster: ClusterClient[F],
   val gossip: GossipClient[F],
   val node: NodeClient[F],
-  val trust: TrustClient[F],
-  val l0GlobalSnapshot: L0GlobalSnapshotClient[F]
+  val trust: TrustClient[F]
 )

@@ -31,7 +31,7 @@ object Programs {
     p2pClient: P2PClient[F],
     currencySnapshotContextFns: CurrencySnapshotContextFunctions[F]
   ): Programs[F] = {
-    val peerSelect: PeerSelect[F] = MajorityPeerSelect.make(storages.cluster, p2pClient.l0GlobalSnapshot)
+    val peerSelect: PeerSelect[F] = MajorityPeerSelect.make(storages.cluster, p2pClient.currencySnapshot)
     val download = Download
       .make(
         p2pClient,
