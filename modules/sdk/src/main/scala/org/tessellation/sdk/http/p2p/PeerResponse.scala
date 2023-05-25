@@ -41,6 +41,13 @@ object PeerResponse {
     )(implicit F: Async[F]): PeerResponse[G, A] =
       apply(PeerAuthMiddleware.responseTokenVerifierMiddleware[F](client, session))(f)
 
+    def apply(client: Client[F], maybeSession: Option[Session[F]])(
+      f: (Request[F], Client[F]) => G[A]
+    )(implicit F: Async[F]): PeerResponse[G, A] =
+      maybeSession match {
+        case None          => apply(client)(f)
+        case Some(session) => apply(client, session)(f)
+      }
   }
 
   def apply[F[_], G[_], A](uri: Uri => Uri, method: Method) =
@@ -48,7 +55,7 @@ object PeerResponse {
   def apply[F[_], G[_], A](path: String, method: Method) =
     new PeerResponsePartaillyApplied[F, G, A]((uri: Uri) => uri.addPath(path), method)
 
-  private[p2p] final class GetPeerResponsePartaillyApplied[F[_], A](val uri: Uri => Uri) {
+  private[p2p] final class GetPeerResponsePartiallyApplied[F[_], A](val uri: Uri => Uri) {
     def apply(
       client: Client[F]
     )(implicit decoder: EntityDecoder[F, A], F: Async[F], S: SecurityProvider[F]): PeerResponse[F, A] =
@@ -62,12 +69,21 @@ object PeerResponse {
       session: Session[F]
     )(implicit decoder: EntityDecoder[F, A], F: Async[F], S: SecurityProvider[F]): PeerResponse[F, A] =
       apply(PeerAuthMiddleware.responseTokenVerifierMiddleware[F](client, session))
+
+    def apply(
+      client: Client[F],
+      maybeSession: Option[Session[F]]
+    )(implicit decoder: EntityDecoder[F, A], F: Async[F], S: SecurityProvider[F]): PeerResponse[F, A] =
+      maybeSession match {
+        case None          => apply(client)
+        case Some(session) => apply(client, session)
+      }
   }
 
-  def apply[F[_], A](uri: Uri => Uri) = new GetPeerResponsePartaillyApplied[F, A](uri)
-  def apply[F[_], A](path: String) = new GetPeerResponsePartaillyApplied[F, A]((uri: Uri) => uri.addPath(path))
+  def apply[F[_], A](uri: Uri => Uri) = new GetPeerResponsePartiallyApplied[F, A](uri)
+  def apply[F[_], A](path: String) = new GetPeerResponsePartiallyApplied[F, A]((uri: Uri) => uri.addPath(path))
 
-  private[p2p] final class SuccessfulPeerResponsePartaillyApplied[F[_]](val uri: Uri => Uri, method: Method) {
+  private[p2p] final class SuccessfulPeerResponsePartiallyApplied[F[_]](val uri: Uri => Uri, method: Method) {
 
     def apply(
       client: Client[F]
@@ -86,13 +102,13 @@ object PeerResponse {
       apply(PeerAuthMiddleware.responseTokenVerifierMiddleware[F](client, session))
   }
 
-  def successful[F[_]](path: String): SuccessfulPeerResponsePartaillyApplied[F] =
-    new SuccessfulPeerResponsePartaillyApplied[F]((uri: Uri) => uri.addPath(path), Method.GET)
-  def successful[F[_]](uri: Uri => Uri): SuccessfulPeerResponsePartaillyApplied[F] =
-    new SuccessfulPeerResponsePartaillyApplied[F](uri, Method.GET)
+  def successful[F[_]](path: String): SuccessfulPeerResponsePartiallyApplied[F] =
+    new SuccessfulPeerResponsePartiallyApplied[F]((uri: Uri) => uri.addPath(path), Method.GET)
+  def successful[F[_]](uri: Uri => Uri): SuccessfulPeerResponsePartiallyApplied[F] =
+    new SuccessfulPeerResponsePartiallyApplied[F](uri, Method.GET)
 
-  def successful[F[_]](path: String, method: Method): SuccessfulPeerResponsePartaillyApplied[F] =
-    new SuccessfulPeerResponsePartaillyApplied[F]((uri: Uri) => uri.addPath(path), method)
-  def successful[F[_]](uri: Uri => Uri, method: Method): SuccessfulPeerResponsePartaillyApplied[F] =
-    new SuccessfulPeerResponsePartaillyApplied[F](uri, method)
+  def successful[F[_]](path: String, method: Method): SuccessfulPeerResponsePartiallyApplied[F] =
+    new SuccessfulPeerResponsePartiallyApplied[F]((uri: Uri) => uri.addPath(path), method)
+  def successful[F[_]](uri: Uri => Uri, method: Method): SuccessfulPeerResponsePartiallyApplied[F] =
+    new SuccessfulPeerResponsePartiallyApplied[F](uri, method)
 }

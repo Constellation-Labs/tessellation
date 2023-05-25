@@ -1,69 +1,23 @@
 package org.tessellation.currency.l0.snapshot
 
 import cats.effect.Async
+import cats.syntax.option._
 
 import org.tessellation.currency.schema.currency._
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema._
-import org.tessellation.schema.snapshot.SnapshotMetadata
 import org.tessellation.sdk.domain.cluster.services.Session
-import org.tessellation.sdk.http.p2p.PeerResponse
-import org.tessellation.sdk.http.p2p.PeerResponse.PeerResponse
+import org.tessellation.sdk.http.p2p.clients.SnapshotClient
 import org.tessellation.security.SecurityProvider
-import org.tessellation.security.hash.Hash
-import org.tessellation.security.signature.Signed
 
-import io.circe.Decoder
-import io.circe.magnolia.derivation.decoder.semiauto._
-import io.circe.refined._
 import org.http4s.client.Client
 
-trait CurrencySnapshotClient[F[_]] {
-  def getLatestOrdinal: PeerResponse[F, SnapshotOrdinal]
-  def getLatestMetadata: PeerResponse[F, SnapshotMetadata]
-  def getLatest: PeerResponse[F, (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]
-  def get(ordinal: SnapshotOrdinal): PeerResponse[F, Signed[CurrencyIncrementalSnapshot]]
-  def get(hash: Hash): PeerResponse[F, Signed[CurrencyIncrementalSnapshot]]
-}
-
 object CurrencySnapshotClient {
+  type CurrencySnapshotClient[F[_]] = SnapshotClient[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
 
-  def make[
-    F[_]: Async: SecurityProvider: KryoSerializer
-  ](client: Client[F], session: Session[F]): CurrencySnapshotClient[F] =
-    new CurrencySnapshotClient[F] {
-
-      def getLatestOrdinal: PeerResponse[F, SnapshotOrdinal] = {
-        import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
-
-        implicit val decoder: Decoder[SnapshotOrdinal] = deriveMagnoliaDecoder[SnapshotOrdinal]
-
-        PeerResponse[F, SnapshotOrdinal]("snapshots/latest/ordinal")(client, session)
-      }
-
-      def getLatestMetadata: PeerResponse[F, SnapshotMetadata] = {
-        import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
-
-        PeerResponse[F, SnapshotMetadata]("snapshots/latest/metadata")(client, session)
-      }
-
-      def getLatest: PeerResponse[F, (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)] = {
-        import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
-
-        PeerResponse[F, (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]("snapshots/latest/combined")(client, session)
-      }
-
-      def get(ordinal: SnapshotOrdinal): PeerResponse[F, Signed[CurrencyIncrementalSnapshot]] = {
-        import org.tessellation.ext.codecs.BinaryCodec.decoder
-
-        PeerResponse[F, Signed[CurrencyIncrementalSnapshot]](s"snapshots/${ordinal.value.value}")(client, session)
-      }
-
-      def get(hash: Hash): PeerResponse[F, Signed[CurrencyIncrementalSnapshot]] = {
-        import org.tessellation.ext.codecs.BinaryCodec.decoder
-
-        PeerResponse[F, Signed[CurrencyIncrementalSnapshot]](s"snapshots/$hash")(client, session)
-      }
-
+  def make[F[_]: Async: SecurityProvider: KryoSerializer](_client: Client[F], session: Session[F]): CurrencySnapshotClient[F] =
+    new SnapshotClient[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo] {
+      val client = _client
+      val optionalSession = session.some
+      val urlPrefix = "snapshots"
     }
 }

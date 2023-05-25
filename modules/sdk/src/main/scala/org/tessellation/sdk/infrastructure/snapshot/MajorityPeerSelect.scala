@@ -12,15 +12,15 @@ import cats.syntax.list._
 
 import scala.util.control.NoStackTrace
 
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.node.NodeState.Ready
 import org.tessellation.schema.peer.Peer
 import org.tessellation.schema.peer.Peer.toP2PContext
+import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo}
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.snapshot.PeerSelect
 import org.tessellation.sdk.domain.snapshot.PeerSelect._
-import org.tessellation.sdk.http.p2p.clients.L0GlobalSnapshotClient
+import org.tessellation.sdk.http.p2p.clients.SnapshotClient
 import org.tessellation.security.hash.Hash
 
 import derevo.cats.show
@@ -48,9 +48,9 @@ object MajorityPeerSelect {
 
   case object NoPeersToSelect extends NoStackTrace
 
-  def make[F[_]: Async: KryoSerializer: Random](
+  def make[F[_]: Async: Random, S <: Snapshot[_, _], SI <: SnapshotInfo[_]](
     storage: ClusterStorage[F],
-    snapshotClient: L0GlobalSnapshotClient[F]
+    snapshotClient: SnapshotClient[F, S, SI]
   ): PeerSelect[F] = new PeerSelect[F] {
 
     val logger = Slf4jLogger.getLoggerFromName[F](peerSelectLoggerName)
@@ -81,7 +81,7 @@ object MajorityPeerSelect {
           )
         }
         .map(_.groupMap { case (_, hash) => hash } { case (peer, _) => peer })
-      peerCandidates = peerDistribution.values.toList.sortBy(-_.length).head
+      peerCandidates = peerDistribution.values.maxBy(_.length)
       selectedPeer <- Random[F].elementOf(peerCandidates.toList)
     } yield
       FilteredPeerDetails(

@@ -1,8 +1,10 @@
 package org.tessellation.http.p2p
 
 import cats.effect.Async
+import cats.syntax.option._
 
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.http.p2p.SdkP2PClient
 import org.tessellation.sdk.http.p2p.clients._
 import org.tessellation.sdk.infrastructure.gossip.p2p.GossipClient
@@ -14,14 +16,15 @@ object P2PClient {
 
   def make[F[_]: Async: SecurityProvider: KryoSerializer](
     sdkP2PClient: SdkP2PClient[F],
-    client: Client[F]
+    client: Client[F],
+    session: Session[F]
   ): P2PClient[F] =
     new P2PClient[F](
       sdkP2PClient.sign,
       sdkP2PClient.cluster,
       sdkP2PClient.gossip,
       sdkP2PClient.node,
-      sdkP2PClient.l0GlobalSnapshot
+      L0GlobalSnapshotClient.make(client, session.some)
     ) {}
 }
 
