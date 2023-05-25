@@ -25,7 +25,6 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 sealed trait RollbackError extends NoStackTrace
 case object LastSnapshotHashNotFound extends RollbackError
-case object LastIncrementalSnapshotNotFound extends RollbackError
 case object LastSnapshotInfoNotFound extends RollbackError
 
 trait Rollback[F[_]] {
@@ -52,12 +51,11 @@ object Rollback {
         .toOptionT
         .getOrRaise(LastSnapshotHashNotFound)
 
-      (maybeLastIncremental, lastInfo) <- globalSnapshotInfo.lastCurrencySnapshots
+      (lastIncremental, lastInfo) <- globalSnapshotInfo.lastCurrencySnapshots
         .get(identifier)
+        .flatMap(_.toOption)
         .toOptionT
         .getOrRaise(LastSnapshotInfoNotFound)
-
-      lastIncremental <- maybeLastIncremental.toOptionT.getOrRaise(LastIncrementalSnapshotNotFound)
 
       _ <- snapshotStorage.prepend(lastIncremental, lastInfo)
 

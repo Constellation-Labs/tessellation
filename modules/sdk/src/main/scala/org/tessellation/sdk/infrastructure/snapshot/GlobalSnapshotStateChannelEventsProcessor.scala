@@ -33,16 +33,23 @@ import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait GlobalSnapshotStateChannelEventsProcessor[F[_]] {
+  type CurrencySnapshotWithState = Either[Signed[CurrencySnapshot], (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]
+
   def process(
     lastGlobalSnapshotInfo: GlobalSnapshotInfo,
     events: List[StateChannelOutput]
   ): F[
     (
       SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
-      SortedMap[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)],
+      SortedMap[Address, CurrencySnapshotWithState],
       Set[StateChannelOutput]
     )
   ]
+
+  def processCurrencySnapshots(
+    lastGlobalSnapshotInfo: GlobalSnapshotInfo,
+    events: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]]
+  ): F[SortedMap[Address, NonEmptyList[CurrencySnapshotWithState]]]
 }
 
 object GlobalSnapshotStateChannelEventsProcessor {
@@ -58,7 +65,7 @@ object GlobalSnapshotStateChannelEventsProcessor {
       ): F[
         (
           SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
-          SortedMap[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)],
+          SortedMap[Address, CurrencySnapshotWithState],
           Set[StateChannelOutput]
         )
       ] =
@@ -71,8 +78,19 @@ object GlobalSnapshotStateChannelEventsProcessor {
           .map { case (_, validatedEvents) => processStateChannelEvents(lastGlobalSnapshotInfo, validatedEvents) }
           .flatMap {
             case (scSnapshots, returnedSCEvents) =>
-              processCurrencySnapshots(lastGlobalSnapshotInfo, scSnapshots).map((scSnapshots, _, returnedSCEvents))
+              processCurrencySnapshots(lastGlobalSnapshotInfo, scSnapshots)
+                .map(calculateLastCurrencySnapshots(_, lastGlobalSnapshotInfo))
+                .map((scSnapshots, _, returnedSCEvents))
           }
+
+      private def calculateLastCurrencySnapshots(
+        processedCurrencySnapshots: SortedMap[Address, NonEmptyList[CurrencySnapshotWithState]],
+        lastGlobalSnapshotInfo: GlobalSnapshotInfo
+      ): SortedMap[Address, CurrencySnapshotWithState] = {
+        val lastCurrencySnapshots = processedCurrencySnapshots.map { case (k, v) => k -> v.last }
+
+        lastGlobalSnapshotInfo.lastCurrencySnapshots.concat(lastCurrencySnapshots)
+      }
 
       private def applyCurrencySnapshot(
         lastState: CurrencySnapshotInfo,
@@ -80,19 +98,20 @@ object GlobalSnapshotStateChannelEventsProcessor {
         snapshot: Signed[CurrencyIncrementalSnapshot]
       ): F[CurrencySnapshotInfo] = currencySnapshotContextFns.createContext(lastState, lastSnapshot, snapshot)
 
-      private def processCurrencySnapshots(
+      def processCurrencySnapshots(
         lastGlobalSnapshotInfo: GlobalSnapshotInfo,
         events: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]]
-      ): F[SortedMap[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)]] =
+      ): F[SortedMap[Address, NonEmptyList[CurrencySnapshotWithState]]] =
         events.toList
-          .foldLeftM(SortedMap.empty[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)]) {
+          .foldLeftM(SortedMap.empty[Address, NonEmptyList[CurrencySnapshotWithState]]) {
             case (agg, (address, binaries)) =>
-              type Success = (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)
-              type Agg =
-                (Option[(Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)], List[Signed[StateChannelSnapshotBinary]])
+              type Success = NonEmptyList[CurrencySnapshotWithState]
               type Result = Option[Success]
+              type Agg = (Result, List[Signed[StateChannelSnapshotBinary]])
 
-              (lastGlobalSnapshotInfo.lastCurrencySnapshots.get(address), binaries.toList.reverse)
+              val initialState = lastGlobalSnapshotInfo.lastCurrencySnapshots.get(address)
+
+              (NonEmptyList.fromList(initialState.toList), binaries.toList.reverse)
                 .tailRecM[F, Result] {
                   case (state, Nil) => state.asRight[Agg].pure[F]
 
@@ -101,27 +120,44 @@ object GlobalSnapshotStateChannelEventsProcessor {
                       .deserialize[Signed[CurrencySnapshot]](head.value.content)
                       .toOption
                       .map { snapshot =>
-                        ((none[Signed[CurrencyIncrementalSnapshot]], snapshot.info).some, tail).asLeft[Result]
+                        (NonEmptyList.one(snapshot.asLeft).some, tail)
+                          .asLeft[Result]
                       }
                       .getOrElse((none[Success], tail).asLeft[Result])
                       .pure[F]
 
-                  case (Some((maybeLastSnapshot, lastState)), head :: tail) =>
+                  case (Some(nel @ NonEmptyList(Left(fullSnapshot), _)), head :: tail) =>
                     JsonBinarySerializer
                       .deserialize[Signed[CurrencyIncrementalSnapshot]](head.value.content)
-                      .toOption
-                      .map { snapshot =>
-                        maybeLastSnapshot
-                          .map(applyCurrencySnapshot(lastState, _, snapshot))
-                          .getOrElse(lastState.pure[F])
-                          .map { state =>
-                            ((snapshot.some, state).some, tail).asLeft[Result]
-                          }
-                      }
-                      .getOrElse(((maybeLastSnapshot, lastState).some, tail).asLeft[Result].pure[F])
+                      .toOption match {
+                      case Some(snapshot) =>
+                        (nel.prepend((snapshot, fullSnapshot.value.info).asRight).some, tail).asLeft[Result].pure[F]
+                      case None =>
+                        (nel.some, tail).asLeft[Result].pure[F]
+                    }
+
+                  case (Some(nel @ NonEmptyList(Right((lastIncremental, lastState)), _)), head :: tail) =>
+                    JsonBinarySerializer
+                      .deserialize[Signed[CurrencyIncrementalSnapshot]](head.value.content)
+                      .toOption match {
+                      case Some(snapshot) =>
+                        applyCurrencySnapshot(lastState, lastIncremental, snapshot).map { state =>
+                          (nel.prepend((snapshot, state).asRight).some, tail).asLeft[Result]
+                        }
+                      case None =>
+                        (nel.some, tail).asLeft[Result].pure[F]
+                    }
+                }
+                .map(_.map(_.reverse))
+                .map { maybeProcessed =>
+                  initialState match {
+                    case Some(_) => maybeProcessed.flatMap(nel => NonEmptyList.fromList(nel.tail))
+                    case None    => maybeProcessed
+                  }
                 }
                 .map {
-                  _.map(updated => agg + (address -> updated)).getOrElse(agg)
+                  case Some(updates) => agg + (address -> updates)
+                  case None          => agg
                 }
 
           }

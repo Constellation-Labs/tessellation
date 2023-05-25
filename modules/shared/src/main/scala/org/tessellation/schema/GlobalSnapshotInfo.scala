@@ -6,7 +6,7 @@ import cats.syntax.flatMap._
 
 import scala.collection.immutable.SortedMap
 
-import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
+import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshot, CurrencySnapshotInfo}
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.merkletree.syntax._
@@ -21,6 +21,7 @@ import org.tessellation.security.signature.Signed
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
+import io.circe.disjunctionCodecs._
 
 @derive(encoder, decoder, eqv, show)
 case class GlobalSnapshotInfoV1(
@@ -62,7 +63,7 @@ case class GlobalSnapshotInfo(
   lastStateChannelSnapshotHashes: SortedMap[Address, Hash],
   lastTxRefs: SortedMap[Address, TransactionReference],
   balances: SortedMap[Address, Balance],
-  lastCurrencySnapshots: SortedMap[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)],
+  lastCurrencySnapshots: SortedMap[Address, Either[Signed[CurrencySnapshot], (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]],
   lastCurrencySnapshotsProofs: SortedMap[Address, Proof]
 ) extends SnapshotInfo[GlobalSnapshotStateProof] {
   def stateProof[F[_]: MonadThrow: KryoSerializer]: F[GlobalSnapshotStateProof] =

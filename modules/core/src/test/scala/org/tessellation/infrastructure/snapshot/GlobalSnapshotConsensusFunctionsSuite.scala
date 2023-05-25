@@ -9,7 +9,7 @@ import cats.syntax.list._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo, SnapshotFee}
+import org.tessellation.currency.schema.currency.SnapshotFee
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
@@ -93,12 +93,17 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     ): IO[
       (
         SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
-        SortedMap[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)],
+        SortedMap[Address, CurrencySnapshotWithState],
         Set[StateChannelEvent]
       )
     ] = IO(
       (events.groupByNel(_.address).view.mapValues(_.map(_.snapshotBinary)).toSortedMap, SortedMap.empty, Set.empty)
     )
+
+    def processCurrencySnapshots(
+      lastGlobalSnapshotInfo: GlobalSnapshotContext,
+      events: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]]
+    ): IO[SortedMap[Address, NonEmptyList[CurrencySnapshotWithState]]] = ???
   }
 
   val collateral: Amount = Amount.empty

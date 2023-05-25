@@ -116,13 +116,13 @@ object CurrencySnapshotProcessor {
                   case None =>
                     val snapshotToDownload = hashedSnapshots.last
                     globalState.lastCurrencySnapshots.get(identifier) match {
-                      case Some((_, stateToDownload)) =>
+                      case Some(Right((_, stateToDownload))) =>
                         val toPass = (snapshotToDownload, stateToDownload).asLeft[Hashed[CurrencyIncrementalSnapshot]]
 
                         checkAlignment(toPass, bs, lcss).map { alignment =>
                           NonEmptyList.one(alignment).some
                         }
-                      case None => (new Throwable("unexpected state")).raiseError[F, Option[Success]]
+                      case _ => (new Throwable("unexpected state")).raiseError[F, Option[Success]]
                     }
 
                   case Some((_, _)) =>
