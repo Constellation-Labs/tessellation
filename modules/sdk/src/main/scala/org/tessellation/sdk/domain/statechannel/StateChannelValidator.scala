@@ -27,7 +27,7 @@ object StateChannelValidator {
   def make[F[_]: Async: KryoSerializer](
     signedValidator: SignedValidator[F],
     stateChannelSeedlist: Option[Set[Address]],
-    maxBinarySizeInBytes: Long = 50 * 1024
+    maxBinarySizeInBytes: Long = 500 * 1024
   ): StateChannelValidator[F] = new StateChannelValidator[F] {
 
     override def validate(stateChannelOutput: StateChannelOutput): F[StateChannelValidationErrorOr[StateChannelOutput]] = for {
