@@ -21,7 +21,7 @@ import org.tessellation.ext.codecs.NonEmptySetCodec
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID.Id
-import org.tessellation.security.hash.ProofsHash
+import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.signature.signature.SignatureProof
 import org.tessellation.security.{Hashed, SecurityProvider}
 
@@ -66,6 +66,16 @@ object Signed {
   ): F[Signed[A]] =
     SignatureProof.fromData(keyPair)(data).map { sp =>
       Signed[A](data, NonEmptySet.fromSetUnsafe(SortedSet(sp)))
+    }
+
+  def forAsync[F[_]: Async: SecurityProvider, A <: AnyRef](
+    data: A,
+    keyPair: KeyPair
+  )(implicit toBytes: A => F[Array[Byte]]): F[Signed[A]] =
+    toBytes(data).map(Hash.fromBytes).flatMap { hash =>
+      SignatureProof.fromHash(keyPair, hash).map { sp =>
+        Signed[A](data, NonEmptySet.fromSetUnsafe(SortedSet(sp)))
+      }
     }
 
   implicit class SignedOps[A <: AnyRef](signed: Signed[A]) {
@@ -119,6 +129,11 @@ object Signed {
         proofsHash.map { proofsHash =>
           Hashed(signed, hash, proofsHash)
         }
+      }
+
+    def toHashed[F[_]: Async: KryoSerializer](toBytes: A => F[Array[Byte]]): F[Hashed[A]] =
+      toBytes(signed.value).map(Hash.fromBytes).flatMap { hash =>
+        proofsHash.map(Hashed(signed, hash, _))
       }
 
     def proofsHash[F[_]: Async: KryoSerializer]: F[ProofsHash] =

@@ -45,6 +45,7 @@ abstract class CurrencyL0App(
     sdkKryoRegistrar
 
   def dataApplication: Option[BaseDataApplicationL0Service[IO]]
+
   def rewards(
     implicit sp: SecurityProvider[IO]
   ): Option[Rewards[IO, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot]]
