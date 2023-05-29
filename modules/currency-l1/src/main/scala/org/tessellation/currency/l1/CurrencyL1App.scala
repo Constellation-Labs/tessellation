@@ -3,19 +3,26 @@ package org.tessellation.currency.l1
 import cats.Applicative
 import cats.effect.IO
 import cats.effect.kernel.Resource
+import cats.syntax.applicativeError._
 import cats.syntax.semigroupk._
 
 import scala.concurrent.duration._
 
 import org.tessellation.BuildInfo
+import org.tessellation.currency._
 import org.tessellation.currency.l1.cli.method
 import org.tessellation.currency.l1.cli.method.{Run, RunInitialValidator, RunValidator}
 import org.tessellation.currency.l1.domain.snapshot.programs.CurrencySnapshotProcessor
-import org.tessellation.currency.l1.modules.{Programs, Storages}
+import org.tessellation.currency.l1.modules._
 import org.tessellation.currency.schema.currency._
 import org.tessellation.dag.l1.http.p2p.P2PClient
 import org.tessellation.dag.l1.infrastructure.block.rumor.handler.blockRumorHandler
-import org.tessellation.dag.l1.modules._
+import org.tessellation.dag.l1.modules.{
+  Daemons => DAGL1Daemons,
+  HealthChecks => DAGL1HealthChecks,
+  Queues => DAGL1Queues,
+  Validators => DAGL1Validators
+}
 import org.tessellation.dag.l1.{DagL1KryoRegistrationIdRange, StateChannel, dagL1KryoRegistrar}
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.kryo.{KryoRegistrationId, MapRegistrationId}
@@ -52,13 +59,16 @@ abstract class CurrencyL1App(
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
     sdkKryoRegistrar.union(dagL1KryoRegistrar)
 
+  def dataApplication: Option[BaseDataApplicationL1Service[IO]] = None
+
   def run(method: Run, sdk: SDK[IO]): Resource[IO, Unit] = {
     import sdk._
 
     val cfg = method.appConfig
 
     for {
-      queues <- Queues.make[IO, CurrencyTransaction, CurrencyBlock](sdkQueues).asResource
+      dagL1Queues <- DAGL1Queues.make[IO, CurrencyTransaction, CurrencyBlock](sdkQueues).asResource
+      queues <- Queues.make[IO, CurrencyTransaction, CurrencyBlock](dagL1Queues).asResource
       storages <- Storages
         .make[IO, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
           sdkStorages,
@@ -66,7 +76,7 @@ abstract class CurrencyL1App(
           method.globalL0Peer
         )
         .asResource
-      validators = Validators
+      validators = DAGL1Validators
         .make[IO, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
           storages,
           seedlist
@@ -103,7 +113,7 @@ abstract class CurrencyL1App(
           storages,
           snapshotProcessor
         )
-      healthChecks <- HealthChecks
+      healthChecks <- DAGL1HealthChecks
         .make[IO, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
           storages,
           services,
@@ -119,12 +129,13 @@ abstract class CurrencyL1App(
       rumorHandler = RumorHandlers.make[IO](storages.cluster, healthChecks.ping, services.localHealthcheck).handlers <+>
         blockRumorHandler[IO, CurrencyBlock](queues.peerBlock)
 
-      _ <- Daemons
+      _ <- DAGL1Daemons
         .start(storages, services, healthChecks)
         .asResource
 
       api = HttpApi
         .make[IO, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
+          dataApplication,
           storages,
           queues,
           keyPair.getPrivate,
@@ -145,7 +156,7 @@ abstract class CurrencyL1App(
           keyPair,
           p2pClient,
           programs,
-          queues,
+          dagL1Queues,
           nodeId,
           services,
           storages,
@@ -193,7 +204,27 @@ abstract class CurrencyL1App(
             }
           }
         }
-      _ <- stateChannel.runtime.merge(globalL0PeerDiscovery).compile.drain.asResource
+      _ <- dataApplication.map {
+        DataApplication
+          .run(
+            storages.cluster,
+            storages.l0Cluster,
+            p2pClient.l0CurrencyCluster,
+            p2pClient.consensusClient,
+            programs.l0PeerDiscovery,
+            services,
+            queues,
+            _,
+            keyPair,
+            nodeId
+          )
+          .merge(globalL0PeerDiscovery)
+          .compile
+          .drain
+          .handleErrorWith { error =>
+            logger.error(error)("An error occured during state channel runtime") >> error.raiseError[IO, Unit]
+          }
+      }.getOrElse(stateChannel.runtime.merge(globalL0PeerDiscovery).compile.drain).asResource
     } yield ()
   }
 }
