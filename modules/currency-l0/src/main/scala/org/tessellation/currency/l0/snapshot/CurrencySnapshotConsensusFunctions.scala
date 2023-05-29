@@ -106,7 +106,8 @@ object CurrencySnapshotConsensusFunctions {
         maybeNewDataState <- (maybeDataApplicationService, maybeLastDataState).mapN {
           case ((service, lastState)) =>
             NonEmptyList
-              .fromList(dataBlocks.flatMap(_.updates))
+              .fromList(dataBlocks)
+              .map(_.flatMap(_.value.updates))
               .map { updates =>
                 service
                   .validateData(lastState, updates)

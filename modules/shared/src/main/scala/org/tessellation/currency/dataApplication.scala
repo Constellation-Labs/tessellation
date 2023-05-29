@@ -7,6 +7,10 @@ import cats.syntax.all._
 import scala.reflect.ClassTag
 import scala.util.control.NoStackTrace
 
+import org.tessellation.security.hash.Hash
+import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Encodable, SecurityProvider}
+
 import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.syntax._
 import io.circe.{Decoder, Encoder, _}
@@ -23,11 +27,15 @@ case object Noop extends DataApplicationValidationError {
 case object UnexpectedInput extends NoStackTrace
 
 trait BaseDataApplicationService[F[_]] {
-  def validateData(oldState: DataState, updates: NonEmptyList[DataUpdate]): F[DataApplicationValidationErrorOr[Unit]]
-  def combine(oldState: DataState, updates: NonEmptyList[DataUpdate]): F[DataState]
+  def validateData(oldState: DataState, updates: NonEmptyList[Signed[DataUpdate]]): F[DataApplicationValidationErrorOr[Unit]]
+  def validateUpdate(update: DataUpdate): F[DataApplicationValidationErrorOr[Unit]]
+  def combine(oldState: DataState, updates: NonEmptyList[Signed[DataUpdate]]): F[DataState]
 
   def serializeState(state: DataState): F[Array[Byte]]
   def deserializeState(bytes: Array[Byte]): F[Either[Throwable, DataState]]
+
+  def serializeUpdate(update: DataUpdate): F[Array[Byte]]
+  def deserializeUpdate(bytes: Array[Byte]): F[Either[Throwable, DataUpdate]]
 
   def dataEncoder: Encoder[DataUpdate]
   def dataDecoder: Decoder[DataUpdate]
@@ -41,14 +49,19 @@ trait BaseDataApplicationL0Service[F[_]] extends BaseDataApplicationService[F] {
 
 trait BaseDataApplicationL1Service[F[_]] extends BaseDataApplicationService[F] {
   def enqueue(value: DataUpdate): F[Unit]
+  def sample(implicit S: SecurityProvider[F]): F[Signed[DataUpdate]]
 }
 
 trait DataApplicationService[F[_], D <: DataUpdate, S <: DataState] {
-  def validateData(oldState: S, updates: NonEmptyList[D]): F[DataApplicationValidationErrorOr[Unit]]
-  def combine(oldState: S, updates: NonEmptyList[D]): F[S]
+  def validateData(oldState: S, updates: NonEmptyList[Signed[D]]): F[DataApplicationValidationErrorOr[Unit]]
+  def validateUpdate(update: D): F[DataApplicationValidationErrorOr[Unit]]
+  def combine(oldState: S, updates: NonEmptyList[Signed[D]]): F[S]
 
   def serializeState(state: S): F[Array[Byte]]
   def deserializeState(bytes: Array[Byte]): F[Either[Throwable, S]]
+
+  def serializeUpdate(update: D): F[Array[Byte]]
+  def deserializeUpdate(bytes: Array[Byte]): F[Either[Throwable, D]]
 
   def dataEncoder: Encoder[D]
   def dataDecoder: Decoder[D]
@@ -60,6 +73,7 @@ trait DataApplicationL0Service[F[_], D <: DataUpdate, S <: DataState] extends Da
 
 trait DataApplicationL1Service[F[_], D <: DataUpdate, S <: DataState] extends DataApplicationService[F, D, S] {
   def enqueue(value: D): F[Unit]
+  def sample(implicit S: SecurityProvider[F]): F[Signed[D]]
 }
 
 object BaseDataApplicationService {
@@ -68,26 +82,32 @@ object BaseDataApplicationService {
   )(implicit d: ClassTag[D], s: ClassTag[S], monadThrow: MonadThrow[F]): BaseDataApplicationService[F] =
     new BaseDataApplicationService[F] {
 
-      def allKnown(updates: NonEmptyList[DataUpdate]): Boolean =
+      def allKnown(updates: NonEmptyList[Signed[DataUpdate]]): Boolean =
         updates.forall { case _: D => true; case _ => false }
 
       def validateData(
         oldState: DataState,
-        updates: NonEmptyList[DataUpdate]
+        updates: NonEmptyList[Signed[DataUpdate]]
       ): F[DataApplicationValidationErrorOr[Unit]] =
         oldState match {
           case s: S if allKnown(updates) =>
-            service.validateData(s, updates.asInstanceOf[NonEmptyList[D]])
+            service.validateData(s, updates.asInstanceOf[NonEmptyList[Signed[D]]])
           case _ => Validated.invalidNec[DataApplicationValidationError, Unit](Noop).pure[F]
+        }
+
+      def validateUpdate(update: DataUpdate): F[DataApplicationValidationErrorOr[Unit]] =
+        update match {
+          case d: D => service.validateUpdate(d)
+          case _    => Validated.invalidNec[DataApplicationValidationError, Unit](Noop).pure[F]
         }
 
       def combine(
         oldState: DataState,
-        updates: NonEmptyList[DataUpdate]
+        updates: NonEmptyList[Signed[DataUpdate]]
       ): F[DataState] =
         oldState match {
           case state: S if allKnown(updates) =>
-            service.combine(state, updates.asInstanceOf[NonEmptyList[D]]).widen[DataState]
+            service.combine(state, updates.asInstanceOf[NonEmptyList[Signed[D]]]).widen[DataState]
           case a => a.pure[F]
         }
 
@@ -99,6 +119,15 @@ object BaseDataApplicationService {
 
       def deserializeState(bytes: Array[Byte]): F[Either[Throwable, DataState]] =
         service.deserializeState(bytes).map(_.widen[DataState])
+
+      def serializeUpdate(update: DataUpdate): F[Array[Byte]] =
+        update match {
+          case d: D => service.serializeUpdate(d)
+          case _    => UnexpectedInput.raiseError[F, Array[Byte]]
+        }
+
+      def deserializeUpdate(update: Array[Byte]): F[Either[Throwable, DataUpdate]] =
+        service.deserializeUpdate(update).map(_.widen[DataUpdate])
 
       def dataEncoder: Encoder[DataUpdate] = new Encoder[DataUpdate] {
         final def apply(a: DataUpdate): Json = a match {
@@ -122,14 +151,21 @@ object BaseDataApplicationL0Service {
     val a = BaseDataApplicationService.apply[F, D, S](service)
 
     new BaseDataApplicationL0Service[F] {
-      def validateData(oldState: DataState, updates: NonEmptyList[DataUpdate]): F[DataApplicationValidationErrorOr[Unit]] =
+      def validateData(oldState: DataState, updates: NonEmptyList[Signed[DataUpdate]]): F[DataApplicationValidationErrorOr[Unit]] =
         a.validateData(oldState, updates)
 
-      def combine(oldState: DataState, updates: NonEmptyList[DataUpdate]): F[DataState] = a.combine(oldState, updates)
+      def validateUpdate(update: DataUpdate): F[DataApplicationValidationErrorOr[Unit]] =
+        a.validateUpdate(update)
+
+      def combine(oldState: DataState, updates: NonEmptyList[Signed[DataUpdate]]): F[DataState] = a.combine(oldState, updates)
 
       def serializeState(state: DataState): F[Array[Byte]] = a.serializeState(state)
 
       def deserializeState(bytes: Array[Byte]): F[Either[Throwable, DataState]] = a.deserializeState(bytes)
+
+      def serializeUpdate(update: DataUpdate): F[Array[Byte]] = a.serializeUpdate(update)
+
+      def deserializeUpdate(bytes: Array[Byte]): F[Either[Throwable, DataUpdate]] = a.deserializeUpdate(bytes)
 
       def dataEncoder: Encoder[DataUpdate] = a.dataEncoder
 
@@ -142,20 +178,27 @@ object BaseDataApplicationL0Service {
 }
 
 object BaseDataApplicationL1Service {
-  def apply[F[_], D <: DataUpdate, S <: DataState](
+  def apply[F[+_], D <: DataUpdate, S <: DataState](
     service: DataApplicationL1Service[F, D, S]
   )(implicit d: ClassTag[D], s: ClassTag[S], monadThrow: MonadThrow[F]): BaseDataApplicationL1Service[F] = {
     val base = BaseDataApplicationService.apply[F, D, S](service)
 
     new BaseDataApplicationL1Service[F] {
-      def validateData(oldState: DataState, updates: NonEmptyList[DataUpdate]): F[DataApplicationValidationErrorOr[Unit]] =
+      def validateData(oldState: DataState, updates: NonEmptyList[Signed[DataUpdate]]): F[DataApplicationValidationErrorOr[Unit]] =
         base.validateData(oldState, updates)
 
-      def combine(oldState: DataState, updates: NonEmptyList[DataUpdate]): F[DataState] = base.combine(oldState, updates)
+      def validateUpdate(update: DataUpdate): F[DataApplicationValidationErrorOr[Unit]] =
+        base.validateUpdate(update)
+
+      def combine(oldState: DataState, updates: NonEmptyList[Signed[DataUpdate]]): F[DataState] = base.combine(oldState, updates)
 
       def serializeState(state: DataState): F[Array[Byte]] = base.serializeState(state)
 
       def deserializeState(bytes: Array[Byte]): F[Either[Throwable, DataState]] = base.deserializeState(bytes)
+
+      def serializeUpdate(update: DataUpdate): F[Array[Byte]] = base.serializeUpdate(update)
+
+      def deserializeUpdate(bytes: Array[Byte]): F[Either[Throwable, DataUpdate]] = base.deserializeUpdate(bytes)
 
       def dataEncoder: Encoder[DataUpdate] = base.dataEncoder
 
@@ -165,6 +208,8 @@ object BaseDataApplicationL1Service {
         case a: D => service.enqueue(a)
         case _    => UnexpectedInput.raiseError[F, Unit]
       }
+
+      def sample(implicit S: SecurityProvider[F]): F[Signed[DataUpdate]] = service.sample
     }
 
   }
@@ -179,8 +224,11 @@ object dataApplication {
   type DataApplicationValidationErrorOr[A] = ValidatedNec[DataApplicationValidationError, A]
 
   case class DataApplicationBlock(
-    updates: List[DataUpdate]
-  )
+    updates: NonEmptyList[Signed[DataUpdate]],
+    updatesHashes: NonEmptyList[Hash]
+  ) extends Encodable {
+    override def toEncode: AnyRef = updatesHashes
+  }
 
   object DataApplicationBlock {
     implicit def decoder(implicit d: Decoder[DataUpdate]): Decoder[DataApplicationBlock] = deriveDecoder

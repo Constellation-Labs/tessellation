@@ -3,6 +3,8 @@ package org.tessellation.dag
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput._
 import org.tessellation.dag.l1.domain.consensus.block.CancellationReason
 import org.tessellation.dag.l1.domain.consensus.block.CancellationReason._
+import org.tessellation.dag.l1.domain.dataApplication.consensus
+import org.tessellation.dag.l1.domain.dataApplication.consensus.ConsensusInput
 import org.tessellation.ext.kryo._
 
 import eu.timepit.refined.auto._
@@ -24,6 +26,10 @@ package object l1 {
     MissingRoundPeers.getClass -> 806,
     CreatedInvalidBlock.getClass -> 807,
     CreatedBlockWithNoTransactions.getClass -> 808,
-    PeerCancelled.getClass -> 809
+    PeerCancelled.getClass -> 809,
+    classOf[ConsensusInput.Proposal] -> 811,
+    classOf[ConsensusInput.SignatureProposal] -> 812,
+    classOf[ConsensusInput.CancelledCreationRound] -> 813,
+    consensus.CancellationReason.getClass -> 814
   )
 }
