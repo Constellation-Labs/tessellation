@@ -28,6 +28,11 @@ object TransactionValidator {
   ): TransactionValidator[F, T] =
     new TransactionValidator[F, T] {
 
+      val lockedAddresses: Set[Address] = Set(
+        Address("DAG0qgcEbMk8vQL6VrnbhMreNeEFXk12v1BvERCb"),
+        Address("DAG2KQrN97LpA5gRerJAQ5mDuy6kjC2dDtMr58fe")
+      )
+
       def validate(
         signedTransaction: Signed[T]
       ): F[TransactionValidationErrorOr[Signed[T]]] =
@@ -37,10 +42,12 @@ object TransactionValidator {
             .map(_.errorMap[TransactionValidationError](InvalidSigned))
           srcAddressSignatureV <- validateSourceAddressSignature(signedTransaction)
           differentSrcAndDstV = validateDifferentSourceAndDestinationAddress(signedTransaction)
+          addressNotLockedV = validateAddressIsNotLocked(signedTransaction)
         } yield
           signaturesV
             .productR(srcAddressSignatureV)
             .productR(differentSrcAndDstV)
+            .productR(addressNotLockedV)
 
       private def validateSourceAddressSignature(
         signedTx: Signed[T]
@@ -56,6 +63,13 @@ object TransactionValidator {
           signedTx.validNec[TransactionValidationError]
         else
           SameSourceAndDestinationAddress(signedTx.source).invalidNec[Signed[T]]
+
+      private def validateAddressIsNotLocked(signedTx: Signed[T]): TransactionValidationErrorOr[Signed[T]] =
+        if (lockedAddresses.contains(signedTx.value.source))
+          AddressLocked(signedTx.value.source).invalidNec[Signed[T]]
+        else
+          signedTx.validNec[TransactionValidationError]
+
     }
 
   @derive(eqv, show)
@@ -63,6 +77,7 @@ object TransactionValidator {
   case class InvalidSigned(error: SignedValidationError) extends TransactionValidationError
   case object NotSignedBySourceAddressOwner extends TransactionValidationError
   case class SameSourceAndDestinationAddress(address: Address) extends TransactionValidationError
+  case class AddressLocked(address: Address) extends TransactionValidationError
 
   type TransactionValidationErrorOr[A] = ValidatedNec[TransactionValidationError, A]
 }
