@@ -61,7 +61,7 @@ const batchMetagraphTransaction = async (
         for( let idx = 0; idx < 100; idx++ ) {
             const txnBody = {
                 address: destination.address,
-                amount: 50,
+                amount: 10,
                 fee: 1
             };
 
