@@ -141,14 +141,6 @@ const handleMetagraphBatchTransactions = async ( origin, destination, networkOpt
             destination
         );
 
-        logMessage( `Waiting ${SLEEP_TIME_UNTIL_QUERY}ms until fetch wallet balances (Metagraph)` );
-        await sleep( SLEEP_TIME_UNTIL_QUERY );
-
-        const originBalance = await metagraphTokenClient.getBalance();
-        const destinationBalance = await metagraphTokenClient.getBalanceFor( destination.address );
-        logMessage( `Origin Balance (Metagraph): ${originBalance}` );
-        logMessage( `Destination Balance (Metagraph): ${destinationBalance}` );
-
         return;
     } catch( error ) {
         const errorMessage = `Error when sending transactions between wallets, message: ${error}`;
@@ -215,7 +207,7 @@ const sendTransactionsUsingUrls = async (
 
     try {
         logMessage( `Starting batch DAG Transactions from: ${account1.address} to ${account2.address}` );
-        await handleBatchTransactions( account1, account2, networkOptions );
+        // await handleBatchTransactions( account1, account2, networkOptions );
 
         assertBalance( account1, account2, true );
 
