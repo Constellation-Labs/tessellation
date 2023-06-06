@@ -151,7 +151,7 @@ const handleMetagraphBatchTransactions = async ( origin, destination, networkOpt
         await sleep( SLEEP_TIME_UNTIL_QUERY );
 
         const originBalance = await metagraphTokenClient.getBalance();
-        const destinationBalance = await metagraphTokenClient.getBalanceFor( destination.addres );
+        const destinationBalance = await metagraphTokenClient.getBalanceFor( destination.address );
 
         return { originBalance, destinationBalance };
     } catch( error ) {
