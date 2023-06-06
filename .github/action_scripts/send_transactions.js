@@ -1,11 +1,80 @@
 const { dag4 } = require( '@stardust-collective/dag4' );
 
+const MAX_NUMBER_OF_ATTEMPTS = 3;
+const SLEEP_TIME_UNTIL_QUERY = 60 * 1000;
+
 const logMessage = ( message ) => {
     const formattedMessage = {
         message
     };
     console.log( formattedMessage );
 };
+
+const sleep = ( ms ) => {
+    return new Promise( ( resolve ) => setTimeout( resolve, ms ) );
+};
+
+const doCheckIfTransactionSentSuccessfully = async (
+    txnHash,
+    clusterNodeInfo
+) => {
+    try {
+        const confirmedTx = await dag4.network.getTransaction( txnHash );
+
+        if( confirmedTx ) {
+            logMessage( `Transaction of hash ${txnHash} confirmed`, clusterNodeInfo );
+            return true;
+        }
+
+        logMessage(
+            `Transaction of hash ${txnHash} dropped - not confirmed. getTransaction response: ${confirmedTx}`,
+            clusterNodeInfo
+        );
+        return false;
+    } catch( e ) {
+        logMessage(
+            `Transaction of hash ${txnHash} dropped - not confirmed err`,
+            clusterNodeInfo
+        );
+        return false;
+    }
+};
+
+const checkIfTransactionSentSuccessfully = async (
+    txnHash,
+    waitingTime
+) => {
+    for( let attempt = 1; attempt <= MAX_NUMBER_OF_ATTEMPTS; attempt++ ) {
+        await sleep( waitingTime );
+        const sentSuccessfully = await doCheckIfTransactionSentSuccessfully(
+            txnHash
+        );
+
+        if( sentSuccessfully ) {
+            return { hash: txnHash, sentSuccessfully: true };
+        }
+
+        logMessage(
+            `Transaction ${txnHash} validation fails, trying again in 60s. (${attempt}/${MAX_NUMBER_OF_ATTEMPTS})`
+        );
+    }
+
+    logMessage( `Could not send transaction ${txnHash}` );
+
+    return { hash: txnHash, sentSuccessfully: false };
+};
+
+const checkDAGTransactions = async ( transactions ) => {
+    const result = transactions.map( async ( actualHash ) => {
+        return checkIfTransactionSentSuccessfully(
+            actualHash,
+            SLEEP_TIME_UNTIL_QUERY,
+        );
+    } );
+
+    return await Promise.all( result );
+};
+
 
 const batchTransaction = async (
     origin,
@@ -106,12 +175,17 @@ const handleBatchTransactions = async ( origin, destination, networkOptions ) =>
 
         const originBalance = await origin.getBalance();
         const destinationBalance = await origin.getBalanceFor( destination.address );
-        const transactions = await origin.getTransactions();
+
+        logMessage( 'Checking if the transactions was sent successfully' );
+        const transactions = await checkDAGTransactions( txnHashes );
+        const allTransactionsSentSuccessfully = transactions.every( transaction => transaction.sentSuccessfully );
+        logMessage( 'Transactions checked' );
 
         logMessage( `Origin Balance (DAG): ${originBalance}` );
         logMessage( `Destination Balance (DAG): ${destinationBalance}` );
-        logMessage( `Transactions Sent (DAG): ${JSON.stringify( txnHashes )}` );
-        logMessage( `Transactions on Network (DAG): ${JSON.stringify( transactions )}` );
+        logMessage( `Transactions Sent Hashes (DAG): ${JSON.stringify( txnHashes )}` );
+        logMessage( `Transactions Sent Status (DAG): ${JSON.stringify( transactions )}` );
+        logMessage( `All transactions sent successfully (DAG): ${allTransactionsSentSuccessfully}` );
 
         return;
     } catch( error ) {
@@ -148,12 +222,10 @@ const handleMetagraphBatchTransactions = async ( origin, destination, networkOpt
 
         const originBalance = await metagraphTokenClient.getBalance();
         const destinationBalance = await metagraphTokenClient.getBalanceFor( destination.address );
-        const transactions = await metagraphTokenClient.getTransactions();
 
         logMessage( `Origin Balance (Metagraph): ${originBalance}` );
         logMessage( `Destination Balance (Metagraph): ${destinationBalance}` );
         logMessage( `Transactions Sent (Metagraph): ${JSON.stringify( txnHashes )}` );
-        logMessage( `Transactions on Network (Metagraph): ${JSON.stringify( transactions )}` );
 
         return;
     } catch( error ) {
