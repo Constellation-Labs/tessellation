@@ -209,7 +209,7 @@ const sendTransactionsUsingUrls = async (
         logMessage( `Starting batch DAG Transactions from: ${account1.address} to ${account2.address}` );
         // await handleBatchTransactions( account1, account2, networkOptions );
 
-        assertBalance( account1, account2, true );
+        await assertBalance( account1, account2, true );
 
         logMessage( `Finished batch DAG Transactions from: ${account1.address} to ${account2.address}` );
     } catch( error ) {
@@ -221,7 +221,7 @@ const sendTransactionsUsingUrls = async (
         logMessage( `Starting batch DAG Transactions from: ${account2.address} to ${account1.address}` );
         await handleBatchTransactions( account2, account1, networkOptions );
 
-        assertBalance( account2, account1, false );
+        await assertBalance( account2, account1, false );
 
         logMessage( `Finished batch DAG Transactions from: ${account2.address} to ${account1.address}` );
     } catch( error ) {
@@ -233,7 +233,7 @@ const sendTransactionsUsingUrls = async (
         logMessage( `Starting batch METAGRAPH Transactions from: ${account1.address} to ${account2.address}` );
         await handleMetagraphBatchTransactions( account1, account2, networkOptions );
 
-        assertBalance( account1, account2, true );
+        await assertBalance( account1, account2, true );
 
         logMessage( `Finished batch METAGRAPH Transactions from: ${account1.address} to ${account2.address}` );
     } catch( error ) {
@@ -245,7 +245,7 @@ const sendTransactionsUsingUrls = async (
         logMessage( `Starting batch METAGRAPH Transactions from: ${account2.address} to ${account1.address}` );
         await handleMetagraphBatchTransactions( account2, account1, networkOptions );
 
-        assertBalance( account2, account1, false );
+        await assertBalance( account2, account1, false );
 
         logMessage( `Finished batch METAGRAPH Transactions from: ${account2.address} to ${account1.address}` );
     } catch( error ) {
