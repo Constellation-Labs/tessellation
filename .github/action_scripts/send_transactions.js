@@ -7,10 +7,6 @@ const logMessage = ( message ) => {
     console.log( formattedMessage );
 };
 
-const randomFromInterval = ( min, max ) => {
-    return Number( ( ( Math.random() * ( max - min + 1 ) + min ) / 100000 ).toFixed( 8 ) );
-};
-
 const batchTransaction = async (
     origin,
     destination
@@ -18,10 +14,9 @@ const batchTransaction = async (
     try {
         const txnsData = [];
         for( let idx = 0; idx < 100; idx++ ) {
-            const amount = randomFromInterval( 1, 10 );
             const txnBody = {
                 address: destination.address,
-                amount,
+                amount: 10,
                 fee: 1
             };
 
@@ -58,10 +53,9 @@ const batchMetagraphTransaction = async (
     try {
         const txnsData = [];
         for( let idx = 0; idx < 100; idx++ ) {
-            const amount = randomFromInterval( 1, 10 );
             const txnBody = {
                 address: destination.address,
-                amount,
+                amount: 50,
                 fee: 1
             };
 
@@ -73,6 +67,7 @@ const batchMetagraphTransaction = async (
       await metagraphTokenClient.generateBatchTransactions( txnsData );
 
         logMessage( 'Generated' );
+        logMessage( generatedTransactions );
         logMessage( 'Starting sending' );
         const hashes = await metagraphTokenClient.sendBatchTransactions(
             generatedTransactions
@@ -81,7 +76,7 @@ const batchMetagraphTransaction = async (
 
         logMessage(
             `Transaction from: ${
-                origin.address
+                origin
             } sent - batch. Generated transaction response body: ${JSON.stringify(
                 generatedTransactions
             )}. Post hashes: ${hashes}`
@@ -108,6 +103,12 @@ const handleBatchTransactions = async ( origin, destination, networkOptions ) =>
             origin,
             destination
         );
+
+        const originBalance = origin.getBalance();
+        const destinationBalance = origin.getBalanceFor( destination.address );
+        logMessage( `Origin Balance (DAG): ${originBalance}` );
+        logMessage( `Destination Balance (DAG): ${destinationBalance}` );
+
         return;
     } catch( error ) {
         const errorMessage = `Error when sending transactions between wallets, message: ${error}`;
@@ -139,6 +140,12 @@ const handleMetagraphBatchTransactions = async ( origin, destination, networkOpt
             origin,
             destination
         );
+
+        const originBalance = metagraphTokenClient.getBalance();
+        const destinationBalance = metagraphTokenClient.getBalanceFor( destination.address );
+        logMessage( `Origin Balance (Metagraph): ${originBalance}` );
+        logMessage( `Destination Balance (Metagraph): ${destinationBalance}` );
+
         return;
     } catch( error ) {
         const errorMessage = `Error when sending transactions between wallets, message: ${error}`;
