@@ -61,7 +61,7 @@ const batchMetagraphTransaction = async (
         for( let idx = 0; idx < 100; idx++ ) {
             const txnBody = {
                 address: destination.address,
-                amount: 10,
+                amount: 50,
                 fee: 1
             };
 
@@ -109,7 +109,13 @@ const handleBatchTransactions = async ( origin, destination, networkOptions ) =>
             destination
         );
 
-        return;
+        logMessage( `Waiting ${SLEEP_TIME_UNTIL_QUERY}ms until fetch wallet balances` );
+        await sleep( SLEEP_TIME_UNTIL_QUERY );
+
+        const originBalance = await origin.getBalance();
+        const destinationBalance = await destination.getBalance();
+
+        return { originBalance, destinationBalance };
     } catch( error ) {
         const errorMessage = `Error when sending transactions between wallets, message: ${error}`;
         logMessage( errorMessage );
@@ -141,7 +147,13 @@ const handleMetagraphBatchTransactions = async ( origin, destination, networkOpt
             destination
         );
 
-        return;
+        logMessage( `Waiting ${SLEEP_TIME_UNTIL_QUERY}ms until fetch wallet balances` );
+        await sleep( SLEEP_TIME_UNTIL_QUERY );
+
+        const originBalance = await metagraphTokenClient.getBalance();
+        const destinationBalance = await metagraphTokenClient.getBalanceFor( destination.addres );
+
+        return { originBalance, destinationBalance };
     } catch( error ) {
         const errorMessage = `Error when sending transactions between wallets, message: ${error}`;
         logMessage( errorMessage );
@@ -150,16 +162,10 @@ const handleMetagraphBatchTransactions = async ( origin, destination, networkOpt
 };
 
 const assertBalance = async (
-    origin,
-    destination,
+    originBalance,
+    destinationBalance,
     isInitial
 ) => {
-    logMessage( `Waiting ${SLEEP_TIME_UNTIL_QUERY}ms until fetch wallet balances` );
-    await sleep( SLEEP_TIME_UNTIL_QUERY );
-
-    const originBalance = await origin.getBalance();
-    const destinationBalance = await destination.getBalance();
-
     const expectedOriginBalance = isInitial ? 8900 : 9900;
     const expectedDestinationBalance = isInitial ? 11000 : 9900;
 
@@ -207,9 +213,9 @@ const sendTransactionsUsingUrls = async (
 
     try {
         logMessage( `Starting batch DAG Transactions from: ${account1.address} to ${account2.address}` );
-        await handleBatchTransactions( account1, account2, networkOptions );
+        const { originBalance, destinationBalance } = await handleBatchTransactions( account1, account2, networkOptions );
 
-        await assertBalance( account1, account2, true );
+        await assertBalance( originBalance, destinationBalance, true );
 
         logMessage( `Finished batch DAG Transactions from: ${account1.address} to ${account2.address}` );
     } catch( error ) {
@@ -219,9 +225,9 @@ const sendTransactionsUsingUrls = async (
 
     try {
         logMessage( `Starting batch DAG Transactions from: ${account2.address} to ${account1.address}` );
-        await handleBatchTransactions( account2, account1, networkOptions );
+        const { originBalance, destinationBalance } = await handleBatchTransactions( account2, account1, networkOptions );
 
-        await assertBalance( account2, account1, false );
+        await assertBalance( originBalance, destinationBalance, false );
 
         logMessage( `Finished batch DAG Transactions from: ${account2.address} to ${account1.address}` );
     } catch( error ) {
@@ -231,9 +237,9 @@ const sendTransactionsUsingUrls = async (
 
     try {
         logMessage( `Starting batch METAGRAPH Transactions from: ${account1.address} to ${account2.address}` );
-        await handleMetagraphBatchTransactions( account1, account2, networkOptions );
+        const { originBalance, destinationBalance } = await handleMetagraphBatchTransactions( account1, account2, networkOptions );
 
-        await assertBalance( account1, account2, true );
+        await assertBalance( originBalance, destinationBalance, true );
 
         logMessage( `Finished batch METAGRAPH Transactions from: ${account1.address} to ${account2.address}` );
     } catch( error ) {
@@ -243,9 +249,9 @@ const sendTransactionsUsingUrls = async (
 
     try {
         logMessage( `Starting batch METAGRAPH Transactions from: ${account2.address} to ${account1.address}` );
-        await handleMetagraphBatchTransactions( account2, account1, networkOptions );
+        const { originBalance, destinationBalance } = await handleMetagraphBatchTransactions( account2, account1, networkOptions );
 
-        await assertBalance( account2, account1, false );
+        await assertBalance( originBalance, destinationBalance, false );
 
         logMessage( `Finished batch METAGRAPH Transactions from: ${account2.address} to ${account1.address}` );
     } catch( error ) {
