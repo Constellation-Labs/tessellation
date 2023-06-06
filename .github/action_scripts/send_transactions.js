@@ -55,7 +55,7 @@ const batchMetagraphTransaction = async (
         for( let idx = 0; idx < 100; idx++ ) {
             const txnBody = {
                 address: destination.address,
-                amount: 50,
+                amount: 10,
                 fee: 1
             };
 
@@ -99,15 +99,19 @@ const handleBatchTransactions = async ( origin, destination, networkOptions ) =>
     );
 
     try {
-        await batchTransaction(
+        const txnHashes = await batchTransaction(
             origin,
             destination
         );
 
-        const originBalance = origin.getBalance();
-        const destinationBalance = origin.getBalanceFor( destination.address );
+        const originBalance = await origin.getBalance();
+        const destinationBalance = await origin.getBalanceFor( destination.address );
+        const transactions = await origin.getTransactions();
+
         logMessage( `Origin Balance (DAG): ${originBalance}` );
         logMessage( `Destination Balance (DAG): ${destinationBalance}` );
+        logMessage( `Transactions Sent (DAG): ${JSON.stringify( txnHashes )}` );
+        logMessage( `Transactions on Network (DAG): ${JSON.stringify( transactions )}` );
 
         return;
     } catch( error ) {
@@ -135,16 +139,21 @@ const handleMetagraphBatchTransactions = async ( origin, destination, networkOpt
             testnet: true
         } );
 
-        await batchMetagraphTransaction(
+        const txnHashes = await batchMetagraphTransaction(
             metagraphTokenClient,
             origin,
             destination
         );
 
-        const originBalance = metagraphTokenClient.getBalance();
-        const destinationBalance = metagraphTokenClient.getBalanceFor( destination.address );
+
+        const originBalance = await metagraphTokenClient.getBalance();
+        const destinationBalance = await metagraphTokenClient.getBalanceFor( destination.address );
+        const transactions = await metagraphTokenClient.getTransactions();
+
         logMessage( `Origin Balance (Metagraph): ${originBalance}` );
         logMessage( `Destination Balance (Metagraph): ${destinationBalance}` );
+        logMessage( `Transactions Sent (Metagraph): ${JSON.stringify( txnHashes )}` );
+        logMessage( `Transactions on Network (Metagraph): ${JSON.stringify( transactions )}` );
 
         return;
     } catch( error ) {
