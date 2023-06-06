@@ -15,26 +15,23 @@ const sleep = ( ms ) => {
 };
 
 const doCheckIfTransactionSentSuccessfully = async (
-    txnHash,
-    clusterNodeInfo
+    txnHash
 ) => {
     try {
-        const confirmedTx = await dag4.network.getTransaction( txnHash );
+        const pendingTx = await dag4.network.getPendingTransaction( txnHash );
 
-        if( confirmedTx ) {
-            logMessage( `Transaction of hash ${txnHash} confirmed`, clusterNodeInfo );
+        if( !pendingTx ) {
+            logMessage( `Transaction of hash ${txnHash} confirmed` );
             return true;
         }
 
         logMessage(
-            `Transaction of hash ${txnHash} dropped - not confirmed. getTransaction response: ${confirmedTx}`,
-            clusterNodeInfo
+            `Transaction of hash ${txnHash} dropped - not confirmed. getPendingTransaction response: ${pendingTx}`
         );
         return false;
     } catch( e ) {
         logMessage(
-            `Transaction of hash ${txnHash} dropped - not confirmed err`,
-            clusterNodeInfo
+            `Transaction of hash ${txnHash} dropped - not confirmed err`
         );
         return false;
     }
@@ -64,7 +61,7 @@ const checkIfTransactionSentSuccessfully = async (
     return { hash: txnHash, sentSuccessfully: false };
 };
 
-const checkDAGTransactions = async ( transactions ) => {
+const checkTransactions = async ( transactions ) => {
     const result = transactions.map( async ( actualHash ) => {
         return checkIfTransactionSentSuccessfully(
             actualHash,
@@ -173,13 +170,13 @@ const handleBatchTransactions = async ( origin, destination, networkOptions ) =>
             destination
         );
 
-        const originBalance = await origin.getBalance();
-        const destinationBalance = await origin.getBalanceFor( destination.address );
-
         logMessage( 'Checking if the transactions was sent successfully' );
-        const transactions = await checkDAGTransactions( txnHashes );
+        const transactions = await checkTransactions( txnHashes );
         const allTransactionsSentSuccessfully = transactions.every( transaction => transaction.sentSuccessfully );
         logMessage( 'Transactions checked' );
+
+        const originBalance = await origin.getBalance();
+        const destinationBalance = await origin.getBalanceFor( destination.address );
 
         logMessage( `Origin Balance (DAG): ${originBalance}` );
         logMessage( `Destination Balance (DAG): ${destinationBalance}` );
@@ -220,12 +217,18 @@ const handleMetagraphBatchTransactions = async ( origin, destination, networkOpt
         );
 
 
+        logMessage( 'Checking if the transactions was sent successfully' );
+        const transactions = await checkTransactions( txnHashes );
+        const allTransactionsSentSuccessfully = transactions.every( transaction => transaction.sentSuccessfully );
+        logMessage( 'Transactions checked' );
+
         const originBalance = await metagraphTokenClient.getBalance();
         const destinationBalance = await metagraphTokenClient.getBalanceFor( destination.address );
 
         logMessage( `Origin Balance (Metagraph): ${originBalance}` );
         logMessage( `Destination Balance (Metagraph): ${destinationBalance}` );
         logMessage( `Transactions Sent (Metagraph): ${JSON.stringify( txnHashes )}` );
+        logMessage( `All transactions sent successfully (Metagraph): ${allTransactionsSentSuccessfully}` );
 
         return;
     } catch( error ) {
