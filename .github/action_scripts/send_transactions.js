@@ -109,17 +109,6 @@ const handleBatchTransactions = async ( origin, destination, networkOptions ) =>
             destination
         );
 
-        logMessage( `Waiting ${SLEEP_TIME_UNTIL_QUERY}ms until fetch wallet balances (DAG)` );
-        await sleep( SLEEP_TIME_UNTIL_QUERY );
-
-        const originBalance = await origin.getBalance();
-        const destinationBalance = await origin.getBalanceFor( destination.address );
-        const destinationBalance2 = await destination.getBalance();
-
-        logMessage( `Origin Balance (DAG): ${originBalance}` );
-        logMessage( `Destination Balance (DAG): ${destinationBalance}` );
-        logMessage( `Destination Balance 2(DAG): ${destinationBalance2}` );
-
         return;
     } catch( error ) {
         const errorMessage = `Error when sending transactions between wallets, message: ${error}`;
@@ -168,6 +157,35 @@ const handleMetagraphBatchTransactions = async ( origin, destination, networkOpt
     }
 };
 
+const assertBalance = async (
+    origin,
+    destination,
+    isInitial
+) => {
+    logMessage( `Waiting ${SLEEP_TIME_UNTIL_QUERY}ms until fetch wallet balances` );
+    await sleep( SLEEP_TIME_UNTIL_QUERY );
+
+    const originBalance = await origin.getBalance();
+    const destinationBalance = await destination.getBalance();
+
+    const expectedOriginBalance = isInitial ? 8900 : 9900;
+    const expectedDestinationBalance = isInitial ? 11000 : 9900;
+
+    if(
+        Number( originBalance ) !== expectedOriginBalance ||
+        Number( destinationBalance ) !== expectedDestinationBalance
+    ) {
+        throw Error( `
+        Error sending transactions. Wallet balances are different than expected:
+        expectedOriginBalance: ${expectedOriginBalance} ---- originBalance: ${originBalance}
+        expectedDestinationBalance: ${expectedDestinationBalance} ---- ${destinationBalance}
+        ` );
+    }
+
+    logMessage( `Origin Balance: expected ${expectedOriginBalance} ---- actual: ${originBalance}` );
+    logMessage( `Destination Balance: expected ${expectedDestinationBalance} ---- actual: ${destinationBalance}` );
+};
+
 const sendTransactionsUsingUrls = async (
     metagraphId,
     l0GlobalUrl,
@@ -198,6 +216,9 @@ const sendTransactionsUsingUrls = async (
     try {
         logMessage( `Starting batch DAG Transactions from: ${account1.address} to ${account2.address}` );
         await handleBatchTransactions( account1, account2, networkOptions );
+
+        assertBalance( account1, account2, true );
+
         logMessage( `Finished batch DAG Transactions from: ${account1.address} to ${account2.address}` );
     } catch( error ) {
         logMessage( `Error sending forth transactions from: ${account1.address} to ${account2.address}:`, error );
@@ -207,6 +228,9 @@ const sendTransactionsUsingUrls = async (
     try {
         logMessage( `Starting batch DAG Transactions from: ${account2.address} to ${account1.address}` );
         await handleBatchTransactions( account2, account1, networkOptions );
+
+        assertBalance( account2, account1, false );
+
         logMessage( `Finished batch DAG Transactions from: ${account2.address} to ${account1.address}` );
     } catch( error ) {
         logMessage( `Error sending back transactions from: ${account2.address} to ${account1.address}:`, error );
@@ -216,6 +240,9 @@ const sendTransactionsUsingUrls = async (
     try {
         logMessage( `Starting batch METAGRAPH Transactions from: ${account1.address} to ${account2.address}` );
         await handleMetagraphBatchTransactions( account1, account2, networkOptions );
+
+        assertBalance( account1, account2, true );
+
         logMessage( `Finished batch METAGRAPH Transactions from: ${account1.address} to ${account2.address}` );
     } catch( error ) {
         logMessage( `Error sending forth transactions from: ${account1.address} to ${account2.address}:`, error );
@@ -225,6 +252,9 @@ const sendTransactionsUsingUrls = async (
     try {
         logMessage( `Starting batch METAGRAPH Transactions from: ${account2.address} to ${account1.address}` );
         await handleMetagraphBatchTransactions( account2, account1, networkOptions );
+
+        assertBalance( account2, account1, false );
+
         logMessage( `Finished batch METAGRAPH Transactions from: ${account2.address} to ${account1.address}` );
     } catch( error ) {
         logMessage( `Error sending back transactions from: ${account2.address} to ${account1.address}:`, error );
