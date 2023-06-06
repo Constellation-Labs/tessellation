@@ -73,7 +73,6 @@ const batchMetagraphTransaction = async (
       await metagraphTokenClient.generateBatchTransactions( txnsData );
 
         logMessage( 'Generated' );
-        logMessage( generatedTransactions );
         logMessage( 'Starting sending' );
         const hashes = await metagraphTokenClient.sendBatchTransactions(
             generatedTransactions
@@ -110,6 +109,7 @@ const handleBatchTransactions = async ( origin, destination, networkOptions ) =>
             destination
         );
 
+        logMessage( `Waiting ${SLEEP_TIME_UNTIL_QUERY}ms until fetch wallet balances (DAG)` );
         await sleep( SLEEP_TIME_UNTIL_QUERY );
 
         const originBalance = await origin.getBalance();
@@ -152,6 +152,7 @@ const handleMetagraphBatchTransactions = async ( origin, destination, networkOpt
             destination
         );
 
+        logMessage( `Waiting ${SLEEP_TIME_UNTIL_QUERY}ms until fetch wallet balances (Metagraph)` );
         await sleep( SLEEP_TIME_UNTIL_QUERY );
 
         const originBalance = await metagraphTokenClient.getBalance();
