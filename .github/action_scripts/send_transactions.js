@@ -22,7 +22,7 @@ const batchTransaction = async (
         for( let idx = 0; idx < 100; idx++ ) {
             const txnBody = {
                 address: destination.address,
-                amount: 10,
+                amount: 23,
                 fee: 1
             };
 
@@ -61,7 +61,7 @@ const batchMetagraphTransaction = async (
         for( let idx = 0; idx < 100; idx++ ) {
             const txnBody = {
                 address: destination.address,
-                amount: 50,
+                amount: 10,
                 fee: 1
             };
 
@@ -207,7 +207,7 @@ const sendTransactionsUsingUrls = async (
 
     try {
         logMessage( `Starting batch DAG Transactions from: ${account1.address} to ${account2.address}` );
-        // await handleBatchTransactions( account1, account2, networkOptions );
+        await handleBatchTransactions( account1, account2, networkOptions );
 
         await assertBalance( account1, account2, true );
 
