@@ -1,6 +1,5 @@
 const { dag4 } = require( '@stardust-collective/dag4' );
 
-const MAX_NUMBER_OF_ATTEMPTS = 3;
 const SLEEP_TIME_UNTIL_QUERY = 60 * 1000;
 
 const logMessage = ( message ) => {
@@ -13,65 +12,6 @@ const logMessage = ( message ) => {
 const sleep = ( ms ) => {
     return new Promise( ( resolve ) => setTimeout( resolve, ms ) );
 };
-
-const doCheckIfTransactionSentSuccessfully = async (
-    txnHash
-) => {
-    try {
-        const pendingTx = await dag4.network.getPendingTransaction( txnHash );
-
-        if( !pendingTx ) {
-            logMessage( `Transaction of hash ${txnHash} confirmed` );
-            return true;
-        }
-
-        logMessage(
-            `Transaction of hash ${txnHash} dropped - not confirmed. getPendingTransaction response: ${pendingTx}`
-        );
-        return false;
-    } catch( e ) {
-        logMessage(
-            `Transaction of hash ${txnHash} dropped - not confirmed err`
-        );
-        return false;
-    }
-};
-
-const checkIfTransactionSentSuccessfully = async (
-    txnHash,
-    waitingTime
-) => {
-    for( let attempt = 1; attempt <= MAX_NUMBER_OF_ATTEMPTS; attempt++ ) {
-        await sleep( waitingTime );
-        const sentSuccessfully = await doCheckIfTransactionSentSuccessfully(
-            txnHash
-        );
-
-        if( sentSuccessfully ) {
-            return { hash: txnHash, sentSuccessfully: true };
-        }
-
-        logMessage(
-            `Transaction ${txnHash} validation fails, trying again in 60s. (${attempt}/${MAX_NUMBER_OF_ATTEMPTS})`
-        );
-    }
-
-    logMessage( `Could not send transaction ${txnHash}` );
-
-    return { hash: txnHash, sentSuccessfully: false };
-};
-
-const checkTransactions = async ( transactions ) => {
-    const result = transactions.map( async ( actualHash ) => {
-        return checkIfTransactionSentSuccessfully(
-            actualHash,
-            SLEEP_TIME_UNTIL_QUERY,
-        );
-    } );
-
-    return await Promise.all( result );
-};
-
 
 const batchTransaction = async (
     origin,
@@ -170,19 +110,14 @@ const handleBatchTransactions = async ( origin, destination, networkOptions ) =>
             destination
         );
 
-        logMessage( 'Checking if the transactions was sent successfully' );
-        const transactions = await checkTransactions( txnHashes );
-        const allTransactionsSentSuccessfully = transactions.every( transaction => transaction.sentSuccessfully );
-        logMessage( 'Transactions checked' );
-
+        logMessage( `Waiting ${SLEEP_TIME_UNTIL_QUERY}ms until fetch the balance of wallets` );
+        sleep( SLEEP_TIME_UNTIL_QUERY );
         const originBalance = await origin.getBalance();
         const destinationBalance = await origin.getBalanceFor( destination.address );
 
         logMessage( `Origin Balance (DAG): ${originBalance}` );
         logMessage( `Destination Balance (DAG): ${destinationBalance}` );
         logMessage( `Transactions Sent Hashes (DAG): ${JSON.stringify( txnHashes )}` );
-        logMessage( `Transactions Sent Status (DAG): ${JSON.stringify( transactions )}` );
-        logMessage( `All transactions sent successfully (DAG): ${allTransactionsSentSuccessfully}` );
 
         return;
     } catch( error ) {
@@ -216,19 +151,14 @@ const handleMetagraphBatchTransactions = async ( origin, destination, networkOpt
             destination
         );
 
-
-        logMessage( 'Checking if the transactions was sent successfully' );
-        const transactions = await checkTransactions( txnHashes );
-        const allTransactionsSentSuccessfully = transactions.every( transaction => transaction.sentSuccessfully );
-        logMessage( 'Transactions checked' );
-
+        logMessage( `Waiting ${SLEEP_TIME_UNTIL_QUERY}ms until fetch the balance of wallets` );
+        sleep( SLEEP_TIME_UNTIL_QUERY );
         const originBalance = await metagraphTokenClient.getBalance();
         const destinationBalance = await metagraphTokenClient.getBalanceFor( destination.address );
 
         logMessage( `Origin Balance (Metagraph): ${originBalance}` );
         logMessage( `Destination Balance (Metagraph): ${destinationBalance}` );
         logMessage( `Transactions Sent (Metagraph): ${JSON.stringify( txnHashes )}` );
-        logMessage( `All transactions sent successfully (Metagraph): ${allTransactionsSentSuccessfully}` );
 
         return;
     } catch( error ) {
