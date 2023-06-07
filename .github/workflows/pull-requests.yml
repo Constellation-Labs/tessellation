@@ -1,4 +1,4 @@
-name: Check scala code
+name: Check scala code and validate sending transactions
 
 on:
   pull_request: {}
@@ -7,11 +7,13 @@ on:
       - develop
       - hotfix/*
       - release/*
+      - main
 
 jobs:
   build:
     name: Test
     runs-on: ubuntu-20.04
+    timeout-minutes: 45
     strategy:
       matrix:
         java:
@@ -19,7 +21,11 @@ jobs:
           - openjdk@1.11.0
     steps:
       - uses: actions/checkout@v3
-
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 16.14.2
+          cache: 'npm'
+          cache-dependency-path: .github/action_scripts/package-lock.json
       - name: Setup Java and scala
         uses: olafurpg/setup-scala@v13
         with:
@@ -39,3 +45,562 @@ jobs:
         run: sbt 'scalafixAll --check --rules OrganizeImports;scalafmtCheckAll;test'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create directories
+        run: |
+          cd .github/config
+          mkdir containers/
+          cd containers
+          mkdir global-l0
+          mkdir dag-l1
+          mkdir currency-l0
+          mkdir currency-l1
+          mkdir jars
+
+      - name: Copy genesis to L0 directories
+        run: |
+          cd .github/config
+          cp genesis.csv containers/global-l0
+          cp genesis.csv containers/currency-l0
+
+      - name: Generate JARS
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          sbt core/assembly keytool/assembly wallet/assembly dagL1/assembly currencyL0/assembly currencyL1/assembly
+          
+          mv modules/core/target/scala-2.13/tessellation-core-assembly-* .github/config/containers/jars/global-l0.jar
+          mv modules/keytool/target/scala-2.13/tessellation-keytool-assembly-* .github/config/containers/jars/cl-keytool.jar
+          mv modules/wallet/target/scala-2.13/tessellation-wallet-assembly-* .github/config/containers/jars/cl-wallet.jar
+          mv modules/dag-l1/target/scala-2.13/tessellation-dag-l1-assembly-* .github/config/containers/jars/dag-l1.jar
+          mv modules/currency-l0/target/scala-2.13/tessellation-currency-l0-assembly-* .github/config/containers/jars/currency-l0.jar
+          mv modules/currency-l1/target/scala-2.13/tessellation-currency-l1-assembly-* .github/config/containers/jars/currency-l1.jar
+
+
+      - name: Running global-l0
+        env:
+          CL_KEYSTORE: token-key.p12
+          CL_KEYALIAS: token-key
+          CL_PASSWORD: ${{ secrets.P12_GENESIS_FILE_PASSWORD }}
+        run: |
+          cd .github/config/containers/global-l0
+          java -jar ../jars/cl-keytool.jar generate
+          
+          export CL_PUBLIC_HTTP_PORT=9000
+          export CL_P2P_HTTP_PORT=9001
+          export CL_CLI_HTTP_PORT=9002
+          export CL_APP_ENV=dev
+          export CL_ENV=dev
+          export CL_COLLATERAL=0
+          
+          nohup java -jar ../jars/global-l0.jar run-genesis genesis.csv --ip 127.0.0.1 > global-l0.log 2>&1 &
+          
+          for ((i = 1; i <= 11; i++)); do
+             if curl http://127.0.0.1:9000/node/info &>/dev/null; then
+                echo "global-l0 initial validator started"
+                cd ..
+                exit 0
+             else
+                if [ $i -eq 10 ]; then
+                 echo "Error starting the global-l0 initial validator"
+                 exit 1
+                fi
+                echo "global-l0 initial validator still booting... waiting 10s ($i/10)"
+                sleep 10
+             fi
+           done
+
+
+
+      - name: Running dag-l1 initial-validator
+        env:
+          CL_KEYSTORE: token-key.p12
+          CL_KEYALIAS: token-key
+          CL_PASSWORD: ${{ secrets.P12_GENESIS_FILE_PASSWORD }}
+        run: |
+          cd .github/config/containers/global-l0
+          export GLOBAL_L0_NODE_ID=$(java -jar ../jars/cl-wallet.jar show-id)
+          
+          cd ../dag-l1
+          
+          mkdir initial-validator
+          cd initial-validator
+          java -jar ../../jars/cl-keytool.jar generate
+
+          export CL_PUBLIC_HTTP_PORT=9100
+          export CL_P2P_HTTP_PORT=9101
+          export CL_CLI_HTTP_PORT=9102
+          export CL_APP_ENV=dev
+          export CL_ENV=dev
+          export CL_COLLATERAL=0
+          export CL_L0_PEER_HTTP_HOST=127.0.0.1
+          export CL_L0_PEER_HTTP_PORT=9000
+          export CL_L0_PEER_ID=$GLOBAL_L0_NODE_ID
+          
+          echo "GLOBAL_L0_NODE_ID= $GLOBAL_L0_NODE_ID"
+          echo "DAG_L1_INITIAL_VALIDATOR_NODE_ID= $(java -jar ../../jars/cl-wallet.jar show-id)"
+          
+          nohup java -jar ../../jars/dag-l1.jar run-initial-validator --ip 127.0.0.1 > dag-l1-1.log 2>&1 &
+
+          for ((i = 1; i <= 11; i++)); do
+             if curl http://127.0.0.1:9100/node/info &>/dev/null; then
+                echo "dag-l1 initial validator started"
+                exit 0
+             else
+                if [ $i -eq 10 ]; then
+                 echo "Error starting the dag-l1 initial validator"
+                 exit 1
+                fi
+                echo "dag-l1 initial validator still booting... waiting 10s ($i/10)"
+                sleep 10
+             fi
+           done
+
+      - name: Running dag-l1 validator - 1
+        env:
+          CL_KEYSTORE: token-key.p12
+          CL_KEYALIAS: token-key
+          CL_PASSWORD: ${{ secrets.P12_GENESIS_FILE_PASSWORD }}
+        run: |
+          cd .github/config/containers/global-l0
+          export GLOBAL_L0_NODE_ID=$(java -jar ../jars/cl-wallet.jar show-id)
+          
+          cd ../dag-l1/initial-validator
+          export DAG_L1_INITIAL_VALIDATOR_NODE_ID=$(java -jar ../../jars/cl-wallet.jar show-id)
+          
+          cd ../
+          mkdir validator-1
+          cd validator-1
+          
+          java -jar ../../jars/cl-keytool.jar generate
+          
+          export CL_PUBLIC_HTTP_PORT=9200
+          export CL_P2P_HTTP_PORT=9201
+          export CL_CLI_HTTP_PORT=9202
+          export CL_APP_ENV=dev
+          export CL_ENV=dev
+          export CL_COLLATERAL=0
+          export CL_L0_PEER_HTTP_HOST=127.0.0.1
+          export CL_L0_PEER_HTTP_PORT=9000
+          export CL_L0_PEER_ID=$GLOBAL_L0_NODE_ID
+          
+          echo "GLOBAL_L0_NODE_ID= $GLOBAL_L0_NODE_ID"
+          echo "DAG_L1_INITIAL_VALIDATOR_NODE_ID= $DAG_L1_INITIAL_VALIDATOR_NODE_ID"
+          echo "DAG_L1_VALIDATOR_1_NODE_ID= $(java -jar ../../jars/cl-wallet.jar show-id)"
+
+          nohup java -jar ../../jars/dag-l1.jar run-validator --ip 127.0.0.1 > dag-l1-1.log 2>&1 &
+
+          for ((i = 1; i <= 11; i++)); do
+           if curl http://127.0.0.1:9200/node/info &>/dev/null; then
+              echo "Joining dag-l1 validator node 1 ..."
+              curl -X POST http://127.0.0.1:9202/cluster/join -H "Content-type: application/json" -d "{ \"id\":\"$DAG_L1_INITIAL_VALIDATOR_NODE_ID\", \"ip\": \"127.0.0.1\", \"p2pPort\": 9101 }"
+              echo "Joined"
+              exit 0
+           else
+              if [ $i -eq 10 ]; then
+               echo "Error starting the dag-l1 validator 1"
+               exit 1
+              fi
+              echo "dag-l1 validator 1 still booting... waiting 10s ($i/10)"
+              sleep 10
+           fi
+          done
+
+      - name: Running dag-l1 validator - 2
+        env:
+          CL_KEYSTORE: token-key.p12
+          CL_KEYALIAS: token-key
+          CL_PASSWORD: ${{ secrets.P12_GENESIS_FILE_PASSWORD }}
+        run: |
+          cd .github/config/containers/global-l0
+          export GLOBAL_L0_NODE_ID=$(java -jar ../jars/cl-wallet.jar show-id)
+          
+          cd ../dag-l1/initial-validator
+          export DAG_L1_INITIAL_VALIDATOR_NODE_ID=$(java -jar ../../jars/cl-wallet.jar show-id)
+          
+          cd ../
+          mkdir validator-2
+          cd validator-2
+          
+          java -jar ../../jars/cl-keytool.jar generate
+          
+          export CL_PUBLIC_HTTP_PORT=9300
+          export CL_P2P_HTTP_PORT=9301
+          export CL_CLI_HTTP_PORT=9302
+          export CL_APP_ENV=dev
+          export CL_ENV=dev
+          export CL_COLLATERAL=0
+          export CL_L0_PEER_HTTP_HOST=127.0.0.1
+          export CL_L0_PEER_HTTP_PORT=9000
+          export CL_L0_PEER_ID=$GLOBAL_L0_NODE_ID
+          
+          echo "GLOBAL_L0_NODE_ID= $GLOBAL_L0_NODE_ID"
+          echo "DAG_L1_INITIAL_VALIDATOR_NODE_ID= $DAG_L1_INITIAL_VALIDATOR_NODE_ID"
+          echo "DAG_L1_VALIDATOR_2_NODE_ID= $(java -jar ../../jars/cl-wallet.jar show-id)"
+
+          nohup java -jar ../../jars/dag-l1.jar run-validator --ip 127.0.0.1 > dag-l1-2.log 2>&1 &
+
+          for ((i = 1; i <= 11; i++)); do
+           if curl http://127.0.0.1:9300/node/info &>/dev/null; then
+              echo "Joining dag-l1 validator node 2 ..."
+              curl -X POST http://127.0.0.1:9302/cluster/join -H "Content-type: application/json" -d "{ \"id\":\"$DAG_L1_INITIAL_VALIDATOR_NODE_ID\", \"ip\": \"127.0.0.1\", \"p2pPort\": 9101 }"
+              echo "Joined"
+              exit 0
+           else
+              if [ $i -eq 10 ]; then
+               echo "Error starting the dag-l1 validator 2"
+               exit 1
+              fi
+              echo "dag-l1 validator 2 still booting... waiting 10s ($i/10)"
+              sleep 10
+           fi
+          done
+
+
+      - name: Running currency-l0 genesis
+        env:
+          CL_KEYSTORE: token-key.p12
+          CL_KEYALIAS: token-key
+          CL_PASSWORD: ${{ secrets.P12_GENESIS_FILE_PASSWORD }}
+        run: |
+          cd .github/config/containers/global-l0
+          export GLOBAL_L0_NODE_ID=$(java -jar ../jars/cl-wallet.jar show-id)
+          
+          cd ../currency-l0
+          mkdir genesis
+          cd genesis
+          
+          java -jar ../../jars/cl-keytool.jar generate
+          export CURRENCY_L0_GENESIS_NODE_ID=$(java -jar ../../jars/cl-wallet.jar show-id)
+          export METAGRAPH_IDENTIFIER=$(java -jar ../../jars/cl-wallet.jar show-address)
+
+          export CL_PUBLIC_HTTP_PORT=9400
+          export CL_P2P_HTTP_PORT=9401
+          export CL_CLI_HTTP_PORT=9402
+          export CL_APP_ENV=dev
+          export CL_ENV=dev
+          export CL_COLLATERAL=0
+          export CL_GLOBAL_L0_PEER_HTTP_HOST=127.0.0.1
+          export CL_GLOBAL_L0_PEER_HTTP_PORT=9000
+          export CL_GLOBAL_L0_PEER_ID=$GLOBAL_L0_NODE_ID
+          export CL_L0_TOKEN_IDENTIFIER=$METAGRAPH_IDENTIFIER
+          
+          echo "GLOBAL_L0_NODE_ID=$GLOBAL_L0_NODE_ID"
+          echo "CURRENCY_L0_GENESIS_NODE_ID=$CURRENCY_L0_GENESIS_NODE_ID"
+          echo "METAGRAPH_IDENTIFIER=$METAGRAPH_IDENTIFIER"
+          
+          nohup java -jar ../../jars/currency-l0.jar run-genesis ../genesis.csv --ip 127.0.0.1 > currency-l0.log 2>&1 &
+
+          for ((i = 1; i <= 11; i++)); do
+             if curl http://127.0.0.1:9400/node/info &>/dev/null; then
+                echo "currency-l0 genesis started"
+                cd ..
+                exit 0
+             else
+                if [ $i -eq 10 ]; then
+                 echo "Error starting the currency-l0 genesis"
+                 exit 1
+                fi
+                echo "currency-l0 genesis still booting... waiting 10s ($i/10)"
+                sleep 10
+             fi
+           done
+
+      - name: Running currency-l0 validator - 1
+        env:
+          CL_KEYSTORE: token-key.p12
+          CL_KEYALIAS: token-key
+          CL_PASSWORD: ${{ secrets.P12_GENESIS_FILE_PASSWORD }}
+        run: |
+          cd .github/config/containers/global-l0
+          export GLOBAL_L0_NODE_ID=$(java -jar ../jars/cl-wallet.jar show-id)
+          
+          cd ../currency-l0/genesis
+          export CURRENCY_L0_GENESIS_NODE_ID=$(java -jar ../../jars/cl-wallet.jar show-id)
+          export METAGRAPH_IDENTIFIER=$(java -jar ../../jars/cl-wallet.jar show-address)
+          
+          cd ../
+          mkdir validator-1
+          cd validator-1
+
+          java -jar ../../jars/cl-keytool.jar generate
+          
+          export CL_PUBLIC_HTTP_PORT=9500
+          export CL_P2P_HTTP_PORT=9501
+          export CL_CLI_HTTP_PORT=9502
+          export CL_APP_ENV=dev
+          export CL_ENV=dev
+          export CL_COLLATERAL=0
+          export CL_GLOBAL_L0_PEER_HTTP_HOST=127.0.0.1
+          export CL_GLOBAL_L0_PEER_HTTP_PORT=9000
+          export CL_GLOBAL_L0_PEER_ID=$GLOBAL_L0_NODE_ID
+          export CL_L0_TOKEN_IDENTIFIER=$METAGRAPH_IDENTIFIER
+          
+          echo "GLOBAL_L0_NODE_ID=$GLOBAL_L0_NODE_ID"
+          echo "CURRENCY_L0_GENESIS_NODE_ID=$CURRENCY_L0_GENESIS_NODE_ID"
+          echo "CURRENCY_L0_VALIDATOR_1_NODE_ID=$(java -jar ../../jars/cl-wallet.jar show-id)"
+          echo "METAGRAPH_IDENTIFIER=$METAGRAPH_IDENTIFIER"
+          
+          nohup java -jar ../../jars/currency-l0.jar run-validator --ip 127.0.0.1 > currency-l0-2.log 2>&1 &
+
+          for ((i = 1; i <= 11; i++)); do
+           if curl http://127.0.0.1:9500/node/info &>/dev/null; then
+              echo "Joining currency-l0 validator node 1 ..."
+              curl -X POST http://127.0.0.1:9502/cluster/join -H "Content-type: application/json" -d "{ \"id\":\"$CURRENCY_L0_GENESIS_NODE_ID\", \"ip\": \"127.0.0.1\", \"p2pPort\": 9401 }"
+              echo "Joined"
+              exit 0
+           else
+              if [ $i -eq 10 ]; then
+               echo "Error starting the currency-l0 validator 1"
+               exit 1
+              fi
+              echo "currency-l0 validator 1 still booting... waiting 10s ($i/10)"
+              sleep 10
+           fi
+          done
+      - name: Running currency-l0 validator - 2
+        env:
+          CL_KEYSTORE: token-key.p12
+          CL_KEYALIAS: token-key
+          CL_PASSWORD: ${{ secrets.P12_GENESIS_FILE_PASSWORD }}
+        run: |
+          cd .github/config/containers/global-l0
+          export GLOBAL_L0_NODE_ID=$(java -jar ../jars/cl-wallet.jar show-id)
+          
+          cd ../currency-l0/genesis
+          export CURRENCY_L0_GENESIS_NODE_ID=$(java -jar ../../jars/cl-wallet.jar show-id)
+          export METAGRAPH_IDENTIFIER=$(java -jar ../../jars/cl-wallet.jar show-address)
+          
+          cd ../
+          mkdir validator-2
+          cd validator-2
+
+          java -jar ../../jars/cl-keytool.jar generate
+          
+          export CL_PUBLIC_HTTP_PORT=9600
+          export CL_P2P_HTTP_PORT=9601
+          export CL_CLI_HTTP_PORT=9602
+          export CL_APP_ENV=dev
+          export CL_ENV=dev
+          export CL_COLLATERAL=0
+          export CL_GLOBAL_L0_PEER_HTTP_HOST=127.0.0.1
+          export CL_GLOBAL_L0_PEER_HTTP_PORT=9000
+          export CL_GLOBAL_L0_PEER_ID=$GLOBAL_L0_NODE_ID
+          export CL_L0_TOKEN_IDENTIFIER=$METAGRAPH_IDENTIFIER
+          
+          echo "GLOBAL_L0_NODE_ID=$GLOBAL_L0_NODE_ID"
+          echo "CURRENCY_L0_GENESIS_NODE_ID=$CURRENCY_L0_GENESIS_NODE_ID"
+          echo "CURRENCY_L0_VALIDATOR_2_NODE_ID=$(java -jar ../../jars/cl-wallet.jar show-id)"
+          echo "METAGRAPH_IDENTIFIER=$METAGRAPH_IDENTIFIER"
+          
+          nohup java -jar ../../jars/currency-l0.jar run-validator --ip 127.0.0.1 > currency-l0-3.log 2>&1 &
+
+          for ((i = 1; i <= 11; i++)); do
+            if curl http://127.0.0.1:9600/node/info &>/dev/null; then
+              echo "Joining currency-l0 validator node 2 ..."
+              curl -X POST http://127.0.0.1:9602/cluster/join -H "Content-type: application/json" -d "{ \"id\":\"$CURRENCY_L0_GENESIS_NODE_ID\", \"ip\": \"127.0.0.1\", \"p2pPort\": 9401 }"
+              echo "Joined"
+              exit 0
+           else
+              if [ $i -eq 10 ]; then
+               echo "Error starting the currency-l0 validator 2"
+               exit 1
+              fi
+              echo "currency-l0 validator 2 still booting... waiting 10s ($i/10)"
+              sleep 10
+           fi
+          done
+
+
+      - name: Running currency-l1 initial validator
+        env:
+          CL_KEYSTORE: token-key.p12
+          CL_KEYALIAS: token-key
+          CL_PASSWORD: ${{ secrets.P12_GENESIS_FILE_PASSWORD }}
+        run: |
+          cd .github/config/containers/global-l0
+          export GLOBAL_L0_NODE_ID=$(java -jar ../jars/cl-wallet.jar show-id)
+          
+          cd ../currency-l0/genesis
+          export CURRENCY_L0_GENESIS_NODE_ID=$(java -jar ../../jars/cl-wallet.jar show-id)
+          export METAGRAPH_IDENTIFIER=$(java -jar ../../jars/cl-wallet.jar show-address)
+          
+          cd ../../currency-l1
+          mkdir initial-validator
+          cd initial-validator
+          
+          java -jar ../../jars/cl-keytool.jar generate
+          export CURRENCY_L1_INITIAL_VALIDATOR_NODE_ID=$(java -jar ../../jars/cl-wallet.jar show-id)
+          
+          export CL_PUBLIC_HTTP_PORT=9700
+          export CL_P2P_HTTP_PORT=9701
+          export CL_CLI_HTTP_PORT=9702
+          export CL_APP_ENV=dev
+          export CL_ENV=dev
+          export CL_COLLATERAL=0
+          export CL_GLOBAL_L0_PEER_HTTP_HOST=127.0.0.1
+          export CL_GLOBAL_L0_PEER_HTTP_PORT=9000
+          export CL_GLOBAL_L0_PEER_ID=$GLOBAL_L0_NODE_ID
+          export CL_L0_PEER_HTTP_HOST=127.0.0.1
+          export CL_L0_PEER_HTTP_PORT=9400
+          export CL_L0_PEER_ID=$CURRENCY_L0_GENESIS_NODE_ID
+          export CL_L0_TOKEN_IDENTIFIER=$METAGRAPH_IDENTIFIER
+          
+          echo "GLOBAL_L0_NODE_ID=$CL_GLOBAL_L0_PEER_ID"
+          echo "CURRENCY_L0_GENESIS_NODE_ID=$CL_L0_PEER_ID"
+          echo "METAGRAPH_IDENTIFIER=$CL_L0_TOKEN_IDENTIFIER"
+          echo "CURRENCY_L1_INITIAL_VALIDATOR_NODE_ID=$CURRENCY_L1_INITIAL_VALIDATOR_NODE_ID"
+          
+          nohup java -jar ../../jars/currency-l1.jar run-initial-validator --ip 127.0.0.1 > currency-l1-1.log 2>&1 &
+          for ((i = 1; i <= 11; i++)); do
+             if curl http://127.0.0.1:9700/node/info &>/dev/null; then
+                echo "currency-l1 initial-validator started"
+                cd ..
+                exit 0
+             else
+                if [ $i -eq 10 ]; then
+                 echo "Error starting the currency-l1 initial validator"
+                 exit 1
+                fi
+                echo "currency-l1 initial validator still booting... waiting 10s ($i/10)"
+                sleep 10
+             fi
+           done
+      - name: Running currency-l1 validator - 1
+        env:
+          CL_KEYSTORE: token-key.p12
+          CL_KEYALIAS: token-key
+          CL_PASSWORD: ${{ secrets.P12_GENESIS_FILE_PASSWORD }}
+        run: |
+          cd .github/config/containers/global-l0
+          export GLOBAL_L0_NODE_ID=$(java -jar ../jars/cl-wallet.jar show-id)
+          
+          cd ../currency-l0/genesis
+          export CURRENCY_L0_GENESIS_NODE_ID=$(java -jar ../../jars/cl-wallet.jar show-id)
+          export METAGRAPH_IDENTIFIER=$(java -jar ../../jars/cl-wallet.jar show-address)
+
+          cd ../../currency-l1/initial-validator
+          export CURRENCY_L1_INITIAL_VALIDATOR_NODE_ID=$(java -jar ../../jars/cl-wallet.jar show-id)
+
+          cd ../
+          mkdir validator-1
+          cd validator-1
+
+          java -jar ../../jars/cl-keytool.jar generate
+
+          export CL_PUBLIC_HTTP_PORT=9800
+          export CL_P2P_HTTP_PORT=9801
+          export CL_CLI_HTTP_PORT=9802
+          export CL_APP_ENV=dev
+          export CL_ENV=dev
+          export CL_COLLATERAL=0
+          export CL_GLOBAL_L0_PEER_HTTP_HOST=127.0.0.1
+          export CL_GLOBAL_L0_PEER_HTTP_PORT=9000
+          export CL_GLOBAL_L0_PEER_ID=$GLOBAL_L0_NODE_ID
+          export CL_L0_PEER_HTTP_HOST=127.0.0.1
+          export CL_L0_PEER_HTTP_PORT=9400
+          export CL_L0_PEER_ID=$CURRENCY_L0_GENESIS_NODE_ID
+          export CL_L0_TOKEN_IDENTIFIER=$METAGRAPH_IDENTIFIER
+          
+          echo "GLOBAL_L0_NODE_ID=$CL_GLOBAL_L0_PEER_ID"
+          echo "CURRENCY_L0_GENESIS_NODE_ID=$CL_L0_PEER_ID"
+          echo "METAGRAPH_IDENTIFIER=$CL_L0_TOKEN_IDENTIFIER"
+          echo "CURRENCY_L1_INITIAL_VALIDATOR_NODE_ID=$CURRENCY_L1_INITIAL_VALIDATOR_NODE_ID"
+          echo "CURRENCY_L1_VALIDATOR_1_NODE_ID=$(java -jar ../../jars/cl-wallet.jar show-id)"
+
+          nohup java -jar ../../jars/currency-l1.jar run-validator --ip 127.0.0.1 > currency-l1-2.log 2>&1 &
+
+          for ((i = 1; i <= 11; i++)); do
+            if curl http://127.0.0.1:9800/node/info &>/dev/null; then
+              echo "Joining currency-l1 validator node 1 ..."
+              curl -X POST http://127.0.0.1:9802/cluster/join -H "Content-type: application/json" -d "{ \"id\":\"$CURRENCY_L1_INITIAL_VALIDATOR_NODE_ID\", \"ip\": \"127.0.0.1\", \"p2pPort\": 9701 }"
+              echo "Joined"
+              exit 0
+           else
+              if [ $i -eq 10 ]; then
+               echo "Error starting the currency-l1 validator 1"
+               exit 1
+              fi
+              echo "currency-l1 validator 1 still booting... waiting 10s ($i/10)"
+              sleep 10
+           fi
+          done
+
+      - name: Running currency-l1 validator - 2
+        env:
+          CL_KEYSTORE: token-key.p12
+          CL_KEYALIAS: token-key
+          CL_PASSWORD: ${{ secrets.P12_GENESIS_FILE_PASSWORD }}
+        run: |
+          cd .github/config/containers/global-l0
+          export GLOBAL_L0_NODE_ID=$(java -jar ../jars/cl-wallet.jar show-id)
+
+          cd ../currency-l0/genesis
+          export CURRENCY_L0_GENESIS_NODE_ID=$(java -jar ../../jars/cl-wallet.jar show-id)
+          export METAGRAPH_IDENTIFIER=$(java -jar ../../jars/cl-wallet.jar show-address)
+
+          cd ../../currency-l1/initial-validator
+          export CURRENCY_L1_INITIAL_VALIDATOR_NODE_ID=$(java -jar ../../jars/cl-wallet.jar show-id)
+
+          cd ../
+          mkdir validator-2
+          cd validator-2
+
+          java -jar ../../jars/cl-keytool.jar generate
+
+          export CL_PUBLIC_HTTP_PORT=9900
+          export CL_P2P_HTTP_PORT=9901
+          export CL_CLI_HTTP_PORT=9902
+          export CL_APP_ENV=dev
+          export CL_ENV=dev
+          export CL_COLLATERAL=0
+          export CL_GLOBAL_L0_PEER_HTTP_HOST=127.0.0.1
+          export CL_GLOBAL_L0_PEER_HTTP_PORT=9000
+          export CL_GLOBAL_L0_PEER_ID=$GLOBAL_L0_NODE_ID
+          export CL_L0_PEER_HTTP_HOST=127.0.0.1
+          export CL_L0_PEER_HTTP_PORT=9400
+          export CL_L0_PEER_ID=$CURRENCY_L0_GENESIS_NODE_ID
+          export CL_L0_TOKEN_IDENTIFIER=$METAGRAPH_IDENTIFIER
+
+          echo "GLOBAL_L0_NODE_ID=$CL_GLOBAL_L0_PEER_ID"
+          echo "CURRENCY_L0_GENESIS_NODE_ID=$CL_L0_PEER_ID"
+          echo "METAGRAPH_IDENTIFIER=$CL_L0_TOKEN_IDENTIFIER"
+          echo "CURRENCY_L1_INITIAL_VALIDATOR_NODE_ID=$CURRENCY_L1_INITIAL_VALIDATOR_NODE_ID"
+          echo "CURRENCY_L1_VALIDATOR_2_NODE_ID=$(java -jar ../../jars/cl-wallet.jar show-id)"
+
+          nohup java -jar ../../jars/currency-l1.jar run-validator --ip 127.0.0.1 > currency-l1-2.log 2>&1 &
+
+          for ((i = 1; i <= 11; i++)); do
+            if curl http://127.0.0.1:9900/node/info &>/dev/null; then
+              sleep 5
+              echo "Joining currency-l1 validator node 2 ..."
+              curl -X POST http://127.0.0.1:9902/cluster/join -H "Content-type: application/json" -d "{ \"id\":\"$CURRENCY_L1_INITIAL_VALIDATOR_NODE_ID\", \"ip\": \"127.0.0.1\", \"p2pPort\": 9701 }"
+              echo "Joined"
+              exit 0
+           else
+              if [ $i -eq 10 ]; then
+               echo "Error starting the currency-l1 validator 2"
+               exit 1
+              fi
+              echo "currency-l1 validator 2 still booting... waiting 10s ($i/10)"
+              sleep 10
+           fi
+          done
+
+      - name: Request clusters info
+        run: |
+          sleep 5
+          echo "Dag L1"
+          curl http://127.0.0.1:9100/cluster/info
+          
+          echo "Currency L0"
+          curl http://127.0.0.1:9400/cluster/info
+          
+          echo "Currency L1"
+          curl http://127.0.0.1:9700/cluster/info
+
+      - name: Send transactions
+        run: |
+          cd .github/action_scripts
+          npm install @stardust-collective/dag4
+          node send_transactions.js
