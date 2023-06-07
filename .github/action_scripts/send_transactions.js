@@ -3,7 +3,7 @@ const { dag4 } = require( '@stardust-collective/dag4' );
 const SLEEP_TIME_UNTIL_QUERY = 60 * 1000;
 
 const FIRST_WALLET_SEED_PHRASE='drift doll absurd cost upon magic plate often actor decade obscure smooth';
-const SECOND_WALLET_SEED_PHRASE='drift doll absurd cost upon magic plate often actor decade obscure smooth';
+const SECOND_WALLET_SEED_PHRASE='upper pistol movie hedgehog case exhaust wife injury joke live festival shield';
 
 const SECOND_WALLET_ADDRESS='DAG6kfTqFxLLPLopHqR43CeQrcvJ5k3eXgYSeELt';
 const THIRD_WALLET_ADDRESS='DAG0DQPuvVThrHnz66S4V6cocrtpg59oesAWyRMb';
