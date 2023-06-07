@@ -5,6 +5,7 @@ const SLEEP_TIME_UNTIL_QUERY = 60 * 1000;
 const FIRST_WALLET_SEED_PHRASE='drift doll absurd cost upon magic plate often actor decade obscure smooth';
 const SECOND_WALLET_SEED_PHRASE='upper pistol movie hedgehog case exhaust wife injury joke live festival shield';
 
+const FIRST_WALLET_ADDRESS='DAG4Zd2W2JxL1f1gsHQCoaKrRonPSSHLgcqD7osU';
 const SECOND_WALLET_ADDRESS='DAG6kfTqFxLLPLopHqR43CeQrcvJ5k3eXgYSeELt';
 const THIRD_WALLET_ADDRESS='DAG0DQPuvVThrHnz66S4V6cocrtpg59oesAWyRMb';
 
@@ -168,12 +169,10 @@ const handleMetagraphBatchTransactions = async ( origin, destination, networkOpt
 };
 
 const sendDoubleSpendTransaction = async ( networkOptions ) => {
+    const lastRef = await dag4.network.getAddressLastAcceptedTransactionRef( FIRST_WALLET_ADDRESS );
+
     const accountFirstNode = dag4.createAccount();
     accountFirstNode.loginSeedPhrase( FIRST_WALLET_SEED_PHRASE );
-
-    const accountSecondNode = dag4.createAccount();
-    accountFirstNode.loginSeedPhrase( FIRST_WALLET_SEED_PHRASE );
-
     await accountFirstNode.connect(
         {
             networkVersion: '2.0',
@@ -182,7 +181,15 @@ const sendDoubleSpendTransaction = async ( networkOptions ) => {
             testnet: true
         }
     );
+    const signedTransaction = await accountFirstNode.generateSignedTransaction(
+        SECOND_WALLET_ADDRESS,
+        5000,
+        1,
+        lastRef
+    );
 
+    const accountSecondNode = dag4.createAccount();
+    accountSecondNode.loginSeedPhrase( FIRST_WALLET_SEED_PHRASE );
     await accountSecondNode.connect(
         {
             networkVersion: '2.0',
@@ -191,16 +198,6 @@ const sendDoubleSpendTransaction = async ( networkOptions ) => {
             testnet: true
         }
     );
-
-    const lastRef = await dag4.network.getAddressLastAcceptedTransactionRef( accountFirstNode.address );
-
-    const signedTransaction = await accountFirstNode.generateSignedTransaction(
-        SECOND_WALLET_ADDRESS,
-        5000,
-        1,
-        lastRef
-    );
-
     const signedTransaction2 = await accountSecondNode.generateSignedTransaction(
         THIRD_WALLET_ADDRESS,
         5000,
