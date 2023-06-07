@@ -262,6 +262,7 @@ const sendTransactionsUsingUrls = async (
     metagraphId,
     l0GlobalUrl,
     dagL1UrlFirstNode,
+    dagL1UrlSecondNode,
     l0MetagraphUrl,
     l1MetagraphUrl
 ) => {
@@ -277,6 +278,7 @@ const sendTransactionsUsingUrls = async (
         metagraphId,
         l0GlobalUrl,
         dagL1UrlFirstNode,
+        dagL1UrlSecondNode,
         l0MetagraphUrl,
         l1MetagraphUrl
     };
@@ -306,6 +308,16 @@ const sendTransactionsUsingUrls = async (
     }
 
     try {
+        logMessage( 'Starting to send double spend transaction' );
+        await sendDoubleSpendTransaction( networkOptions );
+
+        logMessage( 'Finished double spend transaction' );
+    } catch( error ) {
+        logMessage( `Error sending back transactions from: ${account2.address} to ${account1.address}:`, error );
+        throw error;
+    }
+
+    try {
         logMessage( `Starting batch METAGRAPH Transactions from: ${account1.address} to ${account2.address}` );
         const { originBalance, destinationBalance } = await handleMetagraphBatchTransactions( account1, account2, networkOptions );
 
@@ -324,16 +336,6 @@ const sendTransactionsUsingUrls = async (
         await assertBalance( originBalance, destinationBalance, false );
 
         logMessage( `Finished batch METAGRAPH Transactions from: ${account2.address} to ${account1.address}` );
-    } catch( error ) {
-        logMessage( `Error sending back transactions from: ${account2.address} to ${account1.address}:`, error );
-        throw error;
-    }
-
-    try {
-        logMessage( 'Starting to send double spend transaction' );
-        await sendDoubleSpendTransaction( networkOptions );
-
-        logMessage( 'Finished double spend transaction' );
     } catch( error ) {
         logMessage( `Error sending back transactions from: ${account2.address} to ${account1.address}:`, error );
         throw error;
