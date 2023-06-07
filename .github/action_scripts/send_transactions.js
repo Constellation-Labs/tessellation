@@ -2,6 +2,12 @@ const { dag4 } = require( '@stardust-collective/dag4' );
 
 const SLEEP_TIME_UNTIL_QUERY = 60 * 1000;
 
+const FIRST_WALLET_SEED_PHRASE='drift doll absurd cost upon magic plate often actor decade obscure smooth';
+const SECOND_WALLET_SEED_PHRASE='drift doll absurd cost upon magic plate often actor decade obscure smooth';
+
+const SECOND_WALLET_ADDRESS='DAG6kfTqFxLLPLopHqR43CeQrcvJ5k3eXgYSeELt';
+const THIRD_WALLET_ADDRESS='DAG0DQPuvVThrHnz66S4V6cocrtpg59oesAWyRMb';
+
 const logMessage = ( message ) => {
     const formattedMessage = {
         message
@@ -98,7 +104,7 @@ const handleBatchTransactions = async ( origin, destination, networkOptions ) =>
         {
             networkVersion: '2.0',
             l0Url: networkOptions.l0GlobalUrl,
-            l1Url: networkOptions.dagL1Url,
+            l1Url: networkOptions.dagL1UrlFirstNode,
             testnet: true
         }
     );
@@ -128,7 +134,7 @@ const handleMetagraphBatchTransactions = async ( origin, destination, networkOpt
         {
             networkVersion: '2.0',
             l0Url: networkOptions.l0GlobalUrl,
-            l1Url: networkOptions.dagL1Url,
+            l1Url: networkOptions.dagL1UrlFirstNode,
             testnet: true
         }
     );
@@ -154,6 +160,74 @@ const handleMetagraphBatchTransactions = async ( origin, destination, networkOpt
         const destinationBalance = await metagraphTokenClient.getBalanceFor( destination.address );
 
         return { originBalance, destinationBalance };
+    } catch( error ) {
+        const errorMessage = `Error when sending transactions between wallets, message: ${error}`;
+        logMessage( errorMessage );
+        throw error;
+    }
+};
+
+const sendDoubleSpendTransaction = async ( networkOptions ) => {
+    const accountFirstNode = dag4.createAccount();
+    accountFirstNode.loginSeedPhrase( FIRST_WALLET_SEED_PHRASE );
+
+    const accountSecondNode = dag4.createAccount();
+    accountFirstNode.loginSeedPhrase( FIRST_WALLET_SEED_PHRASE );
+
+    await accountFirstNode.connect(
+        {
+            networkVersion: '2.0',
+            l0Url: networkOptions.l0GlobalUrl,
+            l1Url: networkOptions.dagL1UrlFirstNode,
+            testnet: true
+        }
+    );
+
+    await accountSecondNode.connect(
+        {
+            networkVersion: '2.0',
+            l0Url: networkOptions.l0GlobalUrl,
+            l1Url: networkOptions.dagL1UrlSecondNode,
+            testnet: true
+        }
+    );
+
+    const lastRef = await dag4.network.getAddressLastAcceptedTransactionRef( accountFirstNode.address );
+
+    const signedTransaction = await accountFirstNode.generateSignedTransaction(
+        SECOND_WALLET_ADDRESS,
+        5000,
+        1,
+        lastRef
+    );
+
+    const signedTransaction2 = await accountSecondNode.generateSignedTransaction(
+        THIRD_WALLET_ADDRESS,
+        5000,
+        1,
+        lastRef
+    );
+
+    try {
+        await Promise.all( [
+            dag4.network.postTransaction( signedTransaction ),
+            dag4.network.postTransaction( signedTransaction2 )
+        ] );
+
+        logMessage( `Waiting ${SLEEP_TIME_UNTIL_QUERY}ms until fetch wallet balances` );
+        await sleep( SLEEP_TIME_UNTIL_QUERY );
+
+        const secondWalletBalance = await accountFirstNode.getBalanceOf( SECOND_WALLET_ADDRESS );
+        const secondWalletBalance2 = await accountSecondNode.getBalanceOf( SECOND_WALLET_ADDRESS );
+        const thirdWalletBalance = await accountFirstNode.getBalanceOf( THIRD_WALLET_ADDRESS );
+        const thirdWalletBalance2 = await accountSecondNode.getBalanceOf( THIRD_WALLET_ADDRESS );
+
+        logMessage( `SecondWalletBalance: ${secondWalletBalance}` );
+        logMessage( `SecondWalletBalance2: ${secondWalletBalance2}` );
+        logMessage( `ThirddWalletBalance: ${thirdWalletBalance}` );
+        logMessage( `ThirddWalletBalance2: ${thirdWalletBalance2}` );
+
+        return;
     } catch( error ) {
         const errorMessage = `Error when sending transactions between wallets, message: ${error}`;
         logMessage( errorMessage );
@@ -187,26 +261,22 @@ const assertBalance = async (
 const sendTransactionsUsingUrls = async (
     metagraphId,
     l0GlobalUrl,
-    dagL1Url,
+    dagL1UrlFirstNode,
     l0MetagraphUrl,
     l1MetagraphUrl
 ) => {
     //DAG4Zd2W2JxL1f1gsHQCoaKrRonPSSHLgcqD7osU
     const account1 = dag4.createAccount();
-    account1.loginSeedPhrase(
-        'drift doll absurd cost upon magic plate often actor decade obscure smooth'
-    );
+    account1.loginSeedPhrase( FIRST_WALLET_SEED_PHRASE );
 
     //DAG6kfTqFxLLPLopHqR43CeQrcvJ5k3eXgYSeELt
     const account2 = dag4.createAccount();
-    account2.loginSeedPhrase(
-        'upper pistol movie hedgehog case exhaust wife injury joke live festival shield'
-    );
+    account2.loginSeedPhrase( SECOND_WALLET_SEED_PHRASE );
 
     const networkOptions = {
         metagraphId,
         l0GlobalUrl,
-        dagL1Url,
+        dagL1UrlFirstNode,
         l0MetagraphUrl,
         l1MetagraphUrl
     };
@@ -259,6 +329,16 @@ const sendTransactionsUsingUrls = async (
         throw error;
     }
 
+    try {
+        logMessage( 'Starting to send double spend transaction' );
+        await sendDoubleSpendTransaction( networkOptions );
+
+        logMessage( 'Finished double spend transaction' );
+    } catch( error ) {
+        logMessage( `Error sending back transactions from: ${account2.address} to ${account1.address}:`, error );
+        throw error;
+    }
+
     logMessage( 'Script finished' );
     return;
 };
@@ -267,8 +347,10 @@ const sendTransactions = async () => {
     const metagraphId = 'custom_id';
     const l0GlobalUrl =
     'http://localhost:9000';
-    const dagL1Url =
+    const dagL1UrlFirstNode =
     'http://localhost:9100';
+    const dagL1UrlSecondNode =
+    'http://localhost:9200';
     const l0MetagraphUrl =
     'http://localhost:9400';
     const l1MetagraphUrl =
@@ -277,7 +359,8 @@ const sendTransactions = async () => {
     await sendTransactionsUsingUrls(
         metagraphId,
         l0GlobalUrl,
-        dagL1Url,
+        dagL1UrlFirstNode,
+        dagL1UrlSecondNode,
         l0MetagraphUrl,
         l1MetagraphUrl
     );
