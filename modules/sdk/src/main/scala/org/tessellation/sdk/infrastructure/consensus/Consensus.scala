@@ -19,6 +19,7 @@ import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.node.NodeStorage
+import org.tessellation.sdk.domain.seedlist.SeedlistEntry
 import org.tessellation.sdk.infrastructure.gossip.RumorHandler
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
@@ -40,7 +41,7 @@ object Consensus {
     selfId: PeerId,
     keyPair: KeyPair,
     consensusConfig: ConsensusConfig,
-    seedlist: Option[Set[PeerId]],
+    seedlist: Option[Set[SeedlistEntry]],
     clusterStorage: ClusterStorage[F],
     nodeStorage: NodeStorage[F],
     client: Client[F],

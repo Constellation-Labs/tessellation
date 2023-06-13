@@ -56,7 +56,10 @@ object Main
         )
         .asResource
       validators = Validators
-        .make[IO, DAGTransaction, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](storages, seedlist)
+        .make[IO, DAGTransaction, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
+          storages,
+          seedlist
+        )
       p2pClient = P2PClient.make[IO, DAGTransaction, DAGBlock](
         sdkP2PClient,
         sdkResources.client,

@@ -25,6 +25,7 @@ import org.tessellation.sdk.domain.collateral.Collateral
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.healthcheck.LocalHealthcheck
 import org.tessellation.sdk.domain.rewards.Rewards
+import org.tessellation.sdk.domain.seedlist.SeedlistEntry
 import org.tessellation.sdk.domain.snapshot.services.AddressService
 import org.tessellation.sdk.infrastructure.Collateral
 import org.tessellation.sdk.infrastructure.consensus.Consensus
@@ -45,7 +46,7 @@ object Services {
     validators: SdkValidators[F],
     client: Client[F],
     session: Session[F],
-    seedlist: Option[Set[PeerId]],
+    seedlist: Option[Set[SeedlistEntry]],
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
     selfId: PeerId,
     keyPair: KeyPair,

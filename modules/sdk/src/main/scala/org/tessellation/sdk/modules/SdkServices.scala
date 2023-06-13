@@ -19,6 +19,7 @@ import org.tessellation.sdk.config.types.{CollateralConfig, SdkConfig}
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.healthcheck.LocalHealthcheck
+import org.tessellation.sdk.domain.seedlist.SeedlistEntry
 import org.tessellation.sdk.http.p2p.clients.NodeClient
 import org.tessellation.sdk.infrastructure.block.processing.BlockAcceptanceManager
 import org.tessellation.sdk.infrastructure.cluster.services.Cluster
@@ -43,7 +44,7 @@ object SdkServices {
     session: Session[F],
     nodeClient: NodeClient[F],
     validators: SdkValidators[F],
-    seedlist: Option[Set[PeerId]],
+    seedlist: Option[Set[SeedlistEntry]],
     restartSignal: SignallingRef[F, Unit],
     versionHash: Hash,
     collateral: CollateralConfig,

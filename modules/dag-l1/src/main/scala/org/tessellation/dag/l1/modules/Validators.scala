@@ -5,10 +5,10 @@ import cats.effect.Async
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.Block
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.schema.transaction.Transaction
 import org.tessellation.sdk.domain.block.processing.BlockValidator
+import org.tessellation.sdk.domain.seedlist.SeedlistEntry
 import org.tessellation.sdk.domain.transaction.{ContextualTransactionValidator, TransactionChainValidator, TransactionValidator}
 import org.tessellation.sdk.infrastructure.block.processing.BlockValidator
 import org.tessellation.sdk.infrastructure.gossip.RumorValidator
@@ -26,7 +26,7 @@ object Validators {
     SI <: SnapshotInfo[P]
   ](
     storages: Storages[F, T, B, P, S, SI],
-    seedlist: Option[Set[PeerId]]
+    seedlist: Option[Set[SeedlistEntry]]
   ): Validators[F, T, B] = {
     val signedValidator = SignedValidator.make[F]
     val transactionChainValidator = TransactionChainValidator.make[F, T]

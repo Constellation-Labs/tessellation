@@ -13,6 +13,7 @@ import org.tessellation.ext.kryo._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.sdk.domain.seedlist.SeedlistEntry
 import org.tessellation.sdk.domain.statechannel.StateChannelValidator.StateChannelValidationErrorOr
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.SignedValidator.SignedValidationError
@@ -32,7 +33,7 @@ object StateChannelValidator {
 
   def make[F[_]: Async: KryoSerializer](
     signedValidator: SignedValidator[F],
-    l0Seedlist: Option[Set[PeerId]],
+    l0Seedlist: Option[Set[SeedlistEntry]],
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
     maxBinarySizeInBytes: Long = 500 * 1024
   ): StateChannelValidator[F] = new StateChannelValidator[F] {
@@ -72,7 +73,9 @@ object StateChannelValidator {
     private def validateSignaturesWithSeedlist(
       signed: Signed[StateChannelSnapshotBinary]
     ): StateChannelValidationErrorOr[Signed[StateChannelSnapshotBinary]] =
-      signedValidator.validateSignaturesWithSeedlist(l0Seedlist, signed).errorMap(SignersNotInSeedlist)
+      signedValidator
+        .validateSignaturesWithSeedlist(l0Seedlist.map(_.map(_.peerId)), signed)
+        .errorMap(SignersNotInSeedlist)
 
     private def validateStateChannelAddress(address: Address): StateChannelValidationErrorOr[Address] =
       if (stateChannelAllowanceLists.forall(_.contains(address)))

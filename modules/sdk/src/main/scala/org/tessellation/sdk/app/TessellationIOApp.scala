@@ -17,7 +17,9 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.sdk._
 import org.tessellation.sdk.cli.CliMethod
+import org.tessellation.sdk.domain.seedlist.SeedlistEntry
 import org.tessellation.sdk.http.p2p.SdkP2PClient
 import org.tessellation.sdk.infrastructure.cluster.services.Session
 import org.tessellation.sdk.infrastructure.logs.LoggerConfigurator
@@ -26,7 +28,6 @@ import org.tessellation.sdk.infrastructure.seedlist.{Loader => SeedlistLoader}
 import org.tessellation.sdk.infrastructure.trust.TrustRatingCsvLoader
 import org.tessellation.sdk.modules._
 import org.tessellation.sdk.resources.SdkResources
-import org.tessellation.sdk.{sdkKryoRegistrar, _}
 import org.tessellation.security.SecurityProvider
 
 import com.monovore.decline.Opts
@@ -97,7 +98,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                   SignallingRef.of[IO, Unit](()).flatMap { _restartSignal =>
                     def mkSDK =
                       Supervisor[IO].flatMap { implicit _supervisor =>
-                        def loadSeedlist(name: String, seedlistPath: Option[SeedListPath]): IO[Option[Set[PeerId]]] =
+                        def loadSeedlist(name: String, seedlistPath: Option[SeedListPath]): IO[Option[Set[SeedlistEntry]]] =
                           seedlistPath
                             .traverse(SeedlistLoader.make[IO].load)
                             .flatTap { seedlist =>
@@ -120,7 +121,11 @@ abstract class TessellationIOApp[A <: CliMethod](
                           session = Session.make[IO](storages.session, storages.node, storages.cluster)
                           p2pClient = SdkP2PClient.make[IO](res.client, session)
                           queues <- SdkQueues.make[IO].asResource
-                          validators = SdkValidators.make[IO](_l0Seedlist, _seedlist, method.stateChannelAllowanceLists)
+                          validators = SdkValidators.make[IO](
+                            _l0Seedlist,
+                            _seedlist,
+                            method.stateChannelAllowanceLists
+                          )
                           services <- SdkServices
                             .make[IO](
                               cfg,
