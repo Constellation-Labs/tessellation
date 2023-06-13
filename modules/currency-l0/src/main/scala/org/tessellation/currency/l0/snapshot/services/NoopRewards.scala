@@ -13,7 +13,7 @@ import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.infrastructure.consensus.trigger
 import org.tessellation.security.signature.Signed
 
-object Rewards {
+object NoopRewards {
   def make[F[_]: Async]: Rewards[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot] =
     (
       _: Signed[CurrencyIncrementalSnapshot],

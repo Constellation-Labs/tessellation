@@ -11,7 +11,7 @@ import cats.syntax.functor._
 import org.tessellation.currency.BaseDataApplicationL0Service
 import org.tessellation.currency.l0.config.types.AppConfig
 import org.tessellation.currency.l0.http.P2PClient
-import org.tessellation.currency.l0.snapshot.services.{Rewards, StateChannelSnapshotService}
+import org.tessellation.currency.l0.snapshot.services.{NoopRewards, StateChannelSnapshotService}
 import org.tessellation.currency.l0.snapshot.{CurrencySnapshotConsensus, CurrencySnapshotEvent}
 import org.tessellation.currency.schema.currency._
 import org.tessellation.kryo.KryoSerializer
@@ -20,6 +20,7 @@ import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.collateral.Collateral
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.healthcheck.LocalHealthcheck
+import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.domain.snapshot.services.{AddressService, GlobalL0Service}
 import org.tessellation.sdk.infrastructure.Collateral
 import org.tessellation.sdk.infrastructure.metrics.Metrics
@@ -42,14 +43,15 @@ object Services {
     selfId: PeerId,
     keyPair: KeyPair,
     cfg: AppConfig,
-    maybeDataApplication: Option[BaseDataApplicationL0Service[F]]
+    maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
+    maybeRewards: Option[Rewards[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot]]
   ): F[Services[F]] =
     for {
       stateChannelSnapshotService <- StateChannelSnapshotService
         .make[F](keyPair, storages.lastSignedBinaryHash, p2PClient.stateChannelSnapshot, storages.globalL0Cluster, storages.snapshot)
         .pure[F]
 
-      rewards = Rewards.make[F]
+      rewards = maybeRewards.getOrElse(NoopRewards.make[F])
 
       consensus <- CurrencySnapshotConsensus
         .make[F](
