@@ -165,11 +165,7 @@ object CurrencySnapshotConsensusFunctions {
           stateProof,
           maybeNewDataState
         )
-        context = CurrencySnapshotInfo(
-          lastTxRefs = lastContext.lastTxRefs ++ acceptanceResult.contextUpdate.lastTxRefs,
-          balances = lastContext.balances ++ acceptanceResult.contextUpdate.balances
-        )
-      } yield (artifact, context, returnedEvents)
+      } yield (artifact, snapshotInfo, returnedEvents)
     }
 
     private def getReturnedEvents(
