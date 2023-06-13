@@ -1,7 +1,6 @@
 package org.tessellation.http.p2p
 
 import cats.effect.Async
-import cats.syntax.option._
 
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.sdk.domain.cluster.services.Session
@@ -24,7 +23,7 @@ object P2PClient {
       sdkP2PClient.cluster,
       sdkP2PClient.gossip,
       sdkP2PClient.node,
-      L0GlobalSnapshotClient.make(client, session.some)
+      L0GlobalSnapshotClient.make(client, None)
     ) {}
 }
 
