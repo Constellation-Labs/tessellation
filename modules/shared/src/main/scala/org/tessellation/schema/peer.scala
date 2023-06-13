@@ -25,6 +25,7 @@ import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia._
 import derevo.derive
 import derevo.scalacheck.arbitrary
+import fs2.data.csv.CellDecoder
 import io.circe.{Decoder, Encoder}
 import io.estatico.newtype.macros.newtype
 import io.estatico.newtype.ops._
@@ -49,6 +50,10 @@ object peer {
       Iso[PeerId, Id](peerId => Id(peerId.coerce))(id => PeerId(id.hex))
 
     implicit def ordering: Ordering[PeerId] = Order[PeerId].toOrdering
+
+    implicit val cellDecoder: CellDecoder[PeerId] = CellDecoder.stringDecoder
+      .map(Hex(_))
+      .map(PeerId(_))
 
     implicit val quillEncode: MappedEncoding[PeerId, String] =
       MappedEncoding[PeerId, String](_.value.value)

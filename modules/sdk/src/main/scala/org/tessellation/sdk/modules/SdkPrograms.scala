@@ -9,6 +9,7 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.config.types.SdkConfig
 import org.tessellation.sdk.domain.cluster.programs.{Joining, PeerDiscovery}
 import org.tessellation.sdk.domain.healthcheck.LocalHealthcheck
+import org.tessellation.sdk.domain.seedlist.SeedlistEntry
 import org.tessellation.sdk.http.p2p.clients.{ClusterClient, SignClient}
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
@@ -22,7 +23,7 @@ object SdkPrograms {
     clusterClient: ClusterClient[F],
     signClient: SignClient[F],
     localHealthcheck: LocalHealthcheck[F],
-    seedlist: Option[Set[PeerId]],
+    seedlist: Option[Set[SeedlistEntry]],
     nodeId: PeerId,
     versionHash: Hash
   ): F[SdkPrograms[F]] =

@@ -9,10 +9,10 @@ import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import eu.timepit.refined.api.Refined
-import eu.timepit.refined.auto._
 import eu.timepit.refined.cats._
 import eu.timepit.refined.numeric.Interval
 import eu.timepit.refined.refineV
+import fs2.data.csv.{CellDecoder, DecoderError}
 import io.circe.refined._
 import io.estatico.newtype.macros.newtype
 import io.getquill.MappedEncoding
@@ -24,6 +24,11 @@ object trust {
 
   implicit def showTrustValue: Show[TrustValueRefined] = s => s"TrustValue(value=${s.value})"
 
+  implicit val trustValueRefinedCellDecoder: CellDecoder[TrustValueRefined] =
+    CellDecoder.doubleDecoder.emap {
+      refineV[TrustValueRefinement](_)
+        .leftMap(new DecoderError(_))
+    }
   @derive(show)
   @newtype
   case class Score(value: TrustValueRefined)
