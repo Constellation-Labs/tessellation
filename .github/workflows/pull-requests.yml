@@ -111,7 +111,6 @@ jobs:
            done
 
 
-
       - name: Running dag-l1 initial-validator
         env:
           CL_KEYSTORE: token-key.p12
@@ -188,7 +187,7 @@ jobs:
           echo "DAG_L1_INITIAL_VALIDATOR_NODE_ID= $DAG_L1_INITIAL_VALIDATOR_NODE_ID"
           echo "DAG_L1_VALIDATOR_1_NODE_ID= $(java -jar ../../jars/cl-wallet.jar show-id)"
 
-          nohup java -jar ../../jars/dag-l1.jar run-validator --ip 127.0.0.1 > dag-l1-1.log 2>&1 &
+          nohup java -jar ../../jars/dag-l1.jar run-validator --ip 127.0.0.1 > dag-l1-2.log 2>&1 &
 
           for ((i = 1; i <= 11; i++)); do
            if curl http://127.0.0.1:9200/node/info &>/dev/null; then
@@ -238,7 +237,7 @@ jobs:
           echo "DAG_L1_INITIAL_VALIDATOR_NODE_ID= $DAG_L1_INITIAL_VALIDATOR_NODE_ID"
           echo "DAG_L1_VALIDATOR_2_NODE_ID= $(java -jar ../../jars/cl-wallet.jar show-id)"
 
-          nohup java -jar ../../jars/dag-l1.jar run-validator --ip 127.0.0.1 > dag-l1-2.log 2>&1 &
+          nohup java -jar ../../jars/dag-l1.jar run-validator --ip 127.0.0.1 > dag-l1-3.log 2>&1 &
 
           for ((i = 1; i <= 11; i++)); do
            if curl http://127.0.0.1:9300/node/info &>/dev/null; then
@@ -272,7 +271,6 @@ jobs:
           
           java -jar ../../jars/cl-keytool.jar generate
           export CURRENCY_L0_GENESIS_NODE_ID=$(java -jar ../../jars/cl-wallet.jar show-id)
-          export METAGRAPH_IDENTIFIER=$(java -jar ../../jars/cl-wallet.jar show-address)
 
           export CL_PUBLIC_HTTP_PORT=9400
           export CL_P2P_HTTP_PORT=9401
@@ -283,13 +281,11 @@ jobs:
           export CL_GLOBAL_L0_PEER_HTTP_HOST=127.0.0.1
           export CL_GLOBAL_L0_PEER_HTTP_PORT=9000
           export CL_GLOBAL_L0_PEER_ID=$GLOBAL_L0_NODE_ID
-          export CL_L0_TOKEN_IDENTIFIER=$METAGRAPH_IDENTIFIER
           
           echo "GLOBAL_L0_NODE_ID=$GLOBAL_L0_NODE_ID"
           echo "CURRENCY_L0_GENESIS_NODE_ID=$CURRENCY_L0_GENESIS_NODE_ID"
-          echo "METAGRAPH_IDENTIFIER=$METAGRAPH_IDENTIFIER"
           
-          nohup java -jar ../../jars/currency-l0.jar run-genesis ../genesis.csv --ip 127.0.0.1 > currency-l0.log 2>&1 &
+          nohup java -jar ../../jars/currency-l0.jar run-genesis ../genesis.csv --ip 127.0.0.1 > currency-l0-1.log 2>&1 &
 
           for ((i = 1; i <= 11; i++)); do
              if curl http://127.0.0.1:9400/node/info &>/dev/null; then
@@ -306,6 +302,13 @@ jobs:
              fi
            done
 
+      - name: Get the Metagraph ID
+        run: |
+          cd .github/config/containers/currency-l0/genesis
+          export METAGRAPH_ID=$(tail currency-l0-1.log -n 1000 | grep -o "Address from genesis data is .*" | grep -o "DAG.*")
+          echo "METAGRAPH_ID=$METAGRAPH_ID"
+          echo "METAGRAPH_ID=$METAGRAPH_ID" >> $GITHUB_ENV
+
       - name: Running currency-l0 validator - 1
         env:
           CL_KEYSTORE: token-key.p12
@@ -317,7 +320,7 @@ jobs:
           
           cd ../currency-l0/genesis
           export CURRENCY_L0_GENESIS_NODE_ID=$(java -jar ../../jars/cl-wallet.jar show-id)
-          export METAGRAPH_IDENTIFIER=$(java -jar ../../jars/cl-wallet.jar show-address)
+          export METAGRAPH_IDENTIFIER=$METAGRAPH_ID
           
           cd ../
           mkdir validator-1
@@ -369,7 +372,7 @@ jobs:
           
           cd ../currency-l0/genesis
           export CURRENCY_L0_GENESIS_NODE_ID=$(java -jar ../../jars/cl-wallet.jar show-id)
-          export METAGRAPH_IDENTIFIER=$(java -jar ../../jars/cl-wallet.jar show-address)
+          export METAGRAPH_IDENTIFIER=$METAGRAPH_ID
           
           cd ../
           mkdir validator-2
@@ -423,7 +426,7 @@ jobs:
           
           cd ../currency-l0/genesis
           export CURRENCY_L0_GENESIS_NODE_ID=$(java -jar ../../jars/cl-wallet.jar show-id)
-          export METAGRAPH_IDENTIFIER=$(java -jar ../../jars/cl-wallet.jar show-address)
+          export METAGRAPH_IDENTIFIER=$METAGRAPH_ID
           
           cd ../../currency-l1
           mkdir initial-validator
@@ -477,7 +480,7 @@ jobs:
           
           cd ../currency-l0/genesis
           export CURRENCY_L0_GENESIS_NODE_ID=$(java -jar ../../jars/cl-wallet.jar show-id)
-          export METAGRAPH_IDENTIFIER=$(java -jar ../../jars/cl-wallet.jar show-address)
+          export METAGRAPH_IDENTIFIER=$METAGRAPH_ID
 
           cd ../../currency-l1/initial-validator
           export CURRENCY_L1_INITIAL_VALIDATOR_NODE_ID=$(java -jar ../../jars/cl-wallet.jar show-id)
@@ -537,7 +540,7 @@ jobs:
 
           cd ../currency-l0/genesis
           export CURRENCY_L0_GENESIS_NODE_ID=$(java -jar ../../jars/cl-wallet.jar show-id)
-          export METAGRAPH_IDENTIFIER=$(java -jar ../../jars/cl-wallet.jar show-address)
+          export METAGRAPH_IDENTIFIER=$METAGRAPH_ID
 
           cd ../../currency-l1/initial-validator
           export CURRENCY_L1_INITIAL_VALIDATOR_NODE_ID=$(java -jar ../../jars/cl-wallet.jar show-id)
@@ -592,12 +595,15 @@ jobs:
           sleep 5
           echo "Dag L1"
           curl http://127.0.0.1:9100/cluster/info
+          echo ""
           
           echo "Currency L0"
           curl http://127.0.0.1:9400/cluster/info
+          echo ""
           
           echo "Currency L1"
           curl http://127.0.0.1:9700/cluster/info
+          echo ""
 
       - name: Send transactions
         run: |
