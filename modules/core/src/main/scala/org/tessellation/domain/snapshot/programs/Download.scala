@@ -85,7 +85,9 @@ object Download {
           if (batchSize <= minBatchSizeToStartObserving && startingPoint =!= lastFullGlobalSnapshotOrdinal) {
             result.map(_.pure[F]).getOrElse(UnexpectedState.raiseError[F, DownloadResult])
           } else
-            download(metadata.hash, metadata.ordinal).flatMap { case (snapshot, context) => go(snapshot.ordinal, (snapshot, context).some) }
+            download(metadata.hash, metadata.ordinal, result).flatMap {
+              case (snapshot, context) => go(snapshot.ordinal, (snapshot, context).some)
+            }
         }
 
       go(lastFullGlobalSnapshotOrdinal, none[DownloadResult])
@@ -131,22 +133,22 @@ object Download {
       }
     }
 
-    def download(hash: Hash, ordinal: SnapshotOrdinal): F[DownloadResult] = {
+    def download(hash: Hash, ordinal: SnapshotOrdinal, state: Option[DownloadResult]): F[DownloadResult] = {
 
       def go(tmpMap: Map[SnapshotOrdinal, Hash], stepHash: Hash, stepOrdinal: SnapshotOrdinal): F[DownloadResult] =
         isSnapshotPersistedOrReachedGenesis(stepHash, stepOrdinal).ifM(
-          validateChain(tmpMap, ordinal),
+          validateChain(tmpMap, ordinal, state),
           snapshotStorage
             .readTmp(stepOrdinal)
             .flatMap {
               case Some(snapshot) =>
                 snapshot.toHashed[F].map { hashed =>
-                  if (hashed.hash === stepHash) snapshot.some else none[Signed[GlobalIncrementalSnapshot]]
+                  if (hashed.hash === stepHash) hashed.some else none[Hashed[GlobalIncrementalSnapshot]]
                 }
-              case None => none[Signed[GlobalIncrementalSnapshot]].pure[F]
+              case None => none[Hashed[GlobalIncrementalSnapshot]].pure[F]
             }
             .flatMap {
-              _.map(_.toHashed[F])
+              _.map(_.pure[F])
                 .getOrElse(fetchSnapshot(stepHash.some, stepOrdinal).flatMap { snapshot =>
                   snapshotStorage.writeTmp(snapshot).flatMap(_ => snapshot.toHashed[F])
                 })
@@ -178,7 +180,8 @@ object Download {
 
     def validateChain(
       tmpMap: Map[SnapshotOrdinal, Hash],
-      endingOrdinal: SnapshotOrdinal
+      endingOrdinal: SnapshotOrdinal,
+      state: Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]
     ): F[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] = {
 
       type Agg = DownloadResult
@@ -214,15 +217,15 @@ object Download {
           }
       }
 
-      getGenesisSnapshot(tmpMap).flatMap {
-        case (fullSnapshot, incrementalSnapshot) =>
-          go(incrementalSnapshot, GlobalSnapshotInfoV1.toGlobalSnapshotInfo(fullSnapshot.info))
-      }
+      state
+        .map(_.pure[F])
+        .getOrElse(getGenesisSnapshot(tmpMap))
+        .flatMap { case (s, c) => go(s, c) }
     }
 
     def getGenesisSnapshot(
       tmpMap: Map[SnapshotOrdinal, Hash]
-    ): F[(GlobalSnapshot, Signed[GlobalIncrementalSnapshot])] =
+    ): F[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] =
       snapshotStorage
         .readGenesis(lastFullGlobalSnapshotOrdinal)
         .flatMap {
@@ -239,8 +242,9 @@ object Download {
             .getOrElse(snapshotStorage.readPersisted(incrementalGenesisOrdinal))
             .flatMap {
               case Some(snapshot) => (genesis.value, snapshot).pure[F]
-              case None           => fetchSnapshot(none[Hash], incrementalGenesisOrdinal).map((genesis, _))
+              case None           => fetchSnapshot(none[Hash], incrementalGenesisOrdinal).map((genesis.value, _))
             }
+            .map { case (full, incremental) => (incremental, GlobalSnapshotInfoV1.toGlobalSnapshotInfo(full.info)) }
         }
 
     def fetchSnapshot(hash: Option[Hash], ordinal: SnapshotOrdinal): F[Signed[GlobalIncrementalSnapshot]] =
