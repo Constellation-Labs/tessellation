@@ -17,7 +17,6 @@ jobs:
     strategy:
       matrix:
         java:
-          - zulu@1.8.282
           - openjdk@1.11.0
     steps:
       - uses: actions/checkout@v3
@@ -57,6 +56,11 @@ jobs:
           mkdir currency-l1
           mkdir jars
 
+      - name: Installing node-fetch@2.6.6
+        run: |
+          cd .github/action_scripts
+          npm i node-fetch@2.6.6
+
       - name: Copy genesis to L0 directories
         run: |
           cd .github/config
@@ -95,21 +99,7 @@ jobs:
           
           nohup java -jar ../jars/global-l0.jar run-genesis genesis.csv --ip 127.0.0.1 > global-l0.log 2>&1 &
           
-          for ((i = 1; i <= 11; i++)); do
-             if curl http://127.0.0.1:9000/node/info &>/dev/null; then
-                echo "global-l0 initial validator started"
-                cd ..
-                exit 0
-             else
-                if [ $i -eq 10 ]; then
-                 echo "Error starting the global-l0 initial validator"
-                 exit 1
-                fi
-                echo "global-l0 initial validator still booting... waiting 10s ($i/10)"
-                sleep 10
-             fi
-           done
-
+          node ../../../action_scripts/check_if_node_started.js -url=http://127.0.0.1:9000/node/info -cluster_name=Global-L0
 
       - name: Running dag-l1 initial-validator
         env:
@@ -141,19 +131,7 @@ jobs:
           
           nohup java -jar ../../jars/dag-l1.jar run-initial-validator --ip 127.0.0.1 > dag-l1-1.log 2>&1 &
 
-          for ((i = 1; i <= 11; i++)); do
-             if curl http://127.0.0.1:9100/node/info &>/dev/null; then
-                echo "dag-l1 initial validator started"
-                exit 0
-             else
-                if [ $i -eq 10 ]; then
-                 echo "Error starting the dag-l1 initial validator"
-                 exit 1
-                fi
-                echo "dag-l1 initial validator still booting... waiting 10s ($i/10)"
-                sleep 10
-             fi
-           done
+          node ../../../../action_scripts/check_if_node_started.js -url=http://127.0.0.1:9100/node/info -cluster_name=DAG-L1-1
 
       - name: Running dag-l1 validator - 1
         env:
@@ -189,21 +167,13 @@ jobs:
 
           nohup java -jar ../../jars/dag-l1.jar run-validator --ip 127.0.0.1 > dag-l1-2.log 2>&1 &
 
-          for ((i = 1; i <= 11; i++)); do
-           if curl http://127.0.0.1:9200/node/info &>/dev/null; then
-              echo "Joining dag-l1 validator node 1 ..."
-              curl -X POST http://127.0.0.1:9202/cluster/join -H "Content-type: application/json" -d "{ \"id\":\"$DAG_L1_INITIAL_VALIDATOR_NODE_ID\", \"ip\": \"127.0.0.1\", \"p2pPort\": 9101 }"
-              echo "Joined"
-              exit 0
-           else
-              if [ $i -eq 10 ]; then
-               echo "Error starting the dag-l1 validator 1"
-               exit 1
-              fi
-              echo "dag-l1 validator 1 still booting... waiting 10s ($i/10)"
-              sleep 10
-           fi
-          done
+          if node ../../../../action_scripts/check_if_node_started.js -url=http://127.0.0.1:9200/node/info -cluster_name=DAG-L1-2; then
+            sleep 5
+            echo "Joining dag-l1 validator node 1 ..."
+            curl -X POST http://127.0.0.1:9202/cluster/join -H "Content-type: application/json" -d "{ \"id\":\"$DAG_L1_INITIAL_VALIDATOR_NODE_ID\", \"ip\": \"127.0.0.1\", \"p2pPort\": 9101 }"
+            echo "Joined"
+            exit 0
+          fi
 
       - name: Running dag-l1 validator - 2
         env:
@@ -239,21 +209,13 @@ jobs:
 
           nohup java -jar ../../jars/dag-l1.jar run-validator --ip 127.0.0.1 > dag-l1-3.log 2>&1 &
 
-          for ((i = 1; i <= 11; i++)); do
-           if curl http://127.0.0.1:9300/node/info &>/dev/null; then
+          if node ../../../../action_scripts/check_if_node_started.js -url=http://127.0.0.1:9300/node/info -cluster_name=DAG-L1-2; then
+              sleep 5
               echo "Joining dag-l1 validator node 2 ..."
               curl -X POST http://127.0.0.1:9302/cluster/join -H "Content-type: application/json" -d "{ \"id\":\"$DAG_L1_INITIAL_VALIDATOR_NODE_ID\", \"ip\": \"127.0.0.1\", \"p2pPort\": 9101 }"
               echo "Joined"
               exit 0
-           else
-              if [ $i -eq 10 ]; then
-               echo "Error starting the dag-l1 validator 2"
-               exit 1
-              fi
-              echo "dag-l1 validator 2 still booting... waiting 10s ($i/10)"
-              sleep 10
-           fi
-          done
+          fi
 
 
       - name: Running currency-l0 genesis
@@ -287,20 +249,7 @@ jobs:
           
           nohup java -jar ../../jars/currency-l0.jar run-genesis ../genesis.csv --ip 127.0.0.1 > currency-l0-1.log 2>&1 &
 
-          for ((i = 1; i <= 11; i++)); do
-             if curl http://127.0.0.1:9400/node/info &>/dev/null; then
-                echo "currency-l0 genesis started"
-                cd ..
-                exit 0
-             else
-                if [ $i -eq 10 ]; then
-                 echo "Error starting the currency-l0 genesis"
-                 exit 1
-                fi
-                echo "currency-l0 genesis still booting... waiting 10s ($i/10)"
-                sleep 10
-             fi
-           done
+          node ../../../../action_scripts/check_if_node_started.js -url=http://127.0.0.1:9400/node/info -cluster_name=Currency-L0-1
 
       - name: Get the Metagraph ID
         run: |
@@ -346,21 +295,14 @@ jobs:
           
           nohup java -jar ../../jars/currency-l0.jar run-validator --ip 127.0.0.1 > currency-l0-2.log 2>&1 &
 
-          for ((i = 1; i <= 11; i++)); do
-           if curl http://127.0.0.1:9500/node/info &>/dev/null; then
+          if node ../../../../action_scripts/check_if_node_started.js -url=http://127.0.0.1:9500/node/info -cluster_name=Currency-L0-2; then
+              sleep 5
               echo "Joining currency-l0 validator node 1 ..."
               curl -X POST http://127.0.0.1:9502/cluster/join -H "Content-type: application/json" -d "{ \"id\":\"$CURRENCY_L0_GENESIS_NODE_ID\", \"ip\": \"127.0.0.1\", \"p2pPort\": 9401 }"
               echo "Joined"
               exit 0
-           else
-              if [ $i -eq 10 ]; then
-               echo "Error starting the currency-l0 validator 1"
-               exit 1
-              fi
-              echo "currency-l0 validator 1 still booting... waiting 10s ($i/10)"
-              sleep 10
-           fi
-          done
+          fi
+
       - name: Running currency-l0 validator - 2
         env:
           CL_KEYSTORE: token-key.p12
@@ -397,23 +339,14 @@ jobs:
           echo "METAGRAPH_IDENTIFIER=$METAGRAPH_IDENTIFIER"
           
           nohup java -jar ../../jars/currency-l0.jar run-validator --ip 127.0.0.1 > currency-l0-3.log 2>&1 &
-
-          for ((i = 1; i <= 11; i++)); do
-            if curl http://127.0.0.1:9600/node/info &>/dev/null; then
+          
+          if node ../../../../action_scripts/check_if_node_started.js -url=http://127.0.0.1:9600/node/info -cluster_name=Currency-L0-3; then
+              sleep 5
               echo "Joining currency-l0 validator node 2 ..."
               curl -X POST http://127.0.0.1:9602/cluster/join -H "Content-type: application/json" -d "{ \"id\":\"$CURRENCY_L0_GENESIS_NODE_ID\", \"ip\": \"127.0.0.1\", \"p2pPort\": 9401 }"
               echo "Joined"
               exit 0
-           else
-              if [ $i -eq 10 ]; then
-               echo "Error starting the currency-l0 validator 2"
-               exit 1
-              fi
-              echo "currency-l0 validator 2 still booting... waiting 10s ($i/10)"
-              sleep 10
-           fi
-          done
-
+          fi
 
       - name: Running currency-l1 initial validator
         env:
@@ -455,20 +388,9 @@ jobs:
           echo "CURRENCY_L1_INITIAL_VALIDATOR_NODE_ID=$CURRENCY_L1_INITIAL_VALIDATOR_NODE_ID"
           
           nohup java -jar ../../jars/currency-l1.jar run-initial-validator --ip 127.0.0.1 > currency-l1-1.log 2>&1 &
-          for ((i = 1; i <= 11; i++)); do
-             if curl http://127.0.0.1:9700/node/info &>/dev/null; then
-                echo "currency-l1 initial-validator started"
-                cd ..
-                exit 0
-             else
-                if [ $i -eq 10 ]; then
-                 echo "Error starting the currency-l1 initial validator"
-                 exit 1
-                fi
-                echo "currency-l1 initial validator still booting... waiting 10s ($i/10)"
-                sleep 10
-             fi
-           done
+          
+          node ../../../../action_scripts/check_if_node_started.js -url=http://127.0.0.1:9700/node/info -cluster_name=Currency-L1-1
+
       - name: Running currency-l1 validator - 1
         env:
           CL_KEYSTORE: token-key.p12
@@ -512,22 +434,13 @@ jobs:
           echo "CURRENCY_L1_VALIDATOR_1_NODE_ID=$(java -jar ../../jars/cl-wallet.jar show-id)"
 
           nohup java -jar ../../jars/currency-l1.jar run-validator --ip 127.0.0.1 > currency-l1-2.log 2>&1 &
-
-          for ((i = 1; i <= 11; i++)); do
-            if curl http://127.0.0.1:9800/node/info &>/dev/null; then
+          if node ../../../../action_scripts/check_if_node_started.js -url=http://127.0.0.1:9800/node/info -cluster_name=Currency-L1-2; then
+              sleep 5
               echo "Joining currency-l1 validator node 1 ..."
               curl -X POST http://127.0.0.1:9802/cluster/join -H "Content-type: application/json" -d "{ \"id\":\"$CURRENCY_L1_INITIAL_VALIDATOR_NODE_ID\", \"ip\": \"127.0.0.1\", \"p2pPort\": 9701 }"
               echo "Joined"
               exit 0
-           else
-              if [ $i -eq 10 ]; then
-               echo "Error starting the currency-l1 validator 1"
-               exit 1
-              fi
-              echo "currency-l1 validator 1 still booting... waiting 10s ($i/10)"
-              sleep 10
-           fi
-          done
+          fi
 
       - name: Running currency-l1 validator - 2
         env:
@@ -571,42 +484,51 @@ jobs:
           echo "CURRENCY_L1_INITIAL_VALIDATOR_NODE_ID=$CURRENCY_L1_INITIAL_VALIDATOR_NODE_ID"
           echo "CURRENCY_L1_VALIDATOR_2_NODE_ID=$(java -jar ../../jars/cl-wallet.jar show-id)"
 
-          nohup java -jar ../../jars/currency-l1.jar run-validator --ip 127.0.0.1 > currency-l1-2.log 2>&1 &
+          nohup java -jar ../../jars/currency-l1.jar run-validator --ip 127.0.0.1 > currency-l1-3.log 2>&1 &
 
-          for ((i = 1; i <= 11; i++)); do
-            if curl http://127.0.0.1:9900/node/info &>/dev/null; then
+          if node ../../../../action_scripts/check_if_node_started.js -url=http://127.0.0.1:9900/node/info -cluster_name=Currency-L1-3; then
               sleep 5
               echo "Joining currency-l1 validator node 2 ..."
               curl -X POST http://127.0.0.1:9902/cluster/join -H "Content-type: application/json" -d "{ \"id\":\"$CURRENCY_L1_INITIAL_VALIDATOR_NODE_ID\", \"ip\": \"127.0.0.1\", \"p2pPort\": 9701 }"
               echo "Joined"
               exit 0
-           else
-              if [ $i -eq 10 ]; then
-               echo "Error starting the currency-l1 validator 2"
-               exit 1
-              fi
-              echo "currency-l1 validator 2 still booting... waiting 10s ($i/10)"
-              sleep 10
-           fi
-          done
+          fi
 
-      - name: Request clusters info
+      - name: Check clusters
         run: |
-          sleep 5
-          echo "Dag L1"
-          curl http://127.0.0.1:9100/cluster/info
-          echo ""
-          
-          echo "Currency L0"
-          curl http://127.0.0.1:9400/cluster/info
-          echo ""
-          
-          echo "Currency L1"
-          curl http://127.0.0.1:9700/cluster/info
-          echo ""
+          cd .github/action_scripts
+          node check_clusters.js
 
       - name: Send transactions
         run: |
           cd .github/action_scripts
           npm install @stardust-collective/dag4
           node send_transactions.js
+
+      - name: Save Global L0 logs
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: global-l0-java-${{ matrix.java }}
+          path: .github/config/containers/global-l0/global-l0.log
+
+      - name: Save DAG L1 logs
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: dag-l1-java-${{ matrix.java }}
+          path: .github/config/containers/dag-l1/initial-validator/dag-l1-1.log
+
+      - name: Save Currency L0 logs
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: currency-l0-java-${{ matrix.java }}
+          path: .github/config/containers/currency-l0/genesis/currency-l0-1.log
+
+      - name: Save Currency L1 logs
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: currency-l1-java-${{ matrix.java }}
+          path: .github/config/containers/currency-l1/initial-validator/currency-l1-1.log
