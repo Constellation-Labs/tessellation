@@ -27,7 +27,9 @@ object SnapshotDownloadStorage {
 
       def isPersisted(hash: Hash): F[Boolean] = persistedStorage.exists(hash)
 
-      def movePersistedToTmp(hash: Hash): F[Unit] = tmpStorage.getPath(hash).flatMap(persistedStorage.move(hash, _))
+      def movePersistedToTmp(hash: Hash, ordinal: SnapshotOrdinal): F[Unit] =
+        tmpStorage.getPath(hash).flatMap(persistedStorage.move(hash, _) >> persistedStorage.delete(ordinal))
+
       def moveTmpToPersisted(snapshot: Signed[GlobalIncrementalSnapshot]): F[Unit] =
         persistedStorage.getPath(snapshot).flatMap(tmpStorage.moveByOrdinal(snapshot, _) >> persistedStorage.link(snapshot))
 
