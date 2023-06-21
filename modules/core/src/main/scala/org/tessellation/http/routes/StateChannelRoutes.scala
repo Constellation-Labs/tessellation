@@ -26,7 +26,10 @@ final case class StateChannelRoutes[F[_]: Async](
         .as[Signed[StateChannelSnapshotBinary]]
         .map(StateChannelOutput(address, _))
         .flatMap(stateChannelService.process)
-        .flatMap(_ => Ok())
+        .flatMap {
+          case Left(_) => BadRequest()
+          case Right(_) => Ok()
+        }
   }
 
   val publicRoutes: HttpRoutes[F] = Router(
