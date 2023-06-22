@@ -205,7 +205,7 @@ object Download {
                     _.map(
                       _.toHashed[F]
                         .map(_.hash)
-                        .flatMap(snapshotStorage.movePersistedToTmp(_))
+                        .flatMap(snapshotStorage.movePersistedToTmp(_, snapshot.ordinal))
                     ).getOrElse(Applicative[F].unit)
                   } >>
                     snapshotStorage
