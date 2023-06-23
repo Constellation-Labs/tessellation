@@ -242,11 +242,9 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
     } yield peer
 
   private def validateSeedlist(peer: PeerToJoin): F[Unit] =
-    seedlist match {
-      case None => Applicative[F].unit
-      case Some(entries) =>
-        if (entries.contains(peer.id)) Applicative[F].unit else PeerNotInSeedlist(peer.id).raiseError[F, Unit]
-    }
+    PeerNotInSeedlist(peer.id)
+      .raiseError[F, Unit]
+      .unlessA(seedlist.forall(_.contains(peer.id)))
 
   private def validateHandshake(registrationRequest: RegistrationRequest, remoteAddress: Option[Host]): F[Unit] =
     for {
