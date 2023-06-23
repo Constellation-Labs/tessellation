@@ -4,12 +4,11 @@ import java.security.KeyPair
 
 import cats.effect._
 import cats.effect.std.{Random, Supervisor}
-import cats.syntax.applicative._
 import cats.syntax.either._
-import cats.syntax.option._
 import cats.syntax.show._
+import cats.syntax.traverse._
 
-import org.tessellation.cli.env.{KeyAlias, Password, StorePath}
+import org.tessellation.cli.env._
 import org.tessellation.ext.cats.effect._
 import org.tessellation.ext.crypto._
 import org.tessellation.ext.kryo._
@@ -18,7 +17,6 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.trust.PeerObservationAdjustmentUpdateBatch
 import org.tessellation.sdk.cli.CliMethod
 import org.tessellation.sdk.http.p2p.SdkP2PClient
 import org.tessellation.sdk.infrastructure.cluster.services.Session
@@ -99,27 +97,26 @@ abstract class TessellationIOApp[A <: CliMethod](
                   SignallingRef.of[IO, Unit](()).flatMap { _restartSignal =>
                     def mkSDK =
                       Supervisor[IO].flatMap { implicit _supervisor =>
+                        def loadSeedlist(name: String, seedlistPath: Option[SeedListPath]): IO[Option[Set[PeerId]]] =
+                          seedlistPath
+                            .traverse(SeedlistLoader.make[IO].load)
+                            .flatTap { seedlist =>
+                              seedlist
+                                .map(_.size)
+                                .fold(logger.info(s"$name disabled.")) { size =>
+                                  logger.info(s"$name enabled. Allowed nodes: $size")
+                                }
+                            }
+
                         for {
-                          _ <- logger.info(s"Self peerId: ${selfId}").asResource
+                          _ <- logger.info(s"Self peerId: $selfId").asResource
                           _generation <- Generation.make[IO].asResource
                           versionHash <- version.hash.liftTo[IO].asResource
-                          _seedlist <- method.seedlistPath
-                            .fold(none[Set[PeerId]].pure[IO])(SeedlistLoader.make[IO].load(_).map(_.some))
-                            .asResource
-                          _l0Seedlist <- method.l0SeedlistPath
-                            .fold(none[Set[PeerId]].pure[IO])(SeedlistLoader.make[IO].load(_).map(_.some))
-                            .asResource
-                          _trustRatings <- method.trustRatingsPath
-                            .fold(none[PeerObservationAdjustmentUpdateBatch].pure[IO])(TrustRatingCsvLoader.make[IO].load(_).map(_.some))
-                            .asResource
-                          _ <- _seedlist
-                            .map(_.size)
-                            .fold(logger.info(s"Seedlist disabled.")) { size =>
-                              logger.info(s"Seedlist enabled. Allowed nodes: $size")
-                            }
-                            .asResource
+                          _seedlist <- loadSeedlist("Seedlist", method.seedlistPath).asResource
+                          _l0Seedlist <- loadSeedlist("l0Seedlist", method.l0SeedlistPath).asResource
+                          _trustRatings <- method.trustRatingsPath.traverse(TrustRatingCsvLoader.make[IO].load).asResource
                           storages <- SdkStorages.make[IO](clusterId, cfg).asResource
-                          res <- SdkResources.make[IO](cfg, _keyPair.getPrivate(), storages.session, selfId)
+                          res <- SdkResources.make[IO](cfg, _keyPair.getPrivate, storages.session, selfId)
                           session = Session.make[IO](storages.session, storages.node, storages.cluster)
                           p2pClient = SdkP2PClient.make[IO](res.client, session)
                           queues <- SdkQueues.make[IO].asResource
