@@ -12,6 +12,7 @@ import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
 import org.tessellation.sdk.domain.gossip.Gossip
+import org.tessellation.sdk.domain.seedlist.SeedlistEntry
 import org.tessellation.sdk.infrastructure.consensus.declaration.{Facility, kind}
 import org.tessellation.sdk.infrastructure.consensus.message.ConsensusPeerDeclaration
 import org.tessellation.sdk.infrastructure.consensus.trigger.ConsensusTrigger
@@ -42,7 +43,7 @@ object ConsensusStateCreator {
     consensusStorage: ConsensusStorage[F, Event, Key, Artifact, Context],
     gossip: Gossip[F],
     selfId: PeerId,
-    seedlist: Option[Set[PeerId]]
+    seedlist: Option[Set[SeedlistEntry]]
   ): ConsensusStateCreator[F, Key, Artifact, Context] = new ConsensusStateCreator[F, Key, Artifact, Context] {
 
     private val logger = Slf4jLogger.getLoggerFromClass(ConsensusStateCreator.getClass)
@@ -96,7 +97,7 @@ object ConsensusStateCreator {
 
         facilitators <- lastOutcome.facilitators
           .concat(lastOutcome.status.candidates)
-          .filter(peerId => seedlist.forall(_.contains(peerId)))
+          .filter(peerId => seedlist.forall(_.map(_.peerId).contains(peerId)))
           .filterA(consensusFns.facilitatorFilter(lastOutcome.status.signedMajorityArtifact, lastOutcome.status.context, _))
           .map(_.prepended(selfId).distinct.sorted)
 

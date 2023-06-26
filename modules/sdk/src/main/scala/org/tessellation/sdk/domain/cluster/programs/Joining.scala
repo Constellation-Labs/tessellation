@@ -25,6 +25,7 @@ import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tessellation.sdk.domain.healthcheck.LocalHealthcheck
 import org.tessellation.sdk.domain.node.NodeStorage
+import org.tessellation.sdk.domain.seedlist.SeedlistEntry
 import org.tessellation.sdk.effects.GenUUID
 import org.tessellation.sdk.http.p2p.clients.SignClient
 import org.tessellation.security.SecurityProvider
@@ -46,7 +47,7 @@ object Joining {
     session: Session[F],
     sessionStorage: SessionStorage[F],
     localHealthcheck: LocalHealthcheck[F],
-    seedlist: Option[Set[PeerId]],
+    seedlist: Option[Set[SeedlistEntry]],
     selfId: PeerId,
     stateAfterJoining: NodeState,
     peerDiscovery: PeerDiscovery[F],
@@ -83,7 +84,7 @@ object Joining {
     session: Session[F],
     sessionStorage: SessionStorage[F],
     localHealthcheck: LocalHealthcheck[F],
-    seedlist: Option[Set[PeerId]],
+    seedlist: Option[Set[SeedlistEntry]],
     selfId: PeerId,
     stateAfterJoining: NodeState,
     peerDiscovery: PeerDiscovery[F],
@@ -144,7 +145,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
   session: Session[F],
   sessionStorage: SessionStorage[F],
   localHealthcheck: LocalHealthcheck[F],
-  seedlist: Option[Set[PeerId]],
+  seedlist: Option[Set[SeedlistEntry]],
   selfId: PeerId,
   stateAfterJoining: NodeState,
   versionHash: Hash,
@@ -242,11 +243,9 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
     } yield peer
 
   private def validateSeedlist(peer: PeerToJoin): F[Unit] =
-    seedlist match {
-      case None => Applicative[F].unit
-      case Some(entries) =>
-        if (entries.contains(peer.id)) Applicative[F].unit else PeerNotInSeedlist(peer.id).raiseError[F, Unit]
-    }
+    PeerNotInSeedlist(peer.id)
+      .raiseError[F, Unit]
+      .unlessA(seedlist.map(_.map(_.peerId)).forall(_.contains(peer.id)))
 
   private def validateHandshake(registrationRequest: RegistrationRequest, remoteAddress: Option[Host]): F[Unit] =
     for {
@@ -287,7 +286,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
 
       _ <- Applicative[F].unlessA(registrationRequest.id != selfId)(IdDuplicationFound.raiseError[F, Unit])
 
-      seedlistHash <- seedlist.hashF
+      seedlistHash <- seedlist.map(_.map(_.peerId)).hashF
       _ <- Applicative[F].unlessA(registrationRequest.seedlist === seedlistHash)(SeedlistDoesNotMatch.raiseError[F, Unit])
 
     } yield ()

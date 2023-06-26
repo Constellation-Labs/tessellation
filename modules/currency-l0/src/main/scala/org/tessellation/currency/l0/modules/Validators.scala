@@ -4,8 +4,8 @@ import cats.effect.Async
 
 import org.tessellation.currency.schema.currency.{CurrencyBlock, CurrencyTransaction}
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.block.processing.BlockValidator
+import org.tessellation.sdk.domain.seedlist.SeedlistEntry
 import org.tessellation.sdk.domain.transaction.{TransactionChainValidator, TransactionValidator}
 import org.tessellation.sdk.infrastructure.block.processing.BlockValidator
 import org.tessellation.sdk.infrastructure.gossip.RumorValidator
@@ -15,7 +15,7 @@ import org.tessellation.security.signature.SignedValidator
 object Validators {
 
   def make[F[_]: Async: KryoSerializer: SecurityProvider](
-    seedlist: Option[Set[PeerId]]
+    seedlist: Option[Set[SeedlistEntry]]
   ): Validators[F] = {
     val signedValidator = SignedValidator.make[F]
     val transactionChainValidator = TransactionChainValidator.make[F, CurrencyTransaction]

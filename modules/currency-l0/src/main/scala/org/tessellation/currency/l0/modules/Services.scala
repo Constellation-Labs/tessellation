@@ -21,6 +21,7 @@ import org.tessellation.sdk.domain.collateral.Collateral
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.healthcheck.LocalHealthcheck
 import org.tessellation.sdk.domain.rewards.Rewards
+import org.tessellation.sdk.domain.seedlist.SeedlistEntry
 import org.tessellation.sdk.domain.snapshot.services.{AddressService, GlobalL0Service}
 import org.tessellation.sdk.infrastructure.Collateral
 import org.tessellation.sdk.infrastructure.metrics.Metrics
@@ -39,7 +40,7 @@ object Services {
     storages: Storages[F],
     client: Client[F],
     session: Session[F],
-    seedlist: Option[Set[PeerId]],
+    seedlist: Option[Set[SeedlistEntry]],
     selfId: PeerId,
     keyPair: KeyPair,
     cfg: AppConfig,

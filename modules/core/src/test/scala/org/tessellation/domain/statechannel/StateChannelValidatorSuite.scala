@@ -14,6 +14,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.sdk.domain.seedlist.SeedlistEntry
 import org.tessellation.sdk.domain.statechannel.StateChannelValidator
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.hex.Hex
@@ -49,7 +50,10 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       address = testStateChannel.toAddress
       signedSCBinary <- forAsyncKryo(testStateChannel, keyPair)
       scOutput = StateChannelOutput(address, signedSCBinary)
-      validator = mkValidator(peerId.toSortedSet.toSet.some, Map(address -> peerId).some)
+      validator = mkValidator(
+        peerId.toSortedSet.map(SeedlistEntry(_, none, none, none)).some,
+        Map(address -> peerId).some
+      )
       result <- validator.validate(scOutput)
     } yield expect.same(Valid(scOutput), result)
 
@@ -71,7 +75,10 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       )
       scOutput = StateChannelOutput(address, signedSCBinary)
       peerId = signedSCBinary.proofs.map(_.id.toPeerId)
-      validator = mkValidator(peerId.toSortedSet.toSet.some, Map(address -> peerId).some)
+      validator = mkValidator(
+        peerId.toSortedSet.map(SeedlistEntry(_, none, none, none)).some,
+        Map(address -> peerId).some
+      )
       result <- validator.validate(scOutput)
     } yield
       expect.same(
@@ -91,7 +98,10 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       doubleSigned <- signedSCBinary.signAlsoWith(keyPair2)
       scOutput = StateChannelOutput(address, doubleSigned)
       peersIds = doubleSigned.proofs.map(_.id.toPeerId)
-      validator = mkValidator(peersIds.toSortedSet.toSet.some, Map(address -> peersIds).some)
+      validator = mkValidator(
+        peersIds.toSortedSet.map(SeedlistEntry(_, none, none, none)).some,
+        Map(address -> peersIds).some
+      )
       result <- validator.validate(scOutput)
     } yield expect.same(Valid(scOutput), result)
   }
@@ -121,7 +131,11 @@ object StateChannelValidatorSuite extends MutableIOSuite {
     val address = testStateChannel.toAddress
     val scOutput = StateChannelOutput(address, signedSCBinary)
     val peerId = signedSCBinary.proofs.map(_.id.toPeerId)
-    val validator = mkValidator(peerId.toSortedSet.toSet.some, Map(address -> peerId).some, maxBinarySizeInBytes = 443)
+    val validator = mkValidator(
+      peerId.map(SeedlistEntry(_, none, none, none)).toSortedSet.some,
+      Map(address -> peerId).some,
+      maxBinarySizeInBytes = 443
+    )
 
     validator
       .validate(scOutput)
@@ -144,7 +158,10 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       address = testStateChannel.toAddress
       signedSCBinary <- forAsyncKryo(testStateChannel, keyPair1).flatMap(_.signAlsoWith(keyPair2))
       scOutput = StateChannelOutput(address, signedSCBinary)
-      validator = mkValidator(peerId1.toSortedSet.toSet.some, Map(address -> peerId1).some)
+      validator = mkValidator(
+        peerId1.toSortedSet.map(SeedlistEntry(_, none, none, none)).some,
+        Map(address -> peerId1).some
+      )
       result <- validator.validate(scOutput)
     } yield
       expect.same(
@@ -161,7 +178,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       address = testStateChannel.toAddress
       signedSCBinary <- forAsyncKryo(testStateChannel, keyPair)
       scOutput = StateChannelOutput(address, signedSCBinary)
-      validator = mkValidator(None, Map.empty.some)
+      validator = mkValidator(None, Map.empty[Address, NonEmptySet[PeerId]].some)
       result <- validator.validate(scOutput)
     } yield
       expect.same(
@@ -181,7 +198,10 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       address = testStateChannel.toAddress
       signedSCBinary <- forAsyncKryo(testStateChannel, keyPair2)
       scOutput = StateChannelOutput(address, signedSCBinary)
-      validator = mkValidator(peerId1.union(peerId2).toSortedSet.toSet.some, Map(address -> peerId1).some)
+      validator = mkValidator(
+        peerId1.union(peerId2).toSortedSet.map(SeedlistEntry(_, none, none, none)).some,
+        Map(address -> peerId1).some
+      )
       result <- validator.validate(scOutput)
     } yield
       expect.same(
@@ -201,7 +221,10 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       address = testStateChannel.toAddress
       signedSCBinary <- forAsyncKryo(testStateChannel, keyPair1).flatMap(_.signAlsoWith(keyPair2))
       scOutput = StateChannelOutput(address, signedSCBinary)
-      validator = mkValidator(peerId1.union(peerId2).toSortedSet.toSet.some, Map(address -> peerId1).some)
+      validator = mkValidator(
+        peerId1.union(peerId2).toSortedSet.map(SeedlistEntry(_, none, none, none)).some,
+        Map(address -> peerId1).some
+      )
       result <- validator.validate(scOutput)
     } yield expect.same(Valid(scOutput), result)
   }
@@ -228,7 +251,10 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       address = keyPair.getPublic.toAddress
       signedSCBinary <- forAsyncKryo(testStateChannel, keyPair)
       scOutput = StateChannelOutput(address, signedSCBinary)
-      validator = mkValidator(peerId.toSortedSet.toSet.some, Map(address -> peerId).some)
+      validator = mkValidator(
+        peerId.toSortedSet.map(SeedlistEntry(_, none, none, none)).some,
+        Map(address -> peerId).some
+      )
       result <- validator.validate(scOutput)
     } yield
       expect.same(
@@ -239,7 +265,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
   }
 
   private def mkValidator(
-    seedlist: Option[Set[PeerId]],
+    seedlist: Option[Set[SeedlistEntry]],
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
     maxBinarySizeInBytes: Long = 1024
   )(

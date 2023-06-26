@@ -10,6 +10,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.gossip._
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.sdk.domain.seedlist.SeedlistEntry
 import org.tessellation.sdk.infrastructure.gossip.RumorValidator.RumorValidationErrorOr
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.SignedValidator.SignedValidationError
@@ -27,7 +28,7 @@ trait RumorValidator[F[_]] {
 object RumorValidator {
 
   def make[F[_]: Async: KryoSerializer](
-    seedlist: Option[Set[PeerId]],
+    seedlist: Option[Set[SeedlistEntry]],
     signedValidator: SignedValidator[F]
   ): RumorValidator[F] = new RumorValidator[F] {
 
@@ -56,7 +57,9 @@ object RumorValidator {
       signedValidator.validateSignatures(signedRumor).map(_.errorMap(InvalidSigned))
 
     def validateSeedlist(signedRumor: Signed[RumorRaw]): RumorValidationErrorOr[Signed[RumorRaw]] =
-      signedValidator.validateSignaturesWithSeedlist(seedlist, signedRumor).errorMap(SignersNotInSeedlist)
+      signedValidator
+        .validateSignaturesWithSeedlist(seedlist.map(_.map(_.peerId)), signedRumor)
+        .errorMap(SignersNotInSeedlist)
 
   }
 

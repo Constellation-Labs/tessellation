@@ -10,6 +10,7 @@ import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.DAGTransaction
 import org.tessellation.sdk.domain.block.processing.BlockValidator
+import org.tessellation.sdk.domain.seedlist.SeedlistEntry
 import org.tessellation.sdk.domain.statechannel.StateChannelValidator
 import org.tessellation.sdk.domain.transaction.{TransactionChainValidator, TransactionValidator}
 import org.tessellation.sdk.infrastructure.block.processing.BlockValidator
@@ -20,10 +21,10 @@ import org.tessellation.security.signature.SignedValidator
 object SdkValidators {
 
   def make[F[_]: Async: KryoSerializer: SecurityProvider](
-    l0Seedlist: Option[Set[PeerId]],
-    seedlist: Option[Set[PeerId]],
+    l0Seedlist: Option[Set[SeedlistEntry]],
+    seedlist: Option[Set[SeedlistEntry]],
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]]
-  ) = {
+  ): SdkValidators[F] = {
     val signedValidator = SignedValidator.make[F]
     val transactionChainValidator = TransactionChainValidator.make[F, DAGTransaction]
     val transactionValidator = TransactionValidator.make[F, DAGTransaction](signedValidator)
