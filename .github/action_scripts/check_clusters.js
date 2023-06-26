@@ -48,12 +48,11 @@ const checkIfNodeIsReady = async ( url, name ) => {
 };
 
 const validateOrdinalsAndSnapshots = async ( urls ) => {
-    const ordinals = [];
+    const ordinalsPromises = [];
     for( const url of urls ) {
-        const snapshot = await fetchData( `${url}/latest` );
-        ordinals.push( snapshot.value.ordinal );
+        ordinalsPromises.push( fetchData( `${url}/latest` ) );
     }
-
+    const ordinals = ( await Promise.all( ordinalsPromises ) ).map(( _ ) => _.value.ordinal);
     ordinals.sort( ( a, b ) => {
         return a - b;
     } );
@@ -68,12 +67,12 @@ const validateOrdinalsAndSnapshots = async ( urls ) => {
         );
     }
 
-    const snapshots = [];
+    const snapshotsPromises = [];
     for( const url of urls ) {
-        const snapshot = await fetchData( `${url}/${lowestOrdinal}` );
-        snapshots.push( snapshot.value.lastSnapshotHash );
+        snapshotsPromises.push( fetchData( `${url}/${lowestOrdinal}` ) );
     }
 
+    const snapshots = ( await Promise.all( snapshotsPromises ) ).map(( _ ) => _.value.lastSnapshotHash);
     const areSnapshotsTheSame = snapshots.every(
         ( snapshot ) => snapshot === snapshots[ 0 ]
     );
@@ -119,15 +118,16 @@ const clusterCheck = async (
         await Promise.all( promises );
         console.log( `Finished to check if nodes are ready: ${clusterName}` );
 
-
         if( checkOrdinalsAndSnapshots ) {
-            console.log( `Starting to validate ordinals and snapshots: ${clusterName}` );
+            console.log(`Starting to validate ordinals and snapshots: ${clusterName}`);
             const urls = infos.map(
                 ( info ) =>
                     `${info.baseUrl}/${globalLayer ? 'global-snapshots' : 'snapshots'}`
             );
             await validateOrdinalsAndSnapshots( urls );
-            console.log( `Finished to validate ordinals and snapshots: ${clusterName}` );
+            console.log(
+                `Finished to validate ordinals and snapshots: ${clusterName}`
+            );
         }
 
         console.log( `Starting to validate cluster size: ${clusterName}` );
@@ -137,7 +137,6 @@ const clusterCheck = async (
             clusterName
         );
         console.log( `Finished to validate cluster size: ${clusterName}` );
-
     } catch( e ) {
         console.log( `Error on ${clusterName} nodes`, e.message );
         throw e;
