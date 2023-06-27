@@ -78,6 +78,11 @@ object Download {
 
       def go(startingPoint: SnapshotOrdinal, result: Option[DownloadResult]): F[DownloadResult] =
         latestMetadata.flatTap { metadata =>
+          Async[F].whenA(result.isEmpty)(
+            logger.info(s"Cleanup for snapshots greater than ${metadata.ordinal}") >>
+              snapshotStorage.backupPersistedAbove(metadata.ordinal)
+          )
+        }.flatTap { metadata =>
           logger.info(s"Download for startingPoint=${startingPoint}. Latest metadata=${metadata.show}")
         }.flatMap { metadata =>
           val batchSize = metadata.ordinal.value.value - startingPoint.value.value

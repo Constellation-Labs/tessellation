@@ -18,6 +18,7 @@ import org.tessellation.ext.kryo._
 import org.tessellation.kryo.KryoSerializer
 
 import better.files._
+import fs2.Stream
 import fs2.io.file.Path
 
 abstract class LocalFileSystemStorage[F[_]: KryoSerializer, A <: AnyRef: ClassTag](baseDir: Path)(
@@ -95,4 +96,9 @@ abstract class LocalFileSystemStorage[F[_]: KryoSerializer, A <: AnyRef: ClassTa
   def getOccupiedSpace: F[Long] = dir.flatMap { a =>
     F.blocking(a.size)
   }
+
+  def findFiles(condition: File => Boolean): F[Stream[F, File]] =
+    dir
+      .flatMap(a => F.blocking(a.list(condition)))
+      .map(Stream.fromIterator(_, 1))
 }

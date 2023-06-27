@@ -50,6 +50,9 @@ final class SnapshotLocalFileSystemStorage[F[_]: Async: KryoSerializer, S <: Sna
   def read(hash: Hash): F[Option[Signed[S]]] =
     read(hash.coerce[String])
 
+  def exists(ordinal: SnapshotOrdinal): F[Boolean] =
+    exists(toOrdinalName(ordinal))
+
   def exists(hash: Hash): F[Boolean] =
     exists(hash.coerce[String])
 
