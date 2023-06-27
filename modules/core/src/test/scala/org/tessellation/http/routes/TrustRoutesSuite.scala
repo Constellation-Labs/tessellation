@@ -12,7 +12,9 @@ import org.tessellation.infrastructure.trust.storage.TrustStorage
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.generators._
 import org.tessellation.schema.trust.{PeerObservationAdjustmentUpdate, PeerObservationAdjustmentUpdateBatch}
+import org.tessellation.sdk.config.types.TrustStorageConfig
 import org.tessellation.sdk.domain.gossip.Gossip
+import org.tessellation.sdk.domain.trust.storage.{TrustMap, TrustStorage}
 import org.tessellation.sdk.sdkKryoRegistrar
 
 import eu.timepit.refined.auto._
@@ -24,6 +26,16 @@ import org.http4s.syntax.literals._
 import suite.HttpSuite
 
 object TrustRoutesSuite extends HttpSuite {
+
+  def mkTrustStorage(trust: TrustMap = TrustMap.empty): F[TrustStorage[F]] = {
+    val config = TrustStorageConfig(
+      ordinalTrustUpdateInterval = 1000L,
+      ordinalTrustUpdateDelay = 500L
+    )
+
+    TrustStorage.make(trust, config)
+  }
+
   test("GET trust succeeds") {
     val req = GET(uri"/trust")
     val peer = (for {
@@ -34,7 +46,7 @@ object TrustRoutesSuite extends HttpSuite {
       .forAsync[IO](sdkKryoRegistrar.union(coreKryoRegistrar))
       .use { implicit kryoPool =>
         for {
-          ts <- TrustStorage.make[IO]
+          ts <- mkTrustStorage()
           gossip = new Gossip[IO] {
             override def spread[A: TypeTag: Encoder](rumorContent: A): IO[Unit] = IO.unit
             override def spreadCommon[A: TypeTag: Encoder](rumorContent: A): IO[Unit] = IO.unit

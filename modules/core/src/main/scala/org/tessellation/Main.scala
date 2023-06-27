@@ -9,7 +9,7 @@ import org.tessellation.cli.method._
 import org.tessellation.ext.cats.effect._
 import org.tessellation.ext.kryo._
 import org.tessellation.http.p2p.P2PClient
-import org.tessellation.infrastructure.trust.handler.trustHandler
+import org.tessellation.infrastructure.trust.handler.{ordinalTrustHandler, trustHandler}
 import org.tessellation.modules._
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.node.NodeState
@@ -49,7 +49,7 @@ object Main
     for {
       queues <- Queues.make[IO](sdkQueues).asResource
       p2pClient = P2PClient.make[IO](sdkP2PClient, sdkResources.client, sdkServices.session)
-      storages <- Storages.make[IO](sdkStorages, cfg.snapshot, trustRatings).asResource
+      storages <- Storages.make[IO](sdkStorages, method.sdkConfig, cfg.snapshot, trustRatings).asResource
       services <- Services
         .make[IO](
           sdkServices,
@@ -89,7 +89,7 @@ object Main
         .asResource
 
       rumorHandler = RumorHandlers.make[IO](storages.cluster, healthChecks.ping, services.localHealthcheck).handlers <+>
-        trustHandler(storages.trust) <+> services.consensus.handler
+        trustHandler(storages.trust) <+> ordinalTrustHandler(storages.trust) <+> services.consensus.handler
 
       _ <- Daemons
         .start(storages, services, programs, queues, healthChecks, nodeId, cfg)

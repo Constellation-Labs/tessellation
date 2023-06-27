@@ -66,6 +66,11 @@ trait CliMethod {
     )
   )
 
+  val trustStorageConfig: TrustStorageConfig = TrustStorageConfig(
+    ordinalTrustUpdateInterval = 1000L,
+    ordinalTrustUpdateDelay = 500L
+  )
+
   val leavingDelay = 30.seconds
 
   def healthCheckConfig(pingEnabled: Boolean) = HealthCheckConfig(
@@ -86,7 +91,8 @@ trait CliMethod {
     httpConfig,
     leavingDelay,
     stateAfterJoining,
-    collateralConfig(environment, collateralAmount)
+    collateralConfig(environment, collateralAmount),
+    trustStorageConfig
   )
 
 }

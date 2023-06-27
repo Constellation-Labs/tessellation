@@ -2,6 +2,7 @@ package org.tessellation.schema
 
 import cats.Show
 import cats.syntax.either._
+import cats.syntax.eq._
 
 import org.tessellation.schema.peer.PeerId
 
@@ -95,7 +96,7 @@ object trust {
   @derive(decoder, encoder, show, eqv)
   case class PeerObservationAdjustmentUpdateBatch(updates: List[PeerObservationAdjustmentUpdate])
 
-  @derive(decoder, encoder, show)
+  @derive(decoder, eqv, encoder, show)
   case class TrustInfo(
     trustLabel: Option[Double] = None,
     predictedTrust: Option[Double] = None,
@@ -103,14 +104,24 @@ object trust {
     peerLabels: Map[PeerId, Double] = Map.empty
   ) {
 
-    val publicTrust: Option[Double] =
+    lazy val publicTrust: Option[Double] =
       trustLabel
         .map(t => Math.max(-1, t + observationAdjustmentTrust.getOrElse(0d)))
         .orElse(observationAdjustmentTrust.map(t => Math.max(-1, t)))
   }
 
-  @derive(decoder, encoder, show)
+  @derive(eqv, decoder, encoder, show)
   case class PublicTrust(
     labels: Map[PeerId, Double]
+  ) {
+
+    def isEmpty: Boolean = labels === Map.empty
+
+  }
+
+  @derive(eqv, decoder, encoder, show)
+  case class SnapshotOrdinalPublicTrust(
+    ordinal: SnapshotOrdinal,
+    labels: PublicTrust
   )
 }

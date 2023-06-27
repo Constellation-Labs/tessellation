@@ -101,7 +101,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
     storages.cluster,
     services.consensus,
     services.gossip,
-    services.session
+    services.session,
+    DebugTrustRoutes[F](storages.trust).httpRoutes
   ).routes
 
   private val metricRoutes = routes.MetricRoutes[F]().routes

@@ -1,12 +1,11 @@
 package org.tessellation.infrastructure.trust
 
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.trust.TrustInfo
+import org.tessellation.sdk.domain.trust.storage.TrustMap
 
 object TrustModel {
 
   def calculateTrust(trustNodes: List[TrustNode], selfPeerIdx: Int): Map[Int, Double] = {
-
     val eigenTrustScores = EigenTrust.calculate(trustNodes)
 
     val dattScores = DATT.calculate(DATT.convert(trustNodes), selfPeerIdx)
@@ -24,9 +23,13 @@ object TrustModel {
     }
   }
 
-  def calculateTrust(trust: Map[PeerId, TrustInfo], selfPeerId: PeerId): Map[PeerId, Double] = {
-    val selfTrustLabels = trust.flatMap { case (peerId, trustInfo) => trustInfo.publicTrust.map(peerId -> _) }
-    val allNodesTrustLabels = trust.view.mapValues(_.peerLabels).toMap + (selfPeerId -> selfTrustLabels)
+  def calculateTrust(trust: TrustMap, selfPeerId: PeerId): Map[PeerId, Double] = {
+    val selfTrustLabels = trust.trust.flatMap { case (peerId, trustInfo) => trustInfo.publicTrust.map(peerId -> _) }
+
+    val nodesTrustLabels = trust.peerLabels.value.view.mapValues(_.labels).toMap + (selfPeerId -> selfTrustLabels)
+    val allKeys = nodesTrustLabels.keySet ++ nodesTrustLabels.values.flatMap(_.keySet)
+    val allNodesTrustLabels =
+      allKeys.map(key => key -> nodesTrustLabels.getOrElse(key, Map.empty[PeerId, Double])).toMap
 
     val peerIdToIdx = allNodesTrustLabels.keys.zipWithIndex.toMap
     val idxToPeerId = peerIdToIdx.map(_.swap)
