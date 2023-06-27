@@ -11,7 +11,6 @@ import org.tessellation.http.routes._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.transaction.DAGTransaction
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.AppEnvironment.{Dev, Mainnet, Testnet}
@@ -87,7 +86,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
       storages.fullGlobalSnapshot.some,
       "/global-snapshots"
     )
-  private val dagRoutes = CurrencyRoutes[F, DAGTransaction, DAGBlock, GlobalIncrementalSnapshot]("/dag", services.address, mkDagCell)
+  private val dagRoutes = DAGBlockRoutes[F](mkDagCell)
+  private val walletRoutes = WalletRoutes[F, GlobalIncrementalSnapshot]("/dag", services.address)
   private val consensusInfoRoutes = new ConsensusInfoRoutes[F, SnapshotOrdinal](services.cluster, services.consensus.storage, selfId)
   private val consensusRoutes = services.consensus.routes.p2pRoutes
 
@@ -119,6 +119,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
               clusterRoutes.publicRoutes <+>
               snapshotRoutes.publicRoutes <+>
               dagRoutes.publicRoutes <+>
+              walletRoutes.publicRoutes <+>
               nodeRoutes.publicRoutes <+>
               consensusInfoRoutes.publicRoutes
           }

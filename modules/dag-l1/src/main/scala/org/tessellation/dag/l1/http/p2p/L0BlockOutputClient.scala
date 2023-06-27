@@ -10,14 +10,14 @@ import org.http4s.Method.POST
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.client.Client
 
-trait L0CurrencyClusterClient[F[_], B <: Block[_]] {
+trait L0BlockOutputClient[F[_], B <: Block[_]] {
   def sendL1Output(output: Signed[B]): PeerResponse[F, Boolean]
 }
 
-object L0CurrencyClusterClient {
+object L0BlockOutputClient {
 
-  def make[F[_], B <: Block[_]: Encoder](pathPrefix: String, client: Client[F]): L0CurrencyClusterClient[F, B] =
-    new L0CurrencyClusterClient[F, B] {
+  def make[F[_], B <: Block[_]: Encoder](pathPrefix: String, client: Client[F]): L0BlockOutputClient[F, B] =
+    new L0BlockOutputClient[F, B] {
 
       def sendL1Output(output: Signed[B]): PeerResponse[F, Boolean] =
         PeerResponse(s"$pathPrefix/l1-output", POST)(client) { (req, c) =>

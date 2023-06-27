@@ -30,7 +30,7 @@ object P2PClient {
       sdkP2PClient.node,
       sdkP2PClient.cluster,
       L0ClusterClient.make(client),
-      L0CurrencyClusterClient.make(currencyPathPrefix, client),
+      L0BlockOutputClient.make(currencyPathPrefix, client),
       sdkP2PClient.gossip,
       BlockConsensusClient.make(client),
       L0GlobalSnapshotClient.make(client)
@@ -46,7 +46,7 @@ sealed abstract class P2PClient[
   val node: NodeClient[F],
   val cluster: ClusterClient[F],
   val l0Cluster: L0ClusterClient[F],
-  val l0CurrencyCluster: L0CurrencyClusterClient[F, B],
+  val l0BlockOutputClient: L0BlockOutputClient[F, B],
   val gossip: GossipClient[F],
   val blockConsensus: BlockConsensusClient[F, T],
   val l0GlobalSnapshot: L0GlobalSnapshotClient[F]
