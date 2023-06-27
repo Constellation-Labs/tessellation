@@ -5,7 +5,7 @@ import java.security.KeyPair
 import cats.effect.Async
 import cats.effect.std.Random
 
-import org.tessellation.currency.l0.http.P2PClient
+import org.tessellation.currency.l0.http.p2p.P2PClient
 import org.tessellation.currency.l0.snapshot.programs.{Download, Genesis, Rollback}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.{L0Peer, PeerId}

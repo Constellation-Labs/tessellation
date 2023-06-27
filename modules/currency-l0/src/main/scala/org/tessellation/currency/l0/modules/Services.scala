@@ -10,7 +10,7 @@ import cats.syntax.functor._
 
 import org.tessellation.currency.BaseDataApplicationL0Service
 import org.tessellation.currency.l0.config.types.AppConfig
-import org.tessellation.currency.l0.http.P2PClient
+import org.tessellation.currency.l0.http.p2p.P2PClient
 import org.tessellation.currency.l0.snapshot.services.{NoopRewards, StateChannelSnapshotService}
 import org.tessellation.currency.l0.snapshot.{CurrencySnapshotConsensus, CurrencySnapshotEvent}
 import org.tessellation.currency.schema.currency._

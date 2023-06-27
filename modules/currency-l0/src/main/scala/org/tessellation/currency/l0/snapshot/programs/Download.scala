@@ -15,7 +15,7 @@ import cats.syntax.show._
 import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
 
-import org.tessellation.currency.l0.http.P2PClient
+import org.tessellation.currency.l0.http.p2p.P2PClient
 import org.tessellation.currency.l0.snapshot.CurrencySnapshotContext
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext

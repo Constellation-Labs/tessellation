@@ -5,7 +5,10 @@ import java.security.PrivateKey
 import cats.effect.Async
 import cats.syntax.semigroupk._
 
+import org.tessellation.currency.BaseDataApplicationL0Service
 import org.tessellation.currency.l0.cell.{L0Cell, L0CellInput}
+import org.tessellation.currency.l0.http.routes.{CurrencyBlockRoutes, DataBlockRoutes}
+import org.tessellation.currency.l0.snapshot.CurrencySnapshotEvent
 import org.tessellation.currency.schema.currency._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.SnapshotOrdinal
@@ -19,7 +22,6 @@ import org.tessellation.sdk.http.routes._
 import org.tessellation.sdk.infrastructure.healthcheck.ping.PingHealthCheckRoutes
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
-import org.tessellation.security.signature.Signed
 
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
 import org.http4s.server.Router
@@ -38,7 +40,8 @@ object HttpApi {
     environment: AppEnvironment,
     selfId: PeerId,
     nodeVersion: String,
-    httpCfg: HttpConfig
+    httpCfg: HttpConfig,
+    maybeDataApplication: Option[BaseDataApplicationL0Service[F]]
   ): HttpApi[F] =
     new HttpApi[F](
       storages,
@@ -50,7 +53,8 @@ object HttpApi {
       environment,
       selfId,
       nodeVersion,
-      httpCfg
+      httpCfg,
+      maybeDataApplication
     ) {}
 }
 
@@ -64,10 +68,11 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
   environment: AppEnvironment,
   selfId: PeerId,
   nodeVersion: String,
-  httpCfg: HttpConfig
+  httpCfg: HttpConfig,
+  maybeDataApplication: Option[BaseDataApplicationL0Service[F]]
 ) {
 
-  private val mkCell = (block: Signed[CurrencyBlock]) => L0Cell.mkL0Cell(queues.l1Output).apply(L0CellInput.HandleL1Block(block))
+  private val mkCell = (event: CurrencySnapshotEvent) => L0Cell.mkL0Cell(queues.l1Output).apply(L0CellInput.HandleL1Block(event))
 
   private val snapshotRoutes = SnapshotRoutes[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](storages.snapshot, None, "/snapshots")
   private val clusterRoutes =
@@ -76,8 +81,10 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
 
   private val registrationRoutes = RegistrationRoutes[F](services.cluster)
   private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip)
-  private val currencyRoutes =
-    CurrencyRoutes[F, CurrencyTransaction, CurrencyBlock, CurrencyIncrementalSnapshot]("/currency", services.address, mkCell)
+  private val currencyBlockRoutes = CurrencyBlockRoutes[F](mkCell)
+  private val dataBlockRoutes = maybeDataApplication.map(_.dataDecoder).map(implicit decoder => DataBlockRoutes[F](mkCell))
+  private val walletRoutes = WalletRoutes[F, CurrencyIncrementalSnapshot]("/currency", services.address)
+
   private val consensusInfoRoutes = new ConsensusInfoRoutes[F, SnapshotOrdinal](services.cluster, services.consensus.storage, selfId)
   private val consensusRoutes = services.consensus.routes.p2pRoutes
 
@@ -107,7 +114,9 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
               targetRoutes <+>
               snapshotRoutes.publicRoutes <+>
               clusterRoutes.publicRoutes <+>
-              currencyRoutes.publicRoutes <+>
+              currencyBlockRoutes.publicRoutes <+>
+              dataBlockRoutes.map(_.publicRoutes).getOrElse(HttpRoutes.empty) <+>
+              walletRoutes.publicRoutes <+>
               nodeRoutes.publicRoutes <+>
               consensusInfoRoutes.publicRoutes
           }

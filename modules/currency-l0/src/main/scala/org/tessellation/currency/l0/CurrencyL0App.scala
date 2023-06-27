@@ -8,7 +8,7 @@ import org.tessellation.BuildInfo
 import org.tessellation.currency._
 import org.tessellation.currency.l0.cli.method
 import org.tessellation.currency.l0.cli.method._
-import org.tessellation.currency.l0.http.P2PClient
+import org.tessellation.currency.l0.http.p2p.P2PClient
 import org.tessellation.currency.l0.modules._
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.cats.effect.ResourceIO
@@ -101,6 +101,7 @@ abstract class CurrencyL0App(
       _ <- Daemons
         .start(storages, services, programs, queues, healthChecks, dataApplication)
         .asResource
+
       api = HttpApi
         .make[IO](
           storages,
@@ -112,7 +113,8 @@ abstract class CurrencyL0App(
           cfg.environment,
           sdk.nodeId,
           BuildInfo.version,
-          cfg.http
+          cfg.http,
+          dataApplication
         )
       _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
       _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)

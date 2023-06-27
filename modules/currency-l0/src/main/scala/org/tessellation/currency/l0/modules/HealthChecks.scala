@@ -4,7 +4,7 @@ import cats.effect.Async
 import cats.effect.std.{Random, Supervisor}
 import cats.syntax.functor._
 
-import org.tessellation.currency.l0.http.P2PClient
+import org.tessellation.currency.l0.http.p2p.P2PClient
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.config.types.HealthCheckConfig

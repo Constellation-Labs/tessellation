@@ -1,4 +1,4 @@
-package org.tessellation.currency.l0.http
+package org.tessellation.currency.l0.http.p2p
 
 import cats.effect.Async
 

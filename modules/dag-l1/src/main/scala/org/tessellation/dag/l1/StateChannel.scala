@@ -186,7 +186,7 @@ class StateChannel[
         .map(peers => peers.headOption)
         .flatMap { maybeL0Peer =>
           maybeL0Peer.fold(logger.warn("No available L0 peer")) { l0Peer =>
-            p2PClient.l0CurrencyCluster
+            p2PClient.l0BlockOutputClient
               .sendL1Output(fb.hashedBlock.signed)(l0Peer)
               .ifM(Applicative[F].unit, logger.warn("Sending block to L0 failed."))
           }

@@ -2,30 +2,22 @@ package org.tessellation.sdk.http.routes
 
 import cats.effect.Async
 import cats.syntax.flatMap._
-import cats.syntax.functor._
 
 import org.tessellation.ext.http4s.AddressVar
-import org.tessellation.kernel._
-import org.tessellation.schema.Block
 import org.tessellation.schema.snapshot.Snapshot
-import org.tessellation.schema.transaction.Transaction
 import org.tessellation.sdk.domain.snapshot.services.AddressService
 import org.tessellation.sdk.ext.http4s.SnapshotOrdinalVar
-import org.tessellation.security.signature.Signed
 
-import io.circe.Decoder
 import io.circe.shapes._
 import org.http4s.HttpRoutes
-import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
 import org.http4s.dsl.Http4sDsl
 import org.http4s.server.Router
 import shapeless._
 import shapeless.syntax.singleton._
 
-final case class CurrencyRoutes[F[_]: Async, T <: Transaction, B <: Block[T]: Decoder, S <: Snapshot[T, B]](
+final case class WalletRoutes[F[_]: Async, S <: Snapshot[_, _]](
   prefixPath: String,
-  addressService: AddressService[F, S],
-  mkCell: Signed[B] => Cell[F, StackF, _, Either[CellError, Ω], _]
+  addressService: AddressService[F, S]
 ) extends Http4sDsl[F] {
   import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 
@@ -73,13 +65,6 @@ final case class CurrencyRoutes[F[_]: Async, T <: Transaction, B <: Block[T]: De
           Ok(("count" ->> wallets) :: ("ordinal" ->> ordinal.value.value) :: HNil)
         case _ => NotFound()
       }
-
-    case req @ POST -> Root / "l1-output" =>
-      req
-        .as[Signed[B]]
-        .map(mkCell)
-        .flatMap(_.run())
-        .flatMap(_ => Ok())
   }
 
   val publicRoutes: HttpRoutes[F] = Router(
