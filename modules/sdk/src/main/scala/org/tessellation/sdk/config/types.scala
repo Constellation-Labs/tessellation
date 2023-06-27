@@ -17,7 +17,8 @@ object types {
     httpConfig: HttpConfig,
     leavingDelay: FiniteDuration,
     stateAfterJoining: NodeState,
-    collateral: CollateralConfig
+    collateral: CollateralConfig,
+    trustStorage: TrustStorageConfig
   )
 
   case class RumorStorageConfig(
@@ -92,6 +93,11 @@ object types {
 
   case class CollateralConfig(
     amount: Amount
+  )
+
+  case class TrustStorageConfig(
+    ordinalTrustUpdateInterval: NonNegLong,
+    ordinalTrustUpdateDelay: NonNegLong
   )
 
 }

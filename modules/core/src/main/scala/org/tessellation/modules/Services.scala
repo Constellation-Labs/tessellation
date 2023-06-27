@@ -14,6 +14,7 @@ import org.tessellation.domain.cell.L0Cell
 import org.tessellation.domain.statechannel.StateChannelService
 import org.tessellation.infrastructure.rewards._
 import org.tessellation.infrastructure.snapshot._
+import org.tessellation.infrastructure.trust.TrustStorageUpdater
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.block.DAGBlock
@@ -85,6 +86,8 @@ object Services {
       collateralService = Collateral.make[F](cfg.collateral, storages.globalSnapshot)
       stateChannelService = StateChannelService
         .make[F](L0Cell.mkL0Cell(queues.l1Output, queues.stateChannelOutput), validators.stateChannelValidator)
+      getOrdinal = storages.globalSnapshot.headSnapshot.map(_.map(_.ordinal))
+      trustUpdaterService = TrustStorageUpdater.make(getOrdinal, sdkServices.gossip, storages.trust)
     } yield
       new Services[F](
         localHealthcheck = sdkServices.localHealthcheck,
@@ -95,7 +98,8 @@ object Services {
         address = addressService,
         collateral = collateralService,
         rewards = rewards,
-        stateChannel = stateChannelService
+        stateChannel = stateChannelService,
+        trustStorageUpdater = trustUpdaterService
       ) {}
 }
 
@@ -108,5 +112,6 @@ sealed abstract class Services[F[_]] private (
   val address: AddressService[F, GlobalIncrementalSnapshot],
   val collateral: Collateral[F],
   val rewards: Rewards[F, DAGTransaction, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot],
-  val stateChannel: StateChannelService[F]
+  val stateChannel: StateChannelService[F],
+  val trustStorageUpdater: TrustStorageUpdater[F]
 )

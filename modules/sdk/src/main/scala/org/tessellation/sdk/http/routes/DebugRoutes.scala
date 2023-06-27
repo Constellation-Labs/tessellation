@@ -25,7 +25,8 @@ final case class DebugRoutes[F[_]: Async](
   clusterStorage: ClusterStorage[F],
   consensusService: SnapshotConsensus[F, _, _, _, _, _],
   gossipService: Gossip[F],
-  sessionService: Session[F]
+  sessionService: Session[F],
+  additionalRoutes: HttpRoutes[F]*
 ) extends Http4sDsl[F] {
 
   private[routes] val prefixPath = "/debug"
@@ -75,6 +76,6 @@ final case class DebugRoutes[F[_]: Async](
     }
   }
   val routes: HttpRoutes[F] = Router(
-    prefixPath -> httpRoutes
+    prefixPath -> additionalRoutes.fold(httpRoutes)(_ <+> _)
   )
 }

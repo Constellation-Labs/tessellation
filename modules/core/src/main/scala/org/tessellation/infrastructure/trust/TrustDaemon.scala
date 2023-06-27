@@ -6,10 +6,9 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.config.types.TrustDaemonConfig
-import org.tessellation.domain.trust.storage.TrustStorage
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.trust.TrustInfo
 import org.tessellation.sdk.domain.Daemon
+import org.tessellation.sdk.domain.trust.storage.{TrustMap, TrustStorage}
 
 trait TrustDaemon[F[_]] extends Daemon[F]
 
@@ -26,7 +25,7 @@ object TrustDaemon {
         _ <- S.supervise(modelUpdate.foreverM).void
       } yield ()
 
-    private def calculatePredictedTrust(trust: Map[PeerId, TrustInfo]): Map[PeerId, Double] =
+    private def calculatePredictedTrust(trust: TrustMap): Map[PeerId, Double] =
       TrustModel.calculateTrust(trust, selfPeerId)
 
     private def modelUpdate: F[Unit] =

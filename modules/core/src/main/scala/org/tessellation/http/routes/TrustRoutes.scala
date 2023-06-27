@@ -5,10 +5,10 @@ import cats.syntax.applicativeError._
 import cats.syntax.flatMap._
 
 import org.tessellation.domain.cluster.programs.TrustPush
-import org.tessellation.domain.trust.storage.TrustStorage
 import org.tessellation.ext.codecs.BinaryCodec._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.trust.PeerObservationAdjustmentUpdateBatch
+import org.tessellation.sdk.domain.trust.storage.TrustStorage
 import org.tessellation.sdk.ext.http4s.refined.RefinedRequestDecoder
 
 import org.http4s._

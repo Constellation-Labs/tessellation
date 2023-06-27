@@ -13,7 +13,9 @@ import eu.timepit.refined.types.numeric.NonNegLong
 import io.circe.{Decoder, Encoder}
 
 @derive(order, show)
-case class SnapshotOrdinal(value: NonNegLong)
+case class SnapshotOrdinal(value: NonNegLong) {
+  def plus(addend: NonNegLong): SnapshotOrdinal = SnapshotOrdinal(value |+| addend)
+}
 
 object SnapshotOrdinal {
   val MinValue: SnapshotOrdinal = SnapshotOrdinal(NonNegLong.MinValue)
