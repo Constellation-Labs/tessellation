@@ -7,8 +7,9 @@ import cats.syntax.applicative._
 import cats.syntax.eq._
 import cats.syntax.list._
 
-import scala.collection.immutable.SortedSet
+import scala.collection.immutable.{SortedMap, SortedSet}
 
+import org.tessellation.config.types.RewardsConfig._
 import org.tessellation.config.types._
 import org.tessellation.domain.rewards.Rewards
 import org.tessellation.ext.kryo._
@@ -19,7 +20,7 @@ import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.generators.{chooseNumRefined, transactionGen}
-import org.tessellation.schema.transaction.TransactionFee
+import org.tessellation.schema.transaction.{RewardTransaction, TransactionAmount, TransactionFee}
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.key.ops.PublicKeyOps
@@ -70,9 +71,9 @@ object RewardsSuite extends MutableIOSuite with Checkers {
   def makeRewards(config: RewardsConfig)(
     implicit sp: SecurityProvider[IO]
   ): Rewards[F] = {
-    val programsDistributor = ProgramsDistributor.make(config.programs)
+    val programsDistributor = ProgramsDistributor.make
     val regularDistributor = FacilitatorDistributor.make
-    Rewards.make[IO](config.rewardsPerEpoch, programsDistributor, regularDistributor)
+    Rewards.make[IO](config, programsDistributor, regularDistributor)
   }
 
   test("fee rewards sum up to the total fee") { res =>
@@ -109,11 +110,14 @@ object RewardsSuite extends MutableIOSuite with Checkers {
     expect(Amount(NonNegLong.unsafeFrom(sum)) === totalSupply)
   }
 
-  pureTest("all program weights sum up to the expected value") {
-    val weightSum = config.programs.weights.toList.map(_._2.value.value).sum +
-      config.programs.remainingWeight.value
+  test("all program weights sum up to the expected value") {
+    forall(meaningfulEpochProgressGen) { epochProgress =>
+      val configForEpoch = config.programs(epochProgress)
+      val weightSum = configForEpoch.weights.toList.map(_._2.value.value).sum +
+        configForEpoch.remainingWeight.value
 
-    expect.eql(expectedWeightsSum.value.value, weightSum)
+      expect.eql(expectedWeightsSum.value.value, weightSum)
+    }
   }
 
   test("generated reward transactions sum up to the total snapshot reward") { res =>
@@ -151,5 +155,52 @@ object RewardsSuite extends MutableIOSuite with Checkers {
           txs <- rewards.mintedDistribution(epochProgress, facilitators)
         } yield expect(txs.isEmpty)
     }
+  }
+
+  test("minted rewards for the logic before epoch progress 1336392 are as expected") { res =>
+    implicit val (_, sp, makeIdFn) = res
+
+    val epoch = EpochProgress.MinValue
+    val facilitator = makeIdFn.apply()
+    val facilitators = NonEmptySet.one(facilitator)
+    val adjustedConfig = config.copy(rewardsPerEpoch = SortedMap(EpochProgress.MaxValue -> Amount(100L)))
+
+    for {
+      rewards <- makeRewards(adjustedConfig).pure[F]
+
+      txs <- rewards.mintedDistribution(epoch, facilitators)
+      facilitatorAddress <- facilitator.toAddress
+      expected = SortedSet(
+        RewardTransaction(stardustPrimary, TransactionAmount(5L)),
+        RewardTransaction(stardustSecondary, TransactionAmount(5L)),
+        RewardTransaction(softStaking, TransactionAmount(20L)),
+        RewardTransaction(testnet, TransactionAmount(1L)),
+        RewardTransaction(dataPool, TransactionAmount(65L)),
+        RewardTransaction(facilitatorAddress, TransactionAmount(4L))
+      )
+    } yield expect.eql(expected, txs)
+  }
+
+  test("minted rewards for the logic at epoch progress 1336392 and later are as expected") { res =>
+    implicit val (_, sp, makeIdFn) = res
+
+    val epoch = EpochProgress(1336392L)
+    val facilitator = makeIdFn.apply()
+    val facilitators = NonEmptySet.one(facilitator)
+    val adjustedConfig = config.copy(rewardsPerEpoch = SortedMap(EpochProgress.MaxValue -> Amount(100L)))
+
+    for {
+      rewards <- makeRewards(adjustedConfig).pure[F]
+
+      txs <- rewards.mintedDistribution(epoch, facilitators)
+      facilitatorAddress <- facilitator.toAddress
+      expected = SortedSet(
+        RewardTransaction(stardustPrimary, TransactionAmount(5L)),
+        RewardTransaction(stardustSecondary, TransactionAmount(5L)),
+        RewardTransaction(testnet, TransactionAmount(5L)),
+        RewardTransaction(dataPool, TransactionAmount(55L)),
+        RewardTransaction(facilitatorAddress, TransactionAmount(30L))
+      )
+    } yield expect.eql(expected, txs)
   }
 }

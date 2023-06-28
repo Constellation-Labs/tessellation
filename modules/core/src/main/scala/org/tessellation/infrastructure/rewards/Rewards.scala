@@ -15,6 +15,7 @@ import cats.syntax.show._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
+import org.tessellation.config.types.RewardsConfig
 import org.tessellation.domain.rewards._
 import org.tessellation.ext.refined._
 import org.tessellation.schema.ID.Id
@@ -33,7 +34,7 @@ import io.estatico.newtype.ops.toCoercibleIdOps
 object Rewards {
 
   def make[F[_]: Async](
-    rewardsPerEpoch: SortedMap[EpochProgress, Amount],
+    config: RewardsConfig,
     programsDistributor: ProgramsDistributor[Either[ArithmeticException, *]],
     facilitatorDistributor: FacilitatorDistributor[F]
   ): Rewards[F] =
@@ -67,11 +68,11 @@ object Rewards {
       ): F[SortedSet[RewardTransaction]] =
         Random.scalaUtilRandomSeedLong(epochProgress.coerce).flatMap { random =>
           val allRewardsState = for {
-            programRewards <- programsDistributor.distribute().mapK[F](liftFunction(_.liftTo[F]))
+            programRewards <- programsDistributor.distribute(config.programs(epochProgress)).mapK[F](liftFunction(_.liftTo[F]))
             facilitatorRewards <- facilitatorDistributor.distribute(random, facilitators)
           } yield programRewards ++ facilitatorRewards
 
-          val mintedAmount = getAmountByEpoch(epochProgress, rewardsPerEpoch)
+          val mintedAmount = getAmountByEpoch(epochProgress, config.rewardsPerEpoch)
 
           allRewardsState
             .run(mintedAmount)

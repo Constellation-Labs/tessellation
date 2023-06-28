@@ -13,14 +13,14 @@ import io.estatico.newtype.ops._
 
 trait ProgramsDistributor[F[_]] {
 
-  def distribute(): DistributionState[F]
+  def distribute(config: ProgramsDistributionConfig): DistributionState[F]
 
 }
 
 object ProgramsDistributor {
 
-  def make(config: ProgramsDistributionConfig): ProgramsDistributor[Either[ArithmeticException, *]] =
-    () =>
+  def make: ProgramsDistributor[Either[ArithmeticException, *]] =
+    config =>
       StateT { amount =>
         def calculateRewards(denominator: NonNegLong): Either[ArithmeticException, List[(Address, NonNegLong)]] =
           config.weights.toList.foldM(List.empty[(Address, NonNegLong)]) { (acc, item) =>
