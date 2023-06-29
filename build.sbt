@@ -208,9 +208,14 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.refinedCore,
       Libraries.refinedCats,
       Libraries.refinedScalacheck,
-      Libraries.http4sCore
+      Libraries.http4sCore,
+      Libraries.http4sDsl,
+      Libraries.http4sServer,
+      Libraries.http4sClient,
+      Libraries.http4sCirce,
     )
   )
+
 lazy val testShared = (project in file("modules/test-shared"))
   .configs(IntegrationTest)
   .settings(
@@ -359,6 +364,7 @@ lazy val dagL1 = (project in file("modules/dag-l1"))
       Libraries.sqlite
     )
   )
+
 lazy val tools = (project in file("modules/tools"))
   .enablePlugins(AshScriptPlugin)
   .enablePlugins(JavaAppPackaging)
@@ -405,6 +411,7 @@ lazy val tools = (project in file("modules/tools"))
       Libraries.skunkCirce
     )
   )
+
 lazy val core = (project in file("modules/core"))
   .enablePlugins(AshScriptPlugin)
   .enablePlugins(JavaAppPackaging)

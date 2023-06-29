@@ -5,11 +5,10 @@ import java.security.PrivateKey
 import cats.Show
 import cats.effect.Async
 import cats.effect.std.Supervisor
-import cats.syntax.functor._
 import cats.syntax.semigroupk._
 
-import org.tessellation.currency.BaseDataApplicationService
-import org.tessellation.currency.l1.http.Routes
+import org.tessellation.currency.BaseDataApplicationL1Service
+import org.tessellation.currency.l1.http.DataApplicationRoutes
 import org.tessellation.dag.l1.http.{Routes => DAGRoutes}
 import org.tessellation.dag.l1.modules.HealthChecks
 import org.tessellation.kryo.KryoSerializer
@@ -40,7 +39,7 @@ object HttpApi {
     S <: Snapshot[T, B],
     SI <: SnapshotInfo[P]
   ](
-    maybeDataApplication: Option[BaseDataApplicationService[F]],
+    maybeDataApplication: Option[BaseDataApplicationL1Service[F]],
     storages: Storages[F, T, B, P, S, SI],
     queues: Queues[F, T, B],
     privateKey: PrivateKey,
@@ -73,7 +72,7 @@ sealed abstract class HttpApi[
   S <: Snapshot[T, B],
   SI <: SnapshotInfo[P]
 ] private (
-  maybeDataApplication: Option[BaseDataApplicationService[F]],
+  maybeDataApplication: Option[BaseDataApplicationL1Service[F]],
   storages: Storages[F, T, B, P, S, SI],
   queues: Queues[F, T, B],
   privateKey: PrivateKey,
@@ -89,7 +88,7 @@ sealed abstract class HttpApi[
   private val registrationRoutes = RegistrationRoutes[F](services.cluster)
   private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip)
   private val routes = maybeDataApplication.map { da =>
-    Routes[F](queues.dataApplicationPeerConsensusInput, storages.l0Cluster, da.dataDecoder)
+    DataApplicationRoutes[F](queues.dataApplicationPeerConsensusInput, storages.l0Cluster, da, queues.dataUpdates)
   }
   private val currencyRoutes =
     DAGRoutes[F, T](services.transaction, storages.transaction, storages.l0Cluster, queues.peerBlockConsensusInput)
@@ -110,7 +109,7 @@ sealed abstract class HttpApi[
           nodeRoutes.publicRoutes <+>
           metricRoutes <+>
           targetRoutes <+>
-          routes.as(HttpRoutes.empty[F]).getOrElse(currencyRoutes.publicRoutes)
+          routes.map(_.publicRoutes).getOrElse(currencyRoutes.publicRoutes)
       }
     }
 

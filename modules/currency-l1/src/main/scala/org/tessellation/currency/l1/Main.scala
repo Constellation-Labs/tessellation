@@ -120,5 +120,5 @@ object Main
       ClusterId(UUID.fromString("517c3a05-9219-471b-a54c-21b7d72f4ae5")),
       version = BuildInfo.version
     ) {
-  override def dataApplication: Option[BaseDataApplicationL1Service[IO]] = BaseDataApplicationL1Service(Acme.energy).some
+  override def dataApplication: Option[BaseDataApplicationL1Service[IO]] = None // BaseDataApplicationL1Service(Acme.energy).some
 }
