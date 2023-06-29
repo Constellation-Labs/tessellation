@@ -124,6 +124,14 @@ object Signed {
         InvalidSignatureForHash(signed).asLeft[Hashed[A]].pure[F]
       )
 
+    def toHashedWithSignatureCheck[F[_]: Async: KryoSerializer: SecurityProvider](
+      toBytes: A => F[Array[Byte]]
+    ): F[Either[InvalidSignatureForHash[A], Hashed[A]]] =
+      hasValidSignature.ifM(
+        toHashed(toBytes).map(_.asRight[InvalidSignatureForHash[A]]),
+        InvalidSignatureForHash(signed).asLeft[Hashed[A]].pure[F]
+      )
+
     def toHashed[F[_]: Async: KryoSerializer]: F[Hashed[A]] =
       signed.value.hashF.flatMap { hash =>
         proofsHash.map { proofsHash =>
