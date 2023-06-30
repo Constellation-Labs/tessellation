@@ -207,11 +207,17 @@ const checkCurrencyL1Node = async () => {
     await clusterCheck( infos, false, 'Currency L1', 3, false );
 };
 
-const main = async () => {
+const checkClusters = async (isCurrencyLayer) => {
     await checkGlobalL0Node();
-    await checkDAGL1Node();
+    if(!isCurrencyLayer){
+        await checkDAGL1Node();
+        return
+    }
+
     await checkCurrencyL0Node();
     await checkCurrencyL1Node();
 };
 
-main();
+module.exports = {
+    checkClusters
+}
