@@ -13,9 +13,11 @@ import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
+import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.block.DAGBlock
-import org.tessellation.schema.transaction.DAGTransaction
+import org.tessellation.schema.epoch.EpochProgress
+import org.tessellation.schema.transaction.{DAGTransaction, RewardTransaction, TransactionAmount}
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.AppEnvironment.Mainnet
 import org.tessellation.sdk.domain.block.processing._
@@ -30,6 +32,7 @@ import org.tessellation.security.signature.Signed
 import org.tessellation.statechannel.StateChannelOutput
 
 import eu.timepit.refined.auto._
+import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 abstract class GlobalSnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
@@ -133,6 +136,21 @@ object GlobalSnapshotConsensusFunctions {
 
         returnedDAGEvents = getReturnedDAGEvents(acceptanceResult)
 
+        (adjustedSnapshotInfo, adjustedRewardTxs) = snapshotInfo.balances
+          .get(Address("DAGSTARDUSTCOLLECTIVEHZOIPHXZUBFGNXWJETZVSPAPAHMLXS"))
+          .filter(_ => currentEpochProgress === EpochProgress(NonNegLong(2L))) // TODO: set epoch progress
+          .map { stardustBalance =>
+            val adjustedBalances = snapshotInfo.balances.removed(Address("DAGSTARDUSTCOLLECTIVEHZOIPHXZUBFGNXWJETZVSPAPAHMLXS"))
+            val adjustedRewardTxs = acceptedRewardTxs + RewardTransaction(
+              Address("DAG8VT7bxjs1XXBAzJGYJDaeyNxuThikHeUTp9XY"),
+              TransactionAmount(PosLong.unsafeFrom(stardustBalance.value))
+            )
+
+            (snapshotInfo.copy(balances = adjustedBalances), adjustedRewardTxs)
+
+          }
+          .getOrElse((snapshotInfo, acceptedRewardTxs))
+
         globalSnapshot = GlobalIncrementalSnapshot(
           currentOrdinal,
           height,
@@ -140,7 +158,7 @@ object GlobalSnapshotConsensusFunctions {
           lastArtifactHash,
           accepted,
           scSnapshots,
-          acceptedRewardTxs,
+          adjustedRewardTxs,
           currentEpochProgress,
           GlobalSnapshot.nextFacilitators,
           SnapshotTips(
@@ -150,7 +168,7 @@ object GlobalSnapshotConsensusFunctions {
           stateProof
         )
         returnedEvents = returnedSCEvents.map(_.asLeft[DAGEvent]).union(returnedDAGEvents)
-      } yield (globalSnapshot, snapshotInfo, returnedEvents)
+      } yield (globalSnapshot, adjustedSnapshotInfo, returnedEvents)
     }
 
     private def getReturnedDAGEvents(
