@@ -27,7 +27,7 @@ final case class StateChannelRoutes[F[_]: Async](
         .map(StateChannelOutput(address, _))
         .flatMap(stateChannelService.process)
         .flatMap {
-          case Left(_) => BadRequest()
+          case Left(_)  => BadRequest()
           case Right(_) => Ok()
         }
   }

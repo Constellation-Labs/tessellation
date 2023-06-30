@@ -14,6 +14,7 @@ import cats.syntax.show._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
+import org.tessellation.config.types.RewardsConfig
 import org.tessellation.ext.refined._
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.address.Address
@@ -34,7 +35,7 @@ import io.estatico.newtype.ops._
 
 object Rewards {
   def make[F[_]: Async](
-    rewardsPerEpoch: SortedMap[EpochProgress, Amount],
+    config: RewardsConfig,
     programsDistributor: ProgramsDistributor[Either[ArithmeticException, *]],
     facilitatorDistributor: FacilitatorDistributor[F]
   ): Rewards[F, DAGTransaction, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot] =
@@ -90,11 +91,11 @@ object Rewards {
       ): F[SortedSet[RewardTransaction]] =
         Random.scalaUtilRandomSeedLong(epochProgress.coerce).flatMap { random =>
           val allRewardsState = for {
-            programRewards <- programsDistributor.distribute().mapK[F](liftFunction(_.liftTo[F]))
+            programRewards <- programsDistributor.distribute(config.programs(epochProgress)).mapK[F](liftFunction(_.liftTo[F]))
             facilitatorRewards <- facilitatorDistributor.distribute(random, facilitators)
           } yield programRewards ++ facilitatorRewards
 
-          val mintedAmount = getAmountByEpoch(epochProgress, rewardsPerEpoch)
+          val mintedAmount = getAmountByEpoch(epochProgress, config.rewardsPerEpoch)
 
           allRewardsState
             .run(mintedAmount)

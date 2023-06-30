@@ -6,9 +6,11 @@ import cats.effect.{IO, Resource}
 import cats.syntax.applicative._
 import cats.syntax.eq._
 import cats.syntax.list._
+import cats.syntax.option._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
+import org.tessellation.config.types.RewardsConfig._
 import org.tessellation.config.types._
 import org.tessellation.ext.kryo._
 import org.tessellation.kryo.KryoSerializer
@@ -18,7 +20,7 @@ import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.generators.{chooseNumRefined, signatureGen, signedTransactionGen}
-import org.tessellation.schema.transaction.DAGTransaction
+import org.tessellation.schema.transaction.{DAGTransaction, RewardTransaction, TransactionAmount}
 import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.infrastructure.consensus.trigger.{EventTrigger, TimeTrigger}
 import org.tessellation.sdk.sdkKryoRegistrar
@@ -48,11 +50,14 @@ object RewardsSuite extends MutableIOSuite with Checkers {
   } yield (kryo, sp, mkKeyPair)
 
   val config: RewardsConfig = RewardsConfig()
+  val singleEpochRewardsConfig = config.copy(rewardsPerEpoch = SortedMap(EpochProgress.MaxValue -> Amount(100L)))
   val totalSupply: Amount = Amount(1599999999_74784000L) // approx because of rounding
   val expectedWeightsSum: Weight = Weight(100L)
 
   val lowerBound: NonNegLong = EpochProgress.MinValue.value
   val upperBound: NonNegLong = config.rewardsPerEpoch.keySet.max.value
+  val firstMintingLogicUpperBound: NonNegLong = 1336391L
+  val secondMintingLogicLowerBound: NonNegLong = 1336392L
   val lowerBoundNoMinting: NonNegLong = NonNegLong.unsafeFrom(upperBound.value + 1)
   val special: Seq[NonNegLong] =
     config.rewardsPerEpoch.keys.flatMap(epochEnd => Seq(epochEnd.value, NonNegLong.unsafeFrom(epochEnd.value + 1L))).toSeq
@@ -62,6 +67,12 @@ object RewardsSuite extends MutableIOSuite with Checkers {
 
   val epochProgressGen: Gen[EpochProgress] =
     chooseNumRefined(lowerBound, NonNegLong.MaxValue).map(EpochProgress(_))
+
+  val firstMintingLogicEpochProgressGen: Gen[EpochProgress] =
+    chooseNumRefined(lowerBound, firstMintingLogicUpperBound).map(EpochProgress(_))
+
+  val secondMintingLogicEpochProgressGen: Gen[EpochProgress] =
+    chooseNumRefined(secondMintingLogicLowerBound, upperBound).map(EpochProgress(_))
 
   val meaningfulEpochProgressGen: Gen[EpochProgress] =
     chooseNumRefined(lowerBound, upperBound, special: _*).map(EpochProgress(_))
@@ -75,9 +86,11 @@ object RewardsSuite extends MutableIOSuite with Checkers {
     proofs <- Gen.nonEmptyListOf(SignatureProof(id, signature))
   } yield proofs.toNel.get.toNes
 
-  def snapshotWithoutTransactionsGen(implicit genIdFn: GenIdFn, ks: KryoSerializer[IO]): Gen[Signed[GlobalIncrementalSnapshot]] = for {
-    proofs <- signatureProofsGen
+  def snapshotWithoutTransactionsGen(
+    withSignatures: Option[NonEmptySet[SignatureProof]] = None
+  )(implicit genIdFn: GenIdFn, ks: KryoSerializer[IO]): Gen[Signed[GlobalIncrementalSnapshot]] = for {
     epochProgress <- epochProgressGen
+    proofs <- withSignatures.map(Gen.delay(_)).getOrElse(signatureProofsGen)
     snapshot = Signed(GlobalSnapshot.mkGenesis(Map.empty, epochProgress), proofs)
     incremental = Signed(GlobalIncrementalSnapshot.fromGlobalSnapshot(snapshot).unsafeRunSync(), proofs)
   } yield incremental
@@ -85,9 +98,9 @@ object RewardsSuite extends MutableIOSuite with Checkers {
   def makeRewards(config: RewardsConfig)(
     implicit sp: SecurityProvider[IO]
   ): Rewards[F, DAGTransaction, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot] = {
-    val programsDistributor = ProgramsDistributor.make(config.programs)
+    val programsDistributor = ProgramsDistributor.make
     val regularDistributor = FacilitatorDistributor.make
-    Rewards.make[IO](config.rewardsPerEpoch, programsDistributor, regularDistributor)
+    Rewards.make[IO](config, programsDistributor, regularDistributor)
   }
 
   def getAmountByEpoch(epochProgress: EpochProgress): Amount =
@@ -100,7 +113,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
     implicit val (ks, sp, makeIdFn) = res
 
     val gen = for {
-      snapshot <- snapshotWithoutTransactionsGen
+      snapshot <- snapshotWithoutTransactionsGen()
       txs <- Gen.listOf(signedTransactionGen).map(_.toSortedSet)
     } yield (snapshot, txs)
 
@@ -126,11 +139,14 @@ object RewardsSuite extends MutableIOSuite with Checkers {
     expect(Amount(NonNegLong.unsafeFrom(sum)) === totalSupply)
   }
 
-  pureTest("all program weights sum up to the expected value") {
-    val weightSum = config.programs.weights.toList.map(_._2.value.value).sum +
-      config.programs.remainingWeight.value
+  test("all program weights sum up to the expected value") {
+    forall(meaningfulEpochProgressGen) { epochProgress =>
+      val configForEpoch = config.programs(epochProgress)
+      val weightSum = configForEpoch.weights.toList.map(_._2.value.value).sum +
+        configForEpoch.remainingWeight.value
 
-    expect.eql(expectedWeightsSum.value.value, weightSum)
+      expect.eql(expectedWeightsSum.value.value, weightSum)
+    }
   }
 
   test("time trigger minted reward transactions sum up to the total snapshot reward for epoch") { res =>
@@ -138,7 +154,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
 
     val gen = for {
       epochProgress <- meaningfulEpochProgressGen
-      snapshot <- snapshotWithoutTransactionsGen
+      snapshot <- snapshotWithoutTransactionsGen()
     } yield (epochProgress, snapshot.focus(_.value.epochProgress).replace(epochProgress))
 
     forall(gen) {
@@ -157,7 +173,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
 
     val gen = for {
       epochProgress <- meaningfulEpochProgressGen
-      snapshot <- snapshotWithoutTransactionsGen
+      snapshot <- snapshotWithoutTransactionsGen()
       txs <- Gen.listOf(signedTransactionGen).map(_.toSortedSet)
     } yield (epochProgress, snapshot.focus(_.value.epochProgress).replace(epochProgress), txs)
 
@@ -178,7 +194,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
 
     val gen = for {
       epochProgress <- overflowEpochProgressGen
-      snapshot <- snapshotWithoutTransactionsGen
+      snapshot <- snapshotWithoutTransactionsGen()
     } yield snapshot.focus(_.value.epochProgress).replace(epochProgress)
 
     forall(gen) { snapshot =>
@@ -186,6 +202,65 @@ object RewardsSuite extends MutableIOSuite with Checkers {
         rewards <- makeRewards(config).pure[F]
         txs <- rewards.distribute(snapshot, SortedMap.empty, SortedSet.empty, TimeTrigger)
       } yield expect(txs.isEmpty)
+    }
+  }
+
+  test("minted rewards for the logic before epoch progress 1336392 are as expected") { res =>
+    implicit val (ks, sp, makeIdFn) = res
+
+    val facilitator = makeIdFn.apply()
+
+    val gen = for {
+      epochProgress <- firstMintingLogicEpochProgressGen
+      signature <- signatureGen
+      signatures = NonEmptySet.fromSetUnsafe(SortedSet(SignatureProof(facilitator, signature)))
+      snapshot <- snapshotWithoutTransactionsGen(signatures.some)
+    } yield snapshot.focus(_.value.epochProgress).replace(epochProgress)
+
+    forall(gen) { snapshot =>
+      for {
+        rewards <- makeRewards(singleEpochRewardsConfig).pure[F]
+
+        txs <- rewards.distribute(snapshot, SortedMap.empty, SortedSet.empty, TimeTrigger)
+        facilitatorAddress <- facilitator.toAddress
+        expected = SortedSet(
+          RewardTransaction(stardustPrimary, TransactionAmount(5L)),
+          RewardTransaction(stardustSecondary, TransactionAmount(5L)),
+          RewardTransaction(softStaking, TransactionAmount(20L)),
+          RewardTransaction(testnet, TransactionAmount(1L)),
+          RewardTransaction(dataPool, TransactionAmount(65L)),
+          RewardTransaction(facilitatorAddress, TransactionAmount(4L))
+        )
+      } yield expect.eql(expected, txs)
+    }
+  }
+
+  test("minted rewards for the logic at epoch progress 1336392 and later are as expected") { res =>
+    implicit val (ks, sp, makeIdFn) = res
+
+    val facilitator = makeIdFn.apply()
+
+    val gen = for {
+      epochProgress <- secondMintingLogicEpochProgressGen
+      signature <- signatureGen
+      signatures = NonEmptySet.fromSetUnsafe(SortedSet(SignatureProof(facilitator, signature)))
+      snapshot <- snapshotWithoutTransactionsGen(signatures.some)
+    } yield snapshot.focus(_.value.epochProgress).replace(epochProgress)
+
+    forall(gen) { snapshot =>
+      for {
+        rewards <- makeRewards(singleEpochRewardsConfig).pure[F]
+
+        txs <- rewards.distribute(snapshot, SortedMap.empty, SortedSet.empty, TimeTrigger)
+        facilitatorAddress <- facilitator.toAddress
+        expected = SortedSet(
+          RewardTransaction(stardustPrimary, TransactionAmount(5L)),
+          RewardTransaction(stardustSecondary, TransactionAmount(5L)),
+          RewardTransaction(testnet, TransactionAmount(5L)),
+          RewardTransaction(dataPool, TransactionAmount(55L)),
+          RewardTransaction(facilitatorAddress, TransactionAmount(30L))
+        )
+      } yield expect.eql(expected, txs)
     }
   }
 }

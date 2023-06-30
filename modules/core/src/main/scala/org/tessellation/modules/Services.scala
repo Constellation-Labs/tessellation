@@ -55,8 +55,8 @@ object Services {
     for {
       rewards <- Rewards
         .make[F](
-          cfg.rewards.rewardsPerEpoch,
-          ProgramsDistributor.make(cfg.rewards.programs),
+          cfg.rewards,
+          ProgramsDistributor.make,
           FacilitatorDistributor.make
         )
         .pure[F]
