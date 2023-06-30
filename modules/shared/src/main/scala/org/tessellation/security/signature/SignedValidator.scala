@@ -53,7 +53,7 @@ object SignedValidator {
     def validateSignatures[A <: AnyRef](
       signed: Signed[A]
     ): F[SignedValidationErrorOr[Signed[A]]] =
-      signed.validProofs.map { either =>
+      signed.validProofs(None).map { either =>
         either
           .leftMap(InvalidSignatures)
           .toValidatedNec

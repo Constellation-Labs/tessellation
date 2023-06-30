@@ -14,7 +14,7 @@ import org.tessellation.currency.l1.modules.{Queues, Services}
 import org.tessellation.currency.schema.currency._
 import org.tessellation.dag.l1.domain.dataApplication.consensus.ConsensusInput.OwnerConsensusInput
 import org.tessellation.dag.l1.domain.dataApplication.consensus._
-import org.tessellation.dag.l1.http.p2p.L0CurrencyClusterClient
+import org.tessellation.dag.l1.http.p2p.L0BlockOutputClient
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.cluster.programs.L0PeerDiscovery
@@ -29,8 +29,7 @@ object DataApplication {
   def run[F[_]: Async: Random: KryoSerializer: SecurityProvider](
     clusterStorage: ClusterStorage[F],
     l0ClusterStorage: L0ClusterStorage[F],
-    // lastSnapshotStorage: LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
-    currencyClusterClient: L0CurrencyClusterClient[F, CurrencyBlock],
+    blockOutputClient: L0BlockOutputClient[F, CurrencyBlock],
     consensusClient: ConsensusClient[F],
     l0PeerDiscoveryProgram: L0PeerDiscovery[F],
     services: Services[
@@ -98,35 +97,16 @@ object DataApplication {
           .map(peers => peers.headOption)
           .flatMap { maybeL0Peer =>
             maybeL0Peer.fold(logger.warn("No available L0 peer")) { l0Peer =>
-              currencyClusterClient
+              blockOutputClient
                 .sendDataApplicationBlock(fb.hashedBlock.signed)(dataApplicationService.dataEncoder)(l0Peer)
                 .ifM(Applicative[F].unit, logger.warn("Sending block to L0 failed"))
             }
           }
       }
 
-    // TODO
-    def l0PeerDiscovery: Stream[F, Unit] = Stream
-      .awakeEvery(10.seconds)
-      .as(())
-    // .evalMap { _ =>
-    // lastSnapshotStorage.get.flatMap {
-    // _.fold(Applicative[F].unit) { latestSnapshot =>
-    // l0PeerDiscoveryProgram.discover(latestSnapshot.signed.proofs.map(_.id).map(PeerId._Id.reverseGet))
-    // }
-    // }
-    // }
-
-    def sample = Stream
-      .awakeEvery(5.seconds)
-      .evalMap(_ => dataApplicationService.sample)
-      .evalMap(queues.dataUpdates.offer)
-
     blockConsensusInputs
       .through(runConsensus)
       .through(sendBlockToL0)
-      .merge(l0PeerDiscovery)
-      .merge(sample)
       .void
   }
 

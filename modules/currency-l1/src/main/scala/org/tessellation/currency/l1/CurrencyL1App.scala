@@ -209,7 +209,7 @@ abstract class CurrencyL1App(
           .run(
             storages.cluster,
             storages.l0Cluster,
-            p2pClient.l0CurrencyCluster,
+            p2pClient.l0BlockOutputClient,
             p2pClient.consensusClient,
             programs.l0PeerDiscovery,
             services,

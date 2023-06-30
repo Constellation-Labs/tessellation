@@ -7,9 +7,9 @@ import cats.syntax.all._
 import scala.reflect.ClassTag
 import scala.util.control.NoStackTrace
 
+import org.tessellation.security.Encodable
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Encodable, SecurityProvider}
 
 import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.syntax._
@@ -47,10 +47,7 @@ trait BaseDataApplicationL0Service[F[_]] extends BaseDataApplicationService[F] {
   final def serializedGenesis: F[Array[Byte]] = serializeState(genesis)
 }
 
-trait BaseDataApplicationL1Service[F[_]] extends BaseDataApplicationService[F] {
-  def enqueue(value: DataUpdate): F[Unit]
-  def sample(implicit S: SecurityProvider[F]): F[Signed[DataUpdate]]
-}
+trait BaseDataApplicationL1Service[F[_]] extends BaseDataApplicationService[F]
 
 trait DataApplicationService[F[_], D <: DataUpdate, S <: DataState] {
   def validateData(oldState: S, updates: NonEmptyList[Signed[D]]): F[DataApplicationValidationErrorOr[Unit]]
@@ -71,10 +68,8 @@ trait DataApplicationL0Service[F[_], D <: DataUpdate, S <: DataState] extends Da
   def genesis: S
 }
 
-trait DataApplicationL1Service[F[_], D <: DataUpdate, S <: DataState] extends DataApplicationService[F, D, S] {
-  def enqueue(value: D): F[Unit]
-  def sample(implicit S: SecurityProvider[F]): F[Signed[D]]
-}
+trait DataApplicationL1Service[F[_], D <: DataUpdate, S <: DataState] extends DataApplicationService[F, D, S]
+
 
 object BaseDataApplicationService {
   def apply[F[_], D <: DataUpdate, S <: DataState](
@@ -83,7 +78,7 @@ object BaseDataApplicationService {
     new BaseDataApplicationService[F] {
 
       def allKnown(updates: NonEmptyList[Signed[DataUpdate]]): Boolean =
-        updates.forall { case _: D => true; case _ => false }
+        updates.map(_.value).forall { case _: D => true; case _ => false }
 
       def validateData(
         oldState: DataState,
@@ -203,13 +198,6 @@ object BaseDataApplicationL1Service {
       def dataEncoder: Encoder[DataUpdate] = base.dataEncoder
 
       def dataDecoder: Decoder[DataUpdate] = base.dataDecoder
-
-      def enqueue(value: DataUpdate): F[Unit] = value match {
-        case a: D => service.enqueue(a)
-        case _    => UnexpectedInput.raiseError[F, Unit]
-      }
-
-      def sample(implicit S: SecurityProvider[F]): F[Signed[DataUpdate]] = service.sample
     }
 
   }

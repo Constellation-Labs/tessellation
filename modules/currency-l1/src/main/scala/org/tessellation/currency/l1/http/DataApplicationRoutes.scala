@@ -42,14 +42,17 @@ final case class DataApplicationRoutes[F[_]: Async: KryoSerializer: SecurityProv
           _.toHashedWithSignatureCheck[F](dataApplication.serializeUpdate _).flatMap {
             case Left(_) => InternalServerError(InvalidSignature.toApplicationError)
             case Right(hashed) =>
-              dataApplication.validateUpdate(hashed.signed.value).flatMap {
-                case Invalid(e) => InternalServerError(InvalidDataUpdate(e.toString).toApplicationError)
-                case Valid(_) =>
-                  (dataUpdatesQueue.offer(hashed.signed) >>
-                    Ok(("hash" ->> hashed.hash.value) :: HNil)).handleUnknownError
-              }
+              dataApplication
+                .validateUpdate(hashed.signed.value)
+                .flatMap {
+                  case Invalid(e) => InternalServerError(InvalidDataUpdate(e.toString).toApplicationError)
+                  case Valid(_) =>
+                    dataUpdatesQueue.offer(hashed.signed) >>
+                      Ok(("hash" ->> hashed.hash.value) :: HNil)
+                }
           }
         }
+        .handleUnknownError
 
     case GET -> Root / "l0" / "peers" =>
       l0ClusterStorage.getPeers.flatMap(Ok(_))

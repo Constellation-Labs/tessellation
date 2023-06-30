@@ -1,5 +1,6 @@
 package org.tessellation.currency.l0.snapshot
 
+import cats.Applicative
 import cats.data.NonEmptyList
 import cats.effect.Async
 import cats.syntax.applicative._
@@ -111,6 +112,9 @@ object CurrencySnapshotConsensusFunctions {
               .map { updates =>
                 service
                   .validateData(lastState, updates)
+                  .flatTap { validated =>
+                    Applicative[F].unlessA(validated.isValid)(logger.warn(s"Data application is invalid, errors: ${validated.toString}"))
+                  }
                   .map(_.isValid)
                   .handleErrorWith(err =>
                     logger.error(err)(s"Unhandled exception during validating data application, assumed as invalid") >> false.pure[F]
