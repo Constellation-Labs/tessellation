@@ -10,6 +10,7 @@ import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.list._
+import cats.syntax.option._
 import cats.syntax.order._
 import cats.syntax.show._
 import cats.{Eq, Order, Show}
@@ -99,11 +100,16 @@ object Signed {
       signed.proofs.map(_.id).toSortedSet.unsorted === signers
 
     def hasValidSignature[F[_]: Async: SecurityProvider: KryoSerializer]: F[Boolean] =
-      validProofs.map(_.isRight)
+      validProofs(None).map(_.isRight)
 
-    def validProofs[F[_]: Async: SecurityProvider: KryoSerializer]: F[Either[NonEmptySet[SignatureProof], NonEmptySet[SignatureProof]]] =
+    def hasValidSignature[F[_]: Async: SecurityProvider: KryoSerializer](toBytes: A => F[Array[Byte]]): F[Boolean] =
+      validProofs(toBytes.some).map(_.isRight)
+
+    def validProofs[F[_]: Async: SecurityProvider: KryoSerializer](
+      toBytes: Option[A => F[Array[Byte]]]
+    ): F[Either[NonEmptySet[SignatureProof], NonEmptySet[SignatureProof]]] =
       for {
-        hash <- signed.value.hashF
+        hash <- toBytes.map(toHashed(_).map(_.hash)).getOrElse(signed.value.hashF)
         invalidOrValidProofs <- signed.proofs.toNonEmptyList.traverse { proof =>
           signature
             .verifySignatureProof(hash, proof)
@@ -127,7 +133,7 @@ object Signed {
     def toHashedWithSignatureCheck[F[_]: Async: KryoSerializer: SecurityProvider](
       toBytes: A => F[Array[Byte]]
     ): F[Either[InvalidSignatureForHash[A], Hashed[A]]] =
-      hasValidSignature.ifM(
+      hasValidSignature(toBytes).ifM(
         toHashed(toBytes).map(_.asRight[InvalidSignatureForHash[A]]),
         InvalidSignatureForHash(signed).asLeft[Hashed[A]].pure[F]
       )

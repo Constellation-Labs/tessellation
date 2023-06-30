@@ -7,7 +7,6 @@ import cats.syntax.all._
 import org.tessellation.error.ApplicationError
 
 import io.circe._
-import io.circe.syntax._
 import org.http4s._
 import org.http4s.circe.CirceEntityCodec._
 import org.http4s.circe._
@@ -34,7 +33,7 @@ object error {
             case Some(c) => ApplicationError.InvalidRequestBody(c.getMessage)
             case _       => ApplicationError.UnprocessableEntity
           }
-          InternalServerError(error.asJson)
+          InternalServerError(error)
         case Right(a) => f(a)
       }
   }

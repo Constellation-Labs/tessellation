@@ -27,9 +27,9 @@ package object l1 {
     CreatedInvalidBlock.getClass -> 807,
     CreatedBlockWithNoTransactions.getClass -> 808,
     PeerCancelled.getClass -> 809,
-    classOf[ConsensusInput.Proposal] -> 811,
-    classOf[ConsensusInput.SignatureProposal] -> 812,
-    classOf[ConsensusInput.CancelledCreationRound] -> 813,
-    consensus.CancellationReason.getClass -> 814
+    classOf[ConsensusInput.Proposal] -> 810,
+    classOf[ConsensusInput.SignatureProposal] -> 811,
+    classOf[ConsensusInput.CancelledCreationRound] -> 812,
+    consensus.CancellationReason.getClass -> 813
   )
 }
