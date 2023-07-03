@@ -8,6 +8,7 @@ import cats.effect.std.Supervisor
 import cats.syntax.semigroupk._
 
 import org.tessellation.currency.BaseDataApplicationL1Service
+import org.tessellation.currency.dataApplication.DataApplicationCustomRoutes
 import org.tessellation.currency.l1.http.DataApplicationRoutes
 import org.tessellation.dag.l1.http.{Routes => DAGRoutes}
 import org.tessellation.dag.l1.modules.HealthChecks
@@ -109,7 +110,8 @@ sealed abstract class HttpApi[
           nodeRoutes.publicRoutes <+>
           metricRoutes <+>
           targetRoutes <+>
-          routes.map(_.publicRoutes).getOrElse(currencyRoutes.publicRoutes)
+          routes.map(_.publicRoutes).getOrElse(currencyRoutes.publicRoutes) <+>
+          DataApplicationCustomRoutes.publicRoutes[F](maybeDataApplication)
       }
     }
 

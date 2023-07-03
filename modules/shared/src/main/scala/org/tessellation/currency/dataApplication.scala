@@ -1,8 +1,8 @@
 package org.tessellation.currency
 
-import cats.MonadThrow
 import cats.data.{NonEmptyList, Validated, ValidatedNec}
 import cats.syntax.all._
+import cats.{Monad, MonadThrow}
 
 import scala.reflect.ClassTag
 import scala.util.control.NoStackTrace
@@ -14,6 +14,8 @@ import org.tessellation.security.signature.Signed
 import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.syntax._
 import io.circe.{Decoder, Encoder, _}
+import org.http4s.HttpRoutes
+import org.http4s.server.Router
 
 import dataApplication.DataApplicationValidationErrorOr
 
@@ -39,6 +41,8 @@ trait BaseDataApplicationService[F[_]] {
 
   def dataEncoder: Encoder[DataUpdate]
   def dataDecoder: Decoder[DataUpdate]
+
+  def routes: HttpRoutes[F]
 }
 
 trait BaseDataApplicationL0Service[F[_]] extends BaseDataApplicationService[F] {
@@ -62,6 +66,8 @@ trait DataApplicationService[F[_], D <: DataUpdate, S <: DataState] {
 
   def dataEncoder: Encoder[D]
   def dataDecoder: Decoder[D]
+
+  def routes: HttpRoutes[F]
 }
 
 trait DataApplicationL0Service[F[_], D <: DataUpdate, S <: DataState] extends DataApplicationService[F, D, S] {
@@ -69,7 +75,6 @@ trait DataApplicationL0Service[F[_], D <: DataUpdate, S <: DataState] extends Da
 }
 
 trait DataApplicationL1Service[F[_], D <: DataUpdate, S <: DataState] extends DataApplicationService[F, D, S]
-
 
 object BaseDataApplicationService {
   def apply[F[_], D <: DataUpdate, S <: DataState](
@@ -136,6 +141,8 @@ object BaseDataApplicationService {
           service.dataDecoder.tryDecode(c).widen[DataUpdate]
       }
 
+      def routes: HttpRoutes[F] = service.routes
+
     }
 }
 
@@ -167,6 +174,8 @@ object BaseDataApplicationL0Service {
       def dataDecoder: Decoder[DataUpdate] = a.dataDecoder
 
       def genesis: DataState = service.genesis
+
+      def routes: HttpRoutes[F] = a.routes
     }
 
   }
@@ -198,6 +207,8 @@ object BaseDataApplicationL1Service {
       def dataEncoder: Encoder[DataUpdate] = base.dataEncoder
 
       def dataDecoder: Decoder[DataUpdate] = base.dataDecoder
+
+      def routes: HttpRoutes[F] = base.routes
     }
 
   }
@@ -221,6 +232,11 @@ object dataApplication {
   object DataApplicationBlock {
     implicit def decoder(implicit d: Decoder[DataUpdate]): Decoder[DataApplicationBlock] = deriveDecoder
     implicit def encoder(implicit e: Encoder[DataUpdate]): Encoder[DataApplicationBlock] = deriveEncoder
+  }
+
+  object DataApplicationCustomRoutes {
+    def publicRoutes[F[_]: Monad](maybeDataApplication: Option[BaseDataApplicationService[F]]): HttpRoutes[F] =
+      maybeDataApplication.map(_.routes).map(r => Router("/data-application" -> r)).getOrElse(HttpRoutes.empty[F])
   }
 
 }
