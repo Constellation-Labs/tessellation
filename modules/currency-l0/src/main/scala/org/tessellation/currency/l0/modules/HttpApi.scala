@@ -6,6 +6,7 @@ import cats.effect.Async
 import cats.syntax.semigroupk._
 
 import org.tessellation.currency.BaseDataApplicationL0Service
+import org.tessellation.currency.dataApplication.DataApplicationCustomRoutes
 import org.tessellation.currency.l0.cell.{L0Cell, L0CellInput}
 import org.tessellation.currency.l0.http.routes.{CurrencyBlockRoutes, DataBlockRoutes}
 import org.tessellation.currency.l0.snapshot.CurrencySnapshotEvent
@@ -118,7 +119,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
               dataBlockRoutes.map(_.publicRoutes).getOrElse(HttpRoutes.empty) <+>
               walletRoutes.publicRoutes <+>
               nodeRoutes.publicRoutes <+>
-              consensusInfoRoutes.publicRoutes
+              consensusInfoRoutes.publicRoutes <+>
+              DataApplicationCustomRoutes.publicRoutes[F](maybeDataApplication)
           }
         }
     }
