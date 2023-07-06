@@ -5,7 +5,7 @@ import cats.syntax.semigroupk._
 import cats.syntax.traverse._
 
 import org.tessellation.BuildInfo
-import org.tessellation.currency._
+import org.tessellation.currency.dataApplication.BaseDataApplicationL0Service
 import org.tessellation.currency.l0.cli.method
 import org.tessellation.currency.l0.cli.method._
 import org.tessellation.currency.l0.http.p2p.P2PClient
@@ -100,7 +100,7 @@ abstract class CurrencyL0App(
       rumorHandler = RumorHandlers.make[IO](storages.cluster, healthChecks.ping, services.localHealthcheck).handlers <+>
         services.consensus.handler
       _ <- Daemons
-        .start(storages, services, programs, queues, healthChecks, dataApplication)
+        .start(storages, services, programs, queues, healthChecks, services.dataApplication)
         .asResource
 
       api = HttpApi
@@ -115,7 +115,7 @@ abstract class CurrencyL0App(
           sdk.nodeId,
           BuildInfo.version,
           cfg.http,
-          dataApplication
+          services.dataApplication
         )
       _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
       _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)
@@ -160,7 +160,7 @@ abstract class CurrencyL0App(
             NodeState.LoadingGenesis,
             NodeState.GenesisReady
           ) {
-            dataApplication
+            services.dataApplication
               .traverse(_.serializedGenesis)
               .flatMap(programs.genesis.accept(m.genesisPath, _))
           } >> gossipDaemon.startAsInitialValidator >>

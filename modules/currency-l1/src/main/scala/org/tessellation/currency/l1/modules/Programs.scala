@@ -3,8 +3,8 @@ package org.tessellation.currency.l1.modules
 import cats.effect.Async
 import cats.effect.std.Random
 
+import org.tessellation.currency.l1.http.p2p.P2PClient
 import org.tessellation.dag.l1.domain.snapshot.programs.SnapshotProcessor
-import org.tessellation.dag.l1.http.p2p.P2PClient
 import org.tessellation.dag.l1.modules.{Programs => BasePrograms}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.Block

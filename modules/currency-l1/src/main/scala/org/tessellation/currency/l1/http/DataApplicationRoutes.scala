@@ -5,12 +5,15 @@ import cats.effect.Async
 import cats.effect.std.{Queue, Supervisor}
 import cats.syntax.all._
 
+import org.tessellation.currency.dataApplication._
 import org.tessellation.currency.l1.domain.error.{InvalidDataUpdate, InvalidSignature}
-import org.tessellation.currency.{BaseDataApplicationL1Service, DataUpdate}
-import org.tessellation.dag.l1.domain.dataApplication.consensus.ConsensusInput
+import org.tessellation.currency.l1.node.L1NodeContext
+import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import org.tessellation.ext.http4s.error._
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
+import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 
@@ -27,9 +30,16 @@ final case class DataApplicationRoutes[F[_]: Async: KryoSerializer: SecurityProv
   dataApplicationPeerConsensusInput: Queue[F, Signed[ConsensusInput.PeerConsensusInput]],
   l0ClusterStorage: L0ClusterStorage[F],
   dataApplication: BaseDataApplicationL1Service[F],
-  dataUpdatesQueue: Queue[F, Signed[DataUpdate]]
+  dataUpdatesQueue: Queue[F, Signed[DataUpdate]],
+  lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
+  lastCurrencySnapshotStorage: LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
 )(implicit S: Supervisor[F])
     extends Http4sDsl[F] {
+
+  implicit val context: L1NodeContext[F] = L1NodeContext.make[F](
+    lastGlobalSnapshotStorage,
+    lastCurrencySnapshotStorage
+  )
 
   def logger = Slf4jLogger.getLogger[F]
 

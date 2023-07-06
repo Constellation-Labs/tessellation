@@ -14,10 +14,11 @@ import cats.syntax.option._
 import cats.syntax.order._
 import cats.syntax.traverse._
 
-import org.tessellation.currency.dataApplication.DataApplicationBlock
+import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
+import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, DataState, L0NodeContext}
+import org.tessellation.currency.l0.node.L0NodeContext
 import org.tessellation.currency.l0.snapshot.services.StateChannelSnapshotService
 import org.tessellation.currency.schema.currency._
-import org.tessellation.currency.{BaseDataApplicationL0Service, DataState}
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
@@ -25,6 +26,7 @@ import org.tessellation.schema._
 import org.tessellation.schema.balance.Amount
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.sdk.domain.rewards.Rewards
+import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.sdk.infrastructure.consensus.trigger.ConsensusTrigger
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.infrastructure.snapshot.{CurrencySnapshotAcceptanceManager, SnapshotConsensusFunctions}
@@ -53,8 +55,11 @@ object CurrencySnapshotConsensusFunctions {
     currencySnapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F],
     collateral: Amount,
     rewards: Rewards[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot],
-    maybeDataApplicationService: Option[BaseDataApplicationL0Service[F]]
+    maybeDataApplicationService: Option[BaseDataApplicationL0Service[F]],
+    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
   ): CurrencySnapshotConsensusFunctions[F] = new CurrencySnapshotConsensusFunctions[F] {
+
+    implicit val nodeContext: L0NodeContext[F] = L0NodeContext.make[F](lastGlobalSnapshotStorage)
 
     private val logger = Slf4jLogger.getLoggerFromClass(CurrencySnapshotConsensusFunctions.getClass)
 

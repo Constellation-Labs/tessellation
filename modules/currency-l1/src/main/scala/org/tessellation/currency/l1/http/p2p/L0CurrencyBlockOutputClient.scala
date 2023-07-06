@@ -1,6 +1,6 @@
 package org.tessellation.currency.l1.http.p2p
 
-import org.tessellation.currency.dataApplication.DataApplicationBlock
+import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
 import org.tessellation.currency.schema.currency.CurrencyBlock
 import org.tessellation.dag.l1.http.p2p.L0BlockOutputClient
 import org.tessellation.sdk.http.p2p.PeerResponse

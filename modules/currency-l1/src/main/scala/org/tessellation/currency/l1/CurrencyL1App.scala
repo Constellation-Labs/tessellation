@@ -9,13 +9,14 @@ import cats.syntax.semigroupk._
 import scala.concurrent.duration._
 
 import org.tessellation.BuildInfo
-import org.tessellation.currency._
+import org.tessellation.currency.dataApplication.BaseDataApplicationL1Service
 import org.tessellation.currency.l1.cli.method
 import org.tessellation.currency.l1.cli.method.{Run, RunInitialValidator, RunValidator}
 import org.tessellation.currency.l1.domain.snapshot.programs.CurrencySnapshotProcessor
+import org.tessellation.currency.l1.http.p2p.P2PClient
 import org.tessellation.currency.l1.modules._
 import org.tessellation.currency.schema.currency._
-import org.tessellation.dag.l1.http.p2p.P2PClient
+import org.tessellation.dag.l1.http.p2p.{P2PClient => DAGP2PClient}
 import org.tessellation.dag.l1.infrastructure.block.rumor.handler.blockRumorHandler
 import org.tessellation.dag.l1.modules.{
   Daemons => DAGL1Daemons,
@@ -81,20 +82,22 @@ abstract class CurrencyL1App(
           storages,
           seedlist
         )
+      dagP2PClient = DAGP2PClient
+        .make[IO, CurrencyTransaction, CurrencyBlock](sdkP2PClient, sdkResources.client, currencyPathPrefix = "currency")
       p2pClient = P2PClient.make[IO, CurrencyTransaction, CurrencyBlock](
-        sdkP2PClient,
-        sdkResources.client,
-        currencyPathPrefix = "currency"
+        dagP2PClient,
+        sdkResources.client
       )
       services = Services
-        .make[IO, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
+        .make[IO](
           storages,
           storages.lastGlobalSnapshot,
           storages.globalL0Cluster,
           validators,
           sdkServices,
           p2pClient,
-          cfg
+          cfg,
+          dataApplication
         )
       snapshotProcessor = CurrencySnapshotProcessor.make(
         method.identifier,
@@ -118,7 +121,7 @@ abstract class CurrencyL1App(
           storages,
           services,
           programs,
-          p2pClient,
+          dagP2PClient,
           sdkResources.client,
           sdkServices.session,
           cfg.healthCheck,
@@ -135,7 +138,7 @@ abstract class CurrencyL1App(
 
       api = HttpApi
         .make[IO, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
-          dataApplication,
+          services.dataApplication,
           storages,
           queues,
           keyPair.getPrivate,
@@ -154,7 +157,7 @@ abstract class CurrencyL1App(
         .make[IO, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
           cfg,
           keyPair,
-          p2pClient,
+          dagP2PClient,
           programs,
           dagL1Queues,
           nodeId,
@@ -204,7 +207,7 @@ abstract class CurrencyL1App(
             }
           }
         }
-      _ <- dataApplication.map {
+      _ <- services.dataApplication.map {
         DataApplication
           .run(
             storages.cluster,
@@ -216,7 +219,9 @@ abstract class CurrencyL1App(
             queues,
             _,
             keyPair,
-            nodeId
+            nodeId,
+            storages.lastGlobalSnapshot,
+            storages.lastSnapshot
           )
           .merge(globalL0PeerDiscovery)
           .compile

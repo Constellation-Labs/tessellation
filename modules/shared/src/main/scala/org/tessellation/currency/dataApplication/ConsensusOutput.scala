@@ -1,7 +1,7 @@
-package org.tessellation.dag.l1.domain.dataApplication.consensus
+package org.tessellation.currency.dataApplication
 
-import org.tessellation.currency.dataApplication.DataApplicationBlock
-import org.tessellation.dag.l1.domain.consensus.round.RoundId
+import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
+import org.tessellation.schema.round.RoundId
 import org.tessellation.security.Hashed
 
 sealed trait ConsensusOutput

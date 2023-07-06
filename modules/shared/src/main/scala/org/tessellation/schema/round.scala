@@ -1,4 +1,4 @@
-package org.tessellation.dag.l1.domain.consensus
+package org.tessellation.schema
 
 import java.util.UUID
 

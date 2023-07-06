@@ -8,12 +8,12 @@ import cats.syntax.all._
 import scala.concurrent.duration.FiniteDuration
 
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.{BlockSignatureProposal, CancelledBlockCreationRound, Proposal}
-import org.tessellation.dag.l1.domain.consensus.round.RoundId
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.Block
 import org.tessellation.schema.Block.BlockConstructor
 import org.tessellation.schema.block.Tips
 import org.tessellation.schema.peer.{Peer, PeerId}
+import org.tessellation.schema.round.RoundId
 import org.tessellation.schema.transaction.Transaction
 import org.tessellation.sdk.domain.transaction.TransactionValidator
 import org.tessellation.sdk.domain.transaction.filter.Consecutive

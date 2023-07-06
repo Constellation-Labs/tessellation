@@ -2,10 +2,10 @@ package org.tessellation.dag.l1.domain.consensus.block
 
 import cats.Show
 
-import org.tessellation.dag.l1.domain.consensus.round.RoundId
 import org.tessellation.kernel.Ω
 import org.tessellation.schema.block.Tips
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.round.RoundId
 import org.tessellation.schema.transaction.Transaction
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.Signature

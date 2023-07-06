@@ -9,16 +9,18 @@ import cats.syntax.all._
 
 import scala.concurrent.duration._
 
-import org.tessellation.currency.BaseDataApplicationL1Service
+import org.tessellation.currency.dataApplication.ConsensusInput.OwnerConsensusInput
+import org.tessellation.currency.dataApplication.{BaseDataApplicationL1Service, ConsensusInput, ConsensusOutput}
+import org.tessellation.currency.l1.domain.dataApplication.consensus.{ConsensusClient, ConsensusState, Engine}
 import org.tessellation.currency.l1.modules.{Queues, Services}
 import org.tessellation.currency.schema.currency._
-import org.tessellation.dag.l1.domain.dataApplication.consensus.ConsensusInput.OwnerConsensusInput
-import org.tessellation.dag.l1.domain.dataApplication.consensus._
 import org.tessellation.dag.l1.http.p2p.L0BlockOutputClient
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import org.tessellation.sdk.domain.cluster.programs.L0PeerDiscovery
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, L0ClusterStorage}
+import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 
@@ -43,7 +45,9 @@ object DataApplication {
     queues: Queues[F, CurrencyTransaction, CurrencyBlock],
     dataApplicationService: BaseDataApplicationL1Service[F],
     selfKeyPair: KeyPair,
-    selfId: PeerId
+    selfId: PeerId,
+    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
+    lastCurrencySnapshotStorage: LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
   ): Stream[F, Unit] = {
 
     def logger = Slf4jLogger.getLogger[F]
@@ -76,7 +80,16 @@ object DataApplication {
     def runConsensus: Pipe[F, ConsensusInput, ConsensusOutput.FinalBlock] =
       _.evalMapAccumulate(ConsensusState.Empty) {
         Engine
-          .fsm(dataApplicationService, clusterStorage, consensusClient, queues.dataUpdates, selfId, selfKeyPair)
+          .fsm(
+            dataApplicationService,
+            clusterStorage,
+            consensusClient,
+            queues.dataUpdates,
+            selfId,
+            selfKeyPair,
+            lastGlobalSnapshotStorage,
+            lastCurrencySnapshotStorage
+          )
           .run
       }.flatMap {
         case (_, fb @ ConsensusOutput.FinalBlock(hashedBlock)) =>

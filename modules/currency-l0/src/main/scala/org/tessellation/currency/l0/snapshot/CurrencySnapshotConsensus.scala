@@ -5,13 +5,13 @@ import java.security.KeyPair
 import cats.effect.kernel.Async
 import cats.effect.std.{Random, Supervisor}
 
+import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, DataUpdate}
 import org.tessellation.currency.l0.snapshot.services.StateChannelSnapshotService
 import org.tessellation.currency.schema.currency._
-import org.tessellation.currency.{BaseDataApplicationL0Service, DataUpdate}
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import org.tessellation.sdk.config.types.SnapshotConfig
 import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
@@ -19,6 +19,7 @@ import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.domain.seedlist.SeedlistEntry
+import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.sdk.infrastructure.consensus.Consensus
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.infrastructure.snapshot.{CurrencySnapshotAcceptanceManager, SnapshotConsensus}
@@ -44,7 +45,8 @@ object CurrencySnapshotConsensus {
     session: Session[F],
     stateChannelSnapshotService: StateChannelSnapshotService[F],
     snapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F],
-    maybeDataApplication: Option[BaseDataApplicationL0Service[F]]
+    maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
+    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
   ): F[
     SnapshotConsensus[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshotArtifact, CurrencySnapshotContext, CurrencySnapshotEvent]
   ] = {
@@ -58,7 +60,8 @@ object CurrencySnapshotConsensus {
         snapshotAcceptanceManager,
         collateral,
         rewards,
-        maybeDataApplication
+        maybeDataApplication,
+        lastGlobalSnapshotStorage
       ),
       gossip,
       selfId,

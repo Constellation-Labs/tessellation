@@ -1,10 +1,9 @@
-package org.tessellation.dag.l1.domain.dataApplication.consensus
+package org.tessellation.currency.dataApplication
 
 import cats.Show
 
-import org.tessellation.currency.DataUpdate
-import org.tessellation.dag.l1.domain.consensus.round.RoundId
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.round.RoundId
 import org.tessellation.security.Encodable
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
@@ -54,7 +53,7 @@ object ConsensusInput {
   case class SignatureProposal(roundId: RoundId, senderId: PeerId, owner: PeerId, signature: Signature) extends PeerConsensusInput
 
   @derive(encoder, decoder)
-  case class CancelledCreationRound(roundId: RoundId, senderId: PeerId, owner: PeerId, reason: CancellationReason)
+  case class CancelledCreationRound(roundId: RoundId, senderId: PeerId, owner: PeerId, reason: DataCancellationReason)
       extends PeerConsensusInput
 
   implicit def showConsensusInput: Show[ConsensusInput] = {

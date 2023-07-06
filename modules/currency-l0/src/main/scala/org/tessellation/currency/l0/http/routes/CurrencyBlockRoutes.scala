@@ -5,7 +5,7 @@ import cats.implicits.catsSyntaxEitherId
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.currency.dataApplication.DataApplicationBlock
+import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
 import org.tessellation.currency.schema.currency.CurrencyBlock
 import org.tessellation.kernel._
 import org.tessellation.security.signature.Signed
