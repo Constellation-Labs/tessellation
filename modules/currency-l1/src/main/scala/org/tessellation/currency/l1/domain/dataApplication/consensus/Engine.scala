@@ -1,4 +1,4 @@
-package org.tessellation.dag.l1.domain.dataApplication.consensus
+package org.tessellation.currency.l1.domain.dataApplication.consensus
 
 import java.security.KeyPair
 
@@ -8,38 +8,30 @@ import cats.effect.std.{Queue, Random}
 import cats.syntax.all._
 import cats.{Applicative, MonadThrow}
 
-import scala.concurrent.duration.{FiniteDuration, _}
+import scala.concurrent.duration._
 
-import org.tessellation.currency.dataApplication.DataApplicationBlock
-import org.tessellation.currency.{BaseDataApplicationService, DataUpdate}
-import org.tessellation.dag.l1.domain.consensus.round.RoundId
-import org.tessellation.dag.l1.domain.dataApplication.consensus.ConsensusInput._
-import org.tessellation.dag.l1.domain.dataApplication.consensus.ConsensusOutput.Noop
+import org.tessellation.currency.dataApplication.ConsensusInput._
+import org.tessellation.currency.dataApplication.ConsensusOutput.Noop
+import org.tessellation.currency.dataApplication._
+import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
+import org.tessellation.currency.l1.node.L1NodeContext
+import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import org.tessellation.fsm.FSM
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.{Peer, PeerId}
+import org.tessellation.schema.round.RoundId
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
+import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.sdk.effects.GenUUID
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.SignatureProof
 
-import derevo.circe.magnolia.{decoder, encoder}
-import derevo.derive
 import io.circe.Encoder
 import monocle.syntax.all._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
-
-@derive(encoder, decoder)
-sealed trait CancellationReason
-object CancellationReason {
-  case object ReceivedProposalForNonExistentOwnRound extends CancellationReason
-  case object MissingRoundPeers extends CancellationReason
-  case object CreatedInvalidBlock extends CancellationReason
-  case object CreatedEmptyBlock extends CancellationReason
-  case object PeerCancelled extends CancellationReason
-}
 
 case class RoundData(
   roundId: RoundId,
@@ -48,10 +40,10 @@ case class RoundData(
   owner: PeerId,
   ownProposal: Proposal,
   ownBlock: Option[Signed[DataApplicationBlock]] = None,
-  ownCancellation: Option[CancellationReason] = None,
+  ownCancellation: Option[DataCancellationReason] = None,
   peerProposals: Map[PeerId, Proposal] = Map.empty[PeerId, Proposal],
   peerBlockSignatures: Map[PeerId, SignatureProof] = Map.empty,
-  peerCancellations: Map[PeerId, CancellationReason] = Map.empty
+  peerCancellations: Map[PeerId, DataCancellationReason] = Map.empty
 ) {
   def addPeerProposal(proposal: Proposal): RoundData =
     this.focus(_.peerProposals).modify(_ + (proposal.senderId -> proposal))
@@ -63,7 +55,7 @@ case class RoundData(
     this.focus(_.peerBlockSignatures).modify(_ + (signatureProposal.senderId -> proof))
   }
 
-  def setOwnCancellation(reason: CancellationReason): RoundData =
+  def setOwnCancellation(reason: DataCancellationReason): RoundData =
     this.focus(_.ownCancellation).replace(reason.some)
 
   def addPeerCancellation(cancellation: CancelledCreationRound): RoundData =
@@ -94,13 +86,20 @@ object Engine {
   type State = ConsensusState
 
   def fsm[F[_]: MonadThrow: Async: Clock: Random: SecurityProvider: KryoSerializer](
-    dataApplication: BaseDataApplicationService[F],
+    dataApplication: BaseDataApplicationL1Service[F],
     clusterStorage: ClusterStorage[F],
     consensusClient: ConsensusClient[F],
     dataUpdates: Queue[F, Signed[DataUpdate]],
     selfId: PeerId,
-    selfKeyPair: KeyPair
+    selfKeyPair: KeyPair,
+    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
+    lastCurrencySnapshotStorage: LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
   ): FSM[F, State, In, Out] = {
+
+    implicit val context: L1NodeContext[F] = L1NodeContext.make[F](
+      lastGlobalSnapshotStorage,
+      lastCurrencySnapshotStorage
+    )
 
     def peersCount = 2
     def timeout = 10.seconds
@@ -251,7 +250,7 @@ object Engine {
       getRoundData(state, cancellation)
         .filter(canPersistCancellation(cancellation))
         .map { roundData =>
-          def ownCancellation = CancelledCreationRound(roundData.roundId, selfId, roundData.owner, CancellationReason.PeerCancelled)
+          def ownCancellation = CancelledCreationRound(roundData.roundId, selfId, roundData.owner, DataCancellationReason.PeerCancelled)
 
           def modified: RoundData = (roundData, cancellation.senderId) match {
             case (rd, `selfId`) if rd.ownCancellation.isDefined => rd
@@ -354,7 +353,7 @@ object Engine {
                             roundData.roundId,
                             senderId = selfId,
                             owner = roundData.owner,
-                            CancellationReason.CreatedInvalidBlock
+                            DataCancellationReason.CreatedInvalidBlock
                           )
                         processCancellation(newState, cancellation)
                       }
@@ -366,7 +365,7 @@ object Engine {
                     roundData.roundId,
                     senderId = selfId,
                     owner = roundData.owner,
-                    CancellationReason.CreatedEmptyBlock
+                    DataCancellationReason.CreatedEmptyBlock
                   )
                 processCancellation(newState, cancellation)
             }
@@ -374,7 +373,7 @@ object Engine {
         case (newState, _) => ().pure[F].tupleLeft(newState)
       }.getOrElse(logger.warn(s"Couldn't persist proposal").tupleLeft(state))
 
-    def informAboutInabilityToParticipate(proposal: Proposal, reason: CancellationReason): F[Unit] = {
+    def informAboutInabilityToParticipate(proposal: Proposal, reason: DataCancellationReason): F[Unit] = {
       def cancellation = CancelledCreationRound(
         proposal.roundId,
         senderId = selfId,
@@ -407,7 +406,7 @@ object Engine {
         (maybeRoundData, maybePeers) match {
           case (Some(_), _) => persistProposal(state, proposal)
           case (None, _) if proposal.owner === selfId =>
-            informAboutInabilityToParticipate(proposal, CancellationReason.ReceivedProposalForNonExistentOwnRound).tupleLeft(state)
+            informAboutInabilityToParticipate(proposal, DataCancellationReason.ReceivedProposalForNonExistentOwnRound).tupleLeft(state)
           case (None, Some(peers)) =>
             getTime.flatMap { startedAt =>
               pullDataUpdates.flatMap { data =>
@@ -426,7 +425,7 @@ object Engine {
               }
 
             }
-          case (None, None) => informAboutInabilityToParticipate(proposal, CancellationReason.MissingRoundPeers).tupleLeft(state)
+          case (None, None) => informAboutInabilityToParticipate(proposal, DataCancellationReason.MissingRoundPeers).tupleLeft(state)
         }
       }
 

@@ -5,8 +5,8 @@ import java.security.PrivateKey
 import cats.effect.Async
 import cats.syntax.semigroupk._
 
-import org.tessellation.currency.BaseDataApplicationL0Service
-import org.tessellation.currency.dataApplication.DataApplicationCustomRoutes
+import org.tessellation.currency.dataApplication.BaseDataApplicationL0Service
+import org.tessellation.currency.dataApplication.dataApplication.DataApplicationCustomRoutes
 import org.tessellation.currency.l0.cell.{L0Cell, L0CellInput}
 import org.tessellation.currency.l0.http.routes.{CurrencyBlockRoutes, DataBlockRoutes}
 import org.tessellation.currency.l0.snapshot.CurrencySnapshotEvent

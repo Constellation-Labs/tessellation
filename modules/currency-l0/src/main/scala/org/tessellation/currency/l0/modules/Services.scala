@@ -8,7 +8,7 @@ import cats.syntax.applicative._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.currency.BaseDataApplicationL0Service
+import org.tessellation.currency.dataApplication.BaseDataApplicationL0Service
 import org.tessellation.currency.l0.config.types.AppConfig
 import org.tessellation.currency.l0.http.p2p.P2PClient
 import org.tessellation.currency.l0.snapshot.services.{NoopRewards, StateChannelSnapshotService}
@@ -76,7 +76,8 @@ object Services {
           session,
           stateChannelSnapshotService,
           sdkServices.currencySnapshotAcceptanceManager,
-          maybeDataApplication
+          maybeDataApplication,
+          storages.lastGlobalSnapshot
         )
       addressService = AddressService.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](storages.snapshot)
       collateralService = Collateral.make[F](cfg.collateral, storages.snapshot)
@@ -93,7 +94,8 @@ object Services {
         collateral = collateralService,
         stateChannelSnapshot = stateChannelSnapshotService,
         globalL0 = globalL0Service,
-        snapshotContextFunctions = sdkServices.currencySnapshotContextFns
+        snapshotContextFunctions = sdkServices.currencySnapshotContextFns,
+        dataApplication = maybeDataApplication
       ) {}
 }
 
@@ -114,5 +116,6 @@ sealed abstract class Services[F[_]] private (
   val collateral: Collateral[F],
   val stateChannelSnapshot: StateChannelSnapshotService[F],
   val globalL0: GlobalL0Service[F],
-  val snapshotContextFunctions: CurrencySnapshotContextFunctions[F]
+  val snapshotContextFunctions: CurrencySnapshotContextFunctions[F],
+  val dataApplication: Option[BaseDataApplicationL0Service[F]]
 )

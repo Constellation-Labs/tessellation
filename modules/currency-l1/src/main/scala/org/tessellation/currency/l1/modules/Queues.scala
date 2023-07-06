@@ -5,10 +5,9 @@ import cats.effect.std.Queue
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.currency.DataUpdate
-import org.tessellation.currency.dataApplication.DataApplicationBlock
+import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
+import org.tessellation.currency.dataApplication.{ConsensusInput, DataUpdate}
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.PeerBlockConsensusInput
-import org.tessellation.dag.l1.domain.dataApplication.consensus.ConsensusInput
 import org.tessellation.dag.l1.modules.{Queues => DAGL1Queues}
 import org.tessellation.schema.Block
 import org.tessellation.schema.gossip.RumorRaw

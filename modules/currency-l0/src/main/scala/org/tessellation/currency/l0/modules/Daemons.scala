@@ -5,7 +5,7 @@ import cats.effect.std.Supervisor
 import cats.syntax.functor._
 import cats.syntax.traverse._
 
-import org.tessellation.currency.BaseDataApplicationL0Service
+import org.tessellation.currency.dataApplication.BaseDataApplicationL0Service
 import org.tessellation.currency.l0.snapshot.CurrencySnapshotEventsPublisherDaemon
 import org.tessellation.sdk.domain.Daemon
 import org.tessellation.sdk.domain.healthcheck.HealthChecks

@@ -5,8 +5,8 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.dag.l1.domain.consensus.block.RoundData
-import org.tessellation.dag.l1.domain.consensus.round.RoundId
 import org.tessellation.schema.Block
+import org.tessellation.schema.round.RoundId
 import org.tessellation.schema.transaction.Transaction
 
 import io.chrisdavenport.mapref.MapRef

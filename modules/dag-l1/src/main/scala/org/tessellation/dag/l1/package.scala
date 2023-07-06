@@ -1,10 +1,9 @@
 package org.tessellation.dag
 
+import org.tessellation.currency.dataApplication.{ConsensusInput, DataCancellationReason}
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput._
 import org.tessellation.dag.l1.domain.consensus.block.CancellationReason
 import org.tessellation.dag.l1.domain.consensus.block.CancellationReason._
-import org.tessellation.dag.l1.domain.dataApplication.consensus
-import org.tessellation.dag.l1.domain.dataApplication.consensus.ConsensusInput
 import org.tessellation.ext.kryo._
 
 import eu.timepit.refined.auto._
@@ -30,6 +29,6 @@ package object l1 {
     classOf[ConsensusInput.Proposal] -> 810,
     classOf[ConsensusInput.SignatureProposal] -> 811,
     classOf[ConsensusInput.CancelledCreationRound] -> 812,
-    consensus.CancellationReason.getClass -> 813
+    DataCancellationReason.getClass -> 813
   )
 }

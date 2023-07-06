@@ -1,8 +1,9 @@
-package org.tessellation.dag.l1.domain.dataApplication.consensus
+package org.tessellation.currency.l1.domain.dataApplication.consensus
 
 import cats.effect.Sync
 import cats.syntax.functor._
 
+import org.tessellation.currency.dataApplication.ConsensusInput
 import org.tessellation.sdk.http.p2p.PeerResponse
 import org.tessellation.sdk.http.p2p.PeerResponse.PeerResponse
 import org.tessellation.security.signature.Signed

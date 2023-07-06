@@ -19,7 +19,6 @@ import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusOutput.{Clea
 import org.tessellation.dag.l1.domain.consensus.block.CancellationReason._
 import org.tessellation.dag.l1.domain.consensus.block.Validator.isReadyForBlockConsensus
 import org.tessellation.dag.l1.domain.consensus.block.http.p2p.clients.BlockConsensusClient
-import org.tessellation.dag.l1.domain.consensus.round.RoundId
 import org.tessellation.dag.l1.domain.transaction.{TransactionStorage, transactionLoggerName}
 import org.tessellation.ext.collection.MapRefUtils.MapRefOps
 import org.tessellation.kernel._
@@ -27,6 +26,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.Block
 import org.tessellation.schema.Block.BlockConstructor
 import org.tessellation.schema.peer.{Peer, PeerId}
+import org.tessellation.schema.round.RoundId
 import org.tessellation.schema.transaction.Transaction
 import org.tessellation.sdk.domain.block.processing.BlockValidationParams
 import org.tessellation.sdk.effects.GenUUID

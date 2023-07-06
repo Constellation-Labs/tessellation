@@ -12,7 +12,6 @@ import scala.concurrent.duration.FiniteDuration
 
 import org.tessellation.dag.l1.Main
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.Proposal
-import org.tessellation.dag.l1.domain.consensus.round.RoundId
 import org.tessellation.dag.transaction.TransactionGenerator
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.kryo.KryoSerializer
@@ -21,6 +20,7 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.block.{DAGBlock, Tips}
 import org.tessellation.schema.height.Height
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.round.RoundId
 import org.tessellation.schema.transaction.{DAGTransaction, TransactionFee, TransactionReference}
 import org.tessellation.sdk.domain.transaction.TransactionValidator
 import org.tessellation.sdk.sdkKryoRegistrar

@@ -2,12 +2,13 @@ package org.tessellation.currency.l1.modules
 
 import cats.effect.kernel.Async
 import cats.effect.std.Random
-import cats.{Eq, Order}
 
+import org.tessellation.currency.dataApplication.BaseDataApplicationL1Service
+import org.tessellation.currency.l1.http.p2p.P2PClient
+import org.tessellation.currency.schema.currency._
 import org.tessellation.dag.l1.config.types.AppConfig
 import org.tessellation.dag.l1.domain.block.BlockService
 import org.tessellation.dag.l1.domain.transaction.TransactionService
-import org.tessellation.dag.l1.http.p2p.P2PClient
 import org.tessellation.dag.l1.modules.{Services => BaseServices, Validators}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
@@ -22,27 +23,28 @@ import org.tessellation.sdk.modules.SdkServices
 import org.tessellation.security.SecurityProvider
 
 object Services {
-  def make[
-    F[_]: Async: Random: KryoSerializer: SecurityProvider,
-    T <: Transaction: Order: Ordering,
-    B <: Block[T]: Eq: Ordering,
-    P <: StateProof,
-    S <: Snapshot[T, B],
-    SI <: SnapshotInfo[P]
-  ](
-    storages: Storages[F, T, B, P, S, SI],
+  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider](
+    storages: Storages[
+      F,
+      CurrencyTransaction,
+      CurrencyBlock,
+      CurrencySnapshotStateProof,
+      CurrencyIncrementalSnapshot,
+      CurrencySnapshotInfo
+    ],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     globalL0Cluster: L0ClusterStorage[F],
-    validators: Validators[F, T, B],
+    validators: Validators[F, CurrencyTransaction, CurrencyBlock],
     sdkServices: SdkServices[F],
-    p2PClient: P2PClient[F, T, B],
-    cfg: AppConfig
-  ): Services[F, T, B, P, S, SI] =
-    new Services[F, T, B, P, S, SI] {
+    p2PClient: P2PClient[F, CurrencyTransaction, CurrencyBlock],
+    cfg: AppConfig,
+    maybeDataApplication: Option[BaseDataApplicationL1Service[F]]
+  ): Services[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo] =
+    new Services[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo] {
 
       val localHealthcheck = sdkServices.localHealthcheck
-      val block = BlockService.make[F, T, B](
-        BlockAcceptanceManager.make[F, T, B](validators.block),
+      val block = BlockService.make[F, CurrencyTransaction, CurrencyBlock](
+        BlockAcceptanceManager.make[F, CurrencyTransaction, CurrencyBlock](validators.block),
         storages.address,
         storages.block,
         storages.transaction,
@@ -53,10 +55,13 @@ object Services {
       val globalL0 =
         GlobalL0Service.make[F](p2PClient.l0GlobalSnapshot, globalL0Cluster, lastGlobalSnapshotStorage, None)
       val session = sdkServices.session
-      val transaction = TransactionService.make[F, T](storages.transaction, validators.transactionContextual)
+      val transaction = TransactionService.make[F, CurrencyTransaction](storages.transaction, validators.transactionContextual)
       val collateral = Collateral.make[F](cfg.collateral, storages.lastSnapshot)
+      val dataApplication = maybeDataApplication
     }
 }
 
 sealed abstract class Services[F[_], T <: Transaction, B <: Block[T], P <: StateProof, S <: Snapshot[T, B], SI <: SnapshotInfo[P]]
-    extends BaseServices[F, T, B, P, S, SI] {}
+    extends BaseServices[F, T, B, P, S, SI] {
+  val dataApplication: Option[BaseDataApplicationL1Service[F]]
+}

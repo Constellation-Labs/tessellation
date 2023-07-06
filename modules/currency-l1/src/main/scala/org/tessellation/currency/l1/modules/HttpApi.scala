@@ -7,9 +7,10 @@ import cats.effect.Async
 import cats.effect.std.Supervisor
 import cats.syntax.semigroupk._
 
-import org.tessellation.currency.BaseDataApplicationL1Service
-import org.tessellation.currency.dataApplication.DataApplicationCustomRoutes
+import org.tessellation.currency.dataApplication.BaseDataApplicationL1Service
+import org.tessellation.currency.dataApplication.dataApplication.DataApplicationCustomRoutes
 import org.tessellation.currency.l1.http.DataApplicationRoutes
+import org.tessellation.currency.schema.currency._
 import org.tessellation.dag.l1.http.{Routes => DAGRoutes}
 import org.tessellation.dag.l1.modules.HealthChecks
 import org.tessellation.kryo.KryoSerializer
@@ -41,17 +42,38 @@ object HttpApi {
     SI <: SnapshotInfo[P]
   ](
     maybeDataApplication: Option[BaseDataApplicationL1Service[F]],
-    storages: Storages[F, T, B, P, S, SI],
-    queues: Queues[F, T, B],
+    storages: Storages[
+      F,
+      CurrencyTransaction,
+      CurrencyBlock,
+      CurrencySnapshotStateProof,
+      CurrencyIncrementalSnapshot,
+      CurrencySnapshotInfo
+    ],
+    queues: Queues[F, CurrencyTransaction, CurrencyBlock],
     privateKey: PrivateKey,
-    services: Services[F, T, B, P, S, SI],
-    programs: Programs[F, T, B, P, S, SI],
+    services: Services[
+      F,
+      CurrencyTransaction,
+      CurrencyBlock,
+      CurrencySnapshotStateProof,
+      CurrencyIncrementalSnapshot,
+      CurrencySnapshotInfo
+    ],
+    programs: Programs[
+      F,
+      CurrencyTransaction,
+      CurrencyBlock,
+      CurrencySnapshotStateProof,
+      CurrencyIncrementalSnapshot,
+      CurrencySnapshotInfo
+    ],
     healthchecks: HealthChecks[F],
     selfId: PeerId,
     nodeVersion: String,
     httpCfg: HttpConfig
-  ): HttpApi[F, T, B, P, S, SI] =
-    new HttpApi[F, T, B, P, S, SI](
+  ): HttpApi[F] =
+    new HttpApi[F](
       maybeDataApplication,
       storages,
       queues,
@@ -66,19 +88,14 @@ object HttpApi {
 }
 
 sealed abstract class HttpApi[
-  F[_]: Async: KryoSerializer: SecurityProvider: Metrics: Supervisor,
-  T <: Transaction: Decoder: Encoder: Show,
-  B <: Block[T],
-  P <: StateProof,
-  S <: Snapshot[T, B],
-  SI <: SnapshotInfo[P]
+  F[_]: Async: KryoSerializer: SecurityProvider: Metrics: Supervisor
 ] private (
   maybeDataApplication: Option[BaseDataApplicationL1Service[F]],
-  storages: Storages[F, T, B, P, S, SI],
-  queues: Queues[F, T, B],
+  storages: Storages[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
+  queues: Queues[F, CurrencyTransaction, CurrencyBlock],
   privateKey: PrivateKey,
-  services: Services[F, T, B, P, S, SI],
-  programs: Programs[F, T, B, P, S, SI],
+  services: Services[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
+  programs: Programs[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
   healthchecks: HealthChecks[F],
   selfId: PeerId,
   nodeVersion: String,
@@ -89,10 +106,17 @@ sealed abstract class HttpApi[
   private val registrationRoutes = RegistrationRoutes[F](services.cluster)
   private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip)
   private val routes = maybeDataApplication.map { da =>
-    DataApplicationRoutes[F](queues.dataApplicationPeerConsensusInput, storages.l0Cluster, da, queues.dataUpdates)
+    DataApplicationRoutes[F](
+      queues.dataApplicationPeerConsensusInput,
+      storages.l0Cluster,
+      da,
+      queues.dataUpdates,
+      storages.lastGlobalSnapshot,
+      storages.lastSnapshot
+    )
   }
   private val currencyRoutes =
-    DAGRoutes[F, T](services.transaction, storages.transaction, storages.l0Cluster, queues.peerBlockConsensusInput)
+    DAGRoutes[F, CurrencyTransaction](services.transaction, storages.transaction, storages.l0Cluster, queues.peerBlockConsensusInput)
   private val nodeRoutes = NodeRoutes[F](storages.node, storages.session, storages.cluster, nodeVersion, httpCfg, selfId)
   private val healthcheckP2PRoutes = {
     val pingHealthcheckRoutes = PingHealthCheckRoutes[F](healthchecks.ping)
