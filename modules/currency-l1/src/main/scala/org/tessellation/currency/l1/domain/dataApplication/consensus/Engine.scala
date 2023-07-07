@@ -63,7 +63,7 @@ case class RoundData(
 
   def formBlock[F[_]: Async](
     validateUpdate: Signed[DataUpdate] => F[Either[String, Signed[DataUpdate]]],
-    constructBlock: List[Signed[DataUpdate]] => F[Option[DataApplicationBlock]]
+    constructBlock: RoundId => List[Signed[DataUpdate]] => F[Option[DataApplicationBlock]]
   ): F[Option[DataApplicationBlock]] =
     NonEmptyList
       .fromList((ownProposal.dataUpdates ++ peerProposals.values.flatMap(_.dataUpdates)).toList)
@@ -75,7 +75,7 @@ case class RoundData(
 
             valid.pure[F]
           }
-          .flatMap(constructBlock)
+          .flatMap(constructBlock(roundId))
       }
       .map(_.flatten)
 }
@@ -328,10 +328,10 @@ object Engine {
     def persistProposal(state: State, proposal: Proposal): F[(State, Unit)] =
       tryPersistProposal(state, proposal).map {
         case (newState, roundData) if gotAllProposals(roundData) =>
-          def combine(updates: List[Signed[DataUpdate]]): F[Option[DataApplicationBlock]] =
+          def combine(roundId: RoundId)(updates: List[Signed[DataUpdate]]): F[Option[DataApplicationBlock]] =
             NonEmptyList.fromList(updates).traverse { u =>
               u.traverse(_.toHashed(dataApplication.serializeUpdate).map(_.hash)).map { hashes =>
-                DataApplicationBlock(u, hashes)
+                DataApplicationBlock(roundId, u, hashes)
               }
             }
 
