@@ -112,7 +112,7 @@ object CurrencySnapshotConsensusFunctions {
         maybeNewDataState <- (maybeDataApplicationService, maybeLastDataState).mapN {
           case ((service, lastState)) =>
             NonEmptyList
-              .fromList(dataBlocks)
+              .fromList(dataBlocks.distinctBy(_.value.roundId))
               .map(_.flatMap(_.value.updates))
               .map { updates =>
                 service

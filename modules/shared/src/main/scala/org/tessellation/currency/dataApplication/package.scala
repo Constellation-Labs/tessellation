@@ -10,6 +10,7 @@ import scala.util.control.NoStackTrace
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationValidationErrorOr
 import org.tessellation.currency.schema.currency.CurrencyIncrementalSnapshot
 import org.tessellation.schema.GlobalIncrementalSnapshot
+import org.tessellation.schema.round.RoundId
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Encodable, Hashed}
@@ -276,6 +277,7 @@ object dataApplication {
   type DataApplicationValidationErrorOr[A] = ValidatedNec[DataApplicationValidationError, A]
 
   case class DataApplicationBlock(
+    roundId: RoundId,
     updates: NonEmptyList[Signed[DataUpdate]],
     updatesHashes: NonEmptyList[Hash]
   ) extends Encodable {
