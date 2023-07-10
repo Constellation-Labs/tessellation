@@ -37,7 +37,6 @@ object SybilAttackSuite extends SimpleIOSuite with Checkers {
 
   def benchmark(allData: List[TrustNode], filterGood: Int => Boolean): ModelBenchmark = {
 
-    val numNodes = allData.size / 2
     val scores = SelfAvoidingWalk.runWalkFeedbackUpdateSingleNode(
       0,
       allData

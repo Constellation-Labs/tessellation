@@ -9,7 +9,6 @@ import cats.syntax.applicativeError._
 import cats.syntax.either._
 import cats.syntax.eq._
 import cats.syntax.flatMap._
-import cats.syntax.foldable._
 import cats.syntax.functor._
 import cats.syntax.show._
 
@@ -74,10 +73,16 @@ object Rewards {
 
           val mintedAmount = getAmountByEpoch(epochProgress, config.rewardsPerEpoch)
 
-          allRewardsState
+          val rewards: F[SortedSet[RewardTransaction]] = allRewardsState
             .run(mintedAmount)
             .flatTap(validateState(mintedAmount))
             .map(toTransactions)
+
+          val oneTimeRewards = config.oneTimeRewards
+            .filter(_.epoch === epochProgress)
+            .map(otr => RewardTransaction(otr.address, otr.amount))
+
+          rewards.map(_ ++ oneTimeRewards)
         }
 
       private def validateState(totalPool: Amount)(state: (Amount, List[(Address, Amount)])): F[Unit] = {
