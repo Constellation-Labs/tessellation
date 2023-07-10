@@ -9,8 +9,10 @@ import org.tessellation.config.types.RewardsConfig._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.epoch.EpochProgress
+import org.tessellation.schema.transaction.TransactionAmount
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types._
+import org.tessellation.sdk.domain.transaction.TransactionValidator.stardustPrimary
 
 import ciris.Secret
 import eu.timepit.refined.auto._
@@ -55,17 +57,21 @@ object types {
     remainingWeight: Weight
   )
 
+  case class OneTimeReward(epoch: EpochProgress, address: Address, amount: TransactionAmount)
+
   case class RewardsConfig(
     programs: EpochProgress => ProgramsDistributionConfig = mainnetProgramsDistributionConfig,
-    rewardsPerEpoch: SortedMap[EpochProgress, Amount] = mainnetRewardsPerEpoch
+    rewardsPerEpoch: SortedMap[EpochProgress, Amount] = mainnetRewardsPerEpoch,
+    oneTimeRewards: List[OneTimeReward] = List.empty
   )
 
   object RewardsConfig {
-    val stardustPrimary: Address = Address("DAGSTARDUSTCOLLECTIVEHZOIPHXZUBFGNXWJETZVSPAPAHMLXS")
+    val stardustNewPrimary = Address("DAG8vD8BUhCpTnYXEadQVGhHjgxEZZiafbzwmKKh")
     val stardustSecondary: Address = Address("DAG8VT7bxjs1XXBAzJGYJDaeyNxuThikHeUTp9XY")
     val softStaking: Address = Address("DAG77VVVRvdZiYxZ2hCtkHz68h85ApT5b2xzdTkn")
     val testnet: Address = Address("DAG0qE5tkz6cMUD5M2dkqgfV4TQCzUUdAP5MFM9P")
     val dataPool: Address = Address("DAG3RXBWBJq1Bf38rawASakLHKYMbRhsDckaGvGu")
+    val integrationNet: Address = Address("DAG8jE4CHy9T2izWFEv8K6rp5hNJq11SyLEVYnt8")
 
     val mainnetProgramsDistributionConfig: EpochProgress => ProgramsDistributionConfig = {
       case epoch if epoch < EpochProgress(1336392L) =>
@@ -79,7 +85,7 @@ object types {
           ),
           remainingWeight = Weight(4L) // facilitators
         )
-      case _ =>
+      case epoch if epoch < EpochProgress(1352274L) =>
         ProgramsDistributionConfig(
           weights = Map(
             stardustPrimary -> Weight(5L),
@@ -88,6 +94,17 @@ object types {
             dataPool -> Weight(55L)
           ),
           remainingWeight = Weight(30L) // facilitators
+        )
+      case _ =>
+        ProgramsDistributionConfig(
+          weights = Map(
+            stardustNewPrimary -> Weight(5L),
+            stardustSecondary -> Weight(5L),
+            testnet -> Weight(3L),
+            dataPool -> Weight(55L),
+            integrationNet -> Weight(15L)
+          ),
+          remainingWeight = Weight(17L) // facilitators
         )
     }
 

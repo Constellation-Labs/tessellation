@@ -22,17 +22,16 @@ trait TransactionValidator[F[_], T <: Transaction] {
 }
 
 object TransactionValidator {
+  val stardustPrimary: Address = Address("DAGSTARDUSTCOLLECTIVEHZOIPHXZUBFGNXWJETZVSPAPAHMLXS")
+  val lockedAddresses: Set[Address] = Set(
+    Address("DAG0qgcEbMk8vQL6VrnbhMreNeEFXk12v1BvERCb"),
+    Address("DAG2KQrN97LpA5gRerJAQ5mDuy6kjC2dDtMr58fe")
+  )
 
   def make[F[_]: Async, T <: Transaction](
     signedValidator: SignedValidator[F]
   ): TransactionValidator[F, T] =
     new TransactionValidator[F, T] {
-
-      val lockedAddresses: Set[Address] = Set(
-        Address("DAG0qgcEbMk8vQL6VrnbhMreNeEFXk12v1BvERCb"),
-        Address("DAG2KQrN97LpA5gRerJAQ5mDuy6kjC2dDtMr58fe")
-      )
-
       def validate(
         signedTransaction: Signed[T]
       ): F[TransactionValidationErrorOr[Signed[T]]] =

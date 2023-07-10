@@ -97,10 +97,16 @@ object Rewards {
 
           val mintedAmount = getAmountByEpoch(epochProgress, config.rewardsPerEpoch)
 
-          allRewardsState
+          val rewards: F[SortedSet[RewardTransaction]] = allRewardsState
             .run(mintedAmount)
             .flatTap(validateState(mintedAmount))
             .map(toTransactions)
+
+          val oneTimeRewards = config.oneTimeRewards
+            .filter(_.epoch === epochProgress)
+            .map(otr => RewardTransaction(otr.address, otr.amount))
+
+          rewards.map(_ ++ oneTimeRewards)
         }
 
       private def validateState(totalPool: Amount)(state: (Amount, List[(Address, Amount)])): F[Unit] = {
