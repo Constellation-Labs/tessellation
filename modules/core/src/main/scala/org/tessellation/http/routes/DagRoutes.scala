@@ -32,7 +32,7 @@ final case class DagRoutes[F[_]: Async](dagService: DAGService[F], mkDagCell: L0
         }
 
     case GET -> Root / "total-supply" =>
-      dagService.getTotalSupply.flatMap {
+      dagService.getFilteredOutTotalSupply.flatMap {
         case Some((supply, ordinal)) =>
           Ok(("total" ->> supply) :: ("ordinal" ->> ordinal.value.value) :: HNil)
         case _ => NotFound()
