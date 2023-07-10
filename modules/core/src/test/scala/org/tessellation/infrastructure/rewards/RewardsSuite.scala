@@ -12,6 +12,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import org.tessellation.config.types.RewardsConfig._
 import org.tessellation.config.types._
 import org.tessellation.domain.rewards.Rewards
+import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
 import org.tessellation.ext.kryo._
 import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
@@ -21,6 +22,7 @@ import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.generators.{chooseNumRefined, transactionGen}
 import org.tessellation.schema.transaction.{RewardTransaction, TransactionAmount, TransactionFee}
+import org.tessellation.sdk.domain.transaction.TransactionValidator.stardustPrimary
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.key.ops.PublicKeyOps
@@ -181,7 +183,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
     } yield expect.eql(expected, txs)
   }
 
-  test("minted rewards for the logic at epoch progress 1336392 and later are as expected") { res =>
+  test("minted rewards for the logic at epoch progress 1336392 until 1352274 are as expected") { res =>
     implicit val (_, sp, makeIdFn) = res
 
     val epoch = EpochProgress(1336392L)
@@ -202,5 +204,37 @@ object RewardsSuite extends MutableIOSuite with Checkers {
         RewardTransaction(facilitatorAddress, TransactionAmount(30L))
       )
     } yield expect.eql(expected, txs)
+  }
+
+  test("minted rewards for the logic at epoch progress 1352274 and later are as expected") { res =>
+    implicit val (_, sp, makeIdFn) = res
+
+    val facilitator = makeIdFn.apply()
+    val facilitators = NonEmptySet.one(facilitator)
+    val adjustedConfig = config.copy(rewardsPerEpoch = SortedMap(EpochProgress.MaxValue -> Amount(100L)))
+
+    val minEpoch: NonNegLong = 1352274L
+    val maxEpoch: NonNegLong = 5500000L
+    val gen = chooseNumRefined(minEpoch, maxEpoch).map(EpochProgress(_))
+
+    forall(gen) { epoch =>
+      for {
+        oneTimeRewards <- // one-time reward in another epoch should not show up in results
+          List(OneTimeReward(epoch.next, stardustNewPrimary, TransactionAmount(12345L))).pure[F]
+
+        rewards = makeRewards(adjustedConfig.copy(oneTimeRewards = oneTimeRewards))
+
+        txs <- rewards.mintedDistribution(epoch, facilitators)
+        facilitatorAddress <- facilitator.toAddress
+        expected = SortedSet(
+          RewardTransaction(stardustNewPrimary, TransactionAmount(5L)),
+          RewardTransaction(stardustSecondary, TransactionAmount(5L)),
+          RewardTransaction(testnet, TransactionAmount(3L)),
+          RewardTransaction(dataPool, TransactionAmount(55L)),
+          RewardTransaction(integrationNet, TransactionAmount(15L)),
+          RewardTransaction(facilitatorAddress, TransactionAmount(17L))
+        )
+      } yield expect.eql(expected, txs)
+    }
   }
 }
