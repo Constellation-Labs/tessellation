@@ -15,7 +15,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.config.AppEnvironment
-import org.tessellation.sdk.config.AppEnvironment.{Dev, Testnet}
+import org.tessellation.sdk.config.AppEnvironment.{Dev, Integrationnet, Testnet}
 import org.tessellation.sdk.config.types.HttpConfig
 import org.tessellation.sdk.http.p2p.middleware.{PeerAuthMiddleware, `X-Id-Middleware`}
 import org.tessellation.sdk.http.routes
@@ -110,7 +110,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
       PeerAuthMiddleware
         .responseSignerMiddleware(privateKey, storages.session, selfId) {
           `X-Id-Middleware`.responseMiddleware(selfId) {
-            (if (environment == Testnet || environment == Dev) debugRoutes else HttpRoutes.empty) <+>
+            (if (Seq(Dev, Integrationnet, Testnet).contains(environment)) debugRoutes else HttpRoutes.empty) <+>
               metricRoutes <+>
               targetRoutes <+>
               snapshotRoutes.publicRoutes <+>

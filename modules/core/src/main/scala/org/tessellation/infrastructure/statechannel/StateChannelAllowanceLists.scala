@@ -12,9 +12,8 @@ object StateChannelAllowanceLists {
 
   def get(env: AppEnvironment): Option[Map[Address, NonEmptySet[PeerId]]] =
     env match {
-      case Dev     => none
-      case Testnet => none
-      case Mainnet => Map.empty[Address, NonEmptySet[PeerId]].some
+      case Dev | Testnet | Integrationnet => none
+      case Mainnet                        => Map.empty[Address, NonEmptySet[PeerId]].some
     }
 
 }

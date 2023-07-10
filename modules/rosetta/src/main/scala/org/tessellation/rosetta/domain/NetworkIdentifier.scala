@@ -43,13 +43,15 @@ object network {
     val values = findValues
 
     case object Testnet extends NetworkEnvironment(value = "testnet")
+    case object Integrationnet extends NetworkEnvironment(value = "integrationnet")
     case object Mainnet extends NetworkEnvironment(value = "mainnet")
 
     def fromAppEnvironment(appEnvironment: AppEnvironment): Option[NetworkEnvironment] =
       appEnvironment match {
-        case AppEnvironment.Mainnet => NetworkEnvironment.Mainnet.some
-        case AppEnvironment.Testnet => NetworkEnvironment.Testnet.some
-        case _                      => none[NetworkEnvironment]
+        case AppEnvironment.Mainnet        => NetworkEnvironment.Mainnet.some
+        case AppEnvironment.Testnet        => NetworkEnvironment.Testnet.some
+        case AppEnvironment.Integrationnet => NetworkEnvironment.Integrationnet.some
+        case _                             => none[NetworkEnvironment]
       }
   }
 

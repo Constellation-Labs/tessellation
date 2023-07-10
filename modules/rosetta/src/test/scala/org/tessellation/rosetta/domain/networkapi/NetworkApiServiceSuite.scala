@@ -46,21 +46,28 @@ object NetworkApiServiceSuite extends MutableIOSuite with Checkers {
   ): NetworkApiService[IO] =
     NetworkApiService.make[IO](lastSnapshotInfo, genesisSnapshot, nodeState)
 
-  pureTest("list returns mainnet identifier for that AppEnvironment ") {
+  pureTest("list returns mainnet identifier for that AppEnvironment") {
     val netId = NetworkIdentifier(BlockchainId.dag, NetworkEnvironment.Mainnet, none)
     val expected = List(netId)
     val actual = makeNetworkApiService().list(AppEnvironment.Mainnet)
     expect.eql(expected, actual)
   }
 
-  pureTest("list returns testnet identifier for that AppEnvironment ") {
+  pureTest("list returns testnet identifier for that AppEnvironment") {
     val netId = NetworkIdentifier(BlockchainId.dag, NetworkEnvironment.Testnet, none)
     val expected = List(netId)
     val actual = makeNetworkApiService().list(AppEnvironment.Testnet)
     expect.eql(expected, actual)
   }
 
-  pureTest("list returns mainnet identifier for that AppEnvironment ") {
+  pureTest("list returns integrationnet identifier for that AppEnvironment") {
+    val netId = NetworkIdentifier(BlockchainId.dag, NetworkEnvironment.Integrationnet, none)
+    val expected = List(netId)
+    val actual = makeNetworkApiService().list(AppEnvironment.Integrationnet)
+    expect.eql(expected, actual)
+  }
+
+  pureTest("list returns empty list for Dev AppEnvironment") {
     val expected = List()
     val actual = makeNetworkApiService().list(AppEnvironment.Dev)
     expect.eql(expected, actual)
