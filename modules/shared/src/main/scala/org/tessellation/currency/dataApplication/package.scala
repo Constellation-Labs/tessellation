@@ -39,8 +39,6 @@ trait BaseDataApplicationService[F[_]] {
 
   def dataEncoder: Encoder[DataUpdate]
   def dataDecoder: Decoder[DataUpdate]
-
-  def routes: HttpRoutes[F]
 }
 trait BaseDataApplicationContextualOps[F[_], Context] {
   def validateData(oldState: DataState, updates: NonEmptyList[Signed[DataUpdate]])(
@@ -50,6 +48,8 @@ trait BaseDataApplicationContextualOps[F[_], Context] {
   def validateUpdate(update: DataUpdate)(implicit context: Context): F[DataApplicationValidationErrorOr[Unit]]
 
   def combine(oldState: DataState, updates: NonEmptyList[Signed[DataUpdate]])(implicit context: Context): F[DataState]
+
+  def routes(implicit context: Context): HttpRoutes[F]
 }
 
 trait BaseDataApplicationL0Service[F[_]] extends BaseDataApplicationService[F] with BaseDataApplicationContextualOps[F, L0NodeContext[F]] {
@@ -77,7 +77,6 @@ trait DataApplicationService[F[_], D <: DataUpdate, S <: DataState] {
   def dataEncoder: Encoder[D]
   def dataDecoder: Decoder[D]
 
-  def routes: HttpRoutes[F]
 }
 
 trait DataApplicationContextualOps[F[_], D <: DataUpdate, S <: DataState, Context] {
@@ -88,6 +87,8 @@ trait DataApplicationContextualOps[F[_], D <: DataUpdate, S <: DataState, Contex
   def validateUpdate(update: D)(implicit context: Context): F[DataApplicationValidationErrorOr[Unit]]
 
   def combine(oldState: S, updates: NonEmptyList[Signed[D]])(implicit context: Context): F[S]
+
+  def routes(implicit context: Context): HttpRoutes[F]
 }
 
 trait DataApplicationL0Service[F[_], D <: DataUpdate, S <: DataState]
@@ -129,6 +130,8 @@ object BaseDataApplicationContextualOps {
             service.combine(state, updates.asInstanceOf[NonEmptyList[Signed[D]]]).widen[DataState]
           case a => a.pure[F]
         }
+
+      def routes(implicit context: Context): HttpRoutes[F] = service.routes
     }
 }
 
@@ -186,7 +189,7 @@ object BaseDataApplicationService {
           service.dataDecoder.tryDecode(c).widen[DataUpdate]
       }
 
-      def routes: HttpRoutes[F] = service.routes
+      def routes(implicit context: Context): HttpRoutes[F] = v.routes
     }
 }
 
@@ -212,7 +215,7 @@ object BaseDataApplicationL0Service {
 
       def genesis: DataState = service.genesis
 
-      def routes: HttpRoutes[F] = base.routes
+      def routes(implicit context: L0NodeContext[F]): HttpRoutes[F] = base.routes
 
       def validateData(oldState: DataState, updates: NonEmptyList[Signed[DataUpdate]])(
         implicit context: L0NodeContext[F]
@@ -249,7 +252,7 @@ object BaseDataApplicationL1Service {
 
       def dataDecoder: Decoder[DataUpdate] = base.dataDecoder
 
-      def routes: HttpRoutes[F] = base.routes
+      def routes(implicit context: L1NodeContext[F]): HttpRoutes[F] = base.routes
 
       def validateData(oldState: DataState, updates: NonEmptyList[Signed[DataUpdate]])(
         implicit context: L1NodeContext[F]
@@ -290,7 +293,9 @@ object dataApplication {
   }
 
   object DataApplicationCustomRoutes {
-    def publicRoutes[F[_]: Monad](maybeDataApplication: Option[BaseDataApplicationService[F]]): HttpRoutes[F] =
+    def publicRoutes[F[_]: Monad, Context](
+      maybeDataApplication: Option[BaseDataApplicationService[F] with BaseDataApplicationContextualOps[F, Context]]
+    )(implicit context: Context): HttpRoutes[F] =
       maybeDataApplication.map(_.routes).map(r => Router("/data-application" -> r)).getOrElse(HttpRoutes.empty[F])
   }
 
