@@ -68,7 +68,11 @@ object types {
   case class RewardsConfig(
     programs: EpochProgress => ProgramsDistributionConfig = mainnetProgramsDistributionConfig,
     rewardsPerEpoch: SortedMap[EpochProgress, Amount] = mainnetRewardsPerEpoch,
-    oneTimeRewards: List[OneTimeReward] = List.empty
+    oneTimeRewards: List[OneTimeReward] = List(
+      // Transferring final balance of 4,343,029,488,479,231 from DAGSTARDUSTCOLLECTIVEHZOIPHXZUBFGNXWJETZVSPAPAHMLXS
+      // as of the last minting it received awards (Epoch 1352274)
+      OneTimeReward(EpochProgress(1353745L), stardustNewPrimary, TransactionAmount(4_343_029_488_479_231L))
+    )
   )
 
   object RewardsConfig {
