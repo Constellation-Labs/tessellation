@@ -25,7 +25,8 @@ object TransactionValidator {
   val stardustPrimary: Address = Address("DAGSTARDUSTCOLLECTIVEHZOIPHXZUBFGNXWJETZVSPAPAHMLXS")
   val lockedAddresses: Set[Address] = Set(
     Address("DAG0qgcEbMk8vQL6VrnbhMreNeEFXk12v1BvERCb"),
-    Address("DAG2KQrN97LpA5gRerJAQ5mDuy6kjC2dDtMr58fe")
+    Address("DAG2KQrN97LpA5gRerJAQ5mDuy6kjC2dDtMr58fe"),
+    stardustPrimary
   )
 
   def make[F[_]: Async, T <: Transaction](
