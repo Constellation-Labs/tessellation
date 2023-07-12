@@ -27,8 +27,8 @@ import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.Peer
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.node.NodeStorage
-import org.tessellation.sdk.domain.snapshot.PeerSelect
 import org.tessellation.sdk.domain.snapshot.programs.Download
+import org.tessellation.sdk.domain.snapshot.{PeerSelect, Validator}
 import org.tessellation.sdk.infrastructure.snapshot.{GlobalSnapshotContextFunctions, SnapshotConsensus}
 import org.tessellation.security.Hashed
 import org.tessellation.security.hash.Hash
@@ -127,13 +127,18 @@ object Download {
         val (lastSnapshot, lastContext) = result
 
         fetchSnapshot(none, lastSnapshot.ordinal.next).flatMap { snapshot =>
-          globalSnapshotContextFns
-            .createContext(lastContext, lastSnapshot.value, snapshot)
-            .handleErrorWith(_ => InvalidChain.raiseError[F, GlobalSnapshotContext])
-            .flatTap { _ =>
-              snapshotStorage.writePersisted(snapshot)
-            }
-            .map((snapshot, _))
+          lastSnapshot.toHashed[F].flatMap { hashed =>
+            Applicative[F].unlessA {
+              Validator.isNextSnapshot(hashed, snapshot.value)
+            }(InvalidChain.raiseError[F, Unit])
+          } >>
+            globalSnapshotContextFns
+              .createContext(lastContext, lastSnapshot.value, snapshot)
+              .handleErrorWith(_ => InvalidChain.raiseError[F, GlobalSnapshotContext])
+              .flatTap { _ =>
+                snapshotStorage.writePersisted(snapshot)
+              }
+              .map((snapshot, _))
         }
       }
     }
@@ -253,7 +258,8 @@ object Download {
         }
 
     def fetchSnapshot(hash: Option[Hash], ordinal: SnapshotOrdinal): F[Signed[GlobalIncrementalSnapshot]] =
-      clusterStorage.getPeers
+      clusterStorage.getResponsivePeers
+        .map(NodeState.ready)
         .map(_.toList)
         .flatMap(Random[F].shuffleList)
         .flatTap { _ =>
@@ -285,7 +291,8 @@ object Download {
         }
 
     def fetchGenesis(ordinal: SnapshotOrdinal): F[Signed[GlobalSnapshot]] =
-      clusterStorage.getPeers
+      clusterStorage.getResponsivePeers
+        .map(NodeState.ready)
         .map(_.toList)
         .flatMap(Random[F].shuffleList)
         .flatTap { _ =>

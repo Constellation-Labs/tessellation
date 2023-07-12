@@ -1,5 +1,6 @@
 package org.tessellation.currency.l0.snapshot.programs
 
+import cats.Applicative
 import cats.effect.Async
 import cats.effect.std.Random
 import cats.syntax.applicative._
@@ -25,8 +26,8 @@ import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.Peer
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.node.NodeStorage
-import org.tessellation.sdk.domain.snapshot.PeerSelect
 import org.tessellation.sdk.domain.snapshot.programs.Download
+import org.tessellation.sdk.domain.snapshot.{PeerSelect, Validator}
 import org.tessellation.sdk.infrastructure.snapshot.{CurrencySnapshotContextFunctions, SnapshotConsensus}
 import org.tessellation.security.Hashed
 import org.tessellation.security.hash.Hash
@@ -100,16 +101,22 @@ object Download {
         val (lastSnapshot, lastContext) = result
 
         fetchSnapshot(none, lastSnapshot.ordinal.next).flatMap { snapshot =>
-          currencySnapshotContextFns
-            .createContext(lastContext, lastSnapshot.value, snapshot)
-            .handleErrorWith(_ => InvalidChain.raiseError[F, CurrencySnapshotContext])
-            .map((snapshot, _))
+          lastSnapshot.toHashed[F].flatMap { hashed =>
+            Applicative[F].unlessA {
+              Validator.isNextSnapshot(hashed, snapshot.value)
+            }(InvalidChain.raiseError[F, Unit])
+          } >>
+            currencySnapshotContextFns
+              .createContext(lastContext, lastSnapshot.value, snapshot)
+              .handleErrorWith(_ => InvalidChain.raiseError[F, CurrencySnapshotContext])
+              .map((snapshot, _))
         }
       }
     }
 
     def fetchSnapshot(hash: Option[Hash], ordinal: SnapshotOrdinal): F[Signed[CurrencyIncrementalSnapshot]] =
-      clusterStorage.getPeers
+      clusterStorage.getResponsivePeers
+        .map(NodeState.ready)
         .map(_.toList)
         .flatMap(Random[F].shuffleList)
         .flatTap { _ =>
