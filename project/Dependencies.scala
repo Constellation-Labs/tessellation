@@ -16,7 +16,6 @@ object Dependencies {
     val doobie = "1.0.0-RC1"
     val droste = "0.9.0"
     val enumeratum = "1.7.2"
-    val h2 = "2.1.214"
     val javaxCrypto = "1.0.1"
     val jawnVersion = "1.4.0"
     val jawnFs2Version = "1.2.1"
@@ -111,7 +110,6 @@ object Dependencies {
 
     val doobieCore = doobie("core")
     val doobieHikari = doobie("hikari")
-    val doobieH2 = doobie("h2")
     val doobieQuill = doobie("quill")
 
     val drosteCore = droste("core")
@@ -122,8 +120,6 @@ object Dependencies {
     val enumeratumCirce = enumeratum("circe")
 
     val flyway = "org.flywaydb" % "flyway-core" % V.flyway
-
-    val h2 = "com.h2database" % "h2" % V.h2
 
     val http4sCore = http4s("core")
     val http4sDsl = http4s("dsl")
