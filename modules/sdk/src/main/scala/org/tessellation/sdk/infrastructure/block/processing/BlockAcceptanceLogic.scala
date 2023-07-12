@@ -92,7 +92,7 @@ object BlockAcceptanceLogic {
                       .get(address)
                       .toOptionT[F]
                       .orElseF(context.getLastTxRef(address))
-                      .getOrElse(TransactionReference.empty)
+                      .getOrElse(context.getInitialTxRef)
 
                     headTxChainRef <- TransactionReference.of(txChain.head)
                     lastTxChainRef <- TransactionReference.of(txChain.last)

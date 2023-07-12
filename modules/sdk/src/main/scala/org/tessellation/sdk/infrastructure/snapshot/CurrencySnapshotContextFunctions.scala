@@ -9,7 +9,7 @@ import cats.syntax.show._
 
 import scala.util.control.NoStackTrace
 
-import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
+import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotContext}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.sdk.domain.snapshot.SnapshotContextFunctions
@@ -20,16 +20,17 @@ import derevo.cats.{eqv, show}
 import derevo.derive
 import eu.timepit.refined.auto._
 
-abstract class CurrencySnapshotContextFunctions[F[_]] extends SnapshotContextFunctions[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
+abstract class CurrencySnapshotContextFunctions[F[_]]
+    extends SnapshotContextFunctions[F, CurrencyIncrementalSnapshot, CurrencySnapshotContext]
 
 object CurrencySnapshotContextFunctions {
   def make[F[_]: Async: KryoSerializer](snapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F]) =
     new CurrencySnapshotContextFunctions[F] {
       def createContext(
-        context: CurrencySnapshotInfo,
+        context: CurrencySnapshotContext,
         lastArtifact: CurrencyIncrementalSnapshot,
         signedArtifact: Signed[CurrencyIncrementalSnapshot]
-      ): F[CurrencySnapshotInfo] = for {
+      ): F[CurrencySnapshotContext] = for {
         lastActiveTips <- lastArtifact.activeTips
         lastDeprecatedTips = lastArtifact.tips.deprecated
 
@@ -48,7 +49,7 @@ object CurrencySnapshotContextFunctions {
         diffRewards = acceptedRewardTxs -- signedArtifact.rewards
         _ <- CannotApplyRewardsError(diffRewards).raiseError[F, Unit].whenA(diffRewards.nonEmpty)
 
-      } yield snapshotInfo
+      } yield CurrencySnapshotContext(context.address, snapshotInfo)
     }
 
   @derive(eqv, show)

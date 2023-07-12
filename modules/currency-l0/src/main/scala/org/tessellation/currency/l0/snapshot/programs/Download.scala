@@ -17,7 +17,7 @@ import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
 
 import org.tessellation.currency.l0.http.p2p.P2PClient
-import org.tessellation.currency.l0.snapshot.CurrencySnapshotContext
+import org.tessellation.currency.l0.node.IdentifierStorage
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
 import org.tessellation.kryo.KryoSerializer
@@ -45,8 +45,9 @@ object Download {
     clusterStorage: ClusterStorage[F],
     currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
     nodeStorage: NodeStorage[F],
-    consensus: SnapshotConsensus[F, _, _, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, _],
-    peerSelect: PeerSelect[F]
+    consensus: SnapshotConsensus[F, _, _, CurrencyIncrementalSnapshot, CurrencySnapshotContext, _],
+    peerSelect: PeerSelect[F],
+    identifierStorage: IdentifierStorage[F]
   ): Download[F] = new Download[F] {
 
     val logger = Slf4jLogger.getLogger[F]
@@ -64,7 +65,9 @@ object Download {
         .flatMap { result =>
           val ((snapshot, context), observationLimit) = result
 
-          consensus.manager.startFacilitatingAfterDownload(observationLimit, snapshot, context)
+          identifierStorage.get.flatMap { currencyAddress =>
+            consensus.manager.startFacilitatingAfterDownload(observationLimit, snapshot, CurrencySnapshotContext(currencyAddress, context))
+          }
         }
 
     def start: F[DownloadResult] =
@@ -106,10 +109,13 @@ object Download {
               Validator.isNextSnapshot(hashed, snapshot.value)
             }(InvalidChain.raiseError[F, Unit])
           } >>
-            currencySnapshotContextFns
-              .createContext(lastContext, lastSnapshot.value, snapshot)
-              .handleErrorWith(_ => InvalidChain.raiseError[F, CurrencySnapshotContext])
-              .map((snapshot, _))
+            identifierStorage.get
+              .flatMap(currencyAddress =>
+                currencySnapshotContextFns
+                  .createContext(CurrencySnapshotContext(currencyAddress, lastContext), lastSnapshot.value, snapshot)
+                  .handleErrorWith(_ => InvalidChain.raiseError[F, CurrencySnapshotContext])
+              )
+              .map(c => (snapshot, c.snapshotInfo))
         }
       }
     }

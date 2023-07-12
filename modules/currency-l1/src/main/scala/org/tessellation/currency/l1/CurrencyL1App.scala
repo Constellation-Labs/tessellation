@@ -74,7 +74,8 @@ abstract class CurrencyL1App(
         .make[IO, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
           sdkStorages,
           method.l0Peer,
-          method.globalL0Peer
+          method.globalL0Peer,
+          method.identifier
         )
         .asResource
       validators = DAGL1Validators

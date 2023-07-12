@@ -11,9 +11,9 @@ import cats.syntax.show._
 import scala.util.control.NoStackTrace
 
 import org.tessellation.currency.l0.node.IdentifierStorage
+import org.tessellation.currency.l0.snapshot.CurrencySnapshotArtifact
 import org.tessellation.currency.l0.snapshot.storages.LastBinaryHashStorage
-import org.tessellation.currency.l0.snapshot.{CurrencySnapshotArtifact, CurrencySnapshotContext}
-import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
+import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotContext, CurrencySnapshotInfo}
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.collateral.{Collateral, OwnCollateralNotSatisfied}
@@ -69,7 +69,7 @@ object Rollback {
       _ <- consensusManager.startFacilitatingAfterRollback(
         lastIncremental.ordinal,
         lastIncremental,
-        lastInfo
+        CurrencySnapshotContext(identifier, lastInfo)
       )
 
       _ <- logger.info(

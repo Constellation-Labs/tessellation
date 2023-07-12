@@ -15,7 +15,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.Block.HashedOps
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
-import org.tessellation.schema.transaction.Transaction
+import org.tessellation.schema.transaction.{Transaction, TransactionReference}
 import org.tessellation.schema.{Block, BlockReference, transaction}
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.security.Hashed
@@ -54,6 +54,9 @@ object BlockService {
 
         def getLastTxRef(address: Address): F[Option[transaction.TransactionReference]] =
           transactionStorage.getLastAcceptedReference(address).map(_.some)
+
+        def getInitialTxRef: TransactionReference =
+          transactionStorage.getInitialTxRef
 
         def getParentUsage(blockReference: BlockReference): F[Option[NonNegLong]] =
           blockStorage.getUsages(blockReference.hash)

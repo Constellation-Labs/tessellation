@@ -55,7 +55,7 @@ object Services {
           p2PClient.stateChannelSnapshot,
           storages.globalL0Cluster,
           storages.snapshot,
-          storages.identifierStorage
+          storages.identifier
         )
         .pure[F]
 
@@ -110,7 +110,7 @@ sealed abstract class Services[F[_]] private (
     CurrencyTransaction,
     CurrencyBlock,
     CurrencyIncrementalSnapshot,
-    CurrencySnapshotInfo,
+    CurrencySnapshotContext,
     CurrencySnapshotEvent
   ],
   val address: AddressService[F, CurrencyIncrementalSnapshot],

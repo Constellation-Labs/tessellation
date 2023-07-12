@@ -35,17 +35,22 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 class TransactionStorage[F[_]: Async, T <: Transaction: Order: Ordering](
   lastAccepted: MapRef[F, Address, Option[LastTransactionReferenceState]],
-  waitingTransactions: MapRef[F, Address, Option[NonEmptySet[Hashed[T]]]]
+  waitingTransactions: MapRef[F, Address, Option[NonEmptySet[Hashed[T]]]],
+  initialTransactionReference: TransactionReference
 ) {
 
   private val logger = Slf4jLogger.getLogger[F]
   private val transactionLogger = Slf4jLogger.getLoggerFromName[F](transactionLoggerName)
 
+  def getInitialTxRef: TransactionReference = initialTransactionReference
+
   def getState(): F[(Map[Address, LastTransactionReferenceState], Map[Address, NonEmptySet[Hashed[T]]])] =
     (lastAccepted.toMap, waitingTransactions.toMap).mapN((_, _))
 
   def getLastAcceptedReference(source: Address): F[TransactionReference] =
-    lastAccepted(source).get.map(_.map(_.ref).getOrElse(TransactionReference.empty))
+    lastAccepted(source).get.map {
+      _.map(_.ref).getOrElse(initialTransactionReference)
+    }
 
   def setLastAccepted(lastTxRefs: Map[Address, TransactionReference]): F[Unit] =
     lastAccepted.clear >>
@@ -111,7 +116,10 @@ class TransactionStorage[F[_]: Async, T <: Transaction: Order: Ordering](
       txs <- addresses.traverse { address =>
         waitingTransactions(address).get.map {
           case Some(waiting) =>
-            val lastTxState = lastAccepted.getOrElse(address, Majority(TransactionReference.empty))
+            val lastTxState = lastAccepted.getOrElse(
+              address,
+              Majority(initialTransactionReference)
+            )
             val consecutiveTxs = Consecutive.take(waiting.toList, lastTxState.ref)
 
             pullForAddress(lastTxState, consecutiveTxs)
@@ -130,7 +138,10 @@ class TransactionStorage[F[_]: Async, T <: Transaction: Order: Ordering](
           (maybeWaiting, setter) <- waitingTransactions(address).access
 
           pulled <- maybeWaiting.traverse { waiting =>
-            val lastTxState = lastAccepted.getOrElse(address, Majority(TransactionReference.empty))
+            val lastTxState = lastAccepted.getOrElse(
+              address,
+              Majority(initialTransactionReference)
+            )
             val consecutiveTxs = Consecutive.take(waiting.toList, lastTxState.ref)
             val pulled = pullForAddress(lastTxState, consecutiveTxs)
             val maybeStillWaiting = SortedSet.from(waiting.toList.diff(pulled)).toNes
@@ -217,20 +228,23 @@ class TransactionStorage[F[_]: Async, T <: Transaction: Order: Ordering](
 
 object TransactionStorage {
 
-  def make[F[_]: Async: KryoSerializer, T <: Transaction: Order: Ordering]: F[TransactionStorage[F, T]] =
+  def make[F[_]: Async: KryoSerializer, T <: Transaction: Order: Ordering](
+    initialTransactionReference: TransactionReference
+  ): F[TransactionStorage[F, T]] =
     for {
       lastAccepted <- MapRef.ofConcurrentHashMap[F, Address, LastTransactionReferenceState]()
       waitingTransactions <- MapRef.ofConcurrentHashMap[F, Address, NonEmptySet[Hashed[T]]]()
-    } yield new TransactionStorage[F, T](lastAccepted, waitingTransactions)
+    } yield new TransactionStorage[F, T](lastAccepted, waitingTransactions, initialTransactionReference)
 
   def make[F[_]: Async: KryoSerializer, A <: Transaction: Order: Ordering](
     lastAccepted: Map[Address, LastTransactionReferenceState],
-    waitingTransactions: Map[Address, NonEmptySet[Hashed[A]]]
+    waitingTransactions: Map[Address, NonEmptySet[Hashed[A]]],
+    initialTransactionReference: TransactionReference
   ): F[TransactionStorage[F, A]] =
     (
       MapRef.ofSingleImmutableMap(lastAccepted),
       MapRef.ofSingleImmutableMap(waitingTransactions)
-    ).mapN(new TransactionStorage(_, _))
+    ).mapN(new TransactionStorage(_, _, initialTransactionReference))
 
   sealed trait TransactionAcceptanceError extends NoStackTrace
   case class ParentNotAccepted(

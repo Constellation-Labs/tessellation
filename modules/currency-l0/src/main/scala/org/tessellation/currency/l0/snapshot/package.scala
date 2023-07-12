@@ -11,8 +11,6 @@ package object snapshot {
 
   type CurrencySnapshotArtifact = CurrencyIncrementalSnapshot
 
-  type CurrencySnapshotContext = CurrencySnapshotInfo
-
   type CurrencySnapshotConsensus[F[_]] =
     SnapshotConsensus[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshotArtifact, CurrencySnapshotContext, CurrencySnapshotEvent]
 

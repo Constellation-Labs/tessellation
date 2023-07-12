@@ -12,10 +12,10 @@ import cats.syntax.show._
 import scala.util.control.NoStackTrace
 
 import org.tessellation.currency.l0.node.IdentifierStorage
+import org.tessellation.currency.l0.snapshot.CurrencySnapshotArtifact
 import org.tessellation.currency.l0.snapshot.services.StateChannelSnapshotService
 import org.tessellation.currency.l0.snapshot.storages.LastBinaryHashStorage
-import org.tessellation.currency.l0.snapshot.{CurrencySnapshotArtifact, CurrencySnapshotContext}
-import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshot, CurrencySnapshotInfo}
+import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.SnapshotOrdinal
@@ -80,7 +80,7 @@ object Genesis {
       _ <- consensusManager.startFacilitatingAfterRollback(
         signedFirstIncrementalSnapshot.ordinal,
         signedFirstIncrementalSnapshot,
-        hashedGenesis.info
+        CurrencySnapshotContext(identifier, hashedGenesis.info)
       )
       _ <- logger.info(s"Genesis binary ${binaryHash.show} and ${incrementalBinaryHash.show} accepted and sent to Global L0")
     } yield ()

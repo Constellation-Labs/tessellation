@@ -9,11 +9,14 @@ import cats.syntax.functorFilter._
 import cats.syntax.option._
 import cats.syntax.order._
 
+import scala.collection.immutable.SortedMap
+
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
-import org.tessellation.schema.balance.Amount
+import org.tessellation.schema.address.Address
+import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.transaction.DAGTransaction
 import org.tessellation.sdk.config.AppEnvironment
@@ -37,7 +40,6 @@ abstract class GlobalSnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
       F,
       DAGTransaction,
       DAGBlock,
-      GlobalSnapshotStateProof,
       GlobalSnapshotEvent,
       GlobalSnapshotArtifact,
       GlobalSnapshotContext,
@@ -57,6 +59,8 @@ object GlobalSnapshotConsensusFunctions {
     private val logger = Slf4jLogger.getLoggerFromClass(GlobalSnapshotConsensusFunctions.getClass)
 
     def getRequiredCollateral: Amount = collateral
+
+    def getBalances(context: GlobalSnapshotContext): SortedMap[Address, Balance] = context.balances
 
     def consumeSignedMajorityArtifact(signedArtifact: Signed[GlobalSnapshotArtifact], context: GlobalSnapshotContext): F[Unit] =
       globalSnapshotStorage
