@@ -18,7 +18,7 @@ object Dependencies {
     val enumeratum = "1.7.2"
     val javaxCrypto = "1.0.1"
     val jawnVersion = "1.4.0"
-    val jawnFs2Version = "1.2.1"
+    val jawnFs2Version = "2.4.0"
     val flyway = "9.10.2"
     val fs2 = "3.4.0"
     val fs2Data = "1.6.0"
@@ -136,7 +136,7 @@ object Dependencies {
 
     val jawnParser = jawn("jawn-parser")
     val jawnAst = jawn("jawn-ast")
-    val jawnFs2 = "org.http4s" %% "jawn-fs2" % V.jawnFs2Version
+    val jawnFs2 = "org.typelevel" %% "jawn-fs2" % V.jawnFs2Version
 
     val monocleCore = "dev.optics" %% "monocle-core" % V.monocle
     val monocleMacro = "dev.optics" %% "monocle-macro" % V.monocle
