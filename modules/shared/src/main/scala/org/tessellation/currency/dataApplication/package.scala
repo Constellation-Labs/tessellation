@@ -13,7 +13,7 @@ import org.tessellation.schema.GlobalIncrementalSnapshot
 import org.tessellation.schema.round.RoundId
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Encodable, Hashed}
+import org.tessellation.security.{Encodable, Hashed, SecurityProvider}
 
 import io.circe._
 import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
@@ -304,8 +304,10 @@ object dataApplication {
 trait L1NodeContext[F[_]] {
   def getLastGlobalSnapshot: F[Option[Hashed[GlobalIncrementalSnapshot]]]
   def getLastCurrencySnapshot: F[Option[Hashed[CurrencyIncrementalSnapshot]]]
+  def securityProvider: SecurityProvider[F]
 }
 
 trait L0NodeContext[F[_]] {
   def getLastGlobalSnapshot: F[Option[Hashed[GlobalIncrementalSnapshot]]]
+  def securityProvider: SecurityProvider[F]
 }
