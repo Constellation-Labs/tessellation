@@ -1,5 +1,6 @@
 package org.tessellation.schema
 
+import cats.MonadThrow
 import cats.effect.Async
 import cats.syntax.functor._
 import cats.syntax.semigroup._
@@ -62,6 +63,12 @@ object transaction {
 
   object TransactionReference {
     val empty: TransactionReference = TransactionReference(TransactionOrdinal(0L), Hash.empty)
+
+    def emptyCurrency[F[_]: MonadThrow: KryoSerializer](currencyAddress: Address): F[TransactionReference] =
+      currencyAddress.value.value.hashF.map(emptyCurrency(_))
+
+    def emptyCurrency(currencyIdentifier: Hash): TransactionReference =
+      TransactionReference(TransactionOrdinal(0L), currencyIdentifier)
 
     val _Hash: Lens[TransactionReference, Hash] = GenLens[TransactionReference](_.hash)
     val _Ordinal: Lens[TransactionReference, TransactionOrdinal] = GenLens[TransactionReference](_.ordinal)

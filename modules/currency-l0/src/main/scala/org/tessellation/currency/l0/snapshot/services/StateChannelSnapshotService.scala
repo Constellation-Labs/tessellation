@@ -9,8 +9,8 @@ import cats.syntax.functor._
 import cats.syntax.show._
 
 import org.tessellation.currency.l0.node.IdentifierStorage
+import org.tessellation.currency.l0.snapshot.CurrencySnapshotArtifact
 import org.tessellation.currency.l0.snapshot.storages.LastBinaryHashStorage
-import org.tessellation.currency.l0.snapshot.{CurrencySnapshotArtifact, CurrencySnapshotContext}
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.crypto._
 import org.tessellation.json.JsonBinarySerializer
@@ -68,7 +68,7 @@ object StateChannelSnapshotService {
           )
         _ <- lastBinaryHashStorage.set(binaryHashed.hash)
         _ <- snapshotStorage
-          .prepend(signedArtifact, context)
+          .prepend(signedArtifact, context.snapshotInfo)
           .ifM(
             Applicative[F].unit,
             logger.error("Cannot save CurrencySnapshot into the storage")

@@ -11,7 +11,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
-import org.tessellation.schema.transaction.RewardTransaction
+import org.tessellation.schema.transaction.{RewardTransaction, TransactionReference}
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.security.signature.Signed
 import org.tessellation.syntax.sortedCollection.sortedSetSyntax
@@ -22,7 +22,7 @@ import eu.timepit.refined.types.numeric.NonNegLong
 trait CurrencySnapshotAcceptanceManager[F[_]] {
   def accept(
     blocksForAcceptance: List[Signed[CurrencyBlock]],
-    lastSnapshotContext: CurrencySnapshotInfo,
+    lastSnapshotContext: CurrencySnapshotContext,
     lastActiveTips: SortedSet[ActiveTip],
     lastDeprecatedTips: SortedSet[DeprecatedTip],
     calculateRewardsFn: SortedSet[Signed[CurrencyTransaction]] => F[SortedSet[RewardTransaction]]
@@ -44,21 +44,29 @@ object CurrencySnapshotAcceptanceManager {
 
     def accept(
       blocksForAcceptance: List[Signed[CurrencyBlock]],
-      lastSnapshotContext: CurrencySnapshotInfo,
+      lastSnapshotContext: CurrencySnapshotContext,
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip],
       calculateRewardsFn: SortedSet[Signed[CurrencyTransaction]] => F[SortedSet[RewardTransaction]]
     ) = for {
-      acceptanceResult <- acceptBlocks(blocksForAcceptance, lastSnapshotContext, lastActiveTips, lastDeprecatedTips)
+      initialTxRef <- TransactionReference.emptyCurrency(lastSnapshotContext.address)
 
-      transactionsRefs = lastSnapshotContext.lastTxRefs ++ acceptanceResult.contextUpdate.lastTxRefs
+      acceptanceResult <- acceptBlocks(
+        blocksForAcceptance,
+        lastSnapshotContext,
+        lastActiveTips,
+        lastDeprecatedTips,
+        initialTxRef
+      )
+
+      transactionsRefs = lastSnapshotContext.snapshotInfo.lastTxRefs ++ acceptanceResult.contextUpdate.lastTxRefs
 
       acceptedTransactions = acceptanceResult.accepted.flatMap { case (block, _) => block.value.transactions.toSortedSet }.toSortedSet
 
       rewards <- calculateRewardsFn(acceptedTransactions)
 
       (updatedBalancesByRewards, acceptedRewardTxs) = acceptRewardTxs(
-        lastSnapshotContext.balances ++ acceptanceResult.contextUpdate.balances,
+        lastSnapshotContext.snapshotInfo.balances ++ acceptanceResult.contextUpdate.balances,
         rewards
       )
 
@@ -69,16 +77,18 @@ object CurrencySnapshotAcceptanceManager {
 
     private def acceptBlocks(
       blocksForAcceptance: List[Signed[CurrencyBlock]],
-      lastSnapshotContext: CurrencySnapshotInfo,
+      lastSnapshotContext: CurrencySnapshotContext,
       lastActiveTips: SortedSet[ActiveTip],
-      lastDeprecatedTips: SortedSet[DeprecatedTip]
+      lastDeprecatedTips: SortedSet[DeprecatedTip],
+      initialTxRef: TransactionReference
     ) = {
       val tipUsages = getTipsUsages(lastActiveTips, lastDeprecatedTips)
       val context = BlockAcceptanceContext.fromStaticData(
-        lastSnapshotContext.balances,
-        lastSnapshotContext.lastTxRefs,
+        lastSnapshotContext.snapshotInfo.balances,
+        lastSnapshotContext.snapshotInfo.lastTxRefs,
         tipUsages,
-        collateral
+        collateral,
+        initialTxRef
       )
 
       blockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context)

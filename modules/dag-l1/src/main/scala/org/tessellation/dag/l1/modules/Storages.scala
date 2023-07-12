@@ -15,7 +15,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.Block
 import org.tessellation.schema.peer.L0Peer
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
-import org.tessellation.schema.transaction.Transaction
+import org.tessellation.schema.transaction.{Transaction, TransactionReference}
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, L0ClusterStorage, SessionStorage}
 import org.tessellation.sdk.domain.collateral.LatestBalances
 import org.tessellation.sdk.domain.node.NodeStorage
@@ -39,7 +39,7 @@ object Storages {
       consensusStorage <- ConsensusStorage.make[F, T, B]
       l0ClusterStorage <- L0ClusterStorage.make[F](l0Peer)
       lastSnapshotStorage <- LastSnapshotStorage.make[F, S, SI]
-      transactionStorage <- TransactionStorage.make[F, T]
+      transactionStorage <- TransactionStorage.make[F, T](TransactionReference.empty)
       addressStorage <- AddressStorage.make[F]
     } yield
       new Storages[F, T, B, P, S, SI] {

@@ -12,7 +12,7 @@ import cats.syntax.traverse._
 
 import scala.collection.immutable.SortedMap
 
-import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshot, CurrencySnapshotInfo}
+import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.cats.syntax.validated._
 import org.tessellation.json.JsonBinarySerializer
 import org.tessellation.kryo.KryoSerializer
@@ -89,10 +89,14 @@ object GlobalSnapshotStateChannelEventsProcessor {
       }
 
       private def applyCurrencySnapshot(
+        currencyAddress: Address,
         lastState: CurrencySnapshotInfo,
         lastSnapshot: CurrencyIncrementalSnapshot,
         snapshot: Signed[CurrencyIncrementalSnapshot]
-      ): F[CurrencySnapshotInfo] = currencySnapshotContextFns.createContext(lastState, lastSnapshot, snapshot)
+      ): F[CurrencySnapshotInfo] =
+        currencySnapshotContextFns
+          .createContext(CurrencySnapshotContext(currencyAddress, lastState), lastSnapshot, snapshot)
+          .map(_.snapshotInfo)
 
       def processCurrencySnapshots(
         lastGlobalSnapshotInfo: GlobalSnapshotInfo,
@@ -137,7 +141,7 @@ object GlobalSnapshotStateChannelEventsProcessor {
                       .deserialize[Signed[CurrencyIncrementalSnapshot]](head.value.content)
                       .toOption match {
                       case Some(snapshot) =>
-                        applyCurrencySnapshot(lastState, lastIncremental, snapshot).map { state =>
+                        applyCurrencySnapshot(address, lastState, lastIncremental, snapshot).map { state =>
                           (nel.prepend((snapshot, state).asRight).some, tail).asLeft[Result]
                         }
                       case None =>

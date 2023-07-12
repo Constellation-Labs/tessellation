@@ -41,7 +41,7 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
         for {
           lastAccepted <- MapRef.ofConcurrentHashMap[IO, Address, LastTransactionReferenceState]().asResource
           waitingTransactions <- MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[DAGTransaction]]]().asResource
-          transactionStorage = new TransactionStorage[IO, DAGTransaction](lastAccepted, waitingTransactions)
+          transactionStorage = new TransactionStorage[IO, DAGTransaction](lastAccepted, waitingTransactions, TransactionReference.empty)
           key1 <- KeyPairGenerator.makeKeyPair.asResource
           address1 = key1.getPublic.toAddress
           key2 <- KeyPairGenerator.makeKeyPair.asResource

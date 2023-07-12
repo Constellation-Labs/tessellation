@@ -12,9 +12,10 @@ import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.dag.l1.infrastructure.address.storage.AddressStorage
 import org.tessellation.dag.l1.modules.{Storages => BaseStorages}
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.L0Peer
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
-import org.tessellation.schema.transaction.Transaction
+import org.tessellation.schema.transaction.{Transaction, TransactionReference}
 import org.tessellation.schema.{Block, GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
@@ -34,7 +35,8 @@ object Storages {
   ](
     sdkStorages: SdkStorages[F],
     l0Peer: L0Peer,
-    globalL0Peer: L0Peer
+    globalL0Peer: L0Peer,
+    currencyIdentifier: Address
   ): F[Storages[F, T, B, P, S, SI]] =
     for {
       blockStorage <- BlockStorage.make[F, B]
@@ -43,7 +45,9 @@ object Storages {
       globalL0ClusterStorage <- L0ClusterStorage.make[F](globalL0Peer)
       lastCurrencySnapshotStorage <- LastSnapshotStorage.make[F, S, SI]
       lastGlobalSnapshotStorage <- LastSnapshotStorage.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
-      transactionStorage <- TransactionStorage.make[F, T]
+      transactionStorage <- TransactionReference.emptyCurrency(currencyIdentifier).flatMap {
+        TransactionStorage.make[F, T](_)
+      }
       addressStorage <- AddressStorage.make[F]
     } yield
       new Storages[F, T, B, P, S, SI] {

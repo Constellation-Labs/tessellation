@@ -77,7 +77,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
     Random.scalaUtilRandom.flatMap { implicit r =>
       MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[DAGTransaction]]]().map { waitingTxsR =>
         val blockStorage = new BlockStorage[IO, DAGBlock](blocksR)
-        val transactionStorage = new TransactionStorage[IO, DAGTransaction](lastAccTxR, waitingTxsR)
+        val transactionStorage = new TransactionStorage[IO, DAGTransaction](lastAccTxR, waitingTxsR, TransactionReference.empty)
         BlockService
           .make[IO, DAGTransaction, DAGBlock](blockAcceptanceManager, addressStorage, blockStorage, transactionStorage, Amount.empty)
       }

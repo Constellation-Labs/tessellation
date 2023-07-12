@@ -58,6 +58,8 @@ object BlockAcceptanceLogicSuite extends MutableIOSuite with Checkers {
 
       def getLastTxRef(address: Address): IO[Option[TransactionReference]] = ???
 
+      def getInitialTxRef: TransactionReference = ???
+
       def getParentUsage(blockReference: BlockReference): IO[Option[NonNegLong]] = ???
 
       def getCollateral: Amount = collateral

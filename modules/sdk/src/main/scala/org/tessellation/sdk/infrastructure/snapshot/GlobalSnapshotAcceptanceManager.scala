@@ -18,7 +18,7 @@ import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.block.DAGBlock
-import org.tessellation.schema.transaction.{DAGTransaction, RewardTransaction}
+import org.tessellation.schema.transaction.{DAGTransaction, RewardTransaction, TransactionReference}
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.security.signature.Signed
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
@@ -128,7 +128,8 @@ object GlobalSnapshotAcceptanceManager {
         lastSnapshotContext.balances,
         lastSnapshotContext.lastTxRefs,
         tipUsages,
-        collateral
+        collateral,
+        TransactionReference.empty
       )
 
       blockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context)

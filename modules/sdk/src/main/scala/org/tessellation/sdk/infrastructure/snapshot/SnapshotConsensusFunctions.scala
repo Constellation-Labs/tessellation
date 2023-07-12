@@ -11,14 +11,15 @@ import cats.syntax.option._
 import cats.syntax.order._
 import cats.{Applicative, Eq, Order}
 
-import scala.collection.immutable.SortedSet
+import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
 
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.schema._
+import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.height.{Height, SubHeight}
-import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
+import org.tessellation.schema.snapshot.Snapshot
 import org.tessellation.schema.transaction.Transaction
 import org.tessellation.sdk.domain.block.processing.{BlockAcceptanceResult, deprecationThreshold}
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
@@ -39,21 +40,22 @@ abstract class SnapshotConsensusFunctions[
   F[_]: Async: SecurityProvider,
   T <: Transaction,
   B <: Block[T]: Order,
-  P <: StateProof,
   Event,
   Artifact <: Snapshot[T, B]: Eq,
-  Context <: SnapshotInfo[P],
+  Context,
   Trigger <: ConsensusTrigger
 ](implicit ordering: Ordering[BlockAsActiveTip[B]])
     extends ConsensusFunctions[F, Event, SnapshotOrdinal, Artifact, Context] {
 
   def getRequiredCollateral: Amount
 
+  def getBalances(context: Context): SortedMap[Address, Balance]
+
   def triggerPredicate(event: Event): Boolean = true
 
   def facilitatorFilter(lastSignedArtifact: Signed[Artifact], lastContext: Context, peerId: peer.PeerId): F[Boolean] =
     peerId.toAddress[F].map { address =>
-      lastContext.balances.getOrElse(address, Balance.empty).satisfiesCollateral(getRequiredCollateral)
+      getBalances(lastContext).getOrElse(address, Balance.empty).satisfiesCollateral(getRequiredCollateral)
     }
 
   def validateArtifact(

@@ -49,7 +49,7 @@ object Storages {
         snapshot = snapshotStorage,
         lastGlobalSnapshot = lastGlobalSnapshotStorage,
         incrementalSnapshotLocalFileSystemStorage = snapshotLocalFileSystemStorage,
-        identifierStorage = identifierStorage
+        identifier = identifierStorage
       ) {}
 }
 
@@ -63,5 +63,5 @@ sealed abstract class Storages[F[_]] private (
   val snapshot: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo] with LatestBalances[F],
   val lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
   val incrementalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, CurrencyIncrementalSnapshot],
-  val identifierStorage: IdentifierStorage[F]
+  val identifier: IdentifierStorage[F]
 )

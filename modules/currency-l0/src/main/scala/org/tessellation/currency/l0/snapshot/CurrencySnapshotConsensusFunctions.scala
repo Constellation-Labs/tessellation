@@ -14,6 +14,8 @@ import cats.syntax.option._
 import cats.syntax.order._
 import cats.syntax.traverse._
 
+import scala.collection.immutable.SortedMap
+
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
 import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, DataState, L0NodeContext}
 import org.tessellation.currency.l0.node.L0NodeContext
@@ -23,7 +25,8 @@ import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
-import org.tessellation.schema.balance.Amount
+import org.tessellation.schema.address.Address
+import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.domain.snapshot.storage.{LastSnapshotStorage, SnapshotStorage}
@@ -41,7 +44,6 @@ abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
       F,
       CurrencyTransaction,
       CurrencyBlock,
-      CurrencySnapshotStateProof,
       CurrencySnapshotEvent,
       CurrencySnapshotArtifact,
       CurrencySnapshotContext,
@@ -66,7 +68,12 @@ object CurrencySnapshotConsensusFunctions {
 
     def getRequiredCollateral: Amount = collateral
 
-    def consumeSignedMajorityArtifact(signedArtifact: Signed[CurrencyIncrementalSnapshot], context: CurrencySnapshotInfo): F[Unit] =
+    def getBalances(context: CurrencySnapshotContext): SortedMap[Address, Balance] = context.snapshotInfo.balances
+
+    def consumeSignedMajorityArtifact(
+      signedArtifact: Signed[CurrencyIncrementalSnapshot],
+      context: CurrencySnapshotContext
+    ): F[Unit] =
       stateChannelSnapshotService.consume(signedArtifact, context)
 
     def createProposalArtifact(
@@ -148,7 +155,7 @@ object CurrencySnapshotConsensusFunctions {
           lastContext,
           lastActiveTips,
           lastDeprecatedTips,
-          rewards.distribute(lastArtifact, lastContext.balances, _, trigger)
+          rewards.distribute(lastArtifact, lastContext.snapshotInfo.balances, _, trigger)
         )
 
         (deprecated, remainedActive, accepted) = getUpdatedTips(
@@ -176,7 +183,7 @@ object CurrencySnapshotConsensusFunctions {
           stateProof,
           maybeNewDataState
         )
-      } yield (artifact, snapshotInfo, returnedEvents)
+      } yield (artifact, CurrencySnapshotContext(lastContext.address, snapshotInfo), returnedEvents)
     }
 
     private def getReturnedEvents(

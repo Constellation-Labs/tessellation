@@ -37,7 +37,8 @@ object Programs {
         currencySnapshotContextFns,
         storages.node,
         services.consensus,
-        peerSelect
+        peerSelect,
+        storages.identifier
       )
 
     val globalL0PeerDiscovery = L0PeerDiscovery.make(
@@ -58,13 +59,13 @@ object Programs {
       nodeId,
       services.consensus.manager,
       genesisLoader,
-      storages.identifierStorage
+      storages.identifier
     )
 
     val rollback = Rollback.make(
       nodeId,
       services.globalL0,
-      storages.identifierStorage,
+      storages.identifier,
       storages.lastBinaryHash,
       storages.snapshot,
       services.collateral,

@@ -137,13 +137,13 @@ abstract class CurrencyL0App(
 
       _ <- (method match {
         case rv: RunValidator =>
-          storages.identifierStorage.setInitial(rv.identifier) >>
+          storages.identifier.setInitial(rv.identifier) >>
             gossipDaemon.startAsRegularValidator >>
             programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
             storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
 
         case rr: RunRollback =>
-          storages.identifierStorage.setInitial(rr.identifier) >>
+          storages.identifier.setInitial(rr.identifier) >>
             storages.node.tryModifyState(
               NodeState.Initial,
               NodeState.RollbackInProgress,

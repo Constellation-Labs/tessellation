@@ -16,6 +16,7 @@ import org.tessellation.dag.l1.infrastructure.address.storage.AddressStorage
 import org.tessellation.json.JsonBinarySerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
+import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotReference}
 import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.sdk.domain.snapshot.{SnapshotContextFunctions, Validator}
@@ -47,7 +48,7 @@ object CurrencySnapshotProcessor {
     lastCurrencySnapshotStorage: LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
     transactionStorage: TransactionStorage[F, CurrencyTransaction],
     globalSnapshotContextFns: SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
-    currencySnapshotContextFns: SnapshotContextFunctions[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
+    currencySnapshotContextFns: SnapshotContextFunctions[F, CurrencyIncrementalSnapshot, CurrencySnapshotContext]
   ): CurrencySnapshotProcessor[F] =
     new CurrencySnapshotProcessor[F] {
       def process(
@@ -96,7 +97,8 @@ object CurrencySnapshotProcessor {
         lastState: CurrencySnapshotInfo,
         lastSnapshot: CurrencyIncrementalSnapshot,
         snapshot: Signed[CurrencyIncrementalSnapshot]
-      ): F[CurrencySnapshotInfo] = currencySnapshotContextFns.createContext(lastState, lastSnapshot, snapshot)
+      ): F[CurrencySnapshotInfo] =
+        currencySnapshotContextFns.createContext(CurrencySnapshotContext(identifier, lastState), lastSnapshot, snapshot).map(_.snapshotInfo)
 
       private def processCurrencySnapshots(
         globalSnapshot: Hashed[GlobalIncrementalSnapshot],
@@ -195,7 +197,12 @@ object CurrencySnapshotProcessor {
           lastCurrencySnapshotStorage.getCombined.flatMap(LastSnapshotStorage.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](_))
         val as = addressStorage.getState.flatMap(AddressStorage.make(_))
         val ts =
-          transactionStorage.getState().flatMap { case (lastTxs, waitingTxs) => TransactionStorage.make(lastTxs, waitingTxs) }
+          transactionStorage.getState().flatMap {
+            case (lastTxs, waitingTxs) =>
+              TransactionReference.emptyCurrency(identifier).flatMap {
+                TransactionStorage.make(lastTxs, waitingTxs, _)
+              }
+          }
 
         (as, bs, lcss, ts).mapN((_, _, _, _))
       }

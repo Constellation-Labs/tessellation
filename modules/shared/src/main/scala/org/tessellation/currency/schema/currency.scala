@@ -185,4 +185,7 @@ object currency {
         }
         .toSortedSet
   }
+
+  @derive(eqv, encoder, decoder)
+  case class CurrencySnapshotContext(address: Address, snapshotInfo: CurrencySnapshotInfo)
 }
