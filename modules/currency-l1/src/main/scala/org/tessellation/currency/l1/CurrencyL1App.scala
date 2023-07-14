@@ -224,6 +224,7 @@ abstract class CurrencyL1App(
             storages.lastSnapshot
           )
           .merge(globalL0PeerDiscovery)
+          .merge(stateChannel.globalSnapshotProcessing)
           .compile
           .drain
           .handleErrorWith { error =>
