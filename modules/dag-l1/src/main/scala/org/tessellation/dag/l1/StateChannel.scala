@@ -216,7 +216,7 @@ class StateChannel[
       )
     }
 
-  private val globalSnapshotProcessing: Stream[F, Unit] = Stream
+  val globalSnapshotProcessing: Stream[F, Unit] = Stream
     .awakeEvery(10.seconds)
     .evalMap(_ => services.globalL0.pullGlobalSnapshots)
     .evalTap { snapshots =>
