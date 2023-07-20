@@ -19,7 +19,7 @@ import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.domain.seedlist.SeedlistEntry
-import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
+import org.tessellation.sdk.domain.snapshot.storage.{LastSnapshotStorage, SnapshotStorage}
 import org.tessellation.sdk.infrastructure.consensus.Consensus
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.infrastructure.snapshot.{CurrencySnapshotAcceptanceManager, SnapshotConsensus}
@@ -46,7 +46,8 @@ object CurrencySnapshotConsensus {
     stateChannelSnapshotService: StateChannelSnapshotService[F],
     snapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F],
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
-    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
+    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
+    snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
   ): F[
     SnapshotConsensus[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshotArtifact, CurrencySnapshotContext, CurrencySnapshotEvent]
   ] = {
@@ -61,7 +62,8 @@ object CurrencySnapshotConsensus {
         collateral,
         rewards,
         maybeDataApplication,
-        lastGlobalSnapshotStorage
+        lastGlobalSnapshotStorage,
+        snapshotStorage
       ),
       gossip,
       selfId,

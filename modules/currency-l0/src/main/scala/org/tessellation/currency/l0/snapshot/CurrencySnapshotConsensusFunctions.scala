@@ -26,7 +26,7 @@ import org.tessellation.schema._
 import org.tessellation.schema.balance.Amount
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.sdk.domain.rewards.Rewards
-import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
+import org.tessellation.sdk.domain.snapshot.storage.{LastSnapshotStorage, SnapshotStorage}
 import org.tessellation.sdk.infrastructure.consensus.trigger.ConsensusTrigger
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.infrastructure.snapshot.{CurrencySnapshotAcceptanceManager, SnapshotConsensusFunctions}
@@ -56,10 +56,11 @@ object CurrencySnapshotConsensusFunctions {
     collateral: Amount,
     rewards: Rewards[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot],
     maybeDataApplicationService: Option[BaseDataApplicationL0Service[F]],
-    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
+    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
+    snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
   ): CurrencySnapshotConsensusFunctions[F] = new CurrencySnapshotConsensusFunctions[F] {
 
-    implicit val nodeContext: L0NodeContext[F] = L0NodeContext.make[F](lastGlobalSnapshotStorage)
+    implicit val nodeContext: L0NodeContext[F] = L0NodeContext.make[F](lastGlobalSnapshotStorage, snapshotStorage)
 
     private val logger = Slf4jLogger.getLoggerFromClass(CurrencySnapshotConsensusFunctions.getClass)
 

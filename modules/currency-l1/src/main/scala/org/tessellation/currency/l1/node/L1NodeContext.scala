@@ -10,11 +10,15 @@ object L1NodeContext {
   def make[F[_]: SecurityProvider](
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     lastCurrencySnapshotStorage: LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
-  ): L1NodeContext[F] = new L1NodeContext[F] {
-    def getLastGlobalSnapshot: F[Option[Hashed[GlobalIncrementalSnapshot]]] = lastGlobalSnapshotStorage.get
+  ): L1NodeContext[F] =
+    new L1NodeContext[F] {
+      def getLastGlobalSnapshot: F[Option[Hashed[GlobalIncrementalSnapshot]]] = lastGlobalSnapshotStorage.get
 
-    def getLastCurrencySnapshot: F[Option[Hashed[CurrencyIncrementalSnapshot]]] = lastCurrencySnapshotStorage.get
+      def getLastCurrencySnapshot: F[Option[Hashed[CurrencyIncrementalSnapshot]]] = lastCurrencySnapshotStorage.get
 
-    def securityProvider: SecurityProvider[F] = SecurityProvider[F]
-  }
+      def getLastCurrencySnapshotCombined: F[Option[(Hashed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]] =
+        lastCurrencySnapshotStorage.getCombined
+
+      def securityProvider: SecurityProvider[F] = SecurityProvider[F]
+    }
 }

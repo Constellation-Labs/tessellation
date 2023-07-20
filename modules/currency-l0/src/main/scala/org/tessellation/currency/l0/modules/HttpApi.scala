@@ -75,7 +75,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
 ) {
 
   implicit val context: L0NodeContext[F] = L0NodeContext.make[F](
-    storages.lastGlobalSnapshot
+    storages.lastGlobalSnapshot,
+    storages.snapshot
   )
 
   private val mkCell = (event: CurrencySnapshotEvent) => L0Cell.mkL0Cell(queues.l1Output).apply(L0CellInput.HandleL1Block(event))
