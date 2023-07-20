@@ -77,7 +77,8 @@ object Services {
           stateChannelSnapshotService,
           sdkServices.currencySnapshotAcceptanceManager,
           maybeDataApplication,
-          storages.lastGlobalSnapshot
+          storages.lastGlobalSnapshot,
+          storages.snapshot
         )
       addressService = AddressService.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](storages.snapshot)
       collateralService = Collateral.make[F](cfg.collateral, storages.snapshot)

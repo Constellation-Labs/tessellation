@@ -8,7 +8,7 @@ import scala.reflect.ClassTag
 import scala.util.control.NoStackTrace
 
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationValidationErrorOr
-import org.tessellation.currency.schema.currency.CurrencyIncrementalSnapshot
+import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import org.tessellation.schema.GlobalIncrementalSnapshot
 import org.tessellation.schema.round.RoundId
 import org.tessellation.security.hash.Hash
@@ -304,10 +304,13 @@ object dataApplication {
 trait L1NodeContext[F[_]] {
   def getLastGlobalSnapshot: F[Option[Hashed[GlobalIncrementalSnapshot]]]
   def getLastCurrencySnapshot: F[Option[Hashed[CurrencyIncrementalSnapshot]]]
+  def getLastCurrencySnapshotCombined: F[Option[(Hashed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]]
   def securityProvider: SecurityProvider[F]
 }
 
 trait L0NodeContext[F[_]] {
   def getLastGlobalSnapshot: F[Option[Hashed[GlobalIncrementalSnapshot]]]
+  def getLastCurrencySnapshot: F[Option[Hashed[CurrencyIncrementalSnapshot]]]
+  def getLastCurrencySnapshotCombined: F[Option[(Hashed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]]
   def securityProvider: SecurityProvider[F]
 }
