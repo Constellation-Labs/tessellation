@@ -20,7 +20,7 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
 import org.tessellation.sdk.domain.statechannel.StateChannelValidator
 import org.tessellation.security.signature.Signed
-import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
+import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -31,7 +31,8 @@ trait GlobalSnapshotStateChannelEventsProcessor[F[_]] {
   def process(
     snapshotOrdinal: SnapshotOrdinal,
     lastGlobalSnapshotInfo: GlobalSnapshotInfo,
-    events: List[StateChannelOutput]
+    events: List[StateChannelOutput],
+    validationType: StateChannelValidationType
   ): F[
     (
       SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
@@ -57,7 +58,8 @@ object GlobalSnapshotStateChannelEventsProcessor {
       def process(
         snapshotOrdinal: SnapshotOrdinal,
         lastGlobalSnapshotInfo: GlobalSnapshotInfo,
-        events: List[StateChannelOutput]
+        events: List[StateChannelOutput],
+        validationType: StateChannelValidationType
       ): F[
         (
           SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
@@ -65,8 +67,12 @@ object GlobalSnapshotStateChannelEventsProcessor {
           Set[StateChannelOutput]
         )
       ] =
-        events
-          .traverse(event => stateChannelValidator.validate(event).map(_.errorMap(error => (event.address, error))))
+        events.traverse { event =>
+          (validationType match {
+            case StateChannelValidationType.Full       => stateChannelValidator.validate(event)
+            case StateChannelValidationType.Historical => stateChannelValidator.validateHistorical(event)
+          }).map(_.errorMap(error => (event.address, error)))
+        }
           .map(_.partitionMap(_.toEither))
           .flatTap {
             case (invalid, _) => logger.warn(s"Invalid state channels events: ${invalid}").whenA(invalid.nonEmpty)

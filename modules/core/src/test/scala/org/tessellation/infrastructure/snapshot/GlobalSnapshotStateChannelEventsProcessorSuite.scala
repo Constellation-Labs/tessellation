@@ -27,7 +27,7 @@ import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed.forAsyncKryo
 import org.tessellation.security.{KeyPairGenerator, SecurityProvider}
 import org.tessellation.shared.sharedKryoRegistrar
-import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
+import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 
 import eu.timepit.refined.auto._
 import weaver.MutableIOSuite
@@ -47,6 +47,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
     val validator = new StateChannelValidator[IO] {
       def validate(output: StateChannelOutput) =
         IO.pure(failed.filter(f => f._1 == output.address).map(_._2.invalidNec).getOrElse(output.validNec))
+      def validateHistorical(output: StateChannelOutput) = validate(output)
     }
     val validators = SdkValidators.make[IO](None, None, Some(stateChannelAllowanceLists))
     val currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
@@ -79,7 +80,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         SortedMap.empty[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)],
         Set.empty
       )
-      result <- service.process(SnapshotOrdinal(1L), snapshotInfo, output :: Nil)
+      result <- service.process(SnapshotOrdinal(1L), snapshotInfo, output :: Nil, StateChannelValidationType.Full)
     } yield expect.same(expected, result)
 
   }
@@ -103,7 +104,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         SortedMap.empty[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)],
         Set.empty
       )
-      result <- service.process(SnapshotOrdinal(1L), snapshotInfo, output1 :: output2 :: Nil)
+      result <- service.process(SnapshotOrdinal(1L), snapshotInfo, output1 :: output2 :: Nil, StateChannelValidationType.Full)
     } yield expect.same(expected, result)
 
   }
@@ -128,7 +129,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         SortedMap.empty[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)],
         Set.empty
       )
-      result <- service.process(SnapshotOrdinal(1L), snapshotInfo, output1 :: output2 :: Nil)
+      result <- service.process(SnapshotOrdinal(1L), snapshotInfo, output1 :: output2 :: Nil, StateChannelValidationType.Full)
     } yield expect.same(expected, result)
 
   }

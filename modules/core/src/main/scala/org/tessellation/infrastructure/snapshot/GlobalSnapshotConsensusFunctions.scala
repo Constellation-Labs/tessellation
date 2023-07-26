@@ -30,7 +30,7 @@ import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.infrastructure.snapshot._
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
-import org.tessellation.statechannel.StateChannelOutput
+import org.tessellation.statechannel.{StateChannelOutput, StateChannelValidationType}
 
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -124,7 +124,8 @@ object GlobalSnapshotConsensusFunctions {
             snapshotContext,
             lastActiveTips,
             lastDeprecatedTips,
-            rewards.distribute(lastArtifact, snapshotContext.balances, _, trigger)
+            rewards.distribute(lastArtifact, snapshotContext.balances, _, trigger),
+            StateChannelValidationType.Full
           )
         (deprecated, remainedActive, accepted) = getUpdatedTips(
           lastActiveTips,

@@ -16,7 +16,7 @@ import org.tessellation.schema.transaction.RewardTransaction
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.sdk.domain.snapshot.SnapshotContextFunctions
 import org.tessellation.security.signature.Signed
-import org.tessellation.statechannel.StateChannelOutput
+import org.tessellation.statechannel.{StateChannelOutput, StateChannelValidationType}
 
 import derevo.cats.{eqv, show}
 import derevo.derive
@@ -47,7 +47,8 @@ object GlobalSnapshotContextFunctions {
           context,
           lastActiveTips,
           lastDeprecatedTips,
-          _ => signedArtifact.rewards.pure[F]
+          _ => signedArtifact.rewards.pure[F],
+          StateChannelValidationType.Historical
         )
         _ <- CannotApplyBlocksError(acceptanceResult.notAccepted.map { case (_, reason) => reason })
           .raiseError[F, Unit]

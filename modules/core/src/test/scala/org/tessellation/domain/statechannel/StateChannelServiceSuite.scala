@@ -58,6 +58,8 @@ object StateChannelServiceSuite extends MutableIOSuite {
     val validator = new StateChannelValidator[IO] {
       def validate(output: StateChannelOutput) =
         IO.pure(failed.fold[StateChannelValidator.StateChannelValidationErrorOr[StateChannelOutput]](output.validNec)(_.invalidNec))
+
+      def validateHistorical(output: StateChannelOutput) = validate(output)
     }
 
     for {

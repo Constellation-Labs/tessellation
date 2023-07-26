@@ -26,6 +26,7 @@ import derevo.derive
 trait StateChannelValidator[F[_]] {
 
   def validate(stateChannelOutput: StateChannelOutput): F[StateChannelValidationErrorOr[StateChannelOutput]]
+  def validateHistorical(stateChannelOutput: StateChannelOutput): F[StateChannelValidationErrorOr[StateChannelOutput]]
 
 }
 
@@ -38,19 +39,21 @@ object StateChannelValidator {
     maxBinarySizeInBytes: Long = 500 * 1024
   ): StateChannelValidator[F] = new StateChannelValidator[F] {
 
-    override def validate(stateChannelOutput: StateChannelOutput): F[StateChannelValidationErrorOr[StateChannelOutput]] = for {
-      signaturesV <- signedValidator
-        .validateSignatures(stateChannelOutput.snapshotBinary)
-        .map(_.errorMap[StateChannelValidationError](InvalidSigned))
-      snapshotSizeV <- validateSnapshotSize(stateChannelOutput.snapshotBinary)
-      signaturesAllowedV = validateAllowedSignatures(stateChannelOutput)
-      genesisAddressV = validateStateChannelGenesisAddress(stateChannelOutput.address, stateChannelOutput.snapshotBinary)
-    } yield
-      signaturesV
-        .product(snapshotSizeV)
-        .product(signaturesAllowedV)
-        .product(genesisAddressV)
-        .as(stateChannelOutput)
+    def validate(stateChannelOutput: StateChannelOutput): F[StateChannelValidationErrorOr[StateChannelOutput]] =
+      validateHistorical(stateChannelOutput).map(_.product(validateAllowedSignatures(stateChannelOutput)).as(stateChannelOutput))
+
+    def validateHistorical(stateChannelOutput: StateChannelOutput): F[StateChannelValidationErrorOr[StateChannelOutput]] =
+      for {
+        signaturesV <- signedValidator
+          .validateSignatures(stateChannelOutput.snapshotBinary)
+          .map(_.errorMap[StateChannelValidationError](InvalidSigned))
+        snapshotSizeV <- validateSnapshotSize(stateChannelOutput.snapshotBinary)
+        genesisAddressV = validateStateChannelGenesisAddress(stateChannelOutput.address, stateChannelOutput.snapshotBinary)
+      } yield
+        signaturesV
+          .product(snapshotSizeV)
+          .product(genesisAddressV)
+          .as(stateChannelOutput)
 
     private def validateSnapshotSize(
       signedSC: Signed[StateChannelSnapshotBinary]
