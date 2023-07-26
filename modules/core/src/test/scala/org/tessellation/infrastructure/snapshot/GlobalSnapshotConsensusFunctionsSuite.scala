@@ -31,7 +31,7 @@ import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed.forAsyncKryo
 import org.tessellation.security.{KeyPairGenerator, SecurityProvider}
-import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
+import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 import org.tessellation.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._
@@ -90,7 +90,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     def process(
       ordinal: SnapshotOrdinal,
       lastGlobalSnapshotInfo: GlobalSnapshotInfo,
-      events: List[StateChannelEvent]
+      events: List[StateChannelEvent],
+      validationType: StateChannelValidationType
     ): IO[
       (
         SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],

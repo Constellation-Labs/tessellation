@@ -170,6 +170,25 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       )
   }
 
+  test("should succeed when there is signature not from seedlist but is validated as historical") { res =>
+    implicit val (kryo, sp) = res
+
+    for {
+      keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
+      keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
+      peerId1 = NonEmptySet.one(PeerId.fromPublic(keyPair1.getPublic))
+      peerId2 = NonEmptySet.one(PeerId.fromPublic(keyPair2.getPublic))
+      address = testStateChannel.toAddress
+      signedSCBinary <- forAsyncKryo(testStateChannel, keyPair1).flatMap(_.signAlsoWith(keyPair2))
+      scOutput = StateChannelOutput(address, signedSCBinary)
+      validator = mkValidator(
+        peerId1.toSortedSet.map(SeedlistEntry(_, none, none, none)).some,
+        Map(address -> peerId1).some
+      )
+      result <- validator.validateHistorical(scOutput)
+    } yield expect.same(Valid(scOutput), result)
+  }
+
   test("should fail when the state channel address is not on the allowance list") { res =>
     implicit val (kryo, sp) = res
 
@@ -185,6 +204,19 @@ object StateChannelValidatorSuite extends MutableIOSuite {
         StateChannelValidator.StateChannelAddressNotAllowed(address).invalidNec,
         result
       )
+  }
+
+  test("should succeed when the state channel address is not on the allowance list but is validated as historical") { res =>
+    implicit val (kryo, sp) = res
+
+    for {
+      keyPair <- KeyPairGenerator.makeKeyPair[IO]
+      address = testStateChannel.toAddress
+      signedSCBinary <- forAsyncKryo(testStateChannel, keyPair)
+      scOutput = StateChannelOutput(address, signedSCBinary)
+      validator = mkValidator(None, Map.empty[Address, NonEmptySet[PeerId]].some)
+      result <- validator.validateHistorical(scOutput)
+    } yield expect.same(Valid(scOutput), result)
   }
 
   test("should fail when no signature is on the state channel allowance list for given address") { res =>
@@ -208,6 +240,25 @@ object StateChannelValidatorSuite extends MutableIOSuite {
         StateChannelValidator.NoSignerFromStateChannelAllowanceList.invalidNec,
         result
       )
+  }
+
+  test("should succeed when no signature is on the state channel allowance list for given address but is validated as historical") { res =>
+    implicit val (kryo, sp) = res
+
+    for {
+      keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
+      keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
+      peerId1 = NonEmptySet.one(PeerId.fromPublic(keyPair1.getPublic))
+      peerId2 = NonEmptySet.one(PeerId.fromPublic(keyPair2.getPublic))
+      address = testStateChannel.toAddress
+      signedSCBinary <- forAsyncKryo(testStateChannel, keyPair2)
+      scOutput = StateChannelOutput(address, signedSCBinary)
+      validator = mkValidator(
+        peerId1.union(peerId2).toSortedSet.map(SeedlistEntry(_, none, none, none)).some,
+        Map(address -> peerId1).some
+      )
+      result <- validator.validateHistorical(scOutput)
+    } yield expect.same(Valid(scOutput), result)
   }
 
   test("should succeed when at least one signature is on the state channel allowance list for given address") { res =>

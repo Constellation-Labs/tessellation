@@ -21,7 +21,7 @@ import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.transaction.{DAGTransaction, RewardTransaction, TransactionReference}
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.security.signature.Signed
-import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
+import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 import org.tessellation.syntax.sortedCollection.sortedSetSyntax
 
 import eu.timepit.refined.auto._
@@ -35,7 +35,8 @@ trait GlobalSnapshotAcceptanceManager[F[_]] {
     lastSnapshotContext: GlobalSnapshotInfo,
     lastActiveTips: SortedSet[ActiveTip],
     lastDeprecatedTips: SortedSet[DeprecatedTip],
-    calculateRewardsFn: SortedSet[Signed[DAGTransaction]] => F[SortedSet[RewardTransaction]]
+    calculateRewardsFn: SortedSet[Signed[DAGTransaction]] => F[SortedSet[RewardTransaction]],
+    validationType: StateChannelValidationType
   ): F[
     (
       BlockAcceptanceResult[DAGBlock],
@@ -65,11 +66,17 @@ object GlobalSnapshotAcceptanceManager {
       lastSnapshotContext: GlobalSnapshotInfo,
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip],
-      calculateRewardsFn: SortedSet[Signed[DAGTransaction]] => F[SortedSet[RewardTransaction]]
+      calculateRewardsFn: SortedSet[Signed[DAGTransaction]] => F[SortedSet[RewardTransaction]],
+      validationType: StateChannelValidationType
     ) = for {
       acceptanceResult <- acceptBlocks(blocksForAcceptance, lastSnapshotContext, lastActiveTips, lastDeprecatedTips)
 
-      (scSnapshots, currencySnapshots, returnedSCEvents) <- stateChannelEventsProcessor.process(ordinal, lastSnapshotContext, scEvents)
+      (scSnapshots, currencySnapshots, returnedSCEvents) <- stateChannelEventsProcessor.process(
+        ordinal,
+        lastSnapshotContext,
+        scEvents,
+        validationType
+      )
       sCSnapshotHashes <- scSnapshots.toList.traverse { case (address, nel) => nel.head.toHashed.map(address -> _.hash) }
         .map(_.toMap)
       updatedLastStateChannelSnapshotHashes = lastSnapshotContext.lastStateChannelSnapshotHashes ++ sCSnapshotHashes
