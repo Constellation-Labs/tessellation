@@ -10,6 +10,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshot, CurrencySnapshotInfo}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
+import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.hex.Hex
@@ -64,7 +65,8 @@ object JsonBinarySerializerSuite extends MutableIOSuite {
             ),
             SortedSet(ActiveTip(BlockReference(Height(122L), ProofsHash("bbbb")), 2L, SnapshotOrdinal(55L)))
           ),
-          stateProof = sp
+          stateProof = sp,
+          epochProgress = EpochProgress.MinValue
         ),
         NonEmptySet.one(SignatureProof(ID.Id(Hex("")), Signature(Hex(""))))
       )
