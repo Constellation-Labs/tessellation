@@ -72,14 +72,24 @@ object GlobalSnapshotStateChannelAcceptanceManager {
           allowedPeers: Option[NonEmptySet[PeerId]]
         )(lastHash: Hash, outputs: List[StateChannelOutput]) = for {
           outputsWithHashes <- outputs.traverse(stateChannelOutputWithHashes)
-          possibleCandidates = onlyPossibleReferences(lastHash, outputsWithHashes)
-          (toReturn, toProcess) <- allowedForProcessing(ordinal, possibleCandidates).map(_.partitionMap(identity))
+          (impossibleCandidates, possibleCandidates) = onlyPossibleReferences(lastHash, outputsWithHashes).partitionMap(identity)
+          (notAllowed, toProcess) <- allowedForProcessing(ordinal, possibleCandidates).map(_.partitionMap(identity))
+          toReturn = notAllowed.flatten.map(_.output) ++ impossibleCandidates.map(_.output)
           toAdd = selectStateChannels(allowedPeers)(lastHash, toProcess.flatten)
-        } yield (toAdd, toReturn.flatten.map(_.output))
+        } yield (toAdd, toReturn)
 
-        private def onlyPossibleReferences(lastHashReferencs: Hash, outputs: List[StateChannelOutputWithHash]) =
-          outputs
-            .filter(o => (lastHashReferencs :: outputs.map(_.hash)).contains(o.output.snapshotBinary.value.lastSnapshotHash))
+        private def onlyPossibleReferences(
+          lastHashReference: Hash,
+          outputs: List[StateChannelOutputWithHash]
+        ): List[Either[StateChannelOutputWithHash, StateChannelOutputWithHash]] = {
+          val references = lastHashReference :: outputs.map(_.hash)
+
+          outputs.map { o =>
+            val hasReference = references.contains(o.output.snapshotBinary.value.lastSnapshotHash)
+
+            Either.cond(hasReference, o, o)
+          }
+        }
 
         private def allowedForProcessing(ordinal: SnapshotOrdinal, withHashes: List[StateChannelOutputWithHash]) =
           ordinalDelay.traverse { delay =>

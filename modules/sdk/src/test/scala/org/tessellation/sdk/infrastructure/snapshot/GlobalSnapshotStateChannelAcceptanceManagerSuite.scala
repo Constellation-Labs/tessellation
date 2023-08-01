@@ -1,9 +1,11 @@
 package org.tessellation.sdk.infrastructure.snapshot
 
-import cats.data.NonEmptyList
+import cats.data.{NonEmptyChain, NonEmptyList}
 import cats.effect.std.Random
 import cats.effect.{IO, Resource}
 import cats.syntax.applicative._
+import cats.syntax.either._
+import cats.syntax.flatMap._
 import cats.syntax.foldable._
 import cats.syntax.option._
 import cats.syntax.traverse._
@@ -14,7 +16,6 @@ import org.tessellation.currency.schema.currency.SnapshotFee
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
-import org.tessellation.sdk.infrastructure.snapshot.GlobalSnapshotStateChannelAcceptanceManager
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed.forAsyncKryo
@@ -37,9 +38,10 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
       SecurityProvider.forAsync[IO].map((ks, _))
     }
 
+  val address = Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB")
+
   test("valid state channels should be returned when ordinal doesn't exceed delay") { res =>
     implicit val (kryo, sp) = res
-    val address = Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB")
 
     for {
       stateChannelOutput1 <- mkStateChannelOutput(1, address, Hash("someHash").some)
@@ -59,7 +61,6 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
 
   test("valid state channel should be accepted when ordinal exceeds delay") { res =>
     implicit val (kryo, sp) = res
-    val address = Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB")
 
     for {
       stateChannelOutput <- mkStateChannelOutput(1, address, Hash("someHash").some)
@@ -71,9 +72,8 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
 
   }
 
-  test("invalid state channel should be discarded") { res =>
+  test("invalid state channel should be returned") { res =>
     implicit val (kryo, sp) = res
-    val address = Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB")
 
     for {
       stateChannelOutput <- mkStateChannelOutput(1, address, Some(Hash("unknown")))
@@ -81,14 +81,13 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
       manager <- mkManager()
       _ <- manager.accept(SnapshotOrdinal(1L), snapshotInfo, List(stateChannelOutput))
       result <- manager.accept(SnapshotOrdinal(11L), snapshotInfo, List(stateChannelOutput))
-      expected = (SortedMap.empty[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set.empty)
+      expected = (SortedMap.empty[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set(stateChannelOutput))
     } yield expect.same(expected, result)
 
   }
 
   test("valid state channel with more signatures should be preffered") { res =>
     implicit val (kryo, sp) = res
-    val address = Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB")
 
     for {
       stateChannelOutput1 <- mkStateChannelOutput(1, address, None)
@@ -105,7 +104,6 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
 
   test("valid state channel with more occurrences should be preffered") { res =>
     implicit val (kryo, sp) = res
-    val address = Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB")
 
     for {
       stateChannelOutput1 <- mkStateChannelOutput(1, address, None)
@@ -123,7 +121,6 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
 
   test("acceptance should return deterministic result given concurring proposals and reruns") { res =>
     implicit val (kryo, sp) = res
-    val address = Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB")
 
     def gen = for {
       numberOfBinaries <- Gen.chooseNum(2, 10)
@@ -157,7 +154,6 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
 
   test("valid state channel with more signatures should be preffered over more occurrences") { res =>
     implicit val (kryo, sp) = res
-    val address = Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB")
 
     for {
       stateChannelOutput1 <- mkStateChannelOutput(1, address, None)
@@ -174,7 +170,6 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
 
   test("valid state channels which form a chain should be accepted") { res =>
     implicit val (kryo, sp) = res
-    val address = Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB")
 
     for {
       output1 <- mkStateChannelOutput(1, address, None)
@@ -202,7 +197,6 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
 
   test("valid state channels should be accepted right away when ordinal's delay is not set") { res =>
     implicit val (kryo, sp) = res
-    val address = Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB")
 
     for {
       output1 <- mkStateChannelOutput(1, address, None)
@@ -223,8 +217,44 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
     } yield expect.same(expected, result)
   }
 
+  test("state channel events that don't form a chain should be returned") { res =>
+    implicit val (kryo, sp) = res
+
+    for {
+      correctChain <- mkChainOfStateChannelOutputs(1, address, 3L)
+      (first, third) = (correctChain.head, correctChain.last)
+      snapshotInfo = mkGlobalSnapshotInfo(SortedMap.empty)
+      manager <- mkManager(ordinalDelay = None)
+      result <- manager.accept(
+        SnapshotOrdinal(1L),
+        snapshotInfo,
+        List(first, third)
+      )
+      expected = (SortedMap(address -> NonEmptyList.one(first.snapshotBinary)), Set(third))
+    } yield expect.eql(expected, result)
+  }
+
   private def mkManager(ordinalDelay: Option[PosLong] = Some(10L))(implicit ks: KryoSerializer[IO]) =
     GlobalSnapshotStateChannelAcceptanceManager.make[IO](ordinalDelay, None)
+
+  private def mkChainOfStateChannelOutputs(
+    howManySigners: Int,
+    address: Address,
+    chainLength: PosLong
+  )(implicit S: SecurityProvider[IO], K: KryoSerializer[IO]): IO[NonEmptyChain[StateChannelOutput]] =
+    mkStateChannelOutput(howManySigners, address)
+      .map(NonEmptyChain.one)
+      .flatMap { initialOutput =>
+        initialOutput.tailRecM {
+          case outputs if outputs.size >= chainLength =>
+            outputs.asRight[NonEmptyChain[StateChannelOutput]].pure[IO]
+          case outputs =>
+            outputs.last.snapshotBinary.toHashed
+              .map(_.hash.some)
+              .flatMap(mkStateChannelOutput(howManySigners, address, _))
+              .map(outputs.append(_).asLeft[NonEmptyChain[StateChannelOutput]])
+        }
+      }
 
   private def mkStateChannelOutput(
     howManySigners: Int,
