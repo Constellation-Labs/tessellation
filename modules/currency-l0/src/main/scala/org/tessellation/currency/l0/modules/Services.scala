@@ -11,6 +11,7 @@ import cats.syntax.functor._
 import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
 import org.tessellation.currency.l0.config.types.AppConfig
 import org.tessellation.currency.l0.http.p2p.P2PClient
+import org.tessellation.currency.l0.node.L0NodeContext
 import org.tessellation.currency.l0.snapshot.services.{NoopRewards, StateChannelSnapshotService}
 import org.tessellation.currency.l0.snapshot.{CurrencySnapshotConsensus, CurrencySnapshotEvent}
 import org.tessellation.currency.schema.currency._
@@ -25,10 +26,11 @@ import org.tessellation.sdk.domain.seedlist.SeedlistEntry
 import org.tessellation.sdk.domain.snapshot.services.{AddressService, GlobalL0Service}
 import org.tessellation.sdk.infrastructure.Collateral
 import org.tessellation.sdk.infrastructure.metrics.Metrics
+import org.tessellation.sdk.infrastructure.snapshot._
 import org.tessellation.sdk.infrastructure.snapshot.services.AddressService
-import org.tessellation.sdk.infrastructure.snapshot.{CurrencySnapshotContextFunctions, SnapshotConsensus}
 import org.tessellation.sdk.modules.SdkServices
 import org.tessellation.security.SecurityProvider
+import org.tessellation.security.signature.SignedValidator
 
 import org.http4s.client.Client
 
@@ -45,7 +47,8 @@ object Services {
     keyPair: KeyPair,
     cfg: AppConfig,
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
-    maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot]]
+    maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot]],
+    signedValidator: SignedValidator[F]
   ): F[Services[F]] =
     for {
       stateChannelSnapshotService <- StateChannelSnapshotService
@@ -61,6 +64,18 @@ object Services {
 
       rewards = maybeRewards.getOrElse(NoopRewards.make[F])
 
+      creator = CurrencySnapshotCreator.make[F](
+        sdkServices.currencySnapshotAcceptanceManager,
+        maybeDataApplication
+          .map((L0NodeContext.make[F](storages.snapshot), _))
+      )
+
+      validator = CurrencySnapshotValidator.make[F](
+        creator,
+        Some(rewards),
+        signedValidator
+      )
+
       consensus <- CurrencySnapshotConsensus
         .make[F](
           sdkServices.gossip,
@@ -75,9 +90,9 @@ object Services {
           client,
           session,
           stateChannelSnapshotService,
-          sdkServices.currencySnapshotAcceptanceManager,
           maybeDataApplication,
-          storages.snapshot
+          creator,
+          validator
         )
       addressService = AddressService.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](storages.snapshot)
       collateralService = Collateral.make[F](cfg.collateral, storages.snapshot)

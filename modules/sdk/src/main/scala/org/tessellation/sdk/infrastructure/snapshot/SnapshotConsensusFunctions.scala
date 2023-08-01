@@ -3,7 +3,6 @@ package org.tessellation.sdk.infrastructure.snapshot
 import cats.effect.Async
 import cats.syntax.applicativeError._
 import cats.syntax.bifunctor._
-import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.foldable._
 import cats.syntax.functor._
@@ -60,17 +59,7 @@ abstract class SnapshotConsensusFunctions[
     lastContext: Context,
     trigger: ConsensusTrigger,
     artifact: Artifact
-  ): F[Either[InvalidArtifact, (Artifact, Context)]] = {
-    val events = artifact.blocks.unsorted.map(_.block.asInstanceOf[Event])
-
-    createProposalArtifact(lastSignedArtifact.ordinal, lastSignedArtifact, lastContext, trigger, events).map {
-      case (recreatedArtifact, context, _) =>
-        if (recreatedArtifact === artifact)
-          (artifact, context).asRight[InvalidArtifact]
-        else
-          ArtifactMismatch.asLeft[(Artifact, Context)]
-    }
-  }
+  ): F[Either[InvalidArtifact, (Artifact, Context)]]
 
   protected def getUpdatedTips(
     lastActive: SortedSet[ActiveTip],

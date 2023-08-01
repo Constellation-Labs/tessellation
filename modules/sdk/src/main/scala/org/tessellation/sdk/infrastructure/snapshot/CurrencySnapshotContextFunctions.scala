@@ -1,5 +1,6 @@
 package org.tessellation.sdk.infrastructure.snapshot
 
+import cats.data.{NonEmptyChain, Validated}
 import cats.effect.Async
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
@@ -11,9 +12,7 @@ import scala.util.control.NoStackTrace
 
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotContext}
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.sdk.domain.snapshot.SnapshotContextFunctions
-import org.tessellation.sdk.infrastructure.snapshot.GlobalSnapshotContextFunctions.CannotApplyRewardsError
 import org.tessellation.security.signature.Signed
 
 import derevo.cats.{eqv, show}
@@ -24,36 +23,24 @@ abstract class CurrencySnapshotContextFunctions[F[_]]
     extends SnapshotContextFunctions[F, CurrencyIncrementalSnapshot, CurrencySnapshotContext]
 
 object CurrencySnapshotContextFunctions {
-  def make[F[_]: Async: KryoSerializer](snapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F]) =
+  def make[F[_]: Async: KryoSerializer](validator: CurrencySnapshotValidator[F]) =
     new CurrencySnapshotContextFunctions[F] {
       def createContext(
         context: CurrencySnapshotContext,
-        lastArtifact: CurrencyIncrementalSnapshot,
+        lastArtifact: Signed[CurrencyIncrementalSnapshot],
         signedArtifact: Signed[CurrencyIncrementalSnapshot]
       ): F[CurrencySnapshotContext] = for {
-        lastActiveTips <- lastArtifact.activeTips
-        lastDeprecatedTips = lastArtifact.tips.deprecated
+        validatedS <- validator.validateSnapshot(lastArtifact, context, signedArtifact)
+        validatedContext <- validatedS match {
+          case Validated.Valid((_, validatedContext)) => validatedContext.pure[F]
+          case Validated.Invalid(e)                   => CannotCreateContext(e).raiseError[F, CurrencySnapshotContext]
+        }
+      } yield validatedContext
 
-        blocksForAcceptance = signedArtifact.blocks.toList.map(_.block)
-
-        (acceptanceResult, acceptedRewardTxs, snapshotInfo, _) <- snapshotAcceptanceManager.accept(
-          blocksForAcceptance,
-          context,
-          lastActiveTips,
-          lastDeprecatedTips,
-          _ => signedArtifact.rewards.pure[F]
-        )
-        _ <- CannotApplyBlocksError(acceptanceResult.notAccepted.map { case (_, reason) => reason })
-          .raiseError[F, Unit]
-          .whenA(acceptanceResult.notAccepted.nonEmpty)
-        diffRewards = acceptedRewardTxs -- signedArtifact.rewards
-        _ <- CannotApplyRewardsError(diffRewards).raiseError[F, Unit].whenA(diffRewards.nonEmpty)
-
-      } yield CurrencySnapshotContext(context.address, snapshotInfo)
     }
 
   @derive(eqv, show)
-  case class CannotApplyBlocksError(reasons: List[BlockNotAcceptedReason]) extends NoStackTrace {
+  case class CannotCreateContext(reasons: NonEmptyChain[CurrencySnapshotValidationError]) extends NoStackTrace {
 
     override def getMessage: String =
       s"Cannot build currency snapshot ${reasons.show}"

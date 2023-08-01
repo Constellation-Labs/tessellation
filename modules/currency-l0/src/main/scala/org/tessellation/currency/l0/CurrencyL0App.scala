@@ -76,7 +76,8 @@ abstract class CurrencyL0App(
           keyPair,
           cfg,
           dataApplication,
-          rewards
+          rewards,
+          validators.signedValidator
         )
         .asResource
       programs = Programs.make[IO](

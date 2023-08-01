@@ -34,13 +34,13 @@ object DAGSnapshotProcessor {
 
       def applySnapshotFn(
         lastState: GlobalSnapshotInfo,
-        lastSnapshot: GlobalIncrementalSnapshot,
+        lastSnapshot: Signed[GlobalIncrementalSnapshot],
         snapshot: Signed[GlobalIncrementalSnapshot]
       ): F[GlobalSnapshotInfo] = applyGlobalSnapshotFn(lastState, lastSnapshot, snapshot)
 
       def applyGlobalSnapshotFn(
         lastGlobalState: GlobalSnapshotInfo,
-        lastGlobalSnapshot: GlobalIncrementalSnapshot,
+        lastGlobalSnapshot: Signed[GlobalIncrementalSnapshot],
         globalSnapshot: Signed[GlobalIncrementalSnapshot]
       ): F[GlobalSnapshotInfo] = globalSnapshotContextFns.createContext(lastGlobalState, lastGlobalSnapshot, globalSnapshot)
     }

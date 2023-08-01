@@ -112,7 +112,7 @@ object Download {
             identifierStorage.get
               .flatMap(currencyAddress =>
                 currencySnapshotContextFns
-                  .createContext(CurrencySnapshotContext(currencyAddress, lastContext), lastSnapshot.value, snapshot)
+                  .createContext(CurrencySnapshotContext(currencyAddress, lastContext), lastSnapshot, snapshot)
                   .handleErrorWith(_ => InvalidChain.raiseError[F, CurrencySnapshotContext])
               )
               .map(c => (snapshot, c.snapshotInfo))

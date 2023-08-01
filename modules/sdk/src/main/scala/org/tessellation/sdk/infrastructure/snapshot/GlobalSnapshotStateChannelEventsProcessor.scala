@@ -3,11 +3,13 @@ package org.tessellation.sdk.infrastructure.snapshot
 import cats.data.NonEmptyList
 import cats.effect.Async
 import cats.syntax.applicative._
+import cats.syntax.applicativeError._
 import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.foldable._
 import cats.syntax.functor._
 import cats.syntax.option._
+import cats.syntax.show._
 import cats.syntax.traverse._
 
 import scala.collection.immutable.SortedMap
@@ -96,7 +98,7 @@ object GlobalSnapshotStateChannelEventsProcessor {
       private def applyCurrencySnapshot(
         currencyAddress: Address,
         lastState: CurrencySnapshotInfo,
-        lastSnapshot: CurrencyIncrementalSnapshot,
+        lastSnapshot: Signed[CurrencyIncrementalSnapshot],
         snapshot: Signed[CurrencyIncrementalSnapshot]
       ): F[CurrencySnapshotInfo] =
         currencySnapshotContextFns
@@ -148,6 +150,10 @@ object GlobalSnapshotStateChannelEventsProcessor {
                       case Some(snapshot) =>
                         applyCurrencySnapshot(address, lastState, lastIncremental, snapshot).map { state =>
                           (nel.prepend((snapshot, state).asRight).some, tail).asLeft[Result]
+                        }.handleErrorWith { e =>
+                          logger.warn(e)(
+                            s"Currency snapshot of ordinal ${snapshot.value.ordinal.show} for address ${address.show} couldn't be applied"
+                          ) >> (nel.some, tail).asLeft[Result].pure[F]
                         }
                       case None =>
                         (nel.some, tail).asLeft[Result].pure[F]

@@ -19,10 +19,9 @@ import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.domain.seedlist.SeedlistEntry
-import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.infrastructure.consensus.Consensus
 import org.tessellation.sdk.infrastructure.metrics.Metrics
-import org.tessellation.sdk.infrastructure.snapshot.{CurrencySnapshotAcceptanceManager, SnapshotConsensus}
+import org.tessellation.sdk.infrastructure.snapshot.{CurrencySnapshotCreator, CurrencySnapshotValidator, SnapshotConsensus}
 import org.tessellation.security.SecurityProvider
 
 import io.circe.Decoder
@@ -44,9 +43,9 @@ object CurrencySnapshotConsensus {
     client: Client[F],
     session: Session[F],
     stateChannelSnapshotService: StateChannelSnapshotService[F],
-    snapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F],
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
-    snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
+    creator: CurrencySnapshotCreator[F],
+    validator: CurrencySnapshotValidator[F]
   ): F[
     SnapshotConsensus[F, CurrencySnapshotArtifact, CurrencySnapshotContext, CurrencySnapshotEvent]
   ] = {
@@ -57,11 +56,10 @@ object CurrencySnapshotConsensus {
     Consensus.make[F, CurrencySnapshotEvent, SnapshotOrdinal, CurrencySnapshotArtifact, CurrencySnapshotContext](
       CurrencySnapshotConsensusFunctions.make[F](
         stateChannelSnapshotService,
-        snapshotAcceptanceManager,
         collateral,
         rewards,
-        maybeDataApplication,
-        snapshotStorage
+        creator,
+        validator
       ),
       gossip,
       selfId,
