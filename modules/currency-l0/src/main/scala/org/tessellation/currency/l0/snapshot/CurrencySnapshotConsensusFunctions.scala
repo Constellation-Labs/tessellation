@@ -29,7 +29,7 @@ import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
-import org.tessellation.sdk.infrastructure.consensus.trigger.ConsensusTrigger
+import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.infrastructure.snapshot.{CurrencySnapshotAcceptanceManager, SnapshotConsensusFunctions}
 import org.tessellation.security.SecurityProvider
@@ -91,6 +91,10 @@ object CurrencySnapshotConsensusFunctions {
       for {
         lastArtifactHash <- lastArtifact.value.hashF
         currentOrdinal = lastArtifact.ordinal.next
+        currentEpochProgress = trigger match {
+          case EventTrigger => lastArtifact.epochProgress
+          case TimeTrigger  => lastArtifact.epochProgress.next
+        }
         lastActiveTips <- lastArtifact.activeTips
         lastDeprecatedTips = lastArtifact.tips.deprecated
 
@@ -175,6 +179,7 @@ object CurrencySnapshotConsensusFunctions {
             remainedActive = remainedActive
           ),
           stateProof,
+          currentEpochProgress,
           maybeNewDataState
         )
       } yield (artifact, CurrencySnapshotContext(lastContext.address, snapshotInfo), returnedEvents)

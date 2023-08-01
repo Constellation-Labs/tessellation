@@ -12,6 +12,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
+import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.semver.SnapshotVersion
 import org.tessellation.schema.snapshot._
@@ -74,6 +75,7 @@ object currency {
     rewards: SortedSet[RewardTransaction],
     tips: SnapshotTips,
     info: CurrencySnapshotInfo,
+    epochProgress: EpochProgress,
     data: Option[Array[Byte]] = None,
     version: SnapshotVersion = SnapshotVersion("0.0.1")
   ) extends FullSnapshot[CurrencySnapshotStateProof, CurrencySnapshotInfo]
@@ -88,6 +90,7 @@ object currency {
     rewards: SortedSet[RewardTransaction],
     tips: SnapshotTips,
     stateProof: CurrencySnapshotStateProof,
+    epochProgress: EpochProgress,
     data: Option[Array[Byte]] = None,
     version: SnapshotVersion = SnapshotVersion("0.0.1")
   ) extends IncrementalSnapshot[CurrencySnapshotStateProof]
@@ -103,7 +106,8 @@ object currency {
           snapshot.blocks,
           snapshot.rewards,
           snapshot.tips,
-          stateProof
+          stateProof,
+          snapshot.epochProgress
         )
       }
   }
@@ -119,6 +123,7 @@ object currency {
         SortedSet.empty,
         SnapshotTips(SortedSet.empty, mkActiveTips(8)),
         CurrencySnapshotInfo(SortedMap.empty, SortedMap.from(balances)),
+        EpochProgress.MinValue,
         dataApplication
       )
 
@@ -133,6 +138,7 @@ object currency {
           SortedSet.empty,
           genesis.tips,
           stateProof,
+          genesis.epochProgress,
           genesis.data
         )
       }
