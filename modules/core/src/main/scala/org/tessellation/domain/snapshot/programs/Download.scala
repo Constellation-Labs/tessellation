@@ -133,7 +133,7 @@ object Download {
             }(InvalidChain.raiseError[F, Unit])
           } >>
             globalSnapshotContextFns
-              .createContext(lastContext, lastSnapshot.value, snapshot)
+              .createContext(lastContext, lastSnapshot, snapshot)
               .handleErrorWith(_ => InvalidChain.raiseError[F, GlobalSnapshotContext])
               .flatTap { _ =>
                 snapshotStorage.writePersisted(snapshot)
@@ -209,7 +209,7 @@ object Download {
         } else
           readSnapshot.flatMap {
             case Some(snapshot) =>
-              globalSnapshotContextFns.createContext(context, lastSnapshot.value, snapshot).flatMap { newContext =>
+              globalSnapshotContextFns.createContext(context, lastSnapshot, snapshot).flatMap { newContext =>
                 Applicative[F].whenA(tmpMap.contains(snapshot.ordinal)) {
                   snapshotStorage.readPersisted(snapshot.ordinal).flatMap {
                     _.map(

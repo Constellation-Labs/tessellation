@@ -163,7 +163,11 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       BlockAcceptanceManager.make[IO](validators.currencyBlockValidator),
       Amount(0L)
     )
-    val currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotAcceptanceManager)
+
+    val currencySnapshotCreator = CurrencySnapshotCreator.make[IO](currencySnapshotAcceptanceManager, None)
+    val currencySnapshotValidator = CurrencySnapshotValidator.make[IO](currencySnapshotCreator, None, validators.signedValidator)
+
+    val currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
     for {
       stateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](Some(10L), None)
       stateChannelProcessor = GlobalSnapshotStateChannelEventsProcessor

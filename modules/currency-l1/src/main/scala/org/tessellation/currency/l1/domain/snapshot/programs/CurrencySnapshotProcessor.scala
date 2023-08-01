@@ -70,7 +70,7 @@ object CurrencySnapshotProcessor {
               case Some((lastGlobalSnapshot, lastGlobalState)) =>
                 Validator.compare(lastGlobalSnapshot, globalSnapshot.signed.value) match {
                   case _: Validator.Next =>
-                    applyGlobalSnapshotFn(lastGlobalState, lastGlobalSnapshot, globalSnapshot.signed).flatMap { state =>
+                    applyGlobalSnapshotFn(lastGlobalState, lastGlobalSnapshot.signed, globalSnapshot.signed).flatMap { state =>
                       val setGlobalSnapshot = lastGlobalSnapshotStorage
                         .set(globalSnapshot, state)
                         .as[SnapshotProcessingResult](Aligned(globalSnapshotReference, Set.empty))
@@ -87,13 +87,13 @@ object CurrencySnapshotProcessor {
 
       def applyGlobalSnapshotFn(
         lastState: GlobalSnapshotInfo,
-        lastSnapshot: GlobalIncrementalSnapshot,
+        lastSnapshot: Signed[GlobalIncrementalSnapshot],
         snapshot: Signed[GlobalIncrementalSnapshot]
       ): F[GlobalSnapshotInfo] = globalSnapshotContextFns.createContext(lastState, lastSnapshot, snapshot)
 
       def applySnapshotFn(
         lastState: CurrencySnapshotInfo,
-        lastSnapshot: CurrencyIncrementalSnapshot,
+        lastSnapshot: Signed[CurrencyIncrementalSnapshot],
         snapshot: Signed[CurrencyIncrementalSnapshot]
       ): F[CurrencySnapshotInfo] =
         currencySnapshotContextFns.createContext(CurrencySnapshotContext(identifier, lastState), lastSnapshot, snapshot).map(_.snapshotInfo)

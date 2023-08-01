@@ -47,11 +47,11 @@ abstract class SnapshotProcessor[
 
   def applyGlobalSnapshotFn(
     lastGlobalState: GlobalSnapshotInfo,
-    lastGlobalSnapshot: GlobalIncrementalSnapshot,
+    lastGlobalSnapshot: Signed[GlobalIncrementalSnapshot],
     globalSnapshot: Signed[GlobalIncrementalSnapshot]
   ): F[GlobalSnapshotInfo]
 
-  def applySnapshotFn(lastState: SI, lastSnapshot: S, snapshot: Signed[S]): F[SI]
+  def applySnapshotFn(lastState: SI, lastSnapshot: Signed[S], snapshot: Signed[S]): F[SI]
 
   def processAlignment(
     alignment: Alignment,
@@ -263,7 +263,7 @@ abstract class SnapshotProcessor[
                     val isDependent =
                       (block: Signed[Block]) => BlockRelations.dependsOn[F](acceptedInMajority.values.map(_._1).toSet)(block)
 
-                    applySnapshotFn(lastState, lastSnapshot, snapshot.signed).flatMap { state =>
+                    applySnapshotFn(lastState, lastSnapshot.signed, snapshot.signed).flatMap { state =>
                       blockStorage.getBlocksForMajorityReconciliation(lastSnapshot.height, snapshot.height, isDependent).flatMap {
                         case MajorityReconciliationData(deprecatedTips, activeTips, _, _, relatedPostponed, _, acceptedAbove) =>
                           val onlyInMajority = acceptedInMajority -- acceptedAbove
@@ -314,7 +314,7 @@ abstract class SnapshotProcessor[
                     val isDependent =
                       (block: Signed[Block]) => BlockRelations.dependsOn[F](acceptedInMajority.values.map(_._1).toSet)(block)
 
-                    applySnapshotFn(lastState, lastSnapshot, snapshot.signed).flatMap { state =>
+                    applySnapshotFn(lastState, lastSnapshot.signed, snapshot.signed).flatMap { state =>
                       blockStorage.getBlocksForMajorityReconciliation(lastSnapshot.height, snapshot.height, isDependent).flatMap {
                         case MajorityReconciliationData(
                               deprecatedTips,

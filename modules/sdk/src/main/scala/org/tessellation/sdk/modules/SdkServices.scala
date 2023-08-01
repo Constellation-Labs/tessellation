@@ -69,7 +69,18 @@ object SdkServices {
         BlockAcceptanceManager.make[F](validators.currencyBlockValidator),
         collateral.amount
       )
-      currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotAcceptanceManager)
+
+      currencySnapshotValidator = CurrencySnapshotValidator.make[F](
+        CurrencySnapshotCreator.make[F](
+          currencySnapshotAcceptanceManager,
+          None
+        ),
+        None,
+        validators.signedValidator
+      )
+      currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(
+        currencySnapshotValidator
+      )
       globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make(None, stateChannelAllowanceLists)
       globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
         BlockAcceptanceManager.make[F](validators.blockValidator),

@@ -80,11 +80,15 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             waitingTxsR <- MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[Transaction]]]().asResource
             transactionStorage = new TransactionStorage[IO](lastAccTxR, waitingTxsR, TransactionReference.empty)
             validators = SdkValidators.make[IO](None, None, Some(Map.empty))
+
             currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
               BlockAcceptanceManager.make[IO](validators.currencyBlockValidator),
               Amount(0L)
             )
-            currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotAcceptanceManager)
+            currencySnapshotCreator = CurrencySnapshotCreator.make[IO](currencySnapshotAcceptanceManager, None)
+            currencySnapshotValidator = CurrencySnapshotValidator.make[IO](currencySnapshotCreator, None, validators.signedValidator)
+
+            currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
             globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](Some(10L), None).asResource
             globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
               BlockAcceptanceManager.make[IO](validators.blockValidator),
@@ -799,7 +803,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           newSnapshotInfo <- globalSnapshotContextFns.createContext(
             snapshotInfo,
-            hashedLastSnapshot.signed.value,
+            hashedLastSnapshot.signed,
             hashedNextSnapshot.signed
           )
           _ <- lastSnapR.set((hashedLastSnapshot, snapshotInfo).some)
@@ -1032,7 +1036,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           snapshotInfo = GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, snapshotBalances, SortedMap.empty, SortedMap.empty)
           newSnapshotInfo <- globalSnapshotContextFns.createContext(
             snapshotInfo,
-            hashedLastSnapshot.signed.value,
+            hashedLastSnapshot.signed,
             hashedNextSnapshot.signed
           )
           _ <- lastSnapR.set((hashedLastSnapshot, snapshotInfo).some)

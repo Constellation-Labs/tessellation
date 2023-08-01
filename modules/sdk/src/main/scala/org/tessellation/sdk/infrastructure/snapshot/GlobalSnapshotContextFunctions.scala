@@ -29,7 +29,7 @@ object GlobalSnapshotContextFunctions {
     new GlobalSnapshotContextFunctions[F] {
       def createContext(
         context: GlobalSnapshotInfo,
-        lastArtifact: GlobalIncrementalSnapshot,
+        lastArtifact: Signed[GlobalIncrementalSnapshot],
         signedArtifact: Signed[GlobalIncrementalSnapshot]
       ): F[GlobalSnapshotInfo] = for {
         lastActiveTips <- lastArtifact.activeTips
