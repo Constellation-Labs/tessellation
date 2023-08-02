@@ -59,8 +59,7 @@ class DataGenerator[F[_]: Monad: Random] {
 
   def generateData(
     numNodes: Int = 30,
-    edgeLogic: (TrustNode, TrustNode) => F[Option[TrustEdge]] = randomEdge(),
-    minimumEdgeCount: Int = 3
+    edgeLogic: (TrustNode, TrustNode) => F[Option[TrustEdge]] = randomEdge()
   ): F[List[TrustNode]] = {
     val nodes =
       (0 until numNodes).toList.map(id => TrustNode(id, scala.util.Random.nextDouble(), scala.util.Random.nextDouble()))

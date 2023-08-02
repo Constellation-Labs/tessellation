@@ -218,7 +218,6 @@ abstract class CurrencyL1App(
             storages.l0Cluster,
             p2pClient.l0BlockOutputClient,
             p2pClient.consensusClient,
-            programs.l0PeerDiscovery,
             services,
             queues,
             _,

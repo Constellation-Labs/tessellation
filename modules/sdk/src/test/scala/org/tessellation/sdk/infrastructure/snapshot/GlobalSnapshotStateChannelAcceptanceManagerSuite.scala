@@ -277,7 +277,7 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
     .flatMap(_.nextString(10))
     .map(content => StateChannelSnapshotBinary(hash, content.getBytes, SnapshotFee.MinValue))
 
-  private def mkGlobalSnapshotInfo(lastStateChannelSnapshotHashes: SortedMap[Address, Hash] = SortedMap.empty) =
+  private def mkGlobalSnapshotInfo(lastStateChannelSnapshotHashes: SortedMap[Address, Hash]) =
     GlobalSnapshotInfo(lastStateChannelSnapshotHashes, SortedMap.empty, SortedMap.empty, SortedMap.empty, SortedMap.empty)
 
 }

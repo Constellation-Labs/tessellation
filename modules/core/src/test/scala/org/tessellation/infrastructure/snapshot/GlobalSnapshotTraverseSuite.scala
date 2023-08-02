@@ -174,7 +174,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
   }
 
   test("can compute state for given incremental global snapshot") { res =>
-    implicit val (kryo, sp, metrics, _) = res
+    implicit val (kryo, sp, _, _) = res
 
     for {
       snapshots <- mkSnapshots(List.empty, balances)
@@ -185,7 +185,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
   }
 
   test("computed state contains last refs and preserve total amount of balances when no fees or rewards ") { res =>
-    implicit val (kryo, sp, metrics, random) = res
+    implicit val (kryo, sp, _, random) = res
 
     forall(dagBlockChainGen()) { output: IO[DAGS] =>
       for {
@@ -204,7 +204,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
   }
 
   test("computed state contains last refs and include fees in total amount of balances") { res =>
-    implicit val (kryo, sp, metrics, random) = res
+    implicit val (kryo, sp, _, random) = res
 
     forall(dagBlockChainGen(1L)) { output: IO[DAGS] =>
       for {

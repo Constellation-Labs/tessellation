@@ -903,7 +903,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             blocksR,
             lastSnapR,
             lastAccTxR,
-            transactionStorage,
+            _,
             globalSnapshotContextFns
           ) =>
         implicit val securityProvider: SecurityProvider[IO] = sp

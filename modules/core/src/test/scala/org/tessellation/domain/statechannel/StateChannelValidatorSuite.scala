@@ -177,7 +177,6 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
       keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
       peerId1 = NonEmptySet.one(PeerId.fromPublic(keyPair1.getPublic))
-      peerId2 = NonEmptySet.one(PeerId.fromPublic(keyPair2.getPublic))
       address = testStateChannel.toAddress
       signedSCBinary <- forAsyncKryo(testStateChannel, keyPair1).flatMap(_.signAlsoWith(keyPair2))
       scOutput = StateChannelOutput(address, signedSCBinary)

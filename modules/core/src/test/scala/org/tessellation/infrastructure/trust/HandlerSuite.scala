@@ -36,7 +36,7 @@ object HandlerSuite extends MutableIOSuite with Checkers {
     TrustStorage.make(trust, config)
   }
 
-  test("rumor handler updates the trust storage") { implicit kryo =>
+  test("rumor handler updates the trust storage") {
     val gen = for {
       peerId1 <- peerIdGen
       peerId2 <- peerIdGen
@@ -69,7 +69,7 @@ object HandlerSuite extends MutableIOSuite with Checkers {
     }
   }
 
-  test("ordinal rumor handler updates the trust storage") { implicit kryo =>
+  test("ordinal rumor handler updates the trust storage") {
     val gen = for {
       peerId1 <- peerIdGen
       peerId2 <- peerIdGen
