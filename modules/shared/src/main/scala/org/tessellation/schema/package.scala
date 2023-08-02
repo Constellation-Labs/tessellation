@@ -46,6 +46,12 @@ trait OrphanInstances {
   implicit val posLongDecoder: Decoder[PosLong] =
     decoderOf[Long, Positive]
 
+  implicit val posIntDecoder: Decoder[PosInt] =
+    decoderOf[Int, Positive]
+
+  implicit val posIntEncoder: Encoder[PosInt] =
+    encoderOf[Int, Positive]
+
   implicit val nonNegLongEncoder: Encoder[NonNegLong] =
     encoderOf[Long, NonNegative]
 

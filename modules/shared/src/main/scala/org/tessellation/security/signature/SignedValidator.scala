@@ -11,12 +11,14 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.{posIntDecoder, posIntEncoder}
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.SignedValidator.SignedValidationErrorOr
 import org.tessellation.security.signature.signature.SignatureProof
 
 import derevo.cats.{order, show}
+import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import eu.timepit.refined.auto._
 import eu.timepit.refined.cats._
@@ -113,7 +115,7 @@ object SignedValidator {
       }
   }
 
-  @derive(order, show)
+  @derive(order, show, decoder, encoder)
   sealed trait SignedValidationError
   case class InvalidSignatures(invalidSignatures: NonEmptySet[SignatureProof]) extends SignedValidationError
   case class NotEnoughSignatures(signatureCount: Long, minSignatureCount: PosInt) extends SignedValidationError
