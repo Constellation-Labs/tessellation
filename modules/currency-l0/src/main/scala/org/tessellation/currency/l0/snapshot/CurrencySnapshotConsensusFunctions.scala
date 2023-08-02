@@ -30,7 +30,6 @@ import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
-import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.infrastructure.snapshot.{CurrencySnapshotAcceptanceManager, SnapshotConsensusFunctions}
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
@@ -49,7 +48,7 @@ abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
 
 object CurrencySnapshotConsensusFunctions {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider: Metrics: L0NodeContext](
+  def make[F[_]: Async: KryoSerializer: SecurityProvider: L0NodeContext](
     stateChannelSnapshotService: StateChannelSnapshotService[F],
     currencySnapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F],
     collateral: Amount,

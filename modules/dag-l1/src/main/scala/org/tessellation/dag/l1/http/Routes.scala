@@ -16,10 +16,8 @@ import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.security.signature.Signed
 
 import io.circe.shapes._
-import io.circe.syntax.EncoderOps
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder}
-import org.http4s.circe._
 import org.http4s.dsl.Http4sDsl
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import shapeless._
@@ -50,14 +48,14 @@ final case class Routes[F[_]: Async: KryoSerializer](
             case Right(hash) => transactionLogger.info(s"Received valid transaction: ${hash.show}")
           }
           .flatMap {
-            case Left(errors) => BadRequest(ErrorResponse(errors.map(e => ErrorCause(e.show))).asJson)
+            case Left(errors) => BadRequest(ErrorResponse(errors.map(e => ErrorCause(e.show))))
             case Right(hash)  => Ok(("hash" ->> hash.value) :: HNil)
           }
       } yield response
 
     case GET -> Root / "transactions" / HashVar(hash) =>
       transactionStorage.find(hash).flatMap {
-        case Some(tx) => Ok(TransactionView(tx.signed.value, tx.hash, TransactionStatus.Waiting).asJson)
+        case Some(tx) => Ok(TransactionView(tx.signed.value, tx.hash, TransactionStatus.Waiting))
         case None     => NotFound()
       }
 

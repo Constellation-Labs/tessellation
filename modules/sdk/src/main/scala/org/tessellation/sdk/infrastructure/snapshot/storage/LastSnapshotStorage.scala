@@ -37,7 +37,7 @@ object LastSnapshotStorage {
 
       def set(snapshot: Hashed[S], state: SI): F[Unit] =
         snapshotR.modify {
-          case Some((current, currentState)) if current.hash === snapshot.lastSnapshotHash && current.ordinal.next === snapshot.ordinal =>
+          case Some((current, _)) if current.hash === snapshot.lastSnapshotHash && current.ordinal.next === snapshot.ordinal =>
             ((snapshot, state).some, Applicative[F].unit)
           case other =>
             (other, MonadThrow[F].raiseError[Unit](new Throwable("Failure during setting new global snapshot!")))

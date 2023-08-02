@@ -15,7 +15,6 @@ import scala.collection.immutable.SortedMap
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.cats.syntax.validated._
 import org.tessellation.json.JsonBinarySerializer
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
 import org.tessellation.sdk.domain.statechannel.StateChannelValidator
@@ -48,7 +47,7 @@ trait GlobalSnapshotStateChannelEventsProcessor[F[_]] {
 }
 
 object GlobalSnapshotStateChannelEventsProcessor {
-  def make[F[_]: Async: KryoSerializer](
+  def make[F[_]: Async](
     stateChannelValidator: StateChannelValidator[F],
     stateChannelManager: GlobalSnapshotStateChannelAcceptanceManager[F],
     currencySnapshotContextFns: CurrencySnapshotContextFunctions[F]

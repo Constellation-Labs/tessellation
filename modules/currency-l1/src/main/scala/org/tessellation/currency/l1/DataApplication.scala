@@ -18,7 +18,6 @@ import org.tessellation.dag.l1.http.p2p.L0BlockOutputClient
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
-import org.tessellation.sdk.domain.cluster.programs.L0PeerDiscovery
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, L0ClusterStorage}
 import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.security.SecurityProvider
@@ -33,7 +32,6 @@ object DataApplication {
     l0ClusterStorage: L0ClusterStorage[F],
     blockOutputClient: L0BlockOutputClient[F],
     consensusClient: ConsensusClient[F],
-    l0PeerDiscoveryProgram: L0PeerDiscovery[F],
     services: Services[
       F,
       CurrencySnapshotStateProof,

@@ -4,7 +4,6 @@ import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.show._
 
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.gossip.PeerRumor
 import org.tessellation.schema.trust.{PublicTrust, SnapshotOrdinalPublicTrust}
 import org.tessellation.sdk.domain.trust.storage.TrustStorage
@@ -14,7 +13,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object handler {
 
-  def trustHandler[F[_]: Async: KryoSerializer](
+  def trustHandler[F[_]: Async](
     trustStorage: TrustStorage[F]
   ): RumorHandler[F] = {
     val logger = Slf4jLogger.getLogger[F]
@@ -27,7 +26,7 @@ object handler {
     }
   }
 
-  def ordinalTrustHandler[F[_]: Async: KryoSerializer](
+  def ordinalTrustHandler[F[_]: Async](
     trustStorage: TrustStorage[F]
   ): RumorHandler[F] = {
     val logger = Slf4jLogger.getLogger[F]
