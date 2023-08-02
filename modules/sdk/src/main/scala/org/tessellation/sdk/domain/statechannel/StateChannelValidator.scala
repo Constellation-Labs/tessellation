@@ -21,6 +21,7 @@ import org.tessellation.security.signature.{Signed, SignedValidator}
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
 
 import derevo.cats.{eqv, show}
+import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 
 trait StateChannelValidator[F[_]] {
@@ -116,7 +117,7 @@ object StateChannelValidator {
 
   }
 
-  @derive(eqv, show)
+  @derive(eqv, show, decoder, encoder)
   sealed trait StateChannelValidationError
   case class InvalidSigned(error: SignedValidationError) extends StateChannelValidationError
   case object NotSignedExclusivelyByStateChannelOwner extends StateChannelValidationError

@@ -3,7 +3,10 @@ package org.tessellation.currency.l0.snapshot.services
 import java.security.KeyPair
 
 import cats.Applicative
+import cats.data.NonEmptyList
 import cats.effect.Async
+import cats.syntax.applicative._
+import cats.syntax.applicativeError._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.show._
@@ -17,13 +20,15 @@ import org.tessellation.json.JsonBinarySerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
+import org.tessellation.sdk.domain.statechannel.StateChannelValidator.StateChannelValidationError
 import org.tessellation.sdk.http.p2p.clients.StateChannelSnapshotClient
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hashed, SecurityProvider}
 import org.tessellation.statechannel.StateChannelSnapshotBinary
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+import retry._
 
 trait StateChannelSnapshotService[F[_]] {
 
@@ -44,6 +49,20 @@ object StateChannelSnapshotService {
     new StateChannelSnapshotService[F] {
       private val logger = Slf4jLogger.getLogger
 
+      private val sendRetries = 5
+
+      private val retryPolicy: RetryPolicy[F] = RetryPolicies.limitRetries(sendRetries)
+
+      private def wasSuccessful: Either[NonEmptyList[StateChannelValidationError], Unit] => F[Boolean] =
+        _.isRight.pure[F]
+
+      private def onFailure(binaryHashed: Hashed[StateChannelSnapshotBinary]) =
+        (_: Either[NonEmptyList[StateChannelValidationError], Unit], details: RetryDetails) =>
+          logger.info(s"Retrying sending ${binaryHashed.hash.show} to Global L0 after rejection. Retries so far ${details.retriesSoFar}")
+
+      private def onError(binaryHashed: Hashed[StateChannelSnapshotBinary]) = (_: Throwable, details: RetryDetails) =>
+        logger.info(s"Retrying sending ${binaryHashed.hash.show} to Global L0 after error. Retries so far ${details.retriesSoFar}")
+
       def createGenesisBinary(snapshot: Signed[CurrencySnapshot]): F[Signed[StateChannelSnapshotBinary]] = {
         val bytes = JsonBinarySerializer.serialize(snapshot)
         StateChannelSnapshotBinary(Hash.empty, bytes, SnapshotFee.MinValue).sign(keyPair)
@@ -58,14 +77,24 @@ object StateChannelSnapshotService {
       def consume(signedArtifact: Signed[CurrencySnapshotArtifact], context: CurrencySnapshotContext): F[Unit] = for {
         binary <- createBinary(signedArtifact)
         binaryHashed <- binary.toHashed
-        l0Peer <- globalL0ClusterStorage.getRandomPeer
         identifier <- identifierStorage.get
-        _ <- stateChannelSnapshotClient
-          .send(identifier, binary)(l0Peer)
-          .ifM(
-            logger.info(s"Sent ${binaryHashed.hash.show} to Global L0"),
-            logger.error(s"Cannot send ${binaryHashed.hash.show} to Global L0 peer ${l0Peer.show}")
-          )
+        _ <- retryingOnFailuresAndAllErrors[Either[NonEmptyList[StateChannelValidationError], Unit]](
+          retryPolicy,
+          wasSuccessful,
+          onFailure(binaryHashed),
+          onError(binaryHashed)
+        )(
+          globalL0ClusterStorage.getRandomPeer.flatMap { l0Peer =>
+            stateChannelSnapshotClient
+              .send(identifier, binary)(l0Peer)
+              .onError(e => logger.warn(e)(s"Sending ${binaryHashed.hash.show} snapshot to Global L0 peer ${l0Peer.show} failed!"))
+              .flatTap {
+                case Right(_) => logger.info(s"Sent ${binaryHashed.hash.show} to Global L0 peer ${l0Peer.show}")
+                case Left(errors) =>
+                  logger.error(s"Snapshot ${binaryHashed.hash.show} rejected by Global L0 peer ${l0Peer.show}. Reasons: ${errors.show}")
+              }
+          }
+        )
         _ <- lastBinaryHashStorage.set(binaryHashed.hash)
         _ <- snapshotStorage
           .prepend(signedArtifact, context.snapshotInfo)
