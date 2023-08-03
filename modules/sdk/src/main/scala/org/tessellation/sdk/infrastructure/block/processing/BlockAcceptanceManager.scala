@@ -13,7 +13,6 @@ import cats.syntax.show._
 import cats.syntax.traverse._
 
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.transaction.Transaction
 import org.tessellation.schema.{Block, BlockReference}
 import org.tessellation.sdk.domain.block.processing.{TxChains, _}
 import org.tessellation.sdk.infrastructure.block.processing.BlockAcceptanceLogic
@@ -27,15 +26,15 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object BlockAcceptanceManager {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider, T <: Transaction: Eq, B <: Block[T]: Eq: Ordering](
-    blockValidator: BlockValidator[F, T, B]
-  ): BlockAcceptanceManager[F, T, B] = make(BlockAcceptanceLogic.make[F, T, B], blockValidator)
+  def make[F[_]: Async: KryoSerializer: SecurityProvider, B <: Block: Eq: Ordering](
+    blockValidator: BlockValidator[F, B]
+  ): BlockAcceptanceManager[F, B] = make(BlockAcceptanceLogic.make[F, B], blockValidator)
 
-  def make[F[_]: Async: KryoSerializer, T <: Transaction: Eq, B <: Block[T]: Eq: Ordering](
-    logic: BlockAcceptanceLogic[F, T, B],
-    blockValidator: BlockValidator[F, T, B]
-  ): BlockAcceptanceManager[F, T, B] =
-    new BlockAcceptanceManager[F, T, B] {
+  def make[F[_]: Async: KryoSerializer, B <: Block: Eq: Ordering](
+    logic: BlockAcceptanceLogic[F, B],
+    blockValidator: BlockValidator[F, B]
+  ): BlockAcceptanceManager[F, B] =
+    new BlockAcceptanceManager[F, B] {
       private val logger = Slf4jLogger.getLoggerFromClass[F](BlockAcceptanceManager.getClass)
 
       def acceptBlocksIteratively(
@@ -44,36 +43,35 @@ object BlockAcceptanceManager {
       ): F[BlockAcceptanceResult[B]] = {
 
         def go(
-          initState: BlockAcceptanceState[T, B],
-          toProcess: List[(Signed[B], TxChains[T])]
-        ): F[BlockAcceptanceState[T, B]] =
+          initState: BlockAcceptanceState[B],
+          toProcess: List[(Signed[B], TxChains)]
+        ): F[BlockAcceptanceState[B]] =
           for {
-            currState <- toProcess.foldLeftM[F, BlockAcceptanceState[T, B]](initState.copy(awaiting = List.empty)) {
-              (acc, blockAndTxChains) =>
-                blockAndTxChains match {
-                  case (block, txChains) =>
-                    logic
-                      .acceptBlock(block, txChains, context, acc.contextUpdate)
-                      .map {
-                        case (contextUpdate, blockUsages) =>
-                          acc
-                            .focus(_.contextUpdate)
-                            .replace(contextUpdate)
-                            .focus(_.accepted)
-                            .modify((block, blockUsages) :: _)
-                      }
-                      .leftMap {
-                        case reason: BlockRejectionReason =>
-                          acc
-                            .focus(_.rejected)
-                            .modify(_ :+ (block, reason))
-                        case reason: BlockAwaitReason =>
-                          acc
-                            .focus(_.awaiting)
-                            .modify(_ :+ (blockAndTxChains, reason))
-                      }
-                      .merge
-                }
+            currState <- toProcess.foldLeftM[F, BlockAcceptanceState[B]](initState.copy(awaiting = List.empty)) { (acc, blockAndTxChains) =>
+              blockAndTxChains match {
+                case (block, txChains) =>
+                  logic
+                    .acceptBlock(block, txChains, context, acc.contextUpdate)
+                    .map {
+                      case (contextUpdate, blockUsages) =>
+                        acc
+                          .focus(_.contextUpdate)
+                          .replace(contextUpdate)
+                          .focus(_.accepted)
+                          .modify((block, blockUsages) :: _)
+                    }
+                    .leftMap {
+                      case reason: BlockRejectionReason =>
+                        acc
+                          .focus(_.rejected)
+                          .modify(_ :+ (block, reason))
+                      case reason: BlockAwaitReason =>
+                        acc
+                          .focus(_.awaiting)
+                          .modify(_ :+ (blockAndTxChains, reason))
+                    }
+                    .merge
+              }
             }
             result <-
               if (initState === currState) currState.pure[F]
@@ -81,7 +79,7 @@ object BlockAcceptanceManager {
           } yield result
 
         blocks.sorted
-          .foldLeftM((List.empty[(Signed[B], TxChains[T])], List.empty[(Signed[B], ValidationFailed)])) { (acc, block) =>
+          .foldLeftM((List.empty[(Signed[B], TxChains)], List.empty[(Signed[B], ValidationFailed)])) { (acc, block) =>
             acc match {
               case (validList, invalidList) =>
                 blockValidator.validate(block).map {

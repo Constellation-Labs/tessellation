@@ -40,36 +40,22 @@ object currency {
   @newtype
   case class TokenSymbol(symbol: String Refined MatchesRegex["[A-Z]+"])
 
-  @derive(decoder, encoder, order, show)
-  case class CurrencyTransaction(
-    source: Address,
-    destination: Address,
-    amount: TransactionAmount,
-    fee: TransactionFee,
-    parent: TransactionReference,
-    salt: TransactionSalt
-  ) extends Transaction
-
-  object CurrencyTransaction {
-    implicit object OrderingInstance extends OrderBasedOrdering[CurrencyTransaction]
-  }
-
   @derive(show, eqv, encoder, decoder, order)
   case class CurrencyBlock(
     parent: NonEmptyList[BlockReference],
-    transactions: NonEmptySet[Signed[CurrencyTransaction]]
-  ) extends Block[CurrencyTransaction]
+    transactions: NonEmptySet[Signed[Transaction]]
+  ) extends Block
 
   object CurrencyBlock {
 
     implicit object OrderingInstance extends OrderBasedOrdering[CurrencyBlock]
 
-    implicit val transactionsDecoder: Decoder[NonEmptySet[Signed[CurrencyTransaction]]] =
-      NonEmptySetCodec.decoder[Signed[CurrencyTransaction]]
+    implicit val transactionsDecoder: Decoder[NonEmptySet[Signed[Transaction]]] =
+      NonEmptySetCodec.decoder[Signed[Transaction]]
     implicit object OrderingInstanceAsActiveTip extends OrderBasedOrdering[BlockAsActiveTip[CurrencyBlock]]
 
-    implicit val blockConstructor = new BlockConstructor[CurrencyTransaction, CurrencyBlock] {
-      def create(parents: NonEmptyList[BlockReference], transactions: NonEmptySet[Signed[CurrencyTransaction]]): CurrencyBlock =
+    implicit val blockConstructor = new BlockConstructor[CurrencyBlock] {
+      def create(parents: NonEmptyList[BlockReference], transactions: NonEmptySet[Signed[Transaction]]): CurrencyBlock =
         CurrencyBlock(parents, transactions)
     }
   }
@@ -116,7 +102,7 @@ object currency {
     info: CurrencySnapshotInfo,
     data: Option[Array[Byte]] = None,
     version: SnapshotVersion = SnapshotVersion("0.0.1")
-  ) extends FullSnapshot[CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencySnapshotInfo]
+  ) extends FullSnapshot[CurrencyBlock, CurrencySnapshotStateProof, CurrencySnapshotInfo]
 
   @derive(eqv, show, encoder, decoder)
   case class CurrencyIncrementalSnapshot(
@@ -130,7 +116,7 @@ object currency {
     stateProof: CurrencySnapshotStateProof,
     data: Option[Array[Byte]] = None,
     version: SnapshotVersion = SnapshotVersion("0.0.1")
-  ) extends IncrementalSnapshot[CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof]
+  ) extends IncrementalSnapshot[CurrencyBlock, CurrencySnapshotStateProof]
 
   object CurrencyIncrementalSnapshot {
     def fromCurrencySnapshot[F[_]: MonadThrow: KryoSerializer](snapshot: CurrencySnapshot): F[CurrencyIncrementalSnapshot] =

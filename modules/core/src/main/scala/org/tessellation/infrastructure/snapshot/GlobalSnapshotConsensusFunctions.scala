@@ -18,7 +18,6 @@ import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.block.DAGBlock
-import org.tessellation.schema.transaction.DAGTransaction
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.AppEnvironment.Mainnet
 import org.tessellation.sdk.domain.block.processing._
@@ -38,7 +37,6 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 abstract class GlobalSnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
     extends SnapshotConsensusFunctions[
       F,
-      DAGTransaction,
       DAGBlock,
       GlobalSnapshotEvent,
       GlobalSnapshotArtifact,
@@ -52,7 +50,7 @@ object GlobalSnapshotConsensusFunctions {
     globalSnapshotStorage: SnapshotStorage[F, GlobalSnapshotArtifact, GlobalSnapshotContext],
     globalSnapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     collateral: Amount,
-    rewards: Rewards[F, DAGTransaction, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot],
+    rewards: Rewards[F, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot],
     environment: AppEnvironment
   ): GlobalSnapshotConsensusFunctions[F] = new GlobalSnapshotConsensusFunctions[F] {
 

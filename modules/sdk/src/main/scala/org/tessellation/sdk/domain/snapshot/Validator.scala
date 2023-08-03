@@ -9,10 +9,10 @@ import org.tessellation.security.Hashed
 
 object Validator {
 
-  def isNextSnapshot[S <: Snapshot[_, _]](previous: Hashed[S], next: S): Boolean =
+  def isNextSnapshot[S <: Snapshot[_]](previous: Hashed[S], next: S): Boolean =
     compare[S](previous, next).isInstanceOf[Next]
 
-  def compare[S <: Snapshot[_, _]](previous: Hashed[S], next: S): ComparisonResult = {
+  def compare[S <: Snapshot[_]](previous: Hashed[S], next: S): ComparisonResult = {
     val isLastSnapshotHashCorrect = previous.hash === next.lastSnapshotHash
     lazy val isNextOrdinal = previous.ordinal.next === next.ordinal
     lazy val isNextHeight = previous.height < next.height && next.subHeight === SubHeight.MinValue

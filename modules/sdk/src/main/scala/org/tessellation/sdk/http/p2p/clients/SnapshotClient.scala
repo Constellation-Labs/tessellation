@@ -20,7 +20,7 @@ import org.http4s.client.Client
 
 abstract class SnapshotClient[
   F[_]: Async: SecurityProvider: KryoSerializer,
-  S <: Snapshot[_, _]: Decoder,
+  S <: Snapshot[_]: Decoder,
   SI <: SnapshotInfo[_]: Decoder
 ] {
   def client: Client[F]

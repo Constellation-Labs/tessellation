@@ -36,13 +36,12 @@ object DataApplication {
     l0PeerDiscoveryProgram: L0PeerDiscovery[F],
     services: Services[
       F,
-      CurrencyTransaction,
       CurrencyBlock,
       CurrencySnapshotStateProof,
       CurrencyIncrementalSnapshot,
       CurrencySnapshotInfo
     ],
-    queues: Queues[F, CurrencyTransaction, CurrencyBlock],
+    queues: Queues[F, CurrencyBlock],
     dataApplicationService: BaseDataApplicationL1Service[F],
     selfKeyPair: KeyPair,
     selfId: PeerId,

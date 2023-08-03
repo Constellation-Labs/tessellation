@@ -21,7 +21,7 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.epoch.EpochProgress
-import org.tessellation.schema.transaction.{DAGTransaction, RewardTransaction, TransactionAmount}
+import org.tessellation.schema.transaction.{RewardTransaction, Transaction, TransactionAmount}
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotStateProof, SnapshotOrdinal}
 import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
@@ -38,8 +38,8 @@ object Rewards {
     config: RewardsConfig,
     programsDistributor: ProgramsDistributor[Either[ArithmeticException, *]],
     facilitatorDistributor: FacilitatorDistributor[F]
-  ): Rewards[F, DAGTransaction, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot] =
-    new Rewards[F, DAGTransaction, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot] {
+  ): Rewards[F, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot] =
+    new Rewards[F, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot] {
 
       private def getAmountByEpoch(epochProgress: EpochProgress, rewardsPerEpoch: SortedMap[EpochProgress, Amount]): Amount =
         rewardsPerEpoch
@@ -50,7 +50,7 @@ object Rewards {
       def distribute(
         lastArtifact: Signed[GlobalIncrementalSnapshot],
         lastBalances: SortedMap[Address, Balance],
-        acceptedTransactions: SortedSet[Signed[DAGTransaction]],
+        acceptedTransactions: SortedSet[Signed[Transaction]],
         trigger: ConsensusTrigger
       ): F[SortedSet[RewardTransaction]] = {
         val facilitators = lastArtifact.proofs.map(_.id)
@@ -65,7 +65,7 @@ object Rewards {
 
       def feeDistribution(
         snapshotOrdinal: SnapshotOrdinal,
-        transactions: SortedSet[Signed[DAGTransaction]],
+        transactions: SortedSet[Signed[Transaction]],
         facilitators: NonEmptySet[Id]
       ): F[SortedSet[RewardTransaction]] = {
 

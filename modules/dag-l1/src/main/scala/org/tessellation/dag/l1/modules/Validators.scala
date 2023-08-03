@@ -6,7 +6,6 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.Block
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
-import org.tessellation.schema.transaction.Transaction
 import org.tessellation.sdk.domain.block.processing.BlockValidator
 import org.tessellation.sdk.domain.seedlist.SeedlistEntry
 import org.tessellation.sdk.domain.transaction.{ContextualTransactionValidator, TransactionChainValidator, TransactionValidator}
@@ -19,27 +18,26 @@ object Validators {
 
   def make[
     F[_]: Async: KryoSerializer: SecurityProvider,
-    T <: Transaction,
-    B <: Block[T],
+    B <: Block,
     P <: StateProof,
-    S <: Snapshot[T, B],
+    S <: Snapshot[B],
     SI <: SnapshotInfo[P]
   ](
-    storages: Storages[F, T, B, P, S, SI],
+    storages: Storages[F, B, P, S, SI],
     seedlist: Option[Set[SeedlistEntry]]
-  ): Validators[F, T, B] = {
+  ): Validators[F, B] = {
     val signedValidator = SignedValidator.make[F]
-    val transactionChainValidator = TransactionChainValidator.make[F, T]
-    val transactionValidator = TransactionValidator.make[F, T](signedValidator)
+    val transactionChainValidator = TransactionChainValidator.make[F]
+    val transactionValidator = TransactionValidator.make[F](signedValidator)
     val blockValidator =
-      BlockValidator.make[F, T, B](signedValidator, transactionChainValidator, transactionValidator)
-    val contextualTransactionValidator = ContextualTransactionValidator.make[F, T](
+      BlockValidator.make[F, B](signedValidator, transactionChainValidator, transactionValidator)
+    val contextualTransactionValidator = ContextualTransactionValidator.make[F](
       transactionValidator,
       (address: Address) => storages.transaction.getLastAcceptedReference(address)
     )
     val rumorValidator = RumorValidator.make[F](seedlist, signedValidator)
 
-    new Validators[F, T, B](
+    new Validators[F, B](
       signedValidator,
       blockValidator,
       transactionValidator,
@@ -49,10 +47,10 @@ object Validators {
   }
 }
 
-sealed abstract class Validators[F[_], T <: Transaction, B <: Block[T]] private (
+sealed abstract class Validators[F[_], B <: Block] private (
   val signed: SignedValidator[F],
-  val block: BlockValidator[F, T, B],
-  val transaction: TransactionValidator[F, T],
-  val transactionContextual: ContextualTransactionValidator[F, T],
+  val block: BlockValidator[F, B],
+  val transaction: TransactionValidator[F],
+  val transactionContextual: ContextualTransactionValidator[F],
   val rumorValidator: RumorValidator[F]
 )

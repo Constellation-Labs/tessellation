@@ -6,7 +6,7 @@ import org.tessellation.ext.cats.data.OrderBasedOrdering
 import org.tessellation.ext.codecs.NonEmptySetCodec
 import org.tessellation.schema.Block.BlockConstructor
 import org.tessellation.schema._
-import org.tessellation.schema.transaction.DAGTransaction
+import org.tessellation.schema.transaction.Transaction
 import org.tessellation.security.signature.Signed
 
 import derevo.cats.{eqv, order, show}
@@ -17,19 +17,19 @@ import io.circe.Decoder
 @derive(show, eqv, encoder, decoder, order)
 case class DAGBlock(
   parent: NonEmptyList[BlockReference],
-  transactions: NonEmptySet[Signed[DAGTransaction]]
-) extends Block[DAGTransaction] {}
+  transactions: NonEmptySet[Signed[Transaction]]
+) extends Block {}
 
 object DAGBlock {
   implicit object OrderingInstance extends OrderBasedOrdering[DAGBlock]
 
-  implicit val transactionsDecoder: Decoder[NonEmptySet[Signed[DAGTransaction]]] =
-    NonEmptySetCodec.decoder[Signed[DAGTransaction]]
+  implicit val transactionsDecoder: Decoder[NonEmptySet[Signed[Transaction]]] =
+    NonEmptySetCodec.decoder[Signed[Transaction]]
 
   implicit object OrderingInstanceAsActiveTip extends OrderBasedOrdering[BlockAsActiveTip[DAGBlock]]
 
-  implicit val constructor = new BlockConstructor[DAGTransaction, DAGBlock] {
-    def create(parents: NonEmptyList[BlockReference], transactions: NonEmptySet[Signed[DAGTransaction]]): DAGBlock =
+  implicit val constructor = new BlockConstructor[DAGBlock] {
+    def create(parents: NonEmptyList[BlockReference], transactions: NonEmptySet[Signed[Transaction]]): DAGBlock =
       DAGBlock(parents, transactions)
   }
 }

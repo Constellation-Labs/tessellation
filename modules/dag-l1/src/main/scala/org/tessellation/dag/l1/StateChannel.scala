@@ -2,6 +2,7 @@ package org.tessellation.dag.l1
 
 import java.security.KeyPair
 
+import cats.Applicative
 import cats.data.NonEmptyList
 import cats.effect.Async
 import cats.effect.std.{Random, Semaphore}
@@ -14,7 +15,6 @@ import cats.syntax.order._
 import cats.syntax.show._
 import cats.syntax.traverse._
 import cats.syntax.traverseFilter._
-import cats.{Applicative, Order}
 
 import scala.concurrent.duration.DurationInt
 import scala.reflect.runtime.universe.TypeTag
@@ -35,7 +35,6 @@ import org.tessellation.schema._
 import org.tessellation.schema.height.Height
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
-import org.tessellation.schema.transaction.Transaction
 import org.tessellation.security.{Hashed, SecurityProvider}
 
 import fs2.{Pipe, Stream}
@@ -44,10 +43,9 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 class StateChannel[
   F[_]: Async: KryoSerializer: SecurityProvider: Random,
-  T <: Transaction: Encoder: Order: Ordering,
-  B <: Block[T]: Encoder: TypeTag,
+  B <: Block: Encoder: TypeTag,
   P <: StateProof,
-  S <: Snapshot[T, B],
+  S <: Snapshot[B],
   SI <: SnapshotInfo[P]
 ](
   appConfig: AppConfig,
@@ -55,19 +53,19 @@ class StateChannel[
   blockCreationS: Semaphore[F],
   blockStoringS: Semaphore[F],
   keyPair: KeyPair,
-  p2PClient: P2PClient[F, T, B],
-  programs: Programs[F, T, B, P, S, SI],
-  queues: Queues[F, T, B],
+  p2PClient: P2PClient[F, B],
+  programs: Programs[F, B, P, S, SI],
+  queues: Queues[F, B],
   selfId: PeerId,
-  services: Services[F, T, B, P, S, SI],
-  storages: Storages[F, T, B, P, S, SI],
-  validators: Validators[F, T, B]
-)(implicit blockConstructor: BlockConstructor[T, B]) {
+  services: Services[F, B, P, S, SI],
+  storages: Storages[F, B, P, S, SI],
+  validators: Validators[F, B]
+)(implicit blockConstructor: BlockConstructor[B]) {
 
   private implicit val logger = Slf4jLogger.getLogger[F]
 
   private val blockConsensusContext =
-    BlockConsensusContext[F, T, B](
+    BlockConsensusContext[F, B](
       p2PClient.blockConsensus,
       storages.block,
       validators.block,
@@ -115,18 +113,18 @@ class StateChannel[
   private val ownerBlockConsensusInputs: Stream[F, OwnerBlockConsensusInput] =
     inspectionTriggerInput.merge(ownRoundTriggerInput)
 
-  private val peerBlockConsensusInputs: Stream[F, PeerBlockConsensusInput[T]] = Stream
+  private val peerBlockConsensusInputs: Stream[F, PeerBlockConsensusInput] = Stream
     .fromQueueUnterminated(queues.peerBlockConsensusInput)
     .evalFilter(isPeerInputValid(_))
     .map(_.value)
 
-  private val blockConsensusInputs: Stream[F, BlockConsensusInput[T]] =
+  private val blockConsensusInputs: Stream[F, BlockConsensusInput] =
     ownerBlockConsensusInputs.merge(peerBlockConsensusInputs)
 
-  private val runConsensus: Pipe[F, BlockConsensusInput[T], FinalBlock[B]] =
+  private val runConsensus: Pipe[F, BlockConsensusInput, FinalBlock[B]] =
     _.evalTap(input => logger.debug(s"Received block consensus input to process: ${input.show}"))
       .evalMap(
-        new BlockConsensusCell[F, T, B](_, blockConsensusContext)
+        new BlockConsensusCell[F, B](_, blockConsensusContext)
           .run()
           .handleErrorWith(e => CellError(e.getMessage).asLeft[BlockConsensusOutput[B]].pure[F])
       )
@@ -266,28 +264,27 @@ object StateChannel {
 
   def make[
     F[_]: Async: KryoSerializer: SecurityProvider: Random,
-    T <: Transaction: Encoder: Order: Ordering,
-    B <: Block[T]: Encoder: TypeTag,
+    B <: Block: Encoder: TypeTag,
     P <: StateProof,
-    S <: Snapshot[T, B],
+    S <: Snapshot[B],
     SI <: SnapshotInfo[P]
   ](
     appConfig: AppConfig,
     keyPair: KeyPair,
-    p2PClient: P2PClient[F, T, B],
-    programs: Programs[F, T, B, P, S, SI],
-    queues: Queues[F, T, B],
+    p2PClient: P2PClient[F, B],
+    programs: Programs[F, B, P, S, SI],
+    queues: Queues[F, B],
     selfId: PeerId,
-    services: Services[F, T, B, P, S, SI],
-    storages: Storages[F, T, B, P, S, SI],
-    validators: Validators[F, T, B]
-  )(implicit blockConstructor: BlockConstructor[T, B]): F[StateChannel[F, T, B, P, S, SI]] =
+    services: Services[F, B, P, S, SI],
+    storages: Storages[F, B, P, S, SI],
+    validators: Validators[F, B]
+  )(implicit blockConstructor: BlockConstructor[B]): F[StateChannel[F, B, P, S, SI]] =
     for {
       blockAcceptanceS <- Semaphore(1)
       blockCreationS <- Semaphore(1)
       blockStoringS <- Semaphore(1)
     } yield
-      new StateChannel[F, T, B, P, S, SI](
+      new StateChannel[F, B, P, S, SI](
         appConfig,
         blockAcceptanceS,
         blockCreationS,

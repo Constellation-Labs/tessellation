@@ -1,6 +1,5 @@
 package org.tessellation.dag.l1.modules
 
-import cats.Order
 import cats.effect.kernel.Async
 import cats.effect.std.Random
 import cats.syntax.flatMap._
@@ -15,7 +14,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.Block
 import org.tessellation.schema.peer.L0Peer
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
-import org.tessellation.schema.transaction.{Transaction, TransactionReference}
+import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, L0ClusterStorage, SessionStorage}
 import org.tessellation.sdk.domain.collateral.LatestBalances
 import org.tessellation.sdk.domain.node.NodeStorage
@@ -27,22 +26,19 @@ import org.tessellation.sdk.modules.SdkStorages
 
 object Storages {
 
-  def make[F[_]: Async: Random: KryoSerializer, T <: Transaction: Order: Ordering, B <: Block[T], P <: StateProof, S <: Snapshot[
-    T,
-    B
-  ], SI <: SnapshotInfo[P]](
+  def make[F[_]: Async: Random: KryoSerializer, B <: Block, P <: StateProof, S <: Snapshot[B], SI <: SnapshotInfo[P]](
     sdkStorages: SdkStorages[F],
     l0Peer: L0Peer
-  ): F[Storages[F, T, B, P, S, SI]] =
+  ): F[Storages[F, B, P, S, SI]] =
     for {
       blockStorage <- BlockStorage.make[F, B]
-      consensusStorage <- ConsensusStorage.make[F, T, B]
+      consensusStorage <- ConsensusStorage.make[F, B]
       l0ClusterStorage <- L0ClusterStorage.make[F](l0Peer)
       lastSnapshotStorage <- LastSnapshotStorage.make[F, S, SI]
-      transactionStorage <- TransactionStorage.make[F, T](TransactionReference.empty)
+      transactionStorage <- TransactionStorage.make[F](TransactionReference.empty)
       addressStorage <- AddressStorage.make[F]
     } yield
-      new Storages[F, T, B, P, S, SI] {
+      new Storages[F, B, P, S, SI] {
         val address = addressStorage
         val block = blockStorage
         val consensus = consensusStorage
@@ -56,15 +52,15 @@ object Storages {
       }
 }
 
-trait Storages[F[_], T <: Transaction, B <: Block[T], P <: StateProof, S <: Snapshot[T, B], SI <: SnapshotInfo[P]] {
+trait Storages[F[_], B <: Block, P <: StateProof, S <: Snapshot[B], SI <: SnapshotInfo[P]] {
   val address: AddressStorage[F]
   val block: BlockStorage[F, B]
-  val consensus: ConsensusStorage[F, T, B]
+  val consensus: ConsensusStorage[F, B]
   val cluster: ClusterStorage[F]
   val l0Cluster: L0ClusterStorage[F]
   val lastSnapshot: LastSnapshotStorage[F, S, SI] with LatestBalances[F]
   val node: NodeStorage[F]
   val session: SessionStorage[F]
   val rumor: RumorStorage[F]
-  val transaction: TransactionStorage[F, T]
+  val transaction: TransactionStorage[F]
 }

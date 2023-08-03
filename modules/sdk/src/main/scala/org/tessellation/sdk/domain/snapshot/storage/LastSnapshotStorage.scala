@@ -5,7 +5,7 @@ import org.tessellation.schema.height.Height
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo}
 import org.tessellation.security.Hashed
 
-trait LastSnapshotStorage[F[_], S <: Snapshot[_, _], SI <: SnapshotInfo[_]] {
+trait LastSnapshotStorage[F[_], S <: Snapshot[_], SI <: SnapshotInfo[_]] {
   def set(snapshot: Hashed[S], state: SI): F[Unit]
   def setInitial(snapshot: Hashed[S], state: SI): F[Unit]
   def get: F[Option[Hashed[S]]]

@@ -10,13 +10,13 @@ import derevo.derive
 import eu.timepit.refined.types.numeric.NonNegLong
 
 @derive(show, encoder, decoder)
-case class BlockAsActiveTip[B <: Block[_]](
+case class BlockAsActiveTip[B <: Block](
   block: Signed[B],
   usageCount: NonNegLong
 )
 
 object BlockAsActiveTip {
-  implicit def order[B <: Block[_]: Order]: Order[BlockAsActiveTip[B]] = Order.whenEqual(
+  implicit def order[B <: Block: Order]: Order[BlockAsActiveTip[B]] = Order.whenEqual(
     Order.by[BlockAsActiveTip[B], Signed[B]](_.block),
     Order.by[BlockAsActiveTip[B], NonNegLong](_.usageCount)
   )

@@ -21,7 +21,7 @@ import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.generators.{chooseNumRefined, signatureGen, signedTransactionGen}
-import org.tessellation.schema.transaction.{DAGTransaction, RewardTransaction, TransactionAmount}
+import org.tessellation.schema.transaction.{RewardTransaction, TransactionAmount}
 import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.domain.transaction.TransactionValidator.stardustPrimary
 import org.tessellation.sdk.infrastructure.consensus.trigger.{EventTrigger, TimeTrigger}
@@ -108,7 +108,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
 
   def makeRewards(config: RewardsConfig)(
     implicit sp: SecurityProvider[IO]
-  ): Rewards[F, DAGTransaction, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot] = {
+  ): Rewards[F, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot] = {
     val programsDistributor = ProgramsDistributor.make
     val regularDistributor = FacilitatorDistributor.make
     Rewards.make[IO](config, programsDistributor, regularDistributor)

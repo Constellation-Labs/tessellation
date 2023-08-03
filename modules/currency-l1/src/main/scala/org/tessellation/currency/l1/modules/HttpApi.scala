@@ -2,7 +2,6 @@ package org.tessellation.currency.l1.modules
 
 import java.security.PrivateKey
 
-import cats.Show
 import cats.effect.Async
 import cats.effect.std.Supervisor
 import cats.syntax.semigroupk._
@@ -17,7 +16,6 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.Block
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
-import org.tessellation.schema.transaction.Transaction
 import org.tessellation.sdk.config.types.HttpConfig
 import org.tessellation.sdk.http.p2p.middleware.{PeerAuthMiddleware, `X-Id-Middleware`}
 import org.tessellation.sdk.http.routes._
@@ -25,7 +23,6 @@ import org.tessellation.sdk.infrastructure.healthcheck.ping.PingHealthCheckRoute
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
 
-import io.circe.{Decoder, Encoder}
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
 import org.http4s.server.Router
 import org.http4s.server.middleware.{CORS, RequestLogger, ResponseLogger}
@@ -35,26 +32,23 @@ object HttpApi {
 
   def make[
     F[_]: Async: KryoSerializer: SecurityProvider: Metrics: Supervisor: L1NodeContext,
-    T <: Transaction: Decoder: Encoder: Show,
-    B <: Block[T],
+    B <: Block,
     P <: StateProof,
-    S <: Snapshot[T, B],
+   S <: Snapshot[B],
     SI <: SnapshotInfo[P]
   ](
     maybeDataApplication: Option[BaseDataApplicationL1Service[F]],
     storages: Storages[
       F,
-      CurrencyTransaction,
       CurrencyBlock,
       CurrencySnapshotStateProof,
       CurrencyIncrementalSnapshot,
       CurrencySnapshotInfo
     ],
-    queues: Queues[F, CurrencyTransaction, CurrencyBlock],
+    queues: Queues[F, CurrencyBlock],
     privateKey: PrivateKey,
     services: Services[
       F,
-      CurrencyTransaction,
       CurrencyBlock,
       CurrencySnapshotStateProof,
       CurrencyIncrementalSnapshot,
@@ -62,7 +56,6 @@ object HttpApi {
     ],
     programs: Programs[
       F,
-      CurrencyTransaction,
       CurrencyBlock,
       CurrencySnapshotStateProof,
       CurrencyIncrementalSnapshot,
@@ -91,11 +84,11 @@ sealed abstract class HttpApi[
   F[_]: Async: KryoSerializer: SecurityProvider: Metrics: Supervisor: L1NodeContext
 ] private (
   maybeDataApplication: Option[BaseDataApplicationL1Service[F]],
-  storages: Storages[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
-  queues: Queues[F, CurrencyTransaction, CurrencyBlock],
+  storages: Storages[F, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
+  queues: Queues[F, CurrencyBlock],
   privateKey: PrivateKey,
-  services: Services[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
-  programs: Programs[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
+  services: Services[F, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
+  programs: Programs[F, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
   healthchecks: HealthChecks[F],
   selfId: PeerId,
   nodeVersion: String,
@@ -117,7 +110,7 @@ sealed abstract class HttpApi[
     )
   }
   private val currencyRoutes =
-    DAGRoutes[F, CurrencyTransaction](services.transaction, storages.transaction, storages.l0Cluster, queues.peerBlockConsensusInput)
+    DAGRoutes[F](services.transaction, storages.transaction, storages.l0Cluster, queues.peerBlockConsensusInput)
   private val nodeRoutes = NodeRoutes[F](storages.node, storages.session, storages.cluster, nodeVersion, httpCfg, selfId)
   private val healthcheckP2PRoutes = {
     val pingHealthcheckRoutes = PingHealthCheckRoutes[F](healthchecks.ping)
