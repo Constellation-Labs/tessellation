@@ -12,7 +12,7 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.semver.SnapshotVersion
-import org.tessellation.schema.transaction.{Transaction, TransactionReference}
+import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.security.hash.Hash
 import org.tessellation.syntax.sortedCollection._
 
@@ -27,16 +27,16 @@ object snapshot {
     val balancesProof: Hash
   }
 
-  trait FullSnapshot[T <: Transaction, B <: Block[T], P <: StateProof, SI <: SnapshotInfo[P]] extends Snapshot[T, B] {
+  trait FullSnapshot[B <: Block, P <: StateProof, SI <: SnapshotInfo[P]] extends Snapshot[B] {
     val info: SI
   }
 
-  trait IncrementalSnapshot[T <: Transaction, B <: Block[T], P <: StateProof] extends Snapshot[T, B] {
+  trait IncrementalSnapshot[B <: Block, P <: StateProof] extends Snapshot[B] {
     val stateProof: P
     val version: SnapshotVersion
   }
 
-  trait Snapshot[T <: Transaction, B <: Block[T]] {
+  trait Snapshot[B <: Block] {
     val ordinal: SnapshotOrdinal
     val height: Height
     val subHeight: SubHeight

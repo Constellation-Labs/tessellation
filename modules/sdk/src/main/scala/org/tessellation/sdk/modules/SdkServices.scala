@@ -8,13 +8,12 @@ import cats.effect.std.Supervisor
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.currency.schema.currency.{CurrencyBlock, CurrencyTransaction}
+import org.tessellation.currency.schema.currency.CurrencyBlock
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.transaction.DAGTransaction
 import org.tessellation.sdk.config.types.{CollateralConfig, SdkConfig}
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.gossip.Gossip
@@ -69,13 +68,13 @@ object SdkServices {
       localHealthcheck <- LocalHealthcheck.make[F](nodeClient, storages.cluster)
       gossip <- Gossip.make[F](queues.rumor, nodeId, generation, keyPair)
       currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
-        BlockAcceptanceManager.make[F, CurrencyTransaction, CurrencyBlock](validators.currencyBlockValidator),
+        BlockAcceptanceManager.make[F, CurrencyBlock](validators.currencyBlockValidator),
         collateral.amount
       )
       currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotAcceptanceManager)
       globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make(None, stateChannelAllowanceLists)
       globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
-        BlockAcceptanceManager.make[F, DAGTransaction, DAGBlock](validators.blockValidator),
+        BlockAcceptanceManager.make[F, DAGBlock](validators.blockValidator),
         GlobalSnapshotStateChannelEventsProcessor
           .make[F](validators.stateChannelValidator, globalSnapshotStateChannelManager, currencySnapshotContextFns),
         collateral.amount

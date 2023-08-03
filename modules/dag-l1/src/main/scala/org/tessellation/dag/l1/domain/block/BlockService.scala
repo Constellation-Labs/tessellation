@@ -15,7 +15,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.Block.HashedOps
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
-import org.tessellation.schema.transaction.{Transaction, TransactionReference}
+import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.schema.{Block, BlockReference, transaction}
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.security.Hashed
@@ -24,20 +24,20 @@ import org.tessellation.security.signature.Signed
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 
-trait BlockService[F[_], T <: Transaction, B <: Block[T]] {
+trait BlockService[F[_], B <: Block] {
   def accept(signedBlock: Signed[B]): F[Unit]
 }
 
 object BlockService {
 
-  def make[F[_]: Async: KryoSerializer, T <: Transaction, B <: Block[T]](
-    blockAcceptanceManager: BlockAcceptanceManager[F, T, B],
+  def make[F[_]: Async: KryoSerializer, B <: Block](
+    blockAcceptanceManager: BlockAcceptanceManager[F, B],
     addressStorage: AddressStorage[F],
     blockStorage: BlockStorage[F, B],
-    transactionStorage: TransactionStorage[F, T],
+    transactionStorage: TransactionStorage[F],
     collateral: Amount
-  ): BlockService[F, T, B] =
-    new BlockService[F, T, B] {
+  ): BlockService[F, B] =
+    new BlockService[F, B] {
 
       def accept(signedBlock: Signed[B]): F[Unit] =
         signedBlock.toHashed.flatMap { hashedBlock =>
@@ -72,7 +72,7 @@ object BlockService {
         _ <- hashedTransactions.traverse(transactionStorage.accept)
         _ <- blockStorage.accept(hashedBlock)
         _ <- addressStorage.updateBalances(contextUpdate.balances)
-        isDependent = (block: Signed[B]) => BlockRelations.dependsOn[F, T, B](hashedBlock)(block)
+        isDependent = (block: Signed[B]) => BlockRelations.dependsOn[F, B](hashedBlock)(block)
         _ <- blockStorage.restoreDependent(isDependent)
       } yield ()
 

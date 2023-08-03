@@ -45,7 +45,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
     notAcceptanceReason: Option[BlockNotAcceptedReason] = None
   )(implicit K: KryoSerializer[IO]) = {
 
-    val blockAcceptanceManager = new BlockAcceptanceManager[IO, DAGTransaction, DAGBlock]() {
+    val blockAcceptanceManager = new BlockAcceptanceManager[IO, DAGBlock]() {
 
       override def acceptBlocksIteratively(
         blocks: List[Signed[DAGBlock]],
@@ -75,11 +75,11 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
     }
 
     Random.scalaUtilRandom.flatMap { implicit r =>
-      MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[DAGTransaction]]]().map { waitingTxsR =>
+      MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[Transaction]]]().map { waitingTxsR =>
         val blockStorage = new BlockStorage[IO, DAGBlock](blocksR)
-        val transactionStorage = new TransactionStorage[IO, DAGTransaction](lastAccTxR, waitingTxsR, TransactionReference.empty)
+        val transactionStorage = new TransactionStorage[IO](lastAccTxR, waitingTxsR, TransactionReference.empty)
         BlockService
-          .make[IO, DAGTransaction, DAGBlock](blockAcceptanceManager, addressStorage, blockStorage, transactionStorage, Amount.empty)
+          .make[IO, DAGBlock](blockAcceptanceManager, addressStorage, blockStorage, transactionStorage, Amount.empty)
       }
 
     }

@@ -69,10 +69,10 @@ abstract class CurrencyL1App(
     val cfg = method.appConfig
 
     for {
-      dagL1Queues <- DAGL1Queues.make[IO, CurrencyTransaction, CurrencyBlock](sdkQueues).asResource
-      queues <- Queues.make[IO, CurrencyTransaction, CurrencyBlock](dagL1Queues).asResource
+      dagL1Queues <- DAGL1Queues.make[IO, CurrencyBlock](sdkQueues).asResource
+      queues <- Queues.make[IO, CurrencyBlock](dagL1Queues).asResource
       storages <- Storages
-        .make[IO, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
+        .make[IO, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
           sdkStorages,
           method.l0Peer,
           method.globalL0Peer,
@@ -80,13 +80,13 @@ abstract class CurrencyL1App(
         )
         .asResource
       validators = DAGL1Validators
-        .make[IO, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
+        .make[IO, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
           storages,
           seedlist
         )
       dagP2PClient = DAGP2PClient
-        .make[IO, CurrencyTransaction, CurrencyBlock](sdkP2PClient, sdkResources.client, currencyPathPrefix = "currency")
-      p2pClient = P2PClient.make[IO, CurrencyTransaction, CurrencyBlock](
+        .make[IO, CurrencyBlock](sdkP2PClient, sdkResources.client, currencyPathPrefix = "currency")
+      p2pClient = P2PClient.make[IO, CurrencyBlock](
         dagP2PClient,
         sdkResources.client
       )
@@ -112,14 +112,14 @@ abstract class CurrencyL1App(
         sdkServices.currencySnapshotContextFns
       )
       programs = Programs
-        .make[IO, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
+        .make[IO, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
           sdkPrograms,
           p2pClient,
           storages,
           snapshotProcessor
         )
       healthChecks <- DAGL1HealthChecks
-        .make[IO, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
+        .make[IO, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
           storages,
           services,
           programs,
@@ -141,7 +141,7 @@ abstract class CurrencyL1App(
       implicit0(nodeContext: L1NodeContext[IO]) = L1NodeContext.make[IO](storages.lastGlobalSnapshot, storages.lastSnapshot)
 
       api = HttpApi
-        .make[IO, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
+        .make[IO, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
           services.dataApplication,
           storages,
           queues,
@@ -158,7 +158,7 @@ abstract class CurrencyL1App(
       _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.http.cliHttp, api.cliApp)
 
       stateChannel <- StateChannel
-        .make[IO, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
+        .make[IO, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
           cfg,
           keyPair,
           dagP2PClient,

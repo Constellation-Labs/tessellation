@@ -31,7 +31,6 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 sealed abstract class CurrencySnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider]
     extends SnapshotProcessor[
       F,
-      CurrencyTransaction,
       CurrencyBlock,
       CurrencySnapshotStateProof,
       CurrencyIncrementalSnapshot,
@@ -46,7 +45,7 @@ object CurrencySnapshotProcessor {
     blockStorage: BlockStorage[F, CurrencyBlock],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     lastCurrencySnapshotStorage: LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
-    transactionStorage: TransactionStorage[F, CurrencyTransaction],
+    transactionStorage: TransactionStorage[F],
     globalSnapshotContextFns: SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     currencySnapshotContextFns: SnapshotContextFunctions[F, CurrencyIncrementalSnapshot, CurrencySnapshotContext]
   ): CurrencySnapshotProcessor[F] =
@@ -183,13 +182,13 @@ object CurrencySnapshotProcessor {
         addressStorage: AddressStorage[F],
         blockStorage: BlockStorage[F, CurrencyBlock],
         lastCurrencySnapshotStorage: LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
-        transactionStorage: TransactionStorage[F, CurrencyTransaction]
+        transactionStorage: TransactionStorage[F]
       ): F[
         (
           AddressStorage[F],
           BlockStorage[F, CurrencyBlock],
           LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
-          TransactionStorage[F, CurrencyTransaction]
+          TransactionStorage[F]
         )
       ] = {
         val bs = blockStorage.getState().flatMap(BlockStorage.make[F, CurrencyBlock](_))

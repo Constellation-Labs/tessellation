@@ -8,18 +8,18 @@ import cats.syntax.traverse._
 
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.Block.HashedOps
-import org.tessellation.schema.transaction.{Transaction, TransactionReference}
+import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.schema.{Block, BlockReference}
 import org.tessellation.security.Hashed
 import org.tessellation.security.signature.Signed
 
 object BlockRelations {
 
-  def dependsOn[F[_]: Async: KryoSerializer, T <: Transaction, B <: Block[T]](
+  def dependsOn[F[_]: Async: KryoSerializer, B <: Block](
     blocks: Hashed[B]
-  )(block: Signed[B]): F[Boolean] = dependsOn[F, T, B](Set(blocks))(block)
+  )(block: Signed[B]): F[Boolean] = dependsOn[F, B](Set(blocks))(block)
 
-  def dependsOn[F[_]: Async: KryoSerializer, T <: Transaction, B <: Block[T]](
+  def dependsOn[F[_]: Async: KryoSerializer, B <: Block](
     blocks: Set[Hashed[B]],
     references: Set[BlockReference] = Set.empty
   )(block: Signed[B]): F[Boolean] = {

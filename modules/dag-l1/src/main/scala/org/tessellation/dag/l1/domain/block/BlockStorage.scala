@@ -32,7 +32,7 @@ import monocle.macros.syntax.lens._
 
 class BlockStorage[
   F[_]: Sync: Random,
-  B <: Block[_]
+  B <: Block
 ](blocks: MapRef[F, ProofsHash, Option[StoredBlock[B]]]) {
 
   implicit val showStoredBlock: Show[StoredBlock[B]] = {
@@ -280,17 +280,17 @@ class BlockStorage[
 
 object BlockStorage {
 
-  def make[F[_]: Sync: Random, B <: Block[_]]: F[BlockStorage[F, B]] =
+  def make[F[_]: Sync: Random, B <: Block]: F[BlockStorage[F, B]] =
     MapRef.ofConcurrentHashMap[F, ProofsHash, StoredBlock[B]]().map(new BlockStorage[F, B](_))
 
-  def make[F[_]: Sync: Random, B <: Block[_]](blocks: Map[ProofsHash, StoredBlock[B]]): F[BlockStorage[F, B]] =
+  def make[F[_]: Sync: Random, B <: Block](blocks: Map[ProofsHash, StoredBlock[B]]): F[BlockStorage[F, B]] =
     MapRef.ofSingleImmutableMap(blocks).map(new BlockStorage[F, B](_))
 
-  sealed trait StoredBlock[B <: Block[_]]
-  case class WaitingBlock[B <: Block[_]](block: Signed[B]) extends StoredBlock[B]
-  case class PostponedBlock[B <: Block[_]](block: Signed[B]) extends StoredBlock[B]
-  case class AcceptedBlock[B <: Block[_]](block: Hashed[B]) extends StoredBlock[B]
-  case class MajorityBlock[B <: Block[_]](blockReference: BlockReference, usages: NonNegLong, tipStatus: TipStatus) extends StoredBlock[B] {
+  sealed trait StoredBlock[B <: Block]
+  case class WaitingBlock[B <: Block](block: Signed[B]) extends StoredBlock[B]
+  case class PostponedBlock[B <: Block](block: Signed[B]) extends StoredBlock[B]
+  case class AcceptedBlock[B <: Block](block: Hashed[B]) extends StoredBlock[B]
+  case class MajorityBlock[B <: Block](blockReference: BlockReference, usages: NonNegLong, tipStatus: TipStatus) extends StoredBlock[B] {
     def addUsage: MajorityBlock[B] = this.focus(_.usages).modify(usages => NonNegLong.unsafeFrom(usages + 1L))
 
     def removeUsage: MajorityBlock[B] =
@@ -316,7 +316,7 @@ object BlockStorage {
     val errorMessage: String
     override def getMessage: String = errorMessage
   }
-  case class TipUsageUpdateError[B <: Block[_]](
+  case class TipUsageUpdateError[B <: Block](
     child: ProofsHash,
     parent: ProofsHash,
     encountered: Option[StoredBlock[B]]
@@ -327,7 +327,7 @@ object BlockStorage {
     val errorMessage: String =
       s"Parent block with hash=${parent.show} not found in majority when updating usage! Child hash=${child.show}. Encountered state: ${encountered.show}"
   }
-  case class BlockAcceptanceError[B <: Block[_]](hash: ProofsHash, encountered: Option[StoredBlock[B]])(
+  case class BlockAcceptanceError[B <: Block](hash: ProofsHash, encountered: Option[StoredBlock[B]])(
     implicit s: Show[StoredBlock[B]]
   ) extends BlockStorageError {
 
@@ -335,7 +335,7 @@ object BlockStorage {
       s"Block with hash=${hash.show} failed to transition state to Accepted! Encountered state: ${encountered.show}."
   }
 
-  case class BlockPostponementError[B <: Block[_]](hash: ProofsHash, encountered: Option[StoredBlock[B]])(
+  case class BlockPostponementError[B <: Block](hash: ProofsHash, encountered: Option[StoredBlock[B]])(
     implicit s: Show[StoredBlock[B]]
   ) extends BlockStorageError {
 
@@ -343,7 +343,7 @@ object BlockStorage {
       s"Block with hash=${hash.show} failed to transition state to Postponed! Encountered state: ${encountered.show}."
   }
 
-  case class BlockRestorationError[B <: Block[_]](hash: ProofsHash, encountered: Option[StoredBlock[B]])(
+  case class BlockRestorationError[B <: Block](hash: ProofsHash, encountered: Option[StoredBlock[B]])(
     implicit s: Show[StoredBlock[B]]
   ) extends BlockStorageError {
 
@@ -351,7 +351,7 @@ object BlockStorage {
       s"Block with hash=${hash.show} failed to transition state to Waiting! Encountered state: ${encountered.show}."
   }
 
-  case class BlockAlreadyStoredError[B <: Block[_]](hash: ProofsHash, encountered: Option[StoredBlock[B]])(
+  case class BlockAlreadyStoredError[B <: Block](hash: ProofsHash, encountered: Option[StoredBlock[B]])(
     implicit s: Show[StoredBlock[B]]
   ) extends BlockStorageError {
 
@@ -359,54 +359,52 @@ object BlockStorage {
       s"Block with hash=${hash.show} is already stored. Encountered state: ${encountered.show}."
   }
   sealed trait BlockMajorityUpdateError extends BlockStorageError
-  case class UnexpectedBlockStateWhenMarkingAsMajority[B <: Block[_]](hash: ProofsHash, got: Option[StoredBlock[B]])
+  case class UnexpectedBlockStateWhenMarkingAsMajority[B <: Block](hash: ProofsHash, got: Option[StoredBlock[B]])
       extends BlockMajorityUpdateError {
     val errorMessage: String = s"Accepted block to be marked as majority with hash: $hash not found! But got: $got"
   }
-  case class UnexpectedBlockStateWhenRemovingAccepted[B <: Block[_]](hash: ProofsHash, got: Option[StoredBlock[B]])
+
+  case class UnexpectedBlockStateWhenRemovingAccepted[B <: Block](hash: ProofsHash, got: Option[StoredBlock[B]])
       extends BlockMajorityUpdateError {
 
     val errorMessage: String =
       s"Accepted block to be removed during majority update with hash: $hash not found! But got: $got"
   }
-  case class UnexpectedBlockStateWhenRemoving[B <: Block[_]](hash: ProofsHash, got: Option[StoredBlock[B]])
-      extends BlockMajorityUpdateError {
+  case class UnexpectedBlockStateWhenRemoving[B <: Block](hash: ProofsHash, got: Option[StoredBlock[B]]) extends BlockMajorityUpdateError {
 
     val errorMessage: String =
       s"Block to be removed during majority update with hash: $hash not found in expected state! But got: $got"
   }
-  case class UnexpectedBlockStateWhenResetting[B <: Block[_]](hash: ProofsHash, got: Option[StoredBlock[B]])
-      extends BlockMajorityUpdateError {
+  case class UnexpectedBlockStateWhenResetting[B <: Block](hash: ProofsHash, got: Option[StoredBlock[B]]) extends BlockMajorityUpdateError {
 
     val errorMessage: String =
       s"Block to be reset during majority update with hash: $hash not found in expected state! But got: $got"
   }
-  case class UnexpectedBlockStateWhenAddingMajorityBlock[B <: Block[_]](hash: ProofsHash, got: Option[StoredBlock[B]])
+  case class UnexpectedBlockStateWhenAddingMajorityBlock[B <: Block](hash: ProofsHash, got: Option[StoredBlock[B]])
       extends BlockMajorityUpdateError {
 
     val errorMessage: String =
       s"Block to be added during majority update with hash: $hash not found in expected state! But got: $got"
   }
   sealed trait TipUpdateError extends BlockStorageError
-  case class TipDeprecatingError[B <: Block[_]](hash: ProofsHash, got: Option[StoredBlock[B]]) extends TipUpdateError {
+  case class TipDeprecatingError[B <: Block](hash: ProofsHash, got: Option[StoredBlock[B]]) extends TipUpdateError {
     override val errorMessage: String =
       s"Active tip to be deprecated with hash: $hash not found in expected state! But got: $got"
   }
-  case class TipRemovalError[B <: Block[_]](hash: ProofsHash, got: Option[StoredBlock[B]]) extends TipUpdateError {
+  case class TipRemovalError[B <: Block](hash: ProofsHash, got: Option[StoredBlock[B]]) extends TipUpdateError {
     override val errorMessage: String =
       s"Deprecated tip to be removed with hash: $hash not found in expected state! But got: $got"
   }
-  case class ActiveTipAddingError[B <: Block[_]](hash: ProofsHash, got: Option[StoredBlock[B]]) extends TipUpdateError {
+  case class ActiveTipAddingError[B <: Block](hash: ProofsHash, got: Option[StoredBlock[B]]) extends TipUpdateError {
     override val errorMessage: String =
       s"Active tip to be added with hash: $hash not found in expected state! But got: $got"
   }
-  case class DeprecatedTipAddingError[B <: Block[_]](hash: ProofsHash, got: Option[StoredBlock[B]]) extends TipUpdateError {
+  case class DeprecatedTipAddingError[B <: Block](hash: ProofsHash, got: Option[StoredBlock[B]]) extends TipUpdateError {
     override val errorMessage: String =
       s"Deprecated tip to be added with hash: $hash not found in expected state! But got: $got"
   }
 
-  case class UnexpectedBlockStateWhenResettingPostponed[B <: Block[_]](hash: ProofsHash, got: Option[StoredBlock[B]])
-      extends TipUpdateError {
+  case class UnexpectedBlockStateWhenResettingPostponed[B <: Block](hash: ProofsHash, got: Option[StoredBlock[B]]) extends TipUpdateError {
     val errorMessage: String =
       s"Postponed block to be reset to waiting block with hash: $hash not found in expected state! But got: $got"
   }

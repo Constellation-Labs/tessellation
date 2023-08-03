@@ -1,11 +1,10 @@
 package org.tessellation.sdk.domain.block.processing
 
 import org.tessellation.schema.Block
-import org.tessellation.schema.transaction.Transaction
 import org.tessellation.sdk.domain.block.processing.UsageCount
 import org.tessellation.security.signature.Signed
 
-trait BlockAcceptanceManager[F[_], T <: Transaction, B <: Block[T]] {
+trait BlockAcceptanceManager[F[_], B <: Block] {
 
   def acceptBlocksIteratively(
     blocks: List[Signed[B]],

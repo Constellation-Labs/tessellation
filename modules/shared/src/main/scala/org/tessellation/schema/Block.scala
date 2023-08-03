@@ -10,26 +10,26 @@ import org.tessellation.security.Hashed
 import org.tessellation.security.signature.Signed
 
 case class ParentBlockReference(parents: NonEmptyList[BlockReference])
-case class BlockData[T <: Transaction](transactions: NonEmptySet[Signed[T]])
+case class BlockData(transactions: NonEmptySet[Signed[Transaction]])
 
-trait Block[T <: Transaction] extends Fiber[ParentBlockReference, BlockData[T]] {
+trait Block extends Fiber[ParentBlockReference, BlockData] {
   val parent: NonEmptyList[BlockReference]
-  val transactions: NonEmptySet[Signed[T]]
+  val transactions: NonEmptySet[Signed[Transaction]]
 
   val height: Height = parent.maximum.height.next
 
   def reference: ParentBlockReference = ParentBlockReference(parent)
 
-  def data: BlockData[T] = BlockData(transactions)
+  def data: BlockData = BlockData(transactions)
 }
 
 object Block {
 
-  implicit class HashedOps(hashedBlock: Hashed[Block[_]]) {
+  implicit class HashedOps(hashedBlock: Hashed[Block]) {
     def ownReference = BlockReference(hashedBlock.height, hashedBlock.proofsHash)
   }
 
-  trait BlockConstructor[T <: Transaction, B <: Block[T]] {
-    def create(parents: NonEmptyList[BlockReference], transactions: NonEmptySet[Signed[T]]): B
+  trait BlockConstructor[B <: Block] {
+    def create(parents: NonEmptyList[BlockReference], transactions: NonEmptySet[Signed[Transaction]]): B
   }
 }

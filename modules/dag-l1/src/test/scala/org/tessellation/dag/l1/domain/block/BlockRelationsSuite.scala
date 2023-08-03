@@ -7,7 +7,6 @@ import org.tessellation.dag.l1.Main
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.transaction
-import org.tessellation.schema.transaction.DAGTransaction
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.Hashed
 import org.tessellation.security.signature.Signed
@@ -26,7 +25,7 @@ object BlockRelationsSuite extends MutableIOSuite with Checkers {
     forall { (block: Signed[DAGBlock], notRelatedBlock: Signed[DAGBlock]) =>
       for {
         hashedBlock <- block.toHashed[IO]
-        isRelated = (block: Signed[DAGBlock]) => BlockRelations.dependsOn[IO, DAGTransaction, DAGBlock](hashedBlock)(block)
+        isRelated = (block: Signed[DAGBlock]) => BlockRelations.dependsOn[IO, DAGBlock](hashedBlock)(block)
         actual <- isRelated(notRelatedBlock)
       } yield expect.same(false, actual)
     }
@@ -36,7 +35,7 @@ object BlockRelationsSuite extends MutableIOSuite with Checkers {
     forall { (block: Signed[DAGBlock], notRelatedBlock: Signed[DAGBlock]) =>
       for {
         hashedBlock <- block.toHashed[IO]
-        isRelated = (block: Signed[DAGBlock]) => BlockRelations.dependsOn[IO, DAGTransaction, DAGBlock](hashedBlock)(block)
+        isRelated = (block: Signed[DAGBlock]) => BlockRelations.dependsOn[IO, DAGBlock](hashedBlock)(block)
         relatedBlock = notRelatedBlock.copy(value =
           notRelatedBlock.value.copy(parent = hashedBlock.ownReference :: notRelatedBlock.value.parent)
         )
@@ -50,7 +49,7 @@ object BlockRelationsSuite extends MutableIOSuite with Checkers {
       for {
         notRelatedHashedBlock <- notRelatedBlock.toHashed[IO]
         hashedBlock <- block.copy(value = block.value.copy(parent = notRelatedHashedBlock.ownReference :: block.value.parent)).toHashed[IO]
-        isRelated = (block: Signed[DAGBlock]) => BlockRelations.dependsOn[IO, DAGTransaction, DAGBlock](hashedBlock)(block)
+        isRelated = (block: Signed[DAGBlock]) => BlockRelations.dependsOn[IO, DAGBlock](hashedBlock)(block)
         actual <- isRelated(notRelatedBlock)
       } yield expect.same(false, actual)
     }
@@ -60,7 +59,7 @@ object BlockRelationsSuite extends MutableIOSuite with Checkers {
     forall { (block: Signed[DAGBlock], notRelatedBlock: Signed[DAGBlock]) =>
       for {
         hashedBlock <- block.toHashed[IO]
-        isRelated = (block: Signed[DAGBlock]) => BlockRelations.dependsOn[IO, DAGTransaction, DAGBlock](hashedBlock)(block)
+        isRelated = (block: Signed[DAGBlock]) => BlockRelations.dependsOn[IO, DAGBlock](hashedBlock)(block)
         hashedTxn <- block.transactions.head.toHashed[IO]
         relatedTxn = notRelatedBlock.transactions.head.copy(value =
           notRelatedBlock.transactions.head.value.copy(parent = transaction.TransactionReference(hashedTxn.ordinal, hashedTxn.hash))
@@ -78,7 +77,7 @@ object BlockRelationsSuite extends MutableIOSuite with Checkers {
         blockTxn = block.transactions.head
           .copy(value = block.transactions.head.value.copy(parent = transaction.TransactionReference(hashedTxn.ordinal, hashedTxn.hash)))
         hashedBlock <- block.copy(value = block.value.copy(transactions = block.transactions.add(blockTxn))).toHashed[IO]
-        isRelated = (block: Signed[DAGBlock]) => BlockRelations.dependsOn[IO, DAGTransaction, DAGBlock](hashedBlock)(block)
+        isRelated = (block: Signed[DAGBlock]) => BlockRelations.dependsOn[IO, DAGBlock](hashedBlock)(block)
         actual <- isRelated(notRelatedBlock)
       } yield expect.same(false, actual)
     }
@@ -88,7 +87,7 @@ object BlockRelationsSuite extends MutableIOSuite with Checkers {
     forall { (block: Signed[DAGBlock], notRelatedBlock: Signed[DAGBlock]) =>
       for {
         hashedBlock <- block.toHashed[IO]
-        isRelated = (block: Signed[DAGBlock]) => BlockRelations.dependsOn[IO, DAGTransaction, DAGBlock](hashedBlock)(block)
+        isRelated = (block: Signed[DAGBlock]) => BlockRelations.dependsOn[IO, DAGBlock](hashedBlock)(block)
         txn = block.transactions.head
         relatedTxn = notRelatedBlock.transactions.head.copy(value = notRelatedBlock.transactions.head.value.copy(source = txn.destination))
         relatedBlock = notRelatedBlock.copy(value = notRelatedBlock.value.copy(transactions = notRelatedBlock.transactions.add(relatedTxn)))
@@ -102,7 +101,7 @@ object BlockRelationsSuite extends MutableIOSuite with Checkers {
       for {
         hashedBlock <- block.toHashed[IO]
         isRelated = (block: Signed[DAGBlock]) =>
-          BlockRelations.dependsOn[IO, DAGTransaction, DAGBlock](Set.empty[Hashed[DAGBlock]], Set(hashedBlock.ownReference))(block)
+          BlockRelations.dependsOn[IO, DAGBlock](Set.empty[Hashed[DAGBlock]], Set(hashedBlock.ownReference))(block)
         relatedBlock = notRelatedBlock.copy(value =
           notRelatedBlock.value.copy(parent = hashedBlock.ownReference :: notRelatedBlock.value.parent)
         )

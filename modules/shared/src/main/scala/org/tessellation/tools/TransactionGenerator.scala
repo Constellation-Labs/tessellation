@@ -40,12 +40,12 @@ object TransactionGenerator {
     chunkSize: PosInt,
     feeValue: NonNegLong,
     addressParams: NonEmptyList[AddressParams]
-  ): Stream[F, Signed[DAGTransaction]] =
+  ): Stream[F, Signed[Transaction]] =
     addressParams.reverse.map {
       case AddressParams(source, key, initialTxRef) =>
         val otherWallets = addressParams.filter(_.address =!= source).map(_.address)
 
-        def tx(lastTxRef: TransactionReference): F[Signed[DAGTransaction]] =
+        def tx(lastTxRef: TransactionReference): F[Signed[Transaction]] =
           for {
             destination <- Random[F]
               .shuffleList(otherWallets)
@@ -54,11 +54,11 @@ object TransactionGenerator {
             amount = TransactionAmount(PosLong.MinValue)
             fee = TransactionFee(feeValue)
             salt <- Random[F].nextLong.map(TransactionSalt.apply)
-            tx = DAGTransaction(source, destination, amount, fee, lastTxRef, salt)
+            tx = Transaction(source, destination, amount, fee, lastTxRef, salt)
             signedTx <- tx.sign(key)
           } yield signedTx
 
-        def txStream(lastRef: TransactionReference): Stream[F, Signed[DAGTransaction]] =
+        def txStream(lastRef: TransactionReference): Stream[F, Signed[Transaction]] =
           for {
             signedTx <- Stream.eval(tx(lastRef))
             txRef <- Stream.eval(signedTx.value.hashF.map(TransactionReference(signedTx.ordinal, _)))
@@ -66,7 +66,7 @@ object TransactionGenerator {
           } yield result
 
         txStream(initialTxRef).chunkN(chunkSize)
-    }.foldLeft[Stream[F, Stream[Pure, Signed[DAGTransaction]]]](Stream.constant(Stream.empty)) { (acc, s) =>
+    }.foldLeft[Stream[F, Stream[Pure, Signed[Transaction]]]](Stream.constant(Stream.empty)) { (acc, s) =>
       acc.zipWith(s)((acc, currChunk) => acc.cons(currChunk))
     }.flatten
       .chunkMin(chunkMinSize)

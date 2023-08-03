@@ -15,7 +15,7 @@ import org.tessellation.ext.cats.syntax.validated._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.Block
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.transaction.{Transaction, TransactionReference}
+import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.sdk.domain.transaction.TransactionChainValidator.TransactionNel
 import org.tessellation.sdk.domain.transaction.{TransactionChainValidator, TransactionValidator}
@@ -25,17 +25,17 @@ import eu.timepit.refined.auto._
 
 object BlockValidator {
 
-  def make[F[_]: Async: KryoSerializer, T <: Transaction, B <: Block[T]](
+  def make[F[_]: Async: KryoSerializer, B <: Block](
     signedValidator: SignedValidator[F],
-    transactionChainValidator: TransactionChainValidator[F, T],
-    transactionValidator: TransactionValidator[F, T]
-  ): BlockValidator[F, T, B] =
-    new BlockValidator[F, T, B] {
+    transactionChainValidator: TransactionChainValidator[F],
+    transactionValidator: TransactionValidator[F]
+  ): BlockValidator[F, B] =
+    new BlockValidator[F, B] {
 
       def validate(
         signedBlock: Signed[B],
         params: BlockValidationParams
-      ): F[BlockValidationErrorOr[(Signed[B], Map[Address, TransactionNel[T]])]] =
+      ): F[BlockValidationErrorOr[(Signed[B], Map[Address, TransactionNel])]] =
         for {
           signedV <- validateSigned(signedBlock, params)
           transactionsV <- validateTransactions(signedBlock)
@@ -76,7 +76,7 @@ object BlockValidator {
 
       private def validateTransactionChain(
         signedBlock: Signed[B]
-      ): F[BlockValidationErrorOr[Map[Address, TransactionNel[T]]]] =
+      ): F[BlockValidationErrorOr[Map[Address, TransactionNel]]] =
         transactionChainValidator
           .validate(signedBlock.transactions)
           .map(_.errorMap[BlockValidationError](InvalidTransactionChain))

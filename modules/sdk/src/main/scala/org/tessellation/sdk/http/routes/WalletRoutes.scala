@@ -15,7 +15,7 @@ import org.http4s.server.Router
 import shapeless._
 import shapeless.syntax.singleton._
 
-final case class WalletRoutes[F[_]: Async, S <: Snapshot[_, _]](
+final case class WalletRoutes[F[_]: Async, S <: Snapshot[_]](
   prefixPath: String,
   addressService: AddressService[F, S]
 ) extends Http4sDsl[F] {

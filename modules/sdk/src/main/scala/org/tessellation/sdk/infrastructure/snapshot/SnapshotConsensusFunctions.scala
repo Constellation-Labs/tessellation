@@ -20,7 +20,6 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.snapshot.Snapshot
-import org.tessellation.schema.transaction.Transaction
 import org.tessellation.sdk.domain.block.processing.{BlockAcceptanceResult, deprecationThreshold}
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions.InvalidArtifact
@@ -38,10 +37,9 @@ case object ArtifactMismatch extends InvalidArtifact
 
 abstract class SnapshotConsensusFunctions[
   F[_]: Async: SecurityProvider,
-  T <: Transaction,
-  B <: Block[T]: Order,
+  B <: Block: Order,
   Event,
-  Artifact <: Snapshot[T, B]: Eq,
+  Artifact <: Snapshot[B]: Eq,
   Context,
   Trigger <: ConsensusTrigger
 ](implicit ordering: Ordering[BlockAsActiveTip[B]])

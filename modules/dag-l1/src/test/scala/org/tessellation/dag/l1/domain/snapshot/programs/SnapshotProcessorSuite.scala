@@ -11,7 +11,7 @@ import cats.syntax.option._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import org.tessellation.currency.schema.currency.{CurrencyBlock, CurrencyTransaction}
+import org.tessellation.currency.schema.currency.CurrencyBlock
 import org.tessellation.dag.l1.Main
 import org.tessellation.dag.l1.domain.address.storage.AddressStorage
 import org.tessellation.dag.l1.domain.block.BlockStorage
@@ -53,7 +53,7 @@ import weaver.SimpleIOSuite
 object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
   type TestResources = (
-    SnapshotProcessor[IO, DAGTransaction, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
+    SnapshotProcessor[IO, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     SecurityProvider[IO],
     KryoSerializer[IO],
     (KeyPair, KeyPair, KeyPair),
@@ -66,7 +66,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
     MapRef[IO, ProofsHash, Option[StoredBlock[DAGBlock]]],
     Ref[IO, Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]],
     MapRef[IO, Address, Option[LastTransactionReferenceState]],
-    TransactionStorage[IO, DAGTransaction],
+    TransactionStorage[IO],
     GlobalSnapshotContextFunctions[IO]
   )
 
@@ -79,17 +79,17 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock[DAGBlock]]().asResource
             lastSnapR <- SignallingRef.of[IO, Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](None).asResource
             lastAccTxR <- MapRef.ofConcurrentHashMap[IO, Address, LastTransactionReferenceState]().asResource
-            waitingTxsR <- MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[DAGTransaction]]]().asResource
-            transactionStorage = new TransactionStorage[IO, DAGTransaction](lastAccTxR, waitingTxsR, TransactionReference.empty)
+            waitingTxsR <- MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[Transaction]]]().asResource
+            transactionStorage = new TransactionStorage[IO](lastAccTxR, waitingTxsR, TransactionReference.empty)
             validators = SdkValidators.make[IO](None, None, Some(Map.empty))
             currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
-              BlockAcceptanceManager.make[IO, CurrencyTransaction, CurrencyBlock](validators.currencyBlockValidator),
+              BlockAcceptanceManager.make[IO, CurrencyBlock](validators.currencyBlockValidator),
               Amount(0L)
             )
             currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotAcceptanceManager)
             globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](Some(10L), None).asResource
             globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
-              BlockAcceptanceManager.make[IO, DAGTransaction, DAGBlock](validators.blockValidator),
+              BlockAcceptanceManager.make[IO, DAGBlock](validators.blockValidator),
               GlobalSnapshotStateChannelEventsProcessor
                 .make[IO](validators.stateChannelValidator, globalSnapshotStateChannelManager, currencySnapshotContextFns),
               Amount(0L)
@@ -839,7 +839,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           blocksAfter <- blocksR.toMap
           lastGlobalSnapshotAfter <- lastSnapR.get
           lastAcceptedTxRAfter <- lastAccTxR.toMap
-          lastTxRef <- TransactionReference.of[IO, DAGTransaction](aboveRangeAcceptedBlock.signed.value.transactions.head)
+          lastTxRef <- TransactionReference.of[IO](aboveRangeAcceptedBlock.signed.value.transactions.head)
         } yield
           expect.same(
             (processingResult, blocksAfter, balancesAfter, lastGlobalSnapshotAfter, lastAcceptedTxRAfter),
@@ -1245,7 +1245,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
   }
 
   private def hashedDAGBlockForKeyPair(keys: (KeyPair, KeyPair, KeyPair))(implicit sc: SecurityProvider[IO], ks: KryoSerializer[IO]) =
-    (parent: NonEmptyList[BlockReference], transactions: NonEmptySet[Signed[DAGTransaction]]) =>
+    (parent: NonEmptyList[BlockReference], transactions: NonEmptySet[Signed[Transaction]]) =>
       (
         forAsyncKryo(DAGBlock(parent, transactions), keys._1),
         forAsyncKryo(DAGBlock(parent, transactions), keys._2),

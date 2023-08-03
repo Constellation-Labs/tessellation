@@ -12,7 +12,7 @@ import org.http4s.Method.POST
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.client.Client
 
-trait L0BlockOutputClient[F[_], B <: Block[_]] {
+trait L0BlockOutputClient[F[_], B <: Block] {
   def sendL1Output(output: Signed[B]): PeerResponse[F, Boolean]
   def sendDataApplicationBlock(block: Signed[DataApplicationBlock])(
     implicit encoder: Encoder[DataUpdate]
@@ -21,7 +21,7 @@ trait L0BlockOutputClient[F[_], B <: Block[_]] {
 
 object L0BlockOutputClient {
 
-  def make[F[_], B <: Block[_]: Encoder](pathPrefix: String, client: Client[F]): L0BlockOutputClient[F, B] =
+  def make[F[_], B <: Block: Encoder](pathPrefix: String, client: Client[F]): L0BlockOutputClient[F, B] =
     new L0BlockOutputClient[F, B] {
 
       def sendL1Output(output: Signed[B]): PeerResponse[F, Boolean] =

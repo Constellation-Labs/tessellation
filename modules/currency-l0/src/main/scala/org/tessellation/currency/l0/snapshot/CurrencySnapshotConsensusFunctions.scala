@@ -41,7 +41,6 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
     extends SnapshotConsensusFunctions[
       F,
-      CurrencyTransaction,
       CurrencyBlock,
       CurrencySnapshotEvent,
       CurrencySnapshotArtifact,
@@ -55,7 +54,7 @@ object CurrencySnapshotConsensusFunctions {
     stateChannelSnapshotService: StateChannelSnapshotService[F],
     currencySnapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F],
     collateral: Amount,
-    rewards: Rewards[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot],
+    rewards: Rewards[F, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot],
     maybeDataApplicationService: Option[BaseDataApplicationL0Service[F]],
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
   ): CurrencySnapshotConsensusFunctions[F] = new CurrencySnapshotConsensusFunctions[F] {

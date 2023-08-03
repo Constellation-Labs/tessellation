@@ -17,7 +17,7 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.epoch.EpochProgress
-import org.tessellation.schema.transaction.DAGTransaction
+import org.tessellation.schema.transaction.Transaction
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.sdk.domain.rewards.Rewards
@@ -67,7 +67,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
     }
 
-  val bam: BlockAcceptanceManager[IO, DAGTransaction, DAGBlock] = new BlockAcceptanceManager[IO, DAGTransaction, DAGBlock] {
+  val bam: BlockAcceptanceManager[IO, DAGBlock] = new BlockAcceptanceManager[IO, DAGBlock] {
 
     override def acceptBlocksIteratively(
       blocks: List[Signed[DAGBlock]],
@@ -110,11 +110,11 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
   val collateral: Amount = Amount.empty
 
-  val rewards: Rewards[F, DAGTransaction, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot] =
+  val rewards: Rewards[F, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot] =
     (
       artifact: Signed[GlobalSnapshotArtifact],
       balances: SortedMap[Address, Balance],
-      transactions: SortedSet[Signed[DAGTransaction]],
+      transactions: SortedSet[Signed[Transaction]],
       trigger: ConsensusTrigger
     ) => IO(SortedSet.empty)
 

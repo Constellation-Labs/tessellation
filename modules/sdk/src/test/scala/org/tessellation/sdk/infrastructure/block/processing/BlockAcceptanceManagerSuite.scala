@@ -12,7 +12,6 @@ import org.tessellation.schema.BlockReference
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.height.Height
-import org.tessellation.schema.transaction.DAGTransaction
 import org.tessellation.sdk.domain.block.generators.signedDAGBlockGen
 import org.tessellation.sdk.domain.block.processing.{UsageCount, initUsageCount, _}
 import org.tessellation.sdk.domain.transaction.TransactionChainValidator
@@ -41,10 +40,10 @@ object BlockAcceptanceManagerSuite extends MutableIOSuite with Checkers {
 
   def mkBlockAcceptanceManager(acceptInitiallyAwaiting: Boolean = true)(implicit kryo: KryoSerializer[IO]) =
     Ref[F].of[Map[Signed[DAGBlock], Boolean]](Map.empty.withDefaultValue(false)).map { state =>
-      val blockLogic = new BlockAcceptanceLogic[IO, DAGTransaction, DAGBlock] {
+      val blockLogic = new BlockAcceptanceLogic[IO, DAGBlock] {
         override def acceptBlock(
           block: Signed[DAGBlock],
-          txChains: Map[Address, TransactionChainValidator.TransactionNel[DAGTransaction]],
+          txChains: Map[Address, TransactionChainValidator.TransactionNel],
           context: BlockAcceptanceContext[IO],
           contextUpdate: BlockAcceptanceContextUpdate
         ): EitherT[IO, BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)] =
@@ -86,20 +85,20 @@ object BlockAcceptanceManagerSuite extends MutableIOSuite with Checkers {
           )
       }
 
-      val blockValidator = new BlockValidator[IO, DAGTransaction, DAGBlock] {
+      val blockValidator = new BlockValidator[IO, DAGBlock] {
 
         override def validate(
           signedBlock: Signed[DAGBlock],
           params: BlockValidationParams
         ): IO[BlockValidationErrorOr[
-          (Signed[DAGBlock], Map[Address, TransactionChainValidator.TransactionNel[DAGTransaction]])
+          (Signed[DAGBlock], Map[Address, TransactionChainValidator.TransactionNel])
         ]] = signedBlock.parent.head match {
           case `invalidParent` => IO.pure(NotEnoughParents(0, 0).invalidNec)
-          case _ => IO.pure((signedBlock, Map.empty[Address, TransactionChainValidator.TransactionNel[DAGTransaction]]).validNec)
+          case _               => IO.pure((signedBlock, Map.empty[Address, TransactionChainValidator.TransactionNel]).validNec)
 
         }
       }
-      BlockAcceptanceManager.make[IO, DAGTransaction, DAGBlock](blockLogic, blockValidator)
+      BlockAcceptanceManager.make[IO, DAGBlock](blockLogic, blockValidator)
     }
 
   test("accept valid block") { implicit ks =>

@@ -15,7 +15,7 @@ import io.circe.Decoder
 
 object handler {
 
-  def blockRumorHandler[F[_]: Async: KryoSerializer, B <: Block[_]: Decoder: TypeTag](
+  def blockRumorHandler[F[_]: Async: KryoSerializer, B <: Block: Decoder: TypeTag](
     peerBlockQueue: Queue[F, Signed[B]]
   ): RumorHandler[F] =
     RumorHandler.fromCommonRumorConsumer[F, Signed[B]] {

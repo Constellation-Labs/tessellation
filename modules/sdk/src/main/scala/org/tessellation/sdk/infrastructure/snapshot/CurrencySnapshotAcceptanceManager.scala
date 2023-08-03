@@ -11,7 +11,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
-import org.tessellation.schema.transaction.{RewardTransaction, TransactionReference}
+import org.tessellation.schema.transaction.{RewardTransaction, Transaction, TransactionReference}
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.security.signature.Signed
 import org.tessellation.syntax.sortedCollection.sortedSetSyntax
@@ -25,7 +25,7 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
     lastSnapshotContext: CurrencySnapshotContext,
     lastActiveTips: SortedSet[ActiveTip],
     lastDeprecatedTips: SortedSet[DeprecatedTip],
-    calculateRewardsFn: SortedSet[Signed[CurrencyTransaction]] => F[SortedSet[RewardTransaction]]
+    calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]]
   ): F[
     (
       BlockAcceptanceResult[CurrencyBlock],
@@ -38,7 +38,7 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
 
 object CurrencySnapshotAcceptanceManager {
   def make[F[_]: Async: KryoSerializer](
-    blockAcceptanceManager: BlockAcceptanceManager[F, CurrencyTransaction, CurrencyBlock],
+    blockAcceptanceManager: BlockAcceptanceManager[F, CurrencyBlock],
     collateral: Amount
   ) = new CurrencySnapshotAcceptanceManager[F] {
 
@@ -47,7 +47,7 @@ object CurrencySnapshotAcceptanceManager {
       lastSnapshotContext: CurrencySnapshotContext,
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip],
-      calculateRewardsFn: SortedSet[Signed[CurrencyTransaction]] => F[SortedSet[RewardTransaction]]
+      calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]]
     ) = for {
       initialTxRef <- TransactionReference.emptyCurrency(lastSnapshotContext.address)
 

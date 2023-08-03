@@ -20,10 +20,10 @@ package object transaction {
   def createTransaction[F[_]: Async: KryoSerializer: SecurityProvider](
     keyPair: KeyPair,
     destination: Address,
-    prevTx: Option[Signed[DAGTransaction]],
+    prevTx: Option[Signed[Transaction]],
     fee: TransactionFee,
     amount: TransactionAmount
-  ): F[Signed[DAGTransaction]] =
+  ): F[Signed[Transaction]] =
     for {
       source <- keyPair.getPublic.toAddress.pure[F]
 
@@ -34,7 +34,7 @@ package object transaction {
 
       salt <- TransactionSalt.generate
 
-      tx = DAGTransaction(source, destination, amount, fee, parent, salt)
+      tx = Transaction(source, destination, amount, fee, parent, salt)
       signedTx <- tx.sign(keyPair)
 
     } yield signedTx

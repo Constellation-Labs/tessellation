@@ -13,7 +13,7 @@ import cats.syntax.functor._
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.block.DAGBlock
-import org.tessellation.schema.transaction.DAGTransaction
+import org.tessellation.schema.transaction.Transaction
 import org.tessellation.schema.{BlockAsActiveTip, BlockReference}
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
@@ -24,12 +24,12 @@ import fs2.Stream
 object DAGBlockGenerator {
 
   def createDAGs[F[_]: Async: Random: KryoSerializer: SecurityProvider](
-    transactionsChunks: List[NonEmptySet[Signed[DAGTransaction]]],
+    transactionsChunks: List[NonEmptySet[Signed[Transaction]]],
     initialReferences: NonEmptyList[BlockReference],
     keys: NonEmptyList[KeyPair]
   ) = {
 
-    def block(references: NonEmptyList[BlockReference], transactions: NonEmptySet[Signed[DAGTransaction]]): F[Signed[DAGBlock]] =
+    def block(references: NonEmptyList[BlockReference], transactions: NonEmptySet[Signed[Transaction]]): F[Signed[DAGBlock]] =
       for {
         parents <- Random[F]
           .shuffleList(references.distinct.toList)
@@ -41,7 +41,7 @@ object DAGBlockGenerator {
 
     def blockStream(
       initialReferences: NonEmptyList[BlockReference],
-      transactionsChunks: List[NonEmptySet[Signed[DAGTransaction]]]
+      transactionsChunks: List[NonEmptySet[Signed[Transaction]]]
     ): Stream[F, BlockAsActiveTip[DAGBlock]] =
       for {
         signedBlock <- if (transactionsChunks.nonEmpty) Stream.eval(block(initialReferences, transactionsChunks.head)) else Stream.empty

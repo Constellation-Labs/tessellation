@@ -9,7 +9,7 @@ import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.NonNegLong
 
 @derive(show)
-case class BlockAcceptanceResult[B <: Block[_]](
+case class BlockAcceptanceResult[B <: Block](
   contextUpdate: BlockAcceptanceContextUpdate,
   accepted: List[(Signed[B], NonNegLong)],
   notAccepted: List[(Signed[B], BlockNotAcceptedReason)]

@@ -19,7 +19,6 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.transaction.DAGTransaction
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalSnapshotStateProof}
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.collateral.Collateral
@@ -111,7 +110,7 @@ sealed abstract class Services[F[_]] private (
   val consensus: Consensus[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact, GlobalSnapshotContext],
   val address: AddressService[F, GlobalIncrementalSnapshot],
   val collateral: Collateral[F],
-  val rewards: Rewards[F, DAGTransaction, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot],
+  val rewards: Rewards[F, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot],
   val stateChannel: StateChannelService[F],
   val trustStorageUpdater: TrustStorageUpdater[F]
 )

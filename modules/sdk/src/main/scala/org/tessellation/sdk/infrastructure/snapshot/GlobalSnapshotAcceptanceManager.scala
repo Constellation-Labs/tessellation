@@ -18,7 +18,7 @@ import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.block.DAGBlock
-import org.tessellation.schema.transaction.{DAGTransaction, RewardTransaction, TransactionReference}
+import org.tessellation.schema.transaction.{RewardTransaction, Transaction, TransactionReference}
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.security.signature.Signed
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
@@ -35,7 +35,7 @@ trait GlobalSnapshotAcceptanceManager[F[_]] {
     lastSnapshotContext: GlobalSnapshotInfo,
     lastActiveTips: SortedSet[ActiveTip],
     lastDeprecatedTips: SortedSet[DeprecatedTip],
-    calculateRewardsFn: SortedSet[Signed[DAGTransaction]] => F[SortedSet[RewardTransaction]],
+    calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]],
     validationType: StateChannelValidationType
   ): F[
     (
@@ -54,7 +54,7 @@ object GlobalSnapshotAcceptanceManager {
   case object InvalidMerkleTree extends NoStackTrace
 
   def make[F[_]: Async: KryoSerializer](
-    blockAcceptanceManager: BlockAcceptanceManager[F, DAGTransaction, DAGBlock],
+    blockAcceptanceManager: BlockAcceptanceManager[F, DAGBlock],
     stateChannelEventsProcessor: GlobalSnapshotStateChannelEventsProcessor[F],
     collateral: Amount
   ) = new GlobalSnapshotAcceptanceManager[F] {
@@ -66,7 +66,7 @@ object GlobalSnapshotAcceptanceManager {
       lastSnapshotContext: GlobalSnapshotInfo,
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip],
-      calculateRewardsFn: SortedSet[Signed[DAGTransaction]] => F[SortedSet[RewardTransaction]],
+      calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]],
       validationType: StateChannelValidationType
     ) = for {
       acceptanceResult <- acceptBlocks(blocksForAcceptance, lastSnapshotContext, lastActiveTips, lastDeprecatedTips)

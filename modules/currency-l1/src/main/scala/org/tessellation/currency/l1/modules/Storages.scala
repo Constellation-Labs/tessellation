@@ -1,6 +1,5 @@
 package org.tessellation.currency.l1.modules
 
-import cats.Order
 import cats.effect.kernel.Async
 import cats.effect.std.Random
 import cats.syntax.flatMap._
@@ -15,7 +14,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.L0Peer
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
-import org.tessellation.schema.transaction.{Transaction, TransactionReference}
+import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.schema.{Block, GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
@@ -27,30 +26,29 @@ object Storages {
 
   def make[
     F[_]: Async: Random: KryoSerializer,
-    T <: Transaction: Order: Ordering,
-    B <: Block[T],
+    B <: Block,
     P <: StateProof,
-    S <: Snapshot[T, B],
+    S <: Snapshot[B],
     SI <: SnapshotInfo[P]
   ](
     sdkStorages: SdkStorages[F],
     l0Peer: L0Peer,
     globalL0Peer: L0Peer,
     currencyIdentifier: Address
-  ): F[Storages[F, T, B, P, S, SI]] =
+  ): F[Storages[F, B, P, S, SI]] =
     for {
       blockStorage <- BlockStorage.make[F, B]
-      consensusStorage <- ConsensusStorage.make[F, T, B]
+      consensusStorage <- ConsensusStorage.make[F, B]
       l0ClusterStorage <- L0ClusterStorage.make[F](l0Peer)
       globalL0ClusterStorage <- L0ClusterStorage.make[F](globalL0Peer)
       lastCurrencySnapshotStorage <- LastSnapshotStorage.make[F, S, SI]
       lastGlobalSnapshotStorage <- LastSnapshotStorage.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
       transactionStorage <- TransactionReference.emptyCurrency(currencyIdentifier).flatMap {
-        TransactionStorage.make[F, T](_)
+        TransactionStorage.make[F](_)
       }
       addressStorage <- AddressStorage.make[F]
     } yield
-      new Storages[F, T, B, P, S, SI] {
+      new Storages[F, B, P, S, SI] {
         val address = addressStorage
         val block = blockStorage
         val consensus = consensusStorage
@@ -68,12 +66,11 @@ object Storages {
 
 sealed abstract class Storages[
   F[_],
-  T <: Transaction: Order: Ordering,
-  B <: Block[T],
+  B <: Block,
   P <: StateProof,
-  S <: Snapshot[T, B],
+  S <: Snapshot[B],
   SI <: SnapshotInfo[P]
-] extends BaseStorages[F, T, B, P, S, SI] {
+] extends BaseStorages[F, B, P, S, SI] {
 
   val globalL0Cluster: L0ClusterStorage[F]
   val lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]

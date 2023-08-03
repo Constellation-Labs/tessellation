@@ -2,7 +2,6 @@ package org.tessellation.dag.l1.modules
 
 import java.security.PrivateKey
 
-import cats.Show
 import cats.effect.Async
 import cats.effect.std.Supervisor
 import cats.syntax.semigroupk._
@@ -12,7 +11,6 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.Block
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
-import org.tessellation.schema.transaction.Transaction
 import org.tessellation.sdk.config.types.HttpConfig
 import org.tessellation.sdk.http.p2p.middleware.{PeerAuthMiddleware, `X-Id-Middleware`}
 import org.tessellation.sdk.http.routes._
@@ -20,7 +18,6 @@ import org.tessellation.sdk.infrastructure.healthcheck.ping.PingHealthCheckRoute
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
 
-import io.circe.{Decoder, Encoder}
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
 import org.http4s.server.Router
 import org.http4s.server.middleware.{CORS, RequestLogger, ResponseLogger}
@@ -30,38 +27,36 @@ object HttpApi {
 
   def make[
     F[_]: Async: KryoSerializer: SecurityProvider: Metrics: Supervisor,
-    T <: Transaction: Decoder: Encoder: Show,
-    B <: Block[T],
+    B <: Block,
     P <: StateProof,
-    S <: Snapshot[T, B],
+    S <: Snapshot[B],
     SI <: SnapshotInfo[P]
   ](
-    storages: Storages[F, T, B, P, S, SI],
-    queues: Queues[F, T, B],
+    storages: Storages[F, B, P, S, SI],
+    queues: Queues[F, B],
     privateKey: PrivateKey,
-    services: Services[F, T, B, P, S, SI],
-    programs: Programs[F, T, B, P, S, SI],
+    services: Services[F, B, P, S, SI],
+    programs: Programs[F, B, P, S, SI],
     healthchecks: HealthChecks[F],
     selfId: PeerId,
     nodeVersion: String,
     httpCfg: HttpConfig
-  ): HttpApi[F, T, B, P, S, SI] =
-    new HttpApi[F, T, B, P, S, SI](storages, queues, privateKey, services, programs, healthchecks, selfId, nodeVersion, httpCfg) {}
+  ): HttpApi[F, B, P, S, SI] =
+    new HttpApi[F, B, P, S, SI](storages, queues, privateKey, services, programs, healthchecks, selfId, nodeVersion, httpCfg) {}
 }
 
 sealed abstract class HttpApi[
   F[_]: Async: KryoSerializer: SecurityProvider: Metrics: Supervisor,
-  T <: Transaction: Decoder: Encoder: Show,
-  B <: Block[T],
+  B <: Block,
   P <: StateProof,
-  S <: Snapshot[T, B],
+  S <: Snapshot[B],
   SI <: SnapshotInfo[P]
 ] private (
-  storages: Storages[F, T, B, P, S, SI],
-  queues: Queues[F, T, B],
+  storages: Storages[F, B, P, S, SI],
+  queues: Queues[F, B],
   privateKey: PrivateKey,
-  services: Services[F, T, B, P, S, SI],
-  programs: Programs[F, T, B, P, S, SI],
+  services: Services[F, B, P, S, SI],
+  programs: Programs[F, B, P, S, SI],
   healthchecks: HealthChecks[F],
   selfId: PeerId,
   nodeVersion: String,
@@ -71,7 +66,7 @@ sealed abstract class HttpApi[
     ClusterRoutes[F](programs.joining, programs.peerDiscovery, storages.cluster, services.cluster, services.collateral)
   private val registrationRoutes = RegistrationRoutes[F](services.cluster)
   private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip)
-  private val dagRoutes = Routes[F, T](services.transaction, storages.transaction, storages.l0Cluster, queues.peerBlockConsensusInput)
+  private val dagRoutes = Routes[F](services.transaction, storages.transaction, storages.l0Cluster, queues.peerBlockConsensusInput)
   private val nodeRoutes = NodeRoutes[F](storages.node, storages.session, storages.cluster, nodeVersion, httpCfg, selfId)
   private val healthcheckP2PRoutes = {
     val pingHealthcheckRoutes = PingHealthCheckRoutes[F](healthchecks.ping)

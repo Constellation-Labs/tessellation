@@ -17,7 +17,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.Block
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance, BalanceArithmeticError}
-import org.tessellation.schema.transaction.{Transaction, TransactionReference}
+import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
@@ -27,12 +27,12 @@ import eu.timepit.refined.cats._
 
 object BlockAcceptanceLogic {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider, T <: Transaction, B <: Block[T]]: BlockAcceptanceLogic[F, T, B] =
-    new BlockAcceptanceLogic[F, T, B] {
+  def make[F[_]: Async: KryoSerializer: SecurityProvider, B <: Block]: BlockAcceptanceLogic[F, B] =
+    new BlockAcceptanceLogic[F, B] {
 
       def acceptBlock(
         signedBlock: Signed[B],
-        txChains: TxChains[T],
+        txChains: TxChains,
         context: BlockAcceptanceContext[F],
         contextUpdate: BlockAcceptanceContextUpdate
       ): EitherT[F, BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)] =
@@ -76,7 +76,7 @@ object BlockAcceptanceLogic {
           }
 
       def processLastTxRefs(
-        txChains: TxChains[T],
+        txChains: TxChains,
         context: BlockAcceptanceContext[F],
         contextUpdate: BlockAcceptanceContextUpdate
       ): EitherT[F, BlockNotAcceptedReason, BlockAcceptanceContextUpdate] =
@@ -183,7 +183,7 @@ object BlockAcceptanceLogic {
 
     }
 
-  def processSignatures[F[_]: Async: SecurityProvider, B <: Block[_]](
+  def processSignatures[F[_]: Async: SecurityProvider, B <: Block](
     signedBlock: Signed[B],
     context: BlockAcceptanceContext[F]
   ): EitherT[F, BlockNotAcceptedReason, Unit] =
