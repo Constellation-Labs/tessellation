@@ -7,7 +7,7 @@ import cats.syntax.traverse._
 
 import org.tessellation.config.types.AppConfig
 import org.tessellation.infrastructure.snapshot.GlobalSnapshotEventsPublisherDaemon
-import org.tessellation.infrastructure.trust.{TrustDaemon, TrustStorageUpdater}
+import org.tessellation.infrastructure.trust.TrustStorageUpdater
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.Daemon
 import org.tessellation.sdk.infrastructure.cluster.daemon.NodeStateDaemon
@@ -29,7 +29,7 @@ object Daemons {
     List[Daemon[F]](
       NodeStateDaemon.make(storages.node, services.gossip),
       DownloadDaemon.make(storages.node, programs.download),
-      TrustDaemon.make(cfg.trust.daemon, storages.trust, nodeId),
+      Daemon.periodic(storages.trust.updateTrustWithBiases(nodeId), cfg.trust.daemon.interval),
       HealthCheckDaemon.make(healthChecks),
       GlobalSnapshotEventsPublisherDaemon.make(queues.stateChannelOutput, queues.l1Output, services.gossip),
       CollateralDaemon.make(services.collateral, storages.globalSnapshot, storages.cluster),
