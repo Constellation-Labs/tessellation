@@ -1,14 +1,13 @@
 package org.tessellation.infrastructure
 
-import org.tessellation.schema.block.DAGBlock
-import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
+import org.tessellation.schema._
 import org.tessellation.sdk.infrastructure.snapshot.SnapshotConsensus
 import org.tessellation.security.signature.Signed
 import org.tessellation.statechannel.StateChannelOutput
 
 package object snapshot {
 
-  type DAGEvent = Signed[DAGBlock]
+  type DAGEvent = Signed[Block]
 
   type StateChannelEvent = StateChannelOutput
 
@@ -21,6 +20,6 @@ package object snapshot {
   type GlobalSnapshotContext = GlobalSnapshotInfo
 
   type GlobalSnapshotConsensus[F[_]] =
-    SnapshotConsensus[F, DAGBlock, GlobalSnapshotArtifact, GlobalSnapshotContext, GlobalSnapshotEvent]
+    SnapshotConsensus[F, GlobalSnapshotArtifact, GlobalSnapshotContext, GlobalSnapshotEvent]
 
 }

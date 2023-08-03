@@ -27,11 +27,11 @@ import eu.timepit.refined.cats._
 
 object BlockAcceptanceLogic {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider, B <: Block]: BlockAcceptanceLogic[F, B] =
-    new BlockAcceptanceLogic[F, B] {
+  def make[F[_]: Async: KryoSerializer: SecurityProvider]: BlockAcceptanceLogic[F] =
+    new BlockAcceptanceLogic[F] {
 
       def acceptBlock(
-        signedBlock: Signed[B],
+        signedBlock: Signed[Block],
         txChains: TxChains,
         context: BlockAcceptanceContext[F],
         contextUpdate: BlockAcceptanceContextUpdate
@@ -44,7 +44,7 @@ object BlockAcceptanceLogic {
         } yield (contextUpdate3, blockUsages)
 
       private def processParents(
-        signedBlock: Signed[B],
+        signedBlock: Signed[Block],
         context: BlockAcceptanceContext[F],
         contextUpdate: BlockAcceptanceContextUpdate
       ): EitherT[F, BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)] =
@@ -139,7 +139,7 @@ object BlockAcceptanceLogic {
           }
 
       private def processBalances(
-        block: Signed[B],
+        block: Signed[Block],
         context: BlockAcceptanceContext[F],
         contextUpdate: BlockAcceptanceContextUpdate
       ): EitherT[F, BlockNotAcceptedReason, BlockAcceptanceContextUpdate] = {
@@ -183,8 +183,8 @@ object BlockAcceptanceLogic {
 
     }
 
-  def processSignatures[F[_]: Async: SecurityProvider, B <: Block](
-    signedBlock: Signed[B],
+  def processSignatures[F[_]: Async: SecurityProvider](
+    signedBlock: Signed[Block],
     context: BlockAcceptanceContext[F]
   ): EitherT[F, BlockNotAcceptedReason, Unit] =
     EitherT(

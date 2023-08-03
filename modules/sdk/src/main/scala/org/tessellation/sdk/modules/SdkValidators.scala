@@ -3,10 +3,8 @@ package org.tessellation.sdk.modules
 import cats.data.NonEmptySet
 import cats.effect.Async
 
-import org.tessellation.currency.schema.currency.CurrencyBlock
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.block.processing.BlockValidator
 import org.tessellation.sdk.domain.seedlist.SeedlistEntry
@@ -27,11 +25,11 @@ object SdkValidators {
     val signedValidator = SignedValidator.make[F]
     val transactionChainValidator = TransactionChainValidator.make[F]
     val transactionValidator = TransactionValidator.make[F](signedValidator)
-    val blockValidator = BlockValidator.make[F, DAGBlock](signedValidator, transactionChainValidator, transactionValidator)
+    val blockValidator = BlockValidator.make[F](signedValidator, transactionChainValidator, transactionValidator)
     val currencyTransactionChainValidator = TransactionChainValidator.make[F]
     val currencyTransactionValidator = TransactionValidator.make[F](signedValidator)
     val currencyBlockValidator = BlockValidator
-      .make[F, CurrencyBlock](signedValidator, currencyTransactionChainValidator, currencyTransactionValidator)
+      .make[F](signedValidator, currencyTransactionChainValidator, currencyTransactionValidator)
     val rumorValidator = RumorValidator.make[F](seedlist, signedValidator)
     val stateChannelValidator = StateChannelValidator.make[F](signedValidator, l0Seedlist, stateChannelAllowanceLists)
 
@@ -55,8 +53,8 @@ sealed abstract class SdkValidators[F[_]] private (
   val transactionValidator: TransactionValidator[F],
   val currencyTransactionChainValidator: TransactionChainValidator[F],
   val currencyTransactionValidator: TransactionValidator[F],
-  val blockValidator: BlockValidator[F, DAGBlock],
-  val currencyBlockValidator: BlockValidator[F, CurrencyBlock],
+  val blockValidator: BlockValidator[F],
+  val currencyBlockValidator: BlockValidator[F],
   val rumorValidator: RumorValidator[F],
   val stateChannelValidator: StateChannelValidator[F]
 )

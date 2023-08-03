@@ -3,7 +3,6 @@ package org.tessellation.dag.l1.modules
 import cats.effect.Async
 
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.Block
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.sdk.domain.block.processing.BlockValidator
@@ -18,26 +17,25 @@ object Validators {
 
   def make[
     F[_]: Async: KryoSerializer: SecurityProvider,
-    B <: Block,
     P <: StateProof,
-    S <: Snapshot[B],
+    S <: Snapshot,
     SI <: SnapshotInfo[P]
   ](
-    storages: Storages[F, B, P, S, SI],
+    storages: Storages[F, P, S, SI],
     seedlist: Option[Set[SeedlistEntry]]
-  ): Validators[F, B] = {
+  ): Validators[F] = {
     val signedValidator = SignedValidator.make[F]
     val transactionChainValidator = TransactionChainValidator.make[F]
     val transactionValidator = TransactionValidator.make[F](signedValidator)
     val blockValidator =
-      BlockValidator.make[F, B](signedValidator, transactionChainValidator, transactionValidator)
+      BlockValidator.make[F](signedValidator, transactionChainValidator, transactionValidator)
     val contextualTransactionValidator = ContextualTransactionValidator.make[F](
       transactionValidator,
       (address: Address) => storages.transaction.getLastAcceptedReference(address)
     )
     val rumorValidator = RumorValidator.make[F](seedlist, signedValidator)
 
-    new Validators[F, B](
+    new Validators[F](
       signedValidator,
       blockValidator,
       transactionValidator,
@@ -47,9 +45,9 @@ object Validators {
   }
 }
 
-sealed abstract class Validators[F[_], B <: Block] private (
+sealed abstract class Validators[F[_]] private (
   val signed: SignedValidator[F],
-  val block: BlockValidator[F, B],
+  val block: BlockValidator[F],
   val transaction: TransactionValidator[F],
   val transactionContextual: ContextualTransactionValidator[F],
   val rumorValidator: RumorValidator[F]

@@ -12,12 +12,11 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import org.tessellation.currency.schema.currency.SnapshotFee
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.transaction.Transaction
+import org.tessellation.schema.{Block, _}
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.sdk.domain.rewards.Rewards
@@ -67,20 +66,20 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
     }
 
-  val bam: BlockAcceptanceManager[IO, DAGBlock] = new BlockAcceptanceManager[IO, DAGBlock] {
+  val bam: BlockAcceptanceManager[IO] = new BlockAcceptanceManager[IO] {
 
     override def acceptBlocksIteratively(
-      blocks: List[Signed[DAGBlock]],
+      blocks: List[Signed[Block]],
       context: BlockAcceptanceContext[IO]
-    ): IO[BlockAcceptanceResult[DAGBlock]] =
-      BlockAcceptanceResult[DAGBlock](
+    ): IO[BlockAcceptanceResult] =
+      BlockAcceptanceResult(
         BlockAcceptanceContextUpdate.empty,
         List.empty,
         List.empty
       ).pure[IO]
 
     override def acceptBlock(
-      block: Signed[DAGBlock],
+      block: Signed[Block],
       context: BlockAcceptanceContext[IO]
     ): IO[Either[BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)]] = ???
 
@@ -110,7 +109,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
   val collateral: Amount = Amount.empty
 
-  val rewards: Rewards[F, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot] =
+  val rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot] =
     (
       artifact: Signed[GlobalSnapshotArtifact],
       balances: SortedMap[Address, Balance],

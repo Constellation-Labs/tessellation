@@ -15,7 +15,7 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.L0Peer
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.schema.transaction.TransactionReference
-import org.tessellation.schema.{Block, GlobalIncrementalSnapshot, GlobalSnapshotInfo}
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.sdk.infrastructure.cluster.storage.L0ClusterStorage
@@ -26,19 +26,18 @@ object Storages {
 
   def make[
     F[_]: Async: Random: KryoSerializer,
-    B <: Block,
     P <: StateProof,
-    S <: Snapshot[B],
+    S <: Snapshot,
     SI <: SnapshotInfo[P]
   ](
     sdkStorages: SdkStorages[F],
     l0Peer: L0Peer,
     globalL0Peer: L0Peer,
     currencyIdentifier: Address
-  ): F[Storages[F, B, P, S, SI]] =
+  ): F[Storages[F, P, S, SI]] =
     for {
-      blockStorage <- BlockStorage.make[F, B]
-      consensusStorage <- ConsensusStorage.make[F, B]
+      blockStorage <- BlockStorage.make[F]
+      consensusStorage <- ConsensusStorage.make[F]
       l0ClusterStorage <- L0ClusterStorage.make[F](l0Peer)
       globalL0ClusterStorage <- L0ClusterStorage.make[F](globalL0Peer)
       lastCurrencySnapshotStorage <- LastSnapshotStorage.make[F, S, SI]
@@ -48,7 +47,7 @@ object Storages {
       }
       addressStorage <- AddressStorage.make[F]
     } yield
-      new Storages[F, B, P, S, SI] {
+      new Storages[F, P, S, SI] {
         val address = addressStorage
         val block = blockStorage
         val consensus = consensusStorage
@@ -66,11 +65,10 @@ object Storages {
 
 sealed abstract class Storages[
   F[_],
-  B <: Block,
   P <: StateProof,
-  S <: Snapshot[B],
+  S <: Snapshot,
   SI <: SnapshotInfo[P]
-] extends BaseStorages[F, B, P, S, SI] {
+] extends BaseStorages[F, P, S, SI] {
 
   val globalL0Cluster: L0ClusterStorage[F]
   val lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]

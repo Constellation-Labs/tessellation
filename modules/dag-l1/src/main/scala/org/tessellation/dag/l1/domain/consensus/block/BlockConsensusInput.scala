@@ -10,8 +10,8 @@ import org.tessellation.schema.transaction.Transaction
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.Signature
 
-import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
-import io.circe.{Decoder, Encoder}
+import derevo.circe.magnolia.{decoder, encoder}
+import derevo.derive
 
 sealed trait BlockConsensusInput extends Ω
 
@@ -20,14 +20,10 @@ object BlockConsensusInput {
   case object OwnRoundTrigger extends OwnerBlockConsensusInput
   case object InspectionTrigger extends OwnerBlockConsensusInput
 
+  @derive(encoder, decoder)
   sealed trait PeerBlockConsensusInput extends BlockConsensusInput {
     val senderId: PeerId
     val owner: PeerId
-  }
-
-  object PeerBlockConsensusInput {
-    implicit def encoder: Encoder[PeerBlockConsensusInput] = deriveEncoder
-    implicit def decoder: Decoder[PeerBlockConsensusInput] = deriveDecoder
   }
 
   case class Proposal(

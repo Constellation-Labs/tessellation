@@ -27,21 +27,21 @@ object snapshot {
     val balancesProof: Hash
   }
 
-  trait FullSnapshot[B <: Block, P <: StateProof, SI <: SnapshotInfo[P]] extends Snapshot[B] {
+  trait FullSnapshot[P <: StateProof, SI <: SnapshotInfo[P]] extends Snapshot {
     val info: SI
   }
 
-  trait IncrementalSnapshot[B <: Block, P <: StateProof] extends Snapshot[B] {
+  trait IncrementalSnapshot[P <: StateProof] extends Snapshot {
     val stateProof: P
     val version: SnapshotVersion
   }
 
-  trait Snapshot[B <: Block] {
+  trait Snapshot {
     val ordinal: SnapshotOrdinal
     val height: Height
     val subHeight: SubHeight
     val lastSnapshotHash: Hash
-    val blocks: SortedSet[BlockAsActiveTip[B]]
+    val blocks: SortedSet[BlockAsActiveTip]
     val tips: SnapshotTips
 
     def activeTips[F[_]: Async: KryoSerializer]: F[SortedSet[ActiveTip]] =

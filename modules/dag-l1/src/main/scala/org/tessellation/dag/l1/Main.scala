@@ -12,7 +12,6 @@ import org.tessellation.dag.l1.infrastructure.block.rumor.handler.blockRumorHand
 import org.tessellation.dag.l1.modules._
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.kryo._
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.node.NodeState.SessionStarted
@@ -47,24 +46,24 @@ object Main
     val cfg = method.appConfig
 
     for {
-      queues <- Queues.make[IO, DAGBlock](sdkQueues).asResource
+      queues <- Queues.make[IO](sdkQueues).asResource
       storages <- Storages
-        .make[IO, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
+        .make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
           sdkStorages,
           method.l0Peer
         )
         .asResource
       validators = Validators
-        .make[IO, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
+        .make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
           storages,
           seedlist
         )
-      p2pClient = P2PClient.make[IO, DAGBlock](
+      p2pClient = P2PClient.make[IO](
         sdkP2PClient,
         sdkResources.client,
         currencyPathPrefix = "dag"
       )
-      services = Services.make[IO, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
+      services = Services.make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
         storages,
         storages.lastSnapshot,
         storages.l0Cluster,
@@ -82,7 +81,7 @@ object Main
       )
       programs = Programs.make(sdkPrograms, p2pClient, storages, snapshotProcessor)
       healthChecks <- HealthChecks
-        .make[IO, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
+        .make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
           storages,
           services,
           programs,
@@ -102,7 +101,7 @@ object Main
         .asResource
 
       api = HttpApi
-        .make[IO, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
+        .make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
           storages,
           queues,
           keyPair.getPrivate,
@@ -118,7 +117,7 @@ object Main
       _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.http.cliHttp, api.cliApp)
 
       stateChannel <- StateChannel
-        .make[IO, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
+        .make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
           cfg,
           keyPair,
           p2pClient,

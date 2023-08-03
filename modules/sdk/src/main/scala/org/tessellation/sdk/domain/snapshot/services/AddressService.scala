@@ -5,7 +5,7 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.snapshot.Snapshot
 
-trait AddressService[F[_], S <: Snapshot[_]] {
+trait AddressService[F[_], S <: Snapshot] {
   def getBalance(address: Address): F[Option[(Balance, SnapshotOrdinal)]]
   def getBalance(ordinal: SnapshotOrdinal, address: Address): F[Option[(Balance, SnapshotOrdinal)]]
   def getTotalSupply: F[Option[(BigInt, SnapshotOrdinal)]]

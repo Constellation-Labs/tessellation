@@ -13,7 +13,6 @@ import org.tessellation.currency.schema.currency._
 import org.tessellation.dag.l1.http.{Routes => DAGRoutes}
 import org.tessellation.dag.l1.modules.HealthChecks
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.Block
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.sdk.config.types.HttpConfig
@@ -32,31 +31,27 @@ object HttpApi {
 
   def make[
     F[_]: Async: KryoSerializer: SecurityProvider: Metrics: Supervisor: L1NodeContext,
-    B <: Block,
     P <: StateProof,
-   S <: Snapshot[B],
+    S <: Snapshot,
     SI <: SnapshotInfo[P]
   ](
     maybeDataApplication: Option[BaseDataApplicationL1Service[F]],
     storages: Storages[
       F,
-      CurrencyBlock,
       CurrencySnapshotStateProof,
       CurrencyIncrementalSnapshot,
       CurrencySnapshotInfo
     ],
-    queues: Queues[F, CurrencyBlock],
+    queues: Queues[F],
     privateKey: PrivateKey,
     services: Services[
       F,
-      CurrencyBlock,
       CurrencySnapshotStateProof,
       CurrencyIncrementalSnapshot,
       CurrencySnapshotInfo
     ],
     programs: Programs[
       F,
-      CurrencyBlock,
       CurrencySnapshotStateProof,
       CurrencyIncrementalSnapshot,
       CurrencySnapshotInfo
@@ -84,11 +79,11 @@ sealed abstract class HttpApi[
   F[_]: Async: KryoSerializer: SecurityProvider: Metrics: Supervisor: L1NodeContext
 ] private (
   maybeDataApplication: Option[BaseDataApplicationL1Service[F]],
-  storages: Storages[F, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
-  queues: Queues[F, CurrencyBlock],
+  storages: Storages[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
+  queues: Queues[F],
   privateKey: PrivateKey,
-  services: Services[F, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
-  programs: Programs[F, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
+  services: Services[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
+  programs: Programs[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
   healthchecks: HealthChecks[F],
   selfId: PeerId,
   nodeVersion: String,

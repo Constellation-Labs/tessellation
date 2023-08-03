@@ -15,14 +15,14 @@ import org.tessellation.security.Hashed
 import org.tessellation.security.signature.Signed
 
 object Queues {
-  def make[F[_]: Concurrent, B <: Block](dagL1Queues: DAGL1Queues[F, B]): F[Queues[F, B]] =
+  def make[F[_]: Concurrent](dagL1Queues: DAGL1Queues[F]): F[Queues[F]] =
     for {
 
       dataApplicationPeerConsensusInputQueue <- Queue.unbounded[F, Signed[ConsensusInput.PeerConsensusInput]]
       dataApplicationBlockQueue <- Queue.unbounded[F, Signed[DataApplicationBlock]]
       dataUpdatesQueue <- Queue.unbounded[F, Signed[DataUpdate]]
     } yield
-      new Queues[F, B] {
+      new Queues[F] {
         val rumor = dagL1Queues.rumor
         val peerBlockConsensusInput = dagL1Queues.peerBlockConsensusInput
         val peerBlock = dagL1Queues.peerBlock
@@ -32,10 +32,10 @@ object Queues {
       }
 }
 
-sealed abstract class Queues[F[_], B <: Block] private {
+sealed abstract class Queues[F[_]] private {
   val rumor: Queue[F, Hashed[RumorRaw]]
   val peerBlockConsensusInput: Queue[F, Signed[PeerBlockConsensusInput]]
-  val peerBlock: Queue[F, Signed[B]]
+  val peerBlock: Queue[F, Signed[Block]]
   val dataApplicationPeerConsensusInput: Queue[F, Signed[ConsensusInput.PeerConsensusInput]]
   val dataApplicationBlock: Queue[F, Signed[DataApplicationBlock]]
   val dataUpdates: Queue[F, Signed[DataUpdate]]

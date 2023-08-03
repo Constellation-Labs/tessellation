@@ -12,7 +12,7 @@ import org.tessellation.dag.l1.domain.transaction.TransactionService
 import org.tessellation.dag.l1.modules.{Services => BaseServices, Validators}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
-import org.tessellation.schema.{Block, GlobalIncrementalSnapshot, GlobalSnapshotInfo}
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.sdk.domain.snapshot.services.GlobalL0Service
 import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
@@ -25,24 +25,23 @@ object Services {
   def make[F[_]: Async: Random: KryoSerializer: SecurityProvider](
     storages: Storages[
       F,
-      CurrencyBlock,
       CurrencySnapshotStateProof,
       CurrencyIncrementalSnapshot,
       CurrencySnapshotInfo
     ],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     globalL0Cluster: L0ClusterStorage[F],
-    validators: Validators[F, CurrencyBlock],
+    validators: Validators[F],
     sdkServices: SdkServices[F],
-    p2PClient: P2PClient[F, CurrencyBlock],
+    p2PClient: P2PClient[F],
     cfg: AppConfig,
     maybeDataApplication: Option[BaseDataApplicationL1Service[F]]
-  ): Services[F, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo] =
-    new Services[F, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo] {
+  ): Services[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo] =
+    new Services[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo] {
 
       val localHealthcheck = sdkServices.localHealthcheck
-      val block = BlockService.make[F, CurrencyBlock](
-        BlockAcceptanceManager.make[F, CurrencyBlock](validators.block),
+      val block = BlockService.make[F](
+        BlockAcceptanceManager.make[F](validators.block),
         storages.address,
         storages.block,
         storages.transaction,
@@ -59,7 +58,6 @@ object Services {
     }
 }
 
-sealed abstract class Services[F[_], B <: Block, P <: StateProof, S <: Snapshot[B], SI <: SnapshotInfo[P]]
-    extends BaseServices[F, B, P, S, SI] {
+sealed abstract class Services[F[_], P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P]] extends BaseServices[F, P, S, SI] {
   val dataApplication: Option[BaseDataApplicationL1Service[F]]
 }

@@ -10,14 +10,14 @@ import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.NonNegLong
 
 @derive(eqv, show)
-case class BlockAcceptanceState[B <: Block](
+case class BlockAcceptanceState(
   contextUpdate: BlockAcceptanceContextUpdate,
-  accepted: List[(Signed[B], NonNegLong)],
-  rejected: List[(Signed[B], BlockRejectionReason)],
-  awaiting: List[((Signed[B], TxChains), BlockAwaitReason)]
+  accepted: List[(Signed[Block], NonNegLong)],
+  rejected: List[(Signed[Block], BlockRejectionReason)],
+  awaiting: List[((Signed[Block], TxChains), BlockAwaitReason)]
 ) {
 
-  def toBlockAcceptanceResult: BlockAcceptanceResult[B] =
+  def toBlockAcceptanceResult: BlockAcceptanceResult =
     BlockAcceptanceResult(
       contextUpdate,
       accepted,
@@ -27,7 +27,7 @@ case class BlockAcceptanceState[B <: Block](
 
 object BlockAcceptanceState {
 
-  def withRejectedBlocks[B <: Block](rejected: List[(Signed[B], BlockRejectionReason)]): BlockAcceptanceState[B] =
+  def withRejectedBlocks(rejected: List[(Signed[Block], BlockRejectionReason)]): BlockAcceptanceState =
     BlockAcceptanceState(
       contextUpdate = BlockAcceptanceContextUpdate.empty,
       accepted = List.empty,

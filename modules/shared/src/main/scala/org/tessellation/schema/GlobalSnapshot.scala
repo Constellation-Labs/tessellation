@@ -10,7 +10,6 @@ import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
@@ -36,7 +35,7 @@ case class GlobalIncrementalSnapshot(
   height: Height,
   subHeight: SubHeight,
   lastSnapshotHash: Hash,
-  blocks: SortedSet[BlockAsActiveTip[DAGBlock]],
+  blocks: SortedSet[BlockAsActiveTip],
   stateChannelSnapshots: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
   rewards: SortedSet[RewardTransaction],
   epochProgress: EpochProgress,
@@ -44,7 +43,7 @@ case class GlobalIncrementalSnapshot(
   tips: SnapshotTips,
   stateProof: GlobalSnapshotStateProof,
   version: SnapshotVersion = SnapshotVersion("0.0.1")
-) extends IncrementalSnapshot[DAGBlock, GlobalSnapshotStateProof]
+) extends IncrementalSnapshot[GlobalSnapshotStateProof]
 
 object GlobalIncrementalSnapshot {
   def fromGlobalSnapshot[F[_]: MonadThrow: KryoSerializer](snapshot: GlobalSnapshot): F[GlobalIncrementalSnapshot] =
@@ -71,14 +70,14 @@ case class GlobalSnapshot(
   height: Height,
   subHeight: SubHeight,
   lastSnapshotHash: Hash,
-  blocks: SortedSet[BlockAsActiveTip[DAGBlock]],
+  blocks: SortedSet[BlockAsActiveTip],
   stateChannelSnapshots: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
   rewards: SortedSet[RewardTransaction],
   epochProgress: EpochProgress,
   nextFacilitators: NonEmptyList[PeerId],
   info: GlobalSnapshotInfoV1,
   tips: SnapshotTips
-) extends FullSnapshot[DAGBlock, GlobalSnapshotStateProof, GlobalSnapshotInfoV1] {}
+) extends FullSnapshot[GlobalSnapshotStateProof, GlobalSnapshotInfoV1] {}
 
 object GlobalSnapshot {
 
@@ -88,7 +87,7 @@ object GlobalSnapshot {
       Height.MinValue,
       SubHeight.MinValue,
       Coinbase.hash,
-      SortedSet.empty[BlockAsActiveTip[DAGBlock]],
+      SortedSet.empty[BlockAsActiveTip],
       SortedMap.empty,
       SortedSet.empty,
       startingEpochProgress,

@@ -24,22 +24,22 @@ import org.tessellation.security.signature.Signed
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 
-trait BlockService[F[_], B <: Block] {
-  def accept(signedBlock: Signed[B]): F[Unit]
+trait BlockService[F[_]] {
+  def accept(signedBlock: Signed[Block]): F[Unit]
 }
 
 object BlockService {
 
-  def make[F[_]: Async: KryoSerializer, B <: Block](
-    blockAcceptanceManager: BlockAcceptanceManager[F, B],
+  def make[F[_]: Async: KryoSerializer](
+    blockAcceptanceManager: BlockAcceptanceManager[F],
     addressStorage: AddressStorage[F],
-    blockStorage: BlockStorage[F, B],
+    blockStorage: BlockStorage[F],
     transactionStorage: TransactionStorage[F],
     collateral: Amount
-  ): BlockService[F, B] =
-    new BlockService[F, B] {
+  ): BlockService[F] =
+    new BlockService[F] {
 
-      def accept(signedBlock: Signed[B]): F[Unit] =
+      def accept(signedBlock: Signed[Block]): F[Unit] =
         signedBlock.toHashed.flatMap { hashedBlock =>
           EitherT(blockAcceptanceManager.acceptBlock(signedBlock, context))
             .leftSemiflatMap(processAcceptanceError(hashedBlock))
@@ -64,7 +64,7 @@ object BlockService {
         def getCollateral: Amount = collateral
       }
 
-      private def processAcceptanceSuccess(hashedBlock: Hashed[B])(contextUpdate: BlockAcceptanceContextUpdate): F[Unit] = for {
+      private def processAcceptanceSuccess(hashedBlock: Hashed[Block])(contextUpdate: BlockAcceptanceContextUpdate): F[Unit] = for {
         hashedTransactions <- hashedBlock.signed.transactions.toNonEmptyList
           .sortBy(_.ordinal)
           .traverse(_.toHashed)
@@ -72,11 +72,11 @@ object BlockService {
         _ <- hashedTransactions.traverse(transactionStorage.accept)
         _ <- blockStorage.accept(hashedBlock)
         _ <- addressStorage.updateBalances(contextUpdate.balances)
-        isDependent = (block: Signed[B]) => BlockRelations.dependsOn[F, B](hashedBlock)(block)
+        isDependent = (block: Signed[Block]) => BlockRelations.dependsOn[F](hashedBlock)(block)
         _ <- blockStorage.restoreDependent(isDependent)
       } yield ()
 
-      private def processAcceptanceError(hashedBlock: Hashed[B])(reason: BlockNotAcceptedReason): F[BlockAcceptanceError] =
+      private def processAcceptanceError(hashedBlock: Hashed[Block])(reason: BlockNotAcceptedReason): F[BlockAcceptanceError] =
         blockStorage
           .postpone(hashedBlock)
           .as(BlockAcceptanceError(hashedBlock.ownReference, reason))

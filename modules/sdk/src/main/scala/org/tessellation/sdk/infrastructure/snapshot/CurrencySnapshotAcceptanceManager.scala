@@ -21,14 +21,14 @@ import eu.timepit.refined.types.numeric.NonNegLong
 
 trait CurrencySnapshotAcceptanceManager[F[_]] {
   def accept(
-    blocksForAcceptance: List[Signed[CurrencyBlock]],
+    blocksForAcceptance: List[Signed[Block]],
     lastSnapshotContext: CurrencySnapshotContext,
     lastActiveTips: SortedSet[ActiveTip],
     lastDeprecatedTips: SortedSet[DeprecatedTip],
     calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]]
   ): F[
     (
-      BlockAcceptanceResult[CurrencyBlock],
+      BlockAcceptanceResult,
       SortedSet[RewardTransaction],
       CurrencySnapshotInfo,
       CurrencySnapshotStateProof
@@ -38,12 +38,12 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
 
 object CurrencySnapshotAcceptanceManager {
   def make[F[_]: Async: KryoSerializer](
-    blockAcceptanceManager: BlockAcceptanceManager[F, CurrencyBlock],
+    blockAcceptanceManager: BlockAcceptanceManager[F],
     collateral: Amount
   ) = new CurrencySnapshotAcceptanceManager[F] {
 
     def accept(
-      blocksForAcceptance: List[Signed[CurrencyBlock]],
+      blocksForAcceptance: List[Signed[Block]],
       lastSnapshotContext: CurrencySnapshotContext,
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip],
@@ -76,7 +76,7 @@ object CurrencySnapshotAcceptanceManager {
     } yield (acceptanceResult, acceptedRewardTxs, csi, stateProof)
 
     private def acceptBlocks(
-      blocksForAcceptance: List[Signed[CurrencyBlock]],
+      blocksForAcceptance: List[Signed[Block]],
       lastSnapshotContext: CurrencySnapshotContext,
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip],

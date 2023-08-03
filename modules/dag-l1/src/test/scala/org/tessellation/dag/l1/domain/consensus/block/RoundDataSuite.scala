@@ -15,13 +15,13 @@ import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.Propos
 import org.tessellation.dag.transaction.TransactionGenerator
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.BlockReference
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.block.{DAGBlock, Tips}
+import org.tessellation.schema.block.Tips
 import org.tessellation.schema.height.Height
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.round.RoundId
 import org.tessellation.schema.transaction.{TransactionFee, TransactionReference}
+import org.tessellation.schema.{Block, BlockReference}
 import org.tessellation.sdk.domain.transaction.TransactionValidator
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.hash.ProofsHash
@@ -65,7 +65,7 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
   val baseProposal = Proposal(roundId, peerIdA, peerIdA, Set.empty, Set.empty, tips)
 
   val baseRoundData =
-    RoundData[DAGBlock](
+    RoundData(
       roundId,
       FiniteDuration(1000L, TimeUnit.MINUTES),
       Set.empty,
@@ -106,7 +106,7 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
         result <- roundData.formBlock(txValidator)
       } yield
         expect.same(
-          DAGBlock(baseProposal.tips.value, txsA2.map(_.signed).toNes).some,
+          Block(baseProposal.tips.value, txsA2.map(_.signed).toNes).some,
           result
         )
   }
@@ -130,7 +130,7 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
         result <- roundData.formBlock(txValidator)
       } yield
         expect.same(
-          DAGBlock(baseProposal.tips.value, (txsA.map(_.signed) ++ txsA2.map(_.signed).toList).toNes).some,
+          Block(baseProposal.tips.value, (txsA.map(_.signed) ++ txsA2.map(_.signed).toList).toNes).some,
           result
         )
   }
@@ -154,7 +154,7 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
         result <- roundData.formBlock(txValidator)
       } yield
         expect.same(
-          DAGBlock(baseProposal.tips.value, (NonEmptyList.one(txsA.head.signed) ++ txsA2.map(_.signed).toList).toNes).some,
+          Block(baseProposal.tips.value, (NonEmptyList.one(txsA.head.signed) ++ txsA2.map(_.signed).toList).toNes).some,
           result
         )
   }
@@ -179,7 +179,7 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
         result <- roundData.formBlock(txValidator)
       } yield
         expect.same(
-          DAGBlock(baseProposal.tips.value, NonEmptyList.one(txsA.head.signed).toNes).some,
+          Block(baseProposal.tips.value, NonEmptyList.one(txsA.head.signed).toNes).some,
           result
         )
   }

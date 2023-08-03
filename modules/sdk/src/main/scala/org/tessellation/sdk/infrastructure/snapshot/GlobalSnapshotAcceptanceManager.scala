@@ -17,7 +17,6 @@ import org.tessellation.merkletree.syntax._
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.transaction.{RewardTransaction, Transaction, TransactionReference}
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.security.signature.Signed
@@ -30,7 +29,7 @@ import eu.timepit.refined.types.numeric.NonNegLong
 trait GlobalSnapshotAcceptanceManager[F[_]] {
   def accept(
     ordinal: SnapshotOrdinal,
-    blocksForAcceptance: List[Signed[DAGBlock]],
+    blocksForAcceptance: List[Signed[Block]],
     scEvents: List[StateChannelOutput],
     lastSnapshotContext: GlobalSnapshotInfo,
     lastActiveTips: SortedSet[ActiveTip],
@@ -39,7 +38,7 @@ trait GlobalSnapshotAcceptanceManager[F[_]] {
     validationType: StateChannelValidationType
   ): F[
     (
-      BlockAcceptanceResult[DAGBlock],
+      BlockAcceptanceResult,
       SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
       Set[StateChannelOutput],
       SortedSet[RewardTransaction],
@@ -54,14 +53,14 @@ object GlobalSnapshotAcceptanceManager {
   case object InvalidMerkleTree extends NoStackTrace
 
   def make[F[_]: Async: KryoSerializer](
-    blockAcceptanceManager: BlockAcceptanceManager[F, DAGBlock],
+    blockAcceptanceManager: BlockAcceptanceManager[F],
     stateChannelEventsProcessor: GlobalSnapshotStateChannelEventsProcessor[F],
     collateral: Amount
   ) = new GlobalSnapshotAcceptanceManager[F] {
 
     def accept(
       ordinal: SnapshotOrdinal,
-      blocksForAcceptance: List[Signed[DAGBlock]],
+      blocksForAcceptance: List[Signed[Block]],
       scEvents: List[StateChannelOutput],
       lastSnapshotContext: GlobalSnapshotInfo,
       lastActiveTips: SortedSet[ActiveTip],
@@ -125,7 +124,7 @@ object GlobalSnapshotAcceptanceManager {
       )
 
     private def acceptBlocks(
-      blocksForAcceptance: List[Signed[DAGBlock]],
+      blocksForAcceptance: List[Signed[Block]],
       lastSnapshotContext: GlobalSnapshotInfo,
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip]

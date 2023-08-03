@@ -14,7 +14,7 @@ import org.tessellation.sdk.infrastructure.consensus.trigger
 import org.tessellation.security.signature.Signed
 
 object NoopRewards {
-  def make[F[_]: Async]: Rewards[F, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot] =
+  def make[F[_]: Async]: Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot] =
     (
       _: Signed[CurrencyIncrementalSnapshot],
       _: SortedMap[Address, Balance],

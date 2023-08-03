@@ -5,7 +5,7 @@ import org.tessellation.schema.snapshot.Snapshot
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
-trait SnapshotStorage[F[_], S <: Snapshot[_], State] {
+trait SnapshotStorage[F[_], S <: Snapshot, State] {
 
   def prepend(snapshot: Signed[S], state: State): F[Boolean]
 

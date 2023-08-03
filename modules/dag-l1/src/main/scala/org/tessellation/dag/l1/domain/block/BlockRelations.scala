@@ -15,14 +15,14 @@ import org.tessellation.security.signature.Signed
 
 object BlockRelations {
 
-  def dependsOn[F[_]: Async: KryoSerializer, B <: Block](
-    blocks: Hashed[B]
-  )(block: Signed[B]): F[Boolean] = dependsOn[F, B](Set(blocks))(block)
+  def dependsOn[F[_]: Async: KryoSerializer](
+    blocks: Hashed[Block]
+  )(block: Signed[Block]): F[Boolean] = dependsOn[F](Set(blocks))(block)
 
-  def dependsOn[F[_]: Async: KryoSerializer, B <: Block](
-    blocks: Set[Hashed[B]],
+  def dependsOn[F[_]: Async: KryoSerializer](
+    blocks: Set[Hashed[Block]],
     references: Set[BlockReference] = Set.empty
-  )(block: Signed[B]): F[Boolean] = {
+  )(block: Signed[Block]): F[Boolean] = {
     def dstAddresses = blocks.flatMap(_.transactions.toSortedSet.toList.map(_.value.destination))
 
     def isChild =

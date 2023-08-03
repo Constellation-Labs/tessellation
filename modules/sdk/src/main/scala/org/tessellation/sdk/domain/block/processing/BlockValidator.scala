@@ -17,23 +17,23 @@ import derevo.derive
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.PosInt
 
-trait BlockValidator[F[_], B <: Block] {
+trait BlockValidator[F[_]] {
 
   type BlockValidationErrorOr[A] = ValidatedNec[BlockValidationError, A]
 
   def validate(
-    signedBlock: Signed[B],
+    signedBlock: Signed[Block],
     params: BlockValidationParams = BlockValidationParams.default
-  ): F[BlockValidationErrorOr[(Signed[B], Map[Address, TransactionNel])]]
+  ): F[BlockValidationErrorOr[(Signed[Block], Map[Address, TransactionNel])]]
 
   def validateGetBlock(
-    signedBlock: Signed[B],
+    signedBlock: Signed[Block],
     params: BlockValidationParams = BlockValidationParams.default
-  )(implicit ev: Functor[F]): F[BlockValidationErrorOr[Signed[B]]] =
+  )(implicit ev: Functor[F]): F[BlockValidationErrorOr[Signed[Block]]] =
     validate(signedBlock, params).map(_.map(_._1))
 
   def validateGetTxChains(
-    signedBlock: Signed[B],
+    signedBlock: Signed[Block],
     params: BlockValidationParams = BlockValidationParams.default
   )(implicit ev: Functor[F]): F[BlockValidationErrorOr[Map[Address, TransactionNel]]] =
     validate(signedBlock, params).map(_.map(_._2))

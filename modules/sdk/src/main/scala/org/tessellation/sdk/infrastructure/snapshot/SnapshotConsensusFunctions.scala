@@ -9,7 +9,7 @@ import cats.syntax.foldable._
 import cats.syntax.functor._
 import cats.syntax.option._
 import cats.syntax.order._
-import cats.{Applicative, Eq, Order}
+import cats.{Applicative, Eq}
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
@@ -37,12 +37,11 @@ case object ArtifactMismatch extends InvalidArtifact
 
 abstract class SnapshotConsensusFunctions[
   F[_]: Async: SecurityProvider,
-  B <: Block: Order,
   Event,
-  Artifact <: Snapshot[B]: Eq,
+  Artifact <: Snapshot: Eq,
   Context,
   Trigger <: ConsensusTrigger
-](implicit ordering: Ordering[BlockAsActiveTip[B]])
+](implicit ordering: Ordering[BlockAsActiveTip])
     extends ConsensusFunctions[F, Event, SnapshotOrdinal, Artifact, Context] {
 
   def getRequiredCollateral: Amount
@@ -76,9 +75,9 @@ abstract class SnapshotConsensusFunctions[
   protected def getUpdatedTips(
     lastActive: SortedSet[ActiveTip],
     lastDeprecated: SortedSet[DeprecatedTip],
-    acceptanceResult: BlockAcceptanceResult[B],
+    acceptanceResult: BlockAcceptanceResult,
     currentOrdinal: SnapshotOrdinal
-  ): (SortedSet[DeprecatedTip], SortedSet[ActiveTip], SortedSet[BlockAsActiveTip[B]]) = {
+  ): (SortedSet[DeprecatedTip], SortedSet[ActiveTip], SortedSet[BlockAsActiveTip]) = {
     val usagesUpdate = acceptanceResult.contextUpdate.parentUsages
     val accepted =
       acceptanceResult.accepted.map { case (block, usages) => BlockAsActiveTip(block, usages) }.toSortedSet
@@ -110,7 +109,7 @@ abstract class SnapshotConsensusFunctions[
     lastGS: Artifact,
     deprecated: Set[DeprecatedTip],
     remainedActive: Set[ActiveTip],
-    accepted: Set[BlockAsActiveTip[B]]
+    accepted: Set[BlockAsActiveTip]
   ): F[(Height, SubHeight)] = {
     val tipHeights = (deprecated.map(_.block.height) ++ remainedActive.map(_.block.height) ++ accepted
       .map(_.block.height)).toList

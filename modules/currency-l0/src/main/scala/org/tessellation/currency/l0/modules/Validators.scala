@@ -2,7 +2,6 @@ package org.tessellation.currency.l0.modules
 
 import cats.effect.Async
 
-import org.tessellation.currency.schema.currency.CurrencyBlock
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.sdk.domain.block.processing.BlockValidator
 import org.tessellation.sdk.domain.seedlist.SeedlistEntry
@@ -21,7 +20,7 @@ object Validators {
     val transactionChainValidator = TransactionChainValidator.make[F]
     val transactionValidator = TransactionValidator.make[F](signedValidator)
     val blockValidator =
-      BlockValidator.make[F, CurrencyBlock](signedValidator, transactionChainValidator, transactionValidator)
+      BlockValidator.make[F](signedValidator, transactionChainValidator, transactionValidator)
     val rumorValidator = RumorValidator.make[F](seedlist, signedValidator)
 
     new Validators[F](
@@ -38,6 +37,6 @@ sealed abstract class Validators[F[_]] private (
   val signedValidator: SignedValidator[F],
   val transactionChainValidator: TransactionChainValidator[F],
   val transactionValidator: TransactionValidator[F],
-  val blockValidator: BlockValidator[F, CurrencyBlock],
+  val blockValidator: BlockValidator[F],
   val rumorValidator: RumorValidator[F]
 )
