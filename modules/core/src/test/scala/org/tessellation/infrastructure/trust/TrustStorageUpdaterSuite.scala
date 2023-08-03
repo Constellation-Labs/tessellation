@@ -34,10 +34,12 @@ object TrustStorageUpdaterSuite extends SimpleIOSuite with Checkers {
   def mkTrustStorage(trust: TrustMap = TrustMap.empty): F[TrustStorage[F]] = {
     val config = TrustStorageConfig(
       ordinalTrustUpdateInterval = 1000L,
-      ordinalTrustUpdateDelay = 500L
+      ordinalTrustUpdateDelay = 500L,
+      seedlistInputBias = 0.7,
+      seedlistOutputBias = 0.5
     )
 
-    TrustStorage.make(trust, config)
+    TrustStorage.make(trust, config, none)
   }
 
   def mkMockGossip[B](spreadRef: Ref[IO, List[B]]): Gossip[IO] = new Gossip[IO] {

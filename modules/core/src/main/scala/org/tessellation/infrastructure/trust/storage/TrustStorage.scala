@@ -1,5 +1,6 @@
 package org.tessellation.infrastructure.trust.storage
 
+import cats.Order.max
 import cats.effect.Ref
 import cats.syntax.flatMap._
 import cats.syntax.functor._
@@ -7,6 +8,7 @@ import cats.syntax.option._
 import cats.syntax.partialOrder._
 import cats.{Monad, Order}
 
+import org.tessellation.infrastructure.trust.TrustModel
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.trust._
@@ -26,11 +28,15 @@ object TrustStorage {
     nextOrdinalTrust: OrdinalTrustMap
   )
 
-  def make[F[_]: Monad: Ref.Make](config: TrustStorageConfig): F[TrustStorage[F]] = make(TrustMap.empty, config)
+  def make[F[_]: Monad: Ref.Make](
+    config: TrustStorageConfig,
+    seedlist: Option[Set[PeerId]]
+  ): F[TrustStorage[F]] = make(TrustMap.empty, config, seedlist)
 
   def make[F[_]: Monad: Ref.Make](
     trustInfo: TrustMap,
-    config: TrustStorageConfig
+    config: TrustStorageConfig,
+    seedlist: Option[Set[PeerId]]
   ): F[TrustStorage[F]] =
     Ref[F]
       .of[TrustStore](
@@ -42,15 +48,20 @@ object TrustStorage {
             .replace(SnapshotOrdinal(config.ordinalTrustUpdateInterval))
         )
       )
-      .map(make(_, config))
+      .map(make(_, config, seedlist))
 
   def make[F[_]: Monad: Ref.Make](
     trustUpdates: Option[PeerObservationAdjustmentUpdateBatch],
-    config: TrustStorageConfig
+    config: TrustStorageConfig,
+    seedlist: Option[Set[PeerId]]
   ): F[TrustStorage[F]] =
-    trustUpdates.fold(make(config))(batch => make(config).flatTap(_.updateTrust(batch)))
+    trustUpdates.fold(make(config, seedlist))(batch => make(config, seedlist).flatTap(_.updateTrust(batch)))
 
-  def make[F[_]: Monad](trustStoreRef: Ref[F, TrustStore], config: TrustStorageConfig): TrustStorage[F] =
+  def make[F[_]: Monad](
+    trustStoreRef: Ref[F, TrustStore],
+    config: TrustStorageConfig,
+    seedlist: Option[Set[PeerId]]
+  ): TrustStorage[F] =
     new TrustStorage[F] {
 
       def updateTrust(trustUpdates: PeerObservationAdjustmentUpdateBatch): F[Unit] =
@@ -64,8 +75,13 @@ object TrustStorage {
           store.focus(_.trust.trust).replace(updated)
         }
 
-      def updatePredictedTrust(trustUpdates: Map[PeerId, Double]): F[Unit] =
+      def getTrust: F[TrustMap] = trustStoreRef.get.map(_.trust)
+
+      def updateTrustWithBiases(selfPeerId: PeerId): F[Unit] =
         trustStoreRef.update { store =>
+          val biasedTrust = getBiasedTrust(store.trust)
+          val trustUpdates = TrustModel.calculateTrust(biasedTrust, selfPeerId)
+
           val updated = store.trust.trust ++ trustUpdates.map {
             case (k, v) =>
               k -> store.trust.trust
@@ -73,16 +89,24 @@ object TrustStorage {
                 .focus(_.predictedTrust)
                 .replace(v.some)
           }
+
           store.focus(_.trust.trust).replace(updated)
         }
-
-      def getTrust: F[TrustMap] = trustStoreRef.get.map(_.trust)
 
       def getCurrentOrdinalTrust: F[OrdinalTrustMap] = trustStoreRef.get.map(_.currentOrdinalTrust)
 
       def getNextOrdinalTrust: F[OrdinalTrustMap] = trustStoreRef.get.map(_.nextOrdinalTrust)
 
-      def getPublicTrust: F[PublicTrust] = getTrust.map(_.toPublicTrust)
+      def getPublicTrust: F[PublicTrust] = getTrust
+        .map(_.toPublicTrust)
+        .map(
+          _.focus(_.labels)
+            .modify(
+              _.view
+                .mapValues(max(config.seedlistOutputBias, _))
+                .toMap
+            )
+        )
 
       def updatePeerPublicTrustInfo(peerId: PeerId, publicTrust: PublicTrust): F[Unit] = trustStoreRef.update { store =>
         val updated = store.trust.peerLabels.value + (peerId -> publicTrust)
@@ -142,6 +166,23 @@ object TrustStorage {
               )
             )
           } else store
+        }
+
+      private def getBiasedTrust(trust: TrustMap): TrustMap =
+        seedlist.fold(trust) { peerIds =>
+          val updatedTrust = peerIds
+            .filterNot(trust.trust.contains)
+            .map(_ -> TrustInfo(predictedTrust = config.seedlistInputBias.some))
+            .toMap
+          val updatedPeerLabels = peerIds
+            .filterNot(trust.peerLabels.value.contains)
+            .map(_ -> PublicTrust.empty)
+            .toMap
+
+          TrustMap(
+            trust.trust ++ updatedTrust,
+            PublicTrustMap(trust.peerLabels.value ++ updatedPeerLabels)
+          )
         }
     }
 }

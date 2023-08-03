@@ -15,6 +15,7 @@ import org.tessellation.sdk.config.types.{SdkConfig, SnapshotConfig}
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tessellation.sdk.domain.collateral.LatestBalances
 import org.tessellation.sdk.domain.node.NodeStorage
+import org.tessellation.sdk.domain.seedlist.SeedlistEntry
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.domain.trust.storage.TrustStorage
 import org.tessellation.sdk.infrastructure.gossip.RumorStorage
@@ -26,11 +27,12 @@ object Storages {
   def make[F[_]: Async: KryoSerializer: Supervisor](
     sdkStorages: SdkStorages[F],
     sdkConfig: SdkConfig,
+    seedlist: Option[Set[SeedlistEntry]],
     snapshotConfig: SnapshotConfig,
     trustUpdates: Option[PeerObservationAdjustmentUpdateBatch]
   ): F[Storages[F]] =
     for {
-      trustStorage <- TrustStorage.make[F](trustUpdates, sdkConfig.trustStorage)
+      trustStorage <- TrustStorage.make[F](trustUpdates, sdkConfig.trustStorage, seedlist.map(_.map(_.peerId)))
       incrementalGlobalSnapshotTmpLocalFileSystemStorage <- SnapshotLocalFileSystemStorage.make[F, GlobalIncrementalSnapshot](
         snapshotConfig.incrementalTmpSnapshotPath
       )

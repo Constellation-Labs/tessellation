@@ -4,30 +4,35 @@ import cats.kernel.Order
 import cats.syntax.option._
 import cats.syntax.partialOrder._
 
-import org.tessellation.infrastructure.trust.generators.{genPeerLabel, genPeerObservationAdjustmentUpdate, genPeerTrustInfo}
+import scala.math.max
+
+import org.tessellation.infrastructure.trust.generators._
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.generators.peerIdGen
+import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.trust._
 import org.tessellation.sdk.config.types.TrustStorageConfig
 import org.tessellation.sdk.domain.trust.storage._
 
 import eu.timepit.refined.api.Refined
 import eu.timepit.refined.auto._
-import eu.timepit.refined.cats._
 import eu.timepit.refined.numeric.NonNegative
+import monocle.Monocle.toAppliedFocusOps
 import org.scalacheck.Gen
 import weaver.SimpleIOSuite
 import weaver.scalacheck.Checkers
 
 object TrustStorageSuite extends SimpleIOSuite with Checkers {
 
-  def mkTrustStorage(trust: TrustMap = TrustMap.empty): F[TrustStorage[F]] = {
+  def mkTrustStorage(trust: TrustMap = TrustMap.empty, seedlist: Option[Set[PeerId]] = none): F[TrustStorage[F]] = {
     val config = TrustStorageConfig(
       ordinalTrustUpdateInterval = 1000L,
-      ordinalTrustUpdateDelay = 500L
+      ordinalTrustUpdateDelay = 500L,
+      seedlistInputBias = 0.7,
+      seedlistOutputBias = 0.5
     )
 
-    TrustStorage.make(trust, config)
+    TrustStorage.make(trust, config, seedlist)
   }
 
   test("initial trust storage is empty") {
@@ -53,17 +58,32 @@ object TrustStorageSuite extends SimpleIOSuite with Checkers {
   }
 
   test("internal trust storage is updated with predicted trusts") {
-    val gen = Gen.mapOfN(4, genPeerLabel)
+    val gen = for {
+      trust <- Gen.mapOfN(4, genPeerTrustInfo)
+      publicTrust <- Gen.mapOfN(4, genPeerPublicTrust)
+      peerIds <- Gen.containerOfN[Set, PeerId](1, peerIdGen)
+      selfPeerId <- peerIdGen
+    } yield
+      (
+        TrustMap(trust, PublicTrustMap(publicTrust)),
+        peerIds,
+        selfPeerId
+      )
 
-    forall(gen) { trusts =>
-      for {
-        store <- mkTrustStorage()
+    forall(gen) {
+      case (trust, seedlist, selfPeerId) =>
+        for {
+          store <- mkTrustStorage(trust = trust, seedlist = seedlist.some)
+          firstTrustMap <- store.getTrust.map(_.trust)
 
-        _ <- store.updatePredictedTrust(trusts)
+          _ <- store.updateTrustWithBiases(selfPeerId)
 
-        expected = trusts.view.mapValues(trustValue => TrustInfo(predictedTrust = trustValue.some)).toMap
-        actual <- store.getTrust.map(_.trust)
-      } yield expect.eql(expected, actual)
+          secondTrustMap <- store.getTrust.map(_.trust)
+        } yield
+          expect.all(
+            !firstTrustMap.contains(selfPeerId),
+            secondTrustMap.contains(selfPeerId)
+          )
     }
   }
 
@@ -369,6 +389,28 @@ object TrustStorageSuite extends SimpleIOSuite with Checkers {
           secondNext.peerLabels.value.contains(peerId),
           secondNext.peerLabels.value.get(peerId).contains(gossipPublicTrust)
         )
+    }
+  }
+
+  test("a minimum threshold is applied to public trust when it is retrieved") {
+    val gen = for {
+      trustInfo <- Gen.mapOfN(4, genPeerTrustInfo)
+    } yield TrustMap.empty.copy(trust = trustInfo)
+
+    forall(gen) {
+      case trust =>
+        for {
+          store <- mkTrustStorage(trust)
+
+          expected = trust.toPublicTrust
+            .focus(_.labels)
+            .modify(
+              _.view
+                .mapValues(max(0.5, _))
+                .toMap
+            )
+          actual <- store.getPublicTrust
+        } yield expect.eql(expected, actual)
     }
   }
 }

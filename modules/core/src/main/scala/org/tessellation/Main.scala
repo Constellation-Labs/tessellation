@@ -49,7 +49,15 @@ object Main
     for {
       queues <- Queues.make[IO](sdkQueues).asResource
       p2pClient = P2PClient.make[IO](sdkP2PClient, sdkResources.client, sdkServices.session)
-      storages <- Storages.make[IO](sdkStorages, method.sdkConfig, cfg.snapshot, trustRatings).asResource
+      storages <- Storages
+        .make[IO](
+          sdkStorages,
+          method.sdkConfig,
+          sdk.seedlist,
+          cfg.snapshot,
+          trustRatings
+        )
+        .asResource
       services <- Services
         .make[IO](
           sdkServices,

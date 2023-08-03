@@ -3,6 +3,7 @@ package org.tessellation.infrastructure.trust
 import cats.effect.{IO, Resource}
 import cats.syntax.applicative._
 import cats.syntax.eq._
+import cats.syntax.option._
 
 import org.tessellation.infrastructure.trust.generators.genPeerLabel
 import org.tessellation.infrastructure.trust.storage.TrustStorage
@@ -30,10 +31,12 @@ object HandlerSuite extends MutableIOSuite with Checkers {
   def mkTrustStorage(trust: TrustMap = TrustMap.empty): F[TrustStorage[F]] = {
     val config = TrustStorageConfig(
       ordinalTrustUpdateInterval = 1000L,
-      ordinalTrustUpdateDelay = 500L
+      ordinalTrustUpdateDelay = 500L,
+      seedlistInputBias = 0.7,
+      seedlistOutputBias = 0.5
     )
 
-    TrustStorage.make(trust, config)
+    TrustStorage.make(trust, config, none)
   }
 
   test("rumor handler updates the trust storage") {

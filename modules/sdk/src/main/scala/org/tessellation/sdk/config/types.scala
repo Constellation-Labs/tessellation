@@ -97,7 +97,9 @@ object types {
 
   case class TrustStorageConfig(
     ordinalTrustUpdateInterval: NonNegLong,
-    ordinalTrustUpdateDelay: NonNegLong
+    ordinalTrustUpdateDelay: NonNegLong,
+    seedlistInputBias: Double,
+    seedlistOutputBias: Double
   )
 
 }

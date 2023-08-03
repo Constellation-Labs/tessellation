@@ -68,7 +68,9 @@ trait CliMethod {
 
   val trustStorageConfig: TrustStorageConfig = TrustStorageConfig(
     ordinalTrustUpdateInterval = 1000L,
-    ordinalTrustUpdateDelay = 500L
+    ordinalTrustUpdateDelay = 500L,
+    seedlistInputBias = 0.7,
+    seedlistOutputBias = 0.5
   )
 
   val leavingDelay = 30.seconds

@@ -119,6 +119,10 @@ object trust {
 
   }
 
+  object PublicTrust {
+    val empty: PublicTrust = PublicTrust(Map.empty)
+  }
+
   @derive(eqv, decoder, encoder, show)
   case class SnapshotOrdinalPublicTrust(
     ordinal: SnapshotOrdinal,
