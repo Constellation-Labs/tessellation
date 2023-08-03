@@ -18,7 +18,6 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema._
 import org.tessellation.schema.balance.Amount
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.generators.{chooseNumRefined, signatureGen, signedTransactionGen}
 import org.tessellation.schema.transaction.{RewardTransaction, TransactionAmount}
@@ -108,7 +107,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
 
   def makeRewards(config: RewardsConfig)(
     implicit sp: SecurityProvider[IO]
-  ): Rewards[F, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot] = {
+  ): Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot] = {
     val programsDistributor = ProgramsDistributor.make
     val regularDistributor = FacilitatorDistributor.make
     Rewards.make[IO](config, programsDistributor, regularDistributor)

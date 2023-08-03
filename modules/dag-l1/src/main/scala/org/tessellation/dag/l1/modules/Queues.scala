@@ -14,20 +14,20 @@ import org.tessellation.security.signature.Signed
 
 object Queues {
 
-  def make[F[_]: Concurrent, B <: Block](sdkQueues: SdkQueues[F]): F[Queues[F, B]] =
+  def make[F[_]: Concurrent](sdkQueues: SdkQueues[F]): F[Queues[F]] =
     for {
       peerBlockConsensusInputQueue <- Queue.unbounded[F, Signed[PeerBlockConsensusInput]]
-      peerBlockQueue <- Queue.unbounded[F, Signed[B]]
+      peerBlockQueue <- Queue.unbounded[F, Signed[Block]]
     } yield
-      new Queues[F, B] {
+      new Queues[F] {
         val rumor: Queue[F, Hashed[RumorRaw]] = sdkQueues.rumor
         val peerBlockConsensusInput: Queue[F, Signed[PeerBlockConsensusInput]] = peerBlockConsensusInputQueue
-        val peerBlock: Queue[F, Signed[B]] = peerBlockQueue
+        val peerBlock: Queue[F, Signed[Block]] = peerBlockQueue
       }
 }
 
-sealed abstract class Queues[F[_], B <: Block] private {
+sealed abstract class Queues[F[_]] private {
   val rumor: Queue[F, Hashed[RumorRaw]]
   val peerBlockConsensusInput: Queue[F, Signed[PeerBlockConsensusInput]]
-  val peerBlock: Queue[F, Signed[B]]
+  val peerBlock: Queue[F, Signed[Block]]
 }

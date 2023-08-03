@@ -31,17 +31,16 @@ object DataApplication {
   def run[F[_]: Async: Random: KryoSerializer: SecurityProvider: L1NodeContext](
     clusterStorage: ClusterStorage[F],
     l0ClusterStorage: L0ClusterStorage[F],
-    blockOutputClient: L0BlockOutputClient[F, CurrencyBlock],
+    blockOutputClient: L0BlockOutputClient[F],
     consensusClient: ConsensusClient[F],
     l0PeerDiscoveryProgram: L0PeerDiscovery[F],
     services: Services[
       F,
-      CurrencyBlock,
       CurrencySnapshotStateProof,
       CurrencyIncrementalSnapshot,
       CurrencySnapshotInfo
     ],
-    queues: Queues[F, CurrencyBlock],
+    queues: Queues[F],
     dataApplicationService: BaseDataApplicationL1Service[F],
     selfKeyPair: KeyPair,
     selfId: PeerId,

@@ -23,7 +23,6 @@ object Main
 
   def rewards(implicit sp: SecurityProvider[IO]): Option[Rewards[
     IO,
-    CurrencyBlock,
     CurrencySnapshotStateProof,
     CurrencyIncrementalSnapshot
   ]] = None

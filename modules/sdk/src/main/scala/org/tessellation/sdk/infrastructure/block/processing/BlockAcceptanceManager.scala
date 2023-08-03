@@ -1,6 +1,5 @@
 package org.tessellation.sdk.infrastructure.block.processing
 
-import cats.Eq
 import cats.data.Validated.{Invalid, Valid}
 import cats.effect.Async
 import cats.syntax.applicative._
@@ -26,28 +25,28 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object BlockAcceptanceManager {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider, B <: Block: Eq: Ordering](
-    blockValidator: BlockValidator[F, B]
-  ): BlockAcceptanceManager[F, B] = make(BlockAcceptanceLogic.make[F, B], blockValidator)
+  def make[F[_]: Async: KryoSerializer: SecurityProvider](
+    blockValidator: BlockValidator[F]
+  ): BlockAcceptanceManager[F] = make(BlockAcceptanceLogic.make[F], blockValidator)
 
-  def make[F[_]: Async: KryoSerializer, B <: Block: Eq: Ordering](
-    logic: BlockAcceptanceLogic[F, B],
-    blockValidator: BlockValidator[F, B]
-  ): BlockAcceptanceManager[F, B] =
-    new BlockAcceptanceManager[F, B] {
+  def make[F[_]: Async: KryoSerializer](
+    logic: BlockAcceptanceLogic[F],
+    blockValidator: BlockValidator[F]
+  ): BlockAcceptanceManager[F] =
+    new BlockAcceptanceManager[F] {
       private val logger = Slf4jLogger.getLoggerFromClass[F](BlockAcceptanceManager.getClass)
 
       def acceptBlocksIteratively(
-        blocks: List[Signed[B]],
+        blocks: List[Signed[Block]],
         context: BlockAcceptanceContext[F]
-      ): F[BlockAcceptanceResult[B]] = {
+      ): F[BlockAcceptanceResult] = {
 
         def go(
-          initState: BlockAcceptanceState[B],
-          toProcess: List[(Signed[B], TxChains)]
-        ): F[BlockAcceptanceState[B]] =
+          initState: BlockAcceptanceState,
+          toProcess: List[(Signed[Block], TxChains)]
+        ): F[BlockAcceptanceState] =
           for {
-            currState <- toProcess.foldLeftM[F, BlockAcceptanceState[B]](initState.copy(awaiting = List.empty)) { (acc, blockAndTxChains) =>
+            currState <- toProcess.foldLeftM[F, BlockAcceptanceState](initState.copy(awaiting = List.empty)) { (acc, blockAndTxChains) =>
               blockAndTxChains match {
                 case (block, txChains) =>
                   logic
@@ -79,7 +78,7 @@ object BlockAcceptanceManager {
           } yield result
 
         blocks.sorted
-          .foldLeftM((List.empty[(Signed[B], TxChains)], List.empty[(Signed[B], ValidationFailed)])) { (acc, block) =>
+          .foldLeftM((List.empty[(Signed[Block], TxChains)], List.empty[(Signed[Block], ValidationFailed)])) { (acc, block) =>
             acc match {
               case (validList, invalidList) =>
                 blockValidator.validate(block).map {
@@ -100,7 +99,7 @@ object BlockAcceptanceManager {
       }
 
       def acceptBlock(
-        block: Signed[B],
+        block: Signed[Block],
         context: BlockAcceptanceContext[F]
       ): F[Either[BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, NonNegLong)]] =
         blockValidator.validate(block).flatMap {
@@ -115,14 +114,14 @@ object BlockAcceptanceManager {
             .value
         }
 
-      private def logAcceptedBlock(tuple: (Signed[B], NonNegLong)): F[Unit] = {
+      private def logAcceptedBlock(tuple: (Signed[Block], NonNegLong)): F[Unit] = {
         val (signedBlock, blockUsages) = tuple
         BlockReference.of(signedBlock).flatMap { blockRef =>
           logger.info(s"Accepted block: ${blockRef.show}, usages: ${blockUsages.show}")
         }
       }
 
-      private def logNotAcceptedBlock(tuple: (Signed[B], BlockNotAcceptedReason)): F[Unit] = {
+      private def logNotAcceptedBlock(tuple: (Signed[Block], BlockNotAcceptedReason)): F[Unit] = {
         val (signedBlock, reason) = tuple
         BlockReference.of(signedBlock).flatMap { blockRef =>
           reason match {

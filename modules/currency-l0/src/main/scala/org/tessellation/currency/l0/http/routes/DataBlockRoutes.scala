@@ -7,8 +7,8 @@ import cats.syntax.functor._
 
 import org.tessellation.currency.dataApplication.DataUpdate
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
-import org.tessellation.currency.schema.currency.CurrencyBlock
 import org.tessellation.kernel._
+import org.tessellation.schema.Block
 import org.tessellation.security.signature.Signed
 
 import io.circe.Decoder
@@ -17,7 +17,7 @@ import org.http4s.dsl.Http4sDsl
 import org.http4s.server.Router
 
 final case class DataBlockRoutes[F[_]: Async](
-  mkCell: Either[Signed[CurrencyBlock], Signed[DataApplicationBlock]] => Cell[F, StackF, _, Either[CellError, Ω], _]
+  mkCell: Either[Signed[Block], Signed[DataApplicationBlock]] => Cell[F, StackF, _, Either[CellError, Ω], _]
 )(implicit decoder: Decoder[DataUpdate])
     extends Http4sDsl[F] {
   import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
@@ -26,7 +26,7 @@ final case class DataBlockRoutes[F[_]: Async](
     case req @ POST -> Root / "l1-data-output" =>
       req
         .as[Signed[DataApplicationBlock]]
-        .map(_.asRight[Signed[CurrencyBlock]])
+        .map(_.asRight[Signed[Block]])
         .map(mkCell)
         .flatMap(_.run())
         .flatMap {

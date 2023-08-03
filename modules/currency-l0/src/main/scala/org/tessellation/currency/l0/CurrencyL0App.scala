@@ -49,7 +49,7 @@ abstract class CurrencyL0App(
 
   def rewards(
     implicit sp: SecurityProvider[IO]
-  ): Option[Rewards[IO, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot]]
+  ): Option[Rewards[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot]]
 
   def run(method: Run, sdk: SDK[IO]): Resource[IO, Unit] = {
     import sdk._

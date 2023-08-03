@@ -6,9 +6,9 @@ import org.tessellation.schema.Block
 import org.tessellation.sdk.domain.block.processing.{TxChains, UsageCount}
 import org.tessellation.security.signature.Signed
 
-trait BlockAcceptanceLogic[F[_], B <: Block] {
+trait BlockAcceptanceLogic[F[_]] {
   def acceptBlock(
-    block: Signed[B],
+    block: Signed[Block],
     txChains: TxChains,
     context: BlockAcceptanceContext[F],
     contextUpdate: BlockAcceptanceContextUpdate

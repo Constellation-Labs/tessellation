@@ -25,17 +25,17 @@ import eu.timepit.refined.auto._
 
 object BlockValidator {
 
-  def make[F[_]: Async: KryoSerializer, B <: Block](
+  def make[F[_]: Async: KryoSerializer](
     signedValidator: SignedValidator[F],
     transactionChainValidator: TransactionChainValidator[F],
     transactionValidator: TransactionValidator[F]
-  ): BlockValidator[F, B] =
-    new BlockValidator[F, B] {
+  ): BlockValidator[F] =
+    new BlockValidator[F] {
 
       def validate(
-        signedBlock: Signed[B],
+        signedBlock: Signed[Block],
         params: BlockValidationParams
-      ): F[BlockValidationErrorOr[(Signed[B], Map[Address, TransactionNel])]] =
+      ): F[BlockValidationErrorOr[(Signed[Block], Map[Address, TransactionNel])]] =
         for {
           signedV <- validateSigned(signedBlock, params)
           transactionsV <- validateTransactions(signedBlock)
@@ -48,9 +48,9 @@ object BlockValidator {
             .product(transactionChainV)
 
       private def validateSigned(
-        signedBlock: Signed[B],
+        signedBlock: Signed[Block],
         params: BlockValidationParams
-      ): F[BlockValidationErrorOr[Signed[B]]] =
+      ): F[BlockValidationErrorOr[Signed[Block]]] =
         signedValidator
           .validateSignatures(signedBlock)
           .map { signaturesV =>
@@ -61,8 +61,8 @@ object BlockValidator {
           .map(_.errorMap[BlockValidationError](InvalidSigned))
 
       private def validateTransactions(
-        signedBlock: Signed[B]
-      ): F[BlockValidationErrorOr[Signed[B]]] =
+        signedBlock: Signed[Block]
+      ): F[BlockValidationErrorOr[Signed[Block]]] =
         signedBlock.value.transactions.toNonEmptyList.traverse { signedTransaction =>
           for {
             txRef <- TransactionReference.of(signedTransaction)
@@ -75,31 +75,31 @@ object BlockValidator {
         }
 
       private def validateTransactionChain(
-        signedBlock: Signed[B]
+        signedBlock: Signed[Block]
       ): F[BlockValidationErrorOr[Map[Address, TransactionNel]]] =
         transactionChainValidator
           .validate(signedBlock.transactions)
           .map(_.errorMap[BlockValidationError](InvalidTransactionChain))
 
       private def validateProperties(
-        signedBlock: Signed[B],
+        signedBlock: Signed[Block],
         params: BlockValidationParams
-      ): BlockValidationErrorOr[Signed[B]] =
+      ): BlockValidationErrorOr[Signed[Block]] =
         validateParentCount(signedBlock, params)
           .productR(validateUniqueParents(signedBlock))
 
       private def validateParentCount(
-        signedBlock: Signed[B],
+        signedBlock: Signed[Block],
         params: BlockValidationParams
-      ): BlockValidationErrorOr[Signed[B]] =
+      ): BlockValidationErrorOr[Signed[Block]] =
         if (signedBlock.parent.size >= params.minParentCount)
           signedBlock.validNec
         else
           NotEnoughParents(signedBlock.parent.size, params.minParentCount).invalidNec
 
       private def validateUniqueParents(
-        signedBlock: Signed[B]
-      ): BlockValidationErrorOr[Signed[B]] =
+        signedBlock: Signed[Block]
+      ): BlockValidationErrorOr[Signed[Block]] =
         duplicatedValues(signedBlock.parent).toNel
           .map(NonUniqueParents)
           .toInvalidNec(signedBlock)

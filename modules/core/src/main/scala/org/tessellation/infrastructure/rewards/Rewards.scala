@@ -19,7 +19,6 @@ import org.tessellation.ext.refined._
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.transaction.{RewardTransaction, Transaction, TransactionAmount}
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotStateProof, SnapshotOrdinal}
@@ -38,8 +37,8 @@ object Rewards {
     config: RewardsConfig,
     programsDistributor: ProgramsDistributor[Either[ArithmeticException, *]],
     facilitatorDistributor: FacilitatorDistributor[F]
-  ): Rewards[F, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot] =
-    new Rewards[F, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot] {
+  ): Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot] =
+    new Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot] {
 
       private def getAmountByEpoch(epochProgress: EpochProgress, rewardsPerEpoch: SortedMap[EpochProgress, Amount]): Amount =
         rewardsPerEpoch

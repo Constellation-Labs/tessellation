@@ -111,9 +111,6 @@ object transaction {
     salt: TransactionSalt
   ) extends Fiber[TransactionReference, TransactionData]
       with Encodable {
-    import Transaction._
-
-    // implicit object OrderingInstance extends OrderBasedOrdering[Transaction]
 
     def reference = parent
     def data = TransactionData(source, destination, amount, fee)
@@ -121,7 +118,7 @@ object transaction {
     // WARN: Transactions hash needs to be calculated with Kryo instance having setReferences=true, to be backward compatible
     override def toEncode: String =
       "2" +
-        runLengthEncoding(
+        Transaction.runLengthEncoding(
           Seq(
             source.coerce,
             destination.coerce,
@@ -134,16 +131,6 @@ object transaction {
         )
 
     val ordinal: TransactionOrdinal = parent.ordinal.next
-
-    val _Source: Lens[Transaction, Address] = GenLens[Transaction](_.source)
-    val _Destination: Lens[Transaction, Address] = GenLens[Transaction](_.destination)
-
-    val _Amount: Lens[Transaction, TransactionAmount] = GenLens[Transaction](_.amount)
-    val _Fee: Lens[Transaction, TransactionFee] = GenLens[Transaction](_.fee)
-    val _Parent: Lens[Transaction, TransactionReference] = GenLens[Transaction](_.parent)
-
-    val _ParentHash: Lens[Transaction, Hash] = _Parent.andThen(TransactionReference._Hash)
-    val _ParentOrdinal: Lens[Transaction, TransactionOrdinal] = _Parent.andThen(TransactionReference._Ordinal)
   }
 
   object Transaction {

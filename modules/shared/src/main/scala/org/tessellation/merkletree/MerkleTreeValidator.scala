@@ -16,12 +16,12 @@ import derevo.derive
 
 object StateProofValidator {
 
-  def validate[F[_]: MonadThrow: KryoSerializer, P <: StateProof: Eq, A <: IncrementalSnapshot[_, P]](
+  def validate[F[_]: MonadThrow: KryoSerializer, P <: StateProof: Eq, A <: IncrementalSnapshot[P]](
     snapshot: Hashed[A],
     si: SnapshotInfo[P]
   ): F[Validated[StateBroken, Unit]] = si.stateProof.map(validate(snapshot, _))
 
-  def validate[P <: StateProof: Eq, A <: IncrementalSnapshot[_, P]](
+  def validate[P <: StateProof: Eq, A <: IncrementalSnapshot[P]](
     snapshot: Hashed[A],
     stateProof: P
   ): Validated[StateBroken, Unit] =

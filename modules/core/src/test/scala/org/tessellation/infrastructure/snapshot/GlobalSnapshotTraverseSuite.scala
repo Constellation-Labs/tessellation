@@ -12,7 +12,6 @@ import cats.syntax.traverse._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import org.tessellation.currency.schema.currency.CurrencyBlock
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.infrastructure.snapshot._
@@ -20,7 +19,6 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
@@ -61,7 +59,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
 
   val balances: Map[Address, Balance] = Map(Address("DAG8Yy2enxizZdWoipKKZg6VXwk7rY2Z54mJqUdC") -> Balance(NonNegLong(10L)))
 
-  def mkSnapshots(dags: List[List[BlockAsActiveTip[DAGBlock]]], initBalances: Map[Address, Balance])(
+  def mkSnapshots(dags: List[List[BlockAsActiveTip]], initBalances: Map[Address, Balance])(
     implicit K: KryoSerializer[IO],
     S: SecurityProvider[IO]
   ): IO[(Hashed[GlobalSnapshot], NonEmptyList[Hashed[GlobalIncrementalSnapshot]])] =
@@ -83,7 +81,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         }
     }
 
-  def mkSnapshot(lastHash: Hash, reference: GlobalIncrementalSnapshot, keyPair: KeyPair, blocks: SortedSet[BlockAsActiveTip[DAGBlock]])(
+  def mkSnapshot(lastHash: Hash, reference: GlobalIncrementalSnapshot, keyPair: KeyPair, blocks: SortedSet[BlockAsActiveTip])(
     implicit K: KryoSerializer[IO],
     S: SecurityProvider[IO]
   ) =
@@ -106,7 +104,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       hashed <- signed.toHashed
     } yield hashed
 
-  type DAGS = (List[Address], Long, SortedMap[Address, Signed[Transaction]], List[List[BlockAsActiveTip[DAGBlock]]])
+  type DAGS = (List[Address], Long, SortedMap[Address, Signed[Transaction]], List[List[BlockAsActiveTip]])
 
   def mkBlocks(feeValue: NonNegLong, numberOfAddresses: Int, txnsChunksRanges: List[(Int, Int)], blocksChunksRanges: List[(Int, Int)])(
     implicit K: KryoSerializer[IO],
@@ -130,7 +128,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
     blockSigningKeyPairs <- NonEmptyList.of("", "", "").traverse(_ => KeyPairGenerator.makeKeyPair[IO])
     dags <- DAGBlockGenerator.createDAGs(transactionsChain, initialReferences(), blockSigningKeyPairs).compile.toList
     chaunkedDags = blocksChunksRanges
-      .foldLeft[List[List[BlockAsActiveTip[DAGBlock]]]](Nil) { case (acc, (start, end)) => dags.slice(start, end) :: acc }
+      .foldLeft[List[List[BlockAsActiveTip]]](Nil) { case (acc, (start, end)) => dags.slice(start, end) :: acc }
       .reverse
   } yield (addresses, txnsSize, lastTxns, chaunkedDags)
 
@@ -153,16 +151,16 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
 
     val signedValidator = SignedValidator.make[IO]
     val blockValidator =
-      BlockValidator.make[IO, DAGBlock](
+      BlockValidator.make[IO](
         signedValidator,
         TransactionChainValidator.make[IO],
         TransactionValidator.make[IO](signedValidator)
       )
-    val blockAcceptanceManager = BlockAcceptanceManager.make(BlockAcceptanceLogic.make[IO, DAGBlock], blockValidator)
+    val blockAcceptanceManager = BlockAcceptanceManager.make(BlockAcceptanceLogic.make[IO], blockValidator)
     val stateChannelValidator = StateChannelValidator.make[IO](signedValidator, None, Some(Map.empty[Address, NonEmptySet[PeerId]]))
     val validators = SdkValidators.make[IO](None, None, Some(Map.empty[Address, NonEmptySet[PeerId]]))
     val currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
-      BlockAcceptanceManager.make[IO, CurrencyBlock](validators.currencyBlockValidator),
+      BlockAcceptanceManager.make[IO](validators.currencyBlockValidator),
       Amount(0L)
     )
     val currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotAcceptanceManager)

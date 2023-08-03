@@ -39,7 +39,7 @@ object CurrencySnapshotConsensus {
     collateral: Amount,
     clusterStorage: ClusterStorage[F],
     nodeStorage: NodeStorage[F],
-    rewards: Rewards[F, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot],
+    rewards: Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot],
     snapshotConfig: SnapshotConfig,
     client: Client[F],
     session: Session[F],
@@ -48,7 +48,7 @@ object CurrencySnapshotConsensus {
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
   ): F[
-    SnapshotConsensus[F, CurrencyBlock, CurrencySnapshotArtifact, CurrencySnapshotContext, CurrencySnapshotEvent]
+    SnapshotConsensus[F, CurrencySnapshotArtifact, CurrencySnapshotContext, CurrencySnapshotEvent]
   ] = {
     def noopDecoder: Decoder[DataUpdate] = Decoder.failedWithMessage[DataUpdate]("not implemented")
 

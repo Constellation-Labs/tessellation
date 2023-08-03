@@ -45,7 +45,7 @@ object Services {
     keyPair: KeyPair,
     cfg: AppConfig,
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
-    maybeRewards: Option[Rewards[F, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot]]
+    maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot]]
   ): F[Services[F]] =
     for {
       stateChannelSnapshotService <- StateChannelSnapshotService
@@ -106,7 +106,6 @@ sealed abstract class Services[F[_]] private (
   val gossip: Gossip[F],
   val consensus: SnapshotConsensus[
     F,
-    CurrencyBlock,
     CurrencyIncrementalSnapshot,
     CurrencySnapshotContext,
     CurrencySnapshotEvent

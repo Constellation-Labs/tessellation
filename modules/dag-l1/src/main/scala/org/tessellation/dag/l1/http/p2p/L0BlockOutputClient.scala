@@ -12,8 +12,8 @@ import org.http4s.Method.POST
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.client.Client
 
-trait L0BlockOutputClient[F[_], B <: Block] {
-  def sendL1Output(output: Signed[B]): PeerResponse[F, Boolean]
+trait L0BlockOutputClient[F[_]] {
+  def sendL1Output(output: Signed[Block]): PeerResponse[F, Boolean]
   def sendDataApplicationBlock(block: Signed[DataApplicationBlock])(
     implicit encoder: Encoder[DataUpdate]
   ): PeerResponse[F, Boolean]
@@ -21,10 +21,10 @@ trait L0BlockOutputClient[F[_], B <: Block] {
 
 object L0BlockOutputClient {
 
-  def make[F[_], B <: Block: Encoder](pathPrefix: String, client: Client[F]): L0BlockOutputClient[F, B] =
-    new L0BlockOutputClient[F, B] {
+  def make[F[_]](pathPrefix: String, client: Client[F]): L0BlockOutputClient[F] =
+    new L0BlockOutputClient[F] {
 
-      def sendL1Output(output: Signed[B]): PeerResponse[F, Boolean] =
+      def sendL1Output(output: Signed[Block]): PeerResponse[F, Boolean] =
         PeerResponse(s"$pathPrefix/l1-output", POST)(client) { (req, c) =>
           c.successful(req.withEntity(output))
         }

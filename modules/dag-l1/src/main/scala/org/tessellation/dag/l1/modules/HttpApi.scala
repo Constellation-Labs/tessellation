@@ -8,7 +8,6 @@ import cats.syntax.semigroupk._
 
 import org.tessellation.dag.l1.http.Routes
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.Block
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.sdk.config.types.HttpConfig
@@ -27,36 +26,34 @@ object HttpApi {
 
   def make[
     F[_]: Async: KryoSerializer: SecurityProvider: Metrics: Supervisor,
-    B <: Block,
     P <: StateProof,
-    S <: Snapshot[B],
+    S <: Snapshot,
     SI <: SnapshotInfo[P]
   ](
-    storages: Storages[F, B, P, S, SI],
-    queues: Queues[F, B],
+    storages: Storages[F, P, S, SI],
+    queues: Queues[F],
     privateKey: PrivateKey,
-    services: Services[F, B, P, S, SI],
-    programs: Programs[F, B, P, S, SI],
+    services: Services[F, P, S, SI],
+    programs: Programs[F, P, S, SI],
     healthchecks: HealthChecks[F],
     selfId: PeerId,
     nodeVersion: String,
     httpCfg: HttpConfig
-  ): HttpApi[F, B, P, S, SI] =
-    new HttpApi[F, B, P, S, SI](storages, queues, privateKey, services, programs, healthchecks, selfId, nodeVersion, httpCfg) {}
+  ): HttpApi[F, P, S, SI] =
+    new HttpApi[F, P, S, SI](storages, queues, privateKey, services, programs, healthchecks, selfId, nodeVersion, httpCfg) {}
 }
 
 sealed abstract class HttpApi[
   F[_]: Async: KryoSerializer: SecurityProvider: Metrics: Supervisor,
-  B <: Block,
   P <: StateProof,
-  S <: Snapshot[B],
+  S <: Snapshot,
   SI <: SnapshotInfo[P]
 ] private (
-  storages: Storages[F, B, P, S, SI],
-  queues: Queues[F, B],
+  storages: Storages[F, P, S, SI],
+  queues: Queues[F],
   privateKey: PrivateKey,
-  services: Services[F, B, P, S, SI],
-  programs: Programs[F, B, P, S, SI],
+  services: Services[F, P, S, SI],
+  programs: Programs[F, P, S, SI],
   healthchecks: HealthChecks[F],
   selfId: PeerId,
   nodeVersion: String,

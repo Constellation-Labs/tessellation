@@ -41,7 +41,6 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
     extends SnapshotConsensusFunctions[
       F,
-      CurrencyBlock,
       CurrencySnapshotEvent,
       CurrencySnapshotArtifact,
       CurrencySnapshotContext,
@@ -54,7 +53,7 @@ object CurrencySnapshotConsensusFunctions {
     stateChannelSnapshotService: StateChannelSnapshotService[F],
     currencySnapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F],
     collateral: Amount,
-    rewards: Rewards[F, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot],
+    rewards: Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot],
     maybeDataApplicationService: Option[BaseDataApplicationL0Service[F]],
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
   ): CurrencySnapshotConsensusFunctions[F] = new CurrencySnapshotConsensusFunctions[F] {
@@ -79,7 +78,7 @@ object CurrencySnapshotConsensusFunctions {
       events: Set[CurrencySnapshotEvent]
     ): F[(CurrencySnapshotArtifact, CurrencySnapshotContext, Set[CurrencySnapshotEvent])] = {
 
-      val (blocks: List[Signed[CurrencyBlock]], dataBlocks: List[Signed[DataApplicationBlock]]) =
+      val (blocks: List[Signed[Block]], dataBlocks: List[Signed[DataApplicationBlock]]) =
         events
           .filter(_.isLeft || maybeDataApplicationService.isDefined)
           .toList
@@ -182,7 +181,7 @@ object CurrencySnapshotConsensusFunctions {
     }
 
     private def getReturnedEvents(
-      acceptanceResult: BlockAcceptanceResult[CurrencyBlock]
+      acceptanceResult: BlockAcceptanceResult
     ): Set[CurrencySnapshotEvent] =
       acceptanceResult.notAccepted.mapFilter {
         case (signedBlock, _: BlockAwaitReason) => signedBlock.asLeft[Signed[DataApplicationBlock]].some

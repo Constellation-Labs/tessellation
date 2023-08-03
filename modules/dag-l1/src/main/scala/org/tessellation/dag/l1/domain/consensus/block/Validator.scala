@@ -11,7 +11,6 @@ import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.PeerBl
 import org.tessellation.dag.l1.domain.consensus.block.storage.ConsensusStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.Block
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.node.NodeState.Ready
 import org.tessellation.schema.peer.PeerId
@@ -38,8 +37,8 @@ object Validator {
       .map(_.filter(p => isReadyForBlockConsensus(p.state)))
       .map(_.size >= peersCount)
 
-  private def enoughTipsForConsensus[F[_]: Monad, B <: Block](
-    blockStorage: BlockStorage[F, B],
+  private def enoughTipsForConsensus[F[_]: Monad](
+    blockStorage: BlockStorage[F],
     tipsCount: PosInt
   ): F[Boolean] =
     blockStorage.getTips(tipsCount).map(_.isDefined)
@@ -49,11 +48,11 @@ object Validator {
   ): F[Boolean] =
     transactionStorage.countAllowedForConsensus.map(_ >= 1)
 
-  def canStartOwnConsensus[F[_]: Async, B <: Block](
-    consensusStorage: ConsensusStorage[F, B],
+  def canStartOwnConsensus[F[_]: Async](
+    consensusStorage: ConsensusStorage[F],
     nodeStorage: NodeStorage[F],
     clusterStorage: ClusterStorage[F],
-    blockStorage: BlockStorage[F, B],
+    blockStorage: BlockStorage[F],
     transactionStorage: TransactionStorage[F],
     peersCount: PosInt,
     tipsCount: PosInt

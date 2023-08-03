@@ -9,9 +9,8 @@ import cats.syntax.semigroupk._
 import org.tessellation.domain.cell.{L0Cell, L0CellInput}
 import org.tessellation.http.routes._
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.block.DAGBlock
+import org.tessellation.schema._
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.AppEnvironment._
 import org.tessellation.sdk.config.types.HttpConfig
@@ -69,7 +68,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
   httpCfg: HttpConfig
 ) {
 
-  private val mkDagCell = (block: Signed[DAGBlock]) =>
+  private val mkDagCell = (block: Signed[Block]) =>
     L0Cell.mkL0Cell(queues.l1Output, queues.stateChannelOutput).apply(L0CellInput.HandleDAGL1(block))
 
   private val clusterRoutes =

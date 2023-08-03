@@ -11,7 +11,6 @@ import cats.syntax.functor._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotStateProof}
 import org.tessellation.sdk.config.AppEnvironment
@@ -57,13 +56,13 @@ object GlobalSnapshotConsensus {
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
     client: Client[F],
     session: Session[F],
-    rewards: Rewards[F, DAGBlock, GlobalSnapshotStateProof, GlobalIncrementalSnapshot]
+    rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot]
   ): F[Consensus[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact, GlobalSnapshotContext]] =
     for {
       globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager
         .make[F](stateChannelOrdinalDelay, stateChannelAllowanceLists)
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
-        BlockAcceptanceManager.make[F, DAGBlock](validators.blockValidator),
+        BlockAcceptanceManager.make[F](validators.blockValidator),
         GlobalSnapshotStateChannelEventsProcessor
           .make[F](validators.stateChannelValidator, globalSnapshotStateChannelManager, sdkServices.currencySnapshotContextFns),
         collateral

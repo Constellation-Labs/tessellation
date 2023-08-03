@@ -48,7 +48,7 @@ object Download {
     lastFullGlobalSnapshotOrdinal: SnapshotOrdinal,
     globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
     nodeStorage: NodeStorage[F],
-    consensus: SnapshotConsensus[F, _, GlobalIncrementalSnapshot, GlobalSnapshotContext, _],
+    consensus: SnapshotConsensus[F, GlobalIncrementalSnapshot, GlobalSnapshotContext, _],
     peerSelect: PeerSelect[F]
   ): Download[F] = new Download[F] {
 

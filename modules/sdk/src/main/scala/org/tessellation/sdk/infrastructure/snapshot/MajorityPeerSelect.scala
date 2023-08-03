@@ -48,7 +48,7 @@ object MajorityPeerSelect {
 
   case object NoPeersToSelect extends NoStackTrace
 
-  def make[F[_]: Async: Random, S <: Snapshot[_], SI <: SnapshotInfo[_]](
+  def make[F[_]: Async: Random, S <: Snapshot, SI <: SnapshotInfo[_]](
     storage: ClusterStorage[F],
     snapshotClient: SnapshotClient[F, S, SI]
   ): PeerSelect[F] = new PeerSelect[F] {
