@@ -9,12 +9,13 @@ import cats.syntax.semigroupk._
 import scala.concurrent.duration._
 
 import org.tessellation.BuildInfo
-import org.tessellation.currency.dataApplication.BaseDataApplicationL1Service
+import org.tessellation.currency.dataApplication.{BaseDataApplicationL1Service, L1NodeContext}
 import org.tessellation.currency.l1.cli.method
 import org.tessellation.currency.l1.cli.method.{Run, RunInitialValidator, RunValidator}
 import org.tessellation.currency.l1.domain.snapshot.programs.CurrencySnapshotProcessor
 import org.tessellation.currency.l1.http.p2p.P2PClient
 import org.tessellation.currency.l1.modules._
+import org.tessellation.currency.l1.node.L1NodeContext
 import org.tessellation.currency.schema.currency._
 import org.tessellation.dag.l1.http.p2p.{P2PClient => DAGP2PClient}
 import org.tessellation.dag.l1.infrastructure.block.rumor.handler.blockRumorHandler
@@ -136,6 +137,8 @@ abstract class CurrencyL1App(
       _ <- DAGL1Daemons
         .start(storages, services, healthChecks)
         .asResource
+
+      implicit0(nodeContext: L1NodeContext[IO]) = L1NodeContext.make[IO](storages.lastGlobalSnapshot, storages.lastSnapshot)
 
       api = HttpApi
         .make[IO, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](

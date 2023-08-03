@@ -5,11 +5,12 @@ import cats.syntax.semigroupk._
 import cats.syntax.traverse._
 
 import org.tessellation.BuildInfo
-import org.tessellation.currency.dataApplication.BaseDataApplicationL0Service
+import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
 import org.tessellation.currency.l0.cli.method
 import org.tessellation.currency.l0.cli.method._
 import org.tessellation.currency.l0.http.p2p.P2PClient
 import org.tessellation.currency.l0.modules._
+import org.tessellation.currency.l0.node.L0NodeContext
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.kryo._
@@ -60,6 +61,9 @@ abstract class CurrencyL0App(
       p2pClient = P2PClient.make[IO](sdkP2PClient, sdkResources.client, sdkServices.session)
       storages <- Storages.make[IO](sdkStorages, cfg.snapshot, method.globalL0Peer).asResource
       validators = Validators.make[IO](seedlist)
+
+      implicit0(nodeContext: L0NodeContext[IO]) = L0NodeContext.make[IO](storages.snapshot)
+
       services <- Services
         .make[IO](
           p2pClient,

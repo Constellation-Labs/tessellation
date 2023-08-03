@@ -9,7 +9,6 @@ import org.tessellation.currency.dataApplication.dataApplication.DataApplication
 import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
 import org.tessellation.currency.l0.cell.{L0Cell, L0CellInput}
 import org.tessellation.currency.l0.http.routes.{CurrencyBlockRoutes, DataBlockRoutes}
-import org.tessellation.currency.l0.node.L0NodeContext
 import org.tessellation.currency.l0.snapshot.CurrencySnapshotEvent
 import org.tessellation.currency.schema.currency._
 import org.tessellation.kryo.KryoSerializer
@@ -32,7 +31,7 @@ import org.http4s.{HttpApp, HttpRoutes}
 
 object HttpApi {
 
-  def make[F[_]: Async: SecurityProvider: KryoSerializer: Metrics](
+  def make[F[_]: Async: SecurityProvider: KryoSerializer: Metrics: L0NodeContext](
     storages: Storages[F],
     queues: Queues[F],
     services: Services[F],
@@ -60,7 +59,7 @@ object HttpApi {
     ) {}
 }
 
-sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Metrics] private (
+sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Metrics: L0NodeContext] private (
   storages: Storages[F],
   queues: Queues[F],
   services: Services[F],
@@ -73,11 +72,6 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
   httpCfg: HttpConfig,
   maybeDataApplication: Option[BaseDataApplicationL0Service[F]]
 ) {
-
-  implicit val context: L0NodeContext[F] = L0NodeContext.make[F](
-    storages.lastGlobalSnapshot,
-    storages.snapshot
-  )
 
   private val mkCell = (event: CurrencySnapshotEvent) => L0Cell.mkL0Cell(queues.l1Output).apply(L0CellInput.HandleL1Block(event))
 

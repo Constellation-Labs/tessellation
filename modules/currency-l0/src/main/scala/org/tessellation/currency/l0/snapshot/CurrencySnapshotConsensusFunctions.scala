@@ -18,7 +18,6 @@ import scala.collection.immutable.SortedMap
 
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
 import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, DataState, L0NodeContext}
-import org.tessellation.currency.l0.node.L0NodeContext
 import org.tessellation.currency.l0.snapshot.services.StateChannelSnapshotService
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.cats.syntax.next._
@@ -29,7 +28,7 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.sdk.domain.rewards.Rewards
-import org.tessellation.sdk.domain.snapshot.storage.{LastSnapshotStorage, SnapshotStorage}
+import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.infrastructure.consensus.trigger.ConsensusTrigger
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.infrastructure.snapshot.{CurrencySnapshotAcceptanceManager, SnapshotConsensusFunctions}
@@ -52,17 +51,14 @@ abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
 
 object CurrencySnapshotConsensusFunctions {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider: Metrics](
+  def make[F[_]: Async: KryoSerializer: SecurityProvider: Metrics: L0NodeContext](
     stateChannelSnapshotService: StateChannelSnapshotService[F],
     currencySnapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F],
     collateral: Amount,
     rewards: Rewards[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot],
     maybeDataApplicationService: Option[BaseDataApplicationL0Service[F]],
-    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
   ): CurrencySnapshotConsensusFunctions[F] = new CurrencySnapshotConsensusFunctions[F] {
-
-    implicit val nodeContext: L0NodeContext[F] = L0NodeContext.make[F](lastGlobalSnapshotStorage, snapshotStorage)
 
     private val logger = Slf4jLogger.getLoggerFromClass(CurrencySnapshotConsensusFunctions.getClass)
 

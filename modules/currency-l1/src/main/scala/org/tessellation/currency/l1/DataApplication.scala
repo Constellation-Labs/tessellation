@@ -10,7 +10,7 @@ import cats.syntax.all._
 import scala.concurrent.duration._
 
 import org.tessellation.currency.dataApplication.ConsensusInput.OwnerConsensusInput
-import org.tessellation.currency.dataApplication.{BaseDataApplicationL1Service, ConsensusInput, ConsensusOutput}
+import org.tessellation.currency.dataApplication._
 import org.tessellation.currency.l1.domain.dataApplication.consensus.{ConsensusClient, ConsensusState, Engine}
 import org.tessellation.currency.l1.modules.{Queues, Services}
 import org.tessellation.currency.schema.currency._
@@ -28,7 +28,7 @@ import fs2._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object DataApplication {
-  def run[F[_]: Async: Random: KryoSerializer: SecurityProvider](
+  def run[F[_]: Async: Random: KryoSerializer: SecurityProvider: L1NodeContext](
     clusterStorage: ClusterStorage[F],
     l0ClusterStorage: L0ClusterStorage[F],
     blockOutputClient: L0BlockOutputClient[F, CurrencyBlock],

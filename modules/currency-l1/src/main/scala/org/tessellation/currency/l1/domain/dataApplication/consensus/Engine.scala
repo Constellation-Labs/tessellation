@@ -14,7 +14,6 @@ import org.tessellation.currency.dataApplication.ConsensusInput._
 import org.tessellation.currency.dataApplication.ConsensusOutput.Noop
 import org.tessellation.currency.dataApplication._
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
-import org.tessellation.currency.l1.node.L1NodeContext
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import org.tessellation.fsm.FSM
 import org.tessellation.kryo.KryoSerializer
@@ -85,7 +84,7 @@ object Engine {
   type Out = ConsensusOutput
   type State = ConsensusState
 
-  def fsm[F[_]: MonadThrow: Async: Clock: Random: SecurityProvider: KryoSerializer](
+  def fsm[F[_]: MonadThrow: Async: Clock: Random: SecurityProvider: KryoSerializer: L1NodeContext](
     dataApplication: BaseDataApplicationL1Service[F],
     clusterStorage: ClusterStorage[F],
     consensusClient: ConsensusClient[F],
@@ -95,11 +94,6 @@ object Engine {
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     lastCurrencySnapshotStorage: LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
   ): FSM[F, State, In, Out] = {
-
-    implicit val context: L1NodeContext[F] = L1NodeContext.make[F](
-      lastGlobalSnapshotStorage,
-      lastCurrencySnapshotStorage
-    )
 
     def peersCount = 2
     def timeout = 10.seconds

@@ -5,13 +5,13 @@ import java.security.KeyPair
 import cats.effect.kernel.Async
 import cats.effect.std.{Random, Supervisor}
 
-import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, DataUpdate}
+import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, DataUpdate, L0NodeContext}
 import org.tessellation.currency.l0.snapshot.services.StateChannelSnapshotService
 import org.tessellation.currency.schema.currency._
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import org.tessellation.sdk.config.types.SnapshotConfig
 import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
@@ -19,7 +19,7 @@ import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.domain.seedlist.SeedlistEntry
-import org.tessellation.sdk.domain.snapshot.storage.{LastSnapshotStorage, SnapshotStorage}
+import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.infrastructure.consensus.Consensus
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.infrastructure.snapshot.{CurrencySnapshotAcceptanceManager, SnapshotConsensus}
@@ -31,7 +31,7 @@ import org.http4s.client.Client
 
 object CurrencySnapshotConsensus {
 
-  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider: Metrics: Supervisor](
+  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider: Metrics: Supervisor: L0NodeContext](
     gossip: Gossip[F],
     selfId: PeerId,
     keyPair: KeyPair,
@@ -46,7 +46,6 @@ object CurrencySnapshotConsensus {
     stateChannelSnapshotService: StateChannelSnapshotService[F],
     snapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F],
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
-    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
   ): F[
     SnapshotConsensus[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshotArtifact, CurrencySnapshotContext, CurrencySnapshotEvent]
@@ -62,7 +61,6 @@ object CurrencySnapshotConsensus {
         collateral,
         rewards,
         maybeDataApplication,
-        lastGlobalSnapshotStorage,
         snapshotStorage
       ),
       gossip,
