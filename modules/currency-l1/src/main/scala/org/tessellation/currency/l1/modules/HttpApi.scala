@@ -10,7 +10,6 @@ import cats.syntax.semigroupk._
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationCustomRoutes
 import org.tessellation.currency.dataApplication.{BaseDataApplicationL1Service, L1NodeContext}
 import org.tessellation.currency.l1.http.DataApplicationRoutes
-import org.tessellation.currency.l1.node.L1NodeContext
 import org.tessellation.currency.schema.currency._
 import org.tessellation.dag.l1.http.{Routes => DAGRoutes}
 import org.tessellation.dag.l1.modules.HealthChecks
@@ -35,7 +34,7 @@ import org.http4s.{HttpApp, HttpRoutes}
 object HttpApi {
 
   def make[
-    F[_]: Async: KryoSerializer: SecurityProvider: Metrics: Supervisor,
+    F[_]: Async: KryoSerializer: SecurityProvider: Metrics: Supervisor: L1NodeContext,
     T <: Transaction: Decoder: Encoder: Show,
     B <: Block[T],
     P <: StateProof,
@@ -89,7 +88,7 @@ object HttpApi {
 }
 
 sealed abstract class HttpApi[
-  F[_]: Async: KryoSerializer: SecurityProvider: Metrics: Supervisor
+  F[_]: Async: KryoSerializer: SecurityProvider: Metrics: Supervisor: L1NodeContext
 ] private (
   maybeDataApplication: Option[BaseDataApplicationL1Service[F]],
   storages: Storages[F, CurrencyTransaction, CurrencyBlock, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
@@ -102,10 +101,6 @@ sealed abstract class HttpApi[
   nodeVersion: String,
   httpCfg: HttpConfig
 ) {
-  implicit val context: L1NodeContext[F] = L1NodeContext.make[F](
-    storages.lastGlobalSnapshot,
-    storages.lastSnapshot
-  )
 
   private val clusterRoutes =
     ClusterRoutes[F](programs.joining, programs.peerDiscovery, storages.cluster, services.cluster, services.collateral)

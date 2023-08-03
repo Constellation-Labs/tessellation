@@ -8,7 +8,7 @@ import cats.syntax.applicative._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.currency.dataApplication.BaseDataApplicationL0Service
+import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
 import org.tessellation.currency.l0.config.types.AppConfig
 import org.tessellation.currency.l0.http.p2p.P2PClient
 import org.tessellation.currency.l0.snapshot.services.{NoopRewards, StateChannelSnapshotService}
@@ -34,7 +34,7 @@ import org.http4s.client.Client
 
 object Services {
 
-  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider: Metrics: Supervisor](
+  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider: Metrics: Supervisor: L0NodeContext](
     p2PClient: P2PClient[F],
     sdkServices: SdkServices[F],
     storages: Storages[F],
@@ -77,7 +77,6 @@ object Services {
           stateChannelSnapshotService,
           sdkServices.currencySnapshotAcceptanceManager,
           maybeDataApplication,
-          storages.lastGlobalSnapshot,
           storages.snapshot
         )
       addressService = AddressService.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](storages.snapshot)
