@@ -1,9 +1,9 @@
 package org.tessellation.sdk.domain.snapshot
 
-import org.tessellation.schema.peer.Peer
+import org.tessellation.schema.peer.L0Peer
 
 trait PeerSelect[F[_]] {
-  def select: F[Peer]
+  def select: F[L0Peer]
 }
 
 object PeerSelect {

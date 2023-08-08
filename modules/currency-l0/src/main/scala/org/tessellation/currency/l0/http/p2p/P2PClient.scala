@@ -27,7 +27,8 @@ object P2PClient {
       sdkP2PClient.node,
       StateChannelSnapshotClient.make(client),
       L0GlobalSnapshotClient.make(client),
-      CurrencySnapshotClient.make[F](client, session)
+      CurrencySnapshotClient.make[F](client, session),
+      L0TrustClient.make(client)
     ) {}
 }
 
@@ -38,5 +39,6 @@ sealed abstract class P2PClient[F[_]] private (
   val node: NodeClient[F],
   val stateChannelSnapshot: StateChannelSnapshotClient[F],
   val l0GlobalSnapshot: L0GlobalSnapshotClient[F],
-  val currencySnapshot: CurrencySnapshotClient[F]
+  val currencySnapshot: CurrencySnapshotClient[F],
+  val l0Trust: L0TrustClient[F]
 )

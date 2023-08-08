@@ -26,7 +26,8 @@ object P2PClient {
       L0BlockOutputClient.make(currencyPathPrefix, client),
       sdkP2PClient.gossip,
       BlockConsensusClient.make(client),
-      L0GlobalSnapshotClient.make(client)
+      L0GlobalSnapshotClient.make(client),
+      L0TrustClient.make(client)
     ) {}
 }
 
@@ -38,5 +39,6 @@ sealed abstract class P2PClient[F[_]] private (
   val l0BlockOutputClient: L0BlockOutputClient[F],
   val gossip: GossipClient[F],
   val blockConsensus: BlockConsensusClient[F],
-  val l0GlobalSnapshot: L0GlobalSnapshotClient[F]
+  val l0GlobalSnapshot: L0GlobalSnapshotClient[F],
+  val l0Trust: L0TrustClient[F]
 )

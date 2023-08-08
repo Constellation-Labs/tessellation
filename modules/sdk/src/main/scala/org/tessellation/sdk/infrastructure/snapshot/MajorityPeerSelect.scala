@@ -14,8 +14,8 @@ import scala.util.control.NoStackTrace
 
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.node.NodeState.Ready
-import org.tessellation.schema.peer.Peer
 import org.tessellation.schema.peer.Peer.toP2PContext
+import org.tessellation.schema.peer.{L0Peer, Peer}
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo}
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.snapshot.PeerSelect
@@ -39,7 +39,7 @@ object MajorityPeerSelect {
     majorityOrdinal: SnapshotOrdinal,
     hashDistribution: List[(Hash, NonEmptyList[Peer])],
     peerCandidates: NonEmptyList[Peer],
-    selectedPeer: Peer
+    selectedPeer: L0Peer
   )
 
   val maxConcurrentPeerInquiries = 10
@@ -55,7 +55,7 @@ object MajorityPeerSelect {
 
     val logger = Slf4jLogger.getLoggerFromName[F](peerSelectLoggerName)
 
-    def select: F[Peer] = getFilteredPeerDetails
+    def select: F[L0Peer] = getFilteredPeerDetails
       .flatTap(details => logger.debug(details.asJson.noSpaces))
       .map(_.selectedPeer)
 
@@ -82,7 +82,7 @@ object MajorityPeerSelect {
         }
         .map(_.groupMap { case (_, hash) => hash } { case (peer, _) => peer })
       peerCandidates = peerDistribution.values.maxBy(_.length)
-      selectedPeer <- Random[F].elementOf(peerCandidates.toList)
+      selectedPeer <- Random[F].elementOf(peerCandidates.toList).map(L0Peer.fromPeer)
     } yield
       FilteredPeerDetails(
         peers,
