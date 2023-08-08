@@ -144,6 +144,9 @@ object peer {
 
     def fromPeerInfo(p: PeerInfo): L0Peer =
       L0Peer(p.id, p.ip, p.publicPort)
+
+    def fromPeer(p: Peer): L0Peer =
+      L0Peer(p.id, p.ip, p.publicPort)
   }
 
   @derive(eqv, show)

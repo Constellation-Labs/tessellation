@@ -27,7 +27,8 @@ object P2PClient {
       dagL1P2PClient.gossip,
       dagL1P2PClient.blockConsensus,
       dagL1P2PClient.l0GlobalSnapshot,
-      ConsensusClient.make(client)
+      ConsensusClient.make(client),
+      L0TrustClient.make(client)
     ) {}
 }
 
@@ -40,5 +41,6 @@ sealed abstract class P2PClient[F[_]] private (
   val gossip: GossipClient[F],
   val blockConsensus: BlockConsensusClient[F],
   val l0GlobalSnapshot: L0GlobalSnapshotClient[F],
-  val consensusClient: ConsensusClient[F]
+  val consensusClient: ConsensusClient[F],
+  val l0Trust: L0TrustClient[F]
 )

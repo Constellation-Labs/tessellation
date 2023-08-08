@@ -4,10 +4,10 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.trust.PublicTrust
 
 import derevo.cats.{eqv, show}
-import derevo.circe.magnolia.encoder
+import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 
-@derive(eqv, encoder, show)
+@derive(eqv, encoder, decoder, show)
 case class PublicTrustMap(
   value: Map[PeerId, PublicTrust]
 ) {

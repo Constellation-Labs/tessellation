@@ -111,6 +111,11 @@ object trust {
   }
 
   @derive(eqv, decoder, encoder, show)
+  case class TrustScores(
+    scores: Map[PeerId, Double]
+  )
+
+  @derive(eqv, decoder, encoder, show)
   case class PublicTrust(
     labels: Map[PeerId, Double]
   ) {

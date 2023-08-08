@@ -14,7 +14,6 @@ import org.http4s.client.Client
 import org.http4s.client.dsl.Http4sClientDsl
 
 trait TrustClient[F[_]] {
-  // Replace with publicTrust
   def getPublicTrust: PeerResponse[F, PublicTrust]
 }
 
