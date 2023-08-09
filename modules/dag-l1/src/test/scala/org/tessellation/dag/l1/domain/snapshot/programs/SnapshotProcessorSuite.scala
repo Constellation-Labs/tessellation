@@ -86,7 +86,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               Amount(0L)
             )
             currencySnapshotCreator = CurrencySnapshotCreator.make[IO](currencySnapshotAcceptanceManager, None)
-            currencySnapshotValidator = CurrencySnapshotValidator.make[IO](currencySnapshotCreator, None, validators.signedValidator)
+            currencySnapshotValidator = CurrencySnapshotValidator.make[IO](currencySnapshotCreator, validators.signedValidator, None, None)
 
             currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
             globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](Some(10L), None).asResource

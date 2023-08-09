@@ -25,6 +25,7 @@ import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.height.{Height, SubHeight}
+import org.tessellation.schema.transaction.RewardTransaction
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
@@ -49,7 +50,7 @@ trait CurrencySnapshotCreator[F[_]] {
     lastContext: CurrencySnapshotContext,
     trigger: ConsensusTrigger,
     events: Set[CurrencySnapshotEvent],
-    rewards: Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot]
+    rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot]]
   ): F[CurrencySnapshotCreationResult]
 }
 
@@ -66,7 +67,7 @@ object CurrencySnapshotCreator {
       lastContext: CurrencySnapshotContext,
       trigger: ConsensusTrigger,
       events: Set[CurrencySnapshotEvent],
-      rewards: Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot]
+      rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot]]
     ): F[CurrencySnapshotCreationResult] = {
 
       val (blocks: List[Signed[Block]], dataBlocks: List[Signed[DataApplicationBlock]]) =
@@ -143,7 +144,10 @@ object CurrencySnapshotCreator {
           lastContext,
           lastActiveTips,
           lastDeprecatedTips,
-          rewards.distribute(lastArtifact, lastContext.snapshotInfo.balances, _, trigger)
+          transactions =>
+            rewards
+              .map(_.distribute(lastArtifact, lastContext.snapshotInfo.balances, transactions, trigger))
+              .getOrElse(SortedSet.empty[RewardTransaction].pure[F])
         )
 
         (awaitingBlocks, rejectedBlocks) = acceptanceResult.notAccepted.partitionMap {
