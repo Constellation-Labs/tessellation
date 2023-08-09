@@ -70,6 +70,7 @@ object Download {
 
           consensus.manager.startFacilitatingAfterDownload(observationLimit, snapshot, context)
         }
+        .onError(logger.error(_)("Unexpected failure during download!"))
 
     def start: F[DownloadResult] = {
       def latestMetadata = peerSelect.select.flatMap {
