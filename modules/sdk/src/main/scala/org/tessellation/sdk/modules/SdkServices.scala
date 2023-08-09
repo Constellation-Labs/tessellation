@@ -75,8 +75,9 @@ object SdkServices {
           currencySnapshotAcceptanceManager,
           None
         ),
+        validators.signedValidator,
         None,
-        validators.signedValidator
+        None
       )
       currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(
         currencySnapshotValidator

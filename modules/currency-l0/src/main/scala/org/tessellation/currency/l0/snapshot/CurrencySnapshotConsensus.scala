@@ -38,7 +38,7 @@ object CurrencySnapshotConsensus {
     collateral: Amount,
     clusterStorage: ClusterStorage[F],
     nodeStorage: NodeStorage[F],
-    rewards: Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot],
+    maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot]],
     snapshotConfig: SnapshotConfig,
     client: Client[F],
     session: Session[F],
@@ -57,7 +57,7 @@ object CurrencySnapshotConsensus {
       CurrencySnapshotConsensusFunctions.make[F](
         stateChannelSnapshotService,
         collateral,
-        rewards,
+        maybeRewards,
         creator,
         validator
       ),

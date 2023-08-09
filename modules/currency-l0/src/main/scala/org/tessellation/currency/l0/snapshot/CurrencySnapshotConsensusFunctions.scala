@@ -38,7 +38,7 @@ object CurrencySnapshotConsensusFunctions {
   def make[F[_]: Async: KryoSerializer: SecurityProvider: L0NodeContext](
     stateChannelSnapshotService: StateChannelSnapshotService[F],
     collateral: Amount,
-    rewards: Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot],
+    rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot]],
     currencySnapshotCreator: CurrencySnapshotCreator[F],
     currencySnapshotValidator: CurrencySnapshotValidator[F]
   ): CurrencySnapshotConsensusFunctions[F] = new CurrencySnapshotConsensusFunctions[F] {

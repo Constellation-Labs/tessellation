@@ -12,7 +12,7 @@ import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, 
 import org.tessellation.currency.l0.config.types.AppConfig
 import org.tessellation.currency.l0.http.p2p.P2PClient
 import org.tessellation.currency.l0.node.L0NodeContext
-import org.tessellation.currency.l0.snapshot.services.{NoopRewards, StateChannelSnapshotService}
+import org.tessellation.currency.l0.snapshot.services.StateChannelSnapshotService
 import org.tessellation.currency.l0.snapshot.{CurrencySnapshotConsensus, CurrencySnapshotEvent}
 import org.tessellation.currency.schema.currency._
 import org.tessellation.kryo.KryoSerializer
@@ -62,8 +62,6 @@ object Services {
         )
         .pure[F]
 
-      rewards = maybeRewards.getOrElse(NoopRewards.make[F])
-
       creator = CurrencySnapshotCreator.make[F](
         sdkServices.currencySnapshotAcceptanceManager,
         maybeDataApplication
@@ -72,8 +70,9 @@ object Services {
 
       validator = CurrencySnapshotValidator.make[F](
         creator,
-        Some(rewards),
-        signedValidator
+        signedValidator,
+        maybeRewards,
+        maybeDataApplication
       )
 
       consensus <- CurrencySnapshotConsensus
@@ -85,7 +84,7 @@ object Services {
           cfg.collateral.amount,
           storages.cluster,
           storages.node,
-          rewards,
+          maybeRewards,
           cfg.snapshot,
           client,
           session,
