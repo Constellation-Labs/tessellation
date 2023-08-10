@@ -18,7 +18,7 @@ import org.tessellation.security.{Encodable, Hashed, SecurityProvider}
 import io.circe._
 import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.syntax._
-import org.http4s.HttpRoutes
+import org.http4s._
 import org.http4s.server.Router
 
 trait DataUpdate
@@ -39,6 +39,8 @@ trait BaseDataApplicationService[F[_]] {
 
   def dataEncoder: Encoder[DataUpdate]
   def dataDecoder: Decoder[DataUpdate]
+
+  def signedDataEntityDecoder: EntityDecoder[F, Signed[DataUpdate]]
 }
 trait BaseDataApplicationContextualOps[F[_], Context] {
   def validateData(oldState: DataState, updates: NonEmptyList[Signed[DataUpdate]])(
@@ -76,6 +78,8 @@ trait DataApplicationService[F[_], D <: DataUpdate, S <: DataState] {
 
   def dataEncoder: Encoder[D]
   def dataDecoder: Decoder[D]
+
+  def signedDataEntityDecoder: EntityDecoder[F, Signed[D]]
 
 }
 
@@ -184,10 +188,10 @@ object BaseDataApplicationService {
         }
       }
 
-      def dataDecoder: Decoder[DataUpdate] = new Decoder[DataUpdate] {
-        final def apply(c: HCursor): Decoder.Result[DataUpdate] =
-          service.dataDecoder.tryDecode(c).widen[DataUpdate]
-      }
+      def dataDecoder: Decoder[DataUpdate] = service.dataDecoder.widen[DataUpdate]
+
+      def signedDataEntityDecoder: EntityDecoder[F, Signed[DataUpdate]] =
+        service.signedDataEntityDecoder.widen[Signed[DataUpdate]]
 
       def routes(implicit context: Context): HttpRoutes[F] = v.routes
     }
@@ -212,6 +216,8 @@ object BaseDataApplicationL0Service {
       def dataEncoder: Encoder[DataUpdate] = base.dataEncoder
 
       def dataDecoder: Decoder[DataUpdate] = base.dataDecoder
+
+      def signedDataEntityDecoder: EntityDecoder[F, Signed[DataUpdate]] = base.signedDataEntityDecoder
 
       def genesis: DataState = service.genesis
 
@@ -251,6 +257,8 @@ object BaseDataApplicationL1Service {
       def dataEncoder: Encoder[DataUpdate] = base.dataEncoder
 
       def dataDecoder: Decoder[DataUpdate] = base.dataDecoder
+
+      def signedDataEntityDecoder: EntityDecoder[F, Signed[DataUpdate]] = base.signedDataEntityDecoder
 
       def routes(implicit context: L1NodeContext[F]): HttpRoutes[F] = base.routes
 

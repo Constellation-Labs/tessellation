@@ -39,7 +39,7 @@ final case class DataApplicationRoutes[F[_]: Async: KryoSerializer: SecurityProv
 
   private val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "data" =>
-      implicit val decoder = dataApplication.dataDecoder
+      implicit val decoder = dataApplication.signedDataEntityDecoder
 
       req
         .asR[Signed[DataUpdate]] {
