@@ -6,7 +6,6 @@ import cats.syntax.all._
 
 import org.tessellation.error.ApplicationError
 
-import io.circe._
 import org.http4s._
 import org.http4s.circe.CirceEntityCodec._
 import org.http4s.circe._
@@ -26,8 +25,8 @@ object error {
   }
 
   implicit class RefinedRequestApplicationDecoder[F[_]: JsonDecoder: MonadThrow](req: Request[F]) extends Http4sDsl[F] {
-    def asR[A: Decoder](f: A => F[Response[F]]): F[Response[F]] =
-      req.asJsonDecode[A].attempt.flatMap {
+    def asR[A](f: A => F[Response[F]])(implicit d: EntityDecoder[F, A]): F[Response[F]] =
+      req.as[A].attempt.flatMap {
         case Left(e) =>
           val error: ApplicationError = Option(e.getCause) match {
             case Some(c) => ApplicationError.InvalidRequestBody(c.getMessage)
