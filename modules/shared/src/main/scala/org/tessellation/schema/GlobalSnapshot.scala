@@ -79,6 +79,22 @@ case class GlobalSnapshot(
   tips: SnapshotTips
 ) extends FullSnapshot[GlobalSnapshotStateProof, GlobalSnapshotInfoV1] {}
 
+@derive(eqv, show, encoder, decoder)
+case class GlobalSnapshotV2(
+  ordinal: SnapshotOrdinal,
+  height: Height,
+  subHeight: SubHeight,
+  lastSnapshotHash: Hash,
+  blocks: SortedSet[BlockAsActiveTip],
+  stateChannelSnapshots: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
+  rewards: SortedSet[RewardTransaction],
+  epochProgress: EpochProgress,
+  nextFacilitators: NonEmptyList[PeerId],
+  info: GlobalSnapshotInfoV1,
+  tips: SnapshotTips,
+  optionInt: Option[Int] = None
+) extends FullSnapshot[GlobalSnapshotStateProof, GlobalSnapshotInfoV1] {}
+
 object GlobalSnapshot {
 
   def mkGenesis(balances: Map[Address, Balance], startingEpochProgress: EpochProgress): GlobalSnapshot =
@@ -131,4 +147,40 @@ object GlobalSnapshot {
       }
       .toSortedSet
 
+}
+
+object GlobalSnapshotV2 {
+
+  def mkGenesis(balances: Map[Address, Balance], startingEpochProgress: EpochProgress): GlobalSnapshotV2 =
+    GlobalSnapshotV2(
+      SnapshotOrdinal.MinValue,
+      Height.MinValue,
+      SubHeight.MinValue,
+      Coinbase.hash,
+      SortedSet.empty[BlockAsActiveTip],
+      SortedMap.empty,
+      SortedSet.empty,
+      startingEpochProgress,
+      nextFacilitators,
+      GlobalSnapshotInfoV1(SortedMap.empty, SortedMap.empty, SortedMap.from(balances)),
+      SnapshotTips(
+        SortedSet.empty[DeprecatedTip],
+        mkActiveTips(8)
+      )
+    )
+
+  val nextFacilitators: NonEmptyList[PeerId] =
+    NonEmptyList
+      .of(
+        "e0c1ee6ec43510f0e16d2969a7a7c074a5c8cdb477c074fe9c32a9aad8cbc8ff1dff60bb81923e0db437d2686a9b65b86c403e6a21fa32b6acc4e61be4d70925"
+      )
+      .map(s => PeerId(Hex(s)))
+
+  private def mkActiveTips(n: PosInt): SortedSet[ActiveTip] =
+    List
+      .range(0, n.value)
+      .map { i =>
+        ActiveTip(BlockReference(Height.MinValue, ProofsHash(s"%064d".format(i))), 0L, SnapshotOrdinal.MinValue)
+      }
+      .toSortedSet
 }

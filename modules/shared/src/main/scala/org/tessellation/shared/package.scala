@@ -65,6 +65,7 @@ package object shared {
     classOf[SignedOrdering[_]] -> 335,
     Address.OrderingInstance.getClass -> 336,
     NodeState.Observing.getClass -> 337,
+    classOf[GlobalSnapshotV2] -> 651,
     classOf[GlobalSnapshot] -> 600,
     classOf[StateChannelSnapshotBinary] -> 601,
     classOf[SnapshotOrdinal] -> 602,

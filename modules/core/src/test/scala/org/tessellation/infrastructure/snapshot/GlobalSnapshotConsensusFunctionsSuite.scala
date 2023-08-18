@@ -118,6 +118,18 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
   val env: AppEnvironment = AppEnvironment.Testnet
 
+  test("global snapshot hash value comparison") { res =>
+    implicit val (_, ks, sp, m) = res
+
+    import org.tessellation.ext.crypto._
+
+    val genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
+    val genesis_v2 = GlobalSnapshotV2.mkGenesis(Map.empty, EpochProgress.MinValue)
+
+    IO.pure(expect.same(genesis.hash, genesis_v2.hash))
+
+  }
+
   test("validateArtifact - returns artifact for correct data") { res =>
     implicit val (_, ks, sp, m) = res
 
