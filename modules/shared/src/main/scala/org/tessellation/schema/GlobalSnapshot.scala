@@ -16,10 +16,10 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.semver.SnapshotVersion
 import org.tessellation.schema.snapshot.{FullSnapshot, IncrementalSnapshot}
 import org.tessellation.schema.transaction.RewardTransaction
-import org.tessellation.security.Hashed
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Encodable, Hashed}
 import org.tessellation.statechannel.StateChannelSnapshotBinary
 import org.tessellation.syntax.sortedCollection._
 
@@ -93,7 +93,23 @@ case class GlobalSnapshotV2(
   info: GlobalSnapshotInfoV1,
   tips: SnapshotTips,
   optionInt: Option[Int] = None
-) extends FullSnapshot[GlobalSnapshotStateProof, GlobalSnapshotInfoV1] {}
+) extends FullSnapshot[GlobalSnapshotStateProof, GlobalSnapshotInfoV1]
+    with Encodable {
+
+  override def toEncode: AnyRef = (
+    ordinal,
+    height,
+    subHeight,
+    lastSnapshotHash,
+    blocks,
+    stateChannelSnapshots,
+    rewards,
+    epochProgress,
+    nextFacilitators,
+    info,
+    tips
+  )
+}
 
 object GlobalSnapshot {
 

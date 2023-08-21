@@ -25,6 +25,7 @@ import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.infrastructure.snapshot.{GlobalSnapshotAcceptanceManager, GlobalSnapshotStateChannelEventsProcessor}
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.hash.Hash
+import org.tessellation.security.hex.Hex
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed.forAsyncKryo
@@ -122,11 +123,33 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     implicit val (_, ks, sp, m) = res
 
     import org.tessellation.ext.crypto._
+    import org.tessellation.ext.kryo._
 
-    val genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
+    def printBytes(label: String, bytes: Array[Byte]): Unit =
+      println(s"$label: ${Hex.fromBytes(bytes, Some("-"))}")
+
+    // val genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
     val genesis_v2 = GlobalSnapshotV2.mkGenesis(Map.empty, EpochProgress.MinValue)
 
-    IO.pure(expect.same(genesis.hash, genesis_v2.hash))
+    val kryoBytes = genesis_v2.toBinary.getOrElse(Array(0: Byte))
+    val encodeBytes = genesis_v2.toEncode.toBinary.getOrElse(Array(0: Byte))
+
+    printBytes("snapshotKryoBytes", kryoBytes)
+    printBytes("snapshotEncodeBytes", encodeBytes)
+    printBytes("ordinalBytes", genesis_v2.ordinal.toBinary.getOrElse(Array(0: Byte)))
+    println("heightBytes " + genesis_v2.height.value.value.toHexString)
+    println("subheightBytes " + genesis_v2.subHeight.value.value.toHexString)
+    printBytes("lastSnapshotHashBytes", ks.serialize(genesis_v2.lastSnapshotHash.getBytes).getOrElse(Array(0: Byte)))
+    printBytes("blocksBytes", ks.serialize(genesis_v2.blocks).getOrElse(Array(0: Byte)))
+    printBytes("stateChannelSnapshotsBytes", ks.serialize(genesis_v2.stateChannelSnapshots).getOrElse(Array(0: Byte)))
+    printBytes("rewardsBytes", ks.serialize(genesis_v2.rewards).getOrElse(Array(0: Byte)))
+    println("epochProgressBytes " + genesis_v2.epochProgress.value.value.toHexString)
+    printBytes("nextFacilitatorsBytes", ks.serialize(genesis_v2.nextFacilitators).getOrElse(Array(0: Byte)))
+    printBytes("infoBytes", ks.serialize(genesis_v2.info).getOrElse(Array(0: Byte)))
+    printBytes("tipsBytes", ks.serialize(genesis_v2.tips).getOrElse(Array(0: Byte)))
+    printBytes("optionIntBytes", ks.serialize(genesis_v2.optionInt).getOrElse(Array(0: Byte)))
+
+    IO.pure(expect.same(kryoBytes.hash, encodeBytes.hash))
 
   }
 
