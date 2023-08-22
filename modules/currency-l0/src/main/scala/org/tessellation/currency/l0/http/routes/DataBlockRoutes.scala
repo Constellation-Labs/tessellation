@@ -7,22 +7,26 @@ import cats.syntax.functor._
 
 import org.tessellation.currency.dataApplication.DataUpdate
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
+import org.tessellation.http.routes.internal.{InternalUrlPrefix, PublicRoutes}
 import org.tessellation.kernel._
 import org.tessellation.schema.Block
 import org.tessellation.security.signature.Signed
 
+import eu.timepit.refined.auto._
 import io.circe.Decoder
 import org.http4s.HttpRoutes
 import org.http4s.dsl.Http4sDsl
-import org.http4s.server.Router
 
 final case class DataBlockRoutes[F[_]: Async](
   mkCell: Either[Signed[Block], Signed[DataApplicationBlock]] => Cell[F, StackF, _, Either[CellError, Ω], _]
 )(implicit decoder: Decoder[DataUpdate])
-    extends Http4sDsl[F] {
+    extends Http4sDsl[F]
+    with PublicRoutes[F] {
   import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
 
-  private val httpRoutes: HttpRoutes[F] = HttpRoutes.of[F] {
+  protected val prefixPath: InternalUrlPrefix = "/currency"
+
+  protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "l1-data-output" =>
       req
         .as[Signed[DataApplicationBlock]]
@@ -34,8 +38,4 @@ final case class DataBlockRoutes[F[_]: Async](
           case Right(_) => Ok()
         }
   }
-
-  val publicRoutes: HttpRoutes[F] = Router(
-    "/currency" -> httpRoutes
-  )
 }

@@ -15,13 +15,13 @@ import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.AppEnvironment._
 import org.tessellation.sdk.config.types.HttpConfig
 import org.tessellation.sdk.http.p2p.middleware.{PeerAuthMiddleware, `X-Id-Middleware`}
-import org.tessellation.sdk.http.routes
 import org.tessellation.sdk.http.routes._
 import org.tessellation.sdk.infrastructure.healthcheck.ping.PingHealthCheckRoutes
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 
+import eu.timepit.refined.auto._
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
 import org.http4s.server.Router
 import org.http4s.server.middleware.{CORS, RequestLogger, ResponseLogger}
@@ -101,11 +101,11 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
     services.consensus,
     services.gossip,
     services.session,
-    DebugTrustRoutes[F](storages.trust).httpRoutes
-  ).routes
+    DebugTrustRoutes[F](storages.trust).public
+  ).publicRoutes
 
-  private val metricRoutes = routes.MetricRoutes[F]().routes
-  private val targetRoutes = routes.TargetRoutes[F](services.cluster).routes
+  private val metricRoutes = MetricRoutes[F]().publicRoutes
+  private val targetRoutes = TargetRoutes[F](services.cluster).publicRoutes
 
   private val openRoutes: HttpRoutes[F] =
     CORS.policy.withAllowOriginAll.withAllowHeadersAll.withAllowCredentials(false).apply {

@@ -4,16 +4,17 @@ import cats.effect.Async
 import cats.syntax.contravariantSemigroupal._
 import cats.syntax.flatMap._
 
+import org.tessellation.http.routes.internal.{InternalUrlPrefix, P2PRoutes, PublicRoutes}
 import org.tessellation.schema.node.NodeInfo
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.config.types.HttpConfig
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tessellation.sdk.domain.node.NodeStorage
 
+import eu.timepit.refined.auto._
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.dsl.Http4sDsl
-import org.http4s.server.Router
 
 final case class NodeRoutes[F[_]: Async](
   nodeStorage: NodeStorage[F],
@@ -22,10 +23,12 @@ final case class NodeRoutes[F[_]: Async](
   version: String,
   httpCfg: HttpConfig,
   selfId: PeerId
-) extends Http4sDsl[F] {
-  private[routes] val prefixPath = "/node"
+) extends Http4sDsl[F]
+    with PublicRoutes[F]
+    with P2PRoutes[F] {
+  protected[routes] val prefixPath: InternalUrlPrefix = "/node"
 
-  private val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
+  protected val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
     case GET -> Root / "state" =>
       Ok(nodeStorage.getNodeState)
 
@@ -36,7 +39,7 @@ final case class NodeRoutes[F[_]: Async](
       Ok(sessionStorage.getToken)
   }
 
-  private val public: HttpRoutes[F] = HttpRoutes.of[F] {
+  protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case GET -> Root / "info" =>
       (nodeStorage.getNodeState, sessionStorage.getToken, clusterStorage.getToken).mapN { (state, session, clusterSession) =>
         NodeInfo(state, session, clusterSession, version, httpCfg.externalIp, httpCfg.publicHttp.port, httpCfg.p2pHttp.port, selfId)
@@ -48,12 +51,4 @@ final case class NodeRoutes[F[_]: Async](
     case GET -> Root / "health" =>
       Ok()
   }
-
-  val p2pRoutes: HttpRoutes[F] = Router(
-    prefixPath -> p2p
-  )
-
-  val publicRoutes: HttpRoutes[F] = Router(
-    prefixPath -> public
-  )
 }

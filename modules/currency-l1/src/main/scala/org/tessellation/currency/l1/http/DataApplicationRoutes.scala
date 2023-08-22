@@ -9,6 +9,7 @@ import org.tessellation.currency.dataApplication._
 import org.tessellation.currency.l1.domain.error.{InvalidDataUpdate, InvalidSignature}
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import org.tessellation.ext.http4s.error._
+import org.tessellation.http.routes.internal.{InternalUrlPrefix, P2PRoutes, PublicRoutes}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
@@ -16,6 +17,7 @@ import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 
+import eu.timepit.refined.auto._
 import io.circe.Decoder
 import io.circe.shapes._
 import org.http4s.HttpRoutes
@@ -33,11 +35,15 @@ final case class DataApplicationRoutes[F[_]: Async: KryoSerializer: SecurityProv
   lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
   lastCurrencySnapshotStorage: LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
 )(implicit S: Supervisor[F])
-    extends Http4sDsl[F] {
+    extends Http4sDsl[F]
+    with PublicRoutes[F]
+    with P2PRoutes[F] {
 
   def logger = Slf4jLogger.getLogger[F]
 
-  private val public: HttpRoutes[F] = HttpRoutes.of[F] {
+  protected val prefixPath: InternalUrlPrefix = "/"
+
+  protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "data" =>
       implicit val decoder = dataApplication.signedDataEntityDecoder
 
@@ -62,7 +68,7 @@ final case class DataApplicationRoutes[F[_]: Async: KryoSerializer: SecurityProv
       l0ClusterStorage.getPeers.flatMap(Ok(_))
   }
 
-  private val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
+  protected val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "consensus" / "data-application" =>
       implicit val decoder: Decoder[ConsensusInput.Proposal] = ConsensusInput.Proposal.decoder(dataApplication.dataDecoder)
 
@@ -87,7 +93,4 @@ final case class DataApplicationRoutes[F[_]: Async: KryoSerializer: SecurityProv
           logger.error(err)(s"An error occured") >> InternalServerError()
         }
   }
-
-  val publicRoutes: HttpRoutes[F] = public
-  val p2pRoutes: HttpRoutes[F] = p2p
 }

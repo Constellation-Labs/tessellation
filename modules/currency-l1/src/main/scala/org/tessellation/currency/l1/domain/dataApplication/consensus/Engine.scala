@@ -13,7 +13,6 @@ import scala.concurrent.duration._
 import org.tessellation.currency.dataApplication.ConsensusInput._
 import org.tessellation.currency.dataApplication.ConsensusOutput.Noop
 import org.tessellation.currency.dataApplication._
-import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import org.tessellation.fsm.FSM
 import org.tessellation.kryo.KryoSerializer
@@ -31,6 +30,8 @@ import org.tessellation.security.signature.signature.SignatureProof
 import io.circe.Encoder
 import monocle.syntax.all._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+
+import dataApplication.DataApplicationBlock
 
 case class RoundData(
   roundId: RoundId,

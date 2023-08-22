@@ -6,21 +6,23 @@ import cats.syntax.functor._
 
 import org.tessellation.domain.statechannel.StateChannelService
 import org.tessellation.ext.http4s.AddressVar
+import org.tessellation.http.routes.internal.{InternalUrlPrefix, PublicRoutes}
 import org.tessellation.security.signature.Signed
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
 
+import eu.timepit.refined.auto._
 import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder}
 import org.http4s.dsl.Http4sDsl
-import org.http4s.server.Router
 import org.http4s.{EntityDecoder, HttpRoutes}
 
 final case class StateChannelRoutes[F[_]: Async](
   stateChannelService: StateChannelService[F]
-) extends Http4sDsl[F] {
-  private val prefixPath = "/state-channels"
+) extends Http4sDsl[F]
+    with PublicRoutes[F] {
+  protected val prefixPath: InternalUrlPrefix = "/state-channels"
   implicit val decoder: EntityDecoder[F, Array[Byte]] = EntityDecoder.byteArrayDecoder[F]
 
-  private val httpRoutes: HttpRoutes[F] = HttpRoutes.of[F] {
+  protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / AddressVar(address) / "snapshot" =>
       req
         .as[Signed[StateChannelSnapshotBinary]]
@@ -32,7 +34,4 @@ final case class StateChannelRoutes[F[_]: Async](
         }
   }
 
-  val publicRoutes: HttpRoutes[F] = Router(
-    prefixPath -> httpRoutes
-  )
 }

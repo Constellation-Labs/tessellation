@@ -9,12 +9,14 @@ import cats.syntax.show._
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.PeerBlockConsensusInput
 import org.tessellation.dag.l1.domain.transaction.{TransactionService, TransactionStorage, transactionLoggerName}
 import org.tessellation.ext.http4s.{AddressVar, HashVar}
+import org.tessellation.http.routes.internal.{InternalUrlPrefix, P2PRoutes, PublicRoutes}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.http.{ErrorCause, ErrorResponse}
 import org.tessellation.schema.transaction.{Transaction, TransactionStatus, TransactionView}
 import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.security.signature.Signed
 
+import eu.timepit.refined.auto._
 import io.circe.shapes._
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder}
@@ -29,11 +31,15 @@ final case class Routes[F[_]: Async: KryoSerializer](
   l0ClusterStorage: L0ClusterStorage[F],
   peerBlockConsensusInputQueue: Queue[F, Signed[PeerBlockConsensusInput]]
 )(implicit S: Supervisor[F])
-    extends Http4sDsl[F] {
+    extends Http4sDsl[F]
+    with PublicRoutes[F]
+    with P2PRoutes[F] {
 
   private val transactionLogger = Slf4jLogger.getLoggerFromName[F](transactionLoggerName)
 
-  private val public: HttpRoutes[F] = HttpRoutes.of[F] {
+  protected val prefixPath: InternalUrlPrefix = "/"
+
+  protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "transactions" =>
       for {
         transaction <- req.as[Signed[Transaction]]
@@ -68,7 +74,7 @@ final case class Routes[F[_]: Async: KryoSerializer](
       l0ClusterStorage.getPeers.flatMap(Ok(_))
   }
 
-  private val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
+  protected val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "consensus" / "data" =>
       for {
         peerBlockConsensusInput <- req.as[Signed[PeerBlockConsensusInput]]
@@ -76,8 +82,4 @@ final case class Routes[F[_]: Async: KryoSerializer](
         response <- Ok()
       } yield response
   }
-
-  val publicRoutes: HttpRoutes[F] = public
-
-  val p2pRoutes: HttpRoutes[F] = p2p
 }

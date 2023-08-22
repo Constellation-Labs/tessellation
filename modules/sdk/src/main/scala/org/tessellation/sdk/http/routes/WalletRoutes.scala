@@ -4,6 +4,7 @@ import cats.effect.Async
 import cats.syntax.flatMap._
 
 import org.tessellation.ext.http4s.AddressVar
+import org.tessellation.http.routes.internal.{InternalUrlPrefix, PublicRoutes}
 import org.tessellation.schema.snapshot.Snapshot
 import org.tessellation.sdk.domain.snapshot.services.AddressService
 import org.tessellation.sdk.ext.http4s.SnapshotOrdinalVar
@@ -11,17 +12,17 @@ import org.tessellation.sdk.ext.http4s.SnapshotOrdinalVar
 import io.circe.shapes._
 import org.http4s.HttpRoutes
 import org.http4s.dsl.Http4sDsl
-import org.http4s.server.Router
 import shapeless._
 import shapeless.syntax.singleton._
 
 final case class WalletRoutes[F[_]: Async, S <: Snapshot](
-  prefixPath: String,
+  prefixPath: InternalUrlPrefix,
   addressService: AddressService[F, S]
-) extends Http4sDsl[F] {
+) extends Http4sDsl[F]
+    with PublicRoutes[F] {
   import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 
-  private val httpRoutes: HttpRoutes[F] = HttpRoutes.of[F] {
+  protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case GET -> Root / AddressVar(address) / "balance" =>
       addressService
         .getBalance(address)
@@ -66,9 +67,5 @@ final case class WalletRoutes[F[_]: Async, S <: Snapshot](
         case _ => NotFound()
       }
   }
-
-  val publicRoutes: HttpRoutes[F] = Router(
-    prefixPath -> httpRoutes
-  )
 
 }

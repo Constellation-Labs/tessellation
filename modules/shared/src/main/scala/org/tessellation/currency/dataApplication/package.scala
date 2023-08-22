@@ -7,19 +7,22 @@ import cats.{Monad, MonadThrow}
 import scala.reflect.ClassTag
 import scala.util.control.NoStackTrace
 
-import org.tessellation.currency.dataApplication.dataApplication.DataApplicationValidationErrorOr
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
+import org.tessellation.http.routes.internal.ExternalUrlPrefix
 import org.tessellation.schema.GlobalIncrementalSnapshot
 import org.tessellation.schema.round.RoundId
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Encodable, Hashed, SecurityProvider}
 
+import eu.timepit.refined.auto._
 import io.circe._
 import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.syntax._
 import org.http4s._
 import org.http4s.server.Router
+
+import dataApplication.DataApplicationValidationErrorOr
 
 trait DataUpdate
 trait DataState
@@ -52,6 +55,8 @@ trait BaseDataApplicationContextualOps[F[_], Context] {
   def combine(oldState: DataState, updates: NonEmptyList[Signed[DataUpdate]])(implicit context: Context): F[DataState]
 
   def routes(implicit context: Context): HttpRoutes[F]
+
+  def routesPrefix: ExternalUrlPrefix
 }
 
 trait BaseDataApplicationL0Service[F[_]] extends BaseDataApplicationService[F] with BaseDataApplicationContextualOps[F, L0NodeContext[F]] {
@@ -93,6 +98,8 @@ trait DataApplicationContextualOps[F[_], D <: DataUpdate, S <: DataState, Contex
   def combine(oldState: S, updates: NonEmptyList[Signed[D]])(implicit context: Context): F[S]
 
   def routes(implicit context: Context): HttpRoutes[F]
+
+  def routesPrefix: ExternalUrlPrefix = "/data-application"
 }
 
 trait DataApplicationL0Service[F[_], D <: DataUpdate, S <: DataState]
@@ -136,6 +143,8 @@ object BaseDataApplicationContextualOps {
         }
 
       def routes(implicit context: Context): HttpRoutes[F] = service.routes
+
+      def routesPrefix: ExternalUrlPrefix = service.routesPrefix
     }
 }
 
@@ -194,6 +203,8 @@ object BaseDataApplicationService {
         service.signedDataEntityDecoder.widen[Signed[DataUpdate]]
 
       def routes(implicit context: Context): HttpRoutes[F] = v.routes
+
+      def routesPrefix: ExternalUrlPrefix = v.routesPrefix
     }
 }
 
@@ -234,6 +245,8 @@ object BaseDataApplicationL0Service {
         implicit context: L0NodeContext[F]
       ): F[DataState] =
         base.combine(oldState, updates)
+
+      def routesPrefix: ExternalUrlPrefix = base.routesPrefix
     }
   }
 }
@@ -274,6 +287,8 @@ object BaseDataApplicationL1Service {
       def combine(oldState: DataState, updates: NonEmptyList[Signed[DataUpdate]])(
         implicit context: L1NodeContext[F]
       ): F[DataState] = base.combine(oldState, updates)
+
+      def routesPrefix: ExternalUrlPrefix = base.routesPrefix
     }
 
   }
@@ -304,7 +319,9 @@ object dataApplication {
     def publicRoutes[F[_]: Monad, Context](
       maybeDataApplication: Option[BaseDataApplicationService[F] with BaseDataApplicationContextualOps[F, Context]]
     )(implicit context: Context): HttpRoutes[F] =
-      maybeDataApplication.map(_.routes).map(r => Router("/data-application" -> r)).getOrElse(HttpRoutes.empty[F])
+      maybeDataApplication.map { da =>
+        Router(da.routesPrefix.value -> da.routes)
+      }.getOrElse(HttpRoutes.empty[F])
   }
 
 }

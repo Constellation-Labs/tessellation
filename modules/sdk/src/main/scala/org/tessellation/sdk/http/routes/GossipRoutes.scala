@@ -6,26 +6,28 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.traverse._
 
+import org.tessellation.http.routes.internal.{InternalUrlPrefix, P2PRoutes}
 import org.tessellation.schema.gossip._
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.infrastructure.gossip.RumorStorage
 import org.tessellation.security.signature.Signed
 
+import eu.timepit.refined.auto._
 import fs2.{Chunk, Stream}
 import org.http4s._
 import org.http4s.circe.CirceEntityCodec._
 import org.http4s.dsl._
-import org.http4s.server.Router
 
 final case class GossipRoutes[F[_]: Async](
   rumorStorage: RumorStorage[F],
   gossip: Gossip[F]
-) extends Http4sDsl[F] {
+) extends Http4sDsl[F]
+    with P2PRoutes[F] {
 
-  private val prefixPath = "/rumors"
+  protected val prefixPath: InternalUrlPrefix = "/rumors"
 
-  private val httpRoutes: HttpRoutes[F] = HttpRoutes.of[F] {
+  protected val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "peer" / "query" =>
       for {
         inquiryRequest <- req.as[PeerRumorInquiryRequest]
@@ -73,9 +75,5 @@ final case class GossipRoutes[F[_]: Async](
 
   private def streamFromChain[A](chain: Chain[A]): Stream[F, A] =
     Stream.chunk(Chunk.chain(chain)).covary[F]
-
-  val p2pRoutes: HttpRoutes[F] = Router(
-    prefixPath -> httpRoutes
-  )
 
 }
