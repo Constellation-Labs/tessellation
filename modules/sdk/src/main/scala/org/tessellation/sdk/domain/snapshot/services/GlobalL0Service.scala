@@ -2,11 +2,7 @@ package org.tessellation.sdk.domain.snapshot.services
 
 import cats.Applicative
 import cats.effect.Async
-import cats.syntax.applicativeError._
-import cats.syntax.either._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
-import cats.syntax.option._
+import cats.syntax.all._
 
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.kryo.KryoSerializer
