@@ -48,7 +48,8 @@ object Services {
     cfg: AppConfig,
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
     maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot]],
-    signedValidator: SignedValidator[F]
+    signedValidator: SignedValidator[F],
+    globalSnapshotContextFns: GlobalSnapshotContextFunctions[F]
   ): F[Services[F]] =
     for {
       stateChannelSnapshotService <- StateChannelSnapshotService
@@ -109,7 +110,8 @@ object Services {
         stateChannelSnapshot = stateChannelSnapshotService,
         globalL0 = globalL0Service,
         snapshotContextFunctions = sdkServices.currencySnapshotContextFns,
-        dataApplication = maybeDataApplication
+        dataApplication = maybeDataApplication,
+        globalSnapshotContextFunctions = globalSnapshotContextFns
       ) {}
 }
 
@@ -129,5 +131,6 @@ sealed abstract class Services[F[_]] private (
   val stateChannelSnapshot: StateChannelSnapshotService[F],
   val globalL0: GlobalL0Service[F],
   val snapshotContextFunctions: CurrencySnapshotContextFunctions[F],
-  val dataApplication: Option[BaseDataApplicationL0Service[F]]
+  val dataApplication: Option[BaseDataApplicationL0Service[F]],
+  val globalSnapshotContextFunctions: GlobalSnapshotContextFunctions[F]
 )

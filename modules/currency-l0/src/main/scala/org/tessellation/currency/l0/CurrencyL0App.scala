@@ -1,8 +1,7 @@
 package org.tessellation.currency.l0
 
 import cats.effect.{IO, Resource}
-import cats.syntax.semigroupk._
-import cats.syntax.traverse._
+import cats.syntax.all._
 
 import org.tessellation.BuildInfo
 import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
@@ -77,7 +76,8 @@ abstract class CurrencyL0App(
           cfg,
           dataApplication,
           rewards,
-          validators.signedValidator
+          validators.signedValidator,
+          sdkServices.globalSnapshotContextFns
         )
         .asResource
       programs = Programs.make[IO](
@@ -174,6 +174,13 @@ abstract class CurrencyL0App(
             programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
             storages.node.setNodeState(NodeState.Ready)
       }).asResource
+
+      _ <- StateChannel
+        .run[IO](services, storages, programs)
+        .compile
+        .drain
+        .asResource
+
     } yield ()
   }
 }
