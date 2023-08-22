@@ -120,34 +120,36 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
   val env: AppEnvironment = AppEnvironment.Testnet
 
   test("global snapshot hash value comparison") { res =>
-    implicit val (_, ks, sp, m) = res
+    implicit val (_, ks, _, _) = res
 
     import org.tessellation.ext.crypto._
     import org.tessellation.ext.kryo._
 
-    def printBytes(label: String, bytes: Array[Byte]): Unit =
-      println(s"$label: ${Hex.fromBytes(bytes, Some("-"))}")
+    def printBytes(label: String, bytes: Either[Throwable, Array[Byte]]): Unit =
+      println(s"\n$label:\n${Hex.fromBytes(bytes.getOrElse(Array(0: Byte)), Some("-"))}")
 
-    // val genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
+    val genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
     val genesis_v2 = GlobalSnapshotV2.mkGenesis(Map.empty, EpochProgress.MinValue)
 
-    val kryoBytes = genesis_v2.toBinary.getOrElse(Array(0: Byte))
-    val encodeBytes = genesis_v2.toEncode.toBinary.getOrElse(Array(0: Byte))
+    val kryoBytes = genesis_v2.toBinary
+    val encodeBytes = genesis_v2.toEncode.toBinary
 
-    printBytes("snapshotKryoBytes", kryoBytes)
-    printBytes("snapshotEncodeBytes", encodeBytes)
-    printBytes("ordinalBytes", genesis_v2.ordinal.toBinary.getOrElse(Array(0: Byte)))
-    println("heightBytes " + genesis_v2.height.value.value.toHexString)
-    println("subheightBytes " + genesis_v2.subHeight.value.value.toHexString)
-    printBytes("lastSnapshotHashBytes", ks.serialize(genesis_v2.lastSnapshotHash.getBytes).getOrElse(Array(0: Byte)))
-    printBytes("blocksBytes", ks.serialize(genesis_v2.blocks).getOrElse(Array(0: Byte)))
-    printBytes("stateChannelSnapshotsBytes", ks.serialize(genesis_v2.stateChannelSnapshots).getOrElse(Array(0: Byte)))
-    printBytes("rewardsBytes", ks.serialize(genesis_v2.rewards).getOrElse(Array(0: Byte)))
-    println("epochProgressBytes " + genesis_v2.epochProgress.value.value.toHexString)
-    printBytes("nextFacilitatorsBytes", ks.serialize(genesis_v2.nextFacilitators).getOrElse(Array(0: Byte)))
-    printBytes("infoBytes", ks.serialize(genesis_v2.info).getOrElse(Array(0: Byte)))
-    printBytes("tipsBytes", ks.serialize(genesis_v2.tips).getOrElse(Array(0: Byte)))
-    printBytes("optionIntBytes", ks.serialize(genesis_v2.optionInt).getOrElse(Array(0: Byte)))
+    printBytes("v2 toBinary", genesis_v2.toBinary)
+
+//    printBytes("snapshotKryoBytes", kryoBytes)
+//    printBytes("snapshotEncodeBytes", encodeBytes)
+//    printBytes("ordinalBytes", ks.serialize(genesis_v2.ordinal))
+//    println("heightBytes: " + genesis_v2.height.value.value.toHexString)
+//    println("subheightBytes: " + genesis_v2.subHeight.value.value.toHexString)
+//    printBytes("lastSnapshotHashBytes", genesis_v2.lastSnapshotHash.getBytes.asRight[Throwable])
+//    printBytes("blocksBytes", genesis_v2.blocks.toBinary)
+//    printBytes("stateChannelSnapshotsBytes", ks.serialize(genesis_v2.stateChannelSnapshots))
+//    printBytes("rewardsBytes", ks.serialize(genesis_v2.rewards))
+//    println("epochProgressBytes: " + genesis_v2.epochProgress.value.value.toHexString)
+//    printBytes("nextFacilitatorsBytes", ks.serialize(genesis_v2.nextFacilitators))
+//    printBytes("infoBytes", ks.serialize(genesis_v2.info))
+//    printBytes("tipsBytes", ks.serialize(genesis_v2.tips))
+//    printBytes("optionIntBytes", ks.serialize(genesis_v2.optionInt))
 
     IO.pure(expect.same(kryoBytes.hash, encodeBytes.hash))
 

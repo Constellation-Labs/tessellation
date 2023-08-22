@@ -91,22 +91,22 @@ case class GlobalSnapshotV2(
   epochProgress: EpochProgress,
   nextFacilitators: NonEmptyList[PeerId],
   info: GlobalSnapshotInfoV1,
-  tips: SnapshotTips,
-  optionInt: Option[Int] = None
+  tips: SnapshotTips
+  // optionInt: Option[Int] = None
 ) extends FullSnapshot[GlobalSnapshotStateProof, GlobalSnapshotInfoV1]
     with Encodable {
 
   override def toEncode: AnyRef = (
-    ordinal,
-    height,
-    subHeight,
-    lastSnapshotHash,
     blocks,
-    stateChannelSnapshots,
-    rewards,
     epochProgress,
-    nextFacilitators,
+    height,
     info,
+    lastSnapshotHash,
+    nextFacilitators,
+    ordinal,
+    rewards,
+    stateChannelSnapshots,
+    subHeight,
     tips
   )
 }
