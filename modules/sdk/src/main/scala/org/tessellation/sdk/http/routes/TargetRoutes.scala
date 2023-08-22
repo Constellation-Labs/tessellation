@@ -3,6 +3,7 @@ package org.tessellation.sdk.http.routes
 import cats.effect.Async
 import cats.syntax.functor._
 
+import org.tessellation.http.routes.internal.{InternalUrlPrefix, PublicRoutes}
 import org.tessellation.schema.peer.PeerInfo
 import org.tessellation.sdk.domain.cluster.services.Cluster
 import org.tessellation.sdk.http.routes.TargetRoutes.Target
@@ -15,20 +16,16 @@ import io.circe.refined.{refinedKeyDecoder, refinedKeyEncoder}
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.dsl.Http4sDsl
-import org.http4s.server.Router
 
 final case class TargetRoutes[F[_]: Async](
   cluster: Cluster[F]
-) extends Http4sDsl[F] {
-  private[routes] val prefixPath = "/targets"
+) extends Http4sDsl[F]
+    with PublicRoutes[F] {
+  protected[routes] val prefixPath: InternalUrlPrefix = "/targets"
 
-  val httpRoutes: HttpRoutes[F] = HttpRoutes.of[F] {
+  val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case GET -> Root => Ok(cluster.info.map(_.map(Target.fromPeerInfo)))
   }
-
-  val routes: HttpRoutes[F] = Router(
-    prefixPath -> httpRoutes
-  )
 }
 
 object TargetRoutes {

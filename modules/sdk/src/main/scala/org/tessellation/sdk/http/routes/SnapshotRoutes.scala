@@ -8,6 +8,7 @@ import cats.syntax.traverse._
 import org.tessellation.ext.codecs.BinaryCodec
 import org.tessellation.ext.http4s.HashVar
 import org.tessellation.ext.http4s.headers.negotiation.resolveEncoder
+import org.tessellation.http.routes.internal.{InternalUrlPrefix, P2PRoutes, PublicRoutes}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.GlobalSnapshot
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotMetadata}
@@ -20,7 +21,6 @@ import io.circe.Encoder
 import io.circe.shapes._
 import org.http4s.circe.CirceEntityEncoder
 import org.http4s.dsl.Http4sDsl
-import org.http4s.server.Router
 import org.http4s.{EntityEncoder, HttpRoutes}
 import shapeless.HNil
 import shapeless.syntax.singleton._
@@ -28,8 +28,10 @@ import shapeless.syntax.singleton._
 final case class SnapshotRoutes[F[_]: Async: KryoSerializer, S <: Snapshot: Encoder, C: Encoder](
   snapshotStorage: SnapshotStorage[F, S, C],
   fullGlobalSnapshotStorage: Option[SnapshotLocalFileSystemStorage[F, GlobalSnapshot]],
-  prefix: String
-) extends Http4sDsl[F] {
+  prefixPath: InternalUrlPrefix
+) extends Http4sDsl[F]
+    with PublicRoutes[F]
+    with P2PRoutes[F] {
 
   object FullSnapshotQueryParam extends FlagQueryParamMatcher("full")
 
@@ -37,7 +39,7 @@ final case class SnapshotRoutes[F[_]: Async: KryoSerializer, S <: Snapshot: Enco
   implicit def binaryAndJsonEncoders[A <: AnyRef: Encoder]: List[EntityEncoder[F, A]] =
     List(BinaryCodec.encoder[F, A], CirceEntityEncoder.circeEntityEncoder[F, A])
 
-  private val httpRoutes: HttpRoutes[F] = HttpRoutes.of[F] {
+  protected val httpRoutes: HttpRoutes[F] = HttpRoutes.of[F] {
     case GET -> Root / "latest" / "ordinal" =>
       import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 
@@ -111,11 +113,6 @@ final case class SnapshotRoutes[F[_]: Async: KryoSerializer, S <: Snapshot: Enco
 
   }
 
-  val publicRoutes: HttpRoutes[F] = Router(
-    prefix -> httpRoutes
-  )
-
-  val p2pRoutes: HttpRoutes[F] = Router(
-    prefix -> httpRoutes
-  )
+  protected val public: HttpRoutes[F] = httpRoutes
+  protected val p2p: HttpRoutes[F] = httpRoutes
 }

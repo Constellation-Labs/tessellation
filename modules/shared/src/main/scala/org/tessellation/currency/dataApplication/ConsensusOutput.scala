@@ -1,8 +1,9 @@
 package org.tessellation.currency.dataApplication
 
-import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
 import org.tessellation.schema.round.RoundId
 import org.tessellation.security.Hashed
+
+import dataApplication.DataApplicationBlock
 
 sealed trait ConsensusOutput
 

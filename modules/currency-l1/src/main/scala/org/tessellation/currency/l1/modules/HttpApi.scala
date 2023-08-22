@@ -113,8 +113,8 @@ sealed abstract class HttpApi[
     Router("healthcheck" -> pingHealthcheckRoutes.p2pRoutes)
   }
 
-  private val metricRoutes = MetricRoutes[F]().routes
-  private val targetRoutes = TargetRoutes[F](services.cluster).routes
+  private val metricRoutes = MetricRoutes[F]().publicRoutes
+  private val targetRoutes = TargetRoutes[F](services.cluster).publicRoutes
 
   private val openRoutes: HttpRoutes[F] =
     CORS.policy.withAllowOriginAll.withAllowHeadersAll.withAllowCredentials(false).apply {

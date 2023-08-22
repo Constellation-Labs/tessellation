@@ -1,8 +1,10 @@
 package org.tessellation.sdk.http.routes
 
+import cats.Monad
 import cats.effect.Async
 import cats.syntax.all._
 
+import org.tessellation.http.routes.internal.{InternalUrlPrefix, PublicRoutes}
 import org.tessellation.schema.cluster.SessionAlreadyExists
 import org.tessellation.schema.node.InvalidNodeStateTransition
 import org.tessellation.schema.peer.PeerId
@@ -16,6 +18,7 @@ import org.tessellation.sdk.infrastructure.snapshot.SnapshotConsensus
 
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
+import eu.timepit.refined.auto._
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.dsl.Http4sDsl
@@ -27,11 +30,12 @@ final case class DebugRoutes[F[_]: Async](
   gossipService: Gossip[F],
   sessionService: Session[F],
   additionalRoutes: HttpRoutes[F]*
-) extends Http4sDsl[F] {
+) extends Http4sDsl[F]
+    with PublicRoutes[F] {
 
-  private[routes] val prefixPath = "/debug"
+  protected[routes] val prefixPath: InternalUrlPrefix = "/debug"
 
-  private val httpRoutes: HttpRoutes[F] = HttpRoutes.of[F] {
+  protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case GET -> Root           => Ok()
     case GET -> Root / "peers" => Ok(clusterStorage.getPeers)
     case POST -> Root / "create-session" =>
@@ -75,7 +79,8 @@ final case class DebugRoutes[F[_]: Async](
       )
     }
   }
-  val routes: HttpRoutes[F] = Router(
-    prefixPath -> additionalRoutes.fold(httpRoutes)(_ <+> _)
+
+  override def publicRoutes(implicit m: Monad[F]): HttpRoutes[F] = Router(
+    prefixPath.value -> additionalRoutes.fold(public)(_ <+> _)
   )
 }

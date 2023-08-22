@@ -4,6 +4,7 @@ import cats.Order
 import cats.effect.Async
 import cats.syntax.all._
 
+import org.tessellation.http.routes.internal.InternalUrlPrefix
 import org.tessellation.sdk.infrastructure.consensus.message.{GetConsensusOutcomeRequest, RegistrationResponse}
 
 import eu.timepit.refined.auto._
@@ -17,7 +18,7 @@ class ConsensusRoutes[F[_]: Async, Key: Order: Encoder: Decoder, Artifact: Encod
   storage: ConsensusStorage[F, _, Key, Artifact, Context]
 ) extends Http4sDsl[F] {
 
-  private val prefixPath = "/consensus"
+  private val prefixPath: InternalUrlPrefix = "/consensus"
 
   private val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
     case GET -> Root / "registration" =>
@@ -36,7 +37,7 @@ class ConsensusRoutes[F[_]: Async, Key: Order: Encoder: Decoder, Artifact: Encod
   }
 
   val p2pRoutes: HttpRoutes[F] = Router(
-    prefixPath -> p2p
+    prefixPath.value -> p2p
   )
 
 }

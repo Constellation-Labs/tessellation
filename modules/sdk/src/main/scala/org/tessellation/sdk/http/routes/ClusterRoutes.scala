@@ -6,6 +6,7 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.show._
 
+import org.tessellation.http.routes.internal._
 import org.tessellation.schema.cluster._
 import org.tessellation.schema.peer.JoinRequest
 import org.tessellation.sdk.domain.cluster.programs.{Joining, PeerDiscovery}
@@ -14,11 +15,11 @@ import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.collateral.Collateral
 import org.tessellation.sdk.ext.http4s.refined.RefinedRequestDecoder
 
+import eu.timepit.refined.auto._
 import io.circe.shapes._
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.dsl.Http4sDsl
-import org.http4s.server.Router
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import shapeless._
 import shapeless.syntax.singleton._
@@ -29,13 +30,17 @@ final case class ClusterRoutes[F[_]: Async](
   clusterStorage: ClusterStorage[F],
   cluster: Cluster[F],
   collateral: Collateral[F]
-) extends Http4sDsl[F] {
+) extends Http4sDsl[F]
+    with PublicRoutes[F]
+    with P2PRoutes[F]
+    with P2PPublicRoutes[F]
+    with CliRoutes[F] {
 
   implicit val logger = Slf4jLogger.getLogger[F]
 
-  private[routes] val prefixPath = "/cluster"
+  protected[routes] val prefixPath: InternalUrlPrefix = "/cluster"
 
-  private val cli: HttpRoutes[F] = HttpRoutes.of[F] {
+  protected val cli: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "join" =>
       req.decodeR[PeerToJoin] { peerToJoin =>
         joining
@@ -55,7 +60,7 @@ final case class ClusterRoutes[F[_]: Async](
       cluster.leave() >> Ok()
   }
 
-  private val p2pPublic: HttpRoutes[F] = HttpRoutes.of[F] {
+  protected val p2pPublic: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "join" =>
       req.decodeR[JoinRequest] { joinRequest =>
         joining
@@ -73,7 +78,7 @@ final case class ClusterRoutes[F[_]: Async](
       }
   }
 
-  private val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
+  protected val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
     case GET -> Root / "peers" =>
       Ok(clusterStorage.getPeers)
     case GET -> Root / "discovery" =>
@@ -86,7 +91,7 @@ final case class ClusterRoutes[F[_]: Async](
       )
   }
 
-  private val public: HttpRoutes[F] = HttpRoutes.of[F] {
+  protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case GET -> Root / "info" =>
       Ok(cluster.info)
     case GET -> Root / "session" =>
@@ -95,20 +100,4 @@ final case class ClusterRoutes[F[_]: Async](
         case None        => NotFound()
       }
   }
-
-  val p2pPublicRoutes: HttpRoutes[F] = Router(
-    prefixPath -> p2pPublic
-  )
-
-  val p2pRoutes: HttpRoutes[F] = Router(
-    prefixPath -> p2p
-  )
-
-  val cliRoutes: HttpRoutes[F] = Router(
-    prefixPath -> cli
-  )
-
-  val publicRoutes: HttpRoutes[F] = Router(
-    prefixPath -> public
-  )
 }
