@@ -7,7 +7,7 @@ import cats.syntax.show._
 import org.tessellation.schema.gossip.PeerRumor
 import org.tessellation.schema.trust.{PublicTrust, SnapshotOrdinalPublicTrust}
 import org.tessellation.sdk.domain.trust.storage.TrustStorage
-import org.tessellation.sdk.infrastructure.gossip.{IgnoreSelfOrigin, RumorHandler}
+import org.tessellation.sdk.infrastructure.gossip.{IgnoreSelfOrigin, RumorHandler, rumorLoggerName}
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -16,7 +16,7 @@ object handler {
   def trustHandler[F[_]: Async](
     trustStorage: TrustStorage[F]
   ): RumorHandler[F] = {
-    val logger = Slf4jLogger.getLogger[F]
+    val logger = Slf4jLogger.getLoggerFromName[F](rumorLoggerName)
 
     RumorHandler.fromPeerRumorConsumer[F, PublicTrust](IgnoreSelfOrigin) {
       case PeerRumor(origin, _, trust) =>
@@ -29,7 +29,7 @@ object handler {
   def ordinalTrustHandler[F[_]: Async](
     trustStorage: TrustStorage[F]
   ): RumorHandler[F] = {
-    val logger = Slf4jLogger.getLogger[F]
+    val logger = Slf4jLogger.getLoggerFromName[F](rumorLoggerName)
 
     RumorHandler.fromPeerRumorConsumer[F, SnapshotOrdinalPublicTrust](IgnoreSelfOrigin) {
       case PeerRumor(origin, _, trust) =>
