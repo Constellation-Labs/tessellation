@@ -100,9 +100,10 @@ class StateChannel[
     .awakeEvery(10.seconds)
     .evalMap { _ =>
       storages.lastSnapshot.get.flatMap {
-        _.fold(Applicative[F].unit) { latestSnapshot =>
+        case None =>
+          storages.l0Cluster.getRandomPeer.flatMap(p => programs.l0PeerDiscovery.discoverFrom(p))
+        case Some(latestSnapshot) =>
           programs.l0PeerDiscovery.discover(latestSnapshot.signed.proofs.map(_.id).map(PeerId._Id.reverseGet))
-        }
       }
     }
 

@@ -61,5 +61,6 @@ object env {
 
   object SeedListPath {
     val opts: Opts[Option[SeedListPath]] = Opts.option[SeedListPath]("seedlist", "").orNone
+    val priorityOpts: Opts[Option[SeedListPath]] = Opts.option[SeedListPath]("prioritySeedlist", "").orNone
   }
 }

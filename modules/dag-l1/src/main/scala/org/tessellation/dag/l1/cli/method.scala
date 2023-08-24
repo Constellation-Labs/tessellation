@@ -62,6 +62,7 @@ object method {
 
     val l0SeedlistPath = None
 
+    val prioritySeedlistPath: Option[SeedListPath]
   }
 
   case class RunInitialValidator(
@@ -73,7 +74,8 @@ object method {
     l0Peer: L0Peer,
     seedlistPath: Option[SeedListPath],
     collateralAmount: Option[Amount],
-    trustRatingsPath: Option[Path]
+    trustRatingsPath: Option[Path],
+    prioritySeedlistPath: Option[SeedListPath]
   ) extends Run
 
   object RunInitialValidator {
@@ -88,7 +90,8 @@ object method {
         L0PeerOpts.opts,
         SeedListPath.opts,
         CollateralAmountOpts.opts,
-        trustRatingsPathOpts
+        trustRatingsPathOpts,
+        SeedListPath.priorityOpts
       ).mapN(RunInitialValidator.apply)
     }
   }
@@ -102,7 +105,8 @@ object method {
     l0Peer: L0Peer,
     seedlistPath: Option[SeedListPath],
     collateralAmount: Option[Amount],
-    trustRatingsPath: Option[Path]
+    trustRatingsPath: Option[Path],
+    prioritySeedlistPath: Option[SeedListPath]
   ) extends Run
 
   object RunValidator {
@@ -117,7 +121,8 @@ object method {
         L0PeerOpts.opts,
         SeedListPath.opts,
         CollateralAmountOpts.opts,
-        trustRatingsPathOpts
+        trustRatingsPathOpts,
+        SeedListPath.priorityOpts
       ).mapN(RunValidator.apply)
     }
   }

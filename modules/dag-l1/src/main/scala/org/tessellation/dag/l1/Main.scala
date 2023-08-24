@@ -16,7 +16,7 @@ import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.node.NodeState.SessionStarted
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalSnapshotStateProof}
-import org.tessellation.sdk.app.{SDK, TessellationIOApp}
+import org.tessellation.sdk.app.{SDK, TessellationIOApp, getMajorityPeerIds}
 import org.tessellation.sdk.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import org.tessellation.sdk.resources.MkHttpServer
 import org.tessellation.sdk.resources.MkHttpServer.ServerName
@@ -63,6 +63,11 @@ object Main
         sdkResources.client,
         currencyPathPrefix = "dag"
       )
+      maybeMajorityPeerIds <- getMajorityPeerIds[IO](
+        sdk.prioritySeedlist,
+        method.sdkConfig.priorityPeerIds,
+        cfg.environment
+      ).asResource
       services = Services.make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
         storages,
         storages.lastSnapshot,
@@ -70,7 +75,8 @@ object Main
         validators,
         sdkServices,
         p2pClient,
-        cfg
+        cfg,
+        maybeMajorityPeerIds
       )
       snapshotProcessor = DAGSnapshotProcessor.make(
         storages.address,

@@ -1,10 +1,13 @@
 package org.tessellation.sdk.config
 
+import cats.data.NonEmptySet
+
 import scala.concurrent.duration.FiniteDuration
 
 import org.tessellation.cli.AppEnvironment
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.node.NodeState
+import org.tessellation.schema.peer.PeerId
 
 import com.comcast.ip4s.{Host, Port}
 import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong}
@@ -19,7 +22,8 @@ object types {
     leavingDelay: FiniteDuration,
     stateAfterJoining: NodeState,
     collateral: CollateralConfig,
-    trustStorage: TrustStorageConfig
+    trustStorage: TrustStorageConfig,
+    priorityPeerIds: Option[NonEmptySet[PeerId]]
   )
 
   case class RumorStorageConfig(

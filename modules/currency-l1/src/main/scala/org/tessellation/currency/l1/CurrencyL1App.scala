@@ -1,8 +1,6 @@
 package org.tessellation.currency.l1
 
-import cats.Applicative
-import cats.effect.IO
-import cats.effect.kernel.Resource
+import cats.effect.{IO, Resource}
 import cats.syntax.applicativeError._
 import cats.syntax.semigroupk._
 
@@ -32,7 +30,7 @@ import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.node.NodeState.SessionStarted
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.sdk.app.{SDK, TessellationIOApp}
+import org.tessellation.sdk.app.{SDK, TessellationIOApp, getMajorityPeerIds}
 import org.tessellation.sdk.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import org.tessellation.sdk.resources.MkHttpServer
 import org.tessellation.sdk.resources.MkHttpServer.ServerName
@@ -90,6 +88,11 @@ abstract class CurrencyL1App(
         dagP2PClient,
         sdkResources.client
       )
+      maybeMajorityPeerIds <- getMajorityPeerIds[IO](
+        sdk.prioritySeedlist,
+        method.sdkConfig.priorityPeerIds,
+        cfg.environment
+      ).asResource
       services = Services
         .make[IO](
           storages,
@@ -99,7 +102,8 @@ abstract class CurrencyL1App(
           sdkServices,
           p2pClient,
           cfg,
-          dataApplication
+          dataApplication,
+          maybeMajorityPeerIds
         )
       snapshotProcessor = CurrencySnapshotProcessor.make(
         method.identifier,
@@ -206,9 +210,10 @@ abstract class CurrencyL1App(
         .awakeEvery[IO](10.seconds)
         .evalMap { _ =>
           storages.lastGlobalSnapshot.get.flatMap {
-            _.fold(Applicative[IO].unit) { latestSnapshot =>
+            case None =>
+              storages.globalL0Cluster.getRandomPeer.flatMap(p => programs.globalL0PeerDiscovery.discoverFrom(p))
+            case Some(latestSnapshot) =>
               programs.globalL0PeerDiscovery.discover(latestSnapshot.signed.proofs.map(_.id).map(PeerId._Id.reverseGet))
-            }
           }
         }
       _ <- services.dataApplication.map {

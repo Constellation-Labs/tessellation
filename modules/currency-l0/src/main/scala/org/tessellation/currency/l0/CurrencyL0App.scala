@@ -15,7 +15,7 @@ import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.kryo._
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.node.NodeState
-import org.tessellation.sdk.app.{SDK, TessellationIOApp}
+import org.tessellation.sdk.app.{SDK, TessellationIOApp, getMajorityPeerIds}
 import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import org.tessellation.sdk.resources.MkHttpServer
@@ -60,9 +60,12 @@ abstract class CurrencyL0App(
       storages <- Storages.make[IO](sdkStorages, cfg.snapshot, method.globalL0Peer).asResource
       p2pClient = P2PClient.make[IO](sdkP2PClient, sdkResources.client, sdkServices.session)
       validators = Validators.make[IO](seedlist)
-
       implicit0(nodeContext: L0NodeContext[IO]) = L0NodeContext.make[IO](storages.snapshot)
-
+      maybeMajorityPeerIds <- getMajorityPeerIds[IO](
+        sdk.prioritySeedlist,
+        method.sdkConfig.priorityPeerIds,
+        cfg.environment
+      ).asResource
       services <- Services
         .make[IO](
           p2pClient,
@@ -77,7 +80,8 @@ abstract class CurrencyL0App(
           dataApplication,
           rewards,
           validators.signedValidator,
-          sdkServices.globalSnapshotContextFns
+          sdkServices.globalSnapshotContextFns,
+          maybeMajorityPeerIds
         )
         .asResource
       programs = Programs.make[IO](
