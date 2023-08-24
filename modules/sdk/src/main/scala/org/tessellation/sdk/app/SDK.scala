@@ -37,6 +37,7 @@ trait SDK[F[_]] {
   val sdkServices: SdkServices[F]
   val sdkPrograms: SdkPrograms[F]
   val sdkValidators: SdkValidators[F]
+  val prioritySeedlist: Option[Set[SeedlistEntry]]
 
   def restartSignal: SignallingRef[F, Unit]
 }

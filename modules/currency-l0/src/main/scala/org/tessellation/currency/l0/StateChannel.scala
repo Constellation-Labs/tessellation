@@ -67,9 +67,10 @@ object StateChannel {
         .awakeEvery[F](awakePeriod)
         .evalMap { _ =>
           storages.lastGlobalSnapshot.get.flatMap {
-            _.fold(Applicative[F].unit) { latestSnapshot =>
+            case None =>
+              storages.globalL0Cluster.getRandomPeer.flatMap(p => programs.globalL0PeerDiscovery.discoverFrom(p))
+            case Some(latestSnapshot) =>
               programs.globalL0PeerDiscovery.discover(latestSnapshot.signed.proofs.map(_.id).map(PeerId._Id.reverseGet))
-            }
           }
         }
         .handleErrorWith { error =>

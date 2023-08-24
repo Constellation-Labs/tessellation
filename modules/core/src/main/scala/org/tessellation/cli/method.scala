@@ -74,6 +74,8 @@ object method {
 
     val l0SeedlistPath = seedlistPath
 
+    val prioritySeedlistPath: Option[SeedListPath]
+
     val stateAfterJoining: NodeState = NodeState.WaitingForDownload
 
     val lastFullGlobalSnapshotOrdinal: SnapshotOrdinal
@@ -92,7 +94,8 @@ object method {
     seedlistPath: Option[SeedListPath],
     collateralAmount: Option[Amount],
     startingEpochProgress: EpochProgress,
-    trustRatingsPath: Option[Path]
+    trustRatingsPath: Option[Path],
+    prioritySeedlistPath: Option[SeedListPath]
   ) extends Run {
 
     val lastFullGlobalSnapshotOrdinal = SnapshotOrdinal.MinValue
@@ -118,7 +121,8 @@ object method {
         SeedListPath.opts,
         CollateralAmountOpts.opts,
         startingEpochProgressOpts,
-        trustRatingsPathOpts
+        trustRatingsPathOpts,
+        SeedListPath.priorityOpts
       ).mapN(RunGenesis.apply)
     }
   }
@@ -135,7 +139,8 @@ object method {
     collateralAmount: Option[Amount],
     rollbackHash: Hash,
     lastFullGlobalSnapshotOrdinal: SnapshotOrdinal,
-    trustRatingsPath: Option[Path]
+    trustRatingsPath: Option[Path],
+    prioritySeedlistPath: Option[SeedListPath]
   ) extends Run
 
   object RunRollback extends WithOpts[RunRollback] {
@@ -155,7 +160,8 @@ object method {
         CollateralAmountOpts.opts,
         rollbackHashOpts,
         lastFullGlobalSnapshotOrdinalOpts,
-        trustRatingsPathOpts
+        trustRatingsPathOpts,
+        SeedListPath.priorityOpts
       ).mapN {
         case (
               storePath,
@@ -169,7 +175,8 @@ object method {
               collateralAmount,
               rollbackHash,
               lastGlobalSnapshot,
-              trustRatingsPath
+              trustRatingsPath,
+              prioritySeedlistPath
             ) =>
           val lastGS =
             (if (environment === AppEnvironment.Dev) lastGlobalSnapshot else lastFullGlobalSnapshot.get(environment))
@@ -187,7 +194,8 @@ object method {
             collateralAmount,
             rollbackHash,
             lastGS,
-            trustRatingsPath
+            trustRatingsPath,
+            prioritySeedlistPath
           )
       }
     }
@@ -204,7 +212,8 @@ object method {
     seedlistPath: Option[SeedListPath],
     collateralAmount: Option[Amount],
     trustRatingsPath: Option[Path],
-    lastFullGlobalSnapshotOrdinal: SnapshotOrdinal
+    lastFullGlobalSnapshotOrdinal: SnapshotOrdinal,
+    prioritySeedlistPath: Option[SeedListPath]
   ) extends Run
 
   object RunValidator extends WithOpts[RunValidator] {
@@ -221,7 +230,8 @@ object method {
         SeedListPath.opts,
         CollateralAmountOpts.opts,
         trustRatingsPathOpts,
-        lastFullGlobalSnapshotOrdinalOpts
+        lastFullGlobalSnapshotOrdinalOpts,
+        SeedListPath.priorityOpts
       ).mapN {
         case (
               storePath,
@@ -234,7 +244,8 @@ object method {
               seedlistPath,
               collateralAmount,
               trustRatingsPath,
-              lastGlobalSnapshot
+              lastGlobalSnapshot,
+              prioritySeedlistPath
             ) =>
           val lastGS =
             (if (environment === AppEnvironment.Dev) lastGlobalSnapshot else lastFullGlobalSnapshot.get(environment))
@@ -251,7 +262,8 @@ object method {
             seedlistPath,
             collateralAmount,
             trustRatingsPath,
-            lastGS
+            lastGS,
+            prioritySeedlistPath
           )
       }
     }

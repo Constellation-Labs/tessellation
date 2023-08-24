@@ -2,6 +2,7 @@ package org.tessellation.currency.l0.modules
 
 import java.security.KeyPair
 
+import cats.data.NonEmptySet
 import cats.effect.kernel.Async
 import cats.effect.std.{Random, Supervisor}
 import cats.syntax.applicative._
@@ -49,7 +50,8 @@ object Services {
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
     maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot]],
     signedValidator: SignedValidator[F],
-    globalSnapshotContextFns: GlobalSnapshotContextFunctions[F]
+    globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
+    maybeMajorityPeerIds: Option[NonEmptySet[PeerId]]
   ): F[Services[F]] =
     for {
       stateChannelSnapshotService <- StateChannelSnapshotService
@@ -97,7 +99,7 @@ object Services {
       addressService = AddressService.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](storages.snapshot)
       collateralService = Collateral.make[F](cfg.collateral, storages.snapshot)
       globalL0Service = GlobalL0Service
-        .make[F](p2PClient.l0GlobalSnapshot, storages.globalL0Cluster, storages.lastGlobalSnapshot, None)
+        .make[F](p2PClient.l0GlobalSnapshot, storages.globalL0Cluster, storages.lastGlobalSnapshot, None, maybeMajorityPeerIds)
     } yield
       new Services[F](
         localHealthcheck = sdkServices.localHealthcheck,

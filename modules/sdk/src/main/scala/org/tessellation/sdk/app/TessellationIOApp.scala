@@ -115,6 +115,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                           versionHash <- version.hash.liftTo[IO].asResource
                           _seedlist <- loadSeedlist("Seedlist", method.seedlistPath).asResource
                           _l0Seedlist <- loadSeedlist("l0Seedlist", method.l0SeedlistPath).asResource
+                          _prioritySeedlist <- loadSeedlist("prioritySeedlist", method.prioritySeedlistPath).asResource
                           _trustRatings <- method.trustRatingsPath.traverse(TrustRatingCsvLoader.make[IO].load).asResource
                           storages <- SdkStorages.make[IO](clusterId, cfg).asResource
                           res <- SdkResources.make[IO](cfg, _keyPair.getPrivate, storages.session, selfId)
@@ -179,6 +180,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                             val sdkServices = services
                             val sdkPrograms = programs
                             val sdkValidators = validators
+                            val prioritySeedlist = _prioritySeedlist
 
                             def restartSignal = _restartSignal
                           }
