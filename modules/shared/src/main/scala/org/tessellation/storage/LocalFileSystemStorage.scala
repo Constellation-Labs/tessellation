@@ -2,7 +2,6 @@ package org.tessellation.storage
 
 import java.io.{File => JFile}
 import java.nio.file.NoSuchFileException
-
 import cats.data.EitherT
 import cats.effect.Async
 import cats.syntax.applicativeError._
@@ -13,13 +12,12 @@ import cats.syntax.option._
 import cats.syntax.traverse._
 
 import scala.reflect.ClassTag
-
 import org.tessellation.ext.kryo._
 import org.tessellation.kryo.KryoSerializer
-
 import better.files._
 import fs2.Stream
 import fs2.io.file.Path
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 abstract class LocalFileSystemStorage[F[_]: KryoSerializer, A <: AnyRef: ClassTag](baseDir: Path)(
   implicit F: Async[F]
@@ -58,7 +56,9 @@ abstract class LocalFileSystemStorage[F[_]: KryoSerializer, A <: AnyRef: ClassTa
       }
 
   def write(fileName: String, a: A): F[Unit] =
-    a.toBinaryF.flatMap(write(fileName, _))
+    a.toBinaryF.flatMap { binary =>
+      Slf4jLogger.getLogger[F].info(s"Snapshot with hash $fileName serialized with KRYO has a binary size of ${binary.length}") >> write(fileName, binary)
+    }
 
   def write(fileName: String, bytes: Array[Byte]): F[Unit] =
     dir

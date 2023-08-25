@@ -76,6 +76,8 @@ object StateChannelSnapshotService {
 
       def consume(signedArtifact: Signed[CurrencySnapshotArtifact], context: CurrencySnapshotContext): F[Unit] = for {
         binary <- createBinary(signedArtifact)
+        hashed <- signedArtifact.toHashed
+        _ <- logger.info(s"Binary size for snapshot serialize with JSON with hash: ${hashed.hash} is of size: ${binary.value.content.length}")
         binaryHashed <- binary.toHashed
         identifier <- identifierStorage.get
         _ <- retryingOnFailuresAndAllErrors[Either[NonEmptyList[StateChannelValidationError], Unit]](
