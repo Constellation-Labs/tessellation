@@ -1,0 +1,22 @@
+name: Setup Java and Scala
+
+inputs:
+  JAVA_VERSION:
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Java and scala
+      uses: olafurpg/setup-scala@v13
+      with:
+        java-version: ${{ inputs.JAVA_VERSION }}
+
+    - name: Cache for sbt & coursier ♨️
+      uses: coursier/cache-action@v6
+      id: coursier-cache
+
+    - name: Fetch Dependencies
+      shell: bash
+      if: steps.coursier-cache.outputs.cache-hit-coursier != 'true'
+      run: sbt +update

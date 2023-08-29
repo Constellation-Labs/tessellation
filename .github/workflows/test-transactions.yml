@@ -1,0 +1,99 @@
+name: Test sending transactions
+
+on:
+  pull_request: {}
+  push:
+    branches:
+      - develop
+      - hotfix/*
+      - release/*
+
+jobs:
+  build:
+    name: Test sending transactions
+    runs-on: ubuntu-20.04
+    timeout-minutes: 45
+    strategy:
+      matrix:
+        java:
+          - openjdk@1.11.0
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-node@v3
+        with:
+          node-version: 16.14.2
+          cache: 'npm'
+          cache-dependency-path: .github/action_scripts/package-lock.json
+
+      - name: Installing node-fetch@2.6.6
+        run: |
+          cd .github/action_scripts
+          npm i node-fetch@2.6.6
+
+      - name: Setup Java and scala
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          JAVA_VERSION: ${{ matrix.java }}
+        uses: "./.github/templates/setup_java_and_scala"
+
+      - name: Run Global L0 Cluster
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: "./.github/templates/global_l0/gl0_cluster"
+
+      - name: Run DAG L1 Cluster
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: "./.github/templates/dag_l1/dl1_cluster"
+
+      - name: Run Metagraph L0 Cluster
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: "./.github/templates/metagraph_l0/ml0_cluster"
+
+      - name: Run Metagraph L1 Cluster
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: "./.github/templates/metagraph_l1/ml1_cluster"
+
+      - name: Check clusters
+        run: |
+          cd .github/action_scripts
+          node check_clusters.js
+
+
+      - name: Send transactions
+        run: |
+          cd .github/action_scripts
+          npm install @stardust-collective/dag4
+          node send_transactions.js
+
+      - name: Save Global L0 logs
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: send-transactions-global-l0-java-${{ matrix.java }}
+          path: .github/config/containers/global-l0/global-l0.log
+
+      - name: Save DAG L1 logs
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: send-transactions-dag-l1-java-${{ matrix.java }}
+          path: .github/config/containers/dag-l1/initial-validator/dag-l1-initial-validator.log
+
+      - name: Save Metagraph L0 logs
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: send-transactions-metagraph-l0-java-${{ matrix.java }}
+          path: .github/config/containers/metagraph-l0/genesis/metagraph-l0-genesis.log
+
+      - name: Save Metagraph L1 logs
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: send-transactions-metagraph-l1-java-${{ matrix.java }}
+          path: .github/config/containers/metagraph-l1/initial-validator/metagraph-l1-initial-validator.log
