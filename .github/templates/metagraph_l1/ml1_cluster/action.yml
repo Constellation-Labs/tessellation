@@ -15,9 +15,9 @@ runs:
       uses: "./.github/templates/metagraph_l1/initial_validator"
       with:
         METAGRAPH_ID: ${{ env.METAGRAPH_ID }}
-        CL_PUBLIC_HTTP_PORT: 9500
-        CL_P2P_HTTP_PORT: 9501
-        CL_CLI_HTTP_PORT: 9502
+        CL_PUBLIC_HTTP_PORT: 9700
+        CL_P2P_HTTP_PORT: 9701
+        CL_CLI_HTTP_PORT: 9702
         CL_GLOBAL_L0_PEER_HTTP_PORT: 9000
         CL_L0_PEER_HTTP_PORT: 9400
 
@@ -25,22 +25,22 @@ runs:
       uses: "./.github/templates/metagraph_l1/validator"
       with:
         METAGRAPH_ID: ${{ env.METAGRAPH_ID }}
-        CL_PUBLIC_HTTP_PORT: 9500
-        CL_P2P_HTTP_PORT: 9501
-        CL_CLI_HTTP_PORT: 9502
+        CL_PUBLIC_HTTP_PORT: 9800
+        CL_P2P_HTTP_PORT: 9801
+        CL_CLI_HTTP_PORT: 9802
         CL_GLOBAL_L0_PEER_HTTP_PORT: 9000
         CL_L0_PEER_HTTP_PORT: 9400
-        CL_L1_INITIAL_VALIDATOR_P2P_PORT: 9700
+        CL_L1_INITIAL_VALIDATOR_P2P_PORT: 9701
         NODE_NUMBER: 1
 
     - name: Run Metagraph L1 Validator - 2
       uses: "./.github/templates/metagraph_l1/validator"
       with:
         METAGRAPH_ID: ${{ env.METAGRAPH_ID }}
-        CL_PUBLIC_HTTP_PORT: 9600
-        CL_P2P_HTTP_PORT: 9601
-        CL_CLI_HTTP_PORT: 9602
+        CL_PUBLIC_HTTP_PORT: 9900
+        CL_P2P_HTTP_PORT: 9901
+        CL_CLI_HTTP_PORT: 9902
         CL_GLOBAL_L0_PEER_HTTP_PORT: 9000
         CL_L0_PEER_HTTP_PORT: 9400
-        CL_L1_INITIAL_VALIDATOR_P2P_PORT: 9700
+        CL_L1_INITIAL_VALIDATOR_P2P_PORT: 9701
         NODE_NUMBER: 2
