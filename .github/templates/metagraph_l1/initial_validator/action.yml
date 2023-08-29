@@ -29,11 +29,9 @@ runs:
     - name: Generate Metagraph L1 JAR
       shell: bash
       run: |
-        sbt currencyL1/assembly keytool/assembly wallet/assembly
+        sbt currencyL1/assembly
         
         mv modules/currency-l1/target/scala-2.13/tessellation-currency-l1-assembly-* .github/config/containers/jars/metagraph-l1.jar
-        mv modules/keytool/target/scala-2.13/tessellation-keytool-assembly-* .github/config/containers/jars/cl-keytool.jar
-        mv modules/wallet/target/scala-2.13/tessellation-wallet-assembly-* .github/config/containers/jars/cl-wallet.jar
 
     - name: Running Metagraph L1 Initial Validator
       shell: bash
