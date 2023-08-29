@@ -47,7 +47,7 @@ jobs:
           npm i node-fetch@2.6.6
 
       - name: Run Global L0 Cluster
-        uses: "./.github/templates/global_l0/gl0_cluster.yml"
+        uses: "./.github/templates/global_l0/gl0_cluster/action.yml"
 
 #      - name: Running dag-l1 initial-validator
 #        env:
@@ -166,7 +166,7 @@ jobs:
 #          fi
 #
       - name: Run Metagraph L0 Cluster
-        uses: "./.github/templates/metagraph_l0/ml0_cluster.yml"
+        uses: "./.github/templates/metagraph_l0/ml0_cluster/action.yml"
 
 #      - name: Running Metagraph L0 Cluster
 #        env:

@@ -4,4 +4,4 @@ runs:
   using: "composite"
   steps:
     - name: Run Global L0 Genesis
-      uses: "./.github/templates/global_l0/genesis.yml"
+      uses: "./.github/templates/global_l0/action.yml"
