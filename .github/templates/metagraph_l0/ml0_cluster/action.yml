@@ -5,7 +5,7 @@ runs:
   steps:
     - uses: actions/checkout@v3
     - name: Run Metagraph L0 Genesis
-      uses: "./.github/templates/metagraph_l0/genesis/action.yml"
+      uses: "./.github/templates/metagraph_l0/genesis"
 
     - name: Get the Metagraph ID
       run: |
@@ -15,7 +15,7 @@ runs:
         echo "METAGRAPH_ID=$METAGRAPH_ID" >> $GITHUB_ENV
 
     - name: Run Metagraph L0 Validator - 1
-      uses: "./.github/templates/metagraph_l0/validator/action.yml"
+      uses: "./.github/templates/metagraph_l0/validator"
       with:
         METAGRAPH_ID: ${{ env.METAGRAPH_ID }}
         CL_PUBLIC_HTTP_PORT: 9500
@@ -24,7 +24,7 @@ runs:
         NODE_NUMBER: 1
 
     - name: Run Metagraph L0 Validator - 2
-      uses: "./.github/templates/metagraph_l0/validator/action.yml"
+      uses: "./.github/templates/metagraph_l0/validator"
       with:
         METAGRAPH_ID: ${{ env.METAGRAPH_ID }}
         CL_PUBLIC_HTTP_PORT: 9600

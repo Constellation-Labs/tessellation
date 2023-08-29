@@ -5,4 +5,4 @@ runs:
   steps:
     - uses: actions/checkout@v3
     - name: Run Global L0 Genesis
-      uses: "./.github/templates/global_l0/action.yml"
+      uses: "./.github/templates/global_l0"
