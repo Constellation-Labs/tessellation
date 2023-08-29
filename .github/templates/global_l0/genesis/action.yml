@@ -20,8 +20,6 @@ runs:
 
     - name: Generate Global L0 JAR
       shell: bash
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         sbt core/assembly keytool/assembly wallet/assembly
         
@@ -31,10 +29,6 @@ runs:
 
     - name: Running global-l0
       shell: bash
-      env:
-        CL_KEYSTORE: token-key.p12
-        CL_KEYALIAS: token-key
-        CL_PASSWORD: ${{ secrets.P12_GENESIS_FILE_PASSWORD }}
       run: |
         cd .github/config/containers/global-l0
         java -jar ../jars/cl-keytool.jar generate

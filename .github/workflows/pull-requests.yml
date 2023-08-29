@@ -47,6 +47,11 @@ jobs:
           npm i node-fetch@2.6.6
 
       - name: Run Global L0 Cluster
+        env:
+          CL_KEYSTORE: token-key.p12
+          CL_KEYALIAS: token-key
+          CL_PASSWORD: ${{ secrets.P12_GENESIS_FILE_PASSWORD }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         uses: "./.github/templates/global_l0/gl0_cluster"
 
 #      - name: Running dag-l1 initial-validator
