@@ -3,6 +3,5 @@ name: Global L0 Cluster
 runs:
   using: "composite"
   steps:
-    - uses: actions/checkout@v3
     - name: Run Global L0 Genesis
-      uses: "./.github/templates/global_l0"
+      uses: "./.github/templates/global_l0/genesis"
