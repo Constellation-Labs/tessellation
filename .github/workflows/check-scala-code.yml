@@ -1,0 +1,32 @@
+name: Check scala code
+
+on:
+  pull_request: {}
+  push:
+    branches:
+      - develop
+      - hotfix/*
+      - release/*
+jobs:
+  build:
+    name: Check scala code
+    runs-on: ubuntu-20.04
+    timeout-minutes: 45
+    strategy:
+      matrix:
+        java:
+          - openjdk@1.11.0
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Java and scala
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          JAVA_VERSION: ${{ matrix.java }}
+        uses: "./.github/templates/setup_java_and_scala"
+
+      - name: Run with ${{ matrix.java }} 🚀
+        run: sbt 'scalafixAll --check --rules OrganizeImports;scalafmtCheckAll;test'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

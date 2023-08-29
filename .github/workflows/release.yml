@@ -31,19 +31,11 @@ jobs:
           tagRegexGroup: 1
 
       - name: Setup Java and scala
-        uses: olafurpg/setup-scala@v13
-        with:
-          java-version: openjdk@1.11.0
-
-      - name: Cache for sbt & coursier ♨️
-        uses: coursier/cache-action@v6
-        id: coursier-cache
-
-      - name: Fetch Dependencies
-        if: steps.coursier-cache.outputs.cache-hit-coursier != 'true'
-        run: sbt +update
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          JAVA_VERSION: openjdk@1.11.0
+        uses: "./.github/templates/setup_java_and_scala"
 
       - name: Test and assembly 🚀
         run: sbt 'scalafixAll --check --rules OrganizeImports;scalafmtCheckAll;test;keytool/assembly;wallet/assembly;core/assembly;dagL1/assembly'
