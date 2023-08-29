@@ -17,10 +17,6 @@ runs:
   steps:
     - name: Running Metagraph L0 validator - ${{ inputs.NODE_NUMBER }}
       shell: bash
-      env:
-        CL_KEYSTORE: token-key.p12
-        CL_KEYALIAS: token-key
-        CL_PASSWORD: ${{ secrets.P12_GENESIS_FILE_PASSWORD }}
       run: |
         cd .github/config/containers/global-l0
         export GLOBAL_L0_NODE_ID=$(java -jar ../jars/cl-wallet.jar show-id)

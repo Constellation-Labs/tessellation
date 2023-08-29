@@ -171,6 +171,11 @@ jobs:
 #          fi
 #
       - name: Run Metagraph L0 Cluster
+        env:
+          CL_KEYSTORE: token-key.p12
+          CL_KEYALIAS: token-key
+          CL_PASSWORD: ${{ secrets.P12_GENESIS_FILE_PASSWORD }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         uses: "./.github/templates/metagraph_l0/ml0_cluster"
 
 #      - name: Running Metagraph L0 Cluster
