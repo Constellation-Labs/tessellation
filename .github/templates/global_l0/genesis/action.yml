@@ -1,5 +1,13 @@
 name: Global L0 Genesis
 
+inputs:
+  CL_PUBLIC_HTTP_PORT:
+    required: true
+  CL_P2P_HTTP_PORT:
+    required: true
+  CL_CLI_HTTP_PORT:
+    required: true
+
 runs:
   using: "composite"
   steps:
@@ -33,9 +41,9 @@ runs:
         cd .github/config/containers/global-l0
         java -jar ../jars/cl-keytool.jar generate
         
-        export CL_PUBLIC_HTTP_PORT=9000
-        export CL_P2P_HTTP_PORT=9001
-        export CL_CLI_HTTP_PORT=9002
+        export CL_PUBLIC_HTTP_PORT=${{ inputs.CL_PUBLIC_HTTP_PORT }}
+        export CL_P2P_HTTP_PORT=${{ inputs.CL_P2P_HTTP_PORT }}
+        export CL_CLI_HTTP_PORT=${{ inputs.CL_CLI_HTTP_PORT }}
         export CL_APP_ENV=dev
         export CL_ENV=dev
         export CL_COLLATERAL=0
