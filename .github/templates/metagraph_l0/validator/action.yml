@@ -16,6 +16,7 @@ runs:
   using: "composite"
   steps:
     - name: Running Metagraph L0 validator - ${{ inputs.NODE_NUMBER }}
+      shell: bash
       env:
         CL_KEYSTORE: token-key.p12
         CL_KEYALIAS: token-key

@@ -4,6 +4,7 @@ runs:
   using: "composite"
   steps:
     - name: Create directories
+      shell: bash
       run: |
         cd .github/config
         mkdir -p containers/
@@ -12,11 +13,13 @@ runs:
         mkdir -p jars
 
     - name: Copy genesis to Global L0
+      shell: bash
       run: |
         cd .github/config
         cp genesis.csv containers/global-l0
 
     - name: Generate Global L0 JAR
+      shell: bash
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
@@ -27,6 +30,7 @@ runs:
         mv modules/wallet/target/scala-2.13/tessellation-wallet-assembly-* .github/config/containers/jars/cl-wallet.jar
 
     - name: Running global-l0
+      shell: bash
       env:
         CL_KEYSTORE: token-key.p12
         CL_KEYALIAS: token-key
