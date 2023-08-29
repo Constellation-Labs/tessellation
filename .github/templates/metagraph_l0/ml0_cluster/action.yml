@@ -3,6 +3,7 @@ name: Metagraph L0 Cluster
 runs:
   using: "composite"
   steps:
+    - uses: actions/checkout@v3
     - name: Run Metagraph L0 Genesis
       uses: "./.github/templates/metagraph_l0/genesis/action.yml"
 

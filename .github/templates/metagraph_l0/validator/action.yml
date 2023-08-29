@@ -15,6 +15,7 @@ inputs:
 runs:
   using: "composite"
   steps:
+    - uses: actions/checkout@v3
     - name: Running Metagraph L0 validator - ${{ inputs.NODE_NUMBER }}
       env:
         CL_KEYSTORE: token-key.p12
