@@ -12,7 +12,7 @@ runs:
         echo "METAGRAPH_ID=$METAGRAPH_ID" >> $GITHUB_ENV
 
     - name: Run Metagraph L1 Initial Validator
-      uses: "./.github/templates/metagraph_l1/initial-validator"
+      uses: "./.github/templates/metagraph_l1/initial_validator"
       with:
         METAGRAPH_ID: ${{ env.METAGRAPH_ID }}
         CL_PUBLIC_HTTP_PORT: 9500
