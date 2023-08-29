@@ -64,7 +64,7 @@ runs:
         if node ../../../../action_scripts/check_if_node_started.js -url=http://127.0.0.1:${{ inputs.CL_PUBLIC_HTTP_PORT }}/node/info -cluster_name=Metagraph-L1-${{ inputs.NODE_NUMBER }}; then
             sleep 5
             echo "Joining Metagraph L1 validator node ${{ inputs.NODE_NUMBER }} ..."
-            curl -X POST http://127.0.0.1:${{ inputs.CL_PUBLIC_HTTP_PORT }}/cluster/join -H "Content-type: application/json" -d "{ \"id\":\"$CURRENCY_L1_INITIAL_VALIDATOR_NODE_ID\", \"ip\": \"127.0.0.1\", \"p2pPort\": ${{ inputs.CL_L1_INITIAL_VALIDATOR_P2P_PORT }} }"
+            curl -X POST http://127.0.0.1:${{ inputs.CL_CLI_HTTP_PORT }}/cluster/join -H "Content-type: application/json" -d "{ \"id\":\"$CURRENCY_L1_INITIAL_VALIDATOR_NODE_ID\", \"ip\": \"127.0.0.1\", \"p2pPort\": ${{ inputs.CL_L1_INITIAL_VALIDATOR_P2P_PORT }} }"
               echo "Joined"
               exit 0
           fi
