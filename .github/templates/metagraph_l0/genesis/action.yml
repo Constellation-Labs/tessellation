@@ -55,4 +55,4 @@ runs:
         
         nohup java -jar ../../jars/metagraph-l0.jar run-genesis ../genesis.csv --ip 127.0.0.1 > metagraph-l0-1.log 2>&1 &
         
-        node ../../../../action_scripts/check_if_node_started.js -url=http://127.0.0.1:9400/node/info -cluster_name=Metagraph-L0-1
+        node ../../../../action_scripts/check_if_node_started.js -url=http://127.0.0.1:9400/node/info -cluster_name=Metagraph-L0-Genesis
