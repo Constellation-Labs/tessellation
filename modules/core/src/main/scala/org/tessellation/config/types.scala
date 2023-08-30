@@ -31,7 +31,8 @@ object types {
     snapshot: SnapshotConfig,
     collateral: CollateralConfig,
     rewards: RewardsConfig,
-    stateChannelOrdinalDelay: Option[PosLong]
+    stateChannelPullDelay: NonNegLong,
+    stateChannelPurgeDelay: NonNegLong
   )
 
   case class DBConfig(

@@ -67,7 +67,8 @@ object method {
       snapshot = snapshotConfig,
       collateral = collateralConfig(environment, collateralAmount),
       rewards = RewardsConfig(),
-      stateChannelOrdinalDelay = None
+      stateChannelPullDelay = NonNegLong.MinValue,
+      stateChannelPurgeDelay = NonNegLong(4L)
     )
 
     val stateChannelAllowanceLists = StateChannelAllowanceLists.get(environment)

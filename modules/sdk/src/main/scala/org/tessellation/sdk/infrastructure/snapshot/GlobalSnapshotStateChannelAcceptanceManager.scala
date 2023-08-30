@@ -2,11 +2,10 @@ package org.tessellation.sdk.infrastructure.snapshot
 
 import cats.Eval
 import cats.data.{NonEmptyChain, NonEmptyList, NonEmptySet}
-import cats.effect.kernel.Async
+import cats.effect.kernel.{Async, Ref}
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.list._
-import cats.syntax.option._
 import cats.syntax.traverse._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
@@ -23,8 +22,7 @@ import org.tessellation.syntax.sortedCollection._
 
 import _root_.cats.kernel.Order
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.PosLong
-import io.chrisdavenport.mapref.MapRef
+import eu.timepit.refined.types.numeric.NonNegLong
 
 trait GlobalSnapshotStateChannelAcceptanceManager[F[_]] {
   def accept(ordinal: SnapshotOrdinal, lastGlobalSnapshotInfo: GlobalSnapshotInfo, events: List[StateChannelOutput]): F[
@@ -37,10 +35,11 @@ trait GlobalSnapshotStateChannelAcceptanceManager[F[_]] {
 
 object GlobalSnapshotStateChannelAcceptanceManager {
   def make[F[_]: Async: KryoSerializer](
-    ordinalDelay: Option[PosLong],
-    stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]]
+    stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
+    pullDelay: NonNegLong = NonNegLong.MinValue,
+    purgeDelay: NonNegLong = NonNegLong.MinValue
   ): F[GlobalSnapshotStateChannelAcceptanceManager[F]] =
-    MapRef.ofConcurrentHashMap[F, Long, Set[(Address, Hash)]]().map { firstSeenKeysForOrdinalR =>
+    Ref.of[F, Map[(Address, Hash), Long]](Map.empty).map { firstSeenKeysForOrdinalR =>
       new GlobalSnapshotStateChannelAcceptanceManager[F] {
 
         def accept(ordinal: SnapshotOrdinal, lastGlobalSnapshotInfo: GlobalSnapshotInfo, events: List[StateChannelOutput]): F[
@@ -55,16 +54,18 @@ object GlobalSnapshotStateChannelAcceptanceManager {
             .traverse {
               case (address, outputs) =>
                 acceptForAddress(ordinal, stateChannelAllowanceLists.flatMap(_.get(address)))(
-                  lastGlobalSnapshotInfo.lastStateChannelSnapshotHashes.get(address).getOrElse(Hash.empty),
+                  lastGlobalSnapshotInfo.lastStateChannelSnapshotHashes.getOrElse(address, Hash.empty),
                   outputs
                 ).map {
                   case (accepted, returned) => (accepted.map(address -> _), returned.toSet)
                 }
             }
-            .flatTap(_ => firstSeenKeysForOrdinalR(ordinal.value).set(None))
+            .flatTap { _ =>
+              firstSeenKeysForOrdinalR.update(_.filterNot { case (_, seenAt) => shouldPurge(seenAt, ordinal) })
+            }
             .map(_.unzip)
             .map {
-              case (accepted, returned) => (accepted.map(_.toList).flatten.toMap.toSortedMap, returned.toSet.flatten)
+              case (accepted, returned) => (accepted.flatMap(_.toList).toMap.toSortedMap, returned.toSet.flatten)
             }
 
         private def acceptForAddress(
@@ -72,11 +73,30 @@ object GlobalSnapshotStateChannelAcceptanceManager {
           allowedPeers: Option[NonEmptySet[PeerId]]
         )(lastHash: Hash, outputs: List[StateChannelOutput]) = for {
           outputsWithHashes <- outputs.traverse(stateChannelOutputWithHashes)
-          (impossibleCandidates, possibleCandidates) = onlyPossibleReferences(lastHash, outputsWithHashes).partitionMap(identity)
-          (notAllowed, toProcess) <- allowedForProcessing(ordinal, possibleCandidates).map(_.partitionMap(identity))
+          (notAllowed, allowed) <- allowedForProcessing(ordinal, outputsWithHashes).map(_.partitionMap(identity))
+          (impossibleCandidates, possibleCandidates) = onlyPossibleReferences(lastHash, allowed.flatten).partitionMap(identity)
           toReturn = notAllowed.flatten.map(_.output) ++ impossibleCandidates.map(_.output)
-          toAdd = selectStateChannels(allowedPeers)(lastHash, toProcess.flatten)
+          toAdd = selectStateChannels(allowedPeers)(lastHash, possibleCandidates)
         } yield (toAdd, toReturn)
+
+        private def allowedForProcessing(ordinal: SnapshotOrdinal, withHashes: List[StateChannelOutputWithHash]) =
+          withHashes.groupBy(o => (o.output.address, o.output.snapshotBinary.lastSnapshotHash)).toList.traverse {
+            case (key, outputs) =>
+              firstSeenKeysForOrdinalR.modify { current =>
+                current.get(key) match {
+                  case Some(seenAt) if shouldPurge(seenAt, ordinal) =>
+                    (current, Left(List.empty))
+                  case Some(seenAt) if shouldPull(seenAt, ordinal) =>
+                    (current, Right(outputs))
+                  case Some(_) =>
+                    (current, Left(outputs))
+                  case None if shouldPull(ordinal.value, ordinal) =>
+                    (current + (key -> ordinal.value.value), Right(outputs))
+                  case None =>
+                    (current + (key -> ordinal.value.value), Left(outputs))
+                }
+              }
+          }
 
         private def onlyPossibleReferences(
           lastHashReference: Hash,
@@ -90,24 +110,6 @@ object GlobalSnapshotStateChannelAcceptanceManager {
             Either.cond(hasReference, o, o)
           }
         }
-
-        private def allowedForProcessing(ordinal: SnapshotOrdinal, withHashes: List[StateChannelOutputWithHash]) =
-          ordinalDelay.traverse { delay =>
-            withHashes.groupBy(o => (o.output.address, o.output.snapshotBinary.lastSnapshotHash)).toList.traverse {
-              case (key, outputs) =>
-                for {
-                  seenKeys <- firstSeenKeysForOrdinalR(ordinal.value).get.map(_.getOrElse(Set.empty))
-
-                  modified <- firstSeenKeysForOrdinalR(ordinal.value + delay).modify { keysOpt =>
-                    if (seenKeys.contains(key))
-                      (keysOpt, Right(outputs))
-                    else
-                      (keysOpt.map(keys => keys + key).orElse(Set(key).some), Left(outputs))
-                  }
-
-                } yield modified
-            }
-          }.map(_.getOrElse(List(Right(withHashes))))
 
         private def selectStateChannels(
           allowedPeers: Option[NonEmptySet[PeerId]]
@@ -154,6 +156,12 @@ object GlobalSnapshotStateChannelAcceptanceManager {
 
         private def stateChannelOutputWithHashes(output: StateChannelOutput) =
           output.snapshotBinary.toHashed.map(hashed => StateChannelOutputWithHash(output, hashed.hash, hashed.proofsHash))
+
+        private def shouldPurge(seenAt: Long, ordinal: SnapshotOrdinal): Boolean =
+          seenAt <= ordinal.value - pullDelay - purgeDelay
+
+        private def shouldPull(seenAt: Long, ordinal: SnapshotOrdinal): Boolean =
+          seenAt <= ordinal.value - pullDelay
 
       }
     }
