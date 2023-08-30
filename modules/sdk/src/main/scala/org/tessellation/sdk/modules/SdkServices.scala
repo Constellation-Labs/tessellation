@@ -82,7 +82,7 @@ object SdkServices {
       currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(
         currencySnapshotValidator
       )
-      globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make(None, stateChannelAllowanceLists)
+      globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make(stateChannelAllowanceLists)
       globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
         BlockAcceptanceManager.make[F](validators.blockValidator),
         GlobalSnapshotStateChannelEventsProcessor
