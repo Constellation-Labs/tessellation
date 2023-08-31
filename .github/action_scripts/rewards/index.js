@@ -32,7 +32,7 @@ const main = async () => {
   const { rewards } = value
 
   if (!rewards || rewards.length !== 2) {
-    throw Error(`Fail on rewards ditribution: ${JSON.stringify(rewards)}`)
+    throw Error(`Fail on rewards distribution: ${JSON.stringify(rewards)}`)
   }
 
   const firstReward = rewards[0]
@@ -42,7 +42,7 @@ const main = async () => {
     throw Error(`Fail with rewards amount: ${JSON.stringify(firstReward)} - ${JSON.stringify(secondReward)}`)
   }
 
-  console.log("All rewards were successfully distributed")
+  console.log(`All rewards were successfully distributed: ${JSON.stringify(rewards)}`)
 }
 
 main()
