@@ -5,6 +5,7 @@ import cats.effect.Async
 import cats.syntax.functor._
 
 import org.tessellation.BuildInfo
+import org.tessellation.cli.AppEnvironment
 import org.tessellation.rosetta.domain.NetworkIdentifier
 import org.tessellation.rosetta.domain.error.{LatestSnapshotNotFound, NetworkApiError}
 import org.tessellation.rosetta.domain.networkapi.model.options._
@@ -12,7 +13,6 @@ import org.tessellation.rosetta.domain.networkapi.model.status._
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.timestamp.SnapshotTimestamp
 import org.tessellation.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
-import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.security.Hashed
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.hex.Hex

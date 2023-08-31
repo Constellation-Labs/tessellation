@@ -1,7 +1,7 @@
 package org.tessellation.currency.l0.config
 
+import org.tessellation.cli.AppEnvironment
 import org.tessellation.schema.peer.L0Peer
-import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types._
 
 object types {

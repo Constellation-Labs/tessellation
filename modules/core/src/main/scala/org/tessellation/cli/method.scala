@@ -6,8 +6,8 @@ import cats.syntax.eq._
 import scala.concurrent.duration._
 
 import org.tessellation.cli.env._
-import org.tessellation.cli.http
 import org.tessellation.cli.incremental._
+import org.tessellation.cli.{AppEnvironment, http}
 import org.tessellation.config.types._
 import org.tessellation.ext.decline.WithOpts
 import org.tessellation.ext.decline.decline._
@@ -18,7 +18,6 @@ import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.node.NodeState
 import org.tessellation.sdk.cli._
 import org.tessellation.sdk.cli.opts.{genesisPathOpts, trustRatingsPathOpts}
-import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types._
 import org.tessellation.security.hash.Hash
 
@@ -67,7 +66,8 @@ object method {
       snapshot = snapshotConfig,
       collateral = collateralConfig(environment, collateralAmount),
       rewards = RewardsConfig(),
-      stateChannelOrdinalDelay = None
+      stateChannelPullDelay = NonNegLong.MinValue,
+      stateChannelPurgeDelay = NonNegLong(4L)
     )
 
     val stateChannelAllowanceLists = StateChannelAllowanceLists.get(environment)
