@@ -52,6 +52,8 @@ jobs:
       - name: Run Metagraph L0 Cluster
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          IMPLEMENT_REWARDS: true
         uses: "./.github/templates/metagraph_l0/ml0_cluster"
 
       - name: Run Metagraph L1 Cluster
