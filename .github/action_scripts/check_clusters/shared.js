@@ -59,9 +59,9 @@ const validateOrdinalsAndSnapshots = async ( urls ) => {
 
     const lowestOrdinal = ordinals[ 0 ];
     const highestOrdinal = ordinals[ ordinals.length - 1 ];
-    const differenceBetwenLowestAndHigherOrdinal = highestOrdinal - lowestOrdinal;
+    const differenceBetweenLowestAndHigherOrdinal = highestOrdinal - lowestOrdinal;
 
-    if( differenceBetwenLowestAndHigherOrdinal > 3 ) {
+    if( differenceBetweenLowestAndHigherOrdinal > 3 ) {
         throw Error(
             `Ordinals difference greater than 3. Difference: ${differenceBetwenLowestAndHigherOrdinal}`
         );
@@ -143,75 +143,7 @@ const clusterCheck = async (
     }
 };
 
-const checkGlobalL0Node = async () => {
-    const infos = [
-        {
-            name: 'Global L0',
-            baseUrl: 'http://localhost:9000'
-        }
-    ];
-    await clusterCheck( infos, true, 'Global L0', 1, true );
-};
 
-const checkDAGL1Node = async () => {
-    const infos = [
-        {
-            name: 'DAG L1 - 1',
-            baseUrl: 'http://localhost:9100'
-        },
-        {
-            name: 'DAG L1 - 2',
-            baseUrl: 'http://localhost:9200'
-        },
-        {
-            name: 'DAG L1 - 3',
-            baseUrl: 'http://localhost:9300'
-        }
-    ];
-    await clusterCheck( infos, false, 'DAG L1', 3, true );
-};
-
-const checkCurrencyL0Node = async () => {
-    const infos = [
-        {
-            name: 'Currency L0 - 1',
-            baseUrl: 'http://localhost:9400'
-        },
-        {
-            name: 'Currency L0 - 2',
-            baseUrl: 'http://localhost:9500'
-        },
-        {
-            name: 'Currency L0 - 3',
-            baseUrl: 'http://localhost:9600'
-        }
-    ];
-    await clusterCheck( infos, true, 'Currency L0', 3, false );
-};
-
-const checkCurrencyL1Node = async () => {
-    const infos = [
-        {
-            name: 'Currency L1 - 1',
-            baseUrl: 'http://localhost:9700'
-        },
-        {
-            name: 'Currency L1 - 2',
-            baseUrl: 'http://localhost:9800'
-        },
-        {
-            name: 'Currency L1 - 3',
-            baseUrl: 'http://localhost:9900'
-        }
-    ];
-    await clusterCheck( infos, false, 'Currency L1', 3, false );
-};
-
-const main = async () => {
-    await checkGlobalL0Node();
-    await checkDAGL1Node();
-    await checkCurrencyL0Node();
-    await checkCurrencyL1Node();
-};
-
-main();
+module.exports = {
+    clusterCheck
+}
