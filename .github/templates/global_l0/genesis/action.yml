@@ -55,4 +55,4 @@ runs:
         
         nohup java -jar ../jars/global-l0.jar run-genesis genesis.csv --ip 127.0.0.1 > global-l0.log 2>&1 &
         
-        node ../../../action_scripts/check_if_node_started.js -url=http://127.0.0.1:9000/node/info -cluster_name=Global-L0
+        node ../../../action_scripts/check_if_node_started/index.js -url=http://127.0.0.1:9000/node/info -cluster_name=Global-L0

@@ -7,6 +7,8 @@ inputs:
     required: true
   CL_CLI_HTTP_PORT:
     required: true
+  IMPLEMENT_REWARDS:
+    required: false
 
 runs:
   using: "composite"
@@ -29,8 +31,22 @@ runs:
     - name: Generate Metagraph L0 JAR
       shell: bash
       run: |
+        cd .github/config/containers/
+        [ ! -d "github-action-metagraph-test" ] && git clone https://github.com/Constellation-Labs/github-action-metagraph-test.git
+        cd github-action-metagraph-test/
+       
+        if [[ "${{inputs.IMPLEMENT_REWARDS}}" != "" ]]; then
+          echo "Adding basic rewards logic"
+          rm -r modules/l0/src/main/scala/com/my/currency/l0/Main.scala
+          cat ../../../assets/basic_rewards_implementation.txt > modules/l0/src/main/scala/com/my/currency/l0/Main.scala
+        fi
+        
         sbt currencyL0/assembly
-        mv modules/currency-l0/target/scala-2.13/tessellation-currency-l0-assembly-* .github/config/containers/jars/metagraph-l0.jar
+
+    - name: Move Metagraph L0 JAR
+      shell: bash
+      run: |
+        mv .github/config/containers/github-action-metagraph-test/modules/l0/target/scala-2.13/custom-project-currency-l0-assembly-* .github/config/containers/jars/metagraph-l0.jar
 
     - name: Running Metagraph L0 genesis
       shell: bash
@@ -65,4 +81,4 @@ runs:
         
         nohup java -jar ../../jars/metagraph-l0.jar run-genesis ../genesis.csv --ip 127.0.0.1 > metagraph-l0-genesis.log 2>&1 &
         
-        node ../../../../action_scripts/check_if_node_started.js -url=http://127.0.0.1:${{ inputs.CL_PUBLIC_HTTP_PORT }}/node/info -cluster_name=Metagraph-L0-Genesis
+        node ../../../../action_scripts/check_if_node_started/index.js -url=http://127.0.0.1:${{ inputs.CL_PUBLIC_HTTP_PORT }}/node/info -cluster_name=Metagraph-L0-Genesis
