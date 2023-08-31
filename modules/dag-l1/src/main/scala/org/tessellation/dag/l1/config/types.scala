@@ -1,7 +1,7 @@
 package org.tessellation.dag.l1.config
 
+import org.tessellation.cli.AppEnvironment
 import org.tessellation.dag.l1.domain.consensus.block.config.ConsensusConfig
-import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types._
 
 import ciris.Secret

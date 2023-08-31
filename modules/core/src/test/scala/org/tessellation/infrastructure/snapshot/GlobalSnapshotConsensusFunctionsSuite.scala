@@ -9,6 +9,7 @@ import cats.syntax.list._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
+import org.tessellation.cli.AppEnvironment
 import org.tessellation.currency.schema.currency.SnapshotFee
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.kryo.KryoSerializer
@@ -16,7 +17,6 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.{Block, _}
-import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage

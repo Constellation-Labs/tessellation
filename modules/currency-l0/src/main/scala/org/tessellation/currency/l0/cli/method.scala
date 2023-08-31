@@ -4,6 +4,7 @@ import cats.syntax.contravariantSemigroupal._
 
 import scala.concurrent.duration._
 
+import org.tessellation.cli.AppEnvironment
 import org.tessellation.cli.env._
 import org.tessellation.currency.cli.{GlobalL0PeerOpts, L0TokenIdentifierOpts}
 import org.tessellation.currency.l0.cli.http.{opts => httpOpts}
@@ -15,7 +16,6 @@ import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.L0Peer
 import org.tessellation.sdk.cli._
 import org.tessellation.sdk.cli.opts.{genesisPathOpts, trustRatingsPathOpts}
-import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types._
 
 import com.monovore.decline.Opts

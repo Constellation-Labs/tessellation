@@ -141,7 +141,8 @@ abstract class TessellationIOApp[A <: CliMethod](
                               _restartSignal,
                               versionHash,
                               cfg.collateral,
-                              method.stateChannelAllowanceLists
+                              method.stateChannelAllowanceLists,
+                              cfg.environment
                             )
                             .asResource
 

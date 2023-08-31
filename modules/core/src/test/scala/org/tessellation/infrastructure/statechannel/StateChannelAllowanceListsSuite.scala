@@ -1,6 +1,6 @@
 package org.tessellation.infrastructure.statechannel
 
-import org.tessellation.sdk.config.AppEnvironment
+import org.tessellation.cli.AppEnvironment
 
 import eu.timepit.refined.auto._
 import weaver._
