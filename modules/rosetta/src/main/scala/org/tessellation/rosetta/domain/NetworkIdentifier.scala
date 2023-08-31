@@ -2,9 +2,9 @@ package org.tessellation.rosetta.domain
 
 import cats.syntax.option._
 
+import org.tessellation.cli.AppEnvironment
 import org.tessellation.ext.derevo.magnoliaCustomizable.snakeCaseConfiguration
 import org.tessellation.rosetta.domain.network.{BlockchainId, NetworkEnvironment}
-import org.tessellation.sdk.config.AppEnvironment
 
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia._

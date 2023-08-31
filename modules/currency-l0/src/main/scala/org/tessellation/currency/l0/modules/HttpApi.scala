@@ -5,6 +5,8 @@ import java.security.PrivateKey
 import cats.effect.Async
 import cats.syntax.semigroupk._
 
+import org.tessellation.cli.AppEnvironment
+import org.tessellation.cli.AppEnvironment.{Dev, Integrationnet, Testnet}
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationCustomRoutes
 import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
 import org.tessellation.currency.l0.cell.{L0Cell, L0CellInput}
@@ -14,8 +16,6 @@ import org.tessellation.currency.schema.currency._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.sdk.config.AppEnvironment
-import org.tessellation.sdk.config.AppEnvironment.{Dev, Integrationnet, Testnet}
 import org.tessellation.sdk.config.types.HttpConfig
 import org.tessellation.sdk.http.p2p.middleware.{PeerAuthMiddleware, `X-Id-Middleware`}
 import org.tessellation.sdk.http.routes._

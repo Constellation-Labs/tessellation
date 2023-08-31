@@ -2,6 +2,7 @@ package org.tessellation.sdk.config
 
 import scala.concurrent.duration.FiniteDuration
 
+import org.tessellation.cli.AppEnvironment
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.node.NodeState
 

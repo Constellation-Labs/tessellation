@@ -4,12 +4,12 @@ import cats.data.{EitherT, NonEmptyList}
 import cats.effect.Async
 import cats.syntax.either._
 
+import org.tessellation.cli.AppEnvironment
 import org.tessellation.http.routes.internal.{InternalUrlPrefix, PublicRoutes}
 import org.tessellation.rosetta.domain.api.construction._
 import org.tessellation.rosetta.domain.construction.ConstructionService
 import org.tessellation.rosetta.domain.error.{ConstructionError, UnsupportedOperation}
 import org.tessellation.rosetta.ext.http4s.refined._
-import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.security.hex.Hex
 
 import eu.timepit.refined.auto._
