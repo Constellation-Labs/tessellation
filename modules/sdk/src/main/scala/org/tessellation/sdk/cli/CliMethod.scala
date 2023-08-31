@@ -5,13 +5,13 @@ import cats.syntax.eq._
 
 import scala.concurrent.duration._
 
+import org.tessellation.cli.AppEnvironment
+import org.tessellation.cli.AppEnvironment.Mainnet
 import org.tessellation.cli.env._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.sdk.config.AppEnvironment
-import org.tessellation.sdk.config.AppEnvironment.Mainnet
 import org.tessellation.sdk.config.types._
 
 import eu.timepit.refined.auto._

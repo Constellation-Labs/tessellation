@@ -11,14 +11,14 @@ import cats.syntax.order._
 
 import scala.collection.immutable.SortedMap
 
+import org.tessellation.cli.AppEnvironment
+import org.tessellation.cli.AppEnvironment.Mainnet
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
-import org.tessellation.sdk.config.AppEnvironment
-import org.tessellation.sdk.config.AppEnvironment.Mainnet
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions.InvalidArtifact
 import org.tessellation.sdk.domain.rewards.Rewards

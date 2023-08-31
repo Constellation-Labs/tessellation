@@ -1,9 +1,9 @@
 package org.tessellation.cli
 
+import org.tessellation.cli.AppEnvironment
+import org.tessellation.cli.AppEnvironment.{Integrationnet, Mainnet, Testnet}
 import org.tessellation.ext.decline.decline._
 import org.tessellation.schema.SnapshotOrdinal
-import org.tessellation.sdk.config.AppEnvironment
-import org.tessellation.sdk.config.AppEnvironment.{Integrationnet, Mainnet, Testnet}
 
 import com.monovore.decline.Opts
 import com.monovore.decline.refined._

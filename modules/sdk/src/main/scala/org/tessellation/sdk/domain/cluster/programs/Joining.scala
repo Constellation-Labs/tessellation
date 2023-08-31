@@ -12,6 +12,8 @@ import cats.syntax.order._
 import cats.syntax.show._
 import cats.syntax.traverse._
 
+import org.tessellation.cli.AppEnvironment
+import org.tessellation.cli.AppEnvironment.Dev
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID.Id
@@ -19,8 +21,6 @@ import org.tessellation.schema.cluster._
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.Peer.toP2PContext
 import org.tessellation.schema.peer._
-import org.tessellation.sdk.config.AppEnvironment
-import org.tessellation.sdk.config.AppEnvironment.Dev
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tessellation.sdk.domain.healthcheck.LocalHealthcheck
@@ -251,6 +251,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
     for {
 
       _ <- VersionMismatch.raiseError[F, Unit].whenA(registrationRequest.version =!= versionHash)
+      _ <- EnvMismatch.raiseError[F, Unit].whenA(registrationRequest.environment =!= environment)
 
       ip = registrationRequest.ip
       existingPeer <- clusterStorage.getPeer(registrationRequest.id)

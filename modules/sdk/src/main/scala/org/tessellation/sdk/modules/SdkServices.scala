@@ -8,6 +8,7 @@ import cats.effect.std.Supervisor
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
+import org.tessellation.cli.AppEnvironment
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.generation.Generation
@@ -45,7 +46,8 @@ object SdkServices {
     restartSignal: SignallingRef[F, Unit],
     versionHash: Hash,
     collateral: CollateralConfig,
-    stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]]
+    stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
+    environment: AppEnvironment
   ): F[SdkServices[F]] = {
 
     val cluster = Cluster
@@ -59,7 +61,8 @@ object SdkServices {
         storages.node,
         seedlist,
         restartSignal,
-        versionHash
+        versionHash,
+        environment
       )
 
     for {

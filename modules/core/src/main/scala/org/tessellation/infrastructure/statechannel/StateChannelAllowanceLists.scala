@@ -3,10 +3,10 @@ package org.tessellation.infrastructure.statechannel
 import cats.data.NonEmptySet
 import cats.syntax.option._
 
+import org.tessellation.cli.AppEnvironment
+import org.tessellation.cli.AppEnvironment._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.sdk.config.AppEnvironment
-import org.tessellation.sdk.config.AppEnvironment._
 
 object StateChannelAllowanceLists {
 

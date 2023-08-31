@@ -5,8 +5,8 @@ import cats.syntax.flatMap._
 
 import scala.io.{Codec, Source}
 
-import org.tessellation.sdk.config.AppEnvironment
-import org.tessellation.sdk.config.AppEnvironment._
+import org.tessellation.cli.AppEnvironment
+import org.tessellation.cli.AppEnvironment._
 
 import ch.qos.logback.classic.LoggerContext
 import ch.qos.logback.classic.joran.JoranConfigurator

@@ -9,6 +9,7 @@ import cats.{Applicative, MonadThrow}
 
 import scala.concurrent.duration._
 
+import org.tessellation.cli.AppEnvironment
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.cluster._
@@ -37,7 +38,8 @@ object Cluster {
     nodeStorage: NodeStorage[F],
     seedlist: Option[Set[SeedlistEntry]],
     restartSignal: SignallingRef[F, Unit],
-    versionHash: Hash
+    versionHash: Hash,
+    environment: AppEnvironment
   ): Cluster[F] =
     new Cluster[F] {
 
@@ -65,7 +67,8 @@ object Cluster {
             clusterId,
             state,
             seedlistHash,
-            versionHash
+            versionHash,
+            environment
           )
 
       def signRequest(signRequest: SignRequest): F[Signed[SignRequest]] =
