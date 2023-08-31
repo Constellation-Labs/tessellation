@@ -1,4 +1,4 @@
-name: Test rewards
+name: Test metagraph rewards
 
 on:
   pull_request: {}
