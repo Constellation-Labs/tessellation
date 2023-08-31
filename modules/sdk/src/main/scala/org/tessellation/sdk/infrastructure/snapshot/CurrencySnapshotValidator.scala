@@ -4,12 +4,14 @@ import cats.data.ValidatedNec
 import cats.effect.kernel.Async
 import cats.syntax.all._
 
+import scala.collection.immutable.{SortedMap, SortedSet}
+
 import org.tessellation.currency.dataApplication.BaseDataApplicationService
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.cats.syntax.validated.validatedSyntax
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.Block
+import org.tessellation.schema._
 import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import org.tessellation.sdk.snapshot.currency.{CurrencySnapshotArtifact, CurrencySnapshotEvent}
@@ -43,8 +45,8 @@ object CurrencySnapshotValidator {
   def make[F[_]: Async: KryoSerializer](
     currencySnapshotCreator: CurrencySnapshotCreator[F],
     signedValidator: SignedValidator[F],
-    rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot]],
-    dataApplication: Option[BaseDataApplicationService[F]]
+    maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot]],
+    maybeDataApplication: Option[BaseDataApplicationService[F]]
   ): CurrencySnapshotValidator[F] = new CurrencySnapshotValidator[F] {
 
     def validateSignedSnapshot(
@@ -82,19 +84,24 @@ object CurrencySnapshotValidator {
     ): F[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult]] = {
       val events: Set[CurrencySnapshotEvent] = expected.blocks.unsorted.map(_.block.asLeft[Signed[DataApplicationBlock]])
 
+      // Rewrite if implementation not provided
+      val rewards = maybeRewards.orElse(Some {
+        new Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot] {
+          def distribute(
+            lastArtifact: Signed[CurrencySnapshotArtifact],
+            lastBalances: SortedMap[address.Address, balance.Balance],
+            acceptedTransactions: SortedSet[Signed[transaction.Transaction]],
+            trigger: ConsensusTrigger
+          ): F[SortedSet[transaction.RewardTransaction]] = expected.rewards.pure[F]
+        }
+      })
+
       val recreateFn = (trigger: ConsensusTrigger) =>
         currencySnapshotCreator
           .createProposalArtifact(lastArtifact.ordinal, lastArtifact, lastContext, trigger, events, rewards)
           // Rewrite if implementation not provided
           .map { creationResult =>
-            rewards match {
-              case Some(_) => creationResult
-              case None    => creationResult.focus(_.artifact.rewards).replace(expected.rewards)
-            }
-          }
-          // Rewrite if implementation not provided
-          .map { creationResult =>
-            dataApplication match {
+            maybeDataApplication match {
               case Some(_) => creationResult
               case None    => creationResult.focus(_.artifact.data).replace(expected.data)
             }
