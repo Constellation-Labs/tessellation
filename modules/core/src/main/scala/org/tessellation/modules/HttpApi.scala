@@ -6,13 +6,13 @@ import cats.effect.Async
 import cats.syntax.option._
 import cats.syntax.semigroupk._
 
+import org.tessellation.cli.AppEnvironment
+import org.tessellation.cli.AppEnvironment._
 import org.tessellation.domain.cell.{L0Cell, L0CellInput}
 import org.tessellation.http.routes._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.sdk.config.AppEnvironment
-import org.tessellation.sdk.config.AppEnvironment._
 import org.tessellation.sdk.config.types.HttpConfig
 import org.tessellation.sdk.http.p2p.middleware.{PeerAuthMiddleware, `X-Id-Middleware`}
 import org.tessellation.sdk.http.routes._

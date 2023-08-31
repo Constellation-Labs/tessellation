@@ -8,12 +8,12 @@ import cats.effect.std.{Random, Supervisor}
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
+import org.tessellation.cli.AppEnvironment
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotStateProof}
-import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types.SnapshotConfig
 import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
@@ -33,7 +33,7 @@ import org.tessellation.sdk.infrastructure.snapshot.{
 import org.tessellation.sdk.modules.{SdkServices, SdkValidators}
 import org.tessellation.security.SecurityProvider
 
-import eu.timepit.refined.types.numeric.PosLong
+import eu.timepit.refined.types.numeric.NonNegLong
 import io.circe.disjunctionCodecs._
 import org.http4s.client.Client
 
@@ -52,7 +52,8 @@ object GlobalSnapshotConsensus {
     sdkServices: SdkServices[F],
     snapshotConfig: SnapshotConfig,
     environment: AppEnvironment,
-    stateChannelOrdinalDelay: Option[PosLong],
+    stateChannelPullDelay: NonNegLong,
+    stateChannelPurgeDelay: NonNegLong,
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
     client: Client[F],
     session: Session[F],
@@ -60,7 +61,7 @@ object GlobalSnapshotConsensus {
   ): F[Consensus[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact, GlobalSnapshotContext]] =
     for {
       globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager
-        .make[F](stateChannelOrdinalDelay, stateChannelAllowanceLists)
+        .make[F](stateChannelAllowanceLists, pullDelay = stateChannelPullDelay, purgeDelay = stateChannelPurgeDelay)
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
         BlockAcceptanceManager.make[F](validators.blockValidator),
         GlobalSnapshotStateChannelEventsProcessor
