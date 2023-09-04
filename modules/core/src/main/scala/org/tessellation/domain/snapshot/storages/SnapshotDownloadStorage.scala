@@ -19,5 +19,7 @@ trait SnapshotDownloadStorage[F[_]] {
   def moveTmpToPersisted(snapshot: Signed[GlobalIncrementalSnapshot]): F[Unit]
 
   def readGenesis(ordinal: SnapshotOrdinal): F[Option[Signed[GlobalSnapshot]]]
+  def writeGenesis(genesis: Signed[GlobalSnapshot]): F[Unit]
+
   def backupPersistedAbove(ordinal: SnapshotOrdinal): F[Unit]
 }

@@ -173,7 +173,6 @@ object Download {
                     }
                     .getOrElse(HashAndOrdinalMismatch.raiseError[F, DownloadResult])
                 }
-
             }
         )
 
@@ -200,32 +199,39 @@ object Download {
       def go(lastSnapshot: Signed[GlobalIncrementalSnapshot], context: GlobalSnapshotInfo): F[Agg] = {
         val nextOrdinal = lastSnapshot.ordinal.next
 
-        def readSnapshot = tmpMap
+        def readSnapshot: F[Option[Signed[GlobalIncrementalSnapshot]]] = tmpMap
           .get(nextOrdinal)
           .as(snapshotStorage.readTmp(nextOrdinal))
           .getOrElse(snapshotStorage.readPersisted(nextOrdinal))
 
-        if (lastSnapshot.ordinal.value >= endingOrdinal.value) {
-          (lastSnapshot, context).pure[F]
-        } else
-          readSnapshot.flatMap {
-            case Some(snapshot) =>
-              globalSnapshotContextFns.createContext(context, lastSnapshot, snapshot).flatMap { newContext =>
-                Applicative[F].whenA(tmpMap.contains(snapshot.ordinal)) {
-                  snapshotStorage.readPersisted(snapshot.ordinal).flatMap {
-                    _.map(
-                      _.toHashed[F]
-                        .map(_.hash)
-                        .flatMap(snapshotStorage.movePersistedToTmp(_, snapshot.ordinal))
-                    ).getOrElse(Applicative[F].unit)
-                  } >>
-                    snapshotStorage
-                      .moveTmpToPersisted(snapshot)
-                } >>
-                  go(snapshot, newContext)
-              }
-            case None => InvalidChain.raiseError[F, Agg]
+        def persistLastSnapshot: F[Unit] =
+          Applicative[F].whenA(tmpMap.contains(lastSnapshot.ordinal)) {
+            snapshotStorage.readPersisted(lastSnapshot.ordinal).flatMap {
+              _.map(
+                _.toHashed[F]
+                  .map(_.hash)
+                  .flatMap(snapshotStorage.movePersistedToTmp(_, lastSnapshot.ordinal))
+              ).getOrElse(Applicative[F].unit)
+            } >>
+              snapshotStorage
+                .moveTmpToPersisted(lastSnapshot)
           }
+
+        def processNextOrFinish: F[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] = {
+          if (lastSnapshot.ordinal.value >= endingOrdinal.value) {
+            (lastSnapshot, context).pure[F]
+          } else
+            readSnapshot.flatMap {
+              case Some(snapshot) =>
+                globalSnapshotContextFns
+                  .createContext(context, lastSnapshot, snapshot)
+                  .flatMap(go(snapshot, _))
+              case None => InvalidChain.raiseError[F, Agg]
+            }
+        }
+
+        persistLastSnapshot >>
+          processNextOrFinish
       }
 
       state
@@ -242,6 +248,7 @@ object Download {
         .flatMap {
           _.map(_.pure[F]).getOrElse {
             fetchGenesis(lastFullGlobalSnapshotOrdinal)
+              .flatTap(snapshotStorage.writeGenesis)
           }
         }
         .flatMap { genesis =>
@@ -253,7 +260,7 @@ object Download {
             .getOrElse(snapshotStorage.readPersisted(incrementalGenesisOrdinal))
             .flatMap {
               case Some(snapshot) => (genesis.value, snapshot).pure[F]
-              case None           => fetchSnapshot(none[Hash], incrementalGenesisOrdinal).map((genesis.value, _))
+              case None           => FirstIncrementalNotFound.raiseError[F, (GlobalSnapshot, Signed[GlobalIncrementalSnapshot])]
             }
             .map { case (full, incremental) => (incremental, GlobalSnapshotInfoV1.toGlobalSnapshotInfo(full.info)) }
         }
@@ -328,6 +335,7 @@ object Download {
   case object HashAndOrdinalMismatch extends NoStackTrace
   case object CannotFetchSnapshot extends NoStackTrace
   case object CannotFetchGenesisSnapshot extends NoStackTrace
+  case object FirstIncrementalNotFound extends NoStackTrace
   case object InvalidChain extends NoStackTrace
   case object UnexpectedState extends NoStackTrace
 }
