@@ -47,6 +47,8 @@ object SnapshotDownloadStorage {
 
       def readGenesis(ordinal: SnapshotOrdinal): F[Option[Signed[GlobalSnapshot]]] = fullGlobalSnapshotStorage.read(ordinal)
 
+      def writeGenesis(genesis: Signed[GlobalSnapshot]): F[Unit] = fullGlobalSnapshotStorage.write(genesis)
+
       def backupPersistedAbove(ordinal: SnapshotOrdinal): F[Unit] =
         persistedStorage
           .findFiles(_.name.toLongOption.exists(_ > ordinal.value.value))
