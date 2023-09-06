@@ -1,14 +1,4 @@
-const { clusterCheck } = require("./shared")
-
-const checkGlobalL0Node = async () => {
-  const infos = [
-    {
-      name: 'Global L0',
-      baseUrl: 'http://localhost:9000'
-    }
-  ];
-  await clusterCheck(infos, true, 'Global L0', 1, true);
-};
+const { clusterCheck, checkGlobalL0Node } = require("./shared")
 
 const checkCurrencyL0Node = async () => {
     const infos = [
