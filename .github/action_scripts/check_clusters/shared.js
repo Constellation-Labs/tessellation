@@ -143,7 +143,17 @@ const clusterCheck = async (
     }
 };
 
+const checkGlobalL0Node = async () => {
+    const infos = [
+      {
+        name: 'Global L0',
+        baseUrl: 'http://localhost:9000'
+      }
+    ];
+    await clusterCheck(infos, true, 'Global L0', 1, true);
+  };
 
 module.exports = {
-    clusterCheck
+    clusterCheck,
+    checkGlobalL0Node
 }
