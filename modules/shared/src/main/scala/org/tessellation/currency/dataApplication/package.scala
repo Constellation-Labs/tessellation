@@ -7,6 +7,7 @@ import cats.{Monad, MonadThrow}
 import scala.reflect.ClassTag
 import scala.util.control.NoStackTrace
 
+import org.tessellation.currency.dataApplication.dataApplication.{DataApplicationBlock, DataApplicationValidationErrorOr}
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import org.tessellation.http.routes.internal.ExternalUrlPrefix
 import org.tessellation.schema.round.RoundId
@@ -21,8 +22,6 @@ import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.syntax._
 import org.http4s._
 import org.http4s.server.Router
-
-import dataApplication.{DataApplicationBlock, DataApplicationValidationErrorOr}
 
 trait DataUpdate
 
@@ -424,6 +423,7 @@ object dataApplication {
 
   object DataApplicationBlock {
     implicit def decoder(implicit d: Decoder[DataUpdate]): Decoder[DataApplicationBlock] = deriveDecoder
+
     implicit def encoder(implicit e: Encoder[DataUpdate]): Encoder[DataApplicationBlock] = deriveEncoder
   }
 

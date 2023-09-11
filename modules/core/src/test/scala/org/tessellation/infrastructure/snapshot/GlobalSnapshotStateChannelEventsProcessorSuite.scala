@@ -19,6 +19,7 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
+import org.tessellation.sdk.config.types.SnapshotSizeConfig
 import org.tessellation.sdk.domain.statechannel.StateChannelValidator
 import org.tessellation.sdk.infrastructure.block.processing.BlockAcceptanceManager
 import org.tessellation.sdk.infrastructure.snapshot._
@@ -55,12 +56,14 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
           IO.pure(failed.filter(f => f._1 == output.address).map(_._2.invalidNec).getOrElse(output.validNec))
         def validateHistorical(output: StateChannelOutput) = validate(output)
       }
-      validators = SdkValidators.make[IO](None, None, Some(stateChannelAllowanceLists))
+      validators = SdkValidators.make[IO](None, None, Some(stateChannelAllowanceLists), Long.MaxValue)
       currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
         BlockAcceptanceManager.make[IO](validators.currencyBlockValidator),
         Amount(0L)
       )
-      creator = CurrencySnapshotCreator.make[IO](currencySnapshotAcceptanceManager, None)
+      currencyEventsCutter = CurrencyEventsCutter.make[IO]
+      creator = CurrencySnapshotCreator
+        .make[IO](currencySnapshotAcceptanceManager, None, SnapshotSizeConfig(Long.MaxValue, Long.MaxValue), currencyEventsCutter)
       currencySnapshotValidator = CurrencySnapshotValidator.make[IO](creator, validators.signedValidator, None, None)
       currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
       manager = new GlobalSnapshotStateChannelAcceptanceManager[IO] {

@@ -4,6 +4,7 @@ import cats.data.NonEmptySet
 import cats.syntax.option._
 
 import org.tessellation.cli.AppEnvironment
+import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
 import org.tessellation.ext.kryo._
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.healthcheck.consensus.types.HealthCheckRoundId
@@ -53,7 +54,8 @@ package object sdk {
       classOf[IDN] -> 528,
       classOf[ConsensusPeerDeclaration[_, _]] -> 529,
       EventTrigger.getClass -> 530,
-      TimeTrigger.getClass -> 531
+      TimeTrigger.getClass -> 531,
+      classOf[DataApplicationBlock] -> 532
     ).union(sharedKryoRegistrar)
 
   object PriorityPeerIds {

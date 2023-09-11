@@ -15,12 +15,15 @@ import org.tessellation.sdk.infrastructure.gossip.RumorValidator
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.SignedValidator
 
+import eu.timepit.refined.types.numeric.PosLong
+
 object SdkValidators {
 
   def make[F[_]: Async: KryoSerializer: SecurityProvider](
     l0Seedlist: Option[Set[SeedlistEntry]],
     seedlist: Option[Set[SeedlistEntry]],
-    stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]]
+    stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
+    maxBinarySizeInBytes: PosLong
   ): SdkValidators[F] = {
     val signedValidator = SignedValidator.make[F]
     val transactionChainValidator = TransactionChainValidator.make[F]
@@ -31,7 +34,7 @@ object SdkValidators {
     val currencyBlockValidator = BlockValidator
       .make[F](signedValidator, currencyTransactionChainValidator, currencyTransactionValidator)
     val rumorValidator = RumorValidator.make[F](seedlist, signedValidator)
-    val stateChannelValidator = StateChannelValidator.make[F](signedValidator, l0Seedlist, stateChannelAllowanceLists)
+    val stateChannelValidator = StateChannelValidator.make[F](signedValidator, l0Seedlist, stateChannelAllowanceLists, maxBinarySizeInBytes)
 
     new SdkValidators[F](
       signedValidator,

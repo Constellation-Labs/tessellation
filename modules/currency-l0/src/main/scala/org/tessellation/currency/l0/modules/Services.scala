@@ -68,10 +68,17 @@ object Services {
         )
         .pure[F]
 
+      l0NodeContext = L0NodeContext.make[F](storages.snapshot)
+
+      dataApplicationAcceptanceManager = maybeDataApplication.map(service =>
+        DataApplicationSnapshotAcceptanceManager.make[F](service, l0NodeContext)
+      )
+
       creator = CurrencySnapshotCreator.make[F](
         sdkServices.currencySnapshotAcceptanceManager,
-        maybeDataApplication
-          .map((L0NodeContext.make[F](storages.snapshot), _))
+        dataApplicationAcceptanceManager,
+        cfg.snapshotSizeConfig,
+        sdkServices.currencyEventsCutter
       )
 
       validator = CurrencySnapshotValidator.make[F](

@@ -15,6 +15,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.epoch.EpochProgress
+import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.{Block, _}
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.sdk.domain.rewards.Rewards
@@ -31,7 +32,6 @@ import org.tessellation.security.{KeyPairGenerator, SecurityProvider}
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 import org.tessellation.syntax.sortedCollection._
 
-import eu.timepit.refined.auto._
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
 
@@ -120,6 +120,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
     val gscf = mkGlobalSnapshotConsensusFunctions()
 
+    val facilitators = Set.empty[PeerId]
+
     KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>
       val genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
       Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair).flatMap { signedGenesis =>
@@ -132,16 +134,18 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
                   signedLastArtifact,
                   signedGenesis.value.info,
                   EventTrigger,
-                  Set(scEvent.asLeft[DAGEvent])
+                  Set(scEvent.asLeft[DAGEvent]),
+                  facilitators
                 )
                 .flatMap {
                   case (artifact, _, _) =>
-                    gscf.validateArtifact(signedLastArtifact, signedGenesis.value.info, EventTrigger, artifact).map { result =>
-                      expect.same(result.isRight, true) && expect
-                        .same(
-                          result.map(_._1.stateChannelSnapshots(scEvent.address)),
-                          Right(NonEmptyList.one(scEvent.snapshotBinary))
-                        )
+                    gscf.validateArtifact(signedLastArtifact, signedGenesis.value.info, EventTrigger, artifact, facilitators).map {
+                      result =>
+                        expect.same(result.isRight, true) && expect
+                          .same(
+                            result.map(_._1.stateChannelSnapshots(scEvent.address)),
+                            Right(NonEmptyList.one(scEvent.snapshotBinary))
+                          )
                     }
                 }
             }
@@ -156,6 +160,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
     val gscf = mkGlobalSnapshotConsensusFunctions()
 
+    val facilitators = Set.empty[PeerId]
+
     KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>
       val genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
       Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair).flatMap { signedGenesis =>
@@ -168,7 +174,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
                   signedLastArtifact,
                   signedGenesis.value.info,
                   EventTrigger,
-                  Set(scEvent.asLeft[DAGEvent])
+                  Set(scEvent.asLeft[DAGEvent]),
+                  facilitators
                 )
                 .flatMap { proposalArtifact =>
                   gscf
@@ -176,7 +183,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
                       signedLastArtifact,
                       signedGenesis.value.info,
                       EventTrigger,
-                      proposalArtifact._1.copy(ordinal = proposalArtifact._1.ordinal.next)
+                      proposalArtifact._1.copy(ordinal = proposalArtifact._1.ordinal.next),
+                      facilitators
                     )
                     .map { result =>
                       expect.same(result.isLeft, true)

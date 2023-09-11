@@ -1,6 +1,6 @@
 package org.tessellation.sdk.infrastructure.snapshot
 
-import cats.data.ValidatedNec
+import cats.data.{Validated, ValidatedNec}
 import cats.effect.kernel.Async
 import cats.syntax.all._
 
@@ -12,6 +12,7 @@ import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.cats.syntax.validated.validatedSyntax
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
+import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import org.tessellation.sdk.snapshot.currency.{CurrencySnapshotArtifact, CurrencySnapshotEvent}
@@ -20,7 +21,6 @@ import org.tessellation.security.signature.{Signed, SignedValidator}
 
 import derevo.cats.{eqv, show}
 import derevo.derive
-import eu.timepit.refined.auto._
 import monocle.syntax.all._
 
 trait CurrencySnapshotValidator[F[_]] {
@@ -36,7 +36,8 @@ trait CurrencySnapshotValidator[F[_]] {
   def validateSnapshot(
     lastArtifact: Signed[CurrencySnapshotArtifact],
     lastContext: CurrencySnapshotContext,
-    artifact: CurrencySnapshotArtifact
+    artifact: CurrencySnapshotArtifact,
+    facilitators: Set[PeerId]
   ): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]]
 }
 
@@ -55,7 +56,9 @@ object CurrencySnapshotValidator {
       artifact: Signed[CurrencySnapshotArtifact]
     ): F[CurrencySnapshotValidationErrorOr[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotContext)]] =
       validateSigned(artifact).flatMap { signedV =>
-        validateSnapshot(lastArtifact, lastContext, artifact).map { snapshotV =>
+        val facilitators = artifact.proofs.map(_.id).map(PeerId.fromId).toSortedSet
+
+        validateSnapshot(lastArtifact, lastContext, artifact, facilitators).map { snapshotV =>
           signedV.product(snapshotV.map { case (_, info) => info })
         }
       }
@@ -63,10 +66,11 @@ object CurrencySnapshotValidator {
     def validateSnapshot(
       lastArtifact: Signed[CurrencySnapshotArtifact],
       lastContext: CurrencySnapshotContext,
-      artifact: CurrencySnapshotArtifact
+      artifact: CurrencySnapshotArtifact,
+      facilitators: Set[PeerId]
     ): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]] = for {
-      contentV <- validateRecreateContent(lastArtifact, lastContext, artifact)
-      blocksV <- contentV.map(validateNotAcceptedBlocks).pure[F]
+      contentV <- validateRecreateContent(lastArtifact, lastContext, artifact, facilitators)
+      blocksV <- contentV.map(validateNotAcceptedEvents).pure[F]
     } yield
       (contentV, blocksV).mapN {
         case (creationResult, _) => (creationResult.artifact, creationResult.context)
@@ -80,8 +84,9 @@ object CurrencySnapshotValidator {
     def validateRecreateContent(
       lastArtifact: Signed[CurrencySnapshotArtifact],
       lastContext: CurrencySnapshotContext,
-      expected: CurrencySnapshotArtifact
-    ): F[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult]] = {
+      expected: CurrencySnapshotArtifact,
+      facilitators: Set[PeerId]
+    ): F[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]] = {
       def dataApplicationBlocks = maybeDataApplication.flatTraverse { service =>
         expected.dataApplication.map(_.blocks).traverse {
           _.traverse(b => service.deserializeBlock(b))
@@ -110,7 +115,7 @@ object CurrencySnapshotValidator {
       val recreateFn = (trigger: ConsensusTrigger) =>
         mkEvents.flatMap { events =>
           currencySnapshotCreator
-            .createProposalArtifact(lastArtifact.ordinal, lastArtifact, lastContext, trigger, events, rewards)
+            .createProposalArtifact(lastArtifact.ordinal, lastArtifact, lastContext, trigger, events, rewards, facilitators)
             // Rewrite if implementation not provided
             .map { creationResult =>
               maybeDataApplication match {
@@ -132,12 +137,20 @@ object CurrencySnapshotValidator {
       }
     }
 
-    def validateNotAcceptedBlocks(
-      creationResult: CurrencySnapshotCreationResult
-    ): CurrencySnapshotValidationErrorOr[Unit] =
-      if (creationResult.awaitingBlocks.nonEmpty || creationResult.rejectedBlocks.nonEmpty)
-        SomeBlocksWereNotAccepted(creationResult.awaitingBlocks, creationResult.rejectedBlocks).invalidNec
-      else ().validNec
+    def validateNotAcceptedEvents(
+      creationResult: CurrencySnapshotCreationResult[CurrencySnapshotEvent]
+    ): CurrencySnapshotValidationErrorOr[Unit] = {
+      def getBlocks(s: Set[CurrencySnapshotEvent]): Set[Signed[Block]] = s.collect { case Left(block) => block }
+
+      val awaitingBlocks = getBlocks(creationResult.awaitingEvents)
+      val rejectedBlocks = getBlocks(creationResult.rejectedEvents)
+
+      Validated.condNec(
+        awaitingBlocks.nonEmpty && rejectedBlocks.nonEmpty,
+        (),
+        SomeBlocksWereNotAccepted(awaitingBlocks, rejectedBlocks)
+      )
+    }
   }
 
 }
