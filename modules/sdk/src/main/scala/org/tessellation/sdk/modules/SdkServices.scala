@@ -74,10 +74,14 @@ object SdkServices {
         collateral.amount
       )
 
+      currencyEventsCutter = CurrencyEventsCutter.make[F]
+
       currencySnapshotValidator = CurrencySnapshotValidator.make[F](
         CurrencySnapshotCreator.make[F](
           currencySnapshotAcceptanceManager,
-          None
+          None,
+          cfg.snapshotSizeConfig,
+          currencyEventsCutter
         ),
         validators.signedValidator,
         None,
@@ -108,7 +112,8 @@ object SdkServices {
         gossip = gossip,
         globalSnapshotContextFns = globalSnapshotContextFns,
         currencySnapshotContextFns = currencySnapshotContextFns,
-        currencySnapshotAcceptanceManager = currencySnapshotAcceptanceManager
+        currencySnapshotAcceptanceManager = currencySnapshotAcceptanceManager,
+        currencyEventsCutter = currencyEventsCutter
       ) {}
   }
 }
@@ -120,5 +125,6 @@ sealed abstract class SdkServices[F[_]] private (
   val gossip: Gossip[F],
   val globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
   val currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
-  val currencySnapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F]
+  val currencySnapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F],
+  val currencyEventsCutter: CurrencyEventsCutter[F]
 )

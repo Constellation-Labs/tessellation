@@ -28,6 +28,7 @@ import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
 
 import eu.timepit.refined.auto._
+import eu.timepit.refined.types.numeric.PosLong
 import weaver.MutableIOSuite
 
 object StateChannelValidatorSuite extends MutableIOSuite {
@@ -134,7 +135,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
     val validator = mkValidator(
       peerId.map(SeedlistEntry(_, none, none, none)).toSortedSet.some,
       Map(address -> peerId).some,
-      maxBinarySizeInBytes = 443
+      maxBinarySizeInBytes = 443L
     )
 
     validator
@@ -317,7 +318,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
   private def mkValidator(
     seedlist: Option[Set[SeedlistEntry]],
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
-    maxBinarySizeInBytes: Long = 1024
+    maxBinarySizeInBytes: PosLong = 1024L
   )(
     implicit S: SecurityProvider[IO],
     K: KryoSerializer[IO]

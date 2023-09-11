@@ -21,7 +21,6 @@ import org.tessellation.security.signature.signature.{Signature, SignatureProof}
 
 import com.comcast.ip4s.{Host, Port}
 import eu.timepit.refined.api.{RefType, Validate}
-import eu.timepit.refined.auto._
 import eu.timepit.refined.refineV
 import eu.timepit.refined.scalacheck.numeric._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
@@ -46,7 +45,7 @@ object generators {
     Gen.oneOf(Responsive, Unresponsive)
 
   val idGen: Gen[Id] =
-    nesGen(str => Id(Hex(str)))
+    hexGen(128).map(Id(_))
 
   val hostGen: Gen[Host] =
     for {
@@ -108,6 +107,8 @@ object generators {
 
   val transactionSaltGen: Gen[TransactionSalt] = Gen.long.map(TransactionSalt(_))
 
+  def hexGen(n: Int): Gen[Hex] = Gen.stringOfN(n, Gen.hexChar).map(Hex(_))
+
   val transactionGen: Gen[Transaction] =
     for {
       src <- addressGen
@@ -118,7 +119,14 @@ object generators {
       txnSalt <- transactionSaltGen
     } yield Transaction(src, dst, txnAmount, txnFee, txnReference, txnSalt)
 
-  val signatureGen: Gen[Signature] = nesGen(str => Signature(Hex(str)))
+  val signatureGen: Gen[Signature] =
+    /* BouncyCastle encodes ECDSA with ASN.1 DER which which is variable length. That generator should be changed to
+       fixed length instead of range when we switch to SHA512withPLAIN-ECDSA.
+     */
+    Gen
+      .chooseNum(140, 144)
+      .flatMap(hexGen)
+      .map(Signature(_))
 
   val signatureProofGen: Gen[SignatureProof] =
     for {

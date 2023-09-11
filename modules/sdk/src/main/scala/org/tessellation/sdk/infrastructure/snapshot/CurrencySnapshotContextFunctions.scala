@@ -31,7 +31,7 @@ object CurrencySnapshotContextFunctions {
         lastArtifact: Signed[CurrencyIncrementalSnapshot],
         signedArtifact: Signed[CurrencyIncrementalSnapshot]
       ): F[CurrencySnapshotContext] = for {
-        validatedS <- validator.validateSnapshot(lastArtifact, context, signedArtifact)
+        validatedS <- validator.validateSignedSnapshot(lastArtifact, context, signedArtifact)
         validatedContext <- validatedS match {
           case Validated.Valid((_, validatedContext)) => validatedContext.pure[F]
           case Validated.Invalid(e)                   => CannotCreateContext(e).raiseError[F, CurrencySnapshotContext]

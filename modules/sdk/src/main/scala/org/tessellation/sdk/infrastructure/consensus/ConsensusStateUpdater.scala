@@ -228,7 +228,8 @@ object ConsensusStateUpdater {
                               state.lastOutcome.status.signedMajorityArtifact,
                               state.lastOutcome.status.context,
                               majorityTrigger,
-                              events
+                              events,
+                              state.facilitators.toSet
                             )
                           returnedPeerEvents = peerEvents.map {
                             case (peerId, events) =>
@@ -269,7 +270,8 @@ object ConsensusStateUpdater {
                     state.lastOutcome.status.context,
                     majorityTrigger,
                     resources,
-                    scoredProposalHashes
+                    scoredProposalHashes,
+                    state.facilitators.toSet
                   ).flatMap { maybeMajorityArtifactInfo =>
                     state.facilitators.hashF.flatMap { facilitatorsHash =>
                       maybeMajorityArtifactInfo.traverse { majorityArtifactInfo =>
@@ -388,7 +390,8 @@ object ConsensusStateUpdater {
       lastContext: Context,
       trigger: ConsensusTrigger,
       resources: ConsensusResources[Artifact],
-      proposals: List[(Hash, PosDouble)]
+      proposals: List[(Hash, PosDouble)],
+      facilitators: Set[PeerId]
     ): F[Option[ArtifactInfo[Artifact, Context]]] = {
       def go(proposals: List[(Hash, PosDouble)]): F[Option[ArtifactInfo[Artifact, Context]]] =
         proposals match {
@@ -399,11 +402,12 @@ object ConsensusStateUpdater {
               resources.artifacts
                 .get(majorityHash)
                 .traverse { artifact =>
-                  consensusFns.validateArtifact(lastSignedArtifact, lastContext, trigger, artifact).map { validationResultOrError =>
-                    validationResultOrError.map {
-                      case (artifact, context) =>
-                        ArtifactInfo(artifact, context, majorityHash)
-                    }
+                  consensusFns.validateArtifact(lastSignedArtifact, lastContext, trigger, artifact, facilitators).map {
+                    validationResultOrError =>
+                      validationResultOrError.map {
+                        case (artifact, context) =>
+                          ArtifactInfo(artifact, context, majorityHash)
+                      }
                   }
                 }
                 .flatMap { maybeArtifactInfoOrErr =>

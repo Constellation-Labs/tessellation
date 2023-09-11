@@ -30,6 +30,7 @@ import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction._
 import org.tessellation.schema.{Block, _}
+import org.tessellation.sdk.config.types.SnapshotSizeConfig
 import org.tessellation.sdk.infrastructure.block.processing.BlockAcceptanceManager
 import org.tessellation.sdk.infrastructure.snapshot._
 import org.tessellation.sdk.infrastructure.snapshot.storage.LastSnapshotStorage
@@ -80,13 +81,15 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             lastAccTxR <- MapRef.ofConcurrentHashMap[IO, Address, LastTransactionReferenceState]().asResource
             waitingTxsR <- MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[Transaction]]]().asResource
             transactionStorage = new TransactionStorage[IO](lastAccTxR, waitingTxsR, TransactionReference.empty)
-            validators = SdkValidators.make[IO](None, None, Some(Map.empty))
+            validators = SdkValidators.make[IO](None, None, Some(Map.empty), Long.MaxValue)
 
             currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
               BlockAcceptanceManager.make[IO](validators.currencyBlockValidator),
               Amount(0L)
             )
-            currencySnapshotCreator = CurrencySnapshotCreator.make[IO](currencySnapshotAcceptanceManager, None)
+            currencyEventsCutter = CurrencyEventsCutter.make[IO]
+            currencySnapshotCreator = CurrencySnapshotCreator
+              .make[IO](currencySnapshotAcceptanceManager, None, SnapshotSizeConfig(Long.MaxValue, Long.MaxValue), currencyEventsCutter)
             currencySnapshotValidator = CurrencySnapshotValidator.make[IO](currencySnapshotCreator, validators.signedValidator, None, None)
 
             currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
