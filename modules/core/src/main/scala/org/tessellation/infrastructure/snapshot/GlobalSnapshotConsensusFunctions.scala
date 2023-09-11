@@ -19,6 +19,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
+import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions.InvalidArtifact
 import org.tessellation.sdk.domain.rewards.Rewards
@@ -70,7 +71,8 @@ object GlobalSnapshotConsensusFunctions {
       lastSignedArtifact: Signed[GlobalSnapshotArtifact],
       lastContext: GlobalSnapshotContext,
       trigger: ConsensusTrigger,
-      artifact: GlobalSnapshotArtifact
+      artifact: GlobalSnapshotArtifact,
+      facilitators: Set[PeerId]
     ): F[Either[InvalidArtifact, (GlobalSnapshotArtifact, GlobalSnapshotContext)]] = {
       val dagEvents = artifact.blocks.unsorted.map(_.block.asRight[StateChannelOutput])
       val scEvents = artifact.stateChannelSnapshots.toList.flatMap {
@@ -78,7 +80,7 @@ object GlobalSnapshotConsensusFunctions {
       }
       val events = dagEvents ++ scEvents
 
-      createProposalArtifact(lastSignedArtifact.ordinal, lastSignedArtifact, lastContext, trigger, events).map {
+      createProposalArtifact(lastSignedArtifact.ordinal, lastSignedArtifact, lastContext, trigger, events, facilitators).map {
         case (recreatedArtifact, context, _) =>
           if (recreatedArtifact === artifact)
             (artifact, context).asRight[InvalidArtifact]
@@ -92,7 +94,8 @@ object GlobalSnapshotConsensusFunctions {
       lastArtifact: Signed[GlobalSnapshotArtifact],
       snapshotContext: GlobalSnapshotContext,
       trigger: ConsensusTrigger,
-      events: Set[GlobalSnapshotEvent]
+      events: Set[GlobalSnapshotEvent],
+      facilitators: Set[PeerId]
     ): F[(GlobalSnapshotArtifact, GlobalSnapshotContext, Set[GlobalSnapshotEvent])] = {
       val (scEvents: List[StateChannelEvent], dagEvents: List[DAGEvent]) = events.filter { event =>
         if (environment == Mainnet) event.isRight else true

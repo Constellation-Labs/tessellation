@@ -10,7 +10,7 @@ import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.PeerId
 
 import com.comcast.ip4s.{Host, Port}
-import eu.timepit.refined.types.numeric._
+import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong, _}
 import fs2.io.file.Path
 
 object types {
@@ -23,7 +23,13 @@ object types {
     stateAfterJoining: NodeState,
     collateral: CollateralConfig,
     trustStorage: TrustStorageConfig,
-    priorityPeerIds: Option[NonEmptySet[PeerId]]
+    priorityPeerIds: Option[NonEmptySet[PeerId]],
+    snapshotSizeConfig: SnapshotSizeConfig
+  )
+
+  case class SnapshotSizeConfig(
+    singleSignatureProofSize: PosLong,
+    maxStateChannelSnapshotBinarySizeInBytes: PosLong
   )
 
   case class RumorStorageConfig(

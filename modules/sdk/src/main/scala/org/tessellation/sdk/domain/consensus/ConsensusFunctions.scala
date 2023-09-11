@@ -17,7 +17,8 @@ trait ConsensusFunctions[F[_], Event, Key, Artifact, Context] {
     lastSignedArtifact: Signed[Artifact],
     lastContext: Context,
     trigger: ConsensusTrigger,
-    artifact: Artifact
+    artifact: Artifact,
+    facilitators: Set[PeerId]
   ): F[Either[InvalidArtifact, (Artifact, Context)]]
 
   def createProposalArtifact(
@@ -25,7 +26,8 @@ trait ConsensusFunctions[F[_], Event, Key, Artifact, Context] {
     lastArtifact: Signed[Artifact],
     lastContext: Context,
     trigger: ConsensusTrigger,
-    events: Set[Event]
+    events: Set[Event],
+    facilitators: Set[PeerId]
   ): F[(Artifact, Context, Set[Event])]
 
   def consumeSignedMajorityArtifact(signedArtifact: Signed[Artifact], context: Context): F[Unit]

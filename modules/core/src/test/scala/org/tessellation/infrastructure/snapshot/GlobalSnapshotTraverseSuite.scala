@@ -24,6 +24,7 @@ import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.{Transaction, TransactionReference}
+import org.tessellation.sdk.config.types.SnapshotSizeConfig
 import org.tessellation.sdk.domain.statechannel.StateChannelValidator
 import org.tessellation.sdk.domain.transaction.{TransactionChainValidator, TransactionValidator}
 import org.tessellation.sdk.infrastructure.block.processing.{BlockAcceptanceLogic, BlockAcceptanceManager, BlockValidator}
@@ -191,14 +192,16 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         TransactionValidator.make[IO](signedValidator)
       )
     val blockAcceptanceManager = BlockAcceptanceManager.make(BlockAcceptanceLogic.make[IO], blockValidator)
-    val stateChannelValidator = StateChannelValidator.make[IO](signedValidator, None, Some(Map.empty[Address, NonEmptySet[PeerId]]))
-    val validators = SdkValidators.make[IO](None, None, Some(Map.empty[Address, NonEmptySet[PeerId]]))
+    val stateChannelValidator =
+      StateChannelValidator.make[IO](signedValidator, None, Some(Map.empty[Address, NonEmptySet[PeerId]]), Long.MaxValue)
+    val validators = SdkValidators.make[IO](None, None, Some(Map.empty[Address, NonEmptySet[PeerId]]), Long.MaxValue)
     val currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
       BlockAcceptanceManager.make[IO](validators.currencyBlockValidator),
       Amount(0L)
     )
 
-    val currencySnapshotCreator = CurrencySnapshotCreator.make[IO](currencySnapshotAcceptanceManager, None)
+    val currencySnapshotCreator =
+      CurrencySnapshotCreator.make[IO](currencySnapshotAcceptanceManager, None, SnapshotSizeConfig(Long.MaxValue, Long.MaxValue))
     val currencySnapshotValidator = CurrencySnapshotValidator.make[IO](currencySnapshotCreator, validators.signedValidator, None, None)
 
     val currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)

@@ -71,7 +71,8 @@ object Services {
       creator = CurrencySnapshotCreator.make[F](
         sdkServices.currencySnapshotAcceptanceManager,
         maybeDataApplication
-          .map((L0NodeContext.make[F](storages.snapshot), _))
+          .map((L0NodeContext.make[F](storages.snapshot), _)),
+        cfg.snapshotSizeConfig
       )
 
       validator = CurrencySnapshotValidator.make[F](
