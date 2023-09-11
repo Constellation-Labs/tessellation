@@ -12,10 +12,10 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.sdk.PriorityPeerIds
 import org.tessellation.sdk.config.types._
 
 import eu.timepit.refined.auto._
+import eu.timepit.refined.types.all.PosLong
 import fs2.io.file.Path
 
 trait CliMethod {
@@ -89,6 +89,10 @@ trait CliMethod {
       ensureCheckInterval = 10.seconds
     )
   )
+  val snapshotSizeConfig: SnapshotSizeConfig = SnapshotSizeConfig(
+    maxSignaturesSizeInBytes = 102_400L,
+    maxStateChannelSnapshotBinarySizeInBytes = PosLong.unsafeFrom(512_000L)
+  )
 
   lazy val sdkConfig: SdkConfig = SdkConfig(
     environment,
@@ -98,7 +102,8 @@ trait CliMethod {
     stateAfterJoining,
     collateralConfig(environment, collateralAmount),
     trustStorageConfig,
-    PriorityPeerIds.get(environment)
+    PriorityPeerIds.get(environment),
+    snapshotSizeConfig
   )
 
 }

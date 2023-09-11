@@ -14,6 +14,7 @@ object types {
     snapshot: SnapshotConfig,
     collateral: CollateralConfig,
     globalL0Peer: L0Peer,
-    proposalSelect: ProposalSelectConfig
+    proposalSelect: ProposalSelectConfig,
+    snapshotSizeConfig: SnapshotSizeConfig
   )
 }

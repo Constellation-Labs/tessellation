@@ -125,7 +125,8 @@ abstract class TessellationIOApp[A <: CliMethod](
                           validators = SdkValidators.make[IO](
                             _l0Seedlist,
                             _seedlist,
-                            method.stateChannelAllowanceLists
+                            method.stateChannelAllowanceLists,
+                            cfg.snapshotSizeConfig.maxStateChannelSnapshotBinarySizeInBytes
                           )
                           services <- SdkServices
                             .make[IO](

@@ -19,6 +19,7 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
+import org.tessellation.sdk.config.types.SnapshotSizeConfig
 import org.tessellation.sdk.domain.statechannel.StateChannelValidator
 import org.tessellation.sdk.infrastructure.block.processing.BlockAcceptanceManager
 import org.tessellation.sdk.infrastructure.snapshot._

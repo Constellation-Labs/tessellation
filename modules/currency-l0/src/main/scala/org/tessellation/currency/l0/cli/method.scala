@@ -61,7 +61,8 @@ object method {
         additionalDiscoveryDelay = 3.minutes,
         minPeers = 2
       ),
-      proposalSelect = ProposalSelectConfig(trustMultiplier = 5.0)
+      proposalSelect = ProposalSelectConfig(trustMultiplier = 5.0),
+      snapshotSizeConfig = snapshotSizeConfig
     )
 
     val stateAfterJoining: NodeState = NodeState.WaitingForDownload

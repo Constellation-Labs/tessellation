@@ -2,10 +2,10 @@ package org.tessellation.sdk.domain.block.processing
 
 import cats.data.NonEmptyList
 
-import org.tessellation.schema.BlockReference
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.BalanceArithmeticError
 import org.tessellation.schema.transaction.{TransactionOrdinal, TransactionReference}
+import org.tessellation.schema.{BlockReference, SnapshotOrdinal}
 import org.tessellation.security.hash.Hash
 
 import derevo.cats.{eqv, show}
@@ -39,6 +39,9 @@ case class AddressBalanceOutOfRange(address: Address, error: BalanceArithmeticEr
 
 @derive(eqv, show)
 case class SigningPeerBelowCollateral(peerIds: NonEmptyList[Address]) extends BlockAwaitReason
+
+@derive(eqv, show)
+case class ProposalSizeExceeded(ordinal: SnapshotOrdinal) extends BlockAwaitReason
 
 @derive(eqv, show)
 sealed trait TransactionAwaitReason
