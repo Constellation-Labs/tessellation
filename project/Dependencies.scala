@@ -3,7 +3,7 @@ import sbt._
 object Dependencies {
 
   object V {
-    val bouncyCastle = "1.70"
+    val bouncyCastle = "1.75"
     val betterFiles = "3.9.1"
     val cats = "2.9.0"
     val catsEffect = "3.4.2"
@@ -70,8 +70,8 @@ object Dependencies {
 
     def jawn(artifact: String): ModuleID = "org.typelevel" %% artifact % V.jawnVersion
 
-    val bc = bouncyCastle("bcprov-jdk15on")
-    val bcExtensions = bouncyCastle("bcpkix-jdk15on")
+    val bc = bouncyCastle("bcprov-jdk18on")
+    val bcExtensions = bouncyCastle("bcpkix-jdk18on")
 
     val betterFiles = "com.github.pathikrit" %% "better-files" % V.betterFiles
 
