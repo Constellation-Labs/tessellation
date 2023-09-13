@@ -13,7 +13,7 @@ import org.tessellation.sdk.domain.Daemon
 import org.tessellation.sdk.infrastructure.cluster.daemon.NodeStateDaemon
 import org.tessellation.sdk.infrastructure.collateral.daemon.CollateralDaemon
 import org.tessellation.sdk.infrastructure.healthcheck.daemon.HealthCheckDaemon
-import org.tessellation.sdk.infrastructure.snapshot.daemon.DownloadDaemon
+import org.tessellation.sdk.infrastructure.snapshot.daemon.{DownloadDaemon, SelectablePeerDiscoveryDelay}
 
 object Daemons {
 
@@ -25,15 +25,26 @@ object Daemons {
     healthChecks: HealthChecks[F],
     nodeId: PeerId,
     cfg: AppConfig
-  ): F[Unit] =
+  ): F[Unit] = {
+    val pddCfg = cfg.peerDiscoveryDelay
+    val peerDiscoveryDelay = SelectablePeerDiscoveryDelay.make(
+      clusterStorage = storages.cluster,
+      appEnvironment = cfg.environment,
+      checkPeersAttemptDelay = pddCfg.checkPeersAttemptDelay,
+      checkPeersMaxDelay = pddCfg.checkPeersMaxDelay,
+      additionalDiscoveryDelay = pddCfg.additionalDiscoveryDelay,
+      minPeers = pddCfg.minPeers
+    )
+
     List[Daemon[F]](
       NodeStateDaemon.make(storages.node, services.gossip),
-      DownloadDaemon.make(storages.node, programs.download),
+      DownloadDaemon.make(storages.node, programs.download, peerDiscoveryDelay),
       Daemon.periodic(storages.trust.updateTrustWithBiases(nodeId), cfg.trust.daemon.interval),
       HealthCheckDaemon.make(healthChecks),
       GlobalSnapshotEventsPublisherDaemon.make(queues.stateChannelOutput, queues.l1Output, services.gossip),
       CollateralDaemon.make(services.collateral, storages.globalSnapshot, storages.cluster),
       TrustStorageUpdater.daemon(services.trustStorageUpdater)
     ).traverse(_.start).void
+  }
 
 }

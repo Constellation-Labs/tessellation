@@ -54,7 +54,13 @@ object method {
       healthCheck = healthCheckConfig(false),
       snapshot = snapshotConfig,
       collateral = collateralConfig(environment, collateralAmount),
-      globalL0Peer = globalL0Peer
+      globalL0Peer = globalL0Peer,
+      peerDiscoveryDelay = PeerDiscoveryDelay(
+        checkPeersAttemptDelay = 1.minute,
+        checkPeersMaxDelay = 10.minutes,
+        additionalDiscoveryDelay = 3.minutes,
+        minPeers = 2
+      )
     )
 
     val stateAfterJoining: NodeState = NodeState.WaitingForDownload
