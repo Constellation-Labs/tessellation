@@ -23,6 +23,8 @@ import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBi
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
+import eu.timepit.refined.auto._
+import eu.timepit.refined.types.numeric.PosLong
 
 trait StateChannelValidator[F[_]] {
 
@@ -37,7 +39,7 @@ object StateChannelValidator {
     signedValidator: SignedValidator[F],
     l0Seedlist: Option[Set[SeedlistEntry]],
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
-    maxBinarySizeInBytes: Long = 500 * 1024
+    maxBinarySizeInBytes: PosLong
   ): StateChannelValidator[F] = new StateChannelValidator[F] {
 
     def validate(stateChannelOutput: StateChannelOutput): F[StateChannelValidationErrorOr[StateChannelOutput]] =

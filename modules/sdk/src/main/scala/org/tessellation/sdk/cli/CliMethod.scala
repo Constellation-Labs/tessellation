@@ -15,6 +15,7 @@ import org.tessellation.sdk.config.AppEnvironment.Mainnet
 import org.tessellation.sdk.config.types._
 
 import eu.timepit.refined.auto._
+import eu.timepit.refined.types.numeric.PosLong
 import fs2.io.file.Path
 
 trait CliMethod {
@@ -87,6 +88,8 @@ trait CliMethod {
     )
   )
 
+  val maxStateChannelSnapshotBinarySizeInBytes: PosLong = 500 * 1024
+
   lazy val sdkConfig: SdkConfig = SdkConfig(
     environment,
     gossipConfig,
@@ -94,7 +97,8 @@ trait CliMethod {
     leavingDelay,
     stateAfterJoining,
     collateralConfig(environment, collateralAmount),
-    trustStorageConfig
+    trustStorageConfig,
+    maxStateChannelSnapshotBinarySizeInBytes
   )
 
 }

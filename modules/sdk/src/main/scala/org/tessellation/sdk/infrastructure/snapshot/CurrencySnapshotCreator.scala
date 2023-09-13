@@ -22,6 +22,7 @@ import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, 
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
+import org.tessellation.ext.kryo._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.height.{Height, SubHeight}
@@ -70,122 +71,149 @@ object CurrencySnapshotCreator {
       rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot]]
     ): F[CurrencySnapshotCreationResult] = {
 
+      val maxSizeInBytes = 400 * 1024
+
       val (blocks: List[Signed[Block]], dataBlocks: List[Signed[DataApplicationBlock]]) =
         events
           .filter(_.isLeft || maybeDataApplicationService.isDefined)
           .toList
           .partitionMap(identity)
 
-      val blocksForAcceptance = blocks
+      def createProposalWithSizeLimit(
+        blocksForAcceptance: List[Signed[Block]],
+        sizeExcessBlocks: Set[Signed[Block]] = Set.empty[Signed[Block]]
+      ): F[CurrencySnapshotCreationResult] = {
+        for {
+          lastArtifactHash <- lastArtifact.value.hashF
+          currentOrdinal = lastArtifact.ordinal.next
+          currentEpochProgress = trigger match {
+            case EventTrigger => lastArtifact.epochProgress
+            case TimeTrigger  => lastArtifact.epochProgress.next
+          }
+          lastActiveTips <- lastArtifact.activeTips
+          lastDeprecatedTips = lastArtifact.tips.deprecated
 
-      for {
-        lastArtifactHash <- lastArtifact.value.hashF
-        currentOrdinal = lastArtifact.ordinal.next
-        currentEpochProgress = trigger match {
-          case EventTrigger => lastArtifact.epochProgress
-          case TimeTrigger  => lastArtifact.epochProgress.next
-        }
-        lastActiveTips <- lastArtifact.activeTips
-        lastDeprecatedTips = lastArtifact.tips.deprecated
+          maybeLastDataApplication = lastArtifact.data
 
-        maybeLastDataApplication = lastArtifact.data
+          maybeLastDataState <- (maybeLastDataApplication, maybeDataApplicationService).mapN {
+            case (lastDataApplication, (_, service)) =>
+              service
+                .deserializeState(lastDataApplication)
+                .flatTap {
+                  case Left(err) => logger.warn(err)(s"Cannot deserialize custom state")
+                  case Right(a)  => logger.info(s"Deserialized state: $a")
+                }
+                .map(_.toOption)
+                .handleErrorWith(err =>
+                  logger.error(err)(s"Unhandled exception during deserialization data application, fallback to empty state") >>
+                    none[DataState].pure[F]
+                )
+          }.flatSequence
 
-        maybeLastDataState <- (maybeLastDataApplication, maybeDataApplicationService).mapN {
-          case (lastDataApplication, (_, service)) =>
-            service
-              .deserializeState(lastDataApplication)
-              .flatTap {
-                case Left(err) => logger.warn(err)(s"Cannot deserialize custom state")
-                case Right(a)  => logger.info(s"Deserialized state: ${a}")
-              }
-              .map(_.toOption)
-              .handleErrorWith(err =>
-                logger.error(err)(s"Unhandled exception during deserialization data application, fallback to empty state") >>
-                  none[DataState].pure[F]
-              )
-        }.flatSequence
+          maybeNewDataState <- (maybeDataApplicationService, maybeLastDataState).mapN {
+            case (((nodeContext, service), lastState)) =>
+              implicit val context: L0NodeContext[F] = nodeContext
+              NonEmptyList
+                .fromList(dataBlocks.distinctBy(_.value.roundId))
+                .map(_.flatMap(_.value.updates))
+                .map { updates =>
+                  service
+                    .validateData(lastState, updates)
+                    .flatTap { validated =>
+                      Applicative[F].unlessA(validated.isValid)(logger.warn(s"Data application is invalid, errors: ${validated.toString}"))
+                    }
+                    .map(_.isValid)
+                    .handleErrorWith(err =>
+                      logger.error(err)(s"Unhandled exception during validating data application, assumed as invalid") >> false.pure[F]
+                    )
+                    .ifM(
+                      service
+                        .combine(lastState, updates)
+                        .flatMap { state =>
+                          service.serializeState(state)
+                        }
+                        .map(_.some)
+                        .handleErrorWith(err =>
+                          logger.error(err)(
+                            s"Unhandled exception during combine and serialize data application, fallback to last data application"
+                          ) >> maybeLastDataApplication.pure[F]
+                        ),
+                      logger.warn("Data application is not valid") >> maybeLastDataApplication.pure[F]
+                    )
+                }
+                .getOrElse(maybeLastDataApplication.pure[F])
+          }.flatSequence
 
-        maybeNewDataState <- (maybeDataApplicationService, maybeLastDataState).mapN {
-          case (((nodeContext, service), lastState)) =>
-            implicit val context: L0NodeContext[F] = nodeContext
-            NonEmptyList
-              .fromList(dataBlocks.distinctBy(_.value.roundId))
-              .map(_.flatMap(_.value.updates))
-              .map { updates =>
-                service
-                  .validateData(lastState, updates)
-                  .flatTap { validated =>
-                    Applicative[F].unlessA(validated.isValid)(logger.warn(s"Data application is invalid, errors: ${validated.toString}"))
+          (acceptanceResult, acceptedRewardTxs, snapshotInfo, stateProof) <- currencySnapshotAcceptanceManager.accept(
+            blocksForAcceptance,
+            lastContext,
+            lastActiveTips,
+            lastDeprecatedTips,
+            transactions =>
+              rewards
+                .map(_.distribute(lastArtifact, lastContext.snapshotInfo.balances, transactions, trigger))
+                .getOrElse(SortedSet.empty[RewardTransaction].pure[F])
+          )
+
+          (awaitingBlocks, rejectedBlocks) = acceptanceResult.notAccepted.partitionMap {
+            case (b, _: BlockAwaitReason)     => b.asRight
+            case (b, _: BlockRejectionReason) => b.asLeft
+          }
+
+          (deprecated, remainedActive, accepted) = getUpdatedTips(
+            lastActiveTips,
+            lastDeprecatedTips,
+            acceptanceResult,
+            currentOrdinal
+          )
+
+          (height, subHeight) <- getHeightAndSubHeight(lastArtifact, deprecated, remainedActive, accepted)
+
+          artifact = CurrencyIncrementalSnapshot(
+            currentOrdinal,
+            height,
+            subHeight,
+            lastArtifactHash,
+            accepted,
+            acceptedRewardTxs,
+            SnapshotTips(
+              deprecated = deprecated,
+              remainedActive = remainedActive
+            ),
+            stateProof,
+            currentEpochProgress,
+            maybeNewDataState
+          )
+
+          artifactBinary: Array[Byte] <- artifact.toBinaryF
+          size = artifactBinary.length
+
+          result <-
+            if (size <= maxSizeInBytes) {
+              CurrencySnapshotCreationResult(
+                artifact,
+                CurrencySnapshotContext(lastContext.address, snapshotInfo),
+                awaitingBlocks.toSet ++ sizeExcessBlocks,
+                rejectedBlocks.toSet
+              ).pure[F]
+            } else {
+              acceptanceResult.accepted match {
+                case _ :+ _ :+ excessivePair =>
+                  excessivePair match {
+                    case (excessiveBlock, _) =>
+                      val remainingBlocks = blocksForAcceptance.filterNot(_ =!= excessiveBlock)
+                      val excessiveBlocks = sizeExcessBlocks + excessiveBlock
+                      createProposalWithSizeLimit(remainingBlocks, excessiveBlocks)
                   }
-                  .map(_.isValid)
-                  .handleErrorWith(err =>
-                    logger.error(err)(s"Unhandled exception during validating data application, assumed as invalid") >> false.pure[F]
-                  )
-                  .ifM(
-                    service
-                      .combine(lastState, updates)
-                      .flatMap { state =>
-                        service.serializeState(state)
-                      }
-                      .map(_.some)
-                      .handleErrorWith(err =>
-                        logger.error(err)(
-                          s"Unhandled exception during combine and serialize data application, fallback to last data application"
-                        ) >> maybeLastDataApplication.pure[F]
-                      ),
-                    logger.warn("Data application is not valid") >> maybeLastDataApplication.pure[F]
-                  )
+                case _ =>
+                  new Throwable(s"Proposal doesn't fit the size limit after removing all the excessive blocks!")
+                    .raiseError[F, CurrencySnapshotCreationResult]
               }
-              .getOrElse(maybeLastDataApplication.pure[F])
-        }.flatSequence
+            }
+        } yield result
+      }
 
-        (acceptanceResult, acceptedRewardTxs, snapshotInfo, stateProof) <- currencySnapshotAcceptanceManager.accept(
-          blocksForAcceptance,
-          lastContext,
-          lastActiveTips,
-          lastDeprecatedTips,
-          transactions =>
-            rewards
-              .map(_.distribute(lastArtifact, lastContext.snapshotInfo.balances, transactions, trigger))
-              .getOrElse(SortedSet.empty[RewardTransaction].pure[F])
-        )
-
-        (awaitingBlocks, rejectedBlocks) = acceptanceResult.notAccepted.partitionMap {
-          case (b, _: BlockAwaitReason)     => b.asRight
-          case (b, _: BlockRejectionReason) => b.asLeft
-        }
-
-        (deprecated, remainedActive, accepted) = getUpdatedTips(
-          lastActiveTips,
-          lastDeprecatedTips,
-          acceptanceResult,
-          currentOrdinal
-        )
-
-        (height, subHeight) <- getHeightAndSubHeight(lastArtifact, deprecated, remainedActive, accepted)
-
-        artifact = CurrencyIncrementalSnapshot(
-          currentOrdinal,
-          height,
-          subHeight,
-          lastArtifactHash,
-          accepted,
-          acceptedRewardTxs,
-          SnapshotTips(
-            deprecated = deprecated,
-            remainedActive = remainedActive
-          ),
-          stateProof,
-          currentEpochProgress,
-          maybeNewDataState
-        )
-      } yield
-        CurrencySnapshotCreationResult(
-          artifact,
-          CurrencySnapshotContext(lastContext.address, snapshotInfo),
-          awaitingBlocks.toSet,
-          rejectedBlocks.toSet
-        )
+      createProposalWithSizeLimit(blocks)
     }
 
     protected def getHeightAndSubHeight(

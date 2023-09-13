@@ -14,8 +14,8 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.BlockAsActiveTip
 import org.tessellation.syntax.sortedCollection.sortedSetSyntax
 
+import eu.timepit.refined.auto._
 import monocle.macros.syntax.lens._
-
 case class SnapshotSizeLimiterResult(
   snapshot: CurrencyIncrementalSnapshot,
   oldSizeInBytes: Long,

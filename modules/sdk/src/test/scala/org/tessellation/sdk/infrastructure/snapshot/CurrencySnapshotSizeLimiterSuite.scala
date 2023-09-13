@@ -26,8 +26,8 @@ object CurrencySnapshotSizeLimiterSuite extends MutableIOSuite with Checkers {
 
   override def sharedResource: Resource[IO, KryoSerializer[IO]] = KryoSerializer.forAsync[IO](sdkKryoRegistrar)
 
-  private def mkCurrencyIncremental(blocks: Int) = for {
-    blocks <- Gen.listOfN(blocks, signedBlockGen)
+  private def genCurrencyIncrementalWithBlocks = for {
+    blocks <- Gen.listOf(signedBlockGen)
     asActiveTips = blocks.map(BlockAsActiveTip(_, 1L))
   } yield
     CurrencyIncrementalSnapshot(
@@ -44,9 +44,9 @@ object CurrencySnapshotSizeLimiterSuite extends MutableIOSuite with Checkers {
     )
 
   test("limiter rejects excess blocks to fit the size limit") { implicit kryo =>
-    val maxSizeInBytes: Long = 50 * 1024
+    val maxSizeInBytes: Long = 400 * 1024
 
-    forall(mkCurrencyIncremental(10)) { snapshot =>
+    forall(genCurrencyIncrementalWithBlocks) { snapshot =>
       for {
         limiter <- CurrencySnapshotSizeLimiter.make[IO].pure[IO]
         result <- limiter.limit(snapshot, maxSizeInBytes)

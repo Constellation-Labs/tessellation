@@ -18,7 +18,8 @@ object types {
     leavingDelay: FiniteDuration,
     stateAfterJoining: NodeState,
     collateral: CollateralConfig,
-    trustStorage: TrustStorageConfig
+    trustStorage: TrustStorageConfig,
+    maxStateChannelSnapshotBinarySizeInBytes: PosLong
   )
 
   case class RumorStorageConfig(

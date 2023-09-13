@@ -40,7 +40,7 @@ import org.tessellation.tools.TransactionGenerator._
 import org.tessellation.tools.{DAGBlockGenerator, TransactionGenerator}
 
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
+import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong}
 import org.scalacheck.Gen
 import weaver._
 import weaver.scalacheck.Checkers
@@ -157,8 +157,10 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         TransactionValidator.make[IO](signedValidator)
       )
     val blockAcceptanceManager = BlockAcceptanceManager.make(BlockAcceptanceLogic.make[IO], blockValidator)
-    val stateChannelValidator = StateChannelValidator.make[IO](signedValidator, None, Some(Map.empty[Address, NonEmptySet[PeerId]]))
-    val validators = SdkValidators.make[IO](None, None, Some(Map.empty[Address, NonEmptySet[PeerId]]))
+    val maxBinarySizeInBytes: PosLong = 500 * 1024
+    val stateChannelValidator =
+      StateChannelValidator.make[IO](signedValidator, None, Some(Map.empty[Address, NonEmptySet[PeerId]]), maxBinarySizeInBytes)
+    val validators = SdkValidators.make[IO](None, None, Some(Map.empty[Address, NonEmptySet[PeerId]]), maxBinarySizeInBytes)
     val currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
       BlockAcceptanceManager.make[IO](validators.currencyBlockValidator),
       Amount(0L)
