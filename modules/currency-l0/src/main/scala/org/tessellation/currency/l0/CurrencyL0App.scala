@@ -109,7 +109,7 @@ abstract class CurrencyL0App(
       rumorHandler = RumorHandlers.make[IO](storages.cluster, healthChecks.ping, services.localHealthcheck).handlers <+>
         services.consensus.handler
       _ <- Daemons
-        .start(storages, services, programs, queues, healthChecks, services.dataApplication)
+        .start(storages, services, programs, queues, healthChecks, services.dataApplication, cfg)
         .asResource
 
       api = HttpApi

@@ -54,6 +54,7 @@ object PeerSelect {
   val defaultPeerTrustScore: TrustValueRefined = 1e-4
 
   case object NoPeersToSelect extends NoStackTrace
+  case object NoHashes extends NoStackTrace
 
   def make[F[_]: Async: Random, S <: Snapshot, SI <: SnapshotInfo[_]](
     storage: ClusterStorage[F],
@@ -85,7 +86,7 @@ object PeerSelect {
         .flatMap { maybePeerSnapshotHashes =>
           MonadThrow[F].fromOption(
             maybePeerSnapshotHashes.toList.flatten.toNel,
-            NoPeersToSelect
+            NoHashes
           )
         }
         .map(_.groupMap { case (_, hash) => hash } { case (peer, _) => peer })

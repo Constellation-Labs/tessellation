@@ -107,4 +107,11 @@ object types {
     seedlistOutputBias: Double
   )
 
+  case class PeerDiscoveryDelay(
+    checkPeersAttemptDelay: FiniteDuration,
+    checkPeersMaxDelay: FiniteDuration,
+    additionalDiscoveryDelay: FiniteDuration,
+    minPeers: PosInt
+  )
+
 }

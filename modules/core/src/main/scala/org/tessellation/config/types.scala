@@ -32,7 +32,8 @@ object types {
     collateral: CollateralConfig,
     rewards: RewardsConfig,
     stateChannelPullDelay: NonNegLong,
-    stateChannelPurgeDelay: NonNegLong
+    stateChannelPurgeDelay: NonNegLong,
+    peerDiscoveryDelay: PeerDiscoveryDelay
   )
 
   case class DBConfig(

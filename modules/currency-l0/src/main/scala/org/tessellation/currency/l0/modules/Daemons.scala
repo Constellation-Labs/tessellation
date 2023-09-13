@@ -6,13 +6,14 @@ import cats.syntax.functor._
 import cats.syntax.traverse._
 
 import org.tessellation.currency.dataApplication.BaseDataApplicationL0Service
+import org.tessellation.currency.l0.config.types.AppConfig
 import org.tessellation.currency.l0.snapshot.CurrencySnapshotEventsPublisherDaemon
 import org.tessellation.sdk.domain.Daemon
 import org.tessellation.sdk.domain.healthcheck.HealthChecks
 import org.tessellation.sdk.infrastructure.cluster.daemon.NodeStateDaemon
 import org.tessellation.sdk.infrastructure.collateral.daemon.CollateralDaemon
 import org.tessellation.sdk.infrastructure.healthcheck.daemon.HealthCheckDaemon
-import org.tessellation.sdk.infrastructure.snapshot.daemon.DownloadDaemon
+import org.tessellation.sdk.infrastructure.snapshot.daemon.{DownloadDaemon, SelectablePeerDiscoveryDelay}
 
 object Daemons {
 
@@ -22,14 +23,26 @@ object Daemons {
     programs: Programs[F],
     queues: Queues[F],
     healthChecks: HealthChecks[F],
-    maybeDataApplication: Option[BaseDataApplicationL0Service[F]]
-  ): F[Unit] =
+    maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
+    config: AppConfig
+  ): F[Unit] = {
+    val pddConfig = config.peerDiscoveryDelay
+    val peerDiscoveryDelay = SelectablePeerDiscoveryDelay.make(
+      clusterStorage = storages.cluster,
+      appEnvironment = config.environment,
+      checkPeersAttemptDelay = pddConfig.checkPeersAttemptDelay,
+      checkPeersMaxDelay = pddConfig.checkPeersMaxDelay,
+      additionalDiscoveryDelay = pddConfig.additionalDiscoveryDelay,
+      minPeers = pddConfig.minPeers
+    )
+
     List[Daemon[F]](
       NodeStateDaemon.make(storages.node, services.gossip),
-      DownloadDaemon.make(storages.node, programs.download),
+      DownloadDaemon.make(storages.node, programs.download, peerDiscoveryDelay),
       HealthCheckDaemon.make(healthChecks),
       CurrencySnapshotEventsPublisherDaemon.make(queues.l1Output, services.gossip, maybeDataApplication),
       CollateralDaemon.make(services.collateral, storages.snapshot, storages.cluster)
     ).traverse(_.start).void
+  }
 
 }

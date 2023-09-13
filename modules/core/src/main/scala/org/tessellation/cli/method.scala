@@ -6,8 +6,8 @@ import cats.syntax.eq._
 import scala.concurrent.duration._
 
 import org.tessellation.cli.env._
+import org.tessellation.cli.http
 import org.tessellation.cli.incremental._
-import org.tessellation.cli.{AppEnvironment, http}
 import org.tessellation.config.types._
 import org.tessellation.ext.decline.WithOpts
 import org.tessellation.ext.decline.decline._
@@ -67,7 +67,13 @@ object method {
       collateral = collateralConfig(environment, collateralAmount),
       rewards = RewardsConfig(),
       stateChannelPullDelay = NonNegLong.MinValue,
-      stateChannelPurgeDelay = NonNegLong(4L)
+      stateChannelPurgeDelay = NonNegLong(4L),
+      peerDiscoveryDelay = PeerDiscoveryDelay(
+        checkPeersAttemptDelay = 1.minute,
+        checkPeersMaxDelay = 10.minutes,
+        additionalDiscoveryDelay = 3.minutes,
+        minPeers = 2
+      )
     )
 
     val stateChannelAllowanceLists = StateChannelAllowanceLists.get(environment)
