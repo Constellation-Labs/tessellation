@@ -5,6 +5,7 @@ import cats.data.NonEmptyList
 import cats.effect.Async
 import cats.effect.std.Random
 import cats.effect.syntax.concurrent._
+import cats.syntax.either._
 import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
@@ -17,19 +18,24 @@ import org.tessellation.schema.node.NodeState.Ready
 import org.tessellation.schema.peer.Peer.toP2PContext
 import org.tessellation.schema.peer.{L0Peer, Peer}
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo}
+import org.tessellation.schema.trust.{TrustScores, TrustValueRefined, TrustValueRefinement}
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.snapshot.PeerSelect
-import org.tessellation.sdk.domain.snapshot.PeerSelect._
 import org.tessellation.sdk.http.p2p.clients.SnapshotClient
 import org.tessellation.security.hash.Hash
 
 import derevo.cats.show
 import derevo.circe.magnolia.encoder
 import derevo.derive
+import eu.timepit.refined.auto._
+import eu.timepit.refined.numeric.Positive
+import eu.timepit.refined.refineV
+import eu.timepit.refined.types.numeric.PosInt
 import io.circe.syntax.EncoderOps
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-object MajorityPeerSelect {
+object PeerSelect {
+  val peerSelectLoggerName = "PeerSelectLogger"
 
   @derive(encoder, show)
   case class FilteredPeerDetails(
@@ -44,13 +50,15 @@ object MajorityPeerSelect {
 
   val maxConcurrentPeerInquiries = 10
   val peerSampleRatio = 0.25
-  val minSampleSize = 20
+  val minSampleSize: PosInt = 20
+  val defaultPeerTrustScore: TrustValueRefined = 1e-4
 
   case object NoPeersToSelect extends NoStackTrace
 
   def make[F[_]: Async: Random, S <: Snapshot, SI <: SnapshotInfo[_]](
     storage: ClusterStorage[F],
-    snapshotClient: SnapshotClient[F, S, SI]
+    snapshotClient: SnapshotClient[F, S, SI],
+    getTrustScores: F[TrustScores]
   ): PeerSelect[F] = new PeerSelect[F] {
 
     val logger = Slf4jLogger.getLoggerFromName[F](peerSelectLoggerName)
@@ -95,11 +103,25 @@ object MajorityPeerSelect {
       )
 
     def getPeerSublist(peers: Set[Peer]): F[List[Peer]] = {
-      val sampleSize = (peers.size * peerSampleRatio).toInt
+      val sampleSize = Math.max((peers.size * peerSampleRatio).toInt, minSampleSize)
 
-      Random[F]
-        .shuffleList(peers.toList)
-        .map(_.take(Math.max(sampleSize, minSampleSize)))
+      for {
+        scores <- getTrustScores.map(_.scores)
+        refinedScores = scores.view
+          .mapValues(score => refineV[TrustValueRefinement](score))
+          .collect {
+            case (key, Right(s)) =>
+              key -> s
+          }
+          .toMap
+        candidates = peers.map { p =>
+          p -> refinedScores.getOrElse(p.id, defaultPeerTrustScore)
+        }.toMap
+        size <- MonadThrow[F].fromEither(
+          refineV[Positive](sampleSize).leftMap(new IllegalStateException(_))
+        )
+        samples <- WeightedProspect.sample(candidates, size)
+      } yield samples
     }
 
     def getSnapshotHashByPeer(peer: Peer, ordinal: SnapshotOrdinal): F[Option[(Peer, Hash)]] =

@@ -77,6 +77,14 @@ object TrustStorage {
 
       def getTrust: F[TrustMap] = trustStoreRef.get.map(_.trust)
 
+      def getBiasedTrustScores: F[TrustScores] = getTrust
+        .map(getBiasedTrust(_).trust)
+        .map(_.view.mapValues { trustInfo =>
+          trustInfo.predictedTrust.orElse(trustInfo.trustLabel)
+        }.toMap)
+        .map(_.collect { case (peerId, Some(trustScore)) => peerId -> trustScore })
+        .map(TrustScores(_))
+
       def updateTrustWithBiases(selfPeerId: PeerId): F[Unit] =
         trustStoreRef.update { store =>
           val biasedTrust = getBiasedTrust(store.trust)
