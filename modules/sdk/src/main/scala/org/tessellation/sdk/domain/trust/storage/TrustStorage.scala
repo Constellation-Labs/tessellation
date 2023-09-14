@@ -9,6 +9,7 @@ trait TrustStorage[F[_]] {
   def updateTrustWithBiases(selfPeerId: PeerId): F[Unit]
 
   def getTrust: F[TrustMap]
+  def getBiasedTrustScores: F[TrustScores]
   def updatePeerPublicTrustInfo(peerId: PeerId, publicTrust: PublicTrust): F[Unit]
 
   def getCurrentOrdinalTrust: F[OrdinalTrustMap]
