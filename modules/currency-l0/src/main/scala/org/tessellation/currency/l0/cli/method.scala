@@ -54,7 +54,8 @@ object method {
       healthCheck = healthCheckConfig(false),
       snapshot = snapshotConfig,
       collateral = collateralConfig(environment, collateralAmount),
-      globalL0Peer = globalL0Peer
+      globalL0Peer = globalL0Peer,
+      maxStateChannelSnapshotBinarySizeInBytes = maxStateChannelSnapshotBinarySizeInBytes
     )
 
     val stateAfterJoining: NodeState = NodeState.WaitingForDownload

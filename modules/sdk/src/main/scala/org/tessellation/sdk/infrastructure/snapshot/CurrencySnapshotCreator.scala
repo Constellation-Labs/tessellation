@@ -16,6 +16,7 @@ import cats.syntax.order._
 import cats.syntax.traverse._
 
 import scala.collection.immutable.SortedSet
+import scala.io.AnsiColor.{MAGENTA, RESET}
 
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
 import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, DataState, L0NodeContext}
@@ -35,6 +36,8 @@ import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 import org.tessellation.syntax.sortedCollection.sortedSetSyntax
 
+import eu.timepit.refined.auto._
+import eu.timepit.refined.types.numeric.PosLong
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 case class CurrencySnapshotCreationResult(
@@ -58,7 +61,8 @@ trait CurrencySnapshotCreator[F[_]] {
 object CurrencySnapshotCreator {
   def make[F[_]: Async: KryoSerializer: SecurityProvider](
     currencySnapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F],
-    maybeDataApplicationService: Option[(L0NodeContext[F], BaseDataApplicationL0Service[F])]
+    maybeDataApplicationService: Option[(L0NodeContext[F], BaseDataApplicationL0Service[F])],
+    maxStateChannelSnapshotBinarySizeInBytes: PosLong
   ): CurrencySnapshotCreator[F] = new CurrencySnapshotCreator[F] {
     private val logger = Slf4jLogger.getLogger
 
@@ -70,8 +74,6 @@ object CurrencySnapshotCreator {
       events: Set[CurrencySnapshotEvent],
       rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot]]
     ): F[CurrencySnapshotCreationResult] = {
-
-      val maxSizeInBytes = 400 * 1024
 
       val (blocks: List[Signed[Block]], dataBlocks: List[Signed[DataApplicationBlock]]) =
         events
@@ -86,6 +88,7 @@ object CurrencySnapshotCreator {
         for {
           lastArtifactHash <- lastArtifact.value.hashF
           currentOrdinal = lastArtifact.ordinal.next
+
           currentEpochProgress = trigger match {
             case EventTrigger => lastArtifact.epochProgress
             case TimeTrigger  => lastArtifact.epochProgress.next
@@ -189,7 +192,7 @@ object CurrencySnapshotCreator {
           size = artifactBinary.length
 
           result <-
-            if (size <= maxSizeInBytes) {
+            if (size <= maxStateChannelSnapshotBinarySizeInBytes) {
               CurrencySnapshotCreationResult(
                 artifact,
                 CurrencySnapshotContext(lastContext.address, snapshotInfo),

@@ -15,7 +15,6 @@ import org.tessellation.sdk.infrastructure.gossip.RumorValidator
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.SignedValidator
 
-import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.PosLong
 
 object SdkValidators {

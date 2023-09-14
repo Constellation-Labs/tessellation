@@ -217,7 +217,7 @@ object Download {
                 .moveTmpToPersisted(lastSnapshot)
           }
 
-        def processNextOrFinish: F[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] = {
+        def processNextOrFinish: F[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] =
           if (lastSnapshot.ordinal.value >= endingOrdinal.value) {
             (lastSnapshot, context).pure[F]
           } else
@@ -228,7 +228,6 @@ object Download {
                   .flatMap(go(snapshot, _))
               case None => InvalidChain.raiseError[F, Agg]
             }
-        }
 
         persistLastSnapshot >>
           processNextOrFinish

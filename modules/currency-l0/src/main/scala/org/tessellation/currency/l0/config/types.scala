@@ -4,6 +4,8 @@ import org.tessellation.cli.AppEnvironment
 import org.tessellation.schema.peer.L0Peer
 import org.tessellation.sdk.config.types._
 
+import eu.timepit.refined.types.numeric.PosLong
+
 object types {
   case class AppConfig(
     environment: AppEnvironment,
@@ -12,6 +14,7 @@ object types {
     healthCheck: HealthCheckConfig,
     snapshot: SnapshotConfig,
     collateral: CollateralConfig,
-    globalL0Peer: L0Peer
+    globalL0Peer: L0Peer,
+    maxStateChannelSnapshotBinarySizeInBytes: PosLong
   )
 }

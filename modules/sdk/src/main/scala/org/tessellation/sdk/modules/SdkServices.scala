@@ -76,7 +76,8 @@ object SdkServices {
       currencySnapshotValidator = CurrencySnapshotValidator.make[F](
         CurrencySnapshotCreator.make[F](
           currencySnapshotAcceptanceManager,
-          None
+          None,
+          cfg.maxStateChannelSnapshotBinarySizeInBytes
         ),
         validators.signedValidator,
         None,
