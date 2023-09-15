@@ -26,6 +26,7 @@ import org.tessellation.security.signature.Signed.InvalidSignatureForHash
 import org.tessellation.security.{Hashed, SecurityProvider}
 
 import eu.timepit.refined.auto._
+import fs2.compression.Compression
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 sealed abstract class CurrencySnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider]
@@ -38,7 +39,7 @@ sealed abstract class CurrencySnapshotProcessor[F[_]: Async: KryoSerializer: Sec
 
 object CurrencySnapshotProcessor {
 
-  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider](
+  def make[F[_]: Async: Compression: Random: KryoSerializer: SecurityProvider](
     identifier: Address,
     addressStorage: AddressStorage[F],
     blockStorage: BlockStorage[F],
@@ -211,16 +212,17 @@ object CurrencySnapshotProcessor {
         globalSnapshot: GlobalIncrementalSnapshot
       ): F[Option[ValidatedNel[InvalidSignatureForHash[CurrencyIncrementalSnapshot], NonEmptyList[Hashed[CurrencyIncrementalSnapshot]]]]] =
         globalSnapshot.stateChannelSnapshots
-          .get(identifier)
-          .map {
-            _.toList.flatMap(binary =>
-              JsonBinarySerializer.deserialize[Signed[CurrencyIncrementalSnapshot]](binary.content).toOption
-            ) // TODO: currency - deserialization as full or incremental snapshot
-          }
-          .flatMap(NonEmptyList.fromList)
-          .map(_.sortBy(_.value.ordinal))
-          .map(_.traverse(_.toHashedWithSignatureCheck))
-          .sequence
-          .map(_.map(_.traverse(_.toValidatedNel)))
+          .get(identifier) match {
+          case Some(snapshots) =>
+            snapshots.toList.traverse { binary =>
+              JsonBinarySerializer.deserialize[F, Signed[CurrencyIncrementalSnapshot]](binary.content)
+            }
+              .map(_.flatMap(_.toOption))
+              .map(NonEmptyList.fromList)
+              .map(_.map(_.sortBy(_.value.ordinal)))
+              .flatMap(_.map(_.traverse(_.toHashedWithSignatureCheck)).sequence)
+              .map(_.map(_.traverse(_.toValidatedNel)))
+          case None => Async[F].pure(none)
+        }
     }
 }

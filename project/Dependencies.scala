@@ -83,6 +83,7 @@ object Dependencies {
     val squants = "org.typelevel" %% "squants" % V.squants
     val comcast = "com.comcast" %% "ip4s-core" % V.comcast
 
+    val fs2CompressGzip = "de.lhns" %% "fs2-compress-gzip" % "1.0.0"
     val fs2Core = fs2("core")
     val fs2DataCsv = fs2Data("csv")
     val fs2DataCsvGeneric = fs2Data("csv-generic")

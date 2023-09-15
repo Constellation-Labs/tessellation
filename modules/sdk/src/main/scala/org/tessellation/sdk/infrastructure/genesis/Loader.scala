@@ -13,7 +13,7 @@ import fs2.text
 
 object Loader {
 
-  def make[F[_]: Async]: Loader[F] =
+  def make[F[_]: Async: Files]: Loader[F] =
     (path: Path) =>
       Files[F]
         .readAll(path)

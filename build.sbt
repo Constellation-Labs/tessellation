@@ -194,6 +194,7 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.drosteCore,
       Libraries.enumeratumCore,
       Libraries.enumeratumCirce,
+      Libraries.fs2CompressGzip,
       Libraries.fs2Core,
       Libraries.fs2DataCsv,
       Libraries.fs2DataCsvGeneric,

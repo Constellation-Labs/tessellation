@@ -34,12 +34,13 @@ import org.tessellation.sdk.modules.{SdkServices, SdkValidators}
 import org.tessellation.security.SecurityProvider
 
 import eu.timepit.refined.types.numeric.NonNegLong
+import fs2.compression.Compression
 import io.circe.disjunctionCodecs._
 import org.http4s.client.Client
 
 object GlobalSnapshotConsensus {
 
-  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider: Metrics: Supervisor](
+  def make[F[_]: Async: Compression: Random: KryoSerializer: SecurityProvider: Metrics: Supervisor](
     gossip: Gossip[F],
     selfId: PeerId,
     keyPair: KeyPair,

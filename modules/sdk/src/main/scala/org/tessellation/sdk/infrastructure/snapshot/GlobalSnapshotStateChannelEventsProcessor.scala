@@ -24,6 +24,7 @@ import org.tessellation.security.signature.Signed
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 
 import eu.timepit.refined.auto._
+import fs2.compression.Compression
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait GlobalSnapshotStateChannelEventsProcessor[F[_]] {
@@ -49,7 +50,7 @@ trait GlobalSnapshotStateChannelEventsProcessor[F[_]] {
 }
 
 object GlobalSnapshotStateChannelEventsProcessor {
-  def make[F[_]: Async](
+  def make[F[_]: Async: Compression](
     stateChannelValidator: StateChannelValidator[F],
     stateChannelManager: GlobalSnapshotStateChannelAcceptanceManager[F],
     currencySnapshotContextFns: CurrencySnapshotContextFunctions[F]
@@ -124,40 +125,42 @@ object GlobalSnapshotStateChannelEventsProcessor {
 
                   case (None, head :: tail) =>
                     JsonBinarySerializer
-                      .deserialize[Signed[CurrencySnapshot]](head.value.content)
-                      .toOption
-                      .map { snapshot =>
-                        (NonEmptyList.one(snapshot.asLeft).some, tail)
-                          .asLeft[Result]
+                      .deserialize[F, Signed[CurrencySnapshot]](head.value.content)
+                      .map {
+                        _.toOption.map { snapshot =>
+                          (NonEmptyList.one(snapshot.asLeft).some, tail)
+                            .asLeft[Result]
+                        }
                       }
-                      .getOrElse((none[Success], tail).asLeft[Result])
-                      .pure[F]
+                      .map(_.getOrElse((none[Success], tail).asLeft[Result]))
 
                   case (Some(nel @ NonEmptyList(Left(fullSnapshot), _)), head :: tail) =>
                     JsonBinarySerializer
-                      .deserialize[Signed[CurrencyIncrementalSnapshot]](head.value.content)
-                      .toOption match {
-                      case Some(snapshot) =>
-                        (nel.prepend((snapshot, fullSnapshot.value.info).asRight).some, tail).asLeft[Result].pure[F]
-                      case None =>
-                        (nel.some, tail).asLeft[Result].pure[F]
-                    }
+                      .deserialize[F, Signed[CurrencyIncrementalSnapshot]](head.value.content)
+                      .map(_.toOption)
+                      .map {
+                        case Some(snapshot) =>
+                          (nel.prepend((snapshot, fullSnapshot.value.info).asRight).some, tail).asLeft[Result]
+                        case None =>
+                          (nel.some, tail).asLeft[Result]
+                      }
 
                   case (Some(nel @ NonEmptyList(Right((lastIncremental, lastState)), _)), head :: tail) =>
                     JsonBinarySerializer
-                      .deserialize[Signed[CurrencyIncrementalSnapshot]](head.value.content)
-                      .toOption match {
-                      case Some(snapshot) =>
-                        applyCurrencySnapshot(address, lastState, lastIncremental, snapshot).map { state =>
-                          (nel.prepend((snapshot, state).asRight).some, tail).asLeft[Result]
-                        }.handleErrorWith { e =>
-                          logger.warn(e)(
-                            s"Currency snapshot of ordinal ${snapshot.value.ordinal.show} for address ${address.show} couldn't be applied"
-                          ) >> (nel.some, tail).asLeft[Result].pure[F]
-                        }
-                      case None =>
-                        (nel.some, tail).asLeft[Result].pure[F]
-                    }
+                      .deserialize[F, Signed[CurrencyIncrementalSnapshot]](head.value.content)
+                      .map(_.toOption)
+                      .flatMap {
+                        case Some(snapshot) =>
+                          applyCurrencySnapshot(address, lastState, lastIncremental, snapshot).map { state =>
+                            (nel.prepend((snapshot, state).asRight).some, tail).asLeft[Result]
+                          }.handleErrorWith { e =>
+                            logger.warn(e)(
+                              s"Currency snapshot of ordinal ${snapshot.value.ordinal.show} for address ${address.show} couldn't be applied"
+                            ) >> (nel.some, tail).asLeft[Result].pure[F]
+                          }
+                        case None =>
+                          (nel.some, tail).asLeft[Result].pure[F]
+                      }
                 }
                 .map(_.map(_.reverse))
                 .map { maybeProcessed =>

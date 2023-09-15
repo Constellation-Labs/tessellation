@@ -27,6 +27,7 @@ import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hashed, SecurityProvider}
 import org.tessellation.statechannel.StateChannelSnapshotBinary
 
+import fs2.compression.Compression
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import retry._
 
@@ -38,7 +39,7 @@ trait StateChannelSnapshotService[F[_]] {
 }
 
 object StateChannelSnapshotService {
-  def make[F[_]: Async: KryoSerializer: SecurityProvider](
+  def make[F[_]: Async: Compression: KryoSerializer: SecurityProvider](
     keyPair: KeyPair,
     lastBinaryHashStorage: LastBinaryHashStorage[F],
     stateChannelSnapshotClient: StateChannelSnapshotClient[F],
@@ -63,14 +64,14 @@ object StateChannelSnapshotService {
       private def onError(binaryHashed: Hashed[StateChannelSnapshotBinary]) = (_: Throwable, details: RetryDetails) =>
         logger.info(s"Retrying sending ${binaryHashed.hash.show} to Global L0 after error. Retries so far ${details.retriesSoFar}")
 
-      def createGenesisBinary(snapshot: Signed[CurrencySnapshot]): F[Signed[StateChannelSnapshotBinary]] = {
-        val bytes = JsonBinarySerializer.serialize(snapshot)
-        StateChannelSnapshotBinary(Hash.empty, bytes, SnapshotFee.MinValue).sign(keyPair)
-      }
+      def createGenesisBinary(snapshot: Signed[CurrencySnapshot]): F[Signed[StateChannelSnapshotBinary]] =
+        JsonBinarySerializer
+          .serialize(snapshot)
+          .flatMap(StateChannelSnapshotBinary(Hash.empty, _, SnapshotFee.MinValue).sign(keyPair))
 
       def createBinary(snapshot: Signed[CurrencySnapshotArtifact]): F[Signed[StateChannelSnapshotBinary]] = for {
         lastSnapshotBinaryHash <- lastBinaryHashStorage.get
-        bytes = JsonBinarySerializer.serialize(snapshot)
+        bytes <- JsonBinarySerializer.serialize(snapshot)
         binary <- StateChannelSnapshotBinary(lastSnapshotBinaryHash, bytes, SnapshotFee.MinValue).sign(keyPair)
       } yield binary
 

@@ -28,6 +28,7 @@ import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.{Signature, SignatureProof}
 
 import eu.timepit.refined.auto._
+import fs2.compression.Compression
 
 trait ConstructionService[F[_]] {
   def derive(publicKey: RosettaPublicKey): EitherT[F, ConstructionError, AccountIdentifier]
@@ -40,7 +41,7 @@ trait ConstructionService[F[_]] {
 }
 
 object ConstructionService {
-  def make[F[_]: Async: SecurityProvider: KryoSerializer](
+  def make[F[_]: Async: Compression: SecurityProvider: KryoSerializer](
     getLastAcceptedReference: Address => F[TransactionReference],
     salt: F[TransactionSalt]
   ): ConstructionService[F] = new ConstructionService[F] {
@@ -54,8 +55,8 @@ object ConstructionService {
 
     def getTransactionIdentifier(hex: Hex): EitherT[F, ConstructionError, TransactionIdentifier] =
       JsonBinarySerializer
-        .deserialize[Signed[Transaction]](hex.toBytes)
-        .liftTo[F]
+        .deserialize[F, Signed[Transaction]](hex.toBytes)
+        .flatMap(_.liftTo[F])
         .flatMap(_.toHashed[F])
         .map(_.hash)
         .map(TransactionIdentifier(_))
@@ -77,15 +78,14 @@ object ConstructionService {
       }
 
     def combineTransaction(hex: Hex, signature: RosettaSignature): EitherT[F, ConstructionError, Hex] =
-      EitherT
-        .fromEither(JsonBinarySerializer.deserialize[Transaction](hex.toBytes))
+      EitherT(JsonBinarySerializer.deserialize[F, Transaction](hex.toBytes))
         .leftMap(_ => MalformedTransaction)
         .flatMap { transaction =>
           EitherT {
             signature.publicKey.hexBytes.toPublicKeyByEC
               .map(pk => SignatureProof(pk.toId, Signature(signature.hexBytes)).asRight[ConstructionError])
-          }.map { proof =>
-            JsonBinarySerializer.serialize(Signed[Transaction](transaction, NonEmptySet.of(proof)))
+          }.flatMap { proof =>
+            EitherT.right[ConstructionError](JsonBinarySerializer.serialize(Signed[Transaction](transaction, NonEmptySet.of(proof))))
           }
             .map(Hex.fromBytes(_))
         }
@@ -105,43 +105,40 @@ object ConstructionService {
       operations: NonEmptyList[Operation],
       metadataResult: MetadataResult
     ): EitherT[F, ConstructionError, PayloadsResult] =
-      EitherT(
-        salt.map(transactionSalt =>
-          for {
-            (positiveOperation, negativeOperation) <- getPayloadOperations(operations)
+      for {
+        transactionSalt <- EitherT.right[ConstructionError](salt)
+        (positiveOperation, negativeOperation) <- EitherT.fromEither[F](getPayloadOperations(operations))
 
-            transactionAmount <- Either.fromOption(
-              positiveOperation.amount.value.toTransactionAmount,
-              InvalidOperationAmount(positiveOperation.amount.value.value)
-            )
-
-            sourceAddress = negativeOperation.account.address
-            transactionFee <-
-              metadataResult.suggestedFee match {
-                case None      => TransactionFee.zero.asRight
-                case Some(amt) => Either.fromOption(amt.value.toTransactionFee, InvalidSuggestedFee)
-              }
-
-            unsignedTx =
-              Transaction(
-                source = sourceAddress,
-                destination = positiveOperation.account.address,
-                amount = transactionAmount,
-                fee = transactionFee,
-                parent = metadataResult.lastReference,
-                salt = transactionSalt
-              )
-
-            serializedTxn = JsonBinarySerializer.serialize(unsignedTx)
-
-            unsignedTxHash <- unsignedTx.hash.leftMap[ConstructionError](e => SerializationError(e.getMessage))
-            signedBytes = Hex.fromBytes(unsignedTxHash.getBytes)
-
-            payload = SigningPayload(AccountIdentifier(sourceAddress, none), signedBytes, SignatureType.ECDSA)
-
-          } yield PayloadsResult(Hex.fromBytes(serializedTxn), NonEmptyList.one(payload))
+        transactionAmount <- EitherT.fromOption(
+          positiveOperation.amount.value.toTransactionAmount,
+          InvalidOperationAmount(positiveOperation.amount.value.value)
         )
-      )
+
+        sourceAddress = negativeOperation.account.address
+        transactionFee <-
+          metadataResult.suggestedFee match {
+            case None      => EitherT.rightT[F, ConstructionError](TransactionFee.zero)
+            case Some(amt) => EitherT.fromOption[F](amt.value.toTransactionFee, InvalidSuggestedFee)
+          }
+
+        unsignedTx =
+          Transaction(
+            source = sourceAddress,
+            destination = positiveOperation.account.address,
+            amount = transactionAmount,
+            fee = transactionFee,
+            parent = metadataResult.lastReference,
+            salt = transactionSalt
+          )
+
+        serializedTxn <- EitherT.right[ConstructionError](JsonBinarySerializer.serialize(unsignedTx))
+
+        unsignedTxHash <- EitherT.fromEither(unsignedTx.hash.leftMap[ConstructionError](e => SerializationError(e.getMessage)))
+        signedBytes = Hex.fromBytes(unsignedTxHash.getBytes)
+
+        payload = SigningPayload(AccountIdentifier(sourceAddress, none), signedBytes, SignatureType.ECDSA)
+
+      } yield PayloadsResult(Hex.fromBytes(serializedTxn), NonEmptyList.one(payload))
 
     private def transactionToOperations(transaction: Transaction): NonEmptyList[Operation] = {
       val positiveAmount = Amount.fromTransactionAmount(transaction.amount)
@@ -163,7 +160,7 @@ object ConstructionService {
 
     private def parseSignedTransaction(hex: Hex): EitherT[F, ConstructionError, ConstructionParse.ParseResult] = {
       val result = for {
-        signedTransaction <- JsonBinarySerializer.deserialize[Signed[Transaction]](hex.toBytes).toEitherT
+        signedTransaction <- EitherT(JsonBinarySerializer.deserialize[F, Signed[Transaction]](hex.toBytes))
         operations = transactionToOperations(signedTransaction)
         proofs <- signedTransaction.proofs.toNonEmptyList.traverse(_.id.hex.toPublicKey).attemptT
         accountIds = proofs.map(_.toAddress).map(AccountIdentifier(_, none))
@@ -173,12 +170,12 @@ object ConstructionService {
     }
 
     private def parseUnsignedTransaction(hex: Hex): EitherT[F, ConstructionError, ConstructionParse.ParseResult] =
-      EitherT.fromEither(
+      EitherT(
         JsonBinarySerializer
-          .deserialize[Transaction](hex.toBytes)
-          .map(t => ConstructionParse.ParseResult(transactionToOperations(t), none))
-          .leftMap(_ => MalformedTransaction)
+          .deserialize[F, Transaction](hex.toBytes)
       )
+        .map(t => ConstructionParse.ParseResult(transactionToOperations(t), none))
+        .leftMap(_ => MalformedTransaction)
 
     private def getPayloadOperations(operations: NonEmptyList[Operation]): Either[ConstructionError, (Operation, Operation)] =
       for {

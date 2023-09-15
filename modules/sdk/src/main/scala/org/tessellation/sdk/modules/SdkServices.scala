@@ -28,11 +28,12 @@ import org.tessellation.sdk.infrastructure.snapshot._
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
 
+import fs2.compression.Compression
 import fs2.concurrent.SignallingRef
 
 object SdkServices {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider: Metrics: Supervisor](
+  def make[F[_]: Async: Compression: KryoSerializer: SecurityProvider: Metrics: Supervisor](
     cfg: SdkConfig,
     nodeId: PeerId,
     generation: Generation,

@@ -30,19 +30,19 @@ object JsonBinarySerializerSuite extends MutableIOSuite {
     KryoSerializer.forAsync[IO](sharedKryoRegistrar)
 
   test("should deserialize properly serialized object") { implicit res =>
-    currencyIncrementalSnapshot[IO](Hash.empty, CurrencySnapshotInfo(SortedMap.empty, SortedMap.empty)).map { signedSnapshot =>
-      val serialized = JsonBinarySerializer.serialize(signedSnapshot)
-      val deserialized = JsonBinarySerializer.deserialize[Signed[CurrencyIncrementalSnapshot]](serialized)
-      expect.same(Right(signedSnapshot), deserialized)
-    }
+    for {
+      signedSnapshot <- currencyIncrementalSnapshot[IO](Hash.empty, CurrencySnapshotInfo(SortedMap.empty, SortedMap.empty))
+      serialized <- JsonBinarySerializer.serialize(signedSnapshot)
+      deserialized <- JsonBinarySerializer.deserialize[IO, Signed[CurrencyIncrementalSnapshot]](serialized)
+    } yield expect.same(Right(signedSnapshot), deserialized)
   }
 
   test("should not deserialize different serialized object") { implicit res =>
-    currencyIncrementalSnapshot[IO](Hash.empty, CurrencySnapshotInfo(SortedMap.empty, SortedMap.empty)).map { signedSnapshot =>
-      val serialized = JsonBinarySerializer.serialize(signedSnapshot)
-      val deserialized = JsonBinarySerializer.deserialize[CurrencySnapshot](serialized)
-      expect.same(true, deserialized.isLeft)
-    }
+    for {
+      signedSnapshot <- currencyIncrementalSnapshot[IO](Hash.empty, CurrencySnapshotInfo(SortedMap.empty, SortedMap.empty))
+      serialized <- JsonBinarySerializer.serialize(signedSnapshot)
+      deserialized <- JsonBinarySerializer.deserialize[IO, CurrencySnapshot](serialized)
+    } yield expect.same(true, deserialized.isLeft)
   }
 
   private def currencyIncrementalSnapshot[F[_]: MonadThrow: KryoSerializer](

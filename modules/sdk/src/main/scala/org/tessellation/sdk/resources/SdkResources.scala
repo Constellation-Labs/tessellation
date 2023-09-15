@@ -10,6 +10,7 @@ import org.tessellation.sdk.domain.cluster.storage.SessionStorage
 import org.tessellation.sdk.http.p2p.middleware.PeerAuthMiddleware
 import org.tessellation.security.SecurityProvider
 
+import fs2.io.net.Network
 import org.http4s.client.Client
 import org.http4s.client.middleware.{RequestLogger, ResponseLogger}
 
@@ -19,7 +20,7 @@ sealed abstract class SdkResources[F[_]](
 
 object SdkResources {
 
-  def make[F[_]: MkHttpClient: Async: SecurityProvider](
+  def make[F[_]: MkHttpClient: Async: Network: SecurityProvider](
     cfg: SdkConfig,
     privateKey: PrivateKey,
     sessionStorage: SessionStorage[F],

@@ -18,7 +18,7 @@ trait Loader[F[_]] {
 
 object Loader {
 
-  def make[F[_]: Async]: Loader[F] =
+  def make[F[_]: Async: Files]: Loader[F] =
     (path: SeedListPath) =>
       Files[F]
         .readAll(path.coerce)

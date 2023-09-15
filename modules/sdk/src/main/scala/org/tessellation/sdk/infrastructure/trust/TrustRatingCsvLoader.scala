@@ -16,7 +16,7 @@ trait TrustRatingCsvLoader[F[_]] {
 
 object TrustRatingCsvLoader {
 
-  def make[F[_]: Async]: TrustRatingCsvLoader[F] =
+  def make[F[_]: Async: Files]: TrustRatingCsvLoader[F] =
     (path: Path) =>
       Files[F]
         .readAll(path)

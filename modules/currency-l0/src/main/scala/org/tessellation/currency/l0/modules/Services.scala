@@ -32,11 +32,12 @@ import org.tessellation.sdk.modules.SdkServices
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.SignedValidator
 
+import fs2.compression.Compression
 import org.http4s.client.Client
 
 object Services {
 
-  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider: Metrics: Supervisor: L0NodeContext](
+  def make[F[_]: Async: Compression: Random: KryoSerializer: SecurityProvider: Metrics: Supervisor: L0NodeContext](
     p2PClient: P2PClient[F],
     sdkServices: SdkServices[F],
     storages: Storages[F],
