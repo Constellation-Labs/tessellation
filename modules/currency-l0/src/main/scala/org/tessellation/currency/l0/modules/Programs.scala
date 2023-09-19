@@ -17,9 +17,11 @@ import org.tessellation.sdk.infrastructure.snapshot.{CurrencySnapshotContextFunc
 import org.tessellation.sdk.modules.SdkPrograms
 import org.tessellation.security.SecurityProvider
 
+import fs2.io.file.Files
+
 object Programs {
 
-  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider](
+  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider: Files](
     keyPair: KeyPair,
     nodeId: PeerId,
     globalL0Peer: L0Peer,

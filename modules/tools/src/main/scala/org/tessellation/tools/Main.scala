@@ -100,7 +100,7 @@ object Main
       _ <- postStateChannelSnapshot(client, baseUrl)(signedSnapshot, address)
     } yield ()
 
-  def sendTxsUsingGeneratedWallets[F[_]: Async: Random: KryoSerializer: SecurityProvider: Console](
+  def sendTxsUsingGeneratedWallets[F[_]: Async: Random: KryoSerializer: SecurityProvider: Console: Files](
     client: Client[F],
     basicOpts: BasicOpts,
     walletsOpts: GeneratedWallets
@@ -117,7 +117,7 @@ object Main
             .flatMap(_ => checkLastReferences(client, basicOpts.baseUrl, keys.map(_.getPublic.toAddress)))
       }
 
-  def sendTxsUsingLoadedWallets[F[_]: Async: Random: KryoSerializer: SecurityProvider: Console](
+  def sendTxsUsingLoadedWallets[F[_]: Async: Random: KryoSerializer: SecurityProvider: Console: Files](
     client: Client[F],
     basicOpts: BasicOpts,
     walletsOpts: LoadedWallets
@@ -195,7 +195,7 @@ object Main
       KeyPairGenerator.makeKeyPair[F]
     }
 
-  def createGenesis[F[_]: Async](genesisPath: JPath, keys: NonEmptyList[KeyPair]): F[Unit] = {
+  def createGenesis[F[_]: Async: Files](genesisPath: JPath, keys: NonEmptyList[KeyPair]): F[Unit] = {
     implicit val encoder: RowEncoder[GenesisCSVAccount] = deriveRowEncoder
 
     Stream

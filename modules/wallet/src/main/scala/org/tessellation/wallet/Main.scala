@@ -27,7 +27,7 @@ import org.tessellation.wallet.transaction.io.{readFromJsonFile, writeToJsonFile
 
 import com.monovore.decline._
 import com.monovore.decline.effect._
-import fs2.io.file.Path
+import fs2.io.file.{Files, Path}
 import io.estatico.newtype.ops._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -75,7 +75,7 @@ object Main
 
   private def showPublicKey[F[_]: Console](keyPair: KeyPair): F[Unit] = Console[F].println(keyPair.getPublic)
 
-  private def createAndStoreTransaction[F[_]: Async: SecurityProvider: KryoSerializer](
+  private def createAndStoreTransaction[F[_]: Async: Files: SecurityProvider: KryoSerializer](
     keyPair: KeyPair,
     destination: Address,
     fee: TransactionFee,

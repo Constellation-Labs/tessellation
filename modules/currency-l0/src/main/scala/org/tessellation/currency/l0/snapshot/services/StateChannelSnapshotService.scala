@@ -16,7 +16,7 @@ import org.tessellation.currency.l0.snapshot.CurrencySnapshotArtifact
 import org.tessellation.currency.l0.snapshot.storages.LastBinaryHashStorage
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.crypto._
-import org.tessellation.json.JsonBrotliBinarySerializer
+import org.tessellation.json.JsonGzipBinarySerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
@@ -45,7 +45,7 @@ object StateChannelSnapshotService {
     globalL0ClusterStorage: L0ClusterStorage[F],
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
     identifierStorage: IdentifierStorage[F],
-    jsonBrotliBinarySerializer: JsonBrotliBinarySerializer[F]
+    jsonGzipBinarySerializer: JsonGzipBinarySerializer[F]
   ): StateChannelSnapshotService[F] =
     new StateChannelSnapshotService[F] {
       private val logger = Slf4jLogger.getLogger
@@ -65,13 +65,13 @@ object StateChannelSnapshotService {
         logger.info(s"Retrying sending ${binaryHashed.hash.show} to Global L0 after error. Retries so far ${details.retriesSoFar}")
 
       def createGenesisBinary(snapshot: Signed[CurrencySnapshot]): F[Signed[StateChannelSnapshotBinary]] =
-        jsonBrotliBinarySerializer
+        jsonGzipBinarySerializer
           .serialize(snapshot)
           .flatMap(StateChannelSnapshotBinary(Hash.empty, _, SnapshotFee.MinValue).sign(keyPair))
 
       def createBinary(snapshot: Signed[CurrencySnapshotArtifact]): F[Signed[StateChannelSnapshotBinary]] = for {
         lastSnapshotBinaryHash <- lastBinaryHashStorage.get
-        bytes <- jsonBrotliBinarySerializer.serialize(snapshot)
+        bytes <- jsonGzipBinarySerializer.serialize(snapshot)
         binary <- StateChannelSnapshotBinary(lastSnapshotBinaryHash, bytes, SnapshotFee.MinValue).sign(keyPair)
       } yield binary
 

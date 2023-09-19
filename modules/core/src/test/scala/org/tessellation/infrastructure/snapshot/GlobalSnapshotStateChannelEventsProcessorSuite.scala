@@ -12,8 +12,7 @@ import cats.syntax.validated._
 import scala.collection.immutable.SortedMap
 
 import org.tessellation.currency.schema.currency._
-import org.tessellation.ext.cats.effect.ResourceIO
-import org.tessellation.json.JsonBrotliBinarySerializer
+import org.tessellation.json.JsonGzipBinarySerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
@@ -35,13 +34,13 @@ import eu.timepit.refined.auto._
 import weaver.MutableIOSuite
 object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
 
-  type Res = (KryoSerializer[IO], SecurityProvider[IO], JsonBrotliBinarySerializer[IO])
+  type Res = (KryoSerializer[IO], SecurityProvider[IO], JsonGzipBinarySerializer[IO])
 
   override def sharedResource: Resource[IO, GlobalSnapshotStateChannelEventsProcessorSuite.Res] =
     for {
       ks <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
       sp <- SecurityProvider.forAsync[IO]
-      serializer <- JsonBrotliBinarySerializer.make[IO]().asResource
+      serializer = JsonGzipBinarySerializer.make[IO]()
     } yield (ks, sp, serializer)
 
   def mkProcessor(
@@ -71,9 +70,9 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
           )
         ] = IO.pure((events.groupByNel(_.address).map { case (k, v) => k -> v.map(_.snapshotBinary) }, Set.empty))
       }
-      jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.make()
+      jsonGzipBinarySerializer = JsonGzipBinarySerializer.make()
       processor = GlobalSnapshotStateChannelEventsProcessor
-        .make[IO](validator, manager, currencySnapshotContextFns, jsonBrotliBinarySerializer)
+        .make[IO](validator, manager, currencySnapshotContextFns, jsonGzipBinarySerializer)
     } yield processor
 
   test("return new sc event") { res =>
@@ -144,7 +143,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
 
   }
 
-  def mkStateChannelOutput(keyPair: KeyPair, hash: Option[Hash] = None, serializer: JsonBrotliBinarySerializer[IO])(
+  def mkStateChannelOutput(keyPair: KeyPair, hash: Option[Hash] = None, serializer: JsonGzipBinarySerializer[IO])(
     implicit S: SecurityProvider[IO],
     K: KryoSerializer[IO]
   ) = for {

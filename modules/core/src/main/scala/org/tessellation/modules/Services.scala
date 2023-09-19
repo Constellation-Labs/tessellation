@@ -34,11 +34,12 @@ import org.tessellation.sdk.modules.{SdkServices, SdkValidators}
 import org.tessellation.security.SecurityProvider
 
 import eu.timepit.refined.auto._
+import fs2.compression.Compression
 import org.http4s.client.Client
 
 object Services {
 
-  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider: Metrics: Supervisor](
+  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider: Metrics: Supervisor: Compression](
     sdkServices: SdkServices[F],
     queues: Queues[F],
     storages: Storages[F],

@@ -9,7 +9,7 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.cli.AppEnvironment
-import org.tessellation.json.JsonBrotliBinarySerializer
+import org.tessellation.json.JsonGzipBinarySerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
@@ -35,12 +35,13 @@ import org.tessellation.sdk.modules.{SdkServices, SdkValidators}
 import org.tessellation.security.SecurityProvider
 
 import eu.timepit.refined.types.numeric.NonNegLong
+import fs2.compression.Compression
 import io.circe.disjunctionCodecs._
 import org.http4s.client.Client
 
 object GlobalSnapshotConsensus {
 
-  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider: Metrics: Supervisor](
+  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider: Metrics: Supervisor: Compression](
     gossip: Gossip[F],
     selfId: PeerId,
     keyPair: KeyPair,
@@ -63,7 +64,7 @@ object GlobalSnapshotConsensus {
     for {
       globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager
         .make[F](stateChannelAllowanceLists, pullDelay = stateChannelPullDelay, purgeDelay = stateChannelPurgeDelay)
-      jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.make()
+      jsonGzipBinarySerializer = JsonGzipBinarySerializer.make()
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
         BlockAcceptanceManager.make[F](validators.blockValidator),
         GlobalSnapshotStateChannelEventsProcessor
@@ -71,7 +72,7 @@ object GlobalSnapshotConsensus {
             validators.stateChannelValidator,
             globalSnapshotStateChannelManager,
             sdkServices.currencySnapshotContextFns,
-            jsonBrotliBinarySerializer
+            jsonGzipBinarySerializer
           ),
         collateral
       )

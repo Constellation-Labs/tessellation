@@ -75,8 +75,6 @@ object Dependencies {
 
     val betterFiles = "com.github.pathikrit" %% "better-files" % V.betterFiles
 
-    val brotli4j = "com.aayushatharva.brotli4j" % "brotli4j" % "1.12.0"
-
     val cats = "org.typelevel" %% "cats-core" % V.cats
     val catsEffect = "org.typelevel" %% "cats-effect" % V.catsEffect
     val catsEffectTestkit = "org.typelevel" %% "cats-effect-testkit" % V.catsEffect
@@ -85,6 +83,7 @@ object Dependencies {
     val squants = "org.typelevel" %% "squants" % V.squants
     val comcast = "com.comcast" %% "ip4s-core" % V.comcast
 
+    val fs2CompressGzip = "de.lhns" %% "fs2-compress-gzip" % "1.0.0"
     val fs2Core = fs2("core")
     val fs2DataCsv = fs2Data("csv")
     val fs2DataCsvGeneric = fs2Data("csv-generic")

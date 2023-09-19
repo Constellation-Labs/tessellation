@@ -21,15 +21,15 @@ import org.tessellation.dag.l1.domain.transaction.TransactionStorage.{Accepted, 
 import org.tessellation.dag.transaction.TransactionGenerator
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.collection.MapRefUtils._
-import org.tessellation.json.JsonBrotliBinarySerializer
+import org.tessellation.json.JsonGzipBinarySerializer
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction._
-import org.tessellation.schema.{Block, _}
 import org.tessellation.sdk.infrastructure.block.processing.BlockAcceptanceManager
 import org.tessellation.sdk.infrastructure.snapshot._
 import org.tessellation.sdk.infrastructure.snapshot.storage.LastSnapshotStorage
@@ -91,7 +91,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
             currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
             globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, NonNegLong(10L)).asResource
-            jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.make[IO]().asResource
+            jsonGzipBinarySerializer = JsonGzipBinarySerializer.make[IO]()
             globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
               BlockAcceptanceManager.make[IO](validators.blockValidator),
               GlobalSnapshotStateChannelEventsProcessor
@@ -99,7 +99,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   validators.stateChannelValidator,
                   globalSnapshotStateChannelManager,
                   currencySnapshotContextFns,
-                  jsonBrotliBinarySerializer
+                  jsonGzipBinarySerializer
                 ),
               Amount(0L)
             )

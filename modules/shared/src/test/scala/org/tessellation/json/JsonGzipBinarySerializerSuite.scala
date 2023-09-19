@@ -5,9 +5,7 @@ import cats.effect.{IO, Resource}
 import scala.collection.immutable.SortedMap
 
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshot, CurrencySnapshotInfo}
-import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema._
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 import org.tessellation.shared.sharedKryoRegistrar
@@ -15,13 +13,13 @@ import org.tessellation.shared.sharedKryoRegistrar
 import eu.timepit.refined.auto._
 import weaver.MutableIOSuite
 
-object JsonBrotliBinarySerializerSuite extends MutableIOSuite {
+object JsonGzipBinarySerializerSuite extends MutableIOSuite {
 
-  type Res = (KryoSerializer[IO], JsonBrotliBinarySerializer[IO])
+  type Res = (KryoSerializer[IO], JsonGzipBinarySerializer[IO])
 
   override def sharedResource: Resource[IO, Res] =
-    KryoSerializer.forAsync[IO](sharedKryoRegistrar).flatMap { kp =>
-      JsonBrotliBinarySerializer.make[IO]().asResource.map((kp, _))
+    KryoSerializer.forAsync[IO](sharedKryoRegistrar).map { kp =>
+      (kp, JsonGzipBinarySerializer.make[IO]())
     }
 
   test("should deserialize properly serialized object") {

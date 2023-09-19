@@ -9,7 +9,7 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.cli.AppEnvironment
-import org.tessellation.json.JsonBrotliBinarySerializer
+import org.tessellation.json.JsonGzipBinarySerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.generation.Generation
@@ -29,11 +29,12 @@ import org.tessellation.sdk.infrastructure.snapshot._
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
 
+import fs2.compression.Compression
 import fs2.concurrent.SignallingRef
 
 object SdkServices {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider: Metrics: Supervisor](
+  def make[F[_]: Async: KryoSerializer: SecurityProvider: Metrics: Supervisor: Compression](
     cfg: SdkConfig,
     nodeId: PeerId,
     generation: Generation,
@@ -87,7 +88,7 @@ object SdkServices {
         currencySnapshotValidator
       )
       globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make(stateChannelAllowanceLists)
-      jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.make()
+      jsonGzipBinarySerializer = JsonGzipBinarySerializer.make()
       globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
         BlockAcceptanceManager.make[F](validators.blockValidator),
         GlobalSnapshotStateChannelEventsProcessor
@@ -95,7 +96,7 @@ object SdkServices {
             validators.stateChannelValidator,
             globalSnapshotStateChannelManager,
             currencySnapshotContextFns,
-            jsonBrotliBinarySerializer
+            jsonGzipBinarySerializer
           ),
         collateral.amount
       )

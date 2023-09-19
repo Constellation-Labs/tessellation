@@ -16,7 +16,7 @@ import scala.collection.immutable.SortedMap
 
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.cats.syntax.validated._
-import org.tessellation.json.JsonBrotliBinarySerializer
+import org.tessellation.json.JsonGzipBinarySerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
 import org.tessellation.sdk.domain.statechannel.StateChannelValidator
@@ -53,7 +53,7 @@ object GlobalSnapshotStateChannelEventsProcessor {
     stateChannelValidator: StateChannelValidator[F],
     stateChannelManager: GlobalSnapshotStateChannelAcceptanceManager[F],
     currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
-    jsonBrotliBinarySerializer: JsonBrotliBinarySerializer[F]
+    jsonGzipBinarySerializer: JsonGzipBinarySerializer[F]
   ) =
     new GlobalSnapshotStateChannelEventsProcessor[F] {
       private val logger = Slf4jLogger.getLoggerFromClass[F](GlobalSnapshotStateChannelEventsProcessor.getClass)
@@ -124,7 +124,7 @@ object GlobalSnapshotStateChannelEventsProcessor {
                   case (state, Nil) => state.asRight[Agg].pure[F]
 
                   case (None, head :: tail) =>
-                    jsonBrotliBinarySerializer
+                    jsonGzipBinarySerializer
                       .deserialize[Signed[CurrencySnapshot]](head.value.content)
                       .map {
                         _.toOption.map { snapshot =>
@@ -135,7 +135,7 @@ object GlobalSnapshotStateChannelEventsProcessor {
                       .map(_.getOrElse((none[Success], tail).asLeft[Result]))
 
                   case (Some(nel @ NonEmptyList(Left(fullSnapshot), _)), head :: tail) =>
-                    jsonBrotliBinarySerializer
+                    jsonGzipBinarySerializer
                       .deserialize[Signed[CurrencyIncrementalSnapshot]](head.value.content)
                       .map(_.toOption)
                       .map {
@@ -146,7 +146,7 @@ object GlobalSnapshotStateChannelEventsProcessor {
                       }
 
                   case (Some(nel @ NonEmptyList(Right((lastIncremental, lastState)), _)), head :: tail) =>
-                    jsonBrotliBinarySerializer
+                    jsonGzipBinarySerializer
                       .deserialize[Signed[CurrencyIncrementalSnapshot]](head.value.content)
                       .map(_.toOption)
                       .flatMap {

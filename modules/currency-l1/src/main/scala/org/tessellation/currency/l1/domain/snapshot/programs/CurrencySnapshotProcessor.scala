@@ -13,7 +13,7 @@ import org.tessellation.dag.l1.domain.snapshot.programs.SnapshotProcessor
 import org.tessellation.dag.l1.domain.snapshot.programs.SnapshotProcessor._
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.dag.l1.infrastructure.address.storage.AddressStorage
-import org.tessellation.json.JsonBrotliBinarySerializer
+import org.tessellation.json.JsonGzipBinarySerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction.TransactionReference
@@ -47,7 +47,7 @@ object CurrencySnapshotProcessor {
     transactionStorage: TransactionStorage[F],
     globalSnapshotContextFns: SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     currencySnapshotContextFns: SnapshotContextFunctions[F, CurrencyIncrementalSnapshot, CurrencySnapshotContext],
-    jsonBrotliBinarySerializer: JsonBrotliBinarySerializer[F]
+    jsonGzipBinarySerializer: JsonGzipBinarySerializer[F]
   ): CurrencySnapshotProcessor[F] =
     new CurrencySnapshotProcessor[F] {
       def process(
@@ -215,7 +215,7 @@ object CurrencySnapshotProcessor {
           .get(identifier) match {
           case Some(snapshots) =>
             snapshots.toList.traverse { binary =>
-              jsonBrotliBinarySerializer.deserialize[Signed[CurrencyIncrementalSnapshot]](binary.content)
+              jsonGzipBinarySerializer.deserialize[Signed[CurrencyIncrementalSnapshot]](binary.content)
             }
               .map(_.flatMap(_.toOption))
               .map(NonEmptyList.fromList)

@@ -16,7 +16,7 @@ import org.tessellation.currency.l0.node.L0NodeContext
 import org.tessellation.currency.l0.snapshot.services.StateChannelSnapshotService
 import org.tessellation.currency.l0.snapshot.{CurrencySnapshotConsensus, CurrencySnapshotEvent}
 import org.tessellation.currency.schema.currency._
-import org.tessellation.json.JsonBrotliBinarySerializer
+import org.tessellation.json.JsonGzipBinarySerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
@@ -34,11 +34,12 @@ import org.tessellation.sdk.modules.SdkServices
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.SignedValidator
 
+import fs2.compression.Compression
 import org.http4s.client.Client
 
 object Services {
 
-  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider: Metrics: Supervisor: L0NodeContext](
+  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider: Metrics: Supervisor: L0NodeContext: Compression](
     p2PClient: P2PClient[F],
     sdkServices: SdkServices[F],
     storages: Storages[F],
@@ -55,7 +56,8 @@ object Services {
     maybeMajorityPeerIds: Option[NonEmptySet[PeerId]]
   ): F[Services[F]] =
     for {
-      jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.make[F]()
+      _ <- Async[F].unit
+      jsonGzipBinarySerializer = JsonGzipBinarySerializer.make[F]()
       stateChannelSnapshotService <- StateChannelSnapshotService
         .make[F](
           keyPair,
@@ -64,7 +66,7 @@ object Services {
           storages.globalL0Cluster,
           storages.snapshot,
           storages.identifier,
-          jsonBrotliBinarySerializer
+          jsonGzipBinarySerializer
         )
         .pure[F]
 
