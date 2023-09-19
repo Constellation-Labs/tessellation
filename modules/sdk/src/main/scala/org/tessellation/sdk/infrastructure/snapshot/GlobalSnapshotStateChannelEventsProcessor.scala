@@ -16,7 +16,7 @@ import scala.collection.immutable.SortedMap
 
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.cats.syntax.validated._
-import org.tessellation.json.JsonBinarySerializer
+import org.tessellation.json.JsonBrotliBinarySerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
 import org.tessellation.sdk.domain.statechannel.StateChannelValidator
@@ -52,7 +52,8 @@ object GlobalSnapshotStateChannelEventsProcessor {
   def make[F[_]: Async](
     stateChannelValidator: StateChannelValidator[F],
     stateChannelManager: GlobalSnapshotStateChannelAcceptanceManager[F],
-    currencySnapshotContextFns: CurrencySnapshotContextFunctions[F]
+    currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
+    jsonBrotliBinarySerializer: JsonBrotliBinarySerializer[F]
   ) =
     new GlobalSnapshotStateChannelEventsProcessor[F] {
       private val logger = Slf4jLogger.getLoggerFromClass[F](GlobalSnapshotStateChannelEventsProcessor.getClass)
@@ -123,41 +124,43 @@ object GlobalSnapshotStateChannelEventsProcessor {
                   case (state, Nil) => state.asRight[Agg].pure[F]
 
                   case (None, head :: tail) =>
-                    JsonBinarySerializer
+                    jsonBrotliBinarySerializer
                       .deserialize[Signed[CurrencySnapshot]](head.value.content)
-                      .toOption
-                      .map { snapshot =>
-                        (NonEmptyList.one(snapshot.asLeft).some, tail)
-                          .asLeft[Result]
+                      .map {
+                        _.toOption.map { snapshot =>
+                          (NonEmptyList.one(snapshot.asLeft).some, tail)
+                            .asLeft[Result]
+                        }
                       }
-                      .getOrElse((none[Success], tail).asLeft[Result])
-                      .pure[F]
+                      .map(_.getOrElse((none[Success], tail).asLeft[Result]))
 
                   case (Some(nel @ NonEmptyList(Left(fullSnapshot), _)), head :: tail) =>
-                    JsonBinarySerializer
+                    jsonBrotliBinarySerializer
                       .deserialize[Signed[CurrencyIncrementalSnapshot]](head.value.content)
-                      .toOption match {
-                      case Some(snapshot) =>
-                        (nel.prepend((snapshot, fullSnapshot.value.info).asRight).some, tail).asLeft[Result].pure[F]
-                      case None =>
-                        (nel.some, tail).asLeft[Result].pure[F]
-                    }
+                      .map(_.toOption)
+                      .map {
+                        case Some(snapshot) =>
+                          (nel.prepend((snapshot, fullSnapshot.value.info).asRight).some, tail).asLeft[Result]
+                        case None =>
+                          (nel.some, tail).asLeft[Result]
+                      }
 
                   case (Some(nel @ NonEmptyList(Right((lastIncremental, lastState)), _)), head :: tail) =>
-                    JsonBinarySerializer
+                    jsonBrotliBinarySerializer
                       .deserialize[Signed[CurrencyIncrementalSnapshot]](head.value.content)
-                      .toOption match {
-                      case Some(snapshot) =>
-                        applyCurrencySnapshot(address, lastState, lastIncremental, snapshot).map { state =>
-                          (nel.prepend((snapshot, state).asRight).some, tail).asLeft[Result]
-                        }.handleErrorWith { e =>
-                          logger.warn(e)(
-                            s"Currency snapshot of ordinal ${snapshot.value.ordinal.show} for address ${address.show} couldn't be applied"
-                          ) >> (nel.some, tail).asLeft[Result].pure[F]
-                        }
-                      case None =>
-                        (nel.some, tail).asLeft[Result].pure[F]
-                    }
+                      .map(_.toOption)
+                      .flatMap {
+                        case Some(snapshot) =>
+                          applyCurrencySnapshot(address, lastState, lastIncremental, snapshot).map { state =>
+                            (nel.prepend((snapshot, state).asRight).some, tail).asLeft[Result]
+                          }.handleErrorWith { e =>
+                            logger.warn(e)(
+                              s"Currency snapshot of ordinal ${snapshot.value.ordinal.show} for address ${address.show} couldn't be applied"
+                            ) >> (nel.some, tail).asLeft[Result].pure[F]
+                          }
+                        case None =>
+                          (nel.some, tail).asLeft[Result].pure[F]
+                      }
                 }
                 .map(_.map(_.reverse))
                 .map { maybeProcessed =>

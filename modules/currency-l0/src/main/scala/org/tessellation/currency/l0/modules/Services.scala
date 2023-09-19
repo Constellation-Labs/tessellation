@@ -16,6 +16,7 @@ import org.tessellation.currency.l0.node.L0NodeContext
 import org.tessellation.currency.l0.snapshot.services.StateChannelSnapshotService
 import org.tessellation.currency.l0.snapshot.{CurrencySnapshotConsensus, CurrencySnapshotEvent}
 import org.tessellation.currency.schema.currency._
+import org.tessellation.json.JsonBrotliBinarySerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
@@ -54,6 +55,7 @@ object Services {
     maybeMajorityPeerIds: Option[NonEmptySet[PeerId]]
   ): F[Services[F]] =
     for {
+      jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.make[F]()
       stateChannelSnapshotService <- StateChannelSnapshotService
         .make[F](
           keyPair,
@@ -61,7 +63,8 @@ object Services {
           p2PClient.stateChannelSnapshot,
           storages.globalL0Cluster,
           storages.snapshot,
-          storages.identifier
+          storages.identifier,
+          jsonBrotliBinarySerializer
         )
         .pure[F]
 

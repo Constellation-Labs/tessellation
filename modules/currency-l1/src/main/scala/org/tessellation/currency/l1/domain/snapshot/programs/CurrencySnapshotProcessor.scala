@@ -13,7 +13,7 @@ import org.tessellation.dag.l1.domain.snapshot.programs.SnapshotProcessor
 import org.tessellation.dag.l1.domain.snapshot.programs.SnapshotProcessor._
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.dag.l1.infrastructure.address.storage.AddressStorage
-import org.tessellation.json.JsonBinarySerializer
+import org.tessellation.json.JsonBrotliBinarySerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction.TransactionReference
@@ -46,7 +46,8 @@ object CurrencySnapshotProcessor {
     lastCurrencySnapshotStorage: LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
     transactionStorage: TransactionStorage[F],
     globalSnapshotContextFns: SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
-    currencySnapshotContextFns: SnapshotContextFunctions[F, CurrencyIncrementalSnapshot, CurrencySnapshotContext]
+    currencySnapshotContextFns: SnapshotContextFunctions[F, CurrencyIncrementalSnapshot, CurrencySnapshotContext],
+    jsonBrotliBinarySerializer: JsonBrotliBinarySerializer[F]
   ): CurrencySnapshotProcessor[F] =
     new CurrencySnapshotProcessor[F] {
       def process(
@@ -211,16 +212,17 @@ object CurrencySnapshotProcessor {
         globalSnapshot: GlobalIncrementalSnapshot
       ): F[Option[ValidatedNel[InvalidSignatureForHash[CurrencyIncrementalSnapshot], NonEmptyList[Hashed[CurrencyIncrementalSnapshot]]]]] =
         globalSnapshot.stateChannelSnapshots
-          .get(identifier)
-          .map {
-            _.toList.flatMap(binary =>
-              JsonBinarySerializer.deserialize[Signed[CurrencyIncrementalSnapshot]](binary.content).toOption
-            ) // TODO: currency - deserialization as full or incremental snapshot
-          }
-          .flatMap(NonEmptyList.fromList)
-          .map(_.sortBy(_.value.ordinal))
-          .map(_.traverse(_.toHashedWithSignatureCheck))
-          .sequence
-          .map(_.map(_.traverse(_.toValidatedNel)))
+          .get(identifier) match {
+          case Some(snapshots) =>
+            snapshots.toList.traverse { binary =>
+              jsonBrotliBinarySerializer.deserialize[Signed[CurrencyIncrementalSnapshot]](binary.content)
+            }
+              .map(_.flatMap(_.toOption))
+              .map(NonEmptyList.fromList)
+              .map(_.map(_.sortBy(_.value.ordinal)))
+              .flatMap(_.map(_.traverse(_.toHashedWithSignatureCheck)).sequence)
+              .map(_.map(_.traverse(_.toValidatedNel)))
+          case None => Async[F].pure(none)
+        }
     }
 }

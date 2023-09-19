@@ -75,6 +75,8 @@ object Dependencies {
 
     val betterFiles = "com.github.pathikrit" %% "better-files" % V.betterFiles
 
+    val brotli4j = "com.aayushatharva.brotli4j" % "brotli4j" % "1.12.0"
+
     val cats = "org.typelevel" %% "cats-core" % V.cats
     val catsEffect = "org.typelevel" %% "cats-effect" % V.catsEffect
     val catsEffectTestkit = "org.typelevel" %% "cats-effect-testkit" % V.catsEffect
