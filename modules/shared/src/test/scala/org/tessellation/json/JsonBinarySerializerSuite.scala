@@ -45,7 +45,7 @@ object JsonBinarySerializerSuite extends MutableIOSuite {
     }
   }
 
-  private def currencyIncrementalSnapshot[F[_]: MonadThrow: KryoSerializer](
+  private[json] def currencyIncrementalSnapshot[F[_]: MonadThrow: KryoSerializer](
     hash: Hash,
     currencySnapshotInfo: CurrencySnapshotInfo
   ): F[Signed[CurrencyIncrementalSnapshot]] =

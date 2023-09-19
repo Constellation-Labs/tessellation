@@ -21,6 +21,7 @@ import org.tessellation.dag.l1.domain.transaction.TransactionStorage.{Accepted, 
 import org.tessellation.dag.transaction.TransactionGenerator
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.collection.MapRefUtils._
+import org.tessellation.json.JsonBrotliBinarySerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
@@ -90,10 +91,16 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
             currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
             globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, NonNegLong(10L)).asResource
+            jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.make[IO]().asResource
             globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
               BlockAcceptanceManager.make[IO](validators.blockValidator),
               GlobalSnapshotStateChannelEventsProcessor
-                .make[IO](validators.stateChannelValidator, globalSnapshotStateChannelManager, currencySnapshotContextFns),
+                .make[IO](
+                  validators.stateChannelValidator,
+                  globalSnapshotStateChannelManager,
+                  currencySnapshotContextFns,
+                  jsonBrotliBinarySerializer
+                ),
               Amount(0L)
             )
             globalSnapshotContextFns = GlobalSnapshotContextFunctions.make[IO](globalSnapshotAcceptanceManager)

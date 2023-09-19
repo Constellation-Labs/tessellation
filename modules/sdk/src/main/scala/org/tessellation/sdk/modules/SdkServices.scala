@@ -9,6 +9,7 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.cli.AppEnvironment
+import org.tessellation.json.JsonBrotliBinarySerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.generation.Generation
@@ -86,10 +87,16 @@ object SdkServices {
         currencySnapshotValidator
       )
       globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make(stateChannelAllowanceLists)
+      jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.make()
       globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
         BlockAcceptanceManager.make[F](validators.blockValidator),
         GlobalSnapshotStateChannelEventsProcessor
-          .make[F](validators.stateChannelValidator, globalSnapshotStateChannelManager, currencySnapshotContextFns),
+          .make[F](
+            validators.stateChannelValidator,
+            globalSnapshotStateChannelManager,
+            currencySnapshotContextFns,
+            jsonBrotliBinarySerializer
+          ),
         collateral.amount
       )
       globalSnapshotContextFns = GlobalSnapshotContextFunctions.make(globalSnapshotAcceptanceManager)

@@ -26,6 +26,7 @@ import org.tessellation.dag.l1.modules.{
 import org.tessellation.dag.l1.{DagL1KryoRegistrationIdRange, StateChannel, dagL1KryoRegistrar}
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.kryo.{KryoRegistrationId, MapRegistrationId}
+import org.tessellation.json.JsonBrotliBinarySerializer
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.node.NodeState.SessionStarted
@@ -105,6 +106,7 @@ abstract class CurrencyL1App(
           dataApplication,
           maybeMajorityPeerIds
         )
+      jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.make[IO]().asResource
       snapshotProcessor = CurrencySnapshotProcessor.make(
         method.identifier,
         storages.address,
@@ -113,7 +115,8 @@ abstract class CurrencyL1App(
         storages.lastSnapshot,
         storages.transaction,
         sdkServices.globalSnapshotContextFns,
-        sdkServices.currencySnapshotContextFns
+        sdkServices.currencySnapshotContextFns,
+        jsonBrotliBinarySerializer
       )
       programs = Programs
         .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](

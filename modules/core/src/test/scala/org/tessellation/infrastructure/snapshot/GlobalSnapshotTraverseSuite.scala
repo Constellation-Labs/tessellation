@@ -15,6 +15,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.infrastructure.snapshot._
+import org.tessellation.json.JsonBrotliBinarySerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
@@ -170,8 +171,9 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
     val currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
     for {
       stateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, NonNegLong(10L))
+      jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.make()
       stateChannelProcessor = GlobalSnapshotStateChannelEventsProcessor
-        .make[IO](stateChannelValidator, stateChannelManager, currencySnapshotContextFns)
+        .make[IO](stateChannelValidator, stateChannelManager, currencySnapshotContextFns, jsonBrotliBinarySerializer)
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make[IO](blockAcceptanceManager, stateChannelProcessor, Amount.empty)
       snapshotContextFunctions = GlobalSnapshotContextFunctions.make[IO](snapshotAcceptanceManager)
     } yield GlobalSnapshotTraverse.make[IO](loadGlobalIncrementalSnapshot, loadGlobalSnapshot, snapshotContextFunctions, rollbackHash)

@@ -172,6 +172,7 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.bc,
       Libraries.bcExtensions,
       Libraries.betterFiles,
+      Libraries.brotli4j,
       Libraries.cats,
       Libraries.catsEffect,
       Libraries.chill,

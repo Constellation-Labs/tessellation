@@ -16,7 +16,7 @@ import org.tessellation.currency.l0.snapshot.CurrencySnapshotArtifact
 import org.tessellation.currency.l0.snapshot.storages.LastBinaryHashStorage
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.crypto._
-import org.tessellation.json.JsonBinarySerializer
+import org.tessellation.json.JsonBrotliBinarySerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
@@ -44,7 +44,8 @@ object StateChannelSnapshotService {
     stateChannelSnapshotClient: StateChannelSnapshotClient[F],
     globalL0ClusterStorage: L0ClusterStorage[F],
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
-    identifierStorage: IdentifierStorage[F]
+    identifierStorage: IdentifierStorage[F],
+    jsonBrotliBinarySerializer: JsonBrotliBinarySerializer[F]
   ): StateChannelSnapshotService[F] =
     new StateChannelSnapshotService[F] {
       private val logger = Slf4jLogger.getLogger
@@ -63,14 +64,14 @@ object StateChannelSnapshotService {
       private def onError(binaryHashed: Hashed[StateChannelSnapshotBinary]) = (_: Throwable, details: RetryDetails) =>
         logger.info(s"Retrying sending ${binaryHashed.hash.show} to Global L0 after error. Retries so far ${details.retriesSoFar}")
 
-      def createGenesisBinary(snapshot: Signed[CurrencySnapshot]): F[Signed[StateChannelSnapshotBinary]] = {
-        val bytes = JsonBinarySerializer.serialize(snapshot)
-        StateChannelSnapshotBinary(Hash.empty, bytes, SnapshotFee.MinValue).sign(keyPair)
-      }
+      def createGenesisBinary(snapshot: Signed[CurrencySnapshot]): F[Signed[StateChannelSnapshotBinary]] =
+        jsonBrotliBinarySerializer
+          .serialize(snapshot)
+          .flatMap(StateChannelSnapshotBinary(Hash.empty, _, SnapshotFee.MinValue).sign(keyPair))
 
       def createBinary(snapshot: Signed[CurrencySnapshotArtifact]): F[Signed[StateChannelSnapshotBinary]] = for {
         lastSnapshotBinaryHash <- lastBinaryHashStorage.get
-        bytes = JsonBinarySerializer.serialize(snapshot)
+        bytes <- jsonBrotliBinarySerializer.serialize(snapshot)
         binary <- StateChannelSnapshotBinary(lastSnapshotBinaryHash, bytes, SnapshotFee.MinValue).sign(keyPair)
       } yield binary
 
