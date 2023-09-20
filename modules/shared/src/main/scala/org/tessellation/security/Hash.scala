@@ -2,6 +2,8 @@ package org.tessellation.security
 
 import java.nio.charset.StandardCharsets
 
+import cats.Show
+
 import org.tessellation.ext.derevo.ordering
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.security.hash.Hash
@@ -33,6 +35,8 @@ object hash {
     def empty: Hash = Hash(s"%064d".format(0))
 
     implicit val arbitrary: Arbitrary[Hash] = Arbitrary(Gen.stringOfN(64, Gen.hexChar).map(Hash(_)))
+
+    val shortShow: Show[Hash] = Show.show[Hash](h => s"Hash(${h.value.take(8)})")
   }
 
   @derive(encoder, decoder, ordering, order, show)

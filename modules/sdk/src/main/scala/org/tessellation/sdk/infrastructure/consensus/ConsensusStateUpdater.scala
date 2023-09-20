@@ -9,6 +9,7 @@ import cats.syntax.all._
 
 import scala.reflect.runtime.universe.TypeTag
 
+import org.tessellation.ext.collection.FoldableOps.pickMajority
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
@@ -366,9 +367,6 @@ object ConsensusStateUpdater {
           .warn(s"Different facilitators hashes. This node is in fork")
           .whenA(majorityFacilitatorsHash =!= ownFacilitatorsHash)
       }.void
-
-    private def pickMajority[A: Order](proposals: List[A]): Option[A] =
-      proposals.foldMap(a => Map(a -> 1)).toList.map(_.swap).maximumOption.map(_._2)
 
     private def pickValidatedMajorityArtifact(
       ownProposalInfo: ArtifactInfo[Artifact, Context],

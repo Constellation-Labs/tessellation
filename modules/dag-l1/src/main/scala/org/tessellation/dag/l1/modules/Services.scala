@@ -1,5 +1,6 @@
 package org.tessellation.dag.l1.modules
 
+import cats.data.NonEmptySet
 import cats.effect.kernel.Async
 
 import org.tessellation.dag.l1.config.types.AppConfig
@@ -7,6 +8,7 @@ import org.tessellation.dag.l1.domain.block.BlockService
 import org.tessellation.dag.l1.domain.transaction.TransactionService
 import org.tessellation.dag.l1.http.p2p.P2PClient
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
@@ -35,7 +37,8 @@ object Services {
     validators: Validators[F],
     sdkServices: SdkServices[F],
     p2PClient: P2PClient[F],
-    cfg: AppConfig
+    cfg: AppConfig,
+    maybeMajorityPeerIds: Option[NonEmptySet[PeerId]]
   ): Services[F, P, S, SI] =
     new Services[F, P, S, SI] {
       val localHealthcheck = sdkServices.localHealthcheck
@@ -49,7 +52,7 @@ object Services {
       val cluster = sdkServices.cluster
       val gossip = sdkServices.gossip
       val globalL0 = GlobalL0Service
-        .make[F](p2PClient.l0GlobalSnapshot, globalL0Cluster, lastGlobalSnapshotStorage, None)
+        .make[F](p2PClient.l0GlobalSnapshot, globalL0Cluster, lastGlobalSnapshotStorage, None, maybeMajorityPeerIds)
       val session = sdkServices.session
       val transaction = TransactionService.make[F](storages.transaction, validators.transactionContextual)
       val collateral = Collateral.make[F](cfg.collateral, storages.lastSnapshot)

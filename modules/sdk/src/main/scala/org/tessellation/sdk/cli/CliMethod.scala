@@ -12,6 +12,7 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.sdk.PriorityPeerIds
 import org.tessellation.sdk.config.types._
 
 import eu.timepit.refined.auto._
@@ -28,6 +29,8 @@ trait CliMethod {
   val seedlistPath: Option[SeedListPath]
 
   val l0SeedlistPath: Option[SeedListPath]
+
+  val prioritySeedlistPath: Option[SeedListPath]
 
   val stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]]
 
@@ -94,7 +97,8 @@ trait CliMethod {
     leavingDelay,
     stateAfterJoining,
     collateralConfig(environment, collateralAmount),
-    trustStorageConfig
+    trustStorageConfig,
+    PriorityPeerIds.get(environment)
   )
 
 }

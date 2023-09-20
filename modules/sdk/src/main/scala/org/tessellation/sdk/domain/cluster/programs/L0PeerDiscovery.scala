@@ -46,7 +46,6 @@ sealed abstract class L0PeerDiscovery[F[_]: Sync: Random] private (
       .flatMap(Random[F].shuffleList)
       .map(_.head)
       .flatMap(l0ClusterStorage.getPeer)
-      .map(_.map(p => P2PContext(p.ip, p.port, p.id)))
       .flatMap(_.fold(Applicative[F].unit) { p =>
         getPeersFrom(p).flatMap(l0ClusterStorage.setPeers)
       })
@@ -70,7 +69,6 @@ sealed abstract class L0PeerDiscovery[F[_]: Sync: Random] private (
   def discoverFrom(peer: P2PContext): F[Unit] =
     getPeersFrom(peer)
       .map(_.toSortedSet)
-      .map(_.toSet)
       .flatMap(l0ClusterStorage.addPeers)
       .handleErrorWith { e =>
         logger.error(e)("Error during L0 peer discovery!") >>
