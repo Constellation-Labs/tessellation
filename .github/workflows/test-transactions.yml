@@ -3,8 +3,10 @@ name: Test sending transactions
 on:
   pull_request: {}
   push:
-    branches: '**'
-
+    branches:
+      - develop
+      - hotfix/*
+      - release/*
 jobs:
   build:
     name: Test sending transactions

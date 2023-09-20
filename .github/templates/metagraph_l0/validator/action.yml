@@ -27,7 +27,7 @@ runs:
         export CL_PASSWORD=password
         
         cd .github/config/containers/global-l0/genesis
-        export GLOBAL_L0_NODE_ID=$(java -jar ../jars/cl-wallet.jar show-id)
+        export GLOBAL_L0_NODE_ID=$(java -jar ../../jars/cl-wallet.jar show-id)
         
         cd ../../metagraph-l0/genesis
         export CURRENCY_L0_GENESIS_NODE_ID=$(java -jar ../../jars/cl-wallet.jar show-id)

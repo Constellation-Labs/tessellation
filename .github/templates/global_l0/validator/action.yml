@@ -25,7 +25,7 @@ runs:
         export CL_PASSWORD=password
         
         cd .github/config/containers/global-l0/genesis
-        export GLOBAL_L0_NODE_ID=$(java -jar ../jars/cl-wallet.jar show-id)
+        export GLOBAL_L0_NODE_ID=$(java -jar ../../jars/cl-wallet.jar show-id)
         
         cd ../
         mkdir validator-${{ inputs.NODE_NUMBER }}
@@ -39,11 +39,6 @@ runs:
         export CL_APP_ENV=dev
         export CL_ENV=dev
         export CL_COLLATERAL=0
-        export CL_L0_PEER_HTTP_HOST=127.0.0.1
-        export CL_L0_PEER_HTTP_PORT=${{ inputs.CL_GLOBAL_L0_PEER_HTTP_PORT }}
-        export CL_L0_PEER_ID=$GLOBAL_L0_NODE_ID
-        
-        echo "GLOBAL_L0_NODE_ID=$GLOBAL_L0_NODE_ID"
         
         nohup java -jar ../../jars/global-l0.jar run-validator --ip 127.0.0.1 > global-l0-validator-${{ inputs.NODE_NUMBER }}.log 2>&1 &
         
