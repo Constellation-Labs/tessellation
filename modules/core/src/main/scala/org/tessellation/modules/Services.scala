@@ -2,13 +2,16 @@ package org.tessellation.modules
 
 import java.security.KeyPair
 
+import cats.Applicative
 import cats.data.NonEmptySet
 import cats.effect.kernel.Async
 import cats.effect.std.{Random, Supervisor}
 import cats.syntax.applicative._
+import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
+import org.tessellation.cli.AppEnvironment.Dev
 import org.tessellation.config.types.AppConfig
 import org.tessellation.domain.cell.L0Cell
 import org.tessellation.domain.statechannel.StateChannelService
@@ -30,6 +33,7 @@ import org.tessellation.sdk.infrastructure.Collateral
 import org.tessellation.sdk.infrastructure.consensus.Consensus
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.infrastructure.snapshot.services.AddressService
+import org.tessellation.sdk.infrastructure.snapshot.{ProposalOccurrenceSelect, ProposalSelectWithFallback, ProposalTrustSelect}
 import org.tessellation.sdk.modules.{SdkServices, SdkValidators}
 import org.tessellation.security.SecurityProvider
 
@@ -60,6 +64,17 @@ object Services {
         )
         .pure[F]
 
+      trustStorage = storages.trust
+      getTrusts = Applicative[F].product(trustStorage.getBiasedSeedlistOrdinalPeerLabels, trustStorage.getTrust)
+      proposalSelect =
+        if (cfg.environment === Dev)
+          ProposalOccurrenceSelect.make()
+        else {
+          val primary = ProposalTrustSelect.make(getTrusts, cfg.proposalSelect)
+          val secondary = ProposalOccurrenceSelect.make()
+
+          ProposalSelectWithFallback.make(primary, secondary)
+        }
       consensus <- GlobalSnapshotConsensus
         .make[F](
           sdkServices.gossip,
@@ -79,7 +94,8 @@ object Services {
           stateChannelAllowanceLists,
           client,
           session,
-          rewards
+          rewards,
+          proposalSelect
         )
       addressService = AddressService.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](storages.globalSnapshot)
       collateralService = Collateral.make[F](cfg.collateral, storages.globalSnapshot)

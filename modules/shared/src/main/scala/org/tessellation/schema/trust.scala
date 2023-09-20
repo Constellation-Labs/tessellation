@@ -10,6 +10,7 @@ import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import eu.timepit.refined.api.Refined
+import eu.timepit.refined.auto._
 import eu.timepit.refined.cats._
 import eu.timepit.refined.numeric.Interval
 import eu.timepit.refined.refineV
@@ -30,6 +31,9 @@ object trust {
       refineV[TrustValueRefinement](_)
         .leftMap(new DecoderError(_))
     }
+
+  val defaultPeerTrustScore: TrustValueRefined = 1e-4
+
   @derive(show)
   @newtype
   case class Score(value: TrustValueRefined)

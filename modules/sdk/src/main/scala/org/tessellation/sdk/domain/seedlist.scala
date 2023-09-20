@@ -1,15 +1,15 @@
 package org.tessellation.sdk.domain
 
-import cats.Order
 import cats.syntax.contravariant._
 import cats.syntax.either._
 import cats.syntax.option._
+import cats.{Order, Show}
 
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.trust._
 
 import com.comcast.ip4s.IpAddress
-import derevo.cats.eqv
+import derevo.cats.{eqv, show}
 import derevo.derive
 import fs2.data.csv._
 import fs2.data.csv.generic.semiauto.deriveRowDecoder
@@ -17,7 +17,7 @@ import io.estatico.newtype.macros.newtype
 
 object seedlist {
 
-  @derive(eqv)
+  @derive(eqv, show)
   @newtype
   case class Alias(value: String)
 
@@ -29,6 +29,7 @@ object seedlist {
 
   }
 
+  @derive(show)
   case class SeedlistEntry(
     peerId: PeerId,
     ipAddress: Option[IpAddress],
@@ -37,6 +38,8 @@ object seedlist {
   )
 
   object SeedlistEntry {
+
+    implicit val showIpAddress: Show[IpAddress] = Show.show[IpAddress](_.toUriString)
 
     implicit val maybeIpAddressCellDecoder: CellDecoder[Option[IpAddress]] =
       CellDecoder.stringDecoder.emap { value =>

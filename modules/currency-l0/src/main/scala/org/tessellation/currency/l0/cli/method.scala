@@ -60,7 +60,8 @@ object method {
         checkPeersMaxDelay = 10.minutes,
         additionalDiscoveryDelay = 3.minutes,
         minPeers = 2
-      )
+      ),
+      proposalSelect = ProposalSelectConfig(trustMultiplier = 5.0)
     )
 
     val stateAfterJoining: NodeState = NodeState.WaitingForDownload

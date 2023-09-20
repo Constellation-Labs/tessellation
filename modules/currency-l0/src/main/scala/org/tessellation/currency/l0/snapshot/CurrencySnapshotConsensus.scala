@@ -19,6 +19,7 @@ import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.domain.seedlist.SeedlistEntry
+import org.tessellation.sdk.domain.snapshot.ProposalSelect
 import org.tessellation.sdk.infrastructure.consensus.Consensus
 import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.sdk.infrastructure.snapshot.{CurrencySnapshotCreator, CurrencySnapshotValidator, SnapshotConsensus}
@@ -45,7 +46,8 @@ object CurrencySnapshotConsensus {
     stateChannelSnapshotService: StateChannelSnapshotService[F],
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
     creator: CurrencySnapshotCreator[F],
-    validator: CurrencySnapshotValidator[F]
+    validator: CurrencySnapshotValidator[F],
+    proposalSelect: ProposalSelect[F]
   ): F[
     SnapshotConsensus[F, CurrencySnapshotArtifact, CurrencySnapshotContext, CurrencySnapshotEvent]
   ] = {
@@ -69,7 +71,8 @@ object CurrencySnapshotConsensus {
       clusterStorage,
       nodeStorage,
       client,
-      session
+      session,
+      proposalSelect
     )
   }
 }
