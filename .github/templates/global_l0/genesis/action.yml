@@ -24,7 +24,8 @@ runs:
       shell: bash
       run: |
         cd .github/config
-        cp genesis.csv containers/global-l0
+        mkdir containers/global-l0/genesis
+        cp genesis.csv containers/global-l0/genesis
 
     - name: Generate Global L0 JAR
       shell: bash
@@ -42,9 +43,7 @@ runs:
         export CL_KEYALIAS=token-key
         export CL_PASSWORD=password
         
-        cd .github/config/containers/global-l0
-        mkdir genesis
-        cd genesis
+        cd .github/config/containers/global-l0/genesis
         
         java -jar ../../jars/cl-keytool.jar generate
         
