@@ -18,7 +18,7 @@ import org.tessellation.schema.node.NodeState.Ready
 import org.tessellation.schema.peer.Peer.toP2PContext
 import org.tessellation.schema.peer.{L0Peer, Peer}
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo}
-import org.tessellation.schema.trust.{TrustScores, TrustValueRefined, TrustValueRefinement}
+import org.tessellation.schema.trust.{TrustScores, TrustValueRefinement, defaultPeerTrustScore}
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.snapshot.PeerSelect
 import org.tessellation.sdk.http.p2p.clients.SnapshotClient
@@ -51,7 +51,6 @@ object PeerSelect {
   val maxConcurrentPeerInquiries = 10
   val peerSampleRatio = 0.25
   val minSampleSize: PosInt = 20
-  val defaultPeerTrustScore: TrustValueRefined = 1e-4
 
   case object NoPeersToSelect extends NoStackTrace
   case object NoHashes extends NoStackTrace

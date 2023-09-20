@@ -1,5 +1,6 @@
 package org.tessellation.infrastructure.trust.storage
 
+import cats.implicits.catsStdShowForSet
 import cats.kernel.Order
 import cats.syntax.option._
 import cats.syntax.partialOrder._
@@ -9,9 +10,10 @@ import scala.math.max
 import org.tessellation.infrastructure.trust.generators._
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.generators.peerIdGen
-import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.peer.PeerId._
 import org.tessellation.schema.trust._
 import org.tessellation.sdk.config.types.TrustStorageConfig
+import org.tessellation.sdk.domain.seedlist.SeedlistEntry
 import org.tessellation.sdk.domain.trust.storage._
 
 import eu.timepit.refined.api.Refined
@@ -24,7 +26,7 @@ import weaver.scalacheck.Checkers
 
 object TrustStorageSuite extends SimpleIOSuite with Checkers {
 
-  def mkTrustStorage(trust: TrustMap = TrustMap.empty, seedlist: Option[Set[PeerId]] = none): F[TrustStorage[F]] = {
+  def mkTrustStorage(trust: TrustMap = TrustMap.empty, seedlist: Option[Set[SeedlistEntry]] = none): F[TrustStorage[F]] = {
     val config = TrustStorageConfig(
       ordinalTrustUpdateInterval = 1000L,
       ordinalTrustUpdateDelay = 500L,
@@ -58,15 +60,22 @@ object TrustStorageSuite extends SimpleIOSuite with Checkers {
   }
 
   test("internal trust storage is updated with predicted trusts") {
+    val genSeedlistEntries = for {
+      peerId <- peerIdGen
+      score <- Gen.chooseNum(-1.0, 1.0)
+
+      refinedScore = Refined.unsafeApply[Double, TrustValueRefinement](score)
+    } yield SeedlistEntry(peerId, none, none, refinedScore.some)
+
     val gen = for {
       trust <- Gen.mapOfN(4, genPeerTrustInfo)
       publicTrust <- Gen.mapOfN(4, genPeerPublicTrust)
-      peerIds <- Gen.containerOfN[Set, PeerId](1, peerIdGen)
+      seedlist <- Gen.containerOfN[Set, SeedlistEntry](1, genSeedlistEntries)
       selfPeerId <- peerIdGen
     } yield
       (
         TrustMap(trust, PublicTrustMap(publicTrust)),
-        peerIds,
+        seedlist,
         selfPeerId
       )
 

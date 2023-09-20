@@ -13,6 +13,7 @@ object types {
     healthCheck: HealthCheckConfig,
     snapshot: SnapshotConfig,
     collateral: CollateralConfig,
-    globalL0Peer: L0Peer
+    globalL0Peer: L0Peer,
+    proposalSelect: ProposalSelectConfig
   )
 }

@@ -81,6 +81,7 @@ object Services {
         maybeDataApplication
       )
 
+      proposalSelect = ProposalOccurrenceSelect.make()
       consensus <- CurrencySnapshotConsensus
         .make[F](
           sdkServices.gossip,
@@ -97,7 +98,8 @@ object Services {
           stateChannelSnapshotService,
           maybeDataApplication,
           creator,
-          validator
+          validator,
+          proposalSelect
         )
       addressService = AddressService.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](storages.snapshot)
       collateralService = Collateral.make[F](cfg.collateral, storages.snapshot)
