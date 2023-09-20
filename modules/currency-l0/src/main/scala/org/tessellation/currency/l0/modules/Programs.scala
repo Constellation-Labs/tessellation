@@ -13,7 +13,7 @@ import org.tessellation.sdk.domain.cluster.programs.{Joining, L0PeerDiscovery, P
 import org.tessellation.sdk.domain.snapshot.PeerSelect
 import org.tessellation.sdk.domain.snapshot.programs.Download
 import org.tessellation.sdk.infrastructure.genesis.{Loader => GenesisLoader}
-import org.tessellation.sdk.infrastructure.snapshot.{CurrencySnapshotContextFunctions, MajorityPeerSelect}
+import org.tessellation.sdk.infrastructure.snapshot.{CurrencySnapshotContextFunctions, PeerSelect}
 import org.tessellation.sdk.modules.SdkPrograms
 import org.tessellation.security.SecurityProvider
 
@@ -29,7 +29,12 @@ object Programs {
     p2pClient: P2PClient[F],
     currencySnapshotContextFns: CurrencySnapshotContextFunctions[F]
   ): Programs[F] = {
-    val peerSelect: PeerSelect[F] = MajorityPeerSelect.make(storages.cluster, p2pClient.currencySnapshot)
+    val peerSelect: PeerSelect[F] =
+      PeerSelect.make(
+        storages.cluster,
+        p2pClient.currencySnapshot,
+        p2pClient.l0Trust.getCurrentTrust.run(globalL0Peer)
+      )
     val download = Download
       .make(
         p2pClient,

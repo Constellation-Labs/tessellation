@@ -121,7 +121,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
               dagRoutes.publicRoutes <+>
               walletRoutes.publicRoutes <+>
               nodeRoutes.publicRoutes <+>
-              consensusInfoRoutes.publicRoutes
+              consensusInfoRoutes.publicRoutes <+>
+              trustRoutes.publicRoutes
           }
         }
     }
