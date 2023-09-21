@@ -275,7 +275,16 @@ object ConsensusStateUpdater {
                               )
                             )
                           val effect = Signature.fromHash(keyPair.getPrivate, majorityArtifactInfo.hash).flatMap { signature =>
-                            gossip.spread(ConsensusPeerDeclaration(state.key, MajoritySignature(signature, facilitatorsHash)))
+                            gossip.spread(ConsensusPeerDeclaration(state.key, MajoritySignature(signature, facilitatorsHash))).flatTap {
+                              _ =>
+                                import org.tessellation.security.key.ops.PublicKeyOps
+                                val sp = SignatureProof(keyPair.getPublic.toId, signature)
+                                verifySignatureProof(majorityArtifactInfo.hash, sp).map { valid =>
+                                  logger
+                                    .warn("Failed self signature immediate validation within majority proposal signing")
+                                    .whenA(!valid)
+                                }
+                            }
                           } >> Metrics[F].recordDistribution(
                             "dag_consensus_proposal_affinity",
                             proposalAffinity(allProposalHashes, proposalInfo.hash)
@@ -300,10 +309,21 @@ object ConsensusStateUpdater {
                     allSignatures
                       .filterA(verifySignatureProof(majorityArtifactInfo.hash, _))
                       .flatTap { validSignatures =>
+                        val invalid = allSignatures.filterNot(validSignatures.contains(_))
+                        val invalidSample = invalid.head
                         logger
                           .warn(
                             s"Removed ${(allSignatures.size - validSignatures.size).show} invalid signatures during consensus for key ${state.key.show}, " +
-                              s"${validSignatures.size.show} valid signatures left"
+                              s"${validSignatures.size.show} valid signatures left " +
+                              s"invalid id hex: ${invalidSample.id.hex.value} " +
+                              s"invalid signature hex: ${invalidSample.signature.value.value} " +
+                              s"hash ${majorityArtifactInfo.hash.value}" +
+                              s"invalid $invalid " +
+                              s"declarations ${resources.peerDeclarationsMap} " +
+                              s"majorityArtifactInfo $majorityArtifactInfo " +
+                              s"majorityTrigger $majorityTrigger " +
+                              s"candidate $candidates " +
+                              s"ownFacilitatorHash $ownFacilitatorsHash"
                           )
                           .whenA(allSignatures.size =!= validSignatures.size)
                       }
