@@ -7,6 +7,7 @@ import org.tessellation.sdk.config.types._
 object types {
   case class AppConfig(
     environment: AppEnvironment,
+    peerDiscoveryDelay: PeerDiscoveryDelay,
     http: HttpConfig,
     gossip: GossipConfig,
     healthCheck: HealthCheckConfig,

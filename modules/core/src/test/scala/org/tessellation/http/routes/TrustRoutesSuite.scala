@@ -62,7 +62,7 @@ object TrustRoutesSuite extends HttpSuite {
       }.map(_ => TrustRoutes[IO](trustStorage, trustPush).p2pRoutes)
     }
 
-  private def mkCliRoutes(
+  private def mkPublicRoutes(
     trustStorage: TrustStorage[F],
     peerObservationAdjustmentUpdate: List[PeerObservationAdjustmentUpdate] = List.empty
   ) =
@@ -76,7 +76,7 @@ object TrustRoutesSuite extends HttpSuite {
 
       trustStorage.updateTrust {
         PeerObservationAdjustmentUpdateBatch(peerObservationAdjustmentUpdate)
-      }.map(_ => TrustRoutes[IO](trustStorage, trustPush).cliRoutes)
+      }.map(_ => TrustRoutes[IO](trustStorage, trustPush).publicRoutes)
     }
 
   private val genTrustMap = for {
@@ -106,11 +106,11 @@ object TrustRoutesSuite extends HttpSuite {
     forall(genTrustMap) { trust =>
       for {
         ts <- mkTrustStorage(trust)
-        routes <- mkCliRoutes(ts)
+        routes <- mkPublicRoutes(ts)
 
         expected = TrustScores(
           trust.trust.view
-            .mapValues(_.predictedTrust)
+            .mapValues(trustInfo => trustInfo.predictedTrust.orElse(trustInfo.trustLabel))
             .collect { case (k, Some(v)) => (k, v) }
             .toMap
         ).asJson
@@ -128,7 +128,7 @@ object TrustRoutesSuite extends HttpSuite {
         _ <- ts.updateNext(SnapshotOrdinal(1000L))
         _ <- ts.updateCurrent(SnapshotOrdinal(1500L))
 
-        routes <- mkCliRoutes(ts)
+        routes <- mkPublicRoutes(ts)
 
         expected = OrdinalTrustMap(SnapshotOrdinal(1000L), PublicTrustMap.empty, trust).asJson
         testResult <- expectHttpBodyAndStatus(routes, req)(expected, Status.Ok)

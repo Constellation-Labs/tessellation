@@ -9,3 +9,23 @@ runs:
         CL_P2P_HTTP_PORT: 9001
         CL_CLI_HTTP_PORT: 9002
       uses: "./.github/templates/global_l0/genesis"
+
+    - name: Run Global L0 Validator - 1
+      uses: "./.github/templates/global_l0/validator"
+      with:
+        CL_PUBLIC_HTTP_PORT: 8000
+        CL_P2P_HTTP_PORT: 8001
+        CL_CLI_HTTP_PORT: 8002
+        CL_GLOBAL_L0_PEER_HTTP_PORT: 9000
+        CL_L0_P2P_HTTP_PORT: 9001
+        NODE_NUMBER: 1
+
+    - name: Run Global L0 Validator - 2
+      uses: "./.github/templates/global_l0/validator"
+      with:
+        CL_PUBLIC_HTTP_PORT: 8100
+        CL_P2P_HTTP_PORT: 8101
+        CL_CLI_HTTP_PORT: 8102
+        CL_GLOBAL_L0_PEER_HTTP_PORT: 9000
+        CL_L0_P2P_HTTP_PORT: 9001
+        NODE_NUMBER: 2

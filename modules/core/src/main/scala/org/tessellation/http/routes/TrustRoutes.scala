@@ -3,12 +3,11 @@ package org.tessellation.http.routes
 import cats.effect.Async
 import cats.syntax.applicativeError._
 import cats.syntax.flatMap._
-import cats.syntax.functor._
 
 import org.tessellation.domain.cluster.programs.TrustPush
-import org.tessellation.http.routes.internal.{CliRoutes, InternalUrlPrefix, P2PRoutes}
+import org.tessellation.http.routes.internal._
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.trust.{PeerObservationAdjustmentUpdateBatch, TrustScores}
+import org.tessellation.schema.trust.PeerObservationAdjustmentUpdateBatch
 import org.tessellation.sdk.domain.trust.storage.TrustStorage
 import org.tessellation.sdk.ext.http4s.refined.RefinedRequestDecoder
 
@@ -22,7 +21,8 @@ final case class TrustRoutes[F[_]: Async: KryoSerializer](
   trustPush: TrustPush[F]
 ) extends Http4sDsl[F]
     with P2PRoutes[F]
-    with CliRoutes[F] {
+    with CliRoutes[F]
+    with PublicRoutes[F] {
   protected[routes] val prefixPath: InternalUrlPrefix = "/trust"
 
   protected val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
@@ -44,12 +44,12 @@ final case class TrustRoutes[F[_]: Async: KryoSerializer](
               Conflict(s"Internal trust update failure")
           }
       }
+  }
 
+  override protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case GET -> Root / "current" =>
-      trustStorage.getTrust
-        .map(_.trust.view.mapValues(_.predictedTrust))
-        .map(_.collect { case (k, Some(v)) => (k, v) }.toMap)
-        .flatMap(trust => Ok(TrustScores(trust)))
+      trustStorage.getBiasedTrustScores
+        .flatMap(Ok(_))
 
     case GET -> Root / "previous" =>
       trustStorage.getCurrentOrdinalTrust.flatMap(Ok(_))

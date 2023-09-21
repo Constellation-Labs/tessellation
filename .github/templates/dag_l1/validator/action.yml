@@ -24,10 +24,10 @@ runs:
         export CL_KEYALIAS=token-key
         export CL_PASSWORD=password
         
-        cd .github/config/containers/global-l0
-        export GLOBAL_L0_NODE_ID=$(java -jar ../jars/cl-wallet.jar show-id)
+        cd .github/config/containers/global-l0/genesis
+        export GLOBAL_L0_NODE_ID=$(java -jar ../../jars/cl-wallet.jar show-id)
 
-        cd ../dag-l1/initial-validator
+        cd ../../dag-l1/initial-validator
         export DAG_L1_INITIAL_VALIDATOR_NODE_ID=$(java -jar ../../jars/cl-wallet.jar show-id)
 
         cd ../

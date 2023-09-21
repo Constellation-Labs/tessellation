@@ -24,7 +24,8 @@ runs:
       shell: bash
       run: |
         cd .github/config
-        cp genesis.csv containers/global-l0
+        mkdir containers/global-l0/genesis
+        cp genesis.csv containers/global-l0/genesis
 
     - name: Generate Global L0 JAR
       shell: bash
@@ -42,9 +43,9 @@ runs:
         export CL_KEYALIAS=token-key
         export CL_PASSWORD=password
         
-        cd .github/config/containers/global-l0
+        cd .github/config/containers/global-l0/genesis
         
-        java -jar ../jars/cl-keytool.jar generate
+        java -jar ../../jars/cl-keytool.jar generate
         
         export CL_PUBLIC_HTTP_PORT=${{ inputs.CL_PUBLIC_HTTP_PORT }}
         export CL_P2P_HTTP_PORT=${{ inputs.CL_P2P_HTTP_PORT }}
@@ -53,6 +54,6 @@ runs:
         export CL_ENV=dev
         export CL_COLLATERAL=0
         
-        nohup java -jar ../jars/global-l0.jar run-genesis genesis.csv --ip 127.0.0.1 > global-l0.log 2>&1 &
+        nohup java -jar ../../jars/global-l0.jar run-genesis genesis.csv --ip 127.0.0.1 > global-l0-genesis.log 2>&1 &
         
-        node ../../../action_scripts/check_if_node_started/index.js -url=http://127.0.0.1:9000/node/info -cluster_name=Global-L0
+        node ../../../../action_scripts/check_if_node_started/index.js -url=http://127.0.0.1:9000/node/info -cluster_name=Global-L0
