@@ -310,13 +310,13 @@ object ConsensusStateUpdater {
                       .filterA(verifySignatureProof(majorityArtifactInfo.hash, _))
                       .flatTap { validSignatures =>
                         val invalid = allSignatures.filterNot(validSignatures.contains(_))
-                        val invalidSample = invalid.head
+                        val invalidSample = invalid.headOption
                         logger
                           .warn(
                             s"Removed ${(allSignatures.size - validSignatures.size).show} invalid signatures during consensus for key ${state.key.show}, " +
                               s"${validSignatures.size.show} valid signatures left " +
-                              s"invalid id hex: ${invalidSample.id.hex.value} " +
-                              s"invalid signature hex: ${invalidSample.signature.value.value} " +
+                              s"invalid id hex: ${invalidSample.map(x => x.id.hex.value)} " +
+                              s"invalid signature hex: ${invalidSample.map(x => x.signature.value.value)} " +
                               s"hash ${majorityArtifactInfo.hash.value}" +
                               s"invalid $invalid " +
                               s"declarations ${resources.peerDeclarationsMap} " +
