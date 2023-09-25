@@ -19,6 +19,7 @@ import org.tessellation.sdk.domain.consensus.ConsensusFunctions
 import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.infrastructure.consensus.trigger.ConsensusTrigger
 import org.tessellation.sdk.infrastructure.snapshot._
+import org.tessellation.sdk.snapshot.currency.CurrencySnapshotEvent
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 
@@ -38,7 +39,7 @@ object CurrencySnapshotConsensusFunctions {
   def make[F[_]: Async: KryoSerializer: SecurityProvider: L0NodeContext](
     stateChannelSnapshotService: StateChannelSnapshotService[F],
     collateral: Amount,
-    rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot]],
+    rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
     currencySnapshotCreator: CurrencySnapshotCreator[F],
     currencySnapshotValidator: CurrencySnapshotValidator[F]
   ): CurrencySnapshotConsensusFunctions[F] = new CurrencySnapshotConsensusFunctions[F] {

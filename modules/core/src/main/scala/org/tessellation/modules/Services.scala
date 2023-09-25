@@ -110,7 +110,7 @@ sealed abstract class Services[F[_]] private (
   val consensus: Consensus[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact, GlobalSnapshotContext],
   val address: AddressService[F, GlobalIncrementalSnapshot],
   val collateral: Collateral[F],
-  val rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot],
+  val rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent],
   val stateChannel: StateChannelService[F],
   val trustStorageUpdater: TrustStorageUpdater[F]
 )

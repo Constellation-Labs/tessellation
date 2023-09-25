@@ -45,7 +45,7 @@ object CurrencySnapshotValidator {
   def make[F[_]: Async: KryoSerializer](
     currencySnapshotCreator: CurrencySnapshotCreator[F],
     signedValidator: SignedValidator[F],
-    maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot]],
+    maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
     maybeDataApplication: Option[BaseDataApplicationService[F]]
   ): CurrencySnapshotValidator[F] = new CurrencySnapshotValidator[F] {
 
@@ -86,12 +86,13 @@ object CurrencySnapshotValidator {
 
       // Rewrite if implementation not provided
       val rewards = maybeRewards.orElse(Some {
-        new Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot] {
+        new Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent] {
           def distribute(
             lastArtifact: Signed[CurrencySnapshotArtifact],
             lastBalances: SortedMap[address.Address, balance.Balance],
             acceptedTransactions: SortedSet[Signed[transaction.Transaction]],
-            trigger: ConsensusTrigger
+            trigger: ConsensusTrigger,
+            events: Set[CurrencySnapshotEvent]
           ): F[SortedSet[transaction.RewardTransaction]] = expected.rewards.pure[F]
         }
       })

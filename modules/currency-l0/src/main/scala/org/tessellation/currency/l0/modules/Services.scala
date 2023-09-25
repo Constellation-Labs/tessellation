@@ -49,7 +49,7 @@ object Services {
     keyPair: KeyPair,
     cfg: AppConfig,
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
-    maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot]],
+    maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
     signedValidator: SignedValidator[F],
     globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
     maybeMajorityPeerIds: Option[NonEmptySet[PeerId]]

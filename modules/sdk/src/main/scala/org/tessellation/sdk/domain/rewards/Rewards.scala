@@ -9,11 +9,12 @@ import org.tessellation.schema.transaction.{RewardTransaction, Transaction}
 import org.tessellation.sdk.infrastructure.consensus.trigger.ConsensusTrigger
 import org.tessellation.security.signature.Signed
 
-trait Rewards[F[_], P <: StateProof, S <: IncrementalSnapshot[P]] {
+trait Rewards[F[_], P <: StateProof, S <: IncrementalSnapshot[P], E] {
   def distribute(
     lastArtifact: Signed[S],
     lastBalances: SortedMap[Address, Balance],
     acceptedTransactions: SortedSet[Signed[Transaction]],
-    trigger: ConsensusTrigger
+    trigger: ConsensusTrigger,
+    events: Set[E]
   ): F[SortedSet[RewardTransaction]]
 }

@@ -14,6 +14,7 @@ import org.tessellation.config.types.RewardsConfig._
 import org.tessellation.config.types._
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
 import org.tessellation.ext.kryo._
+import org.tessellation.infrastructure.snapshot.GlobalSnapshotEvent
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema._
@@ -33,7 +34,6 @@ import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.syntax.sortedCollection.sortedSetSyntax
 
 import eu.timepit.refined.auto._
-import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.NonNegLong
 import monocle.syntax.all._
 import org.scalacheck.Gen
@@ -51,7 +51,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
   } yield (kryo, sp, mkKeyPair)
 
   val config: RewardsConfig = RewardsConfig()
-  val singleEpochRewardsConfig = config.copy(rewardsPerEpoch = SortedMap(EpochProgress.MaxValue -> Amount(100L)))
+  val singleEpochRewardsConfig: RewardsConfig = config.copy(rewardsPerEpoch = SortedMap(EpochProgress.MaxValue -> Amount(100L)))
   val totalSupply: Amount = Amount(1599999999_74784000L) // approx because of rounding
   val expectedWeightsSum: Weight = Weight(100L)
 
@@ -107,7 +107,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
 
   def makeRewards(config: RewardsConfig)(
     implicit sp: SecurityProvider[IO]
-  ): Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot] = {
+  ): Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent] = {
     val programsDistributor = ProgramsDistributor.make
     val regularDistributor = FacilitatorDistributor.make
     Rewards.make[IO](config, programsDistributor, regularDistributor)
@@ -132,7 +132,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
         for {
           rewards <- makeRewards(config).pure[F]
           expectedSum = txs.toList.map(_.fee.value.toLong).sum
-          rewardTxs <- rewards.distribute(snapshot, SortedMap.empty, txs, EventTrigger)
+          rewardTxs <- rewards.distribute(snapshot, SortedMap.empty, txs, EventTrigger, Set.empty)
           sum = rewardTxs.toList.map(_.amount.value.toLong).sum
         } yield expect(sum === expectedSum)
     }
@@ -171,7 +171,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
       case (epochProgress, snapshot) =>
         for {
           rewards <- makeRewards(config).pure[F]
-          txs <- rewards.distribute(snapshot, SortedMap.empty, SortedSet.empty, TimeTrigger)
+          txs <- rewards.distribute(snapshot, SortedMap.empty, SortedSet.empty, TimeTrigger, Set.empty)
           sum = txs.toList.map(_.amount.value.toLong).sum
           expected = getAmountByEpoch(epochProgress).value.toLong
         } yield expect(sum == expected)
@@ -191,7 +191,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
       case (epochProgress, lastSnapshot, txs) =>
         for {
           rewards <- makeRewards(config).pure[F]
-          rewardTransactions <- rewards.distribute(lastSnapshot, SortedMap.empty, txs, TimeTrigger)
+          rewardTransactions <- rewards.distribute(lastSnapshot, SortedMap.empty, txs, TimeTrigger, Set.empty)
           rewardsSum = rewardTransactions.toList.map(_.amount.value.toLong).sum
           expectedMintedSum = getAmountByEpoch(epochProgress).value.toLong
           expectedFeeSum = txs.toList.map(_.fee.value.toLong).sum
@@ -210,7 +210,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
     forall(gen) { snapshot =>
       for {
         rewards <- makeRewards(config).pure[F]
-        txs <- rewards.distribute(snapshot, SortedMap.empty, SortedSet.empty, TimeTrigger)
+        txs <- rewards.distribute(snapshot, SortedMap.empty, SortedSet.empty, TimeTrigger, Set.empty)
       } yield expect(txs.isEmpty)
     }
   }
@@ -231,7 +231,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
       for {
         rewards <- makeRewards(singleEpochRewardsConfig).pure[F]
 
-        txs <- rewards.distribute(snapshot, SortedMap.empty, SortedSet.empty, TimeTrigger)
+        txs <- rewards.distribute(snapshot, SortedMap.empty, SortedSet.empty, TimeTrigger, Set.empty)
         facilitatorAddress <- facilitator.toAddress
         expected = SortedSet(
           RewardTransaction(stardustPrimary, TransactionAmount(5L)),
@@ -261,7 +261,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
       for {
         rewards <- makeRewards(singleEpochRewardsConfig).pure[F]
 
-        txs <- rewards.distribute(snapshot, SortedMap.empty, SortedSet.empty, TimeTrigger)
+        txs <- rewards.distribute(snapshot, SortedMap.empty, SortedSet.empty, TimeTrigger, Set.empty)
         facilitatorAddress <- facilitator.toAddress
         expected = SortedSet(
           RewardTransaction(stardustPrimary, TransactionAmount(5L)),
@@ -293,7 +293,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
 
         rewards = makeRewards(singleEpochRewardsConfig.copy(oneTimeRewards = oneTimeRewards))
 
-        txs <- rewards.distribute(snapshot, SortedMap.empty, SortedSet.empty, TimeTrigger)
+        txs <- rewards.distribute(snapshot, SortedMap.empty, SortedSet.empty, TimeTrigger, Set.empty)
 
         facilitatorAddress <- facilitator.toAddress
         expected = SortedSet(

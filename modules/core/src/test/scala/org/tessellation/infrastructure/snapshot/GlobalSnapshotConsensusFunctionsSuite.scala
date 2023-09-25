@@ -108,8 +108,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
   val collateral: Amount = Amount.empty
 
-  val rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot] =
-    (_, _, _, _) => IO(SortedSet.empty)
+  val rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent] =
+    (_, _, _, _, _) => IO(SortedSet.empty)
 
   def mkGlobalSnapshotConsensusFunctions()(implicit ks: KryoSerializer[IO], sp: SecurityProvider[IO], m: Metrics[IO]) = {
     val snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make[IO](bam, scProcessor, collateral)

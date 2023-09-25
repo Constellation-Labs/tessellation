@@ -20,6 +20,7 @@ import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import org.tessellation.sdk.resources.MkHttpServer
 import org.tessellation.sdk.resources.MkHttpServer.ServerName
+import org.tessellation.sdk.snapshot.currency.CurrencySnapshotEvent
 import org.tessellation.sdk.{SdkOrSharedOrKernelRegistrationIdRange, sdkKryoRegistrar}
 import org.tessellation.security.SecurityProvider
 
@@ -48,7 +49,7 @@ abstract class CurrencyL0App(
 
   def rewards(
     implicit sp: SecurityProvider[IO]
-  ): Option[Rewards[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot]]
+  ): Option[Rewards[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]]
 
   def run(method: Run, sdk: SDK[IO]): Resource[IO, Unit] = {
     import sdk._

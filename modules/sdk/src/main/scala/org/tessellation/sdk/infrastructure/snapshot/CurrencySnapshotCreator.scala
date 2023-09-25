@@ -50,7 +50,7 @@ trait CurrencySnapshotCreator[F[_]] {
     lastContext: CurrencySnapshotContext,
     trigger: ConsensusTrigger,
     events: Set[CurrencySnapshotEvent],
-    rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot]]
+    rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]]
   ): F[CurrencySnapshotCreationResult]
 }
 
@@ -67,7 +67,7 @@ object CurrencySnapshotCreator {
       lastContext: CurrencySnapshotContext,
       trigger: ConsensusTrigger,
       events: Set[CurrencySnapshotEvent],
-      rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot]]
+      rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]]
     ): F[CurrencySnapshotCreationResult] = {
 
       val (blocks: List[Signed[Block]], dataBlocks: List[Signed[DataApplicationBlock]]) =
@@ -146,7 +146,7 @@ object CurrencySnapshotCreator {
           lastDeprecatedTips,
           transactions =>
             rewards
-              .map(_.distribute(lastArtifact, lastContext.snapshotInfo.balances, transactions, trigger))
+              .map(_.distribute(lastArtifact, lastContext.snapshotInfo.balances, transactions, trigger, events))
               .getOrElse(SortedSet.empty[RewardTransaction].pure[F])
         )
 
