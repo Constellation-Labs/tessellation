@@ -16,6 +16,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import org.tessellation.config.types.RewardsConfig
 import org.tessellation.ext.refined._
+import org.tessellation.infrastructure.snapshot.GlobalSnapshotEvent
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
@@ -37,8 +38,8 @@ object Rewards {
     config: RewardsConfig,
     programsDistributor: ProgramsDistributor[Either[ArithmeticException, *]],
     facilitatorDistributor: FacilitatorDistributor[F]
-  ): Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot] =
-    new Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot] {
+  ): Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent] =
+    new Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent] {
 
       private def getAmountByEpoch(epochProgress: EpochProgress, rewardsPerEpoch: SortedMap[EpochProgress, Amount]): Amount =
         rewardsPerEpoch
@@ -50,7 +51,8 @@ object Rewards {
         lastArtifact: Signed[GlobalIncrementalSnapshot],
         lastBalances: SortedMap[Address, Balance],
         acceptedTransactions: SortedSet[Signed[Transaction]],
-        trigger: ConsensusTrigger
+        trigger: ConsensusTrigger,
+        events: Set[GlobalSnapshotEvent]
       ): F[SortedSet[RewardTransaction]] = {
         val facilitators = lastArtifact.proofs.map(_.id)
 

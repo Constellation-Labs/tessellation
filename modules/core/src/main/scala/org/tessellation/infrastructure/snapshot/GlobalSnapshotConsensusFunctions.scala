@@ -48,7 +48,7 @@ object GlobalSnapshotConsensusFunctions {
     globalSnapshotStorage: SnapshotStorage[F, GlobalSnapshotArtifact, GlobalSnapshotContext],
     globalSnapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     collateral: Amount,
-    rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot],
+    rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent],
     environment: AppEnvironment
   ): GlobalSnapshotConsensusFunctions[F] = new GlobalSnapshotConsensusFunctions[F] {
 
@@ -120,7 +120,7 @@ object GlobalSnapshotConsensusFunctions {
             snapshotContext,
             lastActiveTips,
             lastDeprecatedTips,
-            rewards.distribute(lastArtifact, snapshotContext.balances, _, trigger),
+            rewards.distribute(lastArtifact, snapshotContext.balances, _, trigger, events),
             StateChannelValidationType.Full
           )
         (deprecated, remainedActive, accepted) = getUpdatedTips(

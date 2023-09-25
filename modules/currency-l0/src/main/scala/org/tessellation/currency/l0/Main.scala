@@ -9,6 +9,7 @@ import org.tessellation.currency.dataApplication.BaseDataApplicationL0Service
 import org.tessellation.currency.schema.currency._
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.sdk.domain.rewards.Rewards
+import org.tessellation.sdk.snapshot.currency.CurrencySnapshotEvent
 import org.tessellation.security.SecurityProvider
 
 object Main
@@ -24,6 +25,7 @@ object Main
   def rewards(implicit sp: SecurityProvider[IO]): Option[Rewards[
     IO,
     CurrencySnapshotStateProof,
-    CurrencyIncrementalSnapshot
+    CurrencyIncrementalSnapshot,
+    CurrencySnapshotEvent
   ]] = None
 }

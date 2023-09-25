@@ -58,7 +58,7 @@ object GlobalSnapshotConsensus {
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
     client: Client[F],
     session: Session[F],
-    rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot]
+    rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent]
   ): F[Consensus[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact, GlobalSnapshotContext]] =
     for {
       globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager

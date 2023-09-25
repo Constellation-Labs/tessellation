@@ -11,6 +11,7 @@ import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.transaction.{RewardTransaction, Transaction, TransactionAmount}
 import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.infrastructure.consensus.trigger.ConsensusTrigger
+import org.tessellation.sdk.snapshot.currency.CurrencySnapshotEvent
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 import eu.timepit.refined.auto._
@@ -29,7 +30,8 @@ object Main
 
   def dataApplication: Option[BaseDataApplicationL0Service[IO]] = None
 
-  def rewards(implicit sp: SecurityProvider[IO]): Some[Rewards[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot]] = Some((_: Signed[CurrencyIncrementalSnapshot], _: SortedMap[Address, Balance], _: SortedSet[Signed[Transaction]], _: ConsensusTrigger) => {
+  def rewards(implicit sp: SecurityProvider[IO]): Some[Rewards[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]] =
+   Some((_: Signed[CurrencyIncrementalSnapshot], _: SortedMap[Address, Balance], _: SortedSet[Signed[Transaction]], _: ConsensusTrigger, _: Set[CurrencySnapshotEvent]) => {
     val allRewards = SortedSet(
       Address("DAG8pkb7EhCkT3yU87B2yPBunSCPnEdmX2Wv24sZ"),
       Address("DAG4o41NzhfX6DyYBTTXu6sJa6awm36abJpv89jB")

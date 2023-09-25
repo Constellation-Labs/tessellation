@@ -11,14 +11,16 @@ import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.transaction.{RewardTransaction, Transaction}
 import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.infrastructure.consensus.trigger
+import org.tessellation.sdk.snapshot.currency.CurrencySnapshotEvent
 import org.tessellation.security.signature.Signed
 
 object NoopRewards {
-  def make[F[_]: Async]: Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot] =
+  def make[F[_]: Async]: Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent] =
     (
       _: Signed[CurrencyIncrementalSnapshot],
       _: SortedMap[Address, Balance],
       _: SortedSet[Signed[Transaction]],
-      _: trigger.ConsensusTrigger
+      _: trigger.ConsensusTrigger,
+      _: Set[CurrencySnapshotEvent]
     ) => SortedSet.empty[RewardTransaction].pure[F]
 }

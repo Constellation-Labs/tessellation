@@ -38,7 +38,7 @@ object CurrencySnapshotConsensus {
     collateral: Amount,
     clusterStorage: ClusterStorage[F],
     nodeStorage: NodeStorage[F],
-    maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot]],
+    maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
     snapshotConfig: SnapshotConfig,
     client: Client[F],
     session: Session[F],
