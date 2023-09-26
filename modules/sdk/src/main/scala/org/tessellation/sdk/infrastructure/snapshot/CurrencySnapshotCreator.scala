@@ -17,8 +17,8 @@ import cats.syntax.traverse._
 
 import scala.collection.immutable.SortedSet
 
+import org.tessellation.currency.dataApplication._
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
-import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, DataState, L0NodeContext}
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
@@ -96,7 +96,7 @@ object CurrencySnapshotCreator {
               .deserializeState(lastDataApplication)
               .flatTap {
                 case Left(err) => logger.warn(err)(s"Cannot deserialize custom state")
-                case Right(a)  => logger.info(s"Deserialized state: ${a}")
+                case Right(a)  => logger.info(s"Deserialized state: $a")
               }
               .map(_.toOption)
               .handleErrorWith(err =>
@@ -106,7 +106,7 @@ object CurrencySnapshotCreator {
         }.flatSequence
 
         maybeNewDataState <- (maybeDataApplicationService, maybeLastDataState).mapN {
-          case (((nodeContext, service), lastState)) =>
+          case ((nodeContext, service), lastState) =>
             implicit val context: L0NodeContext[F] = nodeContext
             NonEmptyList
               .fromList(dataBlocks.distinctBy(_.value.roundId))
@@ -118,25 +118,20 @@ object CurrencySnapshotCreator {
                     Applicative[F].unlessA(validated.isValid)(logger.warn(s"Data application is invalid, errors: ${validated.toString}"))
                   }
                   .map(_.isValid)
-                  .handleErrorWith(err =>
-                    logger.error(err)(s"Unhandled exception during validating data application, assumed as invalid") >> false.pure[F]
-                  )
-                  .ifM(
-                    service
-                      .combine(lastState, updates)
-                      .flatMap { state =>
-                        service.serializeState(state)
-                      }
-                      .map(_.some)
-                      .handleErrorWith(err =>
-                        logger.error(err)(
-                          s"Unhandled exception during combine and serialize data application, fallback to last data application"
-                        ) >> maybeLastDataApplication.pure[F]
-                      ),
-                    logger.warn("Data application is not valid") >> maybeLastDataApplication.pure[F]
-                  )
+                  .handleErrorWith(logger.error(_)(s"Unhandled exception during validating data application, assumed as invalid").as(false))
+                  .ifF(updates.toList, List.empty[Signed[DataUpdate]])
               }
-              .getOrElse(maybeLastDataApplication.pure[F])
+              .getOrElse(List.empty[Signed[DataUpdate]].pure[F])
+              .flatMap(service.combine(lastState, _))
+              .flatMap(service.serializeState)
+              .map(_.some)
+              .handleErrorWith(err =>
+                logger
+                  .error(err)(
+                    s"Unhandled exception during combine and serialize data application, fallback to last data application"
+                  )
+                  .as(maybeLastDataApplication)
+              )
         }.flatSequence
 
         (acceptanceResult, acceptedRewardTxs, snapshotInfo, stateProof) <- currencySnapshotAcceptanceManager.accept(
