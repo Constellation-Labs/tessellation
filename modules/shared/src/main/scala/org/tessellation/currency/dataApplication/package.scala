@@ -52,7 +52,7 @@ trait BaseDataApplicationContextualOps[F[_], Context] {
 
   def validateUpdate(update: DataUpdate)(implicit context: Context): F[DataApplicationValidationErrorOr[Unit]]
 
-  def combine(oldState: DataState, updates: NonEmptyList[Signed[DataUpdate]])(implicit context: Context): F[DataState]
+  def combine(oldState: DataState, updates: List[Signed[DataUpdate]])(implicit context: Context): F[DataState]
 
   def routes(implicit context: Context): HttpRoutes[F]
 
@@ -95,7 +95,7 @@ trait DataApplicationContextualOps[F[_], D <: DataUpdate, S <: DataState, Contex
 
   def validateUpdate(update: D)(implicit context: Context): F[DataApplicationValidationErrorOr[Unit]]
 
-  def combine(oldState: S, updates: NonEmptyList[Signed[D]])(implicit context: Context): F[S]
+  def combine(oldState: S, updates: List[Signed[D]])(implicit context: Context): F[S]
 
   def routes(implicit context: Context): HttpRoutes[F]
 
@@ -117,14 +117,14 @@ object BaseDataApplicationContextualOps {
     service: DataApplicationContextualOps[F, D, S, Context]
   )(implicit d: ClassTag[D], s: ClassTag[S], monadThrow: MonadThrow[F]): BaseDataApplicationContextualOps[F, Context] =
     new BaseDataApplicationContextualOps[F, Context] {
-      def allKnown(updates: NonEmptyList[Signed[DataUpdate]]): Boolean =
+      def allKnown(updates: List[Signed[DataUpdate]]): Boolean =
         updates.map(_.value).forall { case _: D => true; case _ => false }
 
       def validateData(oldState: DataState, updates: NonEmptyList[Signed[DataUpdate]])(
         implicit context: Context
       ): F[DataApplicationValidationErrorOr[Unit]] =
         oldState match {
-          case s: S if allKnown(updates) =>
+          case s: S if allKnown(updates.toList) =>
             service.validateData(s, updates.asInstanceOf[NonEmptyList[Signed[D]]])
           case _ => Validated.invalidNec[DataApplicationValidationError, Unit](Noop).pure[F]
         }
@@ -135,10 +135,10 @@ object BaseDataApplicationContextualOps {
           case _    => Validated.invalidNec[DataApplicationValidationError, Unit](Noop).pure[F]
         }
 
-      def combine(oldState: DataState, updates: NonEmptyList[Signed[DataUpdate]])(implicit context: Context): F[DataState] =
+      def combine(oldState: DataState, updates: List[Signed[DataUpdate]])(implicit context: Context): F[DataState] =
         oldState match {
           case state: S if allKnown(updates) =>
-            service.combine(state, updates.asInstanceOf[NonEmptyList[Signed[D]]]).widen[DataState]
+            service.combine(state, updates.asInstanceOf[List[Signed[D]]]).widen[DataState]
           case a => a.pure[F]
         }
 
@@ -169,7 +169,7 @@ object BaseDataApplicationService {
       def validateUpdate(update: DataUpdate)(implicit context: Context): F[DataApplicationValidationErrorOr[Unit]] =
         v.validateUpdate(update)
 
-      def combine(oldState: DataState, updates: NonEmptyList[Signed[DataUpdate]])(implicit context: Context): F[DataState] =
+      def combine(oldState: DataState, updates: List[Signed[DataUpdate]])(implicit context: Context): F[DataState] =
         v.combine(oldState, updates)
 
       def serializeState(state: DataState): F[Array[Byte]] =
@@ -241,7 +241,7 @@ object BaseDataApplicationL0Service {
       def validateUpdate(update: DataUpdate)(implicit context: L0NodeContext[F]): F[DataApplicationValidationErrorOr[Unit]] =
         base.validateUpdate(update)
 
-      def combine(oldState: DataState, updates: NonEmptyList[Signed[DataUpdate]])(
+      def combine(oldState: DataState, updates: List[Signed[DataUpdate]])(
         implicit context: L0NodeContext[F]
       ): F[DataState] =
         base.combine(oldState, updates)
@@ -284,7 +284,7 @@ object BaseDataApplicationL1Service {
       ): F[DataApplicationValidationErrorOr[Unit]] =
         base.validateUpdate(update)
 
-      def combine(oldState: DataState, updates: NonEmptyList[Signed[DataUpdate]])(
+      def combine(oldState: DataState, updates: List[Signed[DataUpdate]])(
         implicit context: L1NodeContext[F]
       ): F[DataState] = base.combine(oldState, updates)
 
