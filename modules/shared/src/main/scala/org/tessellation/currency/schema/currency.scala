@@ -66,6 +66,17 @@ object currency {
   }
 
   @derive(eqv, show, encoder, decoder)
+  case class DataApplicationPart(
+    onChainState: Array[Byte],
+    blocks: List[Array[Byte]],
+    calculatedStateProof: Hash
+  )
+
+  object DataApplicationPart {
+    def empty: DataApplicationPart = DataApplicationPart(Array.empty, List.empty, Hash.empty)
+  }
+
+  @derive(eqv, show, encoder, decoder)
   case class CurrencySnapshot(
     ordinal: SnapshotOrdinal,
     height: Height,
@@ -76,7 +87,7 @@ object currency {
     tips: SnapshotTips,
     info: CurrencySnapshotInfo,
     epochProgress: EpochProgress,
-    data: Option[Array[Byte]] = None,
+    dataApplication: Option[DataApplicationPart] = None,
     version: SnapshotVersion = SnapshotVersion("0.0.1")
   ) extends FullSnapshot[CurrencySnapshotStateProof, CurrencySnapshotInfo]
 
@@ -91,7 +102,7 @@ object currency {
     tips: SnapshotTips,
     stateProof: CurrencySnapshotStateProof,
     epochProgress: EpochProgress,
-    data: Option[Array[Byte]] = None,
+    dataApplication: Option[DataApplicationPart] = None,
     version: SnapshotVersion = SnapshotVersion("0.0.1")
   ) extends IncrementalSnapshot[CurrencySnapshotStateProof]
 
@@ -107,13 +118,15 @@ object currency {
           snapshot.rewards,
           snapshot.tips,
           stateProof,
-          snapshot.epochProgress
+          snapshot.epochProgress,
+          snapshot.dataApplication,
+          snapshot.version
         )
       }
   }
 
   object CurrencySnapshot {
-    def mkGenesis(balances: Map[Address, Balance], dataApplication: Option[Array[Byte]]): CurrencySnapshot =
+    def mkGenesis(balances: Map[Address, Balance], dataApplicationPart: Option[DataApplicationPart]): CurrencySnapshot =
       CurrencySnapshot(
         SnapshotOrdinal.MinValue,
         Height.MinValue,
@@ -124,7 +137,7 @@ object currency {
         SnapshotTips(SortedSet.empty, mkActiveTips(8)),
         CurrencySnapshotInfo(SortedMap.empty, SortedMap.from(balances)),
         EpochProgress.MinValue,
-        dataApplication
+        dataApplicationPart
       )
 
     def mkFirstIncrementalSnapshot[F[_]: MonadThrow: KryoSerializer](genesis: Hashed[CurrencySnapshot]): F[CurrencyIncrementalSnapshot] =
@@ -139,7 +152,8 @@ object currency {
           genesis.tips,
           stateProof,
           genesis.epochProgress,
-          genesis.data
+          genesis.dataApplication,
+          genesis.version
         )
       }
 

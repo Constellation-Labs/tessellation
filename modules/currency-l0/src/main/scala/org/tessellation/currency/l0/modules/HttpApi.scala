@@ -83,7 +83,10 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
   private val registrationRoutes = RegistrationRoutes[F](services.cluster)
   private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip)
   private val currencyBlockRoutes = CurrencyBlockRoutes[F](mkCell)
-  private val dataBlockRoutes = maybeDataApplication.map(_.dataDecoder).map(implicit decoder => DataBlockRoutes[F](mkCell))
+  private val dataBlockRoutes = maybeDataApplication.map { da =>
+    implicit val (d, e) = (da.dataDecoder, da.calculatedStateEncoder)
+    DataBlockRoutes[F](mkCell, da)
+  }
   private val walletRoutes = WalletRoutes[F, CurrencyIncrementalSnapshot]("/currency", services.address)
 
   private val consensusInfoRoutes = new ConsensusInfoRoutes[F, SnapshotOrdinal](services.cluster, services.consensus.storage, selfId)
@@ -137,7 +140,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
                 nodeRoutes.p2pRoutes <+>
                 gossipRoutes.p2pRoutes <+>
                 healthcheckP2PRoutes <+>
-                consensusRoutes
+                consensusRoutes <+>
+                dataBlockRoutes.map(_.p2pRoutes).getOrElse(HttpRoutes.empty)
             )
           )
         )

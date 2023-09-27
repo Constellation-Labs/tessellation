@@ -16,6 +16,7 @@ import cats.syntax.show._
 import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
 
+import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, DataCalculatedState, L0NodeContext}
 import org.tessellation.currency.l0.http.p2p.P2PClient
 import org.tessellation.currency.l0.node.IdentifierStorage
 import org.tessellation.currency.schema.currency._
@@ -47,8 +48,9 @@ object Download {
     nodeStorage: NodeStorage[F],
     consensus: SnapshotConsensus[F, CurrencyIncrementalSnapshot, CurrencySnapshotContext, _],
     peerSelect: PeerSelect[F],
-    identifierStorage: IdentifierStorage[F]
-  ): Download[F] = new Download[F] {
+    identifierStorage: IdentifierStorage[F],
+    maybeDataApplication: Option[BaseDataApplicationL0Service[F]]
+  )(implicit l0NodeContext: L0NodeContext[F]): Download[F] = new Download[F] {
 
     val logger = Slf4jLogger.getLogger[F]
 
@@ -65,8 +67,31 @@ object Download {
         .flatMap { result =>
           val ((snapshot, context), observationLimit) = result
 
-          identifierStorage.get.flatMap { currencyAddress =>
-            consensus.manager.startFacilitatingAfterDownload(observationLimit, snapshot, CurrencySnapshotContext(currencyAddress, context))
+          def setCalculatedState = maybeDataApplication.map { da =>
+            implicit val d = da.calculatedStateDecoder
+
+            clusterStorage.getResponsivePeers
+              .map(NodeState.ready)
+              .map(_.toList)
+              .flatMap(Random[F].shuffleList)
+              .flatMap {
+                case Nil => (new Exception(s"No peers to fetch off-chain state from")).raiseError[F, (SnapshotOrdinal, DataCalculatedState)]
+                case peer :: _ => p2pClient.dataApplication.getCalculatedState.run(peer)
+              }
+              .flatTap {
+                case (_, calculatedState) =>
+                  da.hashCalculatedState(calculatedState).flatMap { calculatedStateHash =>
+                    (new Exception(s"Downloaded calculated state does not match the proof stored in snapshot")
+                      .raiseError[F, Unit])
+                      .unlessA(snapshot.dataApplication.map(_.calculatedStateProof) === calculatedStateHash.some)
+                  }
+              }
+              .flatMap { case (ordinal, calculatedState) => da.setCalculatedState(ordinal, calculatedState) }
+          }.getOrElse(Applicative[F].unit)
+
+          setCalculatedState >> identifierStorage.get.flatMap { currencyAddress =>
+            consensus.manager
+              .startFacilitatingAfterDownload(observationLimit, snapshot, CurrencySnapshotContext(currencyAddress, context))
           }
         }
 

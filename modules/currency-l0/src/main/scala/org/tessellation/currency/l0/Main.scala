@@ -5,7 +5,7 @@ import java.util.UUID
 import cats.effect.IO
 
 import org.tessellation.BuildInfo
-import org.tessellation.currency.dataApplication.BaseDataApplicationL0Service
+import org.tessellation.currency.dataApplication._
 import org.tessellation.currency.schema.currency._
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.sdk.domain.rewards.Rewards

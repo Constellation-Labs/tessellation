@@ -5,6 +5,7 @@ import java.security.KeyPair
 import cats.effect.Async
 import cats.effect.std.Random
 
+import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
 import org.tessellation.currency.l0.http.p2p.P2PClient
 import org.tessellation.currency.l0.snapshot.programs.{Download, Genesis, Rollback}
 import org.tessellation.kryo.KryoSerializer
@@ -27,8 +28,9 @@ object Programs {
     storages: Storages[F],
     services: Services[F],
     p2pClient: P2PClient[F],
-    currencySnapshotContextFns: CurrencySnapshotContextFunctions[F]
-  ): Programs[F] = {
+    currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
+    dataApplication: Option[BaseDataApplicationL0Service[F]]
+  )(implicit context: L0NodeContext[F]): Programs[F] = {
     val peerSelect: PeerSelect[F] =
       PeerSelect.make(
         storages.cluster,
@@ -43,7 +45,8 @@ object Programs {
         storages.node,
         services.consensus,
         peerSelect,
-        storages.identifier
+        storages.identifier,
+        dataApplication
       )
 
     val globalL0PeerDiscovery = L0PeerDiscovery.make(
@@ -74,7 +77,8 @@ object Programs {
       storages.lastBinaryHash,
       storages.snapshot,
       services.collateral,
-      services.consensus.manager
+      services.consensus.manager,
+      dataApplication
     )
 
     new Programs[F](sdkPrograms.peerDiscovery, globalL0PeerDiscovery, sdkPrograms.joining, download, genesis, rollback) {}
