@@ -9,8 +9,8 @@ import scala.util.control.NoStackTrace
 
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import org.tessellation.http.routes.internal.ExternalUrlPrefix
-import org.tessellation.schema.GlobalIncrementalSnapshot
 import org.tessellation.schema.round.RoundId
+import org.tessellation.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Encodable, Hashed, SecurityProvider}
@@ -22,10 +22,23 @@ import io.circe.syntax._
 import org.http4s._
 import org.http4s.server.Router
 
-import dataApplication.DataApplicationValidationErrorOr
+import dataApplication.{DataApplicationBlock, DataApplicationValidationErrorOr}
 
 trait DataUpdate
-trait DataState
+
+trait DataOnChainState
+trait DataCalculatedState
+
+case class DataState[A <: DataOnChainState, B <: DataCalculatedState](
+  onChain: A,
+  calculated: B
+) {
+  def asBase: DataState[DataOnChainState, DataCalculatedState] = DataState(onChain, calculated)
+}
+
+object DataState {
+  type Base = DataState[DataOnChainState, DataCalculatedState]
+}
 
 case object Noop extends DataApplicationValidationError {
   val message = "invalid update"
@@ -34,25 +47,36 @@ case object Noop extends DataApplicationValidationError {
 case object UnexpectedInput extends NoStackTrace
 
 trait BaseDataApplicationService[F[_]] {
-  def serializeState(state: DataState): F[Array[Byte]]
-  def deserializeState(bytes: Array[Byte]): F[Either[Throwable, DataState]]
+  def serializeState(state: DataOnChainState): F[Array[Byte]]
+  def deserializeState(bytes: Array[Byte]): F[Either[Throwable, DataOnChainState]]
 
   def serializeUpdate(update: DataUpdate): F[Array[Byte]]
   def deserializeUpdate(bytes: Array[Byte]): F[Either[Throwable, DataUpdate]]
+
+  def serializeBlock(block: Signed[DataApplicationBlock]): F[Array[Byte]]
+  def deserializeBlock(bytes: Array[Byte]): F[Either[Throwable, Signed[DataApplicationBlock]]]
 
   def dataEncoder: Encoder[DataUpdate]
   def dataDecoder: Decoder[DataUpdate]
 
   def signedDataEntityDecoder: EntityDecoder[F, Signed[DataUpdate]]
+
+  def calculatedStateEncoder: Encoder[DataCalculatedState]
+  def calculatedStateDecoder: Decoder[DataCalculatedState]
 }
+
 trait BaseDataApplicationContextualOps[F[_], Context] {
-  def validateData(oldState: DataState, updates: NonEmptyList[Signed[DataUpdate]])(
+  def validateData(state: DataState.Base, updates: NonEmptyList[Signed[DataUpdate]])(
     implicit context: Context
   ): F[DataApplicationValidationErrorOr[Unit]]
 
   def validateUpdate(update: DataUpdate)(implicit context: Context): F[DataApplicationValidationErrorOr[Unit]]
 
-  def combine(oldState: DataState, updates: List[Signed[DataUpdate]])(implicit context: Context): F[DataState]
+  def combine(state: DataState.Base, updates: List[Signed[DataUpdate]])(implicit context: Context): F[DataState.Base]
+
+  def getCalculatedState(implicit context: Context): F[(SnapshotOrdinal, DataCalculatedState)]
+  def setCalculatedState(ordinal: SnapshotOrdinal, state: DataCalculatedState)(implicit context: Context): F[Boolean]
+  def hashCalculatedState(state: DataCalculatedState)(implicit context: Context): F[Hash]
 
   def routes(implicit context: Context): HttpRoutes[F]
 
@@ -61,71 +85,81 @@ trait BaseDataApplicationContextualOps[F[_], Context] {
 
 trait BaseDataApplicationL0Service[F[_]] extends BaseDataApplicationService[F] with BaseDataApplicationContextualOps[F, L0NodeContext[F]] {
 
-  def genesis: DataState
+  def genesis: DataState.Base
 
-  final def serializedGenesis: F[Array[Byte]] = serializeState(genesis)
+  final def serializedOnChainGenesis: F[Array[Byte]] = serializeState(genesis.onChain)
 }
 
-trait BaseDataApplicationL1Service[F[_]]
-    extends BaseDataApplicationService[F]
-    with BaseDataApplicationContextualOps[
-      F,
-      L1NodeContext[F]
-    ]
+trait BaseDataApplicationL1Service[F[_]] extends BaseDataApplicationService[F] with BaseDataApplicationContextualOps[F, L1NodeContext[F]]
 
-trait DataApplicationService[F[_], D <: DataUpdate, S <: DataState] {
-
-  def serializeState(state: S): F[Array[Byte]]
-  def deserializeState(bytes: Array[Byte]): F[Either[Throwable, S]]
+trait DataApplicationService[F[_], D <: DataUpdate, DON <: DataOnChainState, DOF <: DataCalculatedState] {
+  def serializeState(state: DON): F[Array[Byte]]
+  def deserializeState(bytes: Array[Byte]): F[Either[Throwable, DON]]
 
   def serializeUpdate(update: D): F[Array[Byte]]
   def deserializeUpdate(bytes: Array[Byte]): F[Either[Throwable, D]]
+
+  def serializeBlock(block: Signed[DataApplicationBlock]): F[Array[Byte]]
+  def deserializeBlock(bytes: Array[Byte]): F[Either[Throwable, Signed[DataApplicationBlock]]]
 
   def dataEncoder: Encoder[D]
   def dataDecoder: Decoder[D]
 
   def signedDataEntityDecoder: EntityDecoder[F, Signed[D]]
 
+  def calculatedStateEncoder: Encoder[DOF]
+  def calculatedStateDecoder: Decoder[DOF]
 }
 
-trait DataApplicationContextualOps[F[_], D <: DataUpdate, S <: DataState, Context] {
-  def validateData(oldState: S, updates: NonEmptyList[Signed[D]])(
+trait DataApplicationContextualOps[F[_], D <: DataUpdate, DON <: DataOnChainState, DOF <: DataCalculatedState, Context] {
+  def validateData(state: DataState[DON, DOF], updates: NonEmptyList[Signed[D]])(
     implicit context: Context
   ): F[DataApplicationValidationErrorOr[Unit]]
 
   def validateUpdate(update: D)(implicit context: Context): F[DataApplicationValidationErrorOr[Unit]]
 
-  def combine(oldState: S, updates: List[Signed[D]])(implicit context: Context): F[S]
+  def combine(state: DataState[DON, DOF], updates: List[Signed[D]])(implicit context: Context): F[DataState[DON, DOF]]
+
+  def getCalculatedState(implicit context: Context): F[(SnapshotOrdinal, DOF)]
+
+  def setCalculatedState(ordinal: SnapshotOrdinal, state: DOF)(implicit context: Context): F[Boolean]
+
+  def hashCalculatedState(state: DOF)(implicit context: Context): F[Hash]
 
   def routes(implicit context: Context): HttpRoutes[F]
 
   def routesPrefix: ExternalUrlPrefix = "/data-application"
 }
 
-trait DataApplicationL0Service[F[_], D <: DataUpdate, S <: DataState]
-    extends DataApplicationService[F, D, S]
-    with DataApplicationContextualOps[F, D, S, L0NodeContext[F]] {
-  def genesis: S
+trait DataApplicationL0Service[F[_], D <: DataUpdate, DON <: DataOnChainState, DOF <: DataCalculatedState]
+    extends DataApplicationService[F, D, DON, DOF]
+    with DataApplicationContextualOps[F, D, DON, DOF, L0NodeContext[F]] {
+  def genesis: DataState[DON, DOF]
 }
 
-trait DataApplicationL1Service[F[_], D <: DataUpdate, S <: DataState]
-    extends DataApplicationService[F, D, S]
-    with DataApplicationContextualOps[F, D, S, L1NodeContext[F]]
+trait DataApplicationL1Service[F[_], D <: DataUpdate, DON <: DataOnChainState, DOF <: DataCalculatedState]
+    extends DataApplicationService[F, D, DON, DOF]
+    with DataApplicationContextualOps[F, D, DON, DOF, L1NodeContext[F]]
 
 object BaseDataApplicationContextualOps {
-  def apply[F[_], D <: DataUpdate, S <: DataState, Context](
-    service: DataApplicationContextualOps[F, D, S, Context]
-  )(implicit d: ClassTag[D], s: ClassTag[S], monadThrow: MonadThrow[F]): BaseDataApplicationContextualOps[F, Context] =
+  def apply[F[_], D <: DataUpdate, DON <: DataOnChainState, DOF <: DataCalculatedState, Context](
+    service: DataApplicationContextualOps[F, D, DON, DOF, Context]
+  )(
+    implicit d: ClassTag[D],
+    don: ClassTag[DON],
+    dof: ClassTag[DOF],
+    monadThrow: MonadThrow[F]
+  ): BaseDataApplicationContextualOps[F, Context] =
     new BaseDataApplicationContextualOps[F, Context] {
       def allKnown(updates: List[Signed[DataUpdate]]): Boolean =
         updates.map(_.value).forall { case _: D => true; case _ => false }
 
-      def validateData(oldState: DataState, updates: NonEmptyList[Signed[DataUpdate]])(
+      def validateData(state: DataState.Base, updates: NonEmptyList[Signed[DataUpdate]])(
         implicit context: Context
       ): F[DataApplicationValidationErrorOr[Unit]] =
-        oldState match {
-          case s: S if allKnown(updates.toList) =>
-            service.validateData(s, updates.asInstanceOf[NonEmptyList[Signed[D]]])
+        (state.onChain, state.calculated) match {
+          case (on: DON, off: DOF) if allKnown(updates.toList) =>
+            service.validateData(DataState(on, off), updates.asInstanceOf[NonEmptyList[Signed[D]]])
           case _ => Validated.invalidNec[DataApplicationValidationError, Unit](Noop).pure[F]
         }
 
@@ -135,11 +169,28 @@ object BaseDataApplicationContextualOps {
           case _    => Validated.invalidNec[DataApplicationValidationError, Unit](Noop).pure[F]
         }
 
-      def combine(oldState: DataState, updates: List[Signed[DataUpdate]])(implicit context: Context): F[DataState] =
-        oldState match {
-          case state: S if allKnown(updates) =>
-            service.combine(state, updates.asInstanceOf[List[Signed[D]]]).widen[DataState]
-          case a => a.pure[F]
+      def combine(state: DataState.Base, updates: List[Signed[DataUpdate]])(
+        implicit context: Context
+      ): F[DataState.Base] =
+        (state.onChain, state.calculated) match {
+          case (on: DON, off: DOF) if allKnown(updates) =>
+            service.combine(DataState(on, off), updates.asInstanceOf[List[Signed[D]]]).map(_.asBase)
+          case (_, _) => UnexpectedInput.raiseError[F, DataState.Base]
+        }
+
+      def getCalculatedState(implicit context: Context): F[(SnapshotOrdinal, DataCalculatedState)] =
+        service.getCalculatedState.widen[(SnapshotOrdinal, DataCalculatedState)]
+
+      def setCalculatedState(ordinal: SnapshotOrdinal, state: DataCalculatedState)(implicit context: Context): F[Boolean] =
+        state match {
+          case s: DOF => service.setCalculatedState(ordinal, s)
+          case _      => UnexpectedInput.raiseError[F, Boolean]
+        }
+
+      def hashCalculatedState(state: DataCalculatedState)(implicit context: Context): F[Hash] =
+        state match {
+          case s: DOF => service.hashCalculatedState(s)
+          case _      => UnexpectedInput.raiseError[F, Hash]
         }
 
       def routes(implicit context: Context): HttpRoutes[F] = service.routes
@@ -149,37 +200,54 @@ object BaseDataApplicationContextualOps {
 }
 
 object BaseDataApplicationService {
-  def apply[F[_], D <: DataUpdate, S <: DataState, Context](
-    service: DataApplicationService[F, D, S],
-    validation: DataApplicationContextualOps[F, D, S, Context]
+  def apply[F[_], D <: DataUpdate, DON <: DataOnChainState, DOF <: DataCalculatedState, Context](
+    service: DataApplicationService[F, D, DON, DOF],
+    validation: DataApplicationContextualOps[F, D, DON, DOF, Context]
   )(
     implicit d: ClassTag[D],
-    s: ClassTag[S],
+    don: ClassTag[DON],
+    dof: ClassTag[DOF],
     monadThrow: MonadThrow[F]
   ): BaseDataApplicationService[F] with BaseDataApplicationContextualOps[F, Context] =
     new BaseDataApplicationService[F] with BaseDataApplicationContextualOps[F, Context] {
 
-      val v = BaseDataApplicationContextualOps[F, D, S, Context](validation)
+      val v = BaseDataApplicationContextualOps[F, D, DON, DOF, Context](validation)
 
-      def validateData(oldState: DataState, updates: NonEmptyList[Signed[DataUpdate]])(
+      def validateData(state: DataState.Base, updates: NonEmptyList[Signed[DataUpdate]])(
         implicit context: Context
       ): F[DataApplicationValidationErrorOr[Unit]] =
-        v.validateData(oldState, updates)
+        v.validateData(state, updates)
 
       def validateUpdate(update: DataUpdate)(implicit context: Context): F[DataApplicationValidationErrorOr[Unit]] =
         v.validateUpdate(update)
 
-      def combine(oldState: DataState, updates: List[Signed[DataUpdate]])(implicit context: Context): F[DataState] =
-        v.combine(oldState, updates)
+      def combine(state: DataState.Base, updates: List[Signed[DataUpdate]])(
+        implicit context: Context
+      ): F[DataState.Base] =
+        v.combine(state, updates)
 
-      def serializeState(state: DataState): F[Array[Byte]] =
+      def getCalculatedState(implicit context: Context): F[(SnapshotOrdinal, DataCalculatedState)] = v.getCalculatedState
+
+      def setCalculatedState(ordinal: SnapshotOrdinal, state: DataCalculatedState)(implicit context: Context): F[Boolean] =
+        v.setCalculatedState(ordinal, state)
+
+      def hashCalculatedState(state: DataCalculatedState)(implicit context: Context): F[Hash] =
+        v.hashCalculatedState(state)
+
+      def serializeBlock(block: Signed[DataApplicationBlock]): F[Array[Byte]] =
+        service.serializeBlock(block)
+
+      def deserializeBlock(bytes: Array[Byte]): F[Either[Throwable, Signed[DataApplicationBlock]]] =
+        service.deserializeBlock(bytes)
+
+      def serializeState(state: DataOnChainState): F[Array[Byte]] =
         state match {
-          case s: S => service.serializeState(s)
-          case _    => UnexpectedInput.raiseError[F, Array[Byte]]
+          case on: DON => service.serializeState(on)
+          case _       => UnexpectedInput.raiseError[F, Array[Byte]]
         }
 
-      def deserializeState(bytes: Array[Byte]): F[Either[Throwable, DataState]] =
-        service.deserializeState(bytes).map(_.widen[DataState])
+      def deserializeState(bytes: Array[Byte]): F[Either[Throwable, DataOnChainState]] =
+        service.deserializeState(bytes).map(_.widen[DataOnChainState])
 
       def serializeUpdate(update: DataUpdate): F[Array[Byte]] =
         update match {
@@ -202,6 +270,15 @@ object BaseDataApplicationService {
       def signedDataEntityDecoder: EntityDecoder[F, Signed[DataUpdate]] =
         service.signedDataEntityDecoder.widen[Signed[DataUpdate]]
 
+      def calculatedStateEncoder: Encoder[DataCalculatedState] = new Encoder[DataCalculatedState] {
+        final def apply(a: DataCalculatedState): Json = a match {
+          case data: DOF => data.asJson(service.calculatedStateEncoder)
+          case _         => Json.Null
+        }
+      }
+
+      def calculatedStateDecoder: Decoder[DataCalculatedState] = service.calculatedStateDecoder.widen[DataCalculatedState]
+
       def routes(implicit context: Context): HttpRoutes[F] = v.routes
 
       def routesPrefix: ExternalUrlPrefix = v.routesPrefix
@@ -209,20 +286,24 @@ object BaseDataApplicationService {
 }
 
 object BaseDataApplicationL0Service {
-  def apply[F[_], D <: DataUpdate, S <: DataState](
-    service: DataApplicationL0Service[F, D, S]
-  )(implicit d: ClassTag[D], s: ClassTag[S], monadThrow: MonadThrow[F]): BaseDataApplicationL0Service[F] = {
-    val base = BaseDataApplicationService.apply[F, D, S, L0NodeContext[F]](service, service)
+  def apply[F[_], D <: DataUpdate, DON <: DataOnChainState, DOF <: DataCalculatedState](
+    service: DataApplicationL0Service[F, D, DON, DOF]
+  )(implicit d: ClassTag[D], don: ClassTag[DON], dof: ClassTag[DOF], monadThrow: MonadThrow[F]): BaseDataApplicationL0Service[F] = {
+    val base = BaseDataApplicationService.apply[F, D, DON, DOF, L0NodeContext[F]](service, service)
 
     new BaseDataApplicationL0Service[F] {
 
-      def serializeState(state: DataState): F[Array[Byte]] = base.serializeState(state)
+      def serializeState(state: DataOnChainState): F[Array[Byte]] = base.serializeState(state)
 
-      def deserializeState(bytes: Array[Byte]): F[Either[Throwable, DataState]] = base.deserializeState(bytes)
+      def deserializeState(bytes: Array[Byte]): F[Either[Throwable, DataOnChainState]] = base.deserializeState(bytes)
 
       def serializeUpdate(update: DataUpdate): F[Array[Byte]] = base.serializeUpdate(update)
 
       def deserializeUpdate(bytes: Array[Byte]): F[Either[Throwable, DataUpdate]] = base.deserializeUpdate(bytes)
+
+      def serializeBlock(block: Signed[DataApplicationBlock]): F[Array[Byte]] = base.serializeBlock(block)
+
+      def deserializeBlock(bytes: Array[Byte]): F[Either[Throwable, Signed[DataApplicationBlock]]] = base.deserializeBlock(bytes)
 
       def dataEncoder: Encoder[DataUpdate] = base.dataEncoder
 
@@ -230,42 +311,60 @@ object BaseDataApplicationL0Service {
 
       def signedDataEntityDecoder: EntityDecoder[F, Signed[DataUpdate]] = base.signedDataEntityDecoder
 
-      def genesis: DataState = service.genesis
+      def genesis: DataState.Base = service.genesis.asBase
 
       def routes(implicit context: L0NodeContext[F]): HttpRoutes[F] = base.routes
 
-      def validateData(oldState: DataState, updates: NonEmptyList[Signed[DataUpdate]])(
+      def validateData(state: DataState.Base, updates: NonEmptyList[Signed[DataUpdate]])(
         implicit context: L0NodeContext[F]
-      ): F[DataApplicationValidationErrorOr[Unit]] = base.validateData(oldState, updates)
+      ): F[DataApplicationValidationErrorOr[Unit]] = base.validateData(state, updates)
 
       def validateUpdate(update: DataUpdate)(implicit context: L0NodeContext[F]): F[DataApplicationValidationErrorOr[Unit]] =
         base.validateUpdate(update)
 
-      def combine(oldState: DataState, updates: List[Signed[DataUpdate]])(
+      def combine(state: DataState.Base, updates: List[Signed[DataUpdate]])(
         implicit context: L0NodeContext[F]
-      ): F[DataState] =
-        base.combine(oldState, updates)
+      ): F[DataState.Base] =
+        base.combine(state, updates)
+
+      def getCalculatedState(implicit context: L0NodeContext[F]): F[(SnapshotOrdinal, DataCalculatedState)] =
+        base.getCalculatedState
+
+      def setCalculatedState(ordinal: SnapshotOrdinal, state: DataCalculatedState)(implicit context: L0NodeContext[F]): F[Boolean] =
+        base.setCalculatedState(ordinal, state)
+
+      def hashCalculatedState(state: DataCalculatedState)(implicit context: L0NodeContext[F]): F[Hash] =
+        base.hashCalculatedState(state)
+
+      def calculatedStateDecoder: Decoder[DataCalculatedState] = base.calculatedStateDecoder
+
+      def calculatedStateEncoder: Encoder[DataCalculatedState] = base.calculatedStateEncoder
 
       def routesPrefix: ExternalUrlPrefix = base.routesPrefix
+
     }
   }
 }
 
 object BaseDataApplicationL1Service {
-  def apply[F[+_], D <: DataUpdate, S <: DataState](
-    service: DataApplicationL1Service[F, D, S]
-  )(implicit d: ClassTag[D], s: ClassTag[S], monadThrow: MonadThrow[F]): BaseDataApplicationL1Service[F] = {
-    val base = BaseDataApplicationService.apply[F, D, S, L1NodeContext[F]](service, service)
+  def apply[F[+_], D <: DataUpdate, DON <: DataOnChainState, DOF <: DataCalculatedState](
+    service: DataApplicationL1Service[F, D, DON, DOF]
+  )(implicit d: ClassTag[D], don: ClassTag[DON], dof: ClassTag[DOF], monadThrow: MonadThrow[F]): BaseDataApplicationL1Service[F] = {
+    val base = BaseDataApplicationService.apply[F, D, DON, DOF, L1NodeContext[F]](service, service)
 
     new BaseDataApplicationL1Service[F] {
 
-      def serializeState(state: DataState): F[Array[Byte]] = base.serializeState(state)
+      def serializeState(state: DataOnChainState): F[Array[Byte]] = base.serializeState(state)
 
-      def deserializeState(bytes: Array[Byte]): F[Either[Throwable, DataState]] = base.deserializeState(bytes)
+      def deserializeState(bytes: Array[Byte]): F[Either[Throwable, DataOnChainState]] = base.deserializeState(bytes)
 
       def serializeUpdate(update: DataUpdate): F[Array[Byte]] = base.serializeUpdate(update)
 
       def deserializeUpdate(bytes: Array[Byte]): F[Either[Throwable, DataUpdate]] = base.deserializeUpdate(bytes)
+
+      def serializeBlock(block: Signed[DataApplicationBlock]): F[Array[Byte]] = base.serializeBlock(block)
+
+      def deserializeBlock(bytes: Array[Byte]): F[Either[Throwable, Signed[DataApplicationBlock]]] = base.deserializeBlock(bytes)
 
       def dataEncoder: Encoder[DataUpdate] = base.dataEncoder
 
@@ -275,18 +374,31 @@ object BaseDataApplicationL1Service {
 
       def routes(implicit context: L1NodeContext[F]): HttpRoutes[F] = base.routes
 
-      def validateData(oldState: DataState, updates: NonEmptyList[Signed[DataUpdate]])(
+      def validateData(state: DataState.Base, updates: NonEmptyList[Signed[DataUpdate]])(
         implicit context: L1NodeContext[F]
-      ): F[DataApplicationValidationErrorOr[Unit]] = base.validateData(oldState, updates)
+      ): F[DataApplicationValidationErrorOr[Unit]] = base.validateData(state, updates)
 
       def validateUpdate(update: DataUpdate)(
         implicit context: L1NodeContext[F]
       ): F[DataApplicationValidationErrorOr[Unit]] =
         base.validateUpdate(update)
 
-      def combine(oldState: DataState, updates: List[Signed[DataUpdate]])(
+      def combine(state: DataState.Base, updates: List[Signed[DataUpdate]])(
         implicit context: L1NodeContext[F]
-      ): F[DataState] = base.combine(oldState, updates)
+      ): F[DataState.Base] = base.combine(state, updates)
+
+      def getCalculatedState(implicit context: L1NodeContext[F]): F[(SnapshotOrdinal, DataCalculatedState)] =
+        base.getCalculatedState
+
+      def setCalculatedState(ordinal: SnapshotOrdinal, state: DataCalculatedState)(implicit context: L1NodeContext[F]): F[Boolean] =
+        base.setCalculatedState(ordinal, state)
+
+      def hashCalculatedState(state: DataCalculatedState)(implicit context: L1NodeContext[F]): F[Hash] =
+        base.hashCalculatedState(state)
+
+      def calculatedStateDecoder: Decoder[DataCalculatedState] = base.calculatedStateDecoder
+
+      def calculatedStateEncoder: Encoder[DataCalculatedState] = base.calculatedStateEncoder
 
       def routesPrefix: ExternalUrlPrefix = base.routesPrefix
     }

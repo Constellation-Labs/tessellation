@@ -6,8 +6,8 @@ import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import org.tessellation.currency.dataApplication.BaseDataApplicationService
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
+import org.tessellation.currency.dataApplication.{BaseDataApplicationService, DataCalculatedState}
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.cats.syntax.validated.validatedSyntax
 import org.tessellation.kryo.KryoSerializer
@@ -82,7 +82,16 @@ object CurrencySnapshotValidator {
       lastContext: CurrencySnapshotContext,
       expected: CurrencySnapshotArtifact
     ): F[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult]] = {
-      val events: Set[CurrencySnapshotEvent] = expected.blocks.unsorted.map(_.block.asLeft[Signed[DataApplicationBlock]])
+      def dataApplicationBlocks = maybeDataApplication.flatTraverse { service =>
+        expected.dataApplication.map(_.blocks).traverse {
+          _.traverse(b => service.deserializeBlock(b))
+        }
+      }.map(_.map(_.flatMap(_.toOption)))
+        .map(_.getOrElse(List.empty))
+
+      def mkEvents: F[Set[CurrencySnapshotEvent]] = dataApplicationBlocks
+        .map(_.map(_.asRight[Signed[Block]]))
+        .map(_.toSet ++ expected.blocks.unsorted.map(_.block.asLeft[Signed[DataApplicationBlock]]))
 
       // Rewrite if implementation not provided
       val rewards = maybeRewards.orElse(Some {
@@ -92,27 +101,31 @@ object CurrencySnapshotValidator {
             lastBalances: SortedMap[address.Address, balance.Balance],
             acceptedTransactions: SortedSet[Signed[transaction.Transaction]],
             trigger: ConsensusTrigger,
-            events: Set[CurrencySnapshotEvent]
+            events: Set[CurrencySnapshotEvent],
+            maybeCalculatedState: Option[DataCalculatedState] = None
           ): F[SortedSet[transaction.RewardTransaction]] = expected.rewards.pure[F]
         }
       })
 
       val recreateFn = (trigger: ConsensusTrigger) =>
-        currencySnapshotCreator
-          .createProposalArtifact(lastArtifact.ordinal, lastArtifact, lastContext, trigger, events, rewards)
-          // Rewrite if implementation not provided
-          .map { creationResult =>
-            maybeDataApplication match {
-              case Some(_) => creationResult
-              case None    => creationResult.focus(_.artifact.data).replace(expected.data)
+        mkEvents.flatMap { events =>
+          currencySnapshotCreator
+            .createProposalArtifact(lastArtifact.ordinal, lastArtifact, lastContext, trigger, events, rewards)
+            // Rewrite if implementation not provided
+            .map { creationResult =>
+              maybeDataApplication match {
+                case Some(_) => creationResult
+                case None =>
+                  creationResult.focus(_.artifact.dataApplication).replace(expected.dataApplication)
+              }
             }
-          }
-          .map { creationResult =>
-            if (creationResult.artifact =!= expected)
-              SnapshotDifferentThanExpected(expected, creationResult.artifact).invalidNec
-            else
-              creationResult.validNec
-          }
+            .map { creationResult =>
+              if (creationResult.artifact =!= expected)
+                SnapshotDifferentThanExpected(expected, creationResult.artifact).invalidNec
+              else
+                creationResult.validNec
+            }
+        }
 
       recreateFn(TimeTrigger).flatMap { tV =>
         recreateFn(EventTrigger).map(_.orElse(tV))

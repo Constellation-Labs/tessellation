@@ -5,6 +5,7 @@ import cats.syntax.applicative._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
+import org.tessellation.currency.dataApplication.DataCalculatedState
 import org.tessellation.currency.schema.currency._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
@@ -21,6 +22,7 @@ object NoopRewards {
       _: SortedMap[Address, Balance],
       _: SortedSet[Signed[Transaction]],
       _: trigger.ConsensusTrigger,
-      _: Set[CurrencySnapshotEvent]
+      _: Set[CurrencySnapshotEvent],
+      _: Option[DataCalculatedState]
     ) => SortedSet.empty[RewardTransaction].pure[F]
 }

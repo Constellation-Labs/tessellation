@@ -15,6 +15,7 @@ import cats.syntax.show._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import org.tessellation.config.types.RewardsConfig
+import org.tessellation.currency.dataApplication.DataCalculatedState
 import org.tessellation.ext.refined._
 import org.tessellation.infrastructure.snapshot.GlobalSnapshotEvent
 import org.tessellation.schema.ID.Id
@@ -52,7 +53,8 @@ object Rewards {
         lastBalances: SortedMap[Address, Balance],
         acceptedTransactions: SortedSet[Signed[Transaction]],
         trigger: ConsensusTrigger,
-        events: Set[GlobalSnapshotEvent]
+        events: Set[GlobalSnapshotEvent],
+        maybeCalculatedState: Option[DataCalculatedState] = None
       ): F[SortedSet[RewardTransaction]] = {
         val facilitators = lastArtifact.proofs.map(_.id)
 

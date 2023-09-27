@@ -93,7 +93,8 @@ abstract class CurrencyL0App(
         storages,
         services,
         p2pClient,
-        services.snapshotContextFunctions
+        services.snapshotContextFunctions,
+        dataApplication
       )
       healthChecks <- HealthChecks
         .make[IO](
@@ -158,7 +159,8 @@ abstract class CurrencyL0App(
               NodeState.Initial,
               NodeState.RollbackInProgress,
               NodeState.RollbackDone
-            )(programs.rollback.rollback) >> gossipDaemon.startAsInitialValidator >>
+            )(programs.rollback.rollback) >>
+            gossipDaemon.startAsInitialValidator >>
             services.cluster.createSession >>
             services.session.createSession >>
             programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
@@ -169,11 +171,8 @@ abstract class CurrencyL0App(
             NodeState.Initial,
             NodeState.LoadingGenesis,
             NodeState.GenesisReady
-          ) {
-            services.dataApplication
-              .traverse(_.serializedGenesis)
-              .flatMap(programs.genesis.accept(m.genesisPath, _))
-          } >> gossipDaemon.startAsInitialValidator >>
+          )(programs.genesis.accept(m.genesisPath, services.dataApplication)) >>
+            gossipDaemon.startAsInitialValidator >>
             services.cluster.createSession >>
             services.session.createSession >>
             programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>

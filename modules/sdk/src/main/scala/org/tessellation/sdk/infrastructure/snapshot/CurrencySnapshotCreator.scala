@@ -3,19 +3,10 @@ package org.tessellation.sdk.infrastructure.snapshot
 import cats.Applicative
 import cats.data.NonEmptyList
 import cats.effect.Async
-import cats.syntax.applicative._
-import cats.syntax.applicativeError._
-import cats.syntax.bifunctor._
-import cats.syntax.contravariantSemigroupal._
-import cats.syntax.either._
-import cats.syntax.flatMap._
-import cats.syntax.foldable._
-import cats.syntax.functor._
-import cats.syntax.option._
-import cats.syntax.order._
-import cats.syntax.traverse._
+import cats.syntax.all._
 
 import scala.collection.immutable.SortedSet
+import scala.util.control.NoStackTrace
 
 import org.tessellation.currency.dataApplication._
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
@@ -55,11 +46,28 @@ trait CurrencySnapshotCreator[F[_]] {
 }
 
 object CurrencySnapshotCreator {
+  case class CalculatedStateDoesNotMatchOrdinal(calculatedStateOrdinal: SnapshotOrdinal, expectedOrdinal: SnapshotOrdinal)
+      extends NoStackTrace {
+    override def getMessage(): String =
+      s"Calculated state ordinal=${calculatedStateOrdinal.show} does not match expected ordinal=${expectedOrdinal.show}"
+  }
+
   def make[F[_]: Async: KryoSerializer: SecurityProvider](
     currencySnapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F],
     maybeDataApplicationService: Option[(L0NodeContext[F], BaseDataApplicationL0Service[F])]
   ): CurrencySnapshotCreator[F] = new CurrencySnapshotCreator[F] {
     private val logger = Slf4jLogger.getLogger
+
+    def expectCalculatedStateOrdinal(
+      expectedOrdinal: SnapshotOrdinal
+    )(calculatedState: (SnapshotOrdinal, DataCalculatedState)): F[DataCalculatedState] =
+      calculatedState match {
+        case (ordinal, state) =>
+          CalculatedStateDoesNotMatchOrdinal(ordinal, expectedOrdinal)
+            .raiseError[F, Unit]
+            .unlessA(ordinal === expectedOrdinal)
+            .as(state)
+      }
 
     def createProposalArtifact(
       lastKey: SnapshotOrdinal,
@@ -88,9 +96,9 @@ object CurrencySnapshotCreator {
         lastActiveTips <- lastArtifact.activeTips
         lastDeprecatedTips = lastArtifact.tips.deprecated
 
-        maybeLastDataApplication = lastArtifact.data
+        maybeLastDataApplication = lastArtifact.dataApplication.map(_.onChainState)
 
-        maybeLastDataState <- (maybeLastDataApplication, maybeDataApplicationService).mapN {
+        maybeLastDataOnChainState <- (maybeLastDataApplication, maybeDataApplicationService).mapN {
           case (lastDataApplication, (_, service)) =>
             service
               .deserializeState(lastDataApplication)
@@ -101,29 +109,40 @@ object CurrencySnapshotCreator {
               .map(_.toOption)
               .handleErrorWith(err =>
                 logger.error(err)(s"Unhandled exception during deserialization data application, fallback to empty state") >>
-                  none[DataState].pure[F]
+                  none[DataOnChainState].pure[F]
               )
         }.flatSequence
 
-        maybeNewDataState <- (maybeDataApplicationService, maybeLastDataState).mapN {
-          case ((nodeContext, service), lastState) =>
+        maybeNewDataState <- (maybeDataApplicationService, maybeLastDataOnChainState).mapN {
+          case (((nodeContext, service), lastState)) =>
             implicit val context: L0NodeContext[F] = nodeContext
             NonEmptyList
               .fromList(dataBlocks.distinctBy(_.value.roundId))
               .map(_.flatMap(_.value.updates))
               .map { updates =>
-                service
-                  .validateData(lastState, updates)
+                service.getCalculatedState
+                  .flatMap(expectCalculatedStateOrdinal(lastArtifact.ordinal))
+                  .flatMap { calculatedState =>
+                    service.validateData(DataState(lastState, calculatedState), updates)
+                  }
                   .flatTap { validated =>
                     Applicative[F].unlessA(validated.isValid)(logger.warn(s"Data application is invalid, errors: ${validated.toString}"))
                   }
                   .map(_.isValid)
-                  .handleErrorWith(logger.error(_)(s"Unhandled exception during validating data application, assumed as invalid").as(false))
+                  .handleErrorWith(err =>
+                    logger.error(err)(s"Unhandled exception during validating data application, assumed as invalid").as(false)
+                  )
                   .ifF(updates.toList, List.empty[Signed[DataUpdate]])
               }
               .getOrElse(List.empty[Signed[DataUpdate]].pure[F])
-              .flatMap(service.combine(lastState, _))
-              .flatMap(service.serializeState)
+              .flatMap { updates =>
+                service.getCalculatedState
+                  .flatMap(expectCalculatedStateOrdinal(lastArtifact.ordinal))
+                  .map(DataState(lastState, _))
+                  .flatMap(service.combine(_, updates))
+                  .flatTap(state => service.setCalculatedState(currentOrdinal, state.calculated))
+                  .flatMap(state => service.serializeState(state.onChain))
+              }
               .map(_.some)
               .handleErrorWith(err =>
                 logger
@@ -134,6 +153,14 @@ object CurrencySnapshotCreator {
               )
         }.flatSequence
 
+        maybeCalculatedState <- maybeDataApplicationService.traverse {
+          case (nodeContext, service) =>
+            implicit val context = nodeContext
+
+            service.getCalculatedState
+              .flatMap(expectCalculatedStateOrdinal(currentOrdinal))
+        }
+
         (acceptanceResult, acceptedRewardTxs, snapshotInfo, stateProof) <- currencySnapshotAcceptanceManager.accept(
           blocksForAcceptance,
           lastContext,
@@ -141,7 +168,7 @@ object CurrencySnapshotCreator {
           lastDeprecatedTips,
           transactions =>
             rewards
-              .map(_.distribute(lastArtifact, lastContext.snapshotInfo.balances, transactions, trigger, events))
+              .map(_.distribute(lastArtifact, lastContext.snapshotInfo.balances, transactions, trigger, events, maybeCalculatedState))
               .getOrElse(SortedSet.empty[RewardTransaction].pure[F])
         )
 
@@ -159,6 +186,22 @@ object CurrencySnapshotCreator {
 
         (height, subHeight) <- getHeightAndSubHeight(lastArtifact, deprecated, remainedActive, accepted)
 
+        maybeSerializedDataBlocks <- maybeDataApplicationService.traverse {
+          case (_, service) =>
+            dataBlocks.traverse(service.serializeBlock)
+        }
+
+        maybeCalculatedStateHash <- (maybeDataApplicationService, maybeCalculatedState).traverseN {
+          case ((context, service), calculatedState) =>
+            implicit val c = context
+
+            service.hashCalculatedState(calculatedState)
+        }
+
+        maybeDataApplicationPart = (maybeNewDataState, maybeSerializedDataBlocks, maybeCalculatedStateHash).mapN {
+          DataApplicationPart(_, _, _)
+        }
+
         artifact = CurrencyIncrementalSnapshot(
           currentOrdinal,
           height,
@@ -172,7 +215,7 @@ object CurrencySnapshotCreator {
           ),
           stateProof,
           currentEpochProgress,
-          maybeNewDataState
+          maybeDataApplicationPart
         )
       } yield
         CurrencySnapshotCreationResult(

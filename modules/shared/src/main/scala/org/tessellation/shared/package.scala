@@ -95,7 +95,8 @@ package object shared {
     classOf[ProofEntry] -> 627,
     classOf[GlobalSnapshotStateProof] -> 628,
     classOf[CurrencySnapshotStateProof] -> 629,
-    classOf[StateProof] -> 630
+    classOf[StateProof] -> 630,
+    classOf[DataApplicationPart] -> 631
   )
 
 }
