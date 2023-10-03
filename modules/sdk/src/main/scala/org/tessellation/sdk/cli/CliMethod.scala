@@ -12,35 +12,18 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.sdk.PriorityPeerIds
 import org.tessellation.sdk.config.types._
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.all.PosLong
 import fs2.io.file.Path
 
-trait CliMethod {
-
-  val keyStore: StorePath
-  val alias: KeyAlias
-  val password: Password
-
-  val environment: AppEnvironment
-
-  val seedlistPath: Option[SeedListPath]
-
-  val l0SeedlistPath: Option[SeedListPath]
-
-  val prioritySeedlistPath: Option[SeedListPath]
-
-  val stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]]
-
-  val trustRatingsPath: Option[Path]
-
-  val httpConfig: HttpConfig
-
-  val stateAfterJoining: NodeState
-
-  val collateralAmount: Option[Amount]
+object CliMethod {
+  val snapshotSizeConfig: SnapshotSizeConfig = SnapshotSizeConfig(
+    singleSignatureSizeInBytes = 296L,
+    maxStateChannelSnapshotBinarySizeInBytes = PosLong(512_000L)
+  )
 
   val collateralConfig = (environment: AppEnvironment, amount: Option[Amount]) =>
     CollateralConfig(
@@ -89,10 +72,43 @@ trait CliMethod {
       ensureCheckInterval = 10.seconds
     )
   )
-  val snapshotSizeConfig: SnapshotSizeConfig = SnapshotSizeConfig(
-    maxSignaturesSizeInBytes = 102_400L,
-    maxStateChannelSnapshotBinarySizeInBytes = PosLong.unsafeFrom(512_000L)
-  )
+}
+
+trait CliMethod {
+
+  val keyStore: StorePath
+  val alias: KeyAlias
+  val password: Password
+
+  val environment: AppEnvironment
+
+  val seedlistPath: Option[SeedListPath]
+
+  val l0SeedlistPath: Option[SeedListPath]
+
+  val prioritySeedlistPath: Option[SeedListPath]
+
+  val stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]]
+
+  val trustRatingsPath: Option[Path]
+
+  val httpConfig: HttpConfig
+
+  val stateAfterJoining: NodeState
+
+  val collateralAmount: Option[Amount]
+
+  def healthCheckConfig(pingEnabled: Boolean): HealthCheckConfig = CliMethod.healthCheckConfig(pingEnabled)
+
+  val gossipConfig: GossipConfig = CliMethod.gossipConfig
+
+  val leavingDelay: FiniteDuration = CliMethod.leavingDelay
+
+  val collateralConfig: (AppEnvironment, Option[Amount]) => CollateralConfig = CliMethod.collateralConfig
+
+  val snapshotSizeConfig: SnapshotSizeConfig = CliMethod.snapshotSizeConfig
+
+  val trustStorageConfig: TrustStorageConfig = CliMethod.trustStorageConfig
 
   lazy val sdkConfig: SdkConfig = SdkConfig(
     environment,

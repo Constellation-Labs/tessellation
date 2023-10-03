@@ -56,12 +56,12 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
           IO.pure(failed.filter(f => f._1 == output.address).map(_._2.invalidNec).getOrElse(output.validNec))
         def validateHistorical(output: StateChannelOutput) = validate(output)
       }
-      validators = SdkValidators.make[IO](None, None, Some(stateChannelAllowanceLists))
+      validators = SdkValidators.make[IO](None, None, Some(stateChannelAllowanceLists), Long.MaxValue)
       currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
         BlockAcceptanceManager.make[IO](validators.currencyBlockValidator),
         Amount(0L)
       )
-      creator = CurrencySnapshotCreator.make[IO](currencySnapshotAcceptanceManager, None)
+      creator = CurrencySnapshotCreator.make[IO](currencySnapshotAcceptanceManager, None, SnapshotSizeConfig(Long.MaxValue, Long.MaxValue))
       currencySnapshotValidator = CurrencySnapshotValidator.make[IO](creator, validators.signedValidator, None, None)
       currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
       manager = new GlobalSnapshotStateChannelAcceptanceManager[IO] {

@@ -46,7 +46,10 @@ object generators {
     Gen.oneOf(Responsive, Unresponsive)
 
   val idGen: Gen[Id] =
-    nesGen(str => Id(Hex(str)))
+    Gen
+      .listOfN(128, Gen.alphaChar)
+      .map(_.mkString)
+      .map(str => Id(Hex(str)))
 
   val hostGen: Gen[Host] =
     for {
@@ -118,7 +121,13 @@ object generators {
       txnSalt <- transactionSaltGen
     } yield Transaction(src, dst, txnAmount, txnFee, txnReference, txnSalt)
 
-  val signatureGen: Gen[Signature] = nesGen(str => Signature(Hex(str)))
+  val signatureGen: Gen[Signature] =
+    Gen.chooseNum(140, 144).flatMap { signatureLen =>
+      Gen
+        .listOfN(signatureLen, Gen.alphaChar)
+        .map(_.mkString)
+        .map(str => Signature(Hex(str)))
+    }
 
   val signatureProofGen: Gen[SignatureProof] =
     for {

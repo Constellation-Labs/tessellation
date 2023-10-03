@@ -12,6 +12,7 @@ import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.cats.syntax.validated.validatedSyntax
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
+import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import org.tessellation.sdk.snapshot.currency.{CurrencySnapshotArtifact, CurrencySnapshotEvent}
@@ -36,7 +37,8 @@ trait CurrencySnapshotValidator[F[_]] {
   def validateSnapshot(
     lastArtifact: Signed[CurrencySnapshotArtifact],
     lastContext: CurrencySnapshotContext,
-    artifact: CurrencySnapshotArtifact
+    artifact: CurrencySnapshotArtifact,
+    facilitators: Set[PeerId]
   ): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]]
 }
 
@@ -55,7 +57,9 @@ object CurrencySnapshotValidator {
       artifact: Signed[CurrencySnapshotArtifact]
     ): F[CurrencySnapshotValidationErrorOr[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotContext)]] =
       validateSigned(artifact).flatMap { signedV =>
-        validateSnapshot(lastArtifact, lastContext, artifact).map { snapshotV =>
+        val facilitators = artifact.proofs.map(_.id).map(PeerId.fromId).toSortedSet
+
+        validateSnapshot(lastArtifact, lastContext, artifact, facilitators).map { snapshotV =>
           signedV.product(snapshotV.map { case (_, info) => info })
         }
       }
@@ -63,9 +67,10 @@ object CurrencySnapshotValidator {
     def validateSnapshot(
       lastArtifact: Signed[CurrencySnapshotArtifact],
       lastContext: CurrencySnapshotContext,
-      artifact: CurrencySnapshotArtifact
+      artifact: CurrencySnapshotArtifact,
+      facilitators: Set[PeerId]
     ): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]] = for {
-      contentV <- validateRecreateContent(lastArtifact, lastContext, artifact)
+      contentV <- validateRecreateContent(lastArtifact, lastContext, artifact, facilitators)
       blocksV <- contentV.map(validateNotAcceptedBlocks).pure[F]
     } yield
       (contentV, blocksV).mapN {
@@ -80,7 +85,8 @@ object CurrencySnapshotValidator {
     def validateRecreateContent(
       lastArtifact: Signed[CurrencySnapshotArtifact],
       lastContext: CurrencySnapshotContext,
-      expected: CurrencySnapshotArtifact
+      expected: CurrencySnapshotArtifact,
+      facilitators: Set[PeerId]
     ): F[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult]] = {
       val events: Set[CurrencySnapshotEvent] = expected.blocks.unsorted.map(_.block.asLeft[Signed[DataApplicationBlock]])
 
@@ -99,7 +105,7 @@ object CurrencySnapshotValidator {
 
       val recreateFn = (trigger: ConsensusTrigger) =>
         currencySnapshotCreator
-          .createProposalArtifact(lastArtifact.ordinal, lastArtifact, lastContext, trigger, events, rewards)
+          .createProposalArtifact(lastArtifact.ordinal, lastArtifact, lastContext, trigger, events, rewards, facilitators)
           // Rewrite if implementation not provided
           .map { creationResult =>
             maybeDataApplication match {

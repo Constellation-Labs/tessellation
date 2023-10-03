@@ -3,14 +3,14 @@ package org.tessellation.sdk.config
 import cats.data.NonEmptySet
 
 import scala.concurrent.duration.FiniteDuration
+
 import org.tessellation.cli.AppEnvironment
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.PeerId
+
 import com.comcast.ip4s.{Host, Port}
-import eu.timepit.refined.types.numeric._
-import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong}
+import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong, _}
 import fs2.io.file.Path
 
 object types {
@@ -28,11 +28,9 @@ object types {
   )
 
   case class SnapshotSizeConfig(
-    maxSignaturesSizeInBytes: PosLong,
+    singleSignatureSizeInBytes: PosLong,
     maxStateChannelSnapshotBinarySizeInBytes: PosLong
-  ) {
-    def maxProposalSizeInBytes: Long = maxStateChannelSnapshotBinarySizeInBytes - maxSignaturesSizeInBytes
-  }
+  ) {}
 
   case class RumorStorageConfig(
     peerRumorsCapacity: PosLong,

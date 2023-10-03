@@ -26,6 +26,7 @@ import org.tessellation.ext.kryo._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.height.{Height, SubHeight}
+import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.RewardTransaction
 import org.tessellation.sdk.config.types.SnapshotSizeConfig
 import org.tessellation.sdk.domain.block.processing._
@@ -37,6 +38,7 @@ import org.tessellation.security.signature.Signed
 import org.tessellation.syntax.sortedCollection.sortedSetSyntax
 
 import eu.timepit.refined.auto._
+import eu.timepit.refined.types.numeric.PosLong
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 case class CurrencySnapshotCreationResult(
@@ -53,7 +55,8 @@ trait CurrencySnapshotCreator[F[_]] {
     lastContext: CurrencySnapshotContext,
     trigger: ConsensusTrigger,
     events: Set[CurrencySnapshotEvent],
-    rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]]
+    rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
+    facilitators: Set[PeerId]
   ): F[CurrencySnapshotCreationResult]
 }
 
@@ -65,13 +68,21 @@ object CurrencySnapshotCreator {
   ): CurrencySnapshotCreator[F] = new CurrencySnapshotCreator[F] {
     private val logger = Slf4jLogger.getLogger
 
+    private def maxProposalSizeInBytes(facilitators: Set[PeerId]): PosLong =
+      PosLong
+        .from(
+          snapshotSizeConfig.maxStateChannelSnapshotBinarySizeInBytes - (facilitators.size * snapshotSizeConfig.singleSignatureSizeInBytes)
+        )
+        .getOrElse(1L)
+
     def createProposalArtifact(
       lastKey: SnapshotOrdinal,
       lastArtifact: Signed[CurrencySnapshotArtifact],
       lastContext: CurrencySnapshotContext,
       trigger: ConsensusTrigger,
       events: Set[CurrencySnapshotEvent],
-      rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]]
+      rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
+      facilitators: Set[PeerId]
     ): F[CurrencySnapshotCreationResult] = {
 
       val (blocks: List[Signed[Block]], dataBlocks: List[Signed[DataApplicationBlock]]) =
@@ -80,9 +91,11 @@ object CurrencySnapshotCreator {
           .toList
           .partitionMap(identity)
 
+      val maxUnsignedProposalSizeInBytes = maxProposalSizeInBytes(facilitators)
+
       def createProposalWithSizeLimit(
         blocksForAcceptance: List[Signed[Block]],
-        sizeExcessBlocks: Set[Signed[Block]] = Set.empty[Signed[Block]]
+        sizeExcessiveBlocks: Set[Signed[Block]] = Set.empty[Signed[Block]]
       ): F[CurrencySnapshotCreationResult] = {
         for {
           lastArtifactHash <- lastArtifact.value.hashF
@@ -103,7 +116,7 @@ object CurrencySnapshotCreator {
                 .deserializeState(lastDataApplication)
                 .flatTap {
                   case Left(err) => logger.warn(err)(s"Cannot deserialize custom state")
-                  case Right(a)  => logger.info(s"Deserialized state: $a")
+                  case _         => Applicative[F].unit
                 }
                 .map(_.toOption)
                 .handleErrorWith(err =>
@@ -113,7 +126,7 @@ object CurrencySnapshotCreator {
           }.flatSequence
 
           maybeNewDataState <- (maybeDataApplicationService, maybeLastDataState).mapN {
-            case (((nodeContext, service), lastState)) =>
+            case ((nodeContext, service), lastState) =>
               implicit val context: L0NodeContext[F] = nodeContext
               NonEmptyList
                 .fromList(dataBlocks.distinctBy(_.value.roundId))
@@ -122,23 +135,25 @@ object CurrencySnapshotCreator {
                   service
                     .validateData(lastState, updates)
                     .flatTap { validated =>
-                      Applicative[F].unlessA(validated.isValid)(logger.warn(s"Data application is invalid, errors: ${validated.toString}"))
+                      logger.warn(s"Data application is invalid, errors: ${validated.toString}").unlessA(validated.isValid)
                     }
                     .map(_.isValid)
                     .handleErrorWith(err =>
-                      logger.error(err)(s"Unhandled exception during validating data application, assumed as invalid") >> false.pure[F]
+                      logger.error(err)(s"Unhandled exception during validating data application, assumed as invalid").as(false)
                     )
                     .ifM(
                       service
-                        .combine(lastState, updates)
+                        .combine(lastState, updates.toList)
                         .flatMap { state =>
                           service.serializeState(state)
                         }
                         .map(_.some)
                         .handleErrorWith(err =>
-                          logger.error(err)(
-                            s"Unhandled exception during combine and serialize data application, fallback to last data application"
-                          ) >> maybeLastDataApplication.pure[F]
+                          logger
+                            .error(err)(
+                              s"Unhandled exception during combine and serialize data application, fallback to last data application"
+                            )
+                            .as(maybeLastDataApplication)
                         ),
                       logger.warn("Data application is not valid") >> maybeLastDataApplication.pure[F]
                     )
@@ -153,7 +168,7 @@ object CurrencySnapshotCreator {
             lastDeprecatedTips,
             transactions =>
               rewards
-                .map(_.distribute(lastArtifact, lastContext.snapshotInfo.balances, transactions, trigger))
+                .map(_.distribute(lastArtifact, lastContext.snapshotInfo.balances, transactions, trigger, events))
                 .getOrElse(SortedSet.empty[RewardTransaction].pure[F])
           )
 
@@ -191,11 +206,11 @@ object CurrencySnapshotCreator {
           size = artifactBinary.length
 
           result <-
-            if (size <= snapshotSizeConfig.maxProposalSizeInBytes) {
+            if (size <= maxUnsignedProposalSizeInBytes) {
               CurrencySnapshotCreationResult(
                 artifact,
                 CurrencySnapshotContext(lastContext.address, snapshotInfo),
-                awaitingBlocks.toSet ++ sizeExcessBlocks,
+                awaitingBlocks.toSet ++ sizeExcessiveBlocks,
                 rejectedBlocks.toSet
               ).pure[F]
             } else {
@@ -204,7 +219,7 @@ object CurrencySnapshotCreator {
                   excessivePair match {
                     case (excessiveBlock, _) =>
                       val remainingBlocks = blocksForAcceptance.filterNot(_ =!= excessiveBlock)
-                      val excessiveBlocks = sizeExcessBlocks + excessiveBlock
+                      val excessiveBlocks = sizeExcessiveBlocks + excessiveBlock
                       createProposalWithSizeLimit(remainingBlocks, excessiveBlocks)
                   }
                 case _ =>

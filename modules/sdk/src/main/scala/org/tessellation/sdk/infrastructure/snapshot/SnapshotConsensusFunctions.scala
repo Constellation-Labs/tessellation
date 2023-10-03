@@ -18,6 +18,7 @@ import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.height.{Height, SubHeight}
+import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.snapshot.Snapshot
 import org.tessellation.sdk.domain.block.processing.{BlockAcceptanceResult, deprecationThreshold}
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
@@ -58,7 +59,8 @@ abstract class SnapshotConsensusFunctions[
     lastSignedArtifact: Signed[Artifact],
     lastContext: Context,
     trigger: ConsensusTrigger,
-    artifact: Artifact
+    artifact: Artifact,
+    facilitators: Set[PeerId]
   ): F[Either[InvalidArtifact, (Artifact, Context)]]
 
   protected def getUpdatedTips(
