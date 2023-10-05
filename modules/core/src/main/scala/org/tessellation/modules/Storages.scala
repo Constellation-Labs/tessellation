@@ -27,7 +27,7 @@ object Storages {
   def make[F[_]: Async: KryoSerializer: Supervisor](
     sdkStorages: SdkStorages[F],
     sdkConfig: SdkConfig,
-    seedlist: Option[Set[SeedlistEntry]],
+    seedlist: Set[SeedlistEntry],
     snapshotConfig: SnapshotConfig,
     trustUpdates: Option[PeerObservationAdjustmentUpdateBatch]
   ): F[Storages[F]] =

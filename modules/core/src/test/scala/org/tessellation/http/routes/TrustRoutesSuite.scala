@@ -8,18 +8,21 @@ import scala.reflect.runtime.universe.TypeTag
 import org.tessellation.coreKryoRegistrar
 import org.tessellation.domain.cluster.programs.TrustPush
 import org.tessellation.ext.kryo._
-import org.tessellation.infrastructure.trust.generators.genPeerTrustInfo
+import org.tessellation.infrastructure.trust.generators.{genPeerPublicTrust, genPeerTrustInfo}
 import org.tessellation.infrastructure.trust.storage.TrustStorage
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.generators._
-import org.tessellation.schema.trust.{PeerObservationAdjustmentUpdate, PeerObservationAdjustmentUpdateBatch, TrustScores}
+import org.tessellation.schema.trust._
 import org.tessellation.sdk.config.types.TrustStorageConfig
 import org.tessellation.sdk.domain.gossip.Gossip
+import org.tessellation.sdk.domain.seedlist.SeedlistEntry
 import org.tessellation.sdk.domain.trust.storage._
 import org.tessellation.sdk.sdkKryoRegistrar
 
+import eu.timepit.refined.api.Refined
 import eu.timepit.refined.auto._
+import eu.timepit.refined.numeric.NonNegative
 import io.circe.Encoder
 import io.circe.syntax.EncoderOps
 import org.http4s.Method.GET
@@ -31,19 +34,21 @@ import suite.HttpSuite
 
 object TrustRoutesSuite extends HttpSuite {
 
+  val config = TrustStorageConfig(
+    ordinalTrustUpdateInterval = 1000L,
+    ordinalTrustUpdateDelay = 500L,
+    seedlistInputBias = 0.7,
+    seedlistOutputBias = 0.5
+  )
+
   def kryoSerializerResource: Resource[IO, KryoSerializer[IO]] = KryoSerializer
     .forAsync[IO](sdkKryoRegistrar.union(coreKryoRegistrar))
 
-  private def mkTrustStorage(trust: TrustMap = TrustMap.empty): F[TrustStorage[F]] = {
-    val config = TrustStorageConfig(
-      ordinalTrustUpdateInterval = 1000L,
-      ordinalTrustUpdateDelay = 500L,
-      seedlistInputBias = 0.7,
-      seedlistOutputBias = 0.5
-    )
-
-    TrustStorage.make(trust, config, none)
-  }
+  private def mkTrustStorage(
+    trust: TrustMap = TrustMap.empty,
+    seedlistEntries: Set[SeedlistEntry] = Set.empty[SeedlistEntry]
+  ): F[TrustStorage[F]] =
+    TrustStorage.make(trust, config, seedlistEntries)
 
   private def mkP2pRoutes(
     trustStorage: TrustStorage[F],
@@ -82,7 +87,7 @@ object TrustRoutesSuite extends HttpSuite {
   private val genTrustMap = for {
     numTrusts <- Gen.chooseNum(0, 10)
     trustInfo <- Gen.mapOfN(numTrusts, genPeerTrustInfo)
-  } yield TrustMap(trust = trustInfo, PublicTrustMap.empty)
+  } yield TrustMap(trust = trustInfo, peerLabels = PublicTrustMap.empty)
 
   test("GET trust succeeds") {
     val req = GET(uri"/trust")
@@ -125,14 +130,54 @@ object TrustRoutesSuite extends HttpSuite {
     forall(genTrustMap) { trust =>
       for {
         ts <- mkTrustStorage(trust)
-        _ <- ts.updateNext(SnapshotOrdinal(1000L))
-        _ <- ts.updateCurrent(SnapshotOrdinal(1500L))
+        _ <- ts.updateNext(SnapshotOrdinal(config.ordinalTrustUpdateInterval))
+        _ <- ts.updateCurrent(
+          SnapshotOrdinal(
+            Refined.unsafeApply[Long, NonNegative](
+              config.ordinalTrustUpdateInterval + config.ordinalTrustUpdateDelay
+            )
+          )
+        )
 
         routes <- mkPublicRoutes(ts)
 
-        expected = OrdinalTrustMap(SnapshotOrdinal(1000L), PublicTrustMap.empty, trust).asJson
+        expected = OrdinalTrustMap(
+          SnapshotOrdinal(config.ordinalTrustUpdateInterval),
+          PublicTrustMap.empty,
+          trust
+        ).asJson
         testResult <- expectHttpBodyAndStatus(routes, req)(expected, Status.Ok)
       } yield testResult
+    }
+  }
+
+  test("GET previous peer-labels succeeds") {
+    val req = GET(uri"/trust/previous/peer-labels")
+
+    val gen = for {
+      trustMap <- genTrustMap
+      peerId <- peerIdGen
+      score <- Gen.chooseNum(0.1, 1.0).map(Refined.unsafeApply[Double, TrustValueRefinement])
+      seedlistEntries = Set(SeedlistEntry(peerId, none, none, score.some))
+      (_, publicTrust) <- genPeerPublicTrust
+      snapshotOrdinal = SnapshotOrdinal(config.ordinalTrustUpdateInterval)
+      snapshotOrdinalPublicTrust = SnapshotOrdinalPublicTrust(snapshotOrdinal, publicTrust)
+    } yield (trustMap, seedlistEntries, peerId, snapshotOrdinal, snapshotOrdinalPublicTrust)
+
+    forall(gen) {
+      case (trust, seedlistEntries, peerId, snapshotOrdinal, snapshotOrdinalPublicTrust) =>
+        for {
+          ts <- mkTrustStorage(trust, seedlistEntries)
+
+          _ <- ts.updateNext(snapshotOrdinal)
+          _ <- ts.updateNext(peerId, snapshotOrdinalPublicTrust)
+          _ <- ts.updateCurrent(snapshotOrdinal.plus(config.ordinalTrustUpdateDelay))
+
+          routes <- mkPublicRoutes(ts)
+
+          expected <- ts.getBiasedSeedlistOrdinalPeerLabels.map(_.asJson)
+          testResult <- expectHttpBodyAndStatus(routes, req)(expected, Status.Ok)
+        } yield testResult
     }
   }
 

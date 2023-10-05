@@ -26,7 +26,10 @@ import weaver.scalacheck.Checkers
 
 object TrustStorageSuite extends SimpleIOSuite with Checkers {
 
-  def mkTrustStorage(trust: TrustMap = TrustMap.empty, seedlist: Option[Set[SeedlistEntry]] = none): F[TrustStorage[F]] = {
+  def mkTrustStorage(
+    trust: TrustMap = TrustMap.empty,
+    seedlist: Set[SeedlistEntry] = Set.empty[SeedlistEntry]
+  ): F[TrustStorage[F]] = {
     val config = TrustStorageConfig(
       ordinalTrustUpdateInterval = 1000L,
       ordinalTrustUpdateDelay = 500L,
@@ -82,7 +85,7 @@ object TrustStorageSuite extends SimpleIOSuite with Checkers {
     forall(gen) {
       case (trust, seedlist, selfPeerId) =>
         for {
-          store <- mkTrustStorage(trust = trust, seedlist = seedlist.some)
+          store <- mkTrustStorage(trust = trust, seedlist = seedlist)
           firstTrustMap <- store.getTrust.map(_.trust)
 
           _ <- store.updateTrustWithBiases(selfPeerId)

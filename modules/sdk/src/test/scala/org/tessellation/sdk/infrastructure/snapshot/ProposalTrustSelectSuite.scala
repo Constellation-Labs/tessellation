@@ -6,10 +6,9 @@ import cats.syntax.applicative._
 import cats.syntax.option._
 
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.trust.TrustInfo
+import org.tessellation.schema.trust.{TrustLabels, TrustScores}
 import org.tessellation.sdk.config.types.ProposalSelectConfig
 import org.tessellation.sdk.domain.snapshot.ProposalSelect
-import org.tessellation.sdk.domain.trust.storage.{PublicTrustMap, TrustMap}
 import org.tessellation.sdk.infrastructure.consensus.PeerDeclarations
 import org.tessellation.sdk.infrastructure.consensus.declaration.Proposal
 import org.tessellation.security.hash.Hash
@@ -21,18 +20,20 @@ import weaver.SimpleIOSuite
 import weaver.scalacheck.Checkers
 
 object ProposalTrustSelectSuite extends SimpleIOSuite with Checkers {
-  val defaultDeterministicTrust = Map(
-    PeerId(Hex("a")) -> -1.0,
-    PeerId(Hex("b")) -> 0.5,
-    PeerId(Hex("c")) -> 1.0,
-    PeerId(Hex("d")) -> -0.5,
-    PeerId(Hex("e")) -> 0.75,
-    PeerId(Hex("f")) -> 0.2
+  val defaultDeterministicTrust = TrustLabels(
+    Map(
+      PeerId(Hex("a")) -> -1.0,
+      PeerId(Hex("b")) -> 0.5,
+      PeerId(Hex("c")) -> 1.0,
+      PeerId(Hex("d")) -> -0.5,
+      PeerId(Hex("e")) -> 0.75,
+      PeerId(Hex("f")) -> 0.2
+    )
   )
 
   def mkProposalSelect(
-    deterministicTrust: IO[Option[Map[PeerId, Double]]] = defaultDeterministicTrust.some.pure,
-    relativeTrust: IO[TrustMap] = TrustMap.empty.pure
+    deterministicTrust: IO[TrustLabels] = defaultDeterministicTrust.pure,
+    relativeTrust: IO[TrustScores] = TrustScores.empty.pure
   ): ProposalSelect[F] = {
     val getTrusts = Applicative[IO].product(deterministicTrust, relativeTrust)
     val config = ProposalSelectConfig(trustMultiplier = 5.0)
@@ -68,11 +69,10 @@ object ProposalTrustSelectSuite extends SimpleIOSuite with Checkers {
       )
     )
 
-    val relativeTrust = TrustMap(
-      trust = Map(
-        PeerId(Hex("a")) -> TrustInfo(predictedTrust = Some(-1.0))
-      ),
-      peerLabels = PublicTrustMap.empty
+    val relativeTrust = TrustScores(
+      Map(
+        PeerId(Hex("a")) -> -1.0
+      )
     ).pure
 
     val select = mkProposalSelect(relativeTrust = relativeTrust)
@@ -179,17 +179,18 @@ object ProposalTrustSelectSuite extends SimpleIOSuite with Checkers {
       )
     )
 
-    val deterministicTrust = Map(
-      PeerId(Hex("a")) -> -1.0,
-      PeerId(Hex("b")) -> 0.5,
-      PeerId(Hex("c")) -> 0.75
-    ).some.pure
+    val deterministicTrust = TrustLabels(
+      Map(
+        PeerId(Hex("a")) -> -1.0,
+        PeerId(Hex("b")) -> 0.5,
+        PeerId(Hex("c")) -> 0.75
+      )
+    ).pure
 
-    val relativeTrust = TrustMap(
-      trust = Map(
-        PeerId(Hex("a")) -> TrustInfo(predictedTrust = Some(1.0))
-      ),
-      peerLabels = PublicTrustMap.empty
+    val relativeTrust = TrustScores(
+      Map(
+        PeerId(Hex("a")) -> 1.0
+      )
     ).pure
 
     val select = mkProposalSelect(deterministicTrust = deterministicTrust, relativeTrust = relativeTrust)

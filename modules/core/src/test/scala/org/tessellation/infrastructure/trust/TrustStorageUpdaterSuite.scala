@@ -12,6 +12,7 @@ import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.trust.SnapshotOrdinalPublicTrust
 import org.tessellation.sdk.config.types.TrustStorageConfig
 import org.tessellation.sdk.domain.gossip.Gossip
+import org.tessellation.sdk.domain.seedlist.SeedlistEntry
 import org.tessellation.sdk.domain.trust.storage.{OrdinalTrustMap, TrustMap, TrustStorage}
 
 import eu.timepit.refined.api.Refined
@@ -39,7 +40,7 @@ object TrustStorageUpdaterSuite extends SimpleIOSuite with Checkers {
       seedlistOutputBias = 0.5
     )
 
-    TrustStorage.make(trust, config, none)
+    TrustStorage.make(trust, config, Set.empty[SeedlistEntry])
   }
 
   def mkMockGossip[B](spreadRef: Ref[IO, List[B]]): Gossip[IO] = new Gossip[IO] {

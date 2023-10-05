@@ -53,5 +53,8 @@ final case class TrustRoutes[F[_]: Async: KryoSerializer](
 
     case GET -> Root / "previous" =>
       trustStorage.getCurrentOrdinalTrust.flatMap(Ok(_))
+
+    case GET -> Root / "previous" / "peer-labels" =>
+      trustStorage.getBiasedSeedlistOrdinalPeerLabels.flatMap(Ok(_))
   }
 }

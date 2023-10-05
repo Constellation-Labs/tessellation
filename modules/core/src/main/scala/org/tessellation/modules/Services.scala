@@ -64,12 +64,16 @@ object Services {
         )
         .pure[F]
 
-      trustStorage = storages.trust
-      getTrusts = Applicative[F].product(trustStorage.getBiasedSeedlistOrdinalPeerLabels, trustStorage.getTrust)
       proposalSelect =
         if (cfg.environment === Dev)
           ProposalOccurrenceSelect.make()
         else {
+          val trustStorage = storages.trust
+          val getTrusts = Applicative[F].product(
+            trustStorage.getBiasedSeedlistOrdinalPeerLabels,
+            trustStorage.getBiasedTrustScores
+          )
+
           val primary = ProposalTrustSelect.make(getTrusts, cfg.proposalSelect)
           val secondary = ProposalOccurrenceSelect.make()
 

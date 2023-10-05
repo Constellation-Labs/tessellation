@@ -106,7 +106,7 @@ object PeerSelect {
       val sampleSize = Math.max((peers.size * peerSampleRatio).toInt, minSampleSize)
 
       for {
-        scores <- getTrustScores.map(_.scores)
+        scores <- getTrustScores.map(_.value)
         refinedScores = scores.view
           .mapValues(score => refineV[TrustValueRefinement](score))
           .collect {

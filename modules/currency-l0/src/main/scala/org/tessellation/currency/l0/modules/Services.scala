@@ -2,13 +2,16 @@ package org.tessellation.currency.l0.modules
 
 import java.security.KeyPair
 
+import cats.Applicative
 import cats.data.NonEmptySet
 import cats.effect.kernel.Async
 import cats.effect.std.{Random, Supervisor}
 import cats.syntax.applicative._
+import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
+import org.tessellation.cli.AppEnvironment.Dev
 import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
 import org.tessellation.currency.l0.config.types.AppConfig
 import org.tessellation.currency.l0.http.p2p.P2PClient
@@ -88,7 +91,20 @@ object Services {
         maybeDataApplication
       )
 
-      proposalSelect = ProposalOccurrenceSelect.make()
+      proposalSelect =
+        if (cfg.environment === Dev)
+          ProposalOccurrenceSelect.make()
+        else {
+          val getTrusts = Applicative[F].product(
+            p2PClient.l0Trust.getPreviousPeerLabels.run(cfg.globalL0Peer),
+            p2PClient.l0Trust.getCurrentTrust.run(cfg.globalL0Peer)
+          )
+
+          val primary = ProposalTrustSelect.make(getTrusts, cfg.proposalSelect)
+          val secondary = ProposalOccurrenceSelect.make()
+
+          ProposalSelectWithFallback.make(primary, secondary)
+        }
       consensus <- CurrencySnapshotConsensus
         .make[F](
           sdkServices.gossip,

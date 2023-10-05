@@ -116,7 +116,16 @@ object trust {
 
   @derive(eqv, decoder, encoder, show)
   case class TrustScores(
-    scores: Map[PeerId, Double]
+    value: Map[PeerId, Double]
+  )
+
+  object TrustScores {
+    val empty: TrustScores = TrustScores(Map.empty[PeerId, Double])
+  }
+
+  @derive(decoder, encoder, show)
+  case class TrustLabels(
+    value: Map[PeerId, Double]
   )
 
   @derive(eqv, decoder, encoder, show)

@@ -3,7 +3,6 @@ package org.tessellation.infrastructure.trust
 import cats.effect.{IO, Resource}
 import cats.syntax.applicative._
 import cats.syntax.eq._
-import cats.syntax.option._
 
 import org.tessellation.infrastructure.trust.generators.genPeerLabel
 import org.tessellation.infrastructure.trust.storage.TrustStorage
@@ -14,6 +13,7 @@ import org.tessellation.schema.generators.peerIdGen
 import org.tessellation.schema.gossip._
 import org.tessellation.schema.trust.{PublicTrust, SnapshotOrdinalPublicTrust}
 import org.tessellation.sdk.config.types.TrustStorageConfig
+import org.tessellation.sdk.domain.seedlist.SeedlistEntry
 import org.tessellation.sdk.domain.trust.storage._
 import org.tessellation.shared.sharedKryoRegistrar
 
@@ -36,7 +36,7 @@ object HandlerSuite extends MutableIOSuite with Checkers {
       seedlistOutputBias = 0.5
     )
 
-    TrustStorage.make(trust, config, none)
+    TrustStorage.make(trust, config, Set.empty[SeedlistEntry])
   }
 
   test("rumor handler updates the trust storage") {
