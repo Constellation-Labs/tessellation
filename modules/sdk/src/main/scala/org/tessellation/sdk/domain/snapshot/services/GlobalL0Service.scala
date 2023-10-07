@@ -111,6 +111,10 @@ object GlobalL0Service {
         type Result = LatestSnapshotTuple
         for {
           peers <- globalL0ClusterStorage.getPeers.map(nes => Random.shuffle(nes.toSortedSet))
+
+          // TODO use .trace logging level for this?
+          _ <- logger.debug(s"Pulling latest snapshot using ${peers.size} peers: $peers")
+
           majorityPeers <- getL0Peers(majorityPeerIds)
           result <- peers.tailRecM[F, Result] { l0Peers =>
             l0Peers.headOption.fold {
@@ -137,11 +141,32 @@ object GlobalL0Service {
       ): F[Boolean] = {
         val (snapshot, info) = snapshotTuple
         List(
-          StateProofValidator.validate(snapshot, info).map(_.isValid),
-          getMajorityOrdinal(majorityPeers).map(_.fold(false)(ord => ordinalRange.contains(ord.value - snapshot.ordinal.value))),
-          getMajorityHash(majorityPeers, snapshot.ordinal).map(_.contains(snapshot.hash))
+          stateProofValidation(snapshot, info),
+          majorityOrdinalValidation(snapshot, majorityPeers),
+          majorityHashValidation(snapshot, majorityPeers)
         ).forallM(identity)
       }
+
+      private def stateProofValidation(snapshot: Hashed[GlobalIncrementalSnapshot], info: GlobalSnapshotInfo): F[Boolean] =
+        StateProofValidator
+          .validate(snapshot, info)
+          .flatTap(v => logger.debug(s"Failed StateProofValidation: $v").whenA(v.isInvalid))
+          .map(_.isValid)
+
+      private def majorityOrdinalValidation(snapshot: Hashed[GlobalIncrementalSnapshot], majorityPeers: NonEmptyList[L0Peer]): F[Boolean] =
+        getMajorityOrdinal(majorityPeers).flatMap {
+          case None                                                                   => logger.debug("No majority ordinal").as(false)
+          case Some(ord) if ordinalRange.contains(ord.value - snapshot.ordinal.value) => true.pure[F]
+          case Some(ord) =>
+            logger.debug(s"Majority ordinal ${ord.show} minus Snapshot ordinal ${snapshot.ordinal.show} not in $ordinalRange").as(false)
+        }
+
+      private def majorityHashValidation(snapshot: Hashed[GlobalIncrementalSnapshot], majorityPeers: NonEmptyList[L0Peer]): F[Boolean] =
+        getMajorityHash(majorityPeers, snapshot.ordinal).flatMap {
+          case None                                 => logger.debug(s"No majority hash for ordinal ${snapshot.ordinal.show}").as(false)
+          case Some(hash) if hash === snapshot.hash => true.pure[F]
+          case Some(hash) => logger.debug(s"Majority/Snapshot hash mismatch: ${hash.show} != ${snapshot.hash.show}").as(false)
+        }
 
       private def pullLatestSnapshotFromRandomPeer: F[LatestSnapshotTuple] =
         globalL0ClusterStorage.getRandomPeer >>= pullLatestSnapshotFromPeer
