@@ -33,7 +33,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait GlobalL0Service[F[_]] {
   type LatestSnapshotTuple = (Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)
-  def pullLatestSnapshot: F[LatestSnapshotTuple]
+  def pullLatestSnapshot(skipMajorityCheck: Boolean): F[LatestSnapshotTuple]
   def pullGlobalSnapshots: F[Either[LatestSnapshotTuple, List[Hashed[GlobalIncrementalSnapshot]]]]
   def pullGlobalSnapshot(ordinal: SnapshotOrdinal): F[Option[Hashed[GlobalIncrementalSnapshot]]]
   def pullGlobalSnapshot(hash: Hash): F[Option[Hashed[GlobalIncrementalSnapshot]]]
@@ -63,8 +63,10 @@ object GlobalL0Service {
 
       implicit val hashShow: Show[Hash] = Hash.shortShow
 
-      def pullLatestSnapshot: F[LatestSnapshotTuple] =
-        maybeMajorityPeerIds.fold(pullLatestSnapshotFromRandomPeer)(pullLatestSnapshotWithMajorityHash)
+      def pullLatestSnapshot(skipMajorityCheck: Boolean = false): F[LatestSnapshotTuple] =
+        maybeMajorityPeerIds
+          .filterNot(_ => skipMajorityCheck)
+          .fold(pullLatestSnapshotFromRandomPeer)(pullLatestSnapshotWithMajorityHash)
 
       def pullGlobalSnapshot(hash: Hash): F[Option[Hashed[GlobalIncrementalSnapshot]]] =
         pullGlobalSnapshot(l0GlobalSnapshotClient.get(hash)).handleErrorWith { e =>
