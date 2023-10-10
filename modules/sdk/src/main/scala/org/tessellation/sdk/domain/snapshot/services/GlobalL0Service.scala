@@ -114,8 +114,8 @@ object GlobalL0Service {
         for {
           peers <- globalL0ClusterStorage.getPeers.map(nes => Random.shuffle(nes.toSortedSet))
 
-          // TODO use .trace logging level for this?
-          _ <- logger.debug(s"Pulling latest snapshot using ${peers.size} peers: $peers")
+          _ <- logger.debug(s"Pulling latest snapshot using ${peers.size} peers")
+          _ <- logger.trace(s"${peers.show}")
 
           majorityPeers <- getL0Peers(majorityPeerIds)
           result <- peers.tailRecM[F, Result] { l0Peers =>
