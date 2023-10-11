@@ -28,7 +28,7 @@ import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hashed, SecurityProvider}
 
 import eu.timepit.refined.auto.autoUnwrap
-import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
+import eu.timepit.refined.types.numeric.PosLong
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait GlobalL0Service[F[_]] {
@@ -91,7 +91,7 @@ object GlobalL0Service {
             pullLatestSnapshotWithMajorityHash(majorityPeerIds).map(_.asLeft[List[Hashed[GlobalIncrementalSnapshot]]])
           } { lastStoredOrdinal =>
             for {
-              msd <- getLatestMajoritySnapshotData(majorityPeerIds)
+              msd <- getMajoritySnapshotData(majorityPeerIds, lastStoredOrdinal.next)
               l0Peers <- globalL0ClusterStorage.getPeers
               pulled <- pullVerifiedSnapshots(lastStoredOrdinal.next, msd, l0Peers)
             } yield pulled.asRight[LatestSnapshotTuple]
@@ -168,8 +168,10 @@ object GlobalL0Service {
           } { lastStoredOrdinal =>
             for {
               l0Peer <- globalL0ClusterStorage.getRandomPeer
-              lastOrdinal <- l0GlobalSnapshotClient.getLatestOrdinal.run(l0Peer)
-              pulled <- pullSnapshots(l0Peer, lastStoredOrdinal.next, lastOrdinal)
+              latestOrdinal <- l0GlobalSnapshotClient.getLatestOrdinal.run(l0Peer)
+              nextOrdinal = lastStoredOrdinal.next
+              lastOrdinal = calculateLastOrdinal(nextOrdinal, latestOrdinal)
+              pulled <- pullSnapshots(l0Peer, nextOrdinal, lastOrdinal)
             } yield pulled.toList.asRight[LatestSnapshotTuple]
           }
         }.handleErrorWith { e =>
@@ -180,17 +182,24 @@ object GlobalL0Service {
             )
         }
 
+      private def calculateLastOrdinal(nextOrdinal: SnapshotOrdinal, latestOrdinal: SnapshotOrdinal): SnapshotOrdinal =
+        SnapshotOrdinal.unsafeApply(
+          latestOrdinal.value.value
+            .min(
+              singlePullLimit
+                .map(nextOrdinal.value.value + _.value)
+                .getOrElse(latestOrdinal.value.value)
+            )
+        )
+
       private def pullSnapshots(
         l0Peer: L0Peer,
         nextOrdinal: SnapshotOrdinal,
         lastOrdinal: SnapshotOrdinal
       ): F[Chain[Hashed[GlobalIncrementalSnapshot]]] = {
-        val lastOrdinalCap = lastOrdinal.value.value
-          .min(singlePullLimit.map(nextOrdinal.value.value + _.value).getOrElse(lastOrdinal.value.value))
-
         val ordinals = LazyList
-          .range(nextOrdinal.value.value, lastOrdinalCap + 1)
-          .map(o => SnapshotOrdinal(NonNegLong.unsafeFrom(o)))
+          .range(nextOrdinal.value.value, lastOrdinal.value.value + 1)
+          .map(SnapshotOrdinal.unsafeApply)
 
         type Success = Hashed[GlobalIncrementalSnapshot]
         type Result = Chain[Success]
@@ -213,13 +222,14 @@ object GlobalL0Service {
 
       private case class MajoritySnapshotData(ordinal: SnapshotOrdinal, hash: Hash)
 
-      private def getLatestMajoritySnapshotData(peerIds: NonEmptyList[PeerId]): F[MajoritySnapshotData] = {
+      private def getMajoritySnapshotData(peerIds: NonEmptyList[PeerId], nextOrdinal: SnapshotOrdinal): F[MajoritySnapshotData] = {
         val maybeData =
           for {
             peers <- OptionT.liftF(getL0Peers(peerIds))
             majorityOrdinal <- OptionT(getMajorityOrdinal(peers))
-            majorityHash <- OptionT(getMajorityHash(peers, majorityOrdinal))
-          } yield MajoritySnapshotData(majorityOrdinal, majorityHash)
+            lastOrdinal = calculateLastOrdinal(nextOrdinal, majorityOrdinal)
+            majorityHash <- OptionT(getMajorityHash(peers, lastOrdinal))
+          } yield MajoritySnapshotData(lastOrdinal, majorityHash)
 
         maybeData.getOrElseF(NoMajoritySnapshotData.raiseError[F, MajoritySnapshotData])
       }
