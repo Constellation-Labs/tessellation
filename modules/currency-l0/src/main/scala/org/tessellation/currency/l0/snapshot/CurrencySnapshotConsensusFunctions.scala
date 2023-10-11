@@ -1,14 +1,12 @@
 package org.tessellation.currency.l0.snapshot
 
 import cats.effect.Async
-import cats.syntax.either._
 import cats.syntax.functor._
 import cats.syntax.order._
 
 import scala.collection.immutable.SortedMap
 
 import org.tessellation.currency.dataApplication.L0NodeContext
-import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
 import org.tessellation.currency.l0.snapshot.services.StateChannelSnapshotService
 import org.tessellation.currency.schema.currency._
 import org.tessellation.kryo.KryoSerializer
@@ -23,8 +21,6 @@ import org.tessellation.sdk.infrastructure.snapshot._
 import org.tessellation.sdk.snapshot.currency.CurrencySnapshotEvent
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
-
-import eu.timepit.refined.auto._
 
 abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
     extends SnapshotConsensusFunctions[
@@ -81,8 +77,7 @@ object CurrencySnapshotConsensusFunctions {
 
       currencySnapshotCreator
         .createProposalArtifact(lastKey, lastArtifact, lastContext, trigger, blocksForAcceptance, rewards, facilitators)
-        .map(created => (created.artifact, created.context, created.awaitingBlocks.map(_.asLeft[Signed[DataApplicationBlock]])))
-
+        .map(created => (created.artifact, created.context, created.awaitingEvents))
     }
   }
 }

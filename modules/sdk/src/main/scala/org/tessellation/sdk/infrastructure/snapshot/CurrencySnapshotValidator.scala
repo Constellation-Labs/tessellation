@@ -21,7 +21,6 @@ import org.tessellation.security.signature.{Signed, SignedValidator}
 
 import derevo.cats.{eqv, show}
 import derevo.derive
-import eu.timepit.refined.auto._
 import monocle.syntax.all._
 
 trait CurrencySnapshotValidator[F[_]] {
@@ -71,7 +70,7 @@ object CurrencySnapshotValidator {
       facilitators: Set[PeerId]
     ): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]] = for {
       contentV <- validateRecreateContent(lastArtifact, lastContext, artifact, facilitators)
-      blocksV <- contentV.map(validateNotAcceptedBlocks).pure[F]
+      blocksV <- contentV.map(validateNotAcceptedEvents).pure[F]
     } yield
       (contentV, blocksV).mapN {
         case (creationResult, _) => (creationResult.artifact, creationResult.context)
@@ -87,7 +86,7 @@ object CurrencySnapshotValidator {
       lastContext: CurrencySnapshotContext,
       expected: CurrencySnapshotArtifact,
       facilitators: Set[PeerId]
-    ): F[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult]] = {
+    ): F[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]] = {
       val events: Set[CurrencySnapshotEvent] = expected.blocks.unsorted.map(_.block.asLeft[Signed[DataApplicationBlock]])
 
       // Rewrite if implementation not provided
@@ -125,12 +124,16 @@ object CurrencySnapshotValidator {
       }
     }
 
-    def validateNotAcceptedBlocks(
-      creationResult: CurrencySnapshotCreationResult
-    ): CurrencySnapshotValidationErrorOr[Unit] =
-      if (creationResult.awaitingBlocks.nonEmpty || creationResult.rejectedBlocks.nonEmpty)
-        SomeBlocksWereNotAccepted(creationResult.awaitingBlocks, creationResult.rejectedBlocks).invalidNec
-      else ().validNec
+    def validateNotAcceptedEvents(
+      creationResult: CurrencySnapshotCreationResult[CurrencySnapshotEvent]
+    ): CurrencySnapshotValidationErrorOr[Unit] = {
+      val (awaitingBlocks, _) = creationResult.awaitingEvents.partitionMap(identity)
+      val (rejectedBlocks, _) = creationResult.rejectedEvents.partitionMap(identity)
+
+      if (awaitingBlocks.nonEmpty || rejectedBlocks.nonEmpty) {
+        SomeBlocksWereNotAccepted(awaitingBlocks, rejectedBlocks).invalidNec
+      } else ().validNec
+    }
   }
 
 }

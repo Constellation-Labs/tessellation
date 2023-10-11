@@ -41,11 +41,11 @@ import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.PosLong
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-case class CurrencySnapshotCreationResult(
+case class CurrencySnapshotCreationResult[Event](
   artifact: CurrencySnapshotArtifact,
   context: CurrencySnapshotContext,
-  awaitingBlocks: Set[Signed[Block]],
-  rejectedBlocks: Set[Signed[Block]]
+  awaitingEvents: Set[Event],
+  rejectedEvents: Set[Event]
 )
 
 trait CurrencySnapshotCreator[F[_]] {
@@ -57,7 +57,7 @@ trait CurrencySnapshotCreator[F[_]] {
     events: Set[CurrencySnapshotEvent],
     rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
     facilitators: Set[PeerId]
-  ): F[CurrencySnapshotCreationResult]
+  ): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]
 }
 
 object CurrencySnapshotCreator {
@@ -83,7 +83,7 @@ object CurrencySnapshotCreator {
       events: Set[CurrencySnapshotEvent],
       rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
       facilitators: Set[PeerId]
-    ): F[CurrencySnapshotCreationResult] = {
+    ): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] = {
 
       val (blocks: List[Signed[Block]], dataBlocks: List[Signed[DataApplicationBlock]]) =
         events
@@ -96,7 +96,7 @@ object CurrencySnapshotCreator {
       def createProposalWithSizeLimit(
         blocksForAcceptance: List[Signed[Block]],
         sizeExcessiveBlocks: Set[Signed[Block]] = Set.empty[Signed[Block]]
-      ): F[CurrencySnapshotCreationResult] = {
+      ): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] = {
         for {
           lastArtifactHash <- lastArtifact.value.hashF
           currentOrdinal = lastArtifact.ordinal.next
@@ -207,11 +207,16 @@ object CurrencySnapshotCreator {
 
           result <-
             if (size <= maxUnsignedProposalSizeInBytes) {
-              CurrencySnapshotCreationResult(
+              val awaiting =
+                (awaitingBlocks.toSet ++ sizeExcessiveBlocks).map(_.asLeft[Signed[DataApplicationBlock]])
+              val rejected =
+                rejectedBlocks.map(_.asLeft[Signed[DataApplicationBlock]]).toSet[CurrencySnapshotEvent]
+
+              CurrencySnapshotCreationResult[CurrencySnapshotEvent](
                 artifact,
                 CurrencySnapshotContext(lastContext.address, snapshotInfo),
-                awaitingBlocks.toSet ++ sizeExcessiveBlocks,
-                rejectedBlocks.toSet
+                awaiting,
+                rejected
               ).pure[F]
             } else {
               acceptanceResult.accepted match {
@@ -224,7 +229,7 @@ object CurrencySnapshotCreator {
                   }
                 case _ =>
                   new Throwable(s"Proposal doesn't fit the size limit after removing all the excessive blocks!")
-                    .raiseError[F, CurrencySnapshotCreationResult]
+                    .raiseError[F, CurrencySnapshotCreationResult[CurrencySnapshotEvent]]
               }
             }
         } yield result
