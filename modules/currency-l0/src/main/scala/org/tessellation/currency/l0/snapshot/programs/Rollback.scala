@@ -44,7 +44,7 @@ object Rollback {
     private val logger = Slf4jLogger.getLogger[F]
 
     def rollback: F[Unit] = for {
-      (globalSnapshot, globalSnapshotInfo) <- globalL0Service.pullLatestSnapshot
+      (globalSnapshot, globalSnapshotInfo) <- globalL0Service.pullLatestSnapshotFromRandomPeer
 
       identifier <- identifierStorage.get
       lastBinaryHash <- globalSnapshotInfo.lastStateChannelSnapshotHashes
