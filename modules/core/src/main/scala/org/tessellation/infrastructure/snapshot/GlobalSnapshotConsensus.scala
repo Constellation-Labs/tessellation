@@ -8,7 +8,6 @@ import cats.effect.std.{Random, Supervisor}
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.cli.AppEnvironment
 import org.tessellation.json.JsonBrotliBinarySerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
@@ -53,7 +52,6 @@ object GlobalSnapshotConsensus {
     validators: SdkValidators[F],
     sdkServices: SdkServices[F],
     snapshotConfig: SnapshotConfig,
-    environment: AppEnvironment,
     stateChannelPullDelay: NonNegLong,
     stateChannelPurgeDelay: NonNegLong,
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
@@ -82,8 +80,7 @@ object GlobalSnapshotConsensus {
           globalSnapshotStorage,
           snapshotAcceptanceManager,
           collateral,
-          rewards,
-          environment
+          rewards
         ),
         gossip,
         selfId,
