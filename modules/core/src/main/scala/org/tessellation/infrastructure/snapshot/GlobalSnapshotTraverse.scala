@@ -48,9 +48,9 @@ object GlobalSnapshotTraverse {
           firstInc <- loadIncOrErr(incHashesNec.head)
 
           (info, lastInc) <- incHashesNec.tail.foldLeftM((GlobalSnapshotInfoV1.toGlobalSnapshotInfo(global.info), firstInc)) {
-            (acc, hash) =>
+            case ((lastCtx, lastInc), hash) =>
               loadIncOrErr(hash).flatMap { inc =>
-                contextFns.createContext(acc._1, acc._2, inc).map(_ -> inc)
+                contextFns.createContext(lastCtx, lastInc, inc).map(_ -> inc)
               }
           }
         } yield (info, lastInc)
