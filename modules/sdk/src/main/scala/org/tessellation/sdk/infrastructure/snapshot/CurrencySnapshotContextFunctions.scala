@@ -12,6 +12,7 @@ import scala.util.control.NoStackTrace
 
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotContext}
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.merkletree.StateProofValidator
 import org.tessellation.sdk.domain.snapshot.SnapshotContextFunctions
 import org.tessellation.security.signature.Signed
 
@@ -34,6 +35,10 @@ object CurrencySnapshotContextFunctions {
         validatedContext <- validatedS match {
           case Validated.Valid((_, validatedContext)) => validatedContext.pure[F]
           case Validated.Invalid(e)                   => CannotCreateContext(e).raiseError[F, CurrencySnapshotContext]
+        }
+        _ <- StateProofValidator.validate(signedArtifact, validatedContext.snapshotInfo).flatMap {
+          case Validated.Valid(_)   => Async[F].unit
+          case Validated.Invalid(e) => e.raiseError[F, Unit]
         }
       } yield validatedContext
 

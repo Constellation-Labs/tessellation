@@ -70,40 +70,73 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         .flatMap(_.toHashed)
         .flatMap { genesis =>
           GlobalIncrementalSnapshot.fromGlobalSnapshot(genesis).flatMap { incremental =>
-            mkSnapshot(genesis.hash, incremental, keyPair, SortedSet.empty).flatMap { snap1 =>
+            mkSnapshot(genesis.hash, incremental, genesis.info, keyPair, SortedSet.empty).flatMap { snapshotWithContext =>
               dags
-                .foldLeftM(NonEmptyList.of(snap1)) {
+                .foldLeftM(NonEmptyList.of(snapshotWithContext)) {
                   case (snapshots, blocksChunk) =>
-                    mkSnapshot(snapshots.head.hash, snapshots.head.signed.value, keyPair, blocksChunk.toSortedSet).map(snapshots.prepend)
+                    mkSnapshot(snapshots.head._1.hash, snapshots.head._1.signed.value, snapshots.head._2, keyPair, blocksChunk.toSortedSet)
+                      .map(snapshots.prepend)
                 }
-                .map(incrementals => (genesis, incrementals.reverse))
+                .map(incrementals => (genesis, incrementals.reverse.map(_._1)))
             }
           }
         }
     }
 
-  def mkSnapshot(lastHash: Hash, reference: GlobalIncrementalSnapshot, keyPair: KeyPair, blocks: SortedSet[BlockAsActiveTip])(
+  def mkSnapshot(
+    lastHash: Hash,
+    lastSnapshot: GlobalIncrementalSnapshot,
+    lastInfo: GlobalSnapshotInfo,
+    keyPair: KeyPair,
+    blocks: SortedSet[BlockAsActiveTip]
+  )(
     implicit K: KryoSerializer[IO],
     S: SecurityProvider[IO]
-  ) =
+  ): IO[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] =
     for {
-      activeTips <- reference.activeTips
+      activeTips <- lastSnapshot.activeTips
+      txs = blocks.flatMap(_.block.value.transactions.toSortedSet)
+      lastTxRefs <- txs
+        .groupBy(_.source)
+        .toList
+        .flatMap { case (address, ts) => ts.maxByOption(_.ordinal.value.value).map(address -> _) }
+        .traverse { case (address, t) => TransactionReference.of(t).map(address -> _) }
+        .map(SortedMap.from(_))
+        .map(lastInfo.lastTxRefs ++ _)
+      balances = SortedMap.from(
+        txs
+          .map(_.value)
+          .foldLeft(lastInfo.balances.view.mapValues(_.value.value).toMap) {
+            case (aggBalances, tx) =>
+              val srcBalance = aggBalances.getOrElse(tx.source, 0L) - (tx.amount.value.value + tx.fee.value.value)
+              val dstBalance = aggBalances.getOrElse(tx.destination, 0L) + tx.amount.value.value
+
+              aggBalances ++ Map(tx.source -> srcBalance, tx.destination -> dstBalance)
+          }
+          .view
+          .mapValues(l => Balance(NonNegLong.unsafeFrom(l)))
+      )
+      newSnapshotInfo = lastInfo.copy(
+        lastTxRefs = lastTxRefs,
+        balances = balances
+      )
+      newSnapshotInfoStateProof <- newSnapshotInfo.stateProof
       snapshot = GlobalIncrementalSnapshot(
-        reference.ordinal.next,
+        lastSnapshot.ordinal.next,
         Height.MinValue,
         SubHeight.MinValue,
         lastHash,
         blocks.toSortedSet,
         SortedMap.empty,
         SortedSet.empty,
-        reference.epochProgress,
+        lastSnapshot.epochProgress,
         NonEmptyList.of(PeerId(Hex("peer1"))),
-        reference.tips.copy(remainedActive = activeTips),
-        reference.stateProof
+        lastSnapshot.tips.copy(remainedActive = activeTips),
+        newSnapshotInfoStateProof
       )
       signed <- Signed.forAsyncKryo[IO, GlobalIncrementalSnapshot](snapshot, keyPair)
       hashed <- signed.toHashed
-    } yield hashed
+    } yield (hashed, newSnapshotInfo)
 
   type DAGS = (List[Address], Long, SortedMap[Address, Signed[Transaction]], List[List[BlockAsActiveTip]])
 

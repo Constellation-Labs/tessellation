@@ -1,5 +1,6 @@
 package org.tessellation.sdk.infrastructure.snapshot
 
+import cats.data.Validated
 import cats.effect.Async
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
@@ -11,6 +12,7 @@ import scala.collection.immutable.SortedSet
 import scala.util.control.NoStackTrace
 
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.merkletree.StateProofValidator
 import org.tessellation.schema._
 import org.tessellation.schema.transaction.RewardTransaction
 import org.tessellation.sdk.domain.block.processing._
@@ -56,6 +58,10 @@ object GlobalSnapshotContextFunctions {
         _ <- CannotApplyStateChannelsError(returnedSCEvents).raiseError[F, Unit].whenA(returnedSCEvents.nonEmpty)
         diffRewards = acceptedRewardTxs -- signedArtifact.rewards
         _ <- CannotApplyRewardsError(diffRewards).raiseError[F, Unit].whenA(diffRewards.nonEmpty)
+        _ <- StateProofValidator.validate(signedArtifact, snapshotInfo).flatMap {
+          case Validated.Valid(_)   => Async[F].unit
+          case Validated.Invalid(e) => e.raiseError[F, Unit]
+        }
 
       } yield snapshotInfo
     }

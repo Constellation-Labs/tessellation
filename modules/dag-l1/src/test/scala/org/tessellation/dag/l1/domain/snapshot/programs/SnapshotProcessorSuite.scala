@@ -177,7 +177,9 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
       }
     )
 
-  def generateSnapshot(peerId: PeerId): GlobalIncrementalSnapshot =
+  def generateSnapshot(peerId: PeerId): GlobalIncrementalSnapshot = {
+    val emptySortedMapHash = Hash("5fe34c799983eca1cb31b32156233cceaf9aaeb56b2a5eb77478d08bbd220c6b")
+
     GlobalIncrementalSnapshot(
       snapshotOrdinal10,
       snapshotHeight6,
@@ -189,8 +191,14 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
       EpochProgress.MinValue,
       NonEmptyList.one(peerId),
       SnapshotTips(SortedSet.empty, SortedSet.empty),
-      GlobalSnapshotStateProof(Hash.empty, Hash.empty, Hash.empty, None)
+      GlobalSnapshotStateProof(
+        emptySortedMapHash,
+        emptySortedMapHash,
+        emptySortedMapHash,
+        None
+      )
     )
+  }
 
   def generateGlobalSnapshotInfo: GlobalSnapshotInfo = GlobalSnapshotInfo.empty
 
@@ -721,7 +729,6 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
         val hashedBlock = hashedBlockForKeyPair(keys)
 
         val snapshotBalances = generateSnapshotBalances(Set(srcAddress))
-        val snapshotInfo = GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, snapshotBalances, SortedMap.empty, SortedMap.empty)
 
         for {
           correctTxs <- generateTransactions(srcAddress, srcKey, dstAddress, 5).map(_.toList)
@@ -768,6 +775,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           _ <- aboveRangeMajorityBlock.signed.value.transactions.toNonEmptyList.traverse(_.toHashed.flatMap(transactionStorage.accept))
           _ <- aboveRangeAcceptedBlock.signed.value.transactions.toNonEmptyList.traverse(_.toHashed.flatMap(transactionStorage.accept))
 
+          lastSnapshotInfo = GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, snapshotBalances, SortedMap.empty, SortedMap.empty)
+          lastSnapshotStateProof <- lastSnapshotInfo.stateProof
           hashedLastSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
               tips = SnapshotTips(
@@ -784,10 +793,21 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   ActiveTip(parent42, 1L, snapshotOrdinal9),
                   ActiveTip(parent52, 1L, snapshotOrdinal9)
                 )
-              )
+              ),
+              stateProof = lastSnapshotStateProof
             ),
             srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
+          newSnapshotInfo = {
+            val balances = SortedMap(srcAddress -> Balance(48L), dstAddress -> Balance(2L))
+            val lastTxRefs = SortedMap(srcAddress -> TransactionReference.of(correctTxs(1)))
+
+            lastSnapshotInfo.copy(
+              lastTxRefs = lastTxRefs,
+              balances = balances
+            )
+          }
+          newSnapshotInfoStateProof <- newSnapshotInfo.stateProof
           hashedNextSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
               ordinal = snapshotOrdinal11,
@@ -804,16 +824,12 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   ActiveTip(parent42, 1L, snapshotOrdinal9),
                   ActiveTip(parent52, 1L, snapshotOrdinal9)
                 )
-              )
+              ),
+              stateProof = newSnapshotInfoStateProof
             ),
             srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
-          newSnapshotInfo <- globalSnapshotContextFns.createContext(
-            snapshotInfo,
-            hashedLastSnapshot.signed,
-            hashedNextSnapshot.signed
-          )
-          _ <- lastSnapR.set((hashedLastSnapshot, snapshotInfo).some)
+          _ <- lastSnapR.set((hashedLastSnapshot, lastSnapshotInfo).some)
           // Inserting tips
           _ <- blocksR(parent1.hash).set(MajorityBlock(parent1, 2L, Deprecated).some)
           _ <- blocksR(parent2.hash).set(MajorityBlock(parent2, 2L, Deprecated).some)
@@ -993,6 +1009,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
           snapshotBalances = generateSnapshotBalances(Set(srcAddress))
           snapshotTxRefs = generateSnapshotLastAccTxRefs(Map(srcAddress -> correctTxs(5)))
+          lastSnapshotInfo = GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, snapshotBalances, SortedMap.empty, SortedMap.empty)
+          lastSnapshotInfoStateProof <- lastSnapshotInfo.stateProof
           hashedLastSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
               tips = SnapshotTips(
@@ -1009,10 +1027,21 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   ActiveTip(parent42, 1L, snapshotOrdinal9),
                   ActiveTip(parent52, 1L, snapshotOrdinal9)
                 )
-              )
+              ),
+              stateProof = lastSnapshotInfoStateProof
             ),
             srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
+          newSnapshotInfo = {
+            val balances = SortedMap(srcAddress -> Balance(44L), dstAddress -> Balance(6L))
+            val lastTxRefs = SortedMap(srcAddress -> TransactionReference.of(correctTxs(5)))
+
+            lastSnapshotInfo.copy(
+              lastTxRefs = lastTxRefs,
+              balances = balances
+            )
+          }
+          newSnapshotInfoStateProof <- newSnapshotInfo.stateProof
           hashedNextSnapshot <- forAsyncKryo(
             generateSnapshot(peerId).copy(
               ordinal = snapshotOrdinal11,
@@ -1036,17 +1065,12 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   ActiveTip(parent42, 1L, snapshotOrdinal9),
                   ActiveTip(parent52, 1L, snapshotOrdinal9)
                 )
-              )
+              ),
+              stateProof = newSnapshotInfoStateProof
             ),
             srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
-          snapshotInfo = GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, snapshotBalances, SortedMap.empty, SortedMap.empty)
-          newSnapshotInfo <- globalSnapshotContextFns.createContext(
-            snapshotInfo,
-            hashedLastSnapshot.signed,
-            hashedNextSnapshot.signed
-          )
-          _ <- lastSnapR.set((hashedLastSnapshot, snapshotInfo).some)
+          _ <- lastSnapR.set((hashedLastSnapshot, lastSnapshotInfo).some)
           // Inserting tips
           _ <- blocksR(parent1.hash).set(MajorityBlock(parent1, 2L, Deprecated).some)
           _ <- blocksR(parent2.hash).set(MajorityBlock(parent2, 2L, Deprecated).some)
