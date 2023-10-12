@@ -9,7 +9,6 @@ import cats.syntax.list._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import org.tessellation.cli.AppEnvironment
 import org.tessellation.currency.schema.currency.SnapshotFee
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.kryo.KryoSerializer
@@ -113,10 +112,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
   def mkGlobalSnapshotConsensusFunctions()(implicit ks: KryoSerializer[IO], sp: SecurityProvider[IO], m: Metrics[IO]) = {
     val snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make[IO](bam, scProcessor, collateral)
-    GlobalSnapshotConsensusFunctions.make[IO](gss, snapshotAcceptanceManager, collateral, rewards, env)
+    GlobalSnapshotConsensusFunctions.make[IO](gss, snapshotAcceptanceManager, collateral, rewards)
   }
-
-  val env: AppEnvironment = AppEnvironment.Testnet
 
   test("validateArtifact - returns artifact for correct data") { res =>
     implicit val (_, ks, sp, m) = res

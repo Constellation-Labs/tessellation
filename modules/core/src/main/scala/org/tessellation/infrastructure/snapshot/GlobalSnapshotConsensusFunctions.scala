@@ -11,8 +11,6 @@ import cats.syntax.order._
 
 import scala.collection.immutable.SortedMap
 
-import org.tessellation.cli.AppEnvironment
-import org.tessellation.cli.AppEnvironment.Mainnet
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
@@ -48,8 +46,7 @@ object GlobalSnapshotConsensusFunctions {
     globalSnapshotStorage: SnapshotStorage[F, GlobalSnapshotArtifact, GlobalSnapshotContext],
     globalSnapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     collateral: Amount,
-    rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent],
-    environment: AppEnvironment
+    rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent]
   ): GlobalSnapshotConsensusFunctions[F] = new GlobalSnapshotConsensusFunctions[F] {
 
     private val logger = Slf4jLogger.getLoggerFromClass(GlobalSnapshotConsensusFunctions.getClass)
@@ -94,9 +91,9 @@ object GlobalSnapshotConsensusFunctions {
       trigger: ConsensusTrigger,
       events: Set[GlobalSnapshotEvent]
     ): F[(GlobalSnapshotArtifact, GlobalSnapshotContext, Set[GlobalSnapshotEvent])] = {
-      val (scEvents: List[StateChannelEvent], dagEvents: List[DAGEvent]) = events.filter { event =>
-        if (environment == Mainnet) event.isRight else true
-      }.toList.partitionMap(identity)
+
+      val (scEvents: List[StateChannelEvent], dagEvents: List[DAGEvent]) =
+        events.toList.partitionMap(identity)
 
       val blocksForAcceptance = dagEvents
         .filter(_.height > lastArtifact.height)

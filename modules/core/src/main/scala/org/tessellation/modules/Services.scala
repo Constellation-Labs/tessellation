@@ -88,7 +88,6 @@ object Services {
           validators,
           sdkServices,
           cfg.snapshot,
-          cfg.environment,
           stateChannelPullDelay = cfg.stateChannelPullDelay,
           stateChannelPurgeDelay = cfg.stateChannelPurgeDelay,
           stateChannelAllowanceLists,
