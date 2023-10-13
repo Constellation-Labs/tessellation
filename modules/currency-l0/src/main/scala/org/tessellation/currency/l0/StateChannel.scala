@@ -31,11 +31,7 @@ object StateChannel {
         .awakeEvery[F](awakePeriod)
         .evalMap(_ => services.globalL0.pullGlobalSnapshots)
         .evalMap {
-          case Left((snapshot, state)) =>
-            storages.lastGlobalSnapshot.get.map {
-              case Some(lastSnapshot) => Validator.isNextSnapshot(lastSnapshot, snapshot.signed.value)
-              case None               => true
-            }.ifM(storages.lastGlobalSnapshot.set(snapshot, state), Applicative[F].unit)
+          case Left((snapshot, state)) => storages.lastGlobalSnapshot.setInitial(snapshot, state)
 
           case Right(snapshots) =>
             snapshots.tailRecM {

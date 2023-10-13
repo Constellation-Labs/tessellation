@@ -1,19 +1,18 @@
 package org.tessellation.sdk.infrastructure.snapshot.storage
 
 import cats.effect.kernel.Async
-import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
 import cats.{Applicative, MonadThrow}
 
-import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.height.Height
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo}
 import org.tessellation.sdk.domain.collateral.LatestBalances
+import org.tessellation.sdk.domain.snapshot.Validator.isNextSnapshot
 import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.security.Hashed
 
@@ -37,8 +36,7 @@ object LastSnapshotStorage {
 
       def set(snapshot: Hashed[S], state: SI): F[Unit] =
         snapshotR.modify {
-          case Some((current, _)) if current.hash === snapshot.lastSnapshotHash && current.ordinal.next === snapshot.ordinal =>
-            ((snapshot, state).some, Applicative[F].unit)
+          case Some((current, _)) if isNextSnapshot(current, snapshot.signed.value) => ((snapshot, state).some, Applicative[F].unit)
           case other =>
             (other, MonadThrow[F].raiseError[Unit](new Throwable("Failure during setting new global snapshot!")))
         }.flatten
