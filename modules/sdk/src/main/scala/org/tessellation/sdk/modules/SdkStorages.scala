@@ -7,8 +7,10 @@ import cats.syntax.functor._
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.sdk.config.types.SdkConfig
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
+import org.tessellation.sdk.domain.fork.ForkInfoStorage
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.infrastructure.cluster.storage.{ClusterStorage, SessionStorage}
+import org.tessellation.sdk.infrastructure.fork.ForkInfoStorage
 import org.tessellation.sdk.infrastructure.gossip.RumorStorage
 import org.tessellation.sdk.infrastructure.node.NodeStorage
 
@@ -23,12 +25,14 @@ object SdkStorages {
       nodeStorage <- NodeStorage.make[F]
       sessionStorage <- SessionStorage.make[F]
       rumorStorage <- RumorStorage.make[F](cfg.gossipConfig.storage)
+      forkInfoStorage <- ForkInfoStorage.make[F](cfg.forkInfoStorage)
     } yield
       new SdkStorages[F](
         cluster = clusterStorage,
         node = nodeStorage,
         session = sessionStorage,
-        rumor = rumorStorage
+        rumor = rumorStorage,
+        forkInfo = forkInfoStorage
       ) {}
 }
 
@@ -36,5 +40,6 @@ sealed abstract class SdkStorages[F[_]] private (
   val cluster: ClusterStorage[F],
   val node: NodeStorage[F],
   val session: SessionStorage[F],
-  val rumor: RumorStorage[F]
+  val rumor: RumorStorage[F],
+  val forkInfo: ForkInfoStorage[F]
 )

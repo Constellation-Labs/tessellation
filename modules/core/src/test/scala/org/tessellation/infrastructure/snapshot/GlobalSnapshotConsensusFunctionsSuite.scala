@@ -2,15 +2,17 @@ package org.tessellation.infrastructure.snapshot
 
 import cats.data.NonEmptyList
 import cats.effect.std.Supervisor
-import cats.effect.{IO, Resource}
+import cats.effect.{IO, Ref, Resource}
 import cats.syntax.applicative._
 import cats.syntax.either._
 import cats.syntax.list._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
+import scala.reflect.runtime.universe.TypeTag
 
 import org.tessellation.currency.schema.currency.SnapshotFee
 import org.tessellation.ext.cats.syntax.next._
+import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
@@ -18,6 +20,8 @@ import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.{Block, _}
 import org.tessellation.sdk.domain.block.processing._
+import org.tessellation.sdk.domain.fork.ForkInfo
+import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.infrastructure.consensus.trigger.EventTrigger
@@ -32,12 +36,35 @@ import org.tessellation.security.{KeyPairGenerator, SecurityProvider}
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 import org.tessellation.syntax.sortedCollection._
 
+import io.circe.Encoder
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
 
 object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checkers {
 
   type Res = (Supervisor[IO], KryoSerializer[IO], SecurityProvider[IO], Metrics[IO])
+
+  def mkMockGossip[B](spreadRef: Ref[IO, List[B]]): Gossip[IO] =
+    new Gossip[IO] {
+      override def spread[A: TypeTag: Encoder](rumorContent: A): IO[Unit] =
+        spreadRef.update(rumorContent.asInstanceOf[B] :: _)
+
+      override def spreadCommon[A: TypeTag: Encoder](rumorContent: A): IO[Unit] =
+        IO.raiseError(new Exception("spreadCommon: Unexpected call"))
+    }
+
+  def mkSignedArtifacts()(
+    implicit ks: KryoSerializer[IO],
+    sp: SecurityProvider[IO]
+  ): IO[(Signed[GlobalSnapshotArtifact], Signed[GlobalSnapshot])] = for {
+    keyPair <- KeyPairGenerator.makeKeyPair[IO]
+
+    genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
+    signedGenesis <- Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair)
+
+    lastArtifact <- GlobalIncrementalSnapshot.fromGlobalSnapshot(signedGenesis.value)
+    signedLastArtifact <- Signed.forAsyncKryo[IO, GlobalIncrementalSnapshot](lastArtifact, keyPair)
+  } yield (signedLastArtifact, signedGenesis)
 
   override def sharedResource: Resource[IO, Res] =
     Supervisor[IO].flatMap { supervisor =>
@@ -54,6 +81,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       override def prepend(snapshot: Signed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): IO[Boolean] = ???
 
       override def head: IO[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = ???
+
       override def headSnapshot: IO[Option[Signed[GlobalIncrementalSnapshot]]] = ???
 
       override def get(ordinal: SnapshotOrdinal): IO[Option[Signed[GlobalIncrementalSnapshot]]] = ???
@@ -83,7 +111,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
   }
 
-  val scProcessor = new GlobalSnapshotStateChannelEventsProcessor[IO] {
+  val scProcessor: GlobalSnapshotStateChannelEventsProcessor[IO] = new GlobalSnapshotStateChannelEventsProcessor[IO] {
     def process(
       ordinal: SnapshotOrdinal,
       lastGlobalSnapshotInfo: GlobalSnapshotInfo,
@@ -110,94 +138,118 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
   val rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent] =
     (_, _, _, _, _, _) => IO(SortedSet.empty)
 
-  def mkGlobalSnapshotConsensusFunctions()(implicit ks: KryoSerializer[IO], sp: SecurityProvider[IO], m: Metrics[IO]) = {
-    val snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make[IO](bam, scProcessor, collateral)
-    GlobalSnapshotConsensusFunctions.make[IO](gss, snapshotAcceptanceManager, collateral, rewards)
+  def mkGlobalSnapshotConsensusFunctions(gossip: Gossip[F])(
+    implicit ks: KryoSerializer[IO],
+    sp: SecurityProvider[IO],
+    m: Metrics[IO]
+  ): GlobalSnapshotConsensusFunctions[IO] = {
+    val snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[IO] =
+      GlobalSnapshotAcceptanceManager.make[IO](bam, scProcessor, collateral)
+
+    GlobalSnapshotConsensusFunctions
+      .make[IO](
+        gss,
+        snapshotAcceptanceManager,
+        collateral,
+        rewards,
+        gossip
+      )
   }
+
+  def getTestData(
+    implicit sp: SecurityProvider[F],
+    kryo: KryoSerializer[F],
+    m: Metrics[F]
+  ): IO[(GlobalSnapshotConsensusFunctions[IO], Set[PeerId], Signed[GlobalSnapshotArtifact], Signed[GlobalSnapshot], StateChannelEvent)] =
+    for {
+      gossip <- Ref.of(List.empty[ForkInfo]).map(mkMockGossip)
+      gscf = mkGlobalSnapshotConsensusFunctions(gossip)
+      facilitators = Set.empty[PeerId]
+
+      keyPair <- KeyPairGenerator.makeKeyPair[F]
+
+      genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
+      signedGenesis <- Signed.forAsyncKryo[F, GlobalSnapshot](genesis, keyPair)
+
+      lastArtifact <- GlobalIncrementalSnapshot.fromGlobalSnapshot(signedGenesis.value)
+      signedLastArtifact <- Signed.forAsyncKryo[IO, GlobalIncrementalSnapshot](lastArtifact, keyPair)
+
+      scEvent <- mkStateChannelEvent()
+    } yield (gscf, facilitators, signedLastArtifact, signedGenesis, scEvent)
 
   test("validateArtifact - returns artifact for correct data") { res =>
     implicit val (_, ks, sp, m) = res
 
-    val gscf = mkGlobalSnapshotConsensusFunctions()
+    for {
+      (gscf, facilitators, signedLastArtifact, signedGenesis, scEvent) <- getTestData
 
-    val facilitators = Set.empty[PeerId]
+      (artifact, _, _) <- gscf.createProposalArtifact(
+        SnapshotOrdinal.MinValue,
+        signedLastArtifact,
+        signedGenesis.value.info,
+        EventTrigger,
+        Set(scEvent.asLeft[DAGEvent]),
+        facilitators
+      )
+      result <- gscf.validateArtifact(
+        signedLastArtifact,
+        signedGenesis.value.info,
+        EventTrigger,
+        artifact,
+        facilitators
+      )
 
-    KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>
-      val genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
-      Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair).flatMap { signedGenesis =>
-        GlobalIncrementalSnapshot.fromGlobalSnapshot(signedGenesis.value).flatMap { lastArtifact =>
-          Signed.forAsyncKryo[IO, GlobalIncrementalSnapshot](lastArtifact, keyPair).flatMap { signedLastArtifact =>
-            mkStateChannelEvent().flatMap { scEvent =>
-              gscf
-                .createProposalArtifact(
-                  SnapshotOrdinal.MinValue,
-                  signedLastArtifact,
-                  signedGenesis.value.info,
-                  EventTrigger,
-                  Set(scEvent.asLeft[DAGEvent]),
-                  facilitators
-                )
-                .flatMap {
-                  case (artifact, _, _) =>
-                    gscf.validateArtifact(signedLastArtifact, signedGenesis.value.info, EventTrigger, artifact, facilitators).map {
-                      result =>
-                        expect.same(result.isRight, true) && expect
-                          .same(
-                            result.map(_._1.stateChannelSnapshots(scEvent.address)),
-                            Right(NonEmptyList.one(scEvent.snapshotBinary))
-                          )
-                    }
-                }
-            }
-          }
-        }
-      }
-    }
+      expected = Right(NonEmptyList.one(scEvent.snapshotBinary))
+      actual = result.map(_._1.stateChannelSnapshots(scEvent.address))
+      expectation = expect.same(true, result.isRight) && expect.same(expected, actual)
+    } yield expectation
   }
 
   test("validateArtifact - returns invalid artifact error for incorrect data") { res =>
     implicit val (_, ks, sp, m) = res
 
-    val gscf = mkGlobalSnapshotConsensusFunctions()
+    for {
+      (gscf, facilitators, signedLastArtifact, signedGenesis, scEvent) <- getTestData
 
-    val facilitators = Set.empty[PeerId]
-
-    KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>
-      val genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
-      Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair).flatMap { signedGenesis =>
-        GlobalIncrementalSnapshot.fromGlobalSnapshot(signedGenesis.value).flatMap { lastArtifact =>
-          Signed.forAsyncKryo[IO, GlobalIncrementalSnapshot](lastArtifact, keyPair).flatMap { signedLastArtifact =>
-            mkStateChannelEvent().flatMap { scEvent =>
-              gscf
-                .createProposalArtifact(
-                  SnapshotOrdinal.MinValue,
-                  signedLastArtifact,
-                  signedGenesis.value.info,
-                  EventTrigger,
-                  Set(scEvent.asLeft[DAGEvent]),
-                  facilitators
-                )
-                .flatMap { proposalArtifact =>
-                  gscf
-                    .validateArtifact(
-                      signedLastArtifact,
-                      signedGenesis.value.info,
-                      EventTrigger,
-                      proposalArtifact._1.copy(ordinal = proposalArtifact._1.ordinal.next),
-                      facilitators
-                    )
-                    .map { result =>
-                      expect.same(result.isLeft, true)
-                    }
-                }
-            }
-          }
-        }
-      }
-    }
+      (artifact, _, _) <- gscf.createProposalArtifact(
+        SnapshotOrdinal.MinValue,
+        signedLastArtifact,
+        signedGenesis.value.info,
+        EventTrigger,
+        Set(scEvent.asLeft[DAGEvent]),
+        facilitators
+      )
+      result <- gscf.validateArtifact(
+        signedLastArtifact,
+        signedGenesis.value.info,
+        EventTrigger,
+        artifact.copy(ordinal = artifact.ordinal.next),
+        facilitators
+      )
+    } yield expect.same(true, result.isLeft)
   }
 
-  def mkStateChannelEvent()(implicit S: SecurityProvider[IO], K: KryoSerializer[IO]) = for {
+  test("gossip signed artifacts") { res =>
+    implicit val (_, ks, sp, m) = res
+
+    for {
+      gossiped <- Ref.of(List.empty[ForkInfo])
+      mockGossip = mkMockGossip(gossiped)
+
+      gscf = mkGlobalSnapshotConsensusFunctions(mockGossip)
+      (signedLastArtifact, _) <- mkSignedArtifacts()
+
+      _ <- gscf.gossipForkInfo(mockGossip, signedLastArtifact)
+
+      expected = signedLastArtifact.hash.map { h =>
+        List(ForkInfo(signedLastArtifact.value.ordinal, h))
+      }
+        .getOrElse(List.empty)
+      actual <- gossiped.get
+    } yield expect.eql(expected, actual)
+  }
+
+  def mkStateChannelEvent()(implicit S: SecurityProvider[IO], K: KryoSerializer[IO]): IO[StateChannelEvent] = for {
     keyPair <- KeyPairGenerator.makeKeyPair[IO]
     binary = StateChannelSnapshotBinary(Hash.empty, "test".getBytes, SnapshotFee.MinValue)
     signedSC <- forAsyncKryo(binary, keyPair)

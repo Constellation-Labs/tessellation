@@ -138,7 +138,9 @@ abstract class CurrencyL1App(
         )
         .asResource
 
-      rumorHandler = RumorHandlers.make[IO](storages.cluster, healthChecks.ping, services.localHealthcheck).handlers <+>
+      rumorHandler = RumorHandlers
+        .make[IO](storages.cluster, healthChecks.ping, services.localHealthcheck, sdkStorages.forkInfo)
+        .handlers <+>
         blockRumorHandler[IO](queues.peerBlock)
 
       _ <- DAGL1Daemons

@@ -3,6 +3,7 @@ package org.tessellation.sdk.infrastructure.snapshot
 import cats.effect.Async
 import cats.syntax.applicativeError._
 import cats.syntax.bifunctor._
+import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.foldable._
 import cats.syntax.functor._
@@ -14,6 +15,8 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
 
 import org.tessellation.ext.cats.syntax.next._
+import org.tessellation.ext.crypto._
+import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
@@ -23,6 +26,8 @@ import org.tessellation.schema.snapshot.Snapshot
 import org.tessellation.sdk.domain.block.processing.{BlockAcceptanceResult, deprecationThreshold}
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions.InvalidArtifact
+import org.tessellation.sdk.domain.fork.ForkInfo
+import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.infrastructure.consensus.trigger.ConsensusTrigger
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
@@ -36,13 +41,16 @@ case object NoTipsRemaining extends NoStackTrace
 case object ArtifactMismatch extends InvalidArtifact
 
 abstract class SnapshotConsensusFunctions[
-  F[_]: Async: SecurityProvider,
+  F[_]: Async: SecurityProvider: KryoSerializer,
   Event,
   Artifact <: Snapshot: Eq,
   Context,
   Trigger <: ConsensusTrigger
 ](implicit ordering: Ordering[BlockAsActiveTip])
     extends ConsensusFunctions[F, Event, SnapshotOrdinal, Artifact, Context] {
+
+  def gossipForkInfo(gossip: Gossip[F], signed: Signed[Artifact]): F[Unit] =
+    signed.hash.liftTo[F].flatMap(h => gossip.spread(ForkInfo(signed.value.ordinal, h)))
 
   def getRequiredCollateral: Amount
 

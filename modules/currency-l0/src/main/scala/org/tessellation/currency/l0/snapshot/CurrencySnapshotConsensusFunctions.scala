@@ -1,6 +1,7 @@
 package org.tessellation.currency.l0.snapshot
 
 import cats.effect.Async
+import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.order._
 
@@ -15,6 +16,7 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions
+import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.infrastructure.consensus.trigger.ConsensusTrigger
 import org.tessellation.sdk.infrastructure.snapshot._
@@ -22,7 +24,7 @@ import org.tessellation.sdk.snapshot.currency.CurrencySnapshotEvent
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 
-abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
+abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider: KryoSerializer]
     extends SnapshotConsensusFunctions[
       F,
       CurrencySnapshotEvent,
@@ -38,7 +40,8 @@ object CurrencySnapshotConsensusFunctions {
     collateral: Amount,
     rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
     currencySnapshotCreator: CurrencySnapshotCreator[F],
-    currencySnapshotValidator: CurrencySnapshotValidator[F]
+    currencySnapshotValidator: CurrencySnapshotValidator[F],
+    gossip: Gossip[F]
   ): CurrencySnapshotConsensusFunctions[F] = new CurrencySnapshotConsensusFunctions[F] {
 
     def getRequiredCollateral: Amount = collateral
@@ -49,7 +52,8 @@ object CurrencySnapshotConsensusFunctions {
       signedArtifact: Signed[CurrencyIncrementalSnapshot],
       context: CurrencySnapshotContext
     ): F[Unit] =
-      stateChannelSnapshotService.consume(signedArtifact, context)
+      stateChannelSnapshotService.consume(signedArtifact, context) >>
+        gossipForkInfo(gossip, signedArtifact)
 
     def validateArtifact(
       lastSignedArtifact: Signed[CurrencySnapshotArtifact],
