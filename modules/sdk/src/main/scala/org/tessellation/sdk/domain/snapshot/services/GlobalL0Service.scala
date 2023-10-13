@@ -63,9 +63,13 @@ object GlobalL0Service {
       private val ordinalRange = 0L to 3L
 
       implicit val hashShow: Show[Hash] = Hash.shortShow
+      implicit val peerIdShow: Show[PeerId] = PeerId.shortShow
 
       def pullLatestSnapshot: F[LatestSnapshotTuple] =
         maybeMajorityPeerIds.fold(pullLatestSnapshotFromRandomPeer)(pullLatestSnapshotWithMajorityHash)
+
+      def pullLatestSnapshotFromRandomPeer: F[LatestSnapshotTuple] =
+        globalL0ClusterStorage.getRandomPeer >>= pullLatestSnapshotFromPeer
 
       def pullGlobalSnapshot(hash: Hash): F[Option[Hashed[GlobalIncrementalSnapshot]]] =
         pullGlobalSnapshot(l0GlobalSnapshotClient.get(hash)).handleErrorWith { e =>
@@ -112,6 +116,10 @@ object GlobalL0Service {
         type Result = LatestSnapshotTuple
         for {
           peers <- globalL0ClusterStorage.getPeers.map(nes => Random.shuffle(nes.toSortedSet))
+
+          _ <- logger.debug(s"Pulling latest snapshot using ${peers.size} peers")
+          _ <- logger.trace(s"${peers.map(_.id.show)}")
+
           majorityPeers <- getL0Peers(majorityPeerIds)
           result <- peers.tailRecM[F, Result] { l0Peers =>
             l0Peers.headOption.fold {
@@ -138,14 +146,37 @@ object GlobalL0Service {
       ): F[Boolean] = {
         val (snapshot, info) = snapshotTuple
         List(
-          StateProofValidator.validate(snapshot, info).map(_.isValid),
-          getMajorityOrdinal(majorityPeers).map(_.fold(false)(ord => ordinalRange.contains(ord.value - snapshot.ordinal.value))),
-          getMajorityHash(majorityPeers, snapshot.ordinal).map(_.contains(snapshot.hash))
+          stateProofValidation(snapshot, info),
+          majorityOrdinalValidation(snapshot, majorityPeers),
+          majorityHashValidation(snapshot, majorityPeers)
         ).forallM(identity)
       }
 
-      def pullLatestSnapshotFromRandomPeer: F[LatestSnapshotTuple] =
-        globalL0ClusterStorage.getRandomPeer >>= pullLatestSnapshotFromPeer
+      private def stateProofValidation(snapshot: Hashed[GlobalIncrementalSnapshot], info: GlobalSnapshotInfo): F[Boolean] =
+        StateProofValidator
+          .validate(snapshot, info)
+          .flatTap(v => logger.debug(s"Failed StateProofValidation: $v").whenA(v.isInvalid))
+          .map(_.isValid)
+
+      private def majorityOrdinalValidation(snapshot: Hashed[GlobalIncrementalSnapshot], majorityPeers: NonEmptyList[L0Peer]): F[Boolean] =
+        getMajorityOrdinal(majorityPeers).flatMap { maybeMajorityOrdinal =>
+          val isInRange = maybeMajorityOrdinal.exists(o => ordinalRange.contains(o.value - snapshot.ordinal.value))
+
+          logger
+            .debug(s"Majority ordinal ${maybeMajorityOrdinal.show} missing or not in $ordinalRange, ${snapshot.ordinal.show}")
+            .unlessA(isInRange)
+            .as(isInRange)
+        }
+
+      private def majorityHashValidation(snapshot: Hashed[GlobalIncrementalSnapshot], majorityPeers: NonEmptyList[L0Peer]): F[Boolean] =
+        getMajorityHash(majorityPeers, snapshot.ordinal).flatMap { maybeMajorityHash =>
+          val isMajority = maybeMajorityHash.exists(_ === snapshot.hash)
+
+          logger
+            .debug(s"Majority/Snapshot hash mismatch: ${maybeMajorityHash.show}, ${snapshot.hash.show}")
+            .unlessA(isMajority)
+            .as(isMajority)
+        }
 
       private def pullLatestSnapshotFromPeer(l0Peer: L0Peer): F[LatestSnapshotTuple] =
         l0GlobalSnapshotClient.getLatest(l0Peer).flatMap {

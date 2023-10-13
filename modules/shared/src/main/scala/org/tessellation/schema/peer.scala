@@ -65,6 +65,8 @@ object peer {
 
     def fromPublic(publicKey: PublicKey): PeerId =
       fromId(publicKey.toId)
+
+    val shortShow: Show[PeerId] = Show.show[PeerId](p => s"PeerId(${p.value.value.take(5)})")
   }
 
   implicit class PeerIdOps(peerId: PeerId) {
