@@ -20,6 +20,7 @@ import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.sdk.domain.consensus.ConsensusFunctions.InvalidArtifact
+import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
@@ -32,7 +33,7 @@ import org.tessellation.statechannel.{StateChannelOutput, StateChannelValidation
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-abstract class GlobalSnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
+abstract class GlobalSnapshotConsensusFunctions[F[_]: Async: SecurityProvider: KryoSerializer]
     extends SnapshotConsensusFunctions[
       F,
       GlobalSnapshotEvent,
@@ -47,7 +48,8 @@ object GlobalSnapshotConsensusFunctions {
     globalSnapshotStorage: SnapshotStorage[F, GlobalSnapshotArtifact, GlobalSnapshotContext],
     globalSnapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     collateral: Amount,
-    rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent]
+    rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent],
+    gossip: Gossip[F]
   ): GlobalSnapshotConsensusFunctions[F] = new GlobalSnapshotConsensusFunctions[F] {
 
     private val logger = Slf4jLogger.getLoggerFromClass(GlobalSnapshotConsensusFunctions.getClass)
@@ -62,7 +64,8 @@ object GlobalSnapshotConsensusFunctions {
         .ifM(
           metrics.globalSnapshot(signedArtifact),
           logger.error("Cannot save GlobalSnapshot into the storage")
-        )
+        ) >>
+        gossipForkInfo(gossip, signedArtifact)
 
     override def validateArtifact(
       lastSignedArtifact: Signed[GlobalSnapshotArtifact],

@@ -108,7 +108,9 @@ abstract class CurrencyL0App(
           sdk.nodeId
         )
         .asResource
-      rumorHandler = RumorHandlers.make[IO](storages.cluster, healthChecks.ping, services.localHealthcheck).handlers <+>
+      rumorHandler = RumorHandlers
+        .make[IO](storages.cluster, healthChecks.ping, services.localHealthcheck, sdkStorages.forkInfo)
+        .handlers <+>
         services.consensus.handler
       _ <- Daemons
         .start(storages, services, programs, queues, healthChecks, services.dataApplication, cfg)

@@ -24,7 +24,8 @@ object types {
     collateral: CollateralConfig,
     trustStorage: TrustStorageConfig,
     priorityPeerIds: Option[NonEmptySet[PeerId]],
-    snapshotSizeConfig: SnapshotSizeConfig
+    snapshotSizeConfig: SnapshotSizeConfig,
+    forkInfoStorage: ForkInfoStorageConfig
   )
 
   case class SnapshotSizeConfig(
@@ -118,6 +119,10 @@ object types {
     checkPeersMaxDelay: FiniteDuration,
     additionalDiscoveryDelay: FiniteDuration,
     minPeers: PosInt
+  )
+
+  case class ForkInfoStorageConfig(
+    maxSize: PosInt
   )
 
 }

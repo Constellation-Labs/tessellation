@@ -96,7 +96,9 @@ object Main
         )
         .asResource
 
-      rumorHandler = RumorHandlers.make[IO](storages.cluster, healthChecks.ping, services.localHealthcheck).handlers <+>
+      rumorHandler = RumorHandlers
+        .make[IO](storages.cluster, healthChecks.ping, services.localHealthcheck, sdkStorages.forkInfo)
+        .handlers <+>
         trustHandler(storages.trust) <+> ordinalTrustHandler(storages.trust) <+> services.consensus.handler
 
       _ <- Daemons

@@ -59,7 +59,8 @@ object CurrencySnapshotConsensus {
         collateral,
         maybeRewards,
         creator,
-        validator
+        validator,
+        gossip
       ),
       gossip,
       selfId,

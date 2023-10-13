@@ -99,7 +99,9 @@ object Main
         )
         .asResource
 
-      rumorHandler = RumorHandlers.make[IO](storages.cluster, healthChecks.ping, services.localHealthcheck).handlers <+>
+      rumorHandler = RumorHandlers
+        .make[IO](storages.cluster, healthChecks.ping, services.localHealthcheck, sdkStorages.forkInfo)
+        .handlers <+>
         blockRumorHandler(queues.peerBlock)
 
       _ <- Daemons

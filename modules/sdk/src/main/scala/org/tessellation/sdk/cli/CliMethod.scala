@@ -59,6 +59,8 @@ object CliMethod {
     seedlistOutputBias = 0.5
   )
 
+  val forkInfoStorageConfig: ForkInfoStorageConfig = ForkInfoStorageConfig(10)
+
   val leavingDelay = 30.seconds
 
   def healthCheckConfig(pingEnabled: Boolean) = HealthCheckConfig(
@@ -110,6 +112,8 @@ trait CliMethod {
 
   val trustStorageConfig: TrustStorageConfig = CliMethod.trustStorageConfig
 
+  val forkInfoStorageConfig: ForkInfoStorageConfig = CliMethod.forkInfoStorageConfig
+
   lazy val sdkConfig: SdkConfig = SdkConfig(
     environment,
     gossipConfig,
@@ -119,7 +123,8 @@ trait CliMethod {
     collateralConfig(environment, collateralAmount),
     trustStorageConfig,
     PriorityPeerIds.get(environment),
-    snapshotSizeConfig
+    snapshotSizeConfig,
+    forkInfoStorageConfig
   )
 
 }
