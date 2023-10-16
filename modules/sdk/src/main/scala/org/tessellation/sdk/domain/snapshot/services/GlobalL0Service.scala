@@ -34,7 +34,6 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 trait GlobalL0Service[F[_]] {
   type LatestSnapshotTuple = (Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)
   def pullLatestSnapshot: F[LatestSnapshotTuple]
-  def pullLatestSnapshotFromRandomPeer: F[LatestSnapshotTuple]
   def pullGlobalSnapshots: F[Either[LatestSnapshotTuple, List[Hashed[GlobalIncrementalSnapshot]]]]
   def pullGlobalSnapshot(ordinal: SnapshotOrdinal): F[Option[Hashed[GlobalIncrementalSnapshot]]]
   def pullGlobalSnapshot(hash: Hash): F[Option[Hashed[GlobalIncrementalSnapshot]]]
@@ -144,7 +143,7 @@ object GlobalL0Service {
         ).forallM(identity)
       }
 
-      def pullLatestSnapshotFromRandomPeer: F[LatestSnapshotTuple] =
+      private def pullLatestSnapshotFromRandomPeer: F[LatestSnapshotTuple] =
         globalL0ClusterStorage.getRandomPeer >>= pullLatestSnapshotFromPeer
 
       private def pullLatestSnapshotFromPeer(l0Peer: L0Peer): F[LatestSnapshotTuple] =
