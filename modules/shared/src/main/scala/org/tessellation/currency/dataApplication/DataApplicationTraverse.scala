@@ -4,6 +4,7 @@ import cats.Applicative
 import cats.data._
 import cats.effect.Async
 import cats.syntax.all._
+import org.slf4j.LoggerFactory
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
 import org.tessellation.currency.schema.currency.CurrencyIncrementalSnapshot
 import org.tessellation.json.JsonBrotliBinarySerializer
@@ -19,6 +20,7 @@ trait DataApplicationTraverse[F[_]] {
 }
 
 object DataApplicationTraverse {
+  private val logger = LoggerFactory.getLogger("DataApplicationTraverse")
   def make[F[_]: Async: KryoSerializer: SecurityProvider](
     lastGlobalSnapshot: Hashed[GlobalIncrementalSnapshot],
     fetchSnapshot: Hash => F[Option[Hashed[GlobalIncrementalSnapshot]]],
@@ -46,7 +48,7 @@ object DataApplicationTraverse {
 
           (state, ordinal) <- incHashesNec.foldLeftM((dataApplication.genesis, none[SnapshotOrdinal])) { (acc, hash) =>
             acc match {
-              case (lastState, ordinal) =>
+              case (lastState, _) =>
                 fetchSnapshotOrErr(hash).flatMap { inc =>
                   def getStateChannelSnapshots = fetchCurrencySnapshots(inc, jsonBrotliBinarySerializer).map(_.map {
                     case Validated.Invalid(_)       => List.empty[Hashed[CurrencyIncrementalSnapshot]]
@@ -66,7 +68,7 @@ object DataApplicationTraverse {
                   }.flatMap {
                     case (dataBlocks, lastOrdinal) =>
                       val updates = dataBlocks.flatMap(_.updates.toList)
-
+                      logger.info(s"TESTING: $lastOrdinal")
                       dataApplication.combine(lastState, updates).map((_, lastOrdinal.some))
                   }
                 }
@@ -74,6 +76,7 @@ object DataApplicationTraverse {
           }
 
           _ <- ordinal.map { lastOrdinal =>
+            logger.info(s"TESTING2: $lastOrdinal")
             dataApplication.setCalculatedState(lastOrdinal, state.calculated)
           }.getOrElse(Applicative[F].unit)
 
