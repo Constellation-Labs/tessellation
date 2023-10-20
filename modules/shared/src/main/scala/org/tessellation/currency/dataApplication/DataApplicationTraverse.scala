@@ -54,6 +54,9 @@ object DataApplicationTraverse {
                   }.getOrElse(List.empty[Hashed[CurrencyIncrementalSnapshot]]))
 
                   getStateChannelSnapshots.flatMap { scSnapshots =>
+                    if (scSnapshots.isEmpty) {
+                      return acc.pure
+                    }
                     scSnapshots
                       .flatTraverse(_.dataApplication.map(_.blocks))
                       .traverse(_.traverse(blockBytes => dataApplication.deserializeBlock(blockBytes).flatMap(_.liftTo[F])))
