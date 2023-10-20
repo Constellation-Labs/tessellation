@@ -46,15 +46,16 @@ object DataApplicationTraverse {
 
           (state, ordinal) <- incHashesNec.foldLeftM((dataApplication.genesis, none[SnapshotOrdinal])) { (acc, hash) =>
             acc match {
-              case (lastState, p) =>
+              case (lastState, ordinal) =>
                 fetchSnapshotOrErr(hash).flatMap { inc =>
                   def getStateChannelSnapshots = fetchCurrencySnapshots(inc, jsonBrotliBinarySerializer).map(_.map {
                     case Validated.Invalid(_)       => List.empty[Hashed[CurrencyIncrementalSnapshot]]
                     case Validated.Valid(snapshots) => snapshots.toList
                   }.getOrElse(List.empty[Hashed[CurrencyIncrementalSnapshot]]))
+
                   getStateChannelSnapshots.flatMap { scSnapshots =>
                     if (scSnapshots.isEmpty) {
-                      (List.empty[Signed[DataApplicationBlock]], p).pure[F]
+                      (List.empty[Signed[DataApplicationBlock]], ordinal.get).pure[F]
                     } else {
                       scSnapshots
                         .flatTraverse(_.dataApplication.map(_.blocks))
