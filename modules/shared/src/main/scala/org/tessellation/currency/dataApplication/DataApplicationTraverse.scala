@@ -27,7 +27,6 @@ object DataApplicationTraverse {
     identifier: Address
   )(implicit context: L0NodeContext[F]): DataApplicationTraverse[F] =
     new DataApplicationTraverse[F] {
-      def logger = Slf4jLogger.getLogger[F]
 
       def loadChain(): F[(DataState.Base, Option[SnapshotOrdinal])] = {
 
@@ -47,6 +46,11 @@ object DataApplicationTraverse {
 
           jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.make[F]()
 
+          latest <- fetchCurrencySnapshots(lastGlobalSnapshot, jsonBrotliBinarySerializer).map(_.map {
+            case Validated.Invalid(_) => SnapshotOrdinal.MinValue
+            case Validated.Valid(snapshots) => snapshots.toList.head.ordinal
+          })
+
           (state, ordinal) <- incHashesNec.foldLeftM((dataApplication.genesis, none[SnapshotOrdinal])) { (acc, hash) =>
             acc match {
               case (lastState, _) =>
@@ -58,10 +62,8 @@ object DataApplicationTraverse {
 
                   getStateChannelSnapshots.flatMap { scSnapshots =>
                     if (scSnapshots.isEmpty) {
-                      logger.warn("Empty snapshot, ignoring")
                       (List.empty[Signed[DataApplicationBlock]], SnapshotOrdinal.MinValue).pure[F]
                     } else {
-                      logger.warn(s"Snapshots: ${scSnapshots}")
                       scSnapshots
                         .flatTraverse(_.dataApplication.map(_.blocks))
                         .traverse(_.traverse(blockBytes => dataApplication.deserializeBlock(blockBytes).flatMap(_.liftTo[F])))
@@ -78,7 +80,7 @@ object DataApplicationTraverse {
             }
           }
 
-          _ <- ordinal.map { lastOrdinal =>
+          _ <- latest.map { lastOrdinal =>
             dataApplication.setCalculatedState(lastOrdinal, state.calculated)
           }.getOrElse(Applicative[F].unit)
 
