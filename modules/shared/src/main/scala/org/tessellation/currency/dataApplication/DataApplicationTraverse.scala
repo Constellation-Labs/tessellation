@@ -13,7 +13,6 @@ import org.tessellation.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hashed, SecurityProvider}
-import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait DataApplicationTraverse[F[_]] {
   def loadChain(): F[(DataState.Base, Option[SnapshotOrdinal])]
@@ -27,7 +26,6 @@ object DataApplicationTraverse {
     identifier: Address
   )(implicit context: L0NodeContext[F]): DataApplicationTraverse[F] =
     new DataApplicationTraverse[F] {
-
       def loadChain(): F[(DataState.Base, Option[SnapshotOrdinal])] = {
 
         def fetchSnapshotOrErr(h: Hash) = fetchSnapshot(h).flatMap(_.liftTo[F](new Throwable(s"Global snapshot not found, hash=${h.show}")))
@@ -46,23 +44,17 @@ object DataApplicationTraverse {
 
           jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.make[F]()
 
-          latest <- fetchCurrencySnapshots(lastGlobalSnapshot, jsonBrotliBinarySerializer).map(_.map {
-            case Validated.Invalid(_) => SnapshotOrdinal.MinValue
-            case Validated.Valid(snapshots) => snapshots.toList.head.ordinal
-          })
-
           (state, ordinal) <- incHashesNec.foldLeftM((dataApplication.genesis, none[SnapshotOrdinal])) { (acc, hash) =>
             acc match {
-              case (lastState, _) =>
+              case (lastState, p) =>
                 fetchSnapshotOrErr(hash).flatMap { inc =>
                   def getStateChannelSnapshots = fetchCurrencySnapshots(inc, jsonBrotliBinarySerializer).map(_.map {
                     case Validated.Invalid(_)       => List.empty[Hashed[CurrencyIncrementalSnapshot]]
                     case Validated.Valid(snapshots) => snapshots.toList
                   }.getOrElse(List.empty[Hashed[CurrencyIncrementalSnapshot]]))
-
                   getStateChannelSnapshots.flatMap { scSnapshots =>
                     if (scSnapshots.isEmpty) {
-                      (List.empty[Signed[DataApplicationBlock]], SnapshotOrdinal.MinValue).pure[F]
+                      (List.empty[Signed[DataApplicationBlock]], p).pure[F]
                     } else {
                       scSnapshots
                         .flatTraverse(_.dataApplication.map(_.blocks))
@@ -80,7 +72,7 @@ object DataApplicationTraverse {
             }
           }
 
-          _ <- latest.map { lastOrdinal =>
+          _ <- ordinal.map { lastOrdinal =>
             dataApplication.setCalculatedState(lastOrdinal, state.calculated)
           }.getOrElse(Applicative[F].unit)
 
