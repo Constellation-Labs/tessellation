@@ -55,7 +55,7 @@ object DataApplicationTraverse {
 
                   getStateChannelSnapshots.flatMap { scSnapshots =>
                     if (scSnapshots.isEmpty) {
-                      (List.empty[Signed[DataApplicationBlock]], ordinal.get).pure[F]
+                      (List.empty[Signed[DataApplicationBlock]], SnapshotOrdinal.MinValue).pure[F]
                     } else {
                       scSnapshots
                         .flatTraverse(_.dataApplication.map(_.blocks))
