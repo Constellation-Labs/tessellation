@@ -4,7 +4,7 @@ import cats.Applicative
 import cats.data._
 import cats.effect.Async
 import cats.syntax.all._
-
+import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
 import org.tessellation.currency.schema.currency.CurrencyIncrementalSnapshot
 import org.tessellation.json.JsonBrotliBinarySerializer
 import org.tessellation.kryo.KryoSerializer
@@ -13,6 +13,7 @@ import org.tessellation.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hashed, SecurityProvider}
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait DataApplicationTraverse[F[_]] {
   def loadChain(): F[(DataState.Base, Option[SnapshotOrdinal])]
@@ -26,6 +27,8 @@ object DataApplicationTraverse {
     identifier: Address
   )(implicit context: L0NodeContext[F]): DataApplicationTraverse[F] =
     new DataApplicationTraverse[F] {
+      def logger = Slf4jLogger.getLogger[F]
+
       def loadChain(): F[(DataState.Base, Option[SnapshotOrdinal])] = {
 
         def fetchSnapshotOrErr(h: Hash) = fetchSnapshot(h).flatMap(_.liftTo[F](new Throwable(s"Global snapshot not found, hash=${h.show}")))
@@ -55,13 +58,16 @@ object DataApplicationTraverse {
 
                   getStateChannelSnapshots.flatMap { scSnapshots =>
                     if (scSnapshots.isEmpty) {
-                      return acc.pure
+                      logger.warn("Empty snapshot, ignoring")
+                      (List.empty[Signed[DataApplicationBlock]], SnapshotOrdinal.MinValue).pure[F]
+                    } else {
+                      logger.warn(s"Snapshots: ${scSnapshots}")
+                      scSnapshots
+                        .flatTraverse(_.dataApplication.map(_.blocks))
+                        .traverse(_.traverse(blockBytes => dataApplication.deserializeBlock(blockBytes).flatMap(_.liftTo[F])))
+                        .map(_.toList.flatten)
+                        .map((_, scSnapshots.last.ordinal))
                     }
-                    scSnapshots
-                      .flatTraverse(_.dataApplication.map(_.blocks))
-                      .traverse(_.traverse(blockBytes => dataApplication.deserializeBlock(blockBytes).flatMap(_.liftTo[F])))
-                      .map(_.toList.flatten)
-                      .map((_, scSnapshots.last.ordinal))
                   }.flatMap {
                     case (dataBlocks, lastOrdinal) =>
                       val updates = dataBlocks.flatMap(_.updates.toList)
