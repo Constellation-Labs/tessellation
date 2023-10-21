@@ -32,18 +32,16 @@ object DataApplicationTraverse {
 
         def fetchSnapshotOrErr(h: Hash) = fetchSnapshot(h).flatMap(_.liftTo[F](new Throwable(s"Global snapshot not found, hash=${h.show}")))
 
-        def hashChain(h: Hash): F[NonEmptyChain[Hash]] =
-          fetchSnapshot(h).flatMap {
+        def hashChain(h: Hash): F[NonEmptyChain[Hash]] = fetchSnapshot(h).flatMap {
             _.traverse { snap =>
               hashChain(snap.lastSnapshotHash).map(_.append(h))
             }.map(_.getOrElse(NonEmptyChain.one(h)))
           }
 
         for {
+          _ <- logger.info("Starting to hash the chain").pure
           incHashesNec <- hashChain(lastGlobalSnapshot.lastSnapshotHash).map { nec =>
-            val test = NonEmptyChain.fromChainAppend(nec.tail, lastGlobalSnapshot.hash)
-            logger.info(s"test: ${test}")
-            test
+            NonEmptyChain.fromChainAppend(nec.tail, lastGlobalSnapshot.hash)
           }
 
           jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.make[F]()
@@ -53,30 +51,31 @@ object DataApplicationTraverse {
               case (lastState, _) =>
                 fetchSnapshotOrErr(hash).flatMap { inc =>
                   def getStateChannelSnapshots = fetchCurrencySnapshots(inc, jsonBrotliBinarySerializer).map(_.map {
-                    case Validated.Invalid(_)       =>
-                      logger.info(s"Invalid snapshot ${hash.value}")
-                      List.empty[Hashed[CurrencyIncrementalSnapshot]]
-                    case Validated.Valid(snapshots) =>
-                      logger.info(s"Valid snapshot ${hash.value}")
-                      snapshots.toList
+                    case Validated.Invalid(_) => List.empty[Hashed[CurrencyIncrementalSnapshot]]
+                    case Validated.Valid(snapshots) => snapshots.toList
                   }.getOrElse(List.empty[Hashed[CurrencyIncrementalSnapshot]]))
 
                   getStateChannelSnapshots.flatMap { scSnapshots =>
                     if (scSnapshots.isEmpty) {
+                      logger.info(s"Snapshot of Metagraph ${identifier.value.value} found at hash: ${hash.value}, skipping")
                       (List.empty[Signed[DataApplicationBlock]], SnapshotOrdinal.MinValue).pure[F]
                     } else {
-                      logger.info(s"scSnapshots ${scSnapshots} trsting ${scSnapshots.last.ordinal}")
+                      val scSnapshotsOrdinal = scSnapshots.last.ordinal
+                      logger.info(s"Snapshot of Metagraph ${identifier.value.value} found at ordinal $scSnapshotsOrdinal and hash ${hash.value}, combining")
                       scSnapshots
                         .flatTraverse(_.dataApplication.map(_.blocks))
                         .traverse(_.traverse(blockBytes => dataApplication.deserializeBlock(blockBytes).flatMap(_.liftTo[F])))
                         .map(_.toList.flatten)
-                        .map((_, scSnapshots.last.ordinal))
+                        .map((_, scSnapshotsOrdinal))
                     }
                   }.flatMap {
                     case (dataBlocks, lastOrdinal) =>
-                      val updates = dataBlocks.flatMap(_.updates.toList)
-                      logger.info(s"TESTING: $lastOrdinal")
-                      dataApplication.combine(lastState, updates).map((_, lastOrdinal.some))
+                      if (lastOrdinal > SnapshotOrdinal.MinValue) {
+                        val updates = dataBlocks.flatMap(_.updates.toList)
+                        dataApplication.combine(lastState, updates).map((_, lastOrdinal.some))
+                      } else {
+                        acc.pure
+                      }
                   }
                 }
             }
