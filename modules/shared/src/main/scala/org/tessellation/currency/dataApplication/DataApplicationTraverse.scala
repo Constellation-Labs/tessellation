@@ -57,7 +57,6 @@ object DataApplicationTraverse {
 
                   getStateChannelSnapshots.flatMap { scSnapshots =>
                     if (scSnapshots.isEmpty) {
-                      logger.info(s"Snapshot of Metagraph ${identifier.value.value} found at hash: ${hash.value}, skipping")
                       (List.empty[Signed[DataApplicationBlock]], SnapshotOrdinal.MinValue).pure[F]
                     } else {
                       val scSnapshotsOrdinal = scSnapshots.last.ordinal
@@ -72,7 +71,7 @@ object DataApplicationTraverse {
                     case (dataBlocks, lastOrdinal) =>
                       if (lastOrdinal > SnapshotOrdinal.MinValue) {
                         val updates = dataBlocks.flatMap(_.updates.toList)
-                        dataApplication.combine(lastState, updates).map((_, lastOrdinal.some))
+                        dataApplication.combine(lastState, updates).map(state => (state, lastOrdinal.some))
                       } else {
                         acc.pure
                       }
@@ -82,7 +81,7 @@ object DataApplicationTraverse {
           }
 
           _ <- ordinal.map { lastOrdinal =>
-            logger.info(s"TESTING2: $lastOrdinal")
+            logger.info(s"TESTING2: $lastOrdinal $state ${state.calculated}")
             dataApplication.setCalculatedState(lastOrdinal, state.calculated)
           }.getOrElse(Applicative[F].unit)
 
