@@ -41,7 +41,9 @@ object DataApplicationTraverse {
 
         for {
           incHashesNec <- hashChain(lastGlobalSnapshot.lastSnapshotHash).map { nec =>
-            NonEmptyChain.fromChainAppend(nec.tail, lastGlobalSnapshot.hash)
+            val test = NonEmptyChain.fromChainAppend(nec.tail, lastGlobalSnapshot.hash)
+            logger.info(s"test: ${test}")
+            test
           }
 
           jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.make[F]()
@@ -51,14 +53,19 @@ object DataApplicationTraverse {
               case (lastState, _) =>
                 fetchSnapshotOrErr(hash).flatMap { inc =>
                   def getStateChannelSnapshots = fetchCurrencySnapshots(inc, jsonBrotliBinarySerializer).map(_.map {
-                    case Validated.Invalid(_)       => List.empty[Hashed[CurrencyIncrementalSnapshot]]
-                    case Validated.Valid(snapshots) => snapshots.toList
+                    case Validated.Invalid(_)       =>
+                      logger.info(s"Invalid snapshot ${hash.value}")
+                      List.empty[Hashed[CurrencyIncrementalSnapshot]]
+                    case Validated.Valid(snapshots) =>
+                      logger.info(s"Valid snapshot ${hash.value}")
+                      snapshots.toList
                   }.getOrElse(List.empty[Hashed[CurrencyIncrementalSnapshot]]))
 
                   getStateChannelSnapshots.flatMap { scSnapshots =>
                     if (scSnapshots.isEmpty) {
                       (List.empty[Signed[DataApplicationBlock]], SnapshotOrdinal.MinValue).pure[F]
                     } else {
+                      logger.info(s"scSnapshots ${scSnapshots} trsting ${scSnapshots.last.ordinal}")
                       scSnapshots
                         .flatTraverse(_.dataApplication.map(_.blocks))
                         .traverse(_.traverse(blockBytes => dataApplication.deserializeBlock(blockBytes).flatMap(_.liftTo[F])))
