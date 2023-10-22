@@ -81,7 +81,9 @@ object DataApplicationTraverse {
           }
 
           _ <- ordinal.map { lastOrdinal =>
-            logger.info(s"TESTING2: $lastOrdinal $state ${state.calculated}")
+            logger.info(s"TESTING2: $lastOrdinal")
+            logger.info(s"TESTING21: $state ${state.calculated}")
+            logger.info(s"TESTING22: ${state.calculated}")
             dataApplication.setCalculatedState(lastOrdinal, state.calculated)
           }.getOrElse(Applicative[F].unit)
 
