@@ -5,6 +5,7 @@ import cats.data._
 import cats.effect.Async
 import cats.syntax.all._
 
+import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
 import org.tessellation.currency.schema.currency.CurrencyIncrementalSnapshot
 import org.tessellation.json.JsonBrotliBinarySerializer
 import org.tessellation.kryo.KryoSerializer
@@ -53,17 +54,20 @@ object DataApplicationTraverse {
                     case Validated.Valid(snapshots) => snapshots.toList
                   }.getOrElse(List.empty[Hashed[CurrencyIncrementalSnapshot]]))
 
-                  getStateChannelSnapshots.flatMap { scSnapshots =>
-                    scSnapshots
-                      .flatTraverse(_.dataApplication.map(_.blocks))
-                      .traverse(_.traverse(blockBytes => dataApplication.deserializeBlock(blockBytes).flatMap(_.liftTo[F])))
-                      .map(_.toList.flatten)
-                      .map((_, scSnapshots.last.ordinal))
+                  getStateChannelSnapshots.flatMap {
+                    case Nil => (List.empty[Signed[DataApplicationBlock]], none[SnapshotOrdinal]).pure[F]
+                    case scSnapshots =>
+                      scSnapshots
+                        .flatTraverse(_.dataApplication.map(_.blocks))
+                        .traverse(_.traverse(blockBytes => dataApplication.deserializeBlock(blockBytes).flatMap(_.liftTo[F])))
+                        .map(_.toList.flatten)
+                        .map((_, scSnapshots.last.ordinal.some))
                   }.flatMap {
+                    case (_, None) => acc.pure[F]
                     case (dataBlocks, lastOrdinal) =>
                       val updates = dataBlocks.flatMap(_.updates.toList)
 
-                      dataApplication.combine(lastState, updates).map((_, lastOrdinal.some))
+                      dataApplication.combine(lastState, updates).map((_, lastOrdinal))
                   }
                 }
             }
