@@ -65,6 +65,8 @@ object GlobalL0Service {
       implicit val hashShow: Show[Hash] = Hash.shortShow
       implicit val peerIdShow: Show[PeerId] = PeerId.shortShow
 
+      private val noSnapshots = List.empty[Hashed[GlobalIncrementalSnapshot]]
+
       def pullLatestSnapshot: F[LatestSnapshotTuple] =
         maybeMajorityPeerIds.fold(pullLatestSnapshotFromRandomPeer)(pullLatestSnapshotWithMajorityHash)
 
@@ -98,15 +100,18 @@ object GlobalL0Service {
             for {
               msd <- getMajoritySnapshotData(majorityPeerIds, lastStoredOrdinal.next)
               l0Peers <- globalL0ClusterStorage.getPeers
-              pulled <- pullVerifiedSnapshots(lastStoredOrdinal.next, msd, l0Peers)
+              pulled <- (lastStoredOrdinal < msd.ordinal)
+                .pure[F]
+                .ifM(
+                  pullVerifiedSnapshots(lastStoredOrdinal.next, msd, l0Peers),
+                  noSnapshots.pure[F]
+                )
             } yield pulled.asRight[LatestSnapshotTuple]
           }
         }.handleErrorWith { e =>
           logger
             .warn(e)(s"Failure pulling global snapshots from majority")
-            .as(
-              List.empty[Hashed[GlobalIncrementalSnapshot]].asRight[LatestSnapshotTuple]
-            )
+            .as(noSnapshots.asRight[LatestSnapshotTuple])
         }
 
       private def pullLatestSnapshotWithMajorityHash(
@@ -209,9 +214,7 @@ object GlobalL0Service {
         }.handleErrorWith { e =>
           logger
             .warn(e)("Failure pulling global snapshots from random peer")
-            .as(
-              List.empty[Hashed[GlobalIncrementalSnapshot]].asRight[LatestSnapshotTuple]
-            )
+            .as(noSnapshots.asRight[LatestSnapshotTuple])
         }
 
       private def calculateLastOrdinal(nextOrdinal: SnapshotOrdinal, latestOrdinal: SnapshotOrdinal): SnapshotOrdinal =
@@ -275,7 +278,7 @@ object GlobalL0Service {
               .handleErrorWith(logger.warn(_)(s"Unable to obtain hash for majority peer ${p.show}").as(none[Hash]))
           }
           .map(_.flatten)
-          .flatTap(hashes => logger.debug(s"** Majority Hashes ${hashes.map(_.show)}"))
+          .flatTap(hashes => logger.debug(s"Majority Hashes ${hashes.map(_.show)}"))
           .map(selectMajorityHash)
 
       private def pullVerifiedSnapshots(
@@ -293,22 +296,26 @@ object GlobalL0Service {
             } { peer =>
               for {
                 sc <- pullSnapshots(peer, nextOrdinal, msd.ordinal)
-                verified <- verifySnapshotChain(sc, msd)
+                verified <- verifySnapshotChain(sc, msd, peer)
               } yield Either.cond(verified, sc.toList, peers.tail)
             }
           }
       }
 
-      private def verifySnapshotChain(chain: Chain[Hashed[GlobalIncrementalSnapshot]], msd: MajoritySnapshotData): F[Boolean] =
+      private def verifySnapshotChain(
+        chain: Chain[Hashed[GlobalIncrementalSnapshot]],
+        msd: MajoritySnapshotData,
+        peer: L0Peer
+      ): F[Boolean] =
         chain.toList match {
           case Nil =>
-            logger.debug("No snapshots to verify").as(false)
+            logger.warn(s"No snapshots to verify from ${peer.show}").as(false)
           case _ if !chain.lastOption.exists(_.hash === msd.hash) =>
-            logger.warn("Last snapshot hash does not match majority").as(false)
+            logger.warn(s"Last snapshot hash from ${peer.show} does not match majority").as(false)
           case ss if !ss.zip(ss.tail).forall { case (a, b) => isNextSnapshot[GlobalIncrementalSnapshot](a, b) } =>
-            logger.warn("Pulled snapshots do not form a chain").as(false)
+            logger.warn(s"Pulled snapshots from ${peer.show} do not form a chain").as(false)
           case _ =>
-            logger.debug("Snapshot chain verified").as(true)
+            logger.debug(s"Verified snapshot chain from ${peer.show}").as(true)
         }
 
       private def getL0Peers(peerIds: NonEmptyList[PeerId]): F[NonEmptyList[L0Peer]] =
