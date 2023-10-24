@@ -19,7 +19,7 @@ runs:
       shell: bash
       run: |
         cd .github/config/containers/metagraph-l0/genesis
-        export METAGRAPH_ID=$(tail metagraph-l0-genesis.log -n 1000 | grep -o "Address from genesis data is .*" | grep -o "DAG.*")
+        export METAGRAPH_ID=$(head -n 1 ../genesis.address)
         echo "METAGRAPH_ID=$METAGRAPH_ID"
         echo "METAGRAPH_ID=$METAGRAPH_ID" >> $GITHUB_ENV
 

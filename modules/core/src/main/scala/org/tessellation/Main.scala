@@ -16,7 +16,7 @@ import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshot}
 import org.tessellation.sdk.app.{SDK, TessellationIOApp}
 import org.tessellation.sdk.domain.collateral.OwnCollateralNotSatisfied
-import org.tessellation.sdk.infrastructure.genesis.{Loader => GenesisLoader}
+import org.tessellation.sdk.infrastructure.genesis.{GenesisFS => GenesisLoader}
 import org.tessellation.sdk.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import org.tessellation.sdk.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage
 import org.tessellation.sdk.resources.MkHttpServer
@@ -164,7 +164,7 @@ object Main
             NodeState.LoadingGenesis,
             NodeState.GenesisReady
           ) {
-            GenesisLoader.make[IO].load(m.genesisPath).flatMap { accounts =>
+            GenesisLoader.make[IO, GlobalSnapshot].loadBalances(m.genesisPath).flatMap { accounts =>
               val genesis = GlobalSnapshot.mkGenesis(
                 accounts.map(a => (a.address, a.balance)).toMap,
                 m.startingEpochProgress

@@ -16,24 +16,29 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.peer.{L0Peer, PeerId}
 import org.tessellation.sdk.domain.collateral.{Collateral, OwnCollateralNotSatisfied}
-import org.tessellation.sdk.domain.genesis.{Loader => GenesisLoader}
+import org.tessellation.sdk.domain.genesis.{GenesisFS => GenesisLoader}
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.http.p2p.clients.StateChannelSnapshotClient
 import org.tessellation.sdk.infrastructure.consensus.ConsensusManager
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
+import org.tessellation.security.signature.Signed
 
 import fs2.io.file.Path
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait Genesis[F[_]] {
-  def accept(
-    path: Path,
-    dataApplication: Option[BaseDataApplicationL0Service[F]] = None
-  )(implicit context: L0NodeContext[F]): F[Unit]
-
-  def accept(dataApplication: Option[BaseDataApplicationL0Service[F]])(genesis: CurrencySnapshot)(
+  def acceptSignedGenesis(dataApplication: Option[BaseDataApplicationL0Service[F]])(genesis: Signed[CurrencySnapshot])(
     implicit context: L0NodeContext[F]
+  ): F[Unit]
+
+  def accept(dataApplication: Option[BaseDataApplicationL0Service[F]])(genesisPath: Path)(
+    implicit context: L0NodeContext[F]
+  ): F[Unit]
+
+  def create(dataApplication: Option[BaseDataApplicationL0Service[F]])(
+    balancesPath: Path,
+    keyPair: KeyPair
   ): F[Unit]
 }
 
@@ -48,15 +53,15 @@ object Genesis {
     globalL0Peer: L0Peer,
     nodeId: PeerId,
     consensusManager: ConsensusManager[F, SnapshotOrdinal, CurrencySnapshotArtifact, CurrencySnapshotContext],
-    genesisLoader: GenesisLoader[F],
+    genesisLoader: GenesisLoader[F, CurrencySnapshot],
     identifierStorage: IdentifierStorage[F]
   ): Genesis[F] = new Genesis[F] {
     private val logger = Slf4jLogger.getLogger
 
-    override def accept(
-      dataApplication: Option[BaseDataApplicationL0Service[F]]
-    )(genesis: CurrencySnapshot)(implicit context: L0NodeContext[F]): F[Unit] = for {
-      hashedGenesis <- genesis.sign(keyPair).flatMap(_.toHashed[F])
+    override def acceptSignedGenesis(dataApplication: Option[BaseDataApplicationL0Service[F]])(genesis: Signed[CurrencySnapshot])(
+      implicit context: L0NodeContext[F]
+    ): F[Unit] = for {
+      hashedGenesis <- genesis.toHashed[F]
       firstIncrementalSnapshot <- CurrencySnapshot.mkFirstIncrementalSnapshot[F](hashedGenesis)
       signedFirstIncrementalSnapshot <- firstIncrementalSnapshot.sign(keyPair)
       _ <- snapshotStorage.prepend(signedFirstIncrementalSnapshot, hashedGenesis.info)
@@ -66,9 +71,7 @@ object Genesis {
         .flatMap(OwnCollateralNotSatisfied.raiseError[F, Unit].unlessA)
 
       _ <- dataApplication
-        .map(app => app.setCalculatedState(firstIncrementalSnapshot.ordinal, app.genesis.calculated))
-        .getOrElse(false.pure[F])
-        .void
+        .traverse(app => app.setCalculatedState(firstIncrementalSnapshot.ordinal, app.genesis.calculated))
 
       signedBinary <- stateChannelSnapshotService.createGenesisBinary(hashedGenesis.signed)
       identifier = signedBinary.value.toAddress
@@ -93,24 +96,40 @@ object Genesis {
       _ <- logger.info(s"Genesis binary ${binaryHash.show} and ${incrementalBinaryHash.show} accepted and sent to Global L0")
     } yield ()
 
-    def accept(
-      path: Path,
-      dataApplication: Option[BaseDataApplicationL0Service[F]] = None
-    )(implicit context: L0NodeContext[F]): F[Unit] = {
+    override def accept(dataApplication: Option[BaseDataApplicationL0Service[F]])(genesisPath: Path)(
+      implicit context: L0NodeContext[F]
+    ): F[Unit] = genesisLoader
+      .loadSignedGenesis(genesisPath)
+      .flatTap { genesis =>
+        dataApplication
+          .traverse(app => app.setCalculatedState(genesis.ordinal, app.genesis.calculated))
+      }
+      .flatMap(acceptSignedGenesis(dataApplication))
+
+    def create(dataApplication: Option[BaseDataApplicationL0Service[F]] = None)(
+      balancesPath: Path,
+      keyPair: KeyPair
+    ): F[Unit] = {
       def mkBalances =
         genesisLoader
-          .load(path)
+          .loadBalances(balancesPath)
           .map(_.map(a => (a.address, a.balance)).toMap)
 
       def mkDataApplicationPart =
         dataApplication.traverse(da => da.serializedOnChainGenesis.map(DataApplicationPart(_, List.empty, Hash.empty)))
 
-      (mkBalances, mkDataApplicationPart).mapN {
-        case (balances, dataApplicationPart) =>
-          CurrencySnapshot.mkGenesis(balances, dataApplicationPart)
-      }.flatTap { genesis =>
-        dataApplication.map(app => app.setCalculatedState(genesis.ordinal, app.genesis.calculated)).getOrElse(false.pure[F]).void
-      }.flatMap(accept(dataApplication))
+      for {
+        balances <- mkBalances
+        dataApplicationPart <- mkDataApplicationPart
+        genesis = CurrencySnapshot.mkGenesis(balances, dataApplicationPart)
+        signedGenesis <- genesis.sign(keyPair)
+        signedBinary <- stateChannelSnapshotService.createGenesisBinary(signedGenesis)
+        identifier = signedBinary.value.toAddress
+        _ <- genesisLoader.write(signedGenesis, identifier, balancesPath.resolveSibling(""))
+        _ <- logger.info(
+          s"genesis.snapshot and genesis.address have been created for the metagraph ${identifier.show} in ${balancesPath.resolveSibling("")}"
+        )
+      } yield ()
     }
   }
 
