@@ -8,12 +8,13 @@ import cats.effect.std.Random
 import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
 import org.tessellation.currency.l0.http.p2p.P2PClient
 import org.tessellation.currency.l0.snapshot.programs.{Download, Genesis, Rollback}
+import org.tessellation.currency.schema.currency.CurrencySnapshot
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.{L0Peer, PeerId}
 import org.tessellation.sdk.domain.cluster.programs.{Joining, L0PeerDiscovery, PeerDiscovery}
 import org.tessellation.sdk.domain.snapshot.PeerSelect
 import org.tessellation.sdk.domain.snapshot.programs.Download
-import org.tessellation.sdk.infrastructure.genesis.{Loader => GenesisLoader}
+import org.tessellation.sdk.infrastructure.genesis.{GenesisFS => GenesisLoader}
 import org.tessellation.sdk.infrastructure.snapshot.{CurrencySnapshotContextFunctions, PeerSelect}
 import org.tessellation.sdk.modules.SdkPrograms
 import org.tessellation.security.SecurityProvider
@@ -54,7 +55,7 @@ object Programs {
       storages.globalL0Cluster
     )
 
-    val genesisLoader = GenesisLoader.make
+    val genesisLoader = GenesisLoader.make[F, CurrencySnapshot]
 
     val genesis = Genesis.make(
       keyPair,

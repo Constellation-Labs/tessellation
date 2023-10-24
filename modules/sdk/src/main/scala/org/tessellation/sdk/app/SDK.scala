@@ -40,4 +40,5 @@ trait SDK[F[_]] {
   val prioritySeedlist: Option[Set[SeedlistEntry]]
 
   def restartSignal: SignallingRef[F, Unit]
+  def stopSignal: SignallingRef[F, Boolean]
 }

@@ -146,45 +146,56 @@ abstract class CurrencyL0App(
         services.collateral
       )
 
-      _ <- (method match {
-        case rv: RunValidator =>
-          storages.identifier.setInitial(rv.identifier) >>
-            gossipDaemon.startAsRegularValidator >>
-            programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
-            storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
+      program <- (method match {
+        case m: CreateGenesis =>
+          programs.genesis.create(dataApplication)(
+            m.genesisBalancesPath,
+            keyPair
+          ) >> sdk.stopSignal.set(true)
 
-        case rr: RunRollback =>
-          storages.identifier.setInitial(rr.identifier) >>
-            storages.node.tryModifyState(
-              NodeState.Initial,
-              NodeState.RollbackInProgress,
-              NodeState.RollbackDone
-            )(programs.rollback.rollback) >>
-            gossipDaemon.startAsInitialValidator >>
-            services.cluster.createSession >>
-            services.session.createSession >>
-            programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
-            storages.node.setNodeState(NodeState.Ready)
+        case other =>
+          for {
+            innerProgram <- other match {
+              case rv: RunValidator =>
+                storages.identifier.setInitial(rv.identifier) >>
+                  gossipDaemon.startAsRegularValidator >>
+                  programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
+                  storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
 
-        case m: RunGenesis =>
-          storages.node.tryModifyState(
-            NodeState.Initial,
-            NodeState.LoadingGenesis,
-            NodeState.GenesisReady
-          )(programs.genesis.accept(m.genesisPath, services.dataApplication)) >>
-            gossipDaemon.startAsInitialValidator >>
-            services.cluster.createSession >>
-            services.session.createSession >>
-            programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
-            storages.node.setNodeState(NodeState.Ready)
+              case rr: RunRollback =>
+                storages.identifier.setInitial(rr.identifier) >>
+                  storages.node.tryModifyState(
+                    NodeState.Initial,
+                    NodeState.RollbackInProgress,
+                    NodeState.RollbackDone
+                  )(programs.rollback.rollback) >>
+                  gossipDaemon.startAsInitialValidator >>
+                  services.cluster.createSession >>
+                  services.session.createSession >>
+                  programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
+                  storages.node.setNodeState(NodeState.Ready)
+
+              case m: RunGenesis =>
+                storages.node.tryModifyState(
+                  NodeState.Initial,
+                  NodeState.LoadingGenesis,
+                  NodeState.GenesisReady
+                )(programs.genesis.accept(dataApplication)(m.genesisPath)) >>
+                  gossipDaemon.startAsInitialValidator >>
+                  services.cluster.createSession >>
+                  services.session.createSession >>
+                  programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
+                  storages.node.setNodeState(NodeState.Ready)
+
+              case _ => IO.unit
+            }
+            _ <- StateChannel
+              .run[IO](services, storages, programs)
+              .compile
+              .drain
+          } yield innerProgram
       }).asResource
 
-      _ <- StateChannel
-        .run[IO](services, storages, programs)
-        .compile
-        .drain
-        .asResource
-
-    } yield ()
+    } yield program
   }
 }

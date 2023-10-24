@@ -15,7 +15,7 @@ import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.L0Peer
 import org.tessellation.sdk.cli._
-import org.tessellation.sdk.cli.opts.{genesisPathOpts, trustRatingsPathOpts}
+import org.tessellation.sdk.cli.opts.{genesisBalancesOpts, genesisPathOpts, trustRatingsPathOpts}
 import org.tessellation.sdk.config.types._
 
 import com.monovore.decline.Opts
@@ -71,6 +71,41 @@ object method {
 
     val l0SeedlistPath = None
 
+  }
+
+  case class CreateGenesis(
+    keyStore: StorePath,
+    alias: KeyAlias,
+    password: Password,
+    httpConfig: HttpConfig,
+    environment: AppEnvironment,
+    snapshotConfig: SnapshotConfig,
+    genesisBalancesPath: Path,
+    seedlistPath: Option[SeedListPath],
+    prioritySeedlistPath: Option[SeedListPath],
+    collateralAmount: Option[Amount],
+    globalL0Peer: L0Peer,
+    trustRatingsPath: Option[Path]
+  ) extends Run
+
+  object CreateGenesis extends WithOpts[CreateGenesis] {
+
+    val opts: Opts[CreateGenesis] = Opts.subcommand("create-genesis", "Create genesis snapshot") {
+      (
+        StorePath.opts,
+        KeyAlias.opts,
+        Password.opts,
+        httpOpts,
+        AppEnvironment.opts,
+        snapshot.opts,
+        genesisBalancesOpts,
+        SeedListPath.opts,
+        SeedListPath.priorityOpts,
+        CollateralAmountOpts.opts,
+        GlobalL0PeerOpts.opts,
+        trustRatingsPathOpts
+      ).mapN(CreateGenesis.apply)
+    }
   }
 
   case class RunGenesis(
@@ -179,5 +214,5 @@ object method {
   }
 
   val opts: Opts[Run] =
-    RunGenesis.opts.orElse(RunValidator.opts).orElse(RunRollback.opts)
+    CreateGenesis.opts.orElse(RunGenesis.opts).orElse(RunValidator.opts).orElse(RunRollback.opts)
 }
