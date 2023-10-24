@@ -40,8 +40,6 @@ Installing via [_Homebrew_](https://brew.sh/) is the recommended method for Mac,
 
 Install the latest version of _SBT_ in order to compile the code base and run unit tests.
 
-After _SBT_ is installed, it needs to be configured. The instructions for that are in _CONTRIBUTING.md_.
-
 ## Fedora Linux
 
 On Linux, you can follow the instructions provided by _SBT_, [link](https://www.scala-sbt.org/1.x/docs/Installing-sbt-on-Linux.html).
@@ -49,6 +47,27 @@ On Linux, you can follow the instructions provided by _SBT_, [link](https://www.
 ## Mac OS
 
 On Mac OS, _SBT_ provides instructions [here](https://www.scala-sbt.org/1.x/docs/Installing-sbt-on-Mac.html). It can be installed via [_Homebrew_](https://formulae.brew.sh/formula/sbt#default) as well. It is also recommended that _SBTEnv_ be installed as well, [link](https://formulae.brew.sh/formula/sbtenv#default). It can help configure the _SBT_ environment.
+
+## Configure SBT
+
+1. Generate a _Github Personal Access Token_, [link](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/creating-a-personal-access-token).
+2. Set your global _SBT_ configuration.
+   1. Create the _~/.sbt/1.0/github.sbt_ file.
+   2. Copy into it below. Replace `<TOKEN>` with the Personal Access Token you generated and `<GITHUB_ID>` with your Github username.
+
+```
+credentials +=
+	Credentials(
+		"Github Package Registry",
+		"maven.pkg.github.com",
+		"<GITHUB_ID>",
+		"<TOKEN`")
+
+githubTokenSource := TokenSource.GitConfig("github.token")
+```
+
+3. Create the file _~/.sbt/1.0/plugins/plugin.sbt_.
+   1. Copy into it: `addSbtPlugin("com.codecommit" % "sbt-github-packages" % "0.5.3")`
 
 # Running L0 & L1 on EKS cluster
 
