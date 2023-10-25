@@ -2,15 +2,19 @@ package org.tessellation.sdk.infrastructure.snapshot.storage
 
 import cats.Applicative
 import cats.effect.Async
+import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.contravariantSemigroupal._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
+import scala.util.control.NoStackTrace
+
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.snapshot.Snapshot
+import org.tessellation.sdk.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage.UnableToPersisSnapshot
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 import org.tessellation.storage.LocalFileSystemStorage
@@ -18,24 +22,30 @@ import org.tessellation.storage.LocalFileSystemStorage
 import better.files.File
 import fs2.io.file.Path
 import io.estatico.newtype.ops._
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 final class SnapshotLocalFileSystemStorage[F[_]: Async: KryoSerializer, S <: Snapshot] private (path: Path)
     extends LocalFileSystemStorage[F, Signed[S]](path) {
+
+  private val logger = Slf4jLogger.getLogger[F]
 
   def write(snapshot: Signed[S]): F[Unit] = {
     val ordinalName = toOrdinalName(snapshot.value)
 
     toHashName(snapshot.value).flatMap { hashName =>
-      (exists(ordinalName), exists(hashName)).mapN {
-        case (ordinalExists, hashExists) =>
-          if (ordinalExists || hashExists) {
-            (new Throwable("Snapshot already exists under ordinal or hash filename")).raiseError[F, Unit]
-          } else {
-            write(hashName, snapshot) >> link(hashName, ordinalName)
-          }
-      }.flatten
+      (exists(ordinalName), exists(hashName)).flatMapN { (ordinalExists, hashExists) =>
+        for {
+          _ <- UnableToPersisSnapshot(ordinalName, hashName, hashExists).raiseError[F, Unit].whenA(ordinalExists)
+          _ <- hashExists
+            .pure[F]
+            .ifM(
+              logger.warn(s"Snapshot hash file $hashName exists but ordinal missing; linking to $ordinalName"),
+              write(hashName, snapshot)
+            )
+          _ <- link(hashName, ordinalName)
+        } yield ()
+      }
     }
-
   }
 
   def writeUnderOrdinal(snapshot: Signed[S]): F[Unit] = {
@@ -91,6 +101,10 @@ final class SnapshotLocalFileSystemStorage[F[_]: Async: KryoSerializer, S <: Sna
 }
 
 object SnapshotLocalFileSystemStorage {
+
+  case class UnableToPersisSnapshot(ordinalName: String, hashName: String, hashFileExists: Boolean) extends NoStackTrace {
+    override val getMessage: String = s"Ordinal $ordinalName exists. File $hashName exists: $hashFileExists."
+  }
 
   def make[F[_]: Async: KryoSerializer, S <: Snapshot](path: Path): F[SnapshotLocalFileSystemStorage[F, S]] =
     Applicative[F].pure(new SnapshotLocalFileSystemStorage[F, S](path)).flatTap { storage =>
