@@ -115,7 +115,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Met
             (if (Seq(Dev, Integrationnet, Testnet).contains(environment)) debugRoutes else HttpRoutes.empty) <+>
               metricRoutes <+>
               targetRoutes <+>
-              (if (environment == Mainnet) HttpRoutes.empty else stateChannelRoutes.publicRoutes) <+>
+              stateChannelRoutes.publicRoutes <+>
               clusterRoutes.publicRoutes <+>
               snapshotRoutes.publicRoutes <+>
               dagRoutes.publicRoutes <+>
