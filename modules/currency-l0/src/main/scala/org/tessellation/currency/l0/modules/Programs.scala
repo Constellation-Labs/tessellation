@@ -41,11 +41,14 @@ object Programs {
       .make(
         p2pClient,
         storages.cluster,
+        services.globalL0,
+        services.stateChannelSnapshot,
         currencySnapshotContextFns,
         storages.node,
         services.consensus,
         peerSelect,
         storages.identifier,
+        storages.lastBinaryHash,
         dataApplication
       )
 

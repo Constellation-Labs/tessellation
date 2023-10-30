@@ -15,7 +15,6 @@ import cats.syntax.show._
 
 import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
-
 import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, DataCalculatedState, L0NodeContext}
 import org.tessellation.currency.l0.http.p2p.P2PClient
 import org.tessellation.currency.l0.node.IdentifierStorage
@@ -25,7 +24,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.Peer
-import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
+import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, L0ClusterStorage}
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.domain.snapshot.programs.Download
 import org.tessellation.sdk.domain.snapshot.{PeerSelect, Validator}
@@ -33,9 +32,12 @@ import org.tessellation.sdk.infrastructure.snapshot.{CurrencySnapshotContextFunc
 import org.tessellation.security.Hashed
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
-
 import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.NonNegLong
+import org.tessellation.currency.l0.snapshot.services.StateChannelSnapshotService
+import org.tessellation.currency.l0.snapshot.storages.LastBinaryHashStorage
+import org.tessellation.merkletree.StateProofValidator
+import org.tessellation.sdk.domain.snapshot.services.GlobalL0Service
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import retry.RetryPolicies._
 import retry._
@@ -44,11 +46,14 @@ object Download {
   def make[F[_]: Async: KryoSerializer: Random](
     p2pClient: P2PClient[F],
     clusterStorage: ClusterStorage[F],
+    globalL0Service: GlobalL0Service[F],
+    stateChannelSnapshotService: StateChannelSnapshotService[F],
     currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
     nodeStorage: NodeStorage[F],
     consensus: SnapshotConsensus[F, CurrencyIncrementalSnapshot, CurrencySnapshotContext, _],
     peerSelect: PeerSelect[F],
     identifierStorage: IdentifierStorage[F],
+    lastBinaryHashStorage: LastBinaryHashStorage[F],
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]]
   )(implicit l0NodeContext: L0NodeContext[F]): Download[F] = new Download[F] {
 
@@ -95,15 +100,44 @@ object Download {
           }
         }
 
-    def start: F[DownloadResult] =
-      peerSelect.select.flatMap {
-        p2pClient.currencySnapshot.getLatest.run(_)
-      }
+    def start: F[(DownloadResult, NonNegLong)] = {
+      val pullInitialState =
+        for {
+          (_, globalSnapshotInfo) <- globalL0Service.pullLatestSnapshotFromRandomPeer
+          peer <- peerSelect.select
+          latestOrdinal <- p2pClient.currencySnapshot.getLatestOrdinal.run(peer)
 
-    def observe(result: DownloadResult): F[(DownloadResult, ObservationLimit)] = {
+          identifier <- identifierStorage.get
+          lastBinaryHash <- globalSnapshotInfo.lastStateChannelSnapshotHashes
+            .get(identifier)
+            .toOptionT
+            .getOrRaise(LastSnapshotHashNotFound)
+
+          (lastIncremental, lastInfo) <- globalSnapshotInfo.lastCurrencySnapshots
+            .get(identifier)
+            .flatMap(_.toOption)
+            .toOptionT
+            .getOrRaise(LastSnapshotInfoNotFound)
+
+          snapshotToVerify <- p2pClient.currencySnapshot.get(lastIncremental.ordinal)(peer)
+
+          foo <- StateProofValidator.validate(lastIncremental, lastInfo)
+
+          observationDelay =
+            NonNegLong.from(latestOrdinal.value.value - lastIncremental.ordinal.value.value)
+              .getOrElse(NonNegLong.MinValue)
+
+          _ <- lastBinaryHashStorage.set(lastBinaryHash)
+        } yield ((lastIncremental, lastInfo), observationDelay)
+
+      pullInitialState
+    }
+
+    def observe(resultAndDelay: (DownloadResult, NonNegLong)): F[(DownloadResult, ObservationLimit)] = {
+      val (result, delay) = resultAndDelay
       val (lastSnapshot, _) = result
 
-      val observationLimit = SnapshotOrdinal(lastSnapshot.ordinal.value |+| observationOffset)
+      val observationLimit = SnapshotOrdinal(lastSnapshot.ordinal.value |+| observationOffset |+| delay)
 
       def go(result: DownloadResult): F[DownloadResult] = {
         val (lastSnapshot, _) = result
@@ -134,6 +168,11 @@ object Download {
               Validator.isNextSnapshot(hashed, snapshot.value)
             }(InvalidChain.raiseError[F, Unit])
           } >>
+            stateChannelSnapshotService
+              .createBinary(snapshot)
+              .flatMap(_.toHashed)
+              .map(_.hash)
+              .flatMap(lastBinaryHashStorage.set) >>
             identifierStorage.get
               .flatMap(currencyAddress =>
                 currencySnapshotContextFns
