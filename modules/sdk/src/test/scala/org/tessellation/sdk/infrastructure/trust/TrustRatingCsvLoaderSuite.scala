@@ -1,5 +1,7 @@
 package org.tessellation.sdk.infrastructure.trust
 
+import java.nio.file.Paths
+
 import cats.effect.IO
 
 import org.tessellation.schema.peer.PeerId
@@ -13,8 +15,8 @@ import weaver.scalacheck._
 
 object TrustRatingCsvLoaderSuite extends SimpleIOSuite with Checkers {
   test("load trust ratings from csv") {
-    val testFileLocation = getClass.getResource("/ratings.sample.csv").getPath
-    val inFile = Path(testFileLocation)
+    val testFileLocation = getClass.getResource("/ratings.sample.csv")
+    val inFile = Path.fromNioPath(Paths.get(testFileLocation.toURI))
 
     val expectedRatings = List(
       "3458a688925a4bd89f2ac2c695362e44d2e0c2903bdbb41b341a4d39283b22d8c85b487bd33cc5d36dbe5e31b5b00a10a6eab802718ead4ed7192ade5a5d1941" -> -1.0,

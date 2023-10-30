@@ -1,5 +1,7 @@
 package org.tessellation.sdk.infrastructure.seedlist
 
+import java.nio.file.Paths
+
 import cats.effect.IO
 import cats.syntax.option._
 
@@ -34,8 +36,8 @@ object LoaderSuite extends SimpleIOSuite with Checkers {
   }
 
   test("load old-format seedlist csv") {
-    val testFileLocation = getClass.getResource("/seedlists/seedlist.1field.sample").getPath
-    val inFile = Path(testFileLocation)
+    val testFileLocation = getClass.getResource("/seedlists/seedlist.1field.sample")
+    val inFile = Path.fromNioPath(Paths.get(testFileLocation.toURI))
 
     val expected = Seq(
       mkSeedlistEntry(
@@ -60,8 +62,8 @@ object LoaderSuite extends SimpleIOSuite with Checkers {
   }
 
   test("load new-format seedlist csv") {
-    val testFileLocation = getClass.getResource("/seedlists/seedlist.4fields.sample").getPath
-    val inFile = Path(testFileLocation)
+    val testFileLocation = getClass.getResource("/seedlists/seedlist.4fields.sample")
+    val inFile = Path.fromNioPath(Paths.get(testFileLocation.toURI))
 
     val expected = Seq(
       mkSeedlistEntry(
@@ -98,8 +100,8 @@ object LoaderSuite extends SimpleIOSuite with Checkers {
   }
 
   test("load mixed-format seedlist csv") {
-    val testFileLocation = getClass.getResource("/seedlists/seedlist.mixedFields.sample").getPath
-    val inFile = Path(testFileLocation)
+    val testFileLocation = getClass.getResource("/seedlists/seedlist.mixedFields.sample")
+    val inFile = Path.fromNioPath(Paths.get(testFileLocation.toURI))
 
     val expected = Seq(
       mkSeedlistEntry(
@@ -130,8 +132,8 @@ object LoaderSuite extends SimpleIOSuite with Checkers {
   }
 
   test("load invalid-format seedlist csv") {
-    val testFileLocation = getClass.getResource("/seedlists/seedlist.invalid.sample").getPath
-    val inFile = Path(testFileLocation)
+    val testFileLocation = getClass.getResource("/seedlists/seedlist.invalid.sample")
+    val inFile = Path.fromNioPath(Paths.get(testFileLocation.toURI))
 
     for {
       loader <- Loader.make[IO].load(SeedListPath(inFile)).attempt
