@@ -14,6 +14,7 @@ import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.sdk.PriorityPeerIds
 import org.tessellation.sdk.config.types._
+import org.tessellation.security.hex.Hex
 
 import eu.timepit.refined.auto._
 import fs2.io.file.Path
@@ -101,4 +102,6 @@ trait CliMethod {
     PriorityPeerIds.get(environment)
   )
 
+  def makeStateChannelAllowance(metagraphId: Address, peerIdValues: NonEmptySet[String]): Map[Address, NonEmptySet[PeerId]] =
+    Map(metagraphId -> peerIdValues.map(s => PeerId(Hex(s))))
 }
