@@ -2,6 +2,8 @@ package org.tessellation.schema
 
 import java.util.UUID
 
+import cats.syntax.show._
+
 import scala.util.control.NoStackTrace
 
 import org.tessellation.optics.uuid
@@ -44,11 +46,23 @@ object cluster {
       P2PContext(peer.ip, peer.p2pPort, peer.id)
   }
 
-  case class NodeStateDoesNotAllowForJoining(nodeState: NodeState) extends NoStackTrace
-  case class PeerAlreadyJoinedWithNewerSession(id: PeerId, host: Host, p2pPort: Port, session: SessionToken) extends NoStackTrace
+  implicit val peerIdShow = PeerId.shortShow
 
-  case class PeerAlreadyJoinedWithDifferentRegistrationData(id: PeerId) extends NoStackTrace
-  case class PeerNotInSeedlist(id: PeerId) extends NoStackTrace
+  case class NodeStateDoesNotAllowForJoining(nodeState: NodeState) extends NoStackTrace {
+    override val getMessage = s"Node state doesn't allow joining: ${nodeState.show}"
+  }
+
+  case class PeerAlreadyJoinedWithNewerSession(id: PeerId, host: Host, p2pPort: Port, session: SessionToken) extends NoStackTrace {
+    override val getMessage = s"Peer already joined with newer session: ${id.show}, ${host.show}, ${p2pPort.show}, ${session.show}"
+  }
+
+  case class PeerAlreadyJoinedWithDifferentRegistrationData(id: PeerId) extends NoStackTrace {
+    override val getMessage = s"Peer already joined with different registration: ${id.show}"
+  }
+
+  case class PeerNotInSeedlist(id: PeerId) extends NoStackTrace {
+    override val getMessage = s"Peer not in seedlist: ${id.show}"
+  }
 
   @derive(decoder, encoder, order, show)
   @newtype

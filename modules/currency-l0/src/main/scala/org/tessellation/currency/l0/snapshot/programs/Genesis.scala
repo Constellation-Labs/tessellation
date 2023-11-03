@@ -5,8 +5,6 @@ import java.security.KeyPair
 import cats.effect.Async
 import cats.syntax.all._
 
-import scala.util.control.NoStackTrace
-
 import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
 import org.tessellation.currency.l0.node.IdentifierStorage
 import org.tessellation.currency.l0.snapshot.CurrencySnapshotArtifact
@@ -16,7 +14,6 @@ import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.SnapshotOrdinal
-import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.{L0Peer, PeerId}
 import org.tessellation.sdk.domain.collateral.{Collateral, OwnCollateralNotSatisfied}
 import org.tessellation.sdk.domain.genesis.{Loader => GenesisLoader}
@@ -117,5 +114,4 @@ object Genesis {
     }
   }
 
-  case class IdentifierNotFromGenesisData(identifier: Address, genesisAddress: Address) extends NoStackTrace
 }
