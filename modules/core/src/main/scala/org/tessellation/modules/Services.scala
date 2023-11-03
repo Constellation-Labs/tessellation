@@ -10,6 +10,9 @@ import cats.syntax.applicative._
 import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+import cats.syntax.set._
+
+import scala.collection.immutable.SortedSet
 
 import org.tessellation.cli.AppEnvironment.Dev
 import org.tessellation.config.types.AppConfig
@@ -54,13 +57,20 @@ object Services {
     selfId: PeerId,
     keyPair: KeyPair,
     cfg: AppConfig
-  ): F[Services[F]] =
+  ): F[Services[F]] = {
+    val seedlistPeerIds = seedlist.flatMap { s =>
+      SortedSet
+        .from(s.map(_.peerId))
+        .toNes
+    }
+
     for {
       rewards <- Rewards
         .make[F](
           cfg.rewards,
           ProgramsDistributor.make,
-          FacilitatorDistributor.make
+          FacilitatorDistributor.make,
+          seedlistPeerIds
         )
         .pure[F]
 
@@ -115,6 +125,7 @@ object Services {
         stateChannel = stateChannelService,
         trustStorageUpdater = trustUpdaterService
       ) {}
+  }
 }
 
 sealed abstract class Services[F[_]] private (

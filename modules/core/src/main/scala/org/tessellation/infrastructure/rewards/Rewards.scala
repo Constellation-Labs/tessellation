@@ -10,6 +10,7 @@ import cats.syntax.either._
 import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+import cats.syntax.set._
 import cats.syntax.show._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
@@ -22,6 +23,7 @@ import org.tessellation.schema.ID.Id
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.epoch.EpochProgress
+import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.{RewardTransaction, Transaction, TransactionAmount}
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotStateProof, SnapshotOrdinal}
 import org.tessellation.sdk.domain.rewards.Rewards
@@ -38,7 +40,8 @@ object Rewards {
   def make[F[_]: Async](
     config: RewardsConfig,
     programsDistributor: ProgramsDistributor[Either[ArithmeticException, *]],
-    facilitatorDistributor: FacilitatorDistributor[F]
+    facilitatorDistributor: FacilitatorDistributor[F],
+    seedlist: Option[NonEmptySet[PeerId]]
   ): Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent] =
     new Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent] {
 
@@ -56,7 +59,11 @@ object Rewards {
         events: Set[GlobalSnapshotEvent],
         maybeCalculatedState: Option[DataCalculatedState] = None
       ): F[SortedSet[RewardTransaction]] = {
-        val facilitators = lastArtifact.proofs.map(_.id)
+        val artifactFacilitators = lastArtifact.proofs.map(_.id)
+
+        val facilitators = seedlist.flatMap { s =>
+          artifactFacilitators.filter(id => s.contains(id.toPeerId)).toNes
+        }.getOrElse(artifactFacilitators)
 
         feeDistribution(lastArtifact.ordinal, acceptedTransactions, facilitators).flatMap { feeRewardTxs =>
           trigger match {

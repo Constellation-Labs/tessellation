@@ -110,7 +110,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
   ): Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent] = {
     val programsDistributor = ProgramsDistributor.make
     val regularDistributor = FacilitatorDistributor.make
-    Rewards.make[IO](config, programsDistributor, regularDistributor)
+    Rewards.make[IO](config, programsDistributor, regularDistributor, none)
   }
 
   def getAmountByEpoch(epochProgress: EpochProgress): Amount =
