@@ -11,6 +11,7 @@ import cats.syntax.foldable._
 import cats.syntax.functor._
 import cats.syntax.option._
 import cats.syntax.order._
+import cats.syntax.show._
 import cats.syntax.traverse._
 
 import scala.collection.immutable.SortedSet
@@ -240,4 +241,6 @@ object CurrencySnapshotCreator {
   }
 }
 
-case class UnableToReduceProposalByCutting(ordinal: SnapshotOrdinal) extends NoStackTrace
+case class UnableToReduceProposalByCutting(ordinal: SnapshotOrdinal) extends NoStackTrace {
+  override val getMessage = s"Unable to reduce proposal by cutting for ${ordinal.show}"
+}
