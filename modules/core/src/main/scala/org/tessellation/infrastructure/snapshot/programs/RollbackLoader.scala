@@ -6,6 +6,7 @@ import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
+import org.tessellation.domain.snapshot.storages.SnapshotDownloadStorage
 import org.tessellation.infrastructure.snapshot.GlobalSnapshotTraverse
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
@@ -24,12 +25,14 @@ object RollbackLoader {
     keyPair: KeyPair,
     snapshotConfig: SnapshotConfig,
     incrementalGlobalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
+    snapshotStorage: SnapshotDownloadStorage[F],
     snapshotContextFunctions: GlobalSnapshotContextFunctions[F]
   ): RollbackLoader[F] =
     new RollbackLoader[F](
       keyPair,
       snapshotConfig,
       incrementalGlobalSnapshotLocalFileSystemStorage,
+      snapshotStorage: SnapshotDownloadStorage[F],
       snapshotContextFunctions
     ) {}
 }
@@ -38,6 +41,7 @@ sealed abstract class RollbackLoader[F[_]: Async: KryoSerializer: SecurityProvid
   keyPair: KeyPair,
   snapshotConfig: SnapshotConfig,
   incrementalGlobalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
+  snapshotStorage: SnapshotDownloadStorage[F],
   snapshotContextFunctions: GlobalSnapshotContextFunctions[F]
 ) {
 
@@ -68,6 +72,11 @@ sealed abstract class RollbackLoader[F[_]: Async: KryoSerializer: SecurityProvid
                       (GlobalSnapshotInfoV1.toGlobalSnapshotInfo(fullSnapshot.info), signedFirstIncrementalSnapshot)
                   }
                 }
+          }
+          .flatTap {
+            case (_, lastInc) =>
+              logger.info(s"[Rollback] Cleanup for snapshots greater than ${lastInc.ordinal}") >>
+                snapshotStorage.backupPersistedAbove(lastInc.ordinal)
           }
     }
 }
