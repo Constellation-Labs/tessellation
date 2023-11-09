@@ -14,7 +14,7 @@ import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.snapshot.Snapshot
-import org.tessellation.sdk.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage.UnableToPersisSnapshot
+import org.tessellation.sdk.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage.UnableToPersistSnapshot
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 import org.tessellation.storage.LocalFileSystemStorage
@@ -35,7 +35,7 @@ final class SnapshotLocalFileSystemStorage[F[_]: Async: KryoSerializer, S <: Sna
     toHashName(snapshot.value).flatMap { hashName =>
       (exists(ordinalName), exists(hashName)).flatMapN { (ordinalExists, hashExists) =>
         for {
-          _ <- UnableToPersisSnapshot(ordinalName, hashName, hashExists).raiseError[F, Unit].whenA(ordinalExists)
+          _ <- UnableToPersistSnapshot(ordinalName, hashName, hashExists).raiseError[F, Unit].whenA(ordinalExists)
           _ <- hashExists
             .pure[F]
             .ifM(
@@ -102,7 +102,7 @@ final class SnapshotLocalFileSystemStorage[F[_]: Async: KryoSerializer, S <: Sna
 
 object SnapshotLocalFileSystemStorage {
 
-  case class UnableToPersisSnapshot(ordinalName: String, hashName: String, hashFileExists: Boolean) extends NoStackTrace {
+  case class UnableToPersistSnapshot(ordinalName: String, hashName: String, hashFileExists: Boolean) extends NoStackTrace {
     override val getMessage: String = s"Ordinal $ordinalName exists. File $hashName exists: $hashFileExists."
   }
 

@@ -18,7 +18,7 @@ import fs2.io.file.Path
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
 
-import SnapshotLocalFileSystemStorage.UnableToPersisSnapshot
+import SnapshotLocalFileSystemStorage.UnableToPersistSnapshot
 
 object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers {
 
@@ -48,9 +48,9 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
 
   private def mkError(snapshot: Signed[GlobalIncrementalSnapshot], hashFileExists: Boolean)(
     implicit K: KryoSerializer[IO]
-  ): IO[UnableToPersisSnapshot] =
+  ): IO[UnableToPersistSnapshot] =
     snapshot.toHashed.map(hashed =>
-      UnableToPersisSnapshot(
+      UnableToPersistSnapshot(
         hashed.ordinal.value.toString,
         hashed.hash.value,
         hashFileExists = hashFileExists
