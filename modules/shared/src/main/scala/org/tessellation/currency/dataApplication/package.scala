@@ -2,7 +2,7 @@ package org.tessellation.currency.dataApplication
 
 import cats.data.{NonEmptyList, Validated, ValidatedNec}
 import cats.syntax.all._
-import cats.{Monad, MonadThrow}
+import cats.{Applicative, Monad, MonadThrow}
 
 import scala.reflect.ClassTag
 import scala.util.control.NoStackTrace
@@ -90,6 +90,8 @@ trait BaseDataApplicationL0Service[F[_]] extends BaseDataApplicationService[F] w
   def genesis: DataState.Base
 
   final def serializedOnChainGenesis: F[Array[Byte]] = serializeState(genesis.onChain)
+
+  def onSnapshotConsensusResult(snapshot: Signed[CurrencyIncrementalSnapshot]): F[Unit]
 }
 
 trait BaseDataApplicationL1Service[F[_]] extends BaseDataApplicationService[F] with BaseDataApplicationContextualOps[F, L1NodeContext[F]]
@@ -140,6 +142,8 @@ trait DataApplicationL0Service[F[_], D <: DataUpdate, DON <: DataOnChainState, D
     extends DataApplicationService[F, D, DON, DOF]
     with DataApplicationContextualOps[F, D, DON, DOF, L0NodeContext[F]] {
   def genesis: DataState[DON, DOF]
+
+  def onSnapshotConsensusResult(snapshot: Signed[CurrencyIncrementalSnapshot])(implicit A: Applicative[F]): F[Unit] = A.unit
 }
 
 trait DataApplicationL1Service[F[_], D <: DataUpdate, DON <: DataOnChainState, DOF <: DataCalculatedState]
@@ -360,6 +364,7 @@ object BaseDataApplicationL0Service {
 
       def routesPrefix: ExternalUrlPrefix = base.routesPrefix
 
+      def onSnapshotConsensusResult(snapshot: Signed[CurrencyIncrementalSnapshot]): F[Unit] = service.onSnapshotConsensusResult(snapshot)
     }
   }
 }

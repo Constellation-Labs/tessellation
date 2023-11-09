@@ -60,7 +60,8 @@ object CurrencySnapshotConsensus {
         maybeRewards,
         creator,
         validator,
-        gossip
+        gossip,
+        maybeDataApplication
       ),
       gossip,
       selfId,
