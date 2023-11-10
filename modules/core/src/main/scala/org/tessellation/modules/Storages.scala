@@ -32,7 +32,7 @@ object Storages {
     trustUpdates: Option[PeerObservationAdjustmentUpdateBatch]
   ): F[Storages[F]] =
     for {
-      trustStorage <- TrustStorage.make[F](trustUpdates, sdkConfig.trustStorage, seedlist)
+      trustStorage <- TrustStorage.make[F](trustUpdates, sdkConfig.trustStorage, seedlist.map(_.map(_.peerId)))
       incrementalGlobalSnapshotTmpLocalFileSystemStorage <- SnapshotLocalFileSystemStorage.make[F, GlobalIncrementalSnapshot](
         snapshotConfig.incrementalTmpSnapshotPath
       )

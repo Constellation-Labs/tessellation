@@ -33,8 +33,7 @@ object types {
     rewards: RewardsConfig,
     stateChannelPullDelay: NonNegLong,
     stateChannelPurgeDelay: NonNegLong,
-    peerDiscoveryDelay: PeerDiscoveryDelay,
-    proposalSelect: ProposalSelectConfig
+    peerDiscoveryDelay: PeerDiscoveryDelay
   )
 
   case class DBConfig(
