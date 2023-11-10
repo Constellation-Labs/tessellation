@@ -21,7 +21,6 @@ import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.domain.rewards.Rewards
 import org.tessellation.sdk.domain.seedlist.SeedlistEntry
-import org.tessellation.sdk.domain.snapshot.ProposalSelect
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.infrastructure.block.processing.BlockAcceptanceManager
 import org.tessellation.sdk.infrastructure.consensus.Consensus
@@ -57,8 +56,7 @@ object GlobalSnapshotConsensus {
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
     client: Client[F],
     session: Session[F],
-    rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent],
-    proposalSelect: ProposalSelect[F]
+    rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent]
   ): F[Consensus[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact, GlobalSnapshotContext]] =
     for {
       globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager
@@ -90,8 +88,7 @@ object GlobalSnapshotConsensus {
         clusterStorage,
         nodeStorage,
         client,
-        session,
-        proposalSelect
+        session
       )
     } yield consensus
 }

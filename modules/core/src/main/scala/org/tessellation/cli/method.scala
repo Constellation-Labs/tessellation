@@ -73,8 +73,7 @@ object method {
         checkPeersMaxDelay = 10.minutes,
         additionalDiscoveryDelay = 0.minutes,
         minPeers = 1
-      ),
-      proposalSelect = ProposalSelectConfig(trustMultiplier = 5.0)
+      )
     )
 
     val stateChannelAllowanceLists = StateChannelAllowanceLists.get(environment)
