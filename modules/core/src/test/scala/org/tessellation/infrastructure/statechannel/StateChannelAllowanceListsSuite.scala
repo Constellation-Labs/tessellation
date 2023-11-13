@@ -14,25 +14,25 @@ object StateChannelAllowanceListsSuite extends SimpleIOSuite {
     expect.same(None, result)
   }
 
-  pureTest("allowance list config for testnet should not be defined") {
+  pureTest("allowance list config for testnet should be defined") {
 
-    val result = StateChannelAllowanceLists.get(AppEnvironment.Testnet).map(_.nonEmpty)
+    val result = StateChannelAllowanceLists.get(AppEnvironment.Testnet).exists(_.nonEmpty)
 
-    expect.same(Some(true), result)
+    expect.same(true, result)
   }
 
-  pureTest("allowance list config for integrationnet should not be defined") {
+  pureTest("allowance list config for integrationnet should be defined") {
 
-    val result = StateChannelAllowanceLists.get(AppEnvironment.Integrationnet).map(_.nonEmpty)
+    val result = StateChannelAllowanceLists.get(AppEnvironment.Integrationnet).exists(_.nonEmpty)
 
-    expect.same(Some(true), result)
+    expect.same(true, result)
   }
 
   pureTest("allowance list config for mainnet should be defined") {
 
-    val result = StateChannelAllowanceLists.get(AppEnvironment.Mainnet)
+    val result = StateChannelAllowanceLists.get(AppEnvironment.Mainnet).exists(_.nonEmpty)
 
-    expect.same(true, result.isDefined)
+    expect.same(true, result)
   }
 
 }
