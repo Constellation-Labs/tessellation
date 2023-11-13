@@ -26,10 +26,10 @@ trait TransactionGenerator {
     count: PosInt,
     fee: TransactionFee = TransactionFee.zero,
     lastTxRef: Option[TransactionReference] = None
-  ): F[NonEmptyList[Hashed[DAGTransaction]]] = {
-    def generate(src: Address, srcKey: KeyPair, dst: Address, lastTxRef: TransactionReference): F[Hashed[DAGTransaction]] =
-      forAsyncKryo[F, DAGTransaction](
-        DAGTransaction(src, dst, TransactionAmount(1L), fee, lastTxRef, TransactionSalt(0L)),
+  ): F[NonEmptyList[Hashed[Transaction]]] = {
+    def generate(src: Address, srcKey: KeyPair, dst: Address, lastTxRef: TransactionReference): F[Hashed[Transaction]] =
+      forAsyncKryo[F, Transaction](
+        Transaction(src, dst, TransactionAmount(1L), fee, lastTxRef, TransactionSalt(0L)),
         srcKey
       ).flatMap(_.toHashed[F])
 

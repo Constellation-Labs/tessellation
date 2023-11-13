@@ -5,12 +5,12 @@ import cats.syntax.partialOrder._
 import scala.collection.immutable.SortedMap
 import scala.concurrent.duration.FiniteDuration
 
+import org.tessellation.cli.AppEnvironment
 import org.tessellation.config.types.RewardsConfig._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.transaction.TransactionAmount
-import org.tessellation.sdk.config.AppEnvironment
 import org.tessellation.sdk.config.types._
 import org.tessellation.sdk.domain.transaction.TransactionValidator.stardustPrimary
 
@@ -18,7 +18,6 @@ import ciris.Secret
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric._
 import eu.timepit.refined.types.string.NonEmptyString
-import fs2.io.file.Path
 import io.estatico.newtype.macros.newtype
 
 object types {
@@ -31,7 +30,10 @@ object types {
     healthCheck: HealthCheckConfig,
     snapshot: SnapshotConfig,
     collateral: CollateralConfig,
-    rewards: RewardsConfig
+    rewards: RewardsConfig,
+    stateChannelPullDelay: NonNegLong,
+    stateChannelPurgeDelay: NonNegLong,
+    peerDiscoveryDelay: PeerDiscoveryDelay
   )
 
   case class DBConfig(
@@ -47,12 +49,6 @@ object types {
 
   case class TrustConfig(
     daemon: TrustDaemonConfig
-  )
-
-  case class SnapshotConfig(
-    consensus: ConsensusConfig,
-    globalSnapshotPath: Path,
-    inMemoryCapacity: NonNegLong
   )
 
   @newtype

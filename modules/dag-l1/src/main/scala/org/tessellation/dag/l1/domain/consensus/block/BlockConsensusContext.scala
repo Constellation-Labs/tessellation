@@ -7,9 +7,7 @@ import org.tessellation.dag.l1.domain.consensus.block.config.ConsensusConfig
 import org.tessellation.dag.l1.domain.consensus.block.http.p2p.clients.BlockConsensusClient
 import org.tessellation.dag.l1.domain.consensus.block.storage.ConsensusStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.transaction.DAGTransaction
 import org.tessellation.sdk.domain.block.processing.BlockValidator
 import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.transaction.TransactionValidator
@@ -17,12 +15,12 @@ import org.tessellation.sdk.domain.transaction.TransactionValidator
 case class BlockConsensusContext[F[_]](
   blockConsensusClient: BlockConsensusClient[F],
   blockStorage: BlockStorage[F],
-  blockValidator: BlockValidator[F, DAGTransaction, DAGBlock],
+  blockValidator: BlockValidator[F],
   clusterStorage: ClusterStorage[F],
   consensusConfig: ConsensusConfig,
   consensusStorage: ConsensusStorage[F],
   keyPair: KeyPair,
   selfId: PeerId,
   transactionStorage: TransactionStorage[F],
-  transactionValidator: TransactionValidator[F, DAGTransaction]
+  transactionValidator: TransactionValidator[F]
 )

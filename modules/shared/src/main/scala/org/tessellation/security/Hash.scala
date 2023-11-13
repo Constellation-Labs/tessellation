@@ -1,10 +1,14 @@
 package org.tessellation.security
 
+import java.nio.charset.StandardCharsets
+
+import cats.Show
+
 import org.tessellation.ext.derevo.ordering
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.security.hash.Hash
 
-import com.google.common.hash.Hashing
+import com.google.common.hash.{HashCode, Hashing}
 import derevo.cats.{order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
@@ -16,16 +20,23 @@ object hash {
 
   @derive(encoder, decoder, ordering, order, show)
   @newtype
-  case class Hash(value: String)
+  case class Hash(value: String) {
+    def getBytes: Array[Byte] = value.getBytes(StandardCharsets.UTF_8)
+  }
 
   object Hash {
 
+    def hashCodeFromBytes(bytes: Array[Byte]): HashCode =
+      Hashing.sha256().hashBytes(bytes)
+
     def fromBytes(bytes: Array[Byte]): Hash =
-      Hash(Hashing.sha256().hashBytes(bytes).toString)
+      Hash(hashCodeFromBytes(bytes).toString)
 
     def empty: Hash = Hash(s"%064d".format(0))
 
     implicit val arbitrary: Arbitrary[Hash] = Arbitrary(Gen.stringOfN(64, Gen.hexChar).map(Hash(_)))
+
+    val shortShow: Show[Hash] = Show.show[Hash](h => s"Hash(${h.value.take(8)})")
   }
 
   @derive(encoder, decoder, ordering, order, show)

@@ -16,6 +16,8 @@ trait BlockAcceptanceContext[F[_]] {
 
   def getLastTxRef(address: Address): F[Option[TransactionReference]]
 
+  def getInitialTxRef: TransactionReference
+
   def getParentUsage(blockReference: BlockReference): F[Option[NonNegLong]]
 
   def getCollateral: Amount
@@ -28,7 +30,8 @@ object BlockAcceptanceContext {
     balances: Map[Address, Balance],
     lastTxRefs: Map[Address, TransactionReference],
     parentUsages: Map[BlockReference, NonNegLong],
-    collateral: Amount
+    collateral: Amount,
+    initialTxRef: TransactionReference
   ): BlockAcceptanceContext[F] =
     new BlockAcceptanceContext[F] {
 
@@ -37,6 +40,9 @@ object BlockAcceptanceContext {
 
       def getLastTxRef(address: Address): F[Option[TransactionReference]] =
         lastTxRefs.get(address).pure[F]
+
+      def getInitialTxRef: TransactionReference =
+        initialTxRef
 
       def getParentUsage(blockReference: BlockReference): F[Option[NonNegLong]] =
         parentUsages.get(blockReference).pure[F]

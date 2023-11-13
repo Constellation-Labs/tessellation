@@ -4,6 +4,7 @@ import cats.Order
 import cats.effect.Async
 import cats.syntax.all._
 
+import org.tessellation.http.routes.internal.InternalUrlPrefix
 import org.tessellation.sdk.infrastructure.consensus.message.{GetConsensusOutcomeRequest, RegistrationResponse}
 
 import eu.timepit.refined.auto._
@@ -13,15 +14,15 @@ import org.http4s.circe.CirceEntityCodec._
 import org.http4s.dsl._
 import org.http4s.server.Router
 
-class ConsensusRoutes[F[_]: Async, Key: Order: Encoder: Decoder, Artifact: Encoder](
-  storage: ConsensusStorage[F, _, Key, Artifact]
+class ConsensusRoutes[F[_]: Async, Key: Order: Encoder: Decoder, Artifact: Encoder, Context: Encoder](
+  storage: ConsensusStorage[F, _, Key, Artifact, Context]
 ) extends Http4sDsl[F] {
 
-  private val prefixPath = "/consensus"
+  private val prefixPath: InternalUrlPrefix = "/consensus"
 
   private val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
     case GET -> Root / "registration" =>
-      storage.getOwnRegistration.map(RegistrationResponse(_)).flatMap(Ok(_))
+      storage.getOwnRegistrationKey.map(RegistrationResponse(_)).flatMap(Ok(_))
     case GET -> Root / "latest" / "outcome" =>
       storage.getLastConsensusOutcome.flatMap(Ok(_))
     case req @ POST -> Root / "specific" / "outcome" => // POST used instead of GET because `Key` can't be used be in path
@@ -36,7 +37,7 @@ class ConsensusRoutes[F[_]: Async, Key: Order: Encoder: Decoder, Artifact: Encod
   }
 
   val p2pRoutes: HttpRoutes[F] = Router(
-    prefixPath -> p2p
+    prefixPath.value -> p2p
   )
 
 }

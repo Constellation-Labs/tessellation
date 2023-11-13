@@ -16,10 +16,9 @@ object Dependencies {
     val doobie = "1.0.0-RC1"
     val droste = "0.9.0"
     val enumeratum = "1.7.2"
-    val h2 = "2.1.214"
     val javaxCrypto = "1.0.1"
     val jawnVersion = "1.4.0"
-    val jawnFs2Version = "1.2.1"
+    val jawnFs2Version = "2.4.0"
     val flyway = "9.10.2"
     val fs2 = "3.4.0"
     val fs2Data = "1.6.0"
@@ -76,6 +75,8 @@ object Dependencies {
 
     val betterFiles = "com.github.pathikrit" %% "better-files" % V.betterFiles
 
+    val brotli4j = "com.aayushatharva.brotli4j" % "brotli4j" % "1.12.0"
+
     val cats = "org.typelevel" %% "cats-core" % V.cats
     val catsEffect = "org.typelevel" %% "cats-effect" % V.catsEffect
     val catsEffectTestkit = "org.typelevel" %% "cats-effect-testkit" % V.catsEffect
@@ -111,7 +112,6 @@ object Dependencies {
 
     val doobieCore = doobie("core")
     val doobieHikari = doobie("hikari")
-    val doobieH2 = doobie("h2")
     val doobieQuill = doobie("quill")
 
     val drosteCore = droste("core")
@@ -122,8 +122,6 @@ object Dependencies {
     val enumeratumCirce = enumeratum("circe")
 
     val flyway = "org.flywaydb" % "flyway-core" % V.flyway
-
-    val h2 = "com.h2database" % "h2" % V.h2
 
     val http4sCore = http4s("core")
     val http4sDsl = http4s("dsl")
@@ -140,7 +138,7 @@ object Dependencies {
 
     val jawnParser = jawn("jawn-parser")
     val jawnAst = jawn("jawn-ast")
-    val jawnFs2 = "org.http4s" %% "jawn-fs2" % V.jawnFs2Version
+    val jawnFs2 = "org.typelevel" %% "jawn-fs2" % V.jawnFs2Version
 
     val monocleCore = "dev.optics" %% "monocle-core" % V.monocle
     val monocleMacro = "dev.optics" %% "monocle-macro" % V.monocle

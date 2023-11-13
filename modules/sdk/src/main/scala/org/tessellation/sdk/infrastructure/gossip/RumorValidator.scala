@@ -1,6 +1,5 @@
 package org.tessellation.sdk.infrastructure.gossip
 
-import cats.Order._
 import cats.data.NonEmptySet._
 import cats.data.{NonEmptySet, Validated, ValidatedNec}
 import cats.effect.Async
@@ -11,6 +10,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.gossip._
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.sdk.domain.seedlist.SeedlistEntry
 import org.tessellation.sdk.infrastructure.gossip.RumorValidator.RumorValidationErrorOr
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.SignedValidator.SignedValidationError
@@ -28,7 +28,7 @@ trait RumorValidator[F[_]] {
 object RumorValidator {
 
   def make[F[_]: Async: KryoSerializer](
-    seedlist: Option[Set[PeerId]],
+    seedlist: Option[Set[SeedlistEntry]],
     signedValidator: SignedValidator[F]
   ): RumorValidator[F] = new RumorValidator[F] {
 
@@ -57,14 +57,9 @@ object RumorValidator {
       signedValidator.validateSignatures(signedRumor).map(_.errorMap(InvalidSigned))
 
     def validateSeedlist(signedRumor: Signed[RumorRaw]): RumorValidationErrorOr[Signed[RumorRaw]] =
-      seedlist.flatMap { peers =>
-        signedRumor.proofs
-          .map(_.id.toPeerId)
-          .toSortedSet
-          .diff(peers)
-          .map(_.toId)
-          .toNes
-      }.map(SignersNotInSeedlist).toInvalidNec(signedRumor)
+      signedValidator
+        .validateSignaturesWithSeedlist(seedlist.map(_.map(_.peerId)), signedRumor)
+        .errorMap(SignersNotInSeedlist)
 
   }
 
@@ -72,7 +67,7 @@ object RumorValidator {
   sealed trait RumorValidationError
   case class InvalidHash(calculatedHash: Hash, receivedHash: Hash) extends RumorValidationError
   case class InvalidSigned(error: SignedValidationError) extends RumorValidationError
-  case class SignersNotInSeedlist(signers: NonEmptySet[Id]) extends RumorValidationError
+  case class SignersNotInSeedlist(error: SignedValidationError) extends RumorValidationError
   case class NotSignedByOrigin(origin: PeerId, signers: NonEmptySet[Id]) extends RumorValidationError
 
   type RumorValidationErrorOr[A] = ValidatedNec[RumorValidationError, A]

@@ -12,25 +12,24 @@ import scala.concurrent.duration.FiniteDuration
 
 import org.tessellation.dag.l1.Main
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.Proposal
-import org.tessellation.dag.l1.domain.consensus.round.RoundId
 import org.tessellation.dag.transaction.TransactionGenerator
 import org.tessellation.ext.cats.effect.ResourceIO
-import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.BlockReference
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.block.{DAGBlock, Tips}
+import org.tessellation.schema.block.Tips
 import org.tessellation.schema.height.Height
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.transaction.{DAGTransaction, TransactionFee, TransactionReference}
+import org.tessellation.schema.round.RoundId
+import org.tessellation.schema.transaction.{TransactionFee, TransactionReference}
+import org.tessellation.schema.{Block, BlockReference}
 import org.tessellation.sdk.domain.transaction.TransactionValidator
 import org.tessellation.sdk.sdkKryoRegistrar
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.ProofsHash
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.SignedValidator
 import org.tessellation.security.signature.signature.SignatureProof
+import org.tessellation.security.{KeyPairGenerator, SecurityProvider}
 
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -40,7 +39,7 @@ import weaver.scalacheck.Checkers
 object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenerator {
 
   override type Res =
-    (KryoSerializer[IO], SecurityProvider[IO], KeyPair, KeyPair, Address, Address, TransactionValidator[IO, DAGTransaction])
+    (KryoSerializer[IO], SecurityProvider[IO], KeyPair, KeyPair, Address, Address, TransactionValidator[IO])
 
   override def sharedResource: Resource[IO, Res] =
     KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ sdkKryoRegistrar).flatMap { implicit kp =>
@@ -51,7 +50,7 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
           srcAddress = srcKey.getPublic.toAddress
           dstAddress = dstKey.getPublic.toAddress
           signedValidator = SignedValidator.make
-          txValidator = TransactionValidator.make[F, DAGTransaction](signedValidator)
+          txValidator = TransactionValidator.make[F](signedValidator)
         } yield (kp, sp, srcKey, dstKey, srcAddress, dstAddress, txValidator)
       }
     }
@@ -107,7 +106,7 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
         result <- roundData.formBlock(txValidator)
       } yield
         expect.same(
-          DAGBlock(baseProposal.tips.value, txsA2.map(_.signed).toNes).some,
+          Block(baseProposal.tips.value, txsA2.map(_.signed).toNes).some,
           result
         )
   }
@@ -131,7 +130,7 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
         result <- roundData.formBlock(txValidator)
       } yield
         expect.same(
-          DAGBlock(baseProposal.tips.value, (txsA.map(_.signed) ++ txsA2.map(_.signed).toList).toNes).some,
+          Block(baseProposal.tips.value, (txsA.map(_.signed) ++ txsA2.map(_.signed).toList).toNes).some,
           result
         )
   }
@@ -155,7 +154,7 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
         result <- roundData.formBlock(txValidator)
       } yield
         expect.same(
-          DAGBlock(baseProposal.tips.value, (NonEmptyList.one(txsA.head.signed) ++ txsA2.map(_.signed).toList).toNes).some,
+          Block(baseProposal.tips.value, (NonEmptyList.one(txsA.head.signed) ++ txsA2.map(_.signed).toList).toNes).some,
           result
         )
   }
@@ -180,7 +179,7 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
         result <- roundData.formBlock(txValidator)
       } yield
         expect.same(
-          DAGBlock(baseProposal.tips.value, NonEmptyList.one(txsA.head.signed).toNes).some,
+          Block(baseProposal.tips.value, NonEmptyList.one(txsA.head.signed).toNes).some,
           result
         )
   }

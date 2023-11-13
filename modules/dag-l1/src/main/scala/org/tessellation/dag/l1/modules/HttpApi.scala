@@ -9,6 +9,7 @@ import cats.syntax.semigroupk._
 import org.tessellation.dag.l1.http.Routes
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.sdk.config.types.HttpConfig
 import org.tessellation.sdk.http.p2p.middleware.{PeerAuthMiddleware, `X-Id-Middleware`}
 import org.tessellation.sdk.http.routes._
@@ -23,26 +24,36 @@ import org.http4s.{HttpApp, HttpRoutes}
 
 object HttpApi {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider: Metrics: Supervisor](
-    storages: Storages[F],
+  def make[
+    F[_]: Async: KryoSerializer: SecurityProvider: Metrics: Supervisor,
+    P <: StateProof,
+    S <: Snapshot,
+    SI <: SnapshotInfo[P]
+  ](
+    storages: Storages[F, P, S, SI],
     queues: Queues[F],
     privateKey: PrivateKey,
-    services: Services[F],
-    programs: Programs[F],
+    services: Services[F, P, S, SI],
+    programs: Programs[F, P, S, SI],
     healthchecks: HealthChecks[F],
     selfId: PeerId,
     nodeVersion: String,
     httpCfg: HttpConfig
-  ): HttpApi[F] =
-    new HttpApi[F](storages, queues, privateKey, services, programs, healthchecks, selfId, nodeVersion, httpCfg) {}
+  ): HttpApi[F, P, S, SI] =
+    new HttpApi[F, P, S, SI](storages, queues, privateKey, services, programs, healthchecks, selfId, nodeVersion, httpCfg) {}
 }
 
-sealed abstract class HttpApi[F[_]: Async: KryoSerializer: SecurityProvider: Metrics: Supervisor] private (
-  storages: Storages[F],
+sealed abstract class HttpApi[
+  F[_]: Async: KryoSerializer: SecurityProvider: Metrics: Supervisor,
+  P <: StateProof,
+  S <: Snapshot,
+  SI <: SnapshotInfo[P]
+] private (
+  storages: Storages[F, P, S, SI],
   queues: Queues[F],
   privateKey: PrivateKey,
-  services: Services[F],
-  programs: Programs[F],
+  services: Services[F, P, S, SI],
+  programs: Programs[F, P, S, SI],
   healthchecks: HealthChecks[F],
   selfId: PeerId,
   nodeVersion: String,
@@ -60,8 +71,8 @@ sealed abstract class HttpApi[F[_]: Async: KryoSerializer: SecurityProvider: Met
     Router("healthcheck" -> pingHealthcheckRoutes.p2pRoutes)
   }
 
-  private val metricRoutes = MetricRoutes[F]().routes
-  private val targetRoutes = TargetRoutes[F](services.cluster).routes
+  private val metricRoutes = MetricRoutes[F]().publicRoutes
+  private val targetRoutes = TargetRoutes[F](services.cluster).publicRoutes
 
   private val openRoutes: HttpRoutes[F] =
     CORS.policy.withAllowOriginAll.withAllowHeadersAll.withAllowCredentials(false).apply {

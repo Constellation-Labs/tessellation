@@ -1,20 +1,24 @@
 package org.tessellation.security.signature
 
 import cats.Order
+import cats.Order._
 import cats.data.NonEmptySet._
-import cats.data.{NonEmptySet, ValidatedNec}
+import cats.data.{NonEmptyList, NonEmptySet, ValidatedNec}
 import cats.effect.Async
 import cats.syntax.all._
 
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.address.Address
+import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.{posIntDecoder, posIntEncoder}
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.SignedValidator.SignedValidationErrorOr
 import org.tessellation.security.signature.signature.SignatureProof
 
 import derevo.cats.{order, show}
+import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import eu.timepit.refined.auto._
 import eu.timepit.refined.cats._
@@ -37,8 +41,10 @@ trait SignedValidator[F[_]] {
 
   def isSignedExclusivelyBy[A <: AnyRef](
     signed: Signed[A],
-    minSignatureCount: Address
+    signerAddress: Address
   ): F[SignedValidationErrorOr[Signed[A]]]
+
+  def validateSignaturesWithSeedlist[A <: AnyRef](seedlist: Option[Set[PeerId]], signed: Signed[A]): SignedValidationErrorOr[Signed[A]]
 
 }
 
@@ -49,7 +55,7 @@ object SignedValidator {
     def validateSignatures[A <: AnyRef](
       signed: Signed[A]
     ): F[SignedValidationErrorOr[Signed[A]]] =
-      signed.validProofs.map { either =>
+      signed.validProofs(None).map { either =>
         either
           .leftMap(InvalidSignatures)
           .toValidatedNec
@@ -59,7 +65,7 @@ object SignedValidator {
     def validateUniqueSigners[A <: AnyRef](
       signed: Signed[A]
     ): SignedValidationErrorOr[Signed[A]] =
-      duplicatedValues(signed.proofs.map(_.id)).toNel
+      duplicatedValues(signed.proofs.toNonEmptyList.map(_.id)).toNel
         .map(_.toNes)
         .map(DuplicateSigners)
         .toInvalidNec(signed)
@@ -89,8 +95,18 @@ object SignedValidator {
         signed.validNec[SignedValidationError].pure[F]
       )
 
-    private def duplicatedValues[B: Order](values: NonEmptySet[B]): List[B] =
-      values.groupBy(identity).toNel.toList.mapFilter {
+    def validateSignaturesWithSeedlist[A <: AnyRef](seedlist: Option[Set[PeerId]], signed: Signed[A]): SignedValidationErrorOr[Signed[A]] =
+      seedlist.flatMap { peers =>
+        signed.proofs
+          .map(_.id.toPeerId)
+          .toSortedSet
+          .diff(peers)
+          .map(_.toId)
+          .toNes
+      }.map(SignersNotInSeedlist).toInvalidNec(signed)
+
+    private def duplicatedValues[B: Order](values: NonEmptyList[B]): List[B] =
+      values.groupBy(identity).toList.mapFilter {
         case (value, occurrences) =>
           if (occurrences.tail.nonEmpty)
             value.some
@@ -99,12 +115,13 @@ object SignedValidator {
       }
   }
 
-  @derive(order, show)
+  @derive(order, show, decoder, encoder)
   sealed trait SignedValidationError
   case class InvalidSignatures(invalidSignatures: NonEmptySet[SignatureProof]) extends SignedValidationError
   case class NotEnoughSignatures(signatureCount: Long, minSignatureCount: PosInt) extends SignedValidationError
   case class DuplicateSigners(signers: NonEmptySet[Id]) extends SignedValidationError
   case class MissingSigners(signers: NonEmptySet[Id]) extends SignedValidationError
+  case class SignersNotInSeedlist(signers: NonEmptySet[Id]) extends SignedValidationError
   case object NotSignedExclusivelyByAddressOwner extends SignedValidationError
 
   type SignedValidationErrorOr[A] = ValidatedNec[SignedValidationError, A]

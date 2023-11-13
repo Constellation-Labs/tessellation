@@ -4,10 +4,10 @@ import cats.data.Ior
 import cats.effect.{Async, Ref}
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
-import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
+import cats.syntax.order._
 import cats.syntax.traverse._
 
 import org.tessellation.schema.cluster.{ClusterId, ClusterSessionAlreadyExists, ClusterSessionToken}
@@ -66,8 +66,15 @@ object ClusterStorage {
       def getPeer(id: PeerId): F[Option[Peer]] =
         peers(id).get
 
-      def addPeer(peer: Peer): F[Unit] =
-        setPeer(peer.id)(peer.some)
+      def addPeer(peer: Peer): F[Boolean] =
+        updatePeerAndGet(peer.id) { maybeCurrPeer =>
+          maybeCurrPeer.filter { currPeer =>
+            currPeer.session >= peer.session
+          }.orElse(peer.some)
+        }.map {
+          case (_, newValue) =>
+            newValue.exists(_ === peer)
+        }
 
       def hasPeerId(id: PeerId): F[Boolean] =
         peers(id).get.map(_.isDefined)
@@ -75,14 +82,16 @@ object ClusterStorage {
       def hasPeerHostPort(host: Host, p2pPort: Port): F[Boolean] =
         getPeers.map(_.exists(peer => peer.ip == host && peer.p2pPort == p2pPort))
 
-      def setPeerState(id: PeerId, state: NodeState): F[Unit] =
-        updatePeer(id)(_.map(Peer._State.replace(state)(_)))
+      def updatePeerState(id: PeerId, state: NodeState): F[Boolean] =
+        updatePeerAndGet(id)(_.map(Peer._State.replace(state)(_))).map {
+          case (oldValue, newValue) => oldValue =!= newValue
+        }
 
       def setPeerResponsiveness(id: PeerId, responsiveness: PeerResponsiveness): F[Unit] =
-        updatePeer(id)(_.map(_.focus(_.responsiveness).replace(responsiveness)))
+        updatePeerAndGet(id)(_.map(_.focus(_.responsiveness).replace(responsiveness))).void
 
       def removePeer(id: PeerId): F[Unit] =
-        setPeer(id)(none)
+        updatePeerAndGet(id)(_ => none).void
 
       def removePeers(ids: Set[PeerId]): F[Unit] =
         ids.toList.traverse(removePeer).void
@@ -90,19 +99,17 @@ object ClusterStorage {
       def peerChanges: Stream[F, Ior[Peer, Peer]] =
         topic.subscribe(maxQueuedPeerChanges)
 
-      private def setPeer(id: PeerId)(value: Option[Peer]): F[Unit] = updatePeer(id)(_ => value)
-
-      private def updatePeer(id: PeerId)(fn: Option[Peer] => Option[Peer]): F[Unit] =
-        peers(id).modify(wrapUpdateFn(fn)).flatTap(_.traverse(topic.publish1)).void
+      private def updatePeerAndGet(id: PeerId)(fn: Option[Peer] => Option[Peer]): F[(Option[Peer], Option[Peer])] =
+        peers(id).modify(wrapUpdateFn(fn)).flatTap {
+          case (oldValue, newValue) =>
+            Ior.fromOptions(oldValue, newValue).traverse(topic.publish1).whenA(oldValue =!= newValue)
+        }
 
       private def wrapUpdateFn(fn: Option[Peer] => Option[Peer])(
         oldValue: Option[Peer]
-      ): (Option[Peer], Option[Ior[Peer, Peer]]) = {
+      ): (Option[Peer], (Option[Peer], Option[Peer])) = {
         val newValue = fn(oldValue)
-        if (newValue === oldValue)
-          (oldValue, none)
-        else
-          (newValue, Ior.fromOptions(oldValue, newValue))
+        (newValue, (oldValue, newValue))
       }
 
       private def generateToken: F[ClusterSessionToken] =

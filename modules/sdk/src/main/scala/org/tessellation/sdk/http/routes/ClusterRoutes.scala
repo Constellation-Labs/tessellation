@@ -4,7 +4,9 @@ import cats.effect.Async
 import cats.syntax.applicativeError._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
+import cats.syntax.show._
 
+import org.tessellation.http.routes.internal._
 import org.tessellation.schema.cluster._
 import org.tessellation.schema.peer.JoinRequest
 import org.tessellation.sdk.domain.cluster.programs.{Joining, PeerDiscovery}
@@ -13,12 +15,11 @@ import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.collateral.Collateral
 import org.tessellation.sdk.ext.http4s.refined.RefinedRequestDecoder
 
-import com.comcast.ip4s.Host
+import eu.timepit.refined.auto._
 import io.circe.shapes._
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.dsl.Http4sDsl
-import org.http4s.server.Router
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import shapeless._
 import shapeless.syntax.singleton._
@@ -29,13 +30,17 @@ final case class ClusterRoutes[F[_]: Async](
   clusterStorage: ClusterStorage[F],
   cluster: Cluster[F],
   collateral: Collateral[F]
-) extends Http4sDsl[F] {
+) extends Http4sDsl[F]
+    with PublicRoutes[F]
+    with P2PRoutes[F]
+    with P2PPublicRoutes[F]
+    with CliRoutes[F] {
 
   implicit val logger = Slf4jLogger.getLogger[F]
 
-  private[routes] val prefixPath = "/cluster"
+  protected[routes] val prefixPath: InternalUrlPrefix = "/cluster"
 
-  private val cli: HttpRoutes[F] = HttpRoutes.of[F] {
+  protected val cli: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "join" =>
       req.decodeR[PeerToJoin] { peerToJoin =>
         joining
@@ -44,7 +49,7 @@ final case class ClusterRoutes[F[_]: Async](
           .recoverWith {
             case NodeStateDoesNotAllowForJoining(nodeState) =>
               Conflict(s"Node state=${nodeState} does not allow for joining the cluster.")
-            case PeerAlreadyConnected(id, _, _, _) => Conflict(s"Peer id=${id} already connected.")
+            case PeerAlreadyJoinedWithNewerSession(id, _, _, _) => Conflict(s"Peer id=${id.show} already joined with newer session.")
             case SessionAlreadyExists =>
               Conflict(s"Session already exists.")
             case _ =>
@@ -55,30 +60,25 @@ final case class ClusterRoutes[F[_]: Async](
       cluster.leave() >> Ok()
   }
 
-  private val p2pPublic: HttpRoutes[F] = HttpRoutes.of[F] {
+  protected val p2pPublic: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "join" =>
       req.decodeR[JoinRequest] { joinRequest =>
-        req.remoteAddr
-          .flatMap(_.asIpv4)
-          .map(_.toString)
-          .flatMap(Host.fromString)
-          .fold(BadRequest())(host =>
-            joining
-              .joinRequest(collateral.hasCollateral)(joinRequest, host)
-              .flatMap(_ => Ok())
-              .recoverWith {
-                case PeerAlreadyConnected(id, _, _, _) => Conflict(s"Peer id=${id} already connected.")
-                case SessionDoesNotExist               => Conflict("Peer does not have an active session.")
-                case CollateralNotSatisfied            => Conflict("Collateral is not satisfied.")
-                case NodeNotInCluster                  => Conflict("Node is not part of the cluster.")
-                case _                                 => InternalServerError("Unknown error.")
-              }
-          )
-
+        joining
+          .joinRequest(collateral.hasCollateral)(joinRequest, joinRequest.registrationRequest.ip)
+          .flatMap(_ => Ok())
+          .recoverWith {
+            case PeerAlreadyJoinedWithNewerSession(id, _, _, _) => Conflict(s"Peer id=${id.show} already joined with newer session.")
+            case PeerAlreadyJoinedWithDifferentRegistrationData(id) =>
+              Conflict(s"Peer id=${id.show} already joined with different registration data.")
+            case SessionDoesNotExist    => Conflict("Peer does not have an active session.")
+            case CollateralNotSatisfied => Conflict("Collateral is not satisfied.")
+            case NodeNotInCluster       => Conflict("Node is not part of the cluster.")
+            case _                      => InternalServerError("Unknown error.")
+          }
       }
   }
 
-  private val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
+  protected val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
     case GET -> Root / "peers" =>
       Ok(clusterStorage.getPeers)
     case GET -> Root / "discovery" =>
@@ -91,7 +91,7 @@ final case class ClusterRoutes[F[_]: Async](
       )
   }
 
-  private val public: HttpRoutes[F] = HttpRoutes.of[F] {
+  protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case GET -> Root / "info" =>
       Ok(cluster.info)
     case GET -> Root / "session" =>
@@ -100,20 +100,4 @@ final case class ClusterRoutes[F[_]: Async](
         case None        => NotFound()
       }
   }
-
-  val p2pPublicRoutes: HttpRoutes[F] = Router(
-    prefixPath -> p2pPublic
-  )
-
-  val p2pRoutes: HttpRoutes[F] = Router(
-    prefixPath -> p2p
-  )
-
-  val cliRoutes: HttpRoutes[F] = Router(
-    prefixPath -> cli
-  )
-
-  val publicRoutes: HttpRoutes[F] = Router(
-    prefixPath -> public
-  )
 }

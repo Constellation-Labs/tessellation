@@ -46,6 +46,12 @@ trait OrphanInstances {
   implicit val posLongDecoder: Decoder[PosLong] =
     decoderOf[Long, Positive]
 
+  implicit val posIntDecoder: Decoder[PosInt] =
+    decoderOf[Int, Positive]
+
+  implicit val posIntEncoder: Encoder[PosInt] =
+    encoderOf[Int, Positive]
+
   implicit val nonNegLongEncoder: Encoder[NonNegLong] =
     encoderOf[Long, NonNegative]
 
@@ -57,6 +63,12 @@ trait OrphanInstances {
 
   implicit val nonNegLongKeyDecoder: KeyDecoder[NonNegLong] =
     keyDecoderOf[Long, NonNegative]
+
+  implicit val nonNegIntEncoder: Encoder[NonNegInt] =
+    encoderOf[Int, NonNegative]
+
+  implicit val nonNegIntDecoder: Decoder[NonNegInt] =
+    decoderOf[Int, NonNegative]
 
   implicit def tupleKeyEncoder[A, B](implicit A: KeyEncoder[A], B: KeyEncoder[B]): KeyEncoder[(A, B)] =
     KeyEncoder.instance[(A, B)] { case (a, b) => A(a) + ":" + B(b) }

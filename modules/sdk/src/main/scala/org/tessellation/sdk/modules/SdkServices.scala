@@ -2,23 +2,30 @@ package org.tessellation.sdk.modules
 
 import java.security.KeyPair
 
+import cats.data.NonEmptySet
 import cats.effect.Async
 import cats.effect.std.Supervisor
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
+import org.tessellation.cli.AppEnvironment
+import org.tessellation.json.JsonBrotliBinarySerializer
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.address.Address
 import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.sdk.config.types.SdkConfig
+import org.tessellation.sdk.config.types.{CollateralConfig, SdkConfig}
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.healthcheck.LocalHealthcheck
+import org.tessellation.sdk.domain.seedlist.SeedlistEntry
 import org.tessellation.sdk.http.p2p.clients.NodeClient
+import org.tessellation.sdk.infrastructure.block.processing.BlockAcceptanceManager
 import org.tessellation.sdk.infrastructure.cluster.services.Cluster
 import org.tessellation.sdk.infrastructure.gossip.Gossip
 import org.tessellation.sdk.infrastructure.healthcheck.LocalHealthcheck
 import org.tessellation.sdk.infrastructure.metrics.Metrics
+import org.tessellation.sdk.infrastructure.snapshot._
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
 
@@ -35,9 +42,13 @@ object SdkServices {
     queues: SdkQueues[F],
     session: Session[F],
     nodeClient: NodeClient[F],
-    seedlist: Option[Set[PeerId]],
+    validators: SdkValidators[F],
+    seedlist: Option[Set[SeedlistEntry]],
     restartSignal: SignallingRef[F, Unit],
-    versionHash: Hash
+    versionHash: Hash,
+    collateral: CollateralConfig,
+    stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
+    environment: AppEnvironment
   ): F[SdkServices[F]] = {
 
     val cluster = Cluster
@@ -51,18 +62,58 @@ object SdkServices {
         storages.node,
         seedlist,
         restartSignal,
-        versionHash
+        versionHash,
+        environment
       )
 
     for {
       localHealthcheck <- LocalHealthcheck.make[F](nodeClient, storages.cluster)
       gossip <- Gossip.make[F](queues.rumor, nodeId, generation, keyPair)
+      currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
+        BlockAcceptanceManager.make[F](validators.currencyBlockValidator),
+        collateral.amount
+      )
+
+      currencyEventsCutter = CurrencyEventsCutter.make[F]
+
+      currencySnapshotValidator = CurrencySnapshotValidator.make[F](
+        CurrencySnapshotCreator.make[F](
+          currencySnapshotAcceptanceManager,
+          None,
+          cfg.snapshotSizeConfig,
+          currencyEventsCutter
+        ),
+        validators.signedValidator,
+        None,
+        None
+      )
+      currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(
+        currencySnapshotValidator
+      )
+      globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make(stateChannelAllowanceLists)
+      jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.make()
+      globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
+        BlockAcceptanceManager.make[F](validators.blockValidator),
+        GlobalSnapshotStateChannelEventsProcessor
+          .make[F](
+            validators.stateChannelValidator,
+            globalSnapshotStateChannelManager,
+            currencySnapshotContextFns,
+            jsonBrotliBinarySerializer
+          ),
+        collateral.amount
+      )
+      globalSnapshotContextFns = GlobalSnapshotContextFunctions.make(globalSnapshotAcceptanceManager)
     } yield
       new SdkServices[F](
         localHealthcheck = localHealthcheck,
         cluster = cluster,
         session = session,
-        gossip = gossip
+        gossip = gossip,
+        globalSnapshotContextFns = globalSnapshotContextFns,
+        currencySnapshotContextFns = currencySnapshotContextFns,
+        currencySnapshotAcceptanceManager = currencySnapshotAcceptanceManager,
+        currencyEventsCutter = currencyEventsCutter
       ) {}
   }
 }
@@ -71,5 +122,9 @@ sealed abstract class SdkServices[F[_]] private (
   val localHealthcheck: LocalHealthcheck[F],
   val cluster: Cluster[F],
   val session: Session[F],
-  val gossip: Gossip[F]
+  val gossip: Gossip[F],
+  val globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
+  val currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
+  val currencySnapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F],
+  val currencyEventsCutter: CurrencyEventsCutter[F]
 )

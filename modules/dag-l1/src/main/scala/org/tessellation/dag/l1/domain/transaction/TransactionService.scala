@@ -8,14 +8,14 @@ import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.schema.transaction.DAGTransaction
+import org.tessellation.schema.transaction.Transaction
 import org.tessellation.sdk.domain.transaction.ContextualTransactionValidator
 import org.tessellation.sdk.domain.transaction.ContextualTransactionValidator.ContextualTransactionValidationError
 import org.tessellation.security.Hashed
 import org.tessellation.security.hash.Hash
 
 trait TransactionService[F[_]] {
-  def offer(transaction: Hashed[DAGTransaction]): F[Either[NonEmptyList[ContextualTransactionValidationError], Hash]]
+  def offer(transaction: Hashed[Transaction]): F[Either[NonEmptyList[ContextualTransactionValidationError], Hash]]
 }
 
 object TransactionService {
@@ -26,7 +26,7 @@ object TransactionService {
   ): TransactionService[F] = new TransactionService[F] {
 
     def offer(
-      transaction: Hashed[DAGTransaction]
+      transaction: Hashed[Transaction]
     ): F[Either[NonEmptyList[ContextualTransactionValidationError], Hash]] =
       contextualTransactionValidator.validate(transaction.signed).flatMap {
         case Valid(_) =>

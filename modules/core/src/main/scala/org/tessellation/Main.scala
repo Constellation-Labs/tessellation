@@ -1,6 +1,5 @@
 package org.tessellation
 
-import cats.ApplicativeError
 import cats.effect._
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
@@ -10,14 +9,16 @@ import org.tessellation.cli.method._
 import org.tessellation.ext.cats.effect._
 import org.tessellation.ext.kryo._
 import org.tessellation.http.p2p.P2PClient
-import org.tessellation.infrastructure.genesis.{Loader => GenesisLoader}
-import org.tessellation.infrastructure.trust.handler.trustHandler
+import org.tessellation.infrastructure.trust.handler.{ordinalTrustHandler, trustHandler}
 import org.tessellation.modules._
-import org.tessellation.schema.GlobalSnapshot
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.node.NodeState
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshot}
 import org.tessellation.sdk.app.{SDK, TessellationIOApp}
+import org.tessellation.sdk.domain.collateral.OwnCollateralNotSatisfied
+import org.tessellation.sdk.infrastructure.genesis.{GenesisFS => GenesisLoader}
 import org.tessellation.sdk.infrastructure.gossip.{GossipDaemon, RumorHandlers}
+import org.tessellation.sdk.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage
 import org.tessellation.sdk.resources.MkHttpServer
 import org.tessellation.sdk.resources.MkHttpServer.ServerName
 import org.tessellation.security.signature.Signed
@@ -46,27 +47,42 @@ object Main
     val cfg = method.appConfig
 
     for {
-      _ <- IO.unit.asResource
-      p2pClient = P2PClient.make[IO](sdkP2PClient, sdkResources.client, sdkServices.session)
       queues <- Queues.make[IO](sdkQueues).asResource
-      maybeRollbackHash = Option(method).collect { case rr: RunRollback => rr.rollbackHash }
-      storages <- Storages.make[IO](sdkStorages, cfg.snapshot, maybeRollbackHash).asResource
-      validators = Validators.make[IO](seedlist)
+      p2pClient = P2PClient.make[IO](sdkP2PClient, sdkResources.client, sdkServices.session)
+      storages <- Storages
+        .make[IO](
+          sdkStorages,
+          method.sdkConfig,
+          sdk.seedlist,
+          cfg.snapshot,
+          trustRatings
+        )
+        .asResource
       services <- Services
         .make[IO](
           sdkServices,
           queues,
           storages,
-          validators,
+          sdk.sdkValidators,
           sdkResources.client,
           sdkServices.session,
           sdk.seedlist,
+          method.stateChannelAllowanceLists,
           sdk.nodeId,
           keyPair,
           cfg
         )
         .asResource
-      programs = Programs.make[IO](sdkPrograms, storages, services)
+      programs = Programs.make[IO](
+        sdkPrograms,
+        storages,
+        services,
+        keyPair,
+        cfg,
+        method.lastFullGlobalSnapshotOrdinal,
+        p2pClient,
+        sdkServices.globalSnapshotContextFns
+      )
       healthChecks <- HealthChecks
         .make[IO](
           storages,
@@ -81,7 +97,7 @@ object Main
         .asResource
 
       rumorHandler = RumorHandlers.make[IO](storages.cluster, healthChecks.ping, services.localHealthcheck).handlers <+>
-        trustHandler(storages.trust) <+> services.consensus.handler
+        trustHandler(storages.trust) <+> ordinalTrustHandler(storages.trust) <+> services.consensus.handler
 
       _ <- Daemons
         .start(storages, services, programs, queues, healthChecks, nodeId, cfg)
@@ -110,7 +126,7 @@ object Main
         storages.cluster,
         p2pClient.gossip,
         rumorHandler,
-        validators.rumorValidator,
+        sdk.sdkValidators.rumorValidator,
         services.localHealthcheck,
         nodeId,
         generation,
@@ -122,23 +138,22 @@ object Main
         case _: RunValidator =>
           gossipDaemon.startAsRegularValidator >>
             storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
-        case _: RunRollback =>
+        case m: RunRollback =>
           storages.node.tryModifyState(
             NodeState.Initial,
             NodeState.RollbackInProgress,
             NodeState.RollbackDone
           ) {
-
-            storages.globalSnapshot.head.flatMap {
-              ApplicativeError.liftFromOption[IO](_, new Throwable(s"Rollback performed but snapshot not found!")).flatMap {
-                globalSnapshot =>
-                  services.collateral
-                    .hasCollateral(sdk.nodeId)
-                    .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
-                    services.consensus.manager.startFacilitatingAfter(globalSnapshot.ordinal, globalSnapshot)
-              }
+            programs.rollbackLoader.load(m.rollbackHash).flatMap {
+              case (snapshotInfo, snapshot) =>
+                storages.globalSnapshot
+                  .prepend(snapshot, snapshotInfo) >>
+                  services.consensus.manager.startFacilitatingAfterRollback(snapshot.ordinal, snapshot, snapshotInfo)
             }
           } >>
+            services.collateral
+              .hasCollateral(sdk.nodeId)
+              .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
             gossipDaemon.startAsInitialValidator >>
             services.cluster.createSession >>
             services.session.createSession >>
@@ -149,18 +164,33 @@ object Main
             NodeState.LoadingGenesis,
             NodeState.GenesisReady
           ) {
-            GenesisLoader.make[IO].load(m.genesisPath).flatMap { accounts =>
+            GenesisLoader.make[IO, GlobalSnapshot].loadBalances(m.genesisPath).flatMap { accounts =>
               val genesis = GlobalSnapshot.mkGenesis(
                 accounts.map(a => (a.address, a.balance)).toMap,
                 m.startingEpochProgress
               )
 
-              Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair).flatMap { signedGenesis =>
-                storages.globalSnapshot.prepend(signedGenesis) >>
-                  services.collateral
-                    .hasCollateral(sdk.nodeId)
-                    .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
-                  services.consensus.manager.startFacilitatingAfter(genesis.ordinal, signedGenesis)
+              Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair).flatMap(_.toHashed[IO]).flatMap { hashedGenesis =>
+                SnapshotLocalFileSystemStorage.make[IO, GlobalSnapshot](cfg.snapshot.snapshotPath).flatMap {
+                  fullGlobalSnapshotLocalFileSystemStorage =>
+                    fullGlobalSnapshotLocalFileSystemStorage.write(hashedGenesis.signed) >>
+                      GlobalSnapshot.mkFirstIncrementalSnapshot[IO](hashedGenesis).flatMap { firstIncrementalSnapshot =>
+                        Signed.forAsyncKryo[IO, GlobalIncrementalSnapshot](firstIncrementalSnapshot, keyPair).flatMap {
+                          signedFirstIncrementalSnapshot =>
+                            storages.globalSnapshot.prepend(signedFirstIncrementalSnapshot, hashedGenesis.info) >>
+                              services.collateral
+                                .hasCollateral(sdk.nodeId)
+                                .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
+                              services.consensus.manager
+                                .startFacilitatingAfterRollback(
+                                  signedFirstIncrementalSnapshot.ordinal,
+                                  signedFirstIncrementalSnapshot,
+                                  hashedGenesis.info
+                                )
+
+                        }
+                      }
+                }
               }
             }
           } >>

@@ -1,10 +1,25 @@
-tessellation
-===========
+# tessellation
+
 
 ![build](https://img.shields.io/github/actions/workflow/status/Constellation-Labs/tessellation/release.yml?label=build)
 ![version](https://img.shields.io/github/v/release/Constellation-Labs/tessellation?sort=semver)
 
-## Running L0 & L1 in Kubernetes
+The Constellation Network Node Software, written in Scala, ready for Kubernetes Deployment.
+
+## Documentation
+
+Thorough resources are available on the [documentation site](https://docs.constellationnetwork.io).
+
+The [Constellation Network Primer](https://docs.constellationnetwork.io/learn) provides an overview of the Constellation Network.
+
+## Dev Setup / Contributing
+
+* [Dev System Setup](SETUP.md)
+* [Contributing Instructions and Guidelines](CONTRIBUTING.md)
+
+## Quick Start
+
+Run node-clusters from source-code, using a local kubernetes.
 
 ### Prerequisites
 
@@ -15,6 +30,7 @@ tessellation
 ### Starting clusters
 
 ```
+# within tesselation root
 skaffold dev --trigger=manual
 ```
 
@@ -37,3 +53,12 @@ kubectl scale deployment/l0-validator-deployment --replicas=9
 ```
 
 This scales the L0 cluster to 10 validators total: 1 initial and 9 regular.
+
+### Going Deeper
+
+The full [Validator Node Documentation](https://docs.constellationnetwork.io/validate/)
+
+
+## License
+
+[Apache License 2.0](LICENSE)

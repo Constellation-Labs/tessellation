@@ -16,11 +16,10 @@ import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage.Majority
 import org.tessellation.ext.collection.MapRefUtils._
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
-import org.tessellation.schema.block.DAGBlock
 import org.tessellation.schema.transaction._
+import org.tessellation.schema.{Block, _}
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.Hashed
@@ -45,16 +44,16 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
     notAcceptanceReason: Option[BlockNotAcceptedReason] = None
   )(implicit K: KryoSerializer[IO]) = {
 
-    val blockAcceptanceManager = new BlockAcceptanceManager[IO, DAGTransaction, DAGBlock]() {
+    val blockAcceptanceManager = new BlockAcceptanceManager[IO]() {
 
       override def acceptBlocksIteratively(
-        blocks: List[Signed[DAGBlock]],
+        blocks: List[Signed[Block]],
         context: BlockAcceptanceContext[IO]
-      ): IO[BlockAcceptanceResult[DAGBlock]] =
+      ): IO[BlockAcceptanceResult] =
         ???
 
       override def acceptBlock(
-        block: Signed[DAGBlock],
+        block: Signed[Block],
         context: BlockAcceptanceContext[IO]
       ): IO[Either[BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)]] = IO.pure(notAcceptanceReason).map {
         case None         => (BlockAcceptanceContextUpdate.empty, initUsageCount).asRight[BlockNotAcceptedReason]
@@ -63,6 +62,8 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
     }
 
     val addressStorage = new AddressStorage[IO] {
+
+      override def getState: IO[Map[Address, Balance]] = ???
 
       override def getBalance(address: Address): IO[balance.Balance] = ???
 
@@ -73,10 +74,11 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
     }
 
     Random.scalaUtilRandom.flatMap { implicit r =>
-      MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[DAGTransaction]]]().map { waitingTxsR =>
+      MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[Transaction]]]().map { waitingTxsR =>
         val blockStorage = new BlockStorage[IO](blocksR)
-        val transactionStorage = new TransactionStorage[IO](lastAccTxR, waitingTxsR)
-        BlockService.make[IO](blockAcceptanceManager, addressStorage, blockStorage, transactionStorage, Amount.empty)
+        val transactionStorage = new TransactionStorage[IO](lastAccTxR, waitingTxsR, TransactionReference.empty)
+        BlockService
+          .make[IO](blockAcceptanceManager, addressStorage, blockStorage, transactionStorage, Amount.empty)
       }
 
     }
@@ -84,7 +86,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
 
   test("valid block should be accepted") { res =>
     implicit val kryo = res
-    forall(signedDAGBlockGen) { block =>
+    forall(signedBlockGen) { block =>
       for {
         hashedBlock <- block.toHashed[IO]
         blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]()
@@ -108,7 +110,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
 
   test("valid block should be accepted and not related block should stay postponed ") { res =>
     implicit val kryo = res
-    forall((block: Signed[DAGBlock], notRelatedBlock: Signed[DAGBlock]) =>
+    forall((block: Signed[Block], notRelatedBlock: Signed[Block]) =>
       for {
         hashedBlock <- block.toHashed[IO]
         hashedNotRelatedBlock <- notRelatedBlock.toHashed[IO]
@@ -137,7 +139,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
 
   test("valid block should be accepted and related block should go back to waiting") { res =>
     implicit val kryo = res
-    forall((block: Signed[DAGBlock], notRelatedBlock: Signed[DAGBlock]) =>
+    forall((block: Signed[Block], notRelatedBlock: Signed[Block]) =>
       for {
         hashedBlock <- block.toHashed[IO]
         hashedRelatedBlock <- notRelatedBlock
@@ -168,7 +170,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
 
   test("invalid block should be postponed for acceptance") { res =>
     implicit val kryo = res
-    forall(signedDAGBlockGen) { block =>
+    forall(signedBlockGen) { block =>
       for {
         hashedBlock <- block.toHashed[IO]
         blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]()
@@ -198,7 +200,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
 
   test("invalid block should be postponed for acceptance and not related should stay postponed") { res =>
     implicit val kryo = res
-    forall((block: Signed[DAGBlock], notRelatedBlock: Signed[DAGBlock]) =>
+    forall((block: Signed[Block], notRelatedBlock: Signed[Block]) =>
       for {
         hashedBlock <- block.toHashed[IO]
         hashedNotRelatedBlock <- notRelatedBlock.toHashed[IO]
@@ -232,10 +234,10 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
     )
   }
 
-  private def addParents(blocksR: MapRef[IO, ProofsHash, Option[StoredBlock]], block: Signed[DAGBlock]) =
+  private def addParents(blocksR: MapRef[IO, ProofsHash, Option[StoredBlock]], block: Signed[Block]) =
     block.parent.toList.traverse(parent => blocksR(parent.hash).set(Some(MajorityBlock(parent, 1L, Active))))
 
-  private def setUpLastTxnR(maybeBlock: Option[Signed[DAGBlock]]) = for {
+  private def setUpLastTxnR(maybeBlock: Option[Signed[Block]]) = for {
     lastAccTxR <- MapRef.ofConcurrentHashMap[IO, Address, TransactionStorage.LastTransactionReferenceState]()
     _ <- maybeBlock.traverse(block =>
       block.transactions.toNonEmptyList.toList.traverse(txn => lastAccTxR(txn.source).set(Majority(txn.parent).some))

@@ -4,12 +4,13 @@ import cats.syntax.option._
 
 import org.tessellation.ext.derevo.magnoliaCustomizable.snakeCaseConfiguration
 
+import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{customizableEncoder, encoder}
 import derevo.derive
 import enumeratum.values._
 import io.circe.Encoder
 
-@derive(customizableEncoder)
+@derive(customizableEncoder, eqv, show)
 case class RosettaErrorDetails(reason: String)
 
 sealed abstract class RosettaError(
@@ -42,6 +43,20 @@ object RosettaError extends IntEnum[RosettaError] with RosettaErrorEncoder {
         retriable = false,
         description = Some("Unable to decode the transaction.")
       )
+  case object UnsupportedOperation
+      extends RosettaError(
+        value = 7,
+        message = "Unsupported operation",
+        retriable = false,
+        description = Some("The operation is not supported.")
+      )
+  case class InternalError(reason: String, canRetry: Boolean)
+      extends RosettaError(
+        value = 8,
+        message = "Internal error",
+        retriable = canRetry,
+        description = reason.some
+      )
 }
 
 trait RosettaErrorEncoder {
@@ -50,7 +65,7 @@ trait RosettaErrorEncoder {
     Encoder[RosettaErrorJson].contramap[RosettaError](RosettaErrorJson.apply)
 }
 
-@derive(encoder)
+@derive(encoder, eqv, show)
 case class RosettaErrorJson(
   code: Int,
   message: String,

@@ -1,5 +1,6 @@
 package org.tessellation.schema
 
+import cats.MonadThrow
 import cats.effect.Async
 import cats.syntax.functor._
 import cats.syntax.semigroup._
@@ -13,7 +14,7 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Encodable, Hashed}
+import org.tessellation.security.{Encodable, Hashed, SecureRandom}
 
 import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia.{decoder, encoder}
@@ -63,10 +64,16 @@ object transaction {
   object TransactionReference {
     val empty: TransactionReference = TransactionReference(TransactionOrdinal(0L), Hash.empty)
 
+    def emptyCurrency[F[_]: MonadThrow: KryoSerializer](currencyAddress: Address): F[TransactionReference] =
+      currencyAddress.value.value.hashF.map(emptyCurrency(_))
+
+    def emptyCurrency(currencyIdentifier: Hash): TransactionReference =
+      TransactionReference(TransactionOrdinal(0L), currencyIdentifier)
+
     val _Hash: Lens[TransactionReference, Hash] = GenLens[TransactionReference](_.hash)
     val _Ordinal: Lens[TransactionReference, TransactionOrdinal] = GenLens[TransactionReference](_.ordinal)
 
-    def of[F[_]: Async: KryoSerializer, T <: Transaction](signedTransaction: Signed[T]): F[TransactionReference] =
+    def of[F[_]: Async: KryoSerializer](signedTransaction: Signed[Transaction]): F[TransactionReference] =
       signedTransaction.value.hashF.map(TransactionReference(signedTransaction.ordinal, _))
 
     def of(hashedTransaction: Hashed[Transaction]): TransactionReference =
@@ -78,6 +85,14 @@ object transaction {
   @newtype
   case class TransactionSalt(value: Long)
 
+  object TransactionSalt {
+    def generate[F[_]: Async]: F[TransactionSalt] =
+      SecureRandom
+        .get[F]
+        .map(_.nextLong())
+        .map(TransactionSalt.apply)
+  }
+
   @derive(decoder, encoder, order, show)
   case class TransactionData(
     source: Address,
@@ -86,26 +101,16 @@ object transaction {
     fee: TransactionFee
   )
 
-  sealed trait Transaction extends Fiber[TransactionReference, TransactionData] with Encodable {
-    val source: Address
-    val destination: Address
-    val amount: TransactionAmount
-    val fee: TransactionFee
-    val parent: TransactionReference
-    val salt: TransactionSalt
-    val ordinal: TransactionOrdinal
-  }
-
   @derive(decoder, encoder, order, show)
-  case class DAGTransaction(
+  case class Transaction(
     source: Address,
     destination: Address,
     amount: TransactionAmount,
     fee: TransactionFee,
     parent: TransactionReference,
     salt: TransactionSalt
-  ) extends Transaction {
-    import DAGTransaction._
+  ) extends Fiber[TransactionReference, TransactionData]
+      with Encodable {
 
     def reference = parent
     def data = TransactionData(source, destination, amount, fee)
@@ -113,7 +118,7 @@ object transaction {
     // WARN: Transactions hash needs to be calculated with Kryo instance having setReferences=true, to be backward compatible
     override def toEncode: String =
       "2" +
-        runLengthEncoding(
+        Transaction.runLengthEncoding(
           Seq(
             source.coerce,
             destination.coerce,
@@ -125,24 +130,13 @@ object transaction {
           )
         )
 
-    val ordinal: TransactionOrdinal = _ParentOrdinal.get(this).next
+    val ordinal: TransactionOrdinal = parent.ordinal.next
   }
 
-  object DAGTransaction {
-
-    implicit object OrderingInstance extends OrderBasedOrdering[DAGTransaction]
+  object Transaction {
+    implicit object OrderingInstance extends OrderBasedOrdering[Transaction]
 
     def runLengthEncoding(hashes: Seq[String]): String = hashes.fold("")((acc, hash) => s"$acc${hash.length}$hash")
-
-    val _Source: Lens[DAGTransaction, Address] = GenLens[DAGTransaction](_.source)
-    val _Destination: Lens[DAGTransaction, Address] = GenLens[DAGTransaction](_.destination)
-
-    val _Amount: Lens[DAGTransaction, TransactionAmount] = GenLens[DAGTransaction](_.amount)
-    val _Fee: Lens[DAGTransaction, TransactionFee] = GenLens[DAGTransaction](_.fee)
-    val _Parent: Lens[DAGTransaction, TransactionReference] = GenLens[DAGTransaction](_.parent)
-
-    val _ParentHash: Lens[DAGTransaction, Hash] = _Parent.andThen(TransactionReference._Hash)
-    val _ParentOrdinal: Lens[DAGTransaction, TransactionOrdinal] = _Parent.andThen(TransactionReference._Ordinal)
   }
 
   @derive(decoder, encoder, order, show)
@@ -155,9 +149,9 @@ object transaction {
     implicit object OrderingInstance extends OrderBasedOrdering[RewardTransaction]
   }
 
-  @derive(decoder, encoder, show)
+  @derive(encoder)
   case class TransactionView(
-    transaction: DAGTransaction,
+    transaction: Transaction,
     hash: Hash,
     status: TransactionStatus
   )

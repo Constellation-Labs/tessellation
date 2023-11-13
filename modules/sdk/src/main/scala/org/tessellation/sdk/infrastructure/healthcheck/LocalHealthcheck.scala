@@ -31,7 +31,10 @@ object LocalHealthcheck {
     mkPeersR.map(make(_, retryPolicy, nodeClient, clusterStorage))
   }
 
-  case class PeerUnresponsive(id: PeerId) extends NoStackTrace
+  case class PeerUnresponsive(id: PeerId) extends NoStackTrace {
+    implicit val show = PeerId.shortShow
+    override val getMessage = s"Peer ${id.show} is unresponsive"
+  }
 
   def make[F[_]: Async](
     peersR: MapRef[F, PeerId, Option[F[Fiber[F, Throwable, Unit]]]],
@@ -48,7 +51,7 @@ object LocalHealthcheck {
           logger.debug(
             s"Peer ${id.show} is unresponsive - retriesSoFar: ${details.retriesSoFar.show}, cumulativeDelay: ${details.cumulativeDelay.toSeconds.show}s"
           )
-        case _ => logger.warn(err)(s"Unpexpected error when checking peer responsiveness.")
+        case _ => logger.warn(err)(s"Unexpected error when checking peer responsiveness.")
       }
 
     def start(peer: Peer): F[Unit] =

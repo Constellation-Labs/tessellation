@@ -1,19 +1,23 @@
 package org.tessellation.cli
 
 import cats.syntax.contravariantSemigroupal._
+import cats.syntax.eq._
 
 import scala.concurrent.duration._
 
-import org.tessellation.cli.db
-import org.tessellation.cli.env.{KeyAlias, Password, StorePath}
+import org.tessellation.cli.env._
+import org.tessellation.cli.http
+import org.tessellation.cli.incremental._
 import org.tessellation.config.types._
 import org.tessellation.ext.decline.WithOpts
 import org.tessellation.ext.decline.decline._
+import org.tessellation.infrastructure.statechannel.StateChannelAllowanceLists
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.node.NodeState
-import org.tessellation.sdk.cli.{CliMethod, CollateralAmountOpts}
-import org.tessellation.sdk.config.AppEnvironment
+import org.tessellation.sdk.cli._
+import org.tessellation.sdk.cli.opts.{genesisPathOpts, trustRatingsPathOpts}
 import org.tessellation.sdk.config.types._
 import org.tessellation.security.hash.Hash
 
@@ -61,10 +65,26 @@ object method {
       healthCheck = healthCheckConfig(false),
       snapshot = snapshotConfig,
       collateral = collateralConfig(environment, collateralAmount),
-      rewards = RewardsConfig()
+      rewards = RewardsConfig(),
+      stateChannelPullDelay = NonNegLong.MinValue,
+      stateChannelPurgeDelay = NonNegLong(4L),
+      peerDiscoveryDelay = PeerDiscoveryDelay(
+        checkPeersAttemptDelay = 1.minute,
+        checkPeersMaxDelay = 10.minutes,
+        additionalDiscoveryDelay = 0.minutes,
+        minPeers = 1
+      )
     )
 
+    val stateChannelAllowanceLists = StateChannelAllowanceLists.get(environment)
+
+    val l0SeedlistPath = seedlistPath
+
+    val prioritySeedlistPath: Option[SeedListPath]
+
     val stateAfterJoining: NodeState = NodeState.WaitingForDownload
+
+    val lastFullGlobalSnapshotOrdinal: SnapshotOrdinal
 
   }
 
@@ -77,23 +97,24 @@ object method {
     environment: AppEnvironment,
     snapshotConfig: SnapshotConfig,
     genesisPath: Path,
-    seedlistPath: Option[Path],
+    seedlistPath: Option[SeedListPath],
     collateralAmount: Option[Amount],
-    startingEpochProgress: EpochProgress
-  ) extends Run
+    startingEpochProgress: EpochProgress,
+    trustRatingsPath: Option[Path],
+    prioritySeedlistPath: Option[SeedListPath]
+  ) extends Run {
+
+    val lastFullGlobalSnapshotOrdinal = SnapshotOrdinal.MinValue
+  }
 
   object RunGenesis extends WithOpts[RunGenesis] {
-
-    val genesisPathOpts: Opts[Path] = Opts.argument[Path]("genesis")
-
-    val seedlistPathOpts: Opts[Option[Path]] = Opts.option[Path]("seedlist", "").orNone
 
     val startingEpochProgressOpts: Opts[EpochProgress] = Opts
       .option[NonNegLong]("startingEpochProgress", "Set starting progress for rewarding at the specific epoch")
       .map(EpochProgress(_))
       .withDefault(EpochProgress.MinValue)
 
-    val opts = Opts.subcommand("run-genesis", "Run genesis mode") {
+    val opts: Opts[RunGenesis] = Opts.subcommand("run-genesis", "Run genesis mode") {
       (
         StorePath.opts,
         KeyAlias.opts,
@@ -103,10 +124,12 @@ object method {
         AppEnvironment.opts,
         snapshot.opts,
         genesisPathOpts,
-        seedlistPathOpts,
+        SeedListPath.opts,
         CollateralAmountOpts.opts,
-        startingEpochProgressOpts
-      ).mapN(RunGenesis.apply(_, _, _, _, _, _, _, _, _, _, _))
+        startingEpochProgressOpts,
+        trustRatingsPathOpts,
+        SeedListPath.priorityOpts
+      ).mapN(RunGenesis.apply)
     }
   }
 
@@ -118,18 +141,19 @@ object method {
     httpConfig: HttpConfig,
     environment: AppEnvironment,
     snapshotConfig: SnapshotConfig,
-    seedlistPath: Option[Path],
+    seedlistPath: Option[SeedListPath],
     collateralAmount: Option[Amount],
-    rollbackHash: Hash
+    rollbackHash: Hash,
+    lastFullGlobalSnapshotOrdinal: SnapshotOrdinal,
+    trustRatingsPath: Option[Path],
+    prioritySeedlistPath: Option[SeedListPath]
   ) extends Run
 
   object RunRollback extends WithOpts[RunRollback] {
 
-    val seedlistPathOpts: Opts[Option[Path]] = Opts.option[Path]("seedlist", "").orNone
-
     val rollbackHashOpts: Opts[Hash] = Opts.argument[Hash]("rollbackHash")
 
-    val opts = Opts.subcommand("run-rollback", "Run rollback mode") {
+    val opts: Opts[RunRollback] = Opts.subcommand("run-rollback", "Run rollback mode") {
       (
         StorePath.opts,
         KeyAlias.opts,
@@ -138,10 +162,48 @@ object method {
         http.opts,
         AppEnvironment.opts,
         snapshot.opts,
-        seedlistPathOpts,
+        SeedListPath.opts,
         CollateralAmountOpts.opts,
-        rollbackHashOpts
-      ).mapN(RunRollback.apply(_, _, _, _, _, _, _, _, _, _))
+        rollbackHashOpts,
+        lastFullGlobalSnapshotOrdinalOpts,
+        trustRatingsPathOpts,
+        SeedListPath.priorityOpts
+      ).mapN {
+        case (
+              storePath,
+              keyAlias,
+              password,
+              db,
+              http,
+              environment,
+              snapshot,
+              seedlistPath,
+              collateralAmount,
+              rollbackHash,
+              lastGlobalSnapshot,
+              trustRatingsPath,
+              prioritySeedlistPath
+            ) =>
+          val lastGS =
+            (if (environment === AppEnvironment.Dev) lastGlobalSnapshot else lastFullGlobalSnapshot.get(environment))
+              .getOrElse(SnapshotOrdinal.MinValue)
+
+          RunRollback(
+            storePath,
+            keyAlias,
+            password,
+            db,
+            http,
+            environment,
+            snapshot,
+            seedlistPath,
+            collateralAmount,
+            rollbackHash,
+            lastGS,
+            trustRatingsPath,
+            prioritySeedlistPath
+          )
+      }
     }
   }
 
@@ -153,15 +215,16 @@ object method {
     httpConfig: HttpConfig,
     environment: AppEnvironment,
     snapshotConfig: SnapshotConfig,
-    seedlistPath: Option[Path],
-    collateralAmount: Option[Amount]
+    seedlistPath: Option[SeedListPath],
+    collateralAmount: Option[Amount],
+    trustRatingsPath: Option[Path],
+    lastFullGlobalSnapshotOrdinal: SnapshotOrdinal,
+    prioritySeedlistPath: Option[SeedListPath]
   ) extends Run
 
   object RunValidator extends WithOpts[RunValidator] {
 
-    val seedlistPathOpts: Opts[Option[Path]] = Opts.option[Path]("seedlist", "").orNone
-
-    val opts = Opts.subcommand("run-validator", "Run validator mode") {
+    val opts: Opts[RunValidator] = Opts.subcommand("run-validator", "Run validator mode") {
       (
         StorePath.opts,
         KeyAlias.opts,
@@ -170,9 +233,45 @@ object method {
         http.opts,
         AppEnvironment.opts,
         snapshot.opts,
-        seedlistPathOpts,
-        CollateralAmountOpts.opts
-      ).mapN(RunValidator.apply(_, _, _, _, _, _, _, _, _))
+        SeedListPath.opts,
+        CollateralAmountOpts.opts,
+        trustRatingsPathOpts,
+        lastFullGlobalSnapshotOrdinalOpts,
+        SeedListPath.priorityOpts
+      ).mapN {
+        case (
+              storePath,
+              keyAlias,
+              password,
+              db,
+              http,
+              environment,
+              snapshot,
+              seedlistPath,
+              collateralAmount,
+              trustRatingsPath,
+              lastGlobalSnapshot,
+              prioritySeedlistPath
+            ) =>
+          val lastGS =
+            (if (environment === AppEnvironment.Dev) lastGlobalSnapshot else lastFullGlobalSnapshot.get(environment))
+              .getOrElse(SnapshotOrdinal.MinValue)
+
+          RunValidator(
+            storePath,
+            keyAlias,
+            password,
+            db,
+            http,
+            environment,
+            snapshot,
+            seedlistPath,
+            collateralAmount,
+            trustRatingsPath,
+            lastGS,
+            prioritySeedlistPath
+          )
+      }
     }
   }
 

@@ -7,24 +7,30 @@ import org.tessellation.sdk.domain.consensus.ConsensusFunctions.InvalidArtifact
 import org.tessellation.sdk.infrastructure.consensus.trigger.ConsensusTrigger
 import org.tessellation.security.signature.Signed
 
-trait ConsensusFunctions[F[_], Event, Key, Artifact] {
+trait ConsensusFunctions[F[_], Event, Key, Artifact, Context] {
 
   def triggerPredicate(event: Event): Boolean
 
-  def facilitatorFilter(lastSignedArtifact: Signed[Artifact], peerId: PeerId): F[Boolean]
+  def facilitatorFilter(lastSignedArtifact: Signed[Artifact], lastContext: Context, peerId: PeerId): F[Boolean]
 
-  def validateArtifact(lastSignedArtifact: Signed[Artifact], trigger: ConsensusTrigger)(
-    artifact: Artifact
-  ): F[Either[InvalidArtifact, Artifact]]
+  def validateArtifact(
+    lastSignedArtifact: Signed[Artifact],
+    lastContext: Context,
+    trigger: ConsensusTrigger,
+    artifact: Artifact,
+    facilitators: Set[PeerId]
+  ): F[Either[InvalidArtifact, (Artifact, Context)]]
 
   def createProposalArtifact(
     lastKey: Key,
-    lastSignedArtifact: Signed[Artifact],
+    lastArtifact: Signed[Artifact],
+    lastContext: Context,
     trigger: ConsensusTrigger,
-    events: Set[Event]
-  ): F[(Artifact, Set[Event])]
+    events: Set[Event],
+    facilitators: Set[PeerId]
+  ): F[(Artifact, Context, Set[Event])]
 
-  def consumeSignedMajorityArtifact(signedArtifact: Signed[Artifact]): F[Unit]
+  def consumeSignedMajorityArtifact(signedArtifact: Signed[Artifact], context: Context): F[Unit]
 }
 
 object ConsensusFunctions {

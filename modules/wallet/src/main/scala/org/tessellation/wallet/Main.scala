@@ -15,7 +15,7 @@ import org.tessellation.BuildInfo
 import org.tessellation.keytool.KeyStoreUtils
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.transaction.{DAGTransaction, TransactionAmount, TransactionFee}
+import org.tessellation.schema.transaction.{Transaction, TransactionAmount, TransactionFee}
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.key.ops._
 import org.tessellation.security.signature.Signed
@@ -91,7 +91,7 @@ object Main
           readFromJsonFile(path)
             .handleErrorWith(e =>
               logger.error(e)(s"Error while reading previous transaction from path $path") >> MonadThrow[F]
-                .raiseError[Option[Signed[DAGTransaction]]](e)
+                .raiseError[Option[Signed[Transaction]]](e)
             )
         case None => None.pure[F]
       }

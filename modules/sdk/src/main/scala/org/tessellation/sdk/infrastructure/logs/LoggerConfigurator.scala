@@ -5,8 +5,8 @@ import cats.syntax.flatMap._
 
 import scala.io.{Codec, Source}
 
-import org.tessellation.sdk.config.AppEnvironment
-import org.tessellation.sdk.config.AppEnvironment.{Dev, Mainnet, Testnet}
+import org.tessellation.cli.AppEnvironment
+import org.tessellation.cli.AppEnvironment._
 
 import ch.qos.logback.classic.LoggerContext
 import ch.qos.logback.classic.joran.JoranConfigurator
@@ -18,9 +18,10 @@ object LoggerConfigurator {
 
   def configureLogger[F[_]: Sync](environment: AppEnvironment): F[Unit] = {
     val envDefaultConfigSource = environment match {
-      case Dev     => "logback.xml"
-      case Testnet => "logback-testnet.xml"
-      case Mainnet => "logback-mainnet.xml"
+      case Dev            => "logback.xml"
+      case Testnet        => "logback-testnet.xml"
+      case Integrationnet => "logback-integrationnet.xml"
+      case Mainnet        => "logback-mainnet.xml"
     }
 
     Resource.fromAutoCloseable {

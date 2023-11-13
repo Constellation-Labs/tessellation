@@ -1,5 +1,7 @@
 package org.tessellation.rosetta.domain
 
+import cats.syntax.eq._
+
 import org.tessellation.ext.derevo.magnoliaCustomizable.snakeCaseConfiguration
 import org.tessellation.rosetta.domain.amount.Amount
 
@@ -7,22 +9,23 @@ import derevo.cats.{eqv, show}
 import derevo.circe.magnolia._
 import derevo.derive
 import enumeratum.values.{StringCirceEnum, StringEnum, StringEnumEntry}
+import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.NonNegLong
 import io.circe.refined._
 import io.estatico.newtype.macros.newtype
 
 object operation {
-  @derive(customizableDecoder, customizableEncoder)
+  @derive(eqv, customizableDecoder, customizableEncoder, show)
   case class Operation(
     operationIdentifier: OperationIdentifier,
     relatedOperations: Option[List[OperationIdentifier]],
     `type`: OperationType,
     status: Option[OperationStatus],
-    account: Option[AccountIdentifier],
-    amount: Option[Amount]
+    account: AccountIdentifier,
+    amount: Amount
   )
 
-  @derive(customizableDecoder, customizableEncoder)
+  @derive(eqv, customizableDecoder, customizableEncoder, show)
   case class OperationIdentifier(
     index: OperationIndex
   )
@@ -37,8 +40,12 @@ object operation {
     case object Pending extends OperationStatus(value = "Pending")
     case object Rejected extends OperationStatus(value = "Rejected")
     case object Unknown extends OperationStatus(value = "Unknown")
+
+    def isSuccessful(status: OperationStatus): Boolean =
+      status === Accepted
   }
 
+  @derive(eqv, show)
   sealed abstract class OperationType(val value: String) extends StringEnumEntry
   object OperationType extends StringEnum[OperationType] with StringCirceEnum[OperationType] {
     val values = findValues
@@ -46,7 +53,7 @@ object operation {
     case object Transfer extends OperationType(value = "Transfer")
   }
 
-  @derive(decoder, encoder)
+  @derive(eqv, decoder, encoder, show)
   @newtype
   case class OperationIndex(value: NonNegLong)
 }

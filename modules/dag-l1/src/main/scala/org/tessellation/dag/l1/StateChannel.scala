@@ -29,26 +29,32 @@ import org.tessellation.dag.l1.modules._
 import org.tessellation.ext.fs2.StreamOps
 import org.tessellation.kernel.CellError
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema._
 import org.tessellation.schema.height.Height
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.{GlobalSnapshot, GlobalSnapshotReference}
+import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.security.{Hashed, SecurityProvider}
 
 import fs2.{Pipe, Stream}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
+class StateChannel[
+  F[_]: Async: KryoSerializer: SecurityProvider: Random,
+  P <: StateProof,
+  S <: Snapshot,
+  SI <: SnapshotInfo[P]
+](
   appConfig: AppConfig,
   blockAcceptanceS: Semaphore[F],
   blockCreationS: Semaphore[F],
   blockStoringS: Semaphore[F],
   keyPair: KeyPair,
   p2PClient: P2PClient[F],
-  programs: Programs[F],
+  programs: Programs[F, P, S, SI],
   queues: Queues[F],
   selfId: PeerId,
-  services: Services[F],
-  storages: Storages[F],
+  services: Services[F, P, S, SI],
+  storages: Storages[F, P, S, SI],
   validators: Validators[F]
 ) {
 
@@ -93,10 +99,11 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
   private val l0PeerDiscovery: Stream[F, Unit] = Stream
     .awakeEvery(10.seconds)
     .evalMap { _ =>
-      storages.lastGlobalSnapshotStorage.get.flatMap {
-        _.fold(Applicative[F].unit) { latestSnapshot =>
+      storages.lastSnapshot.get.flatMap {
+        case None =>
+          storages.l0Cluster.getRandomPeer.flatMap(p => programs.l0PeerDiscovery.discoverFrom(p))
+        case Some(latestSnapshot) =>
           programs.l0PeerDiscovery.discover(latestSnapshot.signed.proofs.map(_.id).map(PeerId._Id.reverseGet))
-        }
       }
     }
 
@@ -155,7 +162,7 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
 
   private val storeBlock: Pipe[F, FinalBlock, Unit] =
     _.evalMapLocked(blockStoringS) { fb =>
-      storages.lastGlobalSnapshotStorage.getHeight.map(_.getOrElse(Height.MinValue)).flatMap { lastSnapshotHeight =>
+      storages.lastSnapshot.getHeight.map(_.getOrElse(Height.MinValue)).flatMap { lastSnapshotHeight =>
         if (lastSnapshotHeight < fb.hashedBlock.height)
           storages.block.store(fb.hashedBlock).handleErrorWith(e => logger.debug(e)("Block storing failed."))
         else
@@ -167,19 +174,21 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
 
   private val sendBlockToL0: Pipe[F, FinalBlock, FinalBlock] =
     _.evalTap { fb =>
-      for {
-        l0PeerOpt <- storages.l0Cluster.getPeers
-          .map(_.toNonEmptyList.toList)
-          .flatMap(_.filterA(p => services.collateral.hasCollateral(p.id)))
-          .flatMap(peers => Random[F].shuffleList(peers))
-          .map(peers => peers.headOption)
-
-        _ <- l0PeerOpt.fold(logger.warn("No available L0 peer")) { l0Peer =>
-          p2PClient.l0DAGCluster
-            .sendL1Output(fb.hashedBlock.signed)(l0Peer)
-            .ifM(Applicative[F].unit, logger.warn("Sending block to L0 failed."))
+      storages.l0Cluster.getPeers
+        .map(_.toNonEmptyList.toList)
+        .flatMap(_.filterA(p => services.collateral.hasCollateral(p.id)))
+        .flatMap(peers => Random[F].shuffleList(peers))
+        .map(peers => peers.headOption)
+        .flatMap { maybeL0Peer =>
+          maybeL0Peer.fold(logger.warn("No available L0 peer")) { l0Peer =>
+            p2PClient.l0BlockOutputClient
+              .sendL1Output(fb.hashedBlock.signed)(l0Peer)
+              .ifM(Applicative[F].unit, logger.warn("Sending block to L0 failed."))
+          }
         }
-      } yield ()
+        .handleErrorWith { err =>
+          logger.error(err)("Error sending block to L0")
+        }
     }
 
   private val blockAcceptance: Stream[F, Unit] = Stream
@@ -202,24 +211,31 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
       )
     }
 
-  private val globalSnapshotProcessing: Stream[F, Unit] = Stream
+  val globalSnapshotProcessing: Stream[F, Unit] = Stream
     .awakeEvery(10.seconds)
-    .evalMap(_ => services.l0.pullGlobalSnapshots)
-    .evalTap {
-      _.traverse { s =>
-        logger.info(s"Pulled following global snapshot: ${GlobalSnapshotReference.fromHashedGlobalSnapshot(s).show}")
+    .evalMap(_ => services.globalL0.pullGlobalSnapshots)
+    .evalTap { snapshots =>
+      def log(snapshot: Hashed[GlobalIncrementalSnapshot]) =
+        logger.info(s"Pulled following global snapshot: ${SnapshotReference.fromHashedSnapshot(snapshot).show}")
+
+      snapshots match {
+        case Left((snapshot, _)) => log(snapshot)
+        case Right(snapshots)    => snapshots.traverse(log).void
       }
     }
-    .evalMapLocked(NonEmptyList.of(blockAcceptanceS, blockCreationS, blockStoringS)) { snapshots =>
-      (snapshots, List.empty[SnapshotProcessingResult]).tailRecM {
-        case (snapshot :: nextSnapshots, aggResults) =>
-          programs.snapshotProcessor
-            .process(snapshot)
-            .map(result => (nextSnapshots, aggResults :+ result).asLeft[List[SnapshotProcessingResult]])
+    .evalMapLocked(NonEmptyList.of(blockAcceptanceS, blockCreationS, blockStoringS)) {
+      case Left((snapshot, state)) =>
+        programs.snapshotProcessor.process((snapshot, state).asLeft[Hashed[GlobalIncrementalSnapshot]]).map(List(_))
+      case Right(snapshots) =>
+        (snapshots, List.empty[SnapshotProcessingResult]).tailRecM {
+          case (snapshot :: nextSnapshots, aggResults) =>
+            programs.snapshotProcessor
+              .process(snapshot.asRight[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)])
+              .map(result => (nextSnapshots, aggResults :+ result).asLeft[List[SnapshotProcessingResult]])
 
-        case (Nil, aggResults) =>
-          aggResults.asRight[(List[Hashed[GlobalSnapshot]], List[SnapshotProcessingResult])].pure[F]
-      }
+          case (Nil, aggResults) =>
+            aggResults.asRight[(List[Hashed[GlobalIncrementalSnapshot]], List[SnapshotProcessingResult])].pure[F]
+        }
     }
     .evalMap {
       _.traverse(result => logger.info(s"Snapshot processing result: ${result.show}")).void
@@ -243,23 +259,28 @@ class StateChannel[F[_]: Async: KryoSerializer: SecurityProvider: Random](
 
 object StateChannel {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider: Random](
+  def make[
+    F[_]: Async: KryoSerializer: SecurityProvider: Random,
+    P <: StateProof,
+    S <: Snapshot,
+    SI <: SnapshotInfo[P]
+  ](
     appConfig: AppConfig,
     keyPair: KeyPair,
     p2PClient: P2PClient[F],
-    programs: Programs[F],
+    programs: Programs[F, P, S, SI],
     queues: Queues[F],
     selfId: PeerId,
-    services: Services[F],
-    storages: Storages[F],
+    services: Services[F, P, S, SI],
+    storages: Storages[F, P, S, SI],
     validators: Validators[F]
-  ): F[StateChannel[F]] =
+  ): F[StateChannel[F, P, S, SI]] =
     for {
       blockAcceptanceS <- Semaphore(1)
       blockCreationS <- Semaphore(1)
       blockStoringS <- Semaphore(1)
     } yield
-      new StateChannel[F](
+      new StateChannel[F, P, S, SI](
         appConfig,
         blockAcceptanceS,
         blockCreationS,

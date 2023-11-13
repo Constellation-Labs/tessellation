@@ -2,28 +2,37 @@ package org.tessellation.schema
 
 import cats.Show
 import cats.syntax.either._
+import cats.syntax.eq._
 
-import org.tessellation.schema.TrustValueRefinement.TrustValueRefinement
 import org.tessellation.schema.peer.PeerId
 
-import derevo.cats.show
+import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import eu.timepit.refined.api.Refined
-import eu.timepit.refined.auto._
+import eu.timepit.refined.cats._
+import eu.timepit.refined.numeric.Interval
 import eu.timepit.refined.refineV
+import fs2.data.csv.{CellDecoder, DecoderError}
+import io.circe.refined._
 import io.estatico.newtype.macros.newtype
 import io.getquill.MappedEncoding
 
 object trust {
 
-  type TrustValue = Double Refined TrustValueRefinement
+  type TrustValueRefinement = Interval.Closed[-1.0, 1.0]
+  type TrustValueRefined = Double Refined TrustValueRefinement
 
-  implicit def showTrustValue: Show[TrustValue] = s => s"TrustValue(value=${s.value})"
+  implicit def showTrustValue: Show[TrustValueRefined] = s => s"TrustValue(value=${s.value})"
 
+  implicit val trustValueRefinedCellDecoder: CellDecoder[TrustValueRefined] =
+    CellDecoder.doubleDecoder.emap {
+      refineV[TrustValueRefinement](_)
+        .leftMap(new DecoderError(_))
+    }
   @derive(show)
   @newtype
-  case class Score(value: TrustValue)
+  case class Score(value: TrustValueRefined)
 
   object Score {
 
@@ -40,7 +49,7 @@ object trust {
 
   @derive(show)
   @newtype
-  case class Rating(value: TrustValue)
+  case class Rating(value: TrustValueRefined)
 
   object Rating {
 
@@ -57,7 +66,7 @@ object trust {
 
   @derive(show)
   @newtype
-  case class ObservationAdjustment(value: TrustValue)
+  case class ObservationAdjustment(value: TrustValueRefined)
 
   object ObservationAdjustment {
 
@@ -81,13 +90,13 @@ object trust {
     observationAdjustment: Option[ObservationAdjustment]
   )
 
-  @derive(decoder, encoder, show)
-  case class InternalTrustUpdate(id: PeerId, trust: Double)
+  @derive(decoder, encoder, show, eqv)
+  case class PeerObservationAdjustmentUpdate(id: PeerId, trust: TrustValueRefined)
 
-  @derive(decoder, encoder, show)
-  case class InternalTrustUpdateBatch(updates: List[InternalTrustUpdate])
+  @derive(decoder, encoder, show, eqv)
+  case class PeerObservationAdjustmentUpdateBatch(updates: List[PeerObservationAdjustmentUpdate])
 
-  @derive(decoder, encoder, show)
+  @derive(decoder, eqv, encoder, show)
   case class TrustInfo(
     trustLabel: Option[Double] = None,
     predictedTrust: Option[Double] = None,
@@ -95,14 +104,33 @@ object trust {
     peerLabels: Map[PeerId, Double] = Map.empty
   ) {
 
-    val publicTrust: Option[Double] =
+    lazy val publicTrust: Option[Double] =
       trustLabel
         .map(t => Math.max(-1, t + observationAdjustmentTrust.getOrElse(0d)))
         .orElse(observationAdjustmentTrust.map(t => Math.max(-1, t)))
   }
 
-  @derive(decoder, encoder, show)
+  @derive(eqv, decoder, encoder, show)
+  case class TrustScores(
+    scores: Map[PeerId, Double]
+  )
+
+  @derive(eqv, decoder, encoder, show)
   case class PublicTrust(
     labels: Map[PeerId, Double]
+  ) {
+
+    def isEmpty: Boolean = labels === Map.empty
+
+  }
+
+  object PublicTrust {
+    val empty: PublicTrust = PublicTrust(Map.empty)
+  }
+
+  @derive(eqv, decoder, encoder, show)
+  case class SnapshotOrdinalPublicTrust(
+    ordinal: SnapshotOrdinal,
+    labels: PublicTrust
   )
 }

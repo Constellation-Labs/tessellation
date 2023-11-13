@@ -7,13 +7,12 @@ import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.option._
 
+import org.tessellation.cli.AppEnvironment
 import org.tessellation.rosetta.domain.NetworkIdentifier
 import org.tessellation.rosetta.domain.error.RosettaError
 import org.tessellation.rosetta.domain.network.NetworkEnvironment
-import org.tessellation.sdk.config.AppEnvironment
 
 import io.circe._
-import io.circe.syntax._
 import org.http4s._
 import org.http4s.circe.CirceEntityCodec._
 import org.http4s.circe._
@@ -45,7 +44,7 @@ object refined {
             case Some(c) => RosettaError.InvalidRequestBody(c.getMessage)
             case _       => RosettaError.UnprocessableEntity
           }
-          InternalServerError(error.asJson)
+          InternalServerError(error)
         case Right(a) => f(a)
       }
 

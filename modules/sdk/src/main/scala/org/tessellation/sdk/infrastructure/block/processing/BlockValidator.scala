@@ -15,7 +15,7 @@ import org.tessellation.ext.cats.syntax.validated._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.Block
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.transaction.{Transaction, TransactionReference}
+import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.sdk.domain.transaction.TransactionChainValidator.TransactionNel
 import org.tessellation.sdk.domain.transaction.{TransactionChainValidator, TransactionValidator}
@@ -25,17 +25,17 @@ import eu.timepit.refined.auto._
 
 object BlockValidator {
 
-  def make[F[_]: Async: KryoSerializer, T <: Transaction, B <: Block[T]](
+  def make[F[_]: Async: KryoSerializer](
     signedValidator: SignedValidator[F],
-    transactionChainValidator: TransactionChainValidator[F, T],
-    transactionValidator: TransactionValidator[F, T]
-  ): BlockValidator[F, T, B] =
-    new BlockValidator[F, T, B] {
+    transactionChainValidator: TransactionChainValidator[F],
+    transactionValidator: TransactionValidator[F]
+  ): BlockValidator[F] =
+    new BlockValidator[F] {
 
       def validate(
-        signedBlock: Signed[B],
+        signedBlock: Signed[Block],
         params: BlockValidationParams
-      ): F[BlockValidationErrorOr[(Signed[B], Map[Address, TransactionNel[T]])]] =
+      ): F[BlockValidationErrorOr[(Signed[Block], Map[Address, TransactionNel])]] =
         for {
           signedV <- validateSigned(signedBlock, params)
           transactionsV <- validateTransactions(signedBlock)
@@ -48,9 +48,9 @@ object BlockValidator {
             .product(transactionChainV)
 
       private def validateSigned(
-        signedBlock: Signed[B],
+        signedBlock: Signed[Block],
         params: BlockValidationParams
-      ): F[BlockValidationErrorOr[Signed[B]]] =
+      ): F[BlockValidationErrorOr[Signed[Block]]] =
         signedValidator
           .validateSignatures(signedBlock)
           .map { signaturesV =>
@@ -61,8 +61,8 @@ object BlockValidator {
           .map(_.errorMap[BlockValidationError](InvalidSigned))
 
       private def validateTransactions(
-        signedBlock: Signed[B]
-      ): F[BlockValidationErrorOr[Signed[B]]] =
+        signedBlock: Signed[Block]
+      ): F[BlockValidationErrorOr[Signed[Block]]] =
         signedBlock.value.transactions.toNonEmptyList.traverse { signedTransaction =>
           for {
             txRef <- TransactionReference.of(signedTransaction)
@@ -75,31 +75,31 @@ object BlockValidator {
         }
 
       private def validateTransactionChain(
-        signedBlock: Signed[B]
-      ): F[BlockValidationErrorOr[Map[Address, TransactionNel[T]]]] =
+        signedBlock: Signed[Block]
+      ): F[BlockValidationErrorOr[Map[Address, TransactionNel]]] =
         transactionChainValidator
           .validate(signedBlock.transactions)
           .map(_.errorMap[BlockValidationError](InvalidTransactionChain))
 
       private def validateProperties(
-        signedBlock: Signed[B],
+        signedBlock: Signed[Block],
         params: BlockValidationParams
-      ): BlockValidationErrorOr[Signed[B]] =
+      ): BlockValidationErrorOr[Signed[Block]] =
         validateParentCount(signedBlock, params)
           .productR(validateUniqueParents(signedBlock))
 
       private def validateParentCount(
-        signedBlock: Signed[B],
+        signedBlock: Signed[Block],
         params: BlockValidationParams
-      ): BlockValidationErrorOr[Signed[B]] =
+      ): BlockValidationErrorOr[Signed[Block]] =
         if (signedBlock.parent.size >= params.minParentCount)
           signedBlock.validNec
         else
           NotEnoughParents(signedBlock.parent.size, params.minParentCount).invalidNec
 
       private def validateUniqueParents(
-        signedBlock: Signed[B]
-      ): BlockValidationErrorOr[Signed[B]] =
+        signedBlock: Signed[Block]
+      ): BlockValidationErrorOr[Signed[Block]] =
         duplicatedValues(signedBlock.parent).toNel
           .map(NonUniqueParents)
           .toInvalidNec(signedBlock)

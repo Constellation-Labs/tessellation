@@ -9,6 +9,7 @@ import cats.{Applicative, MonadThrow}
 
 import scala.concurrent.duration._
 
+import org.tessellation.cli.AppEnvironment
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.cluster._
@@ -18,6 +19,7 @@ import org.tessellation.sdk.config.types.HttpConfig
 import org.tessellation.sdk.domain.cluster.services.Cluster
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tessellation.sdk.domain.node.NodeStorage
+import org.tessellation.sdk.domain.seedlist.SeedlistEntry
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
@@ -34,9 +36,10 @@ object Cluster {
     clusterStorage: ClusterStorage[F],
     sessionStorage: SessionStorage[F],
     nodeStorage: NodeStorage[F],
-    seedlist: Option[Set[PeerId]],
+    seedlist: Option[Set[SeedlistEntry]],
     restartSignal: SignallingRef[F, Unit],
-    versionHash: Hash
+    versionHash: Hash,
+    environment: AppEnvironment
   ): Cluster[F] =
     new Cluster[F] {
 
@@ -52,7 +55,7 @@ object Cluster {
           }
           clusterId = clusterStorage.getClusterId
           state <- nodeStorage.getNodeState
-          seedlistHash <- seedlist.hashF
+          seedlistHash <- seedlist.map(_.map(_.peerId)).hashF
         } yield
           RegistrationRequest(
             selfId,
@@ -64,7 +67,8 @@ object Cluster {
             clusterId,
             state,
             seedlistHash,
-            versionHash
+            versionHash,
+            environment
           )
 
       def signRequest(signRequest: SignRequest): F[Signed[SignRequest]] =

@@ -7,7 +7,7 @@ import cats.syntax.functor._
 
 import higherkindness.droste.{AlgebraM, CoalgebraM, scheme}
 
-class Cell[M[_]: Monad, F[_]: Traverse, A, B, S](val data: A, val hylo: S => M[B], val convert: A => S) extends Hom[A, B] { // TODO: was Topos but we aren't using it yet
+class Cell[M[_], F[_], A, B, S](val data: A, val hylo: S => M[B], val convert: A => S) extends Hom[A, B] { // TODO: was Topos but we aren't using it yet
   // extends Topos[A, B] {
   def run(): M[B] = hylo(convert(data))
 }
@@ -21,7 +21,7 @@ object Cell {
     a: A
   ): Cell[M, F, Ω, Either[CellError, Ω], Ω] = a.asInstanceOf[Cell[M, F, Ω, Either[CellError, Ω], Ω]]
 
-  implicit def cellMonoid[M[_]: Applicative, F[_]: Applicative](
+  implicit def cellMonoid[M[_], F[_]: Applicative](
     implicit M: Monad[M],
     F: Traverse[F]
   ): Monoid[Cell[M, F, Ω, Either[CellError, Ω], Ω]] =

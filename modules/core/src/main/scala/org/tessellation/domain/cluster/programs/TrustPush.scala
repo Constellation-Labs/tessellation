@@ -4,8 +4,8 @@ import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.domain.trust.storage.TrustStorage
 import org.tessellation.sdk.domain.gossip.Gossip
+import org.tessellation.sdk.domain.trust.storage.TrustStorage
 
 object TrustPush {
 

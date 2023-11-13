@@ -11,6 +11,7 @@ object DATT {
   ): Map[K, Double] = {
 
     val selfTrust = trust(selfPeerId)
+
     val scores = scala.collection.mutable.HashMap.from[K, Double](selfTrust)
     // Scores always populated/available for current neighbor expansion
     var currentNeighborExpansion = scala.collection.mutable.HashSet.from(scores.keys)

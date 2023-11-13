@@ -6,6 +6,8 @@
     <property name="HTTP_ROLLING_LOG" value="logs/archived/http.%d{yyyy-MM-dd}.%i.log.gz"/>
     <property name="GOSSIP_LOG" value="logs/gossip.log"/>
     <property name="GOSSIP_ROLLING_LOG" value="logs/archived/gossip.%d{yyyy-MM-dd}.%i.log.gz"/>
+    <property name="PEER_SELECT_LOG" value="logs/peer-select.log"/>
+    <property name="PEER_SELECT_ROLLING_LOG" value="logs/archived/peer-select.%d{yyyy-MM-dd}.%i.log.gz"/>
     <property name="TRANSACTIONS_LOG" value="logs/transactions.log"/>
     <property name="TRANSACTIONS_ROLLING_LOG" value="logs/archived/transactions.%d{yyyy-MM-dd}.%i.log.gz"/>
 
@@ -47,6 +49,18 @@
         <file>${GOSSIP_LOG}</file>
         <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
             <fileNamePattern>${GOSSIP_ROLLING_LOG}</fileNamePattern>
+            <maxFileSize>200MB</maxFileSize>
+            <totalSizeCap>2GB</totalSizeCap>
+            <maxHistory>10</maxHistory>
+        </rollingPolicy>
+        <encoder class="ch.qos.logback.classic.encoder.PatternLayoutEncoder">
+            <pattern>%date [%thread] [%property{self_id}] %highlight(%-5level) %cyan(%logger{15}) - %msg %n</pattern>
+        </encoder>
+    </appender>
+    <appender name="PEER_SELECT" class="ch.qos.logback.core.rolling.RollingFileAppender">
+        <file>${PEER_SELECT_LOG}</file>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <fileNamePattern>${PEER_SELECT_ROLLING_LOG}</fileNamePattern>
             <maxFileSize>200MB</maxFileSize>
             <totalSizeCap>2GB</totalSizeCap>
             <maxHistory>10</maxHistory>
@@ -156,6 +170,9 @@
     <logger name="RumorLogger" level="INFO" additivity="false">
         <appender-ref ref="GOSSIP" />
         <appender-ref ref="GOSSIP_JSON" />
+    </logger>
+    <logger name="PeerSelectLogger" level="DEBUG" additivity="false">
+        <appender-ref ref="PEER_SELECT" />
     </logger>
     <logger name="TransactionLogger" level="DEBUG" additivity="false">
         <appender-ref ref="TRANSACTIONS" />

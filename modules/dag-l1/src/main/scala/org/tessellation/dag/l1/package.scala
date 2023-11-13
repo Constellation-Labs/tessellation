@@ -1,5 +1,6 @@
 package org.tessellation.dag
 
+import org.tessellation.currency.dataApplication.{ConsensusInput, DataCancellationReason}
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput._
 import org.tessellation.dag.l1.domain.consensus.block.CancellationReason
 import org.tessellation.dag.l1.domain.consensus.block.CancellationReason._
@@ -24,6 +25,10 @@ package object l1 {
     MissingRoundPeers.getClass -> 806,
     CreatedInvalidBlock.getClass -> 807,
     CreatedBlockWithNoTransactions.getClass -> 808,
-    PeerCancelled.getClass -> 809
+    PeerCancelled.getClass -> 809,
+    classOf[ConsensusInput.Proposal] -> 810,
+    classOf[ConsensusInput.SignatureProposal] -> 811,
+    classOf[ConsensusInput.CancelledCreationRound] -> 812,
+    DataCancellationReason.getClass -> 813
   )
 }

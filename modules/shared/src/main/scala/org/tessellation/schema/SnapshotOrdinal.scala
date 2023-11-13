@@ -6,6 +6,7 @@ import cats.syntax.semigroup._
 
 import derevo.cats.{order, show}
 import derevo.derive
+import eu.timepit.refined.api.Refined
 import eu.timepit.refined.cats._
 import eu.timepit.refined.numeric.NonNegative
 import eu.timepit.refined.refineV
@@ -13,10 +14,15 @@ import eu.timepit.refined.types.numeric.NonNegLong
 import io.circe.{Decoder, Encoder}
 
 @derive(order, show)
-case class SnapshotOrdinal(value: NonNegLong)
+case class SnapshotOrdinal(value: NonNegLong) {
+  def plus(addend: NonNegLong): SnapshotOrdinal = SnapshotOrdinal(value |+| addend)
+}
 
 object SnapshotOrdinal {
   val MinValue: SnapshotOrdinal = SnapshotOrdinal(NonNegLong.MinValue)
+
+  def unsafeApply(value: Long): SnapshotOrdinal =
+    SnapshotOrdinal(Refined.unsafeApply(value))
 
   implicit val next: Next[SnapshotOrdinal] = new Next[SnapshotOrdinal] {
     def next(a: SnapshotOrdinal): SnapshotOrdinal = SnapshotOrdinal(a.value |+| NonNegLong(1L))

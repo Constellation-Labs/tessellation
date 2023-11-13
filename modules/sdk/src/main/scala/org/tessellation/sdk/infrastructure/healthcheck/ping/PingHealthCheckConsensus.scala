@@ -15,7 +15,6 @@ import cats.syntax.traverseFilter._
 
 import scala.concurrent.duration._
 
-import org.tessellation.effects.GenUUID
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.cluster.{PeerToJoin, SessionToken}
 import org.tessellation.schema.node.NodeState
@@ -28,6 +27,7 @@ import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
 import org.tessellation.sdk.domain.gossip.Gossip
 import org.tessellation.sdk.domain.healthcheck.consensus.types.{ConsensusRounds, HealthCheckRoundId}
 import org.tessellation.sdk.domain.healthcheck.consensus.{HealthCheckConsensus, HealthCheckConsensusDriver}
+import org.tessellation.sdk.effects.GenUUID
 import org.tessellation.sdk.http.p2p.clients.NodeClient
 import org.tessellation.sdk.infrastructure.healthcheck.ping.{PeerAvailable, PeerUnavailable}
 

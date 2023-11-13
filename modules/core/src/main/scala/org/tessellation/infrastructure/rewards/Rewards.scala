@@ -15,33 +15,60 @@ import cats.syntax.show._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import org.tessellation.config.types.RewardsConfig
-import org.tessellation.domain.rewards._
+import org.tessellation.currency.dataApplication.DataCalculatedState
 import org.tessellation.ext.refined._
+import org.tessellation.infrastructure.snapshot.GlobalSnapshotEvent
 import org.tessellation.schema.ID.Id
-import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.balance.Amount
+import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.epoch.EpochProgress
-import org.tessellation.schema.transaction.{DAGTransaction, RewardTransaction, TransactionAmount}
+import org.tessellation.schema.transaction.{RewardTransaction, Transaction, TransactionAmount}
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotStateProof, SnapshotOrdinal}
+import org.tessellation.sdk.domain.rewards.Rewards
+import org.tessellation.sdk.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
+import org.tessellation.security.signature.Signed
 import org.tessellation.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.numeric.Positive
 import eu.timepit.refined.refineV
-import io.estatico.newtype.ops.toCoercibleIdOps
+import io.estatico.newtype.ops._
 
 object Rewards {
-
   def make[F[_]: Async](
     config: RewardsConfig,
     programsDistributor: ProgramsDistributor[Either[ArithmeticException, *]],
     facilitatorDistributor: FacilitatorDistributor[F]
-  ): Rewards[F] =
-    new Rewards[F] {
+  ): Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent] =
+    new Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent] {
+
+      private def getAmountByEpoch(epochProgress: EpochProgress, rewardsPerEpoch: SortedMap[EpochProgress, Amount]): Amount =
+        rewardsPerEpoch
+          .minAfter(epochProgress)
+          .map { case (_, reward) => reward }
+          .getOrElse(Amount.empty)
+
+      def distribute(
+        lastArtifact: Signed[GlobalIncrementalSnapshot],
+        lastBalances: SortedMap[Address, Balance],
+        acceptedTransactions: SortedSet[Signed[Transaction]],
+        trigger: ConsensusTrigger,
+        events: Set[GlobalSnapshotEvent],
+        maybeCalculatedState: Option[DataCalculatedState] = None
+      ): F[SortedSet[RewardTransaction]] = {
+        val facilitators = lastArtifact.proofs.map(_.id)
+
+        feeDistribution(lastArtifact.ordinal, acceptedTransactions, facilitators).flatMap { feeRewardTxs =>
+          trigger match {
+            case EventTrigger => feeRewardTxs.pure[F]
+            case TimeTrigger  => mintedDistribution(lastArtifact.epochProgress, facilitators).map(_ ++ feeRewardTxs)
+          }
+        }
+      }
 
       def feeDistribution(
         snapshotOrdinal: SnapshotOrdinal,
-        transactions: SortedSet[DAGTransaction],
+        transactions: SortedSet[Signed[Transaction]],
         facilitators: NonEmptySet[Id]
       ): F[SortedSet[RewardTransaction]] = {
 
@@ -101,11 +128,5 @@ object Rewards {
             refineV[Positive](amount.coerce.value).toList.map(a => RewardTransaction(address, TransactionAmount(a)))
         }.toSortedSet
       }
-
-      def getAmountByEpoch(epochProgress: EpochProgress, rewardsPerEpoch: SortedMap[EpochProgress, Amount]): Amount =
-        rewardsPerEpoch
-          .minAfter(epochProgress)
-          .map { case (_, reward) => reward }
-          .getOrElse(Amount.empty)
     }
 }

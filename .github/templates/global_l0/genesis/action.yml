@@ -1,0 +1,59 @@
+name: Global L0 Genesis
+
+inputs:
+  CL_PUBLIC_HTTP_PORT:
+    required: true
+  CL_P2P_HTTP_PORT:
+    required: true
+  CL_CLI_HTTP_PORT:
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Create directories
+      shell: bash
+      run: |
+        cd .github/config
+        mkdir -p containers/
+        cd containers
+        mkdir global-l0
+        mkdir -p jars
+
+    - name: Copy genesis to Global L0
+      shell: bash
+      run: |
+        cd .github/config
+        mkdir containers/global-l0/genesis
+        cp genesis.csv containers/global-l0/genesis
+
+    - name: Generate Global L0 JAR
+      shell: bash
+      run: |
+        sbt core/assembly keytool/assembly wallet/assembly
+        
+        mv modules/core/target/scala-2.13/tessellation-core-assembly-* .github/config/containers/jars/global-l0.jar
+        mv modules/keytool/target/scala-2.13/tessellation-keytool-assembly-* .github/config/containers/jars/cl-keytool.jar
+        mv modules/wallet/target/scala-2.13/tessellation-wallet-assembly-* .github/config/containers/jars/cl-wallet.jar
+
+    - name: Running global-l0
+      shell: bash
+      run: |
+        export CL_KEYSTORE=token-key.p12
+        export CL_KEYALIAS=token-key
+        export CL_PASSWORD=password
+        
+        cd .github/config/containers/global-l0/genesis
+        
+        java -jar ../../jars/cl-keytool.jar generate
+        
+        export CL_PUBLIC_HTTP_PORT=${{ inputs.CL_PUBLIC_HTTP_PORT }}
+        export CL_P2P_HTTP_PORT=${{ inputs.CL_P2P_HTTP_PORT }}
+        export CL_CLI_HTTP_PORT=${{ inputs.CL_CLI_HTTP_PORT }}
+        export CL_APP_ENV=dev
+        export CL_ENV=dev
+        export CL_COLLATERAL=0
+        
+        nohup java -jar ../../jars/global-l0.jar run-genesis genesis.csv --ip 127.0.0.1 > global-l0-genesis.log 2>&1 &
+        
+        node ../../../../action_scripts/check_if_node_started/index.js -url=http://127.0.0.1:9000/node/info -cluster_name=Global-L0

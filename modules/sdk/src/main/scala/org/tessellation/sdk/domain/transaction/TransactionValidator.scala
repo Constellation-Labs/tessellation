@@ -15,9 +15,9 @@ import derevo.cats.{eqv, show}
 import derevo.derive
 import eu.timepit.refined.auto._
 
-trait TransactionValidator[F[_], T <: Transaction] {
+trait TransactionValidator[F[_]] {
 
-  def validate(signedTransaction: Signed[T]): F[TransactionValidationErrorOr[Signed[T]]]
+  def validate(signedTransaction: Signed[Transaction]): F[TransactionValidationErrorOr[Signed[Transaction]]]
 
 }
 
@@ -29,13 +29,13 @@ object TransactionValidator {
     stardustPrimary
   )
 
-  def make[F[_]: Async, T <: Transaction](
+  def make[F[_]: Async](
     signedValidator: SignedValidator[F]
-  ): TransactionValidator[F, T] =
-    new TransactionValidator[F, T] {
+  ): TransactionValidator[F] =
+    new TransactionValidator[F] {
       def validate(
-        signedTransaction: Signed[T]
-      ): F[TransactionValidationErrorOr[Signed[T]]] =
+        signedTransaction: Signed[Transaction]
+      ): F[TransactionValidationErrorOr[Signed[Transaction]]] =
         for {
           signaturesV <- signedValidator
             .validateSignatures(signedTransaction)
@@ -50,23 +50,23 @@ object TransactionValidator {
             .productR(addressNotLockedV)
 
       private def validateSourceAddressSignature(
-        signedTx: Signed[T]
-      ): F[TransactionValidationErrorOr[Signed[T]]] =
+        signedTx: Signed[Transaction]
+      ): F[TransactionValidationErrorOr[Signed[Transaction]]] =
         signedValidator
           .isSignedExclusivelyBy(signedTx, signedTx.source)
           .map(_.errorMap[TransactionValidationError](_ => NotSignedBySourceAddressOwner))
 
       private def validateDifferentSourceAndDestinationAddress(
-        signedTx: Signed[T]
-      ): TransactionValidationErrorOr[Signed[T]] =
+        signedTx: Signed[Transaction]
+      ): TransactionValidationErrorOr[Signed[Transaction]] =
         if (signedTx.source =!= signedTx.destination)
           signedTx.validNec[TransactionValidationError]
         else
-          SameSourceAndDestinationAddress(signedTx.source).invalidNec[Signed[T]]
+          SameSourceAndDestinationAddress(signedTx.source).invalidNec[Signed[Transaction]]
 
-      private def validateAddressIsNotLocked(signedTx: Signed[T]): TransactionValidationErrorOr[Signed[T]] =
+      private def validateAddressIsNotLocked(signedTx: Signed[Transaction]): TransactionValidationErrorOr[Signed[Transaction]] =
         if (lockedAddresses.contains(signedTx.value.source))
-          AddressLocked(signedTx.value.source).invalidNec[Signed[T]]
+          AddressLocked(signedTx.value.source).invalidNec[Signed[Transaction]]
         else
           signedTx.validNec[TransactionValidationError]
 

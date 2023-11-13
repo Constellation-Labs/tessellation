@@ -45,7 +45,7 @@ object generators {
     Gen.oneOf(Responsive, Unresponsive)
 
   val idGen: Gen[Id] =
-    nesGen(str => Id(Hex(str)))
+    hexGen(128).map(Id(_))
 
   val hostGen: Gen[Host] =
     for {
@@ -90,7 +90,13 @@ object generators {
     Arbitrary.arbitrary[NonNegLong].map(Balance(_))
 
   val transactionAmountGen: Gen[TransactionAmount] = Arbitrary.arbitrary[PosLong].map(TransactionAmount(_))
-  val transactionFeeGen: Gen[TransactionFee] = Arbitrary.arbitrary[NonNegLong].map(TransactionFee(_))
+
+  // total supply is lower than Long.MaxValue so generated fee needs to be limited to avoid cases which won't happen
+  val feeMaxVal: TransactionFee = TransactionFee(NonNegLong(99999999_00000000L))
+
+  val transactionFeeGen: Gen[TransactionFee] =
+    chooseRefinedNum(NonNegLong(0L), feeMaxVal.value).map(TransactionFee(_))
+
   val transactionOrdinalGen: Gen[TransactionOrdinal] = Arbitrary.arbitrary[NonNegLong].map(TransactionOrdinal(_))
 
   val transactionReferenceGen: Gen[TransactionReference] =
@@ -101,7 +107,9 @@ object generators {
 
   val transactionSaltGen: Gen[TransactionSalt] = Gen.long.map(TransactionSalt(_))
 
-  val transactionGen: Gen[DAGTransaction] =
+  def hexGen(n: Int): Gen[Hex] = Gen.stringOfN(n, Gen.hexChar).map(Hex(_))
+
+  val transactionGen: Gen[Transaction] =
     for {
       src <- addressGen
       dst <- addressGen
@@ -109,9 +117,16 @@ object generators {
       txnFee <- transactionFeeGen
       txnReference <- transactionReferenceGen
       txnSalt <- transactionSaltGen
-    } yield DAGTransaction(src, dst, txnAmount, txnFee, txnReference, txnSalt)
+    } yield Transaction(src, dst, txnAmount, txnFee, txnReference, txnSalt)
 
-  val signatureGen: Gen[Signature] = nesGen(str => Signature(Hex(str)))
+  val signatureGen: Gen[Signature] =
+    /* BouncyCastle encodes ECDSA with ASN.1 DER which which is variable length. That generator should be changed to
+       fixed length instead of range when we switch to SHA512withPLAIN-ECDSA.
+     */
+    Gen
+      .chooseNum(140, 144)
+      .flatMap(hexGen)
+      .map(Signature(_))
 
   val signatureProofGen: Gen[SignatureProof] =
     for {
@@ -125,6 +140,8 @@ object generators {
       signatureProof <- Gen.listOfN(3, signatureProofGen).map(l => NonEmptySet.fromSetUnsafe(SortedSet.from(l)))
     } yield Signed(txn, signatureProof)
 
-  val signedTransactionGen: Gen[Signed[DAGTransaction]] = signedOf(transactionGen)
+  val signedTransactionGen: Gen[Signed[Transaction]] = signedOf(transactionGen)
 
+  val snapshotOrdinalGen: Gen[SnapshotOrdinal] =
+    Arbitrary.arbitrary[NonNegLong].map(SnapshotOrdinal(_))
 }

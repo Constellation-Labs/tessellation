@@ -1,7 +1,7 @@
 package org.tessellation.sdk.infrastructure.cluster.rumor
 
-import cats.Applicative
 import cats.effect.Async
+import cats.syntax.applicative._
 import cats.syntax.flatMap._
 import cats.syntax.show._
 
@@ -23,16 +23,12 @@ object handler {
 
     RumorHandler.fromPeerRumorConsumer[F, NodeState](IgnoreSelfOrigin) {
       case PeerRumor(origin, _, state) =>
-        clusterStorage.hasPeerId(origin).flatMap { hasPeer =>
-          logger.info(s"Received state=${state.show} from id=${origin.show}. Peer is ${if (hasPeer) "" else "un"}known.")
-        } >>
-          clusterStorage.setPeerState(origin, state) >> {
-            if (NodeState.absent.contains(state))
-              localHealthcheck.cancel(origin) >>
-                clusterStorage.removePeer(origin)
-            else
-              Applicative[F].unit
-          }
+        clusterStorage.updatePeerState(origin, state).flatTap { updateSuccess =>
+          logger.info(s"Received state=${state.show} from id=${origin.show}. Peer is ${if (updateSuccess) "" else "un"}known.")
+        } >> {
+          localHealthcheck.cancel(origin) >>
+            clusterStorage.removePeer(origin)
+        }.whenA(NodeState.absent.contains(state))
     }
   }
 }

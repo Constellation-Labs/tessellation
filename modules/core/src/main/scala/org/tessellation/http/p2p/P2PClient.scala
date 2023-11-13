@@ -1,16 +1,16 @@
 package org.tessellation.http.p2p
 
 import cats.effect.Async
+import cats.syntax.option._
 
-import org.tessellation.http.p2p.clients._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.sdk.domain.cluster.services.Session
 import org.tessellation.sdk.http.p2p.SdkP2PClient
-import org.tessellation.sdk.http.p2p.clients.{ClusterClient, NodeClient, SignClient}
+import org.tessellation.sdk.http.p2p.clients._
 import org.tessellation.sdk.infrastructure.gossip.p2p.GossipClient
 import org.tessellation.security.SecurityProvider
 
-import org.http4s.client._
+import org.http4s.client.Client
 
 object P2PClient {
 
@@ -24,8 +24,7 @@ object P2PClient {
       sdkP2PClient.cluster,
       sdkP2PClient.gossip,
       sdkP2PClient.node,
-      TrustClient.make[F](client, session),
-      GlobalSnapshotClient.make[F](client, session)
+      L0GlobalSnapshotClient.make(client, session.some)
     ) {}
 }
 
@@ -34,6 +33,5 @@ sealed abstract class P2PClient[F[_]] private (
   val cluster: ClusterClient[F],
   val gossip: GossipClient[F],
   val node: NodeClient[F],
-  val trust: TrustClient[F],
-  val globalSnapshot: GlobalSnapshotClient[F]
+  val globalSnapshot: L0GlobalSnapshotClient[F]
 )

@@ -7,22 +7,22 @@ import cats.syntax.functor._
 import cats.syntax.traverse._
 
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.BlockReference
-import org.tessellation.schema.block.DAGBlock
+import org.tessellation.schema.Block.HashedOps
 import org.tessellation.schema.transaction.TransactionReference
+import org.tessellation.schema.{Block, BlockReference}
 import org.tessellation.security.Hashed
 import org.tessellation.security.signature.Signed
 
 object BlockRelations {
 
   def dependsOn[F[_]: Async: KryoSerializer](
-    blocks: Hashed[DAGBlock]
-  )(block: Signed[DAGBlock]): F[Boolean] = dependsOn(Set(blocks))(block)
+    blocks: Hashed[Block]
+  )(block: Signed[Block]): F[Boolean] = dependsOn[F](Set(blocks))(block)
 
   def dependsOn[F[_]: Async: KryoSerializer](
-    blocks: Set[Hashed[DAGBlock]],
+    blocks: Set[Hashed[Block]],
     references: Set[BlockReference] = Set.empty
-  )(block: Signed[DAGBlock]): F[Boolean] = {
+  )(block: Signed[Block]): F[Boolean] = {
     def dstAddresses = blocks.flatMap(_.transactions.toSortedSet.toList.map(_.value.destination))
 
     def isChild =

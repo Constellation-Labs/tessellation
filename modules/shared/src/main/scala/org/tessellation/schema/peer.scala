@@ -10,6 +10,7 @@ import cats.syntax.contravariant._
 import cats.syntax.eq._
 import cats.syntax.functor._
 
+import org.tessellation.cli.AppEnvironment
 import org.tessellation.ext.derevo.ordering
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.address.Address
@@ -25,6 +26,7 @@ import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia._
 import derevo.derive
 import derevo.scalacheck.arbitrary
+import fs2.data.csv.CellDecoder
 import io.circe.{Decoder, Encoder}
 import io.estatico.newtype.macros.newtype
 import io.estatico.newtype.ops._
@@ -50,6 +52,10 @@ object peer {
 
     implicit def ordering: Ordering[PeerId] = Order[PeerId].toOrdering
 
+    implicit val cellDecoder: CellDecoder[PeerId] = CellDecoder.stringDecoder
+      .map(Hex(_))
+      .map(PeerId(_))
+
     implicit val quillEncode: MappedEncoding[PeerId, String] =
       MappedEncoding[PeerId, String](_.value.value)
 
@@ -59,6 +65,8 @@ object peer {
 
     def fromPublic(publicKey: PublicKey): PeerId =
       fromId(publicKey.toId)
+
+    val shortShow: Show[PeerId] = Show.show[PeerId](p => s"PeerId(${p.value.value.take(5)})")
   }
 
   implicit class PeerIdOps(peerId: PeerId) {
@@ -139,6 +147,9 @@ object peer {
 
     def fromPeerInfo(p: PeerInfo): L0Peer =
       L0Peer(p.id, p.ip, p.publicPort)
+
+    def fromPeer(p: Peer): L0Peer =
+      L0Peer(p.id, p.ip, p.publicPort)
   }
 
   @derive(eqv, show)
@@ -157,7 +168,8 @@ object peer {
     clusterId: ClusterId,
     state: NodeState,
     seedlist: Hash,
-    version: Hash
+    version: Hash,
+    environment: AppEnvironment
   )
 
   @derive(eqv, decoder, encoder, show)

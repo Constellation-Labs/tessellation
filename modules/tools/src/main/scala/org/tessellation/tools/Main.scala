@@ -12,16 +12,17 @@ import cats.syntax.all._
 import scala.concurrent.duration._
 import scala.math.Integral.Implicits._
 
-import org.tessellation.infrastructure.genesis.types.GenesisCSVAccount
-import org.tessellation.keytool.{KeyPairGenerator, KeyStoreUtils}
+import org.tessellation.currency.schema.currency.SnapshotFee
+import org.tessellation.keytool.KeyStoreUtils
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction._
-import org.tessellation.security.SecurityProvider
+import org.tessellation.sdk.domain.genesis.types.GenesisCSVAccount
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.key.ops._
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{KeyPairGenerator, SecurityProvider}
 import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.statechannel.StateChannelSnapshotBinary
 import org.tessellation.tools.TransactionGenerator._
@@ -92,7 +93,7 @@ object Main
       key <- generateKeys(1).map(_.head)
       address = key.getPublic.toAddress
       _ <- console.green(s"Generated address: $address")
-      snapshot = StateChannelSnapshotBinary(Hash.empty, "test".getBytes)
+      snapshot = StateChannelSnapshotBinary(Hash.empty, "test".getBytes, SnapshotFee.MinValue)
       signedSnapshot <- Signed.forAsyncKryo(snapshot, key)
       hashed <- signedSnapshot.toHashed
       _ <- console.green(s"Snapshot hash: ${hashed.hash.show}, proofs hash: ${hashed.proofsHash.show}")
@@ -215,7 +216,7 @@ object Main
       console.green(s"$counter transactions sent in ${minutes}m ${seconds}s")
     }
 
-  def printTx[F[_]: Applicative: Console](verbose: Boolean)(tx: Signed[DAGTransaction]): F[Unit] =
+  def printTx[F[_]: Applicative: Console](verbose: Boolean)(tx: Signed[Transaction]): F[Unit] =
     Applicative[F].whenA(verbose) {
       console.cyan(s"Transaction sent ordinal=${tx.ordinal} sourceAddress=${tx.source}")
     }
@@ -231,7 +232,7 @@ object Main
   }
 
   def postTransaction[F[_]: Async](client: Client[F], baseUrl: UrlString)(
-    tx: Signed[DAGTransaction]
+    tx: Signed[Transaction]
   ): F[Unit] = {
     val target = Uri.unsafeFromString(baseUrl.toString).addPath("transactions")
     val req = Request[F](method = Method.POST, uri = target).withEntity(tx)

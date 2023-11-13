@@ -3,9 +3,9 @@ package org.tessellation.dag.l1.domain.transaction
 import cats.Order
 import cats.data.{NonEmptyList, NonEmptySet}
 import cats.effect.Async
-import cats.syntax.alternative._
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
+import cats.syntax.contravariantSemigroupal._
 import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.foldable._
@@ -35,21 +35,22 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 class TransactionStorage[F[_]: Async](
   lastAccepted: MapRef[F, Address, Option[LastTransactionReferenceState]],
-  waitingTransactions: MapRef[F, Address, Option[NonEmptySet[Hashed[DAGTransaction]]]]
+  waitingTransactions: MapRef[F, Address, Option[NonEmptySet[Hashed[Transaction]]]],
+  initialTransactionReference: TransactionReference
 ) {
 
   private val logger = Slf4jLogger.getLogger[F]
   private val transactionLogger = Slf4jLogger.getLoggerFromName[F](transactionLoggerName)
 
-  def isParentAccepted(transaction: DAGTransaction): F[Boolean] =
-    (transaction.parent != TransactionReference.empty)
-      .guard[Option]
-      .fold(true.pure[F]) { _ =>
-        lastAccepted(transaction.source).get.map(_.exists(_.ref == transaction.parent))
-      }
+  def getInitialTxRef: TransactionReference = initialTransactionReference
+
+  def getState(): F[(Map[Address, LastTransactionReferenceState], Map[Address, NonEmptySet[Hashed[Transaction]]])] =
+    (lastAccepted.toMap, waitingTransactions.toMap).mapN((_, _))
 
   def getLastAcceptedReference(source: Address): F[TransactionReference] =
-    lastAccepted(source).get.map(_.map(_.ref).getOrElse(TransactionReference.empty))
+    lastAccepted(source).get.map {
+      _.map(_.ref).getOrElse(initialTransactionReference)
+    }
 
   def setLastAccepted(lastTxRefs: Map[Address, TransactionReference]): F[Unit] =
     lastAccepted.clear >>
@@ -57,7 +58,7 @@ class TransactionStorage[F[_]: Async](
         case (address, reference) => lastAccepted(address).set(Majority(reference).some)
       }.void
 
-  def accept(hashedTx: Hashed[DAGTransaction]): F[Unit] = {
+  def accept(hashedTx: Hashed[Transaction]): F[Unit] = {
     val parent = hashedTx.signed.value.parent
     val source = hashedTx.signed.value.source
     val reference = TransactionReference(hashedTx.signed.value.ordinal, hashedTx.hash)
@@ -87,9 +88,9 @@ class TransactionStorage[F[_]: Async](
           .flatMap(_.liftTo[F])
     }.void
 
-  def put(transaction: Hashed[DAGTransaction]): F[Unit] = put(Set(transaction))
+  def put(transaction: Hashed[Transaction]): F[Unit] = put(Set(transaction))
 
-  def put(transactions: Set[Hashed[DAGTransaction]]): F[Unit] =
+  def put(transactions: Set[Hashed[Transaction]]): F[Unit] =
     transactions
       .groupBy(_.signed.value.source)
       .toList
@@ -115,17 +116,20 @@ class TransactionStorage[F[_]: Async](
       txs <- addresses.traverse { address =>
         waitingTransactions(address).get.map {
           case Some(waiting) =>
-            val lastTxState = lastAccepted.getOrElse(address, Majority(TransactionReference.empty))
+            val lastTxState = lastAccepted.getOrElse(
+              address,
+              Majority(initialTransactionReference)
+            )
             val consecutiveTxs = Consecutive.take(waiting.toList, lastTxState.ref)
 
             pullForAddress(lastTxState, consecutiveTxs)
           case None =>
-            List.empty[Hashed[DAGTransaction]]
+            List.empty[Hashed[Transaction]]
         }
       }.map(_.flatten)
     } yield txs.size
 
-  def pull(count: NonNegLong): F[Option[NonEmptyList[Hashed[DAGTransaction]]]] =
+  def pull(count: NonNegLong): F[Option[NonEmptyList[Hashed[Transaction]]]] =
     for {
       lastAccepted <- lastAccepted.toMap
       addresses <- waitingTransactions.keys.map(_.sorted)
@@ -134,7 +138,10 @@ class TransactionStorage[F[_]: Async](
           (maybeWaiting, setter) <- waitingTransactions(address).access
 
           pulled <- maybeWaiting.traverse { waiting =>
-            val lastTxState = lastAccepted.getOrElse(address, Majority(TransactionReference.empty))
+            val lastTxState = lastAccepted.getOrElse(
+              address,
+              Majority(initialTransactionReference)
+            )
             val consecutiveTxs = Consecutive.take(waiting.toList, lastTxState.ref)
             val pulled = pullForAddress(lastTxState, consecutiveTxs)
             val maybeStillWaiting = SortedSet.from(waiting.toList.diff(pulled)).toNes
@@ -149,14 +156,14 @@ class TransactionStorage[F[_]: Async](
               .ifM(
                 NonEmptyList.fromList(pulled).pure[F],
                 logger.debug("Concurrent update occurred while trying to pull transactions") >>
-                  none[NonEmptyList[Hashed[DAGTransaction]]].pure[F]
+                  none[NonEmptyList[Hashed[Transaction]]].pure[F]
               )
           }.map(_.flatten)
         } yield pulled
 
         pulledM.handleErrorWith {
           logger.warn(_)(s"Error while pulling transactions for address=${address.show} from waiting pool.") >>
-            none[NonEmptyList[Hashed[DAGTransaction]]].pure[F]
+            none[NonEmptyList[Hashed[Transaction]]].pure[F]
         }
       }.map(_.flatten)
 
@@ -171,8 +178,8 @@ class TransactionStorage[F[_]: Async](
 
   private def pullForAddress(
     lastTxState: LastTransactionReferenceState,
-    consecutiveTxs: List[Hashed[DAGTransaction]]
-  ): List[Hashed[DAGTransaction]] =
+    consecutiveTxs: List[Hashed[Transaction]]
+  ): List[Hashed[Transaction]] =
     (lastTxState, consecutiveTxs.headOption) match {
       case (_: Majority, Some(tx)) if tx.fee == TransactionFee.zero =>
         List(tx)
@@ -181,14 +188,14 @@ class TransactionStorage[F[_]: Async](
     }
 
   private def takeFirstNHighestFeeTxs(
-    txs: List[NonEmptyList[Hashed[DAGTransaction]]],
+    txs: List[NonEmptyList[Hashed[Transaction]]],
     count: NonNegLong
-  ): List[Hashed[DAGTransaction]] = {
+  ): List[Hashed[Transaction]] = {
     @tailrec
     def go(
-      txs: SortedSet[NonEmptyList[Hashed[DAGTransaction]]],
-      acc: List[Hashed[DAGTransaction]]
-    ): List[Hashed[DAGTransaction]] =
+      txs: SortedSet[NonEmptyList[Hashed[Transaction]]],
+      acc: List[Hashed[Transaction]]
+    ): List[Hashed[Transaction]] =
       if (acc.size == count.value)
         acc.reverse
       else {
@@ -205,14 +212,14 @@ class TransactionStorage[F[_]: Async](
         }
       }
 
-    val order: Order[NonEmptyList[Hashed[DAGTransaction]]] =
-      Order.whenEqual(Order.by(-_.head.fee.value.value), Order[NonEmptyList[Hashed[DAGTransaction]]])
+    val order: Order[NonEmptyList[Hashed[Transaction]]] =
+      Order.whenEqual(Order.by(-_.head.fee.value.value), Order[NonEmptyList[Hashed[Transaction]]])
     val sortedTxs = SortedSet.from(txs)(order.toOrdering)
 
     go(sortedTxs, List.empty)
   }
 
-  def find(hash: Hash): F[Option[Hashed[DAGTransaction]]] =
+  def find(hash: Hash): F[Option[Hashed[Transaction]]] =
     waitingTransactions.toMap.map(_.view.values.toList.flatMap(_.toList)).map {
       _.find(_.hash === hash)
     }
@@ -221,12 +228,23 @@ class TransactionStorage[F[_]: Async](
 
 object TransactionStorage {
 
-  def make[F[_]: Async: KryoSerializer]: F[TransactionStorage[F]] =
+  def make[F[_]: Async: KryoSerializer](
+    initialTransactionReference: TransactionReference
+  ): F[TransactionStorage[F]] =
     for {
       lastAccepted <- MapRef.ofConcurrentHashMap[F, Address, LastTransactionReferenceState]()
-      waitingTransactions <- MapRef.ofConcurrentHashMap[F, Address, NonEmptySet[Hashed[DAGTransaction]]]()
-      transactionStorage = new TransactionStorage[F](lastAccepted, waitingTransactions)
-    } yield transactionStorage
+      waitingTransactions <- MapRef.ofConcurrentHashMap[F, Address, NonEmptySet[Hashed[Transaction]]]()
+    } yield new TransactionStorage[F](lastAccepted, waitingTransactions, initialTransactionReference)
+
+  def make[F[_]: Async: KryoSerializer](
+    lastAccepted: Map[Address, LastTransactionReferenceState],
+    waitingTransactions: Map[Address, NonEmptySet[Hashed[Transaction]]],
+    initialTransactionReference: TransactionReference
+  ): F[TransactionStorage[F]] =
+    (
+      MapRef.ofSingleImmutableMap(lastAccepted),
+      MapRef.ofSingleImmutableMap(waitingTransactions)
+    ).mapN(new TransactionStorage(_, _, initialTransactionReference))
 
   sealed trait TransactionAcceptanceError extends NoStackTrace
   case class ParentNotAccepted(

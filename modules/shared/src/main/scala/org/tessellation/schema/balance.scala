@@ -3,7 +3,6 @@ package org.tessellation.schema
 import cats.syntax.either._
 import cats.syntax.semigroup._
 
-import scala.util.Try
 import scala.util.control.NoStackTrace
 
 import derevo.cats.{eqv, order, show}
@@ -11,11 +10,8 @@ import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import eu.timepit.refined.auto._
 import eu.timepit.refined.cats._
-import eu.timepit.refined.numeric.NonNegative
-import eu.timepit.refined.refineV
 import eu.timepit.refined.types.numeric.NonNegLong
 import io.estatico.newtype.macros.newtype
-import io.getquill.MappedEncoding
 import monocle.Iso
 
 object balance {
@@ -65,18 +61,6 @@ object balance {
     implicit val toAmount: Balance => Amount = _amount.get
 
     implicit val fromAmount: Amount => Balance = _amount.reverseGet
-
-    implicit val quillEncode: MappedEncoding[Balance, String] =
-      MappedEncoding[Balance, String](_.value.value.toString())
-
-    implicit val quillDecode: MappedEncoding[String, Balance] = MappedEncoding[String, Balance](strBalance =>
-      Try(strBalance.toLong).toEither
-        .flatMap(refineV[NonNegative].apply[Long](_).leftMap(new Throwable(_))) match {
-        // TODO: look at quill Decode for Address
-        case Left(e)  => throw e
-        case Right(b) => Balance(b)
-      }
-    )
 
   }
 

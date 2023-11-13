@@ -15,17 +15,19 @@ object P2PClient {
 
   def make[F[_]: Async: SecurityProvider: KryoSerializer](
     sdkP2PClient: SdkP2PClient[F],
-    client: Client[F]
+    client: Client[F],
+    currencyPathPrefix: String
   ): P2PClient[F] =
     new P2PClient[F](
       sdkP2PClient.sign,
       sdkP2PClient.node,
       sdkP2PClient.cluster,
       L0ClusterClient.make(client),
-      L0DAGClusterClient.make(client),
+      L0BlockOutputClient.make(currencyPathPrefix, client),
       sdkP2PClient.gossip,
       BlockConsensusClient.make(client),
-      L0GlobalSnapshotClient.make(client)
+      L0GlobalSnapshotClient.make(client),
+      L0TrustClient.make(client)
     ) {}
 }
 
@@ -34,8 +36,9 @@ sealed abstract class P2PClient[F[_]] private (
   val node: NodeClient[F],
   val cluster: ClusterClient[F],
   val l0Cluster: L0ClusterClient[F],
-  val l0DAGCluster: L0DAGClusterClient[F],
+  val l0BlockOutputClient: L0BlockOutputClient[F],
   val gossip: GossipClient[F],
   val blockConsensus: BlockConsensusClient[F],
-  val l0GlobalSnapshotClient: L0GlobalSnapshotClient[F]
+  val l0GlobalSnapshot: L0GlobalSnapshotClient[F],
+  val l0Trust: L0TrustClient[F]
 )

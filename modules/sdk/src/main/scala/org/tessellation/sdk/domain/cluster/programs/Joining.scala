@@ -12,7 +12,8 @@ import cats.syntax.order._
 import cats.syntax.show._
 import cats.syntax.traverse._
 
-import org.tessellation.effects.GenUUID
+import org.tessellation.cli.AppEnvironment
+import org.tessellation.cli.AppEnvironment.Dev
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID.Id
@@ -20,12 +21,12 @@ import org.tessellation.schema.cluster._
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.Peer.toP2PContext
 import org.tessellation.schema.peer._
-import org.tessellation.sdk.config.AppEnvironment
-import org.tessellation.sdk.config.AppEnvironment.Dev
 import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tessellation.sdk.domain.healthcheck.LocalHealthcheck
 import org.tessellation.sdk.domain.node.NodeStorage
+import org.tessellation.sdk.domain.seedlist.SeedlistEntry
+import org.tessellation.sdk.effects.GenUUID
 import org.tessellation.sdk.http.p2p.clients.SignClient
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
@@ -46,7 +47,7 @@ object Joining {
     session: Session[F],
     sessionStorage: SessionStorage[F],
     localHealthcheck: LocalHealthcheck[F],
-    seedlist: Option[Set[PeerId]],
+    seedlist: Option[Set[SeedlistEntry]],
     selfId: PeerId,
     stateAfterJoining: NodeState,
     peerDiscovery: PeerDiscovery[F],
@@ -83,7 +84,7 @@ object Joining {
     session: Session[F],
     sessionStorage: SessionStorage[F],
     localHealthcheck: LocalHealthcheck[F],
-    seedlist: Option[Set[PeerId]],
+    seedlist: Option[Set[SeedlistEntry]],
     selfId: PeerId,
     stateAfterJoining: NodeState,
     peerDiscovery: PeerDiscovery[F],
@@ -144,7 +145,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
   session: Session[F],
   sessionStorage: SessionStorage[F],
   localHealthcheck: LocalHealthcheck[F],
-  seedlist: Option[Set[PeerId]],
+  seedlist: Option[Set[SeedlistEntry]],
   selfId: PeerId,
   stateAfterJoining: NodeState,
   versionHash: Hash,
@@ -232,34 +233,35 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
         Responsive
       )
 
-      _ <- localHealthcheck.cancel(registrationRequest.id)
-
-      _ <- clusterStorage.addPeer(peer)
-
-      // Note: Changing state from SessionStarted to Ready state will execute once for first peer, then all consecutive joins should be ignored
-      _ <- nodeStorage.tryModifyState(NodeState.SessionStarted, stateAfterJoining).handleError(_ => ())
+      _ <- clusterStorage
+        .addPeer(peer)
+        .ifM(
+          localHealthcheck.cancel(registrationRequest.id),
+          PeerAlreadyJoinedWithDifferentRegistrationData(registrationRequest.id).raiseError[F, Unit]
+        )
+      _ <- nodeStorage.tryModifyStateGetResult(NodeState.SessionStarted, stateAfterJoining)
     } yield peer
 
   private def validateSeedlist(peer: PeerToJoin): F[Unit] =
-    seedlist match {
-      case None => Applicative[F].unit
-      case Some(entries) =>
-        if (entries.contains(peer.id)) Applicative[F].unit else PeerNotInSeedlist(peer.id).raiseError[F, Unit]
-    }
+    PeerNotInSeedlist(peer.id)
+      .raiseError[F, Unit]
+      .unlessA(seedlist.map(_.map(_.peerId)).forall(_.contains(peer.id)))
 
   private def validateHandshake(registrationRequest: RegistrationRequest, remoteAddress: Option[Host]): F[Unit] =
     for {
 
       _ <- VersionMismatch.raiseError[F, Unit].whenA(registrationRequest.version =!= versionHash)
+      _ <- EnvMismatch.raiseError[F, Unit].whenA(registrationRequest.environment =!= environment)
 
       ip = registrationRequest.ip
       existingPeer <- clusterStorage.getPeer(registrationRequest.id)
 
       _ <- existingPeer match {
-        case Some(peer) if peer.session < registrationRequest.session => Applicative[F].unit
-        case None                                                     => Applicative[F].unit
+        case Some(peer) if peer.session <= registrationRequest.session => Applicative[F].unit
+        case None                                                      => Applicative[F].unit
         case _ =>
-          PeerAlreadyConnected(registrationRequest.id, ip, registrationRequest.p2pPort, registrationRequest.session).raiseError[F, Unit]
+          PeerAlreadyJoinedWithNewerSession(registrationRequest.id, ip, registrationRequest.p2pPort, registrationRequest.session)
+            .raiseError[F, Unit]
       }
 
       ownClusterId = clusterStorage.getClusterId
@@ -285,7 +287,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
 
       _ <- Applicative[F].unlessA(registrationRequest.id != selfId)(IdDuplicationFound.raiseError[F, Unit])
 
-      seedlistHash <- seedlist.hashF
+      seedlistHash <- seedlist.map(_.map(_.peerId)).hashF
       _ <- Applicative[F].unlessA(registrationRequest.seedlist === seedlistHash)(SeedlistDoesNotMatch.raiseError[F, Unit])
 
     } yield ()

@@ -1,19 +1,18 @@
 package org.tessellation.sdk.domain.block.processing
 
 import org.tessellation.schema.Block
-import org.tessellation.schema.transaction.Transaction
 import org.tessellation.sdk.domain.block.processing.UsageCount
 import org.tessellation.security.signature.Signed
 
-trait BlockAcceptanceManager[F[_], T <: Transaction, B <: Block[T]] {
+trait BlockAcceptanceManager[F[_]] {
 
   def acceptBlocksIteratively(
-    blocks: List[Signed[B]],
+    blocks: List[Signed[Block]],
     context: BlockAcceptanceContext[F]
-  ): F[BlockAcceptanceResult[B]]
+  ): F[BlockAcceptanceResult]
 
   def acceptBlock(
-    block: Signed[B],
+    block: Signed[Block],
     context: BlockAcceptanceContext[F]
   ): F[Either[BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)]]
 

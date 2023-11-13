@@ -60,7 +60,7 @@ lazy val root = (project in file("."))
   .settings(
     name := "tessellation"
   )
-  .aggregate(keytool, kernel, shared, core, testShared, wallet, sdk, dagL1, rosetta)
+  .aggregate(keytool, kernel, shared, core, testShared, wallet, sdk, dagL1, rosetta, currencyL0, currencyL1, tools)
 
 lazy val kernel = (project in file("modules/kernel"))
   .enablePlugins(AshScriptPlugin)
@@ -172,6 +172,7 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.bc,
       Libraries.bcExtensions,
       Libraries.betterFiles,
+      Libraries.brotli4j,
       Libraries.cats,
       Libraries.catsEffect,
       Libraries.chill,
@@ -191,8 +192,12 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.derevoCirce,
       Libraries.derevoScalacheck,
       Libraries.doobieQuill,
+      Libraries.drosteCore,
       Libraries.enumeratumCore,
       Libraries.enumeratumCirce,
+      Libraries.fs2Core,
+      Libraries.fs2DataCsv,
+      Libraries.fs2DataCsvGeneric,
       Libraries.guava,
       Libraries.log4cats,
       Libraries.logback % Runtime,
@@ -204,9 +209,14 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.refinedCore,
       Libraries.refinedCats,
       Libraries.refinedScalacheck,
-      Libraries.http4sCore
+      Libraries.http4sCore,
+      Libraries.http4sDsl,
+      Libraries.http4sServer,
+      Libraries.http4sClient,
+      Libraries.http4sCirce,
     )
   )
+
 lazy val testShared = (project in file("modules/test-shared"))
   .configs(IntegrationTest)
   .settings(
@@ -355,6 +365,7 @@ lazy val dagL1 = (project in file("modules/dag-l1"))
       Libraries.sqlite
     )
   )
+
 lazy val tools = (project in file("modules/tools"))
   .enablePlugins(AshScriptPlugin)
   .enablePlugins(JavaAppPackaging)
@@ -401,6 +412,7 @@ lazy val tools = (project in file("modules/tools"))
       Libraries.skunkCirce
     )
   )
+
 lazy val core = (project in file("modules/core"))
   .enablePlugins(AshScriptPlugin)
   .enablePlugins(JavaAppPackaging)
@@ -433,7 +445,6 @@ lazy val core = (project in file("modules/core"))
       Libraries.derevoCirce,
       Libraries.doobieCore,
       Libraries.doobieHikari,
-      Libraries.doobieH2,
       Libraries.doobieQuill,
       Libraries.drosteCore,
       Libraries.drosteLaws,
@@ -442,7 +453,6 @@ lazy val core = (project in file("modules/core"))
       Libraries.flyway,
       Libraries.fs2DataCsv,
       Libraries.fs2DataCsvGeneric,
-      Libraries.h2,
       Libraries.http4sDsl,
       Libraries.http4sServer,
       Libraries.http4sClient,
@@ -467,24 +477,38 @@ lazy val core = (project in file("modules/core"))
     )
   )
 
-lazy val currencyL0 = (project in file("modules/currency-l0"))
-  .enablePlugins(AshScriptPlugin)
-  .enablePlugins(JavaAppPackaging)
-  .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test, sdk)
+lazy val currencyL1 = (project in file("modules/currency-l1"))
+  .dependsOn(dagL1, sdk, shared)
   .settings(
-    name := "tessellation-currency-l0",
+    name := "tessellation-currency-l1",
     Defaults.itSettings,
     scalafixCommonSettings,
     commonSettings,
     commonTestSettings,
-    dockerSettings,
-    makeBatScripts := Seq(),
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
       CompilerPlugin.betterMonadicFor,
-      CompilerPlugin.semanticDB,
-      Libraries.refinedCore,
-      Libraries.refinedCats
+      CompilerPlugin.semanticDB
+    )
+  )
+
+lazy val currencyL0 = (project in file("modules/currency-l0"))
+  .enablePlugins(AshScriptPlugin)
+  .enablePlugins(BuildInfoPlugin)
+  .enablePlugins(JavaAppPackaging)
+  .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test, sdk)
+  .settings(
+    name := "tessellation-currency-l0",
+    buildInfoKeys := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion),
+    buildInfoPackage := "org.tessellation.currency",
+    Defaults.itSettings,
+    scalafixCommonSettings,
+    commonSettings,
+    commonTestSettings,
+    libraryDependencies ++= Seq(
+      CompilerPlugin.kindProjector,
+      CompilerPlugin.betterMonadicFor,
+      CompilerPlugin.semanticDB
     )
   )
 

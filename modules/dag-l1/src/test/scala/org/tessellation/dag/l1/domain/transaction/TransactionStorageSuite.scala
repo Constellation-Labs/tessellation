@@ -10,13 +10,12 @@ import org.tessellation.dag.l1.Main
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage.{Accepted, LastTransactionReferenceState, Majority}
 import org.tessellation.dag.transaction.TransactionGenerator
 import org.tessellation.ext.cats.effect.ResourceIO
-import org.tessellation.keytool.KeyPairGenerator
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction._
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.key.ops.PublicKeyOps
-import org.tessellation.security.{Hashed, SecurityProvider}
+import org.tessellation.security.{Hashed, KeyPairGenerator, SecurityProvider}
 
 import eu.timepit.refined.auto._
 import io.chrisdavenport.mapref.MapRef
@@ -27,7 +26,7 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
   type TestResources = (
     TransactionStorage[IO],
     MapRef[IO, Address, Option[LastTransactionReferenceState]],
-    MapRef[IO, Address, Option[NonEmptySet[Hashed[DAGTransaction]]]],
+    MapRef[IO, Address, Option[NonEmptySet[Hashed[Transaction]]]],
     KeyPair,
     Address,
     KeyPair,
@@ -41,8 +40,8 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
       KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ sdkKryoRegistrar).flatMap { implicit kp =>
         for {
           lastAccepted <- MapRef.ofConcurrentHashMap[IO, Address, LastTransactionReferenceState]().asResource
-          waitingTransactions <- MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[DAGTransaction]]]().asResource
-          transactionStorage = new TransactionStorage[IO](lastAccepted, waitingTransactions)
+          waitingTransactions <- MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[Transaction]]]().asResource
+          transactionStorage = new TransactionStorage[IO](lastAccepted, waitingTransactions, TransactionReference.empty)
           key1 <- KeyPairGenerator.makeKeyPair.asResource
           address1 = key1.getPublic.toAddress
           key2 <- KeyPairGenerator.makeKeyPair.asResource
