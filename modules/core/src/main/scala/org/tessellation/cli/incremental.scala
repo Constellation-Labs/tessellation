@@ -12,7 +12,7 @@ import eu.timepit.refined.types.numeric.NonNegLong
 
 object incremental {
   val lastFullGlobalSnapshot: Map[AppEnvironment, SnapshotOrdinal] = Map(
-    Mainnet -> SnapshotOrdinal(0L), // TODO: set before mainnet release
+    Mainnet -> SnapshotOrdinal(766717L),
     Testnet -> SnapshotOrdinal(736766L),
     Integrationnet -> SnapshotOrdinal(0L)
   )
