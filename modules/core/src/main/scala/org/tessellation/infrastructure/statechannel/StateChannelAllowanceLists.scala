@@ -20,21 +20,7 @@ object StateChannelAllowanceLists {
     env match {
       case Dev => none
 
-      case Testnet =>
-        allowanceMap(
-          Address("DAG8gMagrwoJ4nAMjbGx17WB5D6nqBEPZYChc3zH") ->
-            NonEmptySet.of(
-              "1f1494da3bf0fdf70faff3fd21cebcd322b2b4d0abc5107924a0a70239afe12c480c9ca9f70ec125bee15781e93310f2a5d726c0f26b287785d009ef93bcaa77",
-              "1ec3c11867e3cd984a31db77e053c4105c78115ae604503fd9b0ef03399efd41464ac6efdf54cb3cdaa480be5262e7bd3fd2e1b6cc6bdc6dc3cee94f31c90856",
-              "3fd28a8c11a56434b1806abc8f244a0db8896f3eb53951a9712a9e7085af88097290ef8169752b21a0f62f7ae4c5002db9cb46ba791a3253caf41cfa9cb3135a"
-            ),
-          Address("DAG3spyM8ZguHxPaJC9K6gCPus2HqPwz5KtguaBK") ->
-            NonEmptySet.of(
-              "a2dcfae447ee1f90803c62083c614357fedab2e8cc21fcd7adff7f3fd3f435b6f259392b7d888758ea508d3442323ef837267dfd4e3421511237ed1f56d54faf",
-              "189f68052ccdec7486c7406b1903e8dfa0c2caabe7586861aba8e3009fc898eadd50297c84525cd074bc4a635f8e3e6ac2517ba5993465946c512dbd1a9ca783",
-              "e75dce5920c141d38be8eef0fca5042e7ca5c26becc4d46cc189e180cab60d5ff1070daa109c9425ca74ac8823ff426bbd4597fcdf19d06c8af29bdebb34d821"
-            )
-        ).some
+      case Testnet => none
 
       case Integrationnet =>
         allowanceMap(
