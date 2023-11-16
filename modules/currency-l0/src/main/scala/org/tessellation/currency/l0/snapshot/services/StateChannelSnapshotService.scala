@@ -79,14 +79,23 @@ object StateChannelSnapshotService {
       } yield binary
 
       def consume(signedArtifact: Signed[CurrencySnapshotArtifact], context: CurrencySnapshotContext): F[Unit] = for {
+        binary <- createBinary(signedArtifact)
+        binaryHashed <- binary.toHashed
+        identifier <- identifierStorage.get
+        _ <- lastBinaryHashStorage.set(binaryHashed.hash)
         _ <- dataApplicationSnapshotAcceptanceManager.traverse { manager =>
           snapshotStorage.head.map { lastSnapshot =>
             lastSnapshot.flatMap { case (value, _) => value.dataApplication }
           }.flatMap(manager.consumeSignedMajorityArtifact(_, signedArtifact))
         }
-        binary <- createBinary(signedArtifact)
-        binaryHashed <- binary.toHashed
-        identifier <- identifierStorage.get
+        _ <- snapshotStorage
+          .prepend(signedArtifact, context.snapshotInfo)
+          .ifM(
+            Applicative[F].unit,
+            logger.error(
+              s"Cannot save CurrencySnapshot ordinal=${signedArtifact.ordinal} for metagraph identifier=${context.address} into the storage."
+            )
+          )
         _ <- retryingOnFailuresAndAllErrors[Either[NonEmptyList[StateChannelValidationError], Unit]](
           retryPolicy,
           wasSuccessful,
@@ -104,13 +113,6 @@ object StateChannelSnapshotService {
               }
           }
         )
-        _ <- lastBinaryHashStorage.set(binaryHashed.hash)
-        _ <- snapshotStorage
-          .prepend(signedArtifact, context.snapshotInfo)
-          .ifM(
-            Applicative[F].unit,
-            logger.error("Cannot save CurrencySnapshot into the storage")
-          )
       } yield ()
     }
 }

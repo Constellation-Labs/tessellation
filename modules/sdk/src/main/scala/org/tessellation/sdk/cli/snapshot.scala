@@ -27,14 +27,18 @@ object snapshot {
     .env[Path]("CL_INCREMENTAL_SNAPSHOT_TMP_STORED_PATH", help = "Path to tmp storage of incremental snapshot")
     .withDefault(Path("data/incremental_snapshot_tmp"))
 
-  val opts = (snapshotPath, incrementalPersistedSnapshotPath, incrementalTmpSnapshotPath).tupled.mapValidated {
-    case (snapshotPath, incrementalPersistedSnapshotPath, incrementalTmpSnapshotPath)
+  val snapshotInfoPath: Opts[Path] = Opts
+    .env[Path]("CL_SNAPSHOT_INFO_PATH", help = "Path to store snapshot infos")
+    .withDefault(Path("data/snapshot_info"))
+
+  val opts = (snapshotPath, incrementalPersistedSnapshotPath, incrementalTmpSnapshotPath, snapshotInfoPath).tupled.mapValidated {
+    case (snapshotPath, incrementalPersistedSnapshotPath, incrementalTmpSnapshotPath, snapshotInfoPath)
         if snapshotPath =!= incrementalPersistedSnapshotPath && incrementalPersistedSnapshotPath =!= incrementalTmpSnapshotPath =>
-      (snapshotPath, incrementalPersistedSnapshotPath, incrementalTmpSnapshotPath).validNel[String]
+      (snapshotPath, incrementalPersistedSnapshotPath, incrementalTmpSnapshotPath, snapshotInfoPath).validNel[String]
     case _ =>
-      "Paths for global snapshot and incremental snapshot (both persisted and tmp) must be different.".invalidNel[(Path, Path, Path)]
+      "Paths for global snapshot and incremental snapshot (both persisted and tmp) must be different.".invalidNel[(Path, Path, Path, Path)]
   }.map {
-    case (snapshotPath, incrementalPersistedSnapshotPath, incrementalTmpSnapshotPath) =>
+    case (snapshotPath, incrementalPersistedSnapshotPath, incrementalTmpSnapshotPath, snapshotInfoPath) =>
       SnapshotConfig(
         consensus = ConsensusConfig(
           timeTriggerInterval = 43.seconds,
@@ -45,7 +49,8 @@ object snapshot {
         snapshotPath = snapshotPath,
         incrementalTmpSnapshotPath = incrementalTmpSnapshotPath,
         incrementalPersistedSnapshotPath = incrementalPersistedSnapshotPath,
-        inMemoryCapacity = 10L
+        inMemoryCapacity = 10L,
+        snapshotInfoPath = snapshotInfoPath
       )
   }
 }

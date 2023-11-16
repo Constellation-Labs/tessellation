@@ -2,15 +2,17 @@ package org.tessellation.currency.l0.modules
 
 import cats.effect.kernel.Async
 import cats.effect.std.{Random, Supervisor}
-import cats.syntax.flatMap._
-import cats.syntax.functor._
+import cats.syntax.all._
 
+import org.tessellation.currency.dataApplication.BaseDataApplicationL0Service
+import org.tessellation.currency.dataApplication.storage.CalculatedStateLocalFileSystemStorage
 import org.tessellation.currency.l0.node.IdentifierStorage
 import org.tessellation.currency.l0.snapshot.storages.LastBinaryHashStorage
+import org.tessellation.currency.schema.currency
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.L0Peer
-import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import org.tessellation.sdk.config.types.SnapshotConfig
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, L0ClusterStorage, SessionStorage}
 import org.tessellation.sdk.domain.collateral.LatestBalances
@@ -18,26 +20,43 @@ import org.tessellation.sdk.domain.node.NodeStorage
 import org.tessellation.sdk.domain.snapshot.storage.{LastSnapshotStorage, SnapshotStorage}
 import org.tessellation.sdk.infrastructure.cluster.storage.L0ClusterStorage
 import org.tessellation.sdk.infrastructure.gossip.RumorStorage
-import org.tessellation.sdk.infrastructure.snapshot.storage.{LastSnapshotStorage, SnapshotLocalFileSystemStorage, SnapshotStorage}
+import org.tessellation.sdk.infrastructure.snapshot.storage._
 import org.tessellation.sdk.modules.SdkStorages
 
+import fs2.io.file.Path
+
 object Storages {
+
+  def dataApplicationCalculatedStatePath = Path("data/calculated_state")
 
   def make[F[_]: Async: KryoSerializer: Supervisor: Random](
     sdkStorages: SdkStorages[F],
     snapshotConfig: SnapshotConfig,
-    globalL0Peer: L0Peer
+    globalL0Peer: L0Peer,
+    dataApplication: Option[BaseDataApplicationL0Service[F]]
   ): F[Storages[F]] =
     for {
       snapshotLocalFileSystemStorage <- SnapshotLocalFileSystemStorage.make[F, CurrencyIncrementalSnapshot](
         snapshotConfig.incrementalPersistedSnapshotPath
       )
+      snapshotInfoLocalFileSystemStorage <- SnapshotInfoLocalFileSystemStorage
+        .make[F, currency.CurrencySnapshotStateProof, CurrencySnapshotInfo](
+          snapshotConfig.snapshotInfoPath
+        )
       snapshotStorage <- SnapshotStorage
-        .make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](snapshotLocalFileSystemStorage, snapshotConfig.inMemoryCapacity)
+        .make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
+          snapshotLocalFileSystemStorage,
+          snapshotInfoLocalFileSystemStorage,
+          snapshotConfig.inMemoryCapacity,
+          SnapshotOrdinal.MinValue
+        )
       lastGlobalSnapshotStorage <- LastSnapshotStorage.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
       globalL0ClusterStorage <- L0ClusterStorage.make[F](globalL0Peer)
       lastBinaryHashStorage <- LastBinaryHashStorage.make[F]
       identifierStorage <- IdentifierStorage.make[F]
+      maybeCalculatedStateStorage <- dataApplication.traverse { _ =>
+        CalculatedStateLocalFileSystemStorage.make[F](dataApplicationCalculatedStatePath)
+      }
     } yield
       new Storages[F](
         globalL0Cluster = globalL0ClusterStorage,
@@ -49,7 +68,8 @@ object Storages {
         snapshot = snapshotStorage,
         lastGlobalSnapshot = lastGlobalSnapshotStorage,
         incrementalSnapshotLocalFileSystemStorage = snapshotLocalFileSystemStorage,
-        identifier = identifierStorage
+        identifier = identifierStorage,
+        calculatedStateStorage = maybeCalculatedStateStorage
       ) {}
 }
 
@@ -63,5 +83,6 @@ sealed abstract class Storages[F[_]] private (
   val snapshot: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo] with LatestBalances[F],
   val lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
   val incrementalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, CurrencyIncrementalSnapshot],
-  val identifier: IdentifierStorage[F]
+  val identifier: IdentifierStorage[F],
+  val calculatedStateStorage: Option[CalculatedStateLocalFileSystemStorage[F]]
 )

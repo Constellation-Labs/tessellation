@@ -5,12 +5,13 @@ import cats.effect.std.Supervisor
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
+import org.tessellation.cli.{AppEnvironment, incremental}
 import org.tessellation.domain.snapshot.storages.SnapshotDownloadStorage
 import org.tessellation.infrastructure.snapshot.SnapshotDownloadStorage
 import org.tessellation.infrastructure.trust.storage.TrustStorage
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema._
 import org.tessellation.schema.trust.PeerObservationAdjustmentUpdateBatch
-import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshot, GlobalSnapshotInfo}
 import org.tessellation.sdk.config.types.{SdkConfig, SnapshotConfig}
 import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tessellation.sdk.domain.collateral.LatestBalances
@@ -19,7 +20,11 @@ import org.tessellation.sdk.domain.seedlist.SeedlistEntry
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.domain.trust.storage.TrustStorage
 import org.tessellation.sdk.infrastructure.gossip.RumorStorage
-import org.tessellation.sdk.infrastructure.snapshot.storage.{SnapshotLocalFileSystemStorage, SnapshotStorage}
+import org.tessellation.sdk.infrastructure.snapshot.storage.{
+  SnapshotInfoLocalFileSystemStorage,
+  SnapshotLocalFileSystemStorage,
+  SnapshotStorage
+}
 import org.tessellation.sdk.modules.SdkStorages
 
 object Storages {
@@ -29,7 +34,8 @@ object Storages {
     sdkConfig: SdkConfig,
     seedlist: Option[Set[SeedlistEntry]],
     snapshotConfig: SnapshotConfig,
-    trustUpdates: Option[PeerObservationAdjustmentUpdateBatch]
+    trustUpdates: Option[PeerObservationAdjustmentUpdateBatch],
+    environment: AppEnvironment
   ): F[Storages[F]] =
     for {
       trustStorage <- TrustStorage.make[F](trustUpdates, sdkConfig.trustStorage, seedlist.map(_.map(_.peerId)))
@@ -42,9 +48,15 @@ object Storages {
       fullGlobalSnapshotLocalFileSystemStorage <- SnapshotLocalFileSystemStorage.make[F, GlobalSnapshot](
         snapshotConfig.snapshotPath
       )
+      incrementalGlobalSnapshotInfoLocalFileSystemStorage <- SnapshotInfoLocalFileSystemStorage
+        .make[F, GlobalSnapshotStateProof, GlobalSnapshotInfo](
+          snapshotConfig.snapshotInfoPath
+        )
       globalSnapshotStorage <- SnapshotStorage.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
         incrementalGlobalSnapshotPersistedLocalFileSystemStorage,
-        snapshotConfig.inMemoryCapacity
+        incrementalGlobalSnapshotInfoLocalFileSystemStorage,
+        snapshotConfig.inMemoryCapacity,
+        incremental.lastFullGlobalSnapshot.get(environment).getOrElse(SnapshotOrdinal.MinValue)
       )
       snapshotDownloadStorage = SnapshotDownloadStorage
         .make[F](
@@ -62,7 +74,8 @@ object Storages {
         globalSnapshot = globalSnapshotStorage,
         fullGlobalSnapshot = fullGlobalSnapshotLocalFileSystemStorage,
         incrementalGlobalSnapshotLocalFileSystemStorage = incrementalGlobalSnapshotPersistedLocalFileSystemStorage,
-        snapshotDownload = snapshotDownloadStorage
+        snapshotDownload = snapshotDownloadStorage,
+        globalSnapshotInfoLocalFileSystemStorage = incrementalGlobalSnapshotInfoLocalFileSystemStorage
       ) {}
 }
 
@@ -75,5 +88,6 @@ sealed abstract class Storages[F[_]] private (
   val globalSnapshot: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo] with LatestBalances[F],
   val fullGlobalSnapshot: SnapshotLocalFileSystemStorage[F, GlobalSnapshot],
   val incrementalGlobalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
-  val snapshotDownload: SnapshotDownloadStorage[F]
+  val snapshotDownload: SnapshotDownloadStorage[F],
+  val globalSnapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfo]
 )

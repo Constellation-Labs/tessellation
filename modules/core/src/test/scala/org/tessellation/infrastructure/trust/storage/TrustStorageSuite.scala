@@ -17,6 +17,7 @@ import org.tessellation.sdk.domain.trust.storage._
 import eu.timepit.refined.api.Refined
 import eu.timepit.refined.auto._
 import eu.timepit.refined.numeric.NonNegative
+import eu.timepit.refined.types.numeric.NonNegLong
 import monocle.Monocle.toAppliedFocusOps
 import org.scalacheck.Gen
 import weaver.SimpleIOSuite
@@ -119,7 +120,7 @@ object TrustStorageSuite extends SimpleIOSuite with Checkers {
       trust <- store.getNextOrdinalTrust
     } yield
       expect.all(
-        SnapshotOrdinal(1000L) === trust.ordinal,
+        SnapshotOrdinal(NonNegLong(1000L)) === trust.ordinal,
         PublicTrustMap.empty === trust.peerLabels
       )
   }
@@ -146,10 +147,10 @@ object TrustStorageSuite extends SimpleIOSuite with Checkers {
         } yield
           expect.all(
             trust === storedTrust,
-            Order.gt(SnapshotOrdinal(1000L), ordinal),
+            Order.gt(SnapshotOrdinal(NonNegLong(1000L)), ordinal),
             maybeOrdinalPublicTrust.isEmpty,
             next.trust.isEmpty,
-            SnapshotOrdinal(1000L) === next.ordinal,
+            SnapshotOrdinal(NonNegLong(1000L)) === next.ordinal,
             PublicTrustMap.empty === next.peerLabels
           )
     }
@@ -173,7 +174,7 @@ object TrustStorageSuite extends SimpleIOSuite with Checkers {
         expectedTrust <- store.getTrust
       } yield
         expect.all(
-          Order.lt(SnapshotOrdinal(1000L), ordinal),
+          Order.lt(SnapshotOrdinal(NonNegLong(1000L)), ordinal),
           expectedTrust.isEmpty,
           maybeOrdinalPublicTrust.isEmpty
         )
@@ -201,8 +202,8 @@ object TrustStorageSuite extends SimpleIOSuite with Checkers {
           next <- store.getNextOrdinalTrust
         } yield
           expect.all(
-            Order.lt(SnapshotOrdinal(1000L), ordinal),
-            maybeOrdinalPublicTrust.map(_.ordinal) === SnapshotOrdinal(1000L).some,
+            Order.lt(SnapshotOrdinal(NonNegLong(1000L)), ordinal),
+            maybeOrdinalPublicTrust.map(_.ordinal) === SnapshotOrdinal(NonNegLong(1000L)).some,
             maybeOrdinalPublicTrust.map(_.labels) === expectedOrdinalPublicTrust.some,
             trust === next.trust
           )
@@ -235,7 +236,7 @@ object TrustStorageSuite extends SimpleIOSuite with Checkers {
           expectedCurrent <- store.getCurrentOrdinalTrust
         } yield
           expect.all(
-            Order.gt(SnapshotOrdinal(1000L + 500L), ordinal),
+            Order.gt(SnapshotOrdinal(NonNegLong(1000L + 500L)), ordinal),
             trust === next.trust,
             OrdinalTrustMap.empty === expectedCurrent
           )
@@ -275,9 +276,9 @@ object TrustStorageSuite extends SimpleIOSuite with Checkers {
           secondNext <- store.getNextOrdinalTrust
         } yield
           expect.all(
-            Order.lteqv(SnapshotOrdinal(1000L + 500L), secondOrdinal),
+            Order.lteqv(SnapshotOrdinal(NonNegLong(1000L + 500L)), secondOrdinal),
             firstNext.trust === current.trust,
-            SnapshotOrdinal(1000L) === current.ordinal,
+            SnapshotOrdinal(NonNegLong(1000L)) === current.ordinal,
             PublicTrustMap.empty === current.peerLabels,
             SnapshotOrdinal(Refined.unsafeApply[Long, NonNegative](1000L * 2)) === secondNext.ordinal,
             secondNext.trust.isEmpty
@@ -297,7 +298,7 @@ object TrustStorageSuite extends SimpleIOSuite with Checkers {
       case (trust, peerId) =>
         for {
           store <- mkTrustStorage(trust)
-          gossipOrdinal = SnapshotOrdinal(2000L)
+          gossipOrdinal = SnapshotOrdinal(NonNegLong(2000L))
 
           gossipOrdinalPublicTrust = SnapshotOrdinalPublicTrust(
             gossipOrdinal,
@@ -309,7 +310,7 @@ object TrustStorageSuite extends SimpleIOSuite with Checkers {
           secondNext <- store.getNextOrdinalTrust
         } yield
           expect.all(
-            SnapshotOrdinal(1000L) === secondNext.ordinal,
+            SnapshotOrdinal(NonNegLong(1000L)) === secondNext.ordinal,
             secondNext.trust.isEmpty,
             PublicTrustMap.empty === secondNext.peerLabels
           )
@@ -324,7 +325,7 @@ object TrustStorageSuite extends SimpleIOSuite with Checkers {
     forall(gen) { trust =>
       for {
         store <- mkTrustStorage(TrustMap.empty.copy(trust = trust))
-        gossipOrdinal = SnapshotOrdinal(1000L)
+        gossipOrdinal = SnapshotOrdinal(NonNegLong(1000L))
 
         _ <- store.updateNext(gossipOrdinal)
 
@@ -351,7 +352,7 @@ object TrustStorageSuite extends SimpleIOSuite with Checkers {
       } yield
         expect.all(
           firstNext.peerLabels.value.contains(peerId),
-          SnapshotOrdinal(1000L) === secondNext.ordinal,
+          SnapshotOrdinal(NonNegLong(1000L)) === secondNext.ordinal,
           firstNext.trust === secondNext.trust,
           firstNext.peerLabels === secondNext.peerLabels
         )
@@ -366,7 +367,7 @@ object TrustStorageSuite extends SimpleIOSuite with Checkers {
     forall(gen) { trust =>
       for {
         store <- mkTrustStorage(TrustMap.empty.copy(trust = trust))
-        gossipOrdinal = SnapshotOrdinal(1000L)
+        gossipOrdinal = SnapshotOrdinal(NonNegLong(1000L))
 
         _ <- store.updateNext(gossipOrdinal)
 
@@ -384,7 +385,7 @@ object TrustStorageSuite extends SimpleIOSuite with Checkers {
       } yield
         expect.all(
           !firstNext.peerLabels.value.contains(peerId),
-          SnapshotOrdinal(1000L) === secondNext.ordinal,
+          SnapshotOrdinal(NonNegLong(1000L)) === secondNext.ordinal,
           firstNext.trust === secondNext.trust,
           secondNext.peerLabels.value.contains(peerId),
           secondNext.peerLabels.value.get(peerId).contains(gossipPublicTrust)

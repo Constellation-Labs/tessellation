@@ -52,6 +52,7 @@ object Programs {
       keyPair,
       config.snapshot,
       storages.incrementalGlobalSnapshotLocalFileSystemStorage,
+      storages.globalSnapshotInfoLocalFileSystemStorage,
       storages.snapshotDownload,
       globalSnapshotContextFns
     )

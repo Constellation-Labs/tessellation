@@ -184,6 +184,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         case _ => None.pure[IO]
       }
 
+    def loadInfo(ordinal: SnapshotOrdinal): IO[Option[GlobalSnapshotInfo]] = None.pure[F]
+
     val signedValidator = SignedValidator.make[IO]
     val blockValidator =
       BlockValidator.make[IO](
@@ -214,7 +216,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         .make[IO](stateChannelValidator, stateChannelManager, currencySnapshotContextFns, jsonBrotliBinarySerializer)
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make[IO](blockAcceptanceManager, stateChannelProcessor, Amount.empty)
       snapshotContextFunctions = GlobalSnapshotContextFunctions.make[IO](snapshotAcceptanceManager)
-    } yield GlobalSnapshotTraverse.make[IO](loadGlobalIncrementalSnapshot, loadGlobalSnapshot, snapshotContextFunctions, rollbackHash)
+    } yield
+      GlobalSnapshotTraverse.make[IO](loadGlobalIncrementalSnapshot, loadGlobalSnapshot, loadInfo, snapshotContextFunctions, rollbackHash)
   }
 
   test("can compute state for given incremental global snapshot") { res =>

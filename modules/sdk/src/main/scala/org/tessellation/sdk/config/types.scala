@@ -67,7 +67,8 @@ object types {
     snapshotPath: Path,
     incrementalTmpSnapshotPath: Path,
     incrementalPersistedSnapshotPath: Path,
-    inMemoryCapacity: NonNegLong
+    inMemoryCapacity: NonNegLong,
+    snapshotInfoPath: Path
   )
 
   case class HttpClientConfig(

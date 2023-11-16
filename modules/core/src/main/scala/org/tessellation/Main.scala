@@ -55,7 +55,8 @@ object Main
           method.sdkConfig,
           sdk.seedlist,
           cfg.snapshot,
-          trustRatings
+          trustRatings,
+          cfg.environment
         )
         .asResource
       services <- Services

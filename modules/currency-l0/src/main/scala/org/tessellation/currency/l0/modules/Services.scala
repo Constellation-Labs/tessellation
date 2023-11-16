@@ -3,11 +3,9 @@ package org.tessellation.currency.l0.modules
 import java.security.KeyPair
 
 import cats.data.NonEmptySet
-import cats.effect.kernel.Async
+import cats.effect.Async
 import cats.effect.std.{Random, Supervisor}
-import cats.syntax.applicative._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
+import cats.syntax.all._
 
 import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
 import org.tessellation.currency.l0.config.types.AppConfig
@@ -59,9 +57,10 @@ object Services {
 
       l0NodeContext = L0NodeContext.make[F](storages.snapshot)
 
-      dataApplicationAcceptanceManager = maybeDataApplication.map(service =>
-        DataApplicationSnapshotAcceptanceManager.make[F](service, l0NodeContext)
-      )
+      dataApplicationAcceptanceManager = (maybeDataApplication, storages.calculatedStateStorage).mapN {
+        case (service, storage) =>
+          DataApplicationSnapshotAcceptanceManager.make[F](service, l0NodeContext, storage)
+      }
 
       stateChannelSnapshotService <- StateChannelSnapshotService
         .make[F](

@@ -6,6 +6,7 @@ import cats.syntax.all._
 
 import scala.util.control.NoStackTrace
 
+import org.tessellation.currency.dataApplication.storage.CalculatedStateLocalFileSystemStorage
 import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, DataApplicationTraverse, L0NodeContext}
 import org.tessellation.currency.l0.node.IdentifierStorage
 import org.tessellation.currency.l0.snapshot.CurrencySnapshotArtifact
@@ -40,7 +41,7 @@ object Rollback {
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
     collateral: Collateral[F],
     consensusManager: ConsensusManager[F, SnapshotOrdinal, CurrencySnapshotArtifact, CurrencySnapshotContext],
-    dataApplication: Option[BaseDataApplicationL0Service[F]]
+    dataApplication: Option[(BaseDataApplicationL0Service[F], CalculatedStateLocalFileSystemStorage[F])]
   )(implicit context: L0NodeContext[F]): Rollback[F] = new Rollback[F] {
     private val logger = Slf4jLogger.getLogger[F]
 
@@ -67,11 +68,17 @@ object Rollback {
 
       _ <- lastBinaryHashStorage.set(lastBinaryHash)
 
-      _ <- dataApplication.map { da =>
-        val fetchSnapshot: Hash => F[Option[Hashed[GlobalIncrementalSnapshot]]] = (hash: Hash) => globalL0Service.pullGlobalSnapshot(hash)
-        val dataApplicationTraverse = DataApplicationTraverse.make[F](globalSnapshot, fetchSnapshot, da, identifier)
+      _ <- dataApplication.map {
+        case ((da, cs)) =>
+          val fetchSnapshot: Hash => F[Option[Hashed[GlobalIncrementalSnapshot]]] = (hash: Hash) => globalL0Service.pullGlobalSnapshot(hash)
 
-        dataApplicationTraverse.loadChain()
+          DataApplicationTraverse.make[F](globalSnapshot, fetchSnapshot, da, cs, identifier).flatMap { dat =>
+            dat.loadChain().flatMap {
+              case Some(_) => Applicative[F].unit
+              case _       => new Exception(s"Metagraph traversing failed").raiseError[F, Unit]
+            }
+          }
+
       }.getOrElse(Applicative[F].unit)
 
       _ <- consensusManager.startFacilitatingAfterRollback(
