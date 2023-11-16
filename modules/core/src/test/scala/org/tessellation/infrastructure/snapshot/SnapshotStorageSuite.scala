@@ -9,7 +9,11 @@ import org.tessellation.ext.kryo._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.{GlobalSnapshot, address, balance, _}
-import org.tessellation.sdk.infrastructure.snapshot.storage.{SnapshotLocalFileSystemStorage, SnapshotStorage}
+import org.tessellation.sdk.infrastructure.snapshot.storage.{
+  SnapshotInfoLocalFileSystemStorage,
+  SnapshotLocalFileSystemStorage,
+  SnapshotStorage
+}
 import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.{KeyPairGenerator, SecurityProvider}
@@ -32,8 +36,16 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
     }
 
   def mkStorage(tmpDir: File)(implicit K: KryoSerializer[IO], S: Supervisor[IO]) =
-    SnapshotLocalFileSystemStorage.make[IO, GlobalIncrementalSnapshot](Path(tmpDir.pathAsString)).flatMap {
-      SnapshotStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](_, 5L)
+    SnapshotLocalFileSystemStorage.make[IO, GlobalIncrementalSnapshot](Path(tmpDir.pathAsString)).flatMap { snapshotFileStorage =>
+      SnapshotInfoLocalFileSystemStorage.make[IO, GlobalSnapshotStateProof, GlobalSnapshotInfo](Path(tmpDir.pathAsString)).flatMap {
+        snapshotInfoFileStorage =>
+          SnapshotStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
+            snapshotFileStorage,
+            snapshotInfoFileStorage,
+            inMemoryCapacity = 5L,
+            SnapshotOrdinal.MinValue
+          )
+      }
     }
 
   def mkSnapshots(

@@ -1,7 +1,7 @@
 package org.tessellation.schema
 
 import cats.Order
-import cats.kernel._
+import cats.kernel.{Next, PartialOrder, PartialPrevious}
 import cats.syntax.semigroup._
 
 import derevo.cats.{order, show}
@@ -19,15 +19,19 @@ case class SnapshotOrdinal(value: NonNegLong) {
 }
 
 object SnapshotOrdinal {
-  val MinValue: SnapshotOrdinal = SnapshotOrdinal(NonNegLong.MinValue)
-
-  def unsafeApply(value: Long): SnapshotOrdinal =
-    SnapshotOrdinal(Refined.unsafeApply(value))
+  def apply(value: Long): Option[SnapshotOrdinal] =
+    NonNegLong.from(value).toOption.map(SnapshotOrdinal(_))
 
   implicit val next: Next[SnapshotOrdinal] = new Next[SnapshotOrdinal] {
     def next(a: SnapshotOrdinal): SnapshotOrdinal = SnapshotOrdinal(a.value |+| NonNegLong(1L))
     def partialOrder: PartialOrder[SnapshotOrdinal] = Order[SnapshotOrdinal]
   }
+
+  val MinValue: SnapshotOrdinal = SnapshotOrdinal(NonNegLong.MinValue)
+  val MinIncrementalValue: SnapshotOrdinal = next.next(MinValue)
+
+  def unsafeApply(value: Long): SnapshotOrdinal =
+    SnapshotOrdinal(Refined.unsafeApply(value))
 
   implicit val partialPrevious: PartialPrevious[SnapshotOrdinal] = new PartialPrevious[SnapshotOrdinal] {
     def partialOrder: PartialOrder[SnapshotOrdinal] = Order[SnapshotOrdinal]

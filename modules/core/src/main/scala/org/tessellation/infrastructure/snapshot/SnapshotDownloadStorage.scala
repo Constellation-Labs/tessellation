@@ -13,8 +13,6 @@ import org.tessellation.sdk.infrastructure.snapshot.storage.SnapshotLocalFileSys
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
-import eu.timepit.refined.types.numeric.NonNegLong
-
 object SnapshotDownloadStorage {
   def make[F[_]: Async: KryoSerializer](
     tmpStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
@@ -53,7 +51,7 @@ object SnapshotDownloadStorage {
         persistedStorage
           .findFiles(_.name.toLongOption.exists(_ > ordinal.value.value))
           .map {
-            _.map(_.name.toLongOption.flatMap(NonNegLong.from(_).toOption)).collect { case Some(o) => SnapshotOrdinal(o) }
+            _.map(_.name.toLongOption.flatMap(SnapshotOrdinal(_))).collect { case Some(a) => a }
           }
           .flatMap {
             _.compile.toList.flatMap {

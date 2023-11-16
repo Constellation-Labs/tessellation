@@ -57,8 +57,10 @@ abstract class CurrencyL0App(
     val cfg = method.appConfig
 
     for {
+      dataApplicationService <- dataApplication.sequence
+
       queues <- Queues.make[IO](sdkQueues).asResource
-      storages <- Storages.make[IO](sdkStorages, cfg.snapshot, method.globalL0Peer).asResource
+      storages <- Storages.make[IO](sdkStorages, cfg.snapshot, method.globalL0Peer, dataApplicationService).asResource
       p2pClient = P2PClient.make[IO](sdkP2PClient, sdkResources.client, sdkServices.session)
       validators = Validators.make[IO](seedlist)
       implicit0(nodeContext: L0NodeContext[IO]) = L0NodeContext.make[IO](storages.snapshot)
@@ -67,7 +69,6 @@ abstract class CurrencyL0App(
         method.sdkConfig.priorityPeerIds,
         cfg.environment
       ).asResource
-      dataApplicationService <- dataApplication.sequence
       services <- Services
         .make[IO](
           p2pClient,
@@ -95,7 +96,7 @@ abstract class CurrencyL0App(
         services,
         p2pClient,
         services.snapshotContextFunctions,
-        dataApplicationService
+        dataApplicationService.zip(storages.calculatedStateStorage)
       )
       healthChecks <- HealthChecks
         .make[IO](

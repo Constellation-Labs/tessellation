@@ -55,6 +55,9 @@ trait BaseDataApplicationService[F[_]] {
   def serializeBlock(block: Signed[DataApplicationBlock]): F[Array[Byte]]
   def deserializeBlock(bytes: Array[Byte]): F[Either[Throwable, Signed[DataApplicationBlock]]]
 
+  def serializeCalculatedState(state: DataCalculatedState): F[Array[Byte]]
+  def deserializeCalculatedState(bytes: Array[Byte]): F[Either[Throwable, DataCalculatedState]]
+
   def dataEncoder: Encoder[DataUpdate]
   def dataDecoder: Decoder[DataUpdate]
 
@@ -100,6 +103,9 @@ trait DataApplicationService[F[_], D <: DataUpdate, DON <: DataOnChainState, DOF
 
   def serializeBlock(block: Signed[DataApplicationBlock]): F[Array[Byte]]
   def deserializeBlock(bytes: Array[Byte]): F[Either[Throwable, Signed[DataApplicationBlock]]]
+
+  def serializeCalculatedState(state: DOF): F[Array[Byte]]
+  def deserializeCalculatedState(bytes: Array[Byte]): F[Either[Throwable, DOF]]
 
   def dataEncoder: Encoder[D]
   def dataDecoder: Decoder[D]
@@ -257,6 +263,15 @@ object BaseDataApplicationService {
       def deserializeUpdate(update: Array[Byte]): F[Either[Throwable, DataUpdate]] =
         service.deserializeUpdate(update).map(_.widen[DataUpdate])
 
+      def serializeCalculatedState(state: DataCalculatedState): F[Array[Byte]] =
+        state match {
+          case a: DOF => service.serializeCalculatedState(a)
+          case _      => UnexpectedInput.raiseError[F, Array[Byte]]
+        }
+
+      def deserializeCalculatedState(bytes: Array[Byte]): F[Either[Throwable, DataCalculatedState]] =
+        service.deserializeCalculatedState(bytes).map(_.widen[DataCalculatedState])
+
       def dataEncoder: Encoder[DataUpdate] = new Encoder[DataUpdate] {
         final def apply(a: DataUpdate): Json = a match {
           case data: D => data.asJson(service.dataEncoder)
@@ -303,6 +318,10 @@ object BaseDataApplicationL0Service {
       def serializeBlock(block: Signed[DataApplicationBlock]): F[Array[Byte]] = base.serializeBlock(block)
 
       def deserializeBlock(bytes: Array[Byte]): F[Either[Throwable, Signed[DataApplicationBlock]]] = base.deserializeBlock(bytes)
+
+      def serializeCalculatedState(state: DataCalculatedState): F[Array[Byte]] = base.serializeCalculatedState(state)
+
+      def deserializeCalculatedState(bytes: Array[Byte]): F[Either[Throwable, DataCalculatedState]] = base.deserializeCalculatedState(bytes)
 
       def dataEncoder: Encoder[DataUpdate] = base.dataEncoder
 
@@ -364,6 +383,10 @@ object BaseDataApplicationL1Service {
       def serializeBlock(block: Signed[DataApplicationBlock]): F[Array[Byte]] = base.serializeBlock(block)
 
       def deserializeBlock(bytes: Array[Byte]): F[Either[Throwable, Signed[DataApplicationBlock]]] = base.deserializeBlock(bytes)
+
+      def serializeCalculatedState(state: DataCalculatedState): F[Array[Byte]] = base.serializeCalculatedState(state)
+
+      def deserializeCalculatedState(bytes: Array[Byte]): F[Either[Throwable, DataCalculatedState]] = base.deserializeCalculatedState(bytes)
 
       def dataEncoder: Encoder[DataUpdate] = base.dataEncoder
 

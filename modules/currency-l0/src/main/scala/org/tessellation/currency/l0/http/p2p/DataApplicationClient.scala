@@ -23,7 +23,9 @@ trait DataApplicationClient[F[_]] {
 object DataApplicationClient {
   def make[F[_]: Async: SecurityProvider](client: Client[F], session: Session[F]): DataApplicationClient[F] =
     new DataApplicationClient[F] with Http4sClientDsl[F] {
-      def getCalculatedState(implicit decoder: Decoder[DataCalculatedState]): PeerResponse[F, (SnapshotOrdinal, DataCalculatedState)] =
+      def getCalculatedState(
+        implicit decoder: Decoder[DataCalculatedState]
+      ): PeerResponse[F, (SnapshotOrdinal, DataCalculatedState)] =
         PeerResponse[F, (SnapshotOrdinal, DataCalculatedState)]("currency/state/calculated")(client, session)
     }
 }

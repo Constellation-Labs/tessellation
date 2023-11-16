@@ -17,7 +17,7 @@ import org.tessellation.schema.snapshot.Snapshot
 import org.tessellation.sdk.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage.UnableToPersistSnapshot
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
-import org.tessellation.storage.LocalFileSystemStorage
+import org.tessellation.storage.KryoLocalFileSystemStorage
 
 import better.files.File
 import fs2.io.file.Path
@@ -25,7 +25,7 @@ import io.estatico.newtype.ops._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 final class SnapshotLocalFileSystemStorage[F[_]: Async: KryoSerializer, S <: Snapshot] private (path: Path)
-    extends LocalFileSystemStorage[F, Signed[S]](path) {
+    extends KryoLocalFileSystemStorage[F, Signed[S]](path) {
 
   private val logger = Slf4jLogger.getLogger[F]
 

@@ -5,6 +5,7 @@ import java.security.KeyPair
 import cats.effect.Async
 import cats.effect.std.Random
 
+import org.tessellation.currency.dataApplication.storage.CalculatedStateLocalFileSystemStorage
 import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
 import org.tessellation.currency.l0.http.p2p.P2PClient
 import org.tessellation.currency.l0.snapshot.programs.{Download, Genesis, Rollback}
@@ -30,7 +31,7 @@ object Programs {
     services: Services[F],
     p2pClient: P2PClient[F],
     currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
-    dataApplication: Option[BaseDataApplicationL0Service[F]]
+    dataApplication: Option[(BaseDataApplicationL0Service[F], CalculatedStateLocalFileSystemStorage[F])]
   )(implicit context: L0NodeContext[F]): Programs[F] = {
     val peerSelect: PeerSelect[F] =
       PeerSelect.make(
@@ -47,7 +48,7 @@ object Programs {
         services.consensus,
         peerSelect,
         storages.identifier,
-        dataApplication
+        dataApplication.map { case (da, _) => da }
       )
 
     val globalL0PeerDiscovery = L0PeerDiscovery.make(

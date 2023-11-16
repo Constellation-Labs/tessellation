@@ -21,7 +21,20 @@ import better.files._
 import fs2.Stream
 import fs2.io.file.Path
 
-abstract class LocalFileSystemStorage[F[_]: KryoSerializer, A <: AnyRef: ClassTag](baseDir: Path)(
+abstract class KryoLocalFileSystemStorage[F[_]: KryoSerializer, A <: AnyRef: ClassTag](baseDir: Path)(implicit F: Async[F])
+    extends LocalFileSystemStorage[F, A](baseDir)
+    with KryoFileSystemStorage[F, A] {
+
+  def read(fileName: String): F[Option[A]] =
+    readBytes(fileName)
+      .flatMap(_.traverse(_.fromBinaryF))
+
+  def write(fileName: String, a: A): F[Unit] =
+    a.toBinaryF.flatMap(write(fileName, _))
+
+}
+
+abstract class LocalFileSystemStorage[F[_], A](baseDir: Path)(
   implicit F: Async[F]
 ) extends FileSystemStorage[F, A]
     with DiskSpace[F] {
@@ -43,10 +56,6 @@ abstract class LocalFileSystemStorage[F[_]: KryoSerializer, A <: AnyRef: ClassTa
     F.blocking((a / fileName).exists)
   }
 
-  def read(fileName: String): F[Option[A]] =
-    readBytes(fileName)
-      .flatMap(_.traverse(_.fromBinaryF))
-
   def readBytes(fileName: String): F[Option[Array[Byte]]] =
     dir
       .map(_ / fileName)
@@ -56,9 +65,6 @@ abstract class LocalFileSystemStorage[F[_]: KryoSerializer, A <: AnyRef: ClassTa
       .recover {
         case _: NoSuchFileException => none[Array[Byte]]
       }
-
-  def write(fileName: String, a: A): F[Unit] =
-    a.toBinaryF.flatMap(write(fileName, _))
 
   def write(fileName: String, bytes: Array[Byte]): F[Unit] =
     dir
@@ -96,6 +102,11 @@ abstract class LocalFileSystemStorage[F[_]: KryoSerializer, A <: AnyRef: ClassTa
   def getOccupiedSpace: F[Long] = dir.flatMap { a =>
     F.blocking(a.size)
   }
+
+  def listFiles: F[Stream[F, File]] =
+    dir
+      .flatMap(a => F.blocking(a.list))
+      .map(Stream.fromIterator(_, 1))
 
   def findFiles(condition: File => Boolean): F[Stream[F, File]] =
     dir

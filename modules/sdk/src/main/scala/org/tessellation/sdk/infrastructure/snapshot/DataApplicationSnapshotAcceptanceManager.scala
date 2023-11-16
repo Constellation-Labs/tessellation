@@ -16,6 +16,7 @@ import scala.util.control.NoStackTrace
 
 import org.tessellation.currency.dataApplication._
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
+import org.tessellation.currency.dataApplication.storage.CalculatedStateLocalFileSystemStorage
 import org.tessellation.currency.schema.currency.DataApplicationPart
 import org.tessellation.ext.cats.syntax.partialPrevious.catsSyntaxPartialPrevious
 import org.tessellation.schema.SnapshotOrdinal
@@ -59,7 +60,8 @@ object DataApplicationSnapshotAcceptanceManager {
 
   def make[F[_]: Async](
     service: BaseDataApplicationL0Service[F],
-    nodeContext: L0NodeContext[F]
+    nodeContext: L0NodeContext[F],
+    calculatedStateStorage: CalculatedStateLocalFileSystemStorage[F]
   ): DataApplicationSnapshotAcceptanceManager[F] = new DataApplicationSnapshotAcceptanceManager[F] {
     private val logger = Slf4jLogger.getLogger
 
@@ -70,7 +72,7 @@ object DataApplicationSnapshotAcceptanceManager {
         case (ordinal, state) =>
           CalculatedStateDoesNotMatchOrdinal(ordinal, expectedOrdinal)
             .raiseError[F, Unit]
-            .unlessA(ordinal === expectedOrdinal)
+            .whenA(ordinal =!= expectedOrdinal)
             .as(state)
       }
 
@@ -103,6 +105,7 @@ object DataApplicationSnapshotAcceptanceManager {
             .map(_.calculatedState)
             .semiflatMap(expectCalculatedStateHash(da.calculatedStateProof))
             .semiflatTap(service.setCalculatedState(artifact.ordinal, _))
+            .semiflatTap(calculatedStateStorage.write(artifact.ordinal, _)(service.serializeCalculatedState))
         }
         .value
         .void
@@ -177,17 +180,15 @@ object DataApplicationSnapshotAcceptanceManager {
         )
 
       newDataState.value.handleErrorWith { err =>
-        logger.error(err)("Unhandled exception during calculating new data application state, fallback to last data application").flatMap {
-          _ =>
-            service.getCalculatedState.map { lastCalculatedState =>
-              maybeLastDataApplication.map(
-                DataApplicationAcceptanceResult(
-                  _,
-                  lastCalculatedState._2
-                )
+        logger.error(err)("Unhandled exception during calculating new data application state, fallback to last data application") >>
+          service.getCalculatedState.map { lastCalculatedState =>
+            maybeLastDataApplication.map(
+              DataApplicationAcceptanceResult(
+                _,
+                lastCalculatedState._2
               )
-            }
-        }
+            )
+          }
       }
     }
   }

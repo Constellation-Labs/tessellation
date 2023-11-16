@@ -14,6 +14,7 @@ import cats.syntax.show._
 import cats.syntax.traverse._
 import cats.{Applicative, MonadThrow}
 
+import org.tessellation.cutoff.{LogarithmicOrdinalCutoff, OrdinalCutoff}
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.cats.syntax.partialPrevious._
 import org.tessellation.ext.crypto._
@@ -41,21 +42,35 @@ object SnapshotStorage {
     def mkHashCache = MapRef.ofSingleImmutableMap[F, Hash, Signed[S]](Map.empty)
     def mkNotPersistedCache = Ref.of(Set.empty[SnapshotOrdinal])
     def mkOffloadQueue = Queue.unbounded[F, SnapshotOrdinal]
+    def mkCutoffQueue = Queue.unbounded[F, SnapshotOrdinal]
 
     def mkLogger = Slf4jLogger.create[F]
 
-    (mkHeadRef, mkOrdinalCache, mkHashCache, mkNotPersistedCache, mkOffloadQueue, mkLogger).mapN {
-      (_, _, _, _, _, _)
+    (mkHeadRef, mkOrdinalCache, mkHashCache, mkNotPersistedCache, mkOffloadQueue, mkCutoffQueue, mkLogger).mapN {
+      (_, _, _, _, _, _, _)
     }
   }
 
   def make[F[_]: Async: KryoSerializer, S <: Snapshot, C <: SnapshotInfo[_]](
     snapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, S],
-    inMemoryCapacity: NonNegLong
+    snapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, _, C],
+    inMemoryCapacity: NonNegLong,
+    snapshotInfoCutoffOrdinal: SnapshotOrdinal
   )(implicit supervisor: Supervisor[F]): F[SnapshotStorage[F, S, C] with LatestBalances[F]] =
     makeResources[F, S, C]().flatMap {
-      case (headRef, ordinalCache, hashCache, notPersistedCache, offloadQueue, _) =>
-        make(headRef, ordinalCache, hashCache, notPersistedCache, offloadQueue, snapshotLocalFileSystemStorage, inMemoryCapacity)
+      case (headRef, ordinalCache, hashCache, notPersistedCache, offloadQueue, cutoffQueue, _) =>
+        make(
+          headRef,
+          ordinalCache,
+          hashCache,
+          notPersistedCache,
+          offloadQueue,
+          cutoffQueue,
+          snapshotLocalFileSystemStorage,
+          snapshotInfoLocalFileSystemStorage,
+          inMemoryCapacity,
+          snapshotInfoCutoffOrdinal
+        )
     }
 
   def make[F[_]: Async: KryoSerializer, S <: Snapshot, C <: SnapshotInfo[_]](
@@ -64,13 +79,18 @@ object SnapshotStorage {
     hashCache: MapRef[F, Hash, Option[Signed[S]]],
     notPersistedCache: Ref[F, Set[SnapshotOrdinal]],
     offloadQueue: Queue[F, SnapshotOrdinal],
+    snapshotInfoCutoffQueue: Queue[F, SnapshotOrdinal],
     snapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, S],
-    inMemoryCapacity: NonNegLong
+    snapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, _, C],
+    inMemoryCapacity: NonNegLong,
+    snapshotInfoCutoffOrdinal: SnapshotOrdinal
   )(implicit supervisor: Supervisor[F]): F[SnapshotStorage[F, S, C] with LatestBalances[F]] = {
 
     def logger = Slf4jLogger.getLogger[F]
 
-    def offloadProcess: F[Unit] =
+    def cutoffLogic: OrdinalCutoff = LogarithmicOrdinalCutoff.make
+
+    def offloadProcess =
       Stream
         .fromQueueUnterminated(offloadQueue)
         .evalMap { cutOffOrdinal =>
@@ -116,10 +136,22 @@ object SnapshotStorage {
               }
             }
         }
-        .compile
-        .drain
 
-    def enqueue(snapshot: Signed[S]) =
+    def snapshotInfoCutoffProcess: Stream[F, Unit] =
+      Stream
+        .fromQueueUnterminated(snapshotInfoCutoffQueue)
+        .evalMap { ordinal =>
+          val toKeep = cutoffLogic.cutoff(snapshotInfoCutoffOrdinal, ordinal)
+
+          snapshotInfoLocalFileSystemStorage.listStoredOrdinals.flatMap {
+            _.compile.toList
+              .map(_.toSet.diff(toKeep).toList)
+              .flatMap(_.traverse(snapshotInfoLocalFileSystemStorage.delete))
+          }
+        }
+        .void
+
+    def enqueue(snapshot: Signed[S], snapshotInfo: C) =
       snapshot.value.hashF.flatMap { hash =>
         hashCache(hash).set(snapshot.some) >>
           ordinalCache(snapshot.ordinal).set(hash.some) >>
@@ -130,6 +162,8 @@ object SnapshotStorage {
                 notPersistedCache.update(current => current + snapshot.ordinal)
             )
           } >>
+          snapshotInfoLocalFileSystemStorage.write(snapshot.ordinal, snapshotInfo) >>
+          snapshotInfoCutoffQueue.offer(snapshot.ordinal) >>
           snapshot.ordinal
             .partialPreviousN(inMemoryCapacity)
             .fold(Applicative[F].unit)(offloadQueue.offer)
@@ -143,18 +177,18 @@ object SnapshotStorage {
         )
         .map(_.reduce(_ && _))
 
-    supervisor.supervise(offloadProcess).map { _ =>
+    supervisor.supervise(offloadProcess.merge(snapshotInfoCutoffProcess).compile.drain).map { _ =>
       new SnapshotStorage[F, S, C] with LatestBalances[F] {
         def prepend(snapshot: Signed[S], state: C): F[Boolean] =
           headRef.modify {
             case None =>
-              ((snapshot, state).some, enqueue(snapshot).map(_ => true))
+              ((snapshot, state).some, enqueue(snapshot, state).as(true))
             case Some((current, currentState)) =>
               isNextSnapshot(current, snapshot) match {
                 case Left(e) =>
                   ((current, currentState).some, e.raiseError[F, Boolean])
                 case Right(isNext) if isNext =>
-                  ((snapshot, state).some, enqueue(snapshot).map(_ => true))
+                  ((snapshot, state).some, enqueue(snapshot, state).as(true))
 
                 case _ =>
                   (

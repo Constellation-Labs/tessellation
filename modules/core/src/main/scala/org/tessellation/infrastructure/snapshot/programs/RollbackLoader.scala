@@ -12,7 +12,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.sdk.config.types.SnapshotConfig
 import org.tessellation.sdk.infrastructure.snapshot.GlobalSnapshotContextFunctions
-import org.tessellation.sdk.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage
+import org.tessellation.sdk.infrastructure.snapshot.storage.{SnapshotInfoLocalFileSystemStorage, SnapshotLocalFileSystemStorage}
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
@@ -25,6 +25,7 @@ object RollbackLoader {
     keyPair: KeyPair,
     snapshotConfig: SnapshotConfig,
     incrementalGlobalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
+    snapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfo],
     snapshotStorage: SnapshotDownloadStorage[F],
     snapshotContextFunctions: GlobalSnapshotContextFunctions[F]
   ): RollbackLoader[F] =
@@ -33,7 +34,8 @@ object RollbackLoader {
       snapshotConfig,
       incrementalGlobalSnapshotLocalFileSystemStorage,
       snapshotStorage: SnapshotDownloadStorage[F],
-      snapshotContextFunctions
+      snapshotContextFunctions,
+      snapshotInfoLocalFileSystemStorage
     ) {}
 }
 
@@ -42,7 +44,8 @@ sealed abstract class RollbackLoader[F[_]: Async: KryoSerializer: SecurityProvid
   snapshotConfig: SnapshotConfig,
   incrementalGlobalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
   snapshotStorage: SnapshotDownloadStorage[F],
-  snapshotContextFunctions: GlobalSnapshotContextFunctions[F]
+  snapshotContextFunctions: GlobalSnapshotContextFunctions[F],
+  snapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfo]
 ) {
 
   private val logger = Slf4jLogger.getLogger[F]
@@ -59,6 +62,7 @@ sealed abstract class RollbackLoader[F[_]: Async: KryoSerializer: SecurityProvid
                   .make[F](
                     incrementalGlobalSnapshotLocalFileSystemStorage.read(_),
                     fullGlobalSnapshotLocalFileSystemStorage.read(_),
+                    snapshotInfoLocalFileSystemStorage.read(_),
                     snapshotContextFunctions,
                     rollbackHash
                   )
@@ -76,7 +80,8 @@ sealed abstract class RollbackLoader[F[_]: Async: KryoSerializer: SecurityProvid
           .flatTap {
             case (_, lastInc) =>
               logger.info(s"[Rollback] Cleanup for snapshots greater than ${lastInc.ordinal}") >>
-                snapshotStorage.backupPersistedAbove(lastInc.ordinal)
+                snapshotStorage.backupPersistedAbove(lastInc.ordinal) >>
+                snapshotInfoLocalFileSystemStorage.deleteAbove(lastInc.ordinal)
           }
     }
 }
