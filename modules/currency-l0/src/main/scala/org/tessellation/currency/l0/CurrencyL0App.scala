@@ -45,11 +45,11 @@ abstract class CurrencyL0App(
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
     sdkKryoRegistrar
 
-  def dataApplication: Option[BaseDataApplicationL0Service[IO]]
+  def dataApplication: Option[Resource[IO, BaseDataApplicationL0Service[IO]]] = None
 
   def rewards(
     implicit sp: SecurityProvider[IO]
-  ): Option[Rewards[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]]
+  ): Option[Rewards[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]] = None
 
   def run(method: Run, sdk: SDK[IO]): Resource[IO, Unit] = {
     import sdk._
@@ -67,6 +67,7 @@ abstract class CurrencyL0App(
         method.sdkConfig.priorityPeerIds,
         cfg.environment
       ).asResource
+      dataApplicationService <- dataApplication.sequence
       services <- Services
         .make[IO](
           p2pClient,
@@ -78,7 +79,7 @@ abstract class CurrencyL0App(
           sdk.nodeId,
           keyPair,
           cfg,
-          dataApplication,
+          dataApplicationService,
           rewards,
           validators.signedValidator,
           sdkServices.globalSnapshotContextFns,
@@ -94,7 +95,7 @@ abstract class CurrencyL0App(
         services,
         p2pClient,
         services.snapshotContextFunctions,
-        dataApplication
+        dataApplicationService
       )
       healthChecks <- HealthChecks
         .make[IO](
@@ -150,7 +151,7 @@ abstract class CurrencyL0App(
 
       program <- (method match {
         case m: CreateGenesis =>
-          programs.genesis.create(dataApplication)(
+          programs.genesis.create(dataApplicationService)(
             m.genesisBalancesPath,
             keyPair
           ) >> sdk.stopSignal.set(true)
@@ -182,7 +183,7 @@ abstract class CurrencyL0App(
                   NodeState.Initial,
                   NodeState.LoadingGenesis,
                   NodeState.GenesisReady
-                )(programs.genesis.accept(dataApplication)(m.genesisPath)) >>
+                )(programs.genesis.accept(dataApplicationService)(m.genesisPath)) >>
                   gossipDaemon.startAsInitialValidator >>
                   services.cluster.createSession >>
                   services.session.createSession >>

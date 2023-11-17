@@ -2,7 +2,7 @@ package com.my.currency.l0
 
 import cats.effect.IO
 import org.tessellation.BuildInfo
-import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, DataCalculatedState}
+import org.tessellation.currency.dataApplication.DataCalculatedState
 import org.tessellation.currency.l0.CurrencyL0App
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotStateProof}
 import org.tessellation.schema.address.Address
@@ -28,9 +28,7 @@ object Main
     version = BuildInfo.version
   ) {
 
-  def dataApplication: Option[BaseDataApplicationL0Service[IO]] = None
-
-  def rewards(implicit sp: SecurityProvider[IO]): Some[Rewards[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]] =
+  override def rewards(implicit sp: SecurityProvider[IO]): Some[Rewards[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]] =
     Some((_: Signed[CurrencyIncrementalSnapshot], _: SortedMap[Address, Balance], _: SortedSet[Signed[Transaction]], _: ConsensusTrigger, _: Set[CurrencySnapshotEvent], _: Option[DataCalculatedState]) => {
       val allRewards = SortedSet(
         Address("DAG8pkb7EhCkT3yU87B2yPBunSCPnEdmX2Wv24sZ"),

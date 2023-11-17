@@ -37,8 +37,7 @@ runs:
        
         if [[ "${{inputs.IMPLEMENT_REWARDS}}" != "" ]]; then
           echo "Adding basic rewards logic"
-          rm -r modules/l0/src/main/scala/com/my/currency/l0/Main.scala
-          cat ../../../assets/basic_rewards_implementation.txt > modules/l0/src/main/scala/com/my/currency/l0/Main.scala
+          cp ../../../assets/basic_rewards_implementation.txt  modules/l0/src/main/scala/com/my/currency/l0/Main.scala
         fi
         
         sbt currencyL0/assembly
