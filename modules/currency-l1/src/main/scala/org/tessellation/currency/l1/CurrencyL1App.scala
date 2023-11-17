@@ -3,6 +3,7 @@ package org.tessellation.currency.l1
 import cats.effect.{IO, Resource}
 import cats.syntax.applicativeError._
 import cats.syntax.semigroupk._
+import cats.syntax.traverse._
 
 import scala.concurrent.duration._
 
@@ -60,7 +61,7 @@ abstract class CurrencyL1App(
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
     sdkKryoRegistrar.union(dagL1KryoRegistrar)
 
-  def dataApplication: Option[BaseDataApplicationL1Service[IO]] = None
+  def dataApplication: Option[Resource[IO, BaseDataApplicationL1Service[IO]]] = None
 
   def run(method: Run, sdk: SDK[IO]): Resource[IO, Unit] = {
     import sdk._
@@ -94,6 +95,7 @@ abstract class CurrencyL1App(
         method.sdkConfig.priorityPeerIds,
         cfg.environment
       ).asResource
+      dataApplicationService <- dataApplication.sequence
       services = Services
         .make[IO](
           storages,
@@ -103,7 +105,7 @@ abstract class CurrencyL1App(
           sdkServices,
           p2pClient,
           cfg,
-          dataApplication,
+          dataApplicationService,
           maybeMajorityPeerIds
         )
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.make[IO]().asResource
