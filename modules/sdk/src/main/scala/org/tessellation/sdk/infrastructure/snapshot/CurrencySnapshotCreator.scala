@@ -101,7 +101,7 @@ object CurrencySnapshotCreator {
           }
           lastActiveTips <- lastArtifact.activeTips
           lastDeprecatedTips = lastArtifact.tips.deprecated
-          maybeLastDataApplication = lastArtifact.dataApplication.map(_.onChainState)
+          maybeLastDataApplication = lastArtifact.dataApplication
 
           (blocks: List[Signed[Block]], dataBlocks: List[Signed[DataApplicationBlock]]) =
             dataApplicationSnapshotAcceptanceManager match {

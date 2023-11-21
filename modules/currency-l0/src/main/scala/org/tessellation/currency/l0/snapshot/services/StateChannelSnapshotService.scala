@@ -10,6 +10,7 @@ import cats.syntax.applicativeError._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.show._
+import cats.syntax.traverse._
 
 import org.tessellation.currency.l0.node.IdentifierStorage
 import org.tessellation.currency.l0.snapshot.CurrencySnapshotArtifact
@@ -22,6 +23,7 @@ import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.sdk.domain.statechannel.StateChannelValidator.StateChannelValidationError
 import org.tessellation.sdk.http.p2p.clients.StateChannelSnapshotClient
+import org.tessellation.sdk.infrastructure.snapshot.DataApplicationSnapshotAcceptanceManager
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hashed, SecurityProvider}
@@ -45,7 +47,8 @@ object StateChannelSnapshotService {
     globalL0ClusterStorage: L0ClusterStorage[F],
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
     identifierStorage: IdentifierStorage[F],
-    jsonBrotliBinarySerializer: JsonBrotliBinarySerializer[F]
+    jsonBrotliBinarySerializer: JsonBrotliBinarySerializer[F],
+    dataApplicationSnapshotAcceptanceManager: Option[DataApplicationSnapshotAcceptanceManager[F]]
   ): StateChannelSnapshotService[F] =
     new StateChannelSnapshotService[F] {
       private val logger = Slf4jLogger.getLogger
@@ -76,6 +79,11 @@ object StateChannelSnapshotService {
       } yield binary
 
       def consume(signedArtifact: Signed[CurrencySnapshotArtifact], context: CurrencySnapshotContext): F[Unit] = for {
+        _ <- dataApplicationSnapshotAcceptanceManager.traverse { manager =>
+          snapshotStorage.head.map { lastSnapshot =>
+            lastSnapshot.flatMap { case (value, _) => value.dataApplication }
+          }.flatMap(manager.consumeSignedMajorityArtifact(_, signedArtifact))
+        }
         binary <- createBinary(signedArtifact)
         binaryHashed <- binary.toHashed
         identifier <- identifierStorage.get

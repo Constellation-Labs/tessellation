@@ -1,7 +1,7 @@
 package org.tessellation.sdk.infrastructure.snapshot
 
 import cats.Applicative
-import cats.data.NonEmptyList
+import cats.data.{NonEmptyList, OptionT}
 import cats.effect.Async
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
@@ -17,18 +17,26 @@ import scala.util.control.NoStackTrace
 import org.tessellation.currency.dataApplication._
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
 import org.tessellation.currency.schema.currency.DataApplicationPart
+import org.tessellation.ext.cats.syntax.partialPrevious.catsSyntaxPartialPrevious
 import org.tessellation.schema.SnapshotOrdinal
+import org.tessellation.sdk.snapshot.currency.CurrencySnapshotArtifact
+import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait DataApplicationSnapshotAcceptanceManager[F[_]] {
   def accept(
-    maybeLastDataApplication: Option[Array[Byte]],
+    maybeLastDataApplication: Option[DataApplicationPart],
     dataBlocks: List[Signed[DataApplicationBlock]],
     lastOrdinal: SnapshotOrdinal,
     currentOrdinal: SnapshotOrdinal
   ): F[Option[DataApplicationAcceptanceResult]]
+
+  def consumeSignedMajorityArtifact(
+    maybeLastDataApplication: Option[DataApplicationPart],
+    artifact: Signed[CurrencySnapshotArtifact]
+  ): F[Unit]
 }
 
 case class DataApplicationAcceptanceResult(
@@ -42,6 +50,11 @@ object DataApplicationSnapshotAcceptanceManager {
       extends NoStackTrace {
     override def getMessage: String =
       s"Calculated state ordinal=${calculatedStateOrdinal.show} does not match expected ordinal=${expectedOrdinal.show}"
+  }
+
+  case class CalculatedStateHashDoesNotMatchMajority(current: Hash, expected: Hash) extends NoStackTrace {
+    override def getMessage: String =
+      s"Calculated state hash=${current.show} does not match expected hash=${expected.show} from majority"
   }
 
   def make[F[_]: Async](
@@ -61,16 +74,50 @@ object DataApplicationSnapshotAcceptanceManager {
             .as(state)
       }
 
+    def expectCalculatedStateHash(
+      expectedHash: Hash
+    )(calculatedState: DataCalculatedState)(implicit context: L0NodeContext[F]): F[DataCalculatedState] =
+      service.hashCalculatedState(calculatedState).flatMap { hash =>
+        CalculatedStateHashDoesNotMatchMajority(hash, expectedHash)
+          .raiseError[F, Unit]
+          .whenA(hash =!= expectedHash)
+          .as(calculatedState)
+      }
+
+    def consumeSignedMajorityArtifact(
+      maybeLastDataApplication: Option[DataApplicationPart],
+      artifact: Signed[CurrencySnapshotArtifact]
+    ): F[Unit] = {
+      implicit val context: L0NodeContext[F] = nodeContext
+
+      OptionT
+        .fromOption(artifact.dataApplication)
+        .flatMap { da =>
+          OptionT
+            .liftF(da.blocks.traverse(service.deserializeBlock).map(_.flatMap(_.toOption)))
+            .flatMapF { dataBlocks =>
+              artifact.ordinal.partialPrevious.flatTraverse(lastOrdinal =>
+                accept(maybeLastDataApplication, dataBlocks, lastOrdinal, artifact.ordinal)
+              )
+            }
+            .map(_.calculatedState)
+            .semiflatMap(expectCalculatedStateHash(da.calculatedStateProof))
+            .semiflatTap(service.setCalculatedState(artifact.ordinal, _))
+        }
+        .value
+        .void
+    }
+
     def accept(
-      maybeLastDataApplication: Option[Array[Byte]],
+      maybeLastDataApplication: Option[DataApplicationPart],
       dataBlocks: List[Signed[DataApplicationBlock]],
       lastOrdinal: SnapshotOrdinal,
       currentOrdinal: SnapshotOrdinal
     ): F[Option[DataApplicationAcceptanceResult]] = {
       implicit val context: L0NodeContext[F] = nodeContext
 
-      for {
-        maybeLastDataOnChainState <- maybeLastDataApplication.flatTraverse { lastDataApplication =>
+      val newDataState: OptionT[F, DataApplicationAcceptanceResult] = for {
+        lastOnChainState <- OptionT.fromOption(maybeLastDataApplication.map(_.onChainState)).flatMapF { lastDataApplication =>
           service
             .deserializeState(lastDataApplication)
             .flatTap {
@@ -83,16 +130,18 @@ object DataApplicationSnapshotAcceptanceManager {
             )
         }
 
-        maybeNewDataState <- maybeLastDataOnChainState.flatTraverse { lastState =>
+        lastCalculatedState <- OptionT.liftF(
+          service.getCalculatedState
+            .flatMap(expectCalculatedStateOrdinal(lastOrdinal))
+        )
+
+        updates <- OptionT.liftF {
           NonEmptyList
             .fromList(dataBlocks.distinctBy(_.value.roundId))
             .map(_.flatMap(_.value.updates))
             .map { updates =>
-              service.getCalculatedState
-                .flatMap(expectCalculatedStateOrdinal(lastOrdinal))
-                .flatMap { calculatedState =>
-                  service.validateData(DataState(lastState, calculatedState), updates)
-                }
+              service
+                .validateData(DataState(lastOnChainState, lastCalculatedState), updates)
                 .flatTap { validated =>
                   logger.warn(s"Data application is invalid, errors: ${validated.toString}").whenA(validated.isInvalid)
                 }
@@ -103,39 +152,43 @@ object DataApplicationSnapshotAcceptanceManager {
                 .ifF(updates.toList, List.empty[Signed[DataUpdate]])
             }
             .getOrElse(List.empty[Signed[DataUpdate]].pure[F])
-            .flatMap { updates =>
-              service.getCalculatedState
-                .flatMap(expectCalculatedStateOrdinal(lastOrdinal))
-                .map(DataState(lastState, _))
-                .flatMap(service.combine(_, updates))
-                .flatTap(state => service.setCalculatedState(currentOrdinal, state.calculated))
-                .flatMap(state => service.serializeState(state.onChain))
-            }
-            .map(_.some)
-            .handleErrorWith(err =>
-              logger
-                .error(err)(
-                  "Unhandled exception during combine and serialize data application, fallback to last data application"
+        }
+
+        newDataState <- OptionT.liftF(
+          service.combine(DataState(lastOnChainState, lastCalculatedState), updates)
+        )
+
+        serializedOnChainState <- OptionT.liftF(
+          service.serializeState(newDataState.onChain)
+        )
+
+        serializedBlocks <- OptionT.liftF(
+          dataBlocks.traverse(service.serializeBlock)
+        )
+
+        calculatedStateProof <- OptionT.liftF(
+          service.hashCalculatedState(newDataState.calculated)
+        )
+
+      } yield
+        DataApplicationAcceptanceResult(
+          DataApplicationPart(serializedOnChainState, serializedBlocks, calculatedStateProof),
+          newDataState.calculated
+        )
+
+      newDataState.value.handleErrorWith { err =>
+        logger.error(err)("Unhandled exception during calculating new data application state, fallback to last data application").flatMap {
+          _ =>
+            service.getCalculatedState.map { lastCalculatedState =>
+              maybeLastDataApplication.map(
+                DataApplicationAcceptanceResult(
+                  _,
+                  lastCalculatedState._2
                 )
-                .as(maybeLastDataApplication)
-            )
+              )
+            }
         }
-
-        calculatedState <- service.getCalculatedState
-          .flatMap(expectCalculatedStateOrdinal(currentOrdinal))
-
-        serializedDataBlocks <- dataBlocks.traverse(service.serializeBlock)
-
-        calculatedStateHash <- service.hashCalculatedState(calculatedState)
-
-        result = maybeNewDataState.map { state =>
-          DataApplicationAcceptanceResult(
-            DataApplicationPart(state, serializedDataBlocks, calculatedStateHash),
-            calculatedState
-          )
-
-        }
-      } yield result
+      }
     }
   }
 }
