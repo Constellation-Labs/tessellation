@@ -56,6 +56,13 @@ object Services {
   ): F[Services[F]] =
     for {
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.make[F]()
+
+      l0NodeContext = L0NodeContext.make[F](storages.snapshot)
+
+      dataApplicationAcceptanceManager = maybeDataApplication.map(service =>
+        DataApplicationSnapshotAcceptanceManager.make[F](service, l0NodeContext)
+      )
+
       stateChannelSnapshotService <- StateChannelSnapshotService
         .make[F](
           keyPair,
@@ -64,15 +71,10 @@ object Services {
           storages.globalL0Cluster,
           storages.snapshot,
           storages.identifier,
-          jsonBrotliBinarySerializer
+          jsonBrotliBinarySerializer,
+          dataApplicationAcceptanceManager
         )
         .pure[F]
-
-      l0NodeContext = L0NodeContext.make[F](storages.snapshot)
-
-      dataApplicationAcceptanceManager = maybeDataApplication.map(service =>
-        DataApplicationSnapshotAcceptanceManager.make[F](service, l0NodeContext)
-      )
 
       creator = CurrencySnapshotCreator.make[F](
         sdkServices.currencySnapshotAcceptanceManager,
