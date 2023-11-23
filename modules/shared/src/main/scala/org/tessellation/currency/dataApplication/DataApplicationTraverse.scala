@@ -122,7 +122,7 @@ object DataApplicationTraverse {
           type Output = (Cache, Option[(DataState.Base, SnapshotOrdinal)])
           type Acc = (Cache, Hashed[GlobalIncrementalSnapshot])
 
-          def nestedRecursion(cache: Cache, snapshots: NonEmptyList[Hashed[CurrencyIncrementalSnapshot]]): F[Either[Acc, Output]] = {
+          def nestedRecursion(cache: Cache, snapshots: NonEmptyList[Hashed[CurrencyIncrementalSnapshot]]): F[Either[Cache, Output]] = {
             type NestedAcc = (List[CurrencyIncrementalSnapshot], Cache)
 
             def sortedSnapshots = snapshots.map(_.signed.value).sortBy(_.ordinal).reverse
@@ -162,11 +162,9 @@ object DataApplicationTraverse {
                     }
               } >>= {
               case (stepCache, Some((state, ordinal))) =>
-                (cache ++ stepCache, (state, ordinal).some).asRight[Acc].pure[F]
+                (cache ++ stepCache, (state, ordinal).some).asRight[Cache].pure[F]
               case (stepCache, _) =>
-                fetchSnapshotOrErr(lastGlobalSnapshot.lastSnapshotHash).map {
-                  (cache ++ stepCache, _).asLeft[Output]
-                }
+                (cache ++ stepCache).asLeft[Output].pure[F]
             }
           }
 
@@ -178,19 +176,23 @@ object DataApplicationTraverse {
                     logger.warn(
                       s"Metagraph snapshots are invalid in global snapshot ordinal=${globalSnapshot.ordinal.show}. Check chain integrity. Trying to continue."
                     ) >>
-                      fetchSnapshotOrErr(lastGlobalSnapshot.lastSnapshotHash).map {
+                      fetchSnapshotOrErr(globalSnapshot.lastSnapshotHash).map {
                         (cache, _).asLeft[Output]
                       }
                   case Validated.Valid(snapshots) =>
                     logger.info(
                       s"Found ${snapshots.size.show} snapshots at global snapshot ordinal=${globalSnapshot.ordinal.show}, performing nested recursion."
-                    ) >> nestedRecursion(cache, snapshots)
+                    ) >> nestedRecursion(cache, snapshots).flatMap {
+                      case Right((newCache, Some((state, ordinal)))) => (newCache, (state, ordinal).some).asRight[Acc].pure[F]
+                      case Right((newCache, None)) => fetchSnapshotOrErr(globalSnapshot.lastSnapshotHash).map { (newCache, _).asLeft[Output] }
+                      case Left(newCache) => fetchSnapshotOrErr(globalSnapshot.lastSnapshotHash).map { (newCache, _).asLeft[Output] }
+                    }
                 })
                 .flatMap {
                   _.map(_.pure[F]).getOrElse(
                     logger
                       .debug(s"Metagraph snapshots are not found in global snapshot ordinal=${globalSnapshot.ordinal.show}, continuing.") >>
-                      fetchSnapshotOrErr(lastGlobalSnapshot.lastSnapshotHash).map {
+                      fetchSnapshotOrErr(globalSnapshot.lastSnapshotHash).map {
                         (cache, _).asLeft[Output]
                       }
                   )
@@ -200,7 +202,7 @@ object DataApplicationTraverse {
 
         discover >>= {
           case (cache, Some((state, ordinal))) =>
-            logger.info(s"Discovered calculated state at ordinal=${ordinal.show}") >>
+            logger.info(s"Discovered calculated state at metagraph ordinal=${ordinal.show}") >>
               applyCache(cache, state, ordinal) >>= {
               case (latestState, latestOrdinal) =>
                 dataApplication.setCalculatedState(latestOrdinal, latestState.calculated) >>
