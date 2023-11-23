@@ -13,12 +13,12 @@ import org.tessellation.currency.l0.snapshot.CurrencySnapshotArtifact
 import org.tessellation.currency.l0.snapshot.storages.LastBinaryHashStorage
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotContext, CurrencySnapshotInfo}
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.node.shared.domain.collateral.{Collateral, OwnCollateralNotSatisfied}
+import org.tessellation.node.shared.domain.snapshot.services.GlobalL0Service
+import org.tessellation.node.shared.domain.snapshot.storage.SnapshotStorage
+import org.tessellation.node.shared.infrastructure.consensus.ConsensusManager
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
-import org.tessellation.sdk.domain.collateral.{Collateral, OwnCollateralNotSatisfied}
-import org.tessellation.sdk.domain.snapshot.services.GlobalL0Service
-import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
-import org.tessellation.sdk.infrastructure.consensus.ConsensusManager
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.{Hashed, SecurityProvider}
 

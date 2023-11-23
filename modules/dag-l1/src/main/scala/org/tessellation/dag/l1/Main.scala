@@ -12,14 +12,14 @@ import org.tessellation.dag.l1.infrastructure.block.rumor.handler.blockRumorHand
 import org.tessellation.dag.l1.modules._
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.kryo._
+import org.tessellation.node.shared.app.{NodeShared, TessellationIOApp, getMajorityPeerIds}
+import org.tessellation.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
+import org.tessellation.node.shared.resources.MkHttpServer
+import org.tessellation.node.shared.resources.MkHttpServer.ServerName
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.node.NodeState.SessionStarted
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalSnapshotStateProof}
-import org.tessellation.sdk.app.{SDK, TessellationIOApp, getMajorityPeerIds}
-import org.tessellation.sdk.infrastructure.gossip.{GossipDaemon, RumorHandlers}
-import org.tessellation.sdk.resources.MkHttpServer
-import org.tessellation.sdk.resources.MkHttpServer.ServerName
 import org.tessellation.shared.{SharedKryoRegistrationIdRange, sharedKryoRegistrar}
 
 import com.monovore.decline.Opts
@@ -40,16 +40,16 @@ object Main
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
     dagL1KryoRegistrar.union(sharedKryoRegistrar)
 
-  def run(method: Run, sdk: SDK[IO]): Resource[IO, Unit] = {
-    import sdk._
+  def run(method: Run, nodeShared: NodeShared[IO]): Resource[IO, Unit] = {
+    import nodeShared._
 
     val cfg = method.appConfig
 
     for {
-      queues <- Queues.make[IO](sdkQueues).asResource
+      queues <- Queues.make[IO](sharedQueues).asResource
       storages <- Storages
         .make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
-          sdkStorages,
+          sharedStorages,
           method.l0Peer
         )
         .asResource
@@ -59,13 +59,13 @@ object Main
           seedlist
         )
       p2pClient = P2PClient.make[IO](
-        sdkP2PClient,
-        sdkResources.client,
+        sharedP2PClient,
+        sharedResources.client,
         currencyPathPrefix = "dag"
       )
       maybeMajorityPeerIds <- getMajorityPeerIds[IO](
-        sdk.prioritySeedlist,
-        method.sdkConfig.priorityPeerIds,
+        nodeShared.prioritySeedlist,
+        method.nodeSharedConfig.priorityPeerIds,
         cfg.environment
       ).asResource
       services = Services.make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
@@ -73,7 +73,7 @@ object Main
         storages.lastSnapshot,
         storages.l0Cluster,
         validators,
-        sdkServices,
+        sharedServices,
         p2pClient,
         cfg,
         maybeMajorityPeerIds
@@ -83,24 +83,24 @@ object Main
         storages.block,
         storages.lastSnapshot,
         storages.transaction,
-        sdkServices.globalSnapshotContextFns
+        sharedServices.globalSnapshotContextFns
       )
-      programs = Programs.make(sdkPrograms, p2pClient, storages, snapshotProcessor)
+      programs = Programs.make(sharedPrograms, p2pClient, storages, snapshotProcessor)
       healthChecks <- HealthChecks
         .make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
           storages,
           services,
           programs,
           p2pClient,
-          sdkResources.client,
-          sdkServices.session,
+          sharedResources.client,
+          sharedServices.session,
           cfg.healthCheck,
-          sdk.nodeId
+          nodeShared.nodeId
         )
         .asResource
 
       rumorHandler = RumorHandlers
-        .make[IO](storages.cluster, healthChecks.ping, services.localHealthcheck, sdkStorages.forkInfo)
+        .make[IO](storages.cluster, healthChecks.ping, services.localHealthcheck, sharedStorages.forkInfo)
         .handlers <+>
         blockRumorHandler(queues.peerBlock)
 
@@ -116,7 +116,7 @@ object Main
           services,
           programs,
           healthChecks,
-          sdk.nodeId,
+          nodeShared.nodeId,
           BuildInfo.version,
           cfg.http
         )

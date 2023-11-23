@@ -13,13 +13,13 @@ import org.tessellation.currency.l0.snapshot.storages.LastBinaryHashStorage
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.node.shared.domain.collateral.{Collateral, OwnCollateralNotSatisfied}
+import org.tessellation.node.shared.domain.genesis.{GenesisFS => GenesisLoader}
+import org.tessellation.node.shared.domain.snapshot.storage.SnapshotStorage
+import org.tessellation.node.shared.http.p2p.clients.StateChannelSnapshotClient
+import org.tessellation.node.shared.infrastructure.consensus.ConsensusManager
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.peer.{L0Peer, PeerId}
-import org.tessellation.sdk.domain.collateral.{Collateral, OwnCollateralNotSatisfied}
-import org.tessellation.sdk.domain.genesis.{GenesisFS => GenesisLoader}
-import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
-import org.tessellation.sdk.http.p2p.clients.StateChannelSnapshotClient
-import org.tessellation.sdk.infrastructure.consensus.ConsensusManager
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed

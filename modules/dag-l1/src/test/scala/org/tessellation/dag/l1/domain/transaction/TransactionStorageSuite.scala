@@ -8,14 +8,14 @@ import cats.syntax.option._
 
 import org.tessellation.dag.l1.Main
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage.{Accepted, LastTransactionReferenceState, Majority}
-import org.tessellation.dag.transaction.TransactionGenerator
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.node.shared.nodeSharedKryoRegistrar
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction._
-import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.{Hashed, KeyPairGenerator, SecurityProvider}
+import org.tessellation.transaction.TransactionGenerator
 
 import eu.timepit.refined.auto._
 import io.chrisdavenport.mapref.MapRef
@@ -37,7 +37,7 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
 
   def testResources: Resource[IO, TestResources] =
     SecurityProvider.forAsync[IO].flatMap { implicit sp =>
-      KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ sdkKryoRegistrar).flatMap { implicit kp =>
+      KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ nodeSharedKryoRegistrar).flatMap { implicit kp =>
         for {
           lastAccepted <- MapRef.ofConcurrentHashMap[IO, Address, LastTransactionReferenceState]().asResource
           waitingTransactions <- MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[Transaction]]]().asResource

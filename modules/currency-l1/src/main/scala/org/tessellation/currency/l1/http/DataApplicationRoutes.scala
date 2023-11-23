@@ -9,11 +9,11 @@ import org.tessellation.currency.dataApplication._
 import org.tessellation.currency.l1.domain.error.{InvalidDataUpdate, InvalidSignature}
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import org.tessellation.ext.http4s.error._
-import org.tessellation.http.routes.internal.{InternalUrlPrefix, P2PRoutes, PublicRoutes}
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.node.shared.domain.cluster.storage.L0ClusterStorage
+import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
+import org.tessellation.routes.internal._
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
-import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
-import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 

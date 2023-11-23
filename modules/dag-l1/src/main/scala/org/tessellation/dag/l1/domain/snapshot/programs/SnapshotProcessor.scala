@@ -17,13 +17,13 @@ import org.tessellation.dag.l1.domain.block.BlockStorage.MajorityReconciliationD
 import org.tessellation.dag.l1.domain.block.{BlockRelations, BlockStorage}
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.node.shared.domain.snapshot.Validator
+import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.schema.transaction.TransactionReference
-import org.tessellation.sdk.domain.snapshot.Validator
-import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.security.hash.ProofsHash
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hashed, SecurityProvider}

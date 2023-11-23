@@ -4,9 +4,9 @@ import cats.effect.Async
 import cats.effect.std.{Queue, Supervisor}
 
 import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, DataUpdate}
-import org.tessellation.sdk.domain.Daemon
-import org.tessellation.sdk.domain.gossip.Gossip
-import org.tessellation.sdk.infrastructure.snapshot.daemon.SnapshotEventsPublisherDaemon
+import org.tessellation.node.shared.domain.Daemon
+import org.tessellation.node.shared.domain.gossip.Gossip
+import org.tessellation.node.shared.infrastructure.snapshot.daemon.SnapshotEventsPublisherDaemon
 
 import fs2.Stream
 import io.circe.disjunctionCodecs._

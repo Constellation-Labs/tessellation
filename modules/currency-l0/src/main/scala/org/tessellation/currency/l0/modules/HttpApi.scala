@@ -5,22 +5,22 @@ import java.security.PrivateKey
 import cats.effect.Async
 import cats.syntax.semigroupk._
 
-import org.tessellation.cli.AppEnvironment
-import org.tessellation.cli.AppEnvironment.{Dev, Integrationnet, Testnet}
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationCustomRoutes
 import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
 import org.tessellation.currency.l0.cell.{L0Cell, L0CellInput}
 import org.tessellation.currency.l0.http.routes.{CurrencyBlockRoutes, DataBlockRoutes}
 import org.tessellation.currency.l0.snapshot.CurrencySnapshotEvent
 import org.tessellation.currency.schema.currency._
+import org.tessellation.env.AppEnvironment
+import org.tessellation.env.AppEnvironment.{Dev, Integrationnet, Testnet}
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.node.shared.config.types.HttpConfig
+import org.tessellation.node.shared.http.p2p.middlewares.{PeerAuthMiddleware, `X-Id-Middleware`}
+import org.tessellation.node.shared.http.routes._
+import org.tessellation.node.shared.infrastructure.healthcheck.ping.PingHealthCheckRoutes
+import org.tessellation.node.shared.infrastructure.metrics.Metrics
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.sdk.config.types.HttpConfig
-import org.tessellation.sdk.http.p2p.middleware.{PeerAuthMiddleware, `X-Id-Middleware`}
-import org.tessellation.sdk.http.routes._
-import org.tessellation.sdk.infrastructure.healthcheck.ping.PingHealthCheckRoutes
-import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
 
 import eu.timepit.refined.auto._

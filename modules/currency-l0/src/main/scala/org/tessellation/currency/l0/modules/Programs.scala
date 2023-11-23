@@ -11,13 +11,13 @@ import org.tessellation.currency.l0.http.p2p.P2PClient
 import org.tessellation.currency.l0.snapshot.programs.{Download, Genesis, Rollback}
 import org.tessellation.currency.schema.currency.CurrencySnapshot
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.node.shared.domain.cluster.programs.{Joining, L0PeerDiscovery, PeerDiscovery}
+import org.tessellation.node.shared.domain.snapshot.PeerSelect
+import org.tessellation.node.shared.domain.snapshot.programs.Download
+import org.tessellation.node.shared.infrastructure.genesis.{GenesisFS => GenesisLoader}
+import org.tessellation.node.shared.infrastructure.snapshot.{CurrencySnapshotContextFunctions, PeerSelect}
+import org.tessellation.node.shared.modules.SharedPrograms
 import org.tessellation.schema.peer.{L0Peer, PeerId}
-import org.tessellation.sdk.domain.cluster.programs.{Joining, L0PeerDiscovery, PeerDiscovery}
-import org.tessellation.sdk.domain.snapshot.PeerSelect
-import org.tessellation.sdk.domain.snapshot.programs.Download
-import org.tessellation.sdk.infrastructure.genesis.{GenesisFS => GenesisLoader}
-import org.tessellation.sdk.infrastructure.snapshot.{CurrencySnapshotContextFunctions, PeerSelect}
-import org.tessellation.sdk.modules.SdkPrograms
 import org.tessellation.security.SecurityProvider
 
 object Programs {
@@ -26,7 +26,7 @@ object Programs {
     keyPair: KeyPair,
     nodeId: PeerId,
     globalL0Peer: L0Peer,
-    sdkPrograms: SdkPrograms[F],
+    sharedPrograms: SharedPrograms[F],
     storages: Storages[F],
     services: Services[F],
     p2pClient: P2PClient[F],
@@ -83,7 +83,7 @@ object Programs {
       dataApplication
     )
 
-    new Programs[F](sdkPrograms.peerDiscovery, globalL0PeerDiscovery, sdkPrograms.joining, download, genesis, rollback) {}
+    new Programs[F](sharedPrograms.peerDiscovery, globalL0PeerDiscovery, sharedPrograms.joining, download, genesis, rollback) {}
   }
 }
 

@@ -1,8 +1,8 @@
 package org.tessellation.currency.l0.config
 
-import org.tessellation.cli.AppEnvironment
+import org.tessellation.env.AppEnvironment
+import org.tessellation.node.shared.config.types._
 import org.tessellation.schema.peer.L0Peer
-import org.tessellation.sdk.config.types._
 
 object types {
   case class AppConfig(
