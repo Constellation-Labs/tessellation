@@ -16,10 +16,10 @@ import org.tessellation.currency.l1.modules.{Queues, Services}
 import org.tessellation.currency.schema.currency._
 import org.tessellation.dag.l1.http.p2p.L0BlockOutputClient
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.node.shared.domain.cluster.storage.{ClusterStorage, L0ClusterStorage}
+import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
-import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, L0ClusterStorage}
-import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 

@@ -28,15 +28,15 @@ import org.tessellation.dag.l1.{DagL1KryoRegistrationIdRange, StateChannel, dagL
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.kryo.{KryoRegistrationId, MapRegistrationId}
 import org.tessellation.json.JsonBrotliBinarySerializer
+import org.tessellation.node.shared.app.{NodeShared, TessellationIOApp, getMajorityPeerIds}
+import org.tessellation.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
+import org.tessellation.node.shared.resources.MkHttpServer
+import org.tessellation.node.shared.resources.MkHttpServer.ServerName
+import org.tessellation.node.shared.{NodeSharedOrSharedRegistrationIdRange, nodeSharedKryoRegistrar}
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.node.NodeState.SessionStarted
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.sdk.app.{SDK, TessellationIOApp, getMajorityPeerIds}
-import org.tessellation.sdk.infrastructure.gossip.{GossipDaemon, RumorHandlers}
-import org.tessellation.sdk.resources.MkHttpServer
-import org.tessellation.sdk.resources.MkHttpServer.ServerName
-import org.tessellation.sdk.{SdkOrSharedOrKernelRegistrationIdRange, sdkKryoRegistrar}
 
 import com.monovore.decline.Opts
 import eu.timepit.refined.boolean.Or
@@ -56,24 +56,24 @@ abstract class CurrencyL1App(
 
   val opts: Opts[Run] = method.opts
 
-  type KryoRegistrationIdRange = SdkOrSharedOrKernelRegistrationIdRange Or DagL1KryoRegistrationIdRange
+  type KryoRegistrationIdRange = NodeSharedOrSharedRegistrationIdRange Or DagL1KryoRegistrationIdRange
 
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
-    sdkKryoRegistrar.union(dagL1KryoRegistrar)
+    nodeSharedKryoRegistrar.union(dagL1KryoRegistrar)
 
   def dataApplication: Option[Resource[IO, BaseDataApplicationL1Service[IO]]] = None
 
-  def run(method: Run, sdk: SDK[IO]): Resource[IO, Unit] = {
-    import sdk._
+  def run(method: Run, nodeShared: NodeShared[IO]): Resource[IO, Unit] = {
+    import nodeShared._
 
     val cfg = method.appConfig
 
     for {
-      dagL1Queues <- DAGL1Queues.make[IO](sdkQueues).asResource
+      dagL1Queues <- DAGL1Queues.make[IO](sharedQueues).asResource
       queues <- Queues.make[IO](dagL1Queues).asResource
       storages <- Storages
         .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
-          sdkStorages,
+          sharedStorages,
           method.l0Peer,
           method.globalL0Peer,
           method.identifier
@@ -85,14 +85,14 @@ abstract class CurrencyL1App(
           seedlist
         )
       dagP2PClient = DAGP2PClient
-        .make[IO](sdkP2PClient, sdkResources.client, currencyPathPrefix = "currency")
+        .make[IO](sharedP2PClient, sharedResources.client, currencyPathPrefix = "currency")
       p2pClient = P2PClient.make[IO](
         dagP2PClient,
-        sdkResources.client
+        sharedResources.client
       )
       maybeMajorityPeerIds <- getMajorityPeerIds[IO](
-        sdk.prioritySeedlist,
-        method.sdkConfig.priorityPeerIds,
+        nodeShared.prioritySeedlist,
+        method.nodeSharedConfig.priorityPeerIds,
         cfg.environment
       ).asResource
       dataApplicationService <- dataApplication.sequence
@@ -102,7 +102,7 @@ abstract class CurrencyL1App(
           storages.lastGlobalSnapshot,
           storages.globalL0Cluster,
           validators,
-          sdkServices,
+          sharedServices,
           p2pClient,
           cfg,
           dataApplicationService,
@@ -116,13 +116,13 @@ abstract class CurrencyL1App(
         storages.lastGlobalSnapshot,
         storages.lastSnapshot,
         storages.transaction,
-        sdkServices.globalSnapshotContextFns,
-        sdkServices.currencySnapshotContextFns,
+        sharedServices.globalSnapshotContextFns,
+        sharedServices.currencySnapshotContextFns,
         jsonBrotliBinarySerializer
       )
       programs = Programs
         .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
-          sdkPrograms,
+          sharedPrograms,
           p2pClient,
           storages,
           snapshotProcessor
@@ -133,15 +133,15 @@ abstract class CurrencyL1App(
           services,
           programs,
           dagP2PClient,
-          sdkResources.client,
-          sdkServices.session,
+          sharedResources.client,
+          sharedServices.session,
           cfg.healthCheck,
-          sdk.nodeId
+          nodeShared.nodeId
         )
         .asResource
 
       rumorHandler = RumorHandlers
-        .make[IO](storages.cluster, healthChecks.ping, services.localHealthcheck, sdkStorages.forkInfo)
+        .make[IO](storages.cluster, healthChecks.ping, services.localHealthcheck, sharedStorages.forkInfo)
         .handlers <+>
         blockRumorHandler[IO](queues.peerBlock)
 
@@ -160,7 +160,7 @@ abstract class CurrencyL1App(
           services,
           programs,
           healthChecks,
-          sdk.nodeId,
+          nodeShared.nodeId,
           BuildInfo.version,
           cfg.http
         )

@@ -13,15 +13,15 @@ import org.tessellation.currency.l0.node.L0NodeContext
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.kryo._
+import org.tessellation.node.shared.app.{NodeShared, TessellationIOApp, getMajorityPeerIds}
+import org.tessellation.node.shared.domain.rewards.Rewards
+import org.tessellation.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
+import org.tessellation.node.shared.resources.MkHttpServer
+import org.tessellation.node.shared.resources.MkHttpServer.ServerName
+import org.tessellation.node.shared.snapshot.currency.CurrencySnapshotEvent
+import org.tessellation.node.shared.{NodeSharedOrSharedRegistrationIdRange, nodeSharedKryoRegistrar}
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.node.NodeState
-import org.tessellation.sdk.app.{SDK, TessellationIOApp, getMajorityPeerIds}
-import org.tessellation.sdk.domain.rewards.Rewards
-import org.tessellation.sdk.infrastructure.gossip.{GossipDaemon, RumorHandlers}
-import org.tessellation.sdk.resources.MkHttpServer
-import org.tessellation.sdk.resources.MkHttpServer.ServerName
-import org.tessellation.sdk.snapshot.currency.CurrencySnapshotEvent
-import org.tessellation.sdk.{SdkOrSharedOrKernelRegistrationIdRange, sdkKryoRegistrar}
 import org.tessellation.security.SecurityProvider
 
 import com.monovore.decline.Opts
@@ -40,10 +40,10 @@ abstract class CurrencyL0App(
 
   val opts: Opts[Run] = method.opts
 
-  type KryoRegistrationIdRange = SdkOrSharedOrKernelRegistrationIdRange
+  type KryoRegistrationIdRange = NodeSharedOrSharedRegistrationIdRange
 
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
-    sdkKryoRegistrar
+    nodeSharedKryoRegistrar
 
   def dataApplication: Option[Resource[IO, BaseDataApplicationL0Service[IO]]] = None
 
@@ -51,47 +51,47 @@ abstract class CurrencyL0App(
     implicit sp: SecurityProvider[IO]
   ): Option[Rewards[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]] = None
 
-  def run(method: Run, sdk: SDK[IO]): Resource[IO, Unit] = {
-    import sdk._
+  def run(method: Run, nodeShared: NodeShared[IO]): Resource[IO, Unit] = {
+    import nodeShared._
 
     val cfg = method.appConfig
 
     for {
       dataApplicationService <- dataApplication.sequence
 
-      queues <- Queues.make[IO](sdkQueues).asResource
-      storages <- Storages.make[IO](sdkStorages, cfg.snapshot, method.globalL0Peer, dataApplicationService).asResource
-      p2pClient = P2PClient.make[IO](sdkP2PClient, sdkResources.client, sdkServices.session)
+      queues <- Queues.make[IO](sharedQueues).asResource
+      storages <- Storages.make[IO](sharedStorages, cfg.snapshot, method.globalL0Peer, dataApplicationService).asResource
+      p2pClient = P2PClient.make[IO](sharedP2PClient, sharedResources.client, sharedServices.session)
       validators = Validators.make[IO](seedlist)
       implicit0(nodeContext: L0NodeContext[IO]) = L0NodeContext.make[IO](storages.snapshot)
       maybeMajorityPeerIds <- getMajorityPeerIds[IO](
-        sdk.prioritySeedlist,
-        method.sdkConfig.priorityPeerIds,
+        nodeShared.prioritySeedlist,
+        method.nodeSharedConfig.priorityPeerIds,
         cfg.environment
       ).asResource
       services <- Services
         .make[IO](
           p2pClient,
-          sdkServices,
+          sharedServices,
           storages,
-          sdkResources.client,
-          sdkServices.session,
-          sdk.seedlist,
-          sdk.nodeId,
+          sharedResources.client,
+          sharedServices.session,
+          nodeShared.seedlist,
+          nodeShared.nodeId,
           keyPair,
           cfg,
           dataApplicationService,
           rewards,
           validators.signedValidator,
-          sdkServices.globalSnapshotContextFns,
+          sharedServices.globalSnapshotContextFns,
           maybeMajorityPeerIds
         )
         .asResource
       programs = Programs.make[IO](
         keyPair,
-        sdk.nodeId,
+        nodeShared.nodeId,
         cfg.globalL0Peer,
-        sdkPrograms,
+        sharedPrograms,
         storages,
         services,
         p2pClient,
@@ -104,14 +104,14 @@ abstract class CurrencyL0App(
           services,
           programs,
           p2pClient,
-          sdkResources.client,
-          sdkServices.session,
+          sharedResources.client,
+          sharedServices.session,
           cfg.healthCheck,
-          sdk.nodeId
+          nodeShared.nodeId
         )
         .asResource
       rumorHandler = RumorHandlers
-        .make[IO](storages.cluster, healthChecks.ping, services.localHealthcheck, sdkStorages.forkInfo)
+        .make[IO](storages.cluster, healthChecks.ping, services.localHealthcheck, sharedStorages.forkInfo)
         .handlers <+>
         services.consensus.handler
       _ <- Daemons
@@ -127,7 +127,7 @@ abstract class CurrencyL0App(
           healthChecks,
           keyPair.getPrivate,
           cfg.environment,
-          sdk.nodeId,
+          nodeShared.nodeId,
           BuildInfo.version,
           cfg.http,
           services.dataApplication
@@ -155,7 +155,7 @@ abstract class CurrencyL0App(
           programs.genesis.create(dataApplicationService)(
             m.genesisBalancesPath,
             keyPair
-          ) >> sdk.stopSignal.set(true)
+          ) >> nodeShared.stopSignal.set(true)
 
         case other =>
           for {

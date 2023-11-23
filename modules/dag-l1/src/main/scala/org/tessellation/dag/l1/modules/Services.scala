@@ -8,19 +8,19 @@ import org.tessellation.dag.l1.domain.block.BlockService
 import org.tessellation.dag.l1.domain.transaction.TransactionService
 import org.tessellation.dag.l1.http.p2p.P2PClient
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.node.shared.domain.cluster.services.{Cluster, Session}
+import org.tessellation.node.shared.domain.cluster.storage.L0ClusterStorage
+import org.tessellation.node.shared.domain.collateral.Collateral
+import org.tessellation.node.shared.domain.gossip.Gossip
+import org.tessellation.node.shared.domain.healthcheck.LocalHealthcheck
+import org.tessellation.node.shared.domain.snapshot.services.GlobalL0Service
+import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
+import org.tessellation.node.shared.infrastructure.block.processing.BlockAcceptanceManager
+import org.tessellation.node.shared.infrastructure.collateral.Collateral
+import org.tessellation.node.shared.modules.SharedServices
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
-import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
-import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
-import org.tessellation.sdk.domain.collateral.Collateral
-import org.tessellation.sdk.domain.gossip.Gossip
-import org.tessellation.sdk.domain.healthcheck.LocalHealthcheck
-import org.tessellation.sdk.domain.snapshot.services.GlobalL0Service
-import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
-import org.tessellation.sdk.infrastructure.Collateral
-import org.tessellation.sdk.infrastructure.block.processing.BlockAcceptanceManager
-import org.tessellation.sdk.modules.SdkServices
 import org.tessellation.security.SecurityProvider
 
 object Services {
@@ -35,13 +35,13 @@ object Services {
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     globalL0Cluster: L0ClusterStorage[F],
     validators: Validators[F],
-    sdkServices: SdkServices[F],
+    sharedServices: SharedServices[F],
     p2PClient: P2PClient[F],
     cfg: AppConfig,
     maybeMajorityPeerIds: Option[NonEmptySet[PeerId]]
   ): Services[F, P, S, SI] =
     new Services[F, P, S, SI] {
-      val localHealthcheck = sdkServices.localHealthcheck
+      val localHealthcheck = sharedServices.localHealthcheck
       val block = BlockService.make[F](
         BlockAcceptanceManager.make[F](validators.block),
         storages.address,
@@ -49,11 +49,11 @@ object Services {
         storages.transaction,
         cfg.collateral.amount
       )
-      val cluster = sdkServices.cluster
-      val gossip = sdkServices.gossip
+      val cluster = sharedServices.cluster
+      val gossip = sharedServices.gossip
       val globalL0 = GlobalL0Service
         .make[F](p2PClient.l0GlobalSnapshot, globalL0Cluster, lastGlobalSnapshotStorage, None, maybeMajorityPeerIds)
-      val session = sdkServices.session
+      val session = sharedServices.session
       val transaction = TransactionService.make[F](storages.transaction, validators.transactionContextual)
       val collateral = Collateral.make[F](cfg.collateral, storages.lastSnapshot)
     }

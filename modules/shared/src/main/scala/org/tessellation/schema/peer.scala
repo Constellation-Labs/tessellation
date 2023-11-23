@@ -10,7 +10,7 @@ import cats.syntax.contravariant._
 import cats.syntax.eq._
 import cats.syntax.functor._
 
-import org.tessellation.cli.AppEnvironment
+import org.tessellation.env.AppEnvironment
 import org.tessellation.ext.derevo.ordering
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.address.Address

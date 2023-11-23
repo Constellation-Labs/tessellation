@@ -5,7 +5,7 @@ import cats.effect.Async
 import cats.syntax.functor._
 
 import org.tessellation.BuildInfo
-import org.tessellation.cli.AppEnvironment
+import org.tessellation.env.AppEnvironment
 import org.tessellation.rosetta.domain.NetworkIdentifier
 import org.tessellation.rosetta.domain.error.{LatestSnapshotNotFound, NetworkApiError}
 import org.tessellation.rosetta.domain.networkapi.model.options._
