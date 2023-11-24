@@ -184,8 +184,9 @@ object DataApplicationTraverse {
                       s"Found ${snapshots.size.show} snapshots at global snapshot ordinal=${globalSnapshot.ordinal.show}, performing nested recursion."
                     ) >> nestedRecursion(cache, snapshots).flatMap {
                       case Right((newCache, Some((state, ordinal)))) => (newCache, (state, ordinal).some).asRight[Acc].pure[F]
-                      case Right((newCache, None)) => fetchSnapshotOrErr(globalSnapshot.lastSnapshotHash).map { (newCache, _).asLeft[Output] }
-                      case Left(newCache) => fetchSnapshotOrErr(globalSnapshot.lastSnapshotHash).map { (newCache, _).asLeft[Output] }
+                      case Right((newCache, None)) =>
+                        fetchSnapshotOrErr(globalSnapshot.lastSnapshotHash).map((newCache, _).asLeft[Output])
+                      case Left(newCache) => fetchSnapshotOrErr(globalSnapshot.lastSnapshotHash).map((newCache, _).asLeft[Output])
                     }
                 })
                 .flatMap {
