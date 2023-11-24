@@ -13,15 +13,15 @@ import org.tessellation.dag.l1.domain.address.storage.AddressStorage
 import org.tessellation.dag.l1.domain.block.BlockStorage
 import org.tessellation.dag.l1.domain.block.BlockStorage._
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
-import org.tessellation.dag.l1.domain.transaction.TransactionStorage.{LastTransactionReferenceState, Majority}
+import org.tessellation.dag.l1.domain.transaction.TransactionStorage.Majority
 import org.tessellation.ext.collection.MapRefUtils._
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.node.shared.domain.block.processing._
-import org.tessellation.node.shared.nodeSharedKryoRegistrar
-import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.transaction._
+import org.tessellation.schema.{Block, _}
+import org.tessellation.sdk.domain.block.processing._
+import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.Hashed
 import org.tessellation.security.hash.ProofsHash
 import org.tessellation.security.signature.Signed
@@ -36,11 +36,11 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
   type Res = KryoSerializer[IO]
 
   override def sharedResource: Resource[IO, BlockServiceSuite.Res] =
-    KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ nodeSharedKryoRegistrar)
+    KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ sdkKryoRegistrar)
 
   def mkBlockService(
     blocksR: MapRef[IO, ProofsHash, Option[StoredBlock]],
-    lastAccTxR: MapRef[IO, Address, Option[LastTransactionReferenceState]],
+    lastAccTxR: MapRef[IO, Address, Option[TransactionStorage.LastTransactionReferenceState]],
     notAcceptanceReason: Option[BlockNotAcceptedReason] = None
   )(implicit K: KryoSerializer[IO]) = {
 

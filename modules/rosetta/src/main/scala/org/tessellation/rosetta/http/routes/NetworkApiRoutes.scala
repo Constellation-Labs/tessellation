@@ -2,11 +2,11 @@ package org.tessellation.rosetta.http.routes
 
 import cats.effect.Async
 
-import org.tessellation.env.AppEnvironment
+import org.tessellation.cli.AppEnvironment
+import org.tessellation.http.routes.internal.{InternalUrlPrefix, PublicRoutes}
 import org.tessellation.rosetta.domain.api.network._
 import org.tessellation.rosetta.domain.networkapi.NetworkApiService
 import org.tessellation.rosetta.ext.http4s.refined._
-import org.tessellation.routes.internal._
 
 import eu.timepit.refined.auto._
 import org.http4s.HttpRoutes

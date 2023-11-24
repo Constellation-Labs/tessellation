@@ -6,7 +6,7 @@ import cats.syntax.either._
 import cats.syntax.option._
 
 import org.tessellation.BuildInfo
-import org.tessellation.env.AppEnvironment
+import org.tessellation.cli.AppEnvironment
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.rosetta.domain.NetworkIdentifier
 import org.tessellation.rosetta.domain.error._

@@ -55,11 +55,11 @@ jobs:
         run: |
           sbt --error keytool/publishM2
           
-      - name: Generating Metagraph dependencies - nodeShared
+      - name: Generating Metagraph dependencies - sdk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          sbt --error nodeShared/publishM2
+          sbt --error sdk/publishM2
 
       - name: Generating Metagraph dependencies - currencyL0
         env:

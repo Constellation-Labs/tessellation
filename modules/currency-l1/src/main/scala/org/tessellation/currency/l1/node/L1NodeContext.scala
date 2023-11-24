@@ -2,8 +2,8 @@ package org.tessellation.currency.l1.node
 
 import org.tessellation.currency.dataApplication.L1NodeContext
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
-import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
+import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.security.{Hashed, SecurityProvider}
 
 object L1NodeContext {

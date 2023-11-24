@@ -1,8 +1,8 @@
 package org.tessellation.dag.l1.config
 
+import org.tessellation.cli.AppEnvironment
 import org.tessellation.dag.l1.domain.consensus.block.config.ConsensusConfig
-import org.tessellation.env.AppEnvironment
-import org.tessellation.node.shared.config.types._
+import org.tessellation.sdk.config.types._
 
 import ciris.Secret
 import eu.timepit.refined.types.string.NonEmptyString

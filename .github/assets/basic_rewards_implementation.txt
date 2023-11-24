@@ -9,9 +9,9 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.transaction.{RewardTransaction, Transaction, TransactionAmount}
-import org.tessellation.node.shared.domain.rewards.Rewards
-import org.tessellation.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
-import org.tessellation.node.shared.snapshot.currency.CurrencySnapshotEvent
+import org.tessellation.sdk.domain.rewards.Rewards
+import org.tessellation.sdk.infrastructure.consensus.trigger.ConsensusTrigger
+import org.tessellation.sdk.snapshot.currency.CurrencySnapshotEvent
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 import eu.timepit.refined.auto._

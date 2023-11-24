@@ -5,8 +5,8 @@ import cats.effect.{IO, Resource}
 import org.tessellation.block.generators._
 import org.tessellation.dag.l1.Main
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.node.shared.nodeSharedKryoRegistrar
 import org.tessellation.schema.{Block, transaction}
+import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.Hashed
 import org.tessellation.security.signature.Signed
 
@@ -18,7 +18,7 @@ object BlockRelationsSuite extends MutableIOSuite with Checkers {
   type Res = KryoSerializer[IO]
 
   override def sharedResource: Resource[IO, BlockServiceSuite.Res] =
-    KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ nodeSharedKryoRegistrar)
+    KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ sdkKryoRegistrar)
 
   test("when no relation between blocks then block is independent") { implicit ks =>
     forall { (block: Signed[Block], notRelatedBlock: Signed[Block]) =>

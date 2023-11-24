@@ -60,7 +60,7 @@ lazy val root = (project in file("."))
   .settings(
     name := "tessellation"
   )
-  .aggregate(keytool, kernel, shared, dagL0, testShared, wallet, nodeShared, dagL1, rosetta, currencyL0, currencyL1, tools)
+  .aggregate(keytool, kernel, shared, core, testShared, wallet, sdk, dagL1, rosetta, currencyL0, currencyL1, tools)
 
 lazy val kernel = (project in file("modules/kernel"))
   .enablePlugins(AshScriptPlugin)
@@ -213,7 +213,7 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.http4sDsl,
       Libraries.http4sServer,
       Libraries.http4sClient,
-      Libraries.http4sCirce
+      Libraries.http4sCirce,
     )
   )
 
@@ -251,11 +251,11 @@ lazy val testShared = (project in file("modules/test-shared"))
     )
   )
 
-lazy val nodeShared = (project in file("modules/node-shared"))
+lazy val sdk = (project in file("modules/sdk"))
   .dependsOn(shared % "compile->compile;test->test", testShared % Test, keytool, kernel)
   .configs(IntegrationTest)
   .settings(
-    name := "tessellation-node-shared",
+    name := "tessellation-sdk",
     Defaults.itSettings,
     scalafixCommonSettings,
     commonSettings,
@@ -301,7 +301,7 @@ lazy val nodeShared = (project in file("modules/node-shared"))
   )
 
 lazy val rosetta = (project in file("modules/rosetta"))
-  .dependsOn(kernel, shared % "compile->compile;test->test", nodeShared, testShared % Test)
+  .dependsOn(kernel, shared % "compile->compile;test->test", sdk, testShared % Test)
   .settings(
     name := "tessellation-rosetta",
     Defaults.itSettings,
@@ -327,7 +327,7 @@ lazy val rosetta = (project in file("modules/rosetta"))
 lazy val dagL1 = (project in file("modules/dag-l1"))
   .enablePlugins(AshScriptPlugin)
   .enablePlugins(JavaAppPackaging)
-  .dependsOn(kernel, shared % "compile->compile;test->test", nodeShared, testShared % Test)
+  .dependsOn(kernel, shared % "compile->compile;test->test", sdk, testShared % Test)
   .configs(IntegrationTest)
   .settings(
     name := "tessellation-dag-l1",
@@ -369,7 +369,7 @@ lazy val dagL1 = (project in file("modules/dag-l1"))
 lazy val tools = (project in file("modules/tools"))
   .enablePlugins(AshScriptPlugin)
   .enablePlugins(JavaAppPackaging)
-  .dependsOn(dagL0, dagL1)
+  .dependsOn(core, dagL1)
   .settings(
     name := "tessellation-tools",
     Defaults.itSettings,
@@ -413,12 +413,12 @@ lazy val tools = (project in file("modules/tools"))
     )
   )
 
-lazy val dagL0 = (project in file("modules/dag-l0"))
+lazy val core = (project in file("modules/core"))
   .enablePlugins(AshScriptPlugin)
   .enablePlugins(JavaAppPackaging)
-  .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test, nodeShared)
+  .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test, sdk)
   .settings(
-    name := "tessellation-dag-l0",
+    name := "tessellation-core",
     Defaults.itSettings,
     scalafixCommonSettings,
     commonSettings,
@@ -478,7 +478,7 @@ lazy val dagL0 = (project in file("modules/dag-l0"))
   )
 
 lazy val currencyL1 = (project in file("modules/currency-l1"))
-  .dependsOn(dagL1, nodeShared, shared)
+  .dependsOn(dagL1, sdk, shared)
   .settings(
     name := "tessellation-currency-l1",
     Defaults.itSettings,
@@ -496,7 +496,7 @@ lazy val currencyL0 = (project in file("modules/currency-l0"))
   .enablePlugins(AshScriptPlugin)
   .enablePlugins(BuildInfoPlugin)
   .enablePlugins(JavaAppPackaging)
-  .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test, nodeShared)
+  .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test, sdk)
   .settings(
     name := "tessellation-currency-l0",
     buildInfoKeys := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion),

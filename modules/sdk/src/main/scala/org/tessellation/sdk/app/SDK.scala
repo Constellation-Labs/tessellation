@@ -1,0 +1,44 @@
+package org.tessellation.sdk.app
+
+import java.security.KeyPair
+
+import cats.effect.std.{Random, Supervisor}
+
+import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.generation.Generation
+import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.trust.PeerObservationAdjustmentUpdateBatch
+import org.tessellation.sdk.domain.seedlist.SeedlistEntry
+import org.tessellation.sdk.http.p2p.SdkP2PClient
+import org.tessellation.sdk.infrastructure.metrics.Metrics
+import org.tessellation.sdk.modules._
+import org.tessellation.sdk.resources.SdkResources
+import org.tessellation.security.SecurityProvider
+
+import fs2.concurrent.SignallingRef
+
+trait SDK[F[_]] {
+  implicit val random: Random[F]
+  implicit val securityProvider: SecurityProvider[F]
+  implicit val kryoPool: KryoSerializer[F]
+  implicit val metrics: Metrics[F]
+  implicit val supervisor: Supervisor[F]
+
+  val keyPair: KeyPair
+  lazy val nodeId: PeerId = PeerId.fromPublic(keyPair.getPublic)
+  val generation: Generation
+  val seedlist: Option[Set[SeedlistEntry]]
+  val trustRatings: Option[PeerObservationAdjustmentUpdateBatch]
+
+  val sdkResources: SdkResources[F]
+  val sdkP2PClient: SdkP2PClient[F]
+  val sdkQueues: SdkQueues[F]
+  val sdkStorages: SdkStorages[F]
+  val sdkServices: SdkServices[F]
+  val sdkPrograms: SdkPrograms[F]
+  val sdkValidators: SdkValidators[F]
+  val prioritySeedlist: Option[Set[SeedlistEntry]]
+
+  def restartSignal: SignallingRef[F, Unit]
+  def stopSignal: SignallingRef[F, Boolean]
+}

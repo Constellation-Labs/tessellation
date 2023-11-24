@@ -1,0 +1,9 @@
+package org.tessellation.sdk.infrastructure.healthcheck.ping
+
+import org.tessellation.sdk.domain.healthcheck.consensus.types.HealthCheckConsensusDecision
+
+sealed trait PingHealthCheckConsensusDecision extends HealthCheckConsensusDecision
+
+final case object DecisionKeepPeer extends PingHealthCheckConsensusDecision
+final case object DecisionPeerMismatch extends PingHealthCheckConsensusDecision
+final case object DecisionDropPeer extends PingHealthCheckConsensusDecision

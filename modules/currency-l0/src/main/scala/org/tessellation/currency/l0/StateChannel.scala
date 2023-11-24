@@ -7,9 +7,9 @@ import cats.syntax.all._
 import scala.concurrent.duration._
 
 import org.tessellation.currency.l0.modules.{Programs, Services, Storages}
-import org.tessellation.node.shared.domain.snapshot.Validator
 import org.tessellation.schema.GlobalIncrementalSnapshot
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.sdk.domain.snapshot.Validator
 import org.tessellation.security.Hashed
 
 import fs2.Stream

@@ -4,8 +4,8 @@ import cats.effect.Sync
 import cats.syntax.functor._
 
 import org.tessellation.currency.dataApplication.ConsensusInput
-import org.tessellation.node.shared.http.p2p.PeerResponse
-import org.tessellation.node.shared.http.p2p.PeerResponse.PeerResponse
+import org.tessellation.sdk.http.p2p.PeerResponse
+import org.tessellation.sdk.http.p2p.PeerResponse.PeerResponse
 import org.tessellation.security.signature.Signed
 
 import io.circe.Encoder

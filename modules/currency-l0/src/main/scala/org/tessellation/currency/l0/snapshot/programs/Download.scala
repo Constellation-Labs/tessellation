@@ -22,14 +22,14 @@ import org.tessellation.currency.l0.node.IdentifierStorage
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.node.shared.domain.cluster.storage.ClusterStorage
-import org.tessellation.node.shared.domain.node.NodeStorage
-import org.tessellation.node.shared.domain.snapshot.programs.Download
-import org.tessellation.node.shared.domain.snapshot.{PeerSelect, Validator}
-import org.tessellation.node.shared.infrastructure.snapshot.{CurrencySnapshotContextFunctions, SnapshotConsensus}
 import org.tessellation.schema._
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.Peer
+import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
+import org.tessellation.sdk.domain.node.NodeStorage
+import org.tessellation.sdk.domain.snapshot.programs.Download
+import org.tessellation.sdk.domain.snapshot.{PeerSelect, Validator}
+import org.tessellation.sdk.infrastructure.snapshot.{CurrencySnapshotContextFunctions, SnapshotConsensus}
 import org.tessellation.security.Hashed
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed

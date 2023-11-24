@@ -18,29 +18,29 @@ import org.tessellation.dag.l1.domain.block.BlockStorage._
 import org.tessellation.dag.l1.domain.snapshot.programs.SnapshotProcessor._
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage.{Accepted, LastTransactionReferenceState, Majority}
+import org.tessellation.dag.transaction.TransactionGenerator
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.collection.MapRefUtils._
 import org.tessellation.json.JsonBrotliBinarySerializer
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.node.shared.config.types.SnapshotSizeConfig
-import org.tessellation.node.shared.infrastructure.block.processing.BlockAcceptanceManager
-import org.tessellation.node.shared.infrastructure.snapshot._
-import org.tessellation.node.shared.infrastructure.snapshot.storage.LastSnapshotStorage
-import org.tessellation.node.shared.modules.SharedValidators
-import org.tessellation.node.shared.nodeSharedKryoRegistrar
-import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction._
+import org.tessellation.schema.{Block, _}
+import org.tessellation.sdk.config.types.SnapshotSizeConfig
+import org.tessellation.sdk.infrastructure.block.processing.BlockAcceptanceManager
+import org.tessellation.sdk.infrastructure.snapshot._
+import org.tessellation.sdk.infrastructure.snapshot.storage.LastSnapshotStorage
+import org.tessellation.sdk.modules.SdkValidators
+import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed.forAsyncKryo
 import org.tessellation.security.{Hashed, KeyPairGenerator, SecurityProvider}
-import org.tessellation.transaction.TransactionGenerator
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
@@ -72,7 +72,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
   def testResources: Resource[IO, TestResources] =
     SecurityProvider.forAsync[IO].flatMap { implicit sp =>
-      KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ nodeSharedKryoRegistrar).flatMap { implicit kp =>
+      KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ sdkKryoRegistrar).flatMap { implicit kp =>
         Random.scalaUtilRandom[IO].asResource.flatMap { implicit random =>
           for {
             balancesR <- Ref.of[IO, Map[Address, Balance]](Map.empty).asResource
@@ -81,7 +81,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             lastAccTxR <- MapRef.ofConcurrentHashMap[IO, Address, LastTransactionReferenceState]().asResource
             waitingTxsR <- MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[Transaction]]]().asResource
             transactionStorage = new TransactionStorage[IO](lastAccTxR, waitingTxsR, TransactionReference.empty)
-            validators = SharedValidators.make[IO](None, None, Some(Map.empty), Long.MaxValue)
+            validators = SdkValidators.make[IO](None, None, Some(Map.empty), Long.MaxValue)
 
             currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
               BlockAcceptanceManager.make[IO](validators.currencyBlockValidator),

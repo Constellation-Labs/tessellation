@@ -5,7 +5,7 @@ import java.security.KeyStore
 import cats.effect.{Async, ExitCode, IO}
 
 import org.tessellation.BuildInfo
-import org.tessellation.env.env._
+import org.tessellation.cli.env._
 import org.tessellation.keytool.cert.DistinguishedName
 import org.tessellation.keytool.cli.method.{ExportPrivateKeyHex, GenerateWallet, MigrateExistingKeyStoreToStorePassOnly}
 import org.tessellation.security.SecurityProvider

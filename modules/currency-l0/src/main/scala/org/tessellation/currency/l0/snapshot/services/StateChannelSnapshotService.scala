@@ -19,11 +19,11 @@ import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.crypto._
 import org.tessellation.json.JsonBrotliBinarySerializer
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.node.shared.domain.cluster.storage.L0ClusterStorage
-import org.tessellation.node.shared.domain.snapshot.storage.SnapshotStorage
-import org.tessellation.node.shared.domain.statechannel.StateChannelValidator.StateChannelValidationError
-import org.tessellation.node.shared.http.p2p.clients.StateChannelSnapshotClient
-import org.tessellation.node.shared.infrastructure.snapshot.DataApplicationSnapshotAcceptanceManager
+import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
+import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
+import org.tessellation.sdk.domain.statechannel.StateChannelValidator.StateChannelValidationError
+import org.tessellation.sdk.http.p2p.clients.StateChannelSnapshotClient
+import org.tessellation.sdk.infrastructure.snapshot.DataApplicationSnapshotAcceptanceManager
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hashed, SecurityProvider}

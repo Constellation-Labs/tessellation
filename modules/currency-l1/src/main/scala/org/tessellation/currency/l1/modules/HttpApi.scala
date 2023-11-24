@@ -13,13 +13,13 @@ import org.tessellation.currency.schema.currency._
 import org.tessellation.dag.l1.http.{Routes => DAGRoutes}
 import org.tessellation.dag.l1.modules.HealthChecks
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.node.shared.config.types.HttpConfig
-import org.tessellation.node.shared.http.p2p.middlewares.{PeerAuthMiddleware, `X-Id-Middleware`}
-import org.tessellation.node.shared.http.routes._
-import org.tessellation.node.shared.infrastructure.healthcheck.ping.PingHealthCheckRoutes
-import org.tessellation.node.shared.infrastructure.metrics.Metrics
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
+import org.tessellation.sdk.config.types.HttpConfig
+import org.tessellation.sdk.http.p2p.middleware.{PeerAuthMiddleware, `X-Id-Middleware`}
+import org.tessellation.sdk.http.routes._
+import org.tessellation.sdk.infrastructure.healthcheck.ping.PingHealthCheckRoutes
+import org.tessellation.sdk.infrastructure.metrics.Metrics
 import org.tessellation.security.SecurityProvider
 
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT

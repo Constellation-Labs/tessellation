@@ -11,17 +11,17 @@ import org.tessellation.currency.l0.snapshot.storages.LastBinaryHashStorage
 import org.tessellation.currency.schema.currency
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.node.shared.config.types.SnapshotConfig
-import org.tessellation.node.shared.domain.cluster.storage.{ClusterStorage, L0ClusterStorage, SessionStorage}
-import org.tessellation.node.shared.domain.collateral.LatestBalances
-import org.tessellation.node.shared.domain.node.NodeStorage
-import org.tessellation.node.shared.domain.snapshot.storage.{LastSnapshotStorage, SnapshotStorage}
-import org.tessellation.node.shared.infrastructure.cluster.storage.L0ClusterStorage
-import org.tessellation.node.shared.infrastructure.gossip.RumorStorage
-import org.tessellation.node.shared.infrastructure.snapshot.storage._
-import org.tessellation.node.shared.modules.SharedStorages
 import org.tessellation.schema.peer.L0Peer
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
+import org.tessellation.sdk.config.types.SnapshotConfig
+import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, L0ClusterStorage, SessionStorage}
+import org.tessellation.sdk.domain.collateral.LatestBalances
+import org.tessellation.sdk.domain.node.NodeStorage
+import org.tessellation.sdk.domain.snapshot.storage.{LastSnapshotStorage, SnapshotStorage}
+import org.tessellation.sdk.infrastructure.cluster.storage.L0ClusterStorage
+import org.tessellation.sdk.infrastructure.gossip.RumorStorage
+import org.tessellation.sdk.infrastructure.snapshot.storage._
+import org.tessellation.sdk.modules.SdkStorages
 
 import fs2.io.file.Path
 
@@ -30,7 +30,7 @@ object Storages {
   def dataApplicationCalculatedStatePath = Path("data/calculated_state")
 
   def make[F[_]: Async: KryoSerializer: Supervisor: Random](
-    sharedStorages: SharedStorages[F],
+    sdkStorages: SdkStorages[F],
     snapshotConfig: SnapshotConfig,
     globalL0Peer: L0Peer,
     dataApplication: Option[BaseDataApplicationL0Service[F]]
@@ -60,10 +60,10 @@ object Storages {
     } yield
       new Storages[F](
         globalL0Cluster = globalL0ClusterStorage,
-        cluster = sharedStorages.cluster,
-        node = sharedStorages.node,
-        session = sharedStorages.session,
-        rumor = sharedStorages.rumor,
+        cluster = sdkStorages.cluster,
+        node = sdkStorages.node,
+        session = sdkStorages.session,
+        rumor = sdkStorages.rumor,
         lastBinaryHash = lastBinaryHashStorage,
         snapshot = snapshotStorage,
         lastGlobalSnapshot = lastGlobalSnapshotStorage,

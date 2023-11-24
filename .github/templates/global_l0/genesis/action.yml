@@ -30,9 +30,9 @@ runs:
     - name: Generate Global L0 JAR
       shell: bash
       run: |
-        sbt dagL0/assembly keytool/assembly wallet/assembly
+        sbt core/assembly keytool/assembly wallet/assembly
         
-        mv modules/dag-l0/target/scala-2.13/tessellation-dag-l0-assembly-* .github/config/containers/jars/global-l0.jar
+        mv modules/core/target/scala-2.13/tessellation-core-assembly-* .github/config/containers/jars/global-l0.jar
         mv modules/keytool/target/scala-2.13/tessellation-keytool-assembly-* .github/config/containers/jars/cl-keytool.jar
         mv modules/wallet/target/scala-2.13/tessellation-wallet-assembly-* .github/config/containers/jars/cl-wallet.jar
 

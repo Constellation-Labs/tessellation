@@ -11,16 +11,16 @@ import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.dag.l1.infrastructure.address.storage.AddressStorage
 import org.tessellation.dag.l1.modules.{Storages => BaseStorages}
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.node.shared.domain.cluster.storage.L0ClusterStorage
-import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
-import org.tessellation.node.shared.infrastructure.cluster.storage.L0ClusterStorage
-import org.tessellation.node.shared.infrastructure.snapshot.storage.LastSnapshotStorage
-import org.tessellation.node.shared.modules.SharedStorages
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.L0Peer
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
+import org.tessellation.sdk.domain.cluster.storage.L0ClusterStorage
+import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
+import org.tessellation.sdk.infrastructure.cluster.storage.L0ClusterStorage
+import org.tessellation.sdk.infrastructure.snapshot.storage.LastSnapshotStorage
+import org.tessellation.sdk.modules.SdkStorages
 
 object Storages {
 
@@ -30,7 +30,7 @@ object Storages {
     S <: Snapshot,
     SI <: SnapshotInfo[P]
   ](
-    sharedStorages: SharedStorages[F],
+    sdkStorages: SdkStorages[F],
     l0Peer: L0Peer,
     globalL0Peer: L0Peer,
     currencyIdentifier: Address
@@ -51,14 +51,14 @@ object Storages {
         val address = addressStorage
         val block = blockStorage
         val consensus = consensusStorage
-        val cluster = sharedStorages.cluster
+        val cluster = sdkStorages.cluster
         val l0Cluster = l0ClusterStorage
         val globalL0Cluster = globalL0ClusterStorage
         val lastSnapshot = lastCurrencySnapshotStorage
         val lastGlobalSnapshot = lastGlobalSnapshotStorage
-        val node = sharedStorages.node
-        val session = sharedStorages.session
-        val rumor = sharedStorages.rumor
+        val node = sdkStorages.node
+        val session = sdkStorages.session
+        val rumor = sdkStorages.rumor
         val transaction = transactionStorage
       }
 }

@@ -4,8 +4,8 @@ import cats.syntax.contravariantSemigroupal._
 
 import scala.concurrent.duration._
 
-import org.tessellation.node.shared.cli.http._
-import org.tessellation.node.shared.config.types.{HttpConfig, HttpServerConfig}
+import org.tessellation.sdk.cli.http._
+import org.tessellation.sdk.config.types.{HttpConfig, HttpServerConfig}
 
 import com.comcast.ip4s.IpLiteralSyntax
 import com.monovore.decline.Opts

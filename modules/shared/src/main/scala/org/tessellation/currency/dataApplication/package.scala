@@ -9,7 +9,7 @@ import scala.util.control.NoStackTrace
 
 import org.tessellation.currency.dataApplication.dataApplication.{DataApplicationBlock, DataApplicationValidationErrorOr}
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
-import org.tessellation.routes.internal.ExternalUrlPrefix
+import org.tessellation.http.routes.internal.ExternalUrlPrefix
 import org.tessellation.schema.round.RoundId
 import org.tessellation.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
 import org.tessellation.security.hash.Hash

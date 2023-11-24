@@ -3,13 +3,13 @@ package org.tessellation.dag.l1.modules
 import cats.effect.Async
 
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.node.shared.domain.block.processing.BlockValidator
-import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
-import org.tessellation.node.shared.domain.transaction.{ContextualTransactionValidator, TransactionChainValidator, TransactionValidator}
-import org.tessellation.node.shared.infrastructure.block.processing.BlockValidator
-import org.tessellation.node.shared.infrastructure.gossip.RumorValidator
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
+import org.tessellation.sdk.domain.block.processing.BlockValidator
+import org.tessellation.sdk.domain.seedlist.SeedlistEntry
+import org.tessellation.sdk.domain.transaction.{ContextualTransactionValidator, TransactionChainValidator, TransactionValidator}
+import org.tessellation.sdk.infrastructure.block.processing.BlockValidator
+import org.tessellation.sdk.infrastructure.gossip.RumorValidator
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.SignedValidator
 

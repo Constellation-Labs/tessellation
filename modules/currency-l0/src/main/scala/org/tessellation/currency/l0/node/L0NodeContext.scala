@@ -7,7 +7,7 @@ import cats.syntax.functor._
 import org.tessellation.currency.dataApplication.L0NodeContext
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.node.shared.domain.snapshot.storage.SnapshotStorage
+import org.tessellation.sdk.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.security.{Hashed, SecurityProvider}
 
 object L0NodeContext {

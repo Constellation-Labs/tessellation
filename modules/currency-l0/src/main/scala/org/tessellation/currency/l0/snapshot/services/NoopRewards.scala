@@ -7,12 +7,12 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import org.tessellation.currency.dataApplication.DataCalculatedState
 import org.tessellation.currency.schema.currency._
-import org.tessellation.node.shared.domain.rewards.Rewards
-import org.tessellation.node.shared.infrastructure.consensus.trigger
-import org.tessellation.node.shared.snapshot.currency.CurrencySnapshotEvent
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.transaction.{RewardTransaction, Transaction}
+import org.tessellation.sdk.domain.rewards.Rewards
+import org.tessellation.sdk.infrastructure.consensus.trigger
+import org.tessellation.sdk.snapshot.currency.CurrencySnapshotEvent
 import org.tessellation.security.signature.Signed
 
 object NoopRewards {

@@ -12,10 +12,9 @@ import scala.concurrent.duration.FiniteDuration
 
 import org.tessellation.dag.l1.Main
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.Proposal
+import org.tessellation.dag.transaction.TransactionGenerator
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.node.shared.domain.transaction.TransactionValidator
-import org.tessellation.node.shared.nodeSharedKryoRegistrar
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.block.Tips
 import org.tessellation.schema.height.Height
@@ -23,13 +22,14 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.round.RoundId
 import org.tessellation.schema.transaction.{TransactionFee, TransactionReference}
 import org.tessellation.schema.{Block, BlockReference}
+import org.tessellation.sdk.domain.transaction.TransactionValidator
+import org.tessellation.sdk.sdkKryoRegistrar
 import org.tessellation.security.hash.ProofsHash
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.SignedValidator
 import org.tessellation.security.signature.signature.SignatureProof
 import org.tessellation.security.{KeyPairGenerator, SecurityProvider}
-import org.tessellation.transaction.TransactionGenerator
 
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -42,7 +42,7 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
     (KryoSerializer[IO], SecurityProvider[IO], KeyPair, KeyPair, Address, Address, TransactionValidator[IO])
 
   override def sharedResource: Resource[IO, Res] =
-    KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ nodeSharedKryoRegistrar).flatMap { implicit kp =>
+    KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ sdkKryoRegistrar).flatMap { implicit kp =>
       SecurityProvider.forAsync[IO].flatMap { implicit sp =>
         for {
           srcKey <- KeyPairGenerator.makeKeyPair[IO].asResource

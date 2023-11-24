@@ -15,10 +15,10 @@ import scala.math.Integral.Implicits._
 import org.tessellation.currency.schema.currency.SnapshotFee
 import org.tessellation.keytool.KeyStoreUtils
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.node.shared.domain.genesis.types.GenesisCSVAccount
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction._
+import org.tessellation.sdk.domain.genesis.types.GenesisCSVAccount
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.key.ops._
 import org.tessellation.security.signature.Signed

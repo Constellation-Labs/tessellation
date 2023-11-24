@@ -2,7 +2,7 @@ package org.tessellation.wallet.cli
 
 import cats.syntax.contravariantSemigroupal._
 
-import org.tessellation.env.env._
+import org.tessellation.cli.env._
 
 import io.estatico.newtype.ops._
 

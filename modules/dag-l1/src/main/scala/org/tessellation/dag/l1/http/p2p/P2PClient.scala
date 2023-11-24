@@ -4,9 +4,9 @@ import cats.effect.Async
 
 import org.tessellation.dag.l1.domain.consensus.block.http.p2p.clients.BlockConsensusClient
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.node.shared.http.p2p.SharedP2PClient
-import org.tessellation.node.shared.http.p2p.clients._
-import org.tessellation.node.shared.infrastructure.gossip.p2p.GossipClient
+import org.tessellation.sdk.http.p2p.SdkP2PClient
+import org.tessellation.sdk.http.p2p.clients._
+import org.tessellation.sdk.infrastructure.gossip.p2p.GossipClient
 import org.tessellation.security.SecurityProvider
 
 import org.http4s.client._
@@ -14,17 +14,17 @@ import org.http4s.client._
 object P2PClient {
 
   def make[F[_]: Async: SecurityProvider: KryoSerializer](
-    sharedP2PClient: SharedP2PClient[F],
+    sdkP2PClient: SdkP2PClient[F],
     client: Client[F],
     currencyPathPrefix: String
   ): P2PClient[F] =
     new P2PClient[F](
-      sharedP2PClient.sign,
-      sharedP2PClient.node,
-      sharedP2PClient.cluster,
+      sdkP2PClient.sign,
+      sdkP2PClient.node,
+      sdkP2PClient.cluster,
       L0ClusterClient.make(client),
       L0BlockOutputClient.make(currencyPathPrefix, client),
-      sharedP2PClient.gossip,
+      sdkP2PClient.gossip,
       BlockConsensusClient.make(client),
       L0GlobalSnapshotClient.make(client),
       L0TrustClient.make(client)
