@@ -138,11 +138,12 @@ object DataApplicationSnapshotAcceptanceManager {
             .flatMap(expectCalculatedStateOrdinal(lastOrdinal))
         )
 
-        updates <- OptionT.liftF {
+        (validatedUpdates, validatedBlocks) <- OptionT.liftF {
           NonEmptyList
             .fromList(dataBlocks.distinctBy(_.value.roundId))
-            .map(_.flatMap(_.value.updates))
-            .map { updates =>
+            .map { uniqueBlocks =>
+              val updates = uniqueBlocks.flatMap(_.value.updates)
+
               service
                 .validateData(DataState(lastOnChainState, lastCalculatedState), updates)
                 .flatTap { validated =>
@@ -152,13 +153,13 @@ object DataApplicationSnapshotAcceptanceManager {
                 .handleErrorWith(err =>
                   logger.error(err)("Unhandled exception during validating data application, assumed as invalid").as(false)
                 )
-                .ifF(updates.toList, List.empty[Signed[DataUpdate]])
+                .ifF((updates.toList, uniqueBlocks.toList), (List.empty, List.empty))
             }
-            .getOrElse(List.empty[Signed[DataUpdate]].pure[F])
+            .getOrElse((List.empty, List.empty).pure[F])
         }
 
         newDataState <- OptionT.liftF(
-          service.combine(DataState(lastOnChainState, lastCalculatedState), updates)
+          service.combine(DataState(lastOnChainState, lastCalculatedState), validatedUpdates)
         )
 
         serializedOnChainState <- OptionT.liftF(
@@ -166,7 +167,7 @@ object DataApplicationSnapshotAcceptanceManager {
         )
 
         serializedBlocks <- OptionT.liftF(
-          dataBlocks.traverse(service.serializeBlock)
+          validatedBlocks.traverse(service.serializeBlock)
         )
 
         calculatedStateProof <- OptionT.liftF(
