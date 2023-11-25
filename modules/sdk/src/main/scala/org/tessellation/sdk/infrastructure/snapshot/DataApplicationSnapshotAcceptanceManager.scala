@@ -103,6 +103,8 @@ object DataApplicationSnapshotAcceptanceManager {
               )
             }
             .map(_.calculatedState)
+            .semiflatTap(_ => logger.info("CONSUMING"))
+            .semiflatTap(_ => logger.info(s"TEST: ${da}"))
             .semiflatMap(expectCalculatedStateHash(da.calculatedStateProof))
             .semiflatTap(service.setCalculatedState(artifact.ordinal, _))
             .semiflatTap(calculatedStateStorage.write(artifact.ordinal, _)(service.serializeCalculatedState))
