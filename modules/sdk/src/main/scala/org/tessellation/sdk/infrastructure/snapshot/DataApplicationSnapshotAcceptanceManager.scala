@@ -121,78 +121,83 @@ object DataApplicationSnapshotAcceptanceManager {
     ): F[Option[DataApplicationAcceptanceResult]] = {
       implicit val context: L0NodeContext[F] = nodeContext
 
-      val newDataState: OptionT[F, DataApplicationAcceptanceResult] = for {
-        lastOnChainState <- OptionT.fromOption(maybeLastDataApplication.map(_.onChainState)).flatMapF { lastDataApplication =>
-          service
-            .deserializeState(lastDataApplication)
-            .flatTap {
-              case Left(err) => logger.warn(err)("Cannot deserialize custom state")
-              case Right(_)  => Applicative[F].unit
-            }
-            .map(_.toOption)
-            .handleErrorWith(err =>
-              logger.error(err)(s"Unhandled exception during deserialization data application, fallback to empty state").as(none)
-            )
-        }
-
-        lastCalculatedState <- OptionT.liftF(
-          service.getCalculatedState
-            .flatMap(expectCalculatedStateOrdinal(lastOrdinal))
-        )
-
-        (validatedUpdates, validatedBlocks) <- OptionT.liftF {
-          NonEmptyList
-            .fromList(dataBlocks.distinctBy(_.value.roundId))
-            .map { uniqueBlocks =>
-              val updates = uniqueBlocks.flatMap(_.value.updates)
-
+      logger.info(s"Argument maybeLastDataApplication: ${maybeLastDataApplication}") >>
+        logger.info(s"Argument dataBlocks: ${dataBlocks}") >>
+        logger.info(s"Argument lastOrdinal: ${lastOrdinal}") >>
+        logger.info(s"Argument currentOrdinal: ${currentOrdinal}") >> {
+          val newDataState: OptionT[F, DataApplicationAcceptanceResult] = for {
+            lastOnChainState <- OptionT.fromOption(maybeLastDataApplication.map(_.onChainState)).flatMapF { lastDataApplication =>
               service
-                .validateData(DataState(lastOnChainState, lastCalculatedState), updates)
-                .flatTap { validated =>
-                  logger.warn(s"Data application is invalid, errors: ${validated.toString}").whenA(validated.isInvalid)
+                .deserializeState(lastDataApplication)
+                .flatTap {
+                  case Left(err) => logger.warn(err)("Cannot deserialize custom state")
+                  case Right(_)  => Applicative[F].unit
                 }
-                .map(_.isValid)
+                .map(_.toOption)
                 .handleErrorWith(err =>
-                  logger.error(err)("Unhandled exception during validating data application, assumed as invalid").as(false)
+                  logger.error(err)(s"Unhandled exception during deserialization data application, fallback to empty state").as(none)
                 )
-                .ifF((updates.toList, uniqueBlocks.toList), (List.empty, List.empty))
             }
-            .getOrElse((List.empty, List.empty).pure[F])
-        }
 
-        newDataState <- OptionT.liftF(
-          service.combine(DataState(lastOnChainState, lastCalculatedState), validatedUpdates)
-        )
-
-        serializedOnChainState <- OptionT.liftF(
-          service.serializeState(newDataState.onChain)
-        )
-
-        serializedBlocks <- OptionT.liftF(
-          validatedBlocks.traverse(service.serializeBlock)
-        )
-
-        calculatedStateProof <- OptionT.liftF(
-          service.hashCalculatedState(newDataState.calculated)
-        )
-
-      } yield
-        DataApplicationAcceptanceResult(
-          DataApplicationPart(serializedOnChainState, serializedBlocks, calculatedStateProof),
-          newDataState.calculated
-        )
-
-      newDataState.value.handleErrorWith { err =>
-        logger.error(err)("Unhandled exception during calculating new data application state, fallback to last data application") >>
-          service.getCalculatedState.map { lastCalculatedState =>
-            maybeLastDataApplication.map(
-              DataApplicationAcceptanceResult(
-                _,
-                lastCalculatedState._2
-              )
+            lastCalculatedState <- OptionT.liftF(
+              service.getCalculatedState
+                .flatMap(expectCalculatedStateOrdinal(lastOrdinal))
             )
+
+            (validatedUpdates, validatedBlocks) <- OptionT.liftF {
+              NonEmptyList
+                .fromList(dataBlocks.distinctBy(_.value.roundId))
+                .map { uniqueBlocks =>
+                  val updates = uniqueBlocks.flatMap(_.value.updates)
+
+                  service
+                    .validateData(DataState(lastOnChainState, lastCalculatedState), updates)
+                    .flatTap { validated =>
+                      logger.warn(s"Data application is invalid, errors: ${validated.toString}").whenA(validated.isInvalid)
+                    }
+                    .map(_.isValid)
+                    .handleErrorWith(err =>
+                      logger.error(err)("Unhandled exception during validating data application, assumed as invalid").as(false)
+                    )
+                    .ifF((updates.toList, uniqueBlocks.toList), (List.empty, List.empty))
+                }
+                .getOrElse((List.empty, List.empty).pure[F])
+            }
+
+            newDataState <- OptionT.liftF(
+              service.combine(DataState(lastOnChainState, lastCalculatedState), validatedUpdates)
+            )
+
+            serializedOnChainState <- OptionT.liftF(
+              service.serializeState(newDataState.onChain)
+            )
+
+            serializedBlocks <- OptionT.liftF(
+              validatedBlocks.traverse(service.serializeBlock)
+            )
+
+            calculatedStateProof <- OptionT.liftF(
+              service.hashCalculatedState(newDataState.calculated)
+            )
+
+          } yield
+            DataApplicationAcceptanceResult(
+              DataApplicationPart(serializedOnChainState, serializedBlocks, calculatedStateProof),
+              newDataState.calculated
+            )
+
+          newDataState.value.handleErrorWith { err =>
+            logger.error(err)("Unhandled exception during calculating new data application state, fallback to last data application") >>
+              service.getCalculatedState.map { lastCalculatedState =>
+                maybeLastDataApplication.map(
+                  DataApplicationAcceptanceResult(
+                    _,
+                    lastCalculatedState._2
+                  )
+                )
+              }
           }
-      }
+        }
     }
   }
 }
