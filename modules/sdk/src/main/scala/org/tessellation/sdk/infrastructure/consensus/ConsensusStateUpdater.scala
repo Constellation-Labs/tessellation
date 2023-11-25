@@ -310,9 +310,12 @@ object ConsensusStateUpdater {
                           )
                           .whenA(allSignatures.size =!= validSignatures.size)
                       }
-                }.flatMap { maybeOnlyValidSignatures =>
+                }
+                  .flatTap(_ => logger.info("FUI CHAMAAADO"))
+                  .flatMap { maybeOnlyValidSignatures =>
                   state.facilitators.hashF.map { facilitatorsHash =>
-                    maybeOnlyValidSignatures.flatMap { validSignatures =>
+                    maybeOnlyValidSignatures
+                      .flatMap { validSignatures =>
                       NonEmptySet.fromSet(validSignatures.toSortedSet).map { validSignaturesNes =>
                         val signedArtifact = Signed(majorityArtifactInfo.artifact, validSignaturesNes)
 
