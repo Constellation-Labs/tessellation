@@ -297,47 +297,46 @@ object ConsensusStateUpdater {
                     .flatMap(peerDeclaration => peerDeclaration.signature.map(signature => (peerId, signature)))
                 }
 
-              maybeAllSignatures.traverseTap(signatures => warnIfForking(ownFacilitatorsHash)(signatures.map(_._2))).flatMap {
-                _.map(_.map { case (id, signature) => SignatureProof(PeerId._Id.get(id), signature.signature) }.toList).traverse {
-                  allSignatures =>
-                    allSignatures
-                      .filterA(verifySignatureProof(majorityArtifactInfo.hash, _))
-                      .flatTap { validSignatures =>
-                        logger
-                          .warn(
-                            s"Removed ${(allSignatures.size - validSignatures.size).show} invalid signatures during consensus for key ${state.key.show}, " +
-                              s"${validSignatures.size.show} valid signatures left"
+              maybeAllSignatures
+                .traverseTap(signatures => warnIfForking(ownFacilitatorsHash)(signatures.map(_._2)))
+                .flatMap {
+                  _.map(_.map { case (id, signature) => SignatureProof(PeerId._Id.get(id), signature.signature) }.toList).traverse {
+                    allSignatures =>
+                      allSignatures
+                        .filterA(verifySignatureProof(majorityArtifactInfo.hash, _))
+                        .flatTap { validSignatures =>
+                          logger
+                            .warn(
+                              s"Removed ${(allSignatures.size - validSignatures.size).show} invalid signatures during consensus for key ${state.key.show}, " +
+                                s"${validSignatures.size.show} valid signatures left"
+                            )
+                            .whenA(allSignatures.size =!= validSignatures.size)
+                        }
+                  }.flatMap { maybeOnlyValidSignatures =>
+                    state.facilitators.hashF.map { facilitatorsHash =>
+                      maybeOnlyValidSignatures.flatMap { validSignatures =>
+                        NonEmptySet.fromSet(validSignatures.toSortedSet).map { validSignaturesNes =>
+                          val signedArtifact = Signed(majorityArtifactInfo.artifact, validSignaturesNes)
+
+                          val newState = state.copy(status =
+                            Finished[Artifact, Context](
+                              signedArtifact,
+                              majorityArtifactInfo.context,
+                              majorityTrigger,
+                              candidates,
+                              facilitatorsHash
+                            )
                           )
-                          .whenA(allSignatures.size =!= validSignatures.size)
+
+                          val effect = consensusFns.consumeSignedMajorityArtifact(signedArtifact, majorityArtifactInfo.context)
+
+                          (newState, effect)
+                        }
                       }
-                }
-                  .flatTap(_ => logger.info("FUI CHAMAAADO"))
-                  .flatMap { maybeOnlyValidSignatures =>
-                  state.facilitators.hashF.map { facilitatorsHash =>
-                    maybeOnlyValidSignatures
-                      .flatMap { validSignatures =>
-                      NonEmptySet.fromSet(validSignatures.toSortedSet).map { validSignaturesNes =>
-                        val signedArtifact = Signed(majorityArtifactInfo.artifact, validSignaturesNes)
 
-                        val newState = state.copy(status =
-                          Finished[Artifact, Context](
-                            signedArtifact,
-                            majorityArtifactInfo.context,
-                            majorityTrigger,
-                            candidates,
-                            facilitatorsHash
-                          )
-                        )
-
-                        val effect = consensusFns.consumeSignedMajorityArtifact(signedArtifact, majorityArtifactInfo.context)
-
-                        (newState, effect)
-                      }
                     }
-
                   }
                 }
-              }
             case Finished(_, _, _, _, _) =>
               none[(ConsensusState[Key, Artifact, Context], F[Unit])].pure[F]
           }

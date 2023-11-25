@@ -85,8 +85,13 @@ object StateChannelSnapshotService {
         _ <- lastBinaryHashStorage.set(binaryHashed.hash)
         _ <- dataApplicationSnapshotAcceptanceManager.traverse { manager =>
           snapshotStorage.head.map { lastSnapshot =>
-            lastSnapshot.flatMap { case (value, _) => value.dataApplication }
-          }.flatMap(manager.consumeSignedMajorityArtifact(_, signedArtifact))
+            lastSnapshot
+              .flatMap { case (value, _) => value.dataApplication }
+          }.flatMap{ t =>
+            logger.info(s"SEI LA: ${t}") >>
+              logger.info(s"SEI LA 2: ${signedArtifact.value}") >>
+            manager.consumeSignedMajorityArtifact(t, signedArtifact)
+          }
         }
         _ <- snapshotStorage
           .prepend(signedArtifact, context.snapshotInfo)
