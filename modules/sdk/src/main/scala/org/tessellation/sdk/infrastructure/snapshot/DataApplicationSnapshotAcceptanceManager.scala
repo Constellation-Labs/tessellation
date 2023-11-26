@@ -102,6 +102,7 @@ object DataApplicationSnapshotAcceptanceManager {
           .flatMap { da =>
             OptionT
               .liftF(da.blocks.traverse(service.deserializeBlock).map(_.flatMap(_.toOption)))
+              .semiflatTap { dataBlocks => logger.info(s"Deserialized data blocks length: ${dataBlocks.length}")}
               .flatMapF { dataBlocks =>
                 artifact.ordinal.partialPrevious.flatTraverse(lastOrdinal =>
                   accept(maybeLastDataApplication, dataBlocks, lastOrdinal, artifact.ordinal)
