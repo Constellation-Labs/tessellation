@@ -180,6 +180,25 @@ object DataApplicationSnapshotAcceptanceManager {
               service.hashCalculatedState(newDataState.calculated)
             )
 
+            _ <- OptionT.liftF(
+              logger.info(s"SO PRA VER O RESULTADO1: ${serializedOnChainState.mkString("Array(", ", ", ")")} ")
+            )
+
+            _ <- OptionT.liftF(
+              logger.info(s"SO PRA VER O RESULTADO2: ${serializedBlocks} ")
+            )
+
+            _ <- OptionT.liftF(
+              logger.info(s"SO PRA VER O RESULTADO3: ${calculatedStateProof} ")
+            )
+
+            _ <- OptionT.liftF(
+              logger.info(s"SO PRA VER O RESULTADO4: ${newDataState.onChain} ")
+            )
+
+            _ <- OptionT.liftF(
+              logger.info(s"SO PRA VER O RESULTADO4: ${newDataState.calculated} ")
+            )
           } yield
             DataApplicationAcceptanceResult(
               DataApplicationPart(serializedOnChainState, serializedBlocks, calculatedStateProof),
