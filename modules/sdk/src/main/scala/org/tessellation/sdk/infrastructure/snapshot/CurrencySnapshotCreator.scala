@@ -16,7 +16,6 @@ import cats.syntax.traverse._
 
 import scala.collection.immutable.SortedSet
 import scala.util.control.NoStackTrace
-
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.cats.syntax.next._
@@ -35,9 +34,9 @@ import org.tessellation.sdk.snapshot.currency.{CurrencySnapshotArtifact, Currenc
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 import org.tessellation.syntax.sortedCollection.sortedSetSyntax
-
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.PosLong
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 case class CurrencySnapshotCreationResult[Event](
   artifact: CurrencySnapshotArtifact,
@@ -90,7 +89,8 @@ object CurrencySnapshotCreator {
         eventsForAcceptance: Set[CurrencySnapshotEvent],
         rejectedEvents: Set[CurrencySnapshotEvent] = Set.empty[CurrencySnapshotEvent],
         awaitedEvents: Set[CurrencySnapshotEvent] = Set.empty[CurrencySnapshotEvent]
-      ): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] =
+      ): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] = {
+        val logger = Slf4jLogger.getLoggerFromName("TEST")
         for {
           lastArtifactHash <- lastArtifact.value.hashF
           currentOrdinal = lastArtifact.ordinal.next
@@ -162,7 +162,9 @@ object CurrencySnapshotCreator {
             currentEpochProgress,
             dataApplicationAcceptanceResult.map(_.dataApplicationPart)
           )
-
+          _ <- logger.info(s"This is my test:${artifact}")
+          _ <- logger.info(s"This is my test2:${artifact.dataApplication}")
+          _ <- logger.info(s"This is my test2:${artifact.dataApplication.getOrElse("NADDA")}")
           context = CurrencySnapshotContext(lastContext.address, snapshotInfo)
           newAwaitingEvents = awaitingBlocks
             .map(_.asLeft[Signed[DataApplicationBlock]])
@@ -174,6 +176,7 @@ object CurrencySnapshotCreator {
 
           result <-
             if (artifactSize <= maxArtifactSize) {
+              logger.info("NAO CORTOU") >>
               CurrencySnapshotCreationResult[CurrencySnapshotEvent](
                 artifact,
                 context,
@@ -181,6 +184,7 @@ object CurrencySnapshotCreator {
                 newRejectedEvents
               ).pure[F]
             } else {
+              logger.info("SIM CORTOU") >>
               currencyEventsCutter.cut(currentOrdinal, acceptedEvents, dataBlocks).flatMap {
                 case Some((remainingAcceptedEvents, sizeAwaitedEvent)) =>
                   createProposalWithSizeLimit(remainingAcceptedEvents, newRejectedEvents, newAwaitingEvents + sizeAwaitedEvent)
@@ -190,9 +194,11 @@ object CurrencySnapshotCreator {
               }
             }
         } yield result
+      }
 
       createProposalWithSizeLimit(events)
     }
+
 
     protected def getHeightAndSubHeight(
       lastGS: CurrencySnapshotArtifact,
