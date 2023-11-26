@@ -91,26 +91,29 @@ object DataApplicationSnapshotAcceptanceManager {
       artifact: Signed[CurrencySnapshotArtifact]
     ): F[Unit] = {
       implicit val context: L0NodeContext[F] = nodeContext
-
-      OptionT
-        .fromOption(artifact.dataApplication)
-        .flatMap { da =>
-          OptionT
-            .liftF(da.blocks.traverse(service.deserializeBlock).map(_.flatMap(_.toOption)))
-            .flatMapF { dataBlocks =>
-              artifact.ordinal.partialPrevious.flatTraverse(lastOrdinal =>
-                accept(maybeLastDataApplication, dataBlocks, lastOrdinal, artifact.ordinal)
-              )
-            }
-            .map(_.calculatedState)
-            .semiflatTap(_ => logger.info("CONSUMING"))
-            .semiflatTap(_ => logger.info(s"TEST: ${da}"))
-            .semiflatMap(expectCalculatedStateHash(da.calculatedStateProof))
-            .semiflatTap(service.setCalculatedState(artifact.ordinal, _))
-            .semiflatTap(calculatedStateStorage.write(artifact.ordinal, _)(service.serializeCalculatedState))
-        }
-        .value
-        .void
+      logger.info(s"Current artifact ordinal: ${artifact.ordinal}") >>
+        logger.info(s"Current artifact dataApplication: ${artifact.dataApplication}") >>
+        OptionT
+          .fromOption(artifact.dataApplication)
+          .semiflatTap { da =>
+            logger.info(s"dataApplication blocks length: ${da.blocks.length}") >>
+              logger.info(s"dataApplication blocks length: ${da.blocks}")
+          }
+          .flatMap { da =>
+            OptionT
+              .liftF(da.blocks.traverse(service.deserializeBlock).map(_.flatMap(_.toOption)))
+              .flatMapF { dataBlocks =>
+                artifact.ordinal.partialPrevious.flatTraverse(lastOrdinal =>
+                  accept(maybeLastDataApplication, dataBlocks, lastOrdinal, artifact.ordinal)
+                )
+              }
+              .map(_.calculatedState)
+              .semiflatMap(expectCalculatedStateHash(da.calculatedStateProof))
+              .semiflatTap(service.setCalculatedState(artifact.ordinal, _))
+              .semiflatTap(calculatedStateStorage.write(artifact.ordinal, _)(service.serializeCalculatedState))
+          }
+          .value
+          .void
     }
 
     def accept(
