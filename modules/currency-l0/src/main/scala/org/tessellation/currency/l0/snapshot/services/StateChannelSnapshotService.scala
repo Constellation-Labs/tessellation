@@ -82,15 +82,21 @@ object StateChannelSnapshotService {
         binary <- createBinary(signedArtifact)
         binaryHashed <- binary.toHashed
         identifier <- identifierStorage.get
+        _ <- snapshotStorage.get(signedArtifact.ordinal).flatTap { t =>
+          logger.info(s"test: ${t.getOrElse("NAO SEI MESMO")}")
+        }
+        _ <- snapshotStorage.head.flatTap { t =>
+          logger.info(s"testaaaa: ${t.getOrElse("NAO SEI MESMOaaa")}")
+        }
         _ <- lastBinaryHashStorage.set(binaryHashed.hash)
         _ <- dataApplicationSnapshotAcceptanceManager.traverse { manager =>
           snapshotStorage.head.map { lastSnapshot =>
-            lastSnapshot
-              .flatMap { case (value, _) => value.dataApplication }
-          }.flatMap{ t =>
+            lastSnapshot.flatMap { case (value, _) => value.dataApplication }
+          }.flatMap { t =>
             logger.info(s"SEI LA: ${t}") >>
-              logger.info(s"SEI LA 2: ${signedArtifact.value}") >>
-            manager.consumeSignedMajorityArtifact(t, signedArtifact)
+              logger.info(s"SEI LA 2: ${signedArtifact}") >>
+              logger.info(s"SEI LA 3: ${signedArtifact.ordinal}") >>
+              manager.consumeSignedMajorityArtifact(t, signedArtifact)
           }
         }
         _ <- snapshotStorage

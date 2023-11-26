@@ -162,9 +162,6 @@ object CurrencySnapshotCreator {
             currentEpochProgress,
             dataApplicationAcceptanceResult.map(_.dataApplicationPart)
           )
-          _ <- logger.info(s"This is my test:${artifact}")
-          _ <- logger.info(s"This is my test2:${artifact.dataApplication}")
-          _ <- logger.info(s"This is my test2:${artifact.dataApplication.getOrElse("NADDA")}")
           context = CurrencySnapshotContext(lastContext.address, snapshotInfo)
           newAwaitingEvents = awaitingBlocks
             .map(_.asLeft[Signed[DataApplicationBlock]])
@@ -176,7 +173,6 @@ object CurrencySnapshotCreator {
 
           result <-
             if (artifactSize <= maxArtifactSize) {
-              logger.info("NAO CORTOU") >>
               CurrencySnapshotCreationResult[CurrencySnapshotEvent](
                 artifact,
                 context,
@@ -184,7 +180,6 @@ object CurrencySnapshotCreator {
                 newRejectedEvents
               ).pure[F]
             } else {
-              logger.info("SIM CORTOU") >>
               currencyEventsCutter.cut(currentOrdinal, acceptedEvents, dataBlocks).flatMap {
                 case Some((remainingAcceptedEvents, sizeAwaitedEvent)) =>
                   createProposalWithSizeLimit(remainingAcceptedEvents, newRejectedEvents, newAwaitingEvents + sizeAwaitedEvent)

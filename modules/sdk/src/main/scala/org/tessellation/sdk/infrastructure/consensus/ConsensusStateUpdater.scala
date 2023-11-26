@@ -327,7 +327,6 @@ object ConsensusStateUpdater {
                               facilitatorsHash
                             )
                           )
-
                           val effect = consensusFns.consumeSignedMajorityArtifact(signedArtifact, majorityArtifactInfo.context)
 
                           (newState, effect)
