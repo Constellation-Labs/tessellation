@@ -192,6 +192,14 @@ object DataApplicationSnapshotAcceptanceManager {
               logger.info(s"SO PRA VER O RESULTADO2: ${serializedBlocks} ")
             )
 
+            blocks <- OptionT.liftF(
+              serializedBlocks.traverse(service.deserializeBlock).map(_.flatMap(_.toOption))
+            )
+
+            _ <- OptionT.liftF(
+              logger.info(s"SO PRA VER O RESULTADOaaa2: ${blocks}")
+            )
+
             _ <- OptionT.liftF(
               logger.info(s"SO PRA VER O RESULTADO3: ${calculatedStateProof} ")
             )
