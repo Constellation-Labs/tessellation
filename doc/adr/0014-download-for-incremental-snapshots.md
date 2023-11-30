@@ -1,4 +1,4 @@
-# 13. Download for incremental snapshots
+# 14. Download for incremental snapshots
 
 Date: 2023-04-18
 
