@@ -7,8 +7,9 @@ import cats.syntax.all._
 import scala.concurrent.duration.FiniteDuration
 
 import org.tessellation.ext.decline.WithOpts
-import org.tessellation.ext.decline.decline.coercibleArgument
+import org.tessellation.ext.decline.decline.{coercibleArgument, _}
 
+import com.comcast.ip4s.{Host, Port}
 import com.monovore.decline.Opts
 import com.monovore.decline.refined.refTypeArgument
 import eu.timepit.refined.api.RefType.refinedRefType
@@ -44,6 +45,11 @@ object method {
   case class SendStateChannelSnapshotCmd(
     baseUrl: UrlString,
     verbose: Boolean
+  ) extends CliMethod
+
+  case class GetLatestSnapshotInfoCmd(
+    networkHost: Host,
+    networkPort: Port
   ) extends CliMethod
 
   sealed trait WalletsOpts
@@ -93,7 +99,17 @@ object method {
       }
   }
 
-  val opts: Opts[CliMethod] = SendTransactionsCmd.opts.orElse(SendStateChannelSnapshotCmd.opts)
+  object GetLatestSnapshotInfoCmd {
+    val opts: Opts[GetLatestSnapshotInfoCmd] =
+      Opts.subcommand("get-latest-snapshot-info", "Get latest snapshot-info") {
+        (
+          Opts.argument[Host](metavar = "host"),
+          Opts.argument[Port](metavar = "port")
+        ).mapN(GetLatestSnapshotInfoCmd.apply)
+      }
+  }
+
+  val opts: Opts[CliMethod] = SendTransactionsCmd.opts.orElse(SendStateChannelSnapshotCmd.opts).orElse(GetLatestSnapshotInfoCmd.opts)
 
   private val defaultProtocol = "http://"
 
