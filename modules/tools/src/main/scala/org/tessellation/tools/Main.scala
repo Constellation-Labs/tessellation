@@ -19,6 +19,7 @@ import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction._
 import org.tessellation.sdk.domain.genesis.types.GenesisCSVAccount
+import org.tessellation.sdk.infrastructure.snapshot.storage.SnapshotInfoLocalFileSystemStorage
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.key.ops._
 import org.tessellation.security.signature.Signed
@@ -28,6 +29,7 @@ import org.tessellation.statechannel.StateChannelSnapshotBinary
 import org.tessellation.tools.TransactionGenerator._
 import org.tessellation.tools.cli.method._
 
+import com.comcast.ip4s.{Host, Port}
 import com.monovore.decline._
 import com.monovore.decline.effect._
 import eu.timepit.refined.auto._
@@ -76,6 +78,8 @@ object Main
                   }
                 case SendStateChannelSnapshotCmd(baseUrl, verbose) =>
                   sendStateChannelSnapshot(client, baseUrl, verbose)
+                case GetLatestSnapshotInfoCmd(networkHost, networkPort) =>
+                  getLatestSnapshotInfo(client, networkHost, networkPort)
                 case _ => IO.raiseError(new Throwable("Not implemented"))
               }).as(ExitCode.Success)
             }
@@ -83,6 +87,24 @@ object Main
         }
       }
     }
+
+  def getLatestSnapshotInfo[F[_]: Async: KryoSerializer: Console](client: Client[F], networkHost: Host, networkPort: Port): F[Unit] = {
+    def getCombined =
+      client.expect[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)](
+        s"http://$networkHost:$networkPort/global-snapshots/latest/combined"
+      )
+
+    getCombined.flatMap {
+      case (snapshot, info) =>
+        console.green(s"Fetched combined snapshot at ordinal=${snapshot.ordinal.show}") >>
+          SnapshotInfoLocalFileSystemStorage.make[F, GlobalSnapshotStateProof, GlobalSnapshotInfo](Path("./snapshot_info")).flatMap {
+            infoStorage =>
+              infoStorage.write(snapshot.ordinal, info) >> console.green(s"SnapshotInfo has been written on disk")
+          }
+    }.handleErrorWith { err =>
+      console.red(s"Error fetching or writing snapshot info on disk: ${err.getMessage()}")
+    }
+  }
 
   def sendStateChannelSnapshot[F[_]: Async: KryoSerializer: SecurityProvider: Console](
     client: Client[F],
