@@ -4,6 +4,8 @@ import cats.Order
 import cats.kernel.{Next, PartialOrder, PartialPrevious}
 import cats.syntax.semigroup._
 
+import org.tessellation.ext.derevo.ordering
+
 import derevo.cats.{order, show}
 import derevo.derive
 import eu.timepit.refined.api.Refined
@@ -13,7 +15,7 @@ import eu.timepit.refined.refineV
 import eu.timepit.refined.types.numeric.NonNegLong
 import io.circe.{Decoder, Encoder}
 
-@derive(order, show)
+@derive(order, ordering, show)
 case class SnapshotOrdinal(value: NonNegLong) {
   def plus(addend: NonNegLong): SnapshotOrdinal = SnapshotOrdinal(value |+| addend)
 }
