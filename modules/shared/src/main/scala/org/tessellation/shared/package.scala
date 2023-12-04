@@ -4,6 +4,7 @@ import java.security.Signature
 
 import cats.data.NonEmptyList
 
+import org.tessellation.currency.dataApplication.DataCancellationReason
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.kryo._
 import org.tessellation.merkletree.{MerkleRoot, Proof, ProofEntry}
@@ -96,7 +97,13 @@ package object shared {
     classOf[GlobalSnapshotStateProof] -> 628,
     classOf[CurrencySnapshotStateProof] -> 629,
     classOf[StateProof] -> 630,
-    classOf[DataApplicationPart] -> 631
+    classOf[DataApplicationPart] -> 631,
+    DataCancellationReason.getClass -> 632,
+    DataCancellationReason.ReceivedProposalForNonExistentOwnRound.getClass -> 633,
+    DataCancellationReason.MissingRoundPeers.getClass -> 634,
+    DataCancellationReason.CreatedInvalidBlock.getClass -> 635,
+    DataCancellationReason.CreatedEmptyBlock.getClass -> 636,
+    DataCancellationReason.PeerCancelled.getClass -> 637
   )
 
 }
