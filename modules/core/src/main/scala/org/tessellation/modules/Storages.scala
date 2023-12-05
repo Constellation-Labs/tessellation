@@ -62,7 +62,8 @@ object Storages {
         .make[F](
           incrementalGlobalSnapshotTmpLocalFileSystemStorage,
           incrementalGlobalSnapshotPersistedLocalFileSystemStorage,
-          fullGlobalSnapshotLocalFileSystemStorage
+          fullGlobalSnapshotLocalFileSystemStorage,
+          incrementalGlobalSnapshotInfoLocalFileSystemStorage
         )
     } yield
       new Storages[F](

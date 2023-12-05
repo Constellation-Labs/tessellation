@@ -7,6 +7,7 @@ import cats.syntax.all._
 import scala.util.control.NoStackTrace
 
 import org.tessellation.ext.cats.syntax.partialPrevious.catsSyntaxPartialPrevious
+import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.sdk.domain.snapshot.SnapshotContextFunctions
 import org.tessellation.security.hash.Hash
@@ -20,7 +21,7 @@ trait GlobalSnapshotTraverse[F[_]] {
 
 object GlobalSnapshotTraverse {
 
-  def make[F[_]: Sync](
+  def make[F[_]: Sync: KryoSerializer](
     loadInc: Hash => F[Option[Signed[GlobalIncrementalSnapshot]]],
     loadFull: Hash => F[Option[Signed[GlobalSnapshot]]],
     loadInfo: SnapshotOrdinal => F[Option[GlobalSnapshotInfo]],
@@ -88,6 +89,12 @@ object GlobalSnapshotTraverse {
           firstInfo <- loadFullOrIncOrErr(hashCandidate).flatMap {
             case Left(globalIncrementalSnapshot) => loadInfoOrErr(globalIncrementalSnapshot.ordinal)
             case Right(globalSnapshot)           => GlobalSnapshotInfoV1.toGlobalSnapshotInfo(globalSnapshot.info).pure[F]
+          }
+
+          _ <- firstInfo.stateProof.flatMap { proof =>
+            (new Exception(s"Snapshot info does not match the snapshot at ordinal=${firstInc.ordinal.show}"))
+              .raiseError[F, Unit]
+              .whenA(proof =!= firstInc.stateProof)
           }
 
           (info, lastInc) <- incHashesNec.tail.foldLeftM((firstInfo, firstInc)) {
