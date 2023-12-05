@@ -1,8 +1,6 @@
 package org.tessellation.sdk.cli
 
-import cats.syntax.contravariantSemigroupal._
-import cats.syntax.eq._
-import cats.syntax.validated._
+import cats.syntax.all._
 
 import scala.concurrent.duration.DurationInt
 
@@ -31,9 +29,11 @@ object snapshot {
     .env[Path]("CL_SNAPSHOT_INFO_PATH", help = "Path to store snapshot infos")
     .withDefault(Path("data/snapshot_info"))
 
-  val opts = (snapshotPath, incrementalPersistedSnapshotPath, incrementalTmpSnapshotPath, snapshotInfoPath).tupled.mapValidated {
+  val paths = (snapshotPath, incrementalPersistedSnapshotPath, incrementalTmpSnapshotPath, snapshotInfoPath)
+
+  val opts = paths.tupled.mapValidated {
     case (snapshotPath, incrementalPersistedSnapshotPath, incrementalTmpSnapshotPath, snapshotInfoPath)
-        if snapshotPath =!= incrementalPersistedSnapshotPath && incrementalPersistedSnapshotPath =!= incrementalTmpSnapshotPath =>
+        if Set(snapshotPath, incrementalPersistedSnapshotPath, incrementalTmpSnapshotPath, snapshotInfoPath).size.toLong === paths.size =>
       (snapshotPath, incrementalPersistedSnapshotPath, incrementalTmpSnapshotPath, snapshotInfoPath).validNel[String]
     case _ =>
       "Paths for global snapshot and incremental snapshot (both persisted and tmp) must be different.".invalidNel[(Path, Path, Path, Path)]
