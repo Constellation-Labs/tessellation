@@ -3,15 +3,7 @@ package org.tessellation.domain.snapshot.programs
 import cats.Applicative
 import cats.effect.Async
 import cats.effect.std.Random
-import cats.syntax.applicative._
-import cats.syntax.applicativeError._
-import cats.syntax.either._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
-import cats.syntax.option._
-import cats.syntax.order._
-import cats.syntax.semigroup._
-import cats.syntax.show._
+import cats.syntax.all._
 
 import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
@@ -81,7 +73,7 @@ object Download {
         latestMetadata.flatTap { metadata =>
           Async[F].whenA(result.isEmpty)(
             logger.info(s"[Download] Cleanup for snapshots greater than ${metadata.ordinal}") >>
-              snapshotStorage.backupPersistedAbove(metadata.ordinal)
+              snapshotStorage.cleanupAbove(metadata.ordinal)
           )
         }.flatTap { metadata =>
           logger.info(s"Download for startingPoint=${startingPoint}. Latest metadata=${metadata.show}")
@@ -148,7 +140,9 @@ object Download {
 
       def go(tmpMap: Map[SnapshotOrdinal, Hash], stepHash: Hash, stepOrdinal: SnapshotOrdinal): F[DownloadResult] =
         isSnapshotPersistedOrReachedGenesis(stepHash, stepOrdinal).ifM(
-          validateChain(tmpMap, ordinal, state),
+          snapshotStorage.getHighestSnapshotInfo(lte = ordinal).flatMap {
+            validateChain(tmpMap, _, ordinal, state)
+          },
           snapshotStorage
             .readTmp(stepOrdinal)
             .flatMap {
@@ -190,6 +184,7 @@ object Download {
 
     def validateChain(
       tmpMap: Map[SnapshotOrdinal, Hash],
+      startingOrdinal: Option[SnapshotOrdinal],
       endingOrdinal: SnapshotOrdinal,
       state: Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]
     ): F[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] = {
@@ -225,6 +220,19 @@ object Download {
               case Some(snapshot) =>
                 globalSnapshotContextFns
                   .createContext(context, lastSnapshot, snapshot)
+                  .flatTap(newContext =>
+                    snapshotStorage
+                      .hasCorrectSnapshotInfo(snapshot.ordinal, snapshot.stateProof)
+                      .flatMap(Applicative[F].unlessA(_) {
+                        newContext.stateProof.flatMap { contextProof =>
+                          if (contextProof === snapshot.stateProof) {
+                            snapshotStorage.persistSnapshotInfo(snapshot.ordinal, newContext)
+                          } else {
+                            InvalidStateProof(snapshot.ordinal).raiseError[F, Unit]
+                          }
+                        }
+                      })
+                  )
                   .flatMap(go(snapshot, _))
               case None => InvalidChain.raiseError[F, Agg]
             }
@@ -235,7 +243,13 @@ object Download {
 
       state
         .map(_.pure[F])
-        .getOrElse(getGenesisSnapshot(tmpMap))
+        .getOrElse {
+          startingOrdinal.flatTraverse(snapshotStorage.readCombined).flatMap {
+            _.map(_.pure[F]).getOrElse(
+              getGenesisSnapshot(tmpMap)
+            )
+          }
+        }
         .flatMap { case (s, c) => go(s, c) }
     }
 
@@ -336,5 +350,6 @@ object Download {
   case object CannotFetchGenesisSnapshot extends NoStackTrace
   case object FirstIncrementalNotFound extends NoStackTrace
   case object InvalidChain extends NoStackTrace
+  case class InvalidStateProof(ordinal: SnapshotOrdinal) extends NoStackTrace
   case object UnexpectedState extends NoStackTrace
 }

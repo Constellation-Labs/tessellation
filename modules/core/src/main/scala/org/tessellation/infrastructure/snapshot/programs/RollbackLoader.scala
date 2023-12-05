@@ -80,8 +80,7 @@ sealed abstract class RollbackLoader[F[_]: Async: KryoSerializer: SecurityProvid
           .flatTap {
             case (_, lastInc) =>
               logger.info(s"[Rollback] Cleanup for snapshots greater than ${lastInc.ordinal}") >>
-                snapshotStorage.backupPersistedAbove(lastInc.ordinal) >>
-                snapshotInfoLocalFileSystemStorage.deleteAbove(lastInc.ordinal)
+                snapshotStorage.cleanupAbove(lastInc.ordinal)
           }
     }
 }

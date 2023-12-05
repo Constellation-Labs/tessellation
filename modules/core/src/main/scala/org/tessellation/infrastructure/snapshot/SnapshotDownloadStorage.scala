@@ -1,15 +1,13 @@
 package org.tessellation.infrastructure.snapshot
 
 import cats.effect.Async
-import cats.effect.syntax.concurrent._
-import cats.syntax.applicative._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
+import cats.effect.syntax.all._
+import cats.syntax.all._
 
 import org.tessellation.domain.snapshot.storages.SnapshotDownloadStorage
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshot, SnapshotOrdinal}
-import org.tessellation.sdk.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage
+import org.tessellation.schema._
+import org.tessellation.sdk.infrastructure.snapshot.storage.{SnapshotInfoLocalFileSystemStorage, SnapshotLocalFileSystemStorage}
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
@@ -17,7 +15,8 @@ object SnapshotDownloadStorage {
   def make[F[_]: Async: KryoSerializer](
     tmpStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
     persistedStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
-    fullGlobalSnapshotStorage: SnapshotLocalFileSystemStorage[F, GlobalSnapshot]
+    fullGlobalSnapshotStorage: SnapshotLocalFileSystemStorage[F, GlobalSnapshot],
+    snapshotInfoStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfo]
   ): SnapshotDownloadStorage[F] =
     new SnapshotDownloadStorage[F] {
 
@@ -37,6 +36,36 @@ object SnapshotDownloadStorage {
 
       def isPersisted(hash: Hash): F[Boolean] = persistedStorage.exists(hash)
 
+      def hasSnapshotInfo(ordinal: SnapshotOrdinal): F[Boolean] =
+        snapshotInfoStorage.exists(ordinal)
+
+      def hasCorrectSnapshotInfo(ordinal: SnapshotOrdinal, proof: GlobalSnapshotStateProof): F[Boolean] =
+        snapshotInfoStorage.read(ordinal).flatMap {
+          case Some(info) => info.stateProof.map(_ === proof)
+          case _          => false.pure[F]
+        }
+
+      def getHighestSnapshotInfo(lte: SnapshotOrdinal): F[Option[SnapshotOrdinal]] =
+        snapshotInfoStorage.listStoredOrdinals
+          .flatMap(_.filter(_ <= lte).compile.toList)
+          .map(_.maximumOption)
+
+      def readCombined(ordinal: SnapshotOrdinal): F[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] =
+        (readPersisted(ordinal), snapshotInfoStorage.read(ordinal)).tupled.map(_.tupled).flatMap {
+          case Some((snapshot, info)) =>
+            info.stateProof
+              .map(_ === snapshot.stateProof)
+              .ifM(
+                (snapshot, info).some.pure[F],
+                new Exception("Persisted snapshot info does not match the persisted snapshot")
+                  .raiseError[F, Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]]
+              )
+          case _ => none.pure[F]
+        }
+
+      def persistSnapshotInfo(ordinal: SnapshotOrdinal, info: GlobalSnapshotInfo): F[Unit] =
+        snapshotInfoStorage.write(ordinal, info)
+
       def movePersistedToTmp(hash: Hash, ordinal: SnapshotOrdinal): F[Unit] =
         tmpStorage.getPath(hash).flatMap(persistedStorage.move(hash, _) >> persistedStorage.delete(ordinal))
 
@@ -47,22 +76,23 @@ object SnapshotDownloadStorage {
 
       def writeGenesis(genesis: Signed[GlobalSnapshot]): F[Unit] = fullGlobalSnapshotStorage.write(genesis)
 
-      def backupPersistedAbove(ordinal: SnapshotOrdinal): F[Unit] =
-        persistedStorage
-          .findFiles(_.name.toLongOption.exists(_ > ordinal.value.value))
-          .map {
-            _.map(_.name.toLongOption.flatMap(SnapshotOrdinal(_))).collect { case Some(a) => a }
-          }
-          .flatMap {
-            _.compile.toList.flatMap {
-              _.parTraverseN(maxParallelFileOperations) { ordinal =>
-                readPersisted(ordinal).flatMap {
-                  case Some(snapshot) =>
-                    snapshot.toHashed.flatMap(s => movePersistedToTmp(s.hash, s.ordinal))
-                  case None => Async[F].unit
-                }
-              }.void
+      def cleanupAbove(ordinal: SnapshotOrdinal): F[Unit] =
+        snapshotInfoStorage.deleteAbove(ordinal) >>
+          persistedStorage
+            .findFiles(_.name.toLongOption.exists(_ > ordinal.value.value))
+            .map {
+              _.map(_.name.toLongOption.flatMap(SnapshotOrdinal(_))).collect { case Some(a) => a }
             }
-          }
+            .flatMap {
+              _.compile.toList.flatMap {
+                _.parTraverseN(maxParallelFileOperations) { ordinal =>
+                  readPersisted(ordinal).flatMap {
+                    case Some(snapshot) =>
+                      snapshot.toHashed.flatMap(s => movePersistedToTmp(s.hash, s.ordinal))
+                    case None => Async[F].unit
+                  }
+                }.void
+              }
+            }
     }
 }
