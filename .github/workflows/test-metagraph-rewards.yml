@@ -43,47 +43,11 @@ jobs:
         run: |
           echo 'ThisBuild / version := "github-action-test-version"' > version.sbt
 
-      - name: Generating Metagraph dependencies - kernel
+      - name: Generating Metagraph dependencies
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          sbt --error kernel/publishM2
-
-      - name: Generating Metagraph dependencies - keytool
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          sbt --error keytool/publishM2
-          
-      - name: Generating Metagraph dependencies - sdk
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          sbt --error sdk/publishM2
-
-      - name: Generating Metagraph dependencies - currencyL0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          sbt --error currencyL0/publishM2
-
-      - name: Generating Metagraph dependencies - currencyL1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          sbt --error currencyL1/publishM2
-
-      - name: Generating Metagraph dependencies - shared
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          sbt --error shared/publishM2
-
-      - name: Generating Metagraph dependencies - dagL1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          sbt --error dagL1/publishM2
+          sbt --error clean compile shared/publishM2 kernel/publishM2 keytool/publishM2 sdk/publishM2 currencyL0/publishM2 currencyL1/publishM2 dagL1/publishM2
 
       - name: Run Global L0 Cluster
         env:
