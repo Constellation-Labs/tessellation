@@ -1,6 +1,8 @@
 package org.tessellation.sdk.cli
 
-import cats.syntax.all._
+import cats.syntax.contravariantSemigroupal._
+import cats.syntax.eq._
+import cats.syntax.validated._
 
 import scala.concurrent.duration.DurationInt
 
@@ -10,6 +12,7 @@ import org.tessellation.sdk.config.types.{ConsensusConfig, SnapshotConfig}
 import com.monovore.decline._
 import eu.timepit.refined.auto._
 import fs2.io.file.Path
+import shapeless.syntax.std.tuple._
 
 object snapshot {
 
@@ -29,14 +32,11 @@ object snapshot {
     .env[Path]("CL_SNAPSHOT_INFO_PATH", help = "Path to store snapshot infos")
     .withDefault(Path("data/snapshot_info"))
 
-  val paths = (snapshotPath, incrementalPersistedSnapshotPath, incrementalTmpSnapshotPath, snapshotInfoPath)
+  val pathsOpts = (snapshotPath, incrementalPersistedSnapshotPath, incrementalTmpSnapshotPath, snapshotInfoPath)
 
-  val opts = paths.tupled.mapValidated {
-    case (snapshotPath, incrementalPersistedSnapshotPath, incrementalTmpSnapshotPath, snapshotInfoPath)
-        if Set(snapshotPath, incrementalPersistedSnapshotPath, incrementalTmpSnapshotPath, snapshotInfoPath).size.toLong === paths.size =>
-      (snapshotPath, incrementalPersistedSnapshotPath, incrementalTmpSnapshotPath, snapshotInfoPath).validNel[String]
-    case _ =>
-      "Paths for global snapshot and incremental snapshot (both persisted and tmp) must be different.".invalidNel[(Path, Path, Path, Path)]
+  val opts = pathsOpts.tupled.mapValidated {
+    case tuple if tuple.toList.size === tuple.toList.toSet.size => tuple.validNel[String]
+    case _ => "Paths for file storages must differ.".invalidNel[(Path, Path, Path, Path)]
   }.map {
     case (snapshotPath, incrementalPersistedSnapshotPath, incrementalTmpSnapshotPath, snapshotInfoPath) =>
       SnapshotConfig(
