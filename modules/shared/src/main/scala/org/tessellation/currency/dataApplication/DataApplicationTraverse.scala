@@ -164,12 +164,9 @@ object DataApplicationTraverse {
             fetchCurrencySnapshots(globalSnapshot, jsonSerializer)
               .flatMap(_.traverse {
                 case Validated.Invalid(_) =>
-                  logger.warn(
-                    s"Metagraph snapshots are invalid in global snapshot ordinal=${globalSnapshot.ordinal.show}. Check chain integrity. Trying to continue."
-                  ) >>
-                    fetchSnapshotOrErr(globalSnapshot.lastSnapshotHash).map {
-                      _.asLeft[Output]
-                    }
+                  (new Exception(
+                    s"Metagraph snapshots are invalid in global snapshot ordinal=${globalSnapshot.ordinal.show}. Check chain integrity."
+                  )).raiseError[F, Either[Acc, Output]]
                 case Validated.Valid(snapshots) =>
                   logger.info(
                     s"Found ${snapshots.size.show} snapshots at global snapshot ordinal=${globalSnapshot.ordinal.show}, performing nested recursion."
