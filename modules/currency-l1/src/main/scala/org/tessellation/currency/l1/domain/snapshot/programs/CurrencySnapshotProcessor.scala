@@ -15,12 +15,12 @@ import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.dag.l1.infrastructure.address.storage.AddressStorage
 import org.tessellation.json.JsonBrotliBinarySerializer
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
+import org.tessellation.node.shared.domain.snapshot.{SnapshotContextFunctions, Validator}
+import org.tessellation.node.shared.infrastructure.snapshot.storage.LastSnapshotStorage
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotReference}
-import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
-import org.tessellation.sdk.domain.snapshot.{SnapshotContextFunctions, Validator}
-import org.tessellation.sdk.infrastructure.snapshot.storage.LastSnapshotStorage
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed.InvalidSignatureForHash
 import org.tessellation.security.{Hashed, SecurityProvider}

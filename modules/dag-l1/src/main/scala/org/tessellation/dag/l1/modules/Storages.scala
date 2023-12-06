@@ -11,22 +11,22 @@ import org.tessellation.dag.l1.domain.consensus.block.storage.ConsensusStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.dag.l1.infrastructure.address.storage.AddressStorage
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.node.shared.domain.cluster.storage.{ClusterStorage, L0ClusterStorage, SessionStorage}
+import org.tessellation.node.shared.domain.collateral.LatestBalances
+import org.tessellation.node.shared.domain.node.NodeStorage
+import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
+import org.tessellation.node.shared.infrastructure.cluster.storage.L0ClusterStorage
+import org.tessellation.node.shared.infrastructure.gossip.RumorStorage
+import org.tessellation.node.shared.infrastructure.snapshot.storage.LastSnapshotStorage
+import org.tessellation.node.shared.modules.SharedStorages
 import org.tessellation.schema.peer.L0Peer
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.schema.transaction.TransactionReference
-import org.tessellation.sdk.domain.cluster.storage.{ClusterStorage, L0ClusterStorage, SessionStorage}
-import org.tessellation.sdk.domain.collateral.LatestBalances
-import org.tessellation.sdk.domain.node.NodeStorage
-import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
-import org.tessellation.sdk.infrastructure.cluster.storage.L0ClusterStorage
-import org.tessellation.sdk.infrastructure.gossip.RumorStorage
-import org.tessellation.sdk.infrastructure.snapshot.storage.LastSnapshotStorage
-import org.tessellation.sdk.modules.SdkStorages
 
 object Storages {
 
   def make[F[_]: Async: Random: KryoSerializer, P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P]](
-    sdkStorages: SdkStorages[F],
+    sharedStorages: SharedStorages[F],
     l0Peer: L0Peer
   ): F[Storages[F, P, S, SI]] =
     for {
@@ -41,12 +41,12 @@ object Storages {
         val address = addressStorage
         val block = blockStorage
         val consensus = consensusStorage
-        val cluster = sdkStorages.cluster
+        val cluster = sharedStorages.cluster
         val l0Cluster = l0ClusterStorage
         val lastSnapshot = lastSnapshotStorage
-        val node = sdkStorages.node
-        val session = sdkStorages.session
-        val rumor = sdkStorages.rumor
+        val node = sharedStorages.node
+        val session = sharedStorages.session
+        val rumor = sharedStorages.rumor
         val transaction = transactionStorage
       }
 }

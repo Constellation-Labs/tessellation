@@ -46,7 +46,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          sbt --error clean compile shared/publishM2 kernel/publishM2 keytool/publishM2 sdk/publishM2 currencyL0/publishM2 currencyL1/publishM2 dagL1/publishM2
+          sbt --error clean compile shared/publishM2 kernel/publishM2 keytool/publishM2 nodeShared/publishM2 currencyL0/publishM2 currencyL1/publishM2 dagL1/publishM2
 
       - name: Run Global L0 Cluster
         env:

@@ -14,15 +14,15 @@ import org.tessellation.currency.dataApplication.ConsensusInput._
 import org.tessellation.currency.dataApplication.ConsensusOutput.Noop
 import org.tessellation.currency.dataApplication._
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
+import org.tessellation.effects.GenUUID
 import org.tessellation.fsm.FSM
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.node.shared.domain.cluster.storage.ClusterStorage
+import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.schema.round.RoundId
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
-import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
-import org.tessellation.sdk.domain.snapshot.storage.LastSnapshotStorage
-import org.tessellation.sdk.effects.GenUUID
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.SignatureProof

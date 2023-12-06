@@ -12,12 +12,12 @@ import scala.util.control.NoStackTrace
 import org.tessellation.dag.l1.domain.address.storage.AddressStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.node.shared.domain.block.processing._
 import org.tessellation.schema.Block.HashedOps
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.schema.{Block, BlockReference, transaction}
-import org.tessellation.sdk.domain.block.processing._
 import org.tessellation.security.Hashed
 import org.tessellation.security.signature.Signed
 

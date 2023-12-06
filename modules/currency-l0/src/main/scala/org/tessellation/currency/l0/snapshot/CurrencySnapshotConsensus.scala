@@ -9,19 +9,19 @@ import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, 
 import org.tessellation.currency.l0.snapshot.services.StateChannelSnapshotService
 import org.tessellation.currency.schema.currency._
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.node.shared.config.types.SnapshotConfig
+import org.tessellation.node.shared.domain.cluster.services.Session
+import org.tessellation.node.shared.domain.cluster.storage.ClusterStorage
+import org.tessellation.node.shared.domain.gossip.Gossip
+import org.tessellation.node.shared.domain.node.NodeStorage
+import org.tessellation.node.shared.domain.rewards.Rewards
+import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
+import org.tessellation.node.shared.infrastructure.consensus.Consensus
+import org.tessellation.node.shared.infrastructure.metrics.Metrics
+import org.tessellation.node.shared.infrastructure.snapshot.{CurrencySnapshotCreator, CurrencySnapshotValidator, SnapshotConsensus}
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.sdk.config.types.SnapshotConfig
-import org.tessellation.sdk.domain.cluster.services.Session
-import org.tessellation.sdk.domain.cluster.storage.ClusterStorage
-import org.tessellation.sdk.domain.gossip.Gossip
-import org.tessellation.sdk.domain.node.NodeStorage
-import org.tessellation.sdk.domain.rewards.Rewards
-import org.tessellation.sdk.domain.seedlist.SeedlistEntry
-import org.tessellation.sdk.infrastructure.consensus.Consensus
-import org.tessellation.sdk.infrastructure.metrics.Metrics
-import org.tessellation.sdk.infrastructure.snapshot.{CurrencySnapshotCreator, CurrencySnapshotValidator, SnapshotConsensus}
 import org.tessellation.security.SecurityProvider
 
 import io.circe.Decoder

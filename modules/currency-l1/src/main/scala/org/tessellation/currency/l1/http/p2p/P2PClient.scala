@@ -6,8 +6,8 @@ import org.tessellation.currency.l1.domain.dataApplication.consensus.ConsensusCl
 import org.tessellation.dag.l1.domain.consensus.block.http.p2p.clients.BlockConsensusClient
 import org.tessellation.dag.l1.http.p2p.{L0BlockOutputClient, P2PClient => DagL1P2PClient}
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.sdk.http.p2p.clients._
-import org.tessellation.sdk.infrastructure.gossip.p2p.GossipClient
+import org.tessellation.node.shared.http.p2p.clients._
+import org.tessellation.node.shared.infrastructure.gossip.p2p.GossipClient
 import org.tessellation.security.SecurityProvider
 
 import org.http4s.client.Client

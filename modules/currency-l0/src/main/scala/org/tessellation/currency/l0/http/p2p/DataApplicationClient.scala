@@ -3,10 +3,10 @@ package org.tessellation.currency.l0.http.p2p
 import cats.effect.Async
 
 import org.tessellation.currency.dataApplication.DataCalculatedState
+import org.tessellation.node.shared.domain.cluster.services.Session
+import org.tessellation.node.shared.http.p2p.PeerResponse
+import org.tessellation.node.shared.http.p2p.PeerResponse.PeerResponse
 import org.tessellation.schema.SnapshotOrdinal
-import org.tessellation.sdk.domain.cluster.services.Session
-import org.tessellation.sdk.http.p2p.PeerResponse
-import org.tessellation.sdk.http.p2p.PeerResponse.PeerResponse
 import org.tessellation.security.SecurityProvider
 
 import io.circe.Decoder

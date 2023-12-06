@@ -2,7 +2,7 @@ package org.tessellation.keytool.cli
 
 import cats.syntax.contravariantSemigroupal._
 
-import org.tessellation.cli.env._
+import org.tessellation.env.env._
 import org.tessellation.ext.decline.WithOpts
 import org.tessellation.keytool.cert.DistinguishedName
 

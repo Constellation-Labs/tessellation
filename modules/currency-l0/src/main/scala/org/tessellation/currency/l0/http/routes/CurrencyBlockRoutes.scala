@@ -6,8 +6,8 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
-import org.tessellation.http.routes.internal.{InternalUrlPrefix, PublicRoutes}
 import org.tessellation.kernel._
+import org.tessellation.routes.internal._
 import org.tessellation.schema.Block
 import org.tessellation.security.signature.Signed
 
