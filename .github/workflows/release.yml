@@ -38,7 +38,7 @@ jobs:
         uses: "./.github/templates/setup_java_and_scala"
 
       - name: Test and assembly 🚀
-        run: sbt 'scalafixAll --check --rules OrganizeImports;scalafmtCheckAll;test;keytool/assembly;wallet/assembly;core/assembly;dagL1/assembly'
+        run: sbt 'scalafixAll --check --rules OrganizeImports;scalafmtCheckAll;test;keytool/assembly;wallet/assembly;dagL0/assembly;dagL1/assembly'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -46,7 +46,7 @@ jobs:
         run: |
           cp ./modules/keytool/target/scala-2.13/tessellation-keytool-assembly-${{ steps.tagName.outputs.tag }}.jar ./cl-keytool.jar
           cp ./modules/wallet/target/scala-2.13/tessellation-wallet-assembly-${{ steps.tagName.outputs.tag }}.jar ./cl-wallet.jar
-          cp ./modules/core/target/scala-2.13/tessellation-core-assembly-${{ steps.tagName.outputs.tag }}.jar ./cl-node.jar
+          cp ./modules/dag-l0/target/scala-2.13/tessellation-dag-l0-assembly-${{ steps.tagName.outputs.tag }}.jar ./cl-node.jar
           cp ./modules/dag-l1/target/scala-2.13/tessellation-dag-l1-assembly-${{ steps.tagName.outputs.tag }}.jar ./cl-dag-l1.jar
 
       - name: Upload release assets

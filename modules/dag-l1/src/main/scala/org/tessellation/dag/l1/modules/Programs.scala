@@ -6,15 +6,15 @@ import cats.effect.std.Random
 import org.tessellation.dag.l1.domain.snapshot.programs.SnapshotProcessor
 import org.tessellation.dag.l1.http.p2p.P2PClient
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.node.shared.domain.cluster.programs.{Joining, L0PeerDiscovery, PeerDiscovery}
+import org.tessellation.node.shared.modules.SharedPrograms
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
-import org.tessellation.sdk.domain.cluster.programs.{Joining, L0PeerDiscovery, PeerDiscovery}
-import org.tessellation.sdk.modules.SdkPrograms
 import org.tessellation.security.SecurityProvider
 
 object Programs {
 
   def make[F[_]: Async: KryoSerializer: SecurityProvider: Random, P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P]](
-    sdkPrograms: SdkPrograms[F],
+    sharedPrograms: SharedPrograms[F],
     p2pClient: P2PClient[F],
     storages: Storages[F, P, S, SI],
     snapshotProcessorProgram: SnapshotProcessor[F, P, S, SI]
@@ -22,9 +22,9 @@ object Programs {
     val l0PeerDiscoveryProgram = L0PeerDiscovery.make(p2pClient.l0Cluster, storages.l0Cluster)
 
     new Programs[F, P, S, SI] {
-      val peerDiscovery = sdkPrograms.peerDiscovery
+      val peerDiscovery = sharedPrograms.peerDiscovery
       val l0PeerDiscovery = l0PeerDiscoveryProgram
-      val joining = sdkPrograms.joining
+      val joining = sharedPrograms.joining
       val snapshotProcessor = snapshotProcessorProgram
     }
   }

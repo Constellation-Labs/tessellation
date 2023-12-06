@@ -2,9 +2,9 @@ package org.tessellation.dag.l1.http.p2p
 
 import org.tessellation.currency.dataApplication.DataUpdate
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
+import org.tessellation.node.shared.http.p2p.PeerResponse
+import org.tessellation.node.shared.http.p2p.PeerResponse.PeerResponse
 import org.tessellation.schema.Block
-import org.tessellation.sdk.http.p2p.PeerResponse
-import org.tessellation.sdk.http.p2p.PeerResponse.PeerResponse
 import org.tessellation.security.signature.Signed
 
 import io.circe.Encoder

@@ -9,7 +9,6 @@ import cats.syntax.eq._
 import cats.syntax.foldable._
 import cats.syntax.option._
 
-import org.tessellation.dag.transaction.TransactionGenerator
 import org.tessellation.ext.crypto._
 import org.tessellation.json.JsonBinarySerializer
 import org.tessellation.kryo.KryoSerializer
@@ -30,6 +29,7 @@ import org.tessellation.security.hex.Hex
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.{Hashed, KeyPairGenerator, SecurityProvider}
 import org.tessellation.shared.sharedKryoRegistrar
+import org.tessellation.transaction.TransactionGenerator
 
 import eu.timepit.refined.api.Refined
 import eu.timepit.refined.auto._

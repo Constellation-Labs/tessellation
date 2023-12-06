@@ -16,19 +16,19 @@ import org.tessellation.currency.l0.snapshot.{CurrencySnapshotConsensus, Currenc
 import org.tessellation.currency.schema.currency._
 import org.tessellation.json.JsonBrotliBinarySerializer
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.node.shared.domain.cluster.services.{Cluster, Session}
+import org.tessellation.node.shared.domain.collateral.Collateral
+import org.tessellation.node.shared.domain.gossip.Gossip
+import org.tessellation.node.shared.domain.healthcheck.LocalHealthcheck
+import org.tessellation.node.shared.domain.rewards.Rewards
+import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
+import org.tessellation.node.shared.domain.snapshot.services.{AddressService, GlobalL0Service}
+import org.tessellation.node.shared.infrastructure.collateral.Collateral
+import org.tessellation.node.shared.infrastructure.metrics.Metrics
+import org.tessellation.node.shared.infrastructure.snapshot._
+import org.tessellation.node.shared.infrastructure.snapshot.services.AddressService
+import org.tessellation.node.shared.modules.SharedServices
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.sdk.domain.cluster.services.{Cluster, Session}
-import org.tessellation.sdk.domain.collateral.Collateral
-import org.tessellation.sdk.domain.gossip.Gossip
-import org.tessellation.sdk.domain.healthcheck.LocalHealthcheck
-import org.tessellation.sdk.domain.rewards.Rewards
-import org.tessellation.sdk.domain.seedlist.SeedlistEntry
-import org.tessellation.sdk.domain.snapshot.services.{AddressService, GlobalL0Service}
-import org.tessellation.sdk.infrastructure.Collateral
-import org.tessellation.sdk.infrastructure.metrics.Metrics
-import org.tessellation.sdk.infrastructure.snapshot._
-import org.tessellation.sdk.infrastructure.snapshot.services.AddressService
-import org.tessellation.sdk.modules.SdkServices
 import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.SignedValidator
 
@@ -38,7 +38,7 @@ object Services {
 
   def make[F[_]: Async: Random: KryoSerializer: SecurityProvider: Metrics: Supervisor: L0NodeContext](
     p2PClient: P2PClient[F],
-    sdkServices: SdkServices[F],
+    sharedServices: SharedServices[F],
     storages: Storages[F],
     client: Client[F],
     session: Session[F],
@@ -76,10 +76,10 @@ object Services {
         .pure[F]
 
       creator = CurrencySnapshotCreator.make[F](
-        sdkServices.currencySnapshotAcceptanceManager,
+        sharedServices.currencySnapshotAcceptanceManager,
         dataApplicationAcceptanceManager,
         cfg.snapshotSizeConfig,
-        sdkServices.currencyEventsCutter
+        sharedServices.currencyEventsCutter
       )
 
       validator = CurrencySnapshotValidator.make[F](
@@ -91,7 +91,7 @@ object Services {
 
       consensus <- CurrencySnapshotConsensus
         .make[F](
-          sdkServices.gossip,
+          sharedServices.gossip,
           selfId,
           keyPair,
           seedlist,
@@ -113,16 +113,16 @@ object Services {
         .make[F](p2PClient.l0GlobalSnapshot, storages.globalL0Cluster, storages.lastGlobalSnapshot, None, maybeMajorityPeerIds)
     } yield
       new Services[F](
-        localHealthcheck = sdkServices.localHealthcheck,
-        cluster = sdkServices.cluster,
-        session = sdkServices.session,
-        gossip = sdkServices.gossip,
+        localHealthcheck = sharedServices.localHealthcheck,
+        cluster = sharedServices.cluster,
+        session = sharedServices.session,
+        gossip = sharedServices.gossip,
         consensus = consensus,
         address = addressService,
         collateral = collateralService,
         stateChannelSnapshot = stateChannelSnapshotService,
         globalL0 = globalL0Service,
-        snapshotContextFunctions = sdkServices.currencySnapshotContextFns,
+        snapshotContextFunctions = sharedServices.currencySnapshotContextFns,
         dataApplication = maybeDataApplication,
         globalSnapshotContextFunctions = globalSnapshotContextFns
       ) {}

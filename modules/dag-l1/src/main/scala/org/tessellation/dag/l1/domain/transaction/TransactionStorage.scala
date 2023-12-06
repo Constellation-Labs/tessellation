@@ -23,9 +23,9 @@ import scala.util.control.NoStackTrace
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage._
 import org.tessellation.ext.collection.MapRefUtils._
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.node.shared.domain.transaction.filter.Consecutive
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction._
-import org.tessellation.sdk.domain.transaction.filter.Consecutive
 import org.tessellation.security.Hashed
 import org.tessellation.security.hash.Hash
 

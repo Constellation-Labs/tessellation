@@ -7,7 +7,7 @@ import cats.syntax.functor._
 import scala.concurrent.duration._
 
 import org.tessellation.dag.l1.modules.HealthChecks
-import org.tessellation.sdk.domain.Daemon
+import org.tessellation.node.shared.domain.Daemon
 
 import fs2._
 

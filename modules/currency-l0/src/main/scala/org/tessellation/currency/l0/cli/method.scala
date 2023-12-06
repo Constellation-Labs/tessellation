@@ -4,19 +4,19 @@ import cats.syntax.contravariantSemigroupal._
 
 import scala.concurrent.duration._
 
-import org.tessellation.cli.AppEnvironment
-import org.tessellation.cli.env._
 import org.tessellation.currency.cli.{GlobalL0PeerOpts, L0TokenIdentifierOpts}
 import org.tessellation.currency.l0.cli.http.{opts => httpOpts}
 import org.tessellation.currency.l0.config.types.AppConfig
+import org.tessellation.env.AppEnvironment
+import org.tessellation.env.env._
 import org.tessellation.ext.decline.WithOpts
+import org.tessellation.node.shared.cli._
+import org.tessellation.node.shared.cli.opts.{genesisBalancesOpts, genesisPathOpts, trustRatingsPathOpts}
+import org.tessellation.node.shared.config.types._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.L0Peer
-import org.tessellation.sdk.cli._
-import org.tessellation.sdk.cli.opts.{genesisBalancesOpts, genesisPathOpts, trustRatingsPathOpts}
-import org.tessellation.sdk.config.types._
 
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
