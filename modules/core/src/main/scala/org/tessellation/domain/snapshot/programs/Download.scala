@@ -140,7 +140,7 @@ object Download {
 
       def go(tmpMap: Map[SnapshotOrdinal, Hash], stepHash: Hash, stepOrdinal: SnapshotOrdinal): F[DownloadResult] =
         isSnapshotPersistedOrReachedGenesis(stepHash, stepOrdinal).ifM(
-          snapshotStorage.getHighestSnapshotInfo(lte = ordinal).flatMap {
+          snapshotStorage.getHighestSnapshotInfoOrdinal(lte = stepOrdinal).flatMap {
             validateChain(tmpMap, _, ordinal, state)
           },
           snapshotStorage
@@ -223,15 +223,16 @@ object Download {
                   .flatTap(newContext =>
                     snapshotStorage
                       .hasCorrectSnapshotInfo(snapshot.ordinal, snapshot.stateProof)
-                      .flatMap(Applicative[F].unlessA(_) {
+                      .ifM(
+                        ().pure[F],
                         newContext.stateProof.flatMap { contextProof =>
                           if (contextProof === snapshot.stateProof) {
-                            snapshotStorage.persistSnapshotInfo(snapshot.ordinal, newContext)
+                            snapshotStorage.persistSnapshotInfoWithCutoff(snapshot.ordinal, newContext)
                           } else {
                             InvalidStateProof(snapshot.ordinal).raiseError[F, Unit]
                           }
                         }
-                      })
+                      )
                   )
                   .flatMap(go(snapshot, _))
               case None => InvalidChain.raiseError[F, Agg]

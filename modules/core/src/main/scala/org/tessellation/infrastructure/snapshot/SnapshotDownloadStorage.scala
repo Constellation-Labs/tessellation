@@ -4,6 +4,7 @@ import cats.effect.Async
 import cats.effect.syntax.all._
 import cats.syntax.all._
 
+import org.tessellation.cutoff.{LogarithmicOrdinalCutoff, OrdinalCutoff}
 import org.tessellation.domain.snapshot.storages.SnapshotDownloadStorage
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
@@ -19,6 +20,8 @@ object SnapshotDownloadStorage {
     snapshotInfoStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfo]
   ): SnapshotDownloadStorage[F] =
     new SnapshotDownloadStorage[F] {
+
+      val cutoffLogic: OrdinalCutoff = LogarithmicOrdinalCutoff.make
 
       val maxParallelFileOperations = 4
 
@@ -36,16 +39,13 @@ object SnapshotDownloadStorage {
 
       def isPersisted(hash: Hash): F[Boolean] = persistedStorage.exists(hash)
 
-      def hasSnapshotInfo(ordinal: SnapshotOrdinal): F[Boolean] =
-        snapshotInfoStorage.exists(ordinal)
-
       def hasCorrectSnapshotInfo(ordinal: SnapshotOrdinal, proof: GlobalSnapshotStateProof): F[Boolean] =
         snapshotInfoStorage.read(ordinal).flatMap {
           case Some(info) => info.stateProof.map(_ === proof)
           case _          => false.pure[F]
         }
 
-      def getHighestSnapshotInfo(lte: SnapshotOrdinal): F[Option[SnapshotOrdinal]] =
+      def getHighestSnapshotInfoOrdinal(lte: SnapshotOrdinal): F[Option[SnapshotOrdinal]] =
         snapshotInfoStorage.listStoredOrdinals
           .flatMap(_.filter(_ <= lte).compile.toList)
           .map(_.maximumOption)
@@ -63,8 +63,16 @@ object SnapshotDownloadStorage {
           case _ => none.pure[F]
         }
 
-      def persistSnapshotInfo(ordinal: SnapshotOrdinal, info: GlobalSnapshotInfo): F[Unit] =
-        snapshotInfoStorage.write(ordinal, info)
+      def persistSnapshotInfoWithCutoff(ordinal: SnapshotOrdinal, info: GlobalSnapshotInfo): F[Unit] =
+        snapshotInfoStorage.write(ordinal, info) >> {
+          val toKeep = cutoffLogic.cutoff(SnapshotOrdinal.MinValue, ordinal)
+
+          snapshotInfoStorage.listStoredOrdinals.flatMap {
+            _.compile.toList
+              .map(_.toSet.diff(toKeep).toList)
+              .flatMap(_.traverse_(snapshotInfoStorage.delete))
+          }
+        }
 
       def movePersistedToTmp(hash: Hash, ordinal: SnapshotOrdinal): F[Unit] =
         tmpStorage.getPath(hash).flatMap(persistedStorage.move(hash, _) >> persistedStorage.delete(ordinal))
