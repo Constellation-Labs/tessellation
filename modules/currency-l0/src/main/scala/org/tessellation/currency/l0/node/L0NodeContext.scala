@@ -8,6 +8,7 @@ import org.tessellation.currency.dataApplication.L0NodeContext
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.snapshot.storage.SnapshotStorage
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.security.{Hashed, SecurityProvider}
 
 object L0NodeContext {
@@ -18,6 +19,11 @@ object L0NodeContext {
 
     def getLastCurrencySnapshot: F[Option[Hashed[CurrencyIncrementalSnapshot]]] =
       OptionT(snapshotStorage.headSnapshot)
+        .semiflatMap(_.toHashed)
+        .value
+
+    def getCurrencySnapshot(ordinal: SnapshotOrdinal): F[Option[Hashed[CurrencyIncrementalSnapshot]]] =
+      OptionT(snapshotStorage.get(ordinal))
         .semiflatMap(_.toHashed)
         .value
 
