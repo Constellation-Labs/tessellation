@@ -22,6 +22,7 @@ import org.tessellation.node.shared.domain.gossip.Gossip
 import org.tessellation.node.shared.domain.healthcheck.LocalHealthcheck
 import org.tessellation.node.shared.domain.rewards.Rewards
 import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
+import org.tessellation.node.shared.domain.snapshot.DoubleSignDetect
 import org.tessellation.node.shared.domain.snapshot.services.{AddressService, GlobalL0Service}
 import org.tessellation.node.shared.infrastructure.collateral.Collateral
 import org.tessellation.node.shared.infrastructure.metrics.Metrics
@@ -128,7 +129,8 @@ object Services {
         snapshotContextFunctions = sharedServices.currencySnapshotContextFns,
         dataApplication = maybeDataApplication,
         globalSnapshotContextFunctions = globalSnapshotContextFns,
-        sentStateChannelBinaryTrackingService = sentStateChannelBinaryTrackingService
+        sentStateChannelBinaryTrackingService = sentStateChannelBinaryTrackingService,
+        doubleSignDetect = sharedServices.doubleSignDetect
       ) {}
 }
 
@@ -150,5 +152,6 @@ sealed abstract class Services[F[_]] private (
   val snapshotContextFunctions: CurrencySnapshotContextFunctions[F],
   val dataApplication: Option[BaseDataApplicationL0Service[F]],
   val globalSnapshotContextFunctions: GlobalSnapshotContextFunctions[F],
-  val sentStateChannelBinaryTrackingService: SentStateChannelBinaryTrackingService[F]
+  val sentStateChannelBinaryTrackingService: SentStateChannelBinaryTrackingService[F],
+  val doubleSignDetect: DoubleSignDetect[F]
 )

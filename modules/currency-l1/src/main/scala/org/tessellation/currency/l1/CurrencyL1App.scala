@@ -148,7 +148,7 @@ abstract class CurrencyL1App(
         blockRumorHandler[IO](queues.peerBlock)
 
       _ <- DAGL1Daemons
-        .start(storages, services, healthChecks)
+        .start(storages, services, healthChecks, cfg)
         .asResource
 
       implicit0(nodeContext: L1NodeContext[IO]) = L1NodeContext.make[IO](storages.lastGlobalSnapshot, storages.lastSnapshot)

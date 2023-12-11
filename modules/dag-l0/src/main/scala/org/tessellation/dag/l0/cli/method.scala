@@ -73,6 +73,9 @@ object method {
         checkPeersMaxDelay = 10.minutes,
         additionalDiscoveryDelay = 0.minutes,
         minPeers = 1
+      ),
+      doubleSignDetectDaemon = DoubleSignDetectDaemonConfig(
+        runInterval = 1.minute
       )
     )
 

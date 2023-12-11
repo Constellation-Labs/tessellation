@@ -15,7 +15,8 @@ object types {
     gossip: GossipConfig,
     consensus: ConsensusConfig,
     healthCheck: HealthCheckConfig,
-    collateral: CollateralConfig
+    collateral: CollateralConfig,
+    doubleSignDetectDaemon: DoubleSignDetectDaemonConfig
   )
 
   case class DBConfig(

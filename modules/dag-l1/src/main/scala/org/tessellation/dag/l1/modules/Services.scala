@@ -12,6 +12,7 @@ import org.tessellation.node.shared.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.node.shared.domain.collateral.Collateral
 import org.tessellation.node.shared.domain.gossip.Gossip
 import org.tessellation.node.shared.domain.healthcheck.LocalHealthcheck
+import org.tessellation.node.shared.domain.snapshot.DoubleSignDetect
 import org.tessellation.node.shared.domain.snapshot.services.GlobalL0Service
 import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.node.shared.infrastructure.block.processing.BlockAcceptanceManager
@@ -55,6 +56,7 @@ object Services {
       val session = sharedServices.session
       val transaction = TransactionService.make[F](storages.transaction, validators.transactionContextual)
       val collateral = Collateral.make[F](cfg.collateral, storages.lastSnapshot)
+      val doubleSignDetect = sharedServices.doubleSignDetect
     }
 }
 
@@ -67,4 +69,5 @@ trait Services[F[_], P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P]] {
   val session: Session[F]
   val transaction: TransactionService[F]
   val collateral: Collateral[F]
+  val doubleSignDetect: DoubleSignDetect[F]
 }

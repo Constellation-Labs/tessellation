@@ -61,7 +61,10 @@ object method {
         additionalDiscoveryDelay = 0.minutes,
         minPeers = 1
       ),
-      snapshotSizeConfig = snapshotSizeConfig
+      snapshotSizeConfig = snapshotSizeConfig,
+      doubleSignDetectDaemon = DoubleSignDetectDaemonConfig(
+        runInterval = 1.minute
+      )
     )
 
     val stateAfterJoining: NodeState = NodeState.WaitingForDownload

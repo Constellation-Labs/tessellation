@@ -16,6 +16,7 @@ import org.tessellation.node.shared.domain.cluster.services.{Cluster, Session}
 import org.tessellation.node.shared.domain.gossip.Gossip
 import org.tessellation.node.shared.domain.healthcheck.LocalHealthcheck
 import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
+import org.tessellation.node.shared.domain.snapshot.DoubleSignDetect
 import org.tessellation.node.shared.http.p2p.clients.NodeClient
 import org.tessellation.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import org.tessellation.node.shared.infrastructure.cluster.services.Cluster
@@ -104,6 +105,7 @@ object SharedServices {
         collateral.amount
       )
       globalSnapshotContextFns = GlobalSnapshotContextFunctions.make(globalSnapshotAcceptanceManager)
+      doubleSignDetect = new DoubleSignDetect(storages.forkInfo, cfg.doubleSignDetect)
     } yield
       new SharedServices[F](
         localHealthcheck = localHealthcheck,
@@ -113,7 +115,8 @@ object SharedServices {
         globalSnapshotContextFns = globalSnapshotContextFns,
         currencySnapshotContextFns = currencySnapshotContextFns,
         currencySnapshotAcceptanceManager = currencySnapshotAcceptanceManager,
-        currencyEventsCutter = currencyEventsCutter
+        currencyEventsCutter = currencyEventsCutter,
+        doubleSignDetect = doubleSignDetect
       ) {}
   }
 }
@@ -126,5 +129,6 @@ sealed abstract class SharedServices[F[_]] private (
   val globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
   val currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
   val currencySnapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F],
-  val currencyEventsCutter: CurrencyEventsCutter[F]
+  val currencyEventsCutter: CurrencyEventsCutter[F],
+  val doubleSignDetect: DoubleSignDetect[F]
 )

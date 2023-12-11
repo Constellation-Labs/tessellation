@@ -9,6 +9,7 @@ import org.tessellation.dag.l0.config.types.AppConfig
 import org.tessellation.dag.l0.infrastructure.snapshot.GlobalSnapshotEventsPublisherDaemon
 import org.tessellation.dag.l0.infrastructure.trust.TrustStorageUpdater
 import org.tessellation.node.shared.domain.Daemon
+import org.tessellation.node.shared.domain.snapshot.DoubleSignDetect
 import org.tessellation.node.shared.infrastructure.cluster.daemon.NodeStateDaemon
 import org.tessellation.node.shared.infrastructure.collateral.daemon.CollateralDaemon
 import org.tessellation.node.shared.infrastructure.healthcheck.daemon.HealthCheckDaemon
@@ -43,7 +44,8 @@ object Daemons {
       HealthCheckDaemon.make(healthChecks),
       GlobalSnapshotEventsPublisherDaemon.make(queues.stateChannelOutput, queues.l1Output, services.gossip),
       CollateralDaemon.make(services.collateral, storages.globalSnapshot, storages.cluster),
-      TrustStorageUpdater.daemon(services.trustStorageUpdater)
+      TrustStorageUpdater.daemon(services.trustStorageUpdater),
+      DoubleSignDetect.daemon(services.doubleSignDetect, cfg.doubleSignDetectDaemon)
     ).traverse(_.start).void
   }
 

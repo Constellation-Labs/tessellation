@@ -10,6 +10,7 @@ import org.tessellation.currency.l0.config.types.AppConfig
 import org.tessellation.currency.l0.snapshot.CurrencySnapshotEventsPublisherDaemon
 import org.tessellation.node.shared.domain.Daemon
 import org.tessellation.node.shared.domain.healthcheck.HealthChecks
+import org.tessellation.node.shared.domain.snapshot.DoubleSignDetect
 import org.tessellation.node.shared.infrastructure.cluster.daemon.NodeStateDaemon
 import org.tessellation.node.shared.infrastructure.collateral.daemon.CollateralDaemon
 import org.tessellation.node.shared.infrastructure.healthcheck.daemon.HealthCheckDaemon
@@ -41,7 +42,8 @@ object Daemons {
       DownloadDaemon.make(storages.node, programs.download, peerDiscoveryDelay),
       HealthCheckDaemon.make(healthChecks),
       CurrencySnapshotEventsPublisherDaemon.make(queues.l1Output, services.gossip, maybeDataApplication),
-      CollateralDaemon.make(services.collateral, storages.snapshot, storages.cluster)
+      CollateralDaemon.make(services.collateral, storages.snapshot, storages.cluster),
+      DoubleSignDetect.daemon(services.doubleSignDetect, config.doubleSignDetectDaemon)
     ).traverse(_.start).void
   }
 

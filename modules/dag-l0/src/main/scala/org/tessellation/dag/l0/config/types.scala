@@ -34,7 +34,8 @@ object types {
     rewards: RewardsConfig,
     stateChannelPullDelay: NonNegLong,
     stateChannelPurgeDelay: NonNegLong,
-    peerDiscoveryDelay: PeerDiscoveryDelay
+    peerDiscoveryDelay: PeerDiscoveryDelay,
+    doubleSignDetectDaemon: DoubleSignDetectDaemonConfig
   )
 
   case class DBConfig(

@@ -106,7 +106,7 @@ object Main
         blockRumorHandler(queues.peerBlock)
 
       _ <- Daemons
-        .start(storages, services, healthChecks)
+        .start(storages, services, healthChecks, cfg)
         .asResource
 
       api = HttpApi

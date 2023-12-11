@@ -22,6 +22,7 @@ import org.tessellation.node.shared.domain.gossip.Gossip
 import org.tessellation.node.shared.domain.healthcheck.LocalHealthcheck
 import org.tessellation.node.shared.domain.rewards.Rewards
 import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
+import org.tessellation.node.shared.domain.snapshot.DoubleSignDetect
 import org.tessellation.node.shared.domain.snapshot.services.AddressService
 import org.tessellation.node.shared.infrastructure.collateral.Collateral
 import org.tessellation.node.shared.infrastructure.consensus.Consensus
@@ -96,7 +97,8 @@ object Services {
         collateral = collateralService,
         rewards = rewards,
         stateChannel = stateChannelService,
-        trustStorageUpdater = trustUpdaterService
+        trustStorageUpdater = trustUpdaterService,
+        doubleSignDetect = sharedServices.doubleSignDetect
       ) {}
 }
 
@@ -110,5 +112,6 @@ sealed abstract class Services[F[_]] private (
   val collateral: Collateral[F],
   val rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent],
   val stateChannel: StateChannelService[F],
-  val trustStorageUpdater: TrustStorageUpdater[F]
+  val trustStorageUpdater: TrustStorageUpdater[F],
+  val doubleSignDetect: DoubleSignDetect[F]
 )

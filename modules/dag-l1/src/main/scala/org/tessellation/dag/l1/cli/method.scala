@@ -55,7 +55,10 @@ object method {
         pullTxsCount = 100L
       ),
       healthCheck = healthCheckConfig(false),
-      collateral = collateralConfig(environment, collateralAmount)
+      collateral = collateralConfig(environment, collateralAmount),
+      doubleSignDetectDaemon = DoubleSignDetectDaemonConfig(
+        runInterval = 1.minute
+      )
     )
 
     val stateChannelAllowanceLists = None

@@ -14,6 +14,7 @@ object types {
     snapshot: SnapshotConfig,
     collateral: CollateralConfig,
     globalL0Peer: L0Peer,
-    snapshotSizeConfig: SnapshotSizeConfig
+    snapshotSizeConfig: SnapshotSizeConfig,
+    doubleSignDetectDaemon: DoubleSignDetectDaemonConfig
   )
 }

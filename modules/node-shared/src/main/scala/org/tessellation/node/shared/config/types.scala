@@ -25,7 +25,8 @@ object types {
     trustStorage: TrustStorageConfig,
     priorityPeerIds: Option[NonEmptySet[PeerId]],
     snapshotSizeConfig: SnapshotSizeConfig,
-    forkInfoStorage: ForkInfoStorageConfig
+    forkInfoStorage: ForkInfoStorageConfig,
+    doubleSignDetect: DoubleSignDetectConfig
   )
 
   case class SnapshotSizeConfig(
@@ -125,5 +126,11 @@ object types {
   case class ForkInfoStorageConfig(
     maxSize: PosInt
   )
+
+  case class DoubleSignDetectConfig(
+    maxDetectionDelta: PosLong
+  )
+
+  case class DoubleSignDetectDaemonConfig(runInterval: FiniteDuration)
 
 }

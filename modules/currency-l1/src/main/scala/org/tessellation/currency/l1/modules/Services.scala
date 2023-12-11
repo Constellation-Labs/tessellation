@@ -56,6 +56,7 @@ object Services {
       val transaction = TransactionService.make[F](storages.transaction, validators.transactionContextual)
       val collateral = Collateral.make[F](cfg.collateral, storages.lastSnapshot)
       val dataApplication = maybeDataApplication
+      val doubleSignDetect = sharedServices.doubleSignDetect
     }
 }
 

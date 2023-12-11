@@ -61,6 +61,10 @@ object CliMethod {
 
   val forkInfoStorageConfig: ForkInfoStorageConfig = ForkInfoStorageConfig(10)
 
+  val doubleSignDetectConfig: DoubleSignDetectConfig = DoubleSignDetectConfig(
+    maxDetectionDelta = 10L
+  )
+
   val leavingDelay = 30.seconds
 
   def healthCheckConfig(pingEnabled: Boolean) = HealthCheckConfig(
@@ -114,6 +118,8 @@ trait CliMethod {
 
   val forkInfoStorageConfig: ForkInfoStorageConfig = CliMethod.forkInfoStorageConfig
 
+  val doubleSignDetectConfig: DoubleSignDetectConfig = CliMethod.doubleSignDetectConfig
+
   lazy val nodeSharedConfig: SharedConfig = SharedConfig(
     environment,
     gossipConfig,
@@ -124,7 +130,8 @@ trait CliMethod {
     trustStorageConfig,
     PriorityPeerIds.get(environment),
     snapshotSizeConfig,
-    forkInfoStorageConfig
+    forkInfoStorageConfig,
+    doubleSignDetectConfig
   )
 
 }
