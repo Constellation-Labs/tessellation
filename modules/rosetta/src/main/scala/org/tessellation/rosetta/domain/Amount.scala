@@ -11,15 +11,13 @@ import eu.timepit.refined._
 import eu.timepit.refined.api.Refined
 import eu.timepit.refined.auto._
 import eu.timepit.refined.cats._
-import eu.timepit.refined.numeric.Interval.OpenClosed
-import eu.timepit.refined.numeric.{NonNegative, Positive}
+import eu.timepit.refined.numeric.{Negative, NonNegative, Positive}
 import eu.timepit.refined.predicates.all.Or
 import io.circe.refined._
 import io.estatico.newtype.macros.newtype
 
 object amount {
-  type NegatedPositive = OpenClosed[W.`Long.MinValue`.T, -1L]
-  type AmountValuePredicate = Positive Or NegatedPositive
+  type AmountValuePredicate = Positive Or Negative
   type AmountValueRefined = Long Refined AmountValuePredicate
 
   @derive(eqv, decoder, encoder, show)
