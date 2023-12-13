@@ -94,7 +94,9 @@ trait BaseDataApplicationL0Service[F[_]] extends BaseDataApplicationService[F] w
   def onSnapshotConsensusResult(snapshot: Signed[CurrencyIncrementalSnapshot]): F[Unit]
 }
 
-trait BaseDataApplicationL1Service[F[_]] extends BaseDataApplicationService[F] with BaseDataApplicationContextualOps[F, L1NodeContext[F]]
+trait BaseDataApplicationL1Service[F[_]] extends BaseDataApplicationService[F] with BaseDataApplicationContextualOps[F, L1NodeContext[F]] {
+  def addDataUpdate(update: Signed[DataUpdate])(implicit context: L1NodeContext[F]): F[Unit] = context.addDataUpdate(update)
+}
 
 trait DataApplicationService[F[_], D <: DataUpdate, DON <: DataOnChainState, DOF <: DataCalculatedState] {
   def serializeState(state: DON): F[Array[Byte]]
@@ -467,6 +469,7 @@ object dataApplication {
 }
 
 trait L1NodeContext[F[_]] {
+  def addDataUpdate(update: Signed[DataUpdate]): F[Unit]
   def getLastGlobalSnapshot: F[Option[Hashed[GlobalIncrementalSnapshot]]]
   def getLastCurrencySnapshot: F[Option[Hashed[CurrencyIncrementalSnapshot]]]
   def getLastCurrencySnapshotCombined: F[Option[(Hashed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]]
