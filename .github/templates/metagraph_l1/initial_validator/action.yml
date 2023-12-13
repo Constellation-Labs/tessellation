@@ -29,16 +29,13 @@ runs:
     - name: Generate Metagraph L1 JAR
       shell: bash
       run: |
-        cd .github/config/containers/
-        [ ! -d "github-action-metagraph-test" ] && git clone https://github.com/Constellation-Labs/github-action-metagraph-test.git
-        cd github-action-metagraph-test/
-        
+        cd .github/templates/project_template/
         sbt currencyL1/assembly
 
     - name: Move Metagraph L1 JAR
       shell: bash
       run: |
-        mv .github/config/containers/github-action-metagraph-test/modules/l1/target/scala-2.13/custom-project-currency-l1-assembly-* .github/config/containers/jars/metagraph-l1.jar
+        mv .github/templates/project_template/modules/l1/target/scala-2.13/custom-project-currency-l1-assembly-* .github/config/containers/jars/metagraph-l1.jar
 
     - name: Running Metagraph L1 Initial Validator
       shell: bash
