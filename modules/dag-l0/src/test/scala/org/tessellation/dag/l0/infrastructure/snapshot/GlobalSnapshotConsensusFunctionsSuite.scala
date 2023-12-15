@@ -11,6 +11,8 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.reflect.runtime.universe.TypeTag
 
 import org.tessellation.currency.schema.currency.SnapshotFee
+import org.tessellation.dag.l0.dagL0KryoRegistrar
+import org.tessellation.dag.l0.domain.snapshot.programs.GlobalSnapshotEventCutter
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.json.JsonHashSerializer
@@ -37,6 +39,7 @@ import org.tessellation.security.{Hasher, KeyPairGenerator, SecurityProvider}
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 import org.tessellation.syntax.sortedCollection._
 
+import eu.timepit.refined.auto._
 import io.circe.Encoder
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
@@ -69,7 +72,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
   def sharedResource: Resource[IO, Res] = for {
     supervisor <- Supervisor[IO]
-    implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](nodeSharedKryoRegistrar)
+    implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](nodeSharedKryoRegistrar ++ dagL0KryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
     implicit0(j: JsonHashSerializer[IO]) <- JsonHashSerializer.forSync[IO].asResource
     h = Hasher.forSync[IO]
@@ -154,7 +157,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         snapshotAcceptanceManager,
         collateral,
         rewards,
-        gossip
+        gossip,
+        GlobalSnapshotEventCutter.make[IO](20_000_000)
       )
   }
 

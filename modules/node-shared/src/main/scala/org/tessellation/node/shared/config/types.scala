@@ -59,7 +59,12 @@ object types {
     timeTriggerInterval: FiniteDuration,
     declarationTimeout: FiniteDuration,
     declarationRangeLimit: NonNegLong,
-    lockDuration: FiniteDuration
+    lockDuration: FiniteDuration,
+    eventCutter: EventCutterConfig
+  )
+
+  case class EventCutterConfig(
+    maxBinarySizeBytes: PosInt
   )
 
   case class SnapshotConfig(

@@ -299,7 +299,11 @@ object Download {
                 .run(peer)
                 .flatMap(_.toHashed[F])
                 .map(_.some)
-                .handleError(_ => none[Hashed[GlobalIncrementalSnapshot]])
+                .handleErrorWith(e =>
+                  logger
+                    .warn(e)(s"Unable to retrieve snapshot at ordinal ${ordinal.show} from peer ${peer.show}")
+                    .as(none[Hashed[GlobalIncrementalSnapshot]])
+                )
                 .map {
                   case Some(snapshot) if hash.forall(_ === snapshot.hash) => snapshot.signed.some.asRight[Agg]
                   case _                                                  => (tail, none[Success]).asLeft[Result]

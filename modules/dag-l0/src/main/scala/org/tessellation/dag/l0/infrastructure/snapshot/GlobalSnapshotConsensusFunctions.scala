@@ -16,6 +16,7 @@ import org.tessellation.ext.crypto._
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.block.processing._
 import org.tessellation.node.shared.domain.consensus.ConsensusFunctions.InvalidArtifact
+import org.tessellation.node.shared.domain.event.EventCutter
 import org.tessellation.node.shared.domain.gossip.Gossip
 import org.tessellation.node.shared.domain.rewards.Rewards
 import org.tessellation.node.shared.domain.snapshot.storage.SnapshotStorage
@@ -49,7 +50,8 @@ object GlobalSnapshotConsensusFunctions {
     globalSnapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     collateral: Amount,
     rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent],
-    gossip: Gossip[F]
+    gossip: Gossip[F],
+    eventCutter: EventCutter[F, StateChannelEvent, DAGEvent]
   ): GlobalSnapshotConsensusFunctions[F] = new GlobalSnapshotConsensusFunctions[F] {
 
     private val logger = Slf4jLogger.getLoggerFromClass(GlobalSnapshotConsensusFunctions.getClass)
@@ -97,14 +99,13 @@ object GlobalSnapshotConsensusFunctions {
       events: Set[GlobalSnapshotEvent],
       facilitators: Set[PeerId]
     ): F[(GlobalSnapshotArtifact, GlobalSnapshotContext, Set[GlobalSnapshotEvent])] = {
+      val (scEventsBeforeCut, dagEventsBeforeCut) = events.partitionMap(identity)
 
-      val (scEvents: List[StateChannelEvent], dagEvents: List[DAGEvent]) =
-        events.toList.partitionMap(identity)
-
-      val blocksForAcceptance = dagEvents
-        .filter(_.height > lastArtifact.height)
+      val dagEvents = dagEventsBeforeCut.filter(_.height > lastArtifact.height)
 
       for {
+        (scEvents, blocksForAcceptance) <- eventCutter.cut(scEventsBeforeCut.toList, dagEvents.toList)
+
         lastArtifactHash <- lastArtifact.value.hash
         currentOrdinal = lastArtifact.ordinal.next
         currentEpochProgress = trigger match {
