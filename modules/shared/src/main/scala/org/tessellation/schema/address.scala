@@ -6,7 +6,7 @@ import org.tessellation.schema.balance.Balance
 import org.tessellation.security.Base58
 import org.tessellation.security.hash.Hash
 
-import derevo.cats.{order, show}
+import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia._
 import derevo.derive
 import eu.timepit.refined.api.{Refined, Validate}
@@ -17,7 +17,7 @@ import io.estatico.newtype.macros.newtype
 
 object address {
 
-  @derive(decoder, encoder, keyDecoder, keyEncoder, order, show)
+  @derive(decoder, encoder, keyDecoder, keyEncoder, order, show, eqv)
   @newtype
   case class Address(value: DAGAddress)
 

@@ -7,7 +7,7 @@ import cats.syntax.validated._
 import scala.concurrent.duration.DurationInt
 
 import org.tessellation.ext.decline.decline._
-import org.tessellation.node.shared.config.types.{ConsensusConfig, SnapshotConfig}
+import org.tessellation.node.shared.config.types.{ConsensusConfig, EventCutterConfig, SnapshotConfig}
 
 import com.monovore.decline._
 import eu.timepit.refined.auto._
@@ -44,7 +44,8 @@ object snapshot {
           timeTriggerInterval = 43.seconds,
           declarationTimeout = 50.seconds,
           declarationRangeLimit = 3L,
-          lockDuration = 10.seconds
+          lockDuration = 10.seconds,
+          EventCutterConfig(maxBinarySizeBytes = 20_971_520)
         ),
         snapshotPath = snapshotPath,
         incrementalTmpSnapshotPath = incrementalTmpSnapshotPath,
