@@ -4,7 +4,7 @@ import scala.reflect.ClassTag
 
 import org.tessellation.kryo.KryoSerializer
 
-import _root_.cats.MonadThrow
+import _root_.cats._
 import _root_.cats.syntax.either._
 import eu.timepit.refined.api.Refined
 import eu.timepit.refined.auto._
@@ -40,8 +40,8 @@ object kryo {
 
   implicit class MapRegistrationId[C1](mapa: Map[Class[_], KryoRegistrationId[C1]]) {
 
-    def union[C2](mapb: Map[Class[_], KryoRegistrationId[C2]]) =
-      mapa.view.mapValues[KryoRegistrationId[C1 Or C2]](identity).toMap ++
-        mapb.view.mapValues[KryoRegistrationId[C1 Or C2]](identity).toMap
+    def union[C2](mapb: Map[Class[_], KryoRegistrationId[C2]]): Map[Class[_], KryoRegistrationId[Or[C1, C2]]] =
+      mapa.view.mapValues[KryoRegistrationId[C1 Or C2]](c => c).toMap ++
+        mapb.view.mapValues[KryoRegistrationId[C1 Or C2]](c => c).toMap
   }
 }
