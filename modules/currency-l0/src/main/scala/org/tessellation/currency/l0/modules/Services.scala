@@ -11,7 +11,7 @@ import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, 
 import org.tessellation.currency.l0.config.types.AppConfig
 import org.tessellation.currency.l0.http.p2p.P2PClient
 import org.tessellation.currency.l0.node.L0NodeContext
-import org.tessellation.currency.l0.snapshot.services.StateChannelSnapshotService
+import org.tessellation.currency.l0.snapshot.services.{SentStateChannelBinaryTrackingService, StateChannelSnapshotService}
 import org.tessellation.currency.l0.snapshot.{CurrencySnapshotConsensus, CurrencySnapshotEvent}
 import org.tessellation.currency.schema.currency._
 import org.tessellation.json.JsonBrotliBinarySerializer
@@ -62,6 +62,8 @@ object Services {
           DataApplicationSnapshotAcceptanceManager.make[F](service, l0NodeContext, storage)
       }
 
+      sentStateChannelBinaryTrackingService <- SentStateChannelBinaryTrackingService.make(storages.identifier)
+
       stateChannelSnapshotService <- StateChannelSnapshotService
         .make[F](
           keyPair,
@@ -71,7 +73,8 @@ object Services {
           storages.snapshot,
           storages.identifier,
           jsonBrotliBinarySerializer,
-          dataApplicationAcceptanceManager
+          dataApplicationAcceptanceManager,
+          sentStateChannelBinaryTrackingService
         )
         .pure[F]
 
@@ -124,7 +127,8 @@ object Services {
         globalL0 = globalL0Service,
         snapshotContextFunctions = sharedServices.currencySnapshotContextFns,
         dataApplication = maybeDataApplication,
-        globalSnapshotContextFunctions = globalSnapshotContextFns
+        globalSnapshotContextFunctions = globalSnapshotContextFns,
+        sentStateChannelBinaryTrackingService = sentStateChannelBinaryTrackingService
       ) {}
 }
 
@@ -145,5 +149,6 @@ sealed abstract class Services[F[_]] private (
   val globalL0: GlobalL0Service[F],
   val snapshotContextFunctions: CurrencySnapshotContextFunctions[F],
   val dataApplication: Option[BaseDataApplicationL0Service[F]],
-  val globalSnapshotContextFunctions: GlobalSnapshotContextFunctions[F]
+  val globalSnapshotContextFunctions: GlobalSnapshotContextFunctions[F],
+  val sentStateChannelBinaryTrackingService: SentStateChannelBinaryTrackingService[F]
 )

@@ -47,8 +47,8 @@ sealed abstract class L0PeerDiscovery[F[_]: Sync: Random] private (
       .flatMap(l0ClusterStorage.getPeer)
       .flatMap(_.fold(Applicative[F].unit) { p =>
         getPeersFrom(p)
-          .map(_.filter(peer => lastFacilitators.map(_.toId).contains(peer.id.toId)).toSortedSet.toNes)
-          .flatMap(_.traverse(l0ClusterStorage.setPeers).void)
+          .map(_.filter(peer => lastFacilitators.contains(peer.id)).toSortedSet.toNes)
+          .flatMap(_.traverse_(l0ClusterStorage.setPeers))
       })
       .handleErrorWith { error =>
         logger.warn(error)(s"An error occured during L0 peer discovery")
