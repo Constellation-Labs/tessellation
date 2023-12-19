@@ -23,8 +23,11 @@ import org.tessellation.syntax.sortedCollection._
 import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
+import derevo.scalacheck.arbitrary
 import eu.timepit.refined.api.Refined
 import eu.timepit.refined.auto._
+import eu.timepit.refined.cats._
+import eu.timepit.refined.scalacheck.all._
 import eu.timepit.refined.string.MatchesRegex
 import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
 import io.estatico.newtype.macros.newtype
@@ -54,7 +57,7 @@ object currency {
       (lastTxRefs.hash, balances.hash).tupled.map(CurrencySnapshotStateProof.apply)
   }
 
-  @derive(decoder, encoder, order, show)
+  @derive(decoder, encoder, order, show, arbitrary)
   @newtype
   case class SnapshotFee(value: NonNegLong)
 

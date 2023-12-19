@@ -7,10 +7,11 @@ import cats.syntax.all._
 import scala.concurrent.duration._
 
 import org.tessellation.currency.l0.modules.{Programs, Services, Storages}
+import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.snapshot.Validator
 import org.tessellation.schema.GlobalIncrementalSnapshot
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.security.Hashed
+import org.tessellation.security.{Hashed, Hasher}
 
 import fs2.Stream
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -19,7 +20,7 @@ object StateChannel {
 
   private val awakePeriod = 10.seconds
 
-  def run[F[_]: Async](
+  def run[F[_]: Async: KryoSerializer: Hasher](
     services: Services[F],
     storages: Storages[F],
     programs: Programs[F]
@@ -31,7 +32,8 @@ object StateChannel {
         .awakeEvery[F](awakePeriod)
         .evalMap(_ => services.globalL0.pullGlobalSnapshots)
         .evalMap {
-          case Left((snapshot, state)) => storages.lastGlobalSnapshot.setInitial(snapshot, state)
+          case Left((snapshot, state)) =>
+            storages.lastGlobalSnapshot.setInitial(snapshot, state)
 
           case Right(snapshots) =>
             snapshots.tailRecM {
@@ -47,11 +49,22 @@ object StateChannel {
                     case Some((lastSnapshot, lastState)) =>
                       services.globalSnapshotContextFunctions.createContext(lastState, lastSnapshot.signed, snapshot.signed).flatMap {
                         context =>
-                          storages.lastGlobalSnapshot.set(snapshot, context)
+                          storages.lastGlobalSnapshot.set(snapshot, context) >>
+                            services.sentStateChannelBinaryTrackingService.updateByGlobalSnapshot(snapshot)
                       }
                   },
                   Applicative[F].unit
                 ) >> Applicative[F].pure(nextSnapshots.asLeft[Unit])
+            }
+        }
+        .evalTap { _ =>
+          services.sentStateChannelBinaryTrackingService.getRetriable
+            .flatMap(_.traverse(_.toHashed))
+            .flatMap {
+              case Some(binaryToRetry) =>
+                logger.info(s"Snapshot binary hash=${binaryToRetry.hash} didn't reach global state. Resending to random Global L0 peer") >>
+                  services.stateChannelSnapshot.sendToGlobalL0(binaryToRetry)
+              case None => Applicative[F].unit
             }
         }
         .handleErrorWith { error =>

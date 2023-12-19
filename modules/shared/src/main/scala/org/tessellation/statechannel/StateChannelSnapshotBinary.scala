@@ -11,8 +11,9 @@ import org.tessellation.security.hash.Hash
 import derevo.cats.{eqv, order}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
+import derevo.scalacheck.arbitrary
 
-@derive(encoder, decoder, order, eqv)
+@derive(encoder, decoder, order, eqv, arbitrary)
 case class StateChannelSnapshotBinary(
   lastSnapshotHash: Hash,
   content: Array[Byte],
