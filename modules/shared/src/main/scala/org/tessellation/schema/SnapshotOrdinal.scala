@@ -2,17 +2,19 @@ package org.tessellation.schema
 
 import cats.Order
 import cats.kernel.{Next, PartialOrder, PartialPrevious}
-import cats.syntax.semigroup._
+import cats.syntax.all._
 
 import org.tessellation.ext.derevo.ordering
 
 import derevo.cats.{order, show}
 import derevo.derive
 import eu.timepit.refined.api.Refined
+import eu.timepit.refined.auto._
 import eu.timepit.refined.cats._
 import eu.timepit.refined.numeric.NonNegative
 import eu.timepit.refined.refineV
 import eu.timepit.refined.types.numeric.NonNegLong
+import fs2.data.csv.{CellDecoder, DecoderError}
 import io.circe.{Decoder, Encoder}
 
 @derive(order, ordering, show)
@@ -23,6 +25,16 @@ case class SnapshotOrdinal(value: NonNegLong) {
 object SnapshotOrdinal {
   def apply(value: Long): Option[SnapshotOrdinal] =
     NonNegLong.from(value).toOption.map(SnapshotOrdinal(_))
+
+  implicit val snapshotOrdinalCellDecoder: CellDecoder[SnapshotOrdinal] =
+    CellDecoder.longDecoder.emap {
+      NonNegLong
+        .from(_)
+        .bimap(
+          new DecoderError(_),
+          SnapshotOrdinal(_)
+        )
+    }
 
   implicit val next: Next[SnapshotOrdinal] = new Next[SnapshotOrdinal] {
     def next(a: SnapshotOrdinal): SnapshotOrdinal = SnapshotOrdinal(a.value |+| NonNegLong(1L))

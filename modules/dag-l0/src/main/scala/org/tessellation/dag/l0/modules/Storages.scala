@@ -57,7 +57,7 @@ object Storages {
         incrementalGlobalSnapshotPersistedLocalFileSystemStorage,
         incrementalGlobalSnapshotInfoLocalFileSystemStorage,
         snapshotConfig.inMemoryCapacity,
-        incremental.lastFullGlobalSnapshot.get(environment).getOrElse(SnapshotOrdinal.MinValue)
+        incremental.lastFullGlobalSnapshot.getOrElse(environment, SnapshotOrdinal.MinValue)
       )
       snapshotDownloadStorage = SnapshotDownloadStorage
         .make[F](
