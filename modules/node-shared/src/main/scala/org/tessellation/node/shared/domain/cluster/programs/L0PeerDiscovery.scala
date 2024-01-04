@@ -3,9 +3,7 @@ package org.tessellation.node.shared.domain.cluster.programs
 import cats.data.NonEmptySet
 import cats.effect.Sync
 import cats.effect.std.Random
-import cats.syntax.applicativeError._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
+import cats.syntax.all._
 import cats.{Applicative, MonadThrow}
 
 import scala.collection.immutable.SortedSet
@@ -16,6 +14,7 @@ import org.tessellation.node.shared.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.node.shared.http.p2p.clients.L0ClusterClient
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.{L0Peer, P2PContext, PeerId}
+import org.tessellation.syntax.sortedCollection.sortedSetSyntax
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -47,7 +46,9 @@ sealed abstract class L0PeerDiscovery[F[_]: Sync: Random] private (
       .map(_.head)
       .flatMap(l0ClusterStorage.getPeer)
       .flatMap(_.fold(Applicative[F].unit) { p =>
-        getPeersFrom(p).flatMap(l0ClusterStorage.setPeers)
+        getPeersFrom(p)
+          .map(_.filter(peer => lastFacilitators.map(_.toId).contains(peer.id.toId)).toSortedSet.toNes)
+          .flatMap(_.traverse(l0ClusterStorage.setPeers).void)
       })
       .handleErrorWith { error =>
         logger.warn(error)(s"An error occured during L0 peer discovery")
