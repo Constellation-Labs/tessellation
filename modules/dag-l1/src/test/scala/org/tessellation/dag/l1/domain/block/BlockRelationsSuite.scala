@@ -4,23 +4,28 @@ import cats.effect.{IO, Resource}
 
 import org.tessellation.block.generators._
 import org.tessellation.dag.l1.Main
+import org.tessellation.ext.cats.effect.ResourceIO
+import org.tessellation.json.JsonHashSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.nodeSharedKryoRegistrar
 import org.tessellation.schema.{Block, transaction}
-import org.tessellation.security.Hashed
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hashed, Hasher}
 
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
 
 object BlockRelationsSuite extends MutableIOSuite with Checkers {
 
-  type Res = KryoSerializer[IO]
+  type Res = Hasher[IO]
 
-  override def sharedResource: Resource[IO, BlockServiceSuite.Res] =
-    KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ nodeSharedKryoRegistrar)
+  def sharedResource: Resource[IO, Res] = for {
+    implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ nodeSharedKryoRegistrar)
+    implicit0(j: JsonHashSerializer[IO]) <- JsonHashSerializer.forSync[IO].asResource
+    h = Hasher.forSync[IO]
+  } yield h
 
-  test("when no relation between blocks then block is independent") { implicit ks =>
+  test("when no relation between blocks then block is independent") { implicit res =>
     forall { (block: Signed[Block], notRelatedBlock: Signed[Block]) =>
       for {
         hashedBlock <- block.toHashed[IO]
@@ -30,7 +35,7 @@ object BlockRelationsSuite extends MutableIOSuite with Checkers {
     }
   }
 
-  test("when first block is parent of second then block is dependent") { implicit ks =>
+  test("when first block is parent of second then block is dependent") { implicit res =>
     forall { (block: Signed[Block], notRelatedBlock: Signed[Block]) =>
       for {
         hashedBlock <- block.toHashed[IO]
@@ -43,7 +48,7 @@ object BlockRelationsSuite extends MutableIOSuite with Checkers {
     }
   }
 
-  test("when second block is parent of first then block is independent") { implicit ks =>
+  test("when second block is parent of first then block is independent") { implicit res =>
     forall { (block: Signed[Block], notRelatedBlock: Signed[Block]) =>
       for {
         notRelatedHashedBlock <- notRelatedBlock.toHashed[IO]
@@ -54,7 +59,7 @@ object BlockRelationsSuite extends MutableIOSuite with Checkers {
     }
   }
 
-  test("when first block has transaction reference used in second then block is dependent") { implicit ks =>
+  test("when first block has transaction reference used in second then block is dependent") { implicit res =>
     forall { (block: Signed[Block], notRelatedBlock: Signed[Block]) =>
       for {
         hashedBlock <- block.toHashed[IO]
@@ -69,7 +74,7 @@ object BlockRelationsSuite extends MutableIOSuite with Checkers {
     }
   }
 
-  test("when second block has transaction reference used in first then block is independent") { implicit ks =>
+  test("when second block has transaction reference used in first then block is independent") { implicit res =>
     forall { (block: Signed[Block], notRelatedBlock: Signed[Block]) =>
       for {
         hashedTxn <- notRelatedBlock.transactions.head.toHashed[IO]
@@ -82,7 +87,7 @@ object BlockRelationsSuite extends MutableIOSuite with Checkers {
     }
   }
 
-  test("when first block sends transaction to second then block is dependent") { implicit ks =>
+  test("when first block sends transaction to second then block is dependent") { implicit res =>
     forall { (block: Signed[Block], notRelatedBlock: Signed[Block]) =>
       for {
         hashedBlock <- block.toHashed[IO]
@@ -95,7 +100,7 @@ object BlockRelationsSuite extends MutableIOSuite with Checkers {
     }
   }
 
-  test("when blocks is related with block reference then block is dependent") { implicit ks =>
+  test("when blocks is related with block reference then block is dependent") { implicit res =>
     forall { (block: Signed[Block], notRelatedBlock: Signed[Block]) =>
       for {
         hashedBlock <- block.toHashed[IO]

@@ -11,15 +11,14 @@ import scala.util.control.NoStackTrace
 
 import org.tessellation.dag.l1.domain.address.storage.AddressStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.block.processing._
 import org.tessellation.schema.Block.HashedOps
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.schema.{Block, BlockReference, transaction}
-import org.tessellation.security.Hashed
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hashed, Hasher}
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
@@ -30,7 +29,7 @@ trait BlockService[F[_]] {
 
 object BlockService {
 
-  def make[F[_]: Async: KryoSerializer](
+  def make[F[_]: Async: Hasher](
     blockAcceptanceManager: BlockAcceptanceManager[F],
     addressStorage: AddressStorage[F],
     blockStorage: BlockStorage[F],

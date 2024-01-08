@@ -3,28 +3,20 @@ package org.tessellation.node.shared.infrastructure.snapshot.storage
 import cats.Order._
 import cats.effect.std.{Queue, Supervisor}
 import cats.effect.{Async, Ref}
-import cats.syntax.applicative._
-import cats.syntax.applicativeError._
-import cats.syntax.contravariantSemigroupal._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
-import cats.syntax.option._
-import cats.syntax.order._
-import cats.syntax.show._
-import cats.syntax.traverse._
+import cats.syntax.all._
 import cats.{Applicative, MonadThrow}
 
 import org.tessellation.cutoff.{LogarithmicOrdinalCutoff, OrdinalCutoff}
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.cats.syntax.partialPrevious._
 import org.tessellation.ext.crypto._
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.collateral.LatestBalances
 import org.tessellation.node.shared.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo}
+import org.tessellation.security.Hasher
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
@@ -32,6 +24,7 @@ import eu.timepit.refined.types.numeric.NonNegLong
 import fs2.Stream
 import fs2.concurrent.SignallingRef
 import io.chrisdavenport.mapref.MapRef
+import io.circe.Encoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object SnapshotStorage {
@@ -51,7 +44,7 @@ object SnapshotStorage {
     }
   }
 
-  def make[F[_]: Async: KryoSerializer, S <: Snapshot, C <: SnapshotInfo[_]](
+  def make[F[_]: Async: Hasher, S <: Snapshot: Encoder, C <: SnapshotInfo[_]](
     snapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, S],
     snapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, _, C],
     inMemoryCapacity: NonNegLong,
@@ -73,7 +66,7 @@ object SnapshotStorage {
         )
     }
 
-  def make[F[_]: Async: KryoSerializer, S <: Snapshot, C <: SnapshotInfo[_]](
+  def make[F[_]: Async: Hasher, S <: Snapshot: Encoder, C <: SnapshotInfo[_]](
     headRef: SignallingRef[F, Option[(Signed[S], C)]],
     ordinalCache: MapRef[F, SnapshotOrdinal, Option[Hash]],
     hashCache: MapRef[F, Hash, Option[Signed[S]]],
@@ -152,7 +145,7 @@ object SnapshotStorage {
         .void
 
     def enqueue(snapshot: Signed[S], snapshotInfo: C) =
-      snapshot.value.hashF.flatMap { hash =>
+      snapshot.value.hash.flatMap { hash =>
         hashCache(hash).set(snapshot.some) >>
           ordinalCache(snapshot.ordinal).set(hash.some) >>
           snapshotLocalFileSystemStorage.write(snapshot).handleErrorWith { e =>
@@ -179,26 +172,29 @@ object SnapshotStorage {
 
     supervisor.supervise(offloadProcess.merge(snapshotInfoCutoffProcess).compile.drain).map { _ =>
       new SnapshotStorage[F, S, C] with LatestBalances[F] {
-        def prepend(snapshot: Signed[S], state: C): F[Boolean] =
-          headRef.modify {
-            case None =>
-              ((snapshot, state).some, enqueue(snapshot, state).as(true))
-            case Some((current, currentState)) =>
-              isNextSnapshot(current, snapshot) match {
-                case Left(e) =>
-                  ((current, currentState).some, e.raiseError[F, Boolean])
-                case Right(isNext) if isNext =>
-                  ((snapshot, state).some, enqueue(snapshot, state).as(true))
+        def prepend(snapshot: Signed[S], state: C): F[Boolean] = {
 
-                case _ =>
-                  (
-                    (current, currentState).some,
-                    logger
-                      .debug(s"Trying to prepend ${snapshot.ordinal.show} but the current snapshot is: ${current.ordinal.show}")
-                      .as(false)
-                  )
-              }
-          }.flatten
+          def offer = enqueue(snapshot, state).as(true)
+
+          def loop: F[Boolean] =
+            headRef.access.flatMap {
+              case (v, setter) =>
+                v match {
+                  case None =>
+                    setter((snapshot, state).some).ifM(offer, loop)
+                  case Some((current, _)) =>
+                    isNextSnapshot(current, snapshot).flatMap { isNext =>
+                      if (isNext) setter((snapshot, state).some).ifM(offer, loop)
+                      else
+                        logger
+                          .debug(s"Trying to prepend ${snapshot.ordinal.show} but the current snapshot is: ${current.ordinal.show}")
+                          .as(false)
+                    }
+                }
+            }
+
+          loop
+        }
 
         def head: F[Option[(Signed[S], C)]] = headRef.get
         def headSnapshot: F[Option[Signed[S]]] = headRef.get.map(_.map(_._1))
@@ -231,7 +227,7 @@ object SnapshotStorage {
         private def isNextSnapshot(
           current: Signed[S],
           snapshot: Signed[S]
-        ): Either[Throwable, Boolean] =
+        ): F[Boolean] =
           current.value.hash.map { hash =>
             hash === snapshot.value.lastSnapshotHash && current.value.ordinal.next === snapshot.value.ordinal
           }

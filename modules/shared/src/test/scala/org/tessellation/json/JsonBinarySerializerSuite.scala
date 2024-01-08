@@ -1,17 +1,19 @@
 package org.tessellation.json
 
-import cats.MonadThrow
 import cats.data.NonEmptySet
+import cats.effect.kernel.Sync
 import cats.effect.{IO, Resource}
 import cats.syntax.functor._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshot, CurrencySnapshotInfo}
+import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.height.{Height, SubHeight}
+import org.tessellation.security.Hasher
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.signature.Signed
@@ -24,10 +26,14 @@ import weaver.MutableIOSuite
 
 object JsonBinarySerializerSuite extends MutableIOSuite {
 
-  type Res = KryoSerializer[IO]
+  type Res = Hasher[IO]
 
   override def sharedResource: Resource[IO, Res] =
-    KryoSerializer.forAsync[IO](sharedKryoRegistrar)
+    KryoSerializer.forAsync[IO](sharedKryoRegistrar).flatMap { implicit res =>
+      JsonHashSerializer.forSync[IO].asResource.map { implicit json =>
+        Hasher.forSync[IO]
+      }
+    }
 
   test("should deserialize properly serialized object") { implicit res =>
     currencyIncrementalSnapshot[IO](Hash.empty, CurrencySnapshotInfo(SortedMap.empty, SortedMap.empty)).map { signedSnapshot =>
@@ -45,7 +51,7 @@ object JsonBinarySerializerSuite extends MutableIOSuite {
     }
   }
 
-  private[json] def currencyIncrementalSnapshot[F[_]: MonadThrow: KryoSerializer](
+  private[json] def currencyIncrementalSnapshot[F[_]: Sync: Hasher](
     hash: Hash,
     currencySnapshotInfo: CurrencySnapshotInfo
   ): F[Signed[CurrencyIncrementalSnapshot]] =

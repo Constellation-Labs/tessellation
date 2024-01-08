@@ -12,7 +12,6 @@ import cats.syntax.show._
 
 import org.tessellation.ext.cats.data.OrderBasedOrdering
 import org.tessellation.ext.crypto._
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.security._
@@ -23,6 +22,7 @@ import derevo.cats.{order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import derevo.scalacheck.arbitrary
+import io.circe.Encoder
 import io.estatico.newtype.macros.newtype
 import io.estatico.newtype.ops._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -55,9 +55,9 @@ object signature {
         signature <- Signature.fromHash(keyPair.getPrivate, hash)
       } yield SignatureProof(id, signature)
 
-    def fromData[F[_]: Async: SecurityProvider: KryoSerializer, A <: AnyRef](
+    def fromData[F[_]: Async: SecurityProvider: Hasher, A: Encoder](
       keyPair: KeyPair
-    )(data: A): F[SignatureProof] = data.hashF.flatMap(SignatureProof.fromHash(keyPair, _))
+    )(data: A): F[SignatureProof] = data.hash.flatMap(SignatureProof.fromHash(keyPair, _))
 
   }
 

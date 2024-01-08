@@ -20,7 +20,7 @@ import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage.{Accepted, LastTransactionReferenceState, Majority}
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.collection.MapRefUtils._
-import org.tessellation.json.JsonBrotliBinarySerializer
+import org.tessellation.json.{JsonBrotliBinarySerializer, JsonHashSerializer}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.SnapshotSizeConfig
 import org.tessellation.node.shared.infrastructure.block.processing.BlockAcceptanceManager
@@ -35,11 +35,11 @@ import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction._
+import org.tessellation.security._
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed.forAsyncKryo
-import org.tessellation.security.{Hashed, KeyPairGenerator, SecurityProvider}
 import org.tessellation.transaction.TransactionGenerator
 
 import eu.timepit.refined.auto._
@@ -55,7 +55,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
   type TestResources = (
     SnapshotProcessor[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     SecurityProvider[IO],
-    KryoSerializer[IO],
+    Hasher[IO],
     (KeyPair, KeyPair, KeyPair),
     KeyPair,
     KeyPair,
@@ -75,6 +75,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
       KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ nodeSharedKryoRegistrar).flatMap { implicit kp =>
         Random.scalaUtilRandom[IO].asResource.flatMap { implicit random =>
           for {
+            implicit0(jhs: JsonHashSerializer[IO]) <- JsonHashSerializer.forSync[IO].asResource
+            implicit0(h: Hasher[IO]) = Hasher.forSync[IO]
             balancesR <- Ref.of[IO, Map[Address, Balance]](Map.empty).asResource
             blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]().asResource
             lastSnapR <- SignallingRef.of[IO, Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](None).asResource
@@ -90,11 +92,12 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             currencyEventsCutter = CurrencyEventsCutter.make[IO]
             currencySnapshotCreator = CurrencySnapshotCreator
               .make[IO](currencySnapshotAcceptanceManager, None, SnapshotSizeConfig(Long.MaxValue, Long.MaxValue), currencyEventsCutter)
-            currencySnapshotValidator = CurrencySnapshotValidator.make[IO](currencySnapshotCreator, validators.signedValidator, None, None)
+            currencySnapshotValidator = CurrencySnapshotValidator
+              .make[IO](currencySnapshotCreator, validators.signedValidator, None, None)
 
             currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
             globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, NonNegLong(10L)).asResource
-            jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.make[IO]().asResource
+            jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync[IO].asResource
             globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
               BlockAcceptanceManager.make[IO](validators.blockValidator),
               GlobalSnapshotStateChannelEventsProcessor
@@ -127,7 +130,11 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               DAGSnapshotProcessor
                 .make[IO](addressStorage, blockStorage, lastSnapshotStorage, transactionStorage, globalSnapshotContextFns)
             }
-            keys <- (KeyPairGenerator.makeKeyPair[IO], KeyPairGenerator.makeKeyPair[IO], KeyPairGenerator.makeKeyPair[IO]).tupled.asResource
+            keys <- (
+              KeyPairGenerator.makeKeyPair[IO],
+              KeyPairGenerator.makeKeyPair[IO],
+              KeyPairGenerator.makeKeyPair[IO]
+            ).tupled.asResource
             srcKey = keys._1
             dstKey <- KeyPairGenerator.makeKeyPair[IO].asResource
             srcAddress = srcKey.getPublic.toAddress
@@ -137,7 +144,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             (
               snapshotProcessor,
               sp,
-              kp,
+              h,
               keys,
               srcKey,
               dstKey,
@@ -210,7 +217,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
       case (
             snapshotProcessor,
             sp,
-            kp,
+            h,
             _,
             srcKey,
             _,
@@ -225,7 +232,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             _
           ) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
-        implicit val kryoPool: KryoSerializer[IO] = kp
+        implicit val hasher = h
 
         val parent1 = BlockReference(Height(4L), ProofsHash("parent1"))
         val parent2 = BlockReference(Height(5L), ProofsHash("parent2"))
@@ -312,7 +319,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
       case (
             snapshotProcessor,
             sp,
-            kp,
+            h,
             keys,
             srcKey,
             dstKey,
@@ -327,7 +334,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             _
           ) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
-        implicit val kryoPool: KryoSerializer[IO] = kp
+        implicit val hasher = h
 
         val parent1 = BlockReference(Height(8L), ProofsHash("parent1"))
         val parent2 = BlockReference(Height(2L), ProofsHash("parent2"))
@@ -471,7 +478,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
       case (
             snapshotProcessor,
             sp,
-            kp,
+            h,
             keys,
             srcKey,
             dstKey,
@@ -486,7 +493,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             _
           ) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
-        implicit val kryoPool: KryoSerializer[IO] = kp
+        implicit val hasher = h
 
         val parent1 = BlockReference(Height(8L), ProofsHash("parent1"))
         val parent2 = BlockReference(Height(2L), ProofsHash("parent2"))
@@ -644,9 +651,9 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
   test("alignment at same height should happen when snapshot with new ordinal but known height is processed") {
     testResources.use {
-      case (snapshotProcessor, sp, kp, _, srcKey, _, _, _, peerId, balancesR, blocksR, lastSnapR, lastAccTxR, _, _) =>
+      case (snapshotProcessor, sp, h, _, srcKey, _, _, _, peerId, balancesR, blocksR, lastSnapR, lastAccTxR, _, _) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
-        implicit val kryoPool: KryoSerializer[IO] = kp
+        implicit val hasher = h
 
         for {
           hashedLastSnapshot <- forAsyncKryo(
@@ -700,7 +707,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
       case (
             snapshotProcessor,
             sp,
-            kp,
+            h,
             keys,
             srcKey,
             dstKey,
@@ -712,10 +719,10 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             lastSnapR,
             lastAccTxR,
             transactionStorage,
-            globalSnapshotContextFns
+            _
           ) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
-        implicit val kryoPool: KryoSerializer[IO] = kp
+        implicit val hasher = h
 
         val parent1 = BlockReference(Height(6L), ProofsHash("parent1"))
         val parent2 = BlockReference(Height(7L), ProofsHash("parent2"))
@@ -922,7 +929,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
       case (
             snapshotProcessor,
             sp,
-            kp,
+            h,
             keys,
             srcKey,
             dstKey,
@@ -934,10 +941,10 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             lastSnapR,
             lastAccTxR,
             _,
-            globalSnapshotContextFns
+            _
           ) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
-        implicit val kryoPool: KryoSerializer[IO] = kp
+        implicit val hasher = h
 
         val parent1 = BlockReference(Height(6L), ProofsHash("parent1"))
         val parent2 = BlockReference(Height(7L), ProofsHash("parent2"))
@@ -1193,9 +1200,9 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
   test("snapshot should be ignored when a snapshot pushed for processing is not a next one") {
     testResources.use {
-      case (snapshotProcessor, sp, kp, _, srcKey, _, _, _, peerId, _, _, lastSnapR, _, _, _) =>
+      case (snapshotProcessor, sp, h, _, srcKey, _, _, _, peerId, _, _, lastSnapR, _, _, _) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
-        implicit val kryoPool: KryoSerializer[IO] = kp
+        implicit val hasher = h
 
         for {
           hashedLastSnapshot <- forAsyncKryo(
@@ -1232,9 +1239,9 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
   test("error should be thrown when the tips get misaligned") {
     testResources.use {
-      case (snapshotProcessor, sp, kp, _, srcKey, _, _, _, peerId, _, blocksR, lastSnapR, _, _, _) =>
+      case (snapshotProcessor, sp, h, _, srcKey, _, _, _, peerId, _, blocksR, lastSnapR, _, _, _) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
-        implicit val kryoPool: KryoSerializer[IO] = kp
+        implicit val hasher = h
 
         val parent1 = BlockReference(Height(8L), ProofsHash("parent1"))
         val parent2 = BlockReference(Height(9L), ProofsHash("parent2"))
@@ -1280,7 +1287,9 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
     }
   }
 
-  private def hashedBlockForKeyPair(keys: (KeyPair, KeyPair, KeyPair))(implicit sc: SecurityProvider[IO], ks: KryoSerializer[IO]) =
+  private def hashedBlockForKeyPair(
+    keys: (KeyPair, KeyPair, KeyPair)
+  )(implicit sc: SecurityProvider[IO], h: Hasher[IO]) =
     (parent: NonEmptyList[BlockReference], transactions: NonEmptySet[Signed[Transaction]]) =>
       (
         forAsyncKryo(Block(parent, transactions), keys._1),

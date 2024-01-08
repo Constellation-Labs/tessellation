@@ -15,16 +15,18 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage.UnableToPersistSnapshot
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.snapshot.Snapshot
+import org.tessellation.security.Hasher
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 import org.tessellation.storage.KryoLocalFileSystemStorage
 
 import better.files.File
 import fs2.io.file.Path
+import io.circe.Encoder
 import io.estatico.newtype.ops._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-final class SnapshotLocalFileSystemStorage[F[_]: Async: KryoSerializer, S <: Snapshot] private (path: Path)
+final class SnapshotLocalFileSystemStorage[F[_]: Async: KryoSerializer: Hasher, S <: Snapshot: Encoder] private (path: Path)
     extends KryoLocalFileSystemStorage[F, Signed[S]](path) {
 
   private val logger = Slf4jLogger.getLogger[F]
@@ -96,7 +98,7 @@ final class SnapshotLocalFileSystemStorage[F[_]: Async: KryoSerializer, S <: Sna
   private def toOrdinalName(snapshot: S): String = toOrdinalName(snapshot.ordinal)
   private def toOrdinalName(ordinal: SnapshotOrdinal): String = ordinal.value.value.toString
 
-  private def toHashName(snapshot: S): F[String] = snapshot.hashF.map(_.coerce[String])
+  private def toHashName(snapshot: S): F[String] = snapshot.hash.map(_.coerce[String])
 
 }
 
@@ -106,7 +108,7 @@ object SnapshotLocalFileSystemStorage {
     override val getMessage: String = s"Ordinal $ordinalName exists. File $hashName exists: $hashFileExists."
   }
 
-  def make[F[_]: Async: KryoSerializer, S <: Snapshot](path: Path): F[SnapshotLocalFileSystemStorage[F, S]] =
+  def make[F[_]: Async: KryoSerializer: Hasher, S <: Snapshot: Encoder](path: Path): F[SnapshotLocalFileSystemStorage[F, S]] =
     Applicative[F].pure(new SnapshotLocalFileSystemStorage[F, S](path)).flatTap { storage =>
       storage.createDirectoryIfNotExists().rethrowT
     }

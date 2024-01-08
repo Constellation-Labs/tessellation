@@ -2,7 +2,6 @@ package org.tessellation.currency.l1.modules
 
 import cats.data.NonEmptySet
 import cats.effect.kernel.Async
-import cats.effect.std.Random
 
 import org.tessellation.currency.dataApplication.BaseDataApplicationL1Service
 import org.tessellation.currency.l1.http.p2p.P2PClient
@@ -11,7 +10,6 @@ import org.tessellation.dag.l1.config.types.AppConfig
 import org.tessellation.dag.l1.domain.block.BlockService
 import org.tessellation.dag.l1.domain.transaction.TransactionService
 import org.tessellation.dag.l1.modules.{Services => BaseServices, Validators}
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.node.shared.domain.snapshot.services.GlobalL0Service
 import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
@@ -21,10 +19,10 @@ import org.tessellation.node.shared.modules.SharedServices
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
-import org.tessellation.security.SecurityProvider
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 object Services {
-  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider](
+  def make[F[_]: Async: Hasher: SecurityProvider](
     storages: Storages[
       F,
       CurrencySnapshotStateProof,

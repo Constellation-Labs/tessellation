@@ -14,6 +14,7 @@ import org.tessellation.schema.Block
 import org.tessellation.schema.block.Tips
 import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.schema.round.RoundId
+import org.tessellation.security.Hasher
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.SignatureProof
 import org.tessellation.syntax.sortedCollection._
@@ -52,7 +53,7 @@ case class RoundData(
   def addPeerCancellation(cancellation: CancelledBlockCreationRound): RoundData =
     this.focus(_.peerCancellations).modify(_ + (cancellation.senderId -> cancellation.reason))
 
-  def formBlock[F[_]: Async: KryoSerializer](validator: TransactionValidator[F]): F[Option[Block]] =
+  def formBlock[F[_]: Async: KryoSerializer: Hasher](validator: TransactionValidator[F]): F[Option[Block]] =
     (ownProposal.transactions ++ peerProposals.values.flatMap(_.transactions)).toList
       .traverse(validator.validate)
       .flatMap { validatedTxs =>

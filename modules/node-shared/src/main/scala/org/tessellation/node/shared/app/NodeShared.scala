@@ -13,7 +13,7 @@ import org.tessellation.node.shared.resources.SharedResources
 import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.trust.PeerObservationAdjustmentUpdateBatch
-import org.tessellation.security.SecurityProvider
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 import fs2.concurrent.SignallingRef
 
@@ -23,6 +23,7 @@ trait NodeShared[F[_]] {
   implicit val kryoPool: KryoSerializer[F]
   implicit val metrics: Metrics[F]
   implicit val supervisor: Supervisor[F]
+  implicit val hasher: Hasher[F]
 
   val keyPair: KeyPair
   lazy val nodeId: PeerId = PeerId.fromPublic(keyPair.getPublic)

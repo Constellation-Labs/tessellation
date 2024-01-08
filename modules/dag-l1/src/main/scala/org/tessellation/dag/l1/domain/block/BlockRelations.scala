@@ -6,20 +6,19 @@ import cats.syntax.eq._
 import cats.syntax.functor._
 import cats.syntax.traverse._
 
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.Block.HashedOps
 import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.schema.{Block, BlockReference}
-import org.tessellation.security.Hashed
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hashed, Hasher}
 
 object BlockRelations {
 
-  def dependsOn[F[_]: Async: KryoSerializer](
+  def dependsOn[F[_]: Async: Hasher](
     blocks: Hashed[Block]
   )(block: Signed[Block]): F[Boolean] = dependsOn[F](Set(blocks))(block)
 
-  def dependsOn[F[_]: Async: KryoSerializer](
+  def dependsOn[F[_]: Async: Hasher](
     blocks: Set[Hashed[Block]],
     references: Set[BlockReference] = Set.empty
   )(block: Signed[Block]): F[Boolean] = {

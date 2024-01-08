@@ -17,6 +17,7 @@ import org.tessellation.node.shared.domain.block.processing._
 import org.tessellation.node.shared.domain.snapshot.SnapshotContextFunctions
 import org.tessellation.schema._
 import org.tessellation.schema.transaction.RewardTransaction
+import org.tessellation.security.Hasher
 import org.tessellation.security.signature.Signed
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelValidationType}
 
@@ -27,7 +28,7 @@ import eu.timepit.refined.auto._
 abstract class GlobalSnapshotContextFunctions[F[_]] extends SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
 
 object GlobalSnapshotContextFunctions {
-  def make[F[_]: Async: KryoSerializer](snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F]) =
+  def make[F[_]: Async: KryoSerializer: Hasher](snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F]) =
     new GlobalSnapshotContextFunctions[F] {
       def createContext(
         context: GlobalSnapshotInfo,

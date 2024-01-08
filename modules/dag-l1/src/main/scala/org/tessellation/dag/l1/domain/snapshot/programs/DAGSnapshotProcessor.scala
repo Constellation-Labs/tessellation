@@ -11,11 +11,11 @@ import org.tessellation.node.shared.domain.snapshot.SnapshotContextFunctions
 import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalSnapshotStateProof}
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Hashed, SecurityProvider}
+import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
 
 object DAGSnapshotProcessor {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider](
+  def make[F[_]: Async: KryoSerializer: Hasher: SecurityProvider](
     addressStorage: AddressStorage[F],
     blockStorage: BlockStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],

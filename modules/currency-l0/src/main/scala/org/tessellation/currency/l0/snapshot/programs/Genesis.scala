@@ -12,7 +12,6 @@ import org.tessellation.currency.l0.snapshot.services.StateChannelSnapshotServic
 import org.tessellation.currency.l0.snapshot.storages.LastBinaryHashStorage
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.crypto._
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.collateral.{Collateral, OwnCollateralNotSatisfied}
 import org.tessellation.node.shared.domain.genesis.{GenesisFS => GenesisLoader}
 import org.tessellation.node.shared.domain.snapshot.storage.SnapshotStorage
@@ -20,9 +19,9 @@ import org.tessellation.node.shared.http.p2p.clients.StateChannelSnapshotClient
 import org.tessellation.node.shared.infrastructure.consensus.ConsensusManager
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.peer.{L0Peer, PeerId}
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 import fs2.io.file.Path
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -43,7 +42,7 @@ trait Genesis[F[_]] {
 }
 
 object Genesis {
-  def make[F[_]: Async: KryoSerializer: SecurityProvider](
+  def make[F[_]: Async: Hasher: SecurityProvider](
     keyPair: KeyPair,
     collateral: Collateral[F],
     lastBinaryHashStorage: LastBinaryHashStorage[F],
@@ -106,7 +105,7 @@ object Genesis {
       }
       .flatMap(acceptSignedGenesis(dataApplication))
 
-    def create(dataApplication: Option[BaseDataApplicationL0Service[F]] = None)(
+    def create(dataApplication: Option[BaseDataApplicationL0Service[F]])(
       balancesPath: Path,
       keyPair: KeyPair
     ): F[Unit] = {

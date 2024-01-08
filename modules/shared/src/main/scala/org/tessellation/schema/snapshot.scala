@@ -1,18 +1,18 @@
 package org.tessellation.schema
 
-import cats.MonadThrow
 import cats.effect.Async
+import cats.effect.kernel.Sync
 import cats.syntax.functor._
 import cats.syntax.traverse._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.semver.SnapshotVersion
 import org.tessellation.schema.transaction.TransactionReference
+import org.tessellation.security.Hasher
 import org.tessellation.security.hash.Hash
 import org.tessellation.syntax.sortedCollection._
 
@@ -44,7 +44,7 @@ object snapshot {
     val blocks: SortedSet[BlockAsActiveTip]
     val tips: SnapshotTips
 
-    def activeTips[F[_]: Async: KryoSerializer]: F[SortedSet[ActiveTip]] =
+    def activeTips[F[_]: Async: Hasher]: F[SortedSet[ActiveTip]] =
       blocks.toList.traverse { blockAsActiveTip =>
         BlockReference
           .of(blockAsActiveTip.block)
@@ -56,7 +56,7 @@ object snapshot {
     val lastTxRefs: SortedMap[Address, TransactionReference]
     val balances: SortedMap[Address, Balance]
 
-    def stateProof[F[_]: MonadThrow: KryoSerializer]: F[P]
+    def stateProof[F[_]: Sync: Hasher]: F[P]
   }
 
   @derive(encoder, decoder, show)

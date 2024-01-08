@@ -26,14 +26,14 @@ import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hasher, SecurityProvider}
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelValidationType}
 
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-abstract class GlobalSnapshotConsensusFunctions[F[_]: Async: SecurityProvider: KryoSerializer]
+abstract class GlobalSnapshotConsensusFunctions[F[_]: Async: SecurityProvider: KryoSerializer: Hasher]
     extends SnapshotConsensusFunctions[
       F,
       GlobalSnapshotEvent,
@@ -44,7 +44,7 @@ abstract class GlobalSnapshotConsensusFunctions[F[_]: Async: SecurityProvider: K
 
 object GlobalSnapshotConsensusFunctions {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider: Metrics](
+  def make[F[_]: Async: KryoSerializer: Hasher: SecurityProvider: Metrics](
     globalSnapshotStorage: SnapshotStorage[F, GlobalSnapshotArtifact, GlobalSnapshotContext],
     globalSnapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     collateral: Amount,
@@ -105,7 +105,7 @@ object GlobalSnapshotConsensusFunctions {
         .filter(_.height > lastArtifact.height)
 
       for {
-        lastArtifactHash <- lastArtifact.value.hashF
+        lastArtifactHash <- lastArtifact.value.hash
         currentOrdinal = lastArtifact.ordinal.next
         currentEpochProgress = trigger match {
           case EventTrigger => lastArtifact.epochProgress

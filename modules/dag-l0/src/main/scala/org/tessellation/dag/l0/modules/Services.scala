@@ -31,13 +31,13 @@ import org.tessellation.node.shared.modules.{SharedServices, SharedValidators}
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalSnapshotStateProof}
-import org.tessellation.security.SecurityProvider
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 import org.http4s.client.Client
 
 object Services {
 
-  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider: Metrics: Supervisor](
+  def make[F[_]: Async: Random: KryoSerializer: Hasher: SecurityProvider: Metrics: Supervisor](
     sharedServices: SharedServices[F],
     queues: Queues[F],
     storages: Storages[F],

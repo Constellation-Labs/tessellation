@@ -19,7 +19,7 @@ import org.tessellation.node.shared.infrastructure.metrics.Metrics
 import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.gossip._
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.security.{Hashed, SecurityProvider}
+import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
 
 import eu.timepit.refined.auto._
 import io.circe.Encoder
@@ -28,7 +28,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object Gossip {
 
-  def make[F[_]: Async: SecurityProvider: KryoSerializer: Metrics](
+  def make[F[_]: Async: SecurityProvider: KryoSerializer: Hasher: Metrics](
     rumorQueue: Queue[F, Hashed[RumorRaw]],
     selfId: PeerId,
     generation: Generation,

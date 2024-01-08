@@ -7,15 +7,14 @@ import cats.data.{NonEmptyList, NonEmptySet, ValidatedNec}
 import cats.effect.Async
 import cats.syntax.all._
 
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.{posIntDecoder, posIntEncoder}
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.SignedValidator.SignedValidationErrorOr
 import org.tessellation.security.signature.signature.SignatureProof
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 import derevo.cats.{order, show}
 import derevo.circe.magnolia.{decoder, encoder}
@@ -23,23 +22,24 @@ import derevo.derive
 import eu.timepit.refined.auto._
 import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.PosInt
+import io.circe.Encoder
 
 trait SignedValidator[F[_]] {
 
-  def validateSignatures[A <: AnyRef](
+  def validateSignatures[A: Encoder](
     signed: Signed[A]
   ): F[SignedValidationErrorOr[Signed[A]]]
 
-  def validateUniqueSigners[A <: AnyRef](
+  def validateUniqueSigners[A: Encoder](
     signed: Signed[A]
   ): SignedValidationErrorOr[Signed[A]]
 
-  def validateMinSignatureCount[A <: AnyRef](
+  def validateMinSignatureCount[A: Encoder](
     signed: Signed[A],
     minSignatureCount: PosInt
   ): SignedValidationErrorOr[Signed[A]]
 
-  def isSignedExclusivelyBy[A <: AnyRef](
+  def isSignedExclusivelyBy[A: Encoder](
     signed: Signed[A],
     signerAddress: Address
   ): F[SignedValidationErrorOr[Signed[A]]]
@@ -50,19 +50,19 @@ trait SignedValidator[F[_]] {
 
 object SignedValidator {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider]: SignedValidator[F] = new SignedValidator[F] {
+  def make[F[_]: Async: Hasher: SecurityProvider]: SignedValidator[F] = new SignedValidator[F] {
 
-    def validateSignatures[A <: AnyRef](
+    def validateSignatures[A: Encoder](
       signed: Signed[A]
     ): F[SignedValidationErrorOr[Signed[A]]] =
-      signed.validProofs(None).map { either =>
+      signed.validProofs(implicitly[Encoder[A]].asRight).map { either =>
         either
           .leftMap(InvalidSignatures)
           .toValidatedNec
           .map(_ => signed)
       }
 
-    def validateUniqueSigners[A <: AnyRef](
+    def validateUniqueSigners[A: Encoder](
       signed: Signed[A]
     ): SignedValidationErrorOr[Signed[A]] =
       duplicatedValues(signed.proofs.toNonEmptyList.map(_.id)).toNel
@@ -70,7 +70,7 @@ object SignedValidator {
         .map(DuplicateSigners)
         .toInvalidNec(signed)
 
-    def validateMinSignatureCount[A <: AnyRef](
+    def validateMinSignatureCount[A: Encoder](
       signed: Signed[A],
       minSignatureCount: PosInt
     ): SignedValidationErrorOr[Signed[A]] =
@@ -79,7 +79,7 @@ object SignedValidator {
       else
         NotEnoughSignatures(signed.proofs.size, minSignatureCount).invalidNec
 
-    def isSignedExclusivelyBy[A <: AnyRef](
+    def isSignedExclusivelyBy[A: Encoder](
       signed: Signed[A],
       signerAddress: Address
     ): F[SignedValidationErrorOr[Signed[A]]] =

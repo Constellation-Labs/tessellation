@@ -4,30 +4,39 @@ import cats.data.{NonEmptySet, Validated}
 import cats.effect.{IO, Resource}
 import cats.syntax.validated._
 
+import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.kryo._
+import org.tessellation.json.JsonHashSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.security.signature.Signed.forAsyncKryo
-import org.tessellation.security.{KeyPairGenerator, SecurityProvider}
+import org.tessellation.security.{Hasher, KeyPairGenerator, SecurityProvider}
 import org.tessellation.shared.sharedKryoRegistrar
 
+import derevo.circe.magnolia.encoder
+import derevo.derive
 import eu.timepit.refined.auto._
 import eu.timepit.refined.numeric.Interval
 import weaver.MutableIOSuite
 
 object SignedValidatorSuite extends MutableIOSuite {
 
-  type Res = (KryoSerializer[IO], SecurityProvider[IO])
+  type Res = (Hasher[IO], SecurityProvider[IO])
 
   override def sharedResource: Resource[IO, SignedValidatorSuite.Res] =
     KryoSerializer
       .forAsync[IO](sharedKryoRegistrar.union(Map[Class[_], KryoRegistrationId[Interval.Closed[5000, 5001]]](classOf[TestObject] -> 5000)))
-      .flatMap { ks =>
-        SecurityProvider.forAsync[IO].map((ks, _))
+      .flatMap { implicit res =>
+        JsonHashSerializer.forSync[IO].asResource.map { implicit json =>
+          Hasher.forSync[IO]
+        }
+      }
+      .flatMap { h =>
+        SecurityProvider.forAsync[IO].map((h, _))
       }
 
   test("should succeed when object is signed only by one peer from seedlist") { res =>
-    implicit val (kryo, sp) = res
+    implicit val (h, sp) = res
 
     for {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
@@ -42,7 +51,7 @@ object SignedValidatorSuite extends MutableIOSuite {
   }
 
   test("should succeed when all signers are on the seedlist") { res =>
-    implicit val (kryo, sp) = res
+    implicit val (h, sp) = res
 
     for {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
@@ -57,7 +66,7 @@ object SignedValidatorSuite extends MutableIOSuite {
   }
 
   test("should succeed when there is no seedlist provided") { res =>
-    implicit val (kryo, sp) = res
+    implicit val (h, sp) = res
 
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
@@ -69,7 +78,7 @@ object SignedValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail when there is at least one signature not in seedlist") { res =>
-    implicit val (kryo, sp) = res
+    implicit val (h, sp) = res
 
     for {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
@@ -85,9 +94,10 @@ object SignedValidatorSuite extends MutableIOSuite {
 
   private def mkValidator()(
     implicit S: SecurityProvider[IO],
-    K: KryoSerializer[IO]
+    H: Hasher[IO]
   ) = SignedValidator.make[IO]
 
+  @derive(encoder)
   case class TestObject(value: String)
 
 }

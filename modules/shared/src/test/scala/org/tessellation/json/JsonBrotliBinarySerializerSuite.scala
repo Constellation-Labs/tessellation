@@ -8,6 +8,7 @@ import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, C
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
+import org.tessellation.security.Hasher
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 import org.tessellation.shared.sharedKryoRegistrar
@@ -17,16 +18,23 @@ import weaver.MutableIOSuite
 
 object JsonBrotliBinarySerializerSuite extends MutableIOSuite {
 
-  type Res = (KryoSerializer[IO], JsonBrotliBinarySerializer[IO])
+  type Res = (Hasher[IO], JsonBrotliBinarySerializer[IO])
 
   override def sharedResource: Resource[IO, Res] =
-    KryoSerializer.forAsync[IO](sharedKryoRegistrar).flatMap { kp =>
-      JsonBrotliBinarySerializer.make[IO]().asResource.map((kp, _))
-    }
+    KryoSerializer
+      .forAsync[IO](sharedKryoRegistrar)
+      .flatMap { implicit res =>
+        JsonHashSerializer.forSync[IO].asResource.map { implicit json =>
+          Hasher.forSync[IO]
+        }
+      }
+      .flatMap { kp =>
+        JsonBrotliBinarySerializer.forSync[IO].asResource.map((kp, _))
+      }
 
   test("should deserialize properly serialized object") {
-    case (kryo, serializer) =>
-      implicit val kp = kryo
+    case (hasher, serializer) =>
+      implicit val h = hasher
 
       for {
         signedSnapshot <- JsonBinarySerializerSuite
@@ -37,8 +45,8 @@ object JsonBrotliBinarySerializerSuite extends MutableIOSuite {
   }
 
   test("should not deserialize different serialized object") {
-    case (kryo, serializer) =>
-      implicit val kp = kryo
+    case (hasher, serializer) =>
+      implicit val h = hasher
 
       for {
         signedSnapshot <- JsonBinarySerializerSuite
@@ -47,4 +55,5 @@ object JsonBrotliBinarySerializerSuite extends MutableIOSuite {
         deserialized <- serializer.deserialize[CurrencySnapshot](serialized)
       } yield expect.same(true, deserialized.isLeft)
   }
+
 }

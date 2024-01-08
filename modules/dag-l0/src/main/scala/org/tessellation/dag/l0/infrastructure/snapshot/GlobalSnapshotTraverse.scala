@@ -10,6 +10,7 @@ import org.tessellation.ext.cats.syntax.partialPrevious.catsSyntaxPartialPreviou
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.snapshot.SnapshotContextFunctions
 import org.tessellation.schema._
+import org.tessellation.security.Hasher
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
@@ -21,7 +22,7 @@ trait GlobalSnapshotTraverse[F[_]] {
 
 object GlobalSnapshotTraverse {
 
-  def make[F[_]: Sync: KryoSerializer](
+  def make[F[_]: Sync: KryoSerializer: Hasher](
     loadInc: Hash => F[Option[Signed[GlobalIncrementalSnapshot]]],
     loadFull: Hash => F[Option[Signed[GlobalSnapshot]]],
     loadInfo: SnapshotOrdinal => F[Option[GlobalSnapshotInfo]],

@@ -9,12 +9,13 @@ import cats.syntax.option._
 import org.tessellation.dag.l1.Main
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage.{Accepted, LastTransactionReferenceState, Majority}
 import org.tessellation.ext.cats.effect.ResourceIO
+import org.tessellation.json.JsonHashSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.nodeSharedKryoRegistrar
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction._
+import org.tessellation.security._
 import org.tessellation.security.key.ops.PublicKeyOps
-import org.tessellation.security.{Hashed, KeyPairGenerator, SecurityProvider}
 import org.tessellation.transaction.TransactionGenerator
 
 import eu.timepit.refined.auto._
@@ -32,13 +33,15 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
     KeyPair,
     Address,
     SecurityProvider[IO],
-    KryoSerializer[IO]
+    Hasher[IO]
   )
 
   def testResources: Resource[IO, TestResources] =
     SecurityProvider.forAsync[IO].flatMap { implicit sp =>
       KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ nodeSharedKryoRegistrar).flatMap { implicit kp =>
         for {
+          implicit0(jhs: JsonHashSerializer[IO]) <- JsonHashSerializer.forSync[IO].asResource
+          implicit0(h: Hasher[IO]) = Hasher.forSync[IO]
           lastAccepted <- MapRef.ofConcurrentHashMap[IO, Address, LastTransactionReferenceState]().asResource
           waitingTransactions <- MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[Transaction]]]().asResource
           transactionStorage = new TransactionStorage[IO](lastAccepted, waitingTransactions, TransactionReference.empty)
@@ -46,15 +49,15 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
           address1 = key1.getPublic.toAddress
           key2 <- KeyPairGenerator.makeKeyPair.asResource
           address2 = key2.getPublic.toAddress
-        } yield (transactionStorage, lastAccepted, waitingTransactions, key1, address1, key2, address2, sp, kp)
+        } yield (transactionStorage, lastAccepted, waitingTransactions, key1, address1, key2, address2, sp, h)
       }
     }
 
   test("pull should take transactions in correct order minding the fees") {
     testResources.use {
-      case (transactionStorage, _, _, key1, address1, key2, address2, sp, kp) =>
+      case (transactionStorage, _, _, key1, address1, key2, address2, sp, h) =>
         implicit val securityProvider = sp
-        implicit val kryoPool = kp
+        implicit val hasher = h
 
         for {
           txsA <- generateTransactions(address1, key1, address2, 2, TransactionFee(3L))
@@ -85,9 +88,9 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
 
   test("pull should take one feeless transaction per address when last tx ref is in majority") {
     testResources.use {
-      case (transactionStorage, lastAcceptedR, _, key1, address1, key2, address2, sp, kp) =>
+      case (transactionStorage, lastAcceptedR, _, key1, address1, key2, address2, sp, h) =>
         implicit val securityProvider = sp
-        implicit val kryoPool = kp
+        implicit val hasher = h
 
         for {
           txsA <- generateTransactions(address1, key1, address2, 2, TransactionFee(0L))
@@ -104,9 +107,9 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
 
   test("pull should not take the feeless transactions when the last tx ref is not in majority") {
     testResources.use {
-      case (transactionStorage, lastAcceptedR, _, key1, address1, key2, address2, sp, kp) =>
+      case (transactionStorage, lastAcceptedR, _, key1, address1, key2, address2, sp, h) =>
         implicit val securityProvider = sp
-        implicit val kryoPool = kp
+        implicit val hasher = h
 
         for {
           txsA <- generateTransactions(address1, key1, address2, 2, TransactionFee(0L))
@@ -123,9 +126,9 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
 
   test("pull should be able to take both fee and feeless transactions in one pull") {
     testResources.use {
-      case (transactionStorage, _, _, key1, address1, key2, address2, sp, kp) =>
+      case (transactionStorage, _, _, key1, address1, key2, address2, sp, h) =>
         implicit val securityProvider = sp
-        implicit val kryoPool = kp
+        implicit val hasher = h
 
         for {
           txsA <- generateTransactions(address1, key1, address2, 2, TransactionFee(1L))
@@ -140,9 +143,9 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
 
   test("pull should favour transactions with higher fees when forming transaction chain") {
     testResources.use {
-      case (transactionStorage, _, _, key1, address1, _, address2, sp, kp) =>
+      case (transactionStorage, _, _, key1, address1, _, address2, sp, h) =>
         implicit val securityProvider = sp
-        implicit val kryoPool = kp
+        implicit val hasher = h
 
         for {
           txsA <- generateTransactions(address1, key1, address2, 2, TransactionFee(1L))
@@ -164,9 +167,9 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
 
   test("pull should limit transactions count to specified value") {
     testResources.use {
-      case (transactionStorage, _, _, key1, address1, key2, address2, sp, kp) =>
+      case (transactionStorage, _, _, key1, address1, key2, address2, sp, h) =>
         implicit val securityProvider = sp
-        implicit val kryoPool = kp
+        implicit val hasher = h
 
         for {
           txsA <- generateTransactions(address1, key1, address2, 2, TransactionFee(3L))

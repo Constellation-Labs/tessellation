@@ -2,30 +2,22 @@ package org.tessellation.ext
 
 import java.security.KeyPair
 
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Hashable, SecurityProvider}
+import org.tessellation.security.{Hasher, SecurityProvider}
 
-import _root_.cats.MonadThrow
 import _root_.cats.data.NonEmptyList
 import _root_.cats.effect.kernel.Async
-import _root_.cats.syntax.either._
-import _root_.cats.syntax.flatMap._
+import _root_.cats.syntax.all._
+import io.circe.Encoder
 
 object crypto {
-  implicit class RefinedHashable[F[_]: KryoSerializer](anyRef: AnyRef) {
+  implicit class RefinedHasher[F[_]: Hasher, A: Encoder](content: A) {
 
-    def hash: Either[Throwable, Hash] = Hashable.forKryo[F].hash(anyRef)
+    def hash: F[Hash] = Hasher[F].hash(content)
   }
 
-  implicit class RefinedHashableF[F[_]: MonadThrow: KryoSerializer](anyRef: AnyRef) {
-
-    def hashF: F[Hash] = Hashable.forKryo[F].hash(anyRef).liftTo[F]
-  }
-
-  implicit class RefinedSignedF[F[_]: Async: KryoSerializer: SecurityProvider, A <: AnyRef](data: A) {
-
+  implicit class RefinedSignedF[F[_]: Async: Hasher: SecurityProvider, A: Encoder](data: A) {
     def sign(keyPair: KeyPair): F[Signed[A]] = Signed.forAsyncKryo[F, A](data, keyPair)
 
     def sign(keyPairs: NonEmptyList[KeyPair]): F[Signed[A]] =

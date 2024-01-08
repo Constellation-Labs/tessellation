@@ -11,10 +11,9 @@ import cats.{Applicative, Id, Order}
 
 import scala.annotation.tailrec
 
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.transaction.{Transaction, TransactionReference}
-import org.tessellation.security.Hashed
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hashed, Hasher}
 
 object Consecutive {
   def signedTxOrder: Order[Signed[Transaction]] =
@@ -22,7 +21,7 @@ object Consecutive {
 
   def hashedTxOrder: Order[Hashed[Transaction]] = signedTxOrder.contramap(_.signed)
 
-  def take[F[_]: Async: KryoSerializer](txs: List[Signed[Transaction]]): F[List[Signed[Transaction]]] = {
+  def take[F[_]: Async: Hasher](txs: List[Signed[Transaction]]): F[List[Signed[Transaction]]] = {
     val headTx =
       txs.sorted(Order.whenEqual(Order.by[Signed[Transaction], Long](_.ordinal.value.value), signedTxOrder).toOrdering).headOption
 

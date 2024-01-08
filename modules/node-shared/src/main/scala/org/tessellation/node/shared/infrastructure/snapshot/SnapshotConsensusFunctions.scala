@@ -3,7 +3,6 @@ package org.tessellation.node.shared.infrastructure.snapshot
 import cats.effect.Async
 import cats.syntax.applicativeError._
 import cats.syntax.bifunctor._
-import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.foldable._
 import cats.syntax.functor._
@@ -29,28 +28,29 @@ import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.snapshot.Snapshot
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hasher, SecurityProvider}
 import org.tessellation.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
+import io.circe.Encoder
 
 case class InvalidHeight(lastHeight: Height, currentHeight: Height) extends NoStackTrace
 case object NoTipsRemaining extends NoStackTrace
 case object ArtifactMismatch extends InvalidArtifact
 
 abstract class SnapshotConsensusFunctions[
-  F[_]: Async: SecurityProvider: KryoSerializer,
+  F[_]: Async: SecurityProvider: KryoSerializer: Hasher,
   Event,
-  Artifact <: Snapshot: Eq,
+  Artifact <: Snapshot: Eq: Encoder,
   Context,
   Trigger <: ConsensusTrigger
 ](implicit ordering: Ordering[BlockAsActiveTip])
     extends ConsensusFunctions[F, Event, SnapshotOrdinal, Artifact, Context] {
 
   def gossipForkInfo(gossip: Gossip[F], signed: Signed[Artifact]): F[Unit] =
-    signed.hash.liftTo[F].flatMap(h => gossip.spread(ForkInfo(signed.value.ordinal, h)))
+    signed.hash.flatMap(h => gossip.spread(ForkInfo(signed.value.ordinal, h)))
 
   def getRequiredCollateral: Amount
 

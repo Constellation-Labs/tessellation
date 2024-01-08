@@ -15,7 +15,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import org.tessellation.dag.l0.infrastructure.snapshot._
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.cats.syntax.next._
-import org.tessellation.json.JsonBrotliBinarySerializer
+import org.tessellation.json.{JsonBrotliBinarySerializer, JsonHashSerializer}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.SnapshotSizeConfig
 import org.tessellation.node.shared.domain.statechannel.StateChannelValidator
@@ -31,11 +31,11 @@ import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.{Transaction, TransactionReference}
+import org.tessellation.security._
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.{Signed, SignedValidator}
-import org.tessellation.security.{Hashed, KeyPairGenerator, SecurityProvider}
 import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.syntax.sortedCollection._
 import org.tessellation.tools.TransactionGenerator._
@@ -50,19 +50,21 @@ import weaver.scalacheck.Checkers
 object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
   type GenKeyPairFn = () => KeyPair
 
-  type Res = (KryoSerializer[IO], SecurityProvider[IO], Metrics[IO], Random[IO])
+  type Res = (KryoSerializer[IO], Hasher[IO], SecurityProvider[IO], Metrics[IO], Random[IO])
 
   override def sharedResource: Resource[IO, Res] = for {
-    kryo <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
+    implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
+    implicit0(j: JsonHashSerializer[IO]) <- JsonHashSerializer.forSync[IO].asResource
+    h = Hasher.forSync[IO]
     metrics <- Metrics.forAsync[IO](Seq.empty)
     random <- Random.scalaUtilRandom[IO].asResource
-  } yield (kryo, sp, metrics, random)
+  } yield (ks, h, sp, metrics, random)
 
   val balances: Map[Address, Balance] = Map(Address("DAG8Yy2enxizZdWoipKKZg6VXwk7rY2Z54mJqUdC") -> Balance(NonNegLong(10L)))
 
   def mkSnapshots(dags: List[List[BlockAsActiveTip]], initBalances: Map[Address, Balance])(
-    implicit K: KryoSerializer[IO],
+    implicit H: Hasher[IO],
     S: SecurityProvider[IO]
   ): IO[(Hashed[GlobalSnapshot], NonEmptyList[Hashed[GlobalIncrementalSnapshot]])] =
     KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>
@@ -91,7 +93,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
     keyPair: KeyPair,
     blocks: SortedSet[BlockAsActiveTip]
   )(
-    implicit K: KryoSerializer[IO],
+    implicit H: Hasher[IO],
     S: SecurityProvider[IO]
   ): IO[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] =
     for {
@@ -142,8 +144,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
   type DAGS = (List[Address], Long, SortedMap[Address, Signed[Transaction]], List[List[BlockAsActiveTip]])
 
   def mkBlocks(feeValue: NonNegLong, numberOfAddresses: Int, txnsChunksRanges: List[(Int, Int)], blocksChunksRanges: List[(Int, Int)])(
-    implicit K: KryoSerializer[IO],
-    S: SecurityProvider[IO],
+    implicit S: SecurityProvider[IO],
+    H: Hasher[IO],
     R: Random[IO]
   ): IO[DAGS] = for {
     keyPairs <- (1 to numberOfAddresses).toList.traverse(_ => KeyPairGenerator.makeKeyPair[IO])
@@ -171,7 +173,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
     globalSnapshot: Hashed[GlobalSnapshot],
     incrementalSnapshots: List[Hashed[GlobalIncrementalSnapshot]],
     rollbackHash: Hash
-  )(implicit K: KryoSerializer[IO], S: SecurityProvider[IO]) = {
+  )(implicit K: KryoSerializer[IO], H: Hasher[IO], S: SecurityProvider[IO]) = {
     def loadGlobalSnapshot(hash: Hash): IO[Option[Signed[GlobalSnapshot]]] =
       hash match {
         case h if h === globalSnapshot.hash => Some(globalSnapshot.signed).pure[IO]
@@ -211,7 +213,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
     val currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
     for {
       stateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, NonNegLong(10L))
-      jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.make()
+      jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync
       stateChannelProcessor = GlobalSnapshotStateChannelEventsProcessor
         .make[IO](stateChannelValidator, stateChannelManager, currencySnapshotContextFns, jsonBrotliBinarySerializer)
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make[IO](blockAcceptanceManager, stateChannelProcessor, Amount.empty)
@@ -221,7 +223,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
   }
 
   test("can compute state for given incremental global snapshot") { res =>
-    implicit val (kryo, sp, _, _) = res
+    implicit val (kryo, h, sp, _, _) = res
 
     for {
       snapshots <- mkSnapshots(List.empty, balances)
@@ -232,7 +234,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
   }
 
   test("computed state contains last refs and preserve total amount of balances when no fees or rewards ") { res =>
-    implicit val (kryo, sp, _, random) = res
+    implicit val (kryo, h, sp, _, random) = res
 
     forall(dagBlockChainGen()) { output: IO[DAGS] =>
       for {
@@ -251,7 +253,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
   }
 
   test("computed state contains last refs and include fees in total amount of balances") { res =>
-    implicit val (kryo, sp, _, random) = res
+    implicit val (kryo, h, sp, _, random) = res
 
     forall(dagBlockChainGen(1L)) { output: IO[DAGS] =>
       for {
@@ -281,7 +283,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
 
   private def dagBlockChainGen(
     feeValue: NonNegLong = 0L
-  )(implicit r: Random[IO], ks: KryoSerializer[IO], sc: SecurityProvider[IO]): Gen[IO[DAGS]] = for {
+  )(implicit r: Random[IO], h: Hasher[IO], sc: SecurityProvider[IO]): Gen[IO[DAGS]] = for {
     numberOfAddresses <- Gen.choose(2, 5)
     txnsChunksRanges <- Gen
       .listOf(Gen.choose(0, 50))

@@ -8,20 +8,20 @@ import cats.syntax.show._
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.signature.Signed
 
-case class Hashed[+A <: AnyRef](signed: Signed[A], hash: Hash, proofsHash: ProofsHash)
+case class Hashed[+A](signed: Signed[A], hash: Hash, proofsHash: ProofsHash)
 
 object Hashed {
-  implicit def autoUnwrap[T <: AnyRef](t: Hashed[T]): T = t.signed
+  implicit def autoUnwrap[T](t: Hashed[T]): T = t.signed
 
-  implicit def order[A <: AnyRef: Order]: Order[Hashed[A]] = Order.fromOrdering(ordering(Order[A].toOrdering))
+  implicit def order[A: Order]: Order[Hashed[A]] = Order.fromOrdering(ordering(Order[A].toOrdering))
 
-  implicit def ordering[A <: AnyRef: Ordering]: Ordering[Hashed[A]] = new HashedOrdering[A]()
+  implicit def ordering[A: Ordering]: Ordering[Hashed[A]] = new HashedOrdering[A]()
 
-  implicit def show[A <: AnyRef: Show]: Show[Hashed[A]] =
+  implicit def show[A: Show]: Show[Hashed[A]] =
     h => s"Hashed(signed=${h.signed.show}, hash=${h.hash.show}, proofsHash=${h.proofsHash.show})"
 }
 
-final class HashedOrdering[A <: AnyRef: Ordering] extends Ordering[Hashed[A]] {
+final class HashedOrdering[A: Ordering] extends Ordering[Hashed[A]] {
 
   def compare(x: Hashed[A], y: Hashed[A]): Int =
     Order

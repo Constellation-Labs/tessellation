@@ -70,7 +70,7 @@ object gossip {
   case class CommonRumor[A](content: A)
 
   @derive(encoder, decoder)
-  sealed trait RumorRaw extends Encodable {
+  sealed trait RumorRaw extends Encodable[String] {
     val content: Json
     val contentType: ContentType
   }
@@ -87,7 +87,8 @@ object gossip {
     content: Json,
     contentType: ContentType
   ) extends RumorRaw {
-    override def toEncode: AnyRef = content.noSpacesSortKeys ++ contentType.coerce[String]
+    override def toEncode = content.noSpacesSortKeys ++ contentType.coerce[String]
+    override def jsonEncoder = implicitly
   }
 
   object CommonRumorRaw {
@@ -101,9 +102,10 @@ object gossip {
     content: Json,
     contentType: ContentType
   ) extends RumorRaw {
-    override def toEncode: AnyRef =
+    override def toEncode =
       content.noSpacesSortKeys ++ contentType
         .coerce[String] ++ origin.coerce[Hex].coerce[String] ++ ordinal.counter.toString ++ ordinal.generation.toString
+    override def jsonEncoder = implicitly
   }
 
   object PeerRumorRaw {

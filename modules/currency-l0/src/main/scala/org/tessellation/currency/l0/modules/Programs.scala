@@ -18,11 +18,11 @@ import org.tessellation.node.shared.infrastructure.genesis.{GenesisFS => Genesis
 import org.tessellation.node.shared.infrastructure.snapshot.{CurrencySnapshotContextFunctions, PeerSelect}
 import org.tessellation.node.shared.modules.SharedPrograms
 import org.tessellation.schema.peer.{L0Peer, PeerId}
-import org.tessellation.security.SecurityProvider
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 object Programs {
 
-  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider](
+  def make[F[_]: Async: Random: KryoSerializer: Hasher: SecurityProvider](
     keyPair: KeyPair,
     nodeId: PeerId,
     globalL0Peer: L0Peer,

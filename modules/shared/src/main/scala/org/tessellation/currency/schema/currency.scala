@@ -1,6 +1,6 @@
 package org.tessellation.currency.schema
 
-import cats.MonadThrow
+import cats.effect.kernel.Sync
 import cats.syntax.contravariantSemigroupal._
 import cats.syntax.functor._
 
@@ -8,7 +8,6 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
 import org.tessellation.ext.crypto._
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
@@ -17,8 +16,8 @@ import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.semver.SnapshotVersion
 import org.tessellation.schema.snapshot._
 import org.tessellation.schema.transaction._
-import org.tessellation.security.Hashed
 import org.tessellation.security.hash.{Hash, ProofsHash}
+import org.tessellation.security.{Hashed, Hasher}
 import org.tessellation.syntax.sortedCollection._
 
 import derevo.cats.{eqv, order, show}
@@ -51,8 +50,8 @@ object currency {
     lastTxRefs: SortedMap[Address, TransactionReference],
     balances: SortedMap[Address, Balance]
   ) extends SnapshotInfo[CurrencySnapshotStateProof] {
-    def stateProof[F[_]: MonadThrow: KryoSerializer]: F[CurrencySnapshotStateProof] =
-      (lastTxRefs.hashF, balances.hashF).tupled.map(CurrencySnapshotStateProof.apply)
+    def stateProof[F[_]: Sync: Hasher]: F[CurrencySnapshotStateProof] =
+      (lastTxRefs.hash, balances.hash).tupled.map(CurrencySnapshotStateProof.apply)
   }
 
   @derive(decoder, encoder, order, show)
@@ -107,7 +106,7 @@ object currency {
   ) extends IncrementalSnapshot[CurrencySnapshotStateProof]
 
   object CurrencyIncrementalSnapshot {
-    def fromCurrencySnapshot[F[_]: MonadThrow: KryoSerializer](snapshot: CurrencySnapshot): F[CurrencyIncrementalSnapshot] =
+    def fromCurrencySnapshot[F[_]: Sync: Hasher](snapshot: CurrencySnapshot): F[CurrencyIncrementalSnapshot] =
       snapshot.info.stateProof[F].map { stateProof =>
         CurrencyIncrementalSnapshot(
           snapshot.ordinal,
@@ -140,7 +139,7 @@ object currency {
         dataApplicationPart
       )
 
-    def mkFirstIncrementalSnapshot[F[_]: MonadThrow: KryoSerializer](genesis: Hashed[CurrencySnapshot]): F[CurrencyIncrementalSnapshot] =
+    def mkFirstIncrementalSnapshot[F[_]: Sync: Hasher](genesis: Hashed[CurrencySnapshot]): F[CurrencyIncrementalSnapshot] =
       genesis.info.stateProof[F].map { stateProof =>
         CurrencyIncrementalSnapshot(
           genesis.ordinal.next,

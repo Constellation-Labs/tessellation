@@ -11,7 +11,6 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
 
 import org.tessellation.ext.crypto._
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.merkletree.Proof
 import org.tessellation.merkletree.syntax._
 import org.tessellation.node.shared.domain.block.processing._
@@ -19,12 +18,14 @@ import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.transaction.{RewardTransaction, Transaction, TransactionReference}
+import org.tessellation.security.Hasher
 import org.tessellation.security.signature.Signed
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 import org.tessellation.syntax.sortedCollection.sortedSetSyntax
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
+import io.circe.disjunctionCodecs._
 
 trait GlobalSnapshotAcceptanceManager[F[_]] {
   def accept(
@@ -52,7 +53,7 @@ object GlobalSnapshotAcceptanceManager {
 
   case object InvalidMerkleTree extends NoStackTrace
 
-  def make[F[_]: Async: KryoSerializer](
+  def make[F[_]: Async: Hasher](
     blockAcceptanceManager: BlockAcceptanceManager[F],
     stateChannelEventsProcessor: GlobalSnapshotStateChannelEventsProcessor[F],
     collateral: Amount
@@ -96,7 +97,7 @@ object GlobalSnapshotAcceptanceManager {
       updatedLastCurrencySnapshotProofs <- maybeMerkleTree.traverse { merkleTree =>
         updatedLastCurrencySnapshots.toList.traverse {
           case (address, state) =>
-            (address, state).hashF
+            (address, state).hash
               .map(merkleTree.findPath(_))
               .flatMap(MonadThrow[F].fromOption(_, InvalidMerkleTree))
               .map((address, _))

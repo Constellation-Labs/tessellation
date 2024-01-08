@@ -8,12 +8,12 @@ import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
 import org.tessellation.node.shared.domain.transaction.{TransactionChainValidator, TransactionValidator}
 import org.tessellation.node.shared.infrastructure.block.processing.BlockValidator
 import org.tessellation.node.shared.infrastructure.gossip.RumorValidator
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.SignedValidator
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 object Validators {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider](
+  def make[F[_]: Async: KryoSerializer: Hasher: SecurityProvider](
     seedlist: Option[Set[SeedlistEntry]]
   ): Validators[F] = {
     val signedValidator = SignedValidator.make[F]

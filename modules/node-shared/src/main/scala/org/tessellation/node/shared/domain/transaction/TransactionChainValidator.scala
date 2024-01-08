@@ -4,10 +4,10 @@ import cats.data._
 import cats.effect.Async
 import cats.syntax.all._
 
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.transaction.TransactionChainValidator.{TransactionChainValidationErrorOr, TransactionNel}
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction.{Transaction, TransactionReference}
+import org.tessellation.security.Hasher
 import org.tessellation.security.signature.Signed
 
 import derevo.cats.{eqv, show}
@@ -22,7 +22,7 @@ trait TransactionChainValidator[F[_]] {
 
 object TransactionChainValidator {
 
-  def make[F[_]: Async: KryoSerializer]: TransactionChainValidator[F] =
+  def make[F[_]: Async: Hasher]: TransactionChainValidator[F] =
     new TransactionChainValidator[F] {
 
       def validate(

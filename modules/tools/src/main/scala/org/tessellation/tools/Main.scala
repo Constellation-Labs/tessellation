@@ -13,6 +13,8 @@ import scala.concurrent.duration._
 import scala.math.Integral.Implicits._
 
 import org.tessellation.currency.schema.currency.SnapshotFee
+import org.tessellation.ext.cats.effect.ResourceIO
+import org.tessellation.json.JsonHashSerializer
 import org.tessellation.keytool.KeyStoreUtils
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.genesis.types.GenesisCSVAccount
@@ -23,7 +25,7 @@ import org.tessellation.schema.transaction._
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.key.ops._
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{KeyPairGenerator, SecurityProvider}
+import org.tessellation.security.{Hasher, KeyPairGenerator, SecurityProvider}
 import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.statechannel.StateChannelSnapshotBinary
 import org.tessellation.tools.TransactionGenerator._
@@ -68,20 +70,23 @@ object Main
     cli.method.opts.map { method =>
       SecurityProvider.forAsync[IO].use { implicit sp =>
         KryoSerializer.forAsync[IO](sharedKryoRegistrar).use { implicit kryo =>
-          EmberClientBuilder.default[IO].build.use { client =>
-            Random.scalaUtilRandom[IO].flatMap { implicit random =>
-              (method match {
-                case SendTransactionsCmd(basicOpts, walletsOpts) =>
-                  walletsOpts match {
-                    case w: GeneratedWallets => sendTxsUsingGeneratedWallets(client, basicOpts, w)
-                    case l: LoadedWallets    => sendTxsUsingLoadedWallets(client, basicOpts, l)
-                  }
-                case SendStateChannelSnapshotCmd(baseUrl, verbose) =>
-                  sendStateChannelSnapshot(client, baseUrl, verbose)
-                case GetLatestSnapshotInfoCmd(networkHost, networkPort) =>
-                  getLatestSnapshotInfo(client, networkHost, networkPort)
-                case _ => IO.raiseError(new Throwable("Not implemented"))
-              }).as(ExitCode.Success)
+          JsonHashSerializer.forSync[IO].asResource.use { implicit jsonHashSerializer =>
+            implicit val hasher = Hasher.forSync[IO]
+            EmberClientBuilder.default[IO].build.use { client =>
+              Random.scalaUtilRandom[IO].flatMap { implicit random =>
+                (method match {
+                  case SendTransactionsCmd(basicOpts, walletsOpts) =>
+                    walletsOpts match {
+                      case w: GeneratedWallets => sendTxsUsingGeneratedWallets(client, basicOpts, w)
+                      case l: LoadedWallets    => sendTxsUsingLoadedWallets(client, basicOpts, l)
+                    }
+                  case SendStateChannelSnapshotCmd(baseUrl, verbose) =>
+                    sendStateChannelSnapshot(client, baseUrl, verbose)
+                  case GetLatestSnapshotInfoCmd(networkHost, networkPort) =>
+                    getLatestSnapshotInfo(client, networkHost, networkPort)
+                  case _ => IO.raiseError(new Throwable("Not implemented"))
+                }).as(ExitCode.Success)
+              }
             }
           }
         }
@@ -106,7 +111,7 @@ object Main
     }
   }
 
-  def sendStateChannelSnapshot[F[_]: Async: KryoSerializer: SecurityProvider: Console](
+  def sendStateChannelSnapshot[F[_]: Async: Hasher: SecurityProvider: Console](
     client: Client[F],
     baseUrl: UrlString,
     verbose: Boolean
@@ -122,7 +127,7 @@ object Main
       _ <- postStateChannelSnapshot(client, baseUrl)(signedSnapshot, address)
     } yield ()
 
-  def sendTxsUsingGeneratedWallets[F[_]: Async: Random: KryoSerializer: SecurityProvider: Console](
+  def sendTxsUsingGeneratedWallets[F[_]: Async: Random: Hasher: SecurityProvider: Console](
     client: Client[F],
     basicOpts: BasicOpts,
     walletsOpts: GeneratedWallets
@@ -139,7 +144,7 @@ object Main
             .flatMap(_ => checkLastReferences(client, basicOpts.baseUrl, keys.map(_.getPublic.toAddress)))
       }
 
-  def sendTxsUsingLoadedWallets[F[_]: Async: Random: KryoSerializer: SecurityProvider: Console](
+  def sendTxsUsingLoadedWallets[F[_]: Async: Random: Hasher: SecurityProvider: Console](
     client: Client[F],
     basicOpts: BasicOpts,
     walletsOpts: LoadedWallets
@@ -157,7 +162,7 @@ object Main
       _ <- checkLastReferences(client, basicOpts.baseUrl, addressParams.map(_.address))
     } yield ()
 
-  def sendTransactions[F[_]: Async: Random: KryoSerializer: SecurityProvider: Console](
+  def sendTransactions[F[_]: Async: Random: Hasher: SecurityProvider: Console](
     client: Client[F],
     basicOpts: BasicOpts,
     addressParams: NonEmptyList[AddressParams]

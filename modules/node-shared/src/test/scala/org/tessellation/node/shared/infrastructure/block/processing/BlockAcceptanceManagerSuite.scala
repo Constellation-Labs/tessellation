@@ -7,6 +7,8 @@ import cats.syntax.bifunctor._
 import cats.syntax.either._
 import cats.syntax.validated._
 
+import org.tessellation.ext.cats.effect.ResourceIO
+import org.tessellation.json.JsonHashSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.block.generators.signedBlockGen
 import org.tessellation.node.shared.domain.block.processing.{UsageCount, initUsageCount, _}
@@ -15,6 +17,7 @@ import org.tessellation.node.shared.infrastructure.block.processing.BlockAccepta
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.height.Height
 import org.tessellation.schema.{Block, BlockReference}
+import org.tessellation.security.Hasher
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.signature.Signed
 import org.tessellation.shared.sharedKryoRegistrar
@@ -32,12 +35,17 @@ object BlockAcceptanceManagerSuite extends MutableIOSuite with Checkers {
   val validInitiallyAwaitingParent = BlockReference(Height(0L), ProofsHash(Hash.empty.value.init + "4"))
   val invalidParent = BlockReference(Height(0L), ProofsHash(Hash.empty.value.init + "5"))
   val commonAddress = Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB")
-  type Res = KryoSerializer[IO]
 
-  override def sharedResource: Resource[IO, BlockAcceptanceManagerSuite.Res] =
-    KryoSerializer.forAsync[IO](sharedKryoRegistrar)
+  type Res = Hasher[IO]
 
-  def mkBlockAcceptanceManager(acceptInitiallyAwaiting: Boolean = true)(implicit kryo: KryoSerializer[IO]) =
+  override def sharedResource: Resource[IO, Res] =
+    KryoSerializer.forAsync[IO](sharedKryoRegistrar).flatMap { implicit kryo =>
+      JsonHashSerializer.forSync[IO].asResource.map { implicit json =>
+        Hasher.forSync[IO]
+      }
+    }
+
+  def mkBlockAcceptanceManager(acceptInitiallyAwaiting: Boolean = true)(implicit h: Hasher[IO]) =
     Ref[F].of[Map[Signed[Block], Boolean]](Map.empty.withDefaultValue(false)).map { state =>
       val blockLogic = new BlockAcceptanceLogic[IO] {
         override def acceptBlock(
@@ -100,7 +108,7 @@ object BlockAcceptanceManagerSuite extends MutableIOSuite with Checkers {
       BlockAcceptanceManager.make[IO](blockLogic, blockValidator)
     }
 
-  test("accept valid block") { implicit ks =>
+  test("accept valid block") { implicit h =>
     forall(validAcceptedBlocksGen) { blocks =>
       val expected = BlockAcceptanceResult(
         BlockAcceptanceContextUpdate.empty
@@ -115,7 +123,7 @@ object BlockAcceptanceManagerSuite extends MutableIOSuite with Checkers {
     }
   }
 
-  test("reject valid block") { implicit ks =>
+  test("reject valid block") { implicit h =>
     forall(validRejectedBlocksGen) {
       case (acceptedBlocks, rejectedBlocks) =>
         val expected = BlockAcceptanceResult(
@@ -132,7 +140,7 @@ object BlockAcceptanceManagerSuite extends MutableIOSuite with Checkers {
     }
   }
 
-  test("awaiting valid block") { implicit ks =>
+  test("awaiting valid block") { implicit h =>
     forall(validAwaitingBlocksGen) {
       case (acceptedBlocks, awaitingBlocks) =>
         val expected = BlockAcceptanceResult(
@@ -149,7 +157,7 @@ object BlockAcceptanceManagerSuite extends MutableIOSuite with Checkers {
     }
   }
 
-  test("accept initially awaiting valid block") { implicit ks =>
+  test("accept initially awaiting valid block") { implicit h =>
     forall(validInitiallyAwaitingBlocksGen) { blocks =>
       val expected = BlockAcceptanceResult(
         BlockAcceptanceContextUpdate.empty
@@ -165,7 +173,7 @@ object BlockAcceptanceManagerSuite extends MutableIOSuite with Checkers {
     }
   }
 
-  test("reject initially awaiting valid block") { implicit ks =>
+  test("reject initially awaiting valid block") { implicit h =>
     forall(validInitiallyAwaitingBlocksGen) { blocks =>
       val expected = BlockAcceptanceResult(
         BlockAcceptanceContextUpdate.empty,
@@ -179,7 +187,7 @@ object BlockAcceptanceManagerSuite extends MutableIOSuite with Checkers {
     }
   }
 
-  test("invalid block") { implicit ks =>
+  test("invalid block") { implicit h =>
     forall(invalidBlocksGen) { blocks =>
       val expected = BlockAcceptanceResult(
         BlockAcceptanceContextUpdate.empty,

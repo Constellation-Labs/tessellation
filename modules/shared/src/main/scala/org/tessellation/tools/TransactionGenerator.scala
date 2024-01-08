@@ -8,12 +8,11 @@ import cats.effect.std.Random
 import cats.syntax.all._
 
 import org.tessellation.ext.crypto._
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction._
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.key.ops._
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong}
@@ -36,7 +35,7 @@ object TransactionGenerator {
 
   private val chunkMinSize = 100
 
-  def infiniteTransactionStream[F[_]: Async: Random: KryoSerializer: SecurityProvider](
+  def infiniteTransactionStream[F[_]: Async: Random: Hasher: SecurityProvider](
     chunkSize: PosInt,
     feeValue: NonNegLong,
     addressParams: NonEmptyList[AddressParams]
@@ -61,7 +60,7 @@ object TransactionGenerator {
         def txStream(lastRef: TransactionReference): Stream[F, Signed[Transaction]] =
           for {
             signedTx <- Stream.eval(tx(lastRef))
-            txRef <- Stream.eval(signedTx.value.hashF.map(TransactionReference(signedTx.ordinal, _)))
+            txRef <- Stream.eval(signedTx.value.hash.map(TransactionReference(signedTx.ordinal, _)))
             result <- Stream(signedTx) ++ txStream(txRef)
           } yield result
 

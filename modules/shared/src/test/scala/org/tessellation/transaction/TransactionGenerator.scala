@@ -8,18 +8,17 @@ import cats.syntax.flatMap._
 import cats.syntax.foldable._
 import cats.syntax.functor._
 
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction._
 import org.tessellation.security.signature.Signed.forAsyncKryo
-import org.tessellation.security.{Hashed, SecurityProvider}
+import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.PosInt
 
 trait TransactionGenerator {
 
-  def generateTransactions[F[_]: Async: KryoSerializer: SecurityProvider](
+  def generateTransactions[F[_]: Async: Hasher: SecurityProvider](
     src: Address,
     srcKey: KeyPair,
     dst: Address,

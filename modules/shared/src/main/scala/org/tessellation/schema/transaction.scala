@@ -1,7 +1,7 @@
 package org.tessellation.schema
 
-import cats.MonadThrow
 import cats.effect.Async
+import cats.effect.kernel.Sync
 import cats.syntax.functor._
 import cats.syntax.semigroup._
 
@@ -9,12 +9,11 @@ import scala.util.Try
 
 import org.tessellation.ext.cats.data.OrderBasedOrdering
 import org.tessellation.ext.crypto._
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
+import org.tessellation.security._
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Encodable, Hashed, SecureRandom}
 
 import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia.{decoder, encoder}
@@ -64,8 +63,8 @@ object transaction {
   object TransactionReference {
     val empty: TransactionReference = TransactionReference(TransactionOrdinal(0L), Hash.empty)
 
-    def emptyCurrency[F[_]: MonadThrow: KryoSerializer](currencyAddress: Address): F[TransactionReference] =
-      currencyAddress.value.value.hashF.map(emptyCurrency(_))
+    def emptyCurrency[F[_]: Sync: Hasher](currencyAddress: Address): F[TransactionReference] =
+      currencyAddress.value.value.hash.map(emptyCurrency(_))
 
     def emptyCurrency(currencyIdentifier: Hash): TransactionReference =
       TransactionReference(TransactionOrdinal(0L), currencyIdentifier)
@@ -73,8 +72,8 @@ object transaction {
     val _Hash: Lens[TransactionReference, Hash] = GenLens[TransactionReference](_.hash)
     val _Ordinal: Lens[TransactionReference, TransactionOrdinal] = GenLens[TransactionReference](_.ordinal)
 
-    def of[F[_]: Async: KryoSerializer](signedTransaction: Signed[Transaction]): F[TransactionReference] =
-      signedTransaction.value.hashF.map(TransactionReference(signedTransaction.ordinal, _))
+    def of[F[_]: Async: Hasher](signedTransaction: Signed[Transaction]): F[TransactionReference] =
+      signedTransaction.value.hash.map(TransactionReference(signedTransaction.ordinal, _))
 
     def of(hashedTransaction: Hashed[Transaction]): TransactionReference =
       TransactionReference(hashedTransaction.ordinal, hashedTransaction.hash)
@@ -110,7 +109,7 @@ object transaction {
     parent: TransactionReference,
     salt: TransactionSalt
   ) extends Fiber[TransactionReference, TransactionData]
-      with Encodable {
+      with Encodable[String] {
 
     def reference = parent
     def data = TransactionData(source, destination, amount, fee)
@@ -129,6 +128,7 @@ object transaction {
             salt.coerce.toHexString
           )
         )
+    override def jsonEncoder: Encoder[String] = implicitly
 
     val ordinal: TransactionOrdinal = parent.ordinal.next
   }

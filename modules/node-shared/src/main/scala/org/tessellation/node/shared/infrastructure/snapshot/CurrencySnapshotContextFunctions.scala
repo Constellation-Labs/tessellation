@@ -11,9 +11,9 @@ import cats.syntax.show._
 import scala.util.control.NoStackTrace
 
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotContext}
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.merkletree.StateProofValidator
 import org.tessellation.node.shared.domain.snapshot.SnapshotContextFunctions
+import org.tessellation.security.Hasher
 import org.tessellation.security.signature.Signed
 
 import derevo.cats.{eqv, show}
@@ -24,7 +24,7 @@ abstract class CurrencySnapshotContextFunctions[F[_]]
     extends SnapshotContextFunctions[F, CurrencyIncrementalSnapshot, CurrencySnapshotContext]
 
 object CurrencySnapshotContextFunctions {
-  def make[F[_]: Async: KryoSerializer](validator: CurrencySnapshotValidator[F]) =
+  def make[F[_]: Async: Hasher](validator: CurrencySnapshotValidator[F]) =
     new CurrencySnapshotContextFunctions[F] {
       def createContext(
         context: CurrencySnapshotContext,

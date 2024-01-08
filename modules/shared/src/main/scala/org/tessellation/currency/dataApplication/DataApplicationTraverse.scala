@@ -13,7 +13,7 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Hashed, SecurityProvider}
+import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
 
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -23,14 +23,14 @@ trait DataApplicationTraverse[F[_]] {
 }
 
 object DataApplicationTraverse {
-  def make[F[_]: Async: KryoSerializer: SecurityProvider](
+  def make[F[_]: Async: KryoSerializer: Hasher: SecurityProvider](
     lastGlobalSnapshot: Hashed[GlobalIncrementalSnapshot],
     fetchSnapshot: Hash => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     dataApplication: BaseDataApplicationL0Service[F],
     calculatedStateStorage: CalculatedStateLocalFileSystemStorage[F],
     identifier: Address
   )(implicit context: L0NodeContext[F]): F[DataApplicationTraverse[F]] =
-    JsonBrotliBinarySerializer.make[F]().map { jsonSerializer =>
+    JsonBrotliBinarySerializer.forSync[F].map { jsonSerializer =>
       make[F](
         lastGlobalSnapshot,
         fetchSnapshot,
@@ -41,7 +41,7 @@ object DataApplicationTraverse {
       )
     }
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider](
+  def make[F[_]: Async: KryoSerializer: Hasher: SecurityProvider](
     lastGlobalSnapshot: Hashed[GlobalIncrementalSnapshot],
     fetchSnapshot: Hash => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     dataApplication: BaseDataApplicationL0Service[F],

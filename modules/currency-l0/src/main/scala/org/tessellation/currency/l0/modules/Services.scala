@@ -29,14 +29,14 @@ import org.tessellation.node.shared.infrastructure.snapshot._
 import org.tessellation.node.shared.infrastructure.snapshot.services.AddressService
 import org.tessellation.node.shared.modules.SharedServices
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.SignedValidator
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 import org.http4s.client.Client
 
 object Services {
 
-  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider: Metrics: Supervisor: L0NodeContext](
+  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider: Hasher: Metrics: Supervisor: L0NodeContext](
     p2PClient: P2PClient[F],
     sharedServices: SharedServices[F],
     storages: Storages[F],
@@ -53,7 +53,7 @@ object Services {
     maybeMajorityPeerIds: Option[NonEmptySet[PeerId]]
   ): F[Services[F]] =
     for {
-      jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.make[F]()
+      jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync[F]
 
       l0NodeContext = L0NodeContext.make[F](storages.snapshot)
 

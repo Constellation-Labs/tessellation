@@ -13,7 +13,7 @@ import com.twitter.chill._
 
 trait KryoSerializer[F[_]] {
 
-  def serialize(anyRef: AnyRef): Either[Throwable, Array[Byte]]
+  def serialize[A](data: A): Either[Throwable, Array[Byte]]
 
   def deserialize[T](bytes: Array[Byte])(implicit T: ClassTag[T]): Either[Throwable, T]
 
@@ -47,9 +47,9 @@ object KryoSerializer {
       make[F](registrar.view.mapValues(_.value).toMap, setReferences).map { kryoPool =>
         val migrationsMap = migrations.map(_.toPair).toMap
         new KryoSerializer[F] {
-          def serialize(anyRef: AnyRef): Either[Throwable, Array[Byte]] =
+          def serialize[A](data: A): Either[Throwable, Array[Byte]] =
             Either.catchNonFatal {
-              kryoPool.toBytesWithClass(anyRef)
+              kryoPool.toBytesWithClass(data)
             }
 
           def deserialize[T](bytes: Array[Byte])(implicit T: ClassTag[T]): Either[Throwable, T] =

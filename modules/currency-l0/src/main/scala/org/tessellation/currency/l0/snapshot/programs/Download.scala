@@ -21,7 +21,6 @@ import org.tessellation.currency.l0.http.p2p.P2PClient
 import org.tessellation.currency.l0.node.IdentifierStorage
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.cluster.storage.ClusterStorage
 import org.tessellation.node.shared.domain.node.NodeStorage
 import org.tessellation.node.shared.domain.snapshot.programs.Download
@@ -30,9 +29,9 @@ import org.tessellation.node.shared.infrastructure.snapshot.{CurrencySnapshotCon
 import org.tessellation.schema._
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.Peer
-import org.tessellation.security.Hashed
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hashed, Hasher}
 
 import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.NonNegLong
@@ -41,7 +40,7 @@ import retry.RetryPolicies._
 import retry._
 
 object Download {
-  def make[F[_]: Async: KryoSerializer: Random](
+  def make[F[_]: Async: Hasher: Random](
     p2pClient: P2PClient[F],
     clusterStorage: ClusterStorage[F],
     currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],

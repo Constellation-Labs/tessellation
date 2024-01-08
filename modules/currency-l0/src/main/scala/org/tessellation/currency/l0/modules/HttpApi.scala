@@ -21,7 +21,7 @@ import org.tessellation.node.shared.infrastructure.healthcheck.ping.PingHealthCh
 import org.tessellation.node.shared.infrastructure.metrics.Metrics
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.security.SecurityProvider
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 import eu.timepit.refined.auto._
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
@@ -31,7 +31,7 @@ import org.http4s.{HttpApp, HttpRoutes}
 
 object HttpApi {
 
-  def make[F[_]: Async: SecurityProvider: KryoSerializer: Metrics: L0NodeContext](
+  def make[F[_]: Async: SecurityProvider: KryoSerializer: Hasher: Metrics: L0NodeContext](
     storages: Storages[F],
     queues: Queues[F],
     services: Services[F],
@@ -59,7 +59,7 @@ object HttpApi {
     ) {}
 }
 
-sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Metrics: L0NodeContext] private (
+sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Hasher: Metrics: L0NodeContext] private (
   storages: Storages[F],
   queues: Queues[F],
   services: Services[F],

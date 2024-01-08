@@ -14,6 +14,7 @@ import org.tessellation.node.shared.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.routes.internal._
 import org.tessellation.schema.http.{ErrorCause, ErrorResponse}
 import org.tessellation.schema.transaction.{Transaction, TransactionStatus, TransactionView}
+import org.tessellation.security.Hasher
 import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto._
@@ -25,7 +26,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 import shapeless._
 import shapeless.syntax.singleton._
 
-final case class Routes[F[_]: Async: KryoSerializer](
+final case class Routes[F[_]: Async: KryoSerializer: Hasher](
   transactionService: TransactionService[F],
   transactionStorage: TransactionStorage[F],
   l0ClusterStorage: L0ClusterStorage[F],

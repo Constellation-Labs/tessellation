@@ -32,8 +32,8 @@ import org.tessellation.schema._
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.RewardTransaction
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hasher, SecurityProvider}
 import org.tessellation.syntax.sortedCollection.sortedSetSyntax
 
 import eu.timepit.refined.auto._
@@ -60,7 +60,7 @@ trait CurrencySnapshotCreator[F[_]] {
 
 object CurrencySnapshotCreator {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider](
+  def make[F[_]: Async: Hasher: KryoSerializer: SecurityProvider](
     currencySnapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F],
     dataApplicationSnapshotAcceptanceManager: Option[DataApplicationSnapshotAcceptanceManager[F]],
     snapshotSizeConfig: SnapshotSizeConfig,
@@ -92,7 +92,7 @@ object CurrencySnapshotCreator {
         awaitedEvents: Set[CurrencySnapshotEvent] = Set.empty[CurrencySnapshotEvent]
       ): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] =
         for {
-          lastArtifactHash <- lastArtifact.value.hashF
+          lastArtifactHash <- lastArtifact.value.hash
           currentOrdinal = lastArtifact.ordinal.next
 
           currentEpochProgress = trigger match {

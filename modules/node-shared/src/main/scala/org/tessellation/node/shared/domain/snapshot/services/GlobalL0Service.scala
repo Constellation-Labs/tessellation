@@ -14,7 +14,6 @@ import scala.util.control.NoStackTrace
 
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.collection.FoldableOps.pickMajority
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.merkletree.StateProofValidator
 import org.tessellation.node.shared.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.node.shared.domain.snapshot.Validator.isNextSnapshot
@@ -25,7 +24,7 @@ import org.tessellation.schema._
 import org.tessellation.schema.peer.{L0Peer, PeerId}
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Hashed, SecurityProvider}
+import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
 
 import eu.timepit.refined.auto.autoUnwrap
 import eu.timepit.refined.types.numeric.PosLong
@@ -47,7 +46,7 @@ object GlobalL0Service {
   case object NoPeerAlignedWithMajority extends Exception("No peer available that is aligned with majority") with NoStackTrace
 
   def make[
-    F[_]: Async: KryoSerializer: SecurityProvider
+    F[_]: Async: Hasher: SecurityProvider
   ](
     l0GlobalSnapshotClient: L0GlobalSnapshotClient[F],
     globalL0ClusterStorage: L0ClusterStorage[F],

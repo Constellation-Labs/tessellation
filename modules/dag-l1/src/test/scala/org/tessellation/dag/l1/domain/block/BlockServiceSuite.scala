@@ -14,7 +14,9 @@ import org.tessellation.dag.l1.domain.block.BlockStorage
 import org.tessellation.dag.l1.domain.block.BlockStorage._
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage.{LastTransactionReferenceState, Majority}
+import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.collection.MapRefUtils._
+import org.tessellation.json.JsonHashSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.block.processing._
 import org.tessellation.node.shared.nodeSharedKryoRegistrar
@@ -22,9 +24,9 @@ import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.transaction._
-import org.tessellation.security.Hashed
 import org.tessellation.security.hash.ProofsHash
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hashed, Hasher}
 
 import eu.timepit.refined.auto._
 import io.chrisdavenport.mapref.MapRef
@@ -33,16 +35,19 @@ import weaver.scalacheck.Checkers
 
 object BlockServiceSuite extends MutableIOSuite with Checkers {
 
-  type Res = KryoSerializer[IO]
+  type Res = Hasher[IO]
 
-  override def sharedResource: Resource[IO, BlockServiceSuite.Res] =
-    KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ nodeSharedKryoRegistrar)
+  def sharedResource: Resource[IO, Res] = for {
+    implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ nodeSharedKryoRegistrar)
+    implicit0(j: JsonHashSerializer[IO]) <- JsonHashSerializer.forSync[IO].asResource
+    h = Hasher.forSync[IO]
+  } yield h
 
   def mkBlockService(
     blocksR: MapRef[IO, ProofsHash, Option[StoredBlock]],
     lastAccTxR: MapRef[IO, Address, Option[LastTransactionReferenceState]],
     notAcceptanceReason: Option[BlockNotAcceptedReason] = None
-  )(implicit K: KryoSerializer[IO]) = {
+  )(implicit H: Hasher[IO]) = {
 
     val blockAcceptanceManager = new BlockAcceptanceManager[IO]() {
 
@@ -84,8 +89,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
     }
   }
 
-  test("valid block should be accepted") { res =>
-    implicit val kryo = res
+  test("valid block should be accepted") { implicit res =>
     forall(signedBlockGen) { block =>
       for {
         hashedBlock <- block.toHashed[IO]
@@ -108,8 +112,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
     }
   }
 
-  test("valid block should be accepted and not related block should stay postponed ") { res =>
-    implicit val kryo = res
+  test("valid block should be accepted and not related block should stay postponed ") { implicit res =>
     forall((block: Signed[Block], notRelatedBlock: Signed[Block]) =>
       for {
         hashedBlock <- block.toHashed[IO]
@@ -137,8 +140,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
     )
   }
 
-  test("valid block should be accepted and related block should go back to waiting") { res =>
-    implicit val kryo = res
+  test("valid block should be accepted and related block should go back to waiting") { implicit res =>
     forall((block: Signed[Block], notRelatedBlock: Signed[Block]) =>
       for {
         hashedBlock <- block.toHashed[IO]
@@ -168,8 +170,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
     )
   }
 
-  test("invalid block should be postponed for acceptance") { res =>
-    implicit val kryo = res
+  test("invalid block should be postponed for acceptance") { implicit res =>
     forall(signedBlockGen) { block =>
       for {
         hashedBlock <- block.toHashed[IO]
@@ -198,8 +199,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
     }
   }
 
-  test("invalid block should be postponed for acceptance and not related should stay postponed") { res =>
-    implicit val kryo = res
+  test("invalid block should be postponed for acceptance and not related should stay postponed") { implicit res =>
     forall((block: Signed[Block], notRelatedBlock: Signed[Block]) =>
       for {
         hashedBlock <- block.toHashed[IO]

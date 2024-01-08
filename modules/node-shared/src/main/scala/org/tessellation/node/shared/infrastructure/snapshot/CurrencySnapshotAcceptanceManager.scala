@@ -7,12 +7,12 @@ import cats.syntax.functor._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import org.tessellation.currency.schema.currency._
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.block.processing._
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.transaction.{RewardTransaction, Transaction, TransactionReference}
+import org.tessellation.security.Hasher
 import org.tessellation.security.signature.Signed
 import org.tessellation.syntax.sortedCollection.sortedSetSyntax
 
@@ -37,7 +37,7 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
 }
 
 object CurrencySnapshotAcceptanceManager {
-  def make[F[_]: Async: KryoSerializer](
+  def make[F[_]: Async: Hasher](
     blockAcceptanceManager: BlockAcceptanceManager[F],
     collateral: Amount
   ) = new CurrencySnapshotAcceptanceManager[F] {

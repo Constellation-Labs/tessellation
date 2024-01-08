@@ -11,18 +11,17 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.ext.crypto._
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.transaction.Transaction
 import org.tessellation.schema.{Block, BlockAsActiveTip, BlockReference}
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 import eu.timepit.refined.auto._
 import fs2.Stream
 
 object DAGBlockGenerator {
 
-  def createDAGs[F[_]: Async: Random: KryoSerializer: SecurityProvider](
+  def createDAGs[F[_]: Async: Random: Hasher: SecurityProvider](
     transactionsChunks: List[NonEmptySet[Signed[Transaction]]],
     initialReferences: NonEmptyList[BlockReference],
     keys: NonEmptyList[KeyPair]

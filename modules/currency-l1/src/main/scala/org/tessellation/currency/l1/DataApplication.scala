@@ -15,19 +15,18 @@ import org.tessellation.currency.l1.domain.dataApplication.consensus.{ConsensusC
 import org.tessellation.currency.l1.modules.{Queues, Services}
 import org.tessellation.currency.schema.currency._
 import org.tessellation.dag.l1.http.p2p.L0BlockOutputClient
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.cluster.storage.{ClusterStorage, L0ClusterStorage}
 import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 import fs2._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object DataApplication {
-  def run[F[_]: Async: Random: KryoSerializer: SecurityProvider: L1NodeContext](
+  def run[F[_]: Async: Random: Hasher: SecurityProvider: L1NodeContext](
     clusterStorage: ClusterStorage[F],
     l0ClusterStorage: L0ClusterStorage[F],
     blockOutputClient: L0BlockOutputClient[F],
@@ -59,10 +58,13 @@ object DataApplication {
     def ownerBlockConsensusInputs =
       inspectionTrigger.merge(ownRoundTrigger)
 
-    def isPeerInputValid(input: Signed[ConsensusInput.PeerConsensusInput]): F[Boolean] =
+    def isPeerInputValid(input: Signed[ConsensusInput.PeerConsensusInput]): F[Boolean] = {
+      implicit val dataEncoder = dataApplicationService.dataEncoder
+      implicit val e = ConsensusInput.PeerConsensusInput.encoder
       input.hasValidSignature.map {
         _ && input.isSignedExclusivelyBy(PeerId._Id.get(input.value.senderId))
       }
+    }
 
     def peerBlockConsensusInputs =
       Stream
