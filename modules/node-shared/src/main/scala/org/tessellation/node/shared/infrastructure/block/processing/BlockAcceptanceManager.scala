@@ -11,12 +11,11 @@ import cats.syntax.functor._
 import cats.syntax.show._
 import cats.syntax.traverse._
 
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.block.processing.{TxChains, _}
 import org.tessellation.node.shared.infrastructure.block.processing.BlockAcceptanceLogic
 import org.tessellation.schema.{Block, BlockReference}
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.NonNegLong
@@ -25,11 +24,11 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object BlockAcceptanceManager {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider](
+  def make[F[_]: Async: Hasher: SecurityProvider](
     blockValidator: BlockValidator[F]
   ): BlockAcceptanceManager[F] = make(BlockAcceptanceLogic.make[F], blockValidator)
 
-  def make[F[_]: Async: KryoSerializer](
+  def make[F[_]: Async: Hasher](
     logic: BlockAcceptanceLogic[F],
     blockValidator: BlockValidator[F]
   ): BlockAcceptanceManager[F] =

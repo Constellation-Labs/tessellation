@@ -22,10 +22,10 @@ import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hasher, SecurityProvider}
 
-abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider: KryoSerializer]
+abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider: KryoSerializer: Hasher]
     extends SnapshotConsensusFunctions[
       F,
       CurrencySnapshotEvent,
@@ -36,7 +36,7 @@ abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider:
 
 object CurrencySnapshotConsensusFunctions {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider: L0NodeContext](
+  def make[F[_]: Async: KryoSerializer: Hasher: SecurityProvider: L0NodeContext](
     stateChannelSnapshotService: StateChannelSnapshotService[F],
     collateral: Amount,
     rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],

@@ -7,6 +7,8 @@ import cats.syntax.option._
 
 import org.tessellation.BuildInfo
 import org.tessellation.env.AppEnvironment
+import org.tessellation.ext.cats.effect.ResourceIO
+import org.tessellation.json.JsonHashSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.rosetta.domain.NetworkIdentifier
 import org.tessellation.rosetta.domain.error._
@@ -22,7 +24,7 @@ import org.tessellation.schema.{GlobalSnapshot, SnapshotOrdinal}
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.signature.Signed.forAsyncKryo
-import org.tessellation.security.{KeyPairGenerator, SecurityProvider}
+import org.tessellation.security.{Hasher, KeyPairGenerator, SecurityProvider}
 import org.tessellation.shared.sharedKryoRegistrar
 
 import eu.timepit.refined.cats.{refTypeEq, refTypeOrder, refTypeShow}
@@ -31,12 +33,14 @@ import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
 
 object NetworkApiServiceSuite extends MutableIOSuite with Checkers {
-  type Res = (SecurityProvider[IO], KryoSerializer[IO])
+  type Res = (SecurityProvider[IO], Hasher[IO])
 
-  override def sharedResource: Resource[IO, Res] =
-    KryoSerializer
-      .forAsync[IO](sharedKryoRegistrar)
-      .flatMap(kryo => SecurityProvider.forAsync[IO].map((_, kryo)))
+  def sharedResource: Resource[IO, Res] = for {
+    implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
+    sp <- SecurityProvider.forAsync[IO]
+    implicit0(j: JsonHashSerializer[IO]) <- JsonHashSerializer.forSync[IO].asResource
+    h = Hasher.forSync[IO]
+  } yield (sp, h)
 
   private def errorResult[A]: IO[A] = IO.raiseError(new Exception("unexpected call"))
   def makeNetworkApiService(
@@ -88,7 +92,7 @@ object NetworkApiServiceSuite extends MutableIOSuite with Checkers {
   }
 
   test("status returns NetworkStatusResponse when snapshot found") { res =>
-    implicit val (sp, k) = res
+    implicit val (sp, h) = res
 
     val gen = for {
       genesisOrdinal <- snapshotOrdinalGen

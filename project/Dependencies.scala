@@ -92,6 +92,7 @@ object Dependencies {
 
     val circeCore = circe("core")
     val circeGeneric = circe("generic")
+    val circeGenericExtras = circe("generic-extras")
     val circeParser = circe("parser")
     val circeRefined = circe("refined")
     val circeFs2 = circe("fs2", "0.14.0")

@@ -11,7 +11,6 @@ import scala.concurrent.duration._
 
 import org.tessellation.env.AppEnvironment
 import org.tessellation.ext.crypto._
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.HttpConfig
 import org.tessellation.node.shared.domain.cluster.services.Cluster
 import org.tessellation.node.shared.domain.cluster.storage.{ClusterStorage, SessionStorage}
@@ -20,15 +19,15 @@ import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
 import org.tessellation.schema.cluster._
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer._
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 import fs2.concurrent.SignallingRef
 
 object Cluster {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider](
+  def make[F[_]: Async: Hasher: SecurityProvider](
     leavingDelay: FiniteDuration,
     httpConfig: HttpConfig,
     selfId: PeerId,
@@ -55,7 +54,7 @@ object Cluster {
           }
           clusterId = clusterStorage.getClusterId
           state <- nodeStorage.getNodeState
-          seedlistHash <- seedlist.map(_.map(_.peerId)).hashF
+          seedlistHash <- seedlist.map(_.map(_.peerId)).hash
         } yield
           RegistrationRequest(
             selfId,

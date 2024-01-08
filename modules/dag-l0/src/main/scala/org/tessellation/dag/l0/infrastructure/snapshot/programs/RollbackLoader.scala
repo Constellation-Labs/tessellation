@@ -12,15 +12,15 @@ import org.tessellation.node.shared.config.types.SnapshotConfig
 import org.tessellation.node.shared.infrastructure.snapshot.GlobalSnapshotContextFunctions
 import org.tessellation.node.shared.infrastructure.snapshot.storage.{SnapshotInfoLocalFileSystemStorage, SnapshotLocalFileSystemStorage}
 import org.tessellation.schema._
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object RollbackLoader {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider](
+  def make[F[_]: Async: KryoSerializer: Hasher: SecurityProvider](
     keyPair: KeyPair,
     snapshotConfig: SnapshotConfig,
     incrementalGlobalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
@@ -38,7 +38,7 @@ object RollbackLoader {
     ) {}
 }
 
-sealed abstract class RollbackLoader[F[_]: Async: KryoSerializer: SecurityProvider] private (
+sealed abstract class RollbackLoader[F[_]: Async: KryoSerializer: Hasher: SecurityProvider] private (
   keyPair: KeyPair,
   snapshotConfig: SnapshotConfig,
   incrementalGlobalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],

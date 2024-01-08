@@ -12,13 +12,15 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.BuildInfo
+import org.tessellation.ext.cats.effect.ResourceIO
+import org.tessellation.json.JsonHashSerializer
 import org.tessellation.keytool.KeyStoreUtils
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction.{Transaction, TransactionAmount, TransactionFee}
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.key.ops._
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hasher, SecurityProvider}
 import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.wallet.cli.env.EnvConfig
 import org.tessellation.wallet.cli.method._
@@ -44,24 +46,27 @@ object Main
       case (method, envs) =>
         SecurityProvider.forAsync[IO].use { implicit sp =>
           KryoSerializer.forAsync[IO](sharedKryoRegistrar).use { implicit kryo =>
-            loadKeyPair[IO](envs).flatMap { keyPair =>
-              method match {
-                case ShowAddress() =>
-                  showAddress[IO](keyPair)
-                    .handleErrorWith(err => logger.error(err)(s"Error while showing address."))
-                    .as(ExitCode.Success)
-                case ShowId() =>
-                  showId[IO](keyPair)
-                    .handleErrorWith(err => logger.error(err)(s"Error while showing id."))
-                    .as(ExitCode.Success)
-                case ShowPublicKey() =>
-                  showPublicKey[IO](keyPair)
-                    .handleErrorWith(err => logger.error(err)(s"Error while showing public key."))
-                    .as(ExitCode.Success)
-                case CreateTransaction(destination, fee, amount, prevTxPath, nextTxPath) =>
-                  createAndStoreTransaction[IO](keyPair, destination, fee, amount, prevTxPath, nextTxPath)
-                    .handleErrorWith(err => logger.error(err)(s"Error while creating transaction."))
-                    .as(ExitCode.Success)
+            JsonHashSerializer.forSync[IO].asResource.use { implicit jsonSerializer =>
+              implicit val hasher = Hasher.forSync[IO]
+              loadKeyPair[IO](envs).flatMap { keyPair =>
+                method match {
+                  case ShowAddress() =>
+                    showAddress[IO](keyPair)
+                      .handleErrorWith(err => logger.error(err)(s"Error while showing address."))
+                      .as(ExitCode.Success)
+                  case ShowId() =>
+                    showId[IO](keyPair)
+                      .handleErrorWith(err => logger.error(err)(s"Error while showing id."))
+                      .as(ExitCode.Success)
+                  case ShowPublicKey() =>
+                    showPublicKey[IO](keyPair)
+                      .handleErrorWith(err => logger.error(err)(s"Error while showing public key."))
+                      .as(ExitCode.Success)
+                  case CreateTransaction(destination, fee, amount, prevTxPath, nextTxPath) =>
+                    createAndStoreTransaction[IO](keyPair, destination, fee, amount, prevTxPath, nextTxPath)
+                      .handleErrorWith(err => logger.error(err)(s"Error while creating transaction."))
+                      .as(ExitCode.Success)
+                }
               }
             }
           }
@@ -75,7 +80,7 @@ object Main
 
   private def showPublicKey[F[_]: Console](keyPair: KeyPair): F[Unit] = Console[F].println(keyPair.getPublic)
 
-  private def createAndStoreTransaction[F[_]: Async: SecurityProvider: KryoSerializer](
+  private def createAndStoreTransaction[F[_]: Async: SecurityProvider: Hasher](
     keyPair: KeyPair,
     destination: Address,
     fee: TransactionFee,

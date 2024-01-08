@@ -22,7 +22,7 @@ import org.tessellation.node.shared.infrastructure.snapshot.{CurrencySnapshotCre
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.security.SecurityProvider
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 import io.circe.Decoder
 import io.circe.disjunctionCodecs._
@@ -30,7 +30,7 @@ import org.http4s.client.Client
 
 object CurrencySnapshotConsensus {
 
-  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider: Metrics: Supervisor: L0NodeContext](
+  def make[F[_]: Async: Random: KryoSerializer: Hasher: SecurityProvider: Metrics: Supervisor: L0NodeContext](
     gossip: Gossip[F],
     selfId: PeerId,
     keyPair: KeyPair,

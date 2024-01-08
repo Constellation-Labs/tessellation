@@ -13,7 +13,7 @@ import scala.collection.immutable.SortedMap
 
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.cats.effect.ResourceIO
-import org.tessellation.json.JsonBrotliBinarySerializer
+import org.tessellation.json.{JsonBrotliBinarySerializer, JsonHashSerializer}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.SnapshotSizeConfig
 import org.tessellation.node.shared.domain.statechannel.StateChannelValidator
@@ -28,7 +28,7 @@ import org.tessellation.security.hash.Hash
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed.forAsyncKryo
-import org.tessellation.security.{KeyPairGenerator, SecurityProvider}
+import org.tessellation.security.{Hasher, KeyPairGenerator, SecurityProvider}
 import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 
@@ -36,19 +36,20 @@ import eu.timepit.refined.auto._
 import weaver.MutableIOSuite
 object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
 
-  type Res = (KryoSerializer[IO], SecurityProvider[IO], JsonBrotliBinarySerializer[IO])
+  type Res = (KryoSerializer[IO], Hasher[IO], SecurityProvider[IO], JsonBrotliBinarySerializer[IO])
 
-  override def sharedResource: Resource[IO, GlobalSnapshotStateChannelEventsProcessorSuite.Res] =
-    for {
-      ks <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
-      sp <- SecurityProvider.forAsync[IO]
-      serializer <- JsonBrotliBinarySerializer.make[IO]().asResource
-    } yield (ks, sp, serializer)
+  def sharedResource: Resource[IO, Res] = for {
+    implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
+    sp <- SecurityProvider.forAsync[IO]
+    implicit0(j: JsonHashSerializer[IO]) <- JsonHashSerializer.forSync[IO].asResource
+    h = Hasher.forSync[IO]
+    serializer <- JsonBrotliBinarySerializer.forSync[IO].asResource
+  } yield (ks, h, sp, serializer)
 
   def mkProcessor(
     stateChannelAllowanceLists: Map[Address, NonEmptySet[PeerId]],
     failed: Option[(Address, StateChannelValidator.StateChannelValidationError)] = None
-  )(implicit K: KryoSerializer[IO], S: SecurityProvider[IO]) =
+  )(implicit K: KryoSerializer[IO], H: Hasher[IO], S: SecurityProvider[IO]) =
     for {
       _ <- IO.unit
       validator = new StateChannelValidator[IO] {
@@ -74,13 +75,13 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
           )
         ] = IO.pure((events.groupByNel(_.address).map { case (k, v) => k -> v.map(_.snapshotBinary) }, Set.empty))
       }
-      jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.make()
+      jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync
       processor = GlobalSnapshotStateChannelEventsProcessor
         .make[IO](validator, manager, currencySnapshotContextFns, jsonBrotliBinarySerializer)
     } yield processor
 
   test("return new sc event") { res =>
-    implicit val (kryo, sp, serializer) = res
+    implicit val (kryo, h, sp, serializer) = res
 
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
@@ -99,7 +100,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
   }
 
   test("return sc events for different addresses") { res =>
-    implicit val (kryo, sp, serializer) = res
+    implicit val (kryo, h, sp, serializer) = res
 
     for {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
@@ -123,7 +124,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
   }
 
   test("return only valid sc events") { res =>
-    implicit val (kryo, sp, serializer) = res
+    implicit val (kryo, h, sp, serializer) = res
 
     for {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
@@ -149,7 +150,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
 
   def mkStateChannelOutput(keyPair: KeyPair, hash: Option[Hash] = None, serializer: JsonBrotliBinarySerializer[IO])(
     implicit S: SecurityProvider[IO],
-    K: KryoSerializer[IO]
+    H: Hasher[IO]
   ) = for {
     content <- Random.scalaUtilRandom[IO].flatMap(_.nextString(10))
     compressedBytes <- serializer.serialize(content)

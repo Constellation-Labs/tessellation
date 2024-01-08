@@ -40,8 +40,9 @@ object ConsensusInput {
     dataUpdates: Set[Signed[DataUpdate]],
     dataHashes: Set[Hash]
   ) extends PeerConsensusInput
-      with Encodable {
-    override def toEncode: AnyRef = (roundId, senderId, owner, facilitators, dataHashes)
+      with Encodable[(RoundId, PeerId, PeerId, Set[PeerId], Set[Hash])] {
+    override def toEncode = (roundId, senderId, owner, facilitators, dataHashes)
+    override def jsonEncoder = implicitly
   }
 
   object Proposal {

@@ -2,31 +2,36 @@ package org.tessellation.schema
 
 import cats.effect.{IO, Resource}
 
+import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.crypto._
+import org.tessellation.json.JsonHashSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction._
+import org.tessellation.security.Hasher
 import org.tessellation.security.hash.Hash
 import org.tessellation.shared.sharedKryoRegistrar
 
 import eu.timepit.refined.auto._
+import io.circe.Encoder
 import suite.ResourceSuite
 import weaver.scalacheck.Checkers
 
 object TransactionSuite extends ResourceSuite with Checkers {
 
-  override type Res = KryoSerializer[IO]
+  override type Res = Hasher[IO]
 
   override def sharedResource: Resource[IO, Res] =
-    KryoSerializer.forAsync[IO](sharedKryoRegistrar, List.empty, setReferences = true)
-
-  def hashWithKryo(toHash: AnyRef): IO[Hash] =
     KryoSerializer
       .forAsync[IO](sharedKryoRegistrar, List.empty, setReferences = true)
-      .use { kryo =>
-        implicit val k = kryo
-        toHash.hashF
+      .flatMap { implicit res =>
+        JsonHashSerializer.forSync[IO].asResource.map { implicit json =>
+          Hasher.forSync[IO]
+        }
       }
+
+  def hashWithKryo[A: Encoder](toHash: A): IO[Hash] =
+    sharedResource.use(_.hash(toHash))
 
   test("Transaction's representation used for hashing should follow expected format") {
     val transaction = Transaction(
@@ -58,7 +63,7 @@ object TransactionSuite extends ResourceSuite with Checkers {
     IO.pure(expect.same(expectedToEncode, transaction.toEncode))
   }
 
-  test("Hash for a new Transaction schema should be the same as hash for old Transaction schema") { implicit kryo =>
+  test("Hash for a new Transaction schema should be the same as hash for old Transaction schema") { implicit res =>
     val expectedHash = Hash("1017a072225263aa502d9dcd22a04455f9b063cc19166356be50b4730afc44f6")
 
     val transaction = Transaction(
@@ -73,6 +78,6 @@ object TransactionSuite extends ResourceSuite with Checkers {
       TransactionSalt(-6326757804706870905L)
     )
 
-    transaction.hashF.map(expect.same(expectedHash, _))
+    transaction.hash.map(expect.same(expectedHash, _))
   }
 }

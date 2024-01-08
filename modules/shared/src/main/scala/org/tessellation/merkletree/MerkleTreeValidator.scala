@@ -1,8 +1,8 @@
 package org.tessellation.merkletree
 
-import cats.MonadThrow
 import cats.data.Validated
 import cats.effect.Async
+import cats.effect.kernel.Sync
 import cats.kernel.Eq
 import cats.syntax.eq._
 import cats.syntax.flatMap._
@@ -11,24 +11,24 @@ import cats.syntax.show._
 
 import scala.util.control.NoStackTrace
 
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.snapshot.{IncrementalSnapshot, SnapshotInfo, StateProof}
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Hashed, hash}
+import org.tessellation.security.{Hashed, Hasher, hash}
 
 import derevo.cats.{eqv, show}
 import derevo.derive
+import io.circe.Encoder
 
 object StateProofValidator {
 
-  def validate[F[_]: Async: KryoSerializer, P <: StateProof: Eq, A <: IncrementalSnapshot[P]](
+  def validate[F[_]: Async: Hasher, P <: StateProof: Eq, A <: IncrementalSnapshot[P]: Encoder](
     snapshot: Signed[A],
     si: SnapshotInfo[P]
   ): F[Validated[StateBroken, Unit]] = snapshot.toHashed.flatMap(hs => si.stateProof.map(validate(hs, _)))
 
-  def validate[F[_]: MonadThrow: KryoSerializer, P <: StateProof: Eq, A <: IncrementalSnapshot[P]](
+  def validate[F[_]: Sync: Hasher, P <: StateProof: Eq, A <: IncrementalSnapshot[P]](
     snapshot: Hashed[A],
     si: SnapshotInfo[P]
   ): F[Validated[StateBroken, Unit]] = si.stateProof.map(validate(snapshot, _))

@@ -14,8 +14,8 @@ import org.tessellation.node.shared.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.routes.internal._
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 import eu.timepit.refined.auto._
 import io.circe.Decoder
@@ -27,7 +27,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 import shapeless._
 import shapeless.syntax.singleton._
 
-final case class DataApplicationRoutes[F[_]: Async: KryoSerializer: SecurityProvider: L1NodeContext](
+final case class DataApplicationRoutes[F[_]: Async: KryoSerializer: Hasher: SecurityProvider: L1NodeContext](
   dataApplicationPeerConsensusInput: Queue[F, Signed[ConsensusInput.PeerConsensusInput]],
   l0ClusterStorage: L0ClusterStorage[F],
   dataApplication: BaseDataApplicationL1Service[F],

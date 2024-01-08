@@ -3,8 +3,11 @@ package org.tessellation.security
 import java.nio.charset.StandardCharsets
 
 import cats.Show
+import cats.effect.kernel.Sync
+import cats.syntax.all._
 
 import org.tessellation.ext.derevo.ordering
+import org.tessellation.json.JsonHashSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.security.hash.Hash
 
@@ -12,6 +15,7 @@ import com.google.common.hash.{HashCode, Hashing}
 import derevo.cats.{order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
+import io.circe.Encoder
 import io.estatico.newtype.macros.newtype
 import io.estatico.newtype.ops._
 import org.scalacheck.{Arbitrary, Gen}
@@ -51,20 +55,35 @@ object hash {
 
 }
 
-trait Hashable[F[_]] {
-  def hash[A <: AnyRef](data: A): Either[Throwable, Hash]
+trait Hasher[F[_]] {
+  def hash[A: Encoder](data: A): F[Hash]
 }
 
-object Hashable {
+object Hasher {
 
-  def forKryo[F[_]: KryoSerializer]: Hashable[F] = new Hashable[F] {
+  def apply[F[_]: Hasher]: Hasher[F] = implicitly
 
-    def hash[A <: AnyRef](data: A): Either[Throwable, Hash] =
+  def forSync[F[_]: Sync: KryoSerializer: JsonHashSerializer]: Hasher[F] = new Hasher[F] {
+
+    def hashJson[A: Encoder](data: A): F[Hash] =
+      (data match {
+        case d: Encodable[_] =>
+          JsonHashSerializer[F].serialize(d.toEncode)(d.jsonEncoder)
+        case _ =>
+          JsonHashSerializer[F].serialize[A](data)
+      }).map(Hash.fromBytes)
+
+    def hashKryo[A: Encoder](data: A): F[Hash] =
       KryoSerializer[F]
         .serialize(data match {
-          case d: Encodable => d.toEncode
-          case _            => data
+          case d: Encodable[_] => d.toEncode
+          case _               => data
         })
         .map(Hash.fromBytes)
+        .liftTo[F]
+
+    // NOTE: For backward compatibility - KryoSerializer is the hashing driver for now
+    def hash[A: Encoder](data: A): F[Hash] = hashKryo(data)
+
   }
 }

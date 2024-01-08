@@ -10,13 +10,13 @@ import org.tessellation.node.shared.infrastructure.block.processing.BlockValidat
 import org.tessellation.node.shared.infrastructure.gossip.RumorValidator
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.SignedValidator
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 object Validators {
 
   def make[
-    F[_]: Async: KryoSerializer: SecurityProvider,
+    F[_]: Async: KryoSerializer: Hasher: SecurityProvider,
     P <: StateProof,
     S <: Snapshot,
     SI <: SnapshotInfo[P]

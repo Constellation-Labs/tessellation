@@ -8,6 +8,8 @@ import cats.syntax.validated._
 
 import org.tessellation.currency.schema.currency.SnapshotFee
 import org.tessellation.dag.l0.domain.cell.L0Cell
+import org.tessellation.ext.cats.effect.ResourceIO
+import org.tessellation.json.JsonHashSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.statechannel.StateChannelValidator
 import org.tessellation.schema.Block
@@ -15,7 +17,7 @@ import org.tessellation.security.hash.Hash
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed.forAsyncKryo
-import org.tessellation.security.{KeyPairGenerator, SecurityProvider}
+import org.tessellation.security.{Hasher, KeyPairGenerator, SecurityProvider}
 import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
 
@@ -24,15 +26,17 @@ import weaver.MutableIOSuite
 
 object StateChannelServiceSuite extends MutableIOSuite {
 
-  type Res = (KryoSerializer[IO], SecurityProvider[IO])
+  type Res = (Hasher[IO], SecurityProvider[IO])
 
-  override def sharedResource: Resource[IO, StateChannelServiceSuite.Res] =
-    KryoSerializer.forAsync[IO](sharedKryoRegistrar).flatMap { ks =>
-      SecurityProvider.forAsync[IO].map((ks, _))
-    }
+  def sharedResource: Resource[IO, Res] = for {
+    implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
+    sp <- SecurityProvider.forAsync[IO]
+    implicit0(j: JsonHashSerializer[IO]) <- JsonHashSerializer.forSync[IO].asResource
+    h = Hasher.forSync[IO]
+  } yield (h, sp)
 
   test("state channel output processed successfully") { res =>
-    implicit val (kryo, sp) = res
+    implicit val (h, sp) = res
 
     for {
       output <- mkStateChannelOutput()
@@ -43,7 +47,7 @@ object StateChannelServiceSuite extends MutableIOSuite {
   }
 
   test("state channel output failed on validation") { res =>
-    implicit val (kryo, sp) = res
+    implicit val (h, sp) = res
 
     for {
       output <- mkStateChannelOutput()
@@ -68,7 +72,7 @@ object StateChannelServiceSuite extends MutableIOSuite {
     } yield StateChannelService.make[IO](L0Cell.mkL0Cell[IO](dagQueue, scQueue), validator)
   }
 
-  def mkStateChannelOutput()(implicit S: SecurityProvider[IO], K: KryoSerializer[IO]) = for {
+  def mkStateChannelOutput()(implicit S: SecurityProvider[IO], H: Hasher[IO]) = for {
     keyPair <- KeyPairGenerator.makeKeyPair[IO]
     binary = StateChannelSnapshotBinary(Hash.empty, "test".getBytes, SnapshotFee.MinValue)
     signedSC <- forAsyncKryo(binary, keyPair)

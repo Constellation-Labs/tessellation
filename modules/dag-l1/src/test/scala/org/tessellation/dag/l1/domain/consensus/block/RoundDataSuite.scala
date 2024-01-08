@@ -13,6 +13,7 @@ import scala.concurrent.duration.FiniteDuration
 import org.tessellation.dag.l1.Main
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.Proposal
 import org.tessellation.ext.cats.effect.ResourceIO
+import org.tessellation.json.JsonHashSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.transaction.TransactionValidator
 import org.tessellation.node.shared.nodeSharedKryoRegistrar
@@ -28,7 +29,7 @@ import org.tessellation.security.hex.Hex
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.SignedValidator
 import org.tessellation.security.signature.signature.SignatureProof
-import org.tessellation.security.{KeyPairGenerator, SecurityProvider}
+import org.tessellation.security.{Hasher, KeyPairGenerator, SecurityProvider}
 import org.tessellation.transaction.TransactionGenerator
 
 import eu.timepit.refined.auto._
@@ -38,22 +39,22 @@ import weaver.scalacheck.Checkers
 
 object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenerator {
 
-  override type Res =
-    (KryoSerializer[IO], SecurityProvider[IO], KeyPair, KeyPair, Address, Address, TransactionValidator[IO])
+  type Res =
+    (KryoSerializer[IO], Hasher[IO], SecurityProvider[IO], KeyPair, KeyPair, Address, Address, TransactionValidator[IO])
 
-  override def sharedResource: Resource[IO, Res] =
-    KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ nodeSharedKryoRegistrar).flatMap { implicit kp =>
-      SecurityProvider.forAsync[IO].flatMap { implicit sp =>
-        for {
-          srcKey <- KeyPairGenerator.makeKeyPair[IO].asResource
-          dstKey <- KeyPairGenerator.makeKeyPair[IO].asResource
-          srcAddress = srcKey.getPublic.toAddress
-          dstAddress = dstKey.getPublic.toAddress
-          signedValidator = SignedValidator.make
-          txValidator = TransactionValidator.make[F](signedValidator)
-        } yield (kp, sp, srcKey, dstKey, srcAddress, dstAddress, txValidator)
-      }
-    }
+  def sharedResource: Resource[IO, Res] =
+    for {
+      implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ nodeSharedKryoRegistrar)
+      implicit0(sp: SecurityProvider[IO]) <- SecurityProvider.forAsync[IO]
+      implicit0(j: JsonHashSerializer[IO]) <- JsonHashSerializer.forSync[IO].asResource
+      implicit0(h: Hasher[IO]) = Hasher.forSync[IO]
+      srcKey <- KeyPairGenerator.makeKeyPair[IO].asResource
+      dstKey <- KeyPairGenerator.makeKeyPair[IO].asResource
+      srcAddress = srcKey.getPublic.toAddress
+      dstAddress = dstKey.getPublic.toAddress
+      signedValidator = SignedValidator.make
+      txValidator = TransactionValidator.make[F](signedValidator)
+    } yield (ks, h, sp, srcKey, dstKey, srcAddress, dstAddress, txValidator)
 
   implicit val logger = Slf4jLogger.getLogger[IO]
 
@@ -80,18 +81,20 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
     )
 
   test("formBlock should return None when there were no transactions in RoundData") {
-    case (kp, _, _, _, _, _, txValidator) =>
+    case (kp, h, _, _, _, _, _, txValidator) =>
       implicit val kryoPool = kp
+      implicit val hasher = h
 
-      baseRoundData.formBlock(txValidator).map(maybeBlock => expect.same(None, maybeBlock))
+      baseRoundData.formBlock[IO](txValidator).map(maybeBlock => expect.same(None, maybeBlock))
   }
 
   test(
     "formBlock should return the block with properly selected transactions - preferring the ones with higher fee if there are concurrent chains of transactions"
   ) {
-    case (kp, sp, srcKey, _, srcAddress, dstAddress, txValidator) =>
+    case (kp, h, sp, srcKey, _, srcAddress, dstAddress, txValidator) =>
       implicit val kryoPool = kp
       implicit val securityProvider = sp
+      implicit val hasher = h
 
       for {
         txsA <- generateTransactions(srcAddress, srcKey, dstAddress, 3)
@@ -112,9 +115,10 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
   }
 
   test("formBlock should pick transactions correctly from the pool of transactions from all facilitators") {
-    case (kp, sp, srcKey, _, srcAddress, dstAddress, txValidator) =>
+    case (kp, h, sp, srcKey, _, srcAddress, dstAddress, txValidator) =>
       implicit val kryoPool = kp
       implicit val securityProvider = sp
+      implicit val hasher = h
 
       for {
         txsA <- generateTransactions(srcAddress, srcKey, dstAddress, 1)
@@ -136,9 +140,10 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
   }
 
   test("formBlock should pick transactions correctly when concurrent transactions are proposed by different facilitators") {
-    case (kp, sp, srcKey, _, srcAddress, dstAddress, txValidator) =>
+    case (kp, h, sp, srcKey, _, srcAddress, dstAddress, txValidator) =>
       implicit val kryoPool = kp
       implicit val securityProvider = sp
+      implicit val hasher = h
 
       for {
         txsA <- generateTransactions(srcAddress, srcKey, dstAddress, 2)
@@ -160,9 +165,10 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
   }
 
   test("formBlock should discard transactions that are invalid") {
-    case (kp, sp, srcKey, dstKey, srcAddress, dstAddress, txValidator) =>
+    case (kp, h, sp, srcKey, dstKey, srcAddress, dstAddress, txValidator) =>
       implicit val kryoPool = kp
       implicit val securityProvider = sp
+      implicit val hasher = h
 
       for {
         txsA <- generateTransactions(srcAddress, srcKey, dstAddress, 3)

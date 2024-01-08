@@ -21,7 +21,7 @@ import org.tessellation.schema.gossip._
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Hashed, SecurityProvider}
+import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
 
 import eu.timepit.refined.auto._
 import fs2.Stream
@@ -37,7 +37,7 @@ trait GossipDaemon[F[_]] {
 
 object GossipDaemon {
 
-  def make[F[_]: Async: SecurityProvider: KryoSerializer: Random: Parallel: Metrics](
+  def make[F[_]: Async: SecurityProvider: KryoSerializer: Hasher: Random: Parallel: Metrics](
     rumorStorage: RumorStorage[F],
     rumorQueue: Queue[F, Hashed[RumorRaw]],
     clusterStorage: ClusterStorage[F],

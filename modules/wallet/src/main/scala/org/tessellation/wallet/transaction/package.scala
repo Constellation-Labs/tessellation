@@ -8,16 +8,15 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.ext.crypto._
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction._
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.key.ops._
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 package object transaction {
 
-  def createTransaction[F[_]: Async: KryoSerializer: SecurityProvider](
+  def createTransaction[F[_]: Async: Hasher: SecurityProvider](
     keyPair: KeyPair,
     destination: Address,
     prevTx: Option[Signed[Transaction]],
@@ -29,7 +28,7 @@ package object transaction {
 
       parent <- prevTx
         .map(_.value)
-        .map(tx => tx.hashF.map(TransactionReference(tx.ordinal, _)))
+        .map(tx => tx.hash.map(TransactionReference(tx.ordinal, _)))
         .getOrElse(TransactionReference.empty.pure[F])
 
       salt <- TransactionSalt.generate

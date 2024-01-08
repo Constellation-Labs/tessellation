@@ -1,6 +1,6 @@
 package org.tessellation.schema
 
-import cats.MonadThrow
+import cats.effect.kernel.Sync
 import cats.syntax.contravariantSemigroupal._
 import cats.syntax.flatMap._
 
@@ -8,13 +8,13 @@ import scala.collection.immutable.SortedMap
 
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshot, CurrencySnapshotInfo}
 import org.tessellation.ext.crypto._
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.merkletree.syntax._
 import org.tessellation.merkletree.{MerkleRoot, MerkleTree, Proof}
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.snapshot.{SnapshotInfo, StateProof}
 import org.tessellation.schema.transaction.TransactionReference
+import org.tessellation.security.Hasher
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
@@ -29,7 +29,7 @@ case class GlobalSnapshotInfoV1(
   lastTxRefs: SortedMap[Address, TransactionReference],
   balances: SortedMap[Address, Balance]
 ) extends SnapshotInfo[GlobalSnapshotStateProof] {
-  def stateProof[F[_]: MonadThrow: KryoSerializer]: F[GlobalSnapshotStateProof] =
+  def stateProof[F[_]: Sync: Hasher]: F[GlobalSnapshotStateProof] =
     GlobalSnapshotInfoV1.toGlobalSnapshotInfo(this).stateProof[F]
 }
 
@@ -66,14 +66,14 @@ case class GlobalSnapshotInfo(
   lastCurrencySnapshots: SortedMap[Address, Either[Signed[CurrencySnapshot], (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]],
   lastCurrencySnapshotsProofs: SortedMap[Address, Proof]
 ) extends SnapshotInfo[GlobalSnapshotStateProof] {
-  def stateProof[F[_]: MonadThrow: KryoSerializer]: F[GlobalSnapshotStateProof] =
+  def stateProof[F[_]: Sync: Hasher]: F[GlobalSnapshotStateProof] =
     lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
 
-  def stateProof[F[_]: MonadThrow: KryoSerializer](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProof] =
+  def stateProof[F[_]: Sync: Hasher](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProof] =
     (
-      lastStateChannelSnapshotHashes.hashF,
-      lastTxRefs.hashF,
-      balances.hashF
+      lastStateChannelSnapshotHashes.hash,
+      lastTxRefs.hash,
+      balances.hash
     ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot)))
 
 }

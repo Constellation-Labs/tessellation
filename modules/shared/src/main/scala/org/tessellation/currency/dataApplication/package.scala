@@ -445,8 +445,9 @@ object dataApplication {
     roundId: RoundId,
     updates: NonEmptyList[Signed[DataUpdate]],
     updatesHashes: NonEmptyList[Hash]
-  ) extends Encodable {
-    override def toEncode: AnyRef = updatesHashes
+  ) extends Encodable[NonEmptyList[Hash]] {
+    override def toEncode = updatesHashes
+    override def jsonEncoder: Encoder[NonEmptyList[Hash]] = implicitly
   }
 
   object DataApplicationBlock {

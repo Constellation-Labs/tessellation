@@ -26,14 +26,14 @@ import org.tessellation.node.shared.infrastructure.snapshot._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 import fs2.concurrent.SignallingRef
 
 object SharedServices {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider: Metrics: Supervisor](
+  def make[F[_]: Async: KryoSerializer: Hasher: SecurityProvider: Metrics: Supervisor](
     cfg: SharedConfig,
     nodeId: PeerId,
     generation: Generation,
@@ -91,7 +91,7 @@ object SharedServices {
         currencySnapshotValidator
       )
       globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make(stateChannelAllowanceLists)
-      jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.make()
+      jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync
       globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
         BlockAcceptanceManager.make[F](validators.blockValidator),
         GlobalSnapshotStateChannelEventsProcessor

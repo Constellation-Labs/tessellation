@@ -20,14 +20,15 @@ import scala.concurrent.duration.FiniteDuration
 
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.ConsensusConfig
 import org.tessellation.node.shared.infrastructure.consensus.declaration.kind.PeerDeclarationKind
 import org.tessellation.node.shared.infrastructure.consensus.declaration.{Facility, MajoritySignature, Proposal}
 import org.tessellation.schema.gossip.Ordinal
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.security.Hasher
 
 import io.chrisdavenport.mapref.MapRef
+import io.circe.Encoder
 import monocle.syntax.all._
 
 trait ConsensusStorage[F[_], Event, Key, Artifact, Context] {
@@ -113,7 +114,7 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context] {
 
 object ConsensusStorage {
 
-  def make[F[_]: Async: KryoSerializer, Event, Key: Order: Next, Artifact <: AnyRef, Context](
+  def make[F[_]: Async: Hasher, Event, Key: Order: Next, Artifact: Encoder, Context](
     consensusConfig: ConsensusConfig
   ): F[ConsensusStorage[F, Event, Key, Artifact, Context]] = {
     case class ConsensusOutcomeWrapper(
@@ -324,7 +325,7 @@ object ConsensusStorage {
           }
 
         def addArtifact(key: Key, artifact: Artifact): F[Option[ConsensusResources[Artifact]]] =
-          artifact.hashF.flatMap { hash =>
+          artifact.hash.flatMap { hash =>
             updateResources(key) { resources =>
               resources
                 .focus(_.artifacts)

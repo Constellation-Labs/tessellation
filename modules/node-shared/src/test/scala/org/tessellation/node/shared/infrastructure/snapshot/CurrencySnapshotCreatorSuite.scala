@@ -2,33 +2,39 @@ package org.tessellation.node.shared.infrastructure.snapshot
 
 import cats.effect.unsafe.implicits.global
 import cats.effect.{IO, Resource}
-import cats.syntax.all._
 
+import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.kryo._
+import org.tessellation.json.JsonHashSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.cli.CliMethod.snapshotSizeConfig
 import org.tessellation.node.shared.nodeSharedKryoRegistrar
 import org.tessellation.security.signature.{Signed, signature}
-import org.tessellation.security.{KeyPairGenerator, SecurityProvider}
+import org.tessellation.security.{Hasher, KeyPairGenerator, SecurityProvider}
 
 import org.scalacheck.Gen
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
 
 object CurrencySnapshotCreatorSuite extends MutableIOSuite with Checkers {
-  type Res = (KryoSerializer[IO], SecurityProvider[IO])
+  type Res = (KryoSerializer[IO], Hasher[IO], SecurityProvider[IO])
 
   def sharedResource: Resource[IO, Res] =
-    (KryoSerializer.forAsync[IO](nodeSharedKryoRegistrar), SecurityProvider.forAsync[IO]).mapN((_, _))
+    for {
+      implicit0(k: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](nodeSharedKryoRegistrar)
+      implicit0(j: JsonHashSerializer[IO]) <- JsonHashSerializer.forSync[IO].asResource
+      h = Hasher.forSync[IO]
+      sp <- SecurityProvider.forAsync[IO]
+    } yield (k, h, sp)
 
-  def signatureProofsGen(implicit sp: SecurityProvider[IO], ks: KryoSerializer[IO]): Gen[signature.SignatureProof] = for {
+  def signatureProofsGen(implicit sp: SecurityProvider[IO], h: Hasher[IO]): Gen[signature.SignatureProof] = for {
     text <- Gen.alphaStr
     keyPair <- Gen.delay(KeyPairGenerator.makeKeyPair[IO].unsafeRunSync())
     signed = Signed.forAsyncKryo(text, keyPair).unsafeRunSync()
   } yield signed.proofs.head
 
   test("single signature size matches the size limit") { implicit res =>
-    implicit val (kryo, sp) = res
+    implicit val (kryo, h, sp) = res
 
     forall(signatureProofsGen) { proof =>
       for {

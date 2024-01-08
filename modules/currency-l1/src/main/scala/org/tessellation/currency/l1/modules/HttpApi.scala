@@ -20,7 +20,7 @@ import org.tessellation.node.shared.infrastructure.healthcheck.ping.PingHealthCh
 import org.tessellation.node.shared.infrastructure.metrics.Metrics
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
-import org.tessellation.security.SecurityProvider
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
 import org.http4s.server.Router
@@ -30,7 +30,7 @@ import org.http4s.{HttpApp, HttpRoutes}
 object HttpApi {
 
   def make[
-    F[_]: Async: KryoSerializer: SecurityProvider: Metrics: Supervisor: L1NodeContext,
+    F[_]: Async: KryoSerializer: Hasher: SecurityProvider: Metrics: Supervisor: L1NodeContext,
     P <: StateProof,
     S <: Snapshot,
     SI <: SnapshotInfo[P]
@@ -76,7 +76,7 @@ object HttpApi {
 }
 
 sealed abstract class HttpApi[
-  F[_]: Async: KryoSerializer: SecurityProvider: Metrics: Supervisor: L1NodeContext
+  F[_]: Async: KryoSerializer: Hasher: SecurityProvider: Metrics: Supervisor: L1NodeContext
 ] private (
   maybeDataApplication: Option[BaseDataApplicationL1Service[F]],
   storages: Storages[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],

@@ -22,7 +22,7 @@ import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
 import org.tessellation.node.shared.infrastructure.gossip.RumorHandler
 import org.tessellation.node.shared.infrastructure.metrics.Metrics
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.security.SecurityProvider
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 import io.circe.{Decoder, Encoder}
 import org.http4s.client.Client
@@ -30,7 +30,7 @@ import org.http4s.client.Client
 object Consensus {
 
   def make[
-    F[_]: Async: Supervisor: Random: KryoSerializer: SecurityProvider: Metrics,
+    F[_]: Async: Supervisor: Random: KryoSerializer: SecurityProvider: Metrics: Hasher,
     Event: TypeTag: Decoder,
     Key: Show: Order: Next: TypeTag: Encoder: Decoder,
     Artifact <: AnyRef: Eq: TypeTag: Encoder: Decoder,

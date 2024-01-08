@@ -21,10 +21,10 @@ import org.tessellation.node.shared.infrastructure.consensus.trigger.{ConsensusT
 import org.tessellation.node.shared.infrastructure.consensus.update.UnlockConsensusUpdate
 import org.tessellation.node.shared.infrastructure.metrics.Metrics
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.{Signature, SignatureProof, verifySignatureProof}
+import org.tessellation.security.{Hasher, SecurityProvider}
 import org.tessellation.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._
@@ -65,7 +65,7 @@ object ConsensusStateUpdater {
 
   def make[F[
     _
-  ]: Async: KryoSerializer: SecurityProvider: Metrics, Event, Key: Show: Order: TypeTag: Encoder, Artifact <: AnyRef: Eq: TypeTag: Encoder, Context <: AnyRef: Eq: TypeTag](
+  ]: Async: KryoSerializer: Hasher: SecurityProvider: Metrics, Event, Key: Show: Order: TypeTag: Encoder, Artifact <: AnyRef: Eq: TypeTag: Encoder, Context <: AnyRef: Eq: TypeTag](
     consensusFns: ConsensusFunctions[F, Event, Key, Artifact, Context],
     consensusStorage: ConsensusStorage[F, Event, Key, Artifact, Context],
     gossip: Gossip[F],
@@ -214,7 +214,7 @@ object ConsensusStateUpdater {
                 }.traverse {
                   case (bound, candidates, majorityTrigger) =>
                     Applicative[F].whenA(majorityTrigger === TimeTrigger)(consensusStorage.clearTimeTrigger) >>
-                      state.facilitators.hashF.flatMap { facilitatorsHash =>
+                      state.facilitators.hash.flatMap { facilitatorsHash =>
                         for {
                           peerEvents <- consensusStorage.pullEvents(bound)
                           events = peerEvents.toList.flatMap(_._2).map(_._2).toSet
@@ -232,7 +232,7 @@ object ConsensusStateUpdater {
                               (peerId, events.filter { case (_, event) => returnedEvents.contains(event) })
                           }.filter { case (_, events) => events.nonEmpty }
                           _ <- consensusStorage.addEvents(returnedPeerEvents)
-                          hash <- artifact.hashF
+                          hash <- artifact.hash
                           effect = gossip.spread(ConsensusPeerDeclaration(state.key, Proposal(hash, facilitatorsHash))) *>
                             gossip.spreadCommon(ConsensusArtifact(state.key, artifact))
                           newState =
@@ -266,7 +266,7 @@ object ConsensusStateUpdater {
                       allProposalHashes,
                       state.facilitators.toSet
                     ).flatMap { maybeMajorityArtifactInfo =>
-                      state.facilitators.hashF.flatMap { facilitatorsHash =>
+                      state.facilitators.hash.flatMap { facilitatorsHash =>
                         maybeMajorityArtifactInfo.traverse { majorityArtifactInfo =>
                           val newState =
                             state.copy(status =
@@ -311,7 +311,7 @@ object ConsensusStateUpdater {
                           .whenA(allSignatures.size =!= validSignatures.size)
                       }
                 }.flatMap { maybeOnlyValidSignatures =>
-                  state.facilitators.hashF.map { facilitatorsHash =>
+                  state.facilitators.hash.map { facilitatorsHash =>
                     maybeOnlyValidSignatures.flatMap { validSignatures =>
                       NonEmptySet.fromSet(validSignatures.toSortedSet).map { validSignaturesNes =>
                         val signedArtifact = Signed(majorityArtifactInfo.artifact, validSignaturesNes)

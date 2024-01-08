@@ -108,7 +108,7 @@ abstract class CurrencyL1App(
           dataApplicationService,
           maybeMajorityPeerIds
         )
-      jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.make[IO]().asResource
+      jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync[IO].asResource
       snapshotProcessor = CurrencySnapshotProcessor.make(
         method.identifier,
         storages.address,

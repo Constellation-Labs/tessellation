@@ -7,12 +7,10 @@ import cats.syntax.bifunctor._
 import cats.syntax.either._
 import cats.syntax.functor._
 
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.statechannel.StateChannelValidator.StateChannelValidationError
 import org.tessellation.node.shared.http.p2p.PeerResponse
 import org.tessellation.node.shared.http.p2p.PeerResponse.PeerResponse
 import org.tessellation.schema.address.Address
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 import org.tessellation.statechannel.StateChannelSnapshotBinary
 
@@ -30,7 +28,7 @@ trait StateChannelSnapshotClient[F[_]] {
 
 object StateChannelSnapshotClient {
 
-  def make[F[_]: Async: SecurityProvider: KryoSerializer](
+  def make[F[_]: Async](
     client: Client[F]
   ): StateChannelSnapshotClient[F] =
     new StateChannelSnapshotClient[F] {

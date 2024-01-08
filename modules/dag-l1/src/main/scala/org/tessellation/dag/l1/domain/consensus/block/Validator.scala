@@ -16,8 +16,8 @@ import org.tessellation.node.shared.domain.node.NodeStorage
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.node.NodeState.Ready
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 import eu.timepit.refined.auto.autoUnwrap
 import eu.timepit.refined.types.numeric.PosInt
@@ -78,7 +78,7 @@ object Validator {
         }
     } yield res
 
-  def isPeerInputValid[F[_]: Async: KryoSerializer: SecurityProvider](
+  def isPeerInputValid[F[_]: Async: KryoSerializer: SecurityProvider: Hasher](
     input: Signed[PeerBlockConsensusInput]
   ): F[Boolean] =
     for {

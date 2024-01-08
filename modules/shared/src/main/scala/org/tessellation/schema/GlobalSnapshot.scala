@@ -1,13 +1,12 @@
 package org.tessellation.schema
 
-import cats.MonadThrow
 import cats.data.NonEmptyList
+import cats.effect.kernel.Sync
 import cats.syntax.functor._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.epoch.EpochProgress
@@ -16,10 +15,10 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.semver.SnapshotVersion
 import org.tessellation.schema.snapshot.{FullSnapshot, IncrementalSnapshot}
 import org.tessellation.schema.transaction.RewardTransaction
-import org.tessellation.security.Hashed
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hashed, Hasher}
 import org.tessellation.statechannel.StateChannelSnapshotBinary
 import org.tessellation.syntax.sortedCollection._
 
@@ -46,7 +45,7 @@ case class GlobalIncrementalSnapshot(
 ) extends IncrementalSnapshot[GlobalSnapshotStateProof]
 
 object GlobalIncrementalSnapshot {
-  def fromGlobalSnapshot[F[_]: MonadThrow: KryoSerializer](snapshot: GlobalSnapshot): F[GlobalIncrementalSnapshot] =
+  def fromGlobalSnapshot[F[_]: Sync: Hasher](snapshot: GlobalSnapshot): F[GlobalIncrementalSnapshot] =
     snapshot.info.stateProof.map { stateProof =>
       GlobalIncrementalSnapshot(
         snapshot.ordinal,
@@ -99,7 +98,7 @@ object GlobalSnapshot {
       )
     )
 
-  def mkFirstIncrementalSnapshot[F[_]: MonadThrow: KryoSerializer](genesis: Hashed[GlobalSnapshot]): F[GlobalIncrementalSnapshot] =
+  def mkFirstIncrementalSnapshot[F[_]: Sync: Hasher](genesis: Hashed[GlobalSnapshot]): F[GlobalIncrementalSnapshot] =
     genesis.info.stateProof.map { stateProof =>
       GlobalIncrementalSnapshot(
         genesis.ordinal.next,

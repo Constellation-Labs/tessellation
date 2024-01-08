@@ -6,13 +6,12 @@ import cats.syntax.functor._
 
 import org.tessellation.currency.dataApplication.L0NodeContext
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.schema.SnapshotOrdinal
-import org.tessellation.security.{Hashed, SecurityProvider}
+import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
 
 object L0NodeContext {
-  def make[F[_]: SecurityProvider: KryoSerializer: Async](
+  def make[F[_]: SecurityProvider: Hasher: Async](
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
   ): L0NodeContext[F] = new L0NodeContext[F] {
     def securityProvider: SecurityProvider[F] = SecurityProvider[F]

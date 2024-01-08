@@ -4,14 +4,13 @@ import java.security.KeyPair
 
 import cats.effect._
 import cats.effect.std.{Random, Supervisor}
-import cats.syntax.either._
 import cats.syntax.show._
 import cats.syntax.traverse._
 
 import org.tessellation.env.env._
 import org.tessellation.ext.cats.effect._
-import org.tessellation.ext.crypto._
 import org.tessellation.ext.kryo._
+import org.tessellation.json.JsonHashSerializer
 import org.tessellation.keytool.KeyStoreUtils
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared._
@@ -28,7 +27,7 @@ import org.tessellation.node.shared.resources.SharedResources
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.security.SecurityProvider
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 import com.monovore.decline.Opts
 import com.monovore.decline.effect.CommandIOApp
@@ -94,118 +93,122 @@ abstract class TessellationIOApp[A <: CliMethod](
               logger.info(s"App environment: ${cfg.environment}") >>
               logger.info(s"App version: ${version.show}") >>
               KryoSerializer.forAsync[IO](registrar).use { implicit _kryoPool =>
-                Metrics.forAsync[IO](Seq(("application", name))).use { implicit _metrics =>
-                  SignallingRef.of[IO, Boolean](false).flatMap { _stopSignal =>
-                    SignallingRef.of[IO, Unit](()).flatMap { _restartSignal =>
-                      def mkNodeShared =
-                        Supervisor[IO].flatMap { implicit _supervisor =>
-                          def loadSeedlist(name: String, seedlistPath: Option[SeedListPath]): IO[Option[Set[SeedlistEntry]]] =
-                            seedlistPath
-                              .traverse(SeedlistLoader.make[IO].load)
-                              .flatTap { seedlist =>
-                                seedlist
-                                  .map(_.size)
-                                  .fold(logger.info(s"$name disabled.")) { size =>
-                                    logger.info(s"$name enabled. Allowed nodes: $size")
-                                  }
-                              }
+                JsonHashSerializer.forSync[IO].asResource.use { implicit _jsonHashSerializer =>
+                  implicit val _hasher = Hasher.forSync[IO]
+                  Metrics.forAsync[IO](Seq(("application", name))).use { implicit _metrics =>
+                    SignallingRef.of[IO, Boolean](false).flatMap { _stopSignal =>
+                      SignallingRef.of[IO, Unit](()).flatMap { _restartSignal =>
+                        def mkNodeShared =
+                          Supervisor[IO].flatMap { implicit _supervisor =>
+                            def loadSeedlist(name: String, seedlistPath: Option[SeedListPath]): IO[Option[Set[SeedlistEntry]]] =
+                              seedlistPath
+                                .traverse(SeedlistLoader.make[IO].load)
+                                .flatTap { seedlist =>
+                                  seedlist
+                                    .map(_.size)
+                                    .fold(logger.info(s"$name disabled.")) { size =>
+                                      logger.info(s"$name enabled. Allowed nodes: $size")
+                                    }
+                                }
 
-                          for {
-                            _ <- logger.info(s"Self peerId: $selfId").asResource
-                            _generation <- Generation.make[IO].asResource
-                            versionHash <- version.hash.liftTo[IO].asResource
-                            _seedlist <- loadSeedlist("Seedlist", method.seedlistPath).asResource
-                            _l0Seedlist <- loadSeedlist("l0Seedlist", method.l0SeedlistPath).asResource
-                            _prioritySeedlist <- loadSeedlist("prioritySeedlist", method.prioritySeedlistPath).asResource
-                            _trustRatings <- method.trustRatingsPath.traverse(TrustRatingCsvLoader.make[IO].load).asResource
-                            storages <- SharedStorages.make[IO](clusterId, cfg).asResource
-                            res <- SharedResources.make[IO](cfg, _keyPair.getPrivate, storages.session, selfId)
-                            session = Session.make[IO](storages.session, storages.node, storages.cluster)
-                            p2pClient = SharedP2PClient.make[IO](res.client, session)
-                            queues <- SharedQueues.make[IO].asResource
-                            validators = SharedValidators.make[IO](
-                              _l0Seedlist,
-                              _seedlist,
-                              method.stateChannelAllowanceLists,
-                              cfg.snapshotSizeConfig.maxStateChannelSnapshotBinarySizeInBytes
-                            )
-                            services <- SharedServices
-                              .make[IO](
-                                cfg,
-                                selfId,
-                                _generation,
-                                _keyPair,
-                                storages,
-                                queues,
-                                session,
-                                p2pClient.node,
-                                validators,
+                            for {
+                              _ <- logger.info(s"Self peerId: $selfId").asResource
+                              _generation <- Generation.make[IO].asResource
+                              versionHash <- _hasher.hash(version).asResource
+                              _seedlist <- loadSeedlist("Seedlist", method.seedlistPath).asResource
+                              _l0Seedlist <- loadSeedlist("l0Seedlist", method.l0SeedlistPath).asResource
+                              _prioritySeedlist <- loadSeedlist("prioritySeedlist", method.prioritySeedlistPath).asResource
+                              _trustRatings <- method.trustRatingsPath.traverse(TrustRatingCsvLoader.make[IO].load).asResource
+                              storages <- SharedStorages.make[IO](clusterId, cfg).asResource
+                              res <- SharedResources.make[IO](cfg, _keyPair.getPrivate, storages.session, selfId)
+                              session = Session.make[IO](storages.session, storages.node, storages.cluster)
+                              p2pClient = SharedP2PClient.make[IO](res.client, session)
+                              queues <- SharedQueues.make[IO].asResource
+                              validators = SharedValidators.make[IO](
+                                _l0Seedlist,
                                 _seedlist,
-                                _restartSignal,
-                                versionHash,
-                                cfg.collateral,
                                 method.stateChannelAllowanceLists,
-                                cfg.environment
+                                cfg.snapshotSizeConfig.maxStateChannelSnapshotBinarySizeInBytes
                               )
-                              .asResource
+                              services <- SharedServices
+                                .make[IO](
+                                  cfg,
+                                  selfId,
+                                  _generation,
+                                  _keyPair,
+                                  storages,
+                                  queues,
+                                  session,
+                                  p2pClient.node,
+                                  validators,
+                                  _seedlist,
+                                  _restartSignal,
+                                  versionHash,
+                                  cfg.collateral,
+                                  method.stateChannelAllowanceLists,
+                                  cfg.environment
+                                )
+                                .asResource
 
-                            programs <- SharedPrograms
-                              .make[IO](
-                                cfg,
-                                storages,
-                                services,
-                                p2pClient.cluster,
-                                p2pClient.sign,
-                                services.localHealthcheck,
-                                _seedlist,
-                                selfId,
-                                versionHash
-                              )
-                              .asResource
+                              programs <- SharedPrograms
+                                .make[IO](
+                                  cfg,
+                                  storages,
+                                  services,
+                                  p2pClient.cluster,
+                                  p2pClient.sign,
+                                  services.localHealthcheck,
+                                  _seedlist,
+                                  selfId,
+                                  versionHash
+                                )
+                                .asResource
 
-                            nodeShared = new NodeShared[IO] {
-                              val random = _random
-                              val securityProvider = _securityProvider
-                              val kryoPool = _kryoPool
-                              val metrics = _metrics
-                              val supervisor = _supervisor
+                              nodeShared = new NodeShared[IO] {
+                                val random = _random
+                                val securityProvider = _securityProvider
+                                val kryoPool = _kryoPool
+                                val metrics = _metrics
+                                val supervisor = _supervisor
+                                val hasher = _hasher
 
-                              val keyPair = _keyPair
-                              val seedlist = _seedlist
-                              val generation = _generation
-                              val trustRatings = _trustRatings
+                                val keyPair = _keyPair
+                                val seedlist = _seedlist
+                                val generation = _generation
+                                val trustRatings = _trustRatings
 
-                              val sharedResources = res
-                              val sharedP2PClient = p2pClient
-                              val sharedQueues = queues
-                              val sharedStorages = storages
-                              val sharedServices = services
-                              val sharedPrograms = programs
-                              val sharedValidators = validators
-                              val prioritySeedlist = _prioritySeedlist
+                                val sharedResources = res
+                                val sharedP2PClient = p2pClient
+                                val sharedQueues = queues
+                                val sharedStorages = storages
+                                val sharedServices = services
+                                val sharedPrograms = programs
+                                val sharedValidators = validators
+                                val prioritySeedlist = _prioritySeedlist
 
-                              def restartSignal = _restartSignal
-                              def stopSignal = _stopSignal
-                            }
-                          } yield nodeShared
-                        }
-
-                      def startup: Resource[IO, Unit] =
-                        mkNodeShared.handleErrorWith { (e: Throwable) =>
-                          (logger.error(e)(s"Unhandled exception during initialization.") >> IO
-                            .raiseError[NodeShared[IO]](e)).asResource
-                        }.flatMap { nodeShared =>
-                          run(method, nodeShared).handleErrorWith { (e: Throwable) =>
-                            (logger.error(e)(s"Unhandled exception during runtime.") >> IO.raiseError[Unit](e)).asResource
+                                def restartSignal = _restartSignal
+                                def stopSignal = _stopSignal
+                              }
+                            } yield nodeShared
                           }
-                        }
 
-                      _restartSignal.discrete.switchMap { _ =>
-                        Stream
-                          .eval(startup.useForever)
-                      }.interruptWhen {
-                        _stopSignal.discrete
-                      }.compile.drain.as(ExitCode.Success)
+                        def startup: Resource[IO, Unit] =
+                          mkNodeShared.handleErrorWith { (e: Throwable) =>
+                            (logger.error(e)(s"Unhandled exception during initialization.") >> IO
+                              .raiseError[NodeShared[IO]](e)).asResource
+                          }.flatMap { nodeShared =>
+                            run(method, nodeShared).handleErrorWith { (e: Throwable) =>
+                              (logger.error(e)(s"Unhandled exception during runtime.") >> IO.raiseError[Unit](e)).asResource
+                            }
+                          }
+
+                        _restartSignal.discrete.switchMap { _ =>
+                          Stream
+                            .eval(startup.useForever)
+                        }.interruptWhen {
+                          _stopSignal.discrete
+                        }.compile.drain.as(ExitCode.Success)
+                      }
                     }
                   }
                 }

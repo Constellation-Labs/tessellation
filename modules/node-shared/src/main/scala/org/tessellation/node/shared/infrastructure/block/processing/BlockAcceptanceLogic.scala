@@ -13,21 +13,20 @@ import cats.syntax.semigroup._
 import cats.syntax.traverse._
 import cats.syntax.traverseFilter._
 
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.block.processing._
 import org.tessellation.schema.Block
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance, BalanceArithmeticError}
 import org.tessellation.schema.transaction.TransactionReference
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.cats._
 
 object BlockAcceptanceLogic {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider]: BlockAcceptanceLogic[F] =
+  def make[F[_]: Async: Hasher: SecurityProvider]: BlockAcceptanceLogic[F] =
     new BlockAcceptanceLogic[F] {
 
       def acceptBlock(

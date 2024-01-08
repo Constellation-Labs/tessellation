@@ -14,6 +14,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
+import org.tessellation.security.Hasher
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.SignatureProof
@@ -34,7 +35,7 @@ trait GlobalSnapshotStateChannelAcceptanceManager[F[_]] {
 }
 
 object GlobalSnapshotStateChannelAcceptanceManager {
-  def make[F[_]: Async: KryoSerializer](
+  def make[F[_]: Async: KryoSerializer: Hasher](
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
     pullDelay: NonNegLong = NonNegLong.MinValue,
     purgeDelay: NonNegLong = NonNegLong.MinValue

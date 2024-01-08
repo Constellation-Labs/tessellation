@@ -1,22 +1,24 @@
 package org.tessellation.merkletree
 
-import cats.MonadThrow
 import cats.data.NonEmptyList
+import cats.effect.kernel.Sync
 import cats.syntax.functor._
 import cats.syntax.traverse._
 
 import scala.collection.immutable.SortedMap
 
 import org.tessellation.ext.crypto._
-import org.tessellation.kryo.KryoSerializer
+import org.tessellation.security.Hasher
+
+import io.circe.Encoder
 
 object syntax extends SortedMapOps
 
 trait SortedMapOps {
-  implicit class SortedMapOpsImpl[K, V](a: SortedMap[K, V]) {
-    def merkleTree[F[_]: MonadThrow: KryoSerializer]: F[Option[MerkleTree]] =
+  implicit class SortedMapOpsImpl[K: Encoder, V: Encoder](a: SortedMap[K, V]) {
+    def merkleTree[F[_]: Sync: Hasher]: F[Option[MerkleTree]] =
       a.toList
-        .traverse(_.hashF)
+        .traverse(_.hash)
         .map(NonEmptyList.fromList)
         .map(_.map(MerkleTree.from))
   }

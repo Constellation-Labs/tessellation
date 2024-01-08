@@ -16,7 +16,6 @@ import org.tessellation.effects.GenUUID
 import org.tessellation.env.AppEnvironment
 import org.tessellation.env.AppEnvironment.Dev
 import org.tessellation.ext.crypto._
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.cluster.services.{Cluster, Session}
 import org.tessellation.node.shared.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tessellation.node.shared.domain.healthcheck.LocalHealthcheck
@@ -28,9 +27,9 @@ import org.tessellation.schema.cluster._
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.Peer.toP2PContext
 import org.tessellation.schema.peer._
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 import com.comcast.ip4s.{Host, IpLiteralSyntax}
 import fs2.{Pipe, Stream}
@@ -38,7 +37,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object Joining {
 
-  def make[F[_]: Async: GenUUID: SecurityProvider: KryoSerializer](
+  def make[F[_]: Async: GenUUID: SecurityProvider: Hasher](
     environment: AppEnvironment,
     nodeStorage: NodeStorage[F],
     clusterStorage: ClusterStorage[F],
@@ -74,7 +73,7 @@ object Joining {
         )
       )
 
-  def make[F[_]: Async: GenUUID: SecurityProvider: KryoSerializer](
+  def make[F[_]: Async: GenUUID: SecurityProvider: Hasher](
     joiningQueue: Queue[F, P2PContext],
     environment: AppEnvironment,
     nodeStorage: NodeStorage[F],
@@ -136,7 +135,7 @@ object Joining {
   }
 }
 
-sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerializer] private (
+sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: Hasher] private (
   environment: AppEnvironment,
   nodeStorage: NodeStorage[F],
   clusterStorage: ClusterStorage[F],
@@ -287,7 +286,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: KryoSerial
 
       _ <- Applicative[F].unlessA(registrationRequest.id != selfId)(IdDuplicationFound.raiseError[F, Unit])
 
-      seedlistHash <- seedlist.map(_.map(_.peerId)).hashF
+      seedlistHash <- seedlist.map(_.map(_.peerId)).hash
       _ <- Applicative[F].unlessA(registrationRequest.seedlist === seedlistHash)(SeedlistDoesNotMatch.raiseError[F, Unit])
 
     } yield ()

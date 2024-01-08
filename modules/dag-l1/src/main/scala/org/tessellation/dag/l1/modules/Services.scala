@@ -7,7 +7,6 @@ import org.tessellation.dag.l1.config.types.AppConfig
 import org.tessellation.dag.l1.domain.block.BlockService
 import org.tessellation.dag.l1.domain.transaction.TransactionService
 import org.tessellation.dag.l1.http.p2p.P2PClient
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.cluster.services.{Cluster, Session}
 import org.tessellation.node.shared.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.node.shared.domain.collateral.Collateral
@@ -21,12 +20,12 @@ import org.tessellation.node.shared.modules.SharedServices
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
-import org.tessellation.security.SecurityProvider
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 object Services {
 
   def make[
-    F[_]: Async: SecurityProvider: KryoSerializer,
+    F[_]: Async: SecurityProvider: Hasher,
     P <: StateProof,
     S <: Snapshot,
     SI <: SnapshotInfo[P]

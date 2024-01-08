@@ -17,11 +17,11 @@ import org.tessellation.node.shared.domain.snapshot.programs.Download
 import org.tessellation.node.shared.infrastructure.snapshot.{GlobalSnapshotContextFunctions, PeerSelect}
 import org.tessellation.node.shared.modules.SharedPrograms
 import org.tessellation.schema.SnapshotOrdinal
-import org.tessellation.security.SecurityProvider
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 object Programs {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider: Random](
+  def make[F[_]: Async: KryoSerializer: Hasher: SecurityProvider: Random](
     sharedPrograms: SharedPrograms[F],
     storages: Storages[F],
     services: Services[F],

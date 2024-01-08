@@ -26,7 +26,7 @@ import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.security.hash.ProofsHash
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Hashed, SecurityProvider}
+import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
 
 import derevo.cats.show
 import derevo.derive
@@ -34,7 +34,7 @@ import eu.timepit.refined.types.numeric.NonNegLong
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 abstract class SnapshotProcessor[
-  F[_]: Async: KryoSerializer: SecurityProvider,
+  F[_]: Async: KryoSerializer: SecurityProvider: Hasher,
   P <: StateProof,
   S <: Snapshot: Eq,
   SI <: SnapshotInfo[P]

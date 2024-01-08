@@ -26,7 +26,7 @@ import org.tessellation.node.shared.http.p2p.clients.StateChannelSnapshotClient
 import org.tessellation.node.shared.infrastructure.snapshot.DataApplicationSnapshotAcceptanceManager
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Hashed, SecurityProvider}
+import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
 import org.tessellation.statechannel.StateChannelSnapshotBinary
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -40,7 +40,7 @@ trait StateChannelSnapshotService[F[_]] {
 }
 
 object StateChannelSnapshotService {
-  def make[F[_]: Async: KryoSerializer: SecurityProvider](
+  def make[F[_]: Async: KryoSerializer: Hasher: SecurityProvider](
     keyPair: KeyPair,
     lastBinaryHashStorage: LastBinaryHashStorage[F],
     stateChannelSnapshotClient: StateChannelSnapshotClient[F],

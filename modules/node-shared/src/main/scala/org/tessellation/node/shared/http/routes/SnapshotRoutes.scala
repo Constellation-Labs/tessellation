@@ -15,6 +15,7 @@ import org.tessellation.node.shared.infrastructure.snapshot.storage.SnapshotLoca
 import org.tessellation.routes.internal._
 import org.tessellation.schema.GlobalSnapshot
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotMetadata}
+import org.tessellation.security.Hasher
 import org.tessellation.security.signature.Signed
 
 import io.circe.Encoder
@@ -25,7 +26,7 @@ import org.http4s.{EntityEncoder, HttpRoutes}
 import shapeless.HNil
 import shapeless.syntax.singleton._
 
-final case class SnapshotRoutes[F[_]: Async: KryoSerializer, S <: Snapshot: Encoder, C: Encoder](
+final case class SnapshotRoutes[F[_]: Async: Hasher: KryoSerializer, S <: Snapshot: Encoder, C: Encoder](
   snapshotStorage: SnapshotStorage[F, S, C],
   fullGlobalSnapshotStorage: Option[SnapshotLocalFileSystemStorage[F, GlobalSnapshot]],
   prefixPath: InternalUrlPrefix

@@ -11,7 +11,6 @@ import cats.syntax.option._
 
 import org.tessellation.ext.crypto._
 import org.tessellation.json.JsonBinarySerializer
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.rosetta.domain._
 import org.tessellation.rosetta.domain.amount.Amount
 import org.tessellation.rosetta.domain.api.construction.ConstructionMetadata.MetadataResult
@@ -21,11 +20,11 @@ import org.tessellation.rosetta.domain.error._
 import org.tessellation.rosetta.domain.operation._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction._
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.key.ops._
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.{Signature, SignatureProof}
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 import eu.timepit.refined.auto._
 
@@ -40,7 +39,7 @@ trait ConstructionService[F[_]] {
 }
 
 object ConstructionService {
-  def make[F[_]: Async: SecurityProvider: KryoSerializer](
+  def make[F[_]: Async: SecurityProvider: Hasher](
     getLastAcceptedReference: Address => F[TransactionReference],
     salt: F[TransactionSalt]
   ): ConstructionService[F] = new ConstructionService[F] {
@@ -105,9 +104,9 @@ object ConstructionService {
       operations: NonEmptyList[Operation],
       metadataResult: MetadataResult
     ): EitherT[F, ConstructionError, PayloadsResult] =
-      EitherT(
-        salt.map(transactionSalt =>
-          for {
+      EitherT {
+        salt.flatMap { transactionSalt =>
+          (for {
             (positiveOperation, negativeOperation) <- getPayloadOperations(operations)
 
             transactionAmount <- Either.fromOption(
@@ -132,16 +131,21 @@ object ConstructionService {
                 salt = transactionSalt
               )
 
-            serializedTxn = JsonBinarySerializer.serialize(unsignedTx)
+          } yield (sourceAddress, unsignedTx)).traverse {
+            case (sourceAddress, unsignedTx) =>
+              unsignedTx.hash.map { unsignedTxHash =>
+                val serializedTxn = JsonBinarySerializer.serialize(unsignedTx)
 
-            unsignedTxHash <- unsignedTx.hash.leftMap[ConstructionError](e => SerializationError(e.getMessage))
-            signedBytes = Hex.fromBytes(unsignedTxHash.getBytes)
+                val signedBytes = Hex.fromBytes(unsignedTxHash.getBytes)
 
-            payload = SigningPayload(AccountIdentifier(sourceAddress, none), signedBytes, SignatureType.ECDSA)
+                val payload = SigningPayload(AccountIdentifier(sourceAddress, none), signedBytes, SignatureType.ECDSA)
 
-          } yield PayloadsResult(Hex.fromBytes(serializedTxn), NonEmptyList.one(payload))
-        )
-      )
+                PayloadsResult(Hex.fromBytes(serializedTxn), NonEmptyList.one(payload))
+              }
+          }
+
+        }
+      }
 
     private def transactionToOperations(transaction: Transaction): NonEmptyList[Operation] = {
       val positiveAmount = Amount.fromTransactionAmount(transaction.amount)

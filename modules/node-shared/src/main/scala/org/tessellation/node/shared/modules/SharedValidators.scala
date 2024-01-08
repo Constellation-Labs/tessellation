@@ -12,14 +12,14 @@ import org.tessellation.node.shared.infrastructure.block.processing.BlockValidat
 import org.tessellation.node.shared.infrastructure.gossip.RumorValidator
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.SignedValidator
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 import eu.timepit.refined.types.numeric.PosLong
 
 object SharedValidators {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider](
+  def make[F[_]: Async: KryoSerializer: Hasher: SecurityProvider](
     l0Seedlist: Option[Set[SeedlistEntry]],
     seedlist: Option[Set[SeedlistEntry]],
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],

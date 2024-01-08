@@ -23,12 +23,12 @@ import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotReference}
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed.InvalidSignatureForHash
-import org.tessellation.security.{Hashed, SecurityProvider}
+import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
 
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-sealed abstract class CurrencySnapshotProcessor[F[_]: Async: KryoSerializer: SecurityProvider]
+sealed abstract class CurrencySnapshotProcessor[F[_]: Async: KryoSerializer: Hasher: SecurityProvider]
     extends SnapshotProcessor[
       F,
       CurrencySnapshotStateProof,
@@ -38,7 +38,7 @@ sealed abstract class CurrencySnapshotProcessor[F[_]: Async: KryoSerializer: Sec
 
 object CurrencySnapshotProcessor {
 
-  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider](
+  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider: Hasher](
     identifier: Address,
     addressStorage: AddressStorage[F],
     blockStorage: BlockStorage[F],

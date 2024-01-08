@@ -10,7 +10,6 @@ import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.list._
-import cats.syntax.option._
 import cats.syntax.order._
 import cats.syntax.show._
 import cats.{Eq, Order, Show}
@@ -20,11 +19,10 @@ import scala.util.control.NoStackTrace
 
 import org.tessellation.ext.codecs.NonEmptySetCodec
 import org.tessellation.ext.crypto._
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.ID.Id
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.signature.signature.SignatureProof
-import org.tessellation.security.{Hashed, SecurityProvider}
+import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
 
 import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.{Decoder, Encoder}
@@ -35,7 +33,7 @@ import org.scalacheck.Arbitrary.arbitrary
 case class Signed[+A](value: A, proofs: NonEmptySet[SignatureProof])
 
 object Signed {
-  case class InvalidSignatureForHash[A <: AnyRef](signed: Signed[A]) extends NoStackTrace
+  case class InvalidSignatureForHash[A](signed: Signed[A]) extends NoStackTrace
 
   implicit def show[A: Show]: Show[Signed[A]] =
     s => s"Signed(value=${s.value.show}, proofs=${s.proofs.show})"
@@ -61,7 +59,7 @@ object Signed {
       tail <- arbitrary[SortedSet[SignatureProof]]
     } yield Signed(value, NonEmptySet(head, tail)))
 
-  def forAsyncKryo[F[_]: Async: SecurityProvider: KryoSerializer, A <: AnyRef](
+  def forAsyncKryo[F[_]: Async: SecurityProvider: Hasher, A: Encoder](
     data: A,
     keyPair: KeyPair
   ): F[Signed[A]] =
@@ -69,7 +67,7 @@ object Signed {
       Signed[A](data, NonEmptySet.fromSetUnsafe(SortedSet(sp)))
     }
 
-  def forAsync[F[_]: Async: SecurityProvider, A <: AnyRef](
+  def forAsync[F[_]: Async: SecurityProvider, A](
     data: A,
     keyPair: KeyPair
   )(implicit toBytes: A => F[Array[Byte]]): F[Signed[A]] =
@@ -79,12 +77,12 @@ object Signed {
       }
     }
 
-  implicit class SignedOps[A <: AnyRef](signed: Signed[A]) {
+  implicit class SignedOps[A](signed: Signed[A]) {
 
     def addProof(proof: SignatureProof): Signed[A] =
       signed.copy(proofs = NonEmptySet.fromSetUnsafe(signed.proofs.toSortedSet + proof))
 
-    def signAlsoWith[F[_]: Async: SecurityProvider: KryoSerializer](keyPair: KeyPair): F[Signed[A]] =
+    def signAlsoWith[F[_]: Async: SecurityProvider: Hasher](keyPair: KeyPair)(implicit encoder: Encoder[A]): F[Signed[A]] =
       SignatureProof.fromData(keyPair)(signed.value).map { sp =>
         Signed(signed.value, signed.proofs.add(sp))
       }
@@ -99,17 +97,17 @@ object Signed {
     def isSignedExclusivelyBy(signers: Set[Id]): Boolean =
       signed.proofs.map(_.id).toSortedSet.unsorted === signers
 
-    def hasValidSignature[F[_]: Async: SecurityProvider: KryoSerializer]: F[Boolean] =
-      validProofs(None).map(_.isRight)
+    def hasValidSignature[F[_]: Async: SecurityProvider: Hasher](implicit encoder: Encoder[A]): F[Boolean] =
+      validProofs(encoder.asRight).map(_.isRight)
 
-    def hasValidSignature[F[_]: Async: SecurityProvider: KryoSerializer](toBytes: A => F[Array[Byte]]): F[Boolean] =
-      validProofs(toBytes.some).map(_.isRight)
+    def hasValidSignature[F[_]: Async: SecurityProvider: Hasher](toBytes: A => F[Array[Byte]]): F[Boolean] =
+      validProofs(toBytes.asLeft).map(_.isRight)
 
-    def validProofs[F[_]: Async: SecurityProvider: KryoSerializer](
-      toBytes: Option[A => F[Array[Byte]]]
+    def validProofs[F[_]: Async: SecurityProvider: Hasher](
+      toBytesOrEncoder: Either[A => F[Array[Byte]], Encoder[A]]
     ): F[Either[NonEmptySet[SignatureProof], NonEmptySet[SignatureProof]]] =
       for {
-        hash <- toBytes.map(toHashed(_).map(_.hash)).getOrElse(signed.value.hashF)
+        hash <- toBytesOrEncoder.fold(toHashed(_).map(_.hash), implicit encoder => signed.value.hash)
         invalidOrValidProofs <- signed.proofs.toNonEmptyList.traverse { proof =>
           signature
             .verifySignatureProof(hash, proof)
@@ -124,13 +122,15 @@ object Signed {
         }
       } yield invalidOrValidProofs
 
-    def toHashedWithSignatureCheck[F[_]: Async: KryoSerializer: SecurityProvider]: F[Either[InvalidSignatureForHash[A], Hashed[A]]] =
+    def toHashedWithSignatureCheck[F[_]: Async: Hasher: SecurityProvider](
+      implicit encoder: Encoder[A]
+    ): F[Either[InvalidSignatureForHash[A], Hashed[A]]] =
       hasValidSignature.ifM(
         toHashed.map(_.asRight[InvalidSignatureForHash[A]]),
         InvalidSignatureForHash(signed).asLeft[Hashed[A]].pure[F]
       )
 
-    def toHashedWithSignatureCheck[F[_]: Async: KryoSerializer: SecurityProvider](
+    def toHashedWithSignatureCheck[F[_]: Async: Hasher: SecurityProvider](
       toBytes: A => F[Array[Byte]]
     ): F[Either[InvalidSignatureForHash[A], Hashed[A]]] =
       hasValidSignature(toBytes).ifM(
@@ -138,20 +138,20 @@ object Signed {
         InvalidSignatureForHash(signed).asLeft[Hashed[A]].pure[F]
       )
 
-    def toHashed[F[_]: Async: KryoSerializer]: F[Hashed[A]] =
-      signed.value.hashF.flatMap { hash =>
+    def toHashed[F[_]: Async: Hasher](implicit encoder: Encoder[A]): F[Hashed[A]] =
+      signed.value.hash.flatMap { hash =>
         proofsHash.map { proofsHash =>
           Hashed(signed, hash, proofsHash)
         }
       }
 
-    def toHashed[F[_]: Async: KryoSerializer](toBytes: A => F[Array[Byte]]): F[Hashed[A]] =
+    def toHashed[F[_]: Async: Hasher](toBytes: A => F[Array[Byte]]): F[Hashed[A]] =
       toBytes(signed.value).map(Hash.fromBytes).flatMap { hash =>
         proofsHash.map(Hashed(signed, hash, _))
       }
 
-    def proofsHash[F[_]: Async: KryoSerializer]: F[ProofsHash] =
-      signed.proofs.toSortedSet.hashF
+    def proofsHash[F[_]: Async: Hasher]: F[ProofsHash] =
+      signed.proofs.toSortedSet.hash
         .map(hash => ProofsHash(hash.coerce))
   }
 

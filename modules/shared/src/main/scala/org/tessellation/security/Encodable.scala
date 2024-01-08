@@ -1,5 +1,8 @@
 package org.tessellation.security
 
-trait Encodable {
-  def toEncode: AnyRef = this
+import io.circe.Encoder
+
+trait Encodable[A] {
+  def toEncode: A
+  def jsonEncoder: Encoder[A]
 }

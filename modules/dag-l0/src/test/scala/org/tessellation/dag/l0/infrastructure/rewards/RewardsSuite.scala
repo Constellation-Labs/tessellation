@@ -13,8 +13,10 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import org.tessellation.dag.l0.config.types.RewardsConfig._
 import org.tessellation.dag.l0.config.types._
 import org.tessellation.dag.l0.infrastructure.snapshot.GlobalSnapshotEvent
+import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
 import org.tessellation.ext.kryo._
+import org.tessellation.json.JsonHashSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.rewards.Rewards
 import org.tessellation.node.shared.domain.transaction.TransactionValidator.stardustPrimary
@@ -29,7 +31,7 @@ import org.tessellation.schema.transaction.{RewardTransaction, TransactionAmount
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.SignatureProof
-import org.tessellation.security.{KeyPairGenerator, SecurityProvider}
+import org.tessellation.security.{Hasher, KeyPairGenerator, SecurityProvider}
 import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.syntax.sortedCollection.sortedSetSyntax
 
@@ -42,13 +44,15 @@ import weaver.scalacheck.Checkers
 
 object RewardsSuite extends MutableIOSuite with Checkers {
   type GenIdFn = () => Id
-  type Res = (KryoSerializer[IO], SecurityProvider[IO], GenIdFn)
+  type Res = (Hasher[IO], SecurityProvider[IO], GenIdFn)
 
   override def sharedResource: Resource[IO, Res] = for {
-    kryo <- KryoSerializer.forAsync[IO](sharedKryoRegistrar.union(nodeSharedKryoRegistrar))
+    implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar.union(nodeSharedKryoRegistrar))
     implicit0(sp: SecurityProvider[IO]) <- SecurityProvider.forAsync[IO]
     mkKeyPair = () => KeyPairGenerator.makeKeyPair.map(_.getPublic.toId).unsafeRunSync()
-  } yield (kryo, sp, mkKeyPair)
+    implicit0(j: JsonHashSerializer[IO]) <- JsonHashSerializer.forSync[IO].asResource
+    h = Hasher.forSync[IO]
+  } yield (h, sp, mkKeyPair)
 
   val config: RewardsConfig = RewardsConfig()
   val singleEpochRewardsConfig: RewardsConfig = config.copy(rewardsPerEpoch = SortedMap(EpochProgress.MaxValue -> Amount(100L)))
@@ -98,7 +102,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
 
   def snapshotWithoutTransactionsGen(
     withSignatures: Option[NonEmptySet[SignatureProof]] = None
-  )(implicit genIdFn: GenIdFn, ks: KryoSerializer[IO]): Gen[Signed[GlobalIncrementalSnapshot]] = for {
+  )(implicit genIdFn: GenIdFn, h: Hasher[IO]): Gen[Signed[GlobalIncrementalSnapshot]] = for {
     epochProgress <- epochProgressGen
     proofs <- withSignatures.map(Gen.delay(_)).getOrElse(signatureProofsGen)
     snapshot = Signed(GlobalSnapshot.mkGenesis(Map.empty, epochProgress), proofs)
@@ -120,7 +124,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
       .getOrElse(Amount.empty)
 
   test("event trigger reward transactions sum up to the total fee") { res =>
-    implicit val (ks, sp, makeIdFn) = res
+    implicit val (h, sp, makeIdFn) = res
 
     val gen = for {
       snapshot <- snapshotWithoutTransactionsGen()
@@ -160,7 +164,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
   }
 
   test("time trigger minted reward transactions sum up to the total snapshot reward for epoch") { res =>
-    implicit val (ks, sp, makeIdFn) = res
+    implicit val (h, sp, makeIdFn) = res
 
     val gen = for {
       epochProgress <- meaningfulEpochProgressGen
@@ -179,7 +183,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
   }
 
   test("time trigger reward transactions include fees from transactions") { res =>
-    implicit val (ks, sp, makeIdFn) = res
+    implicit val (h, sp, makeIdFn) = res
 
     val gen = for {
       epochProgress <- meaningfulEpochProgressGen
@@ -200,7 +204,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
   }
 
   test("time trigger reward transactions won't be generated after the last epoch") { res =>
-    implicit val (ks, sp, makeIdFn) = res
+    implicit val (h, sp, makeIdFn) = res
 
     val gen = for {
       epochProgress <- overflowEpochProgressGen
@@ -216,7 +220,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
   }
 
   test("minted rewards for the logic before epoch progress 1336392 are as expected") { res =>
-    implicit val (ks, sp, makeIdFn) = res
+    implicit val (h, sp, makeIdFn) = res
 
     val facilitator = makeIdFn.apply()
 
@@ -246,7 +250,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
   }
 
   test("minted rewards for the logic at epoch progress 1336392 until 1352274 are as expected") { res =>
-    implicit val (ks, sp, makeIdFn) = res
+    implicit val (h, sp, makeIdFn) = res
 
     val facilitator = makeIdFn.apply()
 
@@ -275,7 +279,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
   }
 
   test("minted rewards for the logic at epoch progress 1352274 and later are as expected") { res =>
-    implicit val (ks, sp, makeIdFn) = res
+    implicit val (h, sp, makeIdFn) = res
 
     val facilitator = makeIdFn.apply()
 

@@ -4,7 +4,6 @@ import cats.effect.Async
 import cats.syntax.all._
 
 import org.tessellation.dag.l0.domain.cluster.programs.TrustPush
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.trust.storage.TrustStorage
 import org.tessellation.node.shared.ext.http4s.refined.RefinedRequestDecoder
 import org.tessellation.routes.internal._
@@ -15,7 +14,7 @@ import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.dsl.Http4sDsl
 
-final case class TrustRoutes[F[_]: Async: KryoSerializer](
+final case class TrustRoutes[F[_]: Async](
   trustStorage: TrustStorage[F],
   trustPush: TrustPush[F]
 ) extends Http4sDsl[F]

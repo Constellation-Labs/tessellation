@@ -2,11 +2,11 @@ package org.tessellation.currency.l1.domain.dataApplication.consensus
 
 import java.security.KeyPair
 
+import cats.Applicative
 import cats.data.NonEmptyList
 import cats.effect.kernel.{Async, Clock}
 import cats.effect.std.{Queue, Random}
 import cats.syntax.all._
-import cats.{Applicative, MonadThrow}
 
 import scala.concurrent.duration._
 
@@ -16,16 +16,15 @@ import org.tessellation.currency.dataApplication._
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import org.tessellation.effects.GenUUID
 import org.tessellation.fsm.FSM
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.cluster.storage.ClusterStorage
 import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.schema.round.RoundId
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.SignatureProof
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 import io.circe.Encoder
 import monocle.syntax.all._
@@ -85,7 +84,7 @@ object Engine {
   type Out = ConsensusOutput
   type State = ConsensusState
 
-  def fsm[F[_]: MonadThrow: Async: Clock: Random: SecurityProvider: KryoSerializer: L1NodeContext](
+  def fsm[F[_]: Async: Random: SecurityProvider: Hasher: L1NodeContext](
     dataApplication: BaseDataApplicationL1Service[F],
     clusterStorage: ClusterStorage[F],
     consensusClient: ConsensusClient[F],
@@ -95,6 +94,8 @@ object Engine {
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     lastCurrencySnapshotStorage: LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
   ): FSM[F, State, In, Out] = {
+
+    implicit val dataEncoder = dataApplication.dataEncoder
 
     def peersCount = 2
     def timeout = 10.seconds
@@ -195,9 +196,6 @@ object Engine {
 
       ownCancellation && peerCancellations
     }
-
-    def canPersistOwnBlock(roundData: RoundData, proposal: Proposal): Boolean =
-      roundData.ownBlock.isEmpty && roundData.roundId === proposal.roundId
 
     def gotAllProposals(roundData: RoundData): Boolean =
       roundData.peers.map(_.id) === roundData.peerProposals.keySet

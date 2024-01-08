@@ -26,10 +26,11 @@ import org.tessellation.node.shared.infrastructure.snapshot.storage.{
 import org.tessellation.node.shared.modules.SharedStorages
 import org.tessellation.schema._
 import org.tessellation.schema.trust.PeerObservationAdjustmentUpdateBatch
+import org.tessellation.security.Hasher
 
 object Storages {
 
-  def make[F[_]: Async: KryoSerializer: Supervisor](
+  def make[F[_]: Async: KryoSerializer: Hasher: Supervisor](
     sharedStorages: SharedStorages[F],
     sharedConfig: SharedConfig,
     seedlist: Option[Set[SeedlistEntry]],

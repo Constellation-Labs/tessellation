@@ -21,11 +21,12 @@ import org.tessellation.schema.peer.L0Peer
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
+import org.tessellation.security.Hasher
 
 object Storages {
 
   def make[
-    F[_]: Async: Random: KryoSerializer,
+    F[_]: Async: Random: KryoSerializer: Hasher,
     P <: StateProof,
     S <: Snapshot,
     SI <: SnapshotInfo[P]

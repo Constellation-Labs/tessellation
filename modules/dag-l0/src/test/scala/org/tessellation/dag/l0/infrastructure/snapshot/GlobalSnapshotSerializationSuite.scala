@@ -5,11 +5,14 @@ import java.nio.file.{Paths => JPaths}
 import cats.effect.{IO, Resource}
 import cats.syntax.all._
 
+import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.crypto._
 import org.tessellation.ext.kryo._
+import org.tessellation.json.JsonHashSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.nodeSharedKryoRegistrar
 import org.tessellation.schema._
+import org.tessellation.security.Hasher
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
@@ -30,25 +33,32 @@ object GlobalSnapshotSerializationSuite extends MutableIOSuite with Checkers {
   val kryoFilename: String = expectedHash.coerce
   val jsonFilename: String = s"${expectedHash.coerce}.json"
 
-  type Res = KryoSerializer[IO]
+  type Res = (KryoSerializer[IO], Hasher[IO])
 
-  def sharedResource: Resource[IO, KryoSerializer[IO]] =
-    KryoSerializer.forAsync[IO](nodeSharedKryoRegistrar)
+  def sharedResource: Resource[IO, Res] = for {
+    implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](nodeSharedKryoRegistrar)
+    implicit0(j: JsonHashSerializer[IO]) <- JsonHashSerializer.forSync[IO].asResource
+    h = Hasher.forSync[IO]
+  } yield (ks, h)
 
-  test("snapshot is successfully deserialized and serialized with kryo") { implicit kryo =>
+  test("snapshot is successfully deserialized and serialized with kryo") { res =>
+    implicit val (ks, h) = res
+
     for {
       storedBytes <- getBytesFromClasspath(kryoFilename)
       signedSnapshot <- storedBytes.fromBinaryF[Signed[GlobalSnapshot]]
       serializedBytes <- signedSnapshot.toBinaryF
-      snapshotHash <- signedSnapshot.value.hashF
+      snapshotHash <- signedSnapshot.value.hash
     } yield expect.same(serializedBytes, storedBytes).and(expect.same(snapshotHash, expectedHash))
   }
 
-  test("snapshot is successfully deserialized and serialized with json parser") { implicit kryo =>
+  test("snapshot is successfully deserialized and serialized with json parser") { implicit res =>
+    implicit val (_, h) = res
+
     for {
       storedJson <- getJsonFromClasspath(jsonFilename)
       signedSnapshot <- storedJson.as[Signed[GlobalSnapshot]].leftWiden[Throwable].liftTo[IO]
-      snapshotHash <- signedSnapshot.value.hashF
+      snapshotHash <- signedSnapshot.value.hash
       serializedJson = signedSnapshot.asJson
     } yield expect.same(serializedJson, storedJson).and(expect.same(snapshotHash, expectedHash))
   }

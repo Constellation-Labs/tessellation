@@ -20,7 +20,7 @@ import org.tessellation.node.shared.infrastructure.consensus.ConsensusManager
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
 import org.tessellation.security.hash.Hash
-import org.tessellation.security.{Hashed, SecurityProvider}
+import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -33,7 +33,7 @@ trait Rollback[F[_]] {
 }
 
 object Rollback {
-  def make[F[_]: Async: KryoSerializer: SecurityProvider](
+  def make[F[_]: Async: KryoSerializer: Hasher: SecurityProvider](
     nodeId: PeerId,
     globalL0Service: GlobalL0Service[F],
     identifierStorage: IdentifierStorage[F],

@@ -12,20 +12,20 @@ import cats.syntax.option._
 import cats.syntax.validated._
 
 import org.tessellation.ext.cats.syntax.validated._
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.block.processing._
 import org.tessellation.node.shared.domain.transaction.TransactionChainValidator.TransactionNel
 import org.tessellation.node.shared.domain.transaction.{TransactionChainValidator, TransactionValidator}
 import org.tessellation.schema.Block
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction.TransactionReference
+import org.tessellation.security.Hasher
 import org.tessellation.security.signature.{Signed, SignedValidator}
 
 import eu.timepit.refined.auto._
 
 object BlockValidator {
 
-  def make[F[_]: Async: KryoSerializer](
+  def make[F[_]: Async: Hasher](
     signedValidator: SignedValidator[F],
     transactionChainValidator: TransactionChainValidator[F],
     transactionValidator: TransactionValidator[F]

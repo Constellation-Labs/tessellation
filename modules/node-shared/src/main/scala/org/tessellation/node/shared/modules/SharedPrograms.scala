@@ -11,12 +11,12 @@ import org.tessellation.node.shared.domain.healthcheck.LocalHealthcheck
 import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
 import org.tessellation.node.shared.http.p2p.clients.{ClusterClient, SignClient}
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.hash.Hash
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 object SharedPrograms {
 
-  def make[F[_]: Async: SecurityProvider: KryoSerializer](
+  def make[F[_]: Async: SecurityProvider: KryoSerializer: Hasher](
     cfg: SharedConfig,
     storages: SharedStorages[F],
     services: SharedServices[F],
