@@ -56,7 +56,9 @@ object CurrencySnapshotConsensusFunctions {
     ): F[Unit] =
       stateChannelSnapshotService.consume(signedArtifact, context) >>
         gossipForkInfo(gossip, signedArtifact) >>
-        maybeDataApplication.traverse_(_.onSnapshotConsensusResult(signedArtifact))
+        maybeDataApplication.traverse_ { da =>
+          signedArtifact.toHashed >>= da.onSnapshotConsensusResult
+        }
 
     def validateArtifact(
       lastSignedArtifact: Signed[CurrencySnapshotArtifact],
