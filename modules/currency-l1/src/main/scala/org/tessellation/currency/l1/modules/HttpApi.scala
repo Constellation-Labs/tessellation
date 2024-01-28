@@ -19,6 +19,7 @@ import org.tessellation.node.shared.http.routes._
 import org.tessellation.node.shared.infrastructure.healthcheck.ping.PingHealthCheckRoutes
 import org.tessellation.node.shared.infrastructure.metrics.Metrics
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.semver.{MetagraphVersion, TessellationVersion}
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.security.{Hasher, SecurityProvider}
 
@@ -58,8 +59,9 @@ object HttpApi {
     ],
     healthchecks: HealthChecks[F],
     selfId: PeerId,
-    nodeVersion: String,
-    httpCfg: HttpConfig
+    nodeVersion: TessellationVersion,
+    httpCfg: HttpConfig,
+    maybeMetagraphVersion: Option[MetagraphVersion]
   ): HttpApi[F] =
     new HttpApi[F](
       maybeDataApplication,
@@ -71,7 +73,8 @@ object HttpApi {
       healthchecks,
       selfId,
       nodeVersion,
-      httpCfg
+      httpCfg,
+      maybeMetagraphVersion
     ) {}
 }
 
@@ -86,8 +89,9 @@ sealed abstract class HttpApi[
   programs: Programs[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
   healthchecks: HealthChecks[F],
   selfId: PeerId,
-  nodeVersion: String,
-  httpCfg: HttpConfig
+  nodeVersion: TessellationVersion,
+  httpCfg: HttpConfig,
+  maybeMetagraphVersion: Option[MetagraphVersion]
 ) {
 
   private val clusterRoutes =
@@ -115,6 +119,9 @@ sealed abstract class HttpApi[
 
   private val metricRoutes = MetricRoutes[F]().publicRoutes
   private val targetRoutes = TargetRoutes[F](services.cluster).publicRoutes
+  private val metagraphNodeRoutes = maybeMetagraphVersion.map { metagraphVersion =>
+    MetagraphRoutes[F](storages.node, storages.session, storages.cluster, httpCfg, selfId, nodeVersion, metagraphVersion)
+  }
 
   private val openRoutes: HttpRoutes[F] =
     CORS.policy.withAllowOriginAll.withAllowHeadersAll.withAllowCredentials(false).apply {
@@ -124,6 +131,7 @@ sealed abstract class HttpApi[
           metricRoutes <+>
           targetRoutes <+>
           routes.map(_.publicRoutes).getOrElse(currencyRoutes.publicRoutes) <+>
+          metagraphNodeRoutes.map(_.publicRoutes).getOrElse(HttpRoutes.empty) <+>
           DataApplicationCustomRoutes.publicRoutes[F, L1NodeContext[F]](maybeDataApplication)
       }
     }
@@ -138,6 +146,7 @@ sealed abstract class HttpApi[
               nodeRoutes.p2pRoutes <+>
               gossipRoutes.p2pRoutes <+>
               routes.map(_.p2pRoutes).getOrElse(currencyRoutes.p2pRoutes) <+>
+              metagraphNodeRoutes.map(_.p2pRoutes).getOrElse(HttpRoutes.empty) <+>
               healthcheckP2PRoutes
           )
         )
