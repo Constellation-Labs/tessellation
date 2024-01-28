@@ -41,7 +41,7 @@ jobs:
       - name: Update version.sbt to github-action-test-version
         shell: bash
         run: |
-          echo 'ThisBuild / version := "github-action-test-version"' > version.sbt
+          echo 'ThisBuild / version := "99.99.99"' > version.sbt
 
       - name: Generating Metagraph dependencies
         env:

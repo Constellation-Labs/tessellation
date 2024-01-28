@@ -18,6 +18,7 @@ import org.tessellation.node.shared.infrastructure.healthcheck.ping.PingHealthCh
 import org.tessellation.node.shared.infrastructure.metrics.Metrics
 import org.tessellation.schema._
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.semver.TessellationVersion
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hasher, SecurityProvider}
 
@@ -38,7 +39,7 @@ object HttpApi {
     privateKey: PrivateKey,
     environment: AppEnvironment,
     selfId: PeerId,
-    nodeVersion: String,
+    nodeVersion: TessellationVersion,
     httpCfg: HttpConfig
   ): HttpApi[F] =
     new HttpApi[F](
@@ -64,7 +65,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Has
   privateKey: PrivateKey,
   environment: AppEnvironment,
   selfId: PeerId,
-  nodeVersion: String,
+  nodeVersion: TessellationVersion,
   httpCfg: HttpConfig
 ) {
 

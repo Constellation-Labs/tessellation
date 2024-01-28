@@ -6,6 +6,7 @@ import scala.util.Try
 
 import org.tessellation.schema.cluster.{ClusterSessionToken, SessionToken}
 import org.tessellation.schema.peer.{Peer, PeerId}
+import org.tessellation.schema.semver.{MetagraphVersion, TessellationVersion}
 
 import com.comcast.ip4s.{Host, Port}
 import derevo.cats.{eqv, show}
@@ -103,4 +104,16 @@ object node {
     id: PeerId
   )
 
+  @derive(encoder)
+  case class MetagraphNodeInfo(
+    state: NodeState,
+    session: Option[SessionToken],
+    clusterSession: Option[ClusterSessionToken],
+    host: Host,
+    publicPort: Port,
+    p2pPort: Port,
+    id: PeerId,
+    tessellationVersion: TessellationVersion,
+    metagraphVersion: MetagraphVersion
+  )
 }

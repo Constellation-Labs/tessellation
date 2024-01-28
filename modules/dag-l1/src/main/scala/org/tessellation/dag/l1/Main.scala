@@ -19,6 +19,7 @@ import org.tessellation.node.shared.resources.MkHttpServer.ServerName
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.node.NodeState.SessionStarted
+import org.tessellation.schema.semver.TessellationVersion
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalSnapshotStateProof}
 import org.tessellation.shared.{SharedKryoRegistrationIdRange, sharedKryoRegistrar}
 
@@ -31,7 +32,7 @@ object Main
       "dag-l1",
       "DAG L1 node",
       ClusterId("17e78993-37ea-4539-a4f3-039068ea1e92"),
-      version = BuildInfo.version
+      version = TessellationVersion.unsafeFrom(BuildInfo.version)
     ) {
   val opts: Opts[Run] = cli.method.opts
 
@@ -117,7 +118,7 @@ object Main
           programs,
           healthChecks,
           nodeShared.nodeId,
-          BuildInfo.version,
+          TessellationVersion.unsafeFrom(BuildInfo.version),
           cfg.http
         )
       _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
