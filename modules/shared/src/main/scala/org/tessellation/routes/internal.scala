@@ -66,6 +66,7 @@ object internal {
       :: Equal["/network"]
       :: Equal["/snapshots"]
       :: Equal["/global-snapshots"]
+      :: Equal["/metagraph"]
       :: HNil
   ]
 
