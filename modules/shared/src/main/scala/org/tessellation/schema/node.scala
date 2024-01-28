@@ -103,4 +103,16 @@ object node {
     id: PeerId
   )
 
+  @derive(encoder)
+  case class MetagraphNodeInfo(
+    state: NodeState,
+    session: Option[SessionToken],
+    clusterSession: Option[ClusterSessionToken],
+    host: Host,
+    publicPort: Port,
+    p2pPort: Port,
+    id: PeerId,
+    tessellationVersion: String,
+    metagraphVersion: String
+  )
 }

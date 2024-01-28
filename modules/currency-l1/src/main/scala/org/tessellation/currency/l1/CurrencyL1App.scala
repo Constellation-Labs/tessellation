@@ -1,13 +1,13 @@
 package org.tessellation.currency.l1
 
 import cats.effect.{IO, Resource}
+import cats.implicits.catsSyntaxOptionId
 import cats.syntax.applicativeError._
 import cats.syntax.semigroupk._
 import cats.syntax.traverse._
 
 import scala.concurrent.duration._
 
-import org.tessellation.BuildInfo
 import org.tessellation.currency.dataApplication.{BaseDataApplicationL1Service, L1NodeContext}
 import org.tessellation.currency.l1.cli.method
 import org.tessellation.currency.l1.cli.method.{Run, RunInitialValidator, RunValidator}
@@ -46,12 +46,13 @@ abstract class CurrencyL1App(
   name: String,
   header: String,
   clusterId: ClusterId,
-  version: String
+  tessellationVersion: String,
+  metagraphVersion: String
 ) extends TessellationIOApp[Run](
       name,
       header,
       clusterId,
-      version = version
+      version = tessellationVersion
     ) {
 
   val opts: Opts[Run] = method.opts
@@ -161,8 +162,9 @@ abstract class CurrencyL1App(
           programs,
           healthChecks,
           nodeShared.nodeId,
-          BuildInfo.version,
-          cfg.http
+          tessellationVersion,
+          cfg.http,
+          metagraphVersion.some
         )
       _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
       _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)

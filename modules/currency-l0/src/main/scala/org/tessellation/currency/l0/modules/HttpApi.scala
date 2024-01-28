@@ -42,7 +42,8 @@ object HttpApi {
     selfId: PeerId,
     nodeVersion: String,
     httpCfg: HttpConfig,
-    maybeDataApplication: Option[BaseDataApplicationL0Service[F]]
+    maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
+    maybeMetagraphVersion: Option[String]
   ): HttpApi[F] =
     new HttpApi[F](
       storages,
@@ -55,7 +56,8 @@ object HttpApi {
       selfId,
       nodeVersion,
       httpCfg,
-      maybeDataApplication
+      maybeDataApplication,
+      maybeMetagraphVersion
     ) {}
 }
 
@@ -70,7 +72,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Has
   selfId: PeerId,
   nodeVersion: String,
   httpCfg: HttpConfig,
-  maybeDataApplication: Option[BaseDataApplicationL0Service[F]]
+  maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
+  maybeMetagraphVersion: Option[String]
 ) {
 
   private val mkCell = (event: CurrencySnapshotEvent) => L0Cell.mkL0Cell(queues.l1Output).apply(L0CellInput.HandleL1Block(event))
@@ -87,6 +90,10 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Has
     implicit val (d, e) = (da.dataDecoder, da.calculatedStateEncoder)
     DataBlockRoutes[F](mkCell, da)
   }
+  private val metagraphNodeRoutes = maybeMetagraphVersion.map { metagraphVersion =>
+    MetagraphRoutes[F](storages.node, storages.session, storages.cluster, httpCfg, selfId, nodeVersion, metagraphVersion)
+  }
+
   private val walletRoutes = WalletRoutes[F, CurrencyIncrementalSnapshot]("/currency", services.address)
 
   private val consensusInfoRoutes = new ConsensusInfoRoutes[F, SnapshotOrdinal](services.cluster, services.consensus.storage, selfId)
@@ -123,6 +130,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Has
               walletRoutes.publicRoutes <+>
               nodeRoutes.publicRoutes <+>
               consensusInfoRoutes.publicRoutes <+>
+              metagraphNodeRoutes.map(_.publicRoutes).getOrElse(HttpRoutes.empty) <+>
               DataApplicationCustomRoutes.publicRoutes[F, L0NodeContext[F]](maybeDataApplication)
           }
         }
@@ -141,7 +149,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Has
                 gossipRoutes.p2pRoutes <+>
                 healthcheckP2PRoutes <+>
                 consensusRoutes <+>
-                dataBlockRoutes.map(_.p2pRoutes).getOrElse(HttpRoutes.empty)
+                dataBlockRoutes.map(_.p2pRoutes).getOrElse(HttpRoutes.empty) <+>
+                metagraphNodeRoutes.map(_.p2pRoutes).getOrElse(HttpRoutes.empty)
             )
           )
         )
