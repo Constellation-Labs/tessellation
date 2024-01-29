@@ -7,7 +7,7 @@ import cats.syntax.functor._
 
 import org.tessellation.dag.l1.domain.block.BlockStorage
 import org.tessellation.dag.l1.domain.consensus.block.storage.ConsensusStorage
-import org.tessellation.dag.l1.domain.transaction.TransactionStorage
+import org.tessellation.dag.l1.domain.transaction.{ContextualTransactionValidator, TransactionStorage}
 import org.tessellation.dag.l1.infrastructure.address.storage.AddressStorage
 import org.tessellation.dag.l1.modules.{Storages => BaseStorages}
 import org.tessellation.node.shared.domain.cluster.storage.L0ClusterStorage
@@ -33,7 +33,8 @@ object Storages {
     sharedStorages: SharedStorages[F],
     l0Peer: L0Peer,
     globalL0Peer: L0Peer,
-    currencyIdentifier: Address
+    currencyIdentifier: Address,
+    contextualTransactionValidator: ContextualTransactionValidator
   ): F[Storages[F, P, S, SI]] =
     for {
       blockStorage <- BlockStorage.make[F]
@@ -43,7 +44,7 @@ object Storages {
       lastCurrencySnapshotStorage <- LastSnapshotStorage.make[F, S, SI]
       lastGlobalSnapshotStorage <- LastSnapshotStorage.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
       transactionStorage <- TransactionReference.emptyCurrency(currencyIdentifier).flatMap {
-        TransactionStorage.make[F](_)
+        TransactionStorage.make[F](_, contextualTransactionValidator)
       }
       addressStorage <- AddressStorage.make[F]
     } yield

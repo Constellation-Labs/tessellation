@@ -12,7 +12,7 @@ import scala.collection.immutable.SortedSet
 import scala.util.Random
 import scala.util.control.NoStackTrace
 
-import org.tessellation.ext.cats.syntax.next._
+import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
 import org.tessellation.ext.collection.FoldableOps.pickMajority
 import org.tessellation.merkletree.StateProofValidator
 import org.tessellation.node.shared.domain.cluster.storage.L0ClusterStorage

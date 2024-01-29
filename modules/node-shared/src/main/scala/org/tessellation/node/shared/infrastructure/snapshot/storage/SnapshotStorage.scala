@@ -7,7 +7,7 @@ import cats.syntax.all._
 import cats.{Applicative, MonadThrow}
 
 import org.tessellation.cutoff.{LogarithmicOrdinalCutoff, OrdinalCutoff}
-import org.tessellation.ext.cats.syntax.next._
+import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
 import org.tessellation.ext.cats.syntax.partialPrevious._
 import org.tessellation.ext.crypto._
 import org.tessellation.node.shared.domain.collateral.LatestBalances

@@ -55,10 +55,10 @@ object BlockService {
           addressStorage.getBalance(address).map(_.some)
 
         def getLastTxRef(address: Address): F[Option[transaction.TransactionReference]] =
-          transactionStorage.getLastAcceptedReference(address).map(_.some)
+          transactionStorage.getLastProcessedTransaction(address).map(_.ref.some)
 
         def getInitialTxRef: TransactionReference =
-          transactionStorage.getInitialTxRef
+          transactionStorage.getInitialTx.ref
 
         def getParentUsage(blockReference: BlockReference): F[Option[NonNegLong]] =
           blockStorage.getUsages(blockReference.hash)

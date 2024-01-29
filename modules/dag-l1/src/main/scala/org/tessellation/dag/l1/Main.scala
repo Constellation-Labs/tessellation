@@ -14,6 +14,7 @@ import org.tessellation.dag.l1.modules._
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.kryo._
 import org.tessellation.node.shared.app.{NodeShared, TessellationIOApp, getMajorityPeerIds}
+import org.tessellation.node.shared.ext.pureconfig._
 import org.tessellation.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import org.tessellation.node.shared.resources.MkHttpServer
 import org.tessellation.node.shared.resources.MkHttpServer.ServerName
@@ -55,17 +56,18 @@ object Main
       cfg = method.appConfig(cfgR, sharedConfig)
 
       queues <- Queues.make[IO](sharedQueues).asResource
+      validators = Validators
+        .make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
+          seedlist,
+          cfg.transactionLimit
+        )
       storages <- Storages
         .make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
           sharedStorages,
-          method.l0Peer
+          method.l0Peer,
+          validators.transactionContextual
         )
         .asResource
-      validators = Validators
-        .make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
-          storages,
-          seedlist
-        )
       p2pClient = P2PClient.make[IO](
         sharedP2PClient,
         sharedResources.client,

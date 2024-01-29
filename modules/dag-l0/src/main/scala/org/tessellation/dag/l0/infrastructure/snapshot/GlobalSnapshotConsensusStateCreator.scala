@@ -12,7 +12,6 @@ import org.tessellation.node.shared.infrastructure.consensus._
 import org.tessellation.node.shared.infrastructure.consensus.declaration.Facility
 import org.tessellation.node.shared.infrastructure.consensus.message.ConsensusPeerDeclaration
 import org.tessellation.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
-import org.tessellation.schema.SnapshotOrdinal.next
 import org.tessellation.schema.peer.PeerId
 
 abstract class GlobalSnapshotConsensusStateCreator[F[_]: Sync]

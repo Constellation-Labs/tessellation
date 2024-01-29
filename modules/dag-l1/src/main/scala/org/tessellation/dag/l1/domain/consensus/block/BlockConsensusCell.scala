@@ -74,7 +74,7 @@ object BlockConsensusCell {
           .info(s"Returned transactions for round: ${ownProposal.roundId} are: ${txs.size}, ${txs.map(_.hash).show}")
       }
       .flatMap {
-        transactionStorage.put
+        transactionStorage.putBack
       }
 
   private def cleanUpRoundData[F[_]: Async](
