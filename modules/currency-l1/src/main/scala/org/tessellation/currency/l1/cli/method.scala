@@ -24,7 +24,8 @@ object method {
     val globalL0Peer: L0Peer
     val identifier: Address
 
-    def appConfig(c: AppConfigReader, shared: SharedConfig): AppConfig = AppConfig(c.consensus, shared)
+    def appConfig(c: AppConfigReader, shared: SharedConfig): AppConfig =
+      AppConfig(c.consensus, c.transactionLimit, shared)
 
     val stateChannelAllowanceLists = None
 

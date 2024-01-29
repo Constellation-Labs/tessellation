@@ -1,168 +1,191 @@
 package org.tessellation.dag.l1.domain.transaction
 
-import cats.Order
-import cats.data.{NonEmptyList, NonEmptySet}
+import cats._
+import cats.data.{NonEmptyList, Validated}
 import cats.effect.Async
-import cats.syntax.applicative._
-import cats.syntax.applicativeError._
-import cats.syntax.contravariantSemigroupal._
-import cats.syntax.either._
-import cats.syntax.flatMap._
-import cats.syntax.foldable._
-import cats.syntax.functor._
-import cats.syntax.option._
-import cats.syntax.order._
-import cats.syntax.set._
-import cats.syntax.show._
-import cats.syntax.traverse._
+import cats.syntax.all._
 
 import scala.annotation.tailrec
-import scala.collection.immutable.SortedSet
+import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
 
+import org.tessellation.dag.l1.domain.transaction.ContextualTransactionValidator.{CanOverride, ContextualTransactionValidationError, NoConflict}
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage._
 import org.tessellation.ext.collection.MapRefUtils._
-import org.tessellation.node.shared.domain.transaction.filter.Consecutive
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
+import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.transaction._
 import org.tessellation.security.Hashed
 import org.tessellation.security.hash.Hash
 
+import derevo.cats.eqv
+import derevo.derive
+import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 import io.chrisdavenport.mapref.MapRef
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 class TransactionStorage[F[_]: Async](
-  lastAccepted: MapRef[F, Address, Option[LastTransactionReferenceState]],
-  waitingTransactions: MapRef[F, Address, Option[NonEmptySet[Hashed[Transaction]]]],
-  initialTransactionReference: TransactionReference
+  transactionsR: MapRef[F, Address, Option[SortedMap[TransactionOrdinal, StoredTransaction]]],
+  initialTransactionReference: TransactionReference,
+  contextualTransactionValidator: ContextualTransactionValidator
 ) {
 
   private val logger = Slf4jLogger.getLogger[F]
   private val transactionLogger = Slf4jLogger.getLoggerFromName[F](transactionLoggerName)
 
-  def getInitialTxRef: TransactionReference = initialTransactionReference
+  def getInitialTx: MajorityTx = MajorityTx(initialTransactionReference, SnapshotOrdinal.MinValue)
 
-  def getState(): F[(Map[Address, LastTransactionReferenceState], Map[Address, NonEmptySet[Hashed[Transaction]]])] =
-    (lastAccepted.toMap, waitingTransactions.toMap).mapN((_, _))
+  def getState: F[Map[Address, SortedMap[TransactionOrdinal, StoredTransaction]]] = transactionsR.toMap
 
-  def getLastAcceptedReference(source: Address): F[TransactionReference] =
-    lastAccepted(source).get.map {
-      _.map(_.ref).getOrElse(initialTransactionReference)
+  def getLastProcessedTransaction(source: Address): F[StoredTransaction] =
+    transactionsR(source).get.map {
+      _.flatMap(getLastProcessedTransaction).getOrElse(getInitialTx)
     }
 
-  def setLastAccepted(lastTxRefs: Map[Address, TransactionReference]): F[Unit] =
-    lastAccepted.clear >>
-      lastTxRefs.toList.traverse {
-        case (address, reference) => lastAccepted(address).set(Majority(reference).some)
-      }.void
+  private def getLastProcessedTransaction(stored: SortedMap[TransactionOrdinal, StoredTransaction]): Option[StoredTransaction] =
+    stored.collect { case tx @ (_, _: AcceptedTx | _: MajorityTx) => tx }.lastOption.map { case (_, transaction) => transaction }
+
+  def initByRefs(refs: Map[Address, TransactionReference], snapshotOrdinal: SnapshotOrdinal): F[Unit] =
+    refs.toList.traverse {
+      case (address, reference) =>
+        transactionsR(address)
+          .modify[Either[Error, Unit]] {
+            case curr @ Some(_) =>
+              (curr, new Error("Storage should be empty before download").asLeft)
+            case None =>
+              val initial = SortedMap(reference.ordinal -> MajorityTx(reference, snapshotOrdinal))
+              (initial.some, ().asRight)
+          }
+          .flatMap(_.liftTo[F])
+    }.void
+
+  def replaceByRefs(refs: Map[Address, TransactionReference], snapshotOrdinal: SnapshotOrdinal): F[Unit] =
+    refs.toList.traverse_ {
+      case (address, reference) =>
+        val initial = SortedMap(reference.ordinal -> MajorityTx(reference, snapshotOrdinal))
+        transactionsR(address).set(initial.some)
+    }
+
+  def advanceMajorityRefs(refs: Map[Address, TransactionReference], snapshotOrdinal: SnapshotOrdinal): F[Unit] =
+    refs.toList.traverse_ {
+      case (source, majorityTxRef) =>
+        transactionsR(source).modify[Either[MarkingTransactionReferenceAsMajorityError, Unit]] { maybeStored =>
+          val stored = maybeStored.getOrElse(SortedMap.empty[TransactionOrdinal, StoredTransaction])
+
+          stored.collectFirst { case (_, a @ AcceptedTx(tx)) if a.ref === majorityTxRef => tx }.map { majorityTx =>
+            val remaining = stored.filter { case (ordinal, _) => ordinal > majorityTx.ordinal }
+
+            remaining + (majorityTx.ordinal -> MajorityTx(TransactionReference.of(majorityTx), snapshotOrdinal))
+          } match {
+            case Some(updated) => (updated.some, ().asRight)
+            case None          => (maybeStored, UnexpectedStateWhenMarkingTxRefAsMajority(source, majorityTxRef, None).asLeft)
+          }
+        }
+    }
 
   def accept(hashedTx: Hashed[Transaction]): F[Unit] = {
     val parent = hashedTx.signed.value.parent
     val source = hashedTx.signed.value.source
     val reference = TransactionReference(hashedTx.signed.value.ordinal, hashedTx.hash)
 
-    lastAccepted(source)
-      .modify[Either[TransactionAcceptanceError, Unit]] { lastAccepted =>
-        if (lastAccepted.exists(_.ref == parent) || (lastAccepted.isEmpty && reference.ordinal == TransactionOrdinal.first))
-          (Accepted(reference).some, ().asRight)
-        else
-          (lastAccepted, ParentNotAccepted(source, lastAccepted.map(_.ref), reference).asLeft)
+    transactionsR(source)
+      .modify[Either[TransactionAcceptanceError, Unit]] { maybeStored =>
+        val stored = maybeStored.getOrElse(SortedMap.empty[TransactionOrdinal, StoredTransaction])
+        val lastAcceptedRef = getLastProcessedTransaction(stored)
+
+        if (lastAcceptedRef.exists(_.ref === parent) || (lastAcceptedRef.isEmpty && hashedTx.ordinal == TransactionOrdinal.first)) {
+          val accepted = stored.updated(hashedTx.ordinal, AcceptedTx(hashedTx))
+
+          val (processed, stillWaitingAboveAccepted) = accepted.partition { case (ordinal, _) => ordinal <= hashedTx.ordinal }
+
+          val updated = stillWaitingAboveAccepted.values.toList.foldLeft(processed) {
+            case (acc, tx) =>
+              val last = acc.last._2
+
+              val maybeStillMatching: Option[StoredTransaction] = tx match {
+                case w: WaitingTx if w.transaction.parent === last.ref    => w.some
+                case p: ProcessingTx if p.transaction.parent === last.ref => p.some
+                case _                                                    => none[StoredTransaction]
+              }
+
+              maybeStillMatching.fold(acc)(tx => acc + (tx.ref.ordinal -> tx))
+          }
+
+          (updated.some, ().asRight)
+        } else {
+          (maybeStored, ParentNotAccepted(source, lastAcceptedRef.map(_.ref), reference).asLeft)
+        }
       }
       .flatMap(_.liftTo[F])
   }
 
-  def markMajority(txRefsToMarkMajority: Map[Address, TransactionReference]): F[Unit] =
-    txRefsToMarkMajority.toList.traverse {
-      case (source, txRef) =>
-        lastAccepted(source)
-          .modify[Either[MarkingTransactionReferenceAsMajorityError, Unit]] {
-            case current @ Some(Accepted(ref)) if ref.ordinal > txRef.ordinal =>
-              (current, ().asRight)
-            case Some(Accepted(ref)) if ref == txRef =>
-              (Majority(txRef).some, ().asRight)
-            case other =>
-              (other, UnexpectedStateWhenMarkingTxRefAsMajority(source, txRef, other).asLeft)
-          }
-          .flatMap(_.liftTo[F])
-    }.void
+  def tryPut(
+    transaction: Hashed[Transaction],
+    lastSnapshotOrdinal: SnapshotOrdinal,
+    sourceBalance: Balance
+  ): F[Either[NonEmptyList[ContextualTransactionValidationError], Hash]] =
+    transactionsR(transaction.source).modify { maybeStored =>
+      val stored = maybeStored.getOrElse(SortedMap.empty[TransactionOrdinal, StoredTransaction])
+      val lastProcessedTransaction = getLastProcessedTransaction(stored).getOrElse(getInitialTx)
+      val validation =
+        contextualTransactionValidator.validate(transaction, maybeStored, sourceBalance, lastSnapshotOrdinal, lastProcessedTransaction.ref)
 
-  def put(transaction: Hashed[Transaction]): F[Unit] = put(Set(transaction))
+      validation match {
+        case Validated.Valid(NoConflict(tx)) =>
+          val updated = stored.updated(transaction.ordinal, WaitingTx(tx))
+          (updated.some, transaction.hash.asRight[NonEmptyList[ContextualTransactionValidationError]])
+        case Validated.Valid(CanOverride(tx)) =>
+          val updated = stored.updated(transaction.ordinal, WaitingTx(tx)).filterNot { case (ordinal, _) => ordinal > tx.ordinal }
+          (updated.some, transaction.hash.asRight[NonEmptyList[ContextualTransactionValidationError]])
+        case Validated.Invalid(e) =>
+          (maybeStored, e.toNonEmptyList.asLeft[Hash])
+      }
+    }
 
-  def put(transactions: Set[Hashed[Transaction]]): F[Unit] =
+  def putBack(transactions: Set[Hashed[Transaction]]): F[Unit] =
     transactions
       .groupBy(_.signed.value.source)
       .toList
       .traverse {
         case (source, txs) =>
-          waitingTransactions(source).modify { current =>
-            val updated = current match {
-              case Some(waiting) =>
-                NonEmptySet.fromSet(SortedSet.from(waiting.toNonEmptyList.toList ++ txs.toList))
-              case None =>
-                NonEmptySet.fromSet(SortedSet.from(txs.toList))
-            }
-
-            (updated, ())
+          transactionsR(source).update { maybeStored =>
+            val stored = maybeStored.getOrElse(SortedMap.empty[TransactionOrdinal, StoredTransaction])
+            txs
+              .foldLeft(stored) {
+                case (acc, tx) =>
+                  acc.updatedWith(tx.ordinal) {
+                    case Some(ProcessingTx(existing)) if existing === tx => WaitingTx(tx).some
+                    case None                                            => none
+                    case existing @ _                                    => existing
+                  }
+              }
+              .some
           }
       }
       .void
 
-  def countAllowedForConsensus: F[Int] =
-    for {
-      lastAccepted <- lastAccepted.toMap
-      addresses <- waitingTransactions.keys
-      txs <- addresses.traverse { address =>
-        waitingTransactions(address).get.map {
-          case Some(waiting) =>
-            val lastTxState = lastAccepted.getOrElse(
-              address,
-              Majority(initialTransactionReference)
-            )
-            val consecutiveTxs = Consecutive.take(waiting.toList, lastTxState.ref)
-
-            pullForAddress(lastTxState, consecutiveTxs)
-          case None =>
-            List.empty[Hashed[Transaction]]
-        }
-      }.map(_.flatten)
-    } yield txs.size
+  def areWaiting: F[Boolean] =
+    transactionsR.toMap.map(_.values.toList.collectFirstSome(_.collectFirst { case (_, w: WaitingTx) => w }).nonEmpty)
 
   def pull(count: NonNegLong): F[Option[NonEmptyList[Hashed[Transaction]]]] =
     for {
-      lastAccepted <- lastAccepted.toMap
-      addresses <- waitingTransactions.keys.map(_.sorted)
-      allPulled <- addresses.traverse { address =>
-        val pulledM = for {
-          (maybeWaiting, setter) <- waitingTransactions(address).access
-
-          pulled <- maybeWaiting.traverse { waiting =>
-            val lastTxState = lastAccepted.getOrElse(
-              address,
-              Majority(initialTransactionReference)
-            )
-            val consecutiveTxs = Consecutive.take(waiting.toList, lastTxState.ref)
-            val pulled = pullForAddress(lastTxState, consecutiveTxs)
-            val maybeStillWaiting = SortedSet.from(waiting.toList.diff(pulled)).toNes
-            val maybeStillWaitingAboveOrdinal = maybeStillWaiting.flatMap(_.filter(_.ordinal > lastTxState.ref.ordinal).toNes)
-            val expiredBelowOrdinal = maybeStillWaiting.flatMap(_.filter(_.ordinal <= lastTxState.ref.ordinal).toNes)
-
-            setter(maybeStillWaitingAboveOrdinal).flatTap { _ =>
-              transactionLogger.info(
-                s"Expired transaction with ordinal lower or equal ${lastTxState.ref.ordinal}: ${expiredBelowOrdinal.map(_.map(_.hash)).show}"
-              )
+      addresses <- transactionsR.keys
+      allPulled <- addresses.traverseCollect { address =>
+        transactionsR(address).modify { maybeStored =>
+          maybeStored.flatMap { stored =>
+            NonEmptyList.fromList(stored.values.collect { case w: WaitingTx => w.transaction }.toList).map { waitingTxs =>
+              val updated = stored.map {
+                case (ordinal, WaitingTx(tx)) => (ordinal, ProcessingTx(tx))
+                case existing @ _             => existing
+              }
+              (updated.some, waitingTxs.some)
             }
-              .ifM(
-                NonEmptyList.fromList(pulled).pure[F],
-                logger.debug("Concurrent update occurred while trying to pull transactions") >>
-                  none[NonEmptyList[Hashed[Transaction]]].pure[F]
-              )
-          }.map(_.flatten)
-        } yield pulled
-
-        pulledM.handleErrorWith {
-          logger.warn(_)(s"Error while pulling transactions for address=${address.show} from waiting pool.") >>
-            none[NonEmptyList[Hashed[Transaction]]].pure[F]
+          } match {
+            case Some(updated) => updated
+            case None          => (maybeStored, none)
+          }
         }
       }.map(_.flatten)
 
@@ -170,21 +193,10 @@ class TransactionStorage[F[_]: Async](
       toReturn = allPulled.flatMap(_.toList).toSet.diff(selected.toSet)
       _ <- logger.debug(s"Pulled transactions to return: ${toReturn.size}")
       _ <- transactionLogger.debug(s"Pulled transactions to return: ${toReturn.size}, returned: ${toReturn.map(_.hash).show}")
-      _ <- put(toReturn)
+      _ <- putBack(toReturn)
       _ <- logger.debug(s"Pulled ${selected.size} transaction(s) for consensus")
       _ <- transactionLogger.debug(s"Pulled ${selected.size} transaction(s) for consensus, pulled: ${selected.map(_.hash).show}")
     } yield NonEmptyList.fromList(selected)
-
-  private def pullForAddress(
-    lastTxState: LastTransactionReferenceState,
-    consecutiveTxs: List[Hashed[Transaction]]
-  ): List[Hashed[Transaction]] =
-    (lastTxState, consecutiveTxs.headOption) match {
-      case (_: Majority, Some(tx)) if tx.fee == TransactionFee.zero =>
-        List(tx)
-      case (_, _) =>
-        consecutiveTxs.takeWhile(_.fee != TransactionFee.zero)
-    }
 
   private def takeFirstNHighestFeeTxs(
     txs: List[NonEmptyList[Hashed[Transaction]]],
@@ -218,35 +230,38 @@ class TransactionStorage[F[_]: Async](
     go(sortedTxs, List.empty)
   }
 
-  def find(hash: Hash): F[Option[Hashed[Transaction]]] =
-    waitingTransactions.toMap.map(_.view.values.toList.flatMap(_.toList)).map {
-      _.find(_.hash === hash)
+  def findWaiting(hash: Hash): F[Option[WaitingTx]] =
+    transactionsR.toMap.map {
+      _.values.toList.collectFirstSome {
+        _.collectFirst { case (_, w: WaitingTx) if w.ref.hash === hash => w }
+      }
     }
-
 }
 
 object TransactionStorage {
-
   def make[F[_]: Async](
-    initialTransactionReference: TransactionReference
+    initialTransactionReference: TransactionReference,
+    contextualTransactionValidator: ContextualTransactionValidator
   ): F[TransactionStorage[F]] =
     for {
-      lastAccepted <- MapRef.ofConcurrentHashMap[F, Address, LastTransactionReferenceState]()
-      waitingTransactions <- MapRef.ofConcurrentHashMap[F, Address, NonEmptySet[Hashed[Transaction]]]()
-    } yield new TransactionStorage[F](lastAccepted, waitingTransactions, initialTransactionReference)
+      transactions <- MapRef.ofConcurrentHashMap[F, Address, SortedMap[TransactionOrdinal, StoredTransaction]]()
+    } yield
+      new TransactionStorage[F](
+        transactions,
+        initialTransactionReference,
+        contextualTransactionValidator
+      )
 
   def make[F[_]: Async](
-    lastAccepted: Map[Address, LastTransactionReferenceState],
-    waitingTransactions: Map[Address, NonEmptySet[Hashed[Transaction]]],
-    initialTransactionReference: TransactionReference
+    transactions: Map[Address, SortedMap[TransactionOrdinal, StoredTransaction]],
+    initialTransactionReference: TransactionReference,
+    contextualTransactionValidator: ContextualTransactionValidator
   ): F[TransactionStorage[F]] =
-    (
-      MapRef.ofSingleImmutableMap(lastAccepted),
-      MapRef.ofSingleImmutableMap(waitingTransactions)
-    ).mapN(new TransactionStorage(_, _, initialTransactionReference))
+    MapRef.ofSingleImmutableMap(transactions).map(new TransactionStorage(_, initialTransactionReference, contextualTransactionValidator))
 
   sealed trait TransactionAcceptanceError extends NoStackTrace
-  case class ParentNotAccepted(
+
+  private case class ParentNotAccepted(
     source: Address,
     lastAccepted: Option[TransactionReference],
     attempted: TransactionReference
@@ -256,16 +271,39 @@ object TransactionStorage {
   }
 
   sealed trait MarkingTransactionReferenceAsMajorityError extends NoStackTrace
-  case class UnexpectedStateWhenMarkingTxRefAsMajority(
+
+  private case class UnexpectedStateWhenMarkingTxRefAsMajority(
     source: Address,
     toMark: TransactionReference,
-    got: Option[LastTransactionReferenceState]
+    got: Option[StoredTransaction]
   ) extends MarkingTransactionReferenceAsMajorityError {
     override def getMessage: String =
       s"Unexpected state encountered when marking transaction reference=$toMark for source address=$source as majority. Got: $got"
   }
-
-  sealed trait LastTransactionReferenceState { val ref: TransactionReference }
-  case class Accepted(ref: TransactionReference) extends LastTransactionReferenceState
-  case class Majority(ref: TransactionReference) extends LastTransactionReferenceState
 }
+
+@derive(eqv)
+sealed trait StoredTransaction {
+  def ref: TransactionReference
+}
+object StoredTransaction {
+  implicit val show: Show[StoredTransaction] = Show.show {
+    case WaitingTx(tx)                    => s"WaitingTx(${tx.hash.show})"
+    case ProcessingTx(tx)                 => s"ProcessingTx(${tx.hash.show}"
+    case AcceptedTx(tx)                   => s"AcceptedTx(${tx.hash.show}"
+    case MajorityTx(ref, snapshotOrdinal) => s"MajorityTx(${ref.hash.show}, ${snapshotOrdinal.show}"
+  }
+
+  implicit val order: Order[StoredTransaction] = Order[TransactionOrdinal].contramap(_.ref.ordinal)
+  implicit val ordering: Ordering[StoredTransaction] = order.toOrdering
+}
+@derive(eqv)
+sealed trait NonMajorityTx extends StoredTransaction {
+  val transaction: Hashed[Transaction]
+  def ref: TransactionReference = TransactionReference.of(transaction)
+}
+case class WaitingTx(transaction: Hashed[Transaction]) extends StoredTransaction with NonMajorityTx
+case class ProcessingTx(transaction: Hashed[Transaction]) extends StoredTransaction with NonMajorityTx
+case class AcceptedTx(transaction: Hashed[Transaction]) extends StoredTransaction with NonMajorityTx
+@derive(eqv)
+case class MajorityTx(ref: TransactionReference, snapshotOrdinal: SnapshotOrdinal) extends StoredTransaction

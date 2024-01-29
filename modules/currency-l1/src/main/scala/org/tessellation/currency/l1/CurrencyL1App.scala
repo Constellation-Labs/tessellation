@@ -25,6 +25,7 @@ import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.kryo.{KryoRegistrationId, MapRegistrationId}
 import org.tessellation.json.JsonBrotliBinarySerializer
 import org.tessellation.node.shared.app.{NodeShared, TessellationIOApp, getMajorityPeerIds}
+import org.tessellation.node.shared.ext.pureconfig._
 import org.tessellation.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import org.tessellation.node.shared.resources.MkHttpServer
 import org.tessellation.node.shared.resources.MkHttpServer.ServerName
@@ -76,19 +77,20 @@ abstract class CurrencyL1App(
 
       dagL1Queues <- DAGL1Queues.make[IO](sharedQueues).asResource
       queues <- Queues.make[IO](dagL1Queues).asResource
+      validators = DAGL1Validators
+        .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
+          seedlist,
+          cfg.transactionLimit
+        )
       storages <- Storages
         .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
           sharedStorages,
           method.l0Peer,
           method.globalL0Peer,
-          method.identifier
+          method.identifier,
+          validators.transactionContextual
         )
         .asResource
-      validators = DAGL1Validators
-        .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
-          storages,
-          seedlist
-        )
       dagP2PClient = DAGP2PClient
         .make[IO](sharedP2PClient, sharedResources.client, currencyPathPrefix = "currency")
       p2pClient = P2PClient.make[IO](
@@ -124,7 +126,8 @@ abstract class CurrencyL1App(
         storages.transaction,
         sharedServices.globalSnapshotContextFns,
         sharedServices.currencySnapshotContextFns,
-        jsonBrotliBinarySerializer
+        jsonBrotliBinarySerializer,
+        cfg.transactionLimit
       )
       programs = Programs
         .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](

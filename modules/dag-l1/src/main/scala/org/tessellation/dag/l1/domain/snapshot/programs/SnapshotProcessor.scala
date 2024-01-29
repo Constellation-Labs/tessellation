@@ -70,7 +70,7 @@ abstract class SnapshotProcessor[
             )
 
         val markTxRefsAsMajority: F[Unit] =
-          transactionStorage.markMajority(txRefsToMarkMajority)
+          transactionStorage.advanceMajorityRefs(txRefsToMarkMajority, snapshot.ordinal)
 
         val setSnapshot: F[Unit] =
           lastSnapshotStorage.set(snapshot, state)
@@ -105,7 +105,7 @@ abstract class SnapshotProcessor[
             )
 
         val markTxRefsAsMajority: F[Unit] =
-          transactionStorage.markMajority(txRefsToMarkMajority)
+          transactionStorage.advanceMajorityRefs(txRefsToMarkMajority, snapshot.ordinal)
 
         val setSnapshot: F[Unit] =
           lastSnapshotStorage.set(snapshot, state)
@@ -134,7 +134,7 @@ abstract class SnapshotProcessor[
             addressStorage.updateBalances(state.balances)
 
         val setTransactionRefs: F[Unit] =
-          transactionStorage.setLastAccepted(state.lastTxRefs)
+          transactionStorage.initByRefs(state.lastTxRefs, snapshot.ordinal)
 
         val setInitialSnapshot: F[Unit] =
           lastSnapshotStorage.setInitial(snapshot, state)
@@ -179,7 +179,7 @@ abstract class SnapshotProcessor[
             addressStorage.updateBalances(state.balances)
 
         val setTransactionRefs: F[Unit] =
-          transactionStorage.setLastAccepted(state.lastTxRefs)
+          transactionStorage.replaceByRefs(state.lastTxRefs, snapshot.ordinal)
 
         val setSnapshot: F[Unit] =
           lastSnapshotStorage.set(snapshot, state)

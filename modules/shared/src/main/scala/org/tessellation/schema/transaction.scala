@@ -1,5 +1,6 @@
 package org.tessellation.schema
 
+import cats.Order._
 import cats.effect.Async
 import cats.effect.kernel.Sync
 import cats.syntax.functor._
@@ -9,6 +10,7 @@ import scala.util.Try
 
 import org.tessellation.ext.cats.data.OrderBasedOrdering
 import org.tessellation.ext.crypto._
+import org.tessellation.ext.derevo.ordering
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.security._
@@ -19,7 +21,7 @@ import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import enumeratum._
-import eu.timepit.refined.auto.{autoInfer, autoRefineV, autoUnwrap}
+import eu.timepit.refined.auto.{autoRefineV, autoUnwrap, _}
 import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 import io.circe.{Decoder, Encoder}
@@ -47,7 +49,7 @@ object transaction {
     val zero: TransactionFee = TransactionFee(0L)
   }
 
-  @derive(decoder, encoder, order, show)
+  @derive(decoder, encoder, show, order, ordering)
   @newtype
   case class TransactionOrdinal(value: NonNegLong) {
     def next: TransactionOrdinal = TransactionOrdinal(value |+| 1L)

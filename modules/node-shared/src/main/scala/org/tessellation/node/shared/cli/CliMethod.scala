@@ -15,7 +15,7 @@ import eu.timepit.refined.auto._
 import fs2.io.file.Path
 
 object CliMethod {
-  val collateralConfig = (environment: AppEnvironment, amount: Option[Amount]) =>
+  val collateralConfig: (AppEnvironment, Option[Amount]) => CollateralConfig = (environment: AppEnvironment, amount: Option[Amount]) =>
     CollateralConfig(
       amount = amount
         .filter(_ => environment =!= Mainnet)

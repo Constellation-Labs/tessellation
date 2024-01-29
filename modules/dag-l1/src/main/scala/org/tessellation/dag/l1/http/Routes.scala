@@ -7,7 +7,7 @@ import cats.syntax.functor._
 import cats.syntax.show._
 
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.PeerBlockConsensusInput
-import org.tessellation.dag.l1.domain.transaction.{TransactionService, TransactionStorage, transactionLoggerName}
+import org.tessellation.dag.l1.domain.transaction._
 import org.tessellation.ext.http4s.{AddressVar, HashVar}
 import org.tessellation.node.shared.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.routes.internal._
@@ -60,14 +60,15 @@ final case class Routes[F[_]: Async: Hasher](
       } yield response
 
     case GET -> Root / "transactions" / HashVar(hash) =>
-      transactionStorage.find(hash).flatMap {
-        case Some(tx) => Ok(TransactionView(tx.signed.value, tx.hash, TransactionStatus.Waiting))
-        case None     => NotFound()
+      transactionStorage.findWaiting(hash).flatMap {
+        case Some(WaitingTx(tx)) => Ok(TransactionView(tx.signed.value, tx.hash, TransactionStatus.Waiting))
+        case None                => NotFound()
       }
 
     case GET -> Root / "transactions" / "last-reference" / AddressVar(address) =>
       transactionStorage
-        .getLastAcceptedReference(address)
+        .getLastProcessedTransaction(address)
+        .map(_.ref)
         .flatMap(Ok(_))
 
     case GET -> Root / "l0" / "peers" =>

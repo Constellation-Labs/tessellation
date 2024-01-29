@@ -8,7 +8,7 @@ import cats.syntax.functor._
 import org.tessellation.dag.l1.domain.address.storage.AddressStorage
 import org.tessellation.dag.l1.domain.block.BlockStorage
 import org.tessellation.dag.l1.domain.consensus.block.storage.ConsensusStorage
-import org.tessellation.dag.l1.domain.transaction.TransactionStorage
+import org.tessellation.dag.l1.domain.transaction.{ContextualTransactionValidator, TransactionStorage}
 import org.tessellation.dag.l1.infrastructure.address.storage.AddressStorage
 import org.tessellation.node.shared.domain.cluster.storage.{ClusterStorage, L0ClusterStorage, SessionStorage}
 import org.tessellation.node.shared.domain.collateral.LatestBalances
@@ -26,14 +26,15 @@ object Storages {
 
   def make[F[_]: Async: Random, P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P]](
     sharedStorages: SharedStorages[F],
-    l0Peer: L0Peer
+    l0Peer: L0Peer,
+    contextualTransactionValidator: ContextualTransactionValidator
   ): F[Storages[F, P, S, SI]] =
     for {
       blockStorage <- BlockStorage.make[F]
       consensusStorage <- ConsensusStorage.make[F]
       l0ClusterStorage <- L0ClusterStorage.make[F](l0Peer)
       lastSnapshotStorage <- LastSnapshotStorage.make[F, S, SI]
-      transactionStorage <- TransactionStorage.make[F](TransactionReference.empty)
+      transactionStorage <- TransactionStorage.make[F](TransactionReference.empty, contextualTransactionValidator)
       addressStorage <- AddressStorage.make[F]
     } yield
       new Storages[F, P, S, SI] {

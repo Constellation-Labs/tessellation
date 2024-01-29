@@ -29,7 +29,7 @@ object LastSnapshotStorage {
   ): F[LastSnapshotStorage[F, S, SI]] =
     SignallingRef.of[F, Option[(Hashed[S], SI)]](snapshot).map(make(_))
 
-  def make[F[_]: MonadThrow, S <: Snapshot, SI <: SnapshotInfo[_]](
+  def make[F[_]: Async, S <: Snapshot, SI <: SnapshotInfo[_]](
     snapshotR: SignallingRef[F, Option[(Hashed[S], SI)]]
   ): LastSnapshotStorage[F, S, SI] with LatestBalances[F] =
     new LastSnapshotStorage[F, S, SI] with LatestBalances[F] {
@@ -55,6 +55,11 @@ object LastSnapshotStorage {
         snapshotR.get.map(_.map(_._1))
 
       def getCombined: F[Option[(Hashed[S], SI)]] = snapshotR.get
+
+      def getCombinedStream: Stream[F, Option[(Hashed[S], SI)]] =
+        Stream
+          .eval[F, Option[(Hashed[S], SI)]](snapshotR.get)
+          .merge(snapshotR.discrete)
 
       def getOrdinal: F[Option[SnapshotOrdinal]] =
         get.map(_.map(_.ordinal))

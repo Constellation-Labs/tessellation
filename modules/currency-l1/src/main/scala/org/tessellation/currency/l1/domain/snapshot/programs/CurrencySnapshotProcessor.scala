@@ -11,7 +11,7 @@ import org.tessellation.dag.l1.domain.address.storage.AddressStorage
 import org.tessellation.dag.l1.domain.block.BlockStorage
 import org.tessellation.dag.l1.domain.snapshot.programs.SnapshotProcessor
 import org.tessellation.dag.l1.domain.snapshot.programs.SnapshotProcessor._
-import org.tessellation.dag.l1.domain.transaction.TransactionStorage
+import org.tessellation.dag.l1.domain.transaction.{ContextualTransactionValidator, TransactionLimitConfig, TransactionStorage}
 import org.tessellation.dag.l1.infrastructure.address.storage.AddressStorage
 import org.tessellation.json.JsonBrotliBinarySerializer
 import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
@@ -46,7 +46,8 @@ object CurrencySnapshotProcessor {
     transactionStorage: TransactionStorage[F],
     globalSnapshotContextFns: SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     currencySnapshotContextFns: SnapshotContextFunctions[F, CurrencyIncrementalSnapshot, CurrencySnapshotContext],
-    jsonBrotliBinarySerializer: JsonBrotliBinarySerializer[F]
+    jsonBrotliBinarySerializer: JsonBrotliBinarySerializer[F],
+    transactionLimitConfig: TransactionLimitConfig
   ): CurrencySnapshotProcessor[F] =
     new CurrencySnapshotProcessor[F] {
       def process(
@@ -194,11 +195,12 @@ object CurrencySnapshotProcessor {
         val lcss =
           lastCurrencySnapshotStorage.getCombined.flatMap(LastSnapshotStorage.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](_))
         val as = addressStorage.getState.flatMap(AddressStorage.make(_))
+        val cv = ContextualTransactionValidator.make(transactionLimitConfig)
         val ts =
-          transactionStorage.getState().flatMap {
-            case (lastTxs, waitingTxs) =>
+          transactionStorage.getState.flatMap {
+            case (lastTxs) =>
               TransactionReference.emptyCurrency(identifier).flatMap {
-                TransactionStorage.make(lastTxs, waitingTxs, _)
+                TransactionStorage.make(lastTxs, _, cv)
               }
           }
 

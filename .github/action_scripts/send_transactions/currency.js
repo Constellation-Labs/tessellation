@@ -181,9 +181,9 @@ const sendDoubleSpendTransaction = async ( networkOptions ) => {
             testnet: true
         }
     );
-    const signedTransaction = await accountFirstNode.generateSignedTransaction(
+    const firstToSecondTx = await accountFirstNode.generateSignedTransaction(
         SECOND_WALLET_ADDRESS,
-        5000,
+        1000,
         1,
         lastRef
     );
@@ -198,17 +198,17 @@ const sendDoubleSpendTransaction = async ( networkOptions ) => {
             testnet: true
         }
     );
-    const signedTransaction2 = await accountSecondNode.generateSignedTransaction(
+    const firstToThirdTx = await accountSecondNode.generateSignedTransaction(
         THIRD_WALLET_ADDRESS,
-        5000,
+        1000,
         1,
         lastRef
     );
 
     try {
-        await Promise.all( [
-            dag4.network.postTransaction( signedTransaction ),
-            dag4.network.postTransaction( signedTransaction2 )
+        const [firstToSecondSucceeded, firstToThirdSucceeded] = await Promise.all( [
+            dag4.network.postTransaction(firstToSecondTx).catch(e => false).then(v => true),
+            dag4.network.postTransaction(firstToThirdTx).catch(e => false).then(v => true)
         ] );
 
         logMessage( `Waiting ${SLEEP_TIME_UNTIL_QUERY}ms until fetch wallet balances` );
@@ -218,7 +218,7 @@ const sendDoubleSpendTransaction = async ( networkOptions ) => {
         const secondWalletBalance = await accountFirstNode.getBalanceFor( SECOND_WALLET_ADDRESS );
         const thirdWalletBalance = await accountFirstNode.getBalanceFor( THIRD_WALLET_ADDRESS );
 
-        if( secondWalletBalance === 9900 && thirdWalletBalance === 5000 ){
+        if( firstToThirdSucceeded && secondWalletBalance === 9900 && thirdWalletBalance === 1000 ){
             logMessage( `Amount sent to third wallet ${thirdWalletBalance} and not to second: ${secondWalletBalance}` );
             logMessage( `FirstWalletBalance: ${firstWalletBalance}` );
             logMessage( `SecondWalletBalance: ${secondWalletBalance}` );
@@ -226,7 +226,7 @@ const sendDoubleSpendTransaction = async ( networkOptions ) => {
             return;
         }
 
-        if( secondWalletBalance === 14900 && thirdWalletBalance === 0 ){
+        if( firstToSecondSucceeded && secondWalletBalance === 10900 && thirdWalletBalance === 0 ){
             logMessage( `Amount sent to second wallet ${secondWalletBalance} and not to third: ${thirdWalletBalance}` );
             logMessage( `FirstWalletBalance: ${firstWalletBalance}` );
             logMessage( `SecondWalletBalance: ${secondWalletBalance}` );

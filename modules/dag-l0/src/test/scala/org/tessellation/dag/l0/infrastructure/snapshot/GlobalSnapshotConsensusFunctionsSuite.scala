@@ -14,7 +14,7 @@ import org.tessellation.currency.schema.currency.SnapshotFee
 import org.tessellation.dag.l0.dagL0KryoRegistrar
 import org.tessellation.dag.l0.domain.snapshot.programs.GlobalSnapshotEventCutter
 import org.tessellation.ext.cats.effect.ResourceIO
-import org.tessellation.ext.cats.syntax.next._
+import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
 import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.block.processing._

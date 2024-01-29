@@ -1,18 +1,20 @@
 package org.tessellation.dag.l1.domain.block
 
-import cats.data.{NonEmptyList, NonEmptySet}
+import cats.data.NonEmptyList
 import cats.effect.std.Random
 import cats.effect.{IO, Resource}
 import cats.syntax.either._
 import cats.syntax.option._
 import cats.syntax.traverse._
 
+import scala.collection.immutable.SortedMap
+import scala.concurrent.duration.DurationInt
+
 import org.tessellation.block.generators._
 import org.tessellation.dag.l1.Main
 import org.tessellation.dag.l1.domain.address.storage.AddressStorage
 import org.tessellation.dag.l1.domain.block.BlockStorage._
-import org.tessellation.dag.l1.domain.transaction.TransactionStorage
-import org.tessellation.dag.l1.domain.transaction.TransactionStorage.{LastTransactionReferenceState, Majority}
+import org.tessellation.dag.l1.domain.transaction._
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.collection.MapRefUtils._
 import org.tessellation.json.JsonSerializer
@@ -24,11 +26,12 @@ import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.transaction._
-import org.tessellation.security._
 import org.tessellation.security.hash.ProofsHash
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hasher, _}
 
 import eu.timepit.refined.auto._
+import fs2.Stream
 import io.chrisdavenport.mapref.MapRef
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
@@ -45,7 +48,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
 
   def mkBlockService(
     blocksR: MapRef[IO, ProofsHash, Option[StoredBlock]],
-    lastAccTxR: MapRef[IO, Address, Option[LastTransactionReferenceState]],
+    ts: MapRef[IO, Address, Option[SortedMap[TransactionOrdinal, StoredTransaction]]],
     notAcceptanceReason: Option[BlockNotAcceptedReason] = None
   )(implicit H: Hasher[IO]) = {
 
@@ -80,28 +83,31 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
 
     }
 
-    val lastGlobalSnapshotStorage = new LastSnapshotStorage[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo] {
-      override def set(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): IO[Unit] = ???
+    Random.scalaUtilRandom.map { implicit r =>
+      val blockStorage = new BlockStorage[IO](blocksR)
+      val contextualValidator = ContextualTransactionValidator.make(
+        TransactionLimitConfig(Balance.empty, 0.hours, TransactionFee.zero, 1.second)
+      )
+      val transactionStorage =
+        new TransactionStorage[IO](ts, TransactionReference.empty, contextualValidator)
 
-      override def setInitial(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): IO[Unit] = ???
+      val lastGlobalSnapshotStorage = new LastSnapshotStorage[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo] {
+        override def set(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): IO[Unit] = ???
 
-      override def get: IO[Option[Hashed[GlobalIncrementalSnapshot]]] = ???
+        override def setInitial(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): IO[Unit] = ???
 
-      override def getCombined: IO[Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = ???
+        override def get: IO[Option[Hashed[GlobalIncrementalSnapshot]]] = ???
 
-      override def getOrdinal: IO[Option[SnapshotOrdinal]] = IO.pure(SnapshotOrdinal.MinValue.some)
+        override def getCombined: IO[Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = ???
 
-      override def getHeight: IO[Option[height.Height]] = ???
-    }
+        override def getCombinedStream: Stream[IO, Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = ???
 
-    Random.scalaUtilRandom.flatMap { implicit r =>
-      MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[Transaction]]]().map { waitingTxsR =>
-        val blockStorage = new BlockStorage[IO](blocksR)
-        val transactionStorage = new TransactionStorage[IO](lastAccTxR, waitingTxsR, TransactionReference.empty)
-        BlockService
-          .make[IO](blockAcceptanceManager, addressStorage, blockStorage, transactionStorage, lastGlobalSnapshotStorage, Amount.empty)
+        override def getOrdinal: IO[Option[SnapshotOrdinal]] = IO.pure(SnapshotOrdinal.MinValue.some)
+
+        override def getHeight: IO[Option[height.Height]] = ???
       }
-
+      BlockService
+        .make[IO](blockAcceptanceManager, addressStorage, blockStorage, transactionStorage, lastGlobalSnapshotStorage, Amount.empty)
     }
   }
 
@@ -112,7 +118,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
         blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]()
         _ <- blocksR(hashedBlock.proofsHash).set(Some(WaitingBlock(hashedBlock.signed)))
         _ <- addParents(blocksR, block)
-        lastAccTxR <- setUpLastTxnR(Some(block))
+        lastAccTxR <- setupTxsStorage(Some(block))
 
         blockService <- mkBlockService(blocksR, lastAccTxR)
 
@@ -137,7 +143,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
         _ <- blocksR(hashedBlock.proofsHash).set(Some(WaitingBlock(hashedBlock.signed)))
         _ <- blocksR(hashedNotRelatedBlock.proofsHash).set(Some(PostponedBlock(hashedNotRelatedBlock.signed)))
         _ <- addParents(blocksR, block)
-        lastAccTxR <- setUpLastTxnR(Some(block))
+        lastAccTxR <- setupTxsStorage(Some(block))
 
         blockService <- mkBlockService(blocksR, lastAccTxR)
 
@@ -167,7 +173,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
         _ <- blocksR(hashedBlock.proofsHash).set(Some(WaitingBlock(hashedBlock.signed)))
         _ <- blocksR(hashedRelatedBlock.proofsHash).set(Some(PostponedBlock(hashedRelatedBlock.signed)))
         _ <- addParents(blocksR, block)
-        lastAccTxR <- setUpLastTxnR(Some(block))
+        lastAccTxR <- setupTxsStorage(Some(block))
 
         blockService <- mkBlockService(blocksR, lastAccTxR)
 
@@ -193,7 +199,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
         blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]()
         _ <- blocksR(hashedBlock.proofsHash).set(Some(WaitingBlock(hashedBlock.signed)))
         _ <- addParents(blocksR, block)
-        lastAccTxR <- setUpLastTxnR(Some(block))
+        lastAccTxR <- setupTxsStorage(Some(block))
 
         blockService <- mkBlockService(blocksR, lastAccTxR, Some(ParentNotFound(block.parent.head)))
 
@@ -224,7 +230,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
         _ <- blocksR(hashedBlock.proofsHash).set(Some(WaitingBlock(hashedBlock.signed)))
         _ <- blocksR(hashedNotRelatedBlock.proofsHash).set(Some(PostponedBlock(hashedNotRelatedBlock.signed)))
         _ <- addParents(blocksR, block)
-        lastAccTxR <- setUpLastTxnR(Some(block))
+        lastAccTxR <- setupTxsStorage(Some(block))
 
         blockService <- mkBlockService(blocksR, lastAccTxR, Some(ParentNotFound(block.parent.head)))
 
@@ -253,11 +259,16 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
   private def addParents(blocksR: MapRef[IO, ProofsHash, Option[StoredBlock]], block: Signed[Block]) =
     block.parent.toList.traverse(parent => blocksR(parent.hash).set(Some(MajorityBlock(parent, 1L, Active))))
 
-  private def setUpLastTxnR(maybeBlock: Option[Signed[Block]]) = for {
-    lastAccTxR <- MapRef.ofConcurrentHashMap[IO, Address, TransactionStorage.LastTransactionReferenceState]()
+  private def setupTxsStorage(maybeBlock: Option[Signed[Block]]) = for {
+    transactionsR <- MapRef.ofConcurrentHashMap[IO, Address, SortedMap[TransactionOrdinal, StoredTransaction]]()
     _ <- maybeBlock.traverse(block =>
-      block.transactions.toNonEmptyList.toList.traverse(txn => lastAccTxR(txn.source).set(Majority(txn.parent).some))
+      block.transactions.toNonEmptyList.toList.traverse(txn =>
+        transactionsR(txn.source).update { maybeStored =>
+          val updated = maybeStored.getOrElse(SortedMap.empty[TransactionOrdinal, StoredTransaction])
+          updated.updated(txn.parent.ordinal, MajorityTx(txn.parent, SnapshotOrdinal.MinValue)).some
+        }
+      )
     )
-  } yield lastAccTxR
+  } yield transactionsR
 
 }

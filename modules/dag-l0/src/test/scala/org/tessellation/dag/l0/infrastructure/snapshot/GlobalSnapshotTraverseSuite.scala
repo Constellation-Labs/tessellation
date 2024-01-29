@@ -14,7 +14,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import org.tessellation.dag.l0.infrastructure.snapshot._
 import org.tessellation.ext.cats.effect.ResourceIO
-import org.tessellation.ext.cats.syntax.next._
+import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
 import org.tessellation.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.SnapshotSizeConfig
