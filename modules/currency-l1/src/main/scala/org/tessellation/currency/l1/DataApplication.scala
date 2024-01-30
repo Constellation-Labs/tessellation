@@ -89,6 +89,8 @@ object DataApplication {
             lastCurrencySnapshotStorage
           )
           .run
+      }.handleErrorWith { e =>
+        Stream.eval(logger.error(e)("Error during data block creation")) >> Stream.empty
       }.flatMap {
         case (_, fb @ ConsensusOutput.FinalBlock(hashedBlock)) =>
           Stream
@@ -110,6 +112,7 @@ object DataApplication {
             maybeL0Peer.fold(logger.warn("No available L0 peer")) { l0Peer =>
               blockOutputClient
                 .sendDataApplicationBlock(fb.hashedBlock.signed)(dataApplicationService.dataEncoder)(l0Peer)
+                .handleErrorWith(e => logger.error(e)("Error when sending block to L0").as(false))
                 .ifM(Applicative[F].unit, logger.warn("Sending block to L0 failed"))
             }
           }
