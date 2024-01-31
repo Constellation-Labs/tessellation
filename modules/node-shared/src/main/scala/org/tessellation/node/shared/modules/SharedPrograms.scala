@@ -1,7 +1,8 @@
 package org.tessellation.node.shared.modules
 
+import cats.Parallel
 import cats.effect.Async
-import cats.syntax.flatMap._
+import cats.effect.std.Supervisor
 import cats.syntax.functor._
 
 import org.tessellation.kryo.KryoSerializer
@@ -16,7 +17,7 @@ import org.tessellation.security.{Hasher, SecurityProvider}
 
 object SharedPrograms {
 
-  def make[F[_]: Async: SecurityProvider: KryoSerializer: Hasher](
+  def make[F[_]: Async: SecurityProvider: KryoSerializer: Hasher: Supervisor: Parallel](
     cfg: SharedConfig,
     storages: SharedStorages[F],
     services: SharedServices[F],
@@ -29,7 +30,7 @@ object SharedPrograms {
   ): F[SharedPrograms[F]] =
     for {
       pd <- PeerDiscovery.make(clusterClient, storages.cluster, nodeId)
-      joining <- Joining.make(
+      joining = new Joining[F](
         cfg.environment,
         storages.node,
         storages.cluster,
@@ -41,8 +42,8 @@ object SharedPrograms {
         seedlist,
         nodeId,
         cfg.stateAfterJoining,
-        pd,
-        versionHash
+        versionHash,
+        pd
       )
     } yield new SharedPrograms[F](pd, joining) {}
 }

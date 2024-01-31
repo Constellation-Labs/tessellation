@@ -1,21 +1,27 @@
 package org.tessellation.node.shared.domain.cluster.programs
 
-import cats.Applicative
+import cats.data.EitherT
 import cats.effect.Async
-import cats.effect.std.Queue
+import cats.effect.std.Supervisor
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
+import cats.syntax.either._
 import cats.syntax.flatMap._
+import cats.syntax.foldable._
 import cats.syntax.functor._
 import cats.syntax.option._
 import cats.syntax.order._
+import cats.syntax.parallel._
 import cats.syntax.show._
-import cats.syntax.traverse._
+import cats.{Applicative, MonadThrow, Parallel}
+
+import scala.util.control.NoStackTrace
 
 import org.tessellation.effects.GenUUID
 import org.tessellation.env.AppEnvironment
 import org.tessellation.env.AppEnvironment.Dev
 import org.tessellation.ext.crypto._
+import org.tessellation.node.shared.domain.Daemon
 import org.tessellation.node.shared.domain.cluster.services.{Cluster, Session}
 import org.tessellation.node.shared.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import org.tessellation.node.shared.domain.healthcheck.LocalHealthcheck
@@ -25,6 +31,7 @@ import org.tessellation.node.shared.http.p2p.clients.SignClient
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.cluster._
 import org.tessellation.schema.node.NodeState
+import org.tessellation.schema.node.NodeState.{SessionStarted, inCluster}
 import org.tessellation.schema.peer.Peer.toP2PContext
 import org.tessellation.schema.peer._
 import org.tessellation.security.hash.Hash
@@ -32,110 +39,19 @@ import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hasher, SecurityProvider}
 
 import com.comcast.ip4s.{Host, IpLiteralSyntax}
-import fs2.{Pipe, Stream}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-object Joining {
-
-  def make[F[_]: Async: GenUUID: SecurityProvider: Hasher](
-    environment: AppEnvironment,
-    nodeStorage: NodeStorage[F],
-    clusterStorage: ClusterStorage[F],
-    signClient: SignClient[F],
-    cluster: Cluster[F],
-    session: Session[F],
-    sessionStorage: SessionStorage[F],
-    localHealthcheck: LocalHealthcheck[F],
-    seedlist: Option[Set[SeedlistEntry]],
-    selfId: PeerId,
-    stateAfterJoining: NodeState,
-    peerDiscovery: PeerDiscovery[F],
-    versionHash: Hash
-  ): F[Joining[F]] =
-    Queue
-      .unbounded[F, P2PContext]
-      .flatMap(
-        make(
-          _,
-          environment,
-          nodeStorage,
-          clusterStorage,
-          signClient,
-          cluster,
-          session,
-          sessionStorage,
-          localHealthcheck,
-          seedlist,
-          selfId,
-          stateAfterJoining,
-          peerDiscovery,
-          versionHash
-        )
-      )
-
-  def make[F[_]: Async: GenUUID: SecurityProvider: Hasher](
-    joiningQueue: Queue[F, P2PContext],
-    environment: AppEnvironment,
-    nodeStorage: NodeStorage[F],
-    clusterStorage: ClusterStorage[F],
-    signClient: SignClient[F],
-    cluster: Cluster[F],
-    session: Session[F],
-    sessionStorage: SessionStorage[F],
-    localHealthcheck: LocalHealthcheck[F],
-    seedlist: Option[Set[SeedlistEntry]],
-    selfId: PeerId,
-    stateAfterJoining: NodeState,
-    peerDiscovery: PeerDiscovery[F],
-    versionHash: Hash
-  ): F[Joining[F]] = {
-
-    val logger = Slf4jLogger.getLogger[F]
-
-    val joining = new Joining(
-      environment,
-      nodeStorage,
-      clusterStorage,
-      signClient,
-      cluster,
-      session,
-      sessionStorage,
-      localHealthcheck,
-      seedlist,
-      selfId,
-      stateAfterJoining,
-      versionHash,
-      joiningQueue
-    ) {}
-
-    def join: Pipe[F, P2PContext, Unit] =
-      in =>
-        in.evalMap { peer =>
-          {
-            joining.twoWayHandshake(peer, none) >>
-              clusterStorage
-                .getPeer(peer.id)
-                .flatMap {
-                  _.fold(Set.empty[P2PContext].pure[F]) { p =>
-                    peerDiscovery.discoverFrom(p).map(_.map(toP2PContext)).handleErrorWith { err =>
-                      logger.error(err)(s"Peer discovery from peer ${peer.show} failed").as(Set.empty)
-                    }
-                  }
-                }
-                .flatMap(_.toList.traverse(joiningQueue.offer(_).void))
-                .void
-          }.handleErrorWith { err =>
-            logger.error(err)(s"Joining to peer ${peer.show} failed")
-          }
-        }
-
-    val process = Stream.fromQueueUnterminated(joiningQueue).through(join).compile.drain
-
-    Async[F].start(process).as(joining)
-  }
+case class FailedToJoin(peer: Peer) extends NoStackTrace {
+  override def getMessage: String = s"Joining to peer ${peer.show} failed"
+}
+case class FailedToDiscoverFrom(peer: Peer, err: Throwable) extends NoStackTrace {
+  override def getMessage: String =
+    s"Peer discovery from peer ${peer.show} failed because ${err.getMessage}"
 }
 
-sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: Hasher] private (
+class Joining[
+  F[_]: Async: GenUUID: SecurityProvider: Hasher: Supervisor: Parallel
+](
   environment: AppEnvironment,
   nodeStorage: NodeStorage[F],
   clusterStorage: ClusterStorage[F],
@@ -148,18 +64,22 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: Hasher] pr
   selfId: PeerId,
   stateAfterJoining: NodeState,
   versionHash: Hash,
-  joiningQueue: Queue[F, P2PContext]
+  peerDiscovery: PeerDiscovery[F]
 ) {
 
   private val logger = Slf4jLogger.getLogger[F]
 
   def join(toPeer: PeerToJoin): F[Unit] =
-    for {
-      _ <- validateJoinConditions()
-      _ <- session.createSession
-
-      _ <- joiningQueue.offer(toPeer)
-    } yield ()
+    validateJoinConditions() >>
+      session.createSession >>
+      Daemon.spawn {
+        joinAll(toPeer) >>
+          clusterStorage.getResponsivePeers.flatMap { peers =>
+            nodeStorage
+              .tryModifyState(SessionStarted, stateAfterJoining)
+              .whenA(peers.nonEmpty)
+          }
+      }.start
 
   def rejoin(withPeer: PeerToJoin): F[Unit] =
     twoWayHandshake(withPeer, None, skipJoinRequest = true).void
@@ -173,7 +93,7 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: Hasher] pr
 
   def joinRequest(hasCollateral: PeerId => F[Boolean])(joinRequest: JoinRequest, remoteAddress: Host): F[Unit] = {
     for {
-      _ <- nodeStorage.getNodeState.map(NodeState.inCluster).flatMap(NodeNotInCluster.raiseError[F, Unit].unlessA)
+      _ <- nodeStorage.getNodeState.map(inCluster).flatMap(NodeNotInCluster.raiseError[F, Unit].unlessA)
       _ <- sessionStorage.getToken.flatMap(_.fold(SessionDoesNotExist.raiseError[F, Unit])(_ => Applicative[F].unit))
 
       registrationRequest = joinRequest.registrationRequest
@@ -188,6 +108,53 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: Hasher] pr
       _ <- twoWayHandshake(withPeer, remoteAddress.some, skipJoinRequest = true)
     } yield ()
   }.onError(err => logger.error(err)(s"Error during join attempt by ${joinRequest.registrationRequest.id.show}"))
+
+  private def joinTo(toJoin: P2PContext): EitherT[F, Throwable, Peer] =
+    twoWayHandshake(toJoin, none).attemptT
+      .flatMapF[Throwable, Peer] { p =>
+        clusterStorage
+          .getPeer(p.id)
+          .map(
+            Either.fromOption(
+              _,
+              FailedToJoin(p)
+            )
+          )
+      }
+
+  private def discoverFrom(peer: Peer): F[Set[Peer]] =
+    peerDiscovery
+      .discoverFrom(peer)
+      .handleErrorWith { e =>
+        MonadThrow[F].raiseError(FailedToDiscoverFrom(peer, e))
+      }
+
+  private def joinAndDiscover(toJoin: P2PContext): EitherT[F, Throwable, Set[P2PContext]] =
+    joinTo(toJoin)
+      .semiflatMap(discoverFrom)
+      .map(_.map(toP2PContext))
+
+  private def joinAll(peerToJoin: P2PContext): F[Unit] = {
+    type Agg = (Set[P2PContext], Set[P2PContext])
+    type Res = Unit
+
+    (Set(peerToJoin), Set.empty[P2PContext]).tailRecM {
+      case (toJoin, _) if toJoin.isEmpty => ().asRight[Agg].pure
+      case (toJoin, attempted) =>
+        for {
+          discovered <- toJoin.toList.parTraverse { peer =>
+            joinAndDiscover(peer).valueOrF { err =>
+              logger
+                .warn(err)(s"Failed to join and discover from ${peer.show}")
+                .as(Set.empty[P2PContext])
+            }
+          }
+          reduced = discovered.combineAll
+          updatedAttempted = attempted ++ toJoin
+          updatedToJoin = reduced.diff(updatedAttempted)
+        } yield (updatedToJoin, updatedAttempted).asLeft[Res]
+    }
+  }
 
   private def twoWayHandshake(
     withPeer: PeerToJoin,
@@ -238,7 +205,6 @@ sealed abstract class Joining[F[_]: Async: GenUUID: SecurityProvider: Hasher] pr
           localHealthcheck.cancel(registrationRequest.id),
           PeerAlreadyJoinedWithDifferentRegistrationData(registrationRequest.id).raiseError[F, Unit]
         )
-      _ <- nodeStorage.tryModifyStateGetResult(NodeState.SessionStarted, stateAfterJoining)
     } yield peer
 
   private def validateSeedlist(peer: PeerToJoin): F[Unit] =
