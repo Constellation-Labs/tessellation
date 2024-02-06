@@ -10,6 +10,7 @@ import org.tessellation.node.shared.domain.node.NodeStorage
 import org.tessellation.routes.internal._
 import org.tessellation.schema.node.NodeInfo
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.semver.TessellationVersion
 
 import eu.timepit.refined.auto._
 import org.http4s.HttpRoutes
@@ -20,7 +21,7 @@ final case class NodeRoutes[F[_]: Async](
   nodeStorage: NodeStorage[F],
   sessionStorage: SessionStorage[F],
   clusterStorage: ClusterStorage[F],
-  version: String,
+  version: TessellationVersion,
   httpCfg: HttpConfig,
   selfId: PeerId
 ) extends Http4sDsl[F]
@@ -42,7 +43,16 @@ final case class NodeRoutes[F[_]: Async](
   protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case GET -> Root / "info" =>
       (nodeStorage.getNodeState, sessionStorage.getToken, clusterStorage.getToken).mapN { (state, session, clusterSession) =>
-        NodeInfo(state, session, clusterSession, version, httpCfg.externalIp, httpCfg.publicHttp.port, httpCfg.p2pHttp.port, selfId)
+        NodeInfo(
+          state,
+          session,
+          clusterSession,
+          version.version.value,
+          httpCfg.externalIp,
+          httpCfg.publicHttp.port,
+          httpCfg.p2pHttp.port,
+          selfId
+        )
       }.flatMap(Ok(_))
 
     case GET -> Root / "state" =>

@@ -27,6 +27,7 @@ import org.tessellation.node.shared.resources.SharedResources
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.semver.TessellationVersion
 import org.tessellation.security.{Hasher, SecurityProvider}
 
 import com.monovore.decline.Opts
@@ -43,12 +44,12 @@ abstract class TessellationIOApp[A <: CliMethod](
   header: String,
   clusterId: ClusterId,
   helpFlag: Boolean = true,
-  version: String = ""
+  version: TessellationVersion = TessellationVersion.unsafeFrom("0.0.1")
 ) extends CommandIOApp(
       name,
       header,
       helpFlag,
-      version
+      version.version.value
     ) {
 
   /** Command-line opts

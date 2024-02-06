@@ -10,6 +10,7 @@ import org.tessellation.node.shared.domain.node.NodeStorage
 import org.tessellation.routes.internal._
 import org.tessellation.schema.node.MetagraphNodeInfo
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.semver.{MetagraphVersion, TessellationVersion}
 
 import eu.timepit.refined.auto._
 import org.http4s.HttpRoutes
@@ -22,8 +23,8 @@ final case class MetagraphRoutes[F[_]: Async](
   clusterStorage: ClusterStorage[F],
   httpCfg: HttpConfig,
   selfId: PeerId,
-  tessellationVersion: String,
-  metagraphVersion: String
+  tessellationVersion: TessellationVersion,
+  metagraphVersion: MetagraphVersion
 ) extends Http4sDsl[F]
     with PublicRoutes[F]
     with P2PRoutes[F] {

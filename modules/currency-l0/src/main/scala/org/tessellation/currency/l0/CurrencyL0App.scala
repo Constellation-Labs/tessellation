@@ -21,6 +21,7 @@ import org.tessellation.node.shared.snapshot.currency.CurrencySnapshotEvent
 import org.tessellation.node.shared.{NodeSharedOrSharedRegistrationIdRange, nodeSharedKryoRegistrar}
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.node.NodeState
+import org.tessellation.schema.semver.{MetagraphVersion, TessellationVersion}
 import org.tessellation.security.SecurityProvider
 
 import com.monovore.decline.Opts
@@ -29,8 +30,8 @@ abstract class CurrencyL0App(
   name: String,
   header: String,
   clusterId: ClusterId,
-  tessellationVersion: String,
-  metagraphVersion: String
+  tessellationVersion: TessellationVersion,
+  metagraphVersion: MetagraphVersion
 ) extends TessellationIOApp[Run](
       name,
       header,

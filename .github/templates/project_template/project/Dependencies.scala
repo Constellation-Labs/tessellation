@@ -4,7 +4,7 @@ object Dependencies {
 
   object V {
     //Default version of tessellation develop branch
-    val tessellation = "github-action-test-version"
+    val tessellation = "99.99.99"
     val decline = "2.4.1"
   }
   def tessellation(artifact: String): ModuleID = "org.constellation" %% s"tessellation-$artifact" % V.tessellation

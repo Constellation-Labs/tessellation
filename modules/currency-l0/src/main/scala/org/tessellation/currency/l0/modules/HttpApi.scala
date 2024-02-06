@@ -21,6 +21,7 @@ import org.tessellation.node.shared.infrastructure.healthcheck.ping.PingHealthCh
 import org.tessellation.node.shared.infrastructure.metrics.Metrics
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.semver.{MetagraphVersion, TessellationVersion}
 import org.tessellation.security.{Hasher, SecurityProvider}
 
 import eu.timepit.refined.auto._
@@ -40,10 +41,10 @@ object HttpApi {
     privateKey: PrivateKey,
     environment: AppEnvironment,
     selfId: PeerId,
-    nodeVersion: String,
+    nodeVersion: TessellationVersion,
     httpCfg: HttpConfig,
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
-    maybeMetagraphVersion: Option[String]
+    maybeMetagraphVersion: Option[MetagraphVersion]
   ): HttpApi[F] =
     new HttpApi[F](
       storages,
@@ -70,10 +71,10 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Has
   privateKey: PrivateKey,
   environment: AppEnvironment,
   selfId: PeerId,
-  nodeVersion: String,
+  nodeVersion: TessellationVersion,
   httpCfg: HttpConfig,
   maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
-  maybeMetagraphVersion: Option[String]
+  maybeMetagraphVersion: Option[MetagraphVersion]
 ) {
 
   private val mkCell = (event: CurrencySnapshotEvent) => L0Cell.mkL0Cell(queues.l1Output).apply(L0CellInput.HandleL1Block(event))

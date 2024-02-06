@@ -21,6 +21,7 @@ import org.tessellation.node.shared.resources.MkHttpServer
 import org.tessellation.node.shared.resources.MkHttpServer.ServerName
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.node.NodeState
+import org.tessellation.schema.semver.TessellationVersion
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshot}
 import org.tessellation.security.signature.Signed
 
@@ -31,7 +32,7 @@ object Main
     extends TessellationIOApp[Run](
       name = "dag-l0",
       header = "Tessellation Node",
-      version = BuildInfo.version,
+      version = TessellationVersion.unsafeFrom(BuildInfo.version),
       clusterId = ClusterId("6d7f1d6a-213a-4148-9d45-d7200f555ecf")
     ) {
 
@@ -117,7 +118,7 @@ object Main
           keyPair.getPrivate,
           cfg.environment,
           nodeShared.nodeId,
-          BuildInfo.version,
+          TessellationVersion.unsafeFrom(BuildInfo.version),
           cfg.http
         )
       _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)

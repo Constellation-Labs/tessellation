@@ -1,8 +1,8 @@
 package org.tessellation.currency.l1
 
 import cats.effect.{IO, Resource}
-import cats.implicits.catsSyntaxOptionId
 import cats.syntax.applicativeError._
+import cats.syntax.option._
 import cats.syntax.semigroupk._
 import cats.syntax.traverse._
 
@@ -37,6 +37,7 @@ import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.node.NodeState.SessionStarted
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.semver.{MetagraphVersion, TessellationVersion}
 
 import com.monovore.decline.Opts
 import eu.timepit.refined.boolean.Or
@@ -46,8 +47,8 @@ abstract class CurrencyL1App(
   name: String,
   header: String,
   clusterId: ClusterId,
-  tessellationVersion: String,
-  metagraphVersion: String
+  tessellationVersion: TessellationVersion,
+  metagraphVersion: MetagraphVersion
 ) extends TessellationIOApp[Run](
       name,
       header,

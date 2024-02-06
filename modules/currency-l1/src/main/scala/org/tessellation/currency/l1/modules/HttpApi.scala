@@ -19,6 +19,7 @@ import org.tessellation.node.shared.http.routes._
 import org.tessellation.node.shared.infrastructure.healthcheck.ping.PingHealthCheckRoutes
 import org.tessellation.node.shared.infrastructure.metrics.Metrics
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.semver.{MetagraphVersion, TessellationVersion}
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.security.{Hasher, SecurityProvider}
 
@@ -58,9 +59,9 @@ object HttpApi {
     ],
     healthchecks: HealthChecks[F],
     selfId: PeerId,
-    nodeVersion: String,
+    nodeVersion: TessellationVersion,
     httpCfg: HttpConfig,
-    maybeMetagraphVersion: Option[String]
+    maybeMetagraphVersion: Option[MetagraphVersion]
   ): HttpApi[F] =
     new HttpApi[F](
       maybeDataApplication,
@@ -88,9 +89,9 @@ sealed abstract class HttpApi[
   programs: Programs[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
   healthchecks: HealthChecks[F],
   selfId: PeerId,
-  nodeVersion: String,
+  nodeVersion: TessellationVersion,
   httpCfg: HttpConfig,
-  maybeMetagraphVersion: Option[String]
+  maybeMetagraphVersion: Option[MetagraphVersion]
 ) {
 
   private val clusterRoutes =
