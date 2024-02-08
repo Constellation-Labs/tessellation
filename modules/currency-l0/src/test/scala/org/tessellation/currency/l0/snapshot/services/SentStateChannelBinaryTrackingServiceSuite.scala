@@ -67,7 +67,7 @@ object SentStateChannelBinaryTrackingServiceSuite extends MutableIOSuite with Ch
         }
       }
 
-  val gen = for {
+  val gen: Gen[(List[Signed[StateChannelSnapshotBinary]], Address)] = for {
     binaries <- Gen.nonEmptyListOf(signedOf(arbitrary[StateChannelSnapshotBinary]))
     address <- addressGen
   } yield (binaries, address)
@@ -121,7 +121,7 @@ object SentStateChannelBinaryTrackingServiceSuite extends MutableIOSuite with Ch
       case (binaries, identifier) =>
         for {
           (service, pendingR) <- mkService(identifier)
-          shuffled <- Random.scalaUtilRandom[IO].flatMap(_.shuffleList(binaries.toList)).flatMap(_.traverse(_.toHashed))
+          shuffled <- Random.scalaUtilRandom[IO].flatMap(_.shuffleList(binaries)).flatMap(_.traverse(_.toHashed))
           _ <- shuffled.traverse(s => service.setPending(s.signed))
           prevPending <- pendingR.get
           snapshot1 <- createGlobalIncrementalSnapshot(identifier, List.empty)
@@ -135,7 +135,7 @@ object SentStateChannelBinaryTrackingServiceSuite extends MutableIOSuite with Ch
     }
   }
 
-  test("returns binary to retry in FIFO manner") { res =>
+  test("returns binaries to retry in FIFO manner") { res =>
     implicit val (ks, hs) = res
 
     forall(gen) {
@@ -148,7 +148,7 @@ object SentStateChannelBinaryTrackingServiceSuite extends MutableIOSuite with Ch
           _ <- service.updateByGlobalSnapshot(snapshot1) >> service.updateByGlobalSnapshot(snapshot1) >> service
             .updateByGlobalSnapshot(snapshot1)
           retriable <- service.getRetriable
-        } yield expect.eql(retriable, shuffled.headOption)
+        } yield expect.eql(retriable, shuffled)
     }
   }
 }
