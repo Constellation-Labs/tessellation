@@ -16,7 +16,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait SentStateChannelBinaryTrackingService[F[_]] {
   def setPending(binary: Signed[StateChannelSnapshotBinary]): F[Unit]
-  def getRetriable: F[Option[Signed[StateChannelSnapshotBinary]]]
+  def getRetriable: F[List[Signed[StateChannelSnapshotBinary]]]
   def updateByGlobalSnapshot(globalSnapshot: GlobalIncrementalSnapshot): F[Unit]
 }
 
@@ -44,13 +44,21 @@ object SentStateChannelBinaryTrackingService {
         val confirmedHashes = binaries.traverse(_.toHashed).map(_.flatMap(b => List(b.hash, b.lastSnapshotHash)))
 
         confirmedHashes.flatMap { confirmed =>
-          pendingR.update { currPending =>
-            val newPending = currPending.zipWithIndex.collectFirst {
-              case ((hashed, _), cuttingPoint) if confirmed.contains(hashed.hash) => cuttingPoint
-            }.map(currPending.splitAt).map { case (stillPending, _) => stillPending }.getOrElse(currPending)
+          pendingR.modify { currPending =>
+            val newPending = currPending.zipWithIndex.collect {
+              case ((hashed, _), cuttingPoint) if confirmed.contains(hashed.hash) => cuttingPoint + 1
+            }.lastOption
+              .map(currPending.splitAt)
+              .map { case (_, stillPending) => stillPending }
+              .getOrElse(currPending)
+              .flatMap { case (binary, checks) => NonNegInt.from(checks + 1).map((binary, _)).toOption }
 
-            newPending.flatMap { case (binary, checks) => NonNegInt.from(checks + 1).map((binary, _)).toOption }
-          }
+            (newPending, newPending.size)
+          }.flatTap { pendingCount =>
+            logger.warn(
+              s"$pendingCount state channel binaries are still not confirmed on the global state. Waiting for the next global snapshot."
+            )
+          }.void
         }
       }
 
@@ -58,16 +66,16 @@ object SentStateChannelBinaryTrackingService {
         binary.toHashed.flatMap { hashed =>
           pendingR.modify { pending =>
             val alreadyExists = pending.exists { case (binary, _) => binary.hash === hashed.hash }
-            val updated = if (alreadyExists) pending else (hashed, NonNegInt.MinValue) :: pending
+            val updated = if (alreadyExists) pending else pending.appended((hashed, NonNegInt.MinValue))
             (updated, alreadyExists)
           }.flatTap { alreadyExists =>
             logger.warn(s"Snapshot binary ${hashed.hash} is already enqueued for tracking!").whenA(alreadyExists)
           }.void
         }
 
-      def getRetriable: F[Option[Signed[StateChannelSnapshotBinary]]] =
+      def getRetriable: F[List[Signed[StateChannelSnapshotBinary]]] =
         pendingR.get.map { pending =>
-          pending.findLast { case (_, checks) => checks >= retryOrdinalDelay }.map { case (binary, _) => binary.signed }
+          pending.filter { case (_, checks) => checks >= retryOrdinalDelay }.map { case (binary, _) => binary.signed }
         }
 
       def updateByGlobalSnapshot(globalSnapshot: GlobalIncrementalSnapshot): F[Unit] =

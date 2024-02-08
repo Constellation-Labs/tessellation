@@ -67,7 +67,7 @@ object method {
       collateral = collateralConfig(environment, collateralAmount),
       rewards = RewardsConfig(),
       stateChannelPullDelay = NonNegLong.MinValue,
-      stateChannelPurgeDelay = NonNegLong(4L),
+      stateChannelPurgeDelay = NonNegLong(5L),
       peerDiscoveryDelay = PeerDiscoveryDelay(
         checkPeersAttemptDelay = 1.minute,
         checkPeersMaxDelay = 10.minutes,
