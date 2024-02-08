@@ -61,10 +61,10 @@ object StateChannel {
           services.sentStateChannelBinaryTrackingService.getRetriable
             .flatMap(_.traverse(_.toHashed))
             .flatMap {
-              case Some(binaryToRetry) =>
+              _.traverse { binaryToRetry =>
                 logger.info(s"Snapshot binary hash=${binaryToRetry.hash} didn't reach global state. Resending to random Global L0 peer") >>
                   services.stateChannelSnapshot.sendToGlobalL0(binaryToRetry)
-              case None => Applicative[F].unit
+              }
             }
         }
         .handleErrorWith { error =>
