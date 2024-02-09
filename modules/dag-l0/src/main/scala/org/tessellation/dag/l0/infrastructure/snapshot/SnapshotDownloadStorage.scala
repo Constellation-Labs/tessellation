@@ -6,9 +6,10 @@ import cats.syntax.all._
 
 import org.tessellation.cutoff.{LogarithmicOrdinalCutoff, OrdinalCutoff}
 import org.tessellation.dag.l0.domain.snapshot.storages.SnapshotDownloadStorage
+import org.tessellation.merkletree.StateProofValidator
 import org.tessellation.node.shared.infrastructure.snapshot.storage.{SnapshotInfoLocalFileSystemStorage, SnapshotLocalFileSystemStorage}
 import org.tessellation.schema._
-import org.tessellation.security.Hasher
+import org.tessellation.security._
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
@@ -17,7 +18,8 @@ object SnapshotDownloadStorage {
     tmpStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
     persistedStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
     fullGlobalSnapshotStorage: SnapshotLocalFileSystemStorage[F, GlobalSnapshot],
-    snapshotInfoStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfo]
+    snapshotInfoStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfo],
+    hashSelect: HashSelect
   ): SnapshotDownloadStorage[F] =
     new SnapshotDownloadStorage[F] {
 
@@ -41,7 +43,7 @@ object SnapshotDownloadStorage {
 
       def hasCorrectSnapshotInfo(ordinal: SnapshotOrdinal, proof: GlobalSnapshotStateProof): F[Boolean] =
         snapshotInfoStorage.read(ordinal).flatMap {
-          case Some(info) => info.stateProof.map(_ === proof)
+          case Some(info) => info.stateProof(ordinal, hashSelect).map(_ === proof)
           case _          => false.pure[F]
         }
 
@@ -53,8 +55,9 @@ object SnapshotDownloadStorage {
       def readCombined(ordinal: SnapshotOrdinal): F[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] =
         (readPersisted(ordinal), snapshotInfoStorage.read(ordinal)).tupled.map(_.tupled).flatMap {
           case Some((snapshot, info)) =>
-            info.stateProof
-              .map(_ === snapshot.stateProof)
+            StateProofValidator
+              .validate(snapshot, info, hashSelect)
+              .map(_.isValid)
               .ifM(
                 (snapshot, info).some.pure[F],
                 new Exception("Persisted snapshot info does not match the persisted snapshot")

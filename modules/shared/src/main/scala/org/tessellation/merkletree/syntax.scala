@@ -21,5 +21,11 @@ trait SortedMapOps {
         .traverse(_.hash)
         .map(NonEmptyList.fromList)
         .map(_.map(MerkleTree.from))
+
+    def compatibleMerkleTree[F[_]: Sync: Hasher]: F[Option[MerkleTree]] =
+      a.toList
+        .traverse(Hasher[F].hashKryo)
+        .map(NonEmptyList.fromList)
+        .map(_.map(MerkleTree.from))
   }
 }

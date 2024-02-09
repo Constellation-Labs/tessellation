@@ -6,11 +6,12 @@ import cats.syntax.validated._
 
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.kryo._
-import org.tessellation.json.JsonHashSerializer
+import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.security.signature.Signed.forAsyncKryo
-import org.tessellation.security.{Hasher, KeyPairGenerator, SecurityProvider}
+import org.tessellation.security._
+import org.tessellation.security.signature.Signed.forAsyncHasher
 import org.tessellation.shared.sharedKryoRegistrar
 
 import derevo.circe.magnolia.encoder
@@ -27,8 +28,8 @@ object SignedValidatorSuite extends MutableIOSuite {
     KryoSerializer
       .forAsync[IO](sharedKryoRegistrar.union(Map[Class[_], KryoRegistrationId[Interval.Closed[5000, 5001]]](classOf[TestObject] -> 5000)))
       .flatMap { implicit res =>
-        JsonHashSerializer.forSync[IO].asResource.map { implicit json =>
-          Hasher.forSync[IO]
+        JsonSerializer.forSync[IO].asResource.map { implicit json =>
+          Hasher.forSync[IO](new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash })
         }
       }
       .flatMap { h =>
@@ -44,7 +45,7 @@ object SignedValidatorSuite extends MutableIOSuite {
       keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
       peerId2 = PeerId.fromPublic(keyPair2.getPublic)
       input = TestObject("Test")
-      signedInput <- forAsyncKryo(input, keyPair1)
+      signedInput <- forAsyncHasher(input, keyPair1)
       validator = mkValidator()
       result = validator.validateSignaturesWithSeedlist(Some(Set(peerId1, peerId2)), signedInput)
     } yield expect.same(Validated.Valid(signedInput), result)
@@ -59,7 +60,7 @@ object SignedValidatorSuite extends MutableIOSuite {
       keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
       peerId2 = PeerId.fromPublic(keyPair2.getPublic)
       input = TestObject("Test")
-      signedInput <- forAsyncKryo(input, keyPair1).flatMap(_.signAlsoWith(keyPair2))
+      signedInput <- forAsyncHasher(input, keyPair1).flatMap(_.signAlsoWith(keyPair2))
       validator = mkValidator()
       result = validator.validateSignaturesWithSeedlist(Some(Set(peerId1, peerId2)), signedInput)
     } yield expect.same(Validated.Valid(signedInput), result)
@@ -71,7 +72,7 @@ object SignedValidatorSuite extends MutableIOSuite {
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
       input = TestObject("Test")
-      signedInput <- forAsyncKryo(input, keyPair)
+      signedInput <- forAsyncHasher(input, keyPair)
       validator = mkValidator()
       result = validator.validateSignaturesWithSeedlist(None, signedInput)
     } yield expect.same(Validated.Valid(signedInput), result)
@@ -86,7 +87,7 @@ object SignedValidatorSuite extends MutableIOSuite {
       keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
       peerId2 = PeerId.fromPublic(keyPair2.getPublic)
       input = TestObject("Test")
-      signedInput <- forAsyncKryo(input, keyPair1).flatMap(_.signAlsoWith(keyPair2))
+      signedInput <- forAsyncHasher(input, keyPair1).flatMap(_.signAlsoWith(keyPair2))
       validator = mkValidator()
       result = validator.validateSignaturesWithSeedlist(Some(Set(peerId1)), signedInput)
     } yield expect.same(SignedValidator.SignersNotInSeedlist(NonEmptySet.one(peerId2.toId)).invalidNec, result)

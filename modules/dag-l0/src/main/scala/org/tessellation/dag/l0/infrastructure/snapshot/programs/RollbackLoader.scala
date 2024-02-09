@@ -7,6 +7,7 @@ import cats.syntax.all._
 
 import org.tessellation.dag.l0.domain.snapshot.storages.SnapshotDownloadStorage
 import org.tessellation.dag.l0.infrastructure.snapshot.GlobalSnapshotTraverse
+import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.SnapshotConfig
 import org.tessellation.node.shared.infrastructure.snapshot.GlobalSnapshotContextFunctions
@@ -14,19 +15,20 @@ import org.tessellation.node.shared.infrastructure.snapshot.storage.{SnapshotInf
 import org.tessellation.schema._
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Hasher, SecurityProvider}
+import org.tessellation.security.{HashSelect, Hasher, SecurityProvider}
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object RollbackLoader {
 
-  def make[F[_]: Async: KryoSerializer: Hasher: SecurityProvider](
+  def make[F[_]: Async: KryoSerializer: JsonSerializer: Hasher: SecurityProvider](
     keyPair: KeyPair,
     snapshotConfig: SnapshotConfig,
     incrementalGlobalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
     snapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfo],
     snapshotStorage: SnapshotDownloadStorage[F],
-    snapshotContextFunctions: GlobalSnapshotContextFunctions[F]
+    snapshotContextFunctions: GlobalSnapshotContextFunctions[F],
+    hashSelect: HashSelect
   ): RollbackLoader[F] =
     new RollbackLoader[F](
       keyPair,
@@ -34,17 +36,19 @@ object RollbackLoader {
       incrementalGlobalSnapshotLocalFileSystemStorage,
       snapshotStorage: SnapshotDownloadStorage[F],
       snapshotContextFunctions,
-      snapshotInfoLocalFileSystemStorage
+      snapshotInfoLocalFileSystemStorage,
+      hashSelect
     ) {}
 }
 
-sealed abstract class RollbackLoader[F[_]: Async: KryoSerializer: Hasher: SecurityProvider] private (
+sealed abstract class RollbackLoader[F[_]: Async: KryoSerializer: JsonSerializer: Hasher: SecurityProvider] private (
   keyPair: KeyPair,
   snapshotConfig: SnapshotConfig,
   incrementalGlobalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
   snapshotStorage: SnapshotDownloadStorage[F],
   snapshotContextFunctions: GlobalSnapshotContextFunctions[F],
-  snapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfo]
+  snapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfo],
+  hashSelect: HashSelect
 ) {
 
   private val logger = Slf4jLogger.getLogger[F]
@@ -63,17 +67,19 @@ sealed abstract class RollbackLoader[F[_]: Async: KryoSerializer: Hasher: Securi
                     fullGlobalSnapshotLocalFileSystemStorage.read(_),
                     snapshotInfoLocalFileSystemStorage.read(_),
                     snapshotContextFunctions,
-                    rollbackHash
+                    rollbackHash,
+                    hashSelect
                   )
                 snapshotTraverse.loadChain()
               }
             case Some(fullSnapshot) =>
               logger.info("Rollback hash points to full global snapshot") >>
-                fullSnapshot.toHashed[F].flatMap(GlobalSnapshot.mkFirstIncrementalSnapshot[F](_)).flatMap { firstIncrementalSnapshot =>
-                  Signed.forAsyncKryo[F, GlobalIncrementalSnapshot](firstIncrementalSnapshot, keyPair).map {
-                    signedFirstIncrementalSnapshot =>
-                      (GlobalSnapshotInfoV1.toGlobalSnapshotInfo(fullSnapshot.info), signedFirstIncrementalSnapshot)
-                  }
+                fullSnapshot.toHashed[F].flatMap(GlobalSnapshot.mkFirstIncrementalSnapshot[F](_, hashSelect)).flatMap {
+                  firstIncrementalSnapshot =>
+                    Signed.forAsyncHasher[F, GlobalIncrementalSnapshot](firstIncrementalSnapshot, keyPair).map {
+                      signedFirstIncrementalSnapshot =>
+                        (GlobalSnapshotInfoV1.toGlobalSnapshotInfo(fullSnapshot.info), signedFirstIncrementalSnapshot)
+                    }
                 }
           }
           .flatTap {

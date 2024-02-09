@@ -10,6 +10,7 @@ import org.tessellation.dag.l0.domain.cluster.programs.TrustPush
 import org.tessellation.dag.l0.domain.snapshot.programs.Download
 import org.tessellation.dag.l0.http.p2p.P2PClient
 import org.tessellation.dag.l0.infrastructure.snapshot.programs.RollbackLoader
+import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.cluster.programs.{Joining, PeerDiscovery}
 import org.tessellation.node.shared.domain.snapshot.PeerSelect
@@ -17,11 +18,11 @@ import org.tessellation.node.shared.domain.snapshot.programs.Download
 import org.tessellation.node.shared.infrastructure.snapshot.{GlobalSnapshotContextFunctions, PeerSelect}
 import org.tessellation.node.shared.modules.SharedPrograms
 import org.tessellation.schema.SnapshotOrdinal
-import org.tessellation.security.{Hasher, SecurityProvider}
+import org.tessellation.security.{HashSelect, Hasher, SecurityProvider}
 
 object Programs {
 
-  def make[F[_]: Async: KryoSerializer: Hasher: SecurityProvider: Random](
+  def make[F[_]: Async: KryoSerializer: JsonSerializer: Hasher: SecurityProvider: Random](
     sharedPrograms: SharedPrograms[F],
     storages: Storages[F],
     services: Services[F],
@@ -29,7 +30,8 @@ object Programs {
     config: AppConfig,
     lastFullGlobalSnapshotOrdinal: SnapshotOrdinal,
     p2pClient: P2PClient[F],
-    globalSnapshotContextFns: GlobalSnapshotContextFunctions[F]
+    globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
+    hashSelect: HashSelect
   ): Programs[F] = {
     val trustPush = TrustPush.make(storages.trust, services.gossip)
     val peerSelect: PeerSelect[F] = PeerSelect.make(
@@ -46,7 +48,8 @@ object Programs {
         globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
         storages.node,
         services.consensus,
-        peerSelect
+        peerSelect,
+        hashSelect
       )
     val rollbackLoader = RollbackLoader.make(
       keyPair,
@@ -54,7 +57,8 @@ object Programs {
       storages.incrementalGlobalSnapshotLocalFileSystemStorage,
       storages.globalSnapshotInfoLocalFileSystemStorage,
       storages.snapshotDownload,
-      globalSnapshotContextFns
+      globalSnapshotContextFns,
+      hashSelect
     )
 
     new Programs[F](sharedPrograms.peerDiscovery, sharedPrograms.joining, trustPush, download, rollbackLoader) {}

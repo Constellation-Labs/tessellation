@@ -10,7 +10,7 @@ import cats.syntax.functor._
 
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction._
-import org.tessellation.security.signature.Signed.forAsyncKryo
+import org.tessellation.security.signature.Signed.forAsyncHasher
 import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
 
 import eu.timepit.refined.auto._
@@ -27,7 +27,7 @@ trait TransactionGenerator {
     lastTxRef: Option[TransactionReference] = None
   ): F[NonEmptyList[Hashed[Transaction]]] = {
     def generate(src: Address, srcKey: KeyPair, dst: Address, lastTxRef: TransactionReference): F[Hashed[Transaction]] =
-      forAsyncKryo[F, Transaction](
+      forAsyncHasher[F, Transaction](
         Transaction(src, dst, TransactionAmount(1L), fee, lastTxRef, TransactionSalt(0L)),
         srcKey
       ).flatMap(_.toHashed[F])

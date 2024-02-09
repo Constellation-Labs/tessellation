@@ -59,7 +59,7 @@ object Signed {
       tail <- arbitrary[SortedSet[SignatureProof]]
     } yield Signed(value, NonEmptySet(head, tail)))
 
-  def forAsyncKryo[F[_]: Async: SecurityProvider: Hasher, A: Encoder](
+  def forAsyncHasher[F[_]: Async: SecurityProvider: Hasher, A: Encoder](
     data: A,
     keyPair: KeyPair
   ): F[Signed[A]] =
@@ -106,21 +106,32 @@ object Signed {
     def validProofs[F[_]: Async: SecurityProvider: Hasher](
       toBytesOrEncoder: Either[A => F[Array[Byte]], Encoder[A]]
     ): F[Either[NonEmptySet[SignatureProof], NonEmptySet[SignatureProof]]] =
-      for {
-        hash <- toBytesOrEncoder.fold(toHashed(_).map(_.hash), implicit encoder => signed.value.hash)
-        invalidOrValidProofs <- signed.proofs.toNonEmptyList.traverse { proof =>
-          signature
-            .verifySignatureProof(hash, proof)
-            .map(result => proof -> result)
-        }.map { proofsAndResults =>
-          proofsAndResults
-            .filterNot(_._2)
-            .map(_._1)
-            .toNel
-            .map(_.toNes)
-            .toLeft(signed.proofs)
-        }
-      } yield invalidOrValidProofs
+      signed.proofs.toNonEmptyList.traverse { proof =>
+        toBytesOrEncoder.fold(
+          toBytes =>
+            toHashed(toBytes).map(_.hash).flatMap { hash =>
+              signature.verifySignatureProof(hash, proof).map(proof -> _)
+            },
+          implicit encoder =>
+            Hasher[F]
+              .hashJson(signed.value)
+              .flatMap {
+                signature
+                  .verifySignatureProof(_, proof)
+                  .ifM(
+                    true.pure[F],
+                    Hasher[F].hashKryo(signed.value) >>= { signature.verifySignatureProof(_, proof) }
+                  )
+              }
+              .map(result => proof -> result)
+        )
+      }.map {
+        _.collect {
+          case (proof, false) => proof
+        }.toNel
+          .map(_.toNes)
+          .toLeft(signed.proofs)
+      }
 
     def toHashedWithSignatureCheck[F[_]: Async: Hasher: SecurityProvider](
       implicit encoder: Encoder[A]

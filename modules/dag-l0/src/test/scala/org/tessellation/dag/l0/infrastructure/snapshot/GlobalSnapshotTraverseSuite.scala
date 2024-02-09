@@ -15,7 +15,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import org.tessellation.dag.l0.infrastructure.snapshot._
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.cats.syntax.next._
-import org.tessellation.json.{JsonBrotliBinarySerializer, JsonHashSerializer}
+import org.tessellation.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.SnapshotSizeConfig
 import org.tessellation.node.shared.domain.statechannel.StateChannelValidator
@@ -52,11 +52,13 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
 
   type Res = (KryoSerializer[IO], Hasher[IO], SecurityProvider[IO], Metrics[IO], Random[IO])
 
+  val hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash }
+
   override def sharedResource: Resource[IO, Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
-    implicit0(j: JsonHashSerializer[IO]) <- JsonHashSerializer.forSync[IO].asResource
-    h = Hasher.forSync[IO]
+    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+    h = Hasher.forSync[IO](hashSelect)
     metrics <- Metrics.forAsync[IO](Seq.empty)
     random <- Random.scalaUtilRandom[IO].asResource
   } yield (ks, h, sp, metrics, random)
@@ -69,10 +71,10 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
   ): IO[(Hashed[GlobalSnapshot], NonEmptyList[Hashed[GlobalIncrementalSnapshot]])] =
     KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>
       Signed
-        .forAsyncKryo[IO, GlobalSnapshot](GlobalSnapshot.mkGenesis(initBalances, EpochProgress.MinValue), keyPair)
+        .forAsyncHasher[IO, GlobalSnapshot](GlobalSnapshot.mkGenesis(initBalances, EpochProgress.MinValue), keyPair)
         .flatMap(_.toHashed)
         .flatMap { genesis =>
-          GlobalIncrementalSnapshot.fromGlobalSnapshot(genesis).flatMap { incremental =>
+          GlobalIncrementalSnapshot.fromGlobalSnapshot(genesis, hashSelect).flatMap { incremental =>
             mkSnapshot(genesis.hash, incremental, genesis.info, keyPair, SortedSet.empty).flatMap { snapshotWithContext =>
               dags
                 .foldLeftM(NonEmptyList.of(snapshotWithContext)) {
@@ -123,7 +125,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         lastTxRefs = lastTxRefs,
         balances = balances
       )
-      newSnapshotInfoStateProof <- newSnapshotInfo.stateProof
+      newSnapshotInfoStateProof <- newSnapshotInfo.stateProof(lastSnapshot.ordinal.next, hashSelect)
       snapshot = GlobalIncrementalSnapshot(
         lastSnapshot.ordinal.next,
         Height.MinValue,
@@ -137,7 +139,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         lastSnapshot.tips.copy(remainedActive = activeTips),
         newSnapshotInfoStateProof
       )
-      signed <- Signed.forAsyncKryo[IO, GlobalIncrementalSnapshot](snapshot, keyPair)
+      signed <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](snapshot, keyPair)
       hashed <- signed.toHashed
     } yield (hashed, newSnapshotInfo)
 
@@ -201,7 +203,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
     val validators = SharedValidators.make[IO](None, None, Some(Map.empty[Address, NonEmptySet[PeerId]]), Long.MaxValue)
     val currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
       BlockAcceptanceManager.make[IO](validators.currencyBlockValidator),
-      Amount(0L)
+      Amount(0L),
+      hashSelect
     )
     val currencyEventsCutter = CurrencyEventsCutter.make[IO]
 
@@ -210,16 +213,17 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         .make[IO](currencySnapshotAcceptanceManager, None, SnapshotSizeConfig(Long.MaxValue, Long.MaxValue), currencyEventsCutter)
     val currencySnapshotValidator = CurrencySnapshotValidator.make[IO](currencySnapshotCreator, validators.signedValidator, None, None)
 
-    val currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
+    val currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator, hashSelect)
     for {
       stateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, NonNegLong(10L))
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync
       stateChannelProcessor = GlobalSnapshotStateChannelEventsProcessor
         .make[IO](stateChannelValidator, stateChannelManager, currencySnapshotContextFns, jsonBrotliBinarySerializer)
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make[IO](blockAcceptanceManager, stateChannelProcessor, Amount.empty)
-      snapshotContextFunctions = GlobalSnapshotContextFunctions.make[IO](snapshotAcceptanceManager)
+      snapshotContextFunctions = GlobalSnapshotContextFunctions.make[IO](snapshotAcceptanceManager, hashSelect)
     } yield
-      GlobalSnapshotTraverse.make[IO](loadGlobalIncrementalSnapshot, loadGlobalSnapshot, loadInfo, snapshotContextFunctions, rollbackHash)
+      GlobalSnapshotTraverse
+        .make[IO](loadGlobalIncrementalSnapshot, loadGlobalSnapshot, loadInfo, snapshotContextFunctions, rollbackHash, hashSelect)
   }
 
   test("can compute state for given incremental global snapshot") { res =>

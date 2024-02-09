@@ -5,6 +5,7 @@ import cats.data.NonEmptySet
 import scala.concurrent.duration.FiniteDuration
 
 import org.tessellation.env.AppEnvironment
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.PeerId
@@ -25,7 +26,8 @@ object types {
     trustStorage: TrustStorageConfig,
     priorityPeerIds: Option[NonEmptySet[PeerId]],
     snapshotSizeConfig: SnapshotSizeConfig,
-    forkInfoStorage: ForkInfoStorageConfig
+    forkInfoStorage: ForkInfoStorageConfig,
+    lastKryoHashOrdinal: SnapshotOrdinal
   )
 
   case class SnapshotSizeConfig(

@@ -108,7 +108,8 @@ abstract class CurrencyL1App(
           p2pClient,
           cfg,
           dataApplicationService,
-          maybeMajorityPeerIds
+          maybeMajorityPeerIds,
+          hashSelect
         )
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync[IO].asResource
       snapshotProcessor = CurrencySnapshotProcessor.make(

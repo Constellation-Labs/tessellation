@@ -19,7 +19,7 @@ import org.tessellation.node.shared.modules.SharedServices
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
-import org.tessellation.security.{Hasher, SecurityProvider}
+import org.tessellation.security.{HashSelect, Hasher, SecurityProvider}
 
 object Services {
   def make[F[_]: Async: Hasher: SecurityProvider](
@@ -36,7 +36,8 @@ object Services {
     p2PClient: P2PClient[F],
     cfg: AppConfig,
     maybeDataApplication: Option[BaseDataApplicationL1Service[F]],
-    maybeMajorityPeerIds: Option[NonEmptySet[PeerId]]
+    maybeMajorityPeerIds: Option[NonEmptySet[PeerId]],
+    hashSelect: HashSelect
   ): Services[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo] =
     new Services[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo] {
 
@@ -51,7 +52,8 @@ object Services {
       val cluster = sharedServices.cluster
       val gossip = sharedServices.gossip
       val globalL0 =
-        GlobalL0Service.make[F](p2PClient.l0GlobalSnapshot, globalL0Cluster, lastGlobalSnapshotStorage, None, maybeMajorityPeerIds)
+        GlobalL0Service
+          .make[F](p2PClient.l0GlobalSnapshot, globalL0Cluster, lastGlobalSnapshotStorage, None, maybeMajorityPeerIds, hashSelect)
       val session = sharedServices.session
       val transaction = TransactionService.make[F](storages.transaction, validators.transactionContextual)
       val collateral = Collateral.make[F](cfg.collateral, storages.lastSnapshot)

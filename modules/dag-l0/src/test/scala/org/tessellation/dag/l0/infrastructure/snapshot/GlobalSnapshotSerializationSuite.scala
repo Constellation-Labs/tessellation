@@ -6,13 +6,12 @@ import cats.effect.{IO, Resource}
 import cats.syntax.all._
 
 import org.tessellation.ext.cats.effect.ResourceIO
-import org.tessellation.ext.crypto._
 import org.tessellation.ext.kryo._
-import org.tessellation.json.JsonHashSerializer
+import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.nodeSharedKryoRegistrar
 import org.tessellation.schema._
-import org.tessellation.security.Hasher
+import org.tessellation.security._
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
@@ -37,8 +36,8 @@ object GlobalSnapshotSerializationSuite extends MutableIOSuite with Checkers {
 
   def sharedResource: Resource[IO, Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](nodeSharedKryoRegistrar)
-    implicit0(j: JsonHashSerializer[IO]) <- JsonHashSerializer.forSync[IO].asResource
-    h = Hasher.forSync[IO]
+    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+    h = Hasher.forSync[IO](new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash })
   } yield (ks, h)
 
   test("snapshot is successfully deserialized and serialized with kryo") { res =>
@@ -48,8 +47,8 @@ object GlobalSnapshotSerializationSuite extends MutableIOSuite with Checkers {
       storedBytes <- getBytesFromClasspath(kryoFilename)
       signedSnapshot <- storedBytes.fromBinaryF[Signed[GlobalSnapshot]]
       serializedBytes <- signedSnapshot.toBinaryF
-      snapshotHash <- signedSnapshot.value.hash
-    } yield expect.same(serializedBytes, storedBytes).and(expect.same(snapshotHash, expectedHash))
+      hashCompare <- h.compare(signedSnapshot.value, expectedHash)
+    } yield expect.eql(serializedBytes, storedBytes).and(expect(hashCompare))
   }
 
   test("snapshot is successfully deserialized and serialized with json parser") { implicit res =>
@@ -58,9 +57,9 @@ object GlobalSnapshotSerializationSuite extends MutableIOSuite with Checkers {
     for {
       storedJson <- getJsonFromClasspath(jsonFilename)
       signedSnapshot <- storedJson.as[Signed[GlobalSnapshot]].leftWiden[Throwable].liftTo[IO]
-      snapshotHash <- signedSnapshot.value.hash
       serializedJson = signedSnapshot.asJson
-    } yield expect.same(serializedJson, storedJson).and(expect.same(snapshotHash, expectedHash))
+      hashCompare <- h.compare(signedSnapshot.value, expectedHash)
+    } yield expect.eql(serializedJson, storedJson).and(expect(hashCompare))
   }
 
   private def getJsonFromClasspath(name: String): F[Json] = {

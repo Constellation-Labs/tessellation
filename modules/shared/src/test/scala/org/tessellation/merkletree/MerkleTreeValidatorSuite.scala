@@ -7,7 +7,7 @@ import cats.syntax.flatMap._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import org.tessellation.ext.cats.effect.ResourceIO
-import org.tessellation.json.JsonHashSerializer
+import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
@@ -15,11 +15,11 @@ import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.security._
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.{Signature, SignatureProof}
-import org.tessellation.security.{Hashed, Hasher}
 import org.tessellation.shared.sharedKryoRegistrar
 
 import eu.timepit.refined.auto._
@@ -30,10 +30,12 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
 
   type Res = Hasher[IO]
 
+  val hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash }
+
   override def sharedResource: Resource[IO, Res] =
     KryoSerializer.forAsync[IO](sharedKryoRegistrar).flatMap { implicit res =>
-      JsonHashSerializer.forSync[IO].asResource.map { implicit json =>
-        Hasher.forSync[IO]
+      JsonSerializer.forSync[IO].asResource.map { implicit json =>
+        Hasher.forSync[IO](hashSelect)
       }
     }
 
@@ -47,7 +49,7 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
     )
     for {
       snapshot <- globalIncrementalSnapshot(globalSnapshotInfo)
-      result <- StateProofValidator.validate(snapshot, globalSnapshotInfo)
+      result <- StateProofValidator.validate(snapshot, globalSnapshotInfo, hashSelect)
     } yield expect.same(Validated.Valid(()), result)
   }
 
@@ -62,14 +64,14 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
 
     for {
       snapshot <- globalIncrementalSnapshot(globalSnapshotInfo)
-      result <- StateProofValidator.validate(snapshot, GlobalSnapshotInfo.empty)
+      result <- StateProofValidator.validate(snapshot, GlobalSnapshotInfo.empty, hashSelect)
     } yield expect.same(Validated.Invalid(StateProofValidator.StateBroken(SnapshotOrdinal(NonNegLong(1L)), snapshot.hash)), result)
   }
 
   private def globalIncrementalSnapshot[F[_]: Async: Hasher](
     globalSnapshotInfo: GlobalSnapshotInfo
   ): F[Hashed[GlobalIncrementalSnapshot]] =
-    globalSnapshotInfo.stateProof[F].flatMap { sp =>
+    globalSnapshotInfo.stateProof[F](SnapshotOrdinal(NonNegLong(1L)), hashSelect).flatMap { sp =>
       Signed(
         GlobalIncrementalSnapshot(
           SnapshotOrdinal(NonNegLong(1L)),

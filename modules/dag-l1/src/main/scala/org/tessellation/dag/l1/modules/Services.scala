@@ -20,7 +20,7 @@ import org.tessellation.node.shared.modules.SharedServices
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
-import org.tessellation.security.{Hasher, SecurityProvider}
+import org.tessellation.security.{HashSelect, Hasher, SecurityProvider}
 
 object Services {
 
@@ -37,7 +37,8 @@ object Services {
     sharedServices: SharedServices[F],
     p2PClient: P2PClient[F],
     cfg: AppConfig,
-    maybeMajorityPeerIds: Option[NonEmptySet[PeerId]]
+    maybeMajorityPeerIds: Option[NonEmptySet[PeerId]],
+    hashSelect: HashSelect
   ): Services[F, P, S, SI] =
     new Services[F, P, S, SI] {
       val localHealthcheck = sharedServices.localHealthcheck
@@ -51,7 +52,7 @@ object Services {
       val cluster = sharedServices.cluster
       val gossip = sharedServices.gossip
       val globalL0 = GlobalL0Service
-        .make[F](p2PClient.l0GlobalSnapshot, globalL0Cluster, lastGlobalSnapshotStorage, None, maybeMajorityPeerIds)
+        .make[F](p2PClient.l0GlobalSnapshot, globalL0Cluster, lastGlobalSnapshotStorage, None, maybeMajorityPeerIds, hashSelect)
       val session = sharedServices.session
       val transaction = TransactionService.make[F](storages.transaction, validators.transactionContextual)
       val collateral = Collateral.make[F](cfg.collateral, storages.lastSnapshot)

@@ -5,17 +5,23 @@ import cats.syntax.all._
 
 import scala.reflect.ClassTag
 
+import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.snapshot.{SnapshotInfo, StateProof}
-import org.tessellation.storage.KryoLocalFileSystemStorage
+import org.tessellation.storage.SerializableLocalFileSystemStorage
 
 import fs2.Stream
 import fs2.io.file.Path
+import io.circe.{Decoder, Encoder}
 
-final class SnapshotInfoLocalFileSystemStorage[F[_]: Async: KryoSerializer, P <: StateProof, S <: SnapshotInfo[P]: ClassTag] private (
+final class SnapshotInfoLocalFileSystemStorage[
+  F[_]: Async: KryoSerializer: JsonSerializer,
+  P <: StateProof,
+  S <: SnapshotInfo[P]: ClassTag: Encoder: Decoder
+] private (
   path: Path
-) extends KryoLocalFileSystemStorage[F, S](path) {
+) extends SerializableLocalFileSystemStorage[F, S](path) {
   def write(ordinal: SnapshotOrdinal, snapshotInfo: S): F[Unit] = {
     val ordinalName = toOrdinalName(ordinal)
 
@@ -53,7 +59,7 @@ final class SnapshotInfoLocalFileSystemStorage[F[_]: Async: KryoSerializer, P <:
 }
 
 object SnapshotInfoLocalFileSystemStorage {
-  def make[F[_]: Async: KryoSerializer, P <: StateProof, S <: SnapshotInfo[P]: ClassTag](
+  def make[F[_]: Async: KryoSerializer: JsonSerializer, P <: StateProof, S <: SnapshotInfo[P]: ClassTag: Encoder: Decoder](
     path: Path
   ): F[SnapshotInfoLocalFileSystemStorage[F, P, S]] =
     new SnapshotInfoLocalFileSystemStorage[F, P, S](path).pure[F].flatTap { storage =>

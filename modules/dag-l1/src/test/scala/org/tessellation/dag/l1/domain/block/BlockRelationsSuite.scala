@@ -5,12 +5,12 @@ import cats.effect.{IO, Resource}
 import org.tessellation.block.generators._
 import org.tessellation.dag.l1.Main
 import org.tessellation.ext.cats.effect.ResourceIO
-import org.tessellation.json.JsonHashSerializer
+import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.nodeSharedKryoRegistrar
-import org.tessellation.schema.{Block, transaction}
+import org.tessellation.schema.{Block, SnapshotOrdinal, transaction}
+import org.tessellation.security._
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Hashed, Hasher}
 
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
@@ -21,8 +21,8 @@ object BlockRelationsSuite extends MutableIOSuite with Checkers {
 
   def sharedResource: Resource[IO, Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ nodeSharedKryoRegistrar)
-    implicit0(j: JsonHashSerializer[IO]) <- JsonHashSerializer.forSync[IO].asResource
-    h = Hasher.forSync[IO]
+    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+    h = Hasher.forSync[IO](new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash })
   } yield h
 
   test("when no relation between blocks then block is independent") { implicit res =>

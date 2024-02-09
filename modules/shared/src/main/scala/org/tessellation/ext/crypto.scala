@@ -18,7 +18,7 @@ object crypto {
   }
 
   implicit class RefinedSignedF[F[_]: Async: Hasher: SecurityProvider, A: Encoder](data: A) {
-    def sign(keyPair: KeyPair): F[Signed[A]] = Signed.forAsyncKryo[F, A](data, keyPair)
+    def sign(keyPair: KeyPair): F[Signed[A]] = Signed.forAsyncHasher[F, A](data, keyPair)
 
     def sign(keyPairs: NonEmptyList[KeyPair]): F[Signed[A]] =
       keyPairs.tail.foldLeft(sign(keyPairs.head)) { (acc, keyPair) =>

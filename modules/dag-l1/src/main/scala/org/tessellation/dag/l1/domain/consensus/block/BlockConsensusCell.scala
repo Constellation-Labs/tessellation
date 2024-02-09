@@ -124,7 +124,7 @@ object BlockConsensusCell {
     context: BlockConsensusContext[F]
   ): F[Unit] =
     for {
-      signedProposal <- Signed.forAsyncKryo[F, PeerBlockConsensusInput](ownProposal, context.keyPair)
+      signedProposal <- Signed.forAsyncHasher[F, PeerBlockConsensusInput](ownProposal, context.keyPair)
       _ <- broadcast(signedProposal, peers, context.blockConsensusClient)
     } yield ()
 
@@ -208,7 +208,7 @@ object BlockConsensusCell {
         signedBlock.proofs.head.signature
       )
       signedBlockSignatureProposal <- Signed
-        .forAsyncKryo[F, PeerBlockConsensusInput](blockSignatureProposal, ctx.keyPair)
+        .forAsyncHasher[F, PeerBlockConsensusInput](blockSignatureProposal, ctx.keyPair)
       _ <- broadcast(signedBlockSignatureProposal, roundData.peers, ctx.blockConsensusClient)
     } yield NoData.asRight[CellError].widen[BlockConsensusOutput]
 
@@ -250,7 +250,7 @@ object BlockConsensusCell {
       case Some(roundData) if gotAllProposals(roundData) =>
         roundData.formBlock(ctx.transactionValidator).flatMap {
           case Some(block) =>
-            Signed.forAsyncKryo(block, ctx.keyPair).flatMap { signedBlock =>
+            Signed.forAsyncHasher(block, ctx.keyPair).flatMap { signedBlock =>
               ctx.blockValidator
                 .validate(signedBlock, validationParams)
                 .flatTap { validationResult =>
@@ -355,7 +355,7 @@ object BlockConsensusCell {
         reason
       )
       signedCancellationMessage <- Signed
-        .forAsyncKryo[F, PeerBlockConsensusInput](cancellation, ctx.keyPair)
+        .forAsyncHasher[F, PeerBlockConsensusInput](cancellation, ctx.keyPair)
       _ <- broadcast(signedCancellationMessage, peersToInform, ctx.blockConsensusClient)
     } yield NoData.asRight[CellError].widen[BlockConsensusOutput]
 
@@ -420,7 +420,7 @@ object BlockConsensusCell {
         case Some((roundData, Some(myCancellation))) =>
           for {
             signedCancellationMessage <- Signed
-              .forAsyncKryo[F, PeerBlockConsensusInput](myCancellation, ctx.keyPair)
+              .forAsyncHasher[F, PeerBlockConsensusInput](myCancellation, ctx.keyPair)
             _ <- broadcast(signedCancellationMessage, roundData.peers, ctx.blockConsensusClient)
           } yield ()
         case _ => Applicative[F].unit

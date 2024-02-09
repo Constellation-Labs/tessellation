@@ -10,6 +10,7 @@ import org.tessellation.env.AppEnvironment.Mainnet
 import org.tessellation.env.env._
 import org.tessellation.node.shared.PriorityPeerIds
 import org.tessellation.node.shared.config.types._
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.node.NodeState
@@ -114,6 +115,8 @@ trait CliMethod {
 
   val forkInfoStorageConfig: ForkInfoStorageConfig = CliMethod.forkInfoStorageConfig
 
+  val lastKryoHashOrdinal: SnapshotOrdinal
+
   lazy val nodeSharedConfig: SharedConfig = SharedConfig(
     environment,
     gossipConfig,
@@ -124,7 +127,8 @@ trait CliMethod {
     trustStorageConfig,
     PriorityPeerIds.get(environment),
     snapshotSizeConfig,
-    forkInfoStorageConfig
+    forkInfoStorageConfig,
+    lastKryoHashOrdinal
   )
 
 }

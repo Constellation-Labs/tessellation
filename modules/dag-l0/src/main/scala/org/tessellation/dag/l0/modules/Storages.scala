@@ -9,6 +9,7 @@ import org.tessellation.dag.l0.domain.snapshot.storages.SnapshotDownloadStorage
 import org.tessellation.dag.l0.infrastructure.snapshot.SnapshotDownloadStorage
 import org.tessellation.dag.l0.infrastructure.trust.storage.TrustStorage
 import org.tessellation.env.AppEnvironment
+import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.{SharedConfig, SnapshotConfig}
 import org.tessellation.node.shared.domain.cluster.storage.{ClusterStorage, SessionStorage}
@@ -26,17 +27,18 @@ import org.tessellation.node.shared.infrastructure.snapshot.storage.{
 import org.tessellation.node.shared.modules.SharedStorages
 import org.tessellation.schema._
 import org.tessellation.schema.trust.PeerObservationAdjustmentUpdateBatch
-import org.tessellation.security.Hasher
+import org.tessellation.security.{HashSelect, Hasher}
 
 object Storages {
 
-  def make[F[_]: Async: KryoSerializer: Hasher: Supervisor](
+  def make[F[_]: Async: KryoSerializer: JsonSerializer: Hasher: Supervisor](
     sharedStorages: SharedStorages[F],
     sharedConfig: SharedConfig,
     seedlist: Option[Set[SeedlistEntry]],
     snapshotConfig: SnapshotConfig,
     trustUpdates: Option[PeerObservationAdjustmentUpdateBatch],
-    environment: AppEnvironment
+    environment: AppEnvironment,
+    hashSelect: HashSelect
   ): F[Storages[F]] =
     for {
       trustStorage <- TrustStorage.make[F](trustUpdates, sharedConfig.trustStorage, seedlist.map(_.map(_.peerId)))
@@ -64,7 +66,8 @@ object Storages {
           incrementalGlobalSnapshotTmpLocalFileSystemStorage,
           incrementalGlobalSnapshotPersistedLocalFileSystemStorage,
           fullGlobalSnapshotLocalFileSystemStorage,
-          incrementalGlobalSnapshotInfoLocalFileSystemStorage
+          incrementalGlobalSnapshotInfoLocalFileSystemStorage,
+          hashSelect
         )
     } yield
       new Storages[F](

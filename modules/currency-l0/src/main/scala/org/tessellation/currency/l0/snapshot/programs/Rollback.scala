@@ -12,6 +12,7 @@ import org.tessellation.currency.l0.node.IdentifierStorage
 import org.tessellation.currency.l0.snapshot.CurrencySnapshotArtifact
 import org.tessellation.currency.l0.snapshot.storages.LastBinaryHashStorage
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotContext, CurrencySnapshotInfo}
+import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.collateral.{Collateral, OwnCollateralNotSatisfied}
 import org.tessellation.node.shared.domain.snapshot.services.GlobalL0Service
@@ -33,7 +34,7 @@ trait Rollback[F[_]] {
 }
 
 object Rollback {
-  def make[F[_]: Async: KryoSerializer: Hasher: SecurityProvider](
+  def make[F[_]: Async: KryoSerializer: JsonSerializer: Hasher: SecurityProvider](
     nodeId: PeerId,
     globalL0Service: GlobalL0Service[F],
     identifierStorage: IdentifierStorage[F],

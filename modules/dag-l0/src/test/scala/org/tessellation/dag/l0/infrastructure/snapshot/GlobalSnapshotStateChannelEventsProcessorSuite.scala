@@ -13,7 +13,7 @@ import scala.collection.immutable.SortedMap
 
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.cats.effect.ResourceIO
-import org.tessellation.json.{JsonBrotliBinarySerializer, JsonHashSerializer}
+import org.tessellation.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.SnapshotSizeConfig
 import org.tessellation.node.shared.domain.statechannel.StateChannelValidator
@@ -24,11 +24,11 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
+import org.tessellation.security._
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.signature.Signed.forAsyncKryo
-import org.tessellation.security.{Hasher, KeyPairGenerator, SecurityProvider}
+import org.tessellation.security.signature.Signed.forAsyncHasher
 import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 
@@ -38,11 +38,13 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
 
   type Res = (KryoSerializer[IO], Hasher[IO], SecurityProvider[IO], JsonBrotliBinarySerializer[IO])
 
+  val hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash }
+
   def sharedResource: Resource[IO, Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
-    implicit0(j: JsonHashSerializer[IO]) <- JsonHashSerializer.forSync[IO].asResource
-    h = Hasher.forSync[IO]
+    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+    h = Hasher.forSync[IO](hashSelect)
     serializer <- JsonBrotliBinarySerializer.forSync[IO].asResource
   } yield (ks, h, sp, serializer)
 
@@ -60,13 +62,14 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       validators = SharedValidators.make[IO](None, None, Some(stateChannelAllowanceLists), Long.MaxValue)
       currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
         BlockAcceptanceManager.make[IO](validators.currencyBlockValidator),
-        Amount(0L)
+        Amount(0L),
+        hashSelect
       )
       currencyEventsCutter = CurrencyEventsCutter.make[IO]
       creator = CurrencySnapshotCreator
         .make[IO](currencySnapshotAcceptanceManager, None, SnapshotSizeConfig(Long.MaxValue, Long.MaxValue), currencyEventsCutter)
       currencySnapshotValidator = CurrencySnapshotValidator.make[IO](creator, validators.signedValidator, None, None)
-      currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
+      currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator, hashSelect)
       manager = new GlobalSnapshotStateChannelAcceptanceManager[IO] {
         def accept(ordinal: SnapshotOrdinal, lastGlobalSnapshotInfo: GlobalSnapshotInfo, events: List[StateChannelOutput]): IO[
           (
@@ -155,7 +158,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
     content <- Random.scalaUtilRandom[IO].flatMap(_.nextString(10))
     compressedBytes <- serializer.serialize(content)
     binary <- StateChannelSnapshotBinary(hash.getOrElse(Hash.empty), compressedBytes, SnapshotFee.MinValue).pure[IO]
-    signedSC <- forAsyncKryo(binary, keyPair)
+    signedSC <- forAsyncHasher(binary, keyPair)
   } yield StateChannelOutput(keyPair.getPublic.toAddress, signedSC)
 
   def mkGlobalSnapshotInfo(lastStateChannelSnapshotHashes: SortedMap[Address, Hash] = SortedMap.empty) =

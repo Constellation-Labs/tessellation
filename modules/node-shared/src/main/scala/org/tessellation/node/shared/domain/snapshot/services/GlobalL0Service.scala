@@ -22,9 +22,9 @@ import org.tessellation.node.shared.http.p2p.PeerResponse
 import org.tessellation.node.shared.http.p2p.clients.L0GlobalSnapshotClient
 import org.tessellation.schema._
 import org.tessellation.schema.peer.{L0Peer, PeerId}
+import org.tessellation.security._
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
 
 import eu.timepit.refined.auto.autoUnwrap
 import eu.timepit.refined.types.numeric.PosLong
@@ -52,7 +52,8 @@ object GlobalL0Service {
     globalL0ClusterStorage: L0ClusterStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     singlePullLimit: Option[PosLong],
-    maybeMajorityPeerIdSet: Option[NonEmptySet[PeerId]]
+    maybeMajorityPeerIdSet: Option[NonEmptySet[PeerId]],
+    hashSelect: HashSelect
   ): GlobalL0Service[F] =
     new GlobalL0Service[F] {
 
@@ -158,7 +159,7 @@ object GlobalL0Service {
 
       private def stateProofValidation(snapshot: Hashed[GlobalIncrementalSnapshot], info: GlobalSnapshotInfo): F[Boolean] =
         StateProofValidator
-          .validate(snapshot, info)
+          .validate(snapshot, info, hashSelect)
           .flatTap(v => logger.debug(s"Failed StateProofValidation: $v").whenA(v.isInvalid))
           .map(_.isValid)
 

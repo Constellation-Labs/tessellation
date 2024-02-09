@@ -14,14 +14,14 @@ import scala.collection.immutable.SortedMap
 
 import org.tessellation.currency.schema.currency.SnapshotFee
 import org.tessellation.ext.cats.effect.ResourceIO
-import org.tessellation.json.JsonHashSerializer
+import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
+import org.tessellation.security._
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.signature.Signed.forAsyncKryo
-import org.tessellation.security.{Hasher, KeyPairGenerator, SecurityProvider}
+import org.tessellation.security.signature.Signed.forAsyncHasher
 import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
 
@@ -38,8 +38,8 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
   override def sharedResource: Resource[IO, GlobalSnapshotStateChannelAcceptanceManagerSuite.Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
-    implicit0(j: JsonHashSerializer[IO]) <- JsonHashSerializer.forSync[IO].asResource
-    h = Hasher.forSync[IO]
+    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+    h = Hasher.forSync[IO](new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash })
   } yield (h, sp)
 
   val address = Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB")
@@ -303,7 +303,7 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
   ) = for {
     binary <- givenBinary.fold(mkStateChannelSnapshotBinary(hash.getOrElse(Hash.empty)))(_.pure[IO])
     keyPairs <- (1 to howManySigners).toList.traverse(_ => KeyPairGenerator.makeKeyPair[IO])
-    signedSC <- forAsyncKryo(givenBinary.getOrElse(binary), keyPairs.head).flatMap(signedSingle =>
+    signedSC <- forAsyncHasher(givenBinary.getOrElse(binary), keyPairs.head).flatMap(signedSingle =>
       keyPairs.tail.foldM(signedSingle)((signed, keyPair) => signed.signAlsoWith(keyPair))
     )
   } yield StateChannelOutput(address, signedSC)

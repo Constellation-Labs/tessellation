@@ -30,7 +30,7 @@ import org.tessellation.node.shared.infrastructure.snapshot.services.AddressServ
 import org.tessellation.node.shared.modules.SharedServices
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.security.signature.SignedValidator
-import org.tessellation.security.{Hasher, SecurityProvider}
+import org.tessellation.security.{HashSelect, Hasher, SecurityProvider}
 
 import org.http4s.client.Client
 
@@ -50,7 +50,8 @@ object Services {
     maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
     signedValidator: SignedValidator[F],
     globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
-    maybeMajorityPeerIds: Option[NonEmptySet[PeerId]]
+    maybeMajorityPeerIds: Option[NonEmptySet[PeerId]],
+    hashSelect: HashSelect
   ): F[Services[F]] =
     for {
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync[F]
@@ -113,7 +114,7 @@ object Services {
       addressService = AddressService.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](storages.snapshot)
       collateralService = Collateral.make[F](cfg.collateral, storages.snapshot)
       globalL0Service = GlobalL0Service
-        .make[F](p2PClient.l0GlobalSnapshot, storages.globalL0Cluster, storages.lastGlobalSnapshot, None, maybeMajorityPeerIds)
+        .make[F](p2PClient.l0GlobalSnapshot, storages.globalL0Cluster, storages.lastGlobalSnapshot, None, maybeMajorityPeerIds, hashSelect)
     } yield
       new Services[F](
         localHealthcheck = sharedServices.localHealthcheck,

@@ -116,6 +116,7 @@ object CurrencySnapshotCreator {
           (acceptanceResult, acceptedRewardTxs, snapshotInfo, stateProof) <- currencySnapshotAcceptanceManager.accept(
             blocks,
             lastContext,
+            currentOrdinal,
             lastActiveTips,
             lastDeprecatedTips,
             transactions =>

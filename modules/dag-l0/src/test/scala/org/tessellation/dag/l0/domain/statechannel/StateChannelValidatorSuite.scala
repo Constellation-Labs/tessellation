@@ -11,21 +11,22 @@ import scala.collection.immutable.SortedSet
 
 import org.tessellation.currency.schema.currency.SnapshotFee
 import org.tessellation.ext.cats.effect.ResourceIO
-import org.tessellation.json.JsonHashSerializer
+import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
 import org.tessellation.node.shared.domain.statechannel.StateChannelValidator
 import org.tessellation.schema.ID.Id
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.security._
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.key.ops.PublicKeyOps
-import org.tessellation.security.signature.Signed.forAsyncKryo
+import org.tessellation.security.signature.Signed.forAsyncHasher
 import org.tessellation.security.signature.SignedValidator.InvalidSignatures
 import org.tessellation.security.signature.signature.{Signature, SignatureProof}
 import org.tessellation.security.signature.{Signed, SignedValidator}
-import org.tessellation.security.{Hasher, KeyPairGenerator, SecurityProvider}
 import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
 
@@ -41,8 +42,8 @@ object StateChannelValidatorSuite extends MutableIOSuite {
   def sharedResource: Resource[IO, Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
-    implicit0(j: JsonHashSerializer[IO]) <- JsonHashSerializer.forSync[IO].asResource
-    h = Hasher.forSync[IO]
+    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+    h = Hasher.forSync[IO](new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash })
   } yield (ks, h, sp)
 
   private val testStateChannel = StateChannelSnapshotBinary(Hash.empty, "test".getBytes, SnapshotFee.MinValue)
@@ -54,7 +55,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
       peerId = NonEmptySet.one(PeerId.fromPublic(keyPair.getPublic))
       address = testStateChannel.toAddress
-      signedSCBinary <- forAsyncKryo(testStateChannel, keyPair)
+      signedSCBinary <- forAsyncHasher(testStateChannel, keyPair)
       scOutput = StateChannelOutput(address, signedSCBinary)
       validator = mkValidator(
         peerId.toSortedSet.map(SeedlistEntry(_, none, none, none, none)).some,
@@ -72,7 +73,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
       keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
       address = testStateChannel.toAddress
-      signedSCBinary <- forAsyncKryo(testStateChannel, keyPair1).map(signed =>
+      signedSCBinary <- forAsyncHasher(testStateChannel, keyPair1).map(signed =>
         signed.copy(proofs =
           NonEmptySet.fromSetUnsafe(
             SortedSet(signed.proofs.head.copy(id = keyPair2.getPublic.toId))
@@ -100,7 +101,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
       address = testStateChannel.toAddress
       keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
-      signedSCBinary <- forAsyncKryo(testStateChannel, keyPair1)
+      signedSCBinary <- forAsyncHasher(testStateChannel, keyPair1)
       doubleSigned <- signedSCBinary.signAlsoWith(keyPair2)
       scOutput = StateChannelOutput(address, doubleSigned)
       peersIds = doubleSigned.proofs.map(_.id.toPeerId)
@@ -162,7 +163,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       peerId1 = NonEmptySet.one(PeerId.fromPublic(keyPair1.getPublic))
       peerId2 = NonEmptySet.one(PeerId.fromPublic(keyPair2.getPublic))
       address = testStateChannel.toAddress
-      signedSCBinary <- forAsyncKryo(testStateChannel, keyPair1).flatMap(_.signAlsoWith(keyPair2))
+      signedSCBinary <- forAsyncHasher(testStateChannel, keyPair1).flatMap(_.signAlsoWith(keyPair2))
       scOutput = StateChannelOutput(address, signedSCBinary)
       validator = mkValidator(
         peerId1.toSortedSet.map(SeedlistEntry(_, none, none, none, none)).some,
@@ -184,7 +185,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
       peerId1 = NonEmptySet.one(PeerId.fromPublic(keyPair1.getPublic))
       address = testStateChannel.toAddress
-      signedSCBinary <- forAsyncKryo(testStateChannel, keyPair1).flatMap(_.signAlsoWith(keyPair2))
+      signedSCBinary <- forAsyncHasher(testStateChannel, keyPair1).flatMap(_.signAlsoWith(keyPair2))
       scOutput = StateChannelOutput(address, signedSCBinary)
       validator = mkValidator(
         peerId1.toSortedSet.map(SeedlistEntry(_, none, none, none, none)).some,
@@ -200,7 +201,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
       address = testStateChannel.toAddress
-      signedSCBinary <- forAsyncKryo(testStateChannel, keyPair)
+      signedSCBinary <- forAsyncHasher(testStateChannel, keyPair)
       scOutput = StateChannelOutput(address, signedSCBinary)
       validator = mkValidator(None, Map.empty[Address, NonEmptySet[PeerId]].some)
       result <- validator.validate(scOutput)
@@ -217,7 +218,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
       address = testStateChannel.toAddress
-      signedSCBinary <- forAsyncKryo(testStateChannel, keyPair)
+      signedSCBinary <- forAsyncHasher(testStateChannel, keyPair)
       scOutput = StateChannelOutput(address, signedSCBinary)
       validator = mkValidator(None, Map.empty[Address, NonEmptySet[PeerId]].some)
       result <- validator.validateHistorical(scOutput)
@@ -233,7 +234,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       peerId1 = NonEmptySet.one(PeerId.fromPublic(keyPair1.getPublic))
       peerId2 = NonEmptySet.one(PeerId.fromPublic(keyPair2.getPublic))
       address = testStateChannel.toAddress
-      signedSCBinary <- forAsyncKryo(testStateChannel, keyPair2)
+      signedSCBinary <- forAsyncHasher(testStateChannel, keyPair2)
       scOutput = StateChannelOutput(address, signedSCBinary)
       validator = mkValidator(
         peerId1.union(peerId2).toSortedSet.map(SeedlistEntry(_, none, none, none, none)).some,
@@ -256,7 +257,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       peerId1 = NonEmptySet.one(PeerId.fromPublic(keyPair1.getPublic))
       peerId2 = NonEmptySet.one(PeerId.fromPublic(keyPair2.getPublic))
       address = testStateChannel.toAddress
-      signedSCBinary <- forAsyncKryo(testStateChannel, keyPair2)
+      signedSCBinary <- forAsyncHasher(testStateChannel, keyPair2)
       scOutput = StateChannelOutput(address, signedSCBinary)
       validator = mkValidator(
         peerId1.union(peerId2).toSortedSet.map(SeedlistEntry(_, none, none, none, none)).some,
@@ -275,7 +276,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       peerId1 = NonEmptySet.one(PeerId.fromPublic(keyPair1.getPublic))
       peerId2 = NonEmptySet.one(PeerId.fromPublic(keyPair2.getPublic))
       address = testStateChannel.toAddress
-      signedSCBinary <- forAsyncKryo(testStateChannel, keyPair1).flatMap(_.signAlsoWith(keyPair2))
+      signedSCBinary <- forAsyncHasher(testStateChannel, keyPair1).flatMap(_.signAlsoWith(keyPair2))
       scOutput = StateChannelOutput(address, signedSCBinary)
       validator = mkValidator(
         peerId1.union(peerId2).toSortedSet.map(SeedlistEntry(_, none, none, none, none)).some,
@@ -291,7 +292,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
       address = testStateChannel.toAddress
-      signedSCBinary <- forAsyncKryo(testStateChannel, keyPair)
+      signedSCBinary <- forAsyncHasher(testStateChannel, keyPair)
       scOutput = StateChannelOutput(address, signedSCBinary)
       validator = mkValidator(None, None)
       result <- validator.validate(scOutput)
@@ -305,7 +306,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
       peerId = NonEmptySet.one(PeerId.fromPublic(keyPair.getPublic))
       address = keyPair.getPublic.toAddress
-      signedSCBinary <- forAsyncKryo(testStateChannel, keyPair)
+      signedSCBinary <- forAsyncHasher(testStateChannel, keyPair)
       scOutput = StateChannelOutput(address, signedSCBinary)
       validator = mkValidator(
         peerId.toSortedSet.map(SeedlistEntry(_, none, none, none, none)).some,

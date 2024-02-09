@@ -14,7 +14,7 @@ import scala.math.Integral.Implicits._
 
 import org.tessellation.currency.schema.currency.SnapshotFee
 import org.tessellation.ext.cats.effect.ResourceIO
-import org.tessellation.json.JsonHashSerializer
+import org.tessellation.json.JsonSerializer
 import org.tessellation.keytool.KeyStoreUtils
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.genesis.types.GenesisCSVAccount
@@ -22,10 +22,10 @@ import org.tessellation.node.shared.infrastructure.snapshot.storage.SnapshotInfo
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction._
+import org.tessellation.security._
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.key.ops._
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Hasher, KeyPairGenerator, SecurityProvider}
 import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.statechannel.StateChannelSnapshotBinary
 import org.tessellation.tools.TransactionGenerator._
@@ -70,8 +70,8 @@ object Main
     cli.method.opts.map { method =>
       SecurityProvider.forAsync[IO].use { implicit sp =>
         KryoSerializer.forAsync[IO](sharedKryoRegistrar).use { implicit kryo =>
-          JsonHashSerializer.forSync[IO].asResource.use { implicit jsonHashSerializer =>
-            implicit val hasher = Hasher.forSync[IO]
+          JsonSerializer.forSync[IO].asResource.use { implicit jsonSerializer =>
+            implicit val hasher = Hasher.forSync[IO](new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash })
             EmberClientBuilder.default[IO].build.use { client =>
               Random.scalaUtilRandom[IO].flatMap { implicit random =>
                 (method match {
@@ -93,7 +93,11 @@ object Main
       }
     }
 
-  def getLatestSnapshotInfo[F[_]: Async: KryoSerializer: Console](client: Client[F], networkHost: Host, networkPort: Port): F[Unit] = {
+  def getLatestSnapshotInfo[F[_]: Async: KryoSerializer: JsonSerializer: Console](
+    client: Client[F],
+    networkHost: Host,
+    networkPort: Port
+  ): F[Unit] = {
     def getCombined =
       client.expect[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)](
         s"http://$networkHost:$networkPort/global-snapshots/latest/combined"
@@ -120,7 +124,7 @@ object Main
       address = key.getPublic.toAddress
       _ <- console.green(s"Generated address: $address")
       snapshot = StateChannelSnapshotBinary(Hash.empty, "test".getBytes, SnapshotFee.MinValue)
-      signedSnapshot <- Signed.forAsyncKryo(snapshot, key)
+      signedSnapshot <- Signed.forAsyncHasher(snapshot, key)
       hashed <- signedSnapshot.toHashed
       _ <- console.green(s"Snapshot hash: ${hashed.hash.show}, proofs hash: ${hashed.proofsHash.show}")
       _ <- postStateChannelSnapshot(client, baseUrl)(signedSnapshot, address)

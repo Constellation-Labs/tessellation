@@ -1,6 +1,6 @@
 package org.tessellation.currency.l1.cli
 
-import cats.syntax.contravariantSemigroupal._
+import cats.syntax.all._
 
 import scala.concurrent.duration.{DurationDouble, DurationInt}
 
@@ -10,9 +10,11 @@ import org.tessellation.dag.l1.config.types.AppConfig
 import org.tessellation.dag.l1.domain.consensus.block.config.ConsensusConfig
 import org.tessellation.env.AppEnvironment
 import org.tessellation.env.env._
+import org.tessellation.node.shared.cli.hashLogic.{lastKryoHashOrdinal, lastKryoHashOrdinalOpts}
 import org.tessellation.node.shared.cli.opts.trustRatingsPathOpts
 import org.tessellation.node.shared.cli.{CliMethod, CollateralAmountOpts, L0PeerOpts}
 import org.tessellation.node.shared.config.types._
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.node.NodeState
@@ -82,7 +84,8 @@ object method {
     seedlistPath: Option[SeedListPath],
     collateralAmount: Option[Amount],
     trustRatingsPath: Option[Path],
-    prioritySeedlistPath: Option[SeedListPath]
+    prioritySeedlistPath: Option[SeedListPath],
+    lastKryoHashOrdinal: SnapshotOrdinal
   ) extends Run
 
   object RunInitialValidator {
@@ -100,8 +103,44 @@ object method {
         SeedListPath.opts,
         CollateralAmountOpts.opts,
         trustRatingsPathOpts,
-        SeedListPath.priorityOpts
-      ).mapN(RunInitialValidator.apply)
+        SeedListPath.priorityOpts,
+        lastKryoHashOrdinalOpts
+      ).mapN {
+        case (
+              storePath,
+              keyAlias,
+              password,
+              environment,
+              http,
+              l0Peer,
+              globalL0Peer,
+              l0TokenIdentifier,
+              seedlistPath,
+              collateralAmount,
+              trustRatingsPath,
+              prioritySeedlistPath,
+              lastKryoHash
+            ) =>
+          val lastKH =
+            (if (environment === AppEnvironment.Dev) lastKryoHash else lastKryoHashOrdinal.get(environment))
+              .getOrElse(SnapshotOrdinal.MinValue)
+
+          RunInitialValidator(
+            storePath,
+            keyAlias,
+            password,
+            environment,
+            http,
+            l0Peer,
+            globalL0Peer,
+            l0TokenIdentifier,
+            seedlistPath,
+            collateralAmount,
+            trustRatingsPath,
+            prioritySeedlistPath,
+            lastKH
+          )
+      }
     }
   }
 
@@ -117,7 +156,8 @@ object method {
     seedlistPath: Option[SeedListPath],
     collateralAmount: Option[Amount],
     trustRatingsPath: Option[Path],
-    prioritySeedlistPath: Option[SeedListPath]
+    prioritySeedlistPath: Option[SeedListPath],
+    lastKryoHashOrdinal: SnapshotOrdinal
   ) extends Run
 
   object RunValidator {
@@ -135,8 +175,44 @@ object method {
         SeedListPath.opts,
         CollateralAmountOpts.opts,
         trustRatingsPathOpts,
-        SeedListPath.priorityOpts
-      ).mapN(RunValidator.apply)
+        SeedListPath.priorityOpts,
+        lastKryoHashOrdinalOpts
+      ).mapN {
+        case (
+              storePath,
+              keyAlias,
+              password,
+              environment,
+              http,
+              l0Peer,
+              globalL0Peer,
+              l0TokenIdentifier,
+              seedlistPath,
+              collateralAmount,
+              trustRatingsPath,
+              prioritySeedlistPath,
+              lastKryoHash
+            ) =>
+          val lastKH =
+            (if (environment === AppEnvironment.Dev) lastKryoHash else lastKryoHashOrdinal.get(environment))
+              .getOrElse(SnapshotOrdinal.MinValue)
+
+          RunValidator(
+            storePath,
+            keyAlias,
+            password,
+            environment,
+            http,
+            l0Peer,
+            globalL0Peer,
+            l0TokenIdentifier,
+            seedlistPath,
+            collateralAmount,
+            trustRatingsPath,
+            prioritySeedlistPath,
+            lastKH
+          )
+      }
     }
   }
 

@@ -13,7 +13,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.height.{Height, SubHeight}
-import org.tessellation.security.Hasher
+import org.tessellation.security._
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.signature.Signed
@@ -28,10 +28,12 @@ object JsonBinarySerializerSuite extends MutableIOSuite {
 
   type Res = Hasher[IO]
 
+  val hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash }
+
   override def sharedResource: Resource[IO, Res] =
     KryoSerializer.forAsync[IO](sharedKryoRegistrar).flatMap { implicit res =>
-      JsonHashSerializer.forSync[IO].asResource.map { implicit json =>
-        Hasher.forSync[IO]
+      JsonSerializer.forSync[IO].asResource.map { implicit json =>
+        Hasher.forSync[IO](hashSelect)
       }
     }
 
@@ -55,7 +57,7 @@ object JsonBinarySerializerSuite extends MutableIOSuite {
     hash: Hash,
     currencySnapshotInfo: CurrencySnapshotInfo
   ): F[Signed[CurrencyIncrementalSnapshot]] =
-    currencySnapshotInfo.stateProof[F].map { sp =>
+    currencySnapshotInfo.stateProof[F](SnapshotOrdinal(NonNegLong(56L)), hashSelect).map { sp =>
       Signed(
         CurrencyIncrementalSnapshot(
           SnapshotOrdinal(NonNegLong(56L)),

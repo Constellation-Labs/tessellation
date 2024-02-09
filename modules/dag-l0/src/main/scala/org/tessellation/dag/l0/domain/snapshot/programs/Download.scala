@@ -13,6 +13,7 @@ import org.tessellation.dag.l0.http.p2p.P2PClient
 import org.tessellation.dag.l0.infrastructure.snapshot.GlobalSnapshotContext
 import org.tessellation.ext.cats.kernel.PartialPrevious
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
+import org.tessellation.merkletree.StateProofValidator
 import org.tessellation.node.shared.domain.cluster.storage.ClusterStorage
 import org.tessellation.node.shared.domain.node.NodeStorage
 import org.tessellation.node.shared.domain.snapshot.programs.Download
@@ -23,7 +24,7 @@ import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.Peer
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Hashed, Hasher}
+import org.tessellation.security.{HashSelect, Hashed, Hasher}
 
 import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.NonNegLong
@@ -40,7 +41,8 @@ object Download {
     globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
     nodeStorage: NodeStorage[F],
     consensus: SnapshotConsensus[F, GlobalIncrementalSnapshot, GlobalSnapshotContext, _],
-    peerSelect: PeerSelect[F]
+    peerSelect: PeerSelect[F],
+    hashSelect: HashSelect
   ): Download[F] = new Download[F] {
 
     val logger = Slf4jLogger.getLogger[F]
@@ -224,13 +226,13 @@ object Download {
                       .hasCorrectSnapshotInfo(snapshot.ordinal, snapshot.stateProof)
                       .ifM(
                         ().pure[F],
-                        newContext.stateProof.flatMap { contextProof =>
-                          if (contextProof === snapshot.stateProof) {
-                            snapshotStorage.persistSnapshotInfoWithCutoff(snapshot.ordinal, newContext)
-                          } else {
+                        StateProofValidator
+                          .validate(snapshot, newContext, hashSelect)
+                          .map(_.isValid)
+                          .ifM(
+                            snapshotStorage.persistSnapshotInfoWithCutoff(snapshot.ordinal, newContext),
                             InvalidStateProof(snapshot.ordinal).raiseError[F, Unit]
-                          }
-                        }
+                          )
                       )
                   )
                   .flatMap(go(snapshot, _))

@@ -16,7 +16,7 @@ import org.tessellation.dag.l0.infrastructure.snapshot.GlobalSnapshotEvent
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
 import org.tessellation.ext.kryo._
-import org.tessellation.json.JsonHashSerializer
+import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.rewards.Rewards
 import org.tessellation.node.shared.domain.transaction.TransactionValidator.stardustPrimary
@@ -28,10 +28,10 @@ import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.generators.{chooseNumRefined, signatureGen, signedTransactionGen}
 import org.tessellation.schema.transaction.{RewardTransaction, TransactionAmount}
+import org.tessellation.security._
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.SignatureProof
-import org.tessellation.security.{Hasher, KeyPairGenerator, SecurityProvider}
 import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.syntax.sortedCollection.sortedSetSyntax
 
@@ -46,12 +46,14 @@ object RewardsSuite extends MutableIOSuite with Checkers {
   type GenIdFn = () => Id
   type Res = (Hasher[IO], SecurityProvider[IO], GenIdFn)
 
+  val hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash }
+
   override def sharedResource: Resource[IO, Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar.union(nodeSharedKryoRegistrar))
     implicit0(sp: SecurityProvider[IO]) <- SecurityProvider.forAsync[IO]
     mkKeyPair = () => KeyPairGenerator.makeKeyPair.map(_.getPublic.toId).unsafeRunSync()
-    implicit0(j: JsonHashSerializer[IO]) <- JsonHashSerializer.forSync[IO].asResource
-    h = Hasher.forSync[IO]
+    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+    h = Hasher.forSync[IO](hashSelect)
   } yield (h, sp, mkKeyPair)
 
   val config: RewardsConfig = RewardsConfig()
@@ -106,7 +108,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
     epochProgress <- epochProgressGen
     proofs <- withSignatures.map(Gen.delay(_)).getOrElse(signatureProofsGen)
     snapshot = Signed(GlobalSnapshot.mkGenesis(Map.empty, epochProgress), proofs)
-    incremental = Signed(GlobalIncrementalSnapshot.fromGlobalSnapshot(snapshot).unsafeRunSync(), proofs)
+    incremental = Signed(GlobalIncrementalSnapshot.fromGlobalSnapshot(snapshot, hashSelect).unsafeRunSync(), proofs)
   } yield incremental
 
   def makeRewards(config: RewardsConfig)(
