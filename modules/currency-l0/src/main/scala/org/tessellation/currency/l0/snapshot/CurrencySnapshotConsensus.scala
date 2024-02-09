@@ -4,8 +4,10 @@ import java.security.KeyPair
 
 import cats.effect.kernel.Async
 import cats.effect.std.{Random, Supervisor}
+import cats.syntax.all._
 
 import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, DataUpdate}
+import org.tessellation.currency.l0.snapshot.schema.{CurrencyConsensusKind, CurrencyConsensusOutcome}
 import org.tessellation.currency.l0.snapshot.services.StateChannelSnapshotService
 import org.tessellation.currency.schema.currency._
 import org.tessellation.node.shared.config.types.SnapshotConfig
@@ -15,10 +17,10 @@ import org.tessellation.node.shared.domain.gossip.Gossip
 import org.tessellation.node.shared.domain.node.NodeStorage
 import org.tessellation.node.shared.domain.rewards.Rewards
 import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
-import org.tessellation.node.shared.infrastructure.consensus.Consensus
+import org.tessellation.node.shared.infrastructure.consensus._
 import org.tessellation.node.shared.infrastructure.metrics.Metrics
-import org.tessellation.node.shared.infrastructure.snapshot.{CurrencySnapshotCreator, CurrencySnapshotValidator, SnapshotConsensus}
-import org.tessellation.schema.SnapshotOrdinal
+import org.tessellation.node.shared.infrastructure.snapshot.{CurrencySnapshotCreator, CurrencySnapshotValidator}
+import org.tessellation.node.shared.snapshot.currency._
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.security.{Hasher, SecurityProvider}
@@ -45,32 +47,56 @@ object CurrencySnapshotConsensus {
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
     creator: CurrencySnapshotCreator[F],
     validator: CurrencySnapshotValidator[F]
-  ): F[
-    SnapshotConsensus[F, CurrencySnapshotArtifact, CurrencySnapshotContext, CurrencySnapshotEvent]
-  ] = {
+  ): F[CurrencySnapshotConsensus[F]] = {
     def noopDecoder: Decoder[DataUpdate] = Decoder.failedWithMessage[DataUpdate]("not implemented")
 
     implicit def daDecoder: Decoder[DataUpdate] = maybeDataApplication.map(_.dataDecoder).getOrElse(noopDecoder)
 
-    Consensus.make[F, CurrencySnapshotEvent, SnapshotOrdinal, CurrencySnapshotArtifact, CurrencySnapshotContext](
-      CurrencySnapshotConsensusFunctions.make[F](
-        stateChannelSnapshotService,
+    for {
+      consensusStorage <- ConsensusStorage
+        .make[
+          F,
+          CurrencySnapshotEvent,
+          CurrencySnapshotKey,
+          CurrencySnapshotArtifact,
+          CurrencySnapshotContext,
+          CurrencySnapshotStatus,
+          CurrencyConsensusOutcome,
+          CurrencyConsensusKind
+        ](snapshotConfig.consensus)
+      consensusFunctions = CurrencySnapshotConsensusFunctions.make[F](
         collateral,
         maybeRewards,
         creator,
-        validator,
+        validator
+      )
+      consensusStateAdvancer = CurrencySnapshotConsensusStateAdvancer
+        .make[F](keyPair, consensusStorage, consensusFunctions, stateChannelSnapshotService, gossip, maybeDataApplication)
+      consensusStateCreator = CurrencySnapshotConsensusStateCreator.make[F](consensusFunctions, consensusStorage, gossip, selfId, seedlist)
+      consensusStateRemover = CurrencySnapshotConsensusStateRemover.make[F](consensusStorage, gossip)
+      consensusStatusOps = CurrencySnapshotConsensusOps.make
+      stateUpdater = ConsensusStateUpdater.make(
+        consensusStateAdvancer,
+        consensusStorage,
         gossip,
-        maybeDataApplication
-      ),
-      gossip,
-      selfId,
-      keyPair,
-      snapshotConfig.consensus,
-      seedlist,
-      clusterStorage,
-      nodeStorage,
-      client,
-      session
-    )
+        consensusStatusOps
+      )
+      consensusClient = ConsensusClient.make[F, CurrencySnapshotKey, CurrencyConsensusOutcome](client, session)
+      manager <- ConsensusManager.make(
+        snapshotConfig.consensus,
+        consensusStorage,
+        consensusStateCreator,
+        stateUpdater,
+        consensusStateAdvancer,
+        consensusStateRemover,
+        consensusStatusOps,
+        nodeStorage,
+        clusterStorage,
+        consensusClient
+      )
+      routes = new ConsensusRoutes(consensusStorage)
+      handler = CurrencyConsensusHandler.make(consensusStorage, manager, consensusFunctions)
+      consensus = new Consensus(handler, consensusStorage, manager, routes, consensusFunctions)
+    } yield consensus
   }
 }

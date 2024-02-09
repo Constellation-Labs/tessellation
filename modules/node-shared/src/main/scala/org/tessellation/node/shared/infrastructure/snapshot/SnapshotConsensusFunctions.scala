@@ -1,6 +1,5 @@
 package org.tessellation.node.shared.infrastructure.snapshot
 
-import cats.Applicative
 import cats.effect.Async
 import cats.syntax.applicativeError._
 import cats.syntax.bifunctor._
@@ -9,6 +8,7 @@ import cats.syntax.foldable._
 import cats.syntax.functor._
 import cats.syntax.option._
 import cats.syntax.order._
+import cats.{Applicative, MonadThrow}
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
@@ -40,16 +40,13 @@ case object NoTipsRemaining extends NoStackTrace
 case object ArtifactMismatch extends InvalidArtifact
 
 abstract class SnapshotConsensusFunctions[
-  F[_]: Async: SecurityProvider: Hasher,
+  F[_]: Async: SecurityProvider,
   Event,
-  Artifact <: Snapshot: Encoder,
+  Artifact <: Snapshot,
   Context,
   Trigger <: ConsensusTrigger
 ](implicit ordering: Ordering[BlockAsActiveTip])
     extends ConsensusFunctions[F, Event, SnapshotOrdinal, Artifact, Context] {
-
-  def gossipForkInfo(gossip: Gossip[F], signed: Signed[Artifact]): F[Unit] =
-    signed.hash.flatMap(h => gossip.spread(ForkInfo(signed.value.ordinal, h)))
 
   def getRequiredCollateral: Amount
 
@@ -125,4 +122,12 @@ abstract class SnapshotConsensusFunctions[
     } yield (height, subHeight)
   }
 
+}
+
+object SnapshotConsensusFunctions {
+  def gossipForkInfo[F[_]: MonadThrow: Hasher, Artifact <: Snapshot: Encoder](
+    gossip: Gossip[F],
+    signed: Signed[Artifact]
+  ): F[Unit] =
+    signed.hash.flatMap(h => gossip.spread(ForkInfo(signed.value.ordinal, h)))
 }

@@ -1,30 +1,25 @@
 package org.tessellation.currency.l0.snapshot
 
 import cats.effect.Async
-import cats.syntax.flatMap._
-import cats.syntax.foldable._
 import cats.syntax.functor._
 import cats.syntax.order._
 
 import scala.collection.immutable.SortedMap
 
-import org.tessellation.currency.dataApplication.BaseDataApplicationL0Service
-import org.tessellation.currency.l0.snapshot.services.StateChannelSnapshotService
 import org.tessellation.currency.schema.currency._
 import org.tessellation.node.shared.domain.consensus.ConsensusFunctions
-import org.tessellation.node.shared.domain.gossip.Gossip
 import org.tessellation.node.shared.domain.rewards.Rewards
 import org.tessellation.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import org.tessellation.node.shared.infrastructure.snapshot._
-import org.tessellation.node.shared.snapshot.currency.CurrencySnapshotEvent
+import org.tessellation.node.shared.snapshot.currency.{CurrencySnapshotArtifact, CurrencySnapshotEvent}
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Hasher, SecurityProvider}
 
-abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider: Hasher]
+abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
     extends SnapshotConsensusFunctions[
       F,
       CurrencySnapshotEvent,
@@ -35,29 +30,16 @@ abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider:
 
 object CurrencySnapshotConsensusFunctions {
 
-  def make[F[_]: Async: Hasher: SecurityProvider](
-    stateChannelSnapshotService: StateChannelSnapshotService[F],
+  def make[F[_]: Async: SecurityProvider](
     collateral: Amount,
     rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
     currencySnapshotCreator: CurrencySnapshotCreator[F],
-    currencySnapshotValidator: CurrencySnapshotValidator[F],
-    gossip: Gossip[F],
-    maybeDataApplication: Option[BaseDataApplicationL0Service[F]]
+    currencySnapshotValidator: CurrencySnapshotValidator[F]
   ): CurrencySnapshotConsensusFunctions[F] = new CurrencySnapshotConsensusFunctions[F] {
 
     def getRequiredCollateral: Amount = collateral
 
     def getBalances(context: CurrencySnapshotContext): SortedMap[Address, Balance] = context.snapshotInfo.balances
-
-    def consumeSignedMajorityArtifact(
-      signedArtifact: Signed[CurrencyIncrementalSnapshot],
-      context: CurrencySnapshotContext
-    ): F[Unit] =
-      stateChannelSnapshotService.consume(signedArtifact, context) >>
-        gossipForkInfo(gossip, signedArtifact) >>
-        maybeDataApplication.traverse_ { da =>
-          signedArtifact.toHashed >>= da.onSnapshotConsensusResult
-        }
 
     def validateArtifact(
       lastSignedArtifact: Signed[CurrencySnapshotArtifact],

@@ -21,10 +21,13 @@ import org.tessellation.node.shared.domain.block.processing._
 import org.tessellation.node.shared.domain.fork.ForkInfo
 import org.tessellation.node.shared.domain.gossip.Gossip
 import org.tessellation.node.shared.domain.rewards.Rewards
-import org.tessellation.node.shared.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.node.shared.infrastructure.consensus.trigger.EventTrigger
 import org.tessellation.node.shared.infrastructure.metrics.Metrics
-import org.tessellation.node.shared.infrastructure.snapshot.{GlobalSnapshotAcceptanceManager, GlobalSnapshotStateChannelEventsProcessor}
+import org.tessellation.node.shared.infrastructure.snapshot.{
+  GlobalSnapshotAcceptanceManager,
+  GlobalSnapshotStateChannelEventsProcessor,
+  SnapshotConsensusFunctions
+}
 import org.tessellation.node.shared.nodeSharedKryoRegistrar
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
@@ -81,23 +84,6 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     metrics <- Metrics.forAsync[IO](Seq.empty)
   } yield (supervisor, ks, h, sp, metrics)
 
-  val gss: SnapshotStorage[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo] =
-    new SnapshotStorage[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo] {
-
-      override def prepend(snapshot: Signed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): IO[Boolean] = ???
-
-      override def head: IO[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = ???
-
-      override def headSnapshot: IO[Option[Signed[GlobalIncrementalSnapshot]]] = ???
-
-      override def get(ordinal: SnapshotOrdinal): IO[Option[Signed[GlobalIncrementalSnapshot]]] = ???
-
-      override def get(hash: Hash): IO[Option[Signed[GlobalIncrementalSnapshot]]] = ???
-
-      override def getHash(ordinal: SnapshotOrdinal): F[Option[Hash]] = ???
-
-    }
-
   val bam: BlockAcceptanceManager[IO] = new BlockAcceptanceManager[IO] {
 
     override def acceptBlocksIteratively(
@@ -144,7 +130,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
   val rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent] =
     (_, _, _, _, _, _) => IO(SortedSet.empty)
 
-  def mkGlobalSnapshotConsensusFunctions(gossip: Gossip[F])(
+  def mkGlobalSnapshotConsensusFunctions(
     implicit ks: KryoSerializer[IO],
     sp: SecurityProvider[IO],
     h: Hasher[IO],
@@ -155,11 +141,9 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
     GlobalSnapshotConsensusFunctions
       .make[IO](
-        gss,
         snapshotAcceptanceManager,
         collateral,
         rewards,
-        gossip,
         GlobalSnapshotEventCutter.make[IO](20_000_000)
       )
   }
@@ -171,11 +155,10 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     m: Metrics[F]
   ): IO[(GlobalSnapshotConsensusFunctions[IO], Set[PeerId], Signed[GlobalSnapshotArtifact], Signed[GlobalSnapshot], StateChannelEvent)] =
     for {
-      gossip <- Ref.of(List.empty[ForkInfo]).map(mkMockGossip)
-      gscf = mkGlobalSnapshotConsensusFunctions(gossip)
-      facilitators = Set.empty[PeerId]
-
       keyPair <- KeyPairGenerator.makeKeyPair[F]
+
+      gscf = mkGlobalSnapshotConsensusFunctions
+      facilitators = Set.empty[PeerId]
 
       genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
       signedGenesis <- Signed.forAsyncHasher[F, GlobalSnapshot](genesis, keyPair)
@@ -239,16 +222,15 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
   }
 
   test("gossip signed artifacts") { res =>
-    implicit val (_, ks, h, sp, m) = res
+    implicit val (_, ks, h, sp, _) = res
 
     for {
       gossiped <- Ref.of(List.empty[ForkInfo])
       mockGossip = mkMockGossip(gossiped)
 
-      gscf = mkGlobalSnapshotConsensusFunctions(mockGossip)
       (signedLastArtifact, _) <- mkSignedArtifacts()
 
-      _ <- gscf.gossipForkInfo(mockGossip, signedLastArtifact)
+      _ <- SnapshotConsensusFunctions.gossipForkInfo(mockGossip, signedLastArtifact)
 
       expected <- h
         .hash(signedLastArtifact)

@@ -7,7 +7,6 @@ import cats.syntax.all._
 import org.tessellation.currency.dataApplication.BaseDataApplicationL0Service
 import org.tessellation.currency.dataApplication.storage.CalculatedStateLocalFileSystemStorage
 import org.tessellation.currency.l0.node.IdentifierStorage
-import org.tessellation.currency.l0.snapshot.storages.LastBinaryHashStorage
 import org.tessellation.currency.schema.currency
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import org.tessellation.json.JsonSerializer
@@ -54,7 +53,6 @@ object Storages {
         )
       lastGlobalSnapshotStorage <- LastSnapshotStorage.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
       globalL0ClusterStorage <- L0ClusterStorage.make[F](globalL0Peer)
-      lastBinaryHashStorage <- LastBinaryHashStorage.make[F]
       identifierStorage <- IdentifierStorage.make[F]
       maybeCalculatedStateStorage <- dataApplication.traverse { _ =>
         CalculatedStateLocalFileSystemStorage.make[F](dataApplicationCalculatedStatePath)
@@ -66,7 +64,6 @@ object Storages {
         node = sharedStorages.node,
         session = sharedStorages.session,
         rumor = sharedStorages.rumor,
-        lastBinaryHash = lastBinaryHashStorage,
         snapshot = snapshotStorage,
         lastGlobalSnapshot = lastGlobalSnapshotStorage,
         incrementalSnapshotLocalFileSystemStorage = snapshotLocalFileSystemStorage,
@@ -81,7 +78,6 @@ sealed abstract class Storages[F[_]] private (
   val node: NodeStorage[F],
   val session: SessionStorage[F],
   val rumor: RumorStorage[F],
-  val lastBinaryHash: LastBinaryHashStorage[F],
   val snapshot: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo] with LatestBalances[F],
   val lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
   val incrementalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, CurrencyIncrementalSnapshot],

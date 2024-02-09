@@ -9,14 +9,16 @@ import org.tessellation.routes.internal._
 
 import eu.timepit.refined.auto._
 import io.circe.{Decoder, Encoder}
+import monocle.Lens
 import org.http4s._
 import org.http4s.circe.CirceEntityCodec._
 import org.http4s.dsl._
 import org.http4s.server.Router
 
-class ConsensusRoutes[F[_]: Async, Key: Order: Encoder: Decoder, Artifact: Encoder, Context: Encoder](
-  storage: ConsensusStorage[F, _, Key, Artifact, Context]
-) extends Http4sDsl[F] {
+class ConsensusRoutes[F[_]: Async, Key: Order: Encoder: Decoder, Artifact, Context, ConStatus, Outcome: Encoder, Kind](
+  storage: ConsensusStorage[F, _, Key, Artifact, Context, ConStatus, Outcome, Kind]
+)(implicit _key: Lens[Outcome, Key])
+    extends Http4sDsl[F] {
 
   private val prefixPath: InternalUrlPrefix = "/consensus"
 
@@ -29,9 +31,9 @@ class ConsensusRoutes[F[_]: Async, Key: Order: Encoder: Decoder, Artifact: Encod
       for {
         outcomeRequest <- req.as[GetConsensusOutcomeRequest[Key]]
         result <- storage.getLastConsensusOutcome.flatMap {
-          case Some(value) if value.key === outcomeRequest.key => Ok(value.some)
-          case Some(value) if value.key > outcomeRequest.key   => Conflict()
-          case _                                               => Ok(none[GetConsensusOutcomeRequest[Key]])
+          case Some(value) if _key.get(value) === outcomeRequest.key => Ok(value.some)
+          case Some(value) if _key.get(value) > outcomeRequest.key   => Conflict()
+          case _                                                     => Ok(none[GetConsensusOutcomeRequest[Key]])
         }
       } yield result
   }

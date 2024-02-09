@@ -26,7 +26,7 @@ import org.http4s.server.Router
 
 final case class DebugRoutes[F[_]: Async](
   clusterStorage: ClusterStorage[F],
-  consensusService: SnapshotConsensus[F, _, _, _],
+  consensusService: SnapshotConsensus[F, _, _, _, _, _, _],
   gossipService: Gossip[F],
   sessionService: Session[F],
   additionalRoutes: HttpRoutes[F]*
@@ -68,7 +68,7 @@ final case class DebugRoutes[F[_]: Async](
   )
 
   object ConsensusResourcesView {
-    def fromResources(resources: ConsensusResources[_]): ConsensusResourcesView = {
+    def fromResources(resources: ConsensusResources[_, _]): ConsensusResourcesView = {
       def peersWithDeclaration(fn: PeerDeclarations => Option[PeerDeclaration]): List[PeerId] =
         resources.peerDeclarationsMap.toList.mapFilter { case (peerId, pds) => fn(pds).map(_ => peerId) }
 

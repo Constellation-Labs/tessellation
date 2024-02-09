@@ -9,17 +9,18 @@ import scala.util.control.NoStackTrace
 import org.tessellation.currency.dataApplication.storage.CalculatedStateLocalFileSystemStorage
 import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, DataApplicationTraverse, L0NodeContext}
 import org.tessellation.currency.l0.node.IdentifierStorage
-import org.tessellation.currency.l0.snapshot.CurrencySnapshotArtifact
-import org.tessellation.currency.l0.snapshot.storages.LastBinaryHashStorage
+import org.tessellation.currency.l0.snapshot.CurrencyConsensusManager
+import org.tessellation.currency.l0.snapshot.schema.{CurrencyConsensusOutcome, Finished}
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotContext, CurrencySnapshotInfo}
 import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.collateral.{Collateral, OwnCollateralNotSatisfied}
 import org.tessellation.node.shared.domain.snapshot.services.GlobalL0Service
 import org.tessellation.node.shared.domain.snapshot.storage.SnapshotStorage
-import org.tessellation.node.shared.infrastructure.consensus.ConsensusManager
+import org.tessellation.node.shared.infrastructure.consensus._
+import org.tessellation.node.shared.infrastructure.consensus.trigger.EventTrigger
+import org.tessellation.schema.GlobalIncrementalSnapshot
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
 
@@ -38,10 +39,9 @@ object Rollback {
     nodeId: PeerId,
     globalL0Service: GlobalL0Service[F],
     identifierStorage: IdentifierStorage[F],
-    lastBinaryHashStorage: LastBinaryHashStorage[F],
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
     collateral: Collateral[F],
-    consensusManager: ConsensusManager[F, SnapshotOrdinal, CurrencySnapshotArtifact, CurrencySnapshotContext],
+    consensusManager: CurrencyConsensusManager[F],
     dataApplication: Option[(BaseDataApplicationL0Service[F], CalculatedStateLocalFileSystemStorage[F])]
   )(implicit context: L0NodeContext[F]): Rollback[F] = new Rollback[F] {
     private val logger = Slf4jLogger.getLogger[F]
@@ -67,8 +67,6 @@ object Rollback {
         .hasCollateral(nodeId)
         .flatMap(OwnCollateralNotSatisfied.raiseError[F, Unit].unlessA)
 
-      _ <- lastBinaryHashStorage.set(lastBinaryHash)
-
       _ <- dataApplication.map {
         case ((da, cs)) =>
           val fetchSnapshot: Hash => F[Option[Hashed[GlobalIncrementalSnapshot]]] = (hash: Hash) => globalL0Service.pullGlobalSnapshot(hash)
@@ -84,8 +82,20 @@ object Rollback {
 
       _ <- consensusManager.startFacilitatingAfterRollback(
         lastIncremental.ordinal,
-        lastIncremental,
-        CurrencySnapshotContext(identifier, lastInfo)
+        CurrencyConsensusOutcome(
+          lastIncremental.ordinal,
+          Facilitators(List(nodeId)),
+          RemovedFacilitators.empty,
+          WithdrawnFacilitators.empty,
+          Finished(
+            lastIncremental,
+            lastBinaryHash,
+            CurrencySnapshotContext(identifier, lastInfo),
+            EventTrigger,
+            Candidates.empty,
+            Hash.empty
+          )
+        )
       )
 
       _ <- logger.info(

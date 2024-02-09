@@ -24,7 +24,6 @@ import org.tessellation.node.shared.domain.rewards.Rewards
 import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
 import org.tessellation.node.shared.domain.snapshot.services.AddressService
 import org.tessellation.node.shared.infrastructure.collateral.Collateral
-import org.tessellation.node.shared.infrastructure.consensus.Consensus
 import org.tessellation.node.shared.infrastructure.metrics.Metrics
 import org.tessellation.node.shared.infrastructure.snapshot.services.AddressService
 import org.tessellation.node.shared.modules.{SharedServices, SharedValidators}
@@ -105,7 +104,7 @@ sealed abstract class Services[F[_]] private (
   val cluster: Cluster[F],
   val session: Session[F],
   val gossip: Gossip[F],
-  val consensus: Consensus[F, GlobalSnapshotEvent, GlobalSnapshotKey, GlobalSnapshotArtifact, GlobalSnapshotContext],
+  val consensus: GlobalSnapshotConsensus[F],
   val address: AddressService[F, GlobalIncrementalSnapshot],
   val collateral: Collateral[F],
   val rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent],

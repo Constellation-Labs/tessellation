@@ -7,17 +7,17 @@ import cats.syntax.all._
 
 import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
 import org.tessellation.currency.l0.node.IdentifierStorage
-import org.tessellation.currency.l0.snapshot.CurrencySnapshotArtifact
+import org.tessellation.currency.l0.snapshot.CurrencyConsensusManager
+import org.tessellation.currency.l0.snapshot.schema.{CurrencyConsensusOutcome, Finished}
 import org.tessellation.currency.l0.snapshot.services.StateChannelSnapshotService
-import org.tessellation.currency.l0.snapshot.storages.LastBinaryHashStorage
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.crypto._
 import org.tessellation.node.shared.domain.collateral.{Collateral, OwnCollateralNotSatisfied}
 import org.tessellation.node.shared.domain.genesis.{GenesisFS => GenesisLoader}
 import org.tessellation.node.shared.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.node.shared.http.p2p.clients.StateChannelSnapshotClient
-import org.tessellation.node.shared.infrastructure.consensus.ConsensusManager
-import org.tessellation.schema.SnapshotOrdinal
+import org.tessellation.node.shared.infrastructure.consensus._
+import org.tessellation.node.shared.infrastructure.consensus.trigger.EventTrigger
 import org.tessellation.schema.peer.{L0Peer, PeerId}
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
@@ -45,13 +45,12 @@ object Genesis {
   def make[F[_]: Async: Hasher: SecurityProvider](
     keyPair: KeyPair,
     collateral: Collateral[F],
-    lastBinaryHashStorage: LastBinaryHashStorage[F],
     stateChannelSnapshotService: StateChannelSnapshotService[F],
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
     stateChannelSnapshotClient: StateChannelSnapshotClient[F],
     globalL0Peer: L0Peer,
     nodeId: PeerId,
-    consensusManager: ConsensusManager[F, SnapshotOrdinal, CurrencySnapshotArtifact, CurrencySnapshotContext],
+    consensusManager: CurrencyConsensusManager[F],
     genesisLoader: GenesisLoader[F, CurrencySnapshot],
     identifierStorage: IdentifierStorage[F],
     hashSelect: HashSelect
@@ -80,18 +79,26 @@ object Genesis {
       binaryHash <- signedBinary.toHashed.map(_.hash)
       _ <- stateChannelSnapshotClient.send(identifier, signedBinary)(globalL0Peer)
 
-      _ <- lastBinaryHashStorage.set(binaryHash)
-
-      signedIncrementalBinary <- stateChannelSnapshotService.createBinary(signedFirstIncrementalSnapshot)
+      signedIncrementalBinary <- stateChannelSnapshotService.createBinary(signedFirstIncrementalSnapshot, binaryHash)
       incrementalBinaryHash <- signedIncrementalBinary.toHashed.map(_.hash)
       _ <- stateChannelSnapshotClient.send(identifier, signedIncrementalBinary)(globalL0Peer)
 
-      _ <- lastBinaryHashStorage.set(incrementalBinaryHash)
-
       _ <- consensusManager.startFacilitatingAfterRollback(
         signedFirstIncrementalSnapshot.ordinal,
-        signedFirstIncrementalSnapshot,
-        CurrencySnapshotContext(identifier, hashedGenesis.info)
+        CurrencyConsensusOutcome(
+          signedFirstIncrementalSnapshot.ordinal,
+          Facilitators(List(nodeId)),
+          RemovedFacilitators.empty,
+          WithdrawnFacilitators.empty,
+          Finished(
+            signedFirstIncrementalSnapshot,
+            incrementalBinaryHash,
+            CurrencySnapshotContext(identifier, hashedGenesis.info),
+            EventTrigger,
+            Candidates.empty,
+            Hash.empty
+          )
+        )
       )
       _ <- logger.info(s"Genesis binary ${binaryHash.show} and ${incrementalBinaryHash.show} accepted and sent to Global L0")
     } yield ()

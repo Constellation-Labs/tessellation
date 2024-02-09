@@ -1,18 +1,64 @@
 package org.tessellation.currency.l0
 
-import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
-import org.tessellation.currency.schema.currency._
-import org.tessellation.node.shared.infrastructure.snapshot._
-import org.tessellation.schema.Block
-import org.tessellation.security.signature.Signed
+import org.tessellation.currency.l0.snapshot.schema.{CurrencyConsensusKind, CurrencyConsensusOutcome, CurrencyConsensusStep}
+import org.tessellation.currency.schema.currency.CurrencySnapshotContext
+import org.tessellation.node.shared.infrastructure.consensus._
+import org.tessellation.node.shared.infrastructure.snapshot.SnapshotConsensus
+import org.tessellation.node.shared.snapshot.currency.{CurrencySnapshotArtifact, CurrencySnapshotEvent}
+import org.tessellation.schema.SnapshotOrdinal
 
 package object snapshot {
 
-  type CurrencySnapshotEvent = Either[Signed[Block], Signed[DataApplicationBlock]]
+  type CurrencySnapshotKey = SnapshotOrdinal
 
-  type CurrencySnapshotArtifact = CurrencyIncrementalSnapshot
+  type CurrencySnapshotStatus = CurrencyConsensusStep
 
   type CurrencySnapshotConsensus[F[_]] =
-    SnapshotConsensus[F, CurrencySnapshotArtifact, CurrencySnapshotContext, CurrencySnapshotEvent]
+    SnapshotConsensus[
+      F,
+      CurrencySnapshotArtifact,
+      CurrencySnapshotContext,
+      CurrencySnapshotEvent,
+      CurrencySnapshotStatus,
+      CurrencyConsensusOutcome,
+      CurrencyConsensusKind
+    ]
 
+  type CurrencySnapshotConsensusState =
+    ConsensusState[CurrencySnapshotKey, CurrencySnapshotStatus, CurrencyConsensusOutcome, CurrencyConsensusKind]
+
+  type CurrencyConsensusStorage[F[_]] =
+    ConsensusStorage[
+      F,
+      CurrencySnapshotEvent,
+      CurrencySnapshotKey,
+      CurrencySnapshotArtifact,
+      CurrencySnapshotContext,
+      CurrencySnapshotStatus,
+      CurrencyConsensusOutcome,
+      CurrencyConsensusKind
+    ]
+
+  type CurrencyConsensusManager[F[_]] =
+    ConsensusManager[
+      F,
+      CurrencySnapshotKey,
+      CurrencySnapshotArtifact,
+      CurrencySnapshotContext,
+      CurrencySnapshotStatus,
+      CurrencyConsensusOutcome,
+      CurrencyConsensusKind
+    ]
+
+  type CurrencyConsensusStateRemover[F[_]] =
+    ConsensusStateRemover[
+      F,
+      CurrencySnapshotKey,
+      CurrencySnapshotEvent,
+      CurrencySnapshotArtifact,
+      CurrencySnapshotContext,
+      CurrencySnapshotStatus,
+      CurrencyConsensusOutcome,
+      CurrencyConsensusKind
+    ]
 }

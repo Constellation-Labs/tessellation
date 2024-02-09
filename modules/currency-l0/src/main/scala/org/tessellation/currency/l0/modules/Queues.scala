@@ -4,8 +4,8 @@ import cats.effect.Concurrent
 import cats.effect.std.Queue
 import cats.syntax.functor._
 
-import org.tessellation.currency.l0.snapshot.CurrencySnapshotEvent
 import org.tessellation.node.shared.modules.SharedQueues
+import org.tessellation.node.shared.snapshot.currency.CurrencySnapshotEvent
 import org.tessellation.schema.gossip.RumorRaw
 import org.tessellation.security.Hashed
 

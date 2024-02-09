@@ -1,7 +1,6 @@
 package org.tessellation.node.shared.infrastructure.consensus
 
 import org.tessellation.node.shared.infrastructure.consensus.declaration.PeerDeclaration
-import org.tessellation.node.shared.infrastructure.consensus.declaration.kind.PeerDeclarationKind
 import org.tessellation.schema.peer.PeerId
 
 import derevo.circe.magnolia.{decoder, encoder}
@@ -16,10 +15,10 @@ object message {
   case class ConsensusPeerDeclaration[K, D <: PeerDeclaration](key: K, declaration: D)
 
   @derive(encoder, decoder)
-  case class ConsensusPeerDeclarationAck[K](key: K, kind: PeerDeclarationKind, ack: Set[PeerId])
+  case class ConsensusPeerDeclarationAck[K, Kind](key: K, kind: Kind, ack: Set[PeerId])
 
   @derive(encoder, decoder)
-  case class ConsensusWithdrawPeerDeclaration[K](key: K, kind: PeerDeclarationKind)
+  case class ConsensusWithdrawPeerDeclaration[K, Kind](key: K, kind: Kind)
 
   @derive(encoder, decoder)
   case class ConsensusArtifact[K, A](key: K, artifact: A)

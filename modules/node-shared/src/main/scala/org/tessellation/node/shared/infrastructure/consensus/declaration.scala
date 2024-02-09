@@ -1,7 +1,6 @@
 package org.tessellation.node.shared.infrastructure.consensus
 
 import org.tessellation.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
-import org.tessellation.schema.peer.PeerId
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.signature.Signature
 
@@ -17,7 +16,7 @@ object declaration {
   }
 
   @derive(eqv, show, encoder, decoder)
-  case class Facility(upperBound: Bound, candidates: Set[PeerId], trigger: Option[ConsensusTrigger], facilitatorsHash: Hash)
+  case class Facility(upperBound: Bound, candidates: Candidates, trigger: Option[ConsensusTrigger], facilitatorsHash: Hash)
       extends PeerDeclaration
 
   @derive(eqv, show, encoder, decoder)
@@ -25,6 +24,9 @@ object declaration {
 
   @derive(eqv, show, encoder, decoder)
   case class MajoritySignature(signature: Signature, facilitatorsHash: Hash) extends PeerDeclaration
+
+  @derive(eqv, show, encoder, decoder)
+  case class BinarySignature(signature: Signature, facilitatorsHash: Hash) extends PeerDeclaration
 
   object kind {
 
@@ -39,6 +41,9 @@ object declaration {
 
     @derive(eqv, show, encoder, decoder)
     case object MajoritySignature extends PeerDeclarationKind
+
+    @derive(eqv, show, encoder, decoder)
+    case object BinarySignature extends PeerDeclarationKind
 
   }
 

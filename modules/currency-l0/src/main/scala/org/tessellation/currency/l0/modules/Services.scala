@@ -11,8 +11,8 @@ import org.tessellation.currency.dataApplication.BaseDataApplicationL0Service
 import org.tessellation.currency.l0.config.types.AppConfig
 import org.tessellation.currency.l0.http.p2p.P2PClient
 import org.tessellation.currency.l0.node.L0NodeContext
+import org.tessellation.currency.l0.snapshot._
 import org.tessellation.currency.l0.snapshot.services.{SentStateChannelBinaryTrackingService, StateChannelSnapshotService}
-import org.tessellation.currency.l0.snapshot.{CurrencySnapshotConsensus, CurrencySnapshotEvent}
 import org.tessellation.currency.schema.currency._
 import org.tessellation.json.JsonBrotliBinarySerializer
 import org.tessellation.kryo.KryoSerializer
@@ -28,6 +28,7 @@ import org.tessellation.node.shared.infrastructure.metrics.Metrics
 import org.tessellation.node.shared.infrastructure.snapshot._
 import org.tessellation.node.shared.infrastructure.snapshot.services.AddressService
 import org.tessellation.node.shared.modules.SharedServices
+import org.tessellation.node.shared.snapshot.currency._
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.security.signature.SignedValidator
 import org.tessellation.security.{HashSelect, Hasher, SecurityProvider}
@@ -68,7 +69,6 @@ object Services {
       stateChannelSnapshotService <- StateChannelSnapshotService
         .make[F](
           keyPair,
-          storages.lastBinaryHash,
           p2PClient.stateChannelSnapshot,
           storages.globalL0Cluster,
           storages.snapshot,
@@ -138,12 +138,7 @@ sealed abstract class Services[F[_]] private (
   val cluster: Cluster[F],
   val session: Session[F],
   val gossip: Gossip[F],
-  val consensus: SnapshotConsensus[
-    F,
-    CurrencyIncrementalSnapshot,
-    CurrencySnapshotContext,
-    CurrencySnapshotEvent
-  ],
+  val consensus: CurrencySnapshotConsensus[F],
   val address: AddressService[F, CurrencyIncrementalSnapshot],
   val collateral: Collateral[F],
   val stateChannelSnapshot: StateChannelSnapshotService[F],

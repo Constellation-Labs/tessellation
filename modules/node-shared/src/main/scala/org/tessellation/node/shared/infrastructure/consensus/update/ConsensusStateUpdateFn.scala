@@ -4,5 +4,5 @@ import cats.data.StateT
 
 import org.tessellation.node.shared.infrastructure.consensus.{ConsensusResources, ConsensusState}
 
-trait ConsensusStateUpdateFn[F[_], Key, Artifact, Context, Action]
-    extends (ConsensusResources[Artifact] => StateT[F, ConsensusState[Key, Artifact, Context], Action])
+trait ConsensusStateUpdateFn[F[_], Key, Artifact, Status, Outcome, Kind, Action]
+    extends (ConsensusResources[Artifact, Kind] => StateT[F, ConsensusState[Key, Status, Outcome, Kind], Action])

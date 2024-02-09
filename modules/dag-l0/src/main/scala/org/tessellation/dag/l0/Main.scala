@@ -8,12 +8,15 @@ import cats.syntax.semigroupk._
 import org.tessellation.BuildInfo
 import org.tessellation.dag.l0.cli.method._
 import org.tessellation.dag.l0.http.p2p.P2PClient
+import org.tessellation.dag.l0.infrastructure.snapshot.schema.{Finished, GlobalConsensusOutcome}
 import org.tessellation.dag.l0.infrastructure.trust.handler.{ordinalTrustHandler, trustHandler}
 import org.tessellation.dag.l0.modules._
 import org.tessellation.ext.cats.effect._
 import org.tessellation.ext.kryo._
 import org.tessellation.node.shared.app.{NodeShared, TessellationIOApp}
 import org.tessellation.node.shared.domain.collateral.OwnCollateralNotSatisfied
+import org.tessellation.node.shared.infrastructure.consensus._
+import org.tessellation.node.shared.infrastructure.consensus.trigger.EventTrigger
 import org.tessellation.node.shared.infrastructure.genesis.{GenesisFS => GenesisLoader}
 import org.tessellation.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import org.tessellation.node.shared.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage
@@ -23,6 +26,7 @@ import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.semver.TessellationVersion
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshot}
+import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
 import com.monovore.decline.Opts
@@ -155,7 +159,16 @@ object Main
               case (snapshotInfo, snapshot) =>
                 storages.globalSnapshot
                   .prepend(snapshot, snapshotInfo) >>
-                  services.consensus.manager.startFacilitatingAfterRollback(snapshot.ordinal, snapshot, snapshotInfo)
+                  services.consensus.manager.startFacilitatingAfterRollback(
+                    snapshot.ordinal,
+                    GlobalConsensusOutcome(
+                      snapshot.ordinal,
+                      Facilitators(List(nodeId)),
+                      RemovedFacilitators.empty,
+                      WithdrawnFacilitators.empty,
+                      Finished(snapshot, snapshotInfo, EventTrigger, Candidates.empty, Hash.empty)
+                    )
+                  )
             }
           } >>
             services.collateral
@@ -191,8 +204,13 @@ object Main
                               services.consensus.manager
                                 .startFacilitatingAfterRollback(
                                   signedFirstIncrementalSnapshot.ordinal,
-                                  signedFirstIncrementalSnapshot,
-                                  hashedGenesis.info
+                                  GlobalConsensusOutcome(
+                                    signedFirstIncrementalSnapshot.ordinal,
+                                    Facilitators(List(nodeId)),
+                                    RemovedFacilitators.empty,
+                                    WithdrawnFacilitators.empty,
+                                    Finished(signedFirstIncrementalSnapshot, hashedGenesis.info, EventTrigger, Candidates.empty, Hash.empty)
+                                  )
                                 )
 
                         }

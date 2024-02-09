@@ -7,6 +7,7 @@ import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, 
 import org.tessellation.node.shared.domain.Daemon
 import org.tessellation.node.shared.domain.gossip.Gossip
 import org.tessellation.node.shared.infrastructure.snapshot.daemon.SnapshotEventsPublisherDaemon
+import org.tessellation.node.shared.snapshot.currency.CurrencySnapshotEvent
 
 import fs2.Stream
 import io.circe.disjunctionCodecs._
