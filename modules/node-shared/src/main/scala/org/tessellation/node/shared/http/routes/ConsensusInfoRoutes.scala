@@ -5,7 +5,7 @@ import cats.syntax.all._
 
 import org.tessellation.node.shared.domain.cluster.services.Cluster
 import org.tessellation.node.shared.http.routes.ConsensusInfoRoutes.ConsensusInfo
-import org.tessellation.node.shared.infrastructure.consensus.{ConsensusOutcome, ConsensusStorage}
+import org.tessellation.node.shared.infrastructure.consensus.{ConsensusStorage, Facilitators}
 import org.tessellation.routes.internal._
 import org.tessellation.schema.peer.{PeerId, PeerInfo}
 
@@ -13,15 +13,17 @@ import derevo.circe.magnolia.encoder
 import derevo.derive
 import eu.timepit.refined.auto._
 import io.circe.Encoder
+import monocle.Lens
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.dsl.Http4sDsl
 
-class ConsensusInfoRoutes[F[_]: Async, Key: Encoder](
+class ConsensusInfoRoutes[F[_]: Async, Key: Encoder, Outcome](
   cluster: Cluster[F],
-  consensusStorage: ConsensusStorage[F, _, Key, _, _],
+  consensusStorage: ConsensusStorage[F, _, Key, _, _, _, Outcome, _],
   selfId: PeerId
-) extends Http4sDsl[F]
+)(implicit _facilitators: Lens[Outcome, Facilitators], _key: Lens[Outcome, Key])
+    extends Http4sDsl[F]
     with PublicRoutes[F] {
 
   protected val prefixPath: InternalUrlPrefix = "/consensus"
@@ -34,9 +36,9 @@ class ConsensusInfoRoutes[F[_]: Async, Key: Encoder](
       }
   }
 
-  private def makeConsensusInfo(outcome: ConsensusOutcome[Key, _, _]): F[ConsensusInfo[Key]] =
-    filterClusterPeers(outcome.facilitators.toSet.incl(selfId))
-      .map(ConsensusInfo(outcome.key, _))
+  private def makeConsensusInfo(outcome: Outcome): F[ConsensusInfo[Key]] =
+    filterClusterPeers(_facilitators.get(outcome).value.toSet.incl(selfId))
+      .map(ConsensusInfo(_key.get(outcome), _))
 
   private def filterClusterPeers(peers: Set[PeerId]): F[Set[PeerInfo]] =
     cluster.info.map(_.filter(peerInfo => peers.contains(peerInfo.id)))

@@ -10,7 +10,7 @@ import scala.util.control.NoStackTrace
 
 import org.tessellation.dag.l0.domain.snapshot.storages.SnapshotDownloadStorage
 import org.tessellation.dag.l0.http.p2p.P2PClient
-import org.tessellation.dag.l0.infrastructure.snapshot.GlobalSnapshotContext
+import org.tessellation.dag.l0.infrastructure.snapshot.{GlobalSnapshotConsensus, GlobalSnapshotContext}
 import org.tessellation.ext.cats.kernel.PartialPrevious
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
 import org.tessellation.merkletree.StateProofValidator
@@ -18,7 +18,7 @@ import org.tessellation.node.shared.domain.cluster.storage.ClusterStorage
 import org.tessellation.node.shared.domain.node.NodeStorage
 import org.tessellation.node.shared.domain.snapshot.programs.Download
 import org.tessellation.node.shared.domain.snapshot.{PeerSelect, Validator}
-import org.tessellation.node.shared.infrastructure.snapshot.{GlobalSnapshotContextFunctions, SnapshotConsensus}
+import org.tessellation.node.shared.infrastructure.snapshot.GlobalSnapshotContextFunctions
 import org.tessellation.schema._
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.Peer
@@ -40,7 +40,7 @@ object Download {
     lastFullGlobalSnapshotOrdinal: SnapshotOrdinal,
     globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
     nodeStorage: NodeStorage[F],
-    consensus: SnapshotConsensus[F, GlobalIncrementalSnapshot, GlobalSnapshotContext, _],
+    consensus: GlobalSnapshotConsensus[F],
     peerSelect: PeerSelect[F],
     hashSelect: HashSelect
   ): Download[F] = new Download[F] {

@@ -4,21 +4,28 @@ import cats.Monad
 import cats.data.StateT
 import cats.syntax.all._
 
-import org.tessellation.node.shared.infrastructure.consensus.{ConsensusResources, Reopened}
+import org.tessellation.node.shared.infrastructure.consensus.{Facilitators, LockStatus, RemovedFacilitators}
+import org.tessellation.schema.peer.PeerId
+
+import monocle.Lens
 
 object UnlockConsensusUpdate {
 
-  def make[F[_]: Monad, Key, Artifact, Context]: ConsensusStateUpdateFn[F, Key, Artifact, Context, Unit] =
-    (resources: ConsensusResources[Artifact]) =>
-      StateT.modify { state =>
-        if (state.notLocked)
-          state
-        else {
-          val (voteKeep, voteRemove, initialVotes) = ((1, 0), (0, 1), (0, 0))
+  def tryUnlock[F[_]: Monad, S, K](acksMap: Map[(PeerId, K), Set[PeerId]])(maybeCollectingKind: S => Option[K])(
+    implicit _lockStatus: Lens[S, LockStatus],
+    _facilitators: Lens[S, Facilitators],
+    _removedFacilitators: Lens[S, RemovedFacilitators]
+  ): StateT[F, S, Unit] =
+    StateT.modify { state =>
+      if (_lockStatus.get(state) =!= LockStatus.Closed)
+        state
+      else {
+        val (voteKeep, voteRemove, initialVotes) = ((1, 0), (0, 1), (0, 0))
 
-          state.maybeCollectingKind.flatMap { collectingKind =>
-            val votingResult = state.facilitators.foldLeft(state.facilitators.map(_ -> initialVotes).toMap) { (acc, facilitator) =>
-              resources.acksMap
+        maybeCollectingKind(state).flatMap { collectingKind =>
+          val votingResult =
+            _facilitators.get(state).value.foldLeft(_facilitators.get(state).value.map(_ -> initialVotes).toMap) { (acc, facilitator) =>
+              acksMap
                 .get((facilitator, collectingKind))
                 .map { ack =>
                   acc.map {
@@ -32,10 +39,13 @@ object UnlockConsensusUpdate {
                 .getOrElse(acc)
             }
 
-            val keepThreshold = (state.facilitators.size + 1) / 2
-            val removeThreshold = state.facilitators.size / 2 + 1
+          val keepThreshold = (_facilitators.get(state).value.size + 1) / 2
+          val removeThreshold = _facilitators.get(state).value.size / 2 + 1
 
-            state.facilitators.traverse { peerId =>
+          _facilitators
+            .get(state)
+            .value
+            .traverse { peerId =>
               votingResult.get(peerId).flatMap {
                 case (votesKeep, votesRemove) =>
                   if (votesKeep >= keepThreshold)
@@ -45,20 +55,26 @@ object UnlockConsensusUpdate {
                   else
                     none
               }
-            }.map {
+            }
+            .map {
               _.partitionMap {
                 case (peerId, decision) => Either.cond(decision, peerId, peerId)
               }
-            }.map {
-              case (removedFacilitators, keptFacilitators) =>
-                state.copy(
-                  lockStatus = if (state.locked) Reopened else state.lockStatus,
-                  facilitators = keptFacilitators,
-                  removedFacilitators = state.removedFacilitators.union(removedFacilitators.toSet)
-                )
             }
-          }.getOrElse(state)
-        }
-      }
+            .map {
+              case (removedFacilitators, keptFacilitators) =>
+                val updateState =
+                  _lockStatus.modify {
+                    case LockStatus.Closed => LockStatus.Reopened
+                    case other             => other
+                  }
+                    .andThen(_facilitators.replace(Facilitators(keptFacilitators)))
+                    .andThen(_removedFacilitators.modify(r => RemovedFacilitators(r.value.union(removedFacilitators.toSet))))
 
+                updateState(state)
+            }
+        }
+          .getOrElse(state)
+      }
+    }
 }

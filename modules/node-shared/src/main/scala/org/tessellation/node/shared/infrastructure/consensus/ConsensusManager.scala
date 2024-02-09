@@ -2,8 +2,8 @@ package org.tessellation.node.shared.infrastructure.consensus
 
 import cats._
 import cats.data.Ior.{Both, Right}
-import cats.effect._
 import cats.effect.std.{Random, Supervisor}
+import cats.effect.{Async, Clock, Temporal}
 import cats.kernel.Next
 import cats.syntax.all._
 
@@ -18,44 +18,51 @@ import org.tessellation.node.shared.infrastructure.consensus.trigger.{ConsensusT
 import org.tessellation.node.shared.infrastructure.metrics.Metrics
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.node.NodeState._
+import org.tessellation.schema.peer.Peer
 import org.tessellation.schema.peer.Peer.toP2PContext
-import org.tessellation.schema.peer.{Peer, PeerId}
-import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto._
+import monocle.Lens
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import retry.RetryDetails
 import retry.RetryPolicies.{constantDelay, fullJitter, limitRetries}
 import retry.syntax.all._
 
-trait ConsensusManager[F[_], Key, Artifact, Context] {
+trait ConsensusManager[F[_], Key, Artifact, Context, Status, Outcome, Kind] {
   def registerForConsensus(observationKey: Key): F[Unit]
 
   def startFacilitatingAfterDownload(observationKey: Key, lastArtifact: Signed[Artifact], lastContext: Context): F[Unit]
 
-  def startFacilitatingAfterRollback(lastKey: Key, lastArtifact: Signed[Artifact], lastContext: Context): F[Unit]
+  def startFacilitatingAfterRollback(lastKey: Key, initialOutcome: Outcome): F[Unit]
 
   def withdrawFromConsensus: F[Unit]
 
   private[consensus] def facilitateOnEvent: F[Unit]
 
-  private[consensus] def checkForStateUpdate(key: Key)(resources: ConsensusResources[Artifact]): F[Unit]
+  private[consensus] def checkForStateUpdate(key: Key)(resources: ConsensusResources[Artifact, Kind]): F[Unit]
 }
 
 object ConsensusManager {
 
-  def make[F[_]: Async: Metrics: Random, Event, Key: Show: Order: Next, Artifact: Eq, Context: Eq](
+  def make[F[_]: Async: Metrics: Random, Event, Key: Show: Order: Next, Artifact: Eq, Context: Eq, Status: Eq, Outcome, Kind](
     config: ConsensusConfig,
-    consensusStorage: ConsensusStorage[F, Event, Key, Artifact, Context],
-    consensusStateCreator: ConsensusStateCreator[F, Key, Artifact, Context],
-    consensusStateUpdater: ConsensusStateUpdater[F, Key, Artifact, Context],
-    consensusStateRemover: ConsensusStateRemover[F, Key, Artifact, Context],
+    consensusStorage: ConsensusStorage[F, Event, Key, Artifact, Context, Status, Outcome, Kind],
+    consensusStateCreator: ConsensusStateCreator[F, Key, Artifact, Context, Status, Outcome, Kind],
+    consensusStateUpdater: ConsensusStateUpdater[F, Key, Artifact, Context, Status, Outcome, Kind],
+    consensusStateAdvancer: ConsensusStateAdvancer[F, Key, Artifact, Context, Status, Outcome, Kind],
+    consensusStateRemover: ConsensusStateRemover[F, Key, Event, Artifact, Context, Status, Outcome, Kind],
+    consensusOps: ConsensusOps[Status, Kind],
     nodeStorage: NodeStorage[F],
     clusterStorage: ClusterStorage[F],
-    consensusClient: ConsensusClient[F, Key, Artifact, Context],
-    selfId: PeerId
-  )(implicit S: Supervisor[F]): F[ConsensusManager[F, Key, Artifact, Context]] = {
+    consensusClient: ConsensusClient[F, Key, Outcome]
+  )(
+    implicit S: Supervisor[F],
+    _artifact: Lens[Outcome, Signed[Artifact]],
+    _context: Lens[Outcome, Context],
+    _key: Lens[Outcome, Key],
+    _trigger: Lens[Outcome, ConsensusTrigger]
+  ): F[ConsensusManager[F, Key, Artifact, Context, Status, Outcome, Kind]] = {
     val logger = Slf4jLogger.getLoggerFromClass[F](ConsensusManager.getClass)
 
     val collectRegistrationRetryPolicy = limitRetries(3).join(fullJitter(2.seconds))
@@ -74,7 +81,7 @@ object ConsensusManager {
         }
       } yield ()
 
-    val manager = new ConsensusManager[F, Key, Artifact, Context] {
+    val manager = new ConsensusManager[F, Key, Artifact, Context, Status, Outcome, Kind] {
 
       def registerForConsensus(observationKey: Key): F[Unit] =
         consensusStorage
@@ -89,7 +96,7 @@ object ConsensusManager {
 
       def startFacilitatingAfterDownload(key: Key, lastArtifact: Signed[Artifact], lastContext: Context): F[Unit] =
         S.supervise {
-          def fetchOutcomeFromRandomPeer: F[Option[ConsensusOutcome[Key, Artifact, Context]]] =
+          def fetchOutcomeFromRandomPeer: F[Option[Outcome]] =
             (selectRandomPeer >>= fetchConsensusOutcome)
               .retryingOnFailuresAndAllErrors(
                 wasSuccessful = wasSuccessful,
@@ -103,24 +110,25 @@ object ConsensusManager {
               .map(_.filter(_.state === Ready))
               .flatMap(Random[F].elementOf)
 
-          def fetchConsensusOutcome(peer: Peer): F[Option[ConsensusOutcome[Key, Artifact, Context]]] =
+          def fetchConsensusOutcome(peer: Peer): F[Option[Outcome]] =
             consensusClient
               .getSpecificConsensusOutcome(GetConsensusOutcomeRequest(key))
               .run(peer)
 
-          def wasSuccessful(maybeOutcome: Option[ConsensusOutcome[Key, Artifact, Context]]): F[Boolean] =
+          def wasSuccessful(maybeOutcome: Option[Outcome]): F[Boolean] =
             maybeOutcome.exists { outcome =>
-              outcome.key === key &&
-              outcome.status.signedMajorityArtifact === lastArtifact &&
-              outcome.status.context === lastContext
+              _key.get(outcome) === key &&
+              _artifact.get(outcome) === lastArtifact &&
+              _context.get(outcome) === lastContext
             }.pure[F]
 
-          def onFailure(maybeOutcome: Option[ConsensusOutcome[Key, Artifact, Context]], retryDetails: RetryDetails): F[Unit] =
+          def onFailure(maybeOutcome: Option[Outcome], retryDetails: RetryDetails): F[Unit] =
             maybeOutcome.map { outcome =>
-              val sameArtifact = outcome.status.signedMajorityArtifact === lastArtifact
-              val sameContext = outcome.status.context === lastContext
+              val sameArtifact = _artifact.get(outcome) === lastArtifact
+              val sameContext = _context.get(outcome) === lastContext
               logger.info(
-                s"Observed outcome {key=${key.show}, outcomeKey=${outcome.key}, sameArtifact=${sameArtifact.show}, sameContext=${sameContext.show}, attempt=${retryDetails.retriesSoFar}}"
+                s"Observed outcome {key=${key.show}, outcomeKey=${_key
+                    .get(outcome)}, sameArtifact=${sameArtifact.show}, sameContext=${sameContext.show}, attempt=${retryDetails.retriesSoFar}}"
               )
             }.getOrElse(logger.info(s"Outcome not observed {key=${key.show}, attempt=${retryDetails.retriesSoFar}}"))
 
@@ -146,15 +154,7 @@ object ConsensusManager {
             .handleErrorWith(logger.error(_)(s"Error facilitating consensus with event trigger"))
         }.void
 
-      def startFacilitatingAfterRollback(lastKey: Key, lastArtifact: Signed[Artifact], lastContext: Context): F[Unit] = {
-        val initialOutcome = ConsensusOutcome[Key, Artifact, Context](
-          lastKey,
-          List(selfId),
-          Set.empty,
-          Set.empty,
-          Finished(lastArtifact, lastContext, EventTrigger, Set.empty, Hash.empty)
-        )
-
+      def startFacilitatingAfterRollback(lastKey: Key, initialOutcome: Outcome): F[Unit] =
         consensusStorage
           .trySetInitialConsensusOutcome(initialOutcome)
           .ifM(
@@ -162,7 +162,6 @@ object ConsensusManager {
               scheduleFacility,
             new Throwable("Error initializing consensus storage").raiseError[F, Unit]
           )
-      }
 
       private def scheduleFacility: F[Unit] =
         Clock[F].monotonic.map(_ + config.timeTriggerInterval).flatMap { nextTimeValue =>
@@ -184,12 +183,12 @@ object ConsensusManager {
         for {
           maybeLastOutcome <- consensusStorage.clearAndGetLastConsensusOutcome
           _ <- maybeLastOutcome.traverse { lastOutcome =>
-            consensusStateRemover.withdrawFromConsensus(lastOutcome.key.next)
+            consensusStateRemover.withdrawFromConsensus(_key.get(lastOutcome).next)
           }
           _ <- consensusStorage.clearObservationKey
         } yield ()
 
-      def checkForStateUpdate(key: Key)(resources: ConsensusResources[Artifact]): F[Unit] =
+      def checkForStateUpdate(key: Key)(resources: ConsensusResources[Artifact, Kind]): F[Unit] =
         S.supervise {
           internalCheckForStateUpdate(key, resources)
             .handleErrorWith(logger.error(_)(s"Error checking for consensus state update {key=${key.show}}"))
@@ -200,7 +199,7 @@ object ConsensusManager {
       ): F[Unit] =
         consensusStorage.getLastConsensusOutcome.flatMap { maybeLastOutcome =>
           maybeLastOutcome.traverse { lastOutcome =>
-            val nextKey = lastOutcome.key.next
+            val nextKey = _key.get(lastOutcome).next
 
             consensusStorage
               .getResources(nextKey)
@@ -218,32 +217,23 @@ object ConsensusManager {
 
       private def internalCheckForStateUpdate(
         key: Key,
-        resources: ConsensusResources[Artifact]
+        resources: ConsensusResources[Artifact, Kind]
       ): F[Unit] =
         consensusStateUpdater.tryUpdateConsensus(key, resources).flatMap {
           case Some((oldState, newState)) =>
-            newState.status match {
-              case finish @ Finished(_, _, majorityTrigger, _, _) =>
+            consensusStateAdvancer.getConsensusOutcome(newState) match {
+              case Some((previousKey, newOutcome)) =>
                 Clock[F].monotonic.flatMap { finishedAt =>
                   Metrics[F].recordTime("dag_consensus_duration", finishedAt - newState.createdAt)
                 } >>
                   consensusStorage
-                    .tryUpdateLastConsensusOutcomeWithCleanup(
-                      newState.lastOutcome.key,
-                      ConsensusOutcome(
-                        newState.key,
-                        newState.facilitators,
-                        newState.removedFacilitators,
-                        newState.withdrawnFacilitators,
-                        finish
-                      )
-                    )
+                    .tryUpdateLastConsensusOutcomeWithCleanup(previousKey, newOutcome)
                     .ifM(
-                      afterConsensusFinish(majorityTrigger),
+                      afterConsensusFinish(_trigger.get(newOutcome)),
                       logger.info("Skip triggering another consensus")
                     ) >>
                   nodeStorage.tryModifyStateGetResult(WaitingForReady, Ready).void
-              case _ =>
+              case None =>
                 stallDetection(key, newState).whenA(oldState.status =!= newState.status) >>
                   internalCheckForStateUpdate(key, resources)
             }
@@ -276,14 +266,14 @@ object ConsensusManager {
         scheduleFacility >> consensusStorage.containsTriggerEvent
           .ifM(internalFacilitateWith(EventTrigger.some), Applicative[F].unit)
 
-      private def stallDetection(key: Key, state: ConsensusState[Key, Artifact, Context]): F[Unit] =
+      private def stallDetection(key: Key, state: ConsensusState[Key, Status, Outcome, Kind]): F[Unit] =
         S.supervise {
           Temporal[F].sleep(config.declarationTimeout) >>
             consensusStateUpdater.tryLockConsensus(key, state).flatMap { maybeResult =>
               maybeResult.traverse {
                 case (_, lockedState) =>
                   Temporal[F].sleep(config.lockDuration) >>
-                    lockedState.maybeCollectingKind.traverse { ackKind =>
+                    consensusOps.maybeCollectingKind(lockedState.status).traverse { ackKind =>
                       consensusStorage.getResources(key).flatMap { resources =>
                         consensusStateUpdater.trySpreadAck(key, ackKind, resources)
                       }

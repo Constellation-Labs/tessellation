@@ -12,38 +12,38 @@ import org.http4s.Method.{GET, POST}
 import org.http4s.circe.CirceEntityCodec._
 import org.http4s.client.Client
 
-trait ConsensusClient[F[_], Key, Artifact, Context] {
+trait ConsensusClient[F[_], Key, Outcome] {
 
   def getRegistration: PeerResponse[F, RegistrationResponse[Key]]
 
-  def getLatestConsensusOutcome: PeerResponse[F, Option[ConsensusOutcome[Key, Artifact, Context]]]
+  def getLatestConsensusOutcome: PeerResponse[F, Option[Outcome]]
 
   def getSpecificConsensusOutcome(
     request: GetConsensusOutcomeRequest[Key]
-  ): PeerResponse[F, Option[ConsensusOutcome[Key, Artifact, Context]]]
+  ): PeerResponse[F, Option[Outcome]]
 
 }
 
 object ConsensusClient {
-  def make[F[_]: Async, Key: Encoder: Decoder, Artifact: Decoder, Context: Decoder](
+  def make[F[_]: Async, Key: Encoder: Decoder, Outcome: Decoder](
     client: Client[F],
     session: Session[F]
-  ): ConsensusClient[F, Key, Artifact, Context] =
-    new ConsensusClient[F, Key, Artifact, Context] {
+  ): ConsensusClient[F, Key, Outcome] =
+    new ConsensusClient[F, Key, Outcome] {
 
       def getRegistration: PeerResponse[F, RegistrationResponse[Key]] = PeerResponse("consensus/registration", GET)(client, session) {
         (req, c) =>
           c.expect[RegistrationResponse[Key]](req)
       }
 
-      def getLatestConsensusOutcome: PeerResponse[F, Option[ConsensusOutcome[Key, Artifact, Context]]] =
+      def getLatestConsensusOutcome: PeerResponse[F, Option[Outcome]] =
         PeerResponse("consensus/latest/outcome", GET)(client, session) { (req, c) =>
           c.expect(req)
         }
 
       def getSpecificConsensusOutcome(
         request: GetConsensusOutcomeRequest[Key]
-      ): PeerResponse[F, Option[ConsensusOutcome[Key, Artifact, Context]]] =
+      ): PeerResponse[F, Option[Outcome]] =
         PeerResponse("consensus/specific/outcome", POST)(client, session) { (req, c) =>
           c.expect(req.withEntity(request))
         }

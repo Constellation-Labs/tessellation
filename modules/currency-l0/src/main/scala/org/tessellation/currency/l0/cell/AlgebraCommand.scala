@@ -1,7 +1,7 @@
 package org.tessellation.currency.l0.cell
 
-import org.tessellation.currency.l0.snapshot.CurrencySnapshotEvent
 import org.tessellation.kernel.Ω
+import org.tessellation.node.shared.snapshot.currency.CurrencySnapshotEvent
 
 sealed trait AlgebraCommand extends Ω
 

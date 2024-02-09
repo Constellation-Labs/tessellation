@@ -63,7 +63,6 @@ object Programs {
     val genesis = Genesis.make(
       keyPair,
       services.collateral,
-      storages.lastBinaryHash,
       services.stateChannelSnapshot,
       storages.snapshot,
       p2pClient.stateChannelSnapshot,
@@ -79,7 +78,6 @@ object Programs {
       nodeId,
       services.globalL0,
       storages.identifier,
-      storages.lastBinaryHash,
       storages.snapshot,
       services.collateral,
       services.consensus.manager,

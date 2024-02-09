@@ -7,7 +7,7 @@ import org.tessellation.currency.dataApplication.dataApplication.DataApplication
 import org.tessellation.env.AppEnvironment
 import org.tessellation.ext.kryo._
 import org.tessellation.node.shared.domain.healthcheck.consensus.types.HealthCheckRoundId
-import org.tessellation.node.shared.infrastructure.consensus.declaration.{Facility, MajoritySignature, Proposal}
+import org.tessellation.node.shared.infrastructure.consensus.declaration._
 import org.tessellation.node.shared.infrastructure.consensus.message._
 import org.tessellation.node.shared.infrastructure.consensus.trigger.{EventTrigger, TimeTrigger}
 import org.tessellation.node.shared.infrastructure.healthcheck.ping._
@@ -55,7 +55,8 @@ package object shared {
       classOf[ConsensusPeerDeclaration[_, _]] -> 529,
       EventTrigger.getClass -> 530,
       TimeTrigger.getClass -> 531,
-      classOf[DataApplicationBlock] -> 532
+      classOf[DataApplicationBlock] -> 532,
+      classOf[BinarySignature] -> 533
     ).union(sharedKryoRegistrar)
 
   object PriorityPeerIds {

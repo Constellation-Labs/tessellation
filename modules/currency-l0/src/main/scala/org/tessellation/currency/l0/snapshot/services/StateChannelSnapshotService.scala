@@ -13,8 +13,6 @@ import cats.syntax.show._
 import cats.syntax.traverse._
 
 import org.tessellation.currency.l0.node.IdentifierStorage
-import org.tessellation.currency.l0.snapshot.CurrencySnapshotArtifact
-import org.tessellation.currency.l0.snapshot.storages.LastBinaryHashStorage
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.crypto._
 import org.tessellation.json.JsonBrotliBinarySerializer
@@ -23,6 +21,7 @@ import org.tessellation.node.shared.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.node.shared.domain.statechannel.StateChannelValidator.StateChannelValidationError
 import org.tessellation.node.shared.http.p2p.clients.StateChannelSnapshotClient
 import org.tessellation.node.shared.infrastructure.snapshot.DataApplicationSnapshotAcceptanceManager
+import org.tessellation.node.shared.snapshot.currency.CurrencySnapshotArtifact
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
@@ -32,16 +31,19 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 import retry._
 
 trait StateChannelSnapshotService[F[_]] {
-  def consume(signedArtifact: Signed[CurrencySnapshotArtifact], context: CurrencySnapshotContext): F[Unit]
+  def consume(
+    signedArtifact: Signed[CurrencySnapshotArtifact],
+    binaryHashed: Hashed[StateChannelSnapshotBinary],
+    context: CurrencySnapshotContext
+  ): F[Unit]
   def createGenesisBinary(snapshot: Signed[CurrencySnapshot]): F[Signed[StateChannelSnapshotBinary]]
-  def createBinary(snapshot: Signed[CurrencySnapshotArtifact]): F[Signed[StateChannelSnapshotBinary]]
+  def createBinary(snapshot: Signed[CurrencySnapshotArtifact], lastSnapshotBinaryHash: Hash): F[Signed[StateChannelSnapshotBinary]]
   def sendToGlobalL0(binaryHashed: Hashed[StateChannelSnapshotBinary]): F[Unit]
 }
 
 object StateChannelSnapshotService {
   def make[F[_]: Async: Hasher: SecurityProvider](
     keyPair: KeyPair,
-    lastBinaryHashStorage: LastBinaryHashStorage[F],
     stateChannelSnapshotClient: StateChannelSnapshotClient[F],
     globalL0ClusterStorage: L0ClusterStorage[F],
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
@@ -72,16 +74,17 @@ object StateChannelSnapshotService {
           .serialize(snapshot)
           .flatMap(StateChannelSnapshotBinary(Hash.empty, _, SnapshotFee.MinValue).sign(keyPair))
 
-      def createBinary(snapshot: Signed[CurrencySnapshotArtifact]): F[Signed[StateChannelSnapshotBinary]] = for {
-        lastSnapshotBinaryHash <- lastBinaryHashStorage.get
-        bytes <- jsonBrotliBinarySerializer.serialize(snapshot)
-        binary <- StateChannelSnapshotBinary(lastSnapshotBinaryHash, bytes, SnapshotFee.MinValue).sign(keyPair)
-      } yield binary
+      def createBinary(snapshot: Signed[CurrencySnapshotArtifact], lastSnapshotBinaryHash: Hash): F[Signed[StateChannelSnapshotBinary]] =
+        for {
+          bytes <- jsonBrotliBinarySerializer.serialize(snapshot)
+          binary <- StateChannelSnapshotBinary(lastSnapshotBinaryHash, bytes, SnapshotFee.MinValue).sign(keyPair)
+        } yield binary
 
-      def consume(signedArtifact: Signed[CurrencySnapshotArtifact], context: CurrencySnapshotContext): F[Unit] = for {
-        binary <- createBinary(signedArtifact)
-        binaryHashed <- binary.toHashed
-        _ <- lastBinaryHashStorage.set(binaryHashed.hash)
+      def consume(
+        signedArtifact: Signed[CurrencySnapshotArtifact],
+        binaryHashed: Hashed[StateChannelSnapshotBinary],
+        context: CurrencySnapshotContext
+      ): F[Unit] = for {
         _ <- dataApplicationSnapshotAcceptanceManager.traverse { manager =>
           snapshotStorage.head.map { lastSnapshot =>
             lastSnapshot.flatMap { case (value, _) => value.dataApplication }
@@ -96,7 +99,7 @@ object StateChannelSnapshotService {
             )
           )
         _ <- sendToGlobalL0(binaryHashed)
-        _ <- sentStateChannelBinaryTrackingService.setPending(binary)
+        _ <- sentStateChannelBinaryTrackingService.setPending(binaryHashed.signed)
       } yield ()
 
       def sendToGlobalL0(binaryHashed: Hashed[StateChannelSnapshotBinary]): F[Unit] =

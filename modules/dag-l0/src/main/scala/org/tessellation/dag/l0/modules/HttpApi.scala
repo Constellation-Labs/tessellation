@@ -8,6 +8,8 @@ import cats.syntax.semigroupk._
 
 import org.tessellation.dag.l0.domain.cell.{L0Cell, L0CellInput}
 import org.tessellation.dag.l0.http.routes._
+import org.tessellation.dag.l0.infrastructure.snapshot.GlobalSnapshotKey
+import org.tessellation.dag.l0.infrastructure.snapshot.schema.GlobalConsensusOutcome
 import org.tessellation.env.AppEnvironment
 import org.tessellation.env.AppEnvironment._
 import org.tessellation.kryo.KryoSerializer
@@ -89,7 +91,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Has
     )
   private val dagRoutes = DAGBlockRoutes[F](mkDagCell)
   private val walletRoutes = WalletRoutes[F, GlobalIncrementalSnapshot]("/dag", services.address)
-  private val consensusInfoRoutes = new ConsensusInfoRoutes[F, SnapshotOrdinal](services.cluster, services.consensus.storage, selfId)
+  private val consensusInfoRoutes =
+    new ConsensusInfoRoutes[F, GlobalSnapshotKey, GlobalConsensusOutcome](services.cluster, services.consensus.storage, selfId)
   private val consensusRoutes = services.consensus.routes.p2pRoutes
 
   private val healthcheckP2PRoutes = {

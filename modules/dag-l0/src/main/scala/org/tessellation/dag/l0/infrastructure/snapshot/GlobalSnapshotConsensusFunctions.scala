@@ -3,7 +3,6 @@ package org.tessellation.dag.l0.infrastructure.snapshot
 import cats.effect.Async
 import cats.syntax.either._
 import cats.syntax.flatMap._
-import cats.syntax.foldable._
 import cats.syntax.functor._
 import cats.syntax.functorFilter._
 import cats.syntax.option._
@@ -16,11 +15,8 @@ import org.tessellation.ext.crypto._
 import org.tessellation.node.shared.domain.block.processing._
 import org.tessellation.node.shared.domain.consensus.ConsensusFunctions.InvalidArtifact
 import org.tessellation.node.shared.domain.event.EventCutter
-import org.tessellation.node.shared.domain.gossip.Gossip
 import org.tessellation.node.shared.domain.rewards.Rewards
-import org.tessellation.node.shared.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
-import org.tessellation.node.shared.infrastructure.metrics.Metrics
 import org.tessellation.node.shared.infrastructure.snapshot._
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
@@ -31,9 +27,8 @@ import org.tessellation.security.{Hasher, SecurityProvider}
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelValidationType}
 
 import eu.timepit.refined.auto._
-import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-abstract class GlobalSnapshotConsensusFunctions[F[_]: Async: SecurityProvider: Hasher]
+abstract class GlobalSnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
     extends SnapshotConsensusFunctions[
       F,
       GlobalSnapshotEvent,
@@ -44,29 +39,16 @@ abstract class GlobalSnapshotConsensusFunctions[F[_]: Async: SecurityProvider: H
 
 object GlobalSnapshotConsensusFunctions {
 
-  def make[F[_]: Async: Hasher: SecurityProvider: Metrics](
-    globalSnapshotStorage: SnapshotStorage[F, GlobalSnapshotArtifact, GlobalSnapshotContext],
+  def make[F[_]: Async: Hasher: SecurityProvider](
     globalSnapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     collateral: Amount,
     rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent],
-    gossip: Gossip[F],
     eventCutter: EventCutter[F, StateChannelEvent, DAGEvent]
   ): GlobalSnapshotConsensusFunctions[F] = new GlobalSnapshotConsensusFunctions[F] {
-
-    private val logger = Slf4jLogger.getLoggerFromClass(GlobalSnapshotConsensusFunctions.getClass)
 
     def getRequiredCollateral: Amount = collateral
 
     def getBalances(context: GlobalSnapshotContext): SortedMap[Address, Balance] = context.balances
-
-    def consumeSignedMajorityArtifact(signedArtifact: Signed[GlobalSnapshotArtifact], context: GlobalSnapshotContext): F[Unit] =
-      globalSnapshotStorage
-        .prepend(signedArtifact, context)
-        .ifM(
-          metrics.globalSnapshot(signedArtifact),
-          logger.error("Cannot save GlobalSnapshot into the storage")
-        ) >>
-        gossipForkInfo(gossip, signedArtifact)
 
     override def validateArtifact(
       lastSignedArtifact: Signed[GlobalSnapshotArtifact],
@@ -164,26 +146,6 @@ object GlobalSnapshotConsensusFunctions {
         case (signedBlock, _: BlockAwaitReason) => signedBlock.asRight[StateChannelEvent].some
         case _                                  => none
       }.toSet
-
-    object metrics {
-
-      def globalSnapshot(signedGS: Signed[GlobalIncrementalSnapshot]): F[Unit] = {
-        val activeTipsCount = signedGS.tips.remainedActive.size + signedGS.blocks.size
-        val deprecatedTipsCount = signedGS.tips.deprecated.size
-        val transactionCount = signedGS.blocks.map(_.block.transactions.size).sum
-        val scSnapshotCount = signedGS.stateChannelSnapshots.view.values.map(_.size).sum
-
-        Metrics[F].updateGauge("dag_global_snapshot_ordinal", signedGS.ordinal.value) >>
-          Metrics[F].updateGauge("dag_global_snapshot_height", signedGS.height.value) >>
-          Metrics[F].updateGauge("dag_global_snapshot_signature_count", signedGS.proofs.size) >>
-          Metrics[F]
-            .updateGauge("dag_global_snapshot_tips_count", deprecatedTipsCount, Seq(("tip_type", "deprecated"))) >>
-          Metrics[F].updateGauge("dag_global_snapshot_tips_count", activeTipsCount, Seq(("tip_type", "active"))) >>
-          Metrics[F].incrementCounterBy("dag_global_snapshot_blocks_total", signedGS.blocks.size) >>
-          Metrics[F].incrementCounterBy("dag_global_snapshot_transactions_total", transactionCount) >>
-          Metrics[F].incrementCounterBy("dag_global_snapshot_state_channel_snapshots_total", scSnapshotCount)
-      }
-    }
   }
 
 }

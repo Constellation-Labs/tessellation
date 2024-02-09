@@ -9,7 +9,8 @@ import org.tessellation.currency.dataApplication.dataApplication.DataApplication
 import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
 import org.tessellation.currency.l0.cell.{L0Cell, L0CellInput}
 import org.tessellation.currency.l0.http.routes.{CurrencyBlockRoutes, DataBlockRoutes}
-import org.tessellation.currency.l0.snapshot.CurrencySnapshotEvent
+import org.tessellation.currency.l0.snapshot.CurrencySnapshotKey
+import org.tessellation.currency.l0.snapshot.schema.CurrencyConsensusOutcome
 import org.tessellation.currency.schema.currency._
 import org.tessellation.env.AppEnvironment
 import org.tessellation.env.AppEnvironment.{Dev, Integrationnet, Testnet}
@@ -19,7 +20,7 @@ import org.tessellation.node.shared.http.p2p.middlewares.{PeerAuthMiddleware, `X
 import org.tessellation.node.shared.http.routes._
 import org.tessellation.node.shared.infrastructure.healthcheck.ping.PingHealthCheckRoutes
 import org.tessellation.node.shared.infrastructure.metrics.Metrics
-import org.tessellation.schema.SnapshotOrdinal
+import org.tessellation.node.shared.snapshot.currency.CurrencySnapshotEvent
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.semver.{MetagraphVersion, TessellationVersion}
 import org.tessellation.security.{Hasher, SecurityProvider}
@@ -102,7 +103,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Has
 
   private val walletRoutes = WalletRoutes[F, CurrencyIncrementalSnapshot]("/currency", services.address)
 
-  private val consensusInfoRoutes = new ConsensusInfoRoutes[F, SnapshotOrdinal](services.cluster, services.consensus.storage, selfId)
+  private val consensusInfoRoutes =
+    new ConsensusInfoRoutes[F, CurrencySnapshotKey, CurrencyConsensusOutcome](services.cluster, services.consensus.storage, selfId)
   private val consensusRoutes = services.consensus.routes.p2pRoutes
 
   private val healthcheckP2PRoutes = {

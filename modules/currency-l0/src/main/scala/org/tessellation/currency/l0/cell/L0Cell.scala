@@ -8,9 +8,9 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.currency.l0.cell.AlgebraCommand.NoAction
-import org.tessellation.currency.l0.snapshot.CurrencySnapshotEvent
 import org.tessellation.kernel.Cell.NullTerminal
 import org.tessellation.kernel._
+import org.tessellation.node.shared.snapshot.currency.CurrencySnapshotEvent
 
 import higherkindness.droste.{AlgebraM, CoalgebraM, scheme}
 

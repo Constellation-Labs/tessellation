@@ -1,111 +1,81 @@
 package org.tessellation.node.shared.infrastructure.consensus
 
 import cats.Show
-import cats.kernel.Eq
-import cats.syntax.eq._
-import cats.syntax.option._
 import cats.syntax.show._
 
 import scala.concurrent.duration.FiniteDuration
 
-import org.tessellation.node.shared.infrastructure.consensus.declaration.kind.{PeerDeclarationKind, _}
-import org.tessellation.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
+import org.tessellation.node.shared.infrastructure.consensus.declaration.PeerDeclaration
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.security.hash.Hash
-import org.tessellation.security.signature.Signed
 
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
+import monocle.Lens
+import monocle.macros.GenLens
+
+@derive(eqv, encoder, decoder)
+case class Facilitators(value: List[PeerId])
+
+@derive(eqv, encoder, decoder)
+case class RemovedFacilitators(value: Set[PeerId])
+object RemovedFacilitators {
+  def empty: RemovedFacilitators = RemovedFacilitators(Set.empty)
+}
+
+@derive(eqv, encoder, decoder)
+case class WithdrawnFacilitators(value: Set[PeerId])
+object WithdrawnFacilitators {
+  def empty: WithdrawnFacilitators = WithdrawnFacilitators(Set.empty)
+}
+
+@derive(eqv, encoder, decoder, show)
+case class Candidates(value: Set[PeerId])
+object Candidates {
+  def empty: Candidates = Candidates(Set.empty)
+}
 
 @derive(eqv)
-case class ConsensusState[Key, Artifact, Context](
+case class ConsensusState[Key, Status, Outcome, Kind](
   key: Key,
-  lastOutcome: ConsensusOutcome[Key, Artifact, Context],
-  facilitators: List[PeerId],
-  status: ConsensusStatus[Artifact, Context],
+  lastOutcome: Outcome,
+  facilitators: Facilitators,
+  status: Status,
   createdAt: FiniteDuration,
-  removedFacilitators: Set[PeerId] = Set.empty,
-  withdrawnFacilitators: Set[PeerId] = Set.empty,
-  lockStatus: LockStatus = Open,
-  spreadAckKinds: Set[PeerDeclarationKind] = Set.empty
+  removedFacilitators: RemovedFacilitators = RemovedFacilitators.empty,
+  withdrawnFacilitators: WithdrawnFacilitators = WithdrawnFacilitators.empty,
+  lockStatus: LockStatus = LockStatus.Open,
+  spreadAckKinds: Set[Kind]
 )
 
 object ConsensusState {
-  implicit def showInstance[K: Show, A, C]: Show[ConsensusState[K, A, C]] = { cs =>
+  implicit def showInstance[K: Show, S: Show, O, Kind: Show]: Show[ConsensusState[K, S, O, Kind]] = { cs =>
     s"""ConsensusState{
        |key=${cs.key.show},
        |lockStatus=${cs.lockStatus.show},
-       |facilitatorCount=${cs.facilitators.size.show},
-       |removedFacilitators=${cs.removedFacilitators.show},
-       |withdrawnFacilitators=${cs.withdrawnFacilitators.show},
+       |facilitatorCount=${cs.facilitators.value.size.show},
+       |removedFacilitators=${cs.removedFacilitators.value.show},
+       |withdrawnFacilitators=${cs.withdrawnFacilitators.value.show},
        |spreadAckKinds=${cs.spreadAckKinds.show},
        |status=${cs.status.show}
        |}""".stripMargin.replace(",\n", ", ")
   }
 
-  implicit class ConsensusStateOps[K, A, C](value: ConsensusState[K, A, C]) {
-    private val kindRelation: (Option[PeerDeclarationKind], Set[PeerDeclarationKind]) = value.status match {
-      case _: CollectingFacilities[A, C] => (Facility.some, Set.empty)
-      case _: CollectingProposals[A, C]  => (Proposal.some, Set(Facility))
-      case _: CollectingSignatures[A, C] => (MajoritySignature.some, Set(Facility, Proposal))
-      case _: Finished[A, C]             => (none, Set(Facility, Proposal, MajoritySignature))
-    }
+  implicit def _lockStatus[K, S, O, Kind]: Lens[ConsensusState[K, S, O, Kind], LockStatus] =
+    GenLens[ConsensusState[K, S, O, Kind]](_.lockStatus)
 
-    def collectedKinds: Set[PeerDeclarationKind] = kindRelation._2
-    def maybeCollectingKind: Option[PeerDeclarationKind] = kindRelation._1
-    def locked: Boolean = value.lockStatus === Closed
-    def notLocked: Boolean = !locked
+  implicit def _facilitators[K, S, O, Kind]: Lens[ConsensusState[K, S, O, Kind], Facilitators] =
+    GenLens[ConsensusState[K, S, O, Kind]](_.facilitators)
 
-  }
+  implicit def _removedFacilitators[K, S, O, Kind]: Lens[ConsensusState[K, S, O, Kind], RemovedFacilitators] =
+    GenLens[ConsensusState[K, S, O, Kind]](_.removedFacilitators)
 }
 
-@derive(eqv)
-sealed trait ConsensusStatus[Artifact, Context]
-
-final case class CollectingFacilities[A, C](
-  maybeTrigger: Option[ConsensusTrigger],
-  facilitatorsHash: Hash
-) extends ConsensusStatus[A, C]
-
-final case class CollectingProposals[A, C](
-  majorityTrigger: ConsensusTrigger,
-  proposalArtifactInfo: ArtifactInfo[A, C],
-  candidates: Set[PeerId],
-  facilitatorsHash: Hash
-) extends ConsensusStatus[A, C]
-
-final case class CollectingSignatures[A, C](
-  majorityArtifactInfo: ArtifactInfo[A, C],
-  majorityTrigger: ConsensusTrigger,
-  candidates: Set[PeerId],
-  facilitatorsHash: Hash
-) extends ConsensusStatus[A, C]
-
-@derive(encoder, decoder)
-final case class Finished[A, C](
-  signedMajorityArtifact: Signed[A],
-  context: C,
-  majorityTrigger: ConsensusTrigger,
-  candidates: Set[PeerId],
-  facilitatorsHash: Hash
-) extends ConsensusStatus[A, C]
-
-object Finished {
-  implicit def eq[A, C]: Eq[Finished[A, C]] = Eq.allEqual[Finished[A, C]]
-}
-
-object ConsensusStatus {
-  implicit def showInstance[A, C]: Show[ConsensusStatus[A, C]] = {
-    case CollectingFacilities(maybeTrigger, facilitatorsHash) =>
-      s"CollectingFacilities{maybeTrigger=${maybeTrigger.show}, facilitatorsHash=${facilitatorsHash.show}}"
-    case CollectingProposals(majorityTrigger, proposalArtifactInfo, candidates, facilitatorsHash) =>
-      s"CollectingProposals{majorityTrigger=${majorityTrigger.show}, proposalArtifactInfo=${proposalArtifactInfo.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}}"
-    case CollectingSignatures(majorityArtifactInfo, majorityTrigger, candidates, facilitatorsHash) =>
-      s"CollectingSignatures{majorityArtifactInfo=${majorityArtifactInfo.show}, ${majorityTrigger.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}}"
-    case Finished(_, _, majorityTrigger, candidates, facilitatorsHash) =>
-      s"Finished{majorityTrigger=${majorityTrigger.show}, candidates=${candidates.show}, facilitatorsHash=${facilitatorsHash.show}}"
-  }
+trait ConsensusOps[S, Kind] {
+  def collectedKinds(status: S): Set[Kind]
+  def maybeCollectingKind(status: S): Option[Kind]
+  def kindGetter: Kind => PeerDeclarations => Option[PeerDeclaration]
 }
 
 @derive(eqv)
@@ -117,6 +87,8 @@ object ArtifactInfo {
 @derive(eqv, show)
 sealed trait LockStatus
 
-case object Open extends LockStatus
-case object Closed extends LockStatus
-case object Reopened extends LockStatus
+object LockStatus {
+  case object Open extends LockStatus
+  case object Closed extends LockStatus
+  case object Reopened extends LockStatus
+}
