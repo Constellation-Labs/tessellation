@@ -11,7 +11,7 @@ import cats.syntax.option._
 
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.crypto._
-import org.tessellation.json.{JsonBinarySerializer, JsonHashSerializer}
+import org.tessellation.json.{JsonBinarySerializer, JsonSerializer}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.rosetta.domain._
 import org.tessellation.rosetta.domain.amount.{Amount, AmountValue, AmountValuePredicate}
@@ -22,6 +22,7 @@ import org.tessellation.rosetta.domain.error._
 import org.tessellation.rosetta.domain.generators._
 import org.tessellation.rosetta.domain.operation.OperationType.Transfer
 import org.tessellation.rosetta.domain.operation.{Operation, OperationIdentifier, OperationIndex}
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.generators.{addressGen, transactionSaltGen}
 import org.tessellation.schema.transaction._
@@ -49,8 +50,8 @@ object ConstructionServiceSuite extends MutableIOSuite with Checkers with Transa
   def sharedResource: Resource[IO, Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
-    implicit0(j: JsonHashSerializer[IO]) <- JsonHashSerializer.forSync[IO].asResource
-    h = Hasher.forSync[IO]
+    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+    h = Hasher.forSync[IO](new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash })
   } yield (sp, h)
 
   def mkConstructionService(

@@ -11,6 +11,7 @@ import cats.syntax.functor._
 import scala.util.control.NoStackTrace
 
 import org.tessellation.ext.crypto._
+import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage.UnableToPersistSnapshot
 import org.tessellation.schema.SnapshotOrdinal
@@ -18,16 +19,20 @@ import org.tessellation.schema.snapshot.Snapshot
 import org.tessellation.security.Hasher
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
-import org.tessellation.storage.KryoLocalFileSystemStorage
+import org.tessellation.storage.SerializableLocalFileSystemStorage
 
 import better.files.File
 import fs2.io.file.Path
-import io.circe.Encoder
+import io.circe.{Decoder, Encoder}
 import io.estatico.newtype.ops._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-final class SnapshotLocalFileSystemStorage[F[_]: Async: KryoSerializer: Hasher, S <: Snapshot: Encoder] private (path: Path)
-    extends KryoLocalFileSystemStorage[F, Signed[S]](path) {
+final class SnapshotLocalFileSystemStorage[
+  F[_]: Async: KryoSerializer: JsonSerializer: Hasher,
+  S <: Snapshot: Encoder: Decoder
+] private (
+  path: Path
+) extends SerializableLocalFileSystemStorage[F, Signed[S]](path) {
 
   private val logger = Slf4jLogger.getLogger[F]
 
@@ -108,7 +113,9 @@ object SnapshotLocalFileSystemStorage {
     override val getMessage: String = s"Ordinal $ordinalName exists. File $hashName exists: $hashFileExists."
   }
 
-  def make[F[_]: Async: KryoSerializer: Hasher, S <: Snapshot: Encoder](path: Path): F[SnapshotLocalFileSystemStorage[F, S]] =
+  def make[F[_]: Async: KryoSerializer: JsonSerializer: Hasher, S <: Snapshot: Encoder: Decoder](
+    path: Path
+  ): F[SnapshotLocalFileSystemStorage[F, S]] =
     Applicative[F].pure(new SnapshotLocalFileSystemStorage[F, S](path)).flatTap { storage =>
       storage.createDirectoryIfNotExists().rethrowT
     }

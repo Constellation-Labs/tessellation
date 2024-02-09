@@ -270,7 +270,7 @@ object Engine {
         roundData.owner,
         signedBlock.proofs.head.signature
       )
-      val signedProposal = Signed.forAsyncKryo(proposal, selfKeyPair)
+      val signedProposal = Signed.forAsyncHasher(proposal, selfKeyPair)
 
       signedProposal.flatMap {
         broadcast(_, roundData.peers)
@@ -296,7 +296,7 @@ object Engine {
     def processCancellation(state: State, cancellation: CancelledCreationRound): F[(State, Unit)] =
       tryPersistCancellation(state, cancellation).traverse {
         case (newState, peers, Some(ownCancellation)) =>
-          Signed.forAsyncKryo[F, CancelledCreationRound](ownCancellation, selfKeyPair).flatMap(broadcast(_, peers)).tupleLeft(newState)
+          Signed.forAsyncHasher[F, CancelledCreationRound](ownCancellation, selfKeyPair).flatMap(broadcast(_, peers)).tupleLeft(newState)
         case (newState, _, _) =>
           ().pure[F].tupleLeft(newState)
       }.flatMap {
@@ -330,7 +330,7 @@ object Engine {
             )
             .flatMap {
               case Some(block) =>
-                Signed.forAsyncKryo(block, selfKeyPair).flatMap { signedBlock =>
+                Signed.forAsyncHasher(block, selfKeyPair).flatMap { signedBlock =>
                   signedBlock.updates
                     .traverse(dataApplication.validateUpdate(_))
                     .map(_.forall(_.isValid))
@@ -370,7 +370,7 @@ object Engine {
       )
 
       def cancellationMsg =
-        Signed.forAsyncKryo[F, CancelledCreationRound](cancellation, selfKeyPair)
+        Signed.forAsyncHasher[F, CancelledCreationRound](cancellation, selfKeyPair)
 
       def peersToInform = clusterStorage.getResponsivePeers
         .map(_.filter(peer => deriveConsensusPeerIds(proposal).contains(peer.id)))
@@ -382,7 +382,7 @@ object Engine {
       implicit val e = Proposal.encoder(dataApplication.dataEncoder)
 
       Signed
-        .forAsyncKryo[F, Proposal](ownProposal, selfKeyPair)
+        .forAsyncHasher[F, Proposal](ownProposal, selfKeyPair)
         .flatMap(broadcast(_, peers))
         .handleErrorWith(e => logger.error(e)(s"Error sending own proposal") >> e.raiseError[F, Unit])
     }

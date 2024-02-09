@@ -9,15 +9,15 @@ import cats.syntax.validated._
 import org.tessellation.currency.schema.currency.SnapshotFee
 import org.tessellation.dag.l0.domain.cell.L0Cell
 import org.tessellation.ext.cats.effect.ResourceIO
-import org.tessellation.json.JsonHashSerializer
+import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.statechannel.StateChannelValidator
-import org.tessellation.schema.Block
+import org.tessellation.schema.{Block, SnapshotOrdinal}
+import org.tessellation.security._
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.signature.Signed.forAsyncKryo
-import org.tessellation.security.{Hasher, KeyPairGenerator, SecurityProvider}
+import org.tessellation.security.signature.Signed.forAsyncHasher
 import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
 
@@ -31,8 +31,8 @@ object StateChannelServiceSuite extends MutableIOSuite {
   def sharedResource: Resource[IO, Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
-    implicit0(j: JsonHashSerializer[IO]) <- JsonHashSerializer.forSync[IO].asResource
-    h = Hasher.forSync[IO]
+    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+    h = Hasher.forSync[IO](new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash })
   } yield (h, sp)
 
   test("state channel output processed successfully") { res =>
@@ -75,7 +75,7 @@ object StateChannelServiceSuite extends MutableIOSuite {
   def mkStateChannelOutput()(implicit S: SecurityProvider[IO], H: Hasher[IO]) = for {
     keyPair <- KeyPairGenerator.makeKeyPair[IO]
     binary = StateChannelSnapshotBinary(Hash.empty, "test".getBytes, SnapshotFee.MinValue)
-    signedSC <- forAsyncKryo(binary, keyPair)
+    signedSC <- forAsyncHasher(binary, keyPair)
 
   } yield StateChannelOutput(keyPair.getPublic.toAddress, signedSC)
 

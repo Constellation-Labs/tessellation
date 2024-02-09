@@ -9,12 +9,12 @@ import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import weaver.MutableIOSuite
 
-object JsonHashSerializerSuite extends MutableIOSuite {
+object JsonSerializerSuite extends MutableIOSuite {
 
-  type Res = JsonHashSerializer[IO]
+  type Res = JsonSerializer[IO]
 
   override def sharedResource: Resource[IO, Res] =
-    JsonHashSerializer.forSync[IO].asResource
+    JsonSerializer.forSync[IO].asResource
 
   test("maintains consistent key ordering") { serializer =>
     val foo = Foo("lorem", 1)

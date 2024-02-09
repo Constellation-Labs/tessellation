@@ -4,13 +4,12 @@ import java.security.KeyPair
 
 import cats.effect._
 import cats.effect.std.{Random, Supervisor}
-import cats.syntax.show._
-import cats.syntax.traverse._
+import cats.syntax.all._
 
 import org.tessellation.env.env._
 import org.tessellation.ext.cats.effect._
 import org.tessellation.ext.kryo._
-import org.tessellation.json.JsonHashSerializer
+import org.tessellation.json.JsonSerializer
 import org.tessellation.keytool.KeyStoreUtils
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared._
@@ -24,11 +23,12 @@ import org.tessellation.node.shared.infrastructure.seedlist.{Loader => SeedlistL
 import org.tessellation.node.shared.infrastructure.trust.TrustRatingCsvLoader
 import org.tessellation.node.shared.modules._
 import org.tessellation.node.shared.resources.SharedResources
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.semver.TessellationVersion
-import org.tessellation.security.{Hasher, SecurityProvider}
+import org.tessellation.security._
 
 import com.monovore.decline.Opts
 import com.monovore.decline.effect.CommandIOApp
@@ -77,6 +77,11 @@ abstract class TessellationIOApp[A <: CliMethod](
       val registrar: Map[Class[_], Int Refined Or[KryoRegistrationIdRange, NodeSharedOrSharedRegistrationIdRange]] =
         kryoRegistrar.union(nodeSharedKryoRegistrar)
 
+      val _hashSelect = new HashSelect {
+        def select(ordinal: SnapshotOrdinal): HashLogic =
+          if (ordinal <= cfg.lastKryoHashOrdinal) KryoHash else JsonHash
+      }
+
       Random.scalaUtilRandom[IO].flatMap { _random =>
         SecurityProvider.forAsync[IO].use { implicit _securityProvider =>
           loadKeyPair[IO](keyStore, alias, password).flatMap { _keyPair =>
@@ -94,8 +99,8 @@ abstract class TessellationIOApp[A <: CliMethod](
               logger.info(s"App environment: ${cfg.environment}") >>
               logger.info(s"App version: ${version.show}") >>
               KryoSerializer.forAsync[IO](registrar).use { implicit _kryoPool =>
-                JsonHashSerializer.forSync[IO].asResource.use { implicit _jsonHashSerializer =>
-                  implicit val _hasher = Hasher.forSync[IO]
+                JsonSerializer.forSync[IO].asResource.use { implicit _jsonSerializer =>
+                  implicit val _hasher = Hasher.forSync[IO](_hashSelect)
                   Metrics.forAsync[IO](Seq(("application", name))).use { implicit _metrics =>
                     SignallingRef.of[IO, Boolean](false).flatMap { _stopSignal =>
                       SignallingRef.of[IO, Unit](()).flatMap { _restartSignal =>
@@ -147,7 +152,8 @@ abstract class TessellationIOApp[A <: CliMethod](
                                   versionHash,
                                   cfg.collateral,
                                   method.stateChannelAllowanceLists,
-                                  cfg.environment
+                                  cfg.environment,
+                                  _hashSelect
                                 )
                                 .asResource
 
@@ -169,6 +175,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                                 val random = _random
                                 val securityProvider = _securityProvider
                                 val kryoPool = _kryoPool
+                                val jsonSerializer = _jsonSerializer
                                 val metrics = _metrics
                                 val supervisor = _supervisor
                                 val hasher = _hasher
@@ -186,6 +193,8 @@ abstract class TessellationIOApp[A <: CliMethod](
                                 val sharedPrograms = programs
                                 val sharedValidators = validators
                                 val prioritySeedlist = _prioritySeedlist
+
+                                val hashSelect = _hashSelect
 
                                 def restartSignal = _restartSignal
                                 def stopSignal = _stopSignal

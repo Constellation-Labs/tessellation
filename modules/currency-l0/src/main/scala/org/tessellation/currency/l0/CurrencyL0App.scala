@@ -85,7 +85,8 @@ abstract class CurrencyL0App(
           rewards,
           validators.signedValidator,
           sharedServices.globalSnapshotContextFns,
-          maybeMajorityPeerIds
+          maybeMajorityPeerIds,
+          hashSelect
         )
         .asResource
       programs = Programs.make[IO](
@@ -97,7 +98,8 @@ abstract class CurrencyL0App(
         services,
         p2pClient,
         services.snapshotContextFunctions,
-        dataApplicationService.zip(storages.calculatedStateStorage)
+        dataApplicationService.zip(storages.calculatedStateStorage),
+        hashSelect
       )
       healthChecks <- HealthChecks
         .make[IO](

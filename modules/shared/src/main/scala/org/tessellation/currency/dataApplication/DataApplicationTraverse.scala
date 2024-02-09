@@ -7,7 +7,7 @@ import cats.syntax.all._
 import org.tessellation.currency.dataApplication.storage.{CalculatedStateLocalFileSystemStorage, TraverseLocalFileSystemTempStorage}
 import org.tessellation.currency.schema.currency.CurrencyIncrementalSnapshot
 import org.tessellation.cutoff.{LogarithmicOrdinalCutoff, OrdinalCutoff}
-import org.tessellation.json.JsonBrotliBinarySerializer
+import org.tessellation.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
@@ -23,7 +23,7 @@ trait DataApplicationTraverse[F[_]] {
 }
 
 object DataApplicationTraverse {
-  def make[F[_]: Async: KryoSerializer: Hasher: SecurityProvider](
+  def make[F[_]: Async: KryoSerializer: JsonSerializer: Hasher: SecurityProvider](
     lastGlobalSnapshot: Hashed[GlobalIncrementalSnapshot],
     fetchSnapshot: Hash => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     dataApplication: BaseDataApplicationL0Service[F],
@@ -41,7 +41,7 @@ object DataApplicationTraverse {
       )
     }
 
-  def make[F[_]: Async: KryoSerializer: Hasher: SecurityProvider](
+  def make[F[_]: Async: KryoSerializer: JsonSerializer: Hasher: SecurityProvider](
     lastGlobalSnapshot: Hashed[GlobalIncrementalSnapshot],
     fetchSnapshot: Hash => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     dataApplication: BaseDataApplicationL0Service[F],

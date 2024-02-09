@@ -77,7 +77,8 @@ object Main
         sharedServices,
         p2pClient,
         cfg,
-        maybeMajorityPeerIds
+        maybeMajorityPeerIds,
+        hashSelect
       )
       snapshotProcessor = DAGSnapshotProcessor.make(
         storages.address,

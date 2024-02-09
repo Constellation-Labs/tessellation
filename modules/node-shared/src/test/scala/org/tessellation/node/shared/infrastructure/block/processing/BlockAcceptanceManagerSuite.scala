@@ -8,7 +8,7 @@ import cats.syntax.either._
 import cats.syntax.validated._
 
 import org.tessellation.ext.cats.effect.ResourceIO
-import org.tessellation.json.JsonHashSerializer
+import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.block.generators.signedBlockGen
 import org.tessellation.node.shared.domain.block.processing.{UsageCount, initUsageCount, _}
@@ -16,8 +16,8 @@ import org.tessellation.node.shared.domain.transaction.TransactionChainValidator
 import org.tessellation.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.height.Height
-import org.tessellation.schema.{Block, BlockReference}
-import org.tessellation.security.Hasher
+import org.tessellation.schema.{Block, BlockReference, SnapshotOrdinal}
+import org.tessellation.security._
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.signature.Signed
 import org.tessellation.shared.sharedKryoRegistrar
@@ -40,8 +40,8 @@ object BlockAcceptanceManagerSuite extends MutableIOSuite with Checkers {
 
   override def sharedResource: Resource[IO, Res] =
     KryoSerializer.forAsync[IO](sharedKryoRegistrar).flatMap { implicit kryo =>
-      JsonHashSerializer.forSync[IO].asResource.map { implicit json =>
-        Hasher.forSync[IO]
+      JsonSerializer.forSync[IO].asResource.map { implicit json =>
+        Hasher.forSync[IO](new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash })
       }
     }
 

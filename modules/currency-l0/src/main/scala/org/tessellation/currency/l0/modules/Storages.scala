@@ -10,6 +10,7 @@ import org.tessellation.currency.l0.node.IdentifierStorage
 import org.tessellation.currency.l0.snapshot.storages.LastBinaryHashStorage
 import org.tessellation.currency.schema.currency
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
+import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.SnapshotConfig
 import org.tessellation.node.shared.domain.cluster.storage.{ClusterStorage, L0ClusterStorage, SessionStorage}
@@ -30,7 +31,7 @@ object Storages {
 
   def dataApplicationCalculatedStatePath = Path("data/calculated_state")
 
-  def make[F[_]: Async: KryoSerializer: Hasher: Supervisor: Random](
+  def make[F[_]: Async: KryoSerializer: JsonSerializer: Hasher: Supervisor: Random](
     sharedStorages: SharedStorages[F],
     snapshotConfig: SnapshotConfig,
     globalL0Peer: L0Peer,

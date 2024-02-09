@@ -9,9 +9,10 @@ import cats.syntax.option._
 import org.tessellation.dag.l1.Main
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage.{Accepted, LastTransactionReferenceState, Majority}
 import org.tessellation.ext.cats.effect.ResourceIO
-import org.tessellation.json.JsonHashSerializer
+import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.nodeSharedKryoRegistrar
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction._
 import org.tessellation.security._
@@ -40,8 +41,8 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
     SecurityProvider.forAsync[IO].flatMap { implicit sp =>
       KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ nodeSharedKryoRegistrar).flatMap { implicit kp =>
         for {
-          implicit0(jhs: JsonHashSerializer[IO]) <- JsonHashSerializer.forSync[IO].asResource
-          implicit0(h: Hasher[IO]) = Hasher.forSync[IO]
+          implicit0(jhs: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+          implicit0(h: Hasher[IO]) = Hasher.forSync[IO](new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash })
           lastAccepted <- MapRef.ofConcurrentHashMap[IO, Address, LastTransactionReferenceState]().asResource
           waitingTransactions <- MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[Transaction]]]().asResource
           transactionStorage = new TransactionStorage[IO](lastAccepted, waitingTransactions, TransactionReference.empty)

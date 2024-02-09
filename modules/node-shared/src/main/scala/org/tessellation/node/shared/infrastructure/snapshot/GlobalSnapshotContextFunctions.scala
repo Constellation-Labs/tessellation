@@ -16,8 +16,8 @@ import org.tessellation.node.shared.domain.block.processing._
 import org.tessellation.node.shared.domain.snapshot.SnapshotContextFunctions
 import org.tessellation.schema._
 import org.tessellation.schema.transaction.RewardTransaction
-import org.tessellation.security.Hasher
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{HashSelect, Hasher}
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelValidationType}
 
 import derevo.cats.{eqv, show}
@@ -27,7 +27,7 @@ import eu.timepit.refined.auto._
 abstract class GlobalSnapshotContextFunctions[F[_]] extends SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
 
 object GlobalSnapshotContextFunctions {
-  def make[F[_]: Async: Hasher](snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F]) =
+  def make[F[_]: Async: Hasher](snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F], hashSelect: HashSelect) =
     new GlobalSnapshotContextFunctions[F] {
       def createContext(
         context: GlobalSnapshotInfo,
@@ -58,7 +58,7 @@ object GlobalSnapshotContextFunctions {
         _ <- CannotApplyStateChannelsError(returnedSCEvents).raiseError[F, Unit].whenA(returnedSCEvents.nonEmpty)
         diffRewards = acceptedRewardTxs -- signedArtifact.rewards
         _ <- CannotApplyRewardsError(diffRewards).raiseError[F, Unit].whenA(diffRewards.nonEmpty)
-        _ <- StateProofValidator.validate(signedArtifact, snapshotInfo).flatMap {
+        _ <- StateProofValidator.validate(signedArtifact, snapshotInfo, hashSelect).flatMap {
           case Validated.Valid(_)   => Async[F].unit
           case Validated.Invalid(e) => e.raiseError[F, Unit]
         }

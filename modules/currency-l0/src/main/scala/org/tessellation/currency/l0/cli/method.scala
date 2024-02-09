@@ -1,6 +1,6 @@
 package org.tessellation.currency.l0.cli
 
-import cats.syntax.contravariantSemigroupal._
+import cats.syntax.all._
 
 import scala.concurrent.duration._
 
@@ -11,8 +11,10 @@ import org.tessellation.env.AppEnvironment
 import org.tessellation.env.env._
 import org.tessellation.ext.decline.WithOpts
 import org.tessellation.node.shared.cli._
+import org.tessellation.node.shared.cli.hashLogic.{lastKryoHashOrdinal, lastKryoHashOrdinalOpts}
 import org.tessellation.node.shared.cli.opts.{genesisBalancesOpts, genesisPathOpts, trustRatingsPathOpts}
 import org.tessellation.node.shared.config.types._
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.node.NodeState
@@ -84,7 +86,8 @@ object method {
     prioritySeedlistPath: Option[SeedListPath],
     collateralAmount: Option[Amount],
     globalL0Peer: L0Peer,
-    trustRatingsPath: Option[Path]
+    trustRatingsPath: Option[Path],
+    lastKryoHashOrdinal: SnapshotOrdinal
   ) extends Run
 
   object CreateGenesis extends WithOpts[CreateGenesis] {
@@ -102,7 +105,8 @@ object method {
         SeedListPath.priorityOpts,
         CollateralAmountOpts.opts,
         GlobalL0PeerOpts.opts,
-        trustRatingsPathOpts
+        trustRatingsPathOpts,
+        Opts.apply(SnapshotOrdinal.MinValue)
       ).mapN(CreateGenesis.apply)
     }
   }
@@ -119,7 +123,8 @@ object method {
     prioritySeedlistPath: Option[SeedListPath],
     collateralAmount: Option[Amount],
     globalL0Peer: L0Peer,
-    trustRatingsPath: Option[Path]
+    trustRatingsPath: Option[Path],
+    lastKryoHashOrdinal: SnapshotOrdinal
   ) extends Run
 
   object RunGenesis extends WithOpts[RunGenesis] {
@@ -137,7 +142,8 @@ object method {
         SeedListPath.priorityOpts,
         CollateralAmountOpts.opts,
         GlobalL0PeerOpts.opts,
-        trustRatingsPathOpts
+        trustRatingsPathOpts,
+        Opts.apply(SnapshotOrdinal.MinValue)
       ).mapN(RunGenesis.apply)
     }
   }
@@ -154,7 +160,8 @@ object method {
     collateralAmount: Option[Amount],
     globalL0Peer: L0Peer,
     identifier: Address,
-    trustRatingsPath: Option[Path]
+    trustRatingsPath: Option[Path],
+    lastKryoHashOrdinal: SnapshotOrdinal
   ) extends Run
 
   object RunValidator extends WithOpts[RunValidator] {
@@ -172,8 +179,44 @@ object method {
         CollateralAmountOpts.opts,
         GlobalL0PeerOpts.opts,
         L0TokenIdentifierOpts.opts,
-        trustRatingsPathOpts
-      ).mapN(RunValidator.apply)
+        trustRatingsPathOpts,
+        lastKryoHashOrdinalOpts
+      ).mapN {
+        case (
+              storePath,
+              keyAlias,
+              password,
+              http,
+              environment,
+              snapshot,
+              seedlistPath,
+              prioritySeedlistPath,
+              collateralAmount,
+              globalL0Peer,
+              l0TokenIdentifier,
+              trustRatingsPath,
+              lastKryoHash
+            ) =>
+          val lastKH =
+            (if (environment === AppEnvironment.Dev) lastKryoHash else lastKryoHashOrdinal.get(environment))
+              .getOrElse(SnapshotOrdinal.MinValue)
+
+          RunValidator(
+            storePath,
+            keyAlias,
+            password,
+            http,
+            environment,
+            snapshot,
+            seedlistPath,
+            prioritySeedlistPath,
+            collateralAmount,
+            globalL0Peer,
+            l0TokenIdentifier,
+            trustRatingsPath,
+            lastKH
+          )
+      }
     }
   }
 
@@ -189,7 +232,8 @@ object method {
     collateralAmount: Option[Amount],
     globalL0Peer: L0Peer,
     identifier: Address,
-    trustRatingsPath: Option[Path]
+    trustRatingsPath: Option[Path],
+    lastKryoHashOrdinal: SnapshotOrdinal
   ) extends Run
 
   object RunRollback extends WithOpts[RunRollback] {
@@ -207,8 +251,44 @@ object method {
         CollateralAmountOpts.opts,
         GlobalL0PeerOpts.opts,
         L0TokenIdentifierOpts.opts,
-        trustRatingsPathOpts
-      ).mapN(RunRollback.apply)
+        trustRatingsPathOpts,
+        lastKryoHashOrdinalOpts
+      ).mapN {
+        case (
+              storePath,
+              keyAlias,
+              password,
+              http,
+              environment,
+              snapshot,
+              seedlistPath,
+              prioritySeedlistPath,
+              collateralAmount,
+              globalL0Peer,
+              l0TokenIdentifier,
+              trustRatingsPath,
+              lastKryoHash
+            ) =>
+          val lastKH =
+            (if (environment === AppEnvironment.Dev) lastKryoHash else lastKryoHashOrdinal.get(environment))
+              .getOrElse(SnapshotOrdinal.MinValue)
+
+          RunRollback(
+            storePath,
+            keyAlias,
+            password,
+            http,
+            environment,
+            snapshot,
+            seedlistPath,
+            prioritySeedlistPath,
+            collateralAmount,
+            globalL0Peer,
+            l0TokenIdentifier,
+            trustRatingsPath,
+            lastKH
+          )
+      }
     }
   }
 

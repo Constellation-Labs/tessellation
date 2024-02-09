@@ -10,6 +10,7 @@ import org.tessellation.env._
 import org.tessellation.env.env._
 import org.tessellation.ext.decline.WithOpts
 import org.tessellation.ext.decline.decline._
+import org.tessellation.node.shared.cli.hashLogic.{lastKryoHashOrdinal, lastKryoHashOrdinalOpts}
 import org.tessellation.node.shared.cli.opts.{genesisPathOpts, trustRatingsPathOpts}
 import org.tessellation.node.shared.cli.{CliMethod, CollateralAmountOpts, snapshot}
 import org.tessellation.node.shared.config.types._
@@ -105,6 +106,7 @@ object method {
   ) extends Run {
 
     val lastFullGlobalSnapshotOrdinal = SnapshotOrdinal.MinValue
+    val lastKryoHashOrdinal = SnapshotOrdinal.MinValue
   }
 
   object RunGenesis extends WithOpts[RunGenesis] {
@@ -145,6 +147,7 @@ object method {
     collateralAmount: Option[Amount],
     rollbackHash: Hash,
     lastFullGlobalSnapshotOrdinal: SnapshotOrdinal,
+    lastKryoHashOrdinal: SnapshotOrdinal,
     trustRatingsPath: Option[Path],
     prioritySeedlistPath: Option[SeedListPath]
   ) extends Run
@@ -166,6 +169,7 @@ object method {
         CollateralAmountOpts.opts,
         rollbackHashOpts,
         lastFullGlobalSnapshotOrdinalOpts,
+        lastKryoHashOrdinalOpts,
         trustRatingsPathOpts,
         SeedListPath.priorityOpts
       ).mapN {
@@ -181,11 +185,15 @@ object method {
               collateralAmount,
               rollbackHash,
               lastGlobalSnapshot,
+              lastKryoHash,
               trustRatingsPath,
               prioritySeedlistPath
             ) =>
           val lastGS =
             (if (environment === AppEnvironment.Dev) lastGlobalSnapshot else lastFullGlobalSnapshot.get(environment))
+              .getOrElse(SnapshotOrdinal.MinValue)
+          val lastKH =
+            (if (environment === AppEnvironment.Dev) lastKryoHash else lastKryoHashOrdinal.get(environment))
               .getOrElse(SnapshotOrdinal.MinValue)
 
           RunRollback(
@@ -200,6 +208,7 @@ object method {
             collateralAmount,
             rollbackHash,
             lastGS,
+            lastKH,
             trustRatingsPath,
             prioritySeedlistPath
           )
@@ -219,6 +228,7 @@ object method {
     collateralAmount: Option[Amount],
     trustRatingsPath: Option[Path],
     lastFullGlobalSnapshotOrdinal: SnapshotOrdinal,
+    lastKryoHashOrdinal: SnapshotOrdinal,
     prioritySeedlistPath: Option[SeedListPath]
   ) extends Run
 
@@ -237,6 +247,7 @@ object method {
         CollateralAmountOpts.opts,
         trustRatingsPathOpts,
         lastFullGlobalSnapshotOrdinalOpts,
+        lastKryoHashOrdinalOpts,
         SeedListPath.priorityOpts
       ).mapN {
         case (
@@ -251,11 +262,14 @@ object method {
               collateralAmount,
               trustRatingsPath,
               lastGlobalSnapshot,
+              lastKryoHash,
               prioritySeedlistPath
             ) =>
           val lastGS =
             (if (environment === AppEnvironment.Dev) lastGlobalSnapshot else lastFullGlobalSnapshot.get(environment))
               .getOrElse(SnapshotOrdinal.MinValue)
+          val lastKH = (if (environment === AppEnvironment.Dev) lastKryoHash else lastKryoHashOrdinal.get(environment))
+            .getOrElse(SnapshotOrdinal.MinValue)
 
           RunValidator(
             storePath,
@@ -269,6 +283,7 @@ object method {
             collateralAmount,
             trustRatingsPath,
             lastGS,
+            lastKH,
             prioritySeedlistPath
           )
       }

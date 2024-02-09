@@ -21,7 +21,7 @@ import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.peer.{L0Peer, PeerId}
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Hasher, SecurityProvider}
+import org.tessellation.security.{HashSelect, Hasher, SecurityProvider}
 
 import fs2.io.file.Path
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -53,7 +53,8 @@ object Genesis {
     nodeId: PeerId,
     consensusManager: ConsensusManager[F, SnapshotOrdinal, CurrencySnapshotArtifact, CurrencySnapshotContext],
     genesisLoader: GenesisLoader[F, CurrencySnapshot],
-    identifierStorage: IdentifierStorage[F]
+    identifierStorage: IdentifierStorage[F],
+    hashSelect: HashSelect
   ): Genesis[F] = new Genesis[F] {
     private val logger = Slf4jLogger.getLogger
 
@@ -61,7 +62,7 @@ object Genesis {
       implicit context: L0NodeContext[F]
     ): F[Unit] = for {
       hashedGenesis <- genesis.toHashed[F]
-      firstIncrementalSnapshot <- CurrencySnapshot.mkFirstIncrementalSnapshot[F](hashedGenesis)
+      firstIncrementalSnapshot <- CurrencySnapshot.mkFirstIncrementalSnapshot[F](hashedGenesis, hashSelect)
       signedFirstIncrementalSnapshot <- firstIncrementalSnapshot.sign(keyPair)
       _ <- snapshotStorage.prepend(signedFirstIncrementalSnapshot, hashedGenesis.info)
 

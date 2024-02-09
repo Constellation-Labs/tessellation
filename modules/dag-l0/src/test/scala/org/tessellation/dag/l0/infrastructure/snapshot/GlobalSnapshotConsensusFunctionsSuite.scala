@@ -15,7 +15,7 @@ import org.tessellation.dag.l0.dagL0KryoRegistrar
 import org.tessellation.dag.l0.domain.snapshot.programs.GlobalSnapshotEventCutter
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.cats.syntax.next._
-import org.tessellation.json.JsonHashSerializer
+import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.block.processing._
 import org.tessellation.node.shared.domain.fork.ForkInfo
@@ -31,11 +31,11 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.security._
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.signature.Signed.forAsyncKryo
-import org.tessellation.security.{Hasher, KeyPairGenerator, SecurityProvider}
+import org.tessellation.security.signature.Signed.forAsyncHasher
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 import org.tessellation.syntax.sortedCollection._
 
@@ -47,6 +47,8 @@ import weaver.scalacheck.Checkers
 object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checkers {
 
   type Res = (Supervisor[IO], KryoSerializer[IO], Hasher[IO], SecurityProvider[IO], Metrics[IO])
+
+  val hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash }
 
   def mkMockGossip[B](spreadRef: Ref[IO, List[B]]): Gossip[IO] =
     new Gossip[IO] {
@@ -64,18 +66,18 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     keyPair <- KeyPairGenerator.makeKeyPair[IO]
 
     genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
-    signedGenesis <- Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair)
+    signedGenesis <- Signed.forAsyncHasher[IO, GlobalSnapshot](genesis, keyPair)
 
-    lastArtifact <- GlobalIncrementalSnapshot.fromGlobalSnapshot(signedGenesis.value)
-    signedLastArtifact <- Signed.forAsyncKryo[IO, GlobalIncrementalSnapshot](lastArtifact, keyPair)
+    lastArtifact <- GlobalIncrementalSnapshot.fromGlobalSnapshot(signedGenesis.value, hashSelect)
+    signedLastArtifact <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](lastArtifact, keyPair)
   } yield (signedLastArtifact, signedGenesis)
 
   def sharedResource: Resource[IO, Res] = for {
     supervisor <- Supervisor[IO]
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](nodeSharedKryoRegistrar ++ dagL0KryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
-    implicit0(j: JsonHashSerializer[IO]) <- JsonHashSerializer.forSync[IO].asResource
-    h = Hasher.forSync[IO]
+    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+    h = Hasher.forSync[IO](hashSelect)
     metrics <- Metrics.forAsync[IO](Seq.empty)
   } yield (supervisor, ks, h, sp, metrics)
 
@@ -176,10 +178,10 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       keyPair <- KeyPairGenerator.makeKeyPair[F]
 
       genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
-      signedGenesis <- Signed.forAsyncKryo[F, GlobalSnapshot](genesis, keyPair)
+      signedGenesis <- Signed.forAsyncHasher[F, GlobalSnapshot](genesis, keyPair)
 
-      lastArtifact <- GlobalIncrementalSnapshot.fromGlobalSnapshot(signedGenesis.value)
-      signedLastArtifact <- Signed.forAsyncKryo[IO, GlobalIncrementalSnapshot](lastArtifact, keyPair)
+      lastArtifact <- GlobalIncrementalSnapshot.fromGlobalSnapshot(signedGenesis.value, hashSelect)
+      signedLastArtifact <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](lastArtifact, keyPair)
 
       scEvent <- mkStateChannelEvent()
     } yield (gscf, facilitators, signedLastArtifact, signedGenesis, scEvent)
@@ -261,7 +263,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
   def mkStateChannelEvent()(implicit S: SecurityProvider[IO], H: Hasher[IO]): IO[StateChannelEvent] = for {
     keyPair <- KeyPairGenerator.makeKeyPair[IO]
     binary = StateChannelSnapshotBinary(Hash.empty, "test".getBytes, SnapshotFee.MinValue)
-    signedSC <- forAsyncKryo(binary, keyPair)
+    signedSC <- forAsyncHasher(binary, keyPair)
   } yield StateChannelOutput(keyPair.getPublic.toAddress, signedSC)
 
 }

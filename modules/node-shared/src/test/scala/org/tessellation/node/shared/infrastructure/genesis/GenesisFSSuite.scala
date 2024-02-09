@@ -4,14 +4,15 @@ import cats.effect.{IO, Resource}
 
 import org.tessellation.currency.schema.currency.CurrencySnapshot
 import org.tessellation.ext.cats.effect.ResourceIO
-import org.tessellation.json.JsonHashSerializer
+import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.nodeSharedKryoRegistrar
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.generators.{addressGen, balanceGen}
+import org.tessellation.security._
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Hasher, KeyPairGenerator, SecurityProvider}
 
 import fs2.io.file.Files
 import fs2.text
@@ -25,8 +26,8 @@ object GenesisFSSuite extends MutableIOSuite with Checkers {
   def sharedResource: Resource[IO, Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](nodeSharedKryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
-    implicit0(j: JsonHashSerializer[IO]) <- JsonHashSerializer.forSync[IO].asResource
-    h = Hasher.forSync[IO]
+    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+    h = Hasher.forSync[IO](new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash })
   } yield (ks, h, sp)
 
   val gen: Gen[(Map[Address, Balance], Address)] = for {
@@ -44,7 +45,7 @@ object GenesisFSSuite extends MutableIOSuite with Checkers {
           for {
             kp <- KeyPairGenerator.makeKeyPair
             genesis = CurrencySnapshot.mkGenesis(balances, None)
-            signedGenesis <- Signed.forAsyncKryo(genesis, kp)
+            signedGenesis <- Signed.forAsyncHasher(genesis, kp)
             _ <- genesisFS.write(signedGenesis, identifier, tempDir)
             loaded <- genesisFS.loadSignedGenesis(tempDir / "genesis.snapshot")
           } yield expect.eql(loaded, signedGenesis)
@@ -63,7 +64,7 @@ object GenesisFSSuite extends MutableIOSuite with Checkers {
           for {
             kp <- KeyPairGenerator.makeKeyPair
             genesis = CurrencySnapshot.mkGenesis(balances, None)
-            signedGenesis <- Signed.forAsyncKryo(genesis, kp)
+            signedGenesis <- Signed.forAsyncHasher(genesis, kp)
             _ <- genesisFS.write(signedGenesis, identifier, tempDir)
             loaded <- Files[F]
               .readAll(tempDir / "genesis.address")

@@ -9,14 +9,14 @@ import cats.syntax.all._
 import scala.collection.immutable.SortedMap
 
 import org.tessellation.currency.l0.node.IdentifierStorage
-import org.tessellation.json.JsonHashSerializer
+import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.generators.{addressGen, signedOf}
-import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshot}
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshot, SnapshotOrdinal}
+import org.tessellation.security._
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Hashed, Hasher}
 import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.statechannel.StateChannelSnapshotBinary
 
@@ -32,10 +32,12 @@ object SentStateChannelBinaryTrackingServiceSuite extends MutableIOSuite with Ch
 
   type Res = Hasher[IO]
 
+  val hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash }
+
   override def sharedResource: Resource[IO, SentStateChannelBinaryTrackingServiceSuite.Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
-    implicit0(js: JsonHashSerializer[IO]) <- Resource.liftK[IO](JsonHashSerializer.forSync[IO])
-    hs = Hasher.forSync[IO]
+    implicit0(js: JsonSerializer[IO]) <- Resource.liftK[IO](JsonSerializer.forSync[IO])
+    hs = Hasher.forSync[IO](hashSelect)
   } yield hs
 
   def createGlobalIncrementalSnapshot(identifier: Address, binaries: List[Signed[StateChannelSnapshotBinary]])(
@@ -49,7 +51,8 @@ object SentStateChannelBinaryTrackingServiceSuite extends MutableIOSuite with Ch
             .fromList(binaries)
             .map(binaries => SortedMap(identifier -> binaries))
             .getOrElse(SortedMap.empty[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]])
-        )
+        ),
+      hashSelect
     )
 
   def mkService(identifier: Address)(

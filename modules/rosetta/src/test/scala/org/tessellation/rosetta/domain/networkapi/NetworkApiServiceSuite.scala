@@ -8,7 +8,7 @@ import cats.syntax.option._
 import org.tessellation.BuildInfo
 import org.tessellation.env.AppEnvironment
 import org.tessellation.ext.cats.effect.ResourceIO
-import org.tessellation.json.JsonHashSerializer
+import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.rosetta.domain.NetworkIdentifier
 import org.tessellation.rosetta.domain.error._
@@ -21,10 +21,10 @@ import org.tessellation.schema.generators._
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.timestamp.SnapshotTimestamp
 import org.tessellation.schema.{GlobalSnapshot, SnapshotOrdinal}
+import org.tessellation.security._
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.hex.Hex
-import org.tessellation.security.signature.Signed.forAsyncKryo
-import org.tessellation.security.{Hasher, KeyPairGenerator, SecurityProvider}
+import org.tessellation.security.signature.Signed.forAsyncHasher
 import org.tessellation.shared.sharedKryoRegistrar
 
 import eu.timepit.refined.cats.{refTypeEq, refTypeOrder, refTypeShow}
@@ -35,11 +35,13 @@ import weaver.scalacheck.Checkers
 object NetworkApiServiceSuite extends MutableIOSuite with Checkers {
   type Res = (SecurityProvider[IO], Hasher[IO])
 
+  val hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash }
+
   def sharedResource: Resource[IO, Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
-    implicit0(j: JsonHashSerializer[IO]) <- JsonHashSerializer.forSync[IO].asResource
-    h = Hasher.forSync[IO]
+    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+    h = Hasher.forSync[IO](hashSelect)
   } yield (sp, h)
 
   private def errorResult[A]: IO[A] = IO.raiseError(new Exception("unexpected call"))
@@ -104,14 +106,14 @@ object NetworkApiServiceSuite extends MutableIOSuite with Checkers {
       case (genesisOrdinal, genesisHash, nodeState) =>
         for {
           keyPair <- KeyPairGenerator.makeKeyPair
-          genesis <- forAsyncKryo(
+          genesis <- forAsyncHasher(
             GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue),
             keyPair
           ).flatMap(_.toHashed[IO])
 
           incrementalSnapshot <- GlobalSnapshot
-            .mkFirstIncrementalSnapshot(genesis)
-            .flatMap(forAsyncKryo(_, keyPair))
+            .mkFirstIncrementalSnapshot(genesis, hashSelect)
+            .flatMap(forAsyncHasher(_, keyPair))
             .flatMap(_.toHashed[IO])
 
           timestamp = SnapshotTimestamp(System.currentTimeMillis())

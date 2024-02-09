@@ -5,32 +5,34 @@ import java.nio.file.NoSuchFileException
 
 import cats.data.EitherT
 import cats.effect.Async
-import cats.syntax.applicativeError._
-import cats.syntax.contravariantSemigroupal._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
-import cats.syntax.option._
-import cats.syntax.traverse._
+import cats.syntax.all._
 
 import scala.reflect.ClassTag
 
-import org.tessellation.ext.kryo._
+import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 
 import better.files._
 import fs2.Stream
 import fs2.io.file.Path
+import io.circe.{Decoder, Encoder}
 
-abstract class KryoLocalFileSystemStorage[F[_]: KryoSerializer, A <: AnyRef: ClassTag](baseDir: Path)(implicit F: Async[F])
-    extends LocalFileSystemStorage[F, A](baseDir)
-    with KryoFileSystemStorage[F, A] {
+abstract class SerializableLocalFileSystemStorage[F[_]: KryoSerializer: JsonSerializer, A: Encoder: Decoder: ClassTag](
+  baseDir: Path
+)(
+  implicit F: Async[F]
+) extends LocalFileSystemStorage[F, A](baseDir)
+    with SerializableFileSystemStorage[F, A] {
 
   def read(fileName: String): F[Option[A]] =
-    readBytes(fileName)
-      .flatMap(_.traverse(_.fromBinaryF))
+    readBytes(fileName).flatMap {
+      _.traverse { bytes =>
+        JsonSerializer[F].deserialize[A](bytes).map(_.orElse(KryoSerializer[F].deserialize[A](bytes))).flatMap(_.liftTo[F])
+      }
+    }
 
   def write(fileName: String, a: A): F[Unit] =
-    a.toBinaryF.flatMap(write(fileName, _))
+    JsonSerializer[F].serialize(a).flatMap(write(fileName, _))
 
 }
 

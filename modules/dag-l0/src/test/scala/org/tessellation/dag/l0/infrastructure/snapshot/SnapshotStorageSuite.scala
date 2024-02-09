@@ -6,7 +6,7 @@ import cats.syntax.option._
 
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.crypto._
-import org.tessellation.json.JsonHashSerializer
+import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.infrastructure.snapshot.storage.{
   SnapshotInfoLocalFileSystemStorage,
@@ -16,8 +16,8 @@ import org.tessellation.node.shared.infrastructure.snapshot.storage.{
 import org.tessellation.node.shared.nodeSharedKryoRegistrar
 import org.tessellation.schema._
 import org.tessellation.schema.epoch.EpochProgress
+import org.tessellation.security._
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Hasher, KeyPairGenerator, SecurityProvider}
 
 import better.files._
 import eu.timepit.refined.auto._
@@ -27,17 +27,19 @@ import weaver.scalacheck.Checkers
 
 object SnapshotStorageSuite extends MutableIOSuite with Checkers {
 
-  type Res = (Supervisor[IO], KryoSerializer[IO], Hasher[IO], SecurityProvider[IO])
+  type Res = (Supervisor[IO], KryoSerializer[IO], JsonSerializer[IO], Hasher[IO], SecurityProvider[IO])
+
+  val hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash }
 
   def sharedResource: Resource[IO, Res] = for {
     supervisor <- Supervisor[IO]
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](nodeSharedKryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
-    implicit0(j: JsonHashSerializer[IO]) <- JsonHashSerializer.forSync[IO].asResource
-    h = Hasher.forSync[IO]
-  } yield (supervisor, ks, h, sp)
+    implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+    h = Hasher.forSync[IO](hashSelect)
+  } yield (supervisor, ks, j, h, sp)
 
-  def mkStorage(tmpDir: File)(implicit K: KryoSerializer[IO], H: Hasher[IO], S: Supervisor[IO]) =
+  def mkStorage(tmpDir: File)(implicit K: KryoSerializer[IO], J: JsonSerializer[IO], H: Hasher[IO], S: Supervisor[IO]) =
     SnapshotLocalFileSystemStorage.make[IO, GlobalIncrementalSnapshot](Path(tmpDir.pathAsString)).flatMap { snapshotFileStorage =>
       SnapshotInfoLocalFileSystemStorage.make[IO, GlobalSnapshotStateProof, GlobalSnapshotInfo](Path(tmpDir.pathAsString)).flatMap {
         snapshotInfoFileStorage =>
@@ -55,15 +57,15 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
     S: SecurityProvider[IO]
   ): IO[(Signed[GlobalSnapshot], Signed[GlobalIncrementalSnapshot])] =
     KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>
-      Signed.forAsyncKryo[IO, GlobalSnapshot](GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue), keyPair).flatMap { genesis =>
-        GlobalIncrementalSnapshot.fromGlobalSnapshot(genesis).flatMap { snapshot =>
-          Signed.forAsyncKryo[IO, GlobalIncrementalSnapshot](snapshot, keyPair).map((genesis, _))
+      Signed.forAsyncHasher[IO, GlobalSnapshot](GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue), keyPair).flatMap { genesis =>
+        GlobalIncrementalSnapshot.fromGlobalSnapshot(genesis, hashSelect).flatMap { snapshot =>
+          Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](snapshot, keyPair).map((genesis, _))
         }
       }
     }
 
   test("head - returns none for empty storage") { res =>
-    implicit val (s, kryo, h, _) = res
+    implicit val (s, kryo, j, h, _) = res
 
     File.temporaryDirectory() { tmpDir =>
       mkStorage(tmpDir).flatMap { storage =>
@@ -75,7 +77,7 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
   }
 
   test("head - returns latest snapshot if not empty") { res =>
-    implicit val (s, kryo, h, sp) = res
+    implicit val (s, kryo, j, h, sp) = res
 
     File.temporaryDirectory() { tmpDir =>
       mkStorage(tmpDir).flatMap { storage =>
@@ -91,7 +93,7 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
   }
 
   test("prepend - should return true if next snapshot creates a chain") { res =>
-    implicit val (s, kryo, h, sp) = res
+    implicit val (s, kryo, j, h, sp) = res
 
     File.temporaryDirectory() { tmpDir =>
       mkStorage(tmpDir).flatMap { storage =>
@@ -104,7 +106,7 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
   }
 
   test("prepend - should allow to start from any arbitrary snapshot") { res =>
-    implicit val (s, kryo, h, sp) = res
+    implicit val (s, kryo, j, h, sp) = res
 
     File.temporaryDirectory() { tmpDir =>
       mkStorage(tmpDir).flatMap { storage =>
@@ -117,7 +119,7 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
   }
 
   test("get - should return snapshot by ordinal") { res =>
-    implicit val (s, kryo, h, sp) = res
+    implicit val (s, kryo, j, h, sp) = res
 
     File.temporaryDirectory() { tmpDir =>
       mkStorage(tmpDir).flatMap { storage =>
@@ -131,7 +133,7 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
   }
 
   test("get - should return snapshot by hash") { res =>
-    implicit val (s, kryo, h, sp) = res
+    implicit val (s, kryo, j, h, sp) = res
 
     File.temporaryDirectory() { tmpDir =>
       mkStorage(tmpDir).flatMap { storage =>
@@ -147,7 +149,7 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
   }
 
   test("getLatestBalancesStream - subscriber should get latest balances") { res =>
-    implicit val (s, kryo, h, sp) = res
+    implicit val (s, kryo, j, h, sp) = res
 
     File.temporaryDirectory() { tmpDir =>
       mkStorage(tmpDir).flatMap { storage =>
@@ -163,7 +165,7 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
   }
 
   test("getLatestBalancesStream - second subscriber should get latest balances") { res =>
-    implicit val (s, kryo, h, sp) = res
+    implicit val (s, kryo, j, h, sp) = res
 
     File.temporaryDirectory() { tmpDir =>
       mkStorage(tmpDir).flatMap { storage =>

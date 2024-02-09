@@ -1,17 +1,18 @@
 package org.tessellation.dag.l0.infrastructure.snapshot
 
 import cats.data.NonEmptyChain
-import cats.effect.Sync
+import cats.effect.kernel.Async
 import cats.syntax.all._
 
 import scala.util.control.NoStackTrace
 
 import org.tessellation.ext.cats.syntax.partialPrevious.catsSyntaxPartialPrevious
+import org.tessellation.merkletree.StateProofValidator
 import org.tessellation.node.shared.domain.snapshot.SnapshotContextFunctions
 import org.tessellation.schema._
-import org.tessellation.security.Hasher
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{HashSelect, Hasher}
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -21,12 +22,13 @@ trait GlobalSnapshotTraverse[F[_]] {
 
 object GlobalSnapshotTraverse {
 
-  def make[F[_]: Sync: Hasher](
+  def make[F[_]: Async: Hasher](
     loadInc: Hash => F[Option[Signed[GlobalIncrementalSnapshot]]],
     loadFull: Hash => F[Option[Signed[GlobalSnapshot]]],
     loadInfo: SnapshotOrdinal => F[Option[GlobalSnapshotInfo]],
     contextFns: SnapshotContextFunctions[F, GlobalSnapshotArtifact, GlobalSnapshotContext],
-    rollbackHash: Hash
+    rollbackHash: Hash,
+    hashSelect: HashSelect
   ): GlobalSnapshotTraverse[F] =
     new GlobalSnapshotTraverse[F] {
       val logger = Slf4jLogger.getLogger[F]
@@ -91,11 +93,11 @@ object GlobalSnapshotTraverse {
             case Right(globalSnapshot)           => GlobalSnapshotInfoV1.toGlobalSnapshotInfo(globalSnapshot.info).pure[F]
           }
 
-          _ <- firstInfo.stateProof.flatMap { proof =>
-            (new Exception(s"Snapshot info does not match the snapshot at ordinal=${firstInc.ordinal.show}"))
-              .raiseError[F, Unit]
-              .whenA(proof =!= firstInc.stateProof)
-          }
+          stateProofInvalid <- StateProofValidator.validate(firstInc, firstInfo, hashSelect).map(_.isInvalid)
+
+          _ <- (new Exception(s"Snapshot info does not match the snapshot at ordinal=${firstInc.ordinal.show}"))
+            .raiseError[F, Unit]
+            .whenA(stateProofInvalid)
 
           (info, lastInc) <- incHashesNec.tail.foldLeftM((firstInfo, firstInc)) {
             case ((lastCtx, lastInc), hash) =>

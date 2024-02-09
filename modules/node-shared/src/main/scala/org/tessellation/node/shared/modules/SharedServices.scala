@@ -27,7 +27,7 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.security.hash.Hash
-import org.tessellation.security.{Hasher, SecurityProvider}
+import org.tessellation.security.{HashSelect, Hasher, SecurityProvider}
 
 import fs2.concurrent.SignallingRef
 
@@ -48,7 +48,8 @@ object SharedServices {
     versionHash: Hash,
     collateral: CollateralConfig,
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
-    environment: AppEnvironment
+    environment: AppEnvironment,
+    hashSelect: HashSelect
   ): F[SharedServices[F]] = {
 
     val cluster = Cluster
@@ -71,7 +72,8 @@ object SharedServices {
       gossip <- Gossip.make[F](queues.rumor, nodeId, generation, keyPair)
       currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
         BlockAcceptanceManager.make[F](validators.currencyBlockValidator),
-        collateral.amount
+        collateral.amount,
+        hashSelect
       )
 
       currencyEventsCutter = CurrencyEventsCutter.make[F]
@@ -88,7 +90,8 @@ object SharedServices {
         None
       )
       currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(
-        currencySnapshotValidator
+        currencySnapshotValidator,
+        hashSelect
       )
       globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make(stateChannelAllowanceLists)
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync
@@ -103,7 +106,7 @@ object SharedServices {
           ),
         collateral.amount
       )
-      globalSnapshotContextFns = GlobalSnapshotContextFunctions.make(globalSnapshotAcceptanceManager)
+      globalSnapshotContextFns = GlobalSnapshotContextFunctions.make(globalSnapshotAcceptanceManager, hashSelect)
     } yield
       new SharedServices[F](
         localHealthcheck = localHealthcheck,

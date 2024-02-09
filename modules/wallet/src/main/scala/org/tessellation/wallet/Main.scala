@@ -13,14 +13,15 @@ import cats.syntax.functor._
 
 import org.tessellation.BuildInfo
 import org.tessellation.ext.cats.effect.ResourceIO
-import org.tessellation.json.JsonHashSerializer
+import org.tessellation.json.JsonSerializer
 import org.tessellation.keytool.KeyStoreUtils
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction.{Transaction, TransactionAmount, TransactionFee}
+import org.tessellation.security._
 import org.tessellation.security.key.ops._
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Hasher, SecurityProvider}
 import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.wallet.cli.env.EnvConfig
 import org.tessellation.wallet.cli.method._
@@ -47,8 +48,8 @@ object Main
       case (method, envs) =>
         SecurityProvider.forAsync[IO].use { implicit sp =>
           KryoSerializer.forAsync[IO](sharedKryoRegistrar).use { implicit kryo =>
-            JsonHashSerializer.forSync[IO].asResource.use { implicit jsonSerializer =>
-              implicit val hasher = Hasher.forSync[IO]
+            JsonSerializer.forSync[IO].asResource.use { implicit jsonSerializer =>
+              implicit val hasher = Hasher.forSync[IO](new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = KryoHash })
               loadKeyPair[IO](envs).flatMap { keyPair =>
                 method match {
                   case ShowAddress() =>

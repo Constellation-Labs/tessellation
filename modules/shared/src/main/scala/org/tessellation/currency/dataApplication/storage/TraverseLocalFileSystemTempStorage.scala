@@ -10,15 +10,16 @@ import org.tessellation.currency.dataApplication.storage.TraverseLocalFileSystem
   SnapshotNotFoundInTempStorage
 }
 import org.tessellation.currency.schema.currency.CurrencyIncrementalSnapshot
+import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.SnapshotOrdinal
-import org.tessellation.storage.KryoLocalFileSystemStorage
+import org.tessellation.storage.SerializableLocalFileSystemStorage
 
 import fs2.Stream
 import fs2.io.file.{Files, Path}
 
-final class TraverseLocalFileSystemTempStorage[F[_]: Async: KryoSerializer] private (path: Path)
-    extends KryoLocalFileSystemStorage[F, CurrencyIncrementalSnapshot](path) {
+final class TraverseLocalFileSystemTempStorage[F[_]: Async: KryoSerializer: JsonSerializer] private (path: Path)
+    extends SerializableLocalFileSystemStorage[F, CurrencyIncrementalSnapshot](path) {
 
   def read(
     ordinal: SnapshotOrdinal
@@ -60,7 +61,7 @@ object TraverseLocalFileSystemTempStorage {
   private def make[F[_]: Async]: Resource[F, Path] =
     Files.forAsync[F].tempDirectory
 
-  def forAsync[F[_]: Async: KryoSerializer]: Resource[F, TraverseLocalFileSystemTempStorage[F]] = make[F].map { path =>
+  def forAsync[F[_]: Async: KryoSerializer: JsonSerializer]: Resource[F, TraverseLocalFileSystemTempStorage[F]] = make[F].map { path =>
     new TraverseLocalFileSystemTempStorage[F](path)
   }
 }

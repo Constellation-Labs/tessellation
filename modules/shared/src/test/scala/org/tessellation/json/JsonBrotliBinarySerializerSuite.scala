@@ -8,7 +8,7 @@ import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, C
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
-import org.tessellation.security.Hasher
+import org.tessellation.security._
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 import org.tessellation.shared.sharedKryoRegistrar
@@ -24,8 +24,8 @@ object JsonBrotliBinarySerializerSuite extends MutableIOSuite {
     KryoSerializer
       .forAsync[IO](sharedKryoRegistrar)
       .flatMap { implicit res =>
-        JsonHashSerializer.forSync[IO].asResource.map { implicit json =>
-          Hasher.forSync[IO]
+        JsonSerializer.forSync[IO].asResource.map { implicit json =>
+          Hasher.forSync[IO](new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash })
         }
       }
       .flatMap { kp =>

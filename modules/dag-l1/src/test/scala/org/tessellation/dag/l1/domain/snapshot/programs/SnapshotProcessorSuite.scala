@@ -20,7 +20,7 @@ import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage.{Accepted, LastTransactionReferenceState, Majority}
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.collection.MapRefUtils._
-import org.tessellation.json.{JsonBrotliBinarySerializer, JsonHashSerializer}
+import org.tessellation.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.SnapshotSizeConfig
 import org.tessellation.node.shared.infrastructure.block.processing.BlockAcceptanceManager
@@ -39,7 +39,7 @@ import org.tessellation.security._
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.key.ops.PublicKeyOps
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.signature.Signed.forAsyncKryo
+import org.tessellation.security.signature.Signed.forAsyncHasher
 import org.tessellation.transaction.TransactionGenerator
 
 import eu.timepit.refined.auto._
@@ -70,13 +70,15 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
     GlobalSnapshotContextFunctions[IO]
   )
 
+  val hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash }
+
   def testResources: Resource[IO, TestResources] =
     SecurityProvider.forAsync[IO].flatMap { implicit sp =>
       KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ nodeSharedKryoRegistrar).flatMap { implicit kp =>
         Random.scalaUtilRandom[IO].asResource.flatMap { implicit random =>
           for {
-            implicit0(jhs: JsonHashSerializer[IO]) <- JsonHashSerializer.forSync[IO].asResource
-            implicit0(h: Hasher[IO]) = Hasher.forSync[IO]
+            implicit0(jhs: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+            implicit0(h: Hasher[IO]) = Hasher.forSync[IO](hashSelect)
             balancesR <- Ref.of[IO, Map[Address, Balance]](Map.empty).asResource
             blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]().asResource
             lastSnapR <- SignallingRef.of[IO, Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](None).asResource
@@ -87,7 +89,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
             currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
               BlockAcceptanceManager.make[IO](validators.currencyBlockValidator),
-              Amount(0L)
+              Amount(0L),
+              hashSelect
             )
             currencyEventsCutter = CurrencyEventsCutter.make[IO]
             currencySnapshotCreator = CurrencySnapshotCreator
@@ -95,7 +98,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             currencySnapshotValidator = CurrencySnapshotValidator
               .make[IO](currencySnapshotCreator, validators.signedValidator, None, None)
 
-            currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
+            currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator, hashSelect)
             globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, NonNegLong(10L)).asResource
             jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync[IO].asResource
             globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
@@ -109,7 +112,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 ),
               Amount(0L)
             )
-            globalSnapshotContextFns = GlobalSnapshotContextFunctions.make[IO](globalSnapshotAcceptanceManager)
+            globalSnapshotContextFns = GlobalSnapshotContextFunctions.make[IO](globalSnapshotAcceptanceManager, hashSelect)
             snapshotProcessor = {
               val addressStorage = new AddressStorage[IO] {
                 def getState: IO[Map[Address, Balance]] =
@@ -188,7 +191,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
     )
 
   def generateSnapshot(peerId: PeerId): GlobalIncrementalSnapshot = {
-    val emptySortedMapHash = Hash("5fe34c799983eca1cb31b32156233cceaf9aaeb56b2a5eb77478d08bbd220c6b")
+    val emptySortedMapHash = Hash("61f6b8f9cd36ed8bf85c455875b6f4ab54d425ac7e177b0b3450a2b23950f319")
 
     GlobalIncrementalSnapshot(
       snapshotOrdinal10,
@@ -240,10 +243,10 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
         for {
           correctTxs <- generateTransactions(srcAddress, srcKey, dstAddress, 1)
           block = Block(NonEmptyList.one(parent2), NonEmptySet.fromSetUnsafe(SortedSet(correctTxs.head.signed)))
-          hashedBlock <- forAsyncKryo(block, srcKey).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
+          hashedBlock <- forAsyncHasher(block, srcKey).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           snapshotBalances = generateSnapshotBalances(Set(srcAddress))
           snapshotTxRefs = generateSnapshotLastAccTxRefs(Map(srcAddress -> correctTxs.head))
-          hashedSnapshot <- forAsyncKryo(
+          hashedSnapshot <- forAsyncHasher(
             generateSnapshot(peerId)
               .copy(
                 blocks = SortedSet(BlockAsActiveTip(hashedBlock.signed, NonNegLong.MinValue)),
@@ -374,7 +377,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
           snapshotBalances = generateSnapshotBalances(Set(srcAddress))
           snapshotTxRefs = generateSnapshotLastAccTxRefs(Map(srcAddress -> correctTxs(5)))
-          hashedSnapshot <- forAsyncKryo(
+          hashedSnapshot <- forAsyncHasher(
             generateSnapshot(peerId).copy(
               blocks = SortedSet(BlockAsActiveTip(majorityInRangeBlock.signed, NonNegLong(1L))),
               tips = SnapshotTips(
@@ -542,7 +545,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
           snapshotBalances = generateSnapshotBalances(Set(srcAddress))
           snapshotTxRefs = generateSnapshotLastAccTxRefs(Map(srcAddress -> correctTxs(5)))
-          hashedSnapshot <- forAsyncKryo(
+          hashedSnapshot <- forAsyncHasher(
             generateSnapshot(peerId).copy(
               blocks = SortedSet(BlockAsActiveTip(majorityInRangeBlock.signed, NonNegLong(1L))),
               tips = SnapshotTips(
@@ -656,11 +659,11 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
         implicit val hasher = h
 
         for {
-          hashedLastSnapshot <- forAsyncKryo(
+          hashedLastSnapshot <- forAsyncHasher(
             generateSnapshot(peerId),
             srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
-          hashedNextSnapshot <- forAsyncKryo(
+          hashedNextSnapshot <- forAsyncHasher(
             generateSnapshot(peerId).copy(
               ordinal = snapshotOrdinal11,
               subHeight = snapshotSubHeight1,
@@ -786,8 +789,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           _ <- aboveRangeAcceptedBlock.signed.value.transactions.toNonEmptyList.traverse(_.toHashed.flatMap(transactionStorage.accept))
 
           lastSnapshotInfo = GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, snapshotBalances, SortedMap.empty, SortedMap.empty)
-          lastSnapshotStateProof <- lastSnapshotInfo.stateProof
-          hashedLastSnapshot <- forAsyncKryo(
+          lastSnapshotStateProof <- lastSnapshotInfo.stateProof(snapshotOrdinal10, hashSelect)
+          hashedLastSnapshot <- forAsyncHasher(
             generateSnapshot(peerId).copy(
               tips = SnapshotTips(
                 SortedSet(
@@ -817,8 +820,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               balances = balances
             )
           }
-          newSnapshotInfoStateProof <- newSnapshotInfo.stateProof
-          hashedNextSnapshot <- forAsyncKryo(
+          newSnapshotInfoStateProof <- newSnapshotInfo.stateProof(snapshotOrdinal11, hashSelect)
+          hashedNextSnapshot <- forAsyncHasher(
             generateSnapshot(peerId).copy(
               ordinal = snapshotOrdinal11,
               height = snapshotHeight8,
@@ -1020,8 +1023,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           snapshotBalances = generateSnapshotBalances(Set(srcAddress))
           snapshotTxRefs = generateSnapshotLastAccTxRefs(Map(srcAddress -> correctTxs(5)))
           lastSnapshotInfo = GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, snapshotBalances, SortedMap.empty, SortedMap.empty)
-          lastSnapshotInfoStateProof <- lastSnapshotInfo.stateProof
-          hashedLastSnapshot <- forAsyncKryo(
+          lastSnapshotInfoStateProof <- lastSnapshotInfo.stateProof(snapshotOrdinal10, hashSelect)
+          hashedLastSnapshot <- forAsyncHasher(
             generateSnapshot(peerId).copy(
               tips = SnapshotTips(
                 SortedSet(
@@ -1051,8 +1054,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               balances = balances
             )
           }
-          newSnapshotInfoStateProof <- newSnapshotInfo.stateProof
-          hashedNextSnapshot <- forAsyncKryo(
+          newSnapshotInfoStateProof <- newSnapshotInfo.stateProof(snapshotOrdinal11, hashSelect)
+          hashedNextSnapshot <- forAsyncHasher(
             generateSnapshot(peerId).copy(
               ordinal = snapshotOrdinal11,
               height = snapshotHeight8,
@@ -1205,11 +1208,11 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
         implicit val hasher = h
 
         for {
-          hashedLastSnapshot <- forAsyncKryo(
+          hashedLastSnapshot <- forAsyncHasher(
             generateSnapshot(peerId),
             srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
-          hashedNextSnapshot <- forAsyncKryo(
+          hashedNextSnapshot <- forAsyncHasher(
             generateSnapshot(peerId).copy(
               ordinal = snapshotOrdinal12,
               lastSnapshotHash = hashedLastSnapshot.hash
@@ -1247,11 +1250,11 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
         val parent2 = BlockReference(Height(9L), ProofsHash("parent2"))
 
         for {
-          hashedLastSnapshot <- forAsyncKryo(
+          hashedLastSnapshot <- forAsyncHasher(
             generateSnapshot(peerId),
             srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
-          hashedNextSnapshot <- forAsyncKryo(
+          hashedNextSnapshot <- forAsyncHasher(
             generateSnapshot(peerId).copy(
               ordinal = snapshotOrdinal11,
               height = snapshotHeight8,
@@ -1292,9 +1295,9 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
   )(implicit sc: SecurityProvider[IO], h: Hasher[IO]) =
     (parent: NonEmptyList[BlockReference], transactions: NonEmptySet[Signed[Transaction]]) =>
       (
-        forAsyncKryo(Block(parent, transactions), keys._1),
-        forAsyncKryo(Block(parent, transactions), keys._2),
-        forAsyncKryo(Block(parent, transactions), keys._3)
+        forAsyncHasher(Block(parent, transactions), keys._1),
+        forAsyncHasher(Block(parent, transactions), keys._2),
+        forAsyncHasher(Block(parent, transactions), keys._3)
       ).tupled.flatMap {
         case (b1, b2, b3) =>
           b1.addProof(b2.proofs.head).addProof(b3.proofs.head).toHashedWithSignatureCheck.map(_.toOption.get)

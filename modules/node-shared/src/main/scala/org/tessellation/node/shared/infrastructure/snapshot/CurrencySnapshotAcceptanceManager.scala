@@ -12,8 +12,8 @@ import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.transaction.{RewardTransaction, Transaction, TransactionReference}
-import org.tessellation.security.Hasher
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{HashSelect, Hasher}
 import org.tessellation.syntax.sortedCollection.sortedSetSyntax
 
 import eu.timepit.refined.auto._
@@ -23,6 +23,7 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
   def accept(
     blocksForAcceptance: List[Signed[Block]],
     lastSnapshotContext: CurrencySnapshotContext,
+    snapshotOrdinal: SnapshotOrdinal,
     lastActiveTips: SortedSet[ActiveTip],
     lastDeprecatedTips: SortedSet[DeprecatedTip],
     calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]]
@@ -39,12 +40,14 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
 object CurrencySnapshotAcceptanceManager {
   def make[F[_]: Async: Hasher](
     blockAcceptanceManager: BlockAcceptanceManager[F],
-    collateral: Amount
+    collateral: Amount,
+    hashSelect: HashSelect
   ) = new CurrencySnapshotAcceptanceManager[F] {
 
     def accept(
       blocksForAcceptance: List[Signed[Block]],
       lastSnapshotContext: CurrencySnapshotContext,
+      snapshotOrdinal: SnapshotOrdinal,
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip],
       calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]]
@@ -71,7 +74,7 @@ object CurrencySnapshotAcceptanceManager {
       )
 
       csi = CurrencySnapshotInfo(transactionsRefs, updatedBalancesByRewards)
-      stateProof <- csi.stateProof
+      stateProof <- csi.stateProof(snapshotOrdinal, hashSelect)
 
     } yield (acceptanceResult, acceptedRewardTxs, csi, stateProof)
 

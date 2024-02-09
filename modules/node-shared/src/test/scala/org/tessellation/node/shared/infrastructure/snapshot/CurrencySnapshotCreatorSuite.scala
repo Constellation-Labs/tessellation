@@ -5,12 +5,13 @@ import cats.effect.{IO, Resource}
 
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.kryo._
-import org.tessellation.json.JsonHashSerializer
+import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.cli.CliMethod.snapshotSizeConfig
 import org.tessellation.node.shared.nodeSharedKryoRegistrar
+import org.tessellation.schema.SnapshotOrdinal
+import org.tessellation.security._
 import org.tessellation.security.signature.{Signed, signature}
-import org.tessellation.security.{Hasher, KeyPairGenerator, SecurityProvider}
 
 import org.scalacheck.Gen
 import weaver.MutableIOSuite
@@ -22,15 +23,15 @@ object CurrencySnapshotCreatorSuite extends MutableIOSuite with Checkers {
   def sharedResource: Resource[IO, Res] =
     for {
       implicit0(k: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](nodeSharedKryoRegistrar)
-      implicit0(j: JsonHashSerializer[IO]) <- JsonHashSerializer.forSync[IO].asResource
-      h = Hasher.forSync[IO]
+      implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
+      h = Hasher.forSync[IO](new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash })
       sp <- SecurityProvider.forAsync[IO]
     } yield (k, h, sp)
 
   def signatureProofsGen(implicit sp: SecurityProvider[IO], h: Hasher[IO]): Gen[signature.SignatureProof] = for {
     text <- Gen.alphaStr
     keyPair <- Gen.delay(KeyPairGenerator.makeKeyPair[IO].unsafeRunSync())
-    signed = Signed.forAsyncKryo(text, keyPair).unsafeRunSync()
+    signed = Signed.forAsyncHasher(text, keyPair).unsafeRunSync()
   } yield signed.proofs.head
 
   test("single signature size matches the size limit") { implicit res =>

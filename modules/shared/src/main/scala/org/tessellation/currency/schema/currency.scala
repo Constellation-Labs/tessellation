@@ -16,8 +16,8 @@ import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.semver.SnapshotVersion
 import org.tessellation.schema.snapshot._
 import org.tessellation.schema.transaction._
+import org.tessellation.security._
 import org.tessellation.security.hash.{Hash, ProofsHash}
-import org.tessellation.security.{Hashed, Hasher}
 import org.tessellation.syntax.sortedCollection._
 
 import derevo.cats.{eqv, order, show}
@@ -53,8 +53,13 @@ object currency {
     lastTxRefs: SortedMap[Address, TransactionReference],
     balances: SortedMap[Address, Balance]
   ) extends SnapshotInfo[CurrencySnapshotStateProof] {
-    def stateProof[F[_]: Sync: Hasher]: F[CurrencySnapshotStateProof] =
-      (lastTxRefs.hash, balances.hash).tupled.map(CurrencySnapshotStateProof.apply)
+    def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal, hashSelect: HashSelect): F[CurrencySnapshotStateProof] =
+      hashSelect.select(ordinal) match {
+        case KryoHash =>
+          (Hasher[F].hashKryo(lastTxRefs), Hasher[F].hashKryo(balances)).tupled.map(CurrencySnapshotStateProof.apply)
+        case JsonHash =>
+          (lastTxRefs.hash, balances.hash).tupled.map(CurrencySnapshotStateProof.apply)
+      }
   }
 
   @derive(decoder, encoder, order, show, arbitrary)
@@ -109,8 +114,8 @@ object currency {
   ) extends IncrementalSnapshot[CurrencySnapshotStateProof]
 
   object CurrencyIncrementalSnapshot {
-    def fromCurrencySnapshot[F[_]: Sync: Hasher](snapshot: CurrencySnapshot): F[CurrencyIncrementalSnapshot] =
-      snapshot.info.stateProof[F].map { stateProof =>
+    def fromCurrencySnapshot[F[_]: Sync: Hasher](snapshot: CurrencySnapshot, hashSelect: HashSelect): F[CurrencyIncrementalSnapshot] =
+      snapshot.info.stateProof[F](snapshot.ordinal, hashSelect).map { stateProof =>
         CurrencyIncrementalSnapshot(
           snapshot.ordinal,
           snapshot.height,
@@ -142,8 +147,11 @@ object currency {
         dataApplicationPart
       )
 
-    def mkFirstIncrementalSnapshot[F[_]: Sync: Hasher](genesis: Hashed[CurrencySnapshot]): F[CurrencyIncrementalSnapshot] =
-      genesis.info.stateProof[F].map { stateProof =>
+    def mkFirstIncrementalSnapshot[F[_]: Sync: Hasher](
+      genesis: Hashed[CurrencySnapshot],
+      hashSelect: HashSelect
+    ): F[CurrencyIncrementalSnapshot] =
+      genesis.info.stateProof[F](genesis.ordinal, hashSelect).map { stateProof =>
         CurrencyIncrementalSnapshot(
           genesis.ordinal.next,
           genesis.height,

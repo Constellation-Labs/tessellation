@@ -7,7 +7,7 @@ trait FileSystemStorage[F[_], A] {
   def delete(path: String): F[Unit]
 }
 
-trait KryoFileSystemStorage[F[_], A] {
+trait SerializableFileSystemStorage[F[_], A] {
   def read(path: String): F[Option[A]]
   def write(path: String, a: A): F[Unit]
 }

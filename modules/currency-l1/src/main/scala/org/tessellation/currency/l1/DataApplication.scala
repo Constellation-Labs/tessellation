@@ -20,7 +20,9 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hasher, SecurityProvider}
 
-import fs2._
+import fs2.{Pipe, Stream}
+import io.circe.Encoder
+import io.circe.generic.semiauto.deriveEncoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object DataApplication {
@@ -54,13 +56,24 @@ object DataApplication {
     def ownerBlockConsensusInputs =
       inspectionTrigger.merge(ownRoundTrigger)
 
-    def isPeerInputValid(input: Signed[ConsensusInput.PeerConsensusInput]): F[Boolean] = {
-      implicit val dataEncoder = dataApplicationService.dataEncoder
-      implicit val e = ConsensusInput.PeerConsensusInput.encoder
-      input.hasValidSignature.map {
-        _ && input.isSignedExclusivelyBy(PeerId._Id.get(input.value.senderId))
-      }
-    }
+    def isPeerInputValid(input: Signed[ConsensusInput.PeerConsensusInput]): F[Boolean] =
+      for {
+        validSignature <- input.value match {
+          case proposal: ConsensusInput.Proposal =>
+            implicit val e = ConsensusInput.Proposal.encoder(dataApplicationService.dataEncoder)
+            Signed(proposal, input.proofs).hasValidSignature
+
+          case signatureProposal: ConsensusInput.SignatureProposal =>
+            implicit val e: Encoder[ConsensusInput.SignatureProposal] = deriveEncoder
+            Signed(signatureProposal, input.proofs).hasValidSignature
+
+          case cancellation: ConsensusInput.CancelledCreationRound =>
+            implicit val e: Encoder[ConsensusInput.CancelledCreationRound] = deriveEncoder
+            Signed(cancellation, input.proofs).hasValidSignature
+        }
+
+        signedExclusively = input.isSignedExclusivelyBy(PeerId._Id.get(input.value.senderId))
+      } yield validSignature && signedExclusively
 
     def peerBlockConsensusInputs =
       Stream

@@ -58,7 +58,8 @@ object Main
           nodeShared.seedlist,
           cfg.snapshot,
           trustRatings,
-          cfg.environment
+          cfg.environment,
+          hashSelect
         )
         .asResource
       services <- Services
@@ -84,7 +85,8 @@ object Main
         cfg,
         method.lastFullGlobalSnapshotOrdinal,
         p2pClient,
-        sharedServices.globalSnapshotContextFns
+        sharedServices.globalSnapshotContextFns,
+        hashSelect
       )
       healthChecks <- HealthChecks
         .make[IO](
@@ -175,12 +177,12 @@ object Main
                 m.startingEpochProgress
               )
 
-              Signed.forAsyncKryo[IO, GlobalSnapshot](genesis, keyPair).flatMap(_.toHashed[IO]).flatMap { hashedGenesis =>
+              Signed.forAsyncHasher[IO, GlobalSnapshot](genesis, keyPair).flatMap(_.toHashed[IO]).flatMap { hashedGenesis =>
                 SnapshotLocalFileSystemStorage.make[IO, GlobalSnapshot](cfg.snapshot.snapshotPath).flatMap {
                   fullGlobalSnapshotLocalFileSystemStorage =>
                     fullGlobalSnapshotLocalFileSystemStorage.write(hashedGenesis.signed) >>
-                      GlobalSnapshot.mkFirstIncrementalSnapshot[IO](hashedGenesis).flatMap { firstIncrementalSnapshot =>
-                        Signed.forAsyncKryo[IO, GlobalIncrementalSnapshot](firstIncrementalSnapshot, keyPair).flatMap {
+                      GlobalSnapshot.mkFirstIncrementalSnapshot[IO](hashedGenesis, hashSelect).flatMap { firstIncrementalSnapshot =>
+                        Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](firstIncrementalSnapshot, keyPair).flatMap {
                           signedFirstIncrementalSnapshot =>
                             storages.globalSnapshot.prepend(signedFirstIncrementalSnapshot, hashedGenesis.info) >>
                               services.collateral
