@@ -8,7 +8,7 @@ import org.tessellation.node.shared.domain.seedlist.snapshotOrdinalTimeline.Snap
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.trust._
 
-import com.comcast.ip4s.IpAddress
+import com.comcast.ip4s.{IpAddress, Port}
 import derevo.cats.eqv
 import derevo.derive
 import eu.timepit.refined.api.Refined
@@ -22,9 +22,11 @@ import fs2.data.csv._
 import fs2.data.csv.generic.semiauto.deriveRowDecoder
 import io.estatico.newtype.macros.newtype
 
+case class ConnectionInfo(ipAddress: IpAddress, p2pPort: Port)
+
 case class SeedlistEntry(
   peerId: PeerId,
-  ipAddress: Option[IpAddress],
+  connectionInfo: Option[ConnectionInfo],
   alias: Option[Alias],
   bias: Option[TrustValueRefined],
   ordinalTimeline: Option[SnapshotOrdinalTimeline]
@@ -49,21 +51,29 @@ object SeedlistEntry {
   }
 
   implicit val maybeIpAddressCellDecoder: CellDecoder[Option[IpAddress]] =
-    CellDecoder.stringDecoder.emap { value =>
-      IpAddress
-        .fromString(value)
-        .asRight
-    }
+    CellDecoder.fromString(IpAddress.fromString)
+
+  implicit val maybePortCellDecoder: CellDecoder[Option[Port]] =
+    CellDecoder.fromString(Port.fromString)
 
   implicit object SeedlistRowDecoder extends RowDecoder[SeedlistEntry] {
-
-    val decoder4Fields: RowDecoder[(PeerId, Option[IpAddress], Option[Alias], Option[TrustValueRefined])] =
-      deriveRowDecoder
 
     val decoder5Fields: RowDecoder[
       (
         PeerId,
         Option[IpAddress],
+        Option[Port],
+        Option[Alias],
+        Option[TrustValueRefined]
+      )
+    ] =
+      deriveRowDecoder
+
+    val decoder6Fields: RowDecoder[
+      (
+        PeerId,
+        Option[IpAddress],
+        Option[Port],
         Option[Alias],
         Option[TrustValueRefined],
         Option[SnapshotOrdinalTimeline]
@@ -77,17 +87,29 @@ object SeedlistEntry {
           CellDecoder[PeerId].apply(row.values.head).map {
             SeedlistEntry(_, none, none, none, none)
           }
-        case 4 =>
-          decoder4Fields(row).map {
-            case (peerId, maybeIpAddress, maybeAlias, maybeBias) =>
-              SeedlistEntry(peerId, maybeIpAddress, maybeAlias, maybeBias, none)
-          }
         case 5 =>
           decoder5Fields(row).map {
-            case (peerId, maybeIpAddress, maybeAlias, maybeBias, maybeOrdinalTimeline) =>
-              SeedlistEntry(peerId, maybeIpAddress, maybeAlias, maybeBias, maybeOrdinalTimeline)
+            case (peerId, maybeIpAddress, maybePort, maybeAlias, maybeBias) =>
+              SeedlistEntry(
+                peerId,
+                (maybeIpAddress, maybePort).mapN(ConnectionInfo),
+                maybeAlias,
+                maybeBias,
+                none
+              )
           }
-        case _ => Left(new DecoderError(s"Rows must have 1, 4, or 5 fields, but found ${row.values.size}"))
+        case 6 =>
+          decoder6Fields(row).map {
+            case (peerId, maybeIpAddress, maybePort, maybeAlias, maybeBias, maybeOrdinalTimeline) =>
+              SeedlistEntry(
+                peerId,
+                (maybeIpAddress, maybePort).mapN(ConnectionInfo),
+                maybeAlias,
+                maybeBias,
+                maybeOrdinalTimeline
+              )
+          }
+        case _ => Left(new DecoderError(s"Rows must have 1, 5, or 6 fields, but found ${row.values.size}"))
       }
   }
 
