@@ -84,7 +84,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Has
     SnapshotRoutes[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
       storages.globalSnapshot,
       storages.fullGlobalSnapshot.some,
-      "/global-snapshots"
+      "/global-snapshots",
+      storages.node
     )
   private val dagRoutes = DAGBlockRoutes[F](mkDagCell)
   private val walletRoutes = WalletRoutes[F, GlobalIncrementalSnapshot]("/dag", services.address)
