@@ -26,7 +26,7 @@ object SharedResources {
     selfId: PeerId
   ): Resource[F, SharedResources[F]] =
     MkHttpClient[F]
-      .newEmber(cfg.httpConfig.client)
+      .newEmber(cfg.http.client)
       .map(
         PeerAuthMiddleware.requestSignerMiddleware[F](_, privateKey, sessionStorage, selfId)
       )

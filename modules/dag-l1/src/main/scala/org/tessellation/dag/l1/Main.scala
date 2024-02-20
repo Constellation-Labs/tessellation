@@ -6,6 +6,7 @@ import cats.syntax.semigroupk._
 
 import org.tessellation.BuildInfo
 import org.tessellation.dag.l1.cli.method.{Run, RunInitialValidator, RunValidator}
+import org.tessellation.dag.l1.config.types._
 import org.tessellation.dag.l1.domain.snapshot.programs.DAGSnapshotProcessor
 import org.tessellation.dag.l1.http.p2p.P2PClient
 import org.tessellation.dag.l1.infrastructure.block.rumor.handler.blockRumorHandler
@@ -26,6 +27,11 @@ import org.tessellation.shared.{SharedKryoRegistrationIdRange, sharedKryoRegistr
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
 import eu.timepit.refined.boolean.Or
+import eu.timepit.refined.pureconfig._
+import pureconfig.ConfigSource
+import pureconfig.generic.auto._
+import pureconfig.module.catseffect.syntax._
+import pureconfig.module.enumeratum._
 
 object Main
     extends TessellationIOApp[Run](
@@ -44,9 +50,10 @@ object Main
   def run(method: Run, nodeShared: NodeShared[IO]): Resource[IO, Unit] = {
     import nodeShared._
 
-    val cfg = method.appConfig
-
     for {
+      cfgR <- ConfigSource.default.loadF[IO, AppConfigReader]().asResource
+      cfg = method.appConfig(cfgR, sharedConfig)
+
       queues <- Queues.make[IO](sharedQueues).asResource
       storages <- Storages
         .make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
@@ -66,7 +73,7 @@ object Main
       )
       maybeMajorityPeerIds <- getMajorityPeerIds[IO](
         nodeShared.prioritySeedlist,
-        method.nodeSharedConfig.priorityPeerIds,
+        cfg.priorityPeerIds,
         cfg.environment
       ).asResource
       services = Services.make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
@@ -88,26 +95,14 @@ object Main
         sharedServices.globalSnapshotContextFns
       )
       programs = Programs.make(sharedPrograms, p2pClient, storages, snapshotProcessor)
-      healthChecks <- HealthChecks
-        .make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
-          storages,
-          services,
-          programs,
-          p2pClient,
-          sharedResources.client,
-          sharedServices.session,
-          cfg.healthCheck,
-          nodeShared.nodeId
-        )
-        .asResource
 
       rumorHandler = RumorHandlers
-        .make[IO](storages.cluster, healthChecks.ping, services.localHealthcheck, sharedStorages.forkInfo)
+        .make[IO](storages.cluster, services.localHealthcheck, sharedStorages.forkInfo)
         .handlers <+>
         blockRumorHandler(queues.peerBlock)
 
       _ <- Daemons
-        .start(storages, services, healthChecks)
+        .start(storages, services)
         .asResource
 
       api = HttpApi
@@ -117,7 +112,6 @@ object Main
           keyPair.getPrivate,
           services,
           programs,
-          healthChecks,
           nodeShared.nodeId,
           TessellationVersion.unsafeFrom(BuildInfo.version),
           cfg.http

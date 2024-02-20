@@ -16,14 +16,10 @@ import org.tessellation.currency.l1.http.p2p.P2PClient
 import org.tessellation.currency.l1.modules._
 import org.tessellation.currency.l1.node.L1NodeContext
 import org.tessellation.currency.schema.currency._
+import org.tessellation.dag.l1.config.types._
 import org.tessellation.dag.l1.http.p2p.{P2PClient => DAGP2PClient}
 import org.tessellation.dag.l1.infrastructure.block.rumor.handler.blockRumorHandler
-import org.tessellation.dag.l1.modules.{
-  Daemons => DAGL1Daemons,
-  HealthChecks => DAGL1HealthChecks,
-  Queues => DAGL1Queues,
-  Validators => DAGL1Validators
-}
+import org.tessellation.dag.l1.modules.{Daemons => DAGL1Daemons, Queues => DAGL1Queues, Validators => DAGL1Validators}
 import org.tessellation.dag.l1.{DagL1KryoRegistrationIdRange, StateChannel, dagL1KryoRegistrar}
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.kryo.{KryoRegistrationId, MapRegistrationId}
@@ -40,8 +36,14 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.semver.{MetagraphVersion, TessellationVersion}
 
 import com.monovore.decline.Opts
+import eu.timepit.refined.auto._
 import eu.timepit.refined.boolean.Or
+import eu.timepit.refined.pureconfig._
 import fs2.Stream
+import pureconfig.ConfigSource
+import pureconfig.generic.auto._
+import pureconfig.module.catseffect.syntax._
+import pureconfig.module.enumeratum._
 
 abstract class CurrencyL1App(
   name: String,
@@ -68,9 +70,10 @@ abstract class CurrencyL1App(
   def run(method: Run, nodeShared: NodeShared[IO]): Resource[IO, Unit] = {
     import nodeShared._
 
-    val cfg = method.appConfig
-
     for {
+      cfgR <- ConfigSource.default.loadF[IO, AppConfigReader]().asResource
+      cfg = method.appConfig(cfgR, sharedConfig)
+
       dagL1Queues <- DAGL1Queues.make[IO](sharedQueues).asResource
       queues <- Queues.make[IO](dagL1Queues).asResource
       storages <- Storages
@@ -94,7 +97,7 @@ abstract class CurrencyL1App(
       )
       maybeMajorityPeerIds <- getMajorityPeerIds[IO](
         nodeShared.prioritySeedlist,
-        method.nodeSharedConfig.priorityPeerIds,
+        cfg.priorityPeerIds,
         cfg.environment
       ).asResource
       dataApplicationService <- dataApplication.sequence
@@ -130,26 +133,14 @@ abstract class CurrencyL1App(
           storages,
           snapshotProcessor
         )
-      healthChecks <- DAGL1HealthChecks
-        .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
-          storages,
-          services,
-          programs,
-          dagP2PClient,
-          sharedResources.client,
-          sharedServices.session,
-          cfg.healthCheck,
-          nodeShared.nodeId
-        )
-        .asResource
 
       rumorHandler = RumorHandlers
-        .make[IO](storages.cluster, healthChecks.ping, services.localHealthcheck, sharedStorages.forkInfo)
+        .make[IO](storages.cluster, services.localHealthcheck, sharedStorages.forkInfo)
         .handlers <+>
         blockRumorHandler[IO](queues.peerBlock)
 
       _ <- DAGL1Daemons
-        .start(storages, services, healthChecks)
+        .start(storages, services)
         .asResource
 
       implicit0(nodeContext: L1NodeContext[IO]) = L1NodeContext.make[IO](storages.lastGlobalSnapshot, storages.lastSnapshot)
@@ -162,7 +153,6 @@ abstract class CurrencyL1App(
           keyPair.getPrivate,
           services,
           programs,
-          healthChecks,
           nodeShared.nodeId,
           tessellationVersion,
           cfg.http,

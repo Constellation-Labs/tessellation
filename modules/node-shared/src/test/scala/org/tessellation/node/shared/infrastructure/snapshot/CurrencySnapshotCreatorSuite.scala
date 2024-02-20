@@ -7,18 +7,21 @@ import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.kryo._
 import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.node.shared.cli.CliMethod.snapshotSizeConfig
+import org.tessellation.node.shared.config.types.SnapshotSizeConfig
 import org.tessellation.node.shared.nodeSharedKryoRegistrar
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.security._
 import org.tessellation.security.signature.{Signed, signature}
 
+import eu.timepit.refined.auto._
 import org.scalacheck.Gen
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
 
 object CurrencySnapshotCreatorSuite extends MutableIOSuite with Checkers {
   type Res = (KryoSerializer[IO], Hasher[IO], SecurityProvider[IO])
+
+  val snapshotSizeConfig = SnapshotSizeConfig(296L, 512000L)
 
   def sharedResource: Resource[IO, Res] =
     for {

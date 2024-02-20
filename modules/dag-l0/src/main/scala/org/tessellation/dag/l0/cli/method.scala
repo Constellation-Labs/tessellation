@@ -2,22 +2,17 @@ package org.tessellation.dag.l0.cli
 
 import cats.syntax.all._
 
-import scala.concurrent.duration._
-
 import org.tessellation.dag.l0.config.types._
 import org.tessellation.dag.l0.infrastructure.statechannel.StateChannelAllowanceLists
 import org.tessellation.env._
 import org.tessellation.env.env._
 import org.tessellation.ext.decline.WithOpts
 import org.tessellation.ext.decline.decline._
-import org.tessellation.node.shared.cli.hashLogic.{lastKryoHashOrdinal, lastKryoHashOrdinalOpts}
 import org.tessellation.node.shared.cli.opts.{genesisPathOpts, trustRatingsPathOpts}
-import org.tessellation.node.shared.cli.{CliMethod, CollateralAmountOpts, snapshot}
+import org.tessellation.node.shared.cli.{CliMethod, CollateralAmountOpts}
 import org.tessellation.node.shared.config.types._
-import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.epoch.EpochProgress
-import org.tessellation.schema.node.NodeState
 import org.tessellation.security.hash.Hash
 
 import com.monovore.decline.Opts
@@ -26,66 +21,27 @@ import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 import fs2.io.file.Path
 
-import incremental._
-
 object method {
 
   sealed trait Run extends CliMethod {
-    val dbConfig: DBConfig
 
-    val snapshotConfig: SnapshotConfig
-
-    val appConfig: AppConfig = AppConfig(
-      environment = environment,
-      http = httpConfig,
-      db = dbConfig,
-      gossip = GossipConfig(
-        storage = RumorStorageConfig(
-          peerRumorsCapacity = 50L,
-          activeCommonRumorsCapacity = 20L,
-          seenCommonRumorsCapacity = 50L
-        ),
-        daemon = GossipDaemonConfig(
-          peerRound = GossipRoundConfig(
-            fanout = 1,
-            interval = 0.2.seconds,
-            maxConcurrentRounds = 8
-          ),
-          commonRound = GossipRoundConfig(
-            fanout = 1,
-            interval = 0.5.seconds,
-            maxConcurrentRounds = 4
-          )
-        )
-      ),
-      trust = TrustConfig(
-        TrustDaemonConfig(
-          10.minutes
-        )
-      ),
-      healthCheck = healthCheckConfig(false),
-      snapshot = snapshotConfig,
-      collateral = collateralConfig(environment, collateralAmount),
+    def appConfig(c: AppConfigReader, shared: SharedConfig): AppConfig = AppConfig(
+      trust = c.trust,
       rewards = RewardsConfig(),
-      stateChannelPullDelay = NonNegLong.MinValue,
-      stateChannelPurgeDelay = NonNegLong(5L),
-      peerDiscoveryDelay = PeerDiscoveryDelay(
-        checkPeersAttemptDelay = 1.minute,
-        checkPeersMaxDelay = 10.minutes,
-        additionalDiscoveryDelay = 0.minutes,
-        minPeers = 1
-      )
+      snapshot = c.snapshot,
+      stateChannel = c.stateChannel,
+      peerDiscovery = c.peerDiscovery,
+      incremental = c.incremental,
+      shared = shared
     )
+
+    val environment: AppEnvironment
 
     val stateChannelAllowanceLists = StateChannelAllowanceLists.get(environment)
 
     val l0SeedlistPath = seedlistPath
 
     val prioritySeedlistPath: Option[SeedListPath]
-
-    val stateAfterJoining: NodeState = NodeState.WaitingForDownload
-
-    val lastFullGlobalSnapshotOrdinal: SnapshotOrdinal
 
   }
 
@@ -96,18 +52,13 @@ object method {
     dbConfig: DBConfig,
     httpConfig: HttpConfig,
     environment: AppEnvironment,
-    snapshotConfig: SnapshotConfig,
     genesisPath: Path,
     seedlistPath: Option[SeedListPath],
     collateralAmount: Option[Amount],
     startingEpochProgress: EpochProgress,
     trustRatingsPath: Option[Path],
     prioritySeedlistPath: Option[SeedListPath]
-  ) extends Run {
-
-    val lastFullGlobalSnapshotOrdinal = SnapshotOrdinal.MinValue
-    val lastKryoHashOrdinal = SnapshotOrdinal.MinValue
-  }
+  ) extends Run {}
 
   object RunGenesis extends WithOpts[RunGenesis] {
 
@@ -124,7 +75,6 @@ object method {
         db.opts,
         http.opts,
         AppEnvironment.opts,
-        snapshot.opts,
         genesisPathOpts,
         SeedListPath.opts,
         CollateralAmountOpts.opts,
@@ -142,12 +92,9 @@ object method {
     dbConfig: DBConfig,
     httpConfig: HttpConfig,
     environment: AppEnvironment,
-    snapshotConfig: SnapshotConfig,
     seedlistPath: Option[SeedListPath],
     collateralAmount: Option[Amount],
     rollbackHash: Hash,
-    lastFullGlobalSnapshotOrdinal: SnapshotOrdinal,
-    lastKryoHashOrdinal: SnapshotOrdinal,
     trustRatingsPath: Option[Path],
     prioritySeedlistPath: Option[SeedListPath]
   ) extends Run
@@ -164,55 +111,12 @@ object method {
         db.opts,
         http.opts,
         AppEnvironment.opts,
-        snapshot.opts,
         SeedListPath.opts,
         CollateralAmountOpts.opts,
         rollbackHashOpts,
-        lastFullGlobalSnapshotOrdinalOpts,
-        lastKryoHashOrdinalOpts,
         trustRatingsPathOpts,
         SeedListPath.priorityOpts
-      ).mapN {
-        case (
-              storePath,
-              keyAlias,
-              password,
-              db,
-              http,
-              environment,
-              snapshot,
-              seedlistPath,
-              collateralAmount,
-              rollbackHash,
-              lastGlobalSnapshot,
-              lastKryoHash,
-              trustRatingsPath,
-              prioritySeedlistPath
-            ) =>
-          val lastGS =
-            (if (environment === AppEnvironment.Dev) lastGlobalSnapshot else lastFullGlobalSnapshot.get(environment))
-              .getOrElse(SnapshotOrdinal.MinValue)
-          val lastKH =
-            (if (environment === AppEnvironment.Dev) lastKryoHash else lastKryoHashOrdinal.get(environment))
-              .getOrElse(SnapshotOrdinal.MinValue)
-
-          RunRollback(
-            storePath,
-            keyAlias,
-            password,
-            db,
-            http,
-            environment,
-            snapshot,
-            seedlistPath,
-            collateralAmount,
-            rollbackHash,
-            lastGS,
-            lastKH,
-            trustRatingsPath,
-            prioritySeedlistPath
-          )
-      }
+      ).mapN(RunRollback.apply)
     }
   }
 
@@ -223,12 +127,9 @@ object method {
     dbConfig: DBConfig,
     httpConfig: HttpConfig,
     environment: AppEnvironment,
-    snapshotConfig: SnapshotConfig,
     seedlistPath: Option[SeedListPath],
     collateralAmount: Option[Amount],
     trustRatingsPath: Option[Path],
-    lastFullGlobalSnapshotOrdinal: SnapshotOrdinal,
-    lastKryoHashOrdinal: SnapshotOrdinal,
     prioritySeedlistPath: Option[SeedListPath]
   ) extends Run
 
@@ -242,51 +143,11 @@ object method {
         db.opts,
         http.opts,
         AppEnvironment.opts,
-        snapshot.opts,
         SeedListPath.opts,
         CollateralAmountOpts.opts,
         trustRatingsPathOpts,
-        lastFullGlobalSnapshotOrdinalOpts,
-        lastKryoHashOrdinalOpts,
         SeedListPath.priorityOpts
-      ).mapN {
-        case (
-              storePath,
-              keyAlias,
-              password,
-              db,
-              http,
-              environment,
-              snapshot,
-              seedlistPath,
-              collateralAmount,
-              trustRatingsPath,
-              lastGlobalSnapshot,
-              lastKryoHash,
-              prioritySeedlistPath
-            ) =>
-          val lastGS =
-            (if (environment === AppEnvironment.Dev) lastGlobalSnapshot else lastFullGlobalSnapshot.get(environment))
-              .getOrElse(SnapshotOrdinal.MinValue)
-          val lastKH = (if (environment === AppEnvironment.Dev) lastKryoHash else lastKryoHashOrdinal.get(environment))
-            .getOrElse(SnapshotOrdinal.MinValue)
-
-          RunValidator(
-            storePath,
-            keyAlias,
-            password,
-            db,
-            http,
-            environment,
-            snapshot,
-            seedlistPath,
-            collateralAmount,
-            trustRatingsPath,
-            lastGS,
-            lastKH,
-            prioritySeedlistPath
-          )
-      }
+      ).mapN(RunValidator.apply)
     }
   }
 

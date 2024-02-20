@@ -1,12 +1,11 @@
 package org.tessellation.dag.l0
 
 import cats.effect._
-import cats.syntax.applicative._
-import cats.syntax.applicativeError._
-import cats.syntax.semigroupk._
+import cats.syntax.all._
 
 import org.tessellation.BuildInfo
 import org.tessellation.dag.l0.cli.method._
+import org.tessellation.dag.l0.config.types._
 import org.tessellation.dag.l0.http.p2p.P2PClient
 import org.tessellation.dag.l0.infrastructure.snapshot.schema.{Finished, GlobalConsensusOutcome}
 import org.tessellation.dag.l0.infrastructure.trust.handler.{ordinalTrustHandler, trustHandler}
@@ -15,6 +14,7 @@ import org.tessellation.ext.cats.effect._
 import org.tessellation.ext.kryo._
 import org.tessellation.node.shared.app.{NodeShared, TessellationIOApp}
 import org.tessellation.node.shared.domain.collateral.OwnCollateralNotSatisfied
+import org.tessellation.node.shared.ext.pureconfig._
 import org.tessellation.node.shared.infrastructure.consensus._
 import org.tessellation.node.shared.infrastructure.consensus.trigger.EventTrigger
 import org.tessellation.node.shared.infrastructure.genesis.{GenesisFS => GenesisLoader}
@@ -25,12 +25,17 @@ import org.tessellation.node.shared.resources.MkHttpServer.ServerName
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.semver.TessellationVersion
-import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshot}
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshot, SnapshotOrdinal}
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
+import eu.timepit.refined.pureconfig._
+import pureconfig.ConfigSource
+import pureconfig.generic.auto._
+import pureconfig.module.catseffect.syntax._
+import pureconfig.module.enumeratum._
 
 object Main
     extends TessellationIOApp[Run](
@@ -50,19 +55,21 @@ object Main
   def run(method: Run, nodeShared: NodeShared[IO]): Resource[IO, Unit] = {
     import nodeShared._
 
-    val cfg = method.appConfig
-
     for {
+      cfgR <- ConfigSource.default.loadF[IO, AppConfigReader]().asResource
+      cfg = method.appConfig(cfgR, sharedConfig)
       queues <- Queues.make[IO](sharedQueues).asResource
+
       p2pClient = P2PClient.make[IO](sharedP2PClient, sharedResources.client, sharedServices.session)
       storages <- Storages
         .make[IO](
           sharedStorages,
-          method.nodeSharedConfig,
+          sharedConfig,
           nodeShared.seedlist,
           cfg.snapshot,
+          cfg.incremental,
           trustRatings,
-          cfg.environment,
+          sharedConfig.environment,
           hashSelect
         )
         .asResource
@@ -87,31 +94,19 @@ object Main
         services,
         keyPair,
         cfg,
-        method.lastFullGlobalSnapshotOrdinal,
+        cfg.incremental.lastFullGlobalSnapshotOrdinal.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
         p2pClient,
         sharedServices.globalSnapshotContextFns,
         hashSelect
       )
-      healthChecks <- HealthChecks
-        .make[IO](
-          storages,
-          services,
-          programs,
-          p2pClient,
-          sharedResources.client,
-          sharedServices.session,
-          cfg.healthCheck,
-          nodeShared.nodeId
-        )
-        .asResource
 
       rumorHandler = RumorHandlers
-        .make[IO](storages.cluster, healthChecks.ping, services.localHealthcheck, sharedStorages.forkInfo)
+        .make[IO](storages.cluster, services.localHealthcheck, sharedStorages.forkInfo)
         .handlers <+>
         trustHandler(storages.trust) <+> ordinalTrustHandler(storages.trust) <+> services.consensus.handler
 
       _ <- Daemons
-        .start(storages, services, programs, queues, healthChecks, nodeId, cfg)
+        .start(storages, services, programs, queues, nodeId, cfg)
         .asResource
 
       api = HttpApi
@@ -120,9 +115,8 @@ object Main
           queues,
           services,
           programs,
-          healthChecks,
           keyPair.getPrivate,
-          cfg.environment,
+          sharedConfig.environment,
           nodeShared.nodeId,
           TessellationVersion.unsafeFrom(BuildInfo.version),
           cfg.http
@@ -141,7 +135,7 @@ object Main
         services.localHealthcheck,
         nodeId,
         generation,
-        cfg.gossip.daemon,
+        sharedConfig.gossip.daemon,
         services.collateral
       )
 

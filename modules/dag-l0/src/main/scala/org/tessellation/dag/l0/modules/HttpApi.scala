@@ -16,7 +16,6 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.HttpConfig
 import org.tessellation.node.shared.http.p2p.middlewares.{PeerAuthMiddleware, `X-Id-Middleware`}
 import org.tessellation.node.shared.http.routes._
-import org.tessellation.node.shared.infrastructure.healthcheck.ping.PingHealthCheckRoutes
 import org.tessellation.node.shared.infrastructure.metrics.Metrics
 import org.tessellation.schema._
 import org.tessellation.schema.peer.PeerId
@@ -26,7 +25,6 @@ import org.tessellation.security.{Hasher, SecurityProvider}
 
 import eu.timepit.refined.auto._
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
-import org.http4s.server.Router
 import org.http4s.server.middleware.{CORS, RequestLogger, ResponseLogger}
 import org.http4s.{HttpApp, HttpRoutes}
 
@@ -37,7 +35,6 @@ object HttpApi {
     queues: Queues[F],
     services: Services[F],
     programs: Programs[F],
-    healthchecks: HealthChecks[F],
     privateKey: PrivateKey,
     environment: AppEnvironment,
     selfId: PeerId,
@@ -49,7 +46,6 @@ object HttpApi {
       queues,
       services,
       programs,
-      healthchecks,
       privateKey,
       environment,
       selfId,
@@ -63,7 +59,6 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Has
   queues: Queues[F],
   services: Services[F],
   programs: Programs[F],
-  healthchecks: HealthChecks[F],
   privateKey: PrivateKey,
   environment: AppEnvironment,
   selfId: PeerId,
@@ -94,12 +89,6 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Has
   private val consensusInfoRoutes =
     new ConsensusInfoRoutes[F, GlobalSnapshotKey, GlobalConsensusOutcome](services.cluster, services.consensus.storage, selfId)
   private val consensusRoutes = services.consensus.routes.p2pRoutes
-
-  private val healthcheckP2PRoutes = {
-    val pingHealthcheckRoutes = PingHealthCheckRoutes[F](healthchecks.ping)
-
-    Router("healthcheck" -> pingHealthcheckRoutes.p2pRoutes)
-  }
 
   private val debugRoutes = DebugRoutes[F](
     storages.cluster,
@@ -144,7 +133,6 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Has
                 gossipRoutes.p2pRoutes <+>
                 trustRoutes.p2pRoutes <+>
                 snapshotRoutes.p2pRoutes <+>
-                healthcheckP2PRoutes <+>
                 consensusRoutes
             )
           )

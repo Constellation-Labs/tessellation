@@ -20,7 +20,8 @@ object Loader {
 
   def make[F[_]: Async]: Loader[F] =
     (path: SeedListPath) =>
-      Files[F]
+      Files
+        .forAsync[F]
         .readAll(path.coerce)
         .through(text.utf8.decode)
         .through(

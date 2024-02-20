@@ -24,7 +24,7 @@ object SharedStorages {
       clusterStorage <- ClusterStorage.make[F](clusterId)
       nodeStorage <- NodeStorage.make[F]
       sessionStorage <- SessionStorage.make[F]
-      rumorStorage <- RumorStorage.make[F](cfg.gossipConfig.storage)
+      rumorStorage <- RumorStorage.make[F](cfg.gossip.storage)
       forkInfoStorage <- ForkInfoStorage.make[F](cfg.forkInfoStorage)
     } yield
       new SharedStorages[F](

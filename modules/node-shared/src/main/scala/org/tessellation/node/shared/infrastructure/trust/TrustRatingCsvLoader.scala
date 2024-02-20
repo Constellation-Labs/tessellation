@@ -18,7 +18,8 @@ object TrustRatingCsvLoader {
 
   def make[F[_]: Async]: TrustRatingCsvLoader[F] =
     (path: Path) =>
-      Files[F]
+      Files
+        .forAsync[F]
         .readAll(path)
         .through(text.utf8.decode)
         .through(
