@@ -16,18 +16,38 @@ import fs2.io.file.Path
 
 object types {
 
+  case class SharedConfigReader(
+    gossip: GossipConfig,
+    leavingDelay: FiniteDuration,
+    stateAfterJoining: NodeState,
+    collateral: Option[CollateralConfig],
+    trust: SharedTrustConfig,
+    snapshot: SharedSnapshotConfig,
+    forkInfoStorage: ForkInfoStorageConfig,
+    priorityPeerIds: Map[AppEnvironment, NonEmptySet[PeerId]],
+    lastKryoHashOrdinal: Map[AppEnvironment, SnapshotOrdinal]
+  )
+
   case class SharedConfig(
     environment: AppEnvironment,
-    gossipConfig: GossipConfig,
-    httpConfig: HttpConfig,
+    gossip: GossipConfig,
+    http: HttpConfig,
     leavingDelay: FiniteDuration,
     stateAfterJoining: NodeState,
     collateral: CollateralConfig,
     trustStorage: TrustStorageConfig,
     priorityPeerIds: Option[NonEmptySet[PeerId]],
-    snapshotSizeConfig: SnapshotSizeConfig,
+    snapshotSize: SnapshotSizeConfig,
     forkInfoStorage: ForkInfoStorageConfig,
-    lastKryoHashOrdinal: SnapshotOrdinal
+    lastKryoHashOrdinal: Map[AppEnvironment, SnapshotOrdinal]
+  )
+
+  case class SharedTrustConfig(
+    storage: TrustStorageConfig
+  )
+
+  case class SharedSnapshotConfig(
+    size: SnapshotSizeConfig
   )
 
   case class SnapshotSizeConfig(
@@ -71,11 +91,11 @@ object types {
 
   case class SnapshotConfig(
     consensus: ConsensusConfig,
-    snapshotPath: Path,
-    incrementalTmpSnapshotPath: Path,
-    incrementalPersistedSnapshotPath: Path,
     inMemoryCapacity: NonNegLong,
-    snapshotInfoPath: Path
+    snapshotPath: Path,
+    snapshotInfoPath: Path,
+    incrementalTmpSnapshotPath: Path,
+    incrementalPersistedSnapshotPath: Path
   )
 
   case class HttpClientConfig(
@@ -95,20 +115,6 @@ object types {
     publicHttp: HttpServerConfig,
     p2pHttp: HttpServerConfig,
     cliHttp: HttpServerConfig
-  )
-
-  case class HealthCheckConfig(
-    ping: PingHealthCheckConfig,
-    removeUnresponsiveParallelPeersAfter: FiniteDuration,
-    requestProposalsAfter: FiniteDuration
-  )
-
-  case class PingHealthCheckConfig(
-    enabled: Boolean,
-    concurrentChecks: PosInt,
-    defaultCheckTimeout: FiniteDuration,
-    defaultCheckAttempts: PosInt,
-    ensureCheckInterval: FiniteDuration
   )
 
   case class CollateralConfig(

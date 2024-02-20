@@ -11,7 +11,6 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.HttpConfig
 import org.tessellation.node.shared.http.p2p.middlewares.{PeerAuthMiddleware, `X-Id-Middleware`}
 import org.tessellation.node.shared.http.routes._
-import org.tessellation.node.shared.infrastructure.healthcheck.ping.PingHealthCheckRoutes
 import org.tessellation.node.shared.infrastructure.metrics.Metrics
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.semver.TessellationVersion
@@ -19,7 +18,6 @@ import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.security.{Hasher, SecurityProvider}
 
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
-import org.http4s.server.Router
 import org.http4s.server.middleware.{CORS, RequestLogger, ResponseLogger}
 import org.http4s.{HttpApp, HttpRoutes}
 
@@ -36,12 +34,11 @@ object HttpApi {
     privateKey: PrivateKey,
     services: Services[F, P, S, SI],
     programs: Programs[F, P, S, SI],
-    healthchecks: HealthChecks[F],
     selfId: PeerId,
     nodeVersion: TessellationVersion,
     httpCfg: HttpConfig
   ): HttpApi[F, P, S, SI] =
-    new HttpApi[F, P, S, SI](storages, queues, privateKey, services, programs, healthchecks, selfId, nodeVersion, httpCfg) {}
+    new HttpApi[F, P, S, SI](storages, queues, privateKey, services, programs, selfId, nodeVersion, httpCfg) {}
 }
 
 sealed abstract class HttpApi[
@@ -55,7 +52,6 @@ sealed abstract class HttpApi[
   privateKey: PrivateKey,
   services: Services[F, P, S, SI],
   programs: Programs[F, P, S, SI],
-  healthchecks: HealthChecks[F],
   selfId: PeerId,
   nodeVersion: TessellationVersion,
   httpCfg: HttpConfig
@@ -66,11 +62,6 @@ sealed abstract class HttpApi[
   private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip)
   private val dagRoutes = Routes[F](services.transaction, storages.transaction, storages.l0Cluster, queues.peerBlockConsensusInput)
   private val nodeRoutes = NodeRoutes[F](storages.node, storages.session, storages.cluster, nodeVersion, httpCfg, selfId)
-  private val healthcheckP2PRoutes = {
-    val pingHealthcheckRoutes = PingHealthCheckRoutes[F](healthchecks.ping)
-
-    Router("healthcheck" -> pingHealthcheckRoutes.p2pRoutes)
-  }
 
   private val metricRoutes = MetricRoutes[F]().publicRoutes
   private val targetRoutes = TargetRoutes[F](services.cluster).publicRoutes
@@ -95,8 +86,7 @@ sealed abstract class HttpApi[
             clusterRoutes.p2pRoutes <+>
               nodeRoutes.p2pRoutes <+>
               gossipRoutes.p2pRoutes <+>
-              dagRoutes.p2pRoutes <+>
-              healthcheckP2PRoutes
+              dagRoutes.p2pRoutes
           )
         )
     )

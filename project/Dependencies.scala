@@ -31,6 +31,7 @@ object Dependencies {
     val monocle = "3.1.0"
     val mapref = "0.2.0-M2"
     val newtype = "0.4.4"
+    val pureconfig = "0.17.5"
     val refined = "0.10.1"
     val redis4cats = "1.3.0"
     val skunk = "0.3.2"
@@ -69,6 +70,8 @@ object Dependencies {
     def bouncyCastle(artifact: String): ModuleID = "org.bouncycastle" % artifact % V.bouncyCastle
 
     def jawn(artifact: String): ModuleID = "org.typelevel" %% artifact % V.jawnVersion
+
+    def pureconfig(artifact: String): ModuleID = "com.github.pureconfig" %% s"pureconfig-$artifact" % V.pureconfig
 
     val bc = bouncyCastle("bcprov-jdk15on")
     val bcExtensions = bouncyCastle("bcpkix-jdk15on")
@@ -148,6 +151,7 @@ object Dependencies {
 
     val refinedCore = "eu.timepit" %% "refined" % V.refined
     val refinedCats = "eu.timepit" %% "refined-cats" % V.refined
+    val refinedPureconfig = "eu.timepit" %% "refined-pureconfig" % V.refined
 
     val log4cats = "org.typelevel" %% "log4cats-slf4j" % V.log4cats
     val newtype = "io.estatico" %% "newtype" % V.newtype
@@ -166,6 +170,13 @@ object Dependencies {
     val shapeless = "com.chuusai" %% "shapeless" % V.shapeless
 
     val mapref = "io.chrisdavenport" %% "mapref" % V.mapref
+
+    val pureconfigCore = "com.github.pureconfig" %% "pureconfig" % V.pureconfig
+    val pureconfigCats = pureconfig("cats")
+    val pureconfigCatsEffect = pureconfig("cats-effect")
+    val pureconfigEnumeratum = pureconfig("enumeratum")
+    val pureconfigHttp4s = pureconfig("http4s")
+    val pureconfigIp4s = pureconfig("ip4s")
 
     // Runtime
     val logback = "ch.qos.logback" % "logback-classic" % V.logback

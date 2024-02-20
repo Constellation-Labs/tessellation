@@ -11,12 +11,10 @@ import org.tessellation.currency.dataApplication.{BaseDataApplicationL1Service, 
 import org.tessellation.currency.l1.http.DataApplicationRoutes
 import org.tessellation.currency.schema.currency._
 import org.tessellation.dag.l1.http.{Routes => DAGRoutes}
-import org.tessellation.dag.l1.modules.HealthChecks
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.HttpConfig
 import org.tessellation.node.shared.http.p2p.middlewares.{PeerAuthMiddleware, `X-Id-Middleware`}
 import org.tessellation.node.shared.http.routes._
-import org.tessellation.node.shared.infrastructure.healthcheck.ping.PingHealthCheckRoutes
 import org.tessellation.node.shared.infrastructure.metrics.Metrics
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.semver.{MetagraphVersion, TessellationVersion}
@@ -24,7 +22,6 @@ import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.security.{Hasher, SecurityProvider}
 
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
-import org.http4s.server.Router
 import org.http4s.server.middleware.{CORS, RequestLogger, ResponseLogger}
 import org.http4s.{HttpApp, HttpRoutes}
 
@@ -57,7 +54,6 @@ object HttpApi {
       CurrencyIncrementalSnapshot,
       CurrencySnapshotInfo
     ],
-    healthchecks: HealthChecks[F],
     selfId: PeerId,
     nodeVersion: TessellationVersion,
     httpCfg: HttpConfig,
@@ -70,7 +66,6 @@ object HttpApi {
       privateKey,
       services,
       programs,
-      healthchecks,
       selfId,
       nodeVersion,
       httpCfg,
@@ -87,7 +82,6 @@ sealed abstract class HttpApi[
   privateKey: PrivateKey,
   services: Services[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
   programs: Programs[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
-  healthchecks: HealthChecks[F],
   selfId: PeerId,
   nodeVersion: TessellationVersion,
   httpCfg: HttpConfig,
@@ -111,11 +105,6 @@ sealed abstract class HttpApi[
   private val currencyRoutes =
     DAGRoutes[F](services.transaction, storages.transaction, storages.l0Cluster, queues.peerBlockConsensusInput)
   private val nodeRoutes = NodeRoutes[F](storages.node, storages.session, storages.cluster, nodeVersion, httpCfg, selfId)
-  private val healthcheckP2PRoutes = {
-    val pingHealthcheckRoutes = PingHealthCheckRoutes[F](healthchecks.ping)
-
-    Router("healthcheck" -> pingHealthcheckRoutes.p2pRoutes)
-  }
 
   private val metricRoutes = MetricRoutes[F]().publicRoutes
   private val targetRoutes = TargetRoutes[F](services.cluster).publicRoutes
@@ -146,8 +135,7 @@ sealed abstract class HttpApi[
               nodeRoutes.p2pRoutes <+>
               gossipRoutes.p2pRoutes <+>
               routes.map(_.p2pRoutes).getOrElse(currencyRoutes.p2pRoutes) <+>
-              metagraphNodeRoutes.map(_.p2pRoutes).getOrElse(HttpRoutes.empty) <+>
-              healthcheckP2PRoutes
+              metagraphNodeRoutes.map(_.p2pRoutes).getOrElse(HttpRoutes.empty)
           )
         )
     )

@@ -4,7 +4,7 @@ import cats.effect.Async
 import cats.effect.std.Supervisor
 import cats.syntax.all._
 
-import org.tessellation.dag.l0.cli.incremental
+import org.tessellation.dag.l0.config.types.IncrementalConfig
 import org.tessellation.dag.l0.domain.snapshot.storages.SnapshotDownloadStorage
 import org.tessellation.dag.l0.infrastructure.snapshot.SnapshotDownloadStorage
 import org.tessellation.dag.l0.infrastructure.trust.storage.TrustStorage
@@ -36,6 +36,7 @@ object Storages {
     sharedConfig: SharedConfig,
     seedlist: Option[Set[SeedlistEntry]],
     snapshotConfig: SnapshotConfig,
+    incrementalConfig: IncrementalConfig,
     trustUpdates: Option[PeerObservationAdjustmentUpdateBatch],
     environment: AppEnvironment,
     hashSelect: HashSelect
@@ -59,7 +60,7 @@ object Storages {
         incrementalGlobalSnapshotPersistedLocalFileSystemStorage,
         incrementalGlobalSnapshotInfoLocalFileSystemStorage,
         snapshotConfig.inMemoryCapacity,
-        incremental.lastFullGlobalSnapshot.getOrElse(environment, SnapshotOrdinal.MinValue)
+        incrementalConfig.lastFullGlobalSnapshotOrdinal.getOrElse(environment, SnapshotOrdinal.MinValue)
       )
       snapshotDownloadStorage = SnapshotDownloadStorage
         .make[F](

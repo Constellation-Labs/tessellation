@@ -8,6 +8,7 @@ import scala.concurrent.duration.FiniteDuration
 import org.tessellation.env.AppEnvironment
 import org.tessellation.node.shared.config.types._
 import org.tessellation.node.shared.domain.transaction.TransactionValidator.stardustPrimary
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.epoch.EpochProgress
@@ -22,19 +23,41 @@ import io.estatico.newtype.macros.newtype
 import types.RewardsConfig._
 
 object types {
-  case class AppConfig(
-    environment: AppEnvironment,
-    http: HttpConfig,
-    db: DBConfig,
-    gossip: GossipConfig,
+  case class AppConfigReader(
     trust: TrustConfig,
-    healthCheck: HealthCheckConfig,
     snapshot: SnapshotConfig,
-    collateral: CollateralConfig,
+    stateChannel: StateChannelConfig,
+    peerDiscovery: PeerDiscoveryConfig,
+    incremental: IncrementalConfig
+  )
+
+  case class AppConfig(
+    trust: TrustConfig,
+    snapshot: SnapshotConfig,
     rewards: RewardsConfig,
-    stateChannelPullDelay: NonNegLong,
-    stateChannelPurgeDelay: NonNegLong,
-    peerDiscoveryDelay: PeerDiscoveryDelay
+    stateChannel: StateChannelConfig,
+    peerDiscovery: PeerDiscoveryConfig,
+    incremental: IncrementalConfig,
+    shared: SharedConfig
+  ) {
+    val environment = shared.environment
+    val gossip = shared.gossip
+    val http = shared.http
+    val snapshotSize = shared.snapshotSize
+    val collateral = shared.collateral
+  }
+
+  case class IncrementalConfig(
+    lastFullGlobalSnapshotOrdinal: Map[AppEnvironment, SnapshotOrdinal]
+  )
+
+  case class StateChannelConfig(
+    pullDelay: NonNegLong,
+    purgeDelay: NonNegLong
+  )
+
+  case class PeerDiscoveryConfig(
+    delay: PeerDiscoveryDelay
   )
 
   case class DBConfig(

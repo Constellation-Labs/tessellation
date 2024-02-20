@@ -205,8 +205,9 @@ object Main
   def applyDelay[F[_]: Temporal, A](delay: Option[FiniteDuration]): Pipe[F, A, A] =
     in => delay.map(in.spaced(_)).getOrElse(in)
 
-  def loadKeys[F[_]: Files: Async: SecurityProvider](opts: LoadedWallets): F[List[KeyPair]] =
-    Files[F]
+  def loadKeys[F[_]: Async: SecurityProvider](opts: LoadedWallets): F[List[KeyPair]] =
+    Files
+      .forAsync[F]
       .walk(Path.fromNioPath(opts.walletsPath), 1, followLinks = false)
       .filter(_.extName === ".p12")
       .evalMap { keyFile =>
@@ -235,7 +236,7 @@ object Main
       .map(GenesisCSVAccount(_, 100000000L))
       .through(encodeWithoutHeaders[GenesisCSVAccount]())
       .through(text.utf8.encode)
-      .through(Files[F].writeAll(Path.fromNioPath(genesisPath)))
+      .through(Files.forAsync[F].writeAll(Path.fromNioPath(genesisPath)))
       .compile
       .drain
   }

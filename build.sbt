@@ -210,6 +210,12 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.refinedCore,
       Libraries.refinedCats,
       Libraries.refinedScalacheck,
+      Libraries.pureconfigCore,
+      Libraries.pureconfigCats,
+      Libraries.pureconfigEnumeratum,
+      Libraries.pureconfigHttp4s,
+      Libraries.pureconfigIp4s,
+      Libraries.refinedPureconfig,
       Libraries.http4sCore,
       Libraries.http4sDsl,
       Libraries.http4sServer,
@@ -297,6 +303,13 @@ lazy val nodeShared = (project in file("modules/node-shared"))
       Libraries.logstashLogbackEncoder % Runtime,
       Libraries.log4cats,
       Libraries.micrometerPrometheusRegistry,
+      Libraries.pureconfigCore,
+      Libraries.pureconfigCats,
+      Libraries.pureconfigCatsEffect,
+      Libraries.pureconfigEnumeratum,
+      Libraries.pureconfigHttp4s,
+      Libraries.pureconfigIp4s,
+      Libraries.refinedPureconfig,
       Libraries.shapeless
     )
   )

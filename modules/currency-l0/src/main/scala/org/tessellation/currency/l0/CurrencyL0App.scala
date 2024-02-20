@@ -6,6 +6,7 @@ import cats.syntax.all._
 import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
 import org.tessellation.currency.l0.cli.method
 import org.tessellation.currency.l0.cli.method._
+import org.tessellation.currency.l0.config.types._
 import org.tessellation.currency.l0.http.p2p.P2PClient
 import org.tessellation.currency.l0.modules._
 import org.tessellation.currency.l0.node.L0NodeContext
@@ -14,6 +15,7 @@ import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.kryo._
 import org.tessellation.node.shared.app.{NodeShared, TessellationIOApp, getMajorityPeerIds}
 import org.tessellation.node.shared.domain.rewards.Rewards
+import org.tessellation.node.shared.ext.pureconfig._
 import org.tessellation.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
 import org.tessellation.node.shared.resources.MkHttpServer
 import org.tessellation.node.shared.resources.MkHttpServer.ServerName
@@ -25,6 +27,12 @@ import org.tessellation.schema.semver.{MetagraphVersion, TessellationVersion}
 import org.tessellation.security.SecurityProvider
 
 import com.monovore.decline.Opts
+import eu.timepit.refined.auto._
+import eu.timepit.refined.pureconfig._
+import pureconfig.ConfigSource
+import pureconfig.generic.auto._
+import pureconfig.module.catseffect.syntax._
+import pureconfig.module.enumeratum._
 
 abstract class CurrencyL0App(
   name: String,
@@ -55,9 +63,10 @@ abstract class CurrencyL0App(
   def run(method: Run, nodeShared: NodeShared[IO]): Resource[IO, Unit] = {
     import nodeShared._
 
-    val cfg = method.appConfig
-
     for {
+      cfgR <- ConfigSource.default.loadF[IO, AppConfigReader]().asResource
+      cfg = method.appConfig(cfgR, sharedConfig)
+
       dataApplicationService <- dataApplication.sequence
 
       queues <- Queues.make[IO](sharedQueues).asResource
@@ -67,7 +76,7 @@ abstract class CurrencyL0App(
       implicit0(nodeContext: L0NodeContext[IO]) = L0NodeContext.make[IO](storages.snapshot)
       maybeMajorityPeerIds <- getMajorityPeerIds[IO](
         nodeShared.prioritySeedlist,
-        method.nodeSharedConfig.priorityPeerIds,
+        sharedConfig.priorityPeerIds,
         cfg.environment
       ).asResource
       services <- Services
@@ -101,24 +110,12 @@ abstract class CurrencyL0App(
         dataApplicationService.zip(storages.calculatedStateStorage),
         hashSelect
       )
-      healthChecks <- HealthChecks
-        .make[IO](
-          storages,
-          services,
-          programs,
-          p2pClient,
-          sharedResources.client,
-          sharedServices.session,
-          cfg.healthCheck,
-          nodeShared.nodeId
-        )
-        .asResource
       rumorHandler = RumorHandlers
-        .make[IO](storages.cluster, healthChecks.ping, services.localHealthcheck, sharedStorages.forkInfo)
+        .make[IO](storages.cluster, services.localHealthcheck, sharedStorages.forkInfo)
         .handlers <+>
         services.consensus.handler
       _ <- Daemons
-        .start(storages, services, programs, queues, healthChecks, services.dataApplication, cfg)
+        .start(storages, services, programs, queues, services.dataApplication, cfg)
         .asResource
 
       api = HttpApi
@@ -127,7 +124,6 @@ abstract class CurrencyL0App(
           queues,
           services,
           programs,
-          healthChecks,
           keyPair.getPrivate,
           cfg.environment,
           nodeShared.nodeId,

@@ -82,7 +82,7 @@ object Services {
       creator = CurrencySnapshotCreator.make[F](
         sharedServices.currencySnapshotAcceptanceManager,
         dataApplicationAcceptanceManager,
-        cfg.snapshotSizeConfig,
+        cfg.snapshotSize,
         sharedServices.currencyEventsCutter
       )
 

@@ -10,8 +10,6 @@ import org.tessellation.node.shared.domain.fork.ForkInfoStorage
 import org.tessellation.node.shared.domain.healthcheck.LocalHealthcheck
 import org.tessellation.node.shared.infrastructure.cluster.rumor.handler.nodeStateHandler
 import org.tessellation.node.shared.infrastructure.fork.ForkInfoHandler
-import org.tessellation.node.shared.infrastructure.healthcheck.ping.PingHealthCheckConsensus
-import org.tessellation.node.shared.infrastructure.healthcheck.ping.handler.pingProposalHandler
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -19,21 +17,18 @@ object RumorHandlers {
 
   def make[F[_]: Async](
     clusterStorage: ClusterStorage[F],
-    pingHealthCheck: PingHealthCheckConsensus[F],
     localHealthcheck: LocalHealthcheck[F],
     forkInfoStorage: ForkInfoStorage[F]
   ): RumorHandlers[F] =
-    new RumorHandlers[F](clusterStorage, pingHealthCheck, localHealthcheck, forkInfoStorage) {}
+    new RumorHandlers[F](clusterStorage, localHealthcheck, forkInfoStorage) {}
 }
 
 sealed abstract class RumorHandlers[F[_]: Async] private (
   clusterStorage: ClusterStorage[F],
-  pingHealthCheck: PingHealthCheckConsensus[F],
   localHealthcheck: LocalHealthcheck[F],
   forkInfoStorage: ForkInfoStorage[F]
 ) {
   private val nodeState = nodeStateHandler(clusterStorage, localHealthcheck)
-  private val pingProposal = pingProposalHandler(pingHealthCheck)
   private val forkInfo = ForkInfoHandler.make(forkInfoStorage)
 
   private val debug: RumorHandler[F] = {
@@ -54,5 +49,5 @@ sealed abstract class RumorHandlers[F[_]: Async] private (
     strHandler <+> optIntHandler
   }
 
-  val handlers: RumorHandler[F] = nodeState <+> pingProposal <+> debug <+> forkInfo
+  val handlers: RumorHandler[F] = nodeState <+> debug <+> forkInfo
 }

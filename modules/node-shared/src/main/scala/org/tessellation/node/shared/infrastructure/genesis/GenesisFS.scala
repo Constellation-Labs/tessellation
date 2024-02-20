@@ -23,18 +23,19 @@ object GenesisFS {
     def write(genesis: Signed[S], identifier: Address, path: Path): F[Unit] = {
       val writeGenesis = Stream
         .evalSeq(genesis.toBinaryF.map(_.toSeq))
-        .through(Files[F].writeAll(path / "genesis.snapshot"))
+        .through(Files.forAsync[F].writeAll(path / "genesis.snapshot"))
 
       val writeIdentifier = Stream
         .emit(identifier.value.value)
         .through(text.utf8.encode)
-        .through(Files[F].writeAll(path / "genesis.address"))
+        .through(Files.forAsync[F].writeAll(path / "genesis.address"))
 
       writeGenesis.merge(writeIdentifier).compile.drain
     }
 
     def loadBalances(path: Path): F[Set[types.GenesisAccount]] =
-      Files[F]
+      Files
+        .forAsync[F]
         .readAll(path)
         .through(text.utf8.decode)
         .through(
@@ -48,7 +49,8 @@ object GenesisFS {
         .map(_.toSet)
 
     def loadSignedGenesis(path: Path): F[Signed[S]] =
-      Files[F]
+      Files
+        .forAsync[F]
         .readAll(path)
         .compile
         .toList

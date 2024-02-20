@@ -55,7 +55,7 @@ object SharedServices {
     val cluster = Cluster
       .make[F](
         cfg.leavingDelay,
-        cfg.httpConfig,
+        cfg.http,
         nodeId,
         keyPair,
         storages.cluster,
@@ -82,7 +82,7 @@ object SharedServices {
         CurrencySnapshotCreator.make[F](
           currencySnapshotAcceptanceManager,
           None,
-          cfg.snapshotSizeConfig,
+          cfg.snapshotSize,
           currencyEventsCutter
         ),
         validators.signedValidator,

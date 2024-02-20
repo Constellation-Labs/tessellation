@@ -5,7 +5,6 @@ import cats.effect.std.Supervisor
 import cats.syntax.functor._
 import cats.syntax.traverse._
 
-import org.tessellation.dag.l1.infrastructure.healthcheck.HealthCheckDaemon
 import org.tessellation.node.shared.domain.Daemon
 import org.tessellation.node.shared.infrastructure.cluster.daemon.NodeStateDaemon
 import org.tessellation.node.shared.infrastructure.collateral.daemon.CollateralDaemon
@@ -20,13 +19,11 @@ object Daemons {
     SI <: SnapshotInfo[P]
   ](
     storages: Storages[F, P, S, SI],
-    services: Services[F, P, S, SI],
-    healthChecks: HealthChecks[F]
+    services: Services[F, P, S, SI]
   ): F[Unit] =
     List[Daemon[F]](
       NodeStateDaemon.make(storages.node, services.gossip),
-      CollateralDaemon.make(services.collateral, storages.lastSnapshot, storages.cluster),
-      HealthCheckDaemon.make(healthChecks)
+      CollateralDaemon.make(services.collateral, storages.lastSnapshot, storages.cluster)
     ).traverse(_.start).void
 
 }

@@ -6,6 +6,7 @@ import cats.effect.std.{Random, Supervisor}
 
 import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.node.shared.config.types.SharedConfig
 import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
 import org.tessellation.node.shared.http.p2p.SharedP2PClient
 import org.tessellation.node.shared.infrastructure.metrics.Metrics
@@ -32,6 +33,8 @@ trait NodeShared[F[_]] {
   val generation: Generation
   val seedlist: Option[Set[SeedlistEntry]]
   val trustRatings: Option[PeerObservationAdjustmentUpdateBatch]
+
+  val sharedConfig: SharedConfig
 
   val sharedResources: SharedResources[F]
   val sharedP2PClient: SharedP2PClient[F]
