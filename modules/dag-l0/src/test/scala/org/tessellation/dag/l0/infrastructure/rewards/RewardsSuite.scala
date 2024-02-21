@@ -123,7 +123,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
       .map { case (_, reward) => reward }
       .getOrElse(Amount.empty)
 
-  test("event trigger reward transactions sum up to the total fee") { res =>
+  test("event trigger reward transactions sum up to 0 indicating fees getting burned") { res =>
     implicit val (h, sp, makeIdFn) = res
 
     val gen = for {
@@ -135,7 +135,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
       case (snapshot, txs) =>
         for {
           rewards <- makeRewards(config).pure[F]
-          expectedSum = txs.toList.map(_.fee.value.toLong).sum
+          expectedSum = 0L
           rewardTxs <- rewards.distribute(snapshot, SortedMap.empty, txs, EventTrigger, Set.empty)
           sum = rewardTxs.toList.map(_.amount.value.toLong).sum
         } yield expect(sum === expectedSum)
@@ -182,7 +182,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
     }
   }
 
-  test("time trigger reward transactions include fees from transactions") { res =>
+  test("time trigger reward transactions don't include burned fees") { res =>
     implicit val (h, sp, makeIdFn) = res
 
     val gen = for {
@@ -198,7 +198,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
           rewardTransactions <- rewards.distribute(lastSnapshot, SortedMap.empty, txs, TimeTrigger, Set.empty)
           rewardsSum = rewardTransactions.toList.map(_.amount.value.toLong).sum
           expectedMintedSum = getAmountByEpoch(epochProgress).value.toLong
-          expectedFeeSum = txs.toList.map(_.fee.value.toLong).sum
+          expectedFeeSum = 0L
         } yield expect(rewardsSum == expectedMintedSum + expectedFeeSum)
     }
   }

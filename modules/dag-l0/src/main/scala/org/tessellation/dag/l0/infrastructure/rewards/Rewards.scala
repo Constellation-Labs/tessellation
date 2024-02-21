@@ -17,7 +17,6 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import org.tessellation.currency.dataApplication.DataCalculatedState
 import org.tessellation.dag.l0.config.types.RewardsConfig
 import org.tessellation.dag.l0.infrastructure.snapshot.GlobalSnapshotEvent
-import org.tessellation.ext.refined._
 import org.tessellation.node.shared.domain.rewards.Rewards
 import org.tessellation.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import org.tessellation.schema.ID.Id
@@ -25,7 +24,7 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.transaction.{RewardTransaction, Transaction, TransactionAmount}
-import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotStateProof, SnapshotOrdinal}
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotStateProof}
 import org.tessellation.security.signature.Signed
 import org.tessellation.syntax.sortedCollection._
 
@@ -58,33 +57,9 @@ object Rewards {
       ): F[SortedSet[RewardTransaction]] = {
         val facilitators = lastArtifact.proofs.map(_.id)
 
-        feeDistribution(lastArtifact.ordinal, acceptedTransactions, facilitators).flatMap { feeRewardTxs =>
-          trigger match {
-            case EventTrigger => feeRewardTxs.pure[F]
-            case TimeTrigger  => mintedDistribution(lastArtifact.epochProgress, facilitators).map(_ ++ feeRewardTxs)
-          }
-        }
-      }
-
-      def feeDistribution(
-        snapshotOrdinal: SnapshotOrdinal,
-        transactions: SortedSet[Signed[Transaction]],
-        facilitators: NonEmptySet[Id]
-      ): F[SortedSet[RewardTransaction]] = {
-
-        val totalFee = transactions.toList
-          .map(_.fee.coerce)
-          .sumAll
-          .map(Amount(_))
-          .liftTo[F]
-
-        Random.scalaUtilRandomSeedLong(snapshotOrdinal.value).flatMap { randomizer =>
-          totalFee.flatMap { amount =>
-            facilitatorDistributor
-              .distribute(randomizer, facilitators)
-              .run(amount)
-              .flatTap(validateState(amount))
-          }.map(toTransactions)
+        trigger match {
+          case EventTrigger => SortedSet.empty[RewardTransaction].pure[F]
+          case TimeTrigger  => mintedDistribution(lastArtifact.epochProgress, facilitators)
         }
       }
 
