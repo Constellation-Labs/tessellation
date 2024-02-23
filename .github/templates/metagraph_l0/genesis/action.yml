@@ -35,7 +35,7 @@ runs:
 
         if [[ "${{inputs.IMPLEMENT_REWARDS}}" != "" ]]; then
           echo "Adding basic rewards logic"
-          cp ../../assets/basic_rewards_implementation.txt  modules/l0/src/main/scala/com/my/currency/l0/Main.scala
+          cp ../../assets/basic_rewards_implementation.txt  modules/l0/src/main/scala/com/my/project_template/l0/Main.scala
         fi
         
         sbt currencyL0/assembly
@@ -43,7 +43,7 @@ runs:
     - name: Move Metagraph L0 JAR
       shell: bash
       run: |
-        mv .github/templates/project_template/modules/l0/target/scala-2.13/custom-project-currency-l0-assembly-* .github/config/containers/jars/metagraph-l0.jar
+        mv .github/templates/project_template/modules/l0/target/scala-2.13/project_template-currency-l0-assembly-* .github/config/containers/jars/metagraph-l0.jar
 
     - name: Running Metagraph L0 genesis
       shell: bash
@@ -67,7 +67,6 @@ runs:
         export CL_P2P_HTTP_PORT=${{ inputs.CL_P2P_HTTP_PORT }}
         export CL_CLI_HTTP_PORT=${{ inputs.CL_CLI_HTTP_PORT }}
         export CL_APP_ENV=dev
-        export CL_ENV=dev
         export CL_COLLATERAL=0
         export CL_GLOBAL_L0_PEER_HTTP_HOST=127.0.0.1
         export CL_GLOBAL_L0_PEER_HTTP_PORT=9000

@@ -1,4 +1,4 @@
-name: Test sending transactions
+name: Test sending currency transactions
 
 on:
   pull_request: {}
@@ -66,7 +66,7 @@ jobs:
       - name: Run Metagraph L1 Cluster
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        uses: "./.github/templates/metagraph_l1/ml1_cluster"
+        uses: "./.github/templates/metagraph_currency_l1/ml1_cluster"
 
       - name: Check DAG cluster
         run: |
@@ -76,13 +76,13 @@ jobs:
       - name: Check Metagraph cluster
         run: |
           cd .github/action_scripts/check_clusters
-          node metagraph.js
+          node metagraph-currency.js
 
       - name: Send transactions
         run: |
           cd .github/action_scripts
           npm install @stardust-collective/dag4
-          node send_transactions/index.js
+          node send_transactions/currency.js
 
       - name: Save Global L0 Genesis logs
         uses: actions/upload-artifact@v3
@@ -154,23 +154,23 @@ jobs:
           name: send-transactions-metagraph-l0-validator-2-java-${{ matrix.java }}
           path: .github/config/containers/metagraph-l0/validator-2/metagraph-l0-validator-2.log
 
-      - name: Save Metagraph L1 - Initial Validator logs
+      - name: Save Currency L1 - Initial Validator logs
         uses: actions/upload-artifact@v3
         if: always()
         with:
-          name: send-transactions-metagraph-l1-initial-validator-java-${{ matrix.java }}
-          path: .github/config/containers/metagraph-l1/initial-validator/metagraph-l1-initial-validator.log
+          name: send-transactions-currency-l1-initial-validator-java-${{ matrix.java }}
+          path: .github/config/containers/currency-l1/initial-validator/currency-l1-initial-validator.log
 
-      - name: Save Metagraph L1 - Validator 1 logs
+      - name: Save Currency L1 - Validator 1 logs
         uses: actions/upload-artifact@v3
         if: always()
         with:
-          name: send-transactions-metagraph-l1-validator-1-java-${{ matrix.java }}
-          path: .github/config/containers/metagraph-l1/validator-1/metagraph-l1-1.log
+          name: send-transactions-currency-l1-validator-1-java-${{ matrix.java }}
+          path: .github/config/containers/currency-l1/validator-1/currency-l1-1.log
 
-      - name: Save Metagraph L1 - Validator 2 logs
+      - name: Save Currency L1 - Validator 2 logs
         uses: actions/upload-artifact@v3
         if: always()
         with:
-          name: send-transactions-metagraph-l1-validator-2-java-${{ matrix.java }}
-          path: .github/config/containers/metagraph-l1/validator-2/metagraph-l1-2.log
+          name: send-transactions-currency-l1-validator-2-java-${{ matrix.java }}
+          path: .github/config/containers/currency-l1/validator-2/currency-l1-2.log

@@ -40,7 +40,6 @@ runs:
         export CL_P2P_HTTP_PORT=${{ inputs.CL_P2P_HTTP_PORT }}
         export CL_CLI_HTTP_PORT=${{ inputs.CL_CLI_HTTP_PORT }}
         export CL_APP_ENV=dev
-        export CL_ENV=dev
         export CL_COLLATERAL=0
         export CL_L0_PEER_HTTP_HOST=127.0.0.1
         export CL_L0_PEER_HTTP_PORT=${{ inputs.CL_GLOBAL_L0_PEER_HTTP_PORT }}

@@ -119,6 +119,8 @@ const clusterCheck = async (
 
         if (checkOrdinalsAndSnapshots) {
             console.log(`Starting to validate ordinals and snapshots: ${clusterName}`);
+            console.log(`Waiting 30s before start checking`)
+            await sleep(30 * 1000)
             const urls = infos.map(
                 (info) =>
                     `${info.baseUrl}/${globalLayer ? 'global-snapshots' : 'snapshots'}`
@@ -160,7 +162,26 @@ const checkGlobalL0Node = async () => {
     await clusterCheck(infos, true, 'Global L0', 3, true);
 };
 
+const checkCurrencyL0Node = async () => {
+    const infos = [
+        {
+            name: 'Currency L0 - 1',
+            baseUrl: 'http://localhost:9400'
+        },
+        {
+            name: 'Currency L0 - 2',
+            baseUrl: 'http://localhost:9500'
+        },
+        {
+            name: 'Currency L0 - 3',
+            baseUrl: 'http://localhost:9600'
+        }
+    ];
+    await clusterCheck( infos, true, 'Currency L0', 3, false );
+};
+
 module.exports = {
     clusterCheck,
-    checkGlobalL0Node
+    checkGlobalL0Node,
+    checkCurrencyL0Node
 }
