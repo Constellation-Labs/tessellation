@@ -41,7 +41,7 @@ object HealthChecks {
 
     ping.map {
       new HealthChecks(_) {
-        def trigger(): F[Unit] = ping.trigger()
+        def trigger(): F[Unit] = this.ping.trigger()
       }
     }
   }

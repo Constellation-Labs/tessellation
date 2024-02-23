@@ -57,8 +57,8 @@ object TraverseLocalFileSystemTempStorage {
   case class SnapshotAlreadyExistsInTempStorage(ordinal: SnapshotOrdinal) extends TempStorageError
   case class SnapshotNotFoundInTempStorage(ordinal: SnapshotOrdinal) extends TempStorageError
 
-  private def make[F[_]: Files]: Resource[F, Path] =
-    Files[F].tempDirectory
+  private def make[F[_]: Async]: Resource[F, Path] =
+    Files.forAsync[F].tempDirectory
 
   def forAsync[F[_]: Async: KryoSerializer]: Resource[F, TraverseLocalFileSystemTempStorage[F]] = make[F].map { path =>
     new TraverseLocalFileSystemTempStorage[F](path)

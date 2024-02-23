@@ -8,6 +8,7 @@ import org.tessellation.node.shared.resources.MkHttpServer.ServerName
 
 import derevo.cats.show
 import derevo.derive
+import fs2.io.net.Network
 import io.estatico.newtype.macros.newtype
 import org.http4s.HttpApp
 import org.http4s.ember.server.EmberServerBuilder
@@ -31,7 +32,7 @@ object MkHttpServer {
   private def showEmberBanner[F[_]: Async](name: ServerName)(s: Server): F[Unit] =
     logger.info(s"HTTP Server name=${name.show} started at ${s.address}")
 
-  implicit def forAsync[F[_]: Async]: MkHttpServer[F] =
+  implicit def forAsync[F[_]: Async: Network]: MkHttpServer[F] =
     (name: ServerName, cfg: HttpServerConfig, httpApp: HttpApp[F]) =>
       EmberServerBuilder
         .default[F]

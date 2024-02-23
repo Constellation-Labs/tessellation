@@ -1,6 +1,5 @@
 package org.tessellation.node.shared.infrastructure.healthcheck
 
-import cats.Applicative
 import cats.effect._
 import cats.effect.std.Supervisor
 import cats.syntax.applicativeError._
@@ -9,6 +8,7 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
 import cats.syntax.show._
+import cats.{Applicative, Show}
 
 import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
@@ -32,7 +32,7 @@ object LocalHealthcheck {
   }
 
   case class PeerUnresponsive(id: PeerId) extends NoStackTrace {
-    implicit val show = PeerId.shortShow
+    implicit val show: Show[PeerId] = PeerId.shortShow
     override val getMessage = s"Peer ${id.show} is unresponsive"
   }
 

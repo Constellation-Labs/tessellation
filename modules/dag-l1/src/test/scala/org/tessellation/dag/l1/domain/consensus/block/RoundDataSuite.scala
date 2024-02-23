@@ -33,6 +33,7 @@ import org.tessellation.security.{Hasher, KeyPairGenerator, SecurityProvider}
 import org.tessellation.transaction.TransactionGenerator
 
 import eu.timepit.refined.auto._
+import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import suite.ResourceSuite
 import weaver.scalacheck.Checkers
@@ -56,7 +57,7 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
       txValidator = TransactionValidator.make[F](signedValidator)
     } yield (ks, h, sp, srcKey, dstKey, srcAddress, dstAddress, txValidator)
 
-  implicit val logger = Slf4jLogger.getLogger[IO]
+  implicit val logger: SelfAwareStructuredLogger[IO] = Slf4jLogger.getLogger[IO]
 
   val roundId = RoundId(UUID.randomUUID())
   val peerIdA = PeerId(Hex("peerA"))

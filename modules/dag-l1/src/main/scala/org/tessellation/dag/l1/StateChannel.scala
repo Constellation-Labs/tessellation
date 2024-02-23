@@ -36,6 +36,7 @@ import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
 
 import fs2.{Pipe, Stream}
+import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 class StateChannel[
@@ -58,7 +59,7 @@ class StateChannel[
   validators: Validators[F]
 ) {
 
-  private implicit val logger = Slf4jLogger.getLogger[F]
+  private implicit val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLogger[F]
 
   private val blockConsensusContext =
     BlockConsensusContext[F](
