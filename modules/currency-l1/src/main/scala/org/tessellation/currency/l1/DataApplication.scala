@@ -16,9 +16,7 @@ import org.tessellation.currency.l1.modules.{Queues, Services}
 import org.tessellation.currency.schema.currency._
 import org.tessellation.dag.l1.http.p2p.L0BlockOutputClient
 import org.tessellation.node.shared.domain.cluster.storage.{ClusterStorage, L0ClusterStorage}
-import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hasher, SecurityProvider}
 
@@ -40,9 +38,7 @@ object DataApplication {
     queues: Queues[F],
     dataApplicationService: BaseDataApplicationL1Service[F],
     selfKeyPair: KeyPair,
-    selfId: PeerId,
-    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
-    lastCurrencySnapshotStorage: LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
+    selfId: PeerId
   ): Stream[F, Unit] = {
 
     def logger = Slf4jLogger.getLogger[F]
@@ -84,9 +80,7 @@ object DataApplication {
             consensusClient,
             queues.dataUpdates,
             selfId,
-            selfKeyPair,
-            lastGlobalSnapshotStorage,
-            lastCurrencySnapshotStorage
+            selfKeyPair
           )
           .run
       }.handleErrorWith { e =>

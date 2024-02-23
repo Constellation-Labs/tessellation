@@ -6,6 +6,8 @@ import cats.Show
 import cats.effect.kernel.Sync
 import cats.syntax.all._
 
+import scala.annotation.nowarn
+
 import org.tessellation.ext.derevo.ordering
 import org.tessellation.json.JsonHashSerializer
 import org.tessellation.kryo.KryoSerializer
@@ -65,6 +67,7 @@ object Hasher {
 
   def forSync[F[_]: Sync: KryoSerializer: JsonHashSerializer]: Hasher[F] = new Hasher[F] {
 
+    @nowarn
     def hashJson[A: Encoder](data: A): F[Hash] =
       (data match {
         case d: Encodable[_] =>
@@ -73,7 +76,7 @@ object Hasher {
           JsonHashSerializer[F].serialize[A](data)
       }).map(Hash.fromBytes)
 
-    def hashKryo[A: Encoder](data: A): F[Hash] =
+    def hashKryo[A](data: A): F[Hash] =
       KryoSerializer[F]
         .serialize(data match {
           case d: Encodable[_] => d.toEncode

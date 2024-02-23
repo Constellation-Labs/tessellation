@@ -45,8 +45,7 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
   implicit val show: Show[DataApplicationBlock] = (t: DataApplicationBlock) => t.toString
 
   implicit def eqDataApplicationBlock(
-    implicit eq: Eq[SampleDataUpdate],
-    eqRoundId: Eq[RoundId],
+    implicit eqRoundId: Eq[RoundId],
     eqDataUpdate: Eq[NonEmptyList[Signed[SampleDataUpdate]]],
     eqHash: Eq[NonEmptyList[Hash]]
   ): Eq[Signed[DataApplicationBlock]] = Eq.instance {

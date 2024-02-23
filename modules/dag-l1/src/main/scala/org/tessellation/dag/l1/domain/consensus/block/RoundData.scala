@@ -7,7 +7,6 @@ import cats.syntax.all._
 import scala.concurrent.duration.FiniteDuration
 
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.{BlockSignatureProposal, CancelledBlockCreationRound, Proposal}
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.transaction.TransactionValidator
 import org.tessellation.node.shared.domain.transaction.filter.Consecutive
 import org.tessellation.schema.Block
@@ -53,7 +52,7 @@ case class RoundData(
   def addPeerCancellation(cancellation: CancelledBlockCreationRound): RoundData =
     this.focus(_.peerCancellations).modify(_ + (cancellation.senderId -> cancellation.reason))
 
-  def formBlock[F[_]: Async: KryoSerializer: Hasher](validator: TransactionValidator[F]): F[Option[Block]] =
+  def formBlock[F[_]: Async: Hasher](validator: TransactionValidator[F]): F[Option[Block]] =
     (ownProposal.transactions ++ peerProposals.values.flatMap(_.transactions)).toList
       .traverse(validator.validate)
       .flatMap { validatedTxs =>

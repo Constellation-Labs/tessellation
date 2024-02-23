@@ -10,7 +10,6 @@ import cats.syntax.traverse._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
@@ -35,7 +34,7 @@ trait GlobalSnapshotStateChannelAcceptanceManager[F[_]] {
 }
 
 object GlobalSnapshotStateChannelAcceptanceManager {
-  def make[F[_]: Async: KryoSerializer: Hasher](
+  def make[F[_]: Async: Hasher](
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
     pullDelay: NonNegLong = NonNegLong.MinValue,
     purgeDelay: NonNegLong = NonNegLong.MinValue

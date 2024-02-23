@@ -13,15 +13,12 @@ import scala.concurrent.duration._
 import org.tessellation.currency.dataApplication.ConsensusInput._
 import org.tessellation.currency.dataApplication.ConsensusOutput.Noop
 import org.tessellation.currency.dataApplication._
-import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import org.tessellation.effects.GenUUID
 import org.tessellation.fsm.FSM
 import org.tessellation.node.shared.domain.cluster.storage.ClusterStorage
-import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.schema.round.RoundId
-import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.SignatureProof
 import org.tessellation.security.{Hasher, SecurityProvider}
@@ -90,9 +87,7 @@ object Engine {
     consensusClient: ConsensusClient[F],
     dataUpdates: Queue[F, Signed[DataUpdate]],
     selfId: PeerId,
-    selfKeyPair: KeyPair,
-    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
-    lastCurrencySnapshotStorage: LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
+    selfKeyPair: KeyPair
   ): FSM[F, State, In, Out] = {
 
     implicit val dataEncoder = dataApplication.dataEncoder

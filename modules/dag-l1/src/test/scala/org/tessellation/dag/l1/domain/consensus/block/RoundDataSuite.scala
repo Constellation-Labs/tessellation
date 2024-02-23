@@ -82,8 +82,7 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
     )
 
   test("formBlock should return None when there were no transactions in RoundData") {
-    case (kp, h, _, _, _, _, _, txValidator) =>
-      implicit val kryoPool = kp
+    case (_, h, _, _, _, _, _, txValidator) =>
       implicit val hasher = h
 
       baseRoundData.formBlock[IO](txValidator).map(maybeBlock => expect.same(None, maybeBlock))
@@ -92,8 +91,7 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
   test(
     "formBlock should return the block with properly selected transactions - preferring the ones with higher fee if there are concurrent chains of transactions"
   ) {
-    case (kp, h, sp, srcKey, _, srcAddress, dstAddress, txValidator) =>
-      implicit val kryoPool = kp
+    case (_, h, sp, srcKey, _, srcAddress, dstAddress, txValidator) =>
       implicit val securityProvider = sp
       implicit val hasher = h
 
@@ -116,8 +114,7 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
   }
 
   test("formBlock should pick transactions correctly from the pool of transactions from all facilitators") {
-    case (kp, h, sp, srcKey, _, srcAddress, dstAddress, txValidator) =>
-      implicit val kryoPool = kp
+    case (_, h, sp, srcKey, _, srcAddress, dstAddress, txValidator) =>
       implicit val securityProvider = sp
       implicit val hasher = h
 
@@ -141,8 +138,7 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
   }
 
   test("formBlock should pick transactions correctly when concurrent transactions are proposed by different facilitators") {
-    case (kp, h, sp, srcKey, _, srcAddress, dstAddress, txValidator) =>
-      implicit val kryoPool = kp
+    case (_, h, sp, srcKey, _, srcAddress, dstAddress, txValidator) =>
       implicit val securityProvider = sp
       implicit val hasher = h
 
@@ -166,8 +162,7 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
   }
 
   test("formBlock should discard transactions that are invalid") {
-    case (kp, h, sp, srcKey, dstKey, srcAddress, dstAddress, txValidator) =>
-      implicit val kryoPool = kp
+    case (_, h, sp, srcKey, dstKey, srcAddress, dstAddress, txValidator) =>
       implicit val securityProvider = sp
       implicit val hasher = h
 

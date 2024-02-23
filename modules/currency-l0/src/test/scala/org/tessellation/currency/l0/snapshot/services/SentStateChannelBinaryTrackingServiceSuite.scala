@@ -30,13 +30,13 @@ import weaver.scalacheck.Checkers
 
 object SentStateChannelBinaryTrackingServiceSuite extends MutableIOSuite with Checkers {
 
-  type Res = (KryoSerializer[IO], Hasher[IO])
+  type Res = Hasher[IO]
 
   override def sharedResource: Resource[IO, SentStateChannelBinaryTrackingServiceSuite.Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
     implicit0(js: JsonHashSerializer[IO]) <- Resource.liftK[IO](JsonHashSerializer.forSync[IO])
     hs = Hasher.forSync[IO]
-  } yield (ks, hs)
+  } yield hs
 
   def createGlobalIncrementalSnapshot(identifier: Address, binaries: List[Signed[StateChannelSnapshotBinary]])(
     implicit hs: Hasher[IO]
@@ -53,8 +53,7 @@ object SentStateChannelBinaryTrackingServiceSuite extends MutableIOSuite with Ch
     )
 
   def mkService(identifier: Address)(
-    implicit ks: KryoSerializer[IO],
-    hs: Hasher[IO]
+    implicit hs: Hasher[IO]
   ): IO[(SentStateChannelBinaryTrackingService[IO], Ref[IO, List[(Hashed[StateChannelSnapshotBinary], NonNegInt)]])] =
     Ref
       .of[IO, List[(Hashed[StateChannelSnapshotBinary], NonNegInt)]](List.empty)
@@ -72,9 +71,7 @@ object SentStateChannelBinaryTrackingServiceSuite extends MutableIOSuite with Ch
     address <- addressGen
   } yield (binaries, address)
 
-  test("stores and clears pending binaries") { res =>
-    implicit val (ks, hs) = res
-
+  test("stores and clears pending binaries") { implicit hs =>
     forall(gen) {
       case (binaries, identifier) =>
         for {
@@ -93,9 +90,7 @@ object SentStateChannelBinaryTrackingServiceSuite extends MutableIOSuite with Ch
     }
   }
 
-  test("stores and clears older pending binaries when newer is confirmed") { res =>
-    implicit val (ks, hs) = res
-
+  test("stores and clears older pending binaries when newer is confirmed") { implicit hs =>
     forall(gen) {
       case (binaries, identifier) =>
         for {
@@ -114,9 +109,7 @@ object SentStateChannelBinaryTrackingServiceSuite extends MutableIOSuite with Ch
     }
   }
 
-  test("increments checks for pending binaries") { res =>
-    implicit val (ks, hs) = res
-
+  test("increments checks for pending binaries") { implicit hs =>
     forall(gen) {
       case (binaries, identifier) =>
         for {
@@ -135,9 +128,7 @@ object SentStateChannelBinaryTrackingServiceSuite extends MutableIOSuite with Ch
     }
   }
 
-  test("returns binaries to retry in FIFO manner") { res =>
-    implicit val (ks, hs) = res
-
+  test("returns binaries to retry in FIFO manner") { implicit hs =>
     forall(gen) {
       case (binaries, identifier) =>
         for {

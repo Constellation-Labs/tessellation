@@ -10,7 +10,6 @@ import org.tessellation.dag.l1.domain.block.BlockStorage
 import org.tessellation.dag.l1.domain.consensus.block.storage.ConsensusStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.dag.l1.infrastructure.address.storage.AddressStorage
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.cluster.storage.{ClusterStorage, L0ClusterStorage, SessionStorage}
 import org.tessellation.node.shared.domain.collateral.LatestBalances
 import org.tessellation.node.shared.domain.node.NodeStorage
@@ -25,7 +24,7 @@ import org.tessellation.schema.transaction.TransactionReference
 
 object Storages {
 
-  def make[F[_]: Async: Random: KryoSerializer, P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P]](
+  def make[F[_]: Async: Random, P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P]](
     sharedStorages: SharedStorages[F],
     l0Peer: L0Peer
   ): F[Storages[F, P, S, SI]] =

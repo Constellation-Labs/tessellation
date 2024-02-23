@@ -7,7 +7,7 @@ import cats.effect.Async
 import cats.effect.std.{Random, Supervisor}
 import cats.syntax.all._
 
-import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
+import org.tessellation.currency.dataApplication.BaseDataApplicationL0Service
 import org.tessellation.currency.l0.config.types.AppConfig
 import org.tessellation.currency.l0.http.p2p.P2PClient
 import org.tessellation.currency.l0.node.L0NodeContext
@@ -36,7 +36,7 @@ import org.http4s.client.Client
 
 object Services {
 
-  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider: Hasher: Metrics: Supervisor: L0NodeContext](
+  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider: Hasher: Metrics: Supervisor](
     p2PClient: P2PClient[F],
     sharedServices: SharedServices[F],
     storages: Storages[F],

@@ -11,7 +11,6 @@ import scala.reflect.runtime.universe.TypeTag
 
 import org.tessellation.ext.collection.FoldableOps.pickMajority
 import org.tessellation.ext.crypto._
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.consensus.ConsensusFunctions
 import org.tessellation.node.shared.domain.gossip.Gossip
 import org.tessellation.node.shared.infrastructure.consensus.declaration._
@@ -65,7 +64,7 @@ object ConsensusStateUpdater {
 
   def make[F[
     _
-  ]: Async: KryoSerializer: Hasher: SecurityProvider: Metrics, Event, Key: Show: Order: TypeTag: Encoder, Artifact <: AnyRef: Eq: TypeTag: Encoder, Context <: AnyRef: Eq: TypeTag](
+  ]: Async: Hasher: SecurityProvider: Metrics, Event, Key: Show: Order: TypeTag: Encoder, Artifact <: AnyRef: Eq: TypeTag: Encoder, Context <: AnyRef: Eq](
     consensusFns: ConsensusFunctions[F, Event, Key, Artifact, Context],
     consensusStorage: ConsensusStorage[F, Event, Key, Artifact, Context],
     gossip: Gossip[F],

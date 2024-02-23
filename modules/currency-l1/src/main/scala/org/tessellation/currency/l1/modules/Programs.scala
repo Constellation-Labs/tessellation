@@ -6,16 +6,14 @@ import cats.effect.std.Random
 import org.tessellation.currency.l1.http.p2p.P2PClient
 import org.tessellation.dag.l1.domain.snapshot.programs.SnapshotProcessor
 import org.tessellation.dag.l1.modules.{Programs => BasePrograms}
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.cluster.programs.L0PeerDiscovery
 import org.tessellation.node.shared.modules.SharedPrograms
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
-import org.tessellation.security.SecurityProvider
 
 object Programs {
 
   def make[
-    F[_]: Async: KryoSerializer: SecurityProvider: Random,
+    F[_]: Async: Random,
     P <: StateProof,
     S <: Snapshot,
     SI <: SnapshotInfo[P]

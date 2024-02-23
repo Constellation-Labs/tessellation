@@ -9,7 +9,6 @@ import org.tessellation.currency.dataApplication._
 import org.tessellation.currency.l1.domain.error.{InvalidDataUpdate, InvalidSignature}
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import org.tessellation.ext.http4s.error._
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.routes.internal._
@@ -27,7 +26,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 import shapeless._
 import shapeless.syntax.singleton._
 
-final case class DataApplicationRoutes[F[_]: Async: KryoSerializer: Hasher: SecurityProvider: L1NodeContext](
+final case class DataApplicationRoutes[F[_]: Async: Hasher: SecurityProvider: L1NodeContext](
   dataApplicationPeerConsensusInput: Queue[F, Signed[ConsensusInput.PeerConsensusInput]],
   l0ClusterStorage: L0ClusterStorage[F],
   dataApplication: BaseDataApplicationL1Service[F],

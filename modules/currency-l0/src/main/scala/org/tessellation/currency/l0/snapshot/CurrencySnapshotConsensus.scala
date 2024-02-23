@@ -5,10 +5,9 @@ import java.security.KeyPair
 import cats.effect.kernel.Async
 import cats.effect.std.{Random, Supervisor}
 
-import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, DataUpdate, L0NodeContext}
+import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, DataUpdate}
 import org.tessellation.currency.l0.snapshot.services.StateChannelSnapshotService
 import org.tessellation.currency.schema.currency._
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.SnapshotConfig
 import org.tessellation.node.shared.domain.cluster.services.Session
 import org.tessellation.node.shared.domain.cluster.storage.ClusterStorage
@@ -30,7 +29,7 @@ import org.http4s.client.Client
 
 object CurrencySnapshotConsensus {
 
-  def make[F[_]: Async: Random: KryoSerializer: Hasher: SecurityProvider: Metrics: Supervisor: L0NodeContext](
+  def make[F[_]: Async: Random: Hasher: SecurityProvider: Metrics: Supervisor](
     gossip: Gossip[F],
     selfId: PeerId,
     keyPair: KeyPair,

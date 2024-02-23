@@ -237,9 +237,7 @@ abstract class CurrencyL1App(
             queues,
             _,
             keyPair,
-            nodeId,
-            storages.lastGlobalSnapshot,
-            storages.lastSnapshot
+            nodeId
           )
           .merge(globalL0PeerDiscovery)
           .merge(stateChannel.globalSnapshotProcessing)

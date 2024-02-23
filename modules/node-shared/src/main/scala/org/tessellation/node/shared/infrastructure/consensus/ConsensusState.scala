@@ -92,7 +92,7 @@ final case class Finished[A, C](
 ) extends ConsensusStatus[A, C]
 
 object Finished {
-  implicit def eq[A: Eq, C: Eq]: Eq[Finished[A, C]] = Eq.allEqual[Finished[A, C]]
+  implicit def eq[A, C]: Eq[Finished[A, C]] = Eq.allEqual[Finished[A, C]]
 }
 
 object ConsensusStatus {

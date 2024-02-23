@@ -10,7 +10,6 @@ import org.tessellation.currency.dataApplication.dataApplication.DataApplication
 import org.tessellation.currency.dataApplication.{BaseDataApplicationService, DataCalculatedState}
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.cats.syntax.validated.validatedSyntax
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.rewards.Rewards
 import org.tessellation.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import org.tessellation.node.shared.snapshot.currency.{CurrencySnapshotArtifact, CurrencySnapshotEvent}
@@ -43,7 +42,7 @@ trait CurrencySnapshotValidator[F[_]] {
 
 object CurrencySnapshotValidator {
 
-  def make[F[_]: Async: KryoSerializer](
+  def make[F[_]: Async](
     currencySnapshotCreator: CurrencySnapshotCreator[F],
     signedValidator: SignedValidator[F],
     maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],

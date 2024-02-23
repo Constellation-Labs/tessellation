@@ -13,7 +13,6 @@ import scala.collection.immutable.SortedMap
 
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.block.processing._
 import org.tessellation.node.shared.domain.consensus.ConsensusFunctions.InvalidArtifact
 import org.tessellation.node.shared.domain.event.EventCutter
@@ -34,7 +33,7 @@ import org.tessellation.statechannel.{StateChannelOutput, StateChannelValidation
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-abstract class GlobalSnapshotConsensusFunctions[F[_]: Async: SecurityProvider: KryoSerializer: Hasher]
+abstract class GlobalSnapshotConsensusFunctions[F[_]: Async: SecurityProvider: Hasher]
     extends SnapshotConsensusFunctions[
       F,
       GlobalSnapshotEvent,
@@ -45,7 +44,7 @@ abstract class GlobalSnapshotConsensusFunctions[F[_]: Async: SecurityProvider: K
 
 object GlobalSnapshotConsensusFunctions {
 
-  def make[F[_]: Async: KryoSerializer: Hasher: SecurityProvider: Metrics](
+  def make[F[_]: Async: Hasher: SecurityProvider: Metrics](
     globalSnapshotStorage: SnapshotStorage[F, GlobalSnapshotArtifact, GlobalSnapshotContext],
     globalSnapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     collateral: Amount,

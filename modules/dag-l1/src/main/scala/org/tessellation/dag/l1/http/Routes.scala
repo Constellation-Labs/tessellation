@@ -9,7 +9,6 @@ import cats.syntax.show._
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.PeerBlockConsensusInput
 import org.tessellation.dag.l1.domain.transaction.{TransactionService, TransactionStorage, transactionLoggerName}
 import org.tessellation.ext.http4s.{AddressVar, HashVar}
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.routes.internal._
 import org.tessellation.schema.http.{ErrorCause, ErrorResponse}
@@ -26,7 +25,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 import shapeless._
 import shapeless.syntax.singleton._
 
-final case class Routes[F[_]: Async: KryoSerializer: Hasher](
+final case class Routes[F[_]: Async: Hasher](
   transactionService: TransactionService[F],
   transactionStorage: TransactionStorage[F],
   l0ClusterStorage: L0ClusterStorage[F],

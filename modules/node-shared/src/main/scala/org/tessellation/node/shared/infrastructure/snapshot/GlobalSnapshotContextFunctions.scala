@@ -11,7 +11,6 @@ import cats.syntax.show._
 import scala.collection.immutable.SortedSet
 import scala.util.control.NoStackTrace
 
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.merkletree.StateProofValidator
 import org.tessellation.node.shared.domain.block.processing._
 import org.tessellation.node.shared.domain.snapshot.SnapshotContextFunctions
@@ -28,7 +27,7 @@ import eu.timepit.refined.auto._
 abstract class GlobalSnapshotContextFunctions[F[_]] extends SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
 
 object GlobalSnapshotContextFunctions {
-  def make[F[_]: Async: KryoSerializer: Hasher](snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F]) =
+  def make[F[_]: Async: Hasher](snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F]) =
     new GlobalSnapshotContextFunctions[F] {
       def createContext(
         context: GlobalSnapshotInfo,

@@ -10,7 +10,6 @@ import org.tessellation.dag.l1.domain.block.BlockStorage
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.PeerBlockConsensusInput
 import org.tessellation.dag.l1.domain.consensus.block.storage.ConsensusStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.cluster.storage.ClusterStorage
 import org.tessellation.node.shared.domain.node.NodeStorage
 import org.tessellation.schema.node.NodeState
@@ -78,7 +77,7 @@ object Validator {
         }
     } yield res
 
-  def isPeerInputValid[F[_]: Async: KryoSerializer: SecurityProvider: Hasher](
+  def isPeerInputValid[F[_]: Async: SecurityProvider: Hasher](
     input: Signed[PeerBlockConsensusInput]
   ): F[Boolean] =
     for {

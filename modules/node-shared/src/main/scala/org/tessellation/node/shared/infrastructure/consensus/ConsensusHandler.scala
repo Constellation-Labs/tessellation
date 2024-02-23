@@ -1,6 +1,5 @@
 package org.tessellation.node.shared.infrastructure.consensus
 
-import cats.Show
 import cats.effect.Async
 import cats.syntax.all._
 
@@ -10,7 +9,6 @@ import org.tessellation.node.shared.domain.consensus.ConsensusFunctions
 import org.tessellation.node.shared.infrastructure.consensus.declaration._
 import org.tessellation.node.shared.infrastructure.consensus.message._
 import org.tessellation.node.shared.infrastructure.gossip.RumorHandler
-import org.tessellation.security.SecurityProvider
 
 import io.circe.Decoder
 
@@ -18,7 +16,7 @@ object ConsensusHandler {
 
   def make[F[
     _
-  ]: Async: SecurityProvider, Event: TypeTag: Decoder, Key: Show: TypeTag: Decoder, Artifact: TypeTag: Decoder, Context: Decoder](
+  ]: Async, Event: TypeTag: Decoder, Key: TypeTag: Decoder, Artifact: TypeTag: Decoder, Context](
     storage: ConsensusStorage[F, Event, Key, Artifact, Context],
     manager: ConsensusManager[F, Key, Artifact, Context],
     fns: ConsensusFunctions[F, Event, Key, Artifact, Context]

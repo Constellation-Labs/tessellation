@@ -5,15 +5,13 @@ import cats.effect.std.Random
 
 import org.tessellation.dag.l1.domain.snapshot.programs.SnapshotProcessor
 import org.tessellation.dag.l1.http.p2p.P2PClient
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.cluster.programs.{Joining, L0PeerDiscovery, PeerDiscovery}
 import org.tessellation.node.shared.modules.SharedPrograms
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
-import org.tessellation.security.SecurityProvider
 
 object Programs {
 
-  def make[F[_]: Async: KryoSerializer: SecurityProvider: Random, P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P]](
+  def make[F[_]: Async: Random, P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P]](
     sharedPrograms: SharedPrograms[F],
     p2pClient: P2PClient[F],
     storages: Storages[F, P, S, SI],

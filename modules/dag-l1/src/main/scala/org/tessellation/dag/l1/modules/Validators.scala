@@ -2,7 +2,6 @@ package org.tessellation.dag.l1.modules
 
 import cats.effect.Async
 
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.block.processing.BlockValidator
 import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
 import org.tessellation.node.shared.domain.transaction.{ContextualTransactionValidator, TransactionChainValidator, TransactionValidator}
@@ -16,7 +15,7 @@ import org.tessellation.security.{Hasher, SecurityProvider}
 object Validators {
 
   def make[
-    F[_]: Async: KryoSerializer: Hasher: SecurityProvider,
+    F[_]: Async: Hasher: SecurityProvider,
     P <: StateProof,
     S <: Snapshot,
     SI <: SnapshotInfo[P]

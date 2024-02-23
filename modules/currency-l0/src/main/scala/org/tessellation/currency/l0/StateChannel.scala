@@ -7,7 +7,6 @@ import cats.syntax.all._
 import scala.concurrent.duration._
 
 import org.tessellation.currency.l0.modules.{Programs, Services, Storages}
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.snapshot.Validator
 import org.tessellation.schema.GlobalIncrementalSnapshot
 import org.tessellation.schema.peer.PeerId
@@ -20,7 +19,7 @@ object StateChannel {
 
   private val awakePeriod = 10.seconds
 
-  def run[F[_]: Async: KryoSerializer: Hasher](
+  def run[F[_]: Async: Hasher](
     services: Services[F],
     storages: Storages[F],
     programs: Programs[F]

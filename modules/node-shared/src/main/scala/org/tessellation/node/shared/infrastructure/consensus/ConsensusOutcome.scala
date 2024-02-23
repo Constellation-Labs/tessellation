@@ -2,13 +2,12 @@ package org.tessellation.node.shared.infrastructure.consensus
 
 import org.tessellation.schema.peer.PeerId
 
-import derevo.cats.eqv
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 
 /** Represents a finished consensus
   */
-@derive(eqv, encoder, decoder)
+@derive(encoder, decoder)
 case class ConsensusOutcome[Key, Artifact, Context](
   key: Key,
   facilitators: List[PeerId],

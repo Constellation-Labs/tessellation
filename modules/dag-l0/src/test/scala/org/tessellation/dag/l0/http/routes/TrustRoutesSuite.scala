@@ -47,37 +47,35 @@ object TrustRoutesSuite extends HttpSuite {
 
   private def mkP2pRoutes(
     trustStorage: TrustStorage[F],
-    peerObservationAdjustmentUpdate: List[PeerObservationAdjustmentUpdate] = List.empty
-  ) =
-    kryoSerializerResource.use { implicit kryo =>
-      val gossip = new Gossip[IO] {
-        override def spread[A: TypeTag: Encoder](rumorContent: A): IO[Unit] = IO.unit
+    peerObservationAdjustmentUpdate: List[PeerObservationAdjustmentUpdate]
+  ) = {
+    val gossip = new Gossip[IO] {
+      override def spread[A: TypeTag: Encoder](rumorContent: A): IO[Unit] = IO.unit
 
-        override def spreadCommon[A: TypeTag: Encoder](rumorContent: A): IO[Unit] = IO.unit
-      }
-      val trustPush = TrustPush.make[IO](trustStorage, gossip)
-
-      trustStorage.updateTrust {
-        PeerObservationAdjustmentUpdateBatch(peerObservationAdjustmentUpdate)
-      }.map(_ => TrustRoutes[IO](trustStorage, trustPush).p2pRoutes)
+      override def spreadCommon[A: TypeTag: Encoder](rumorContent: A): IO[Unit] = IO.unit
     }
+    val trustPush = TrustPush.make[IO](trustStorage, gossip)
+
+    trustStorage.updateTrust {
+      PeerObservationAdjustmentUpdateBatch(peerObservationAdjustmentUpdate)
+    }.map(_ => TrustRoutes[IO](trustStorage, trustPush).p2pRoutes)
+  }
 
   private def mkPublicRoutes(
     trustStorage: TrustStorage[F],
     peerObservationAdjustmentUpdate: List[PeerObservationAdjustmentUpdate] = List.empty
-  ) =
-    kryoSerializerResource.use { implicit kryo =>
-      val gossip = new Gossip[IO] {
-        override def spread[A: TypeTag: Encoder](rumorContent: A): IO[Unit] = IO.unit
+  ) = {
+    val gossip = new Gossip[IO] {
+      override def spread[A: TypeTag: Encoder](rumorContent: A): IO[Unit] = IO.unit
 
-        override def spreadCommon[A: TypeTag: Encoder](rumorContent: A): IO[Unit] = IO.unit
-      }
-      val trustPush = TrustPush.make[IO](trustStorage, gossip)
-
-      trustStorage.updateTrust {
-        PeerObservationAdjustmentUpdateBatch(peerObservationAdjustmentUpdate)
-      }.map(_ => TrustRoutes[IO](trustStorage, trustPush).publicRoutes)
+      override def spreadCommon[A: TypeTag: Encoder](rumorContent: A): IO[Unit] = IO.unit
     }
+    val trustPush = TrustPush.make[IO](trustStorage, gossip)
+
+    trustStorage.updateTrust {
+      PeerObservationAdjustmentUpdateBatch(peerObservationAdjustmentUpdate)
+    }.map(_ => TrustRoutes[IO](trustStorage, trustPush).publicRoutes)
+  }
 
   private val genTrustMap = for {
     numTrusts <- Gen.chooseNum(0, 10)

@@ -4,7 +4,6 @@ import cats.effect.{Async, Ref}
 import cats.syntax.all._
 
 import org.tessellation.currency.l0.node.IdentifierStorage
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.GlobalIncrementalSnapshot
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hashed, Hasher}
@@ -23,7 +22,7 @@ trait SentStateChannelBinaryTrackingService[F[_]] {
 object SentStateChannelBinaryTrackingService {
   private val retryOrdinalDelay: PosInt = 3
 
-  def make[F[_]: Async: KryoSerializer: Hasher](
+  def make[F[_]: Async: Hasher](
     identifierStorage: IdentifierStorage[F]
   ): F[SentStateChannelBinaryTrackingService[F]] =
     Ref
@@ -32,7 +31,7 @@ object SentStateChannelBinaryTrackingService {
       )
       .map(make[F](_, identifierStorage))
 
-  def make[F[_]: Async: KryoSerializer: Hasher](
+  def make[F[_]: Async: Hasher](
     pendingR: Ref[F, List[(Hashed[StateChannelSnapshotBinary], NonNegInt)]],
     identifierStorage: IdentifierStorage[F]
   ): SentStateChannelBinaryTrackingService[F] =

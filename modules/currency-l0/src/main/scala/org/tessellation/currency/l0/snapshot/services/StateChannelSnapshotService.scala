@@ -18,7 +18,6 @@ import org.tessellation.currency.l0.snapshot.storages.LastBinaryHashStorage
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.crypto._
 import org.tessellation.json.JsonBrotliBinarySerializer
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.node.shared.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.node.shared.domain.statechannel.StateChannelValidator.StateChannelValidationError
@@ -40,7 +39,7 @@ trait StateChannelSnapshotService[F[_]] {
 }
 
 object StateChannelSnapshotService {
-  def make[F[_]: Async: KryoSerializer: Hasher: SecurityProvider](
+  def make[F[_]: Async: Hasher: SecurityProvider](
     keyPair: KeyPair,
     lastBinaryHashStorage: LastBinaryHashStorage[F],
     stateChannelSnapshotClient: StateChannelSnapshotClient[F],

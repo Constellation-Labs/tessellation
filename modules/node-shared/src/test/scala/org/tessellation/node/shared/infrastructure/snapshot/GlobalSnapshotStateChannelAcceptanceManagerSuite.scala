@@ -33,19 +33,19 @@ import weaver.scalacheck.Checkers
 
 object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite with Checkers {
 
-  type Res = (KryoSerializer[IO], Hasher[IO], SecurityProvider[IO])
+  type Res = (Hasher[IO], SecurityProvider[IO])
 
   override def sharedResource: Resource[IO, GlobalSnapshotStateChannelAcceptanceManagerSuite.Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
     implicit0(j: JsonHashSerializer[IO]) <- JsonHashSerializer.forSync[IO].asResource
     h = Hasher.forSync[IO]
-  } yield (ks, h, sp)
+  } yield (h, sp)
 
   val address = Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB")
 
   test("valid state channels should be returned when ordinal doesn't exceed delay") { res =>
-    implicit val (kryo, h, sp) = res
+    implicit val (h, sp) = res
 
     for {
       stateChannelOutput1 <- mkStateChannelOutput(1, address, Hash("someHash").some)
@@ -64,7 +64,7 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
   }
 
   test("valid state channel should be accepted when ordinal exceeds delay") { res =>
-    implicit val (kryo, h, sp) = res
+    implicit val (h, sp) = res
 
     for {
       stateChannelOutput <- mkStateChannelOutput(1, address, Hash("someHash").some)
@@ -77,7 +77,7 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
   }
 
   test("invalid state channel should be returned if purge delay is not exceeded") { res =>
-    implicit val (kryo, h, sp) = res
+    implicit val (h, sp) = res
 
     for {
       stateChannelOutput <- mkStateChannelOutput(1, address, Some(Hash("unknown")))
@@ -91,7 +91,7 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
   }
 
   test("invalid or yet un-processable state channel should be purged after purge delay is exceeded") { res =>
-    implicit val (kryo, h, sp) = res
+    implicit val (h, sp) = res
 
     for {
       stateChannelOutput <- mkStateChannelOutput(1, address, Some(Hash("unknown")))
@@ -109,7 +109,7 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
   }
 
   test("valid state channel with more signatures should be preferred") { res =>
-    implicit val (kryo, h, sp) = res
+    implicit val (h, sp) = res
 
     for {
       stateChannelOutput1 <- mkStateChannelOutput(1, address, None)
@@ -125,7 +125,7 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
   }
 
   test("valid state channel with more occurrences should be preffered") { res =>
-    implicit val (kryo, h, sp) = res
+    implicit val (h, sp) = res
 
     for {
       stateChannelOutput1 <- mkStateChannelOutput(1, address, None)
@@ -142,7 +142,7 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
   }
 
   test("acceptance should return deterministic result given concurring proposals and reruns") { res =>
-    implicit val (kryo, h, sp) = res
+    implicit val (h, sp) = res
 
     def gen = for {
       numberOfBinaries <- Gen.chooseNum(2, 10)
@@ -175,7 +175,7 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
   }
 
   test("valid state channel with more signatures should be preffered over more occurrences") { res =>
-    implicit val (kryo, h, sp) = res
+    implicit val (h, sp) = res
 
     for {
       stateChannelOutput1 <- mkStateChannelOutput(1, address, None)
@@ -191,7 +191,7 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
   }
 
   test("valid state channels which form a chain should be accepted") { res =>
-    implicit val (kryo, h, sp) = res
+    implicit val (h, sp) = res
 
     for {
       output1 <- mkStateChannelOutput(1, address, None)
@@ -218,7 +218,7 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
   }
 
   test("valid state channels should be accepted right away when pull delay is set to 0") { res =>
-    implicit val (kryo, h, sp) = res
+    implicit val (h, sp) = res
 
     for {
       output1 <- mkStateChannelOutput(1, address, None)
@@ -240,7 +240,7 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
   }
 
   test("valid state channel should be processed with purge delay set to 0") { res =>
-    implicit val (kryo, h, sp) = res
+    implicit val (h, sp) = res
 
     for {
       stateChannelOutput <- mkStateChannelOutput(1, address, Hash("someHash").some)
@@ -252,7 +252,7 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
   }
 
   test("state channel events that don't form a chain should be returned") { res =>
-    implicit val (kryo, h, sp) = res
+    implicit val (h, sp) = res
 
     for {
       correctChain <- mkChainOfStateChannelOutputs(1, address, 3L)
@@ -269,8 +269,7 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
   }
 
   private def mkManager(pullDelay: NonNegLong = NonNegLong(10L), purgeDelay: NonNegLong = NonNegLong(4L))(
-    implicit ks: KryoSerializer[IO],
-    h: Hasher[IO]
+    implicit h: Hasher[IO]
   ) =
     GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, pullDelay = pullDelay, purgeDelay = purgeDelay)
 

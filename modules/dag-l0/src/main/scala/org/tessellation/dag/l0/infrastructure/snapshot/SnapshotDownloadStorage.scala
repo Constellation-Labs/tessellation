@@ -6,7 +6,6 @@ import cats.syntax.all._
 
 import org.tessellation.cutoff.{LogarithmicOrdinalCutoff, OrdinalCutoff}
 import org.tessellation.dag.l0.domain.snapshot.storages.SnapshotDownloadStorage
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.infrastructure.snapshot.storage.{SnapshotInfoLocalFileSystemStorage, SnapshotLocalFileSystemStorage}
 import org.tessellation.schema._
 import org.tessellation.security.Hasher
@@ -14,7 +13,7 @@ import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
 object SnapshotDownloadStorage {
-  def make[F[_]: Async: KryoSerializer: Hasher](
+  def make[F[_]: Async: Hasher](
     tmpStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
     persistedStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
     fullGlobalSnapshotStorage: SnapshotLocalFileSystemStorage[F, GlobalSnapshot],
