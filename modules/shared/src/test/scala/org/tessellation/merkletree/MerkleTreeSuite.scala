@@ -12,9 +12,9 @@ import weaver.scalacheck.Checkers
 
 object MerkleTreeSuite extends SimpleIOSuite with Checkers {
 
-  implicit val hashesGen = Gen.nonEmptyListOf[Hash](Hash.arbitrary.arbitrary).map(NonEmptyList.fromListUnsafe)
+  implicit val hashesGen: Gen[NonEmptyList[Hash]] = Gen.nonEmptyListOf[Hash](Hash.arbitrary.arbitrary).map(NonEmptyList.fromListUnsafe)
 
-  implicit val fixedHashesGen = Gen.listOfN(10, Hash.arbitrary.arbitrary).map(NonEmptyList.fromListUnsafe)
+  implicit val fixedHashesGen: Gen[NonEmptyList[Hash]] = Gen.listOfN(10, Hash.arbitrary.arbitrary).map(NonEmptyList.fromListUnsafe)
 
   pureTest("tree created from one hash is possible") {
     val hash = Hash("a")

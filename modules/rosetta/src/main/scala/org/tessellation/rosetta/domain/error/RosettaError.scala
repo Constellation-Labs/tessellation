@@ -61,7 +61,7 @@ object RosettaError extends IntEnum[RosettaError] with RosettaErrorEncoder {
 
 trait RosettaErrorEncoder {
 
-  implicit def rosettaErrorEncoder =
+  implicit def rosettaErrorEncoder: Encoder[RosettaError] =
     Encoder[RosettaErrorJson].contramap[RosettaError](RosettaErrorJson.apply)
 }
 

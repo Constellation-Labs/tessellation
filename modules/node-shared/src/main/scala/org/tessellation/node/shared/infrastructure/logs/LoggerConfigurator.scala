@@ -8,9 +8,8 @@ import scala.io.{Codec, Source}
 import org.tessellation.env.AppEnvironment
 import org.tessellation.env.AppEnvironment._
 
-import ch.qos.logback.classic.LoggerContext
 import ch.qos.logback.classic.joran.JoranConfigurator
-import ch.qos.logback.classic.util.ContextInitializer
+import ch.qos.logback.classic.{ClassicConstants, LoggerContext}
 import org.slf4j.LoggerFactory
 import org.xml.sax.InputSource
 
@@ -25,7 +24,7 @@ object LoggerConfigurator {
     }
 
     Resource.fromAutoCloseable {
-      Sync[F].delay(System.getProperty(ContextInitializer.CONFIG_FILE_PROPERTY)).flatMap { configFileProperty =>
+      Sync[F].delay(System.getProperty(ClassicConstants.CONFIG_FILE_PROPERTY)).flatMap { configFileProperty =>
         if (configFileProperty != null)
           Sync[F].delay(Source.fromFile(configFileProperty)(Codec.UTF8).bufferedReader())
         else

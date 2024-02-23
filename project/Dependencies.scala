@@ -45,7 +45,7 @@ object Dependencies {
     val logback = "1.3.5"
     val logstashLogbackEncoder = "7.2"
     val organizeImports = "0.5.0"
-    val semanticDB = "4.7.1"
+    val semanticDB = "4.8.15"
     val weaver = "0.8.1"
   }
 

@@ -14,6 +14,7 @@ import org.tessellation.security.hex.Hex
 import com.monovore.decline.Opts
 import com.monovore.decline.effect.CommandIOApp
 import io.estatico.newtype.ops._
+import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object Main
@@ -22,7 +23,7 @@ object Main
       header = "Constellation Keytool",
       version = BuildInfo.version
     ) {
-  implicit val logger = Slf4jLogger.getLogger[IO]
+  implicit val logger: SelfAwareStructuredLogger[IO] = Slf4jLogger.getLogger[IO]
 
   override def main: Opts[IO[ExitCode]] =
     cli.method.opts.map { method =>

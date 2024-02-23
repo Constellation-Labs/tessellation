@@ -2,6 +2,7 @@ package org.tessellation.schema
 
 import java.util.UUID
 
+import cats.Show
 import cats.syntax.show._
 
 import scala.util.control.NoStackTrace
@@ -46,7 +47,7 @@ object cluster {
       P2PContext(peer.ip, peer.p2pPort, peer.id)
   }
 
-  implicit val peerIdShow = PeerId.shortShow
+  implicit val peerIdShow: Show[PeerId] = PeerId.shortShow
 
   case class NodeStateDoesNotAllowForJoining(nodeState: NodeState) extends NoStackTrace {
     override val getMessage = s"Node state doesn't allow joining: ${nodeState.show}"

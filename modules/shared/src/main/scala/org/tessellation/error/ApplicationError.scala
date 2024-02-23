@@ -42,7 +42,8 @@ object ApplicationError extends IntEnum[ApplicationError] with ApplicationErrorE
 }
 
 trait ApplicationErrorEncoder {
-  implicit def encoder = Encoder[ApplicationErrorJson].contramap[ApplicationError](ApplicationErrorJson.apply).mapJson(_.deepDropNullValues)
+  implicit def encoder: Encoder[ApplicationError] =
+    Encoder[ApplicationErrorJson].contramap[ApplicationError](ApplicationErrorJson.apply).mapJson(_.deepDropNullValues)
 }
 
 @derive(encoder, eqv, show)

@@ -22,6 +22,6 @@ object generators {
     } yield Block(blockReferences, NonEmptySet.fromSetUnsafe(SortedSet(signedTxn)))
 
   val signedBlockGen: Gen[Signed[Block]] = signedOf(blockGen)
-  implicit val signedBlockArbitrary = Arbitrary(signedBlockGen)
+  implicit val signedBlockArbitrary: Arbitrary[Signed[Block]] = Arbitrary(signedBlockGen)
 
 }

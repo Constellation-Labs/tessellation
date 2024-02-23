@@ -20,6 +20,7 @@ import io.circe.shapes._
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.dsl.Http4sDsl
+import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import shapeless._
 import shapeless.syntax.singleton._
@@ -36,7 +37,7 @@ final case class ClusterRoutes[F[_]: Async](
     with P2PPublicRoutes[F]
     with CliRoutes[F] {
 
-  implicit val logger = Slf4jLogger.getLogger[F]
+  implicit val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLogger[F]
 
   protected[routes] val prefixPath: InternalUrlPrefix = "/cluster"
 

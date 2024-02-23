@@ -1,5 +1,6 @@
 package org.tessellation.merkletree
 
+import cats.Show
 import cats.data.Validated
 import cats.effect.Async
 import cats.effect.kernel.Sync
@@ -41,7 +42,7 @@ object StateProofValidator {
 
   @derive(eqv, show)
   case class StateBroken(snapshotOrdinal: SnapshotOrdinal, snapshotHash: hash.Hash) extends NoStackTrace {
-    implicit val hashShow = Hash.shortShow
+    implicit val hashShow: Show[Hash] = Hash.shortShow
     override val getMessage = s"State broken for ${snapshotOrdinal.show}, ${snapshotHash.show}"
   }
 }
