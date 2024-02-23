@@ -27,11 +27,11 @@ object metrics {
         Metrics[F].incrementCounter("dag_rumors_sent_total", rumorTags)
     }.void
 
-  def updateRumorsConsumed[F[_]: Monad: Metrics](outcome: String, rumor: RumorRaw): F[Unit] =
+  def updateRumorsConsumed[F[_]: Metrics](outcome: String, rumor: RumorRaw): F[Unit] =
     Metrics[F]
       .incrementCounter("dag_rumors_consumed_total", getRumorTags(rumor) :+ ("outcome", outcome))
 
-  def updateRumorsSpread[F[_]: Monad: Metrics](rumor: RumorRaw): F[Unit] =
+  def updateRumorsSpread[F[_]: Metrics](rumor: RumorRaw): F[Unit] =
     Metrics[F].incrementCounter("dag_rumors_spread_total", getRumorTags(rumor))
 
   def getRumorTags(rumor: RumorRaw): TagSeq =
@@ -41,10 +41,10 @@ object metrics {
       ("rumor_type", if (rumor.isInstanceOf[CommonRumorRaw]) "common" else "peer")
     )
 
-  def incrementGossipRoundSucceeded[F[_]: Monad: Metrics]: F[Unit] =
+  def incrementGossipRoundSucceeded[F[_]: Metrics]: F[Unit] =
     Metrics[F].incrementCounter("dag_gossip_round_succeeded_total")
 
-  def recordRoundDuration[F[_]: Monad: Metrics](duration: FiniteDuration, roundLabel: String): F[Unit] =
+  def recordRoundDuration[F[_]: Metrics](duration: FiniteDuration, roundLabel: String): F[Unit] =
     Metrics[F].recordTime("dag_gossip_round_duration", duration, Seq(("round_label", roundLabel)))
 
 }

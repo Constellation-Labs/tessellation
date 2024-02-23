@@ -1,6 +1,5 @@
 package org.tessellation.node.shared.http.routes
 
-import cats.Order
 import cats.effect.Async
 import cats.syntax.all._
 
@@ -18,7 +17,7 @@ import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.dsl.Http4sDsl
 
-class ConsensusInfoRoutes[F[_]: Async, Key: Order: Encoder](
+class ConsensusInfoRoutes[F[_]: Async, Key: Encoder](
   cluster: Cluster[F],
   consensusStorage: ConsensusStorage[F, _, Key, _, _],
   selfId: PeerId

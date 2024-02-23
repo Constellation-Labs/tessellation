@@ -23,7 +23,6 @@ import org.tessellation.dag.l1.domain.transaction.{TransactionStorage, transacti
 import org.tessellation.effects.GenUUID
 import org.tessellation.ext.collection.MapRefUtils.MapRefOps
 import org.tessellation.kernel._
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.block.processing.BlockValidationParams
 import org.tessellation.schema.Block
 import org.tessellation.schema.peer.{Peer, PeerId}
@@ -36,7 +35,7 @@ import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
 import eu.timepit.refined.auto.{autoRefineV, autoUnwrap}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-class BlockConsensusCell[F[_]: Async: SecurityProvider: KryoSerializer: Hasher: Random](
+class BlockConsensusCell[F[_]: Async: SecurityProvider: Hasher: Random](
   data: BlockConsensusInput,
   ctx: BlockConsensusContext[F]
 ) extends Cell[F, Id, BlockConsensusInput, Either[CellError, BlockConsensusOutput], BlockConsensusInput](
@@ -62,7 +61,7 @@ object BlockConsensusCell {
   private def deriveConsensusPeerIds(proposal: Proposal, selfId: PeerId): Set[PeerId] =
     proposal.facilitators + proposal.senderId + proposal.owner - selfId
 
-  private def returnTransactions[F[_]: Async: KryoSerializer: Hasher](
+  private def returnTransactions[F[_]: Async: Hasher](
     ownProposal: Proposal,
     transactionStorage: TransactionStorage[F]
   ): F[Unit] =
@@ -94,7 +93,7 @@ object BlockConsensusCell {
       )
   }
 
-  private def cancelRound[F[_]: Async: KryoSerializer: Hasher](
+  private def cancelRound[F[_]: Async: Hasher](
     ownProposal: Proposal,
     ctx: BlockConsensusContext[F]
   ): F[Unit] =
@@ -119,7 +118,7 @@ object BlockConsensusCell {
     case None               => (roundData.some, roundData.some)
   }
 
-  private def sendOwnProposal[F[_]: Async: SecurityProvider: KryoSerializer: Hasher](
+  private def sendOwnProposal[F[_]: Async: SecurityProvider: Hasher](
     ownProposal: Proposal,
     peers: Set[Peer],
     context: BlockConsensusContext[F]
@@ -129,7 +128,7 @@ object BlockConsensusCell {
       _ <- broadcast(signedProposal, peers, context.blockConsensusClient)
     } yield ()
 
-  def persistInitialOwnRoundData[F[_]: Async: SecurityProvider: KryoSerializer: Hasher](
+  def persistInitialOwnRoundData[F[_]: Async: SecurityProvider: Hasher](
     roundData: RoundData,
     ctx: BlockConsensusContext[F]
   ): F[Either[CellError, BlockConsensusOutput]] =
@@ -144,7 +143,7 @@ object BlockConsensusCell {
             .map(_ => CellError("Another own round already in progress! Transactions returned.").asLeft[BlockConsensusOutput])
       }
 
-  def persistInitialPeerRoundData[F[_]: Async: SecurityProvider: KryoSerializer: Hasher](
+  def persistInitialPeerRoundData[F[_]: Async: SecurityProvider: Hasher](
     roundData: RoundData,
     peerProposal: Proposal,
     ctx: BlockConsensusContext[F]
@@ -195,7 +194,7 @@ object BlockConsensusCell {
     case other => (other, None)
   }
 
-  private def sendBlockProposal[F[_]: Async: SecurityProvider: KryoSerializer: Hasher](
+  private def sendBlockProposal[F[_]: Async: SecurityProvider: Hasher](
     signedBlock: Signed[Block],
     roundData: RoundData,
     ctx: BlockConsensusContext[F]
@@ -213,7 +212,7 @@ object BlockConsensusCell {
       _ <- broadcast(signedBlockSignatureProposal, roundData.peers, ctx.blockConsensusClient)
     } yield NoData.asRight[CellError].widen[BlockConsensusOutput]
 
-  private def processValidBlock[F[_]: Async: SecurityProvider: KryoSerializer: Hasher](
+  private def processValidBlock[F[_]: Async: SecurityProvider: Hasher](
     proposal: Proposal,
     signedBlock: Signed[Block],
     ctx: BlockConsensusContext[F]
@@ -238,7 +237,7 @@ object BlockConsensusCell {
 
   private val validationParams: BlockValidationParams = BlockValidationParams.default.copy(minSignatureCount = 1)
 
-  def persistProposal[F[_]: Async: SecurityProvider: KryoSerializer: Hasher](
+  def persistProposal[F[_]: Async: SecurityProvider: Hasher](
     proposal: Proposal,
     ctx: BlockConsensusContext[F]
   ): F[Either[CellError, BlockConsensusOutput]] = (proposal.owner == ctx.selfId)
@@ -308,7 +307,7 @@ object BlockConsensusCell {
     case other => (other, None)
   }
 
-  def persistBlockSignatureProposal[F[_]: Async: SecurityProvider: KryoSerializer: Hasher](
+  def persistBlockSignatureProposal[F[_]: Async: SecurityProvider: Hasher](
     blockSignatureProposal: BlockSignatureProposal,
     ctx: BlockConsensusContext[F]
   ): F[Either[CellError, BlockConsensusOutput]] =
@@ -341,7 +340,7 @@ object BlockConsensusCell {
           NoData.asRight[CellError].widen[BlockConsensusOutput].pure[F]
       }
 
-  def informAboutInabilityToParticipate[F[_]: Async: SecurityProvider: KryoSerializer: Hasher](
+  def informAboutInabilityToParticipate[F[_]: Async: SecurityProvider: Hasher](
     proposal: Proposal,
     reason: CancellationReason,
     ctx: BlockConsensusContext[F]
@@ -404,7 +403,7 @@ object BlockConsensusCell {
     ownCancellationPresent && peerCancellationsPresent
   }
 
-  def processCancellation[F[_]: Async: SecurityProvider: KryoSerializer: Hasher](
+  def processCancellation[F[_]: Async: SecurityProvider: Hasher](
     cancellation: CancelledBlockCreationRound,
     ctx: BlockConsensusContext[F]
   ): F[Either[CellError, BlockConsensusOutput]] =
@@ -440,7 +439,7 @@ object BlockConsensusCell {
       }
     } yield result
 
-  def cancelTimedOutRounds[F[_]: Async: KryoSerializer: Hasher](
+  def cancelTimedOutRounds[F[_]: Async: Hasher](
     toCancel: Set[Proposal],
     ctx: BlockConsensusContext[F]
   ): F[Either[CellError, BlockConsensusOutput]] =
@@ -466,7 +465,7 @@ object BlockConsensusCell {
       .pull(ctx.consensusConfig.pullTxsCount)
       .map(_.map(_.toList.toSet).getOrElse(Set.empty))
 
-  def startOwnRound[F[_]: Async: Random: SecurityProvider: KryoSerializer: Hasher](
+  def startOwnRound[F[_]: Async: Random: SecurityProvider: Hasher](
     ctx: BlockConsensusContext[F]
   ): F[Either[CellError, BlockConsensusOutput]] =
     for {
@@ -499,7 +498,7 @@ object BlockConsensusCell {
       }
     } yield result
 
-  def inspectConsensuses[F[_]: Async: KryoSerializer: Hasher](
+  def inspectConsensuses[F[_]: Async: Hasher](
     ctx: BlockConsensusContext[F]
   ): F[Either[CellError, BlockConsensusOutput]] =
     for {
@@ -535,7 +534,7 @@ object BlockConsensusCell {
           none[Set[Peer]].pure[F]
     } yield result
 
-  def processProposal[F[_]: Async: SecurityProvider: KryoSerializer: Hasher](
+  def processProposal[F[_]: Async: SecurityProvider: Hasher](
     proposal: Proposal,
     ctx: BlockConsensusContext[F]
   ): F[Either[CellError, BlockConsensusOutput]] =

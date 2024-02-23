@@ -6,7 +6,6 @@ import cats.effect.Async
 import cats.syntax.all._
 
 import org.tessellation.ext.cats.syntax.validated._
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
 import org.tessellation.node.shared.infrastructure.gossip.RumorValidator.RumorValidationErrorOr
 import org.tessellation.schema.ID.Id
@@ -27,7 +26,7 @@ trait RumorValidator[F[_]] {
 
 object RumorValidator {
 
-  def make[F[_]: Async: KryoSerializer](
+  def make[F[_]: Async](
     seedlist: Option[Set[SeedlistEntry]],
     signedValidator: SignedValidator[F]
   ): RumorValidator[F] = new RumorValidator[F] {

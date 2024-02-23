@@ -10,7 +10,6 @@ import org.tessellation.dag.l1.domain.consensus.block.storage.ConsensusStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.dag.l1.infrastructure.address.storage.AddressStorage
 import org.tessellation.dag.l1.modules.{Storages => BaseStorages}
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.node.shared.infrastructure.cluster.storage.L0ClusterStorage
@@ -26,7 +25,7 @@ import org.tessellation.security.Hasher
 object Storages {
 
   def make[
-    F[_]: Async: Random: KryoSerializer: Hasher,
+    F[_]: Async: Random: Hasher,
     P <: StateProof,
     S <: Snapshot,
     SI <: SnapshotInfo[P]

@@ -1,13 +1,12 @@
 package org.tessellation.node.shared.infrastructure.gossip
 
+import cats.Applicative
 import cats.data.Ior
 import cats.effect.Async
 import cats.effect.std.{Queue, Random, Supervisor}
 import cats.syntax.all._
-import cats.{Applicative, Parallel}
 
 import org.tessellation.ext.cats.syntax.next._
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.GossipDaemonConfig
 import org.tessellation.node.shared.domain.cluster.storage.ClusterStorage
 import org.tessellation.node.shared.domain.collateral.Collateral
@@ -21,7 +20,7 @@ import org.tessellation.schema.gossip._
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
+import org.tessellation.security.{Hashed, Hasher}
 
 import eu.timepit.refined.auto._
 import fs2.Stream
@@ -37,7 +36,7 @@ trait GossipDaemon[F[_]] {
 
 object GossipDaemon {
 
-  def make[F[_]: Async: SecurityProvider: KryoSerializer: Hasher: Random: Parallel: Metrics](
+  def make[F[_]: Async: Hasher: Random: Metrics](
     rumorStorage: RumorStorage[F],
     rumorQueue: Queue[F, Hashed[RumorRaw]],
     clusterStorage: ClusterStorage[F],

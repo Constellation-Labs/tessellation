@@ -1,5 +1,6 @@
 package org.tessellation.node.shared.infrastructure.snapshot
 
+import cats.Applicative
 import cats.effect.Async
 import cats.syntax.applicativeError._
 import cats.syntax.bifunctor._
@@ -8,14 +9,12 @@ import cats.syntax.foldable._
 import cats.syntax.functor._
 import cats.syntax.option._
 import cats.syntax.order._
-import cats.{Applicative, Eq}
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
 
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.block.processing.{BlockAcceptanceResult, deprecationThreshold}
 import org.tessellation.node.shared.domain.consensus.ConsensusFunctions
 import org.tessellation.node.shared.domain.consensus.ConsensusFunctions.InvalidArtifact
@@ -41,9 +40,9 @@ case object NoTipsRemaining extends NoStackTrace
 case object ArtifactMismatch extends InvalidArtifact
 
 abstract class SnapshotConsensusFunctions[
-  F[_]: Async: SecurityProvider: KryoSerializer: Hasher,
+  F[_]: Async: SecurityProvider: Hasher,
   Event,
-  Artifact <: Snapshot: Eq: Encoder,
+  Artifact <: Snapshot: Encoder,
   Context,
   Trigger <: ConsensusTrigger
 ](implicit ordering: Ordering[BlockAsActiveTip])

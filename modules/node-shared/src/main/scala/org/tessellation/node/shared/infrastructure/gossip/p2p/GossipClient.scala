@@ -3,7 +3,6 @@ package org.tessellation.node.shared.infrastructure.gossip.p2p
 import cats.effect.Async
 import cats.syntax.all._
 
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.cluster.services.Session
 import org.tessellation.node.shared.http.p2p.PeerResponse
 import org.tessellation.node.shared.http.p2p.PeerResponse.PeerResponse
@@ -35,7 +34,7 @@ trait GossipClient[F[_]] {
 
 object GossipClient {
 
-  def make[F[_]: Async: KryoSerializer](client: Client[F], session: Session[F]): GossipClient[F] =
+  def make[F[_]: Async](client: Client[F], session: Session[F]): GossipClient[F] =
     new GossipClient[F] {
 
       implicit val facade: Facade[Json] = new CirceSupportParser(None, false).facade

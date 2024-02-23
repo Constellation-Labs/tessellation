@@ -5,7 +5,6 @@ import cats.effect.Async
 import cats.effect.std.Supervisor
 import cats.syntax.functor._
 
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.SharedConfig
 import org.tessellation.node.shared.domain.cluster.programs.{Joining, PeerDiscovery}
 import org.tessellation.node.shared.domain.healthcheck.LocalHealthcheck
@@ -17,7 +16,7 @@ import org.tessellation.security.{Hasher, SecurityProvider}
 
 object SharedPrograms {
 
-  def make[F[_]: Async: SecurityProvider: KryoSerializer: Hasher: Supervisor: Parallel](
+  def make[F[_]: Async: SecurityProvider: Hasher: Supervisor: Parallel](
     cfg: SharedConfig,
     storages: SharedStorages[F],
     services: SharedServices[F],

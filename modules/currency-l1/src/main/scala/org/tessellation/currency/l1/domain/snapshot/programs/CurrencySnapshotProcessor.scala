@@ -14,7 +14,6 @@ import org.tessellation.dag.l1.domain.snapshot.programs.SnapshotProcessor._
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.dag.l1.infrastructure.address.storage.AddressStorage
 import org.tessellation.json.JsonBrotliBinarySerializer
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.node.shared.domain.snapshot.{SnapshotContextFunctions, Validator}
 import org.tessellation.node.shared.infrastructure.snapshot.storage.LastSnapshotStorage
@@ -28,7 +27,7 @@ import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-sealed abstract class CurrencySnapshotProcessor[F[_]: Async: KryoSerializer: Hasher: SecurityProvider]
+sealed abstract class CurrencySnapshotProcessor[F[_]: Async: Hasher: SecurityProvider]
     extends SnapshotProcessor[
       F,
       CurrencySnapshotStateProof,
@@ -38,7 +37,7 @@ sealed abstract class CurrencySnapshotProcessor[F[_]: Async: KryoSerializer: Has
 
 object CurrencySnapshotProcessor {
 
-  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider: Hasher](
+  def make[F[_]: Async: Random: SecurityProvider: Hasher](
     identifier: Address,
     addressStorage: AddressStorage[F],
     blockStorage: BlockStorage[F],

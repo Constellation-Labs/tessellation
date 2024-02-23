@@ -43,8 +43,7 @@ object method {
   ) extends CliMethod
 
   case class SendStateChannelSnapshotCmd(
-    baseUrl: UrlString,
-    verbose: Boolean
+    baseUrl: UrlString
   ) extends CliMethod
 
   case class GetLatestSnapshotInfoCmd(
@@ -92,10 +91,11 @@ object method {
 
     val opts: Opts[SendStateChannelSnapshotCmd] =
       Opts.subcommand("send-state-channel-snapshot", "Send sample state-channel snapshot") {
-        (
-          Opts.argument[String](metavar = "baseUrl").map(withProtocol).mapValidated(refineV[Url](_).toValidatedNel),
-          Opts.flag("verbose", "Display debug messages", "v").map(_ => true).withDefault(false)
-        ).mapN(SendStateChannelSnapshotCmd.apply)
+        Opts
+          .argument[String](metavar = "baseUrl")
+          .map(withProtocol)
+          .mapValidated(refineV[Url](_).toValidatedNel)
+          .map(SendStateChannelSnapshotCmd.apply)
       }
   }
 

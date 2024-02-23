@@ -11,7 +11,6 @@ import cats.{Eq, Order, Show}
 
 import scala.reflect.runtime.universe.TypeTag
 
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.ConsensusConfig
 import org.tessellation.node.shared.domain.cluster.services.Session
 import org.tessellation.node.shared.domain.cluster.storage.ClusterStorage
@@ -30,11 +29,11 @@ import org.http4s.client.Client
 object Consensus {
 
   def make[
-    F[_]: Async: Supervisor: Random: KryoSerializer: SecurityProvider: Metrics: Hasher,
+    F[_]: Async: Supervisor: Random: SecurityProvider: Metrics: Hasher,
     Event: TypeTag: Decoder,
     Key: Show: Order: Next: TypeTag: Encoder: Decoder,
     Artifact <: AnyRef: Eq: TypeTag: Encoder: Decoder,
-    Context <: AnyRef: Eq: TypeTag: Encoder: Decoder
+    Context <: AnyRef: Eq: Encoder: Decoder
   ](
     consensusFns: ConsensusFunctions[F, Event, Key, Artifact, Context],
     gossip: Gossip[F],
@@ -83,7 +82,7 @@ object Consensus {
     } yield new Consensus(handler, storage, manager, routes, consensusFns)
 }
 
-sealed class Consensus[F[_]: Async, Event, Key, Artifact, Context] private (
+sealed class Consensus[F[_], Event, Key, Artifact, Context] private (
   val handler: RumorHandler[F],
   val storage: ConsensusStorage[F, Event, Key, Artifact, Context],
   val manager: ConsensusManager[F, Key, Artifact, Context],

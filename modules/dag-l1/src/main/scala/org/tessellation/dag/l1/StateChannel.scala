@@ -28,7 +28,6 @@ import org.tessellation.dag.l1.http.p2p.P2PClient
 import org.tessellation.dag.l1.modules._
 import org.tessellation.ext.fs2.StreamOps
 import org.tessellation.kernel.CellError
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema._
 import org.tessellation.schema.height.Height
 import org.tessellation.schema.peer.PeerId
@@ -40,7 +39,7 @@ import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 class StateChannel[
-  F[_]: Async: KryoSerializer: Hasher: SecurityProvider: Random,
+  F[_]: Async: Hasher: SecurityProvider: Random,
   P <: StateProof,
   S <: Snapshot,
   SI <: SnapshotInfo[P]
@@ -261,7 +260,7 @@ class StateChannel[
 object StateChannel {
 
   def make[
-    F[_]: Async: KryoSerializer: Hasher: SecurityProvider: Random,
+    F[_]: Async: Hasher: SecurityProvider: Random,
     P <: StateProof,
     S <: Snapshot,
     SI <: SnapshotInfo[P]

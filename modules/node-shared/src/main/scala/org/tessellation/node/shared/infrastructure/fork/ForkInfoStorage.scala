@@ -18,7 +18,7 @@ object ForkInfoStorage {
       .of(ForkInfoMap.empty)
       .map(make(_, config))
 
-  def make[F[_]: Monad](
+  def make[F[_]](
     storeRef: Ref[F, ForkInfoMap],
     config: ForkInfoStorageConfig
   ): ForkInfoStorage[F] = new ForkInfoStorage[F] {

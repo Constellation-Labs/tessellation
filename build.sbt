@@ -309,7 +309,6 @@ lazy val rosetta = (project in file("modules/rosetta"))
     scalafixCommonSettings,
     commonSettings,
     commonTestSettings,
-    dockerSettings,
     makeBatScripts := Seq(),
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,

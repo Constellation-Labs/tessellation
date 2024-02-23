@@ -80,8 +80,8 @@ object Main
                       case w: GeneratedWallets => sendTxsUsingGeneratedWallets(client, basicOpts, w)
                       case l: LoadedWallets    => sendTxsUsingLoadedWallets(client, basicOpts, l)
                     }
-                  case SendStateChannelSnapshotCmd(baseUrl, verbose) =>
-                    sendStateChannelSnapshot(client, baseUrl, verbose)
+                  case SendStateChannelSnapshotCmd(baseUrl) =>
+                    sendStateChannelSnapshot(client, baseUrl)
                   case GetLatestSnapshotInfoCmd(networkHost, networkPort) =>
                     getLatestSnapshotInfo(client, networkHost, networkPort)
                   case _ => IO.raiseError(new Throwable("Not implemented"))
@@ -113,8 +113,7 @@ object Main
 
   def sendStateChannelSnapshot[F[_]: Async: Hasher: SecurityProvider: Console](
     client: Client[F],
-    baseUrl: UrlString,
-    verbose: Boolean
+    baseUrl: UrlString
   ): F[Unit] =
     for {
       key <- generateKeys(1).map(_.head)

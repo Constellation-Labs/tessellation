@@ -2,7 +2,6 @@ package org.tessellation.dag.l1.domain.snapshot.programs
 
 import cats.data.NonEmptyList
 import cats.effect.Async
-import cats.kernel.Eq
 import cats.syntax.applicativeError._
 import cats.syntax.either._
 import cats.syntax.flatMap._
@@ -16,7 +15,6 @@ import org.tessellation.dag.l1.domain.address.storage.AddressStorage
 import org.tessellation.dag.l1.domain.block.BlockStorage.MajorityReconciliationData
 import org.tessellation.dag.l1.domain.block.{BlockRelations, BlockStorage}
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.snapshot.Validator
 import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.schema._
@@ -34,9 +32,9 @@ import eu.timepit.refined.types.numeric.NonNegLong
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 abstract class SnapshotProcessor[
-  F[_]: Async: KryoSerializer: SecurityProvider: Hasher,
+  F[_]: Async: SecurityProvider: Hasher,
   P <: StateProof,
-  S <: Snapshot: Eq,
+  S <: Snapshot,
   SI <: SnapshotInfo[P]
 ] {
   import SnapshotProcessor._

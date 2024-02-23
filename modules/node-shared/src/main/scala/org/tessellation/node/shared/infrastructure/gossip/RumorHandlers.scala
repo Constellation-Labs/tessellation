@@ -5,7 +5,6 @@ import cats.effect.Async
 import cats.syntax.semigroupk._
 import cats.syntax.show._
 
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.cluster.storage.ClusterStorage
 import org.tessellation.node.shared.domain.fork.ForkInfoStorage
 import org.tessellation.node.shared.domain.healthcheck.LocalHealthcheck
@@ -18,7 +17,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object RumorHandlers {
 
-  def make[F[_]: Async: KryoSerializer](
+  def make[F[_]: Async](
     clusterStorage: ClusterStorage[F],
     pingHealthCheck: PingHealthCheckConsensus[F],
     localHealthcheck: LocalHealthcheck[F],
@@ -27,7 +26,7 @@ object RumorHandlers {
     new RumorHandlers[F](clusterStorage, pingHealthCheck, localHealthcheck, forkInfoStorage) {}
 }
 
-sealed abstract class RumorHandlers[F[_]: Async: KryoSerializer] private (
+sealed abstract class RumorHandlers[F[_]: Async] private (
   clusterStorage: ClusterStorage[F],
   pingHealthCheck: PingHealthCheckConsensus[F],
   localHealthcheck: LocalHealthcheck[F],

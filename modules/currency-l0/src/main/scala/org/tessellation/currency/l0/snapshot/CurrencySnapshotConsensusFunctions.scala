@@ -8,10 +8,9 @@ import cats.syntax.order._
 
 import scala.collection.immutable.SortedMap
 
-import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
+import org.tessellation.currency.dataApplication.BaseDataApplicationL0Service
 import org.tessellation.currency.l0.snapshot.services.StateChannelSnapshotService
 import org.tessellation.currency.schema.currency._
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.consensus.ConsensusFunctions
 import org.tessellation.node.shared.domain.gossip.Gossip
 import org.tessellation.node.shared.domain.rewards.Rewards
@@ -25,7 +24,7 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hasher, SecurityProvider}
 
-abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider: KryoSerializer: Hasher]
+abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider: Hasher]
     extends SnapshotConsensusFunctions[
       F,
       CurrencySnapshotEvent,
@@ -36,7 +35,7 @@ abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider:
 
 object CurrencySnapshotConsensusFunctions {
 
-  def make[F[_]: Async: KryoSerializer: Hasher: SecurityProvider: L0NodeContext](
+  def make[F[_]: Async: Hasher: SecurityProvider](
     stateChannelSnapshotService: StateChannelSnapshotService[F],
     collateral: Amount,
     rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],

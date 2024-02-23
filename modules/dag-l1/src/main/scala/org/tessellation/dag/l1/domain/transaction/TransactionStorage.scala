@@ -22,7 +22,6 @@ import scala.util.control.NoStackTrace
 
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage._
 import org.tessellation.ext.collection.MapRefUtils._
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.transaction.filter.Consecutive
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction._
@@ -228,7 +227,7 @@ class TransactionStorage[F[_]: Async](
 
 object TransactionStorage {
 
-  def make[F[_]: Async: KryoSerializer](
+  def make[F[_]: Async](
     initialTransactionReference: TransactionReference
   ): F[TransactionStorage[F]] =
     for {
@@ -236,7 +235,7 @@ object TransactionStorage {
       waitingTransactions <- MapRef.ofConcurrentHashMap[F, Address, NonEmptySet[Hashed[Transaction]]]()
     } yield new TransactionStorage[F](lastAccepted, waitingTransactions, initialTransactionReference)
 
-  def make[F[_]: Async: KryoSerializer](
+  def make[F[_]: Async](
     lastAccepted: Map[Address, LastTransactionReferenceState],
     waitingTransactions: Map[Address, NonEmptySet[Hashed[Transaction]]],
     initialTransactionReference: TransactionReference

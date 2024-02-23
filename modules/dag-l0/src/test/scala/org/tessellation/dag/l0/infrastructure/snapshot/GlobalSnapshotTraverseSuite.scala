@@ -186,7 +186,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         case _ => None.pure[IO]
       }
 
-    def loadInfo(ordinal: SnapshotOrdinal): IO[Option[GlobalSnapshotInfo]] = None.pure[F]
+    def loadInfo: SnapshotOrdinal => IO[Option[GlobalSnapshotInfo]] = _ => None.pure[F]
 
     val signedValidator = SignedValidator.make[IO]
     val blockValidator =
