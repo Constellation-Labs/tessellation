@@ -1,4 +1,4 @@
-name: Test metagraph rewards
+name: Test sending data transactions
 
 on:
   pull_request: {}
@@ -7,10 +7,9 @@ on:
       - develop
       - hotfix/*
       - release/*
-
 jobs:
   build:
-    name: Test rewards
+    name: Test sending transactions
     runs-on: ubuntu-20.04
     timeout-minutes: 45
     strategy:
@@ -57,34 +56,25 @@ jobs:
       - name: Run Metagraph L0 Cluster
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          IMPLEMENT_REWARDS: true
         uses: "./.github/templates/metagraph_l0/ml0_cluster"
 
-      - name: Run Metagraph L1 Cluster
+      - name: Run Metagraph L1 - Data Cluster
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        uses: "./.github/templates/metagraph_currency_l1/ml1_cluster"
+        uses: "./.github/templates/metagraph_data_l1/ml1_cluster"
 
       - name: Check Metagraph cluster
         run: |
           cd .github/action_scripts/check_clusters
-          node metagraph-currency.js
+          node metagraph-data.js
 
-      - name: Check rewards
+      - name: Send transactions
         run: |
-          cd .github/action_scripts/rewards
-          node index.js
-
-      - name: Wait 1 minute before check cluster
-        run: |
-          sleep 60
-
-      ## Checking cluster again because we already faced scenarios where the cluster dies after sending rewards transactions
-      - name: Check Metagraph cluster
-        run: |
-          cd .github/action_scripts/check_clusters
-          node metagraph-currency.js
+          cd .github/action_scripts
+          npm install @stardust-collective/dag4
+          npm install js-sha256
+          npm install axios
+          node send_transactions/data.js
 
       - name: Save Global L0 Genesis logs
         uses: actions/upload-artifact@v3
@@ -107,44 +97,51 @@ jobs:
           name: rewards-global-l0-validator-2-java-${{ matrix.java }}
           path: .github/config/containers/global-l0/validator-2/global-l0-validator-2.log
 
+      - name: Save Metagraph L0 - Create genesis logs
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: send-transactions-metagraph-l0-create-genesis-java-${{ matrix.java }}
+          path: .github/config/containers/metagraph-l0/genesis/metagraph-l0-create-genesis.log
+
       - name: Save Metagraph L0 - Genesis logs
         uses: actions/upload-artifact@v3
         if: always()
         with:
-          name: rewards-metagraph-l0-genesis-java-${{ matrix.java }}
+          name: send-transactions-metagraph-l0-genesis-java-${{ matrix.java }}
           path: .github/config/containers/metagraph-l0/genesis/metagraph-l0-genesis.log
 
       - name: Save Metagraph L0 - Validator 1 logs
         uses: actions/upload-artifact@v3
         if: always()
         with:
-          name: rewards-metagraph-l0-validator-1-java-${{ matrix.java }}
+          name: send-transactions-metagraph-l0-validator-1-java-${{ matrix.java }}
           path: .github/config/containers/metagraph-l0/validator-1/metagraph-l0-validator-1.log
 
       - name: Save Metagraph L0 - Validator 2 logs
         uses: actions/upload-artifact@v3
         if: always()
         with:
-          name: rewards-metagraph-l0-validator-2-java-${{ matrix.java }}
+          name: send-transactions-metagraph-l0-validator-2-java-${{ matrix.java }}
           path: .github/config/containers/metagraph-l0/validator-2/metagraph-l0-validator-2.log
 
-      - name: Save Currency L1 - Initial Validator logs
+      - name: Save Data L1 - Initial Validator logs
         uses: actions/upload-artifact@v3
         if: always()
         with:
-          name: rewards-currency-l1-initial-validator-java-${{ matrix.java }}
-          path: .github/config/containers/currency-l1/initial-validator/currency-l1-initial-validator.log
+          name: send-transactions-data-l1-initial-validator-java-${{ matrix.java }}
+          path: .github/config/containers/data-l1/initial-validator/data-l1-initial-validator.log
 
-      - name: Save Currency L1 - Validator 1 logs
+      - name: Save Data L1 - Validator 1 logs
         uses: actions/upload-artifact@v3
         if: always()
         with:
-          name: rewards-currency-l1-validator-1-java-${{ matrix.java }}
-          path: .github/config/containers/currency-l1/validator-1/currency-l1-1.log
+          name: send-transactions-data-l1-validator-1-java-${{ matrix.java }}
+          path: .github/config/containers/data-l1/validator-1/data-l1-1.log
 
-      - name: Save Currency L1 - Validator 2 logs
+      - name: Save Data L1 - Validator 2 logs
         uses: actions/upload-artifact@v3
         if: always()
         with:
-          name: rewards-currency-l1-validator-2-java-${{ matrix.java }}
-          path: .github/config/containers/currency-l1/validator-2/currency-l1-2.log
+          name: send-transactions-data-l1-validator-2-java-${{ matrix.java }}
+          path: .github/config/containers/data-l1/validator-2/data-l1-2.log

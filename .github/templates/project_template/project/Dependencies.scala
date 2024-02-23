@@ -3,7 +3,6 @@ import sbt._
 object Dependencies {
 
   object V {
-    //Default version of tessellation develop branch
     val tessellation = "99.99.99"
     val decline = "2.4.1"
   }
@@ -21,10 +20,10 @@ object Dependencies {
     val tessellationKeytool = tessellation("keytool")
     val tessellationCurrencyL0 = tessellation("currency-l0")
     val tessellationCurrencyL1 = tessellation("currency-l1")
-    val requests = "com.lihaoyi" %% "requests" % "0.8.0"
     val declineCore = decline()
     val declineEffect = decline("effect")
     val declineRefined = decline("refined")
+    val requests = "com.lihaoyi" %% "requests" % "0.8.0"
   }
 
 
