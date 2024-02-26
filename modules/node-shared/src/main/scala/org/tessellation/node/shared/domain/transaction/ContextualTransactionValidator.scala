@@ -1,6 +1,6 @@
 package org.tessellation.node.shared.domain.transaction
 
-import cats.data.ValidatedNec
+import cats.data.{Validated, ValidatedNec}
 import cats.effect.Async
 import cats.syntax.apply._
 import cats.syntax.flatMap._
@@ -37,6 +37,10 @@ object ContextualTransactionValidator {
 
   }
 
+  private val lockedAddresses = Set(
+    Address("DAG6LvxLSdWoC9uJZPgXtcmkcWBaGYypF6smaPyH") // NOTE: BitForex
+  )
+
   def make[F[_]: Async](
     nonContextualValidator: TransactionValidator[F],
     context: TransactionValidationContext[F]
@@ -49,9 +53,8 @@ object ContextualTransactionValidator {
         for {
           nonContextuallyV <- validateNonContextually(signedTransaction)
           lastTxRefV <- validateLastTransactionRef(signedTransaction)
-        } yield
-          nonContextuallyV
-            .productR(lastTxRefV)
+          notLocked = validateNotLocked(signedTransaction)
+        } yield notLocked *> nonContextuallyV *> lastTxRefV
 
       private def validateNonContextually(
         signedTx: Signed[Transaction]
@@ -75,6 +78,16 @@ object ContextualTransactionValidator {
               signedTx.validNec[ContextualTransactionValidationError]
           }
         }
+
+      private def validateNotLocked(
+        signedTx: Signed[Transaction]
+      ): ContextualTransactionValidationErrorOr[Signed[Transaction]] =
+        Validated
+          .condNec[ContextualTransactionValidationError, Signed[Transaction]](
+            !lockedAddresses.contains(signedTx.source),
+            signedTx,
+            LockedAddressError(signedTx.source)
+          )
     }
 
   @derive(eqv, show)
@@ -83,6 +96,7 @@ object ContextualTransactionValidator {
       extends ContextualTransactionValidationError
   case class ParentHashDifferentThanLastTxHash(parentHash: Hash, lastTxHash: Hash) extends ContextualTransactionValidationError
   case class NonContextualValidationError(error: TransactionValidationError) extends ContextualTransactionValidationError
+  case class LockedAddressError(address: Address) extends ContextualTransactionValidationError
 
   type ContextualTransactionValidationErrorOr[A] = ValidatedNec[ContextualTransactionValidationError, A]
 }
