@@ -64,7 +64,7 @@ abstract class CurrencyL0App(
       storages <- Storages.make[IO](sharedStorages, cfg.snapshot, method.globalL0Peer, dataApplicationService).asResource
       p2pClient = P2PClient.make[IO](sharedP2PClient, sharedResources.client, sharedServices.session)
       validators = Validators.make[IO](seedlist)
-      implicit0(nodeContext: L0NodeContext[IO]) = L0NodeContext.make[IO](storages.snapshot)
+      implicit0(nodeContext: L0NodeContext[IO]) = L0NodeContext.make[IO](storages.snapshot)(keyPair)
       maybeMajorityPeerIds <- getMajorityPeerIds[IO](
         nodeShared.prioritySeedlist,
         method.nodeSharedConfig.priorityPeerIds,

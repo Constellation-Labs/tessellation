@@ -1,16 +1,22 @@
 package org.tessellation.currency.l1.node
 
+import java.security.KeyPair
+
+import cats.effect.Async
+
 import org.tessellation.currency.dataApplication.L1NodeContext
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
+import org.tessellation.security.hash.Hash
+import org.tessellation.security.signature.signature.SignatureProof
 import org.tessellation.security.{Hashed, SecurityProvider}
 
 object L1NodeContext {
-  def make[F[_]: SecurityProvider](
+  def make[F[_]: Async: SecurityProvider](
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     lastCurrencySnapshotStorage: LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
-  ): L1NodeContext[F] =
+  )(keypair: KeyPair): L1NodeContext[F] =
     new L1NodeContext[F] {
       def getLastGlobalSnapshot: F[Option[Hashed[GlobalIncrementalSnapshot]]] = lastGlobalSnapshotStorage.get
 
@@ -20,5 +26,7 @@ object L1NodeContext {
         lastCurrencySnapshotStorage.getCombined
 
       def securityProvider: SecurityProvider[F] = SecurityProvider[F]
+
+      def signWithNodeKey(input: Hash): F[SignatureProof] = SignatureProof.fromHash(keypair, input)
     }
 }

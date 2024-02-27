@@ -55,7 +55,7 @@ object Services {
     for {
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync[F]
 
-      l0NodeContext = L0NodeContext.make[F](storages.snapshot)
+      l0NodeContext = L0NodeContext.make[F](storages.snapshot)(keyPair)
 
       dataApplicationAcceptanceManager = (maybeDataApplication, storages.calculatedStateStorage).mapN {
         case (service, storage) =>

@@ -14,6 +14,7 @@ import org.tessellation.schema.round.RoundId
 import org.tessellation.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.signature.signature.SignatureProof
 import org.tessellation.security.{Encodable, Hashed, SecurityProvider}
 
 import eu.timepit.refined.auto._
@@ -472,6 +473,7 @@ trait L1NodeContext[F[_]] {
   def getLastCurrencySnapshot: F[Option[Hashed[CurrencyIncrementalSnapshot]]]
   def getLastCurrencySnapshotCombined: F[Option[(Hashed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]]
   def securityProvider: SecurityProvider[F]
+  def signWithNodeKey(input: Hash): F[SignatureProof]
 }
 
 trait L0NodeContext[F[_]] {
@@ -479,4 +481,5 @@ trait L0NodeContext[F[_]] {
   def getCurrencySnapshot(ordinal: SnapshotOrdinal): F[Option[Hashed[CurrencyIncrementalSnapshot]]]
   def getLastCurrencySnapshotCombined: F[Option[(Hashed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]]
   def securityProvider: SecurityProvider[F]
+  def signWithNodeKey(input: Hash): F[SignatureProof]
 }
