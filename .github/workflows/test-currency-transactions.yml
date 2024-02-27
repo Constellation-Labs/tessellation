@@ -71,11 +71,13 @@ jobs:
       - name: Check DAG cluster
         run: |
           cd .github/action_scripts/check_clusters
+          npm install axios
           node dag.js
 
       - name: Check Metagraph cluster
         run: |
           cd .github/action_scripts/check_clusters
+          npm install axios
           node metagraph-currency.js
 
       - name: Send transactions
