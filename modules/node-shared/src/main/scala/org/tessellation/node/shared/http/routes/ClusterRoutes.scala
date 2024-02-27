@@ -48,13 +48,11 @@ final case class ClusterRoutes[F[_]: Async](
           .join(peerToJoin)
           .flatMap(_ => Ok())
           .recoverWith {
-            case NodeStateDoesNotAllowForJoining(nodeState) =>
-              Conflict(s"Node state=${nodeState} does not allow for joining the cluster.")
+            case NodeStateDoesNotAllowForJoining(nodeState) => Conflict(s"Node state=$nodeState does not allow for joining the cluster.")
             case PeerAlreadyJoinedWithNewerSession(id, _, _, _) => Conflict(s"Peer id=${id.show} already joined with newer session.")
-            case SessionAlreadyExists =>
-              Conflict(s"Session already exists.")
-            case _ =>
-              InternalServerError("Unknown error.")
+            case SessionAlreadyExists                           => Conflict(s"Session already exists.")
+            case PeerNotOnSeedlist(id)                          => Conflict(s"Peer $id not on seedlist")
+            case _                                              => InternalServerError("Unknown error.")
           }
       }
     case POST -> Root / "leave" =>
@@ -74,6 +72,7 @@ final case class ClusterRoutes[F[_]: Async](
             case SessionDoesNotExist    => Conflict("Peer does not have an active session.")
             case CollateralNotSatisfied => Conflict("Collateral is not satisfied.")
             case NodeNotInCluster       => Conflict("Node is not part of the cluster.")
+            case PeerNotOnSeedlist(id)  => Conflict(s"Peer $id not on seedlist")
             case _                      => InternalServerError("Unknown error.")
           }
       }

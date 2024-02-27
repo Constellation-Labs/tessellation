@@ -208,7 +208,7 @@ class Joining[
     } yield peer
 
   private def validateSeedlist(peer: PeerToJoin): F[Unit] =
-    PeerNotInSeedlist(peer.id)
+    PeerNotOnSeedlist(peer.id)
       .raiseError[F, Unit]
       .unlessA(seedlist.map(_.map(_.peerId)).forall(_.contains(peer.id)))
 

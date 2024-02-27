@@ -61,8 +61,8 @@ object cluster {
     override val getMessage = s"Peer already joined with different registration: ${id.show}"
   }
 
-  case class PeerNotInSeedlist(id: PeerId) extends NoStackTrace {
-    override val getMessage = s"Peer not in seedlist: ${id.show}"
+  case class PeerNotOnSeedlist(id: PeerId) extends NoStackTrace {
+    override val getMessage = s"Peer not on seedlist: ${id.show}"
   }
 
   @derive(decoder, encoder, order, show)
