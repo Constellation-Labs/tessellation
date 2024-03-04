@@ -134,11 +134,21 @@ object generators {
       signature <- signatureGen
     } yield SignatureProof(id, signature)
 
+  def signatureProofN(n: Int): Gen[NonEmptySet[SignatureProof]] =
+    Gen.listOfN(n, signatureProofGen).map(l => NonEmptySet.fromSetUnsafe(SortedSet.from(l)))
+
   def signedOf[A](valueGen: Gen[A]): Gen[Signed[A]] =
     for {
       txn <- valueGen
-      signatureProof <- Gen.listOfN(3, signatureProofGen).map(l => NonEmptySet.fromSetUnsafe(SortedSet.from(l)))
+      signatureProof <- signatureProofN(3)
     } yield Signed(txn, signatureProof)
+
+  def signedOfN[A](valueGen: Gen[A], minProofs: Int, maxProofs: Int): Gen[Signed[A]] =
+    for {
+      value <- valueGen
+      numProofs <- Gen.chooseNum(minProofs, maxProofs)
+      proofs <- signatureProofN(numProofs)
+    } yield Signed(value, proofs)
 
   val signedTransactionGen: Gen[Signed[Transaction]] = signedOf(transactionGen)
 

@@ -2,8 +2,7 @@ package org.tessellation.security.signature
 
 import cats.Order
 import cats.Order._
-import cats.data.NonEmptySet._
-import cats.data.{NonEmptyList, NonEmptySet, ValidatedNec}
+import cats.data._
 import cats.effect.Async
 import cats.syntax.all._
 
@@ -46,6 +45,7 @@ trait SignedValidator[F[_]] {
 
   def validateSignaturesWithSeedlist[A <: AnyRef](seedlist: Option[Set[PeerId]], signed: Signed[A]): SignedValidationErrorOr[Signed[A]]
 
+  def validateSignedBySeedlistMajority[A](seedlist: Option[Set[PeerId]], signed: Signed[A]): SignedValidationErrorOr[Signed[A]]
 }
 
 object SignedValidator {
@@ -105,6 +105,23 @@ object SignedValidator {
           .toNes
       }.map(SignersNotInSeedlist).toInvalidNec(signed)
 
+    def validateSignedBySeedlistMajority[A](seedlist: Option[Set[PeerId]], signed: Signed[A]): SignedValidationErrorOr[Signed[A]] =
+      seedlist match {
+        case None => signed.validNec
+        case Some(peers) =>
+          val minRequired = peers.size / 2 + 1
+          val signingPeers = signed.proofs
+            .map(_.id.toPeerId)
+            .toSortedSet
+            .intersect(peers)
+
+          Validated.condNec(
+            signingPeers.size >= minRequired,
+            signed,
+            NotEnoughSeedlistSignatures(signingPeers.size, minRequired)
+          )
+      }
+
     private def duplicatedValues[B: Order](values: NonEmptyList[B]): List[B] =
       values.groupBy(identity).toList.mapFilter {
         case (value, occurrences) =>
@@ -119,6 +136,7 @@ object SignedValidator {
   sealed trait SignedValidationError
   case class InvalidSignatures(invalidSignatures: NonEmptySet[SignatureProof]) extends SignedValidationError
   case class NotEnoughSignatures(signatureCount: Long, minSignatureCount: PosInt) extends SignedValidationError
+  case class NotEnoughSeedlistSignatures(signatureCount: Int, minSignatureCount: Int) extends SignedValidationError
   case class DuplicateSigners(signers: NonEmptySet[Id]) extends SignedValidationError
   case class MissingSigners(signers: NonEmptySet[Id]) extends SignedValidationError
   case class SignersNotInSeedlist(signers: NonEmptySet[Id]) extends SignedValidationError
