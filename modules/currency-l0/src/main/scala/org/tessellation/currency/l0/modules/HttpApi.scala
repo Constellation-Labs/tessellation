@@ -123,6 +123,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Has
   private val metricRoutes = MetricRoutes[F]().publicRoutes
   private val targetRoutes = TargetRoutes[F](services.cluster).publicRoutes
 
+  private val currencyMessageRoutes = new CurrencyMessageRoutes[F](services.currencyMessageService).publicRoutes
+
   private val openRoutes: HttpRoutes[F] =
     CORS.policy.withAllowOriginAll.withAllowHeadersAll.withAllowCredentials(false).apply {
       PeerAuthMiddleware
@@ -139,6 +141,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Has
               nodeRoutes.publicRoutes <+>
               consensusInfoRoutes.publicRoutes <+>
               metagraphNodeRoutes.map(_.publicRoutes).getOrElse(HttpRoutes.empty) <+>
+              currencyMessageRoutes <+>
               DataApplicationCustomRoutes.publicRoutes[F, L0NodeContext[F]](maybeDataApplication)
           }
         }

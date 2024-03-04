@@ -18,6 +18,7 @@ import org.tessellation.keytool.KeyStoreUtils
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
+import org.tessellation.schema.currencyMessage.{CurrencyMessage, MessageOrdinal, MessageType}
 import org.tessellation.schema.transaction.{Transaction, TransactionAmount, TransactionFee}
 import org.tessellation.security._
 import org.tessellation.security.key.ops._
@@ -25,12 +26,13 @@ import org.tessellation.security.signature.Signed
 import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.wallet.cli.env.EnvConfig
 import org.tessellation.wallet.cli.method._
+import org.tessellation.wallet.file.io.{readFromJsonFile, writeToJsonFile}
 import org.tessellation.wallet.transaction.createTransaction
-import org.tessellation.wallet.transaction.io.{readFromJsonFile, writeToJsonFile}
 
 import com.monovore.decline._
 import com.monovore.decline.effect._
 import fs2.io.file.Path
+import io.circe.syntax._
 import io.estatico.newtype.ops._
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -68,6 +70,14 @@ object Main
                     createAndStoreTransaction[IO](keyPair, destination, fee, amount, prevTxPath, nextTxPath)
                       .handleErrorWith(err => logger.error(err)(s"Error while creating transaction."))
                       .as(ExitCode.Success)
+                  case CreateOwnerSigningMessage(address, parentOrdinal, outputPath) =>
+                    createCurrencyMessage[IO](keyPair, MessageType.Owner, address, parentOrdinal, outputPath)
+                      .handleErrorWith(err => logger.error(err)(s"Error while creating owner signing message."))
+                      .as(ExitCode.Success)
+                  case CreateStakingSigningMessage(address, parentOrdinal, outputPath) =>
+                    createCurrencyMessage[IO](keyPair, MessageType.Staking, address, parentOrdinal, outputPath)
+                      .handleErrorWith(err => logger.error(err)(s"Error while creating staking signing message."))
+                      .as(ExitCode.Success)
                 }
               }
             }
@@ -95,7 +105,7 @@ object Main
 
       prevTx <- prevTxPath match {
         case Some(path) =>
-          readFromJsonFile(path)
+          readFromJsonFile[F, Signed[Transaction]](path)
             .handleErrorWith(e =>
               logger.error(e)(s"Error while reading previous transaction from path $path") >> MonadThrow[F]
                 .raiseError[Option[Signed[Transaction]]](e)
@@ -107,6 +117,17 @@ object Main
 
       _ <- writeToJsonFile(nextTxPath)(tx)
     } yield ()
+
+  private def createCurrencyMessage[F[_]: Async: SecurityProvider: Hasher: Console](
+    keyPair: KeyPair,
+    messageType: MessageType,
+    address: Address,
+    parentOrdinal: MessageOrdinal,
+    outputPath: Option[Path]
+  ): F[Unit] =
+    Signed
+      .forAsyncHasher[F, CurrencyMessage](CurrencyMessage(messageType, address, parentOrdinal), keyPair)
+      .flatMap(m => outputPath.fold(Console[F].println(m.asJson.noSpaces))(writeToJsonFile(_)(m)))
 
   private def loadKeyPair[F[_]: Async: SecurityProvider](cfg: EnvConfig): F[KeyPair] =
     KeyStoreUtils

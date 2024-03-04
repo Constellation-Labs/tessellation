@@ -57,6 +57,7 @@ object Storages {
       maybeCalculatedStateStorage <- dataApplication.traverse { _ =>
         CalculatedStateLocalFileSystemStorage.make[F](dataApplicationCalculatedStatePath)
       }
+      currencyMessageStorage <- CurrencyMessageStorage.make[F]
     } yield
       new Storages[F](
         globalL0Cluster = globalL0ClusterStorage,
@@ -68,7 +69,8 @@ object Storages {
         lastGlobalSnapshot = lastGlobalSnapshotStorage,
         incrementalSnapshotLocalFileSystemStorage = snapshotLocalFileSystemStorage,
         identifier = identifierStorage,
-        calculatedStateStorage = maybeCalculatedStateStorage
+        calculatedStateStorage = maybeCalculatedStateStorage,
+        currencyMessageStorage = currencyMessageStorage
       ) {}
 }
 
@@ -82,5 +84,6 @@ sealed abstract class Storages[F[_]] private (
   val lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
   val incrementalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, CurrencyIncrementalSnapshot],
   val identifier: IdentifierStorage[F],
-  val calculatedStateStorage: Option[CalculatedStateLocalFileSystemStorage[F]]
+  val calculatedStateStorage: Option[CalculatedStateLocalFileSystemStorage[F]],
+  val currencyMessageStorage: CurrencyMessageStorage[F]
 )

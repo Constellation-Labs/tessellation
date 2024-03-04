@@ -7,6 +7,7 @@ import cats.syntax.validated._
 import org.tessellation.ext.decline.WithOpts
 import org.tessellation.ext.decline.decline._
 import org.tessellation.schema.address.Address
+import org.tessellation.schema.currencyMessage.MessageOrdinal
 import org.tessellation.schema.transaction.{TransactionAmount, TransactionFee}
 
 import com.monovore.decline.Opts
@@ -76,6 +77,37 @@ object method {
     }
   }
 
+  case class CreateOwnerSigningMessage(dagAddress: Address, parentOrdinal: MessageOrdinal, outputPath: Option[Path]) extends CliMethod
+
+  object CreateOwnerSigningMessage extends WithOpts[CreateOwnerSigningMessage] {
+    val opts: Opts[CreateOwnerSigningMessage] =
+      Opts.subcommand("create-owner-signing-message", "Creates owner signing message") {
+        parseMessageOpts.mapN(CreateOwnerSigningMessage.apply)
+      }
+  }
+
+  case class CreateStakingSigningMessage(dagAddress: Address, parentOrdinal: MessageOrdinal, outputPath: Option[Path]) extends CliMethod
+
+  object CreateStakingSigningMessage extends WithOpts[CreateStakingSigningMessage] {
+    val opts: Opts[CreateStakingSigningMessage] =
+      Opts.subcommand("create-staking-signing-message", "Creates staking signing message") {
+        parseMessageOpts.mapN(CreateStakingSigningMessage.apply)
+      }
+  }
+
+  private def parseMessageOpts: (Opts[Address], Opts[MessageOrdinal], Opts[Option[Path]]) = (
+    Opts.option[Address]("address", "DAG Address", "a"),
+    Opts
+      .option[Long]("parentOrdinal", "Ordinal of the parent message", "o")
+      .mapValidated(MessageOrdinal(_).toValidatedNel),
+    Opts.option[Path]("output", "Filename to write output: path must exist and any existing file is overwritten", "f").orNone
+  )
+
   val opts: Opts[CliMethod] =
-    ShowAddress.opts.orElse(ShowId.opts).orElse(ShowPublicKey.opts).orElse(CreateTransaction.opts)
+    ShowAddress.opts
+      .orElse(ShowId.opts)
+      .orElse(ShowPublicKey.opts)
+      .orElse(CreateTransaction.opts)
+      .orElse(CreateOwnerSigningMessage.opts)
+      .orElse(CreateStakingSigningMessage.opts)
 }
