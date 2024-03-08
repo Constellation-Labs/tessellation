@@ -16,7 +16,7 @@ import org.tessellation.node.shared.domain.transaction.TransactionChainValidator
 import org.tessellation.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.height.Height
-import org.tessellation.schema.{Block, BlockReference}
+import org.tessellation.schema.{Block, BlockReference, SnapshotOrdinal}
 import org.tessellation.security.Hasher
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.signature.Signed
@@ -44,6 +44,8 @@ object BlockAcceptanceManagerSuite extends MutableIOSuite with Checkers {
         Hasher.forSync[IO]
       }
     }
+
+  private val getOption = SnapshotOrdinal.MinValue
 
   def mkBlockAcceptanceManager(acceptInitiallyAwaiting: Boolean = true)(implicit h: Hasher[IO]) =
     Ref[F].of[Map[Signed[Block], Boolean]](Map.empty.withDefaultValue(false)).map { state =>
@@ -96,6 +98,7 @@ object BlockAcceptanceManagerSuite extends MutableIOSuite with Checkers {
 
         override def validate(
           signedBlock: Signed[Block],
+          ordinal: SnapshotOrdinal,
           params: BlockValidationParams
         ): IO[BlockValidationErrorOr[
           (Signed[Block], Map[Address, TransactionChainValidator.TransactionNel])
@@ -118,7 +121,7 @@ object BlockAcceptanceManagerSuite extends MutableIOSuite with Checkers {
       )
       for {
         blockAcceptanceManager <- mkBlockAcceptanceManager()
-        res <- blockAcceptanceManager.acceptBlocksIteratively(blocks, null)
+        res <- blockAcceptanceManager.acceptBlocksIteratively(blocks, null, getOption)
       } yield expect.same(res, expected)
     }
   }
@@ -135,7 +138,7 @@ object BlockAcceptanceManagerSuite extends MutableIOSuite with Checkers {
 
         for {
           blockAcceptanceManager <- mkBlockAcceptanceManager()
-          res <- blockAcceptanceManager.acceptBlocksIteratively(acceptedBlocks ++ rejectedBlocks, null)
+          res <- blockAcceptanceManager.acceptBlocksIteratively(acceptedBlocks ++ rejectedBlocks, null, getOption)
         } yield expect.same(res, expected)
     }
   }
@@ -152,7 +155,7 @@ object BlockAcceptanceManagerSuite extends MutableIOSuite with Checkers {
         )
         for {
           blockAcceptanceManager <- mkBlockAcceptanceManager()
-          res <- blockAcceptanceManager.acceptBlocksIteratively(acceptedBlocks ++ awaitingBlocks, null)
+          res <- blockAcceptanceManager.acceptBlocksIteratively(acceptedBlocks ++ awaitingBlocks, null, getOption)
         } yield expect.same(res, expected)
     }
   }
@@ -168,7 +171,7 @@ object BlockAcceptanceManagerSuite extends MutableIOSuite with Checkers {
 
       for {
         blockAcceptanceManager <- mkBlockAcceptanceManager(acceptInitiallyAwaiting = true)
-        res <- blockAcceptanceManager.acceptBlocksIteratively(blocks, null)
+        res <- blockAcceptanceManager.acceptBlocksIteratively(blocks, null, getOption)
       } yield expect.same(res, expected)
     }
   }
@@ -182,7 +185,7 @@ object BlockAcceptanceManagerSuite extends MutableIOSuite with Checkers {
       )
       for {
         blockAcceptanceManager <- mkBlockAcceptanceManager(acceptInitiallyAwaiting = false)
-        res <- blockAcceptanceManager.acceptBlocksIteratively(blocks, null)
+        res <- blockAcceptanceManager.acceptBlocksIteratively(blocks, null, getOption)
       } yield expect.same(res, expected)
     }
   }
@@ -196,7 +199,7 @@ object BlockAcceptanceManagerSuite extends MutableIOSuite with Checkers {
       )
       for {
         blockAcceptanceManager <- mkBlockAcceptanceManager(acceptInitiallyAwaiting = false)
-        res <- blockAcceptanceManager.acceptBlocksIteratively(blocks, null)
+        res <- blockAcceptanceManager.acceptBlocksIteratively(blocks, null, getOption)
       } yield expect.same(res, expected)
     }
   }
