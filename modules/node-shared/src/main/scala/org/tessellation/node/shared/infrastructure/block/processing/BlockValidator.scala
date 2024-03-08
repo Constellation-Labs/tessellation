@@ -9,15 +9,16 @@ import cats.syntax.functor._
 import cats.syntax.functorFilter._
 import cats.syntax.list._
 import cats.syntax.option._
+import cats.syntax.partialOrder._
 import cats.syntax.validated._
 
 import org.tessellation.ext.cats.syntax.validated._
 import org.tessellation.node.shared.domain.block.processing._
 import org.tessellation.node.shared.domain.transaction.TransactionChainValidator.TransactionNel
 import org.tessellation.node.shared.domain.transaction.{TransactionChainValidator, TransactionValidator}
-import org.tessellation.schema.Block
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction.TransactionReference
+import org.tessellation.schema.{Block, SnapshotOrdinal}
 import org.tessellation.security.Hasher
 import org.tessellation.security.signature.{Signed, SignedValidator}
 
@@ -34,15 +35,18 @@ object BlockValidator {
 
       def validate(
         signedBlock: Signed[Block],
+        snapshotOrdinal: SnapshotOrdinal,
         params: BlockValidationParams
       ): F[BlockValidationErrorOr[(Signed[Block], Map[Address, TransactionNel])]] =
         for {
           signedV <- validateSigned(signedBlock, params)
+          lockedV = validateNotLockedAtOrdinal(signedBlock, snapshotOrdinal)
           transactionsV <- validateTransactions(signedBlock)
           propertiesV = validateProperties(signedBlock, params)
           transactionChainV <- validateTransactionChain(signedBlock)
         } yield
           signedV
+            .productR(lockedV)
             .productR(transactionsV)
             .productR(propertiesV)
             .product(transactionChainV)
@@ -112,5 +116,22 @@ object BlockValidator {
             else
               none
         }
+
+      private val addressesLockedAtOrdinal: Map[Address, SnapshotOrdinal] = Map(
+        Address("DAG6LvxLSdWoC9uJZPgXtcmkcWBaGYypF6smaPyH") -> SnapshotOrdinal(1447110L) // NOTE: BitForex
+      )
+
+      private def validateNotLockedAtOrdinal(signedBlock: Signed[Block], ordinal: SnapshotOrdinal): BlockValidationErrorOr[Signed[Block]] =
+        signedBlock.value.transactions.toNonEmptyList
+          .map(signedTxn =>
+            addressesLockedAtOrdinal
+              .get(signedTxn.value.source)
+              .filter(lockedAt => ordinal >= lockedAt)
+              .fold(signedBlock.validNec[BlockValidationError])(
+                AddressLockedAtOrdinal(signedTxn.value.source, ordinal, _).invalidNec[Signed[Block]]
+              )
+          )
+          .reduce[BlockValidationErrorOr[Signed[Block]]](_ *> _)
+
     }
 }

@@ -13,7 +13,7 @@ import cats.syntax.traverse._
 
 import org.tessellation.node.shared.domain.block.processing.{TxChains, _}
 import org.tessellation.node.shared.infrastructure.block.processing.BlockAcceptanceLogic
-import org.tessellation.schema.{Block, BlockReference}
+import org.tessellation.schema.{Block, BlockReference, SnapshotOrdinal}
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hasher, SecurityProvider}
 
@@ -37,7 +37,8 @@ object BlockAcceptanceManager {
 
       def acceptBlocksIteratively(
         blocks: List[Signed[Block]],
-        context: BlockAcceptanceContext[F]
+        context: BlockAcceptanceContext[F],
+        snapshotOrdinal: SnapshotOrdinal
       ): F[BlockAcceptanceResult] = {
 
         def go(
@@ -80,7 +81,7 @@ object BlockAcceptanceManager {
           .foldLeftM((List.empty[(Signed[Block], TxChains)], List.empty[(Signed[Block], ValidationFailed)])) { (acc, block) =>
             acc match {
               case (validList, invalidList) =>
-                blockValidator.validate(block).map {
+                blockValidator.validate(block, snapshotOrdinal).map {
                   case Valid(blockAndTxChains) => (blockAndTxChains :: validList, invalidList)
                   case Invalid(errors)         => (validList, (block, ValidationFailed(errors.toNonEmptyList)) :: invalidList)
                 }
@@ -99,9 +100,10 @@ object BlockAcceptanceManager {
 
       def acceptBlock(
         block: Signed[Block],
-        context: BlockAcceptanceContext[F]
+        context: BlockAcceptanceContext[F],
+        snapshotOrdinal: SnapshotOrdinal
       ): F[Either[BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, NonNegLong)]] =
-        blockValidator.validate(block).flatMap {
+        blockValidator.validate(block, snapshotOrdinal).flatMap {
           _.toEither
             .leftMap(errors => ValidationFailed(errors.toNonEmptyList))
             .toEitherT[F]

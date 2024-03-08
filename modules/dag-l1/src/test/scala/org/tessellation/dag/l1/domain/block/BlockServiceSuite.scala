@@ -10,7 +10,6 @@ import cats.syntax.traverse._
 import org.tessellation.block.generators._
 import org.tessellation.dag.l1.Main
 import org.tessellation.dag.l1.domain.address.storage.AddressStorage
-import org.tessellation.dag.l1.domain.block.BlockStorage
 import org.tessellation.dag.l1.domain.block.BlockStorage._
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage.{LastTransactionReferenceState, Majority}
@@ -19,6 +18,7 @@ import org.tessellation.ext.collection.MapRefUtils._
 import org.tessellation.json.JsonHashSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.block.processing._
+import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.node.shared.nodeSharedKryoRegistrar
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
@@ -53,13 +53,15 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
 
       override def acceptBlocksIteratively(
         blocks: List[Signed[Block]],
-        context: BlockAcceptanceContext[IO]
+        context: BlockAcceptanceContext[IO],
+        ordinal: SnapshotOrdinal
       ): IO[BlockAcceptanceResult] =
         ???
 
       override def acceptBlock(
         block: Signed[Block],
-        context: BlockAcceptanceContext[IO]
+        context: BlockAcceptanceContext[IO],
+        ordinal: SnapshotOrdinal
       ): IO[Either[BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)]] = IO.pure(notAcceptanceReason).map {
         case None         => (BlockAcceptanceContextUpdate.empty, initUsageCount).asRight[BlockNotAcceptedReason]
         case Some(reason) => reason.asLeft[(BlockAcceptanceContextUpdate, UsageCount)]
@@ -78,12 +80,26 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
 
     }
 
+    val lastGlobalSnapshotStorage = new LastSnapshotStorage[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo] {
+      override def set(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): IO[Unit] = ???
+
+      override def setInitial(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): IO[Unit] = ???
+
+      override def get: IO[Option[Hashed[GlobalIncrementalSnapshot]]] = ???
+
+      override def getCombined: IO[Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = ???
+
+      override def getOrdinal: IO[Option[SnapshotOrdinal]] = IO.pure(SnapshotOrdinal.MinValue.some)
+
+      override def getHeight: IO[Option[height.Height]] = ???
+    }
+
     Random.scalaUtilRandom.flatMap { implicit r =>
       MapRef.ofConcurrentHashMap[IO, Address, NonEmptySet[Hashed[Transaction]]]().map { waitingTxsR =>
         val blockStorage = new BlockStorage[IO](blocksR)
         val transactionStorage = new TransactionStorage[IO](lastAccTxR, waitingTxsR, TransactionReference.empty)
         BlockService
-          .make[IO](blockAcceptanceManager, addressStorage, blockStorage, transactionStorage, Amount.empty)
+          .make[IO](blockAcceptanceManager, addressStorage, blockStorage, transactionStorage, lastGlobalSnapshotStorage, Amount.empty)
       }
 
     }

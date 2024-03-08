@@ -26,6 +26,9 @@ case class ValidationFailed(reasons: NonEmptyList[BlockValidationError]) extends
 case class ParentNotFound(parent: BlockReference) extends BlockRejectionReason
 
 @derive(eqv, show)
+case object SnapshotOrdinalUnavailable extends BlockRejectionReason
+
+@derive(eqv, show)
 case class RejectedTransaction(tx: TransactionReference, reason: TransactionRejectionReason) extends BlockRejectionReason
 
 @derive(eqv, show)
