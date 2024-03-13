@@ -146,7 +146,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         snapshotAcceptanceManager,
         collateral,
         rewards,
-        GlobalSnapshotEventCutter.make[IO](20_000_000)
+        GlobalSnapshotEventCutter
+          .make[IO](20_000_000, (binary: StateChannelSnapshotBinary, info: GlobalSnapshotInfo) => binary.fee.value.value)
       )
   }
 
