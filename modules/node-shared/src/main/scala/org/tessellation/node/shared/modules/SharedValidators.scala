@@ -3,13 +3,16 @@ package org.tessellation.node.shared.modules
 import cats.data.NonEmptySet
 import cats.effect.Async
 
+import scala.collection.immutable.SortedMap
+
 import org.tessellation.json.JsonSerializer
 import org.tessellation.node.shared.domain.block.processing.BlockValidator
 import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
-import org.tessellation.node.shared.domain.statechannel.StateChannelValidator
+import org.tessellation.node.shared.domain.statechannel.{FeeCalculator, FeeCalculatorConfig, StateChannelValidator}
 import org.tessellation.node.shared.domain.transaction.{TransactionChainValidator, TransactionValidator}
 import org.tessellation.node.shared.infrastructure.block.processing.BlockValidator
 import org.tessellation.node.shared.infrastructure.gossip.RumorValidator
+import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.security.signature.SignedValidator
@@ -23,6 +26,7 @@ object SharedValidators {
     l0Seedlist: Option[Set[SeedlistEntry]],
     seedlist: Option[Set[SeedlistEntry]],
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
+    feeConfigs: SortedMap[SnapshotOrdinal, FeeCalculatorConfig],
     maxBinarySizeInBytes: PosLong,
     txHasher: Hasher[F]
   ): SharedValidators[F] = {
@@ -35,7 +39,9 @@ object SharedValidators {
     val currencyBlockValidator = BlockValidator
       .make[F](signedValidator, currencyTransactionChainValidator, currencyTransactionValidator, txHasher)
     val rumorValidator = RumorValidator.make[F](seedlist, signedValidator)
-    val stateChannelValidator = StateChannelValidator.make[F](signedValidator, l0Seedlist, stateChannelAllowanceLists, maxBinarySizeInBytes)
+    val feeCalculator = FeeCalculator.make(feeConfigs)
+    val stateChannelValidator =
+      StateChannelValidator.make[F](signedValidator, l0Seedlist, stateChannelAllowanceLists, maxBinarySizeInBytes, feeCalculator)
 
     new SharedValidators[F](
       signedValidator,

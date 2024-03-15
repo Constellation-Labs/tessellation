@@ -3,6 +3,7 @@ package org.tessellation.currency.l0.snapshot.services
 import java.security.KeyPair
 
 import cats.Applicative
+import cats.data.NonEmptySet
 import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
@@ -10,15 +11,25 @@ import cats.syntax.traverse._
 
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.crypto._
-import org.tessellation.json.JsonBrotliBinarySerializer
-import org.tessellation.node.shared.domain.snapshot.storage.SnapshotStorage
+import org.tessellation.json.{JsonBrotliBinarySerializer, JsonSerializer}
+import org.tessellation.node.shared.config.types.SnapshotSizeConfig
+import org.tessellation.node.shared.domain.snapshot.storage.{LastSnapshotStorage, SnapshotStorage}
+import org.tessellation.node.shared.domain.statechannel.FeeCalculator
 import org.tessellation.node.shared.infrastructure.snapshot.DataApplicationSnapshotAcceptanceManager
 import org.tessellation.node.shared.snapshot.currency.CurrencySnapshotArtifact
+import org.tessellation.schema.ID.Id
+import org.tessellation.schema.address.Address
+import org.tessellation.schema.balance.Balance
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import org.tessellation.security.hash.Hash
+import org.tessellation.security.hex.Hex
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.signature.signature.{Signature, SignatureProof}
 import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
 import org.tessellation.statechannel.StateChannelSnapshotBinary
 
+import eu.timepit.refined.auto._
+import eu.timepit.refined.types.numeric.{NonNegInt, NonNegLong}
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait StateChannelSnapshotService[F[_]] {
@@ -28,33 +39,80 @@ trait StateChannelSnapshotService[F[_]] {
     context: CurrencySnapshotContext
   )(implicit hasher: Hasher[F]): F[Unit]
   def createGenesisBinary(snapshot: Signed[CurrencySnapshot])(implicit hasher: Hasher[F]): F[Signed[StateChannelSnapshotBinary]]
-  def createBinary(snapshot: Signed[CurrencySnapshotArtifact], lastSnapshotBinaryHash: Hash)(
+  def createBinary(
+    snapshot: Signed[CurrencySnapshotArtifact],
+    lastSnapshotBinaryHash: Hash,
+    maybeGlobalSnapshotOrdinal: Option[SnapshotOrdinal],
+    stakingAddress: Option[Address]
+  )(
     implicit hasher: Hasher[F]
   ): F[Signed[StateChannelSnapshotBinary]]
 }
 
 object StateChannelSnapshotService {
-  def make[F[_]: Async: SecurityProvider](
+  def make[F[_]: Async: JsonSerializer: SecurityProvider](
     keyPair: KeyPair,
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
+    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     jsonBrotliBinarySerializer: JsonBrotliBinarySerializer[F],
     dataApplicationSnapshotAcceptanceManager: Option[DataApplicationSnapshotAcceptanceManager[F]],
-    stateChannelBinarySender: StateChannelBinarySender[F]
+    stateChannelBinarySender: StateChannelBinarySender[F],
+    feeCalculator: FeeCalculator[F],
+    snapshotSizeConfig: SnapshotSizeConfig
   ): StateChannelSnapshotService[F] =
     new StateChannelSnapshotService[F] {
       private val logger = Slf4jLogger.getLogger
 
-      def createGenesisBinary(snapshot: Signed[CurrencySnapshot])(implicit hasher: Hasher[F]): F[Signed[StateChannelSnapshotBinary]] =
-        jsonBrotliBinarySerializer
-          .serialize(snapshot)
-          .flatMap(StateChannelSnapshotBinary(Hash.empty, _, SnapshotFee.MinValue).sign(keyPair))
+      private val feeCalculationDelay: NonNegLong = 10L
 
-      def createBinary(snapshot: Signed[CurrencySnapshotArtifact], lastSnapshotBinaryHash: Hash)(
+      private def calculateFee(
+        lastHash: Hash,
+        bytes: Array[Byte],
+        signatureCount: Int,
+        maybeStakingAddress: Option[Address],
+        maybeGlobalSnapshotOrdinal: Option[SnapshotOrdinal]
+      ): F[SnapshotFee] =
+        lastGlobalSnapshotStorage.getCombined
+          .map(_.flatMap { case (_, state) => maybeStakingAddress.flatMap(state.balances.get) }.getOrElse(Balance.empty))
+          .flatMap { staked =>
+            JsonSerializer[F]
+              .serialize(
+                Signed(
+                  StateChannelSnapshotBinary(lastHash, bytes, SnapshotFee(NonNegLong.MaxValue)),
+                  NonEmptySet.one(SignatureProof(Id(Hex("")), Signature(Hex(""))))
+                )
+              )
+              .map(_.length)
+              .flatMap { noSigsBytesSize =>
+                val sizeKb = NonNegInt.unsafeFrom(
+                  (BigDecimal(noSigsBytesSize + signatureCount * snapshotSizeConfig.singleSignatureSizeInBytes) / BigDecimal(1024))
+                    .setScale(0, BigDecimal.RoundingMode.UP)
+                    .toInt
+                )
+
+                feeCalculator.calculateRecommendedFee(maybeGlobalSnapshotOrdinal, feeCalculationDelay)(staked, sizeKb)
+              }
+          }
+
+      def createGenesisBinary(snapshot: Signed[CurrencySnapshot])(implicit hasher: Hasher[F]): F[Signed[StateChannelSnapshotBinary]] =
+        for {
+          bytes <- jsonBrotliBinarySerializer.serialize(snapshot)
+          fee <- calculateFee(Hash.empty, bytes, snapshot.proofs.length, None, None)
+          binary <- StateChannelSnapshotBinary(Hash.empty, bytes, fee).sign(keyPair)
+        } yield binary
+
+      def createBinary(
+        snapshot: Signed[CurrencySnapshotArtifact],
+        lastSnapshotBinaryHash: Hash,
+        maybeGlobalSnapshotOrdinal: Option[SnapshotOrdinal],
+        stakingAddress: Option[Address]
+      )(
         implicit hasher: Hasher[F]
       ): F[Signed[StateChannelSnapshotBinary]] =
         for {
           bytes <- jsonBrotliBinarySerializer.serialize(snapshot)
-          binary <- StateChannelSnapshotBinary(lastSnapshotBinaryHash, bytes, SnapshotFee.MinValue).sign(keyPair)
+          fee <- calculateFee(lastSnapshotBinaryHash, bytes, snapshot.proofs.length, stakingAddress, maybeGlobalSnapshotOrdinal)
+          binary <- StateChannelSnapshotBinary(lastSnapshotBinaryHash, bytes, fee).sign(keyPair)
         } yield binary
 
       def consume(

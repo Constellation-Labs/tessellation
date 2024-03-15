@@ -5,6 +5,7 @@ import java.nio.file.{Path => JPath}
 import cats.data.NonEmptySet
 
 import org.tessellation.env.AppEnvironment
+import org.tessellation.node.shared.domain.statechannel.FeeCalculatorConfig
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.peer.PeerId
@@ -32,5 +33,9 @@ package object pureconfig {
   implicit val environmentToOrdinalMapReader: ConfigReader[Map[AppEnvironment, SnapshotOrdinal]] =
     genericMapReader[AppEnvironment, SnapshotOrdinal](catchReadError(AppEnvironment.withName))
   implicit val environmentToSetOfPeersReader: ConfigReader[Map[AppEnvironment, NonEmptySet[PeerId]]] =
+    genericMapReader(catchReadError(AppEnvironment.withName))
+  implicit val ordinalToFeeCalculatorConfigReader: ConfigReader[Map[SnapshotOrdinal, FeeCalculatorConfig]] =
+    genericMapReader(catchReadError(strOrdinal => SnapshotOrdinal.unsafeApply(strOrdinal.toLong)))
+  implicit val envToOrdinalToFeeCalculatorConfigReader: ConfigReader[Map[AppEnvironment, Map[SnapshotOrdinal, FeeCalculatorConfig]]] =
     genericMapReader(catchReadError(AppEnvironment.withName))
 }

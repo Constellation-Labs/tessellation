@@ -22,6 +22,7 @@ import org.tessellation.node.shared.infrastructure.consensus.trigger.TimeTrigger
 import org.tessellation.node.shared.infrastructure.metrics.Metrics
 import org.tessellation.node.shared.infrastructure.snapshot.SnapshotConsensusFunctions.gossipForkInfo
 import org.tessellation.node.shared.snapshot.currency._
+import org.tessellation.schema.currencyMessage.fetchStakingAddress
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.{Signature, _}
@@ -174,53 +175,70 @@ object CurrencySnapshotConsensusStateAdvancer {
                   val maybeAllSignatures =
                     maybeGetAllDeclarations(state, resources)(_.signature)
 
-                  maybeAllSignatures
-                    .traverseTap(signatures =>
-                      warnIfForking(ownFacilitatorsHash, facilitatorsObservationName)(signatures.values.toList.map(_.facilitatorsHash))
-                    )
-                    .flatMap {
-                      _.map(_.map { case (id, signature) => SignatureProof(PeerId._Id.get(id), signature.signature) }.toList).traverse {
-                        allSignatures =>
-                          allSignatures
-                            .filterA(verifySignatureProof(majorityArtifactInfo.hash, _))
-                            .flatTap { validSignatures =>
-                              logger
-                                .warn(
-                                  s"Removed ${(allSignatures.size - validSignatures.size).show} invalid signatures during consensus for key ${state.key.show}, " +
-                                    s"${validSignatures.size.show} valid signatures left"
-                                )
-                                .whenA(allSignatures.size =!= validSignatures.size)
-                            }
-                      }.flatMap { maybeOnlyValidSignatures =>
-                        state.facilitators.value.hash.flatMap { facilitatorsHash =>
-                          maybeOnlyValidSignatures.flatMap(sigs => NonEmptySet.fromSet(sigs.toSortedSet)).traverse { validSignaturesNes =>
-                            val signedArtifact = Signed(majorityArtifactInfo.artifact, validSignaturesNes)
+                  val maybeGlobalSnapshotOrdinal =
+                    maybeGetAllDeclarations(state, resources)(_.facility)
+                      .map(_.map { case (_, f) => f.lastGlobalSnapshotOrdinal })
+                      .map(_.toList)
+                      .flatMap(pickMajority(_))
 
-                            stateChannelSnapshotService
-                              .createBinary(signedArtifact, state.lastOutcome.finished.binaryArtifactHash)
-                              .map { signedBinary =>
-                                val newState = state.copy(status =
-                                  identity[CurrencySnapshotStatus](
-                                    CollectingBinarySignatures(
-                                      signedArtifact,
-                                      majorityArtifactInfo.context,
-                                      signedBinary.value,
-                                      majorityTrigger,
-                                      candidates,
-                                      facilitatorsHash
+                  maybeGlobalSnapshotOrdinal.flatTraverse { globalSnapshotOrdinal =>
+                    maybeAllSignatures
+                      .traverseTap(signatures =>
+                        warnIfForking(ownFacilitatorsHash, facilitatorsObservationName)(signatures.values.toList.map(_.facilitatorsHash))
+                      )
+                      .flatMap {
+                        _.map(_.map { case (id, signature) => SignatureProof(PeerId._Id.get(id), signature.signature) }.toList).traverse {
+                          allSignatures =>
+                            allSignatures
+                              .filterA(verifySignatureProof(majorityArtifactInfo.hash, _))
+                              .flatTap { validSignatures =>
+                                logger
+                                  .warn(
+                                    s"Removed ${(allSignatures.size - validSignatures.size).show} invalid signatures during consensus for key ${state.key.show}, " +
+                                      s"${validSignatures.size.show} valid signatures left"
+                                  )
+                                  .whenA(allSignatures.size =!= validSignatures.size)
+                              }
+                        }.flatMap { maybeOnlyValidSignatures =>
+                          state.facilitators.value.hash.flatMap { facilitatorsHash =>
+                            maybeOnlyValidSignatures.flatMap(sigs => NonEmptySet.fromSet(sigs.toSortedSet)).traverse { validSignaturesNes =>
+                              val signedArtifact = Signed(majorityArtifactInfo.artifact, validSignaturesNes)
+                              val maybeStakingAddress = fetchStakingAddress(state.lastOutcome.finished.context.snapshotInfo)
+
+                              stateChannelSnapshotService
+                                .createBinary(
+                                  signedArtifact,
+                                  state.lastOutcome.finished.binaryArtifactHash,
+                                  globalSnapshotOrdinal.some,
+                                  maybeStakingAddress
+                                )
+                                .map { signedBinary =>
+                                  val newState = state.copy(status =
+                                    identity[CurrencySnapshotStatus](
+                                      CollectingBinarySignatures(
+                                        signedArtifact,
+                                        majorityArtifactInfo.context,
+                                        signedBinary.value,
+                                        majorityTrigger,
+                                        candidates,
+                                        facilitatorsHash
+                                      )
                                     )
                                   )
-                                )
-                                val effect = gossip.spread(
-                                  ConsensusPeerDeclaration(state.key, BinarySignature(signedBinary.proofs.head.signature, facilitatorsHash))
-                                )
+                                  val effect = gossip.spread(
+                                    ConsensusPeerDeclaration(
+                                      state.key,
+                                      BinarySignature(signedBinary.proofs.head.signature, facilitatorsHash)
+                                    )
+                                  )
 
-                                (newState, effect)
-                              }
+                                  (newState, effect)
+                                }
+                            }
                           }
                         }
                       }
-                    }
+                  }
                 case CollectingBinarySignatures(
                       signedMajorityArtifact,
                       context,

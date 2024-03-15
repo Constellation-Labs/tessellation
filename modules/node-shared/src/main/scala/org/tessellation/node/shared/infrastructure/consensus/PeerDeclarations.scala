@@ -5,6 +5,7 @@ import org.tessellation.node.shared.infrastructure.consensus.declaration._
 import derevo.cats.{eqv, show}
 import derevo.derive
 import derevo.scalacheck.arbitrary
+import eu.timepit.refined.scalacheck.all._
 
 @derive(arbitrary, eqv, show)
 case class PeerDeclarations(

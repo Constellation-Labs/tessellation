@@ -69,7 +69,7 @@ object GlobalSnapshotConsensusStateCreator {
           gossip.spread(
             ConsensusPeerDeclaration(
               key,
-              Facility(bound, candidates, maybeTrigger, lastOutcome.finished.facilitatorsHash)
+              Facility(bound, candidates, maybeTrigger, lastOutcome.finished.facilitatorsHash, lastOutcome.key)
             )
           )
         }

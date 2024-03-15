@@ -23,6 +23,7 @@ import org.tessellation.node.shared.domain.healthcheck.LocalHealthcheck
 import org.tessellation.node.shared.domain.rewards.Rewards
 import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
 import org.tessellation.node.shared.domain.snapshot.services.{AddressService, GlobalL0Service}
+import org.tessellation.node.shared.domain.statechannel.FeeCalculator
 import org.tessellation.node.shared.infrastructure.collateral.Collateral
 import org.tessellation.node.shared.infrastructure.metrics.Metrics
 import org.tessellation.node.shared.infrastructure.snapshot._
@@ -72,13 +73,18 @@ object Services {
         p2PClient.stateChannelSnapshot
       )
 
+      feeCalculator = FeeCalculator.make(cfg.shared.feeConfigs)
+
       stateChannelSnapshotService <- StateChannelSnapshotService
         .make[F](
           keyPair,
           storages.snapshot,
+          storages.lastGlobalSnapshot,
           jsonBrotliBinarySerializer,
           dataApplicationAcceptanceManager,
-          stateChannelBinarySender
+          stateChannelBinarySender,
+          feeCalculator,
+          cfg.snapshotSize
         )
         .pure[F]
 
@@ -105,6 +111,7 @@ object Services {
           cfg.collateral.amount,
           storages.cluster,
           storages.node,
+          storages.lastGlobalSnapshot,
           maybeRewards,
           cfg.snapshot,
           client,

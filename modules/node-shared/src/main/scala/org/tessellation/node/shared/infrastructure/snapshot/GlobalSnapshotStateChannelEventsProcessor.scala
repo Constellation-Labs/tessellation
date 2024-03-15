@@ -19,6 +19,7 @@ import org.tessellation.ext.cats.syntax.validated._
 import org.tessellation.json.JsonBrotliBinarySerializer
 import org.tessellation.node.shared.domain.statechannel.StateChannelValidator
 import org.tessellation.schema.address.Address
+import org.tessellation.schema.currencyMessage.fetchStakingBalance
 import org.tessellation.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
 import org.tessellation.security.Hasher
 import org.tessellation.security.signature.Signed
@@ -58,6 +59,7 @@ object GlobalSnapshotStateChannelEventsProcessor {
   ) =
     new GlobalSnapshotStateChannelEventsProcessor[F] {
       private val logger = Slf4jLogger.getLoggerFromClass[F](GlobalSnapshotStateChannelEventsProcessor.getClass)
+
       def process(
         snapshotOrdinal: SnapshotOrdinal,
         lastGlobalSnapshotInfo: GlobalSnapshotInfo,
@@ -71,9 +73,13 @@ object GlobalSnapshotStateChannelEventsProcessor {
         )
       ] =
         events.traverse { event =>
+          val stakingBalance = fetchStakingBalance(event.address, lastGlobalSnapshotInfo)
+
           (validationType match {
-            case StateChannelValidationType.Full       => stateChannelValidator.validate(event)
-            case StateChannelValidationType.Historical => stateChannelValidator.validateHistorical(event)
+            case StateChannelValidationType.Full =>
+              stateChannelValidator.validate(event, snapshotOrdinal, stakingBalance)
+            case StateChannelValidationType.Historical =>
+              stateChannelValidator.validateHistorical(event, snapshotOrdinal, stakingBalance)
           }).map(_.errorMap(error => (event.address, error)))
         }
           .map(_.partitionMap(_.toEither))
