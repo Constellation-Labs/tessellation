@@ -9,12 +9,14 @@ import org.tessellation.currency.schema.currency.CurrencySnapshotContext
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
 import org.tessellation.node.shared.domain.gossip.Gossip
 import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
+import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.node.shared.infrastructure.consensus._
 import org.tessellation.node.shared.infrastructure.consensus.declaration.Facility
 import org.tessellation.node.shared.infrastructure.consensus.message.ConsensusPeerDeclaration
 import org.tessellation.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import org.tessellation.node.shared.snapshot.currency._
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 
 abstract class CurrencySnapshotConsensusStateCreator[F[_]: Sync]
     extends ConsensusStateCreator[
@@ -32,6 +34,7 @@ object CurrencySnapshotConsensusStateCreator {
   def make[F[_]: Async](
     consensusFns: CurrencySnapshotConsensusFunctions[F],
     consensusStorage: CurrencyConsensusStorage[F],
+    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     gossip: Gossip[F],
     selfId: PeerId,
     seedlist: Option[Set[SeedlistEntry]]
@@ -68,11 +71,12 @@ object CurrencySnapshotConsensusStateCreator {
         }
 
         time <- Clock[F].monotonic
+        lastGlobalSnapshotOrdinal <- lastGlobalSnapshotStorage.getOrdinal.map(_.getOrElse(SnapshotOrdinal.MinValue))
         effect = consensusStorage.getUpperBound.flatMap { bound =>
           gossip.spread(
             ConsensusPeerDeclaration(
               key,
-              Facility(bound, candidates, maybeTrigger, lastOutcome.finished.facilitatorsHash)
+              Facility(bound, candidates, maybeTrigger, lastOutcome.finished.facilitatorsHash, lastGlobalSnapshotOrdinal)
             )
           )
         }

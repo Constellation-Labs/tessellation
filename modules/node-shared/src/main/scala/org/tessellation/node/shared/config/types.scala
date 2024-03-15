@@ -2,9 +2,11 @@ package org.tessellation.node.shared.config
 
 import cats.data.NonEmptySet
 
+import scala.collection.immutable.SortedMap
 import scala.concurrent.duration.FiniteDuration
 
 import org.tessellation.env.AppEnvironment
+import org.tessellation.node.shared.domain.statechannel.FeeCalculatorConfig
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.node.NodeState
@@ -23,6 +25,7 @@ object types {
     collateral: Option[CollateralConfig],
     trust: SharedTrustConfig,
     snapshot: SharedSnapshotConfig,
+    feeConfigs: Map[AppEnvironment, Map[SnapshotOrdinal, FeeCalculatorConfig]],
     forkInfoStorage: ForkInfoStorageConfig,
     priorityPeerIds: Map[AppEnvironment, NonEmptySet[PeerId]],
     lastKryoHashOrdinal: Map[AppEnvironment, SnapshotOrdinal]
@@ -38,6 +41,7 @@ object types {
     trustStorage: TrustStorageConfig,
     priorityPeerIds: Option[NonEmptySet[PeerId]],
     snapshotSize: SnapshotSizeConfig,
+    feeConfigs: SortedMap[SnapshotOrdinal, FeeCalculatorConfig],
     forkInfoStorage: ForkInfoStorageConfig,
     lastKryoHashOrdinal: Map[AppEnvironment, SnapshotOrdinal]
   )

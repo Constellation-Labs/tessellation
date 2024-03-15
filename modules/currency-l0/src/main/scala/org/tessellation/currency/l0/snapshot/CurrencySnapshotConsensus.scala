@@ -17,12 +17,14 @@ import org.tessellation.node.shared.domain.gossip.Gossip
 import org.tessellation.node.shared.domain.node.NodeStorage
 import org.tessellation.node.shared.domain.rewards.Rewards
 import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
+import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.node.shared.infrastructure.consensus._
 import org.tessellation.node.shared.infrastructure.metrics.Metrics
 import org.tessellation.node.shared.infrastructure.snapshot.{CurrencySnapshotCreator, CurrencySnapshotValidator}
 import org.tessellation.node.shared.snapshot.currency._
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import org.tessellation.security.{HasherSelector, SecurityProvider}
 
 import io.circe.Decoder
@@ -38,6 +40,7 @@ object CurrencySnapshotConsensus {
     collateral: Amount,
     clusterStorage: ClusterStorage[F],
     nodeStorage: NodeStorage[F],
+    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
     snapshotConfig: SnapshotConfig,
     client: Client[F],
@@ -73,7 +76,8 @@ object CurrencySnapshotConsensus {
       )
       consensusStateAdvancer = CurrencySnapshotConsensusStateAdvancer
         .make[F](keyPair, consensusStorage, consensusFunctions, stateChannelSnapshotService, gossip, maybeDataApplication)
-      consensusStateCreator = CurrencySnapshotConsensusStateCreator.make[F](consensusFunctions, consensusStorage, gossip, selfId, seedlist)
+      consensusStateCreator = CurrencySnapshotConsensusStateCreator
+        .make[F](consensusFunctions, consensusStorage, lastGlobalSnapshotStorage, gossip, selfId, seedlist)
       consensusStateRemover = CurrencySnapshotConsensusStateRemover.make[F](consensusStorage, gossip)
       consensusStatusOps = CurrencySnapshotConsensusOps.make
       stateUpdater = ConsensusStateUpdater.make(

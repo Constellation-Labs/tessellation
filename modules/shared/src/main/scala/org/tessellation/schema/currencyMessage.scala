@@ -4,9 +4,11 @@ import cats.Order
 import cats.kernel.{Next, PartialOrder, PartialPrevious}
 import cats.syntax.semigroup._
 
+import org.tessellation.currency.schema.currency.CurrencySnapshotInfo
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
 import org.tessellation.ext.derevo.ordering
 import org.tessellation.schema.address.Address
+import org.tessellation.schema.balance.Balance
 
 import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia.{decoder, encoder}
@@ -60,4 +62,21 @@ object currencyMessage {
   case class CurrencyMessage(messageType: MessageType, address: Address, parentOrdinal: MessageOrdinal) {
     def ordinal: MessageOrdinal = parentOrdinal.next
   }
+
+  def fetchStakingAddress(state: CurrencySnapshotInfo): Option[Address] =
+    state.lastMessages
+      .flatMap(_.get(MessageType.Staking))
+      .map(_.address)
+
+  def fetchStakingBalance(metagraphId: Address, state: GlobalSnapshotInfo): Balance =
+    state.lastCurrencySnapshots
+      .get(metagraphId)
+      .map {
+        case Left(_) => Balance.empty
+        case Right((_, currencyState)) =>
+          val maybeStakingAddress = fetchStakingAddress(currencyState)
+
+          maybeStakingAddress.flatMap(state.balances.get).getOrElse(Balance.empty)
+      }
+      .getOrElse(Balance.empty)
 }

@@ -80,7 +80,12 @@ object Genesis {
       binaryHash <- signedBinary.toHashed.map(_.hash)
       _ <- stateChannelSnapshotClient.send(identifier, signedBinary)(globalL0Peer)
 
-      signedIncrementalBinary <- stateChannelSnapshotService.createBinary(signedFirstIncrementalSnapshot, binaryHash)
+      signedIncrementalBinary <- stateChannelSnapshotService.createBinary(
+        signedFirstIncrementalSnapshot,
+        binaryHash,
+        None,
+        None
+      )
       incrementalBinaryHash <- signedIncrementalBinary.toHashed.map(_.hash)
       _ <- stateChannelSnapshotClient.send(identifier, signedIncrementalBinary)(globalL0Peer)
 

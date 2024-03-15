@@ -142,6 +142,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                                   _l0Seedlist,
                                   _seedlist,
                                   method.stateChannelAllowanceLists,
+                                  cfg.feeConfigs,
                                   cfg.snapshotSize.maxStateChannelSnapshotBinarySizeInBytes,
                                   Hasher.forKryo[IO]
                                 )

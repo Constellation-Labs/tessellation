@@ -81,7 +81,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             transactionsR <- MapRef
               .ofConcurrentHashMap[IO, Address, SortedMap[TransactionOrdinal, StoredTransaction]]()
               .asResource
-            validators = SharedValidators.make[IO](None, None, Some(Map.empty), Long.MaxValue, Hasher.forKryo[IO])
+            validators = SharedValidators.make[IO](None, None, Some(Map.empty), SortedMap.empty, Long.MaxValue, Hasher.forKryo[IO])
             contextualTransactionValidator = ContextualTransactionValidator
               .make(TransactionLimitConfig(Balance.empty, 0.hours, TransactionFee.zero, 1.second), None)
             transactionStorage = new TransactionStorage[IO](

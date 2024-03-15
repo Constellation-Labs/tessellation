@@ -3,6 +3,8 @@ package org.tessellation.node.shared.cli
 import cats.data.NonEmptySet
 import cats.syntax.eq._
 
+import scala.collection.immutable.SortedMap
+
 import org.tessellation.env.AppEnvironment
 import org.tessellation.env.AppEnvironment.Mainnet
 import org.tessellation.env.env._
@@ -55,6 +57,7 @@ trait CliMethod {
     c.trust.storage,
     c.priorityPeerIds.get(environment),
     c.snapshot.size,
+    c.feeConfigs.get(environment).map(SortedMap.from(_)).getOrElse(SortedMap.empty),
     c.forkInfoStorage,
     c.lastKryoHashOrdinal
   )

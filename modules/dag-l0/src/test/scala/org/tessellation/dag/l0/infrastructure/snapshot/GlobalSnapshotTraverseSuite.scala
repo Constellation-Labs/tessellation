@@ -19,7 +19,7 @@ import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
 import org.tessellation.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.SnapshotSizeConfig
-import org.tessellation.node.shared.domain.statechannel.StateChannelValidator
+import org.tessellation.node.shared.domain.statechannel.FeeCalculator
 import org.tessellation.node.shared.domain.transaction.{TransactionChainValidator, TransactionValidator}
 import org.tessellation.node.shared.infrastructure.block.processing.{BlockAcceptanceLogic, BlockAcceptanceManager, BlockValidator}
 import org.tessellation.node.shared.infrastructure.metrics.Metrics
@@ -226,9 +226,9 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         txHasher
       )
     val blockAcceptanceManager = BlockAcceptanceManager.make(BlockAcceptanceLogic.make[IO](txHasher), blockValidator, txHasher)
-    val stateChannelValidator =
-      StateChannelValidator.make[IO](signedValidator, None, Some(Map.empty[Address, NonEmptySet[PeerId]]), Long.MaxValue)
-    val validators = SharedValidators.make[IO](None, None, Some(Map.empty[Address, NonEmptySet[PeerId]]), Long.MaxValue, txHasher)
+    val feeCalculator = FeeCalculator.make(SortedMap.empty)
+    val validators =
+      SharedValidators.make[IO](None, None, Some(Map.empty[Address, NonEmptySet[PeerId]]), SortedMap.empty, Long.MaxValue, txHasher)
     val currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
       BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, txHasher),
       Amount(0L)
@@ -247,7 +247,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       stateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, NonNegLong(10L))
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync
       stateChannelProcessor = GlobalSnapshotStateChannelEventsProcessor
-        .make[IO](stateChannelValidator, stateChannelManager, currencySnapshotContextFns, jsonBrotliBinarySerializer)
+        .make[IO](validators.stateChannelValidator, stateChannelManager, currencySnapshotContextFns, jsonBrotliBinarySerializer)
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make[IO](blockAcceptanceManager, stateChannelProcessor, Amount.empty)
       snapshotContextFunctions = GlobalSnapshotContextFunctions.make[IO](snapshotAcceptanceManager)
     } yield
