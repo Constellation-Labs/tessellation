@@ -3,7 +3,7 @@ package org.tessellation.dag.l1
 import java.security.KeyPair
 
 import cats.Applicative
-import cats.data.NonEmptyList
+import cats.data.{NonEmptyList, OptionT}
 import cats.effect.Async
 import cats.effect.std.{Random, Semaphore}
 import cats.syntax.applicative._
@@ -120,9 +120,10 @@ class StateChannel[
 
   private val runConsensus: Pipe[F, BlockConsensusInput, FinalBlock] =
     _.evalTap(input => logger.debug(s"Received block consensus input to process: ${input.show}"))
-      .evalMap(
-        new BlockConsensusCell[F](_, blockConsensusContext)
-          .run()
+      .evalMap(blockConsensusInput =>
+        OptionT(storages.lastSnapshot.getOrdinal)
+          .getOrRaise(new IllegalStateException("Could not find the latest snapshot ordinal"))
+          .flatMap(new BlockConsensusCell[F](blockConsensusInput, blockConsensusContext, _).run())
           .handleErrorWith(e => CellError(e.getMessage).asLeft[BlockConsensusOutput].pure[F])
       )
       .flatMap {
