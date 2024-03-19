@@ -51,12 +51,13 @@ object CurrencySnapshotAcceptanceManager {
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip],
       calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]]
-    ) = for {
+    ): F[(BlockAcceptanceResult, SortedSet[RewardTransaction], CurrencySnapshotInfo, CurrencySnapshotStateProof)] = for {
       initialTxRef <- TransactionReference.emptyCurrency(lastSnapshotContext.address)
 
       acceptanceResult <- acceptBlocks(
         blocksForAcceptance,
         lastSnapshotContext,
+        snapshotOrdinal,
         lastActiveTips,
         lastDeprecatedTips,
         initialTxRef
@@ -81,6 +82,7 @@ object CurrencySnapshotAcceptanceManager {
     private def acceptBlocks(
       blocksForAcceptance: List[Signed[Block]],
       lastSnapshotContext: CurrencySnapshotContext,
+      snapshotOrdinal: SnapshotOrdinal,
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip],
       initialTxRef: TransactionReference
@@ -94,7 +96,7 @@ object CurrencySnapshotAcceptanceManager {
         initialTxRef
       )
 
-      blockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context)
+      blockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context, snapshotOrdinal)
     }
 
     private def acceptRewardTxs(

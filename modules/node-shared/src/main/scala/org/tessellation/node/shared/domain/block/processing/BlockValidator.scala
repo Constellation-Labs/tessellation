@@ -8,7 +8,7 @@ import org.tessellation.node.shared.domain.transaction.TransactionChainValidator
 import org.tessellation.node.shared.domain.transaction.TransactionValidator.TransactionValidationError
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction.TransactionReference
-import org.tessellation.schema.{Block, BlockReference}
+import org.tessellation.schema.{Block, BlockReference, SnapshotOrdinal}
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.SignedValidator.SignedValidationError
 
@@ -23,20 +23,23 @@ trait BlockValidator[F[_]] {
 
   def validate(
     signedBlock: Signed[Block],
+    snapshotOrdinal: SnapshotOrdinal,
     params: BlockValidationParams = BlockValidationParams.default
   ): F[BlockValidationErrorOr[(Signed[Block], Map[Address, TransactionNel])]]
 
   def validateGetBlock(
     signedBlock: Signed[Block],
-    params: BlockValidationParams = BlockValidationParams.default
+    params: BlockValidationParams = BlockValidationParams.default,
+    snapshotOrdinal: SnapshotOrdinal
   )(implicit ev: Functor[F]): F[BlockValidationErrorOr[Signed[Block]]] =
-    validate(signedBlock, params).map(_.map(_._1))
+    validate(signedBlock, snapshotOrdinal, params).map(_.map(_._1))
 
   def validateGetTxChains(
     signedBlock: Signed[Block],
+    snapshotOrdinal: SnapshotOrdinal,
     params: BlockValidationParams = BlockValidationParams.default
   )(implicit ev: Functor[F]): F[BlockValidationErrorOr[Map[Address, TransactionNel]]] =
-    validate(signedBlock, params).map(_.map(_._2))
+    validate(signedBlock, snapshotOrdinal, params).map(_.map(_._2))
 }
 
 case class BlockValidationParams(minSignatureCount: PosInt, minParentCount: PosInt)
@@ -57,3 +60,5 @@ case class InvalidSigned(error: SignedValidationError) extends BlockValidationEr
 case class NotEnoughParents(parentCount: Int, minParentCount: Int) extends BlockValidationError
 
 case class NonUniqueParents(duplicatedParents: NonEmptyList[BlockReference]) extends BlockValidationError
+
+case class AddressLockedAtOrdinal(address: Address, ordinal: SnapshotOrdinal, lockedAt: SnapshotOrdinal) extends BlockValidationError
