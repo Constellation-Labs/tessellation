@@ -47,6 +47,7 @@ object Services {
         storages.address,
         storages.block,
         storages.transaction,
+        lastGlobalSnapshotStorage,
         cfg.collateral.amount
       )
       val cluster = sharedServices.cluster

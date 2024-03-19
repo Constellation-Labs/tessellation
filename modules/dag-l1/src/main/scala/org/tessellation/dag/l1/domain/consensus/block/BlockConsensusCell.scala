@@ -24,10 +24,10 @@ import org.tessellation.effects.GenUUID
 import org.tessellation.ext.collection.MapRefUtils.MapRefOps
 import org.tessellation.kernel._
 import org.tessellation.node.shared.domain.block.processing.BlockValidationParams
-import org.tessellation.schema.Block
 import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.schema.round.RoundId
 import org.tessellation.schema.transaction.Transaction
+import org.tessellation.schema.{Block, SnapshotOrdinal}
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed._
 import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
@@ -37,13 +37,14 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 class BlockConsensusCell[F[_]: Async: SecurityProvider: Hasher: Random](
   data: BlockConsensusInput,
-  ctx: BlockConsensusContext[F]
+  ctx: BlockConsensusContext[F],
+  ordinal: SnapshotOrdinal
 ) extends Cell[F, Id, BlockConsensusInput, Either[CellError, BlockConsensusOutput], BlockConsensusInput](
       data,
       {
         case OwnRoundTrigger                                => startOwnRound(ctx)
         case InspectionTrigger                              => inspectConsensuses(ctx)
-        case proposal: Proposal                             => processProposal(proposal, ctx)
+        case proposal: Proposal                             => processProposal(proposal, ctx, ordinal)
         case blockSignatureProposal: BlockSignatureProposal => persistBlockSignatureProposal(blockSignatureProposal, ctx)
         case cancellation: CancelledBlockCreationRound      => processCancellation(cancellation, ctx)
       },
@@ -146,7 +147,8 @@ object BlockConsensusCell {
   def persistInitialPeerRoundData[F[_]: Async: SecurityProvider: Hasher](
     roundData: RoundData,
     peerProposal: Proposal,
-    ctx: BlockConsensusContext[F]
+    ctx: BlockConsensusContext[F],
+    ordinal: SnapshotOrdinal
   ): F[Either[CellError, BlockConsensusOutput]] =
     ctx.consensusStorage
       .peerConsensuses(roundData.roundId)
@@ -162,7 +164,7 @@ object BlockConsensusCell {
               )
             _ <- returnTransactions(roundData.ownProposal, ctx.transactionStorage)
           } yield ()
-      } >> persistProposal(peerProposal, ctx)
+      } >> persistProposal(peerProposal, ctx, ordinal)
 
   private def canPersistProposal(roundData: RoundData, proposal: Proposal): Boolean = {
     val sameRoundId = roundData.roundId == proposal.roundId
@@ -239,7 +241,8 @@ object BlockConsensusCell {
 
   def persistProposal[F[_]: Async: SecurityProvider: Hasher](
     proposal: Proposal,
-    ctx: BlockConsensusContext[F]
+    ctx: BlockConsensusContext[F],
+    ordinal: SnapshotOrdinal
   ): F[Either[CellError, BlockConsensusOutput]] = (proposal.owner == ctx.selfId)
     .pure[F]
     .ifM(
@@ -252,7 +255,7 @@ object BlockConsensusCell {
           case Some(block) =>
             Signed.forAsyncHasher(block, ctx.keyPair).flatMap { signedBlock =>
               ctx.blockValidator
-                .validate(signedBlock, validationParams)
+                .validate(signedBlock, ordinal, validationParams)
                 .flatTap { validationResult =>
                   Applicative[F].whenA(validationResult.isInvalid) {
                     logger.debug(s"Created block is invalid: $validationResult")
@@ -536,7 +539,8 @@ object BlockConsensusCell {
 
   def processProposal[F[_]: Async: SecurityProvider: Hasher](
     proposal: Proposal,
-    ctx: BlockConsensusContext[F]
+    ctx: BlockConsensusContext[F],
+    ordinal: SnapshotOrdinal
   ): F[Either[CellError, BlockConsensusOutput]] =
     for {
       maybeRoundData <- ctx.consensusStorage.ownConsensus.get.flatMap {
@@ -545,7 +549,7 @@ object BlockConsensusCell {
       }
       maybePeers <- fetchConsensusPeers(proposal, ctx)
       result <- (maybeRoundData, maybePeers) match {
-        case (Some(_), _) => persistProposal(proposal, ctx)
+        case (Some(_), _) => persistProposal(proposal, ctx, ordinal)
         case (None, _) if proposal.owner == ctx.selfId =>
           informAboutInabilityToParticipate(proposal, ReceivedProposalForNonExistentOwnRound, ctx)
         case (None, Some(peers)) =>
@@ -568,7 +572,7 @@ object BlockConsensusCell {
               ownProposal,
               tips = proposal.tips
             )
-            result <- persistInitialPeerRoundData(roundData, proposal, ctx)
+            result <- persistInitialPeerRoundData(roundData, proposal, ctx, ordinal)
           } yield result
         case (None, None) => informAboutInabilityToParticipate(proposal, MissingRoundPeers, ctx)
       }

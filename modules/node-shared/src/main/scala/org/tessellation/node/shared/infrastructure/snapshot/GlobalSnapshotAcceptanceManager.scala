@@ -69,7 +69,7 @@ object GlobalSnapshotAcceptanceManager {
       calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]],
       validationType: StateChannelValidationType
     ) = for {
-      acceptanceResult <- acceptBlocks(blocksForAcceptance, lastSnapshotContext, lastActiveTips, lastDeprecatedTips)
+      acceptanceResult <- acceptBlocks(blocksForAcceptance, lastSnapshotContext, lastActiveTips, lastDeprecatedTips, ordinal)
 
       (scSnapshots, currencySnapshots, returnedSCEvents) <- stateChannelEventsProcessor.process(
         ordinal,
@@ -128,7 +128,8 @@ object GlobalSnapshotAcceptanceManager {
       blocksForAcceptance: List[Signed[Block]],
       lastSnapshotContext: GlobalSnapshotInfo,
       lastActiveTips: SortedSet[ActiveTip],
-      lastDeprecatedTips: SortedSet[DeprecatedTip]
+      lastDeprecatedTips: SortedSet[DeprecatedTip],
+      ordinal: SnapshotOrdinal
     ) = {
       val tipUsages = getTipsUsages(lastActiveTips, lastDeprecatedTips)
       val context = BlockAcceptanceContext.fromStaticData(
@@ -139,7 +140,7 @@ object GlobalSnapshotAcceptanceManager {
         TransactionReference.empty
       )
 
-      blockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context)
+      blockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context, ordinal)
     }
 
     private def acceptRewardTxs(

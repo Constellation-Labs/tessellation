@@ -88,7 +88,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
     override def acceptBlocksIteratively(
       blocks: List[Signed[Block]],
-      context: BlockAcceptanceContext[IO]
+      context: BlockAcceptanceContext[IO],
+      ordinal: SnapshotOrdinal
     ): IO[BlockAcceptanceResult] =
       BlockAcceptanceResult(
         BlockAcceptanceContextUpdate.empty,
@@ -98,7 +99,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
     override def acceptBlock(
       block: Signed[Block],
-      context: BlockAcceptanceContext[IO]
+      context: BlockAcceptanceContext[IO],
+      ordinal: SnapshotOrdinal
     ): IO[Either[BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)]] = ???
 
   }
