@@ -83,7 +83,7 @@ abstract class LocalFileSystemStorage[F[_], A](baseDir: Path)(
 
   def move(fileName: String, to: File): F[Unit] =
     dir.map(_ / fileName).flatMap { src =>
-      F.blocking(src.moveTo(to)).void
+      F.blocking(src.moveTo(to)(File.CopyOptions(overwrite = true))).void
     }
 
   def getPath(fileName: String): F[File] =
