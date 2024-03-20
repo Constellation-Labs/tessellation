@@ -99,7 +99,12 @@ object SnapshotDownloadStorage {
                 _.parTraverseN(maxParallelFileOperations) { ordinal =>
                   readPersisted(ordinal).flatMap {
                     case Some(snapshot) =>
-                      snapshot.toHashed.flatMap(s => movePersistedToTmp(s.hash, s.ordinal))
+                      snapshot.toHashed.flatMap(s => movePersistedToTmp(s.hash, s.ordinal)).handleErrorWith { error =>
+                        Hasher[F].getLogic(snapshot.ordinal) match {
+                          case KryoHash => error.raiseError[F, Unit]
+                          case JsonHash => Hasher[F].hashKryo(snapshot.value).flatMap(hash => movePersistedToTmp(hash, snapshot.ordinal))
+                        }
+                      }
                     case None => Async[F].unit
                   }
                 }.void
