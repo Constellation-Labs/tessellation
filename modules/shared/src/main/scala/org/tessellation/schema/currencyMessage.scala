@@ -20,7 +20,7 @@ import eu.timepit.refined.types.numeric.NonNegLong
 import io.circe.{Decoder, Encoder}
 
 object currencyMessage {
-  @derive(eqv, show)
+  @derive(eqv, show, order, ordering)
   sealed abstract class MessageType(val value: String) extends StringEnumEntry
 
   object MessageType extends StringEnum[MessageType] with StringCirceEnum[MessageType] {
@@ -56,7 +56,7 @@ object currencyMessage {
     implicit val decoder: Decoder[MessageOrdinal] = Decoder[NonNegLong].map(MessageOrdinal(_))
   }
 
-  @derive(eqv, show, encoder, decoder)
+  @derive(eqv, show, encoder, decoder, order, ordering)
   case class CurrencyMessage(messageType: MessageType, address: Address, parentOrdinal: MessageOrdinal) {
     def ordinal: MessageOrdinal = parentOrdinal.next
   }
