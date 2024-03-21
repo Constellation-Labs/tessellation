@@ -11,6 +11,7 @@ import org.tessellation.ext.crypto._
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
+import org.tessellation.schema.currencyMessage.CurrencyMessage
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.semver.SnapshotVersion
@@ -110,6 +111,7 @@ object currency {
     stateProof: CurrencySnapshotStateProof,
     epochProgress: EpochProgress,
     dataApplication: Option[DataApplicationPart] = None,
+    messages: Option[SortedSet[CurrencyMessage]] = None,
     version: SnapshotVersion = SnapshotVersion("0.0.1")
   ) extends IncrementalSnapshot[CurrencySnapshotStateProof]
 
@@ -127,6 +129,7 @@ object currency {
           stateProof,
           snapshot.epochProgress,
           snapshot.dataApplication,
+          None,
           snapshot.version
         )
       }
@@ -163,6 +166,7 @@ object currency {
           stateProof,
           genesis.epochProgress,
           genesis.dataApplication,
+          None,
           genesis.version
         )
       }
