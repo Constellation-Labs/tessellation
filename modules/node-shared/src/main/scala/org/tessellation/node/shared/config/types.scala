@@ -11,7 +11,7 @@ import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.PeerId
 
 import com.comcast.ip4s.{Host, Port}
-import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong}
+import eu.timepit.refined.types.numeric._
 import fs2.io.file.Path
 
 object types {
@@ -89,8 +89,18 @@ object types {
     maxBinarySizeBytes: PosInt
   )
 
+  case class FeeCalculatorConfig(
+    baseFee: PosInt,
+    computationalCost: PosInt,
+    stakingWeight: PosDouble,
+    stakedDag: NonNegInt,
+    proScore: NonNegInt,
+    proWeight: NonNegInt
+  )
+
   case class SnapshotConfig(
     consensus: ConsensusConfig,
+    feeCalculator: FeeCalculatorConfig,
     inMemoryCapacity: NonNegLong,
     snapshotPath: Path,
     snapshotInfoPath: Path,

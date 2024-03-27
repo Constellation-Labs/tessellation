@@ -8,7 +8,7 @@ import cats.effect.std.{Random, Supervisor}
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.dag.l0.domain.snapshot.programs.GlobalSnapshotEventCutter
+import org.tessellation.dag.l0.domain.snapshot.programs.{GlobalSnapshotEventCutter, SnapshotBinaryFeeCalculator}
 import org.tessellation.dag.l0.infrastructure.snapshot.schema.{GlobalConsensusKind, GlobalConsensusOutcome}
 import org.tessellation.json.JsonBrotliBinarySerializer
 import org.tessellation.kryo.KryoSerializer
@@ -91,7 +91,10 @@ object GlobalSnapshotConsensus {
         snapshotAcceptanceManager,
         collateral,
         rewards,
-        GlobalSnapshotEventCutter.make[F](snapshotConfig.consensus.eventCutter.maxBinarySizeBytes)
+        GlobalSnapshotEventCutter.make[F](
+          snapshotConfig.consensus.eventCutter.maxBinarySizeBytes,
+          SnapshotBinaryFeeCalculator.make(snapshotConfig.feeCalculator)
+        )
       )
       consensusStateAdvancer = GlobalSnapshotConsensusStateAdvancer
         .make[F](keyPair, consensusStorage, globalSnapshotStorage, consensusFunctions, gossip)

@@ -85,7 +85,7 @@ object GlobalSnapshotConsensusFunctions {
       val dagEvents = dagEventsBeforeCut.filter(_.height > lastArtifact.height)
 
       for {
-        (scEvents, blocksForAcceptance) <- eventCutter.cut(scEventsBeforeCut.toList, dagEvents.toList)
+        (scEvents, blocksForAcceptance) <- eventCutter.cut(scEventsBeforeCut.toList, dagEvents.toList, snapshotContext)
 
         lastArtifactHash <- lastArtifact.value.hash
         currentOrdinal = lastArtifact.ordinal.next

@@ -19,7 +19,7 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.Block._
 import org.tessellation.schema.generators._
 import org.tessellation.schema.transaction.TransactionFee
-import org.tessellation.schema.{Block, SnapshotOrdinal}
+import org.tessellation.schema.{Block, GlobalSnapshotInfo, SnapshotOrdinal}
 import org.tessellation.security._
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
@@ -46,9 +46,8 @@ object GlobalSnapshotEventCutterSuite extends MutableIOSuite with Checkers {
   test("no events should not raise error") { res =>
     implicit val (ks, h, _) = res
 
-    GlobalSnapshotEventCutter
-      .make[IO](PosInt.MaxValue)
-      .cut(Nil, Nil)
+    makeCutter(PosInt.MaxValue)
+      .cut(Nil, Nil, makeSnapshotInfo())
       .map(actual => expect.all((Nil, Nil) == actual))
   }
 
@@ -59,8 +58,8 @@ object GlobalSnapshotEventCutterSuite extends MutableIOSuite with Checkers {
     forall(gen) {
       case (scEvents, dagEvents) =>
         for {
-          cutter <- GlobalSnapshotEventCutter.make[IO](PosInt.MinValue).pure[F]
-          actual <- cutter.cut(scEvents, dagEvents)
+          cutter <- makeCutter(PosInt.MinValue).pure[F]
+          actual <- cutter.cut(scEvents, dagEvents, makeSnapshotInfo())
         } yield expect.all(actual == (Nil, Nil))
     }
   }
@@ -74,8 +73,8 @@ object GlobalSnapshotEventCutterSuite extends MutableIOSuite with Checkers {
         for {
           scEventsSize <- scEvents.toBinary.liftTo[IO].map(_.length)
           dagEventsSize <- dagEvents.toBinary.liftTo[IO].map(_.length)
-          cutter = GlobalSnapshotEventCutter.make[IO](PosInt.unsafeFrom(scEventsSize + dagEventsSize))
-          (scEventsAfterCut, dagEventsAfterCut) <- cutter.cut(scEvents, dagEvents)
+          cutter = makeCutter(PosInt.unsafeFrom(scEventsSize + dagEventsSize))
+          (scEventsAfterCut, dagEventsAfterCut) <- cutter.cut(scEvents, dagEvents, makeSnapshotInfo())
         } yield expect.all(scEvents == scEventsAfterCut, dagEvents == dagEventsAfterCut)
     }
   }
@@ -124,8 +123,8 @@ object GlobalSnapshotEventCutterSuite extends MutableIOSuite with Checkers {
             expectedDagEvents.toBinary.liftTo[IO].map(_.length)
           ).mapN(_ + _)
 
-          cutter = GlobalSnapshotEventCutter.make[IO](PosInt.unsafeFrom(expectedSize))
-          (actualScEvents, actualDagEvents) <- cutter.cut(scParent :: adjustedScEvents, dagParent :: adjustedDagEvents)
+          cutter = makeCutter(PosInt.unsafeFrom(expectedSize))
+          (actualScEvents, actualDagEvents) <- cutter.cut(scParent :: adjustedScEvents, dagParent :: adjustedDagEvents, makeSnapshotInfo())
         } yield
           expect.all(
             expectedScEvents == actualScEvents,
@@ -133,6 +132,13 @@ object GlobalSnapshotEventCutterSuite extends MutableIOSuite with Checkers {
           )
     }
   }
+
+  def makeSnapshotInfo() =
+    GlobalSnapshotInfo.empty
+
+  def makeCutter(maxSize: PosInt)(implicit K: KryoSerializer[IO], H: Hasher[IO]) =
+    GlobalSnapshotEventCutter
+      .make[IO](maxSize, (binary: StateChannelSnapshotBinary, info: GlobalSnapshotInfo) => binary.fee.value.value)
 
   val zeroLongGen: Gen[Long] = Gen.const(0L)
   val posLongGen: Gen[Long] = Gen.choose(1L, Long.MaxValue)
