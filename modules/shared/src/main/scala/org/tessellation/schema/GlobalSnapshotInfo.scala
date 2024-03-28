@@ -13,7 +13,7 @@ import org.tessellation.merkletree.{MerkleRoot, MerkleTree, Proof}
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.snapshot.{SnapshotInfo, StateProof}
-import org.tessellation.schema.transaction.TransactionReference
+import org.tessellation.schema.transaction.{ApproveTransaction, TransactionReference}
 import org.tessellation.security._
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
@@ -64,7 +64,8 @@ case class GlobalSnapshotInfo(
   lastTxRefs: SortedMap[Address, TransactionReference],
   balances: SortedMap[Address, Balance],
   lastCurrencySnapshots: SortedMap[Address, Either[Signed[CurrencySnapshot], (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]],
-  lastCurrencySnapshotsProofs: SortedMap[Address, Proof]
+  lastCurrencySnapshotsProofs: SortedMap[Address, Proof],
+  activeApprovals: List[ApproveTransaction] = List.empty
 ) extends SnapshotInfo[GlobalSnapshotStateProof] {
   def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal, hashSelect: HashSelect): F[GlobalSnapshotStateProof] =
     hashSelect.select(ordinal) match {
