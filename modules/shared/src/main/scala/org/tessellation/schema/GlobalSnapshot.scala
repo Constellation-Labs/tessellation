@@ -14,7 +14,7 @@ import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.semver.SnapshotVersion
 import org.tessellation.schema.snapshot.{FullSnapshot, IncrementalSnapshot}
-import org.tessellation.schema.transaction.RewardTransaction
+import org.tessellation.schema.transaction.{ApproveTransaction, RewardTransaction}
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.signature.Signed
@@ -41,6 +41,7 @@ case class GlobalIncrementalSnapshot(
   nextFacilitators: NonEmptyList[PeerId],
   tips: SnapshotTips,
   stateProof: GlobalSnapshotStateProof,
+  approvalTransactions: Option[List[ApproveTransaction]] = None,
   version: SnapshotVersion = SnapshotVersion("0.0.1")
 ) extends IncrementalSnapshot[GlobalSnapshotStateProof]
 

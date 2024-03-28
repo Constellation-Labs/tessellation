@@ -173,4 +173,16 @@ object transaction {
       Decoder.decodeString.emapTry(s => Try(TransactionStatus.withName(s)))
   }
 
+  @derive(decoder, encoder, order, show)
+  @newtype
+  case class ApproveTransactionFee(value: PosLong)
+
+  @derive(decoder, encoder, order, show)
+  case class ApproveTransaction(
+    destination: Address,
+    currencyAddress: Option[Address], // NOTE: to determine currency; None = DAG
+    amount: TransactionAmount,
+    lastValidOrdinal: SnapshotOrdinal,
+    fee: ApproveTransactionFee
+  )
 }
