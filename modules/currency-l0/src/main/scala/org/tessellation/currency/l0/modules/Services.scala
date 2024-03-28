@@ -12,7 +12,7 @@ import org.tessellation.currency.l0.config.types.AppConfig
 import org.tessellation.currency.l0.http.p2p.P2PClient
 import org.tessellation.currency.l0.node.L0NodeContext
 import org.tessellation.currency.l0.snapshot._
-import org.tessellation.currency.l0.snapshot.services.{SentStateChannelBinaryTrackingService, StateChannelSnapshotService}
+import org.tessellation.currency.l0.snapshot.services.{StateChannelBinarySender, StateChannelSnapshotService}
 import org.tessellation.currency.schema.currency._
 import org.tessellation.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import org.tessellation.node.shared.domain.cluster.services.{Cluster, Session}
@@ -63,18 +63,20 @@ object Services {
           DataApplicationSnapshotAcceptanceManager.make[F](service, l0NodeContext, storage)
       }
 
-      sentStateChannelBinaryTrackingService <- SentStateChannelBinaryTrackingService.make(storages.identifier)
+      stateChannelBinarySender <- StateChannelBinarySender.make(
+        storages.identifier,
+        storages.globalL0Cluster,
+        storages.lastGlobalSnapshot,
+        p2PClient.stateChannelSnapshot
+      )
 
       stateChannelSnapshotService <- StateChannelSnapshotService
         .make[F](
           keyPair,
-          p2PClient.stateChannelSnapshot,
-          storages.globalL0Cluster,
           storages.snapshot,
-          storages.identifier,
           jsonBrotliBinarySerializer,
           dataApplicationAcceptanceManager,
-          sentStateChannelBinaryTrackingService
+          stateChannelBinarySender
         )
         .pure[F]
 
@@ -128,7 +130,7 @@ object Services {
         snapshotContextFunctions = sharedServices.currencySnapshotContextFns,
         dataApplication = maybeDataApplication,
         globalSnapshotContextFunctions = globalSnapshotContextFns,
-        sentStateChannelBinaryTrackingService = sentStateChannelBinaryTrackingService,
+        stateChannelBinarySender = stateChannelBinarySender,
         currencyMessageService = CurrencyMessageService.make[F](signedValidator, seedlist, storages.snapshot)
       ) {}
 }
@@ -146,6 +148,6 @@ sealed abstract class Services[F[_]] private (
   val snapshotContextFunctions: CurrencySnapshotContextFunctions[F],
   val dataApplication: Option[BaseDataApplicationL0Service[F]],
   val globalSnapshotContextFunctions: GlobalSnapshotContextFunctions[F],
-  val sentStateChannelBinaryTrackingService: SentStateChannelBinaryTrackingService[F],
+  val stateChannelBinarySender: StateChannelBinarySender[F],
   val currencyMessageService: CurrencyMessageService[F]
 )

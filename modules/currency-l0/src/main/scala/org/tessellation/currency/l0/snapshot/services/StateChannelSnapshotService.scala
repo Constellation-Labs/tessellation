@@ -3,23 +3,15 @@ package org.tessellation.currency.l0.snapshot.services
 import java.security.KeyPair
 
 import cats.Applicative
-import cats.data.NonEmptyList
 import cats.effect.Async
-import cats.syntax.applicative._
-import cats.syntax.applicativeError._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
-import cats.syntax.show._
 import cats.syntax.traverse._
 
-import org.tessellation.currency.l0.node.IdentifierStorage
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.crypto._
 import org.tessellation.json.JsonBrotliBinarySerializer
-import org.tessellation.node.shared.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.node.shared.domain.snapshot.storage.SnapshotStorage
-import org.tessellation.node.shared.domain.statechannel.StateChannelValidator.StateChannelValidationError
-import org.tessellation.node.shared.http.p2p.clients.StateChannelSnapshotClient
 import org.tessellation.node.shared.infrastructure.snapshot.DataApplicationSnapshotAcceptanceManager
 import org.tessellation.node.shared.snapshot.currency.CurrencySnapshotArtifact
 import org.tessellation.security.hash.Hash
@@ -28,7 +20,6 @@ import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
 import org.tessellation.statechannel.StateChannelSnapshotBinary
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
-import retry._
 
 trait StateChannelSnapshotService[F[_]] {
   def consume(
@@ -38,36 +29,18 @@ trait StateChannelSnapshotService[F[_]] {
   ): F[Unit]
   def createGenesisBinary(snapshot: Signed[CurrencySnapshot]): F[Signed[StateChannelSnapshotBinary]]
   def createBinary(snapshot: Signed[CurrencySnapshotArtifact], lastSnapshotBinaryHash: Hash): F[Signed[StateChannelSnapshotBinary]]
-  def sendToGlobalL0(binaryHashed: Hashed[StateChannelSnapshotBinary]): F[Unit]
 }
 
 object StateChannelSnapshotService {
   def make[F[_]: Async: Hasher: SecurityProvider](
     keyPair: KeyPair,
-    stateChannelSnapshotClient: StateChannelSnapshotClient[F],
-    globalL0ClusterStorage: L0ClusterStorage[F],
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
-    identifierStorage: IdentifierStorage[F],
     jsonBrotliBinarySerializer: JsonBrotliBinarySerializer[F],
     dataApplicationSnapshotAcceptanceManager: Option[DataApplicationSnapshotAcceptanceManager[F]],
-    sentStateChannelBinaryTrackingService: SentStateChannelBinaryTrackingService[F]
+    stateChannelBinarySender: StateChannelBinarySender[F]
   ): StateChannelSnapshotService[F] =
     new StateChannelSnapshotService[F] {
       private val logger = Slf4jLogger.getLogger
-
-      private val sendRetries = 5
-
-      private val retryPolicy: RetryPolicy[F] = RetryPolicies.limitRetries(sendRetries)
-
-      private def wasSuccessful: Either[NonEmptyList[StateChannelValidationError], Unit] => F[Boolean] =
-        _.isRight.pure[F]
-
-      private def onFailure(binaryHashed: Hashed[StateChannelSnapshotBinary]) =
-        (_: Either[NonEmptyList[StateChannelValidationError], Unit], details: RetryDetails) =>
-          logger.info(s"Retrying sending ${binaryHashed.hash.show} to Global L0 after rejection. Retries so far ${details.retriesSoFar}")
-
-      private def onError(binaryHashed: Hashed[StateChannelSnapshotBinary]) = (_: Throwable, details: RetryDetails) =>
-        logger.info(s"Retrying sending ${binaryHashed.hash.show} to Global L0 after error. Retries so far ${details.retriesSoFar}")
 
       def createGenesisBinary(snapshot: Signed[CurrencySnapshot]): F[Signed[StateChannelSnapshotBinary]] =
         jsonBrotliBinarySerializer
@@ -98,29 +71,8 @@ object StateChannelSnapshotService {
               s"Cannot save CurrencySnapshot ordinal=${signedArtifact.ordinal} for metagraph identifier=${context.address} into the storage."
             )
           )
-        _ <- sendToGlobalL0(binaryHashed)
-        _ <- sentStateChannelBinaryTrackingService.setPending(binaryHashed.signed)
+        _ <- stateChannelBinarySender.process(binaryHashed)
       } yield ()
 
-      def sendToGlobalL0(binaryHashed: Hashed[StateChannelSnapshotBinary]): F[Unit] =
-        retryingOnFailuresAndAllErrors[Either[NonEmptyList[StateChannelValidationError], Unit]](
-          retryPolicy,
-          wasSuccessful,
-          onFailure(binaryHashed),
-          onError(binaryHashed)
-        )(
-          globalL0ClusterStorage.getRandomPeer.flatMap { l0Peer =>
-            identifierStorage.get.flatMap { identifier =>
-              stateChannelSnapshotClient
-                .send(identifier, binaryHashed.signed)(l0Peer)
-                .onError(e => logger.warn(e)(s"Sending ${binaryHashed.hash.show} snapshot to Global L0 peer ${l0Peer.show} failed!"))
-                .flatTap {
-                  case Right(_) => logger.info(s"Sent ${binaryHashed.hash.show} to Global L0 peer ${l0Peer.show}")
-                  case Left(errors) =>
-                    logger.error(s"Snapshot ${binaryHashed.hash.show} rejected by Global L0 peer ${l0Peer.show}. Reasons: ${errors.show}")
-                }
-            }
-          }
-        ).void
     }
 }
