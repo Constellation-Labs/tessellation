@@ -5,7 +5,6 @@ import cats.syntax.flatMap._
 
 import org.tessellation.ext.http4s.AddressVar
 import org.tessellation.node.shared.domain.snapshot.services.AddressService
-import org.tessellation.node.shared.ext.http4s.SnapshotOrdinalVar
 import org.tessellation.routes.internal._
 import org.tessellation.schema.snapshot.Snapshot
 
@@ -41,27 +40,6 @@ final case class WalletRoutes[F[_]: Async, S <: Snapshot](
 
     case GET -> Root / "wallet-count" =>
       addressService.getWalletCount.flatMap {
-        case Some((wallets, ordinal)) =>
-          Ok(("count" ->> wallets) :: ("ordinal" ->> ordinal.value.value) :: HNil)
-        case _ => NotFound()
-      }
-
-    case GET -> Root / SnapshotOrdinalVar(ordinal) / AddressVar(address) / "balance" =>
-      addressService.getBalance(ordinal, address).flatMap {
-        case Some((balance, ordinal)) =>
-          Ok(("balance" ->> balance) :: ("ordinal" ->> ordinal.value.value) :: HNil)
-        case _ => NotFound()
-      }
-
-    case GET -> Root / SnapshotOrdinalVar(ordinal) / "total-supply" =>
-      addressService.getTotalSupply(ordinal).flatMap {
-        case Some((supply, ordinal)) =>
-          Ok(("total" ->> supply) :: ("ordinal" ->> ordinal.value.value) :: HNil)
-        case _ => NotFound()
-      }
-
-    case GET -> Root / SnapshotOrdinalVar(ordinal) / "wallet-count" =>
-      addressService.getWalletCount(ordinal).flatMap {
         case Some((wallets, ordinal)) =>
           Ok(("count" ->> wallets) :: ("ordinal" ->> ordinal.value.value) :: HNil)
         case _ => NotFound()
