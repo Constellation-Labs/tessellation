@@ -9,7 +9,11 @@ import scala.annotation.tailrec
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
 
-import org.tessellation.dag.l1.domain.transaction.ContextualTransactionValidator.{CanOverride, ContextualTransactionValidationError, NoConflict}
+import org.tessellation.dag.l1.domain.transaction.ContextualTransactionValidator.{
+  CanOverride,
+  ContextualTransactionValidationError,
+  NoConflict
+}
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage._
 import org.tessellation.ext.collection.MapRefUtils._
 import org.tessellation.schema.SnapshotOrdinal

@@ -41,7 +41,7 @@ object StateProofValidator {
     stateProof.map(validate(snapshot, _))
   }
 
-  private def validate[P <: StateProof: Eq, A <: IncrementalSnapshot[P]](
+  def validate[P <: StateProof: Eq, A <: IncrementalSnapshot[P]](
     snapshot: Hashed[A],
     stateProof: P
   ): Validated[StateBroken, Unit] =

@@ -9,7 +9,7 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import org.tessellation.env.AppEnvironment
-import org.tessellation.json.JsonBrotliBinarySerializer
+import org.tessellation.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.{CollateralConfig, SharedConfig}
 import org.tessellation.node.shared.domain.cluster.services.{Cluster, Session}
@@ -33,7 +33,7 @@ import fs2.concurrent.SignallingRef
 
 object SharedServices {
 
-  def make[F[_]: Async: KryoSerializer: Hasher: SecurityProvider: Metrics: Supervisor](
+  def make[F[_]: Async: KryoSerializer: Hasher: SecurityProvider: Metrics: Supervisor: JsonSerializer](
     cfg: SharedConfig,
     nodeId: PeerId,
     generation: Generation,
@@ -76,7 +76,7 @@ object SharedServices {
         hashSelect
       )
 
-      currencyEventsCutter = CurrencyEventsCutter.make[F]
+      currencyEventsCutter = CurrencyEventsCutter.make[F](None)
 
       currencySnapshotValidator = CurrencySnapshotValidator.make[F](
         CurrencySnapshotCreator.make[F](

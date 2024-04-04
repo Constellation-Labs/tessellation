@@ -14,8 +14,7 @@ import org.tessellation.currency.l0.node.L0NodeContext
 import org.tessellation.currency.l0.snapshot._
 import org.tessellation.currency.l0.snapshot.services.{SentStateChannelBinaryTrackingService, StateChannelSnapshotService}
 import org.tessellation.currency.schema.currency._
-import org.tessellation.json.JsonBrotliBinarySerializer
-import org.tessellation.kryo.KryoSerializer
+import org.tessellation.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import org.tessellation.node.shared.domain.cluster.services.{Cluster, Session}
 import org.tessellation.node.shared.domain.collateral.Collateral
 import org.tessellation.node.shared.domain.gossip.Gossip
@@ -37,7 +36,7 @@ import org.http4s.client.Client
 
 object Services {
 
-  def make[F[_]: Async: Random: KryoSerializer: SecurityProvider: Hasher: Metrics: Supervisor](
+  def make[F[_]: Async: Random: JsonSerializer: SecurityProvider: Hasher: Metrics: Supervisor](
     p2PClient: P2PClient[F],
     sharedServices: SharedServices[F],
     storages: Storages[F],

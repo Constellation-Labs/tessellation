@@ -36,7 +36,7 @@ import eu.timepit.refined.auto._
 import weaver.MutableIOSuite
 object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
 
-  type Res = (KryoSerializer[IO], Hasher[IO], SecurityProvider[IO], JsonBrotliBinarySerializer[IO])
+  type Res = (KryoSerializer[IO], Hasher[IO], JsonSerializer[IO], SecurityProvider[IO], JsonBrotliBinarySerializer[IO])
 
   val hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash }
 
@@ -46,12 +46,12 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
     implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
     h = Hasher.forSync[IO](hashSelect)
     serializer <- JsonBrotliBinarySerializer.forSync[IO].asResource
-  } yield (ks, h, sp, serializer)
+  } yield (ks, h, j, sp, serializer)
 
   def mkProcessor(
     stateChannelAllowanceLists: Map[Address, NonEmptySet[PeerId]],
     failed: Option[(Address, StateChannelValidator.StateChannelValidationError)] = None
-  )(implicit K: KryoSerializer[IO], H: Hasher[IO], S: SecurityProvider[IO]) =
+  )(implicit H: Hasher[IO], S: SecurityProvider[IO], J: JsonSerializer[IO]) =
     for {
       _ <- IO.unit
       validator = new StateChannelValidator[IO] {
@@ -65,7 +65,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         Amount(0L),
         hashSelect
       )
-      currencyEventsCutter = CurrencyEventsCutter.make[IO]
+      currencyEventsCutter = CurrencyEventsCutter.make[IO](None)
       creator = CurrencySnapshotCreator
         .make[IO](currencySnapshotAcceptanceManager, None, SnapshotSizeConfig(Long.MaxValue, Long.MaxValue), currencyEventsCutter)
       currencySnapshotValidator = CurrencySnapshotValidator.make[IO](creator, validators.signedValidator, None, None)
@@ -84,7 +84,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
     } yield processor
 
   test("return new sc event") { res =>
-    implicit val (kryo, h, sp, serializer) = res
+    implicit val (_, h, j, sp, serializer) = res
 
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
@@ -103,7 +103,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
   }
 
   test("return sc events for different addresses") { res =>
-    implicit val (kryo, h, sp, serializer) = res
+    implicit val (_, h, j, sp, serializer) = res
 
     for {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
@@ -127,7 +127,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
   }
 
   test("return only valid sc events") { res =>
-    implicit val (kryo, h, sp, serializer) = res
+    implicit val (_, h, j, sp, serializer) = res
 
     for {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]

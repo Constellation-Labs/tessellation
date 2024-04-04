@@ -6,7 +6,7 @@ import cats.syntax.flatMap._
 
 import scala.collection.immutable.SortedMap
 
-import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshot, CurrencySnapshotInfo}
+import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.crypto._
 import org.tessellation.merkletree.syntax._
 import org.tessellation.merkletree.{MerkleRoot, MerkleTree, Proof}
@@ -59,6 +59,70 @@ object GlobalSnapshotStateProof {
 }
 
 @derive(encoder, decoder, eqv, show)
+case class GlobalSnapshotInfoV2(
+  lastStateChannelSnapshotHashes: SortedMap[Address, Hash],
+  lastTxRefs: SortedMap[Address, TransactionReference],
+  balances: SortedMap[Address, Balance],
+  lastCurrencySnapshots: SortedMap[Address, Either[Signed[
+    CurrencySnapshot
+  ], (Signed[CurrencyIncrementalSnapshotV1], CurrencySnapshotInfo)]],
+  lastCurrencySnapshotsProofs: SortedMap[Address, Proof]
+) extends SnapshotInfo[GlobalSnapshotStateProof] {
+  def toGlobalSnapshotInfo: GlobalSnapshotInfo =
+    GlobalSnapshotInfo(
+      lastStateChannelSnapshotHashes,
+      lastTxRefs,
+      balances,
+      lastCurrencySnapshots.view.mapValues {
+        _.map { case (Signed(inc, proofs), info) => (Signed(inc.toCurrencyIncrementalSnapshot, proofs), info) }
+      }.to(lastCurrencySnapshots.sortedMapFactory),
+      lastCurrencySnapshotsProofs
+    )
+
+  def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal, hashSelect: HashSelect): F[GlobalSnapshotStateProof] =
+    hashSelect.select(ordinal) match {
+      case KryoHash =>
+        lastCurrencySnapshots
+          .compatibleMerkleTree[F]
+          .flatMap(compatibleStateProof(_))
+      case JsonHash =>
+        lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
+    }
+
+  def stateProof[F[_]: Sync: Hasher](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProof] =
+    (
+      lastStateChannelSnapshotHashes.hash,
+      lastTxRefs.hash,
+      balances.hash
+    ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot)))
+
+  def compatibleStateProof[F[_]: Sync: Hasher](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProof] = {
+    def compatibleHash[A](data: A) = Hasher[F].hashKryo[A](data)
+    (
+      compatibleHash(lastStateChannelSnapshotHashes),
+      compatibleHash(lastTxRefs),
+      compatibleHash(balances)
+    ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot)))
+  }
+
+}
+
+object GlobalSnapshotInfoV2 {
+  def fromGlobalSnapshotInfo(gs: GlobalSnapshotInfo): GlobalSnapshotInfoV2 =
+    GlobalSnapshotInfoV2(
+      gs.lastStateChannelSnapshotHashes,
+      gs.lastTxRefs,
+      gs.balances,
+      gs.lastCurrencySnapshots.view.mapValues {
+        _.map {
+          case (Signed(inc, proofs), info) => (Signed(CurrencyIncrementalSnapshotV1.fromCurrencyIncrementalSnapshot(inc), proofs), info)
+        }
+      }.to(gs.lastCurrencySnapshots.sortedMapFactory),
+      gs.lastCurrencySnapshotsProofs
+    )
+}
+
+@derive(encoder, decoder, eqv, show)
 case class GlobalSnapshotInfo(
   lastStateChannelSnapshotHashes: SortedMap[Address, Hash],
   lastTxRefs: SortedMap[Address, TransactionReference],
@@ -69,7 +133,9 @@ case class GlobalSnapshotInfo(
   def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal, hashSelect: HashSelect): F[GlobalSnapshotStateProof] =
     hashSelect.select(ordinal) match {
       case KryoHash =>
-        lastCurrencySnapshots.compatibleMerkleTree[F].flatMap(compatibleStateProof(_))
+        lastCurrencySnapshots
+          .compatibleMerkleTree[F]
+          .flatMap(compatibleStateProof(_))
       case JsonHash =>
         lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
     }

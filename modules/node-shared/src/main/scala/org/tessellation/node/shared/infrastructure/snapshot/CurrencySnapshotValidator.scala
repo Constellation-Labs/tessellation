@@ -77,8 +77,22 @@ object CurrencySnapshotValidator {
 
     def validateSigned(
       signedSnapshot: Signed[CurrencyIncrementalSnapshot]
-    ): F[CurrencySnapshotValidationErrorOr[Signed[CurrencyIncrementalSnapshot]]] =
-      signedValidator.validateSignatures(signedSnapshot).map(_.errorMap(InvalidSigned))
+    ): F[CurrencySnapshotValidationErrorOr[Signed[CurrencyIncrementalSnapshot]]] = {
+      val snapshot = signedSnapshot.value
+      val proofs = signedSnapshot.proofs
+
+      val validateSnapshot = signedValidator
+        .validateSignatures(signedSnapshot)
+        .map(_.errorMap[CurrencySnapshotValidationError](InvalidSigned(_)))
+      val validateKryoSnapshot = signedValidator
+        .validateSignatures(Signed(CurrencyIncrementalSnapshotV1.fromCurrencyIncrementalSnapshot(snapshot), proofs))
+        .map(_.errorMap[CurrencySnapshotValidationError](InvalidSigned(_)))
+        .map(_.map {
+          case Signed(s, p) => Signed(s.toCurrencyIncrementalSnapshot, p)
+        })
+
+      validateSnapshot.handleErrorWith(_ => validateKryoSnapshot)
+    }
 
     def validateRecreateContent(
       lastArtifact: Signed[CurrencySnapshotArtifact],

@@ -50,7 +50,7 @@ import weaver.scalacheck.Checkers
 object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
   type GenKeyPairFn = () => KeyPair
 
-  type Res = (KryoSerializer[IO], Hasher[IO], SecurityProvider[IO], Metrics[IO], Random[IO])
+  type Res = (KryoSerializer[IO], Hasher[IO], JsonSerializer[IO], SecurityProvider[IO], Metrics[IO], Random[IO])
 
   val hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash }
 
@@ -61,7 +61,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
     h = Hasher.forSync[IO](hashSelect)
     metrics <- Metrics.forAsync[IO](Seq.empty)
     random <- Random.scalaUtilRandom[IO].asResource
-  } yield (ks, h, sp, metrics, random)
+  } yield (ks, h, j, sp, metrics, random)
 
   val balances: Map[Address, Balance] = Map(Address("DAG8Yy2enxizZdWoipKKZg6VXwk7rY2Z54mJqUdC") -> Balance(NonNegLong(10L)))
 
@@ -175,7 +175,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
     globalSnapshot: Hashed[GlobalSnapshot],
     incrementalSnapshots: List[Hashed[GlobalIncrementalSnapshot]],
     rollbackHash: Hash
-  )(implicit K: KryoSerializer[IO], H: Hasher[IO], S: SecurityProvider[IO]) = {
+  )(implicit J: JsonSerializer[IO], H: Hasher[IO], S: SecurityProvider[IO]) = {
     def loadGlobalSnapshot(hash: Hash): IO[Option[Signed[GlobalSnapshot]]] =
       hash match {
         case h if h === globalSnapshot.hash => Some(globalSnapshot.signed).pure[IO]
@@ -206,7 +206,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       Amount(0L),
       hashSelect
     )
-    val currencyEventsCutter = CurrencyEventsCutter.make[IO]
+    val currencyEventsCutter = CurrencyEventsCutter.make[IO](None)
 
     val currencySnapshotCreator =
       CurrencySnapshotCreator
@@ -227,7 +227,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
   }
 
   test("can compute state for given incremental global snapshot") { res =>
-    implicit val (kryo, h, sp, _, _) = res
+    implicit val (_, h, j, sp, _, _) = res
 
     for {
       snapshots <- mkSnapshots(List.empty, balances)
@@ -238,7 +238,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
   }
 
   test("computed state contains last refs and preserve total amount of balances when no fees or rewards ") { res =>
-    implicit val (kryo, h, sp, _, random) = res
+    implicit val (_, h, j, sp, _, random) = res
 
     forall(dagBlockChainGen()) { output: IO[DAGS] =>
       for {
@@ -257,7 +257,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
   }
 
   test("computed state contains last refs and include fees in total amount of balances") { res =>
-    implicit val (kryo, h, sp, _, random) = res
+    implicit val (_, h, j, sp, _, random) = res
 
     forall(dagBlockChainGen(1L)) { output: IO[DAGS] =>
       for {

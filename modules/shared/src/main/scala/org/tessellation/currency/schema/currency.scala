@@ -135,6 +135,54 @@ object currency {
       }
   }
 
+  @derive(eqv, show, encoder, decoder)
+  case class CurrencyIncrementalSnapshotV1(
+    ordinal: SnapshotOrdinal,
+    height: Height,
+    subHeight: SubHeight,
+    lastSnapshotHash: Hash,
+    blocks: SortedSet[BlockAsActiveTip],
+    rewards: SortedSet[RewardTransaction],
+    tips: SnapshotTips,
+    stateProof: CurrencySnapshotStateProof,
+    epochProgress: EpochProgress,
+    dataApplication: Option[DataApplicationPart] = None,
+    version: SnapshotVersion = SnapshotVersion("0.0.1")
+  ) extends IncrementalSnapshot[CurrencySnapshotStateProof] {
+    def toCurrencyIncrementalSnapshot: CurrencyIncrementalSnapshot =
+      CurrencyIncrementalSnapshot(
+        ordinal,
+        height,
+        subHeight,
+        lastSnapshotHash,
+        blocks,
+        rewards,
+        tips,
+        stateProof,
+        epochProgress,
+        dataApplication,
+        None,
+        version
+      )
+  }
+
+  object CurrencyIncrementalSnapshotV1 {
+    def fromCurrencyIncrementalSnapshot(snapshot: CurrencyIncrementalSnapshot): CurrencyIncrementalSnapshotV1 =
+      CurrencyIncrementalSnapshotV1(
+        snapshot.ordinal,
+        snapshot.height,
+        snapshot.subHeight,
+        snapshot.lastSnapshotHash,
+        snapshot.blocks,
+        snapshot.rewards,
+        snapshot.tips,
+        snapshot.stateProof,
+        snapshot.epochProgress,
+        snapshot.dataApplication,
+        snapshot.version
+      )
+  }
+
   object CurrencySnapshot {
     def mkGenesis(balances: Map[Address, Balance], dataApplicationPart: Option[DataApplicationPart]): CurrencySnapshot =
       CurrencySnapshot(

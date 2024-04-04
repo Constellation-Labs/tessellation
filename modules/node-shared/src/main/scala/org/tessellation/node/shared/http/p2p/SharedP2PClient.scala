@@ -2,7 +2,6 @@ package org.tessellation.node.shared.http.p2p
 
 import cats.effect.Async
 
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.cluster.services.Session
 import org.tessellation.node.shared.http.p2p.clients._
 import org.tessellation.node.shared.infrastructure.gossip.p2p.GossipClient
@@ -12,7 +11,7 @@ import org.http4s.client._
 
 object SharedP2PClient {
 
-  def make[F[_]: Async: SecurityProvider: KryoSerializer](client: Client[F], session: Session[F]): SharedP2PClient[F] =
+  def make[F[_]: Async: SecurityProvider](client: Client[F], session: Session[F]): SharedP2PClient[F] =
     new SharedP2PClient[F](
       SignClient.make[F](client),
       ClusterClient.make[F](client, session),

@@ -56,6 +56,10 @@ object Storages {
         .make[F, GlobalSnapshotStateProof, GlobalSnapshotInfo](
           snapshotConfig.snapshotInfoPath
         )
+      incrementalKryoGlobalSnapshotInfoLocalFileSystemStorage <- SnapshotInfoLocalFileSystemStorage
+        .make[F, GlobalSnapshotStateProof, GlobalSnapshotInfoV2](
+          snapshotConfig.snapshotInfoPath
+        )
       globalSnapshotStorage <- SnapshotStorage.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
         incrementalGlobalSnapshotPersistedLocalFileSystemStorage,
         incrementalGlobalSnapshotInfoLocalFileSystemStorage,
@@ -68,6 +72,7 @@ object Storages {
           incrementalGlobalSnapshotPersistedLocalFileSystemStorage,
           fullGlobalSnapshotLocalFileSystemStorage,
           incrementalGlobalSnapshotInfoLocalFileSystemStorage,
+          incrementalKryoGlobalSnapshotInfoLocalFileSystemStorage,
           hashSelect
         )
     } yield

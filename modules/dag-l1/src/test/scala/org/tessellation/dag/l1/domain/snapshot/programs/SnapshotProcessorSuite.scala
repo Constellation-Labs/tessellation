@@ -96,7 +96,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               Amount(0L),
               hashSelect
             )
-            currencyEventsCutter = CurrencyEventsCutter.make[IO]
+            currencyEventsCutter = CurrencyEventsCutter.make[IO](None)
             currencySnapshotCreator = CurrencySnapshotCreator
               .make[IO](currencySnapshotAcceptanceManager, None, SnapshotSizeConfig(Long.MaxValue, Long.MaxValue), currencyEventsCutter)
             currencySnapshotValidator = CurrencySnapshotValidator

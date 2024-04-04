@@ -21,8 +21,7 @@ import org.tessellation.currency.dataApplication.dataApplication.DataApplication
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.ext.crypto._
-import org.tessellation.ext.kryo._
-import org.tessellation.kryo.KryoSerializer
+import org.tessellation.json.JsonSerializer
 import org.tessellation.node.shared.config.types.SnapshotSizeConfig
 import org.tessellation.node.shared.domain.block.processing._
 import org.tessellation.node.shared.domain.rewards.Rewards
@@ -60,7 +59,7 @@ trait CurrencySnapshotCreator[F[_]] {
 
 object CurrencySnapshotCreator {
 
-  def make[F[_]: Async: Hasher: KryoSerializer](
+  def make[F[_]: Async: Hasher: JsonSerializer](
     currencySnapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F],
     dataApplicationSnapshotAcceptanceManager: Option[DataApplicationSnapshotAcceptanceManager[F]],
     snapshotSizeConfig: SnapshotSizeConfig,
@@ -171,7 +170,7 @@ object CurrencySnapshotCreator {
           newRejectedEvents = rejectedBlocks.map(_.asLeft[Signed[DataApplicationBlock]]).toSet[CurrencySnapshotEvent] ++ rejectedEvents
           acceptedEvents = acceptanceResult.accepted.map(_._1)
 
-          artifactSize: Int <- artifact.toBinaryF.map(_.length)
+          artifactSize: Int <- JsonSerializer[F].serialize(artifact).map(_.length)
 
           result <-
             if (artifactSize <= maxArtifactSize) {

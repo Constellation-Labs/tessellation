@@ -11,7 +11,6 @@ import org.tessellation.currency.dataApplication.{BaseDataApplicationL1Service, 
 import org.tessellation.currency.l1.http.DataApplicationRoutes
 import org.tessellation.currency.schema.currency._
 import org.tessellation.dag.l1.http.{Routes => DAGRoutes}
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.HttpConfig
 import org.tessellation.node.shared.http.p2p.middlewares.{PeerAuthMiddleware, `X-Id-Middleware`}
 import org.tessellation.node.shared.http.routes._
@@ -28,7 +27,7 @@ import org.http4s.{HttpApp, HttpRoutes}
 object HttpApi {
 
   def make[
-    F[_]: Async: KryoSerializer: Hasher: SecurityProvider: Metrics: Supervisor: L1NodeContext,
+    F[_]: Async: Hasher: SecurityProvider: Metrics: Supervisor: L1NodeContext,
     P <: StateProof,
     S <: Snapshot,
     SI <: SnapshotInfo[P]
@@ -74,7 +73,7 @@ object HttpApi {
 }
 
 sealed abstract class HttpApi[
-  F[_]: Async: KryoSerializer: Hasher: SecurityProvider: Metrics: Supervisor: L1NodeContext
+  F[_]: Async: Hasher: SecurityProvider: Metrics: Supervisor: L1NodeContext
 ] private (
   maybeDataApplication: Option[BaseDataApplicationL1Service[F]],
   storages: Storages[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
