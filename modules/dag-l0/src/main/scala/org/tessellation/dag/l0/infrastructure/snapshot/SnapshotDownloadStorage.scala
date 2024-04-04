@@ -19,6 +19,7 @@ object SnapshotDownloadStorage {
     persistedStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
     fullGlobalSnapshotStorage: SnapshotLocalFileSystemStorage[F, GlobalSnapshot],
     snapshotInfoStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfo],
+    snapshotInfoKryoStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfoV2],
     hashSelect: HashSelect
   ): SnapshotDownloadStorage[F] =
     new SnapshotDownloadStorage[F] {
@@ -42,9 +43,12 @@ object SnapshotDownloadStorage {
       def isPersisted(hash: Hash): F[Boolean] = persistedStorage.exists(hash)
 
       def hasCorrectSnapshotInfo(ordinal: SnapshotOrdinal, proof: GlobalSnapshotStateProof): F[Boolean] =
-        snapshotInfoStorage.read(ordinal).flatMap {
-          case Some(info) => info.stateProof(ordinal, hashSelect).map(_ === proof)
-          case _          => false.pure[F]
+        (hashSelect.select(ordinal) match {
+          case JsonHash => snapshotInfoStorage.read(ordinal).flatMap(_.traverse(_.stateProof(ordinal, hashSelect)))
+          case KryoHash => snapshotInfoKryoStorage.read(ordinal).flatMap(_.traverse(_.stateProof(ordinal, hashSelect)))
+        }).map {
+          case Some(calculatedProof) => calculatedProof === proof
+          case _                     => false
         }
 
       def getHighestSnapshotInfoOrdinal(lte: SnapshotOrdinal): F[Option[SnapshotOrdinal]] =
@@ -52,19 +56,26 @@ object SnapshotDownloadStorage {
           .flatMap(_.filter(_ <= lte).compile.toList)
           .map(_.maximumOption)
 
-      def readCombined(ordinal: SnapshotOrdinal): F[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] =
-        (readPersisted(ordinal), snapshotInfoStorage.read(ordinal)).tupled.map(_.tupled).flatMap {
+      def readCombined(ordinal: SnapshotOrdinal): F[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = {
+        val maybeInfo = hashSelect.select(ordinal) match {
+          case JsonHash => snapshotInfoStorage.read(ordinal).map(_.map(_.asRight[GlobalSnapshotInfoV2]))
+          case KryoHash => snapshotInfoKryoStorage.read(ordinal).map(_.map(_.asLeft[GlobalSnapshotInfo]))
+        }
+
+        (readPersisted(ordinal).flatMap(_.traverse(_.toHashed)), maybeInfo).tupled.map(_.tupled).flatMap {
           case Some((snapshot, info)) =>
-            StateProofValidator
-              .validate(snapshot, info, hashSelect)
-              .map(_.isValid)
+            info
+              .bitraverse(_.stateProof(ordinal, hashSelect), _.stateProof(ordinal, hashSelect))
+              .map(_.fold(identity, identity))
+              .map(StateProofValidator.validate(snapshot, _).isValid)
               .ifM(
-                (snapshot, info).some.pure[F],
+                (snapshot.signed, info.leftMap(_.toGlobalSnapshotInfo).fold(identity, identity)).some.pure[F],
                 new Exception("Persisted snapshot info does not match the persisted snapshot")
                   .raiseError[F, Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]]
               )
           case _ => none.pure[F]
         }
+      }
 
       def persistSnapshotInfoWithCutoff(ordinal: SnapshotOrdinal, info: GlobalSnapshotInfo): F[Unit] =
         snapshotInfoStorage.write(ordinal, info) >> {

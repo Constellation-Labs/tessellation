@@ -37,19 +37,19 @@ import weaver.MutableIOSuite
 
 object StateChannelValidatorSuite extends MutableIOSuite {
 
-  type Res = (KryoSerializer[IO], Hasher[IO], SecurityProvider[IO])
+  type Res = (JsonSerializer[IO], Hasher[IO], SecurityProvider[IO])
 
   def sharedResource: Resource[IO, Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
     implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
     h = Hasher.forSync[IO](new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash })
-  } yield (ks, h, sp)
+  } yield (j, h, sp)
 
   private val testStateChannel = StateChannelSnapshotBinary(Hash.empty, "test".getBytes, SnapshotFee.MinValue)
 
   test("should succeed when state channel is signed correctly and binary size is within allowed maximum") { res =>
-    implicit val (kryo, h, sp) = res
+    implicit val (json, h, sp) = res
 
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
@@ -67,7 +67,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail when the signature is wrong") { res =>
-    implicit val (kryo, h, sp) = res
+    implicit val (json, h, sp) = res
 
     for {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
@@ -95,7 +95,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
   }
 
   test("should succeed when there is more than one allowed signature") { res =>
-    implicit val (kryo, h, sp) = res
+    implicit val (json, h, sp) = res
 
     for {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
@@ -141,21 +141,21 @@ object StateChannelValidatorSuite extends MutableIOSuite {
     val validator = mkValidator(
       peerId.map(SeedlistEntry(_, none, none, none, none)).toSortedSet.some,
       Map(address -> peerId).some,
-      maxBinarySizeInBytes = 443L
+      maxBinarySizeInBytes = 278L
     )
 
     validator
       .validate(scOutput)
       .map(
         expect.same(
-          StateChannelValidator.BinaryExceedsMaxAllowedSize(443, 444).invalidNec,
+          StateChannelValidator.BinaryExceedsMaxAllowedSize(278, 279).invalidNec,
           _
         )
       )
   }
 
   test("should fail when there is signature not from seedlist") { res =>
-    implicit val (kryo, h, sp) = res
+    implicit val (json, h, sp) = res
 
     for {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
@@ -178,7 +178,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
   }
 
   test("should succeed when there is signature not from seedlist but is validated as historical") { res =>
-    implicit val (kryo, h, sp) = res
+    implicit val (json, h, sp) = res
 
     for {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
@@ -196,7 +196,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail when the state channel address is not on the allowance list") { res =>
-    implicit val (kryo, h, sp) = res
+    implicit val (json, h, sp) = res
 
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
@@ -213,7 +213,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
   }
 
   test("should succeed when the state channel address is not on the allowance list but is validated as historical") { res =>
-    implicit val (kryo, h, sp) = res
+    implicit val (json, h, sp) = res
 
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
@@ -226,7 +226,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail when no signature is on the state channel allowance list for given address") { res =>
-    implicit val (kryo, h, sp) = res
+    implicit val (json, h, sp) = res
 
     for {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
@@ -249,7 +249,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
   }
 
   test("should succeed when no signature is on the state channel allowance list for given address but is validated as historical") { res =>
-    implicit val (kryo, h, sp) = res
+    implicit val (json, h, sp) = res
 
     for {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
@@ -268,7 +268,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
   }
 
   test("should succeed when at least one signature is on the state channel allowance list for given address") { res =>
-    implicit val (kryo, h, sp) = res
+    implicit val (json, h, sp) = res
 
     for {
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
@@ -287,7 +287,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
   }
 
   test("should succeed when the seedlist and state channel allowance list check is disabled") { res =>
-    implicit val (kryo, h, sp) = res
+    implicit val (json, h, sp) = res
 
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
@@ -300,7 +300,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
   }
 
   test("should fail when address is not derived from genesis of the state channel") { res =>
-    implicit val (kryo, h, sp) = res
+    implicit val (json, h, sp) = res
 
     for {
       keyPair <- KeyPairGenerator.makeKeyPair[IO]
@@ -327,7 +327,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
     maxBinarySizeInBytes: PosLong = 1024L
   )(
     implicit S: SecurityProvider[IO],
-    K: KryoSerializer[IO],
+    J: JsonSerializer[IO],
     H: Hasher[IO]
   ) =
     StateChannelValidator.make[IO](SignedValidator.make[IO], seedlist, stateChannelAllowanceLists, maxBinarySizeInBytes)

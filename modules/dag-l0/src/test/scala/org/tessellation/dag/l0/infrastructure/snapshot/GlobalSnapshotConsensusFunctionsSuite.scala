@@ -224,7 +224,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
   }
 
   test("gossip signed artifacts") { res =>
-    implicit val (_, ks, h, sp, _) = res
+    implicit val (_, _, h, sp, _) = res
 
     for {
       gossiped <- Ref.of(List.empty[ForkInfo])

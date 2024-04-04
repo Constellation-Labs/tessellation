@@ -9,8 +9,7 @@ import cats.syntax.option._
 import cats.syntax.validated._
 
 import org.tessellation.ext.cats.syntax.validated._
-import org.tessellation.ext.kryo._
-import org.tessellation.kryo.KryoSerializer
+import org.tessellation.json.JsonSerializer
 import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
 import org.tessellation.node.shared.domain.statechannel.StateChannelValidator.StateChannelValidationErrorOr
 import org.tessellation.schema.address.Address
@@ -35,7 +34,7 @@ trait StateChannelValidator[F[_]] {
 
 object StateChannelValidator {
 
-  def make[F[_]: Async: KryoSerializer](
+  def make[F[_]: Async: JsonSerializer](
     signedValidator: SignedValidator[F],
     l0Seedlist: Option[Set[SeedlistEntry]],
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
@@ -61,7 +60,7 @@ object StateChannelValidator {
     private def validateSnapshotSize(
       signedSC: Signed[StateChannelSnapshotBinary]
     ): F[StateChannelValidationErrorOr[Signed[StateChannelSnapshotBinary]]] =
-      signedSC.toBinaryF.map { binary =>
+      JsonSerializer[F].serialize(signedSC).map { binary =>
         val actualSize = binary.size
         val isWithinLimit = actualSize <= maxBinarySizeInBytes
 

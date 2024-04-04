@@ -3,13 +3,12 @@ package org.tessellation.security
 import cats.effect.kernel.Sync
 import cats.syntax.all._
 
-import scala.annotation.nowarn
-
+import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencyIncrementalSnapshotV1}
 import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.snapshot.Snapshot
 import org.tessellation.schema.transaction.Transaction
+import org.tessellation.schema.{GlobalSnapshotInfo, GlobalSnapshotInfoV2, SnapshotOrdinal}
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
@@ -41,7 +40,6 @@ object Hasher {
 
     def getLogic(ordinal: SnapshotOrdinal): HashLogic = hashSelect.select(ordinal)
 
-    @nowarn
     def hashJson[A: Encoder](data: A): F[Hash] =
       (data match {
         case d: Encodable[_] =>
@@ -72,6 +70,13 @@ object Hasher {
           case _              => JsonHash
         }
 
+      def map[B](d: B) =
+        d match {
+          case g: GlobalSnapshotInfo          => GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(g)
+          case s: CurrencyIncrementalSnapshot => CurrencyIncrementalSnapshotV1.fromCurrencyIncrementalSnapshot(s)
+          case a                              => a
+        }
+
       val hashLogic = data match {
         case st: Signed[_] => select(st.value)
         case _             => select(data)
@@ -79,7 +84,7 @@ object Hasher {
 
       hashLogic match {
         case JsonHash => hashJson(data)
-        case KryoHash => hashKryo(data)
+        case KryoHash => hashKryo(map(data))
       }
     }
 

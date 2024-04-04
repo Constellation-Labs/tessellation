@@ -14,7 +14,6 @@ import org.tessellation.currency.l0.snapshot.schema.CurrencyConsensusOutcome
 import org.tessellation.currency.schema.currency._
 import org.tessellation.env.AppEnvironment
 import org.tessellation.env.AppEnvironment.{Dev, Integrationnet, Testnet}
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.HttpConfig
 import org.tessellation.node.shared.http.p2p.middlewares.{PeerAuthMiddleware, `X-Id-Middleware`}
 import org.tessellation.node.shared.http.routes._
@@ -31,7 +30,7 @@ import org.http4s.{HttpApp, HttpRoutes}
 
 object HttpApi {
 
-  def make[F[_]: Async: SecurityProvider: KryoSerializer: Hasher: Metrics: L0NodeContext](
+  def make[F[_]: Async: SecurityProvider: Hasher: Metrics: L0NodeContext](
     storages: Storages[F],
     queues: Queues[F],
     services: Services[F],
@@ -59,7 +58,7 @@ object HttpApi {
     ) {}
 }
 
-sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Hasher: Metrics: L0NodeContext] private (
+sealed abstract class HttpApi[F[_]: Async: SecurityProvider: Hasher: Metrics: L0NodeContext] private (
   storages: Storages[F],
   queues: Queues[F],
   services: Services[F],

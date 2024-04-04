@@ -2,7 +2,6 @@ package org.tessellation.node.shared.http.p2p.clients
 
 import cats.effect.Async
 
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.cluster.services.Session
 import org.tessellation.node.shared.http.p2p.PeerResponse
 import org.tessellation.node.shared.http.p2p.PeerResponse.PeerResponse
@@ -19,7 +18,7 @@ import org.http4s.Method.GET
 import org.http4s.client.Client
 
 abstract class SnapshotClient[
-  F[_]: Async: SecurityProvider: KryoSerializer,
+  F[_]: Async: SecurityProvider,
   S <: Snapshot: Decoder,
   SI <: SnapshotInfo[_]: Decoder
 ] {
@@ -48,13 +47,13 @@ abstract class SnapshotClient[
   }
 
   def get(ordinal: SnapshotOrdinal): PeerResponse[F, Signed[S]] = {
-    import org.tessellation.ext.codecs.BinaryCodec.decoder
+    import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
 
     PeerResponse[F, Signed[S]](s"$urlPrefix/${ordinal.value.value}")(client, optionalSession)
   }
 
   def get(hash: Hash): PeerResponse[F, Signed[S]] = {
-    import org.tessellation.ext.codecs.BinaryCodec.decoder
+    import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
 
     PeerResponse[F, Signed[S]](s"$urlPrefix/$hash")(client, optionalSession)
   }

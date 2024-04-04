@@ -3,7 +3,6 @@ package org.tessellation.dag.l1.http.p2p
 import cats.effect.Async
 
 import org.tessellation.dag.l1.domain.consensus.block.http.p2p.clients.BlockConsensusClient
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.http.p2p.SharedP2PClient
 import org.tessellation.node.shared.http.p2p.clients._
 import org.tessellation.node.shared.infrastructure.gossip.p2p.GossipClient
@@ -13,7 +12,7 @@ import org.http4s.client._
 
 object P2PClient {
 
-  def make[F[_]: Async: SecurityProvider: KryoSerializer](
+  def make[F[_]: Async: SecurityProvider](
     sharedP2PClient: SharedP2PClient[F],
     client: Client[F],
     currencyPathPrefix: String

@@ -3,10 +3,8 @@ package org.tessellation.node.shared.http.routes
 import cats.effect.Async
 import cats.syntax.all._
 
-import org.tessellation.ext.codecs.BinaryCodec
 import org.tessellation.ext.http4s.HashVar
 import org.tessellation.ext.http4s.headers.negotiation.resolveEncoder
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.node.NodeStorage
 import org.tessellation.node.shared.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.node.shared.ext.http4s.SnapshotOrdinalVar
@@ -27,7 +25,7 @@ import org.http4s.{EntityEncoder, HttpRoutes, Response}
 import shapeless.HNil
 import shapeless.syntax.singleton._
 
-final case class SnapshotRoutes[F[_]: Async: Hasher: KryoSerializer, S <: Snapshot: Encoder, C: Encoder](
+final case class SnapshotRoutes[F[_]: Async: Hasher, S <: Snapshot: Encoder, C: Encoder](
   snapshotStorage: SnapshotStorage[F, S, C],
   fullGlobalSnapshotStorage: Option[SnapshotLocalFileSystemStorage[F, GlobalSnapshot]],
   prefixPath: InternalUrlPrefix,
@@ -39,8 +37,7 @@ final case class SnapshotRoutes[F[_]: Async: Hasher: KryoSerializer, S <: Snapsh
   object FullSnapshotQueryParam extends FlagQueryParamMatcher("full")
 
   // first on the list is the default - used when `Accept: */*` is requested
-  implicit def binaryAndJsonEncoders[A <: AnyRef: Encoder]: List[EntityEncoder[F, A]] =
-    List(BinaryCodec.encoder[F, A], CirceEntityEncoder.circeEntityEncoder[F, A])
+  implicit def jsonEncoders[A <: AnyRef: Encoder]: List[EntityEncoder[F, A]] = List(CirceEntityEncoder.circeEntityEncoder[F, A])
 
   private val serviceUnavailableNodeNotReady: F[Response[F]] =
     ServiceUnavailable(("message" ->> "Node is not ready yet") :: HNil)

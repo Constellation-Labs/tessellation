@@ -22,9 +22,9 @@ import org.tessellation.node.shared.infrastructure.snapshot.GlobalSnapshotContex
 import org.tessellation.schema._
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.Peer
+import org.tessellation.security._
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{HashSelect, Hashed, Hasher}
 
 import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.NonNegLong
@@ -226,9 +226,13 @@ object Download {
                       .hasCorrectSnapshotInfo(snapshot.ordinal, snapshot.stateProof)
                       .ifM(
                         ().pure[F],
-                        StateProofValidator
-                          .validate(snapshot, newContext, hashSelect)
-                          .map(_.isValid)
+                        (hashSelect.select(snapshot.ordinal) match {
+                          case JsonHash => StateProofValidator.validate(snapshot, newContext, hashSelect).map(_.isValid)
+                          case KryoHash =>
+                            StateProofValidator
+                              .validate(snapshot, GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(newContext), hashSelect)
+                              .map(_.isValid)
+                        })
                           .ifM(
                             snapshotStorage.persistSnapshotInfoWithCutoff(snapshot.ordinal, newContext),
                             InvalidStateProof(snapshot.ordinal).raiseError[F, Unit]

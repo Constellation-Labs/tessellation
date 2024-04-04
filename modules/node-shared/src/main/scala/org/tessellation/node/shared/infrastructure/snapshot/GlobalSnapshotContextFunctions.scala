@@ -16,8 +16,8 @@ import org.tessellation.node.shared.domain.block.processing._
 import org.tessellation.node.shared.domain.snapshot.SnapshotContextFunctions
 import org.tessellation.schema._
 import org.tessellation.schema.transaction.RewardTransaction
+import org.tessellation.security._
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{HashSelect, Hasher}
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelValidationType}
 
 import derevo.cats.{eqv, show}
@@ -58,7 +58,12 @@ object GlobalSnapshotContextFunctions {
         _ <- CannotApplyStateChannelsError(returnedSCEvents).raiseError[F, Unit].whenA(returnedSCEvents.nonEmpty)
         diffRewards = acceptedRewardTxs -- signedArtifact.rewards
         _ <- CannotApplyRewardsError(diffRewards).raiseError[F, Unit].whenA(diffRewards.nonEmpty)
-        _ <- StateProofValidator.validate(signedArtifact, snapshotInfo, hashSelect).flatMap {
+        hashedArtifact <- signedArtifact.toHashed
+        calculatedStateProof <- hashSelect.select(signedArtifact.ordinal) match {
+          case JsonHash => snapshotInfo.stateProof(signedArtifact.ordinal, hashSelect)
+          case KryoHash => GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(snapshotInfo).stateProof(signedArtifact.ordinal, hashSelect)
+        }
+        _ <- StateProofValidator.validate(hashedArtifact, calculatedStateProof) match {
           case Validated.Valid(_)   => Async[F].unit
           case Validated.Invalid(e) => e.raiseError[F, Unit]
         }

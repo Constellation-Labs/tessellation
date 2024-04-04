@@ -3,7 +3,6 @@ package org.tessellation.dag.l0.http.p2p
 import cats.effect.Async
 import cats.syntax.option._
 
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.cluster.services.Session
 import org.tessellation.node.shared.http.p2p.SharedP2PClient
 import org.tessellation.node.shared.http.p2p.clients._
@@ -14,7 +13,7 @@ import org.http4s.client.Client
 
 object P2PClient {
 
-  def make[F[_]: Async: SecurityProvider: KryoSerializer](
+  def make[F[_]: Async: SecurityProvider](
     sharedP2PClient: SharedP2PClient[F],
     client: Client[F],
     session: Session[F]

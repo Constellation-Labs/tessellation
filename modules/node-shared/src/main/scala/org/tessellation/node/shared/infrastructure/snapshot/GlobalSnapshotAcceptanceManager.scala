@@ -3,13 +3,12 @@ package org.tessellation.node.shared.infrastructure.snapshot
 import cats.MonadThrow
 import cats.data.NonEmptyList
 import cats.effect.Async
-import cats.syntax.flatMap._
-import cats.syntax.functor._
-import cats.syntax.traverse._
+import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
 
+import org.tessellation.currency.schema.currency.CurrencyIncrementalSnapshotV1
 import org.tessellation.ext.crypto._
 import org.tessellation.merkletree.Proof
 import org.tessellation.merkletree.syntax._
@@ -18,8 +17,8 @@ import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.transaction.{RewardTransaction, Transaction, TransactionReference}
-import org.tessellation.security.Hasher
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hasher, JsonHash, KryoHash}
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 import org.tessellation.syntax.sortedCollection.sortedSetSyntax
 
@@ -77,7 +76,13 @@ object GlobalSnapshotAcceptanceManager {
         scEvents,
         validationType
       )
-      sCSnapshotHashes <- scSnapshots.toList.traverse { case (address, nel) => nel.head.toHashed.map(address -> _.hash) }
+      sCSnapshotHashes <- scSnapshots.toList.traverse {
+        case (address, nel) =>
+          (Hasher[F].getLogic(ordinal) match {
+            case JsonHash => nel.head.toHashed
+            case KryoHash => nel.head.toKryoHashed
+          }).map(address -> _.hash)
+      }
         .map(_.toMap)
       updatedLastStateChannelSnapshotHashes = lastSnapshotContext.lastStateChannelSnapshotHashes ++ sCSnapshotHashes
       updatedLastCurrencySnapshots = lastSnapshotContext.lastCurrencySnapshots ++ currencySnapshots
@@ -93,16 +98,48 @@ object GlobalSnapshotAcceptanceManager {
         rewards
       )
 
-      maybeMerkleTree <- updatedLastCurrencySnapshots.merkleTree[F]
-      updatedLastCurrencySnapshotProofs <- maybeMerkleTree.traverse { merkleTree =>
-        updatedLastCurrencySnapshots.toList.traverse {
-          case (address, state) =>
-            (address, state).hash
-              .map(merkleTree.findPath(_))
-              .flatMap(MonadThrow[F].fromOption(_, InvalidMerkleTree))
-              .map((address, _))
-        }
-      }.map(_.map(SortedMap.from(_)).getOrElse(SortedMap.empty[Address, Proof]))
+      (maybeMerkleTree, updatedLastCurrencySnapshotProofs) <- Hasher[F].getLogic(ordinal) match {
+        case JsonHash =>
+          val maybeMerkleTree = updatedLastCurrencySnapshots.merkleTree[F]
+
+          val updatedLastCurrencySnapshotProofs = maybeMerkleTree.flatMap {
+            _.traverse { merkleTree =>
+              updatedLastCurrencySnapshots.toList.traverse {
+                case (address, state) =>
+                  (address, state).hash
+                    .map(merkleTree.findPath(_))
+                    .flatMap(MonadThrow[F].fromOption(_, InvalidMerkleTree))
+                    .map((address, _))
+              }
+            }.map(_.map(SortedMap.from(_)).getOrElse(SortedMap.empty[Address, Proof]))
+          }
+
+          (maybeMerkleTree, updatedLastCurrencySnapshotProofs).tupled
+
+        case KryoHash =>
+          val updatedLastCurrencySnapshotsCompatible = updatedLastCurrencySnapshots.map {
+            case (address, Left(snapshot)) => (address, Left(snapshot))
+            case (address, Right((Signed(incrementalSnapshot, proofs), info))) =>
+              (address, Right((Signed(CurrencyIncrementalSnapshotV1.fromCurrencyIncrementalSnapshot(incrementalSnapshot), proofs), info)))
+          }
+
+          val maybeMerkleTree = updatedLastCurrencySnapshotsCompatible.compatibleMerkleTree[F]
+
+          val updatedLastCurrencySnapshotProofs = maybeMerkleTree.flatMap {
+            _.traverse { merkleTree =>
+              updatedLastCurrencySnapshotsCompatible.toList.traverse {
+                case (address, state) =>
+                  Hasher[F]
+                    .hashKryo((address, state))
+                    .map(merkleTree.findPath(_))
+                    .flatMap(MonadThrow[F].fromOption(_, InvalidMerkleTree))
+                    .map((address, _))
+              }
+            }.map(_.map(SortedMap.from(_)).getOrElse(SortedMap.empty[Address, Proof]))
+          }
+
+          (maybeMerkleTree, updatedLastCurrencySnapshotProofs).tupled
+      }
 
       gsi = GlobalSnapshotInfo(
         updatedLastStateChannelSnapshotHashes,

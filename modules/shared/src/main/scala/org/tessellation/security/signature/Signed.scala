@@ -156,6 +156,13 @@ object Signed {
         }
       }
 
+    def toKryoHashed[F[_]: Async: Hasher]: F[Hashed[A]] =
+      Hasher[F].hashKryo(signed.value).flatMap { hash =>
+        proofsHash.map { proofsHash =>
+          Hashed(signed, hash, proofsHash)
+        }
+      }
+
     def toHashed[F[_]: Async: Hasher](toBytes: A => F[Array[Byte]]): F[Hashed[A]] =
       toBytes(signed.value).map(Hash.fromBytes).flatMap { hash =>
         proofsHash.map(Hashed(signed, hash, _))

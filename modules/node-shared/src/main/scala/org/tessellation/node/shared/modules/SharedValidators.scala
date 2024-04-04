@@ -3,7 +3,7 @@ package org.tessellation.node.shared.modules
 import cats.data.NonEmptySet
 import cats.effect.Async
 
-import org.tessellation.kryo.KryoSerializer
+import org.tessellation.json.JsonSerializer
 import org.tessellation.node.shared.domain.block.processing.BlockValidator
 import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
 import org.tessellation.node.shared.domain.statechannel.StateChannelValidator
@@ -19,7 +19,7 @@ import eu.timepit.refined.types.numeric.PosLong
 
 object SharedValidators {
 
-  def make[F[_]: Async: KryoSerializer: Hasher: SecurityProvider](
+  def make[F[_]: Async: JsonSerializer: Hasher: SecurityProvider](
     l0Seedlist: Option[Set[SeedlistEntry]],
     seedlist: Option[Set[SeedlistEntry]],
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
