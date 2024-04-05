@@ -10,7 +10,6 @@ import org.tessellation.node.shared.infrastructure.snapshot.daemon.SnapshotEvent
 import org.tessellation.node.shared.snapshot.currency.CurrencySnapshotEvent
 
 import fs2.Stream
-import io.circe.disjunctionCodecs._
 import io.circe.{Encoder, Json}
 
 object CurrencySnapshotEventsPublisherDaemon {

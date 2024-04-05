@@ -11,7 +11,7 @@ import org.tessellation.node.shared.domain.consensus.ConsensusFunctions
 import org.tessellation.node.shared.domain.rewards.Rewards
 import org.tessellation.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import org.tessellation.node.shared.infrastructure.snapshot._
-import org.tessellation.node.shared.snapshot.currency.{CurrencySnapshotArtifact, CurrencySnapshotEvent}
+import org.tessellation.node.shared.snapshot.currency.{BlockEvent, CurrencySnapshotArtifact, CurrencySnapshotEvent}
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
@@ -61,8 +61,8 @@ object CurrencySnapshotConsensusFunctions {
       facilitators: Set[PeerId]
     ): F[(CurrencySnapshotArtifact, CurrencySnapshotContext, Set[CurrencySnapshotEvent])] = {
       val blocksForAcceptance: Set[CurrencySnapshotEvent] = events.filter {
-        case Left(currencyBlock) => currencyBlock.height > lastArtifact.height
-        case Right(_)            => true
+        case BlockEvent(currencyBlock) => currencyBlock.height > lastArtifact.height
+        case _                         => true
       }
 
       currencySnapshotCreator

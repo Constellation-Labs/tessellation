@@ -1,6 +1,7 @@
 package org.tessellation.currency.dataApplication
 
 import cats.data.{NonEmptyList, Validated, ValidatedNec}
+import cats.kernel.Eq
 import cats.syntax.all._
 import cats.{Applicative, Monad, MonadThrow}
 
@@ -454,6 +455,12 @@ object dataApplication {
     implicit def decoder(implicit d: Decoder[DataUpdate]): Decoder[DataApplicationBlock] = deriveDecoder
 
     implicit def encoder(implicit e: Encoder[DataUpdate]): Encoder[DataApplicationBlock] = deriveEncoder
+
+    implicit def eqv: Eq[DataApplicationBlock] =
+      Eq.and[DataApplicationBlock](
+        Eq[RoundId].contramap(_.roundId),
+        Eq[NonEmptyList[Hash]].contramap(_.updatesHashes)
+      )
   }
 
   object DataApplicationCustomRoutes {

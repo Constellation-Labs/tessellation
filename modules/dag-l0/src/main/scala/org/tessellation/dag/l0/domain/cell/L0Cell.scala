@@ -82,6 +82,7 @@ object L0Cell {
     def enqueueDAGL1Data[F[_]: Async](queue: Queue[F, Signed[Block]])(data: Signed[Block]): AlgebraR[F] =
       queue.offer(data) >>
         NullTerminal.asRight[CellError].widen[Ω].pure[F]
+
   }
 
   object Coalgebra {
@@ -97,5 +98,6 @@ object L0Cell {
 
       res.pure[F]
     }
+
   }
 }

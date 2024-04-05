@@ -140,7 +140,7 @@ object GlobalSnapshotStateChannelEventsProcessor {
                       .map(_.toOption)
                       .map {
                         case Some(snapshot) =>
-                          (nel.prepend((snapshot, fullSnapshot.value.info).asRight).some, tail).asLeft[Result]
+                          (nel.prepend((snapshot, fullSnapshot.value.info.toCurrencySnapshotInfo).asRight).some, tail).asLeft[Result]
                         case None =>
                           (nel.some, tail).asLeft[Result]
                       }

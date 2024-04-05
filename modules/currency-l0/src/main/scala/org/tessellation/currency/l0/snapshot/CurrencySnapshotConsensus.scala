@@ -26,7 +26,6 @@ import org.tessellation.schema.peer.PeerId
 import org.tessellation.security.{Hasher, SecurityProvider}
 
 import io.circe.Decoder
-import io.circe.disjunctionCodecs._
 import org.http4s.client.Client
 
 object CurrencySnapshotConsensus {

@@ -1,8 +1,7 @@
 package org.tessellation.currency.schema
 
 import cats.effect.kernel.Sync
-import cats.syntax.contravariantSemigroupal._
-import cats.syntax.functor._
+import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
@@ -11,7 +10,7 @@ import org.tessellation.ext.crypto._
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
-import org.tessellation.schema.currencyMessage.CurrencyMessage
+import org.tessellation.schema.currencyMessage.{CurrencyMessage, MessageType}
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.semver.SnapshotVersion
@@ -19,6 +18,7 @@ import org.tessellation.schema.snapshot._
 import org.tessellation.schema.transaction._
 import org.tessellation.security._
 import org.tessellation.security.hash.{Hash, ProofsHash}
+import org.tessellation.security.signature.Signed
 import org.tessellation.syntax.sortedCollection._
 
 import derevo.cats.{eqv, order, show}
@@ -41,26 +41,70 @@ object currency {
   @derive(encoder, decoder, eqv, show)
   case class CurrencySnapshotStateProof(
     lastTxRefsProof: Hash,
-    balancesProof: Hash
+    balancesProof: Hash,
+    lastMessagesProof: Option[Hash] = None
   ) extends StateProof
 
   object CurrencySnapshotStateProof {
-    def apply(a: (Hash, Hash)): CurrencySnapshotStateProof =
-      CurrencySnapshotStateProof(a._1, a._2)
+    def apply(a: (Hash, Hash, Option[Hash])): CurrencySnapshotStateProof =
+      CurrencySnapshotStateProof(a._1, a._2, a._3)
+  }
+
+  @derive(encoder, decoder, eqv, show)
+  case class CurrencySnapshotStateProofV1(
+    lastTxRefsProof: Hash,
+    balancesProof: Hash
+  ) extends StateProof {
+    def toCurrencySnapshotStateProof: CurrencySnapshotStateProof = CurrencySnapshotStateProof(lastTxRefsProof, balancesProof, None)
+  }
+
+  object CurrencySnapshotStateProofV1 {
+    def apply(a: (Hash, Hash)): CurrencySnapshotStateProofV1 =
+      CurrencySnapshotStateProofV1(a._1, a._2)
+
+    def fromCurrencySnapshotStateProof(proof: CurrencySnapshotStateProof): CurrencySnapshotStateProofV1 =
+      CurrencySnapshotStateProofV1(proof.lastTxRefsProof, proof.balancesProof)
   }
 
   @derive(encoder, decoder, eqv, show)
   case class CurrencySnapshotInfo(
     lastTxRefs: SortedMap[Address, TransactionReference],
-    balances: SortedMap[Address, Balance]
+    balances: SortedMap[Address, Balance],
+    lastMessages: Option[SortedMap[MessageType, Signed[CurrencyMessage]]] = None
   ) extends SnapshotInfo[CurrencySnapshotStateProof] {
     def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal, hashSelect: HashSelect): F[CurrencySnapshotStateProof] =
       hashSelect.select(ordinal) match {
         case KryoHash =>
-          (Hasher[F].hashKryo(lastTxRefs), Hasher[F].hashKryo(balances)).tupled.map(CurrencySnapshotStateProof.apply)
+          (Hasher[F].hashKryo(lastTxRefs), Hasher[F].hashKryo(balances), lastMessages.traverse(Hasher[F].hashKryo)).tupled
+            .map(CurrencySnapshotStateProof.apply)
         case JsonHash =>
-          (lastTxRefs.hash, balances.hash).tupled.map(CurrencySnapshotStateProof.apply)
+          (lastTxRefs.hash, balances.hash, lastMessages.traverse(_.hash)).tupled.map(CurrencySnapshotStateProof.apply)
       }
+  }
+
+  @derive(encoder, decoder, eqv, show)
+  case class CurrencySnapshotInfoV1(
+    lastTxRefs: SortedMap[Address, TransactionReference],
+    balances: SortedMap[Address, Balance]
+  ) extends SnapshotInfo[CurrencySnapshotStateProofV1] {
+    def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal, hashSelect: HashSelect): F[CurrencySnapshotStateProofV1] =
+      hashSelect.select(ordinal) match {
+        case KryoHash =>
+          (Hasher[F].hashKryo(lastTxRefs), Hasher[F].hashKryo(balances)).tupled
+            .map(CurrencySnapshotStateProofV1.apply)
+        case JsonHash =>
+          (lastTxRefs.hash, balances.hash).tupled.map(CurrencySnapshotStateProofV1.apply)
+      }
+
+    def toCurrencySnapshotInfo: CurrencySnapshotInfo = CurrencySnapshotInfo(lastTxRefs, balances, None)
+  }
+
+  object CurrencySnapshotInfoV1 {
+    def fromCurrencySnapshotInfo(info: CurrencySnapshotInfo): CurrencySnapshotInfoV1 =
+      CurrencySnapshotInfoV1(
+        info.lastTxRefs,
+        info.balances
+      )
   }
 
   @derive(decoder, encoder, order, show, arbitrary)
@@ -93,11 +137,11 @@ object currency {
     blocks: SortedSet[BlockAsActiveTip],
     rewards: SortedSet[RewardTransaction],
     tips: SnapshotTips,
-    info: CurrencySnapshotInfo,
+    info: CurrencySnapshotInfoV1,
     epochProgress: EpochProgress,
     dataApplication: Option[DataApplicationPart] = None,
     version: SnapshotVersion = SnapshotVersion("0.0.1")
-  ) extends FullSnapshot[CurrencySnapshotStateProof, CurrencySnapshotInfo]
+  ) extends FullSnapshot[CurrencySnapshotStateProofV1, CurrencySnapshotInfoV1]
 
   @derive(eqv, show, encoder, decoder)
   case class CurrencyIncrementalSnapshot(
@@ -111,7 +155,7 @@ object currency {
     stateProof: CurrencySnapshotStateProof,
     epochProgress: EpochProgress,
     dataApplication: Option[DataApplicationPart] = None,
-    messages: Option[SortedSet[CurrencyMessage]] = None,
+    messages: Option[SortedSet[Signed[CurrencyMessage]]] = None,
     version: SnapshotVersion = SnapshotVersion("0.0.1")
   ) extends IncrementalSnapshot[CurrencySnapshotStateProof]
 
@@ -126,7 +170,7 @@ object currency {
           snapshot.blocks,
           snapshot.rewards,
           snapshot.tips,
-          stateProof,
+          stateProof.toCurrencySnapshotStateProof,
           snapshot.epochProgress,
           snapshot.dataApplication,
           None,
@@ -144,11 +188,11 @@ object currency {
     blocks: SortedSet[BlockAsActiveTip],
     rewards: SortedSet[RewardTransaction],
     tips: SnapshotTips,
-    stateProof: CurrencySnapshotStateProof,
+    stateProof: CurrencySnapshotStateProofV1,
     epochProgress: EpochProgress,
     dataApplication: Option[DataApplicationPart] = None,
     version: SnapshotVersion = SnapshotVersion("0.0.1")
-  ) extends IncrementalSnapshot[CurrencySnapshotStateProof] {
+  ) extends IncrementalSnapshot[CurrencySnapshotStateProofV1] {
     def toCurrencyIncrementalSnapshot: CurrencyIncrementalSnapshot =
       CurrencyIncrementalSnapshot(
         ordinal,
@@ -158,7 +202,7 @@ object currency {
         blocks,
         rewards,
         tips,
-        stateProof,
+        stateProof.toCurrencySnapshotStateProof,
         epochProgress,
         dataApplication,
         None,
@@ -176,7 +220,7 @@ object currency {
         snapshot.blocks,
         snapshot.rewards,
         snapshot.tips,
-        snapshot.stateProof,
+        CurrencySnapshotStateProofV1.fromCurrencySnapshotStateProof(snapshot.stateProof),
         snapshot.epochProgress,
         snapshot.dataApplication,
         snapshot.version
@@ -193,7 +237,7 @@ object currency {
         SortedSet.empty,
         SortedSet.empty,
         SnapshotTips(SortedSet.empty, mkActiveTips(8)),
-        CurrencySnapshotInfo(SortedMap.empty, SortedMap.from(balances)),
+        CurrencySnapshotInfoV1(SortedMap.empty, SortedMap.from(balances)),
         EpochProgress.MinValue,
         dataApplicationPart
       )
@@ -211,7 +255,7 @@ object currency {
           SortedSet.empty,
           SortedSet.empty,
           genesis.tips,
-          stateProof,
+          stateProof.toCurrencySnapshotStateProof,
           genesis.epochProgress,
           genesis.dataApplication,
           None,

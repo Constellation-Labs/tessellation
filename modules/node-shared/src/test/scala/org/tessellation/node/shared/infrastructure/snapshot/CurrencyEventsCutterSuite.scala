@@ -8,16 +8,18 @@ import cats.implicits.catsStdShowForList
 import cats.syntax.all._
 import cats.{Eq, Show}
 
+import org.tessellation.block.generators.signedBlockGen
 import org.tessellation.currency.dataApplication._
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
 import org.tessellation.currency.schema.currency
 import org.tessellation.ext.cats.effect._
 import org.tessellation.json.JsonSerializer
-import org.tessellation.node.shared.domain.block.generators.signedBlockGen
+import org.tessellation.node.shared.snapshot.currency._
 import org.tessellation.routes.internal
-import org.tessellation.schema.generators.signedOf
+import org.tessellation.schema.SnapshotOrdinal
+import org.tessellation.schema.currencyMessage.{CurrencyMessage, MessageOrdinal, MessageType}
+import org.tessellation.schema.generators.{addressGen, signedOf}
 import org.tessellation.schema.round.RoundId
-import org.tessellation.schema.{Block, SnapshotOrdinal}
 import org.tessellation.security.Hashed
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
@@ -47,6 +49,12 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
     signed <- signedOf[DataApplicationBlock](DataApplicationBlock(roundId, updates, hashes))
   } yield signed
 
+  val currencyMessageGen: Gen[Signed[CurrencyMessage]] = for {
+    messageType <- Gen.oneOf(MessageType.Owner, MessageType.Staking)
+    address <- addressGen
+    signed <- signedOf[CurrencyMessage](CurrencyMessage(messageType, address, MessageOrdinal.MinValue))
+  } yield signed
+
   implicit val show: Show[DataApplicationBlock] = (t: DataApplicationBlock) => t.toString
 
   implicit def eqDataApplicationBlock(
@@ -64,6 +72,27 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
   def sharedResource: Resource[IO, JsonSerializer[IO]] =
     JsonSerializer.forSync[F].asResource
 
+  test("does not cut messages") { implicit j =>
+    val cutter = CurrencyEventsCutter.make[IO](testDataApplication.some)
+
+    val gen = for {
+      messageA <- currencyMessageGen
+      messages = List(messageA)
+    } yield messages
+
+    forall(gen) {
+      case (messages) =>
+        cutter.cut(SnapshotOrdinal.MinValue, List.empty, List.empty, messages).map { result =>
+          expect.eql(
+            result match {
+              case Some(_) => false
+              case None    => true
+            },
+            true
+          )
+        }
+    }
+  }
   test("cuts data block if more data blocks than blocks") { implicit j =>
     val cutter = CurrencyEventsCutter.make[IO](testDataApplication.some)
 
@@ -73,18 +102,22 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
       dataBlockC <- dataApplicationBlockGen
       blockA <- signedBlockGen
       blockB <- signedBlockGen
+      messageA <- currencyMessageGen
       dataBlocks = List(dataBlockA, dataBlockB, dataBlockC)
       blocks = List(blockA, blockB)
-    } yield (dataBlocks, blocks)
+      messages = List(messageA)
+    } yield (dataBlocks, blocks, messages)
 
     forall(gen) {
-      case (dataBlocks, blocks) =>
-        cutter.cut(SnapshotOrdinal.MinValue, blocks, dataBlocks).map { result =>
+      case (dataBlocks, blocks, messages) =>
+        cutter.cut(SnapshotOrdinal.MinValue, blocks, dataBlocks, messages).map { result =>
           expect.eql(
             result match {
               case Some((remaining, rejected)) =>
-                dataBlocks.last.asRight[Signed[Block]] === rejected &&
-                remaining === dataBlocks.map(_.asRight[Signed[Block]]).toSet.filterNot(_ === rejected)
+                DataApplicationBlockEvent(dataBlocks.last).asInstanceOf[CurrencySnapshotEvent] === rejected &&
+                remaining === (dataBlocks.map(DataApplicationBlockEvent(_)).widen[CurrencySnapshotEvent] ++ messages
+                  .map(CurrencyMessageEvent(_))
+                  .widen[CurrencySnapshotEvent]).toSet.filterNot(_ === rejected)
               case None => false
             },
             true
@@ -102,18 +135,22 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
       blockA <- signedBlockGen
       blockB <- signedBlockGen
       blockC <- signedBlockGen
+      messageA <- currencyMessageGen
       dataBlocks = List(dataBlockA, dataBlockB)
       blocks = List(blockA, blockB, blockC)
-    } yield (dataBlocks, blocks)
+      messages = List(messageA)
+    } yield (dataBlocks, blocks, messages)
 
     forall(gen) {
-      case (dataBlocks, blocks) =>
-        cutter.cut(SnapshotOrdinal.MinValue, blocks, dataBlocks).map { result =>
+      case (dataBlocks, blocks, messages) =>
+        cutter.cut(SnapshotOrdinal.MinValue, blocks, dataBlocks, messages).map { result =>
           expect.eql(
             result match {
               case Some((remaining, rejected)) =>
-                blocks.last.asLeft[Signed[DataApplicationBlock]] === rejected &&
-                remaining === blocks.map(_.asLeft[Signed[DataApplicationBlock]]).toSet.filterNot(_ === rejected)
+                BlockEvent(blocks.last).asInstanceOf[CurrencySnapshotEvent] === rejected &&
+                remaining === (blocks.map(BlockEvent(_)).widen[CurrencySnapshotEvent].toSet ++ messages
+                  .map(CurrencyMessageEvent(_))
+                  .widen[CurrencySnapshotEvent]).filterNot(_ === rejected)
               case None => false
             },
             true
@@ -131,18 +168,22 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
       dataBlockC <- dataApplicationBlockGen
       blockA <- signedBlockGen
       blockB <- signedBlockGen
+      messageA <- currencyMessageGen
       dataBlocks = List(dataBlockA, dataBlockB, dataBlockC)
       blocks = List(blockA, blockB)
-    } yield (dataBlocks, blocks)
+      messages = List(messageA)
+    } yield (dataBlocks, blocks, messages)
 
     forall(gen) {
-      case (dataBlocks, blocks) =>
-        cutter.cut(SnapshotOrdinal.MinValue, blocks, dataBlocks).map { result =>
+      case (dataBlocks, blocks, messages) =>
+        cutter.cut(SnapshotOrdinal.MinValue, blocks, dataBlocks, messages).map { result =>
           expect.eql(
             result match {
               case Some((remaining, rejected)) =>
-                blocks.last.asLeft[Signed[DataApplicationBlock]] === rejected &&
-                remaining === blocks.map(_.asLeft[Signed[DataApplicationBlock]]).toSet.filterNot(_ === rejected)
+                BlockEvent(blocks.last).asInstanceOf[CurrencySnapshotEvent] === rejected &&
+                remaining === (blocks.map(BlockEvent(_)).widen[CurrencySnapshotEvent].toSet ++ messages
+                  .map(CurrencyMessageEvent(_))
+                  .widen[CurrencySnapshotEvent]).filterNot(_ === rejected)
               case None => false
             },
             true
@@ -158,28 +199,36 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
       n <- Gen.chooseNum(1, 100)
       dataBlocks <- Gen.listOfN(n, dataApplicationBlockGen)
       blocks <- Gen.listOfN(n, signedBlockGen)
-    } yield (dataBlocks, blocks)
+      messageA <- currencyMessageGen
+      messages = List(messageA)
+    } yield (dataBlocks, blocks, messages)
 
     implicit val dataUpdateEncoder: Encoder[DataUpdate] = testDataApplication.dataEncoder
     implicit val dataBlockEncoder = DataApplicationBlock.encoder
 
     forall(gen) {
-      case (dataBlocks, blocks) =>
+      case (dataBlocks, blocks, messages) =>
         for {
           dataBlockSize: Int <- dataBlocks.lastOption.map(a => JsonSerializer[IO].serialize(a).map(_.length)).getOrElse(0.pure[IO])
           blockSize: Int <- blocks.lastOption.map(a => JsonSerializer[IO].serialize(a).map(_.length)).getOrElse(0.pure[IO])
-          result <- cutter.cut(SnapshotOrdinal.MinValue, blocks, dataBlocks)
+          result <- cutter.cut(SnapshotOrdinal.MinValue, blocks, dataBlocks, messages)
           expected = result match {
             case Some((remaining, rejected)) =>
               if (dataBlockSize > blockSize)
-                dataBlocks.last.asRight[Signed[Block]] === rejected && remaining === dataBlocks
-                  .map(_.asRight[Signed[Block]])
-                  .toSet
+                DataApplicationBlockEvent(dataBlocks.last).asInstanceOf[CurrencySnapshotEvent] === rejected && remaining === (dataBlocks
+                  .map(DataApplicationBlockEvent(_))
+                  .widen[CurrencySnapshotEvent]
+                  .toSet ++ messages
+                  .map(CurrencyMessageEvent(_))
+                  .widen[CurrencySnapshotEvent])
                   .filterNot(_ === rejected)
               else if (dataBlockSize < blockSize)
-                blocks.last.asLeft[Signed[DataApplicationBlock]] === rejected && remaining === blocks
-                  .map(_.asLeft[Signed[DataApplicationBlock]])
-                  .toSet
+                BlockEvent(blocks.last).asInstanceOf[CurrencySnapshotEvent] === rejected && remaining === (blocks
+                  .map(BlockEvent(_))
+                  .widen[CurrencySnapshotEvent]
+                  .toSet ++ messages
+                  .map(CurrencyMessageEvent(_))
+                  .widen[CurrencySnapshotEvent])
                   .filterNot(_ === rejected)
               else true
             case None => false
@@ -194,11 +243,13 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
     val gen = for {
       dataBlocks <- Gen.listOfN(0, dataApplicationBlockGen)
       blocks <- Gen.listOfN(0, signedBlockGen)
-    } yield (dataBlocks, blocks)
+      messageA <- currencyMessageGen
+      messages = List(messageA)
+    } yield (dataBlocks, blocks, messages)
 
     forall(gen) {
-      case (dataBlocks, blocks) =>
-        cutter.cut(SnapshotOrdinal.MinValue, blocks, dataBlocks).map { result =>
+      case (dataBlocks, blocks, messages) =>
+        cutter.cut(SnapshotOrdinal.MinValue, blocks, dataBlocks, messages).map { result =>
           expect.eql(
             result.isEmpty,
             true
@@ -215,11 +266,13 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
       blocksLength = 1 - dataBlocksLength
       dataBlocks <- Gen.listOfN(dataBlocksLength, dataApplicationBlockGen)
       blocks <- Gen.listOfN(blocksLength, signedBlockGen)
-    } yield (dataBlocks, blocks)
+      messageA <- currencyMessageGen
+      messages = List(messageA)
+    } yield (dataBlocks, blocks, messages)
 
     forall(gen) {
-      case (dataBlocks, blocks) =>
-        cutter.cut(SnapshotOrdinal.MinValue, blocks, dataBlocks).map { result =>
+      case (dataBlocks, blocks, messages) =>
+        cutter.cut(SnapshotOrdinal.MinValue, blocks, dataBlocks, messages).map { result =>
           expect.eql(
             result.isEmpty,
             true

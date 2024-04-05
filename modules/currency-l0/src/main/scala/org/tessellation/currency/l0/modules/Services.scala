@@ -129,7 +129,7 @@ object Services {
         dataApplication = maybeDataApplication,
         globalSnapshotContextFunctions = globalSnapshotContextFns,
         sentStateChannelBinaryTrackingService = sentStateChannelBinaryTrackingService,
-        currencyMessageService = CurrencyMessageService.make[F](signedValidator, seedlist, storages.currencyMessageStorage)
+        currencyMessageService = CurrencyMessageService.make[F](signedValidator, seedlist, storages.snapshot)
       ) {}
 }
 

@@ -5,5 +5,5 @@ import org.tessellation.node.shared.snapshot.currency.CurrencySnapshotEvent
 sealed trait CoalgebraCommand
 
 object CoalgebraCommand {
-  case class ProcessL1Block(data: CurrencySnapshotEvent) extends CoalgebraCommand
+  case class ProcessCurrencySnapshotEvent(data: CurrencySnapshotEvent) extends CoalgebraCommand
 }

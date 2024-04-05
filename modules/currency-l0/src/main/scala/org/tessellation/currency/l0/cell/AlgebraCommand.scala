@@ -6,6 +6,6 @@ import org.tessellation.node.shared.snapshot.currency.CurrencySnapshotEvent
 sealed trait AlgebraCommand extends Ω
 
 object AlgebraCommand {
-  case class EnqueueL1BlockData(data: CurrencySnapshotEvent) extends AlgebraCommand
+  case class EnqueueCurrencySnapshotEvent(data: CurrencySnapshotEvent) extends AlgebraCommand
   case object NoAction extends AlgebraCommand
 }

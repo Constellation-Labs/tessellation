@@ -63,7 +63,7 @@ object Genesis {
       hashedGenesis <- genesis.toHashed[F]
       firstIncrementalSnapshot <- CurrencySnapshot.mkFirstIncrementalSnapshot[F](hashedGenesis, hashSelect)
       signedFirstIncrementalSnapshot <- firstIncrementalSnapshot.sign(keyPair)
-      _ <- snapshotStorage.prepend(signedFirstIncrementalSnapshot, hashedGenesis.info)
+      _ <- snapshotStorage.prepend(signedFirstIncrementalSnapshot, hashedGenesis.info.toCurrencySnapshotInfo)
 
       _ <- collateral
         .hasCollateral(nodeId)
@@ -93,7 +93,7 @@ object Genesis {
           Finished(
             signedFirstIncrementalSnapshot,
             incrementalBinaryHash,
-            CurrencySnapshotContext(identifier, hashedGenesis.info),
+            CurrencySnapshotContext(identifier, hashedGenesis.info.toCurrencySnapshotInfo),
             EventTrigger,
             Candidates.empty,
             Hash.empty

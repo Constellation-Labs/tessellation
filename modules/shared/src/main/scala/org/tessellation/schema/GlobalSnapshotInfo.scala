@@ -65,7 +65,7 @@ case class GlobalSnapshotInfoV2(
   balances: SortedMap[Address, Balance],
   lastCurrencySnapshots: SortedMap[Address, Either[Signed[
     CurrencySnapshot
-  ], (Signed[CurrencyIncrementalSnapshotV1], CurrencySnapshotInfo)]],
+  ], (Signed[CurrencyIncrementalSnapshotV1], CurrencySnapshotInfoV1)]],
   lastCurrencySnapshotsProofs: SortedMap[Address, Proof]
 ) extends SnapshotInfo[GlobalSnapshotStateProof] {
   def toGlobalSnapshotInfo: GlobalSnapshotInfo =
@@ -74,7 +74,7 @@ case class GlobalSnapshotInfoV2(
       lastTxRefs,
       balances,
       lastCurrencySnapshots.view.mapValues {
-        _.map { case (Signed(inc, proofs), info) => (Signed(inc.toCurrencyIncrementalSnapshot, proofs), info) }
+        _.map { case (Signed(inc, proofs), info) => (Signed(inc.toCurrencyIncrementalSnapshot, proofs), info.toCurrencySnapshotInfo) }
       }.to(lastCurrencySnapshots.sortedMapFactory),
       lastCurrencySnapshotsProofs
     )
@@ -115,7 +115,11 @@ object GlobalSnapshotInfoV2 {
       gs.balances,
       gs.lastCurrencySnapshots.view.mapValues {
         _.map {
-          case (Signed(inc, proofs), info) => (Signed(CurrencyIncrementalSnapshotV1.fromCurrencyIncrementalSnapshot(inc), proofs), info)
+          case (Signed(inc, proofs), info) =>
+            (
+              Signed(CurrencyIncrementalSnapshotV1.fromCurrencyIncrementalSnapshot(inc), proofs),
+              CurrencySnapshotInfoV1.fromCurrencySnapshotInfo(info)
+            )
         }
       }.to(gs.lastCurrencySnapshots.sortedMapFactory),
       gs.lastCurrencySnapshotsProofs
