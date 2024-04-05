@@ -6,13 +6,12 @@ import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
 import org.tessellation.currency.dataApplication.{BaseDataApplicationService, DataCalculatedState}
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.cats.syntax.validated.validatedSyntax
 import org.tessellation.node.shared.domain.rewards.Rewards
 import org.tessellation.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
-import org.tessellation.node.shared.snapshot.currency.{CurrencySnapshotArtifact, CurrencySnapshotEvent}
+import org.tessellation.node.shared.snapshot.currency._
 import org.tessellation.schema._
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.security.signature.SignedValidator.SignedValidationError
@@ -107,9 +106,14 @@ object CurrencySnapshotValidator {
       }.map(_.map(_.flatMap(_.toOption)))
         .map(_.getOrElse(List.empty))
 
-      def mkEvents: F[Set[CurrencySnapshotEvent]] = dataApplicationBlocks
-        .map(_.map(_.asRight[Signed[Block]]))
-        .map(_.toSet ++ expected.blocks.unsorted.map(_.block.asLeft[Signed[DataApplicationBlock]]))
+      def mkEvents: F[Set[CurrencySnapshotEvent]] =
+        dataApplicationBlocks
+          .map(_.map(DataApplicationBlockEvent(_)))
+          .map(
+            _.toSet ++ expected.blocks.unsorted.map(_.block).map(BlockEvent(_)) ++ expected.messages
+              .map(_.toSet.map(CurrencyMessageEvent(_)))
+              .getOrElse(Set.empty[CurrencyMessageEvent])
+          )
 
       // Rewrite if implementation not provided
       val rewards = maybeRewards.orElse(Some {
@@ -153,7 +157,7 @@ object CurrencySnapshotValidator {
     def validateNotAcceptedEvents(
       creationResult: CurrencySnapshotCreationResult[CurrencySnapshotEvent]
     ): CurrencySnapshotValidationErrorOr[Unit] = {
-      def getBlocks(s: Set[CurrencySnapshotEvent]): Set[Signed[Block]] = s.collect { case Left(block) => block }
+      def getBlocks(s: Set[CurrencySnapshotEvent]): Set[Signed[Block]] = s.collect { case BlockEvent(block) => block }
 
       val awaitingBlocks = getBlocks(creationResult.awaitingEvents)
       val rejectedBlocks = getBlocks(creationResult.rejectedEvents)

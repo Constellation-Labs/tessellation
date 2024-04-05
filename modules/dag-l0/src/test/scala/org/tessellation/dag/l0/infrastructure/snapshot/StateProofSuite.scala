@@ -53,6 +53,7 @@ object StateProofSuite extends MutableIOSuite with Checkers {
       snap <- deserializeSnapshot(snapshotFile)
 
       snapshotStateProof = snap.stateProof
+
       infoStateProof <- info.stateProof(snap.ordinal, hashSelect)
 
     } yield expect.eql(snapshotStateProof, infoStateProof)

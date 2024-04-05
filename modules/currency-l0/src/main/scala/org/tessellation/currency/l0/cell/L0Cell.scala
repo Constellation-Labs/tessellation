@@ -14,15 +14,15 @@ import org.tessellation.node.shared.snapshot.currency.CurrencySnapshotEvent
 
 import higherkindness.droste.{AlgebraM, CoalgebraM, scheme}
 
-import AlgebraCommand.EnqueueL1BlockData
-import CoalgebraCommand.ProcessL1Block
+import AlgebraCommand.EnqueueCurrencySnapshotEvent
+import CoalgebraCommand.ProcessCurrencySnapshotEvent
 import L0Cell.{Algebra, Coalgebra}
-import L0CellInput.HandleL1Block
+import L0CellInput.HandleCurrencySnapshotEvent
 
 sealed trait L0CellInput
 
 object L0CellInput {
-  case class HandleL1Block(data: CurrencySnapshotEvent) extends L0CellInput
+  case class HandleCurrencySnapshotEvent(data: CurrencySnapshotEvent) extends L0CellInput
 }
 
 class L0Cell[F[_]: Async](
@@ -35,19 +35,19 @@ class L0Cell[F[_]: Async](
           case More(a) => a.pure[F]
           case Done(Right(cmd: AlgebraCommand)) =>
             cmd match {
-              case EnqueueL1BlockData(data) =>
-                Algebra.enqueueL1BlockData(l1OutputQueue)(data)
+              case EnqueueCurrencySnapshotEvent(data) =>
+                Algebra.enqueueCurrencySnapshotEvent(l1OutputQueue)(data)
               case NoAction =>
                 NullTerminal.asRight[CellError].widen[Ω].pure[F]
             }
           case Done(other) => other.pure[F]
         },
         CoalgebraM[F, StackF, CoalgebraCommand] {
-          case ProcessL1Block(data) => Coalgebra.processL1Block(data)
+          case ProcessCurrencySnapshotEvent(data) => Coalgebra.processCurrencySnapshotEvent(data)
         }
       ),
       {
-        case HandleL1Block(data) => ProcessL1Block(data)
+        case HandleCurrencySnapshotEvent(data) => ProcessCurrencySnapshotEvent(data)
       }
     )
 
@@ -65,15 +65,15 @@ object L0Cell {
 
   object Algebra {
 
-    def enqueueL1BlockData[F[_]: Async](queue: Queue[F, CurrencySnapshotEvent])(data: CurrencySnapshotEvent): AlgebraR[F] =
+    def enqueueCurrencySnapshotEvent[F[_]: Async](queue: Queue[F, CurrencySnapshotEvent])(data: CurrencySnapshotEvent): AlgebraR[F] =
       queue.offer(data) >>
         NullTerminal.asRight[CellError].widen[Ω].pure[F]
   }
 
   object Coalgebra {
 
-    def processL1Block[F[_]: Async](data: CurrencySnapshotEvent): CoalgebraR[F] = {
-      def res: StackF[CoalgebraCommand] = Done(AlgebraCommand.EnqueueL1BlockData(data).asRight[CellError])
+    def processCurrencySnapshotEvent[F[_]: Async](data: CurrencySnapshotEvent): CoalgebraR[F] = {
+      def res: StackF[CoalgebraCommand] = Done(AlgebraCommand.EnqueueCurrencySnapshotEvent(data).asRight[CellError])
 
       res.pure[F]
     }

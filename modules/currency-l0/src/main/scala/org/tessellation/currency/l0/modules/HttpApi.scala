@@ -72,7 +72,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: Hasher: Metrics: L0
   maybeMetagraphVersion: Option[MetagraphVersion]
 ) {
 
-  private val mkCell = (event: CurrencySnapshotEvent) => L0Cell.mkL0Cell(queues.l1Output).apply(L0CellInput.HandleL1Block(event))
+  private val mkCell = (event: CurrencySnapshotEvent) =>
+    L0Cell.mkL0Cell(queues.l1Output).apply(L0CellInput.HandleCurrencySnapshotEvent(event))
 
   private val snapshotRoutes = SnapshotRoutes[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
     storages.snapshot,
@@ -111,7 +112,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: Hasher: Metrics: L0
   private val metricRoutes = MetricRoutes[F]().publicRoutes
   private val targetRoutes = TargetRoutes[F](services.cluster).publicRoutes
 
-  private val currencyMessageRoutes = new CurrencyMessageRoutes[F](services.currencyMessageService).publicRoutes
+  private val currencyMessageRoutes = new CurrencyMessageRoutes[F](mkCell, services.currencyMessageService).publicRoutes
 
   private val openRoutes: HttpRoutes[F] =
     CORS.policy.withAllowOriginAll.withAllowHeadersAll.withAllowCredentials(false).apply {
