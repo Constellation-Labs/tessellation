@@ -6,6 +6,7 @@ import cats.syntax.all._
 import scala.annotation.tailrec
 import scala.collection.immutable.SortedMap
 
+import org.tessellation.dag.l1.domain.transaction.ContextualTransactionValidator.CustomValidationError
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
 import org.tessellation.node.shared.domain.transaction.TransactionValidator.TransactionValidationError
 import org.tessellation.schema.SnapshotOrdinal
@@ -20,16 +21,27 @@ import derevo.cats.{eqv, show}
 import derevo.derive
 import eu.timepit.refined.auto._
 
+trait CustomContextualTransactionValidator {
+  def validate(
+    hashedTransaction: Hashed[Transaction],
+    context: TransactionValidatorContext
+  ): Either[CustomValidationError, Hashed[Transaction]]
+}
+
+case class TransactionValidatorContext(
+  sourceTransactions: Option[SortedMap[TransactionOrdinal, StoredTransaction]],
+  sourceBalance: Balance,
+  sourceLastTransactionRef: TransactionReference,
+  currentOrdinal: SnapshotOrdinal
+)
+
 trait ContextualTransactionValidator {
 
   import ContextualTransactionValidator._
 
   def validate(
     hashedTransaction: Hashed[Transaction],
-    sourceTransactions: Option[SortedMap[TransactionOrdinal, StoredTransaction]],
-    sourceBalance: Balance,
-    currentOrdinal: SnapshotOrdinal,
-    sourceLastTransactionRef: TransactionReference
+    context: TransactionValidatorContext
   ): ContextualTransactionValidationErrorOr[ValidConflictResolveResult]
 }
 
@@ -40,25 +52,33 @@ object ContextualTransactionValidator {
   )
 
   def make(
-    transactionLimitConfig: TransactionLimitConfig
+    transactionLimitConfig: TransactionLimitConfig,
+    customValidator: Option[CustomContextualTransactionValidator]
   ): ContextualTransactionValidator =
     new ContextualTransactionValidator {
 
       def validate(
         hashedTransaction: Hashed[Transaction],
-        sourceTransactions: Option[SortedMap[TransactionOrdinal, StoredTransaction]],
-        sourceBalance: Balance,
-        currentOrdinal: SnapshotOrdinal,
-        sourceLastTransactionRef: TransactionReference
+        context: TransactionValidatorContext
       ): ContextualTransactionValidationErrorOr[ValidConflictResolveResult] =
         validateNotLocked(hashedTransaction)
-          .flatMap(validateLastTransactionRef(_, sourceTransactions, sourceLastTransactionRef))
-          .flatMap(validateConflictAtOrdinal(_, sourceTransactions))
+          .flatMap(validateLastTransactionRef(_, context.sourceTransactions, context.sourceLastTransactionRef))
+          .flatMap(validateConflictAtOrdinal(_, context.sourceTransactions))
           .flatMap {
             case (conflictResolveResult, conflictResolvedStoredTxs) =>
-              validateBalances(conflictResolveResult.tx, conflictResolvedStoredTxs, sourceBalance)
-                .flatMap(validateLimit(_, conflictResolvedStoredTxs, sourceBalance, currentOrdinal))
+              validateBalances(conflictResolveResult.tx, conflictResolvedStoredTxs, context.sourceBalance)
+                .flatMap(validateLimit(_, conflictResolvedStoredTxs, context.sourceBalance, context.currentOrdinal))
                 .map(_ => conflictResolveResult)
+          }
+          .flatMap { conflictResolveResult =>
+            customValidator match {
+              case Some(validator) =>
+                validator
+                  .validate(hashedTransaction, context)
+                  .leftWiden[ContextualTransactionValidationError]
+                  .as(conflictResolveResult)
+              case None => conflictResolveResult.asRight
+            }
           }
           .toValidatedNec
 
@@ -260,6 +280,7 @@ object ContextualTransactionValidator {
   case class TransactionLimited(ref: TransactionReference, fee: TransactionFee) extends ContextualTransactionValidationError
   case class NonContextualValidationError(error: TransactionValidationError) extends ContextualTransactionValidationError
   case class LockedAddressError(address: Address) extends ContextualTransactionValidationError
+  case class CustomValidationError(message: String) extends ContextualTransactionValidationError
 
   type ContextualTransactionValidationErrorOr[A] = ValidatedNec[ContextualTransactionValidationError, A]
 }

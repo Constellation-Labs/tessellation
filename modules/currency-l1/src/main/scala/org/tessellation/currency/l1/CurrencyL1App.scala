@@ -17,6 +17,7 @@ import org.tessellation.currency.l1.modules._
 import org.tessellation.currency.l1.node.L1NodeContext
 import org.tessellation.currency.schema.currency._
 import org.tessellation.dag.l1.config.types._
+import org.tessellation.dag.l1.domain.transaction.CustomContextualTransactionValidator
 import org.tessellation.dag.l1.http.p2p.{P2PClient => DAGP2PClient}
 import org.tessellation.dag.l1.infrastructure.block.rumor.handler.blockRumorHandler
 import org.tessellation.dag.l1.modules.{Daemons => DAGL1Daemons, Queues => DAGL1Queues, Validators => DAGL1Validators}
@@ -46,6 +47,11 @@ import pureconfig.generic.auto._
 import pureconfig.module.catseffect.syntax._
 import pureconfig.module.enumeratum._
 
+trait OverridableL1 extends TessellationIOApp[Run] {
+  def dataApplication: Option[Resource[IO, BaseDataApplicationL1Service[IO]]] = None
+  def transactionValidator: Option[CustomContextualTransactionValidator] = None
+}
+
 abstract class CurrencyL1App(
   name: String,
   header: String,
@@ -57,7 +63,8 @@ abstract class CurrencyL1App(
       header,
       clusterId,
       version = tessellationVersion
-    ) {
+    )
+    with OverridableL1 {
 
   val opts: Opts[Run] = method.opts
 
@@ -65,8 +72,6 @@ abstract class CurrencyL1App(
 
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
     nodeSharedKryoRegistrar.union(dagL1KryoRegistrar)
-
-  def dataApplication: Option[Resource[IO, BaseDataApplicationL1Service[IO]]] = None
 
   def run(method: Run, nodeShared: NodeShared[IO]): Resource[IO, Unit] = {
     import nodeShared._
@@ -80,7 +85,8 @@ abstract class CurrencyL1App(
       validators = DAGL1Validators
         .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
           seedlist,
-          cfg.transactionLimit
+          cfg.transactionLimit,
+          transactionValidator
         )
       storages <- Storages
         .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](

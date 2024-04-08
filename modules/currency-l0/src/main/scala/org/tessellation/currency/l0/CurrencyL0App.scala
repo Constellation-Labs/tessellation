@@ -34,18 +34,22 @@ import pureconfig.generic.auto._
 import pureconfig.module.catseffect.syntax._
 import pureconfig.module.enumeratum._
 
+trait OverridableL0 extends TessellationIOApp[Run] {
+  def dataApplication: Option[Resource[IO, BaseDataApplicationL0Service[IO]]] = None
+
+  def rewards(
+    implicit sp: SecurityProvider[IO]
+  ): Option[Rewards[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]] = None
+}
+
 abstract class CurrencyL0App(
   name: String,
   header: String,
   clusterId: ClusterId,
   tessellationVersion: TessellationVersion,
   metagraphVersion: MetagraphVersion
-) extends TessellationIOApp[Run](
-      name,
-      header,
-      clusterId,
-      version = tessellationVersion
-    ) {
+) extends TessellationIOApp[Run](name, header, clusterId, version = tessellationVersion)
+    with OverridableL0 {
 
   val opts: Opts[Run] = method.opts
 
@@ -53,12 +57,6 @@ abstract class CurrencyL0App(
 
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
     nodeSharedKryoRegistrar
-
-  def dataApplication: Option[Resource[IO, BaseDataApplicationL0Service[IO]]] = None
-
-  def rewards(
-    implicit sp: SecurityProvider[IO]
-  ): Option[Rewards[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]] = None
 
   def run(method: Run, nodeShared: NodeShared[IO]): Resource[IO, Unit] = {
     import nodeShared._

@@ -2,7 +2,11 @@ package org.tessellation.dag.l1.modules
 
 import cats.effect.Async
 
-import org.tessellation.dag.l1.domain.transaction.{ContextualTransactionValidator, TransactionLimitConfig}
+import org.tessellation.dag.l1.domain.transaction.{
+  ContextualTransactionValidator,
+  CustomContextualTransactionValidator,
+  TransactionLimitConfig
+}
 import org.tessellation.node.shared.domain.block.processing.BlockValidator
 import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
 import org.tessellation.node.shared.domain.transaction._
@@ -21,7 +25,8 @@ object Validators {
     SI <: SnapshotInfo[P]
   ](
     seedlist: Option[Set[SeedlistEntry]],
-    transactionLimitConfig: TransactionLimitConfig
+    transactionLimitConfig: TransactionLimitConfig,
+    customContextualTransactionValidator: Option[CustomContextualTransactionValidator]
   ): Validators[F] = {
     val signedValidator = SignedValidator.make[F]
     val transactionChainValidator = TransactionChainValidator.make[F]
@@ -30,7 +35,8 @@ object Validators {
       BlockValidator.make[F](signedValidator, transactionChainValidator, transactionValidator)
 
     val contextualTransactionValidator = ContextualTransactionValidator.make(
-      transactionLimitConfig
+      transactionLimitConfig,
+      customContextualTransactionValidator
     )
 
     val rumorValidator = RumorValidator.make[F](seedlist, signedValidator)

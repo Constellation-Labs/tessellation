@@ -133,8 +133,9 @@ class TransactionStorage[F[_]: Async](
     transactionsR(transaction.source).modify { maybeStored =>
       val stored = maybeStored.getOrElse(SortedMap.empty[TransactionOrdinal, StoredTransaction])
       val lastProcessedTransaction = getLastProcessedTransaction(stored).getOrElse(getInitialTx)
+      val validationContext = TransactionValidatorContext(maybeStored, sourceBalance, lastProcessedTransaction.ref, lastSnapshotOrdinal)
       val validation =
-        contextualTransactionValidator.validate(transaction, maybeStored, sourceBalance, lastSnapshotOrdinal, lastProcessedTransaction.ref)
+        contextualTransactionValidator.validate(transaction, validationContext)
 
       validation match {
         case Validated.Valid(NoConflict(tx)) =>

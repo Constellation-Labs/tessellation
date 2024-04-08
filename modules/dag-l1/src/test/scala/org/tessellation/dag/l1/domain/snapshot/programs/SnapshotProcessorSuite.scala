@@ -84,7 +84,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               .asResource
             validators = SharedValidators.make[IO](None, None, Some(Map.empty), Long.MaxValue)
             contextualTransactionValidator = ContextualTransactionValidator
-              .make(TransactionLimitConfig(Balance.empty, 0.hours, TransactionFee.zero, 1.second))
+              .make(TransactionLimitConfig(Balance.empty, 0.hours, TransactionFee.zero, 1.second), None)
             transactionStorage = new TransactionStorage[IO](
               transactionsR,
               TransactionReference.empty,
