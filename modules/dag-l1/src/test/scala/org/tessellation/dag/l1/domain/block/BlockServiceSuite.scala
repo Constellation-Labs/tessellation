@@ -86,7 +86,8 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
     Random.scalaUtilRandom.map { implicit r =>
       val blockStorage = new BlockStorage[IO](blocksR)
       val contextualValidator = ContextualTransactionValidator.make(
-        TransactionLimitConfig(Balance.empty, 0.hours, TransactionFee.zero, 1.second)
+        TransactionLimitConfig(Balance.empty, 0.hours, TransactionFee.zero, 1.second),
+        None
       )
       val transactionStorage =
         new TransactionStorage[IO](ts, TransactionReference.empty, contextualValidator)

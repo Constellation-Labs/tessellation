@@ -195,7 +195,7 @@ object CurrencySnapshotProcessor {
         val lcss =
           lastCurrencySnapshotStorage.getCombined.flatMap(LastSnapshotStorage.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](_))
         val as = addressStorage.getState.flatMap(AddressStorage.make(_))
-        val cv = ContextualTransactionValidator.make(transactionLimitConfig)
+        val cv = ContextualTransactionValidator.make(transactionLimitConfig, None)
         val ts =
           transactionStorage.getState.flatMap {
             case (lastTxs) =>

@@ -50,7 +50,7 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
           implicit0(h: Hasher[IO]) = Hasher.forSync[IO]((_: SnapshotOrdinal) => JsonHash)
           transactions <- MapRef.ofConcurrentHashMap[IO, Address, SortedMap[TransactionOrdinal, StoredTransaction]]().asResource
           contextualTransactionValidator = ContextualTransactionValidator
-            .make(TransactionLimitConfig(Balance(100000000L), 20.hours, TransactionFee(200000L), 43.seconds))
+            .make(TransactionLimitConfig(Balance(100000000L), 20.hours, TransactionFee(200000L), 43.seconds), None)
           transactionStorage = new TransactionStorage[IO](
             transactions,
             TransactionReference.empty,

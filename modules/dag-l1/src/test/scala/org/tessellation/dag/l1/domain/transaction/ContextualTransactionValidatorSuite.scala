@@ -116,7 +116,7 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
           lastSnapshotOrdinal = SnapshotOrdinal.unsafeApply(84L)
           lastProcessedTransactionRef = TransactionReference.empty
 
-          validator = ContextualTransactionValidator.make(config)
+          validator = ContextualTransactionValidator.make(config, None)
           tx = Transaction(
             kp.getPublic.toAddress,
             dst,
@@ -127,7 +127,8 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
           )
           signedTx <- Signed.forAsyncHasher(tx, kp)
           hashedTx <- signedTx.toHashed
-          result = validator.validate(hashedTx, txs, balance, lastSnapshotOrdinal, lastProcessedTransactionRef)
+          context = TransactionValidatorContext(txs, balance, lastProcessedTransactionRef, lastSnapshotOrdinal)
+          result = validator.validate(hashedTx, context)
         } yield
           expect.eql(
             result,
@@ -179,7 +180,7 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
           lastSnapshotOrdinal = SnapshotOrdinal.MinValue
           lastProcessedTransactionRef = TransactionReference.empty
 
-          validator = ContextualTransactionValidator.make(config)
+          validator = ContextualTransactionValidator.make(config, None)
           tx = Transaction(
             kp.getPublic.toAddress,
             dst,
@@ -190,7 +191,8 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
           )
           signedTx <- Signed.forAsyncHasher(tx, kp)
           hashedTx <- signedTx.toHashed
-          result = validator.validate(hashedTx, txs.some, balance, lastSnapshotOrdinal, lastProcessedTransactionRef)
+          context = TransactionValidatorContext(txs.some, balance, lastProcessedTransactionRef, lastSnapshotOrdinal)
+          result = validator.validate(hashedTx, context)
         } yield
           expect.eql(
             result,
@@ -206,7 +208,7 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
     for {
       dst <- KeyPairGenerator.makeKeyPair
       kp <- KeyPairGenerator.makeKeyPair
-      validator = ContextualTransactionValidator.make(config)
+      validator = ContextualTransactionValidator.make(config, None)
       tx = Transaction(
         kp.getPublic.toAddress,
         dst.getPublic.toAddress,
@@ -220,12 +222,10 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
       lastSnapshotOrdinal = SnapshotOrdinal.MinValue
       lastProcessedTransactionRef = TransactionReference.empty
       hashedTx <- Signed.forAsyncHasher(tx, kp).flatMap(_.toHashed)
+      context = TransactionValidatorContext(txs, balance, lastProcessedTransactionRef, lastSnapshotOrdinal)
       result = validator.validate(
         hashedTx,
-        txs,
-        balance,
-        lastSnapshotOrdinal,
-        lastProcessedTransactionRef
+        context
       )
     } yield expect.eql(true, result.isValid)
   }
@@ -246,13 +246,22 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
       balance = Balance(NonNegLong.MaxValue)
       lastSnapshotOrdinal = SnapshotOrdinal.unsafeApply(durationToOrdinals(config.timeToWaitForBaseBalance))
       lastProcessedTransactionRef = TransactionReference.empty
-      validator = ContextualTransactionValidator.make(config)
+      validator = ContextualTransactionValidator.make(config, None)
       txLowerFee <- genTransaction(kp, majorityTxRef, TransactionFee(1L)).flatMap(_.toHashed)
       txEqualFee <- genTransaction(kp, majorityTxRef, TransactionFee(2L)).flatMap(_.toHashed)
       txHigherFee <- genTransaction(kp, majorityTxRef, TransactionFee(3L)).flatMap(_.toHashed)
-      resultLower = validator.validate(txLowerFee, txs.some, balance, lastSnapshotOrdinal, lastProcessedTransactionRef)
-      resultEqual = validator.validate(txEqualFee, txs.some, balance, lastSnapshotOrdinal, lastProcessedTransactionRef)
-      resultHigher = validator.validate(txHigherFee, txs.some, balance, lastSnapshotOrdinal, lastProcessedTransactionRef)
+      resultLower = validator.validate(
+        txLowerFee,
+        TransactionValidatorContext(txs.some, balance, lastProcessedTransactionRef, lastSnapshotOrdinal)
+      )
+      resultEqual = validator.validate(
+        txEqualFee,
+        TransactionValidatorContext(txs.some, balance, lastProcessedTransactionRef, lastSnapshotOrdinal)
+      )
+      resultHigher = validator.validate(
+        txHigherFee,
+        TransactionValidatorContext(txs.some, balance, lastProcessedTransactionRef, lastSnapshotOrdinal)
+      )
     } yield
       expect.all(
         resultLower === Conflict(conflictingTx.ordinal, conflictingTxRef.hash, txLowerFee.hash).invalidNec,
@@ -279,11 +288,17 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
       balance = Balance(NonNegLong.MaxValue)
       lastSnapshotOrdinal = SnapshotOrdinal.unsafeApply(durationToOrdinals(config.timeToWaitForBaseBalance))
       lastProcessedTransactionRef = TransactionReference.of(acceptedTx)
-      validator = ContextualTransactionValidator.make(config)
+      validator = ContextualTransactionValidator.make(config, None)
       txOverridesAccepted <- genTransaction(kp, majorityTxRef, TransactionFee(3L)).flatMap(_.toHashed)
       txOverridesProcessing <- genTransaction(kp, acceptedTxRef, TransactionFee(3L)).flatMap(_.toHashed)
-      resultAccepted = validator.validate(txOverridesAccepted, txs.some, balance, lastSnapshotOrdinal, lastProcessedTransactionRef)
-      resultProcessing = validator.validate(txOverridesProcessing, txs.some, balance, lastSnapshotOrdinal, lastProcessedTransactionRef)
+      resultAccepted = validator.validate(
+        txOverridesAccepted,
+        TransactionValidatorContext(txs.some, balance, lastProcessedTransactionRef, lastSnapshotOrdinal)
+      )
+      resultProcessing = validator.validate(
+        txOverridesProcessing,
+        TransactionValidatorContext(txs.some, balance, lastProcessedTransactionRef, lastSnapshotOrdinal)
+      )
     } yield
       expect.all(
         resultAccepted === NonEmptyChain
@@ -305,11 +320,12 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
           lastSnapshotOrdinal = SnapshotOrdinal.unsafeApply(durationToOrdinals(config.timeToWaitForBaseBalance - 1.hour))
           txs = none
           lastProcessedTransactionRef = TransactionReference.empty
-          validator = ContextualTransactionValidator.make(config)
+          validator = ContextualTransactionValidator.make(config, None)
           tx = Transaction(kp.getPublic.toAddress, dst, TransactionAmount(1L), TransactionFee.zero, TransactionReference.empty, salt)
           signedTx <- Signed.forAsyncHasher(tx, kp)
           hashedTx <- signedTx.toHashed
-          result = validator.validate(hashedTx, txs, balance, lastSnapshotOrdinal, lastProcessedTransactionRef)
+          context = TransactionValidatorContext(txs, balance, lastProcessedTransactionRef, lastSnapshotOrdinal)
+          result = validator.validate(hashedTx, context)
         } yield
           expect.eql(
             result,
@@ -330,11 +346,11 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
           lastProcessedTransactionRef = TransactionReference.empty
           txs = none
           lastSnapshotOrdinal = SnapshotOrdinal.unsafeApply(durationToOrdinals(config.timeToWaitForBaseBalance))
-          validator = ContextualTransactionValidator.make(config)
+          validator = ContextualTransactionValidator.make(config, None)
           tx = Transaction(kp.getPublic.toAddress, dst, TransactionAmount(1L), TransactionFee.zero, TransactionReference.empty, salt)
           signedTx <- Signed.forAsyncHasher(tx, kp).flatMap(_.toHashed)
-
-          result = validator.validate(signedTx, txs, balance, lastSnapshotOrdinal, lastProcessedTransactionRef)
+          context = TransactionValidatorContext(txs, balance, lastProcessedTransactionRef, lastSnapshotOrdinal)
+          result = validator.validate(signedTx, context)
         } yield expect.eql(true, result.isValid)
     }
   }
@@ -377,20 +393,99 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
       lastSnapshotOrdinal = SnapshotOrdinal.unsafeApply(durationToOrdinals(config.timeToWaitForBaseBalance))
       lastTxRef = TransactionReference.empty
 
-      validator = ContextualTransactionValidator.make(config)
+      validator = ContextualTransactionValidator.make(config, None)
 
       txA <- genTransaction(baseBalanceAddress, baseBalanceAddressTxs.last._2.ref).flatMap(_.toHashed)
       txB <- genTransaction(higherThanBaseBalanceAddress, higherThanBaseBalanceAddressTxs.last._2.ref).flatMap(_.toHashed)
       txC <- genTransaction(lowerThanBaseBalanceAddress, lowerThanBaseBalanceAddressTxs.last._2.ref).flatMap(_.toHashed)
 
-      resultA = validator.validate(txA, getTransactions(txA.source), getBalance(txA.source), lastSnapshotOrdinal, lastTxRef)
-      resultB = validator.validate(txB, getTransactions(txB.source), getBalance(txB.source), lastSnapshotOrdinal, lastTxRef)
-      resultC = validator.validate(txC, getTransactions(txC.source), getBalance(txC.source), lastSnapshotOrdinal, lastTxRef)
+      resultA = validator.validate(
+        txA,
+        TransactionValidatorContext(getTransactions(txA.source), getBalance(txA.source), lastTxRef, lastSnapshotOrdinal)
+      )
+      resultB = validator.validate(
+        txB,
+        TransactionValidatorContext(getTransactions(txB.source), getBalance(txB.source), lastTxRef, lastSnapshotOrdinal)
+      )
+      resultC = validator.validate(
+        txC,
+        TransactionValidatorContext(getTransactions(txC.source), getBalance(txC.source), lastTxRef, lastSnapshotOrdinal)
+      )
     } yield
       expect.all(
         resultA === TransactionLimited(TransactionReference.of(txA), txA.fee).invalidNec,
         resultB.isValid,
         resultC === TransactionLimited(TransactionReference.of(txC), txC.fee).invalidNec
       )
+  }
+
+  test("Custom validator rejects transaction") { res =>
+    implicit val (hasher, sp) = res
+    for {
+      dst <- KeyPairGenerator.makeKeyPair
+      kp <- KeyPairGenerator.makeKeyPair
+      error = CustomValidationError("Fee can't be odd number!")
+      customContextualValidator = new CustomContextualTransactionValidator {
+        def validate(
+          hashedTransaction: Hashed[Transaction],
+          context: TransactionValidatorContext
+        ): Either[CustomValidationError, Hashed[Transaction]] =
+          Either.cond(
+            hashedTransaction.fee.value % 2 == 0,
+            hashedTransaction,
+            error
+          )
+      }
+      validator = ContextualTransactionValidator.make(config, customContextualValidator.some)
+      tx = Transaction(
+        kp.getPublic.toAddress,
+        dst.getPublic.toAddress,
+        TransactionAmount(1L),
+        TransactionFee(99999999L),
+        TransactionReference.empty,
+        TransactionSalt(1L)
+      )
+      hashedTx <- Signed.forAsyncHasher(tx, kp).flatMap(_.toHashed)
+      context = TransactionValidatorContext(none, config.baseBalance, TransactionReference.empty, SnapshotOrdinal.MinValue)
+      result = validator.validate(
+        hashedTx,
+        context
+      )
+    } yield expect.eql(result, error.invalidNec)
+  }
+
+  test("Custom validator approves transaction") { res =>
+    implicit val (hasher, sp) = res
+    for {
+      dst <- KeyPairGenerator.makeKeyPair
+      kp <- KeyPairGenerator.makeKeyPair
+      error = CustomValidationError("Fee can't be odd number!")
+      customContextualValidator = new CustomContextualTransactionValidator {
+        def validate(
+          hashedTransaction: Hashed[Transaction],
+          context: TransactionValidatorContext
+        ): Either[CustomValidationError, Hashed[Transaction]] =
+          Either.cond(
+            hashedTransaction.fee.value % 2 == 0,
+            hashedTransaction,
+            error
+          )
+      }
+      validator = ContextualTransactionValidator.make(config, customContextualValidator.some)
+      tx = Transaction(
+        kp.getPublic.toAddress,
+        dst.getPublic.toAddress,
+        TransactionAmount(1L),
+        TransactionFee(99999998L),
+        TransactionReference.empty,
+        TransactionSalt(1L)
+      )
+      hashedTx <- Signed.forAsyncHasher(tx, kp).flatMap(_.toHashed)
+      context = TransactionValidatorContext(none, config.baseBalance, TransactionReference.empty, SnapshotOrdinal.MinValue)
+      result = validator.validate(
+        hashedTx,
+        context
+      )
+    } yield expect(result.isValid)
   }
 }

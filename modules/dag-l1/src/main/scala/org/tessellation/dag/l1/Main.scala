@@ -59,7 +59,8 @@ object Main
       validators = Validators
         .make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
           seedlist,
-          cfg.transactionLimit
+          cfg.transactionLimit,
+          None
         )
       storages <- Storages
         .make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
