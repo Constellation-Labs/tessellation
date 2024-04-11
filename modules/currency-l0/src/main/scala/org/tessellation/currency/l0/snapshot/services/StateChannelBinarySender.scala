@@ -106,13 +106,17 @@ object StateChannelBinarySender {
             state.pending.splitAt(cutAt + 1)._2
           }
 
-          val updatedRetryMode =
-            if (!state.retryMode)
+          val updatedRetryMode = {
+            val hasStalled =
               updatedPending.exists(p => globalSnapshot.ordinal.value - p.enqueuedAtOrdinal.value >= noConfirmationsToTriggerRetryMode)
-            else if (state.cap >= state.pending.length && updatedPending.forall(_.sendsSoFar >= 1))
+
+            if (!state.retryMode) {
+              hasStalled
+            } else if (state.cap >= state.pending.length && updatedPending.forall(_.sendsSoFar >= 1) && !hasStalled) {
               false
-            else
+            } else
               state.retryMode
+          }
 
           val (updatedCap, updatedBackoffExponent, updatedNoConfirmationsSinceRetryCount) =
             if ((!updatedRetryMode && state.retryMode) || updatedPending.isEmpty) {
