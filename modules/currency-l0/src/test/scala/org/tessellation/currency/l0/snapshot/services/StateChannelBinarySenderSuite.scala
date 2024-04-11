@@ -7,7 +7,6 @@ import cats.syntax.all._
 import scala.collection.immutable.SortedMap
 
 import org.tessellation.currency.l0.node.IdentifierStorage
-import org.tessellation.currency.l0.snapshot.services._
 import org.tessellation.currency.schema.currency.SnapshotFee
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.generators.nonEmptyStringGen
@@ -184,7 +183,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
     }
   }
 
-  test("retry mode - should switch to normal mode if cap reached than enqueued count and all sent at least once") { res =>
+  test("retry mode - should switch to normal mode if cap >= enqueued count, all sent and no stalled") { res =>
     implicit val (_, hs, sp) = res
 
     forall(Gen.nonEmptyListOf(binaryGen)) { binaries =>
@@ -202,22 +201,31 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         hashed <- binaries.traverse(_.toHashed)
         _ <- hashed.traverse(sender.process)
 
-        globalSnapshot <- mkSnapshot(SnapshotOrdinal(1L), kp.getPublic.toAddress, List.empty)
-
+        globalSnapshot <- mkSnapshot(SnapshotOrdinal(5L), kp.getPublic.toAddress, List.empty)
         _ <- sender.confirm(globalSnapshot)
-        reachedButNotSentAtLeastOnce <- stateRef.get
+        capReachedButNoSendsSoFar <- stateRef.get
 
         _ <- stateRef.update { state =>
           state.copy(
-            pending = state.pending.map(t => t.copy(sendsSoFar = NonNegLong(1L))),
-            cap = NonNegLong.unsafeFrom(binaries.length.toLong)
+            pending = state.pending.map(t => t.copy(sendsSoFar = NonNegLong(1L), enqueuedAtOrdinal = SnapshotOrdinal(0L))),
+            cap = NonNegLong.unsafeFrom(state.pending.length.toLong)
           )
         }
-
         _ <- sender.confirm(globalSnapshot)
-        reachedButAllSentAtLeastOnce <- stateRef.get
+        capReachedAllSentButHasStalled <- stateRef.get
 
-      } yield expect(reachedButNotSentAtLeastOnce.retryMode).and(expect(!reachedButAllSentAtLeastOnce.retryMode))
+        _ <- stateRef.update { state =>
+          state.copy(
+            pending = state.pending.map(t => t.copy(sendsSoFar = NonNegLong(1L), enqueuedAtOrdinal = SnapshotOrdinal(1L))),
+            cap = NonNegLong.unsafeFrom(state.pending.length.toLong)
+          )
+        }
+        _ <- sender.confirm(globalSnapshot)
+        capReachedAllSentAndNoStalled <- stateRef.get
+      } yield
+        expect(capReachedButNoSendsSoFar.retryMode)
+          .and(expect(capReachedAllSentButHasStalled.retryMode))
+          .and(expect(!capReachedAllSentAndNoStalled.retryMode))
     }
   }
 
