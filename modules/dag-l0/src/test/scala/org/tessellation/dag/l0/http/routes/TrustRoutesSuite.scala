@@ -31,7 +31,13 @@ import suite.HttpSuite
 
 object TrustRoutesSuite extends HttpSuite {
 
-  def kryoSerializerResource: Resource[IO, KryoSerializer[IO]] = KryoSerializer
+  override type Res = KryoSerializer[IO]
+  private val genTrustMap = for {
+    numTrusts <- Gen.chooseNum(0, 10)
+    trustInfo <- Gen.mapOfN(numTrusts, genPeerTrustInfo)
+  } yield TrustMap(trust = trustInfo, PublicTrustMap.empty)
+
+  override def sharedResource: Resource[IO, Res] = KryoSerializer
     .forAsync[IO](nodeSharedKryoRegistrar.union(dagL0KryoRegistrar))
 
   private def mkTrustStorage(trust: TrustMap = TrustMap.empty): F[TrustStorage[F]] = {
@@ -76,11 +82,6 @@ object TrustRoutesSuite extends HttpSuite {
       PeerObservationAdjustmentUpdateBatch(peerObservationAdjustmentUpdate)
     }.map(_ => TrustRoutes[IO](trustStorage, trustPush).publicRoutes)
   }
-
-  private val genTrustMap = for {
-    numTrusts <- Gen.chooseNum(0, 10)
-    trustInfo <- Gen.mapOfN(numTrusts, genPeerTrustInfo)
-  } yield TrustMap(trust = trustInfo, PublicTrustMap.empty)
 
   test("GET trust succeeds") {
     val req = GET(uri"/trust")
@@ -133,5 +134,4 @@ object TrustRoutesSuite extends HttpSuite {
       } yield testResult
     }
   }
-
 }

@@ -10,6 +10,7 @@ import org.tessellation.currency.l1.domain.error.{InvalidDataUpdate, InvalidSign
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import org.tessellation.ext.http4s.error._
 import org.tessellation.node.shared.domain.cluster.storage.L0ClusterStorage
+import org.tessellation.node.shared.domain.queue.ViewableQueue
 import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.routes.internal._
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
@@ -17,20 +18,19 @@ import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hasher, SecurityProvider}
 
 import eu.timepit.refined.auto._
-import io.circe.Decoder
-import io.circe.shapes._
-import org.http4s.HttpRoutes
+import io.circe.syntax.EncoderOps
+import io.circe.{Decoder, Encoder}
 import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder}
 import org.http4s.dsl.Http4sDsl
+import org.http4s.{EntityDecoder, HttpRoutes}
+import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
-import shapeless._
-import shapeless.syntax.singleton._
 
 final case class DataApplicationRoutes[F[_]: Async: Hasher: SecurityProvider: L1NodeContext](
   dataApplicationPeerConsensusInput: Queue[F, Signed[ConsensusInput.PeerConsensusInput]],
   l0ClusterStorage: L0ClusterStorage[F],
   dataApplication: BaseDataApplicationL1Service[F],
-  dataUpdatesQueue: Queue[F, Signed[DataUpdate]],
+  dataUpdatesQueue: ViewableQueue[F, Signed[DataUpdate]],
   lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
   lastCurrencySnapshotStorage: LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
 )(implicit S: Supervisor[F])
@@ -38,13 +38,13 @@ final case class DataApplicationRoutes[F[_]: Async: Hasher: SecurityProvider: L1
     with PublicRoutes[F]
     with P2PRoutes[F] {
 
-  def logger = Slf4jLogger.getLogger[F]
+  def logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLogger[F]
 
   protected val prefixPath: InternalUrlPrefix = "/"
 
   protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "data" =>
-      implicit val decoder = dataApplication.signedDataEntityDecoder
+      implicit val decoder: EntityDecoder[F, Signed[DataUpdate]] = dataApplication.signedDataEntityDecoder
 
       req
         .asR[Signed[DataUpdate]] {
@@ -57,7 +57,7 @@ final case class DataApplicationRoutes[F[_]: Async: Hasher: SecurityProvider: L1
                   case Invalid(e) => InternalServerError(InvalidDataUpdate(e.toString).toApplicationError)
                   case Valid(_) =>
                     dataUpdatesQueue.offer(hashed.signed) >>
-                      Ok(("hash" ->> hashed.hash.value) :: HNil)
+                      Ok(("hash" -> hashed.hash.value).asJson)
                 }
           }
         }
@@ -65,6 +65,11 @@ final case class DataApplicationRoutes[F[_]: Async: Hasher: SecurityProvider: L1
 
     case GET -> Root / "l0" / "peers" =>
       l0ClusterStorage.getPeers.flatMap(Ok(_))
+
+    case GET -> Root / "data" =>
+      implicit val signedEncoder: Encoder[Signed[DataUpdate]] = Signed.encoder(dataApplication.dataEncoder)
+
+      dataUpdatesQueue.view.flatMap(Ok(_))
   }
 
   protected val p2p: HttpRoutes[F] = HttpRoutes.of[F] {

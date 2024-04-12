@@ -495,7 +495,7 @@ lazy val dagL0 = (project in file("modules/dag-l0"))
   )
 
 lazy val currencyL1 = (project in file("modules/currency-l1"))
-  .dependsOn(dagL1, nodeShared, shared)
+  .dependsOn(dagL1, shared % "compile->compile;test->test", testShared % Test, nodeShared)
   .settings(
     name := "tessellation-currency-l1",
     Defaults.itSettings,

@@ -12,9 +12,9 @@ import org.http4s._
 import org.http4s.circe._
 import org.http4s.headers.Location
 import weaver.scalacheck.Checkers
-import weaver.{Expectations, SimpleIOSuite}
+import weaver.{Expectations, MutableIOSuite}
 
-trait HttpSuite extends SimpleIOSuite with Checkers {
+trait HttpSuite extends MutableIOSuite with Checkers {
   case object DummyError extends NoStackTrace
 
   def expectHttpBodyAndStatus[A: Encoder](routes: HttpRoutes[IO], req: Request[IO])(
