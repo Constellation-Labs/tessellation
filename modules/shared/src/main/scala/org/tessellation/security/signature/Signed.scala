@@ -40,6 +40,8 @@ object Signed {
 
   implicit def encoder[A: Encoder]: Encoder[Signed[A]] = deriveEncoder
 
+  implicit val proofsEncoder: Encoder[NonEmptySet[SignatureProof]] = NonEmptySetCodec.encoder[SignatureProof]
+
   implicit val proofsDecoder: Decoder[NonEmptySet[SignatureProof]] = NonEmptySetCodec.decoder[SignatureProof]
 
   implicit def decoder[A: Decoder]: Decoder[Signed[A]] = deriveDecoder

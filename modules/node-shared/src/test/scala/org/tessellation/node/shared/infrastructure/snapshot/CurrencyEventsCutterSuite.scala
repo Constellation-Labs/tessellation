@@ -30,7 +30,7 @@ import derevo.derive
 import eu.timepit.refined.auto._
 import io.circe.syntax._
 import io.circe.{Decoder, Encoder, Json}
-import org.http4s.{EntityDecoder, HttpRoutes}
+import org.http4s.{EntityDecoder, EntityEncoder, HttpRoutes}
 import org.scalacheck.Gen
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
@@ -309,6 +309,8 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
 
     override def dataDecoder: Decoder[DataUpdate] = ???
 
+    override def signedDataEntityEncoder: EntityEncoder[IO, Signed[DataUpdate]] = ???
+
     override def signedDataEntityDecoder: EntityDecoder[IO, Signed[DataUpdate]] = ???
 
     override def calculatedStateEncoder: Encoder[DataCalculatedState] = ???
@@ -342,7 +344,6 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
     override def genesis: DataState.Base = ???
 
     override def onSnapshotConsensusResult(snapshot: Hashed[currency.CurrencyIncrementalSnapshot]): IO[Unit] = ???
-
   }
 
 }

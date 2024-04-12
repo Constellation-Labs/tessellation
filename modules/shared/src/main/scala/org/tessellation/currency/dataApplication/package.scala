@@ -22,6 +22,7 @@ import io.circe._
 import io.circe.generic.semiauto.{deriveDecoder, deriveEncoder}
 import io.circe.syntax._
 import org.http4s._
+import org.http4s.circe.jsonEncoderOf
 import org.http4s.server.Router
 
 trait DataUpdate
@@ -61,6 +62,8 @@ trait BaseDataApplicationService[F[_]] {
 
   def dataEncoder: Encoder[DataUpdate]
   def dataDecoder: Decoder[DataUpdate]
+
+  def signedDataEntityEncoder: EntityEncoder[F, Signed[DataUpdate]]
 
   def signedDataEntityDecoder: EntityDecoder[F, Signed[DataUpdate]]
 
@@ -286,6 +289,9 @@ object BaseDataApplicationService {
 
       def dataDecoder: Decoder[DataUpdate] = service.dataDecoder.widen[DataUpdate]
 
+      def signedDataEntityEncoder: EntityEncoder[F, Signed[DataUpdate]] =
+        jsonEncoderOf[F, Signed[DataUpdate]](Signed.encoder[DataUpdate](dataEncoder))
+
       def signedDataEntityDecoder: EntityDecoder[F, Signed[DataUpdate]] =
         service.signedDataEntityDecoder.widen[Signed[DataUpdate]]
 
@@ -331,6 +337,8 @@ object BaseDataApplicationL0Service {
       def dataEncoder: Encoder[DataUpdate] = base.dataEncoder
 
       def dataDecoder: Decoder[DataUpdate] = base.dataDecoder
+
+      def signedDataEntityEncoder: EntityEncoder[F, Signed[DataUpdate]] = base.signedDataEntityEncoder
 
       def signedDataEntityDecoder: EntityDecoder[F, Signed[DataUpdate]] = base.signedDataEntityDecoder
 
@@ -397,6 +405,8 @@ object BaseDataApplicationL1Service {
       def dataEncoder: Encoder[DataUpdate] = base.dataEncoder
 
       def dataDecoder: Decoder[DataUpdate] = base.dataDecoder
+
+      def signedDataEntityEncoder: EntityEncoder[F, Signed[DataUpdate]] = base.signedDataEntityEncoder
 
       def signedDataEntityDecoder: EntityDecoder[F, Signed[DataUpdate]] = base.signedDataEntityDecoder
 

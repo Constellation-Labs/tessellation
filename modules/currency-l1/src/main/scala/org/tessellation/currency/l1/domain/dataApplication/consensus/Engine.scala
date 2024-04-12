@@ -5,7 +5,7 @@ import java.security.KeyPair
 import cats.Applicative
 import cats.data.NonEmptyList
 import cats.effect.kernel.{Async, Clock}
-import cats.effect.std.{Queue, Random}
+import cats.effect.std.Random
 import cats.syntax.all._
 
 import scala.concurrent.duration._
@@ -13,9 +13,11 @@ import scala.concurrent.duration._
 import org.tessellation.currency.dataApplication.ConsensusInput._
 import org.tessellation.currency.dataApplication.ConsensusOutput.Noop
 import org.tessellation.currency.dataApplication._
+import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
 import org.tessellation.effects.GenUUID
 import org.tessellation.fsm.FSM
 import org.tessellation.node.shared.domain.cluster.storage.ClusterStorage
+import org.tessellation.node.shared.domain.queue.ViewableQueue
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.schema.round.RoundId
@@ -26,8 +28,6 @@ import org.tessellation.security.{Hasher, SecurityProvider}
 import io.circe.Encoder
 import monocle.syntax.all._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
-
-import dataApplication.DataApplicationBlock
 
 case class RoundData(
   roundId: RoundId,
@@ -85,7 +85,7 @@ object Engine {
     dataApplication: BaseDataApplicationL1Service[F],
     clusterStorage: ClusterStorage[F],
     consensusClient: ConsensusClient[F],
-    dataUpdates: Queue[F, Signed[DataUpdate]],
+    dataUpdates: ViewableQueue[F, Signed[DataUpdate]],
     selfId: PeerId,
     selfKeyPair: KeyPair
   ): FSM[F, State, In, Out] = {
