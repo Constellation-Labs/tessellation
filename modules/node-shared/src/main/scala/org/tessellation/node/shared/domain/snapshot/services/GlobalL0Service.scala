@@ -46,14 +46,13 @@ object GlobalL0Service {
   case object NoPeerAlignedWithMajority extends Exception("No peer available that is aligned with majority") with NoStackTrace
 
   def make[
-    F[_]: Async: Hasher: SecurityProvider
+    F[_]: Async: SecurityProvider: HasherSelector
   ](
     l0GlobalSnapshotClient: L0GlobalSnapshotClient[F],
     globalL0ClusterStorage: L0ClusterStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     singlePullLimit: Option[PosLong],
-    maybeMajorityPeerIdSet: Option[NonEmptySet[PeerId]],
-    hashSelect: HashSelect
+    maybeMajorityPeerIdSet: Option[NonEmptySet[PeerId]]
   ): GlobalL0Service[F] =
     new GlobalL0Service[F] {
 
@@ -151,15 +150,17 @@ object GlobalL0Service {
       ): F[Boolean] = {
         val (snapshot, info) = snapshotTuple
         List(
-          stateProofValidation(snapshot, info),
+          HasherSelector[F].forOrdinal(snapshot.ordinal)(implicit hasher => stateProofValidation(snapshot, info)),
           majorityOrdinalValidation(snapshot, majorityPeers),
           majorityHashValidation(snapshot, majorityPeers)
         ).forallM(identity)
       }
 
-      private def stateProofValidation(snapshot: Hashed[GlobalIncrementalSnapshot], info: GlobalSnapshotInfo): F[Boolean] =
+      private def stateProofValidation(snapshot: Hashed[GlobalIncrementalSnapshot], info: GlobalSnapshotInfo)(
+        implicit hasher: Hasher[F]
+      ): F[Boolean] =
         StateProofValidator
-          .validate(snapshot, info, hashSelect)
+          .validate(snapshot, info)
           .flatTap(v => logger.debug(s"Failed StateProofValidation: $v").whenA(v.isInvalid))
           .map(_.isValid)
 
@@ -186,7 +187,12 @@ object GlobalL0Service {
       private def pullLatestSnapshotFromPeer(l0Peer: L0Peer): F[LatestSnapshotTuple] =
         l0GlobalSnapshotClient.getLatest(l0Peer).flatMap {
           case (snapshot, state) =>
-            snapshot.toHashedWithSignatureCheck.flatMap(_.liftTo[F]).map((_, state))
+            HasherSelector[F]
+              .forOrdinal(snapshot.ordinal) { implicit hasher =>
+                snapshot.toHashedWithSignatureCheck
+              }
+              .flatMap(_.liftTo[F])
+              .map((_, state))
         }
 
       private def pullGlobalSnapshot(
@@ -194,7 +200,9 @@ object GlobalL0Service {
       ): F[Option[Hashed[GlobalIncrementalSnapshot]]] =
         globalL0ClusterStorage.getRandomPeer.flatMap { l0Peer =>
           peerResponse(l0Peer)
-            .flatMap(_.toHashedWithSignatureCheck.flatMap(_.liftTo[F]))
+            .flatMap(snapshot =>
+              HasherSelector[F].forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashedWithSignatureCheck).flatMap(_.liftTo[F])
+            )
             .map(_.some)
         }
 
@@ -231,7 +239,7 @@ object GlobalL0Service {
         l0Peer: L0Peer,
         nextOrdinal: SnapshotOrdinal,
         lastOrdinal: SnapshotOrdinal
-      ): F[Chain[Hashed[GlobalIncrementalSnapshot]]] = {
+      )(implicit hasherSelector: HasherSelector[F]): F[Chain[Hashed[GlobalIncrementalSnapshot]]] = {
         val ordinals = LazyList
           .range(nextOrdinal.value.value, lastOrdinal.value.value + 1)
           .map(SnapshotOrdinal.unsafeApply)
@@ -243,7 +251,9 @@ object GlobalL0Service {
           case (ordinal #:: nextOrdinals, snapshots) =>
             l0GlobalSnapshotClient
               .get(ordinal)(l0Peer)
-              .flatMap(_.toHashedWithSignatureCheck.flatMap(_.liftTo[F]))
+              .flatMap(snapshot =>
+                hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashedWithSignatureCheck).flatMap(_.liftTo[F])
+              )
               .map(s => (nextOrdinals, snapshots :+ s).asLeft[Result])
               .handleErrorWith { e =>
                 logger

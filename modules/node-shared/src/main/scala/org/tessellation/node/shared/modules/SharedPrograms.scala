@@ -12,11 +12,11 @@ import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
 import org.tessellation.node.shared.http.p2p.clients.{ClusterClient, SignClient}
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.security.hash.Hash
-import org.tessellation.security.{Hasher, SecurityProvider}
+import org.tessellation.security.{HasherSelector, SecurityProvider}
 
 object SharedPrograms {
 
-  def make[F[_]: Async: SecurityProvider: Hasher: Supervisor: Parallel](
+  def make[F[_]: Async: SecurityProvider: HasherSelector: Supervisor: Parallel](
     cfg: SharedConfig,
     storages: SharedStorages[F],
     services: SharedServices[F],
@@ -29,21 +29,23 @@ object SharedPrograms {
   ): F[SharedPrograms[F]] =
     for {
       pd <- PeerDiscovery.make(clusterClient, storages.cluster, nodeId)
-      joining = new Joining[F](
-        cfg.environment,
-        storages.node,
-        storages.cluster,
-        signClient,
-        services.cluster,
-        services.session,
-        storages.session,
-        localHealthcheck,
-        seedlist,
-        nodeId,
-        cfg.stateAfterJoining,
-        versionHash,
-        pd
-      )
+      joining = HasherSelector[F].withCurrent { implicit hasher =>
+        new Joining[F](
+          cfg.environment,
+          storages.node,
+          storages.cluster,
+          signClient,
+          services.cluster,
+          services.session,
+          storages.session,
+          localHealthcheck,
+          seedlist,
+          nodeId,
+          cfg.stateAfterJoining,
+          versionHash,
+          pd
+        )
+      }
     } yield new SharedPrograms[F](pd, joining) {}
 }
 

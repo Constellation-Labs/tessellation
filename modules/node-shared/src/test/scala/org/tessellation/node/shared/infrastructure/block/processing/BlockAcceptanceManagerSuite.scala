@@ -36,18 +36,18 @@ object BlockAcceptanceManagerSuite extends MutableIOSuite with Checkers {
   val invalidParent = BlockReference(Height(0L), ProofsHash(Hash.empty.value.init + "5"))
   val commonAddress = Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB")
 
-  type Res = Hasher[IO]
+  type Res = (Hasher[IO], Hasher[IO])
 
   override def sharedResource: Resource[IO, Res] =
     KryoSerializer.forAsync[IO](sharedKryoRegistrar).flatMap { implicit kryo =>
       JsonSerializer.forSync[IO].asResource.map { implicit json =>
-        Hasher.forSync[IO](new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash })
+        (Hasher.forJson[IO], Hasher.forKryo[IO])
       }
     }
 
   private val getOption = SnapshotOrdinal.MinValue
 
-  def mkBlockAcceptanceManager(acceptInitiallyAwaiting: Boolean = true)(implicit h: Hasher[IO]) =
+  def mkBlockAcceptanceManager(txHasher: Hasher[IO], acceptInitiallyAwaiting: Boolean = true) =
     Ref[F].of[Map[Signed[Block], Boolean]](Map.empty.withDefaultValue(false)).map { state =>
       val blockLogic = new BlockAcceptanceLogic[IO] {
         override def acceptBlock(
@@ -100,7 +100,7 @@ object BlockAcceptanceManagerSuite extends MutableIOSuite with Checkers {
           signedBlock: Signed[Block],
           ordinal: SnapshotOrdinal,
           params: BlockValidationParams
-        ): IO[BlockValidationErrorOr[
+        )(implicit hasher: Hasher[F]): IO[BlockValidationErrorOr[
           (Signed[Block], Map[Address, TransactionChainValidator.TransactionNel])
         ]] = signedBlock.parent.head match {
           case `invalidParent` => IO.pure(NotEnoughParents(0, 0).invalidNec)
@@ -108,100 +108,106 @@ object BlockAcceptanceManagerSuite extends MutableIOSuite with Checkers {
 
         }
       }
-      BlockAcceptanceManager.make[IO](blockLogic, blockValidator)
+      BlockAcceptanceManager.make[IO](blockLogic, blockValidator, txHasher)
     }
 
-  test("accept valid block") { implicit h =>
-    forall(validAcceptedBlocksGen) { blocks =>
-      val expected = BlockAcceptanceResult(
-        BlockAcceptanceContextUpdate.empty
-          .copy(parentUsages = Map((validAcceptedParent, 1L))),
-        blocks.sorted.map(b => (b, 0L)),
-        Nil
-      )
-      for {
-        blockAcceptanceManager <- mkBlockAcceptanceManager()
-        res <- blockAcceptanceManager.acceptBlocksIteratively(blocks, null, getOption)
-      } yield expect.same(res, expected)
-    }
-  }
-
-  test("reject valid block") { implicit h =>
-    forall(validRejectedBlocksGen) {
-      case (acceptedBlocks, rejectedBlocks) =>
+  test("accept valid block") {
+    case (currentHasher, txHasher) =>
+      forall(validAcceptedBlocksGen) { blocks =>
         val expected = BlockAcceptanceResult(
           BlockAcceptanceContextUpdate.empty
-            .copy(parentUsages = if (acceptedBlocks.nonEmpty) Map((validAcceptedParent, 1L)) else Map.empty),
-          acceptedBlocks.sorted.map(b => (b, 0L)),
-          rejectedBlocks.sorted.reverse.map(b => (b, ParentNotFound(validRejectedParent)))
+            .copy(parentUsages = Map((validAcceptedParent, 1L))),
+          blocks.sorted.map(b => (b, 0L)),
+          Nil
+        )
+        for {
+          blockAcceptanceManager <- mkBlockAcceptanceManager(txHasher)
+          res <- blockAcceptanceManager.acceptBlocksIteratively(blocks, null, getOption)(currentHasher)
+        } yield expect.same(res, expected)
+      }
+  }
+
+  test("reject valid block") {
+    case (currentHasher, txHasher) =>
+      forall(validRejectedBlocksGen) {
+        case (acceptedBlocks, rejectedBlocks) =>
+          val expected = BlockAcceptanceResult(
+            BlockAcceptanceContextUpdate.empty
+              .copy(parentUsages = if (acceptedBlocks.nonEmpty) Map((validAcceptedParent, 1L)) else Map.empty),
+            acceptedBlocks.sorted.map(b => (b, 0L)),
+            rejectedBlocks.sorted.reverse.map(b => (b, ParentNotFound(validRejectedParent)))
+          )
+
+          for {
+            blockAcceptanceManager <- mkBlockAcceptanceManager(txHasher)
+            res <- blockAcceptanceManager.acceptBlocksIteratively(acceptedBlocks ++ rejectedBlocks, null, getOption)(currentHasher)
+          } yield expect.same(res, expected)
+      }
+  }
+
+  test("awaiting valid block") {
+    case (currentHasher, txHasher) =>
+      forall(validAwaitingBlocksGen) {
+        case (acceptedBlocks, awaitingBlocks) =>
+          val expected = BlockAcceptanceResult(
+            BlockAcceptanceContextUpdate.empty
+              .copy(parentUsages = if (acceptedBlocks.nonEmpty) Map((validAcceptedParent, 1L)) else Map.empty),
+            acceptedBlocks.sorted.map(b => (b, 0L)),
+            awaitingBlocks.sorted.reverse
+              .map(b => (b, SigningPeerBelowCollateral(NonEmptyList.of(commonAddress))))
+          )
+          for {
+            blockAcceptanceManager <- mkBlockAcceptanceManager(txHasher)
+            res <- blockAcceptanceManager.acceptBlocksIteratively(acceptedBlocks ++ awaitingBlocks, null, getOption)(currentHasher)
+          } yield expect.same(res, expected)
+      }
+  }
+
+  test("accept initially awaiting valid block") {
+    case (currentHasher, txHasher) =>
+      forall(validInitiallyAwaitingBlocksGen) { blocks =>
+        val expected = BlockAcceptanceResult(
+          BlockAcceptanceContextUpdate.empty
+            .copy(parentUsages = Map((validInitiallyAwaitingParent, 1L))),
+          blocks.sorted.map(b => (b, 0L)),
+          Nil
         )
 
         for {
-          blockAcceptanceManager <- mkBlockAcceptanceManager()
-          res <- blockAcceptanceManager.acceptBlocksIteratively(acceptedBlocks ++ rejectedBlocks, null, getOption)
+          blockAcceptanceManager <- mkBlockAcceptanceManager(txHasher, acceptInitiallyAwaiting = true)
+          res <- blockAcceptanceManager.acceptBlocksIteratively(blocks, null, getOption)(currentHasher)
         } yield expect.same(res, expected)
-    }
+      }
   }
 
-  test("awaiting valid block") { implicit h =>
-    forall(validAwaitingBlocksGen) {
-      case (acceptedBlocks, awaitingBlocks) =>
+  test("reject initially awaiting valid block") {
+    case (currentHasher, txHasher) =>
+      forall(validInitiallyAwaitingBlocksGen) { blocks =>
         val expected = BlockAcceptanceResult(
-          BlockAcceptanceContextUpdate.empty
-            .copy(parentUsages = if (acceptedBlocks.nonEmpty) Map((validAcceptedParent, 1L)) else Map.empty),
-          acceptedBlocks.sorted.map(b => (b, 0L)),
-          awaitingBlocks.sorted.reverse
-            .map(b => (b, SigningPeerBelowCollateral(NonEmptyList.of(commonAddress))))
+          BlockAcceptanceContextUpdate.empty,
+          Nil,
+          blocks.sorted.reverse.map(b => (b, ParentNotFound(validInitiallyAwaitingParent)))
         )
         for {
-          blockAcceptanceManager <- mkBlockAcceptanceManager()
-          res <- blockAcceptanceManager.acceptBlocksIteratively(acceptedBlocks ++ awaitingBlocks, null, getOption)
+          blockAcceptanceManager <- mkBlockAcceptanceManager(txHasher, acceptInitiallyAwaiting = false)
+          res <- blockAcceptanceManager.acceptBlocksIteratively(blocks, null, getOption)(currentHasher)
         } yield expect.same(res, expected)
-    }
+      }
   }
 
-  test("accept initially awaiting valid block") { implicit h =>
-    forall(validInitiallyAwaitingBlocksGen) { blocks =>
-      val expected = BlockAcceptanceResult(
-        BlockAcceptanceContextUpdate.empty
-          .copy(parentUsages = Map((validInitiallyAwaitingParent, 1L))),
-        blocks.sorted.map(b => (b, 0L)),
-        Nil
-      )
-
-      for {
-        blockAcceptanceManager <- mkBlockAcceptanceManager(acceptInitiallyAwaiting = true)
-        res <- blockAcceptanceManager.acceptBlocksIteratively(blocks, null, getOption)
-      } yield expect.same(res, expected)
-    }
-  }
-
-  test("reject initially awaiting valid block") { implicit h =>
-    forall(validInitiallyAwaitingBlocksGen) { blocks =>
-      val expected = BlockAcceptanceResult(
-        BlockAcceptanceContextUpdate.empty,
-        Nil,
-        blocks.sorted.reverse.map(b => (b, ParentNotFound(validInitiallyAwaitingParent)))
-      )
-      for {
-        blockAcceptanceManager <- mkBlockAcceptanceManager(acceptInitiallyAwaiting = false)
-        res <- blockAcceptanceManager.acceptBlocksIteratively(blocks, null, getOption)
-      } yield expect.same(res, expected)
-    }
-  }
-
-  test("invalid block") { implicit h =>
-    forall(invalidBlocksGen) { blocks =>
-      val expected = BlockAcceptanceResult(
-        BlockAcceptanceContextUpdate.empty,
-        Nil,
-        blocks.sorted.reverse.map(b => (b, ValidationFailed(NonEmptyList.of(NotEnoughParents(0, 0)))))
-      )
-      for {
-        blockAcceptanceManager <- mkBlockAcceptanceManager(acceptInitiallyAwaiting = false)
-        res <- blockAcceptanceManager.acceptBlocksIteratively(blocks, null, getOption)
-      } yield expect.same(res, expected)
-    }
+  test("invalid block") {
+    case (currentHasher, txHasher) =>
+      forall(invalidBlocksGen) { blocks =>
+        val expected = BlockAcceptanceResult(
+          BlockAcceptanceContextUpdate.empty,
+          Nil,
+          blocks.sorted.reverse.map(b => (b, ValidationFailed(NonEmptyList.of(NotEnoughParents(0, 0)))))
+        )
+        for {
+          blockAcceptanceManager <- mkBlockAcceptanceManager(txHasher, acceptInitiallyAwaiting = false)
+          res <- blockAcceptanceManager.acceptBlocksIteratively(blocks, null, getOption)(currentHasher)
+        } yield expect.same(res, expected)
+      }
   }
 
   def validAcceptedBlocksGen = dagBlocksGen(1, validAcceptedParent)

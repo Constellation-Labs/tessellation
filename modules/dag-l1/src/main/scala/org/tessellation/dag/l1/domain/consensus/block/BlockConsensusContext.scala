@@ -11,6 +11,7 @@ import org.tessellation.node.shared.domain.block.processing.BlockValidator
 import org.tessellation.node.shared.domain.cluster.storage.ClusterStorage
 import org.tessellation.node.shared.domain.transaction.TransactionValidator
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.security.Hasher
 
 case class BlockConsensusContext[F[_]](
   blockConsensusClient: BlockConsensusClient[F],
@@ -22,5 +23,6 @@ case class BlockConsensusContext[F[_]](
   keyPair: KeyPair,
   selfId: PeerId,
   transactionStorage: TransactionStorage[F],
-  transactionValidator: TransactionValidator[F]
+  transactionValidator: TransactionValidator[F],
+  txHasher: Hasher[F]
 )

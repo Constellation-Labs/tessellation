@@ -14,6 +14,7 @@ import org.tessellation.node.shared.ext.http4s.refined.RefinedRequestDecoder
 import org.tessellation.routes.internal._
 import org.tessellation.schema.cluster._
 import org.tessellation.schema.peer.JoinRequest
+import org.tessellation.security.Hasher
 
 import eu.timepit.refined.auto._
 import io.circe.shapes._
@@ -25,7 +26,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 import shapeless._
 import shapeless.syntax.singleton._
 
-final case class ClusterRoutes[F[_]: Async](
+final case class ClusterRoutes[F[_]: Async: Hasher](
   joining: Joining[F],
   peerDiscovery: PeerDiscovery[F],
   clusterStorage: ClusterStorage[F],

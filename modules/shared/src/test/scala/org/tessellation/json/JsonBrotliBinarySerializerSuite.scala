@@ -25,7 +25,7 @@ object JsonBrotliBinarySerializerSuite extends MutableIOSuite {
       .forAsync[IO](sharedKryoRegistrar)
       .flatMap { implicit res =>
         JsonSerializer.forSync[IO].asResource.map { implicit json =>
-          Hasher.forSync[IO](new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash })
+          Hasher.forJson[IO]
         }
       }
       .flatMap { kp =>

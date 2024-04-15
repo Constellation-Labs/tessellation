@@ -32,7 +32,7 @@ import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.Peer
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Hashed, Hasher}
+import org.tessellation.security.{Hashed, Hasher, HasherSelector}
 
 import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.NonNegLong
@@ -41,7 +41,7 @@ import retry.RetryPolicies._
 import retry._
 
 object Download {
-  def make[F[_]: Async: Hasher: Random](
+  def make[F[_]: Async: Random](
     p2pClient: P2PClient[F],
     clusterStorage: ClusterStorage[F],
     currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
@@ -60,7 +60,9 @@ object Download {
     type DownloadResult = (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)
     type ObservationLimit = SnapshotOrdinal
 
-    def download: F[Unit] =
+    def download(implicit hasherSelector: HasherSelector[F]): F[Unit] = {
+      implicit val hasher = hasherSelector.getCurrent
+
       nodeStorage
         .tryModifyState(NodeState.WaitingForDownload, NodeState.DownloadInProgress, NodeState.WaitingForObserving)(start)
         .flatMap(observe)
@@ -94,13 +96,14 @@ object Download {
               .startFacilitatingAfterDownload(observationLimit, snapshot, CurrencySnapshotContext(currencyAddress, context))
           }
         }
+    }
 
     def start: F[DownloadResult] =
       peerSelect.select.flatMap {
         p2pClient.currencySnapshot.getLatest.run(_)
       }
 
-    def observe(result: DownloadResult): F[(DownloadResult, ObservationLimit)] = {
+    def observe(result: DownloadResult)(implicit hasher: Hasher[F]): F[(DownloadResult, ObservationLimit)] = {
       val (lastSnapshot, _) = result
 
       val observationLimit = SnapshotOrdinal(lastSnapshot.ordinal.value |+| observationOffset)
@@ -117,7 +120,7 @@ object Download {
         go(result).map((_, observationLimit))
     }
 
-    def fetchNextSnapshot(result: DownloadResult): F[DownloadResult] = {
+    def fetchNextSnapshot(result: DownloadResult)(implicit hasher: Hasher[F]): F[DownloadResult] = {
       def retryPolicy = constantDelay(fetchSnapshotDelayBetweenTrials)
 
       def isWorthRetrying(err: Throwable): F[Boolean] = err match {
@@ -145,7 +148,7 @@ object Download {
       }
     }
 
-    def fetchSnapshot(hash: Option[Hash], ordinal: SnapshotOrdinal): F[Signed[CurrencyIncrementalSnapshot]] =
+    def fetchSnapshot(hash: Option[Hash], ordinal: SnapshotOrdinal)(implicit hasher: Hasher[F]): F[Signed[CurrencyIncrementalSnapshot]] =
       clusterStorage.getResponsivePeers
         .map(NodeState.ready)
         .map(_.toList)

@@ -19,11 +19,11 @@ import org.tessellation.node.shared.infrastructure.genesis.{GenesisFS => Genesis
 import org.tessellation.node.shared.infrastructure.snapshot.{CurrencySnapshotContextFunctions, PeerSelect}
 import org.tessellation.node.shared.modules.SharedPrograms
 import org.tessellation.schema.peer.{L0Peer, PeerId}
-import org.tessellation.security.{HashSelect, Hasher, SecurityProvider}
+import org.tessellation.security.{HasherSelector, SecurityProvider}
 
 object Programs {
 
-  def make[F[_]: Async: Random: KryoSerializer: JsonSerializer: Hasher: SecurityProvider](
+  def make[F[_]: Async: Random: KryoSerializer: JsonSerializer: SecurityProvider: HasherSelector](
     keyPair: KeyPair,
     nodeId: PeerId,
     globalL0Peer: L0Peer,
@@ -32,8 +32,7 @@ object Programs {
     services: Services[F],
     p2pClient: P2PClient[F],
     currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
-    dataApplication: Option[(BaseDataApplicationL0Service[F], CalculatedStateLocalFileSystemStorage[F])],
-    hashSelect: HashSelect
+    dataApplication: Option[(BaseDataApplicationL0Service[F], CalculatedStateLocalFileSystemStorage[F])]
   )(implicit context: L0NodeContext[F]): Programs[F] = {
     val peerSelect: PeerSelect[F] =
       PeerSelect.make(
@@ -70,8 +69,7 @@ object Programs {
       nodeId,
       services.consensus.manager,
       genesisLoader,
-      storages.identifier,
-      hashSelect
+      storages.identifier
     )
 
     val rollback = Rollback.make(

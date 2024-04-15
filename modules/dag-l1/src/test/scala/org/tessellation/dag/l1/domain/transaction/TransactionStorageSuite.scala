@@ -38,6 +38,7 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
     Address,
     SecurityProvider[IO],
     Hasher[IO],
+    Hasher[IO],
     KeyPair,
     Address
   )
@@ -47,7 +48,7 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
       KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ nodeSharedKryoRegistrar).flatMap { implicit kp =>
         for {
           implicit0(jhs: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
-          implicit0(h: Hasher[IO]) = Hasher.forSync[IO]((_: SnapshotOrdinal) => JsonHash)
+          implicit0(h: Hasher[IO]) = Hasher.forJson[IO]
           transactions <- MapRef.ofConcurrentHashMap[IO, Address, SortedMap[TransactionOrdinal, StoredTransaction]]().asResource
           contextualTransactionValidator = ContextualTransactionValidator
             .make(TransactionLimitConfig(Balance(100000000L), 20.hours, TransactionFee(200000L), 43.seconds), None)
@@ -62,13 +63,13 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
           address2 = key2.getPublic.toAddress
           key3 <- KeyPairGenerator.makeKeyPair.asResource
           address3 = key3.getPublic.toAddress
-        } yield (transactionStorage, transactions, key1, address1, key2, address2, sp, h, key3, address3)
+        } yield (transactionStorage, transactions, key1, address1, key2, address2, sp, h, Hasher.forKryo[IO], key3, address3)
       }
     }
 
   test("setting initial refs should fail if already set") {
     testResources.use {
-      case (transactionStorage, transactionR, _, address1, _, _, _, _, _, _) =>
+      case (transactionStorage, transactionR, _, address1, _, _, _, _, _, _, _) =>
         for {
           _ <- transactionR(address1).set(SortedMap.empty[TransactionOrdinal, StoredTransaction].some)
 
@@ -85,7 +86,7 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
 
   test("setting initial refs should succeed if not already set") {
     testResources.use {
-      case (transactionStorage, _, _, address1, _, _, _, _, _, _) =>
+      case (transactionStorage, _, _, address1, _, _, _, _, _, _, _) =>
         val ordinal = SnapshotOrdinal.MinValue
         val ref = TransactionReference.empty
         for {
@@ -100,17 +101,17 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
 
   test("pull should take transactions in correct order minding the fees") {
     testResources.use {
-      case (transactionStorage, _, key1, address1, key2, address2, sp, h, key3, address3) =>
+      case (transactionStorage, _, key1, address1, key2, address2, sp, h, txHasher, key3, address3) =>
         implicit val securityProvider = sp
         implicit val hasher = h
 
         for {
 
-          txsA <- generateTransactions(address1, key1, address2, 2, TransactionFee(3L))
+          txsA <- generateTransactions(address1, key1, address2, 2, TransactionFee(3L), txHasher = txHasher)
 
-          txsB <- generateTransactions(address2, key2, address1, 2, TransactionFee(2L))
+          txsB <- generateTransactions(address2, key2, address1, 2, TransactionFee(2L), txHasher = txHasher)
 
-          txsC <- generateTransactions(address3, key3, address2, 2, TransactionFee.zero)
+          txsC <- generateTransactions(address3, key3, address2, 2, TransactionFee.zero, txHasher = txHasher)
 
           txsA2 <- generateTransactions(
             address1,
@@ -118,7 +119,8 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
             address2,
             2,
             TransactionFee(1L),
-            Some(TransactionReference(txsA.last.ordinal, txsA.last.hash))
+            Some(TransactionReference(txsA.last.ordinal, txsA.last.hash)),
+            txHasher = txHasher
           )
           _ <- (txsC.toList ::: txsA.toList ::: txsA2.toList ::: txsB.toList).distinct
             .traverse(transactionStorage.tryPut(_, SnapshotOrdinal.MinValue, Balance(NonNegLong.MaxValue)))
@@ -131,13 +133,13 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
 
   test("pull should be able to take both fee and feeless transactions in one pull") {
     testResources.use {
-      case (transactionStorage, _, key1, address1, key2, address2, sp, h, _, _) =>
+      case (transactionStorage, _, key1, address1, key2, address2, sp, h, txHasher, _, _) =>
         implicit val securityProvider = sp
         implicit val hasher = h
 
         for {
-          txsA <- generateTransactions(address1, key1, address2, 2, TransactionFee(1L))
-          txsB <- generateTransactions(address2, key2, address1, 1, TransactionFee(0L))
+          txsA <- generateTransactions(address1, key1, address2, 2, TransactionFee(1L), txHasher = txHasher)
+          txsB <- generateTransactions(address2, key2, address1, 1, TransactionFee(0L), txHasher = txHasher)
           _ <- (txsA.toList ::: txsB.toList).distinct
             .traverse(transactionStorage.tryPut(_, SnapshotOrdinal.MinValue, Balance(NonNegLong.MaxValue)))
 
@@ -149,20 +151,21 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
 
   test("pull should limit transactions count to specified value") {
     testResources.use {
-      case (transactionStorage, _, key1, address1, key2, address2, sp, h, _, _) =>
+      case (transactionStorage, _, key1, address1, key2, address2, sp, h, txHasher, _, _) =>
         implicit val securityProvider = sp
         implicit val hasher = h
 
         for {
-          txsA <- generateTransactions(address1, key1, address2, 2, TransactionFee(3L))
-          txsB <- generateTransactions(address2, key2, address1, 2, TransactionFee(2L))
+          txsA <- generateTransactions(address1, key1, address2, 2, TransactionFee(3L), txHasher = txHasher)
+          txsB <- generateTransactions(address2, key2, address1, 2, TransactionFee(2L), txHasher = txHasher)
           txsA2 <- generateTransactions(
             address1,
             key1,
             address2,
             2,
             TransactionFee(1L),
-            Some(TransactionReference(txsA.last.ordinal, txsA.last.hash))
+            Some(TransactionReference(txsA.last.ordinal, txsA.last.hash)),
+            txHasher = txHasher
           )
           _ <- (txsA.toList ::: txsA2.toList ::: txsB.toList).distinct
             .traverse(transactionStorage.tryPut(_, SnapshotOrdinal.MinValue, Balance(NonNegLong.MaxValue)))

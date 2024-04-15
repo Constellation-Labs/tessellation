@@ -60,7 +60,7 @@ object DataApplicationRoutesSuite extends HttpSuite {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
     implicit0(json2bin: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
-    h: Hasher[IO] <- IO(Hasher.forSync[IO](_ => JsonHash)).asResource
+    h: Hasher[IO] = Hasher.forJson[IO]
     sv <- Supervisor[IO]
     r <- Random.scalaUtilRandom.asResource
   } yield (sp, h, sv, r)

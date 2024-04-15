@@ -25,11 +25,12 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 import shapeless._
 import shapeless.syntax.singleton._
 
-final case class Routes[F[_]: Async: Hasher](
+final case class Routes[F[_]: Async](
   transactionService: TransactionService[F],
   transactionStorage: TransactionStorage[F],
   l0ClusterStorage: L0ClusterStorage[F],
-  peerBlockConsensusInputQueue: Queue[F, Signed[PeerBlockConsensusInput]]
+  peerBlockConsensusInputQueue: Queue[F, Signed[PeerBlockConsensusInput]],
+  txHasher: Hasher[F]
 )(implicit S: Supervisor[F])
     extends Http4sDsl[F]
     with PublicRoutes[F]
@@ -41,6 +42,8 @@ final case class Routes[F[_]: Async: Hasher](
 
   protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "transactions" =>
+      implicit val hasher = txHasher
+
       for {
         transaction <- req.as[Signed[Transaction]]
         hashedTransaction <- transaction.toHashed[F]

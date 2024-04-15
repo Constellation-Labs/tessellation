@@ -8,6 +8,7 @@ import org.tessellation.node.shared.http.routes.TargetRoutes.Target
 import org.tessellation.node.shared.infrastructure.metrics.Metrics.LabelName
 import org.tessellation.routes.internal._
 import org.tessellation.schema.peer.PeerInfo
+import org.tessellation.security.Hasher
 
 import derevo.circe.magnolia._
 import derevo.derive
@@ -17,7 +18,7 @@ import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.dsl.Http4sDsl
 
-final case class TargetRoutes[F[_]: Async](
+final case class TargetRoutes[F[_]: Async: Hasher](
   cluster: Cluster[F]
 ) extends Http4sDsl[F]
     with PublicRoutes[F] {

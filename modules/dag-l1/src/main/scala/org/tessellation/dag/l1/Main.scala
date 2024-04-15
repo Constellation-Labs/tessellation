@@ -23,6 +23,7 @@ import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.node.NodeState.SessionStarted
 import org.tessellation.schema.semver.TessellationVersion
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalSnapshotStateProof}
+import org.tessellation.security.Hasher
 import org.tessellation.shared.{SharedKryoRegistrationIdRange, sharedKryoRegistrar}
 
 import com.monovore.decline.Opts
@@ -60,7 +61,8 @@ object Main
         .make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
           seedlist,
           cfg.transactionLimit,
-          None
+          None,
+          Hasher.forKryo[IO]
         )
       storages <- Storages
         .make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
@@ -88,14 +90,15 @@ object Main
         p2pClient,
         cfg,
         maybeMajorityPeerIds,
-        hashSelect
+        Hasher.forKryo[IO]
       )
       snapshotProcessor = DAGSnapshotProcessor.make(
         storages.address,
         storages.block,
         storages.lastSnapshot,
         storages.transaction,
-        sharedServices.globalSnapshotContextFns
+        sharedServices.globalSnapshotContextFns,
+        Hasher.forKryo[IO]
       )
       programs = Programs.make(sharedPrograms, p2pClient, storages, snapshotProcessor)
 
@@ -117,7 +120,8 @@ object Main
           programs,
           nodeShared.nodeId,
           TessellationVersion.unsafeFrom(BuildInfo.version),
-          cfg.http
+          cfg.http,
+          Hasher.forKryo[IO]
         )
       _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
       _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)
@@ -133,7 +137,8 @@ object Main
           nodeId,
           services,
           storages,
-          validators
+          validators,
+          Hasher.forKryo[IO]
         )
         .asResource
 

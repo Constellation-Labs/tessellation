@@ -11,7 +11,6 @@ import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.kryo._
 import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.generators._
 import org.tessellation.schema.peer.PeerId
@@ -37,7 +36,7 @@ object SignedValidatorSuite extends MutableIOSuite with Checkers {
       .forAsync[IO](sharedKryoRegistrar.union(Map[Class[_], KryoRegistrationId[Interval.Closed[5000, 5001]]](classOf[TestObject] -> 5000)))
       .flatMap { implicit res =>
         JsonSerializer.forSync[IO].asResource.map { implicit json =>
-          Hasher.forSync[IO](new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash })
+          Hasher.forJson[IO]
         }
       }
       .flatMap { h =>

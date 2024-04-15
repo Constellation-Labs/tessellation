@@ -13,6 +13,7 @@ import org.tessellation.node.shared.infrastructure.cluster.daemon.NodeStateDaemo
 import org.tessellation.node.shared.infrastructure.collateral.daemon.CollateralDaemon
 import org.tessellation.node.shared.infrastructure.snapshot.daemon.{DownloadDaemon, SelectablePeerDiscoveryDelay}
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.security.HasherSelector
 
 object Daemons {
 
@@ -22,7 +23,8 @@ object Daemons {
     programs: Programs[F],
     queues: Queues[F],
     nodeId: PeerId,
-    cfg: AppConfig
+    cfg: AppConfig,
+    hasherSelector: HasherSelector[F]
   ): F[Unit] = {
     val pddCfg = cfg.peerDiscovery.delay
     val peerDiscoveryDelay = SelectablePeerDiscoveryDelay.make(
@@ -36,7 +38,7 @@ object Daemons {
 
     List[Daemon[F]](
       NodeStateDaemon.make(storages.node, services.gossip),
-      DownloadDaemon.make(storages.node, programs.download, peerDiscoveryDelay),
+      DownloadDaemon.make(storages.node, programs.download, peerDiscoveryDelay, hasherSelector),
       Daemon.periodic(storages.trust.updateTrustWithBiases(nodeId), cfg.trust.daemon.interval),
       GlobalSnapshotEventsPublisherDaemon.make(queues.stateChannelOutput, queues.l1Output, services.gossip),
       CollateralDaemon.make(services.collateral, storages.globalSnapshot, storages.cluster),

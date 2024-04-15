@@ -22,7 +22,7 @@ import org.tessellation.node.shared.infrastructure.snapshot.storage._
 import org.tessellation.node.shared.modules.SharedStorages
 import org.tessellation.schema.peer.L0Peer
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
-import org.tessellation.security.Hasher
+import org.tessellation.security.HasherSelector
 
 import fs2.io.file.Path
 
@@ -30,11 +30,12 @@ object Storages {
 
   def dataApplicationCalculatedStatePath = Path("data/calculated_state")
 
-  def make[F[_]: Async: KryoSerializer: JsonSerializer: Hasher: Supervisor: Random](
+  def make[F[_]: Async: KryoSerializer: JsonSerializer: Supervisor: Random](
     sharedStorages: SharedStorages[F],
     snapshotConfig: SnapshotConfig,
     globalL0Peer: L0Peer,
-    dataApplication: Option[BaseDataApplicationL0Service[F]]
+    dataApplication: Option[BaseDataApplicationL0Service[F]],
+    hasherSelector: HasherSelector[F]
   ): F[Storages[F]] =
     for {
       snapshotLocalFileSystemStorage <- SnapshotLocalFileSystemStorage.make[F, CurrencyIncrementalSnapshot](
@@ -49,7 +50,8 @@ object Storages {
           snapshotLocalFileSystemStorage,
           snapshotInfoLocalFileSystemStorage,
           snapshotConfig.inMemoryCapacity,
-          SnapshotOrdinal.MinValue
+          SnapshotOrdinal.MinValue,
+          hasherSelector
         )
       lastGlobalSnapshotStorage <- LastSnapshotStorage.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
       globalL0ClusterStorage <- L0ClusterStorage.make[F](globalL0Peer)

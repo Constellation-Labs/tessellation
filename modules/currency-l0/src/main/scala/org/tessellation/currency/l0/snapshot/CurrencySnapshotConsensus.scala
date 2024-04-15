@@ -23,14 +23,14 @@ import org.tessellation.node.shared.infrastructure.snapshot.{CurrencySnapshotCre
 import org.tessellation.node.shared.snapshot.currency._
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.security.{Hasher, SecurityProvider}
+import org.tessellation.security.{HasherSelector, SecurityProvider}
 
 import io.circe.Decoder
 import org.http4s.client.Client
 
 object CurrencySnapshotConsensus {
 
-  def make[F[_]: Async: Random: Hasher: SecurityProvider: Metrics: Supervisor](
+  def make[F[_]: Async: Random: SecurityProvider: Metrics: Supervisor](
     gossip: Gossip[F],
     selfId: PeerId,
     keyPair: KeyPair,
@@ -45,11 +45,13 @@ object CurrencySnapshotConsensus {
     stateChannelSnapshotService: StateChannelSnapshotService[F],
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
     creator: CurrencySnapshotCreator[F],
-    validator: CurrencySnapshotValidator[F]
+    validator: CurrencySnapshotValidator[F],
+    hasherSelector: HasherSelector[F]
   ): F[CurrencySnapshotConsensus[F]] = {
     def noopDecoder: Decoder[DataUpdate] = Decoder.failedWithMessage[DataUpdate]("not implemented")
 
     implicit def daDecoder: Decoder[DataUpdate] = maybeDataApplication.map(_.dataDecoder).getOrElse(noopDecoder)
+    implicit val hs: HasherSelector[F] = hasherSelector
 
     for {
       consensusStorage <- ConsensusStorage

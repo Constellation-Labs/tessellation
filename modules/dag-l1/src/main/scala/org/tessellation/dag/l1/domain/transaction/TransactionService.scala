@@ -14,15 +14,17 @@ import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.schema.transaction.Transaction
-import org.tessellation.security.Hashed
 import org.tessellation.security.hash.Hash
+import org.tessellation.security.{Hashed, Hasher}
 
 import fs2.Stream
 
 import ContextualTransactionValidator.ContextualTransactionValidationError
 
 trait TransactionService[F[_]] {
-  def offer(transaction: Hashed[Transaction]): F[Either[NonEmptyList[ContextualTransactionValidationError], Hash]]
+  def offer(transaction: Hashed[Transaction])(
+    implicit hasher: Hasher[F]
+  ): F[Either[NonEmptyList[ContextualTransactionValidationError], Hash]]
 }
 
 object TransactionService {
@@ -40,7 +42,7 @@ object TransactionService {
 
     def offer(
       transaction: Hashed[Transaction]
-    ): F[Either[NonEmptyList[ContextualTransactionValidationError], Hash]] =
+    )(implicit hasher: Hasher[F]): F[Either[NonEmptyList[ContextualTransactionValidationError], Hash]] =
       transactionValidator
         .validate(transaction.signed)
         .map(_.errorMap(NonContextualValidationError))

@@ -19,20 +19,21 @@ import eu.timepit.refined.types.numeric.PosLong
 
 object SharedValidators {
 
-  def make[F[_]: Async: JsonSerializer: Hasher: SecurityProvider](
+  def make[F[_]: Async: JsonSerializer: SecurityProvider](
     l0Seedlist: Option[Set[SeedlistEntry]],
     seedlist: Option[Set[SeedlistEntry]],
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
-    maxBinarySizeInBytes: PosLong
+    maxBinarySizeInBytes: PosLong,
+    txHasher: Hasher[F]
   ): SharedValidators[F] = {
     val signedValidator = SignedValidator.make[F]
-    val transactionChainValidator = TransactionChainValidator.make[F]
-    val transactionValidator = TransactionValidator.make[F](signedValidator)
-    val blockValidator = BlockValidator.make[F](signedValidator, transactionChainValidator, transactionValidator)
-    val currencyTransactionChainValidator = TransactionChainValidator.make[F]
-    val currencyTransactionValidator = TransactionValidator.make[F](signedValidator)
+    val transactionChainValidator = TransactionChainValidator.make[F](txHasher)
+    val transactionValidator = TransactionValidator.make[F](signedValidator, txHasher)
+    val blockValidator = BlockValidator.make[F](signedValidator, transactionChainValidator, transactionValidator, txHasher)
+    val currencyTransactionChainValidator = TransactionChainValidator.make[F](txHasher)
+    val currencyTransactionValidator = TransactionValidator.make[F](signedValidator, txHasher)
     val currencyBlockValidator = BlockValidator
-      .make[F](signedValidator, currencyTransactionChainValidator, currencyTransactionValidator)
+      .make[F](signedValidator, currencyTransactionChainValidator, currencyTransactionValidator, txHasher)
     val rumorValidator = RumorValidator.make[F](seedlist, signedValidator)
     val stateChannelValidator = StateChannelValidator.make[F](signedValidator, l0Seedlist, stateChannelAllowanceLists, maxBinarySizeInBytes)
 

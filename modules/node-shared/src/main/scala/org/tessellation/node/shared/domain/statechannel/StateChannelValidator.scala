@@ -14,6 +14,7 @@ import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
 import org.tessellation.node.shared.domain.statechannel.StateChannelValidator.StateChannelValidationErrorOr
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.security.Hasher
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.SignedValidator.SignedValidationError
 import org.tessellation.security.signature.{Signed, SignedValidator}
@@ -27,8 +28,10 @@ import eu.timepit.refined.types.numeric.PosLong
 
 trait StateChannelValidator[F[_]] {
 
-  def validate(stateChannelOutput: StateChannelOutput): F[StateChannelValidationErrorOr[StateChannelOutput]]
-  def validateHistorical(stateChannelOutput: StateChannelOutput): F[StateChannelValidationErrorOr[StateChannelOutput]]
+  def validate(stateChannelOutput: StateChannelOutput)(implicit hasher: Hasher[F]): F[StateChannelValidationErrorOr[StateChannelOutput]]
+  def validateHistorical(stateChannelOutput: StateChannelOutput)(
+    implicit hasher: Hasher[F]
+  ): F[StateChannelValidationErrorOr[StateChannelOutput]]
 
 }
 
@@ -41,10 +44,12 @@ object StateChannelValidator {
     maxBinarySizeInBytes: PosLong
   ): StateChannelValidator[F] = new StateChannelValidator[F] {
 
-    def validate(stateChannelOutput: StateChannelOutput): F[StateChannelValidationErrorOr[StateChannelOutput]] =
+    def validate(stateChannelOutput: StateChannelOutput)(implicit hasher: Hasher[F]): F[StateChannelValidationErrorOr[StateChannelOutput]] =
       validateHistorical(stateChannelOutput).map(_.product(validateAllowedSignatures(stateChannelOutput)).as(stateChannelOutput))
 
-    def validateHistorical(stateChannelOutput: StateChannelOutput): F[StateChannelValidationErrorOr[StateChannelOutput]] =
+    def validateHistorical(
+      stateChannelOutput: StateChannelOutput
+    )(implicit hasher: Hasher[F]): F[StateChannelValidationErrorOr[StateChannelOutput]] =
       for {
         signaturesV <- signedValidator
           .validateSignatures(stateChannelOutput.snapshotBinary)

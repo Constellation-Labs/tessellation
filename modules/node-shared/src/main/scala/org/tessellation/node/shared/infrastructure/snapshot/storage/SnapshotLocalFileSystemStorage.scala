@@ -28,7 +28,7 @@ import io.estatico.newtype.ops._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 final class SnapshotLocalFileSystemStorage[
-  F[_]: Async: KryoSerializer: JsonSerializer: Hasher,
+  F[_]: Async: KryoSerializer: JsonSerializer,
   S <: Snapshot: Encoder: Decoder
 ] private (
   path: Path
@@ -36,7 +36,7 @@ final class SnapshotLocalFileSystemStorage[
 
   private val logger = Slf4jLogger.getLogger[F]
 
-  def write(snapshot: Signed[S]): F[Unit] = {
+  def write(snapshot: Signed[S])(implicit hasher: Hasher[F]): F[Unit] = {
     val ordinalName = toOrdinalName(snapshot.value)
 
     toHashName(snapshot.value).flatMap { hashName =>
@@ -79,7 +79,7 @@ final class SnapshotLocalFileSystemStorage[
   def getPath(hash: Hash): F[File] =
     getPath(hash.coerce[String])
 
-  def getPath(snapshot: Signed[S]): F[File] =
+  def getPath(snapshot: Signed[S])(implicit hasher: Hasher[F]): F[File] =
     toHashName(snapshot.value).flatMap { hashName =>
       getPath(hashName)
     }
@@ -87,7 +87,7 @@ final class SnapshotLocalFileSystemStorage[
   def move(hash: Hash, to: File): F[Unit] =
     move(hash.coerce[String], to)
 
-  def move(snapshot: Signed[S], to: File): F[Unit] =
+  def move(snapshot: Signed[S], to: File)(implicit hasher: Hasher[F]): F[Unit] =
     toHashName(snapshot.value).flatMap { hashName =>
       move(hashName, to)
     }
@@ -95,7 +95,7 @@ final class SnapshotLocalFileSystemStorage[
   def moveByOrdinal(snapshot: Signed[S], to: File): F[Unit] =
     move(toOrdinalName(snapshot), to)
 
-  def link(snapshot: Signed[S]): F[Unit] =
+  def link(snapshot: Signed[S])(implicit hasher: Hasher[F]): F[Unit] =
     toHashName(snapshot).flatMap { hashName =>
       link(hashName, toOrdinalName(snapshot))
     }
@@ -103,7 +103,8 @@ final class SnapshotLocalFileSystemStorage[
   private def toOrdinalName(snapshot: S): String = toOrdinalName(snapshot.ordinal)
   private def toOrdinalName(ordinal: SnapshotOrdinal): String = ordinal.value.value.toString
 
-  private def toHashName(snapshot: S): F[String] = snapshot.hash.map(_.coerce[String])
+  private def toHashName(snapshot: S)(implicit hasher: Hasher[F]): F[String] =
+    snapshot.hash.map(_.coerce[String])
 
 }
 
@@ -113,7 +114,7 @@ object SnapshotLocalFileSystemStorage {
     override val getMessage: String = s"Ordinal $ordinalName exists. File $hashName exists: $hashFileExists."
   }
 
-  def make[F[_]: Async: KryoSerializer: JsonSerializer: Hasher, S <: Snapshot: Encoder: Decoder](
+  def make[F[_]: Async: KryoSerializer: JsonSerializer, S <: Snapshot: Encoder: Decoder](
     path: Path
   ): F[SnapshotLocalFileSystemStorage[F, S]] =
     Applicative[F].pure(new SnapshotLocalFileSystemStorage[F, S](path)).flatTap { storage =>

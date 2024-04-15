@@ -26,10 +26,11 @@ import eu.timepit.refined.auto._
 
 object BlockValidator {
 
-  def make[F[_]: Async: Hasher](
+  def make[F[_]: Async](
     signedValidator: SignedValidator[F],
     transactionChainValidator: TransactionChainValidator[F],
-    transactionValidator: TransactionValidator[F]
+    transactionValidator: TransactionValidator[F],
+    txHasher: Hasher[F]
   ): BlockValidator[F] =
     new BlockValidator[F] {
 
@@ -37,9 +38,9 @@ object BlockValidator {
         signedBlock: Signed[Block],
         snapshotOrdinal: SnapshotOrdinal,
         params: BlockValidationParams
-      ): F[BlockValidationErrorOr[(Signed[Block], Map[Address, TransactionNel])]] =
+      )(implicit hasher: Hasher[F]): F[BlockValidationErrorOr[(Signed[Block], Map[Address, TransactionNel])]] =
         for {
-          signedV <- validateSigned(signedBlock, params)
+          signedV <- validateSigned(signedBlock, params)(hasher)
           lockedV = validateNotLockedAtOrdinal(signedBlock, snapshotOrdinal)
           transactionsV <- validateTransactions(signedBlock)
           propertiesV = validateProperties(signedBlock, params)
@@ -54,7 +55,7 @@ object BlockValidator {
       private def validateSigned(
         signedBlock: Signed[Block],
         params: BlockValidationParams
-      ): F[BlockValidationErrorOr[Signed[Block]]] =
+      )(implicit hasher: Hasher[F]): F[BlockValidationErrorOr[Signed[Block]]] =
         signedValidator
           .validateSignatures(signedBlock)
           .map { signaturesV =>
@@ -66,7 +67,9 @@ object BlockValidator {
 
       private def validateTransactions(
         signedBlock: Signed[Block]
-      ): F[BlockValidationErrorOr[Signed[Block]]] =
+      ): F[BlockValidationErrorOr[Signed[Block]]] = {
+        implicit val hasher = txHasher
+
         signedBlock.value.transactions.toNonEmptyList.traverse { signedTransaction =>
           for {
             txRef <- TransactionReference.of(signedTransaction)
@@ -77,6 +80,7 @@ object BlockValidator {
             acc.productL(v)
           }
         }
+      }
 
       private def validateTransactionChain(
         signedBlock: Signed[Block]

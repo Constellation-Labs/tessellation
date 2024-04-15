@@ -37,28 +37,28 @@ object GlobalSnapshotSerializationSuite extends MutableIOSuite with Checkers {
   def sharedResource: Resource[IO, Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](nodeSharedKryoRegistrar)
     implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
-    h = Hasher.forSync[IO](new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash })
-  } yield (ks, h)
+    hk = Hasher.forKryo[IO]
+  } yield (ks, hk)
 
   test("snapshot is successfully deserialized and serialized with kryo") { res =>
-    implicit val (ks, h) = res
+    implicit val (ks, hk) = res
 
     for {
       storedBytes <- getBytesFromClasspath(kryoFilename)
       signedSnapshot <- storedBytes.fromBinaryF[Signed[GlobalSnapshot]]
       serializedBytes <- signedSnapshot.toBinaryF
-      hashCompare <- h.compare(signedSnapshot.value, expectedHash)
+      hashCompare <- hk.compare(signedSnapshot.value, expectedHash)
     } yield expect.eql(serializedBytes, storedBytes).and(expect(hashCompare))
   }
 
   test("snapshot is successfully deserialized and serialized with json parser") { implicit res =>
-    implicit val (_, h) = res
+    implicit val (_, hk) = res
 
     for {
       storedJson <- getJsonFromClasspath(jsonFilename)
       signedSnapshot <- storedJson.as[Signed[GlobalSnapshot]].leftWiden[Throwable].liftTo[IO]
       serializedJson = signedSnapshot.asJson
-      hashCompare <- h.compare(signedSnapshot.value, expectedHash)
+      hashCompare <- hk.compare(signedSnapshot.value, expectedHash)
     } yield expect.eql(serializedJson, storedJson).and(expect(hashCompare))
   }
 

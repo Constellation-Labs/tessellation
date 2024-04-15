@@ -16,10 +16,10 @@ import org.tessellation.ext.kryo.RefinedSerializer
 import org.tessellation.generators.nonEmptyStringGen
 import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
+import org.tessellation.schema.Block
 import org.tessellation.schema.Block._
 import org.tessellation.schema.generators._
 import org.tessellation.schema.transaction.TransactionFee
-import org.tessellation.schema.{Block, SnapshotOrdinal}
 import org.tessellation.security._
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
@@ -40,7 +40,7 @@ object GlobalSnapshotEventCutterSuite extends MutableIOSuite with Checkers {
       implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar ++ dagL0KryoRegistrar)
       sp <- SecurityProvider.forAsync[IO]
       implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
-      h = Hasher.forSync[IO](new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash })
+      h = Hasher.forJson[IO]
     } yield (ks, h, sp)
 
   test("no events should not raise error") { res =>

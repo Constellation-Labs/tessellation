@@ -8,9 +8,10 @@ import cats.syntax.all._
 import org.tessellation.dag.l0.domain.cell.{L0Cell, L0CellInput}
 import org.tessellation.node.shared.domain.statechannel.StateChannelValidator
 import org.tessellation.node.shared.domain.statechannel.StateChannelValidator.StateChannelValidationError
+import org.tessellation.security.Hasher
 import org.tessellation.statechannel.StateChannelOutput
 trait StateChannelService[F[_]] {
-  def process(stateChannel: StateChannelOutput): F[Either[NonEmptyList[StateChannelValidationError], Unit]]
+  def process(stateChannel: StateChannelOutput)(implicit hasher: Hasher[F]): F[Either[NonEmptyList[StateChannelValidationError], Unit]]
 }
 
 object StateChannelService {
@@ -18,7 +19,9 @@ object StateChannelService {
   def make[F[_]: Async](mkDagCell: L0Cell.Mk[F], stateChannelValidator: StateChannelValidator[F]): StateChannelService[F] =
     new StateChannelService[F] {
 
-      def process(stateChannelOutput: StateChannelOutput): F[Either[NonEmptyList[StateChannelValidationError], Unit]] =
+      def process(
+        stateChannelOutput: StateChannelOutput
+      )(implicit hasher: Hasher[F]): F[Either[NonEmptyList[StateChannelValidationError], Unit]] =
         stateChannelValidator.validate(stateChannelOutput).flatMap {
           case Valid(_) =>
             mkDagCell(L0CellInput.HandleStateChannelSnapshot(stateChannelOutput))

@@ -11,7 +11,7 @@ import org.tessellation.currency.l0.modules.{Programs, Services, Storages}
 import org.tessellation.node.shared.domain.snapshot.Validator
 import org.tessellation.schema.GlobalIncrementalSnapshot
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.security.{Hashed, Hasher}
+import org.tessellation.security.{Hashed, HasherSelector}
 
 import fs2.Stream
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -20,7 +20,7 @@ object StateChannel {
 
   private val awakePeriod = 10.seconds
 
-  def run[F[_]: Async: Hasher](
+  def run[F[_]: Async: HasherSelector](
     services: Services[F],
     storages: Storages[F],
     programs: Programs[F]

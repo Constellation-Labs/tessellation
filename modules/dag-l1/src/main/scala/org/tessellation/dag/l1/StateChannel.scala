@@ -32,14 +32,14 @@ import org.tessellation.schema._
 import org.tessellation.schema.height.Height
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
-import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
+import org.tessellation.security._
 
 import fs2.{Pipe, Stream}
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 class StateChannel[
-  F[_]: Async: Hasher: SecurityProvider: Random,
+  F[_]: Async: HasherSelector: SecurityProvider: Random,
   P <: StateProof,
   S <: Snapshot,
   SI <: SnapshotInfo[P]
@@ -55,7 +55,8 @@ class StateChannel[
   selfId: PeerId,
   services: Services[F, P, S, SI],
   storages: Storages[F, P, S, SI],
-  validators: Validators[F]
+  validators: Validators[F],
+  txHasher: Hasher[F]
 ) {
 
   private implicit val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLogger[F]
@@ -71,7 +72,8 @@ class StateChannel[
       keyPair,
       selfId,
       storages.transaction,
-      validators.transaction
+      validators.transaction,
+      txHasher
     )
 
   private val inspectionTriggerInput: Stream[F, OwnerBlockConsensusInput] = Stream
@@ -112,7 +114,7 @@ class StateChannel[
 
   private val peerBlockConsensusInputs: Stream[F, PeerBlockConsensusInput] = Stream
     .fromQueueUnterminated(queues.peerBlockConsensusInput)
-    .evalFilter(isPeerInputValid(_))
+    .evalFilter(in => HasherSelector[F].withCurrent(implicit hasher => isPeerInputValid(in)))
     .map(_.value)
 
   private val blockConsensusInputs: Stream[F, BlockConsensusInput] =
@@ -123,7 +125,11 @@ class StateChannel[
       .evalMap(blockConsensusInput =>
         OptionT(storages.lastSnapshot.getOrdinal)
           .getOrRaise(new IllegalStateException("Could not find the latest snapshot ordinal"))
-          .flatMap(new BlockConsensusCell[F](blockConsensusInput, blockConsensusContext, _).run())
+          .flatMap(ordinal =>
+            HasherSelector[F].withCurrent { implicit hasher =>
+              new BlockConsensusCell[F](blockConsensusInput, blockConsensusContext, ordinal).run()
+            }
+          )
           .handleErrorWith(e => CellError(e.getMessage).asLeft[BlockConsensusOutput].pure[F])
       )
       .flatMap {
@@ -152,7 +158,7 @@ class StateChannel[
 
   private val peerBlocks: Stream[F, FinalBlock] = Stream
     .fromQueueUnterminated(queues.peerBlock)
-    .evalMap(_.toHashedWithSignatureCheck)
+    .evalMap(block => HasherSelector[F].withCurrent(implicit hasher => block.toHashedWithSignatureCheck))
     .evalTap {
       case Left(e)  => logger.warn(e)(s"Received an invalidly signed peer block!")
       case Right(_) => Async[F].unit
@@ -204,8 +210,10 @@ class StateChannel[
           .traverse {
             case (hash, signedBlock) =>
               logger.debug(s"Acceptance of a block $hash starts!") >>
-                services.block
-                  .accept(signedBlock)
+                HasherSelector[F].withCurrent { implicit hasher =>
+                  services.block
+                    .accept(signedBlock)
+                }
                   .handleErrorWith(logger.warn(_)(s"Failed acceptance of a block with ${hash.show}"))
           }
           .void
@@ -226,12 +234,16 @@ class StateChannel[
     }
     .evalMapLocked(NonEmptyList.of(blockAcceptanceS, blockCreationS, blockStoringS)) {
       case Left((snapshot, state)) =>
-        programs.snapshotProcessor.process((snapshot, state).asLeft[Hashed[GlobalIncrementalSnapshot]]).map(List(_))
+        HasherSelector[F].withCurrent { implicit hasher =>
+          programs.snapshotProcessor.process((snapshot, state).asLeft[Hashed[GlobalIncrementalSnapshot]]).map(List(_))
+        }
       case Right(snapshots) =>
         (snapshots, List.empty[SnapshotProcessingResult]).tailRecM {
           case (snapshot :: nextSnapshots, aggResults) =>
-            programs.snapshotProcessor
-              .process(snapshot.asRight[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)])
+            HasherSelector[F].withCurrent { implicit hasher =>
+              programs.snapshotProcessor
+                .process(snapshot.asRight[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)])
+            }
               .map(result => (nextSnapshots, aggResults :+ result).asLeft[List[SnapshotProcessingResult]])
 
           case (Nil, aggResults) =>
@@ -261,7 +273,7 @@ class StateChannel[
 object StateChannel {
 
   def make[
-    F[_]: Async: Hasher: SecurityProvider: Random,
+    F[_]: Async: HasherSelector: SecurityProvider: Random,
     P <: StateProof,
     S <: Snapshot,
     SI <: SnapshotInfo[P]
@@ -274,7 +286,8 @@ object StateChannel {
     selfId: PeerId,
     services: Services[F, P, S, SI],
     storages: Storages[F, P, S, SI],
-    validators: Validators[F]
+    validators: Validators[F],
+    txHasher: Hasher[F]
   ): F[StateChannel[F, P, S, SI]] =
     for {
       blockAcceptanceS <- Semaphore(1)
@@ -293,6 +306,7 @@ object StateChannel {
         selfId,
         services,
         storages,
-        validators
+        validators,
+        txHasher
       )
 }

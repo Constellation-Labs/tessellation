@@ -14,7 +14,7 @@ import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
 object SnapshotDownloadStorage {
-  def make[F[_]: Async: Hasher](
+  def make[F[_]: Async: HasherSelector](
     tmpStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
     persistedStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
     fullGlobalSnapshotStorage: SnapshotLocalFileSystemStorage[F, GlobalSnapshot],
@@ -36,16 +36,21 @@ object SnapshotDownloadStorage {
         tmpStorage.exists(snapshot.ordinal).flatMap(tmpStorage.delete(snapshot.ordinal).whenA) >>
           tmpStorage.writeUnderOrdinal(snapshot)
 
-      def writePersisted(snapshot: Signed[GlobalIncrementalSnapshot]): F[Unit] = persistedStorage.write(snapshot)
+      def writePersisted(snapshot: Signed[GlobalIncrementalSnapshot]): F[Unit] = HasherSelector[F].forOrdinal(snapshot.ordinal) {
+        implicit hasher => persistedStorage.write(snapshot)
+      }
 
       def deletePersisted(ordinal: SnapshotOrdinal): F[Unit] = persistedStorage.delete(ordinal)
 
       def isPersisted(hash: Hash): F[Boolean] = persistedStorage.exists(hash)
 
-      def hasCorrectSnapshotInfo(ordinal: SnapshotOrdinal, proof: GlobalSnapshotStateProof): F[Boolean] =
+      def hasCorrectSnapshotInfo(
+        ordinal: SnapshotOrdinal,
+        proof: GlobalSnapshotStateProof
+      )(implicit hasher: Hasher[F]): F[Boolean] =
         (hashSelect.select(ordinal) match {
-          case JsonHash => snapshotInfoStorage.read(ordinal).flatMap(_.traverse(_.stateProof(ordinal, hashSelect)))
-          case KryoHash => snapshotInfoKryoStorage.read(ordinal).flatMap(_.traverse(_.stateProof(ordinal, hashSelect)))
+          case JsonHash => snapshotInfoStorage.read(ordinal).flatMap(_.traverse(_.stateProof(ordinal)))
+          case KryoHash => snapshotInfoKryoStorage.read(ordinal).flatMap(_.traverse(_.stateProof(ordinal)))
         }).map {
           case Some(calculatedProof) => calculatedProof === proof
           case _                     => false
@@ -56,7 +61,9 @@ object SnapshotDownloadStorage {
           .flatMap(_.filter(_ <= lte).compile.toList)
           .map(_.maximumOption)
 
-      def readCombined(ordinal: SnapshotOrdinal): F[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = {
+      def readCombined(
+        ordinal: SnapshotOrdinal
+      )(implicit hasher: Hasher[F]): F[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = {
         val maybeInfo = hashSelect.select(ordinal) match {
           case JsonHash => snapshotInfoStorage.read(ordinal).map(_.map(_.asRight[GlobalSnapshotInfoV2]))
           case KryoHash => snapshotInfoKryoStorage.read(ordinal).map(_.map(_.asLeft[GlobalSnapshotInfo]))
@@ -65,7 +72,7 @@ object SnapshotDownloadStorage {
         (readPersisted(ordinal).flatMap(_.traverse(_.toHashed)), maybeInfo).tupled.map(_.tupled).flatMap {
           case Some((snapshot, info)) =>
             info
-              .bitraverse(_.stateProof(ordinal, hashSelect), _.stateProof(ordinal, hashSelect))
+              .bitraverse(_.stateProof(ordinal), _.stateProof(ordinal))
               .map(_.fold(identity, identity))
               .map(StateProofValidator.validate(snapshot, _).isValid)
               .ifM(
@@ -92,11 +99,15 @@ object SnapshotDownloadStorage {
         tmpStorage.getPath(hash).flatMap(persistedStorage.move(hash, _) >> persistedStorage.delete(ordinal))
 
       def moveTmpToPersisted(snapshot: Signed[GlobalIncrementalSnapshot]): F[Unit] =
-        persistedStorage.getPath(snapshot).flatMap(tmpStorage.moveByOrdinal(snapshot, _) >> persistedStorage.link(snapshot))
+        HasherSelector[F].forOrdinal(snapshot.ordinal) { implicit hasher =>
+          persistedStorage.getPath(snapshot).flatMap(tmpStorage.moveByOrdinal(snapshot, _) >> persistedStorage.link(snapshot))
+        }
 
       def readGenesis(ordinal: SnapshotOrdinal): F[Option[Signed[GlobalSnapshot]]] = fullGlobalSnapshotStorage.read(ordinal)
 
-      def writeGenesis(genesis: Signed[GlobalSnapshot]): F[Unit] = fullGlobalSnapshotStorage.write(genesis)
+      def writeGenesis(genesis: Signed[GlobalSnapshot]): F[Unit] = HasherSelector[F].forOrdinal(genesis.ordinal) { implicit hasher =>
+        fullGlobalSnapshotStorage.write(genesis)
+      }
 
       def cleanupAbove(ordinal: SnapshotOrdinal): F[Unit] =
         snapshotInfoStorage.deleteAbove(ordinal) >>
@@ -110,12 +121,10 @@ object SnapshotDownloadStorage {
                 _.parTraverseN(maxParallelFileOperations) { ordinal =>
                   readPersisted(ordinal).flatMap {
                     case Some(snapshot) =>
-                      snapshot.toHashed.flatMap(s => movePersistedToTmp(s.hash, s.ordinal)).handleErrorWith { error =>
-                        Hasher[F].getLogic(snapshot.ordinal) match {
-                          case KryoHash => error.raiseError[F, Unit]
-                          case JsonHash => Hasher[F].hashKryo(snapshot.value).flatMap(hash => movePersistedToTmp(hash, snapshot.ordinal))
+                      HasherSelector[F]
+                        .forOrdinal(snapshot.ordinal) { implicit hasher =>
+                          snapshot.toHashed.flatMap(s => movePersistedToTmp(s.hash, s.ordinal))
                         }
-                      }
                     case None => Async[F].unit
                   }
                 }.void

@@ -49,8 +49,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
   ): IO[GlobalIncrementalSnapshot] =
     GlobalIncrementalSnapshot
       .fromGlobalSnapshot[F](
-        GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue),
-        (_: SnapshotOrdinal) => JsonHash
+        GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
       )
       .map(
         _.copy(
@@ -120,7 +119,7 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
       implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
       sp <- SecurityProvider.forAsync[IO]
       implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
-      h = Hasher.forSync[IO]((_: SnapshotOrdinal) => JsonHash)
+      h = Hasher.forJson[IO]
     } yield (ks, h, sp)
 
   def binaryGen: Gen[Signed[StateChannelSnapshotBinary]] =

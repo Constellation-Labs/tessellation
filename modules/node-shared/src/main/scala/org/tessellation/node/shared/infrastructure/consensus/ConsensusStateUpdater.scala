@@ -16,6 +16,7 @@ import org.tessellation.node.shared.infrastructure.consensus.message._
 import org.tessellation.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import org.tessellation.node.shared.infrastructure.consensus.update.UnlockConsensusUpdate
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.security.Hasher
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
@@ -223,7 +224,7 @@ object ConsensusStateUpdater {
     proposals: List[Hash],
     facilitators: Set[PeerId],
     consensusFns: ConsensusFunctions[F, Event, Key, Artifact, Context]
-  ): F[Option[ArtifactInfo[Artifact, Context]]] = {
+  )(implicit hasher: Hasher[F]): F[Option[ArtifactInfo[Artifact, Context]]] = {
     def go(proposals: List[(Int, Hash)]): F[Option[ArtifactInfo[Artifact, Context]]] =
       proposals match {
         case (occurrences, majorityHash) :: tail =>

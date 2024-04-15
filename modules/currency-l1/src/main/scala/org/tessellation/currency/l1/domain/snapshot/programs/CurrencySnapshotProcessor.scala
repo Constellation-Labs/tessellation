@@ -27,7 +27,7 @@ import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-sealed abstract class CurrencySnapshotProcessor[F[_]: Async: Hasher: SecurityProvider]
+sealed abstract class CurrencySnapshotProcessor[F[_]: Async: SecurityProvider]
     extends SnapshotProcessor[
       F,
       CurrencySnapshotStateProof,
@@ -37,7 +37,7 @@ sealed abstract class CurrencySnapshotProcessor[F[_]: Async: Hasher: SecurityPro
 
 object CurrencySnapshotProcessor {
 
-  def make[F[_]: Async: Random: SecurityProvider: Hasher](
+  def make[F[_]: Async: Random: SecurityProvider](
     identifier: Address,
     addressStorage: AddressStorage[F],
     blockStorage: BlockStorage[F],
@@ -47,12 +47,13 @@ object CurrencySnapshotProcessor {
     globalSnapshotContextFns: SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     currencySnapshotContextFns: SnapshotContextFunctions[F, CurrencyIncrementalSnapshot, CurrencySnapshotContext],
     jsonBrotliBinarySerializer: JsonBrotliBinarySerializer[F],
-    transactionLimitConfig: TransactionLimitConfig
+    transactionLimitConfig: TransactionLimitConfig,
+    txHasher: Hasher[F]
   ): CurrencySnapshotProcessor[F] =
     new CurrencySnapshotProcessor[F] {
       def process(
         snapshot: Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), Hashed[GlobalIncrementalSnapshot]]
-      ): F[SnapshotProcessingResult] =
+      )(implicit hasher: Hasher[F]): F[SnapshotProcessingResult] =
         snapshot match {
           case Left((globalSnapshot, globalState)) =>
             val globalSnapshotReference = SnapshotReference.fromHashedSnapshot(globalSnapshot)
@@ -90,13 +91,13 @@ object CurrencySnapshotProcessor {
         lastState: GlobalSnapshotInfo,
         lastSnapshot: Signed[GlobalIncrementalSnapshot],
         snapshot: Signed[GlobalIncrementalSnapshot]
-      ): F[GlobalSnapshotInfo] = globalSnapshotContextFns.createContext(lastState, lastSnapshot, snapshot)
+      )(implicit hasher: Hasher[F]): F[GlobalSnapshotInfo] = globalSnapshotContextFns.createContext(lastState, lastSnapshot, snapshot)
 
       def applySnapshotFn(
         lastState: CurrencySnapshotInfo,
         lastSnapshot: Signed[CurrencyIncrementalSnapshot],
         snapshot: Signed[CurrencyIncrementalSnapshot]
-      ): F[CurrencySnapshotInfo] =
+      )(implicit hasher: Hasher[F]): F[CurrencySnapshotInfo] =
         currencySnapshotContextFns.createContext(CurrencySnapshotContext(identifier, lastState), lastSnapshot, snapshot).map(_.snapshotInfo)
 
       private def processCurrencySnapshots(
@@ -104,7 +105,7 @@ object CurrencySnapshotProcessor {
         globalState: GlobalSnapshotInfo,
         globalSnapshotReference: SnapshotReference,
         setGlobalSnapshot: F[SnapshotProcessingResult]
-      ): F[SnapshotProcessingResult] =
+      )(implicit hasher: Hasher[F]): F[SnapshotProcessingResult] =
         fetchCurrencySnapshots(globalSnapshot).flatMap {
           case Some(Validated.Valid(hashedSnapshots)) =>
             prepareIntermediateStorages(addressStorage, blockStorage, lastCurrencySnapshotStorage, transactionStorage).flatMap {
@@ -120,7 +121,7 @@ object CurrencySnapshotProcessor {
                       case Some(Right((_, stateToDownload))) =>
                         val toPass = (snapshotToDownload, stateToDownload).asLeft[Hashed[CurrencyIncrementalSnapshot]]
 
-                        checkAlignment(toPass, bs, lcss).map { alignment =>
+                        checkAlignment(toPass, bs, lcss, txHasher).map { alignment =>
                           NonEmptyList.one(alignment).some
                         }
                       case _ => (new Throwable("unexpected state")).raiseError[F, Option[Success]]
@@ -131,7 +132,7 @@ object CurrencySnapshotProcessor {
                       case (NonEmptyList(snapshot, nextSnapshots), agg) =>
                         val toPass = snapshot.asRight[(Hashed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]
 
-                        checkAlignment(toPass, bs, lcss).flatMap {
+                        checkAlignment(toPass, bs, lcss, txHasher).flatMap {
                           case _: Ignore =>
                             Applicative[F].pure(none[Success].asRight[Agg])
                           case alignment =>
@@ -183,7 +184,7 @@ object CurrencySnapshotProcessor {
         blockStorage: BlockStorage[F],
         lastCurrencySnapshotStorage: LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
         transactionStorage: TransactionStorage[F]
-      ): F[
+      )(implicit hasher: Hasher[F]): F[
         (
           AddressStorage[F],
           BlockStorage[F],
@@ -211,6 +212,8 @@ object CurrencySnapshotProcessor {
       // currency snapshots. Binary that fails to deserialize as currency snapshot are ignored here.
       private def fetchCurrencySnapshots(
         globalSnapshot: GlobalIncrementalSnapshot
+      )(
+        implicit hasher: Hasher[F]
       ): F[Option[ValidatedNel[InvalidSignatureForHash[CurrencyIncrementalSnapshot], NonEmptyList[Hashed[CurrencyIncrementalSnapshot]]]]] =
         globalSnapshot.stateChannelSnapshots
           .get(identifier) match {

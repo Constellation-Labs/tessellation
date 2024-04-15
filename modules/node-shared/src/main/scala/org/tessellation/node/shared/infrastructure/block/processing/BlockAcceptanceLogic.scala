@@ -26,7 +26,7 @@ import eu.timepit.refined.cats._
 
 object BlockAcceptanceLogic {
 
-  def make[F[_]: Async: Hasher: SecurityProvider]: BlockAcceptanceLogic[F] =
+  def make[F[_]: Async: SecurityProvider](txHasher: Hasher[F]): BlockAcceptanceLogic[F] =
     new BlockAcceptanceLogic[F] {
 
       def acceptBlock(
@@ -78,7 +78,9 @@ object BlockAcceptanceLogic {
         txChains: TxChains,
         context: BlockAcceptanceContext[F],
         contextUpdate: BlockAcceptanceContextUpdate
-      ): EitherT[F, BlockNotAcceptedReason, BlockAcceptanceContextUpdate] =
+      ): EitherT[F, BlockNotAcceptedReason, BlockAcceptanceContextUpdate] = {
+        implicit val hasher = txHasher
+
         txChains.toList
           .foldLeft((contextUpdate.lastTxRefs, none[BlockAwaitReason]).asRight[RejectedTransaction].toEitherT[F]) { (acc, tup) =>
             acc.flatMap {
@@ -136,6 +138,7 @@ object BlockAcceptanceLogic {
           .map { lastTxRefsUpdate =>
             contextUpdate.copy(lastTxRefs = lastTxRefsUpdate)
           }
+      }
 
       private def processBalances(
         block: Signed[Block],

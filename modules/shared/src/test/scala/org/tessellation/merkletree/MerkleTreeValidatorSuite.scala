@@ -30,12 +30,10 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
 
   type Res = Hasher[IO]
 
-  val hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash }
-
   override def sharedResource: Resource[IO, Res] =
     KryoSerializer.forAsync[IO](sharedKryoRegistrar).flatMap { implicit res =>
       JsonSerializer.forSync[IO].asResource.map { implicit json =>
-        Hasher.forSync[IO](hashSelect)
+        Hasher.forJson[IO]
       }
     }
 
@@ -49,7 +47,7 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
     )
     for {
       snapshot <- globalIncrementalSnapshot(globalSnapshotInfo)
-      result <- StateProofValidator.validate(snapshot, globalSnapshotInfo, hashSelect)
+      result <- StateProofValidator.validate(snapshot, globalSnapshotInfo)
     } yield expect.same(Validated.Valid(()), result)
   }
 
@@ -64,14 +62,14 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
 
     for {
       snapshot <- globalIncrementalSnapshot(globalSnapshotInfo)
-      result <- StateProofValidator.validate(snapshot, GlobalSnapshotInfo.empty, hashSelect)
+      result <- StateProofValidator.validate(snapshot, GlobalSnapshotInfo.empty)
     } yield expect.same(Validated.Invalid(StateProofValidator.StateBroken(SnapshotOrdinal(NonNegLong(1L)), snapshot.hash)), result)
   }
 
   private def globalIncrementalSnapshot[F[_]: Async: Hasher](
     globalSnapshotInfo: GlobalSnapshotInfo
   ): F[Hashed[GlobalIncrementalSnapshot]] =
-    globalSnapshotInfo.stateProof[F](SnapshotOrdinal(NonNegLong(1L)), hashSelect).flatMap { sp =>
+    globalSnapshotInfo.stateProof[F](SnapshotOrdinal(NonNegLong(1L))).flatMap { sp =>
       Signed(
         GlobalIncrementalSnapshot(
           SnapshotOrdinal(NonNegLong(1L)),

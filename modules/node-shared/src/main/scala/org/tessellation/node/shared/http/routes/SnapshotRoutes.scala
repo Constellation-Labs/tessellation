@@ -13,7 +13,7 @@ import org.tessellation.routes.internal._
 import org.tessellation.schema.GlobalSnapshot
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotMetadata}
-import org.tessellation.security.Hasher
+import org.tessellation.security.HasherSelector
 import org.tessellation.security.signature.Signed
 
 import io.circe.Encoder
@@ -25,11 +25,12 @@ import org.http4s.{EntityEncoder, HttpRoutes, Response}
 import shapeless.HNil
 import shapeless.syntax.singleton._
 
-final case class SnapshotRoutes[F[_]: Async: Hasher, S <: Snapshot: Encoder, C: Encoder](
+final case class SnapshotRoutes[F[_]: Async, S <: Snapshot: Encoder, C: Encoder](
   snapshotStorage: SnapshotStorage[F, S, C],
   fullGlobalSnapshotStorage: Option[SnapshotLocalFileSystemStorage[F, GlobalSnapshot]],
   prefixPath: InternalUrlPrefix,
-  nodeStorage: NodeStorage[F]
+  nodeStorage: NodeStorage[F],
+  hasherSelector: HasherSelector[F]
 ) extends Http4sDsl[F]
     with PublicRoutes[F]
     with P2PRoutes[F] {
@@ -61,7 +62,7 @@ final case class SnapshotRoutes[F[_]: Async: Hasher, S <: Snapshot: Encoder, C: 
         .map(validStateForSnapshotReturn)
         .ifM(
           snapshotStorage.headSnapshot
-            .flatMap(_.traverse(_.toHashed[F]))
+            .flatMap(_.traverse(snapshot => hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashed[F])))
             .map(_.map(snapshot => SnapshotMetadata(snapshot.ordinal, snapshot.hash, snapshot.lastSnapshotHash)))
             .flatMap {
               case Some(metadata) => Ok(metadata)
@@ -123,8 +124,11 @@ final case class SnapshotRoutes[F[_]: Async: Hasher, S <: Snapshot: Encoder, C: 
       nodeStorage.getNodeState
         .map(validStateForSnapshotReturn)
         .ifM(
-          snapshotStorage
-            .getHash(ordinal)
+          hasherSelector
+            .forOrdinal(ordinal) { implicit hasher =>
+              snapshotStorage
+                .getHash(ordinal)
+            }
             .flatMap {
               case None           => NotFound()
               case Some(snapshot) => Ok(snapshot)

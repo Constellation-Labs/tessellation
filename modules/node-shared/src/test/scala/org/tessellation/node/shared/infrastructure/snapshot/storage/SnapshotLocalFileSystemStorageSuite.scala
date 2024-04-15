@@ -26,14 +26,12 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
 
   type Res = (Supervisor[IO], KryoSerializer[IO], JsonSerializer[IO], Hasher[IO], SecurityProvider[IO])
 
-  val hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash }
-
   override def sharedResource: Resource[IO, Res] =
     for {
       s <- Supervisor[IO]
       implicit0(k: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar.union(nodeSharedKryoRegistrar))
       implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
-      h = Hasher.forSync[IO](hashSelect)
+      h = Hasher.forJson[IO]
       sp <- SecurityProvider.forAsync[IO]
     } yield (s, k, j, h, sp)
 
@@ -46,7 +44,7 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
   ): IO[(Signed[GlobalSnapshot], Signed[GlobalIncrementalSnapshot])] =
     KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>
       Signed.forAsyncHasher[IO, GlobalSnapshot](GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue), keyPair).flatMap { genesis =>
-        GlobalIncrementalSnapshot.fromGlobalSnapshot(genesis, hashSelect).flatMap { snapshot =>
+        GlobalIncrementalSnapshot.fromGlobalSnapshot(genesis).flatMap { snapshot =>
           Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](snapshot, keyPair).map((genesis, _))
         }
       }

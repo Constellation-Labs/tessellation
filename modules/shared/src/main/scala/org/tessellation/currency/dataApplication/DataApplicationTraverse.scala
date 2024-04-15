@@ -13,7 +13,7 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
+import org.tessellation.security.{Hashed, HasherSelector, SecurityProvider}
 
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -23,7 +23,7 @@ trait DataApplicationTraverse[F[_]] {
 }
 
 object DataApplicationTraverse {
-  def make[F[_]: Async: KryoSerializer: JsonSerializer: Hasher: SecurityProvider](
+  def make[F[_]: Async: KryoSerializer: JsonSerializer: SecurityProvider: HasherSelector](
     lastGlobalSnapshot: Hashed[GlobalIncrementalSnapshot],
     fetchSnapshot: Hash => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     dataApplication: BaseDataApplicationL0Service[F],
@@ -41,7 +41,7 @@ object DataApplicationTraverse {
       )
     }
 
-  def make[F[_]: Async: KryoSerializer: JsonSerializer: Hasher: SecurityProvider](
+  def make[F[_]: Async: KryoSerializer: JsonSerializer: SecurityProvider: HasherSelector](
     lastGlobalSnapshot: Hashed[GlobalIncrementalSnapshot],
     fetchSnapshot: Hash => F[Option[Hashed[GlobalIncrementalSnapshot]]],
     dataApplication: BaseDataApplicationL0Service[F],
@@ -211,14 +211,16 @@ object DataApplicationTraverse {
         globalSnapshot.stateChannelSnapshots
           .get(identifier) match {
           case Some(snapshots) =>
-            snapshots.toList.traverse { binary =>
-              jsonBrotliBinarySerializer.deserialize[Signed[CurrencyIncrementalSnapshot]](binary.content)
+            HasherSelector[F].forOrdinal(globalSnapshot.ordinal) { implicit hasher =>
+              snapshots.toList.traverse { binary =>
+                jsonBrotliBinarySerializer.deserialize[Signed[CurrencyIncrementalSnapshot]](binary.content)
+              }
+                .map(_.flatMap(_.toOption))
+                .map(NonEmptyList.fromList)
+                .map(_.map(_.sortBy(_.value.ordinal)))
+                .flatMap(_.map(_.traverse(_.toHashedWithSignatureCheck)).sequence)
+                .map(_.map(_.traverse(_.toValidatedNel)))
             }
-              .map(_.flatMap(_.toOption))
-              .map(NonEmptyList.fromList)
-              .map(_.map(_.sortBy(_.value.ordinal)))
-              .flatMap(_.map(_.traverse(_.toHashedWithSignatureCheck)).sequence)
-              .map(_.map(_.traverse(_.toValidatedNel)))
           case None => none.pure[F]
         }
     }

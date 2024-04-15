@@ -12,14 +12,15 @@ import org.tessellation.security.{Hasher, SecurityProvider}
 
 object Validators {
 
-  def make[F[_]: Async: Hasher: SecurityProvider](
-    seedlist: Option[Set[SeedlistEntry]]
+  def make[F[_]: Async: SecurityProvider](
+    seedlist: Option[Set[SeedlistEntry]],
+    txHasher: Hasher[F]
   ): Validators[F] = {
     val signedValidator = SignedValidator.make[F]
-    val transactionChainValidator = TransactionChainValidator.make[F]
-    val transactionValidator = TransactionValidator.make[F](signedValidator)
+    val transactionChainValidator = TransactionChainValidator.make[F](txHasher)
+    val transactionValidator = TransactionValidator.make[F](signedValidator, txHasher)
     val blockValidator =
-      BlockValidator.make[F](signedValidator, transactionChainValidator, transactionValidator)
+      BlockValidator.make[F](signedValidator, transactionChainValidator, transactionValidator, txHasher)
     val rumorValidator = RumorValidator.make[F](seedlist, signedValidator)
 
     new Validators[F](

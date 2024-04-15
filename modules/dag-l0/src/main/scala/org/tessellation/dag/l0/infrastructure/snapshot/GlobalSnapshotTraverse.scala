@@ -10,9 +10,9 @@ import org.tessellation.ext.cats.syntax.partialPrevious.catsSyntaxPartialPreviou
 import org.tessellation.merkletree.StateProofValidator
 import org.tessellation.node.shared.domain.snapshot.SnapshotContextFunctions
 import org.tessellation.schema._
+import org.tessellation.security._
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{HashSelect, Hasher}
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -22,13 +22,12 @@ trait GlobalSnapshotTraverse[F[_]] {
 
 object GlobalSnapshotTraverse {
 
-  def make[F[_]: Async: Hasher](
+  def make[F[_]: Async: HasherSelector](
     loadInc: Hash => F[Option[Signed[GlobalIncrementalSnapshot]]],
     loadFull: Hash => F[Option[Signed[GlobalSnapshot]]],
     loadInfo: SnapshotOrdinal => F[Option[GlobalSnapshotInfo]],
     contextFns: SnapshotContextFunctions[F, GlobalSnapshotArtifact, GlobalSnapshotContext],
-    rollbackHash: Hash,
-    hashSelect: HashSelect
+    rollbackHash: Hash
   ): GlobalSnapshotTraverse[F] =
     new GlobalSnapshotTraverse[F] {
       val logger = Slf4jLogger.getLogger[F]
@@ -93,7 +92,15 @@ object GlobalSnapshotTraverse {
             case Right(globalSnapshot)           => GlobalSnapshotInfoV1.toGlobalSnapshotInfo(globalSnapshot.info).pure[F]
           }
 
-          stateProofInvalid <- StateProofValidator.validate(firstInc, firstInfo, hashSelect).map(_.isInvalid)
+          firstInfoCalculatedProof <- HasherSelector[F].forOrdinal(firstInc.ordinal) { implicit hasher =>
+            hasher.getLogic(firstInc.ordinal) match {
+              case KryoHash => GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(firstInfo).stateProof(firstInc.ordinal)
+              case JsonHash => firstInfo.stateProof(firstInc.ordinal)
+            }
+          }
+
+          hashedFirstInc <- HasherSelector[F].forOrdinal(firstInc.ordinal)(implicit hasher => firstInc.toHashed)
+          stateProofInvalid = StateProofValidator.validate(hashedFirstInc, firstInfoCalculatedProof).isInvalid
 
           _ <- (new Exception(s"Snapshot info does not match the snapshot at ordinal=${firstInc.ordinal.show}"))
             .raiseError[F, Unit]

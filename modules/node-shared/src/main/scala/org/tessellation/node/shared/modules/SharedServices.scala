@@ -10,7 +10,6 @@ import cats.syntax.functor._
 
 import org.tessellation.env.AppEnvironment
 import org.tessellation.json.{JsonBrotliBinarySerializer, JsonSerializer}
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.{CollateralConfig, SharedConfig}
 import org.tessellation.node.shared.domain.cluster.services.{Cluster, Session}
 import org.tessellation.node.shared.domain.gossip.Gossip
@@ -27,13 +26,13 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.security.hash.Hash
-import org.tessellation.security.{HashSelect, Hasher, SecurityProvider}
+import org.tessellation.security.{Hasher, HasherSelector, SecurityProvider}
 
 import fs2.concurrent.SignallingRef
 
 object SharedServices {
 
-  def make[F[_]: Async: KryoSerializer: Hasher: SecurityProvider: Metrics: Supervisor: JsonSerializer](
+  def make[F[_]: Async: HasherSelector: SecurityProvider: Metrics: Supervisor: JsonSerializer](
     cfg: SharedConfig,
     nodeId: PeerId,
     generation: Generation,
@@ -49,7 +48,7 @@ object SharedServices {
     collateral: CollateralConfig,
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
     environment: AppEnvironment,
-    hashSelect: HashSelect
+    txHasher: Hasher[F]
   ): F[SharedServices[F]] = {
 
     val cluster = Cluster
@@ -69,11 +68,10 @@ object SharedServices {
 
     for {
       localHealthcheck <- LocalHealthcheck.make[F](nodeClient, storages.cluster)
-      gossip <- Gossip.make[F](queues.rumor, nodeId, generation, keyPair)
+      gossip <- HasherSelector[F].withCurrent(implicit hasher => Gossip.make[F](queues.rumor, nodeId, generation, keyPair))
       currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
-        BlockAcceptanceManager.make[F](validators.currencyBlockValidator),
-        collateral.amount,
-        hashSelect
+        BlockAcceptanceManager.make[F](validators.currencyBlockValidator, txHasher),
+        collateral.amount
       )
 
       currencyEventsCutter = CurrencyEventsCutter.make[F](None)
@@ -90,13 +88,12 @@ object SharedServices {
         None
       )
       currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(
-        currencySnapshotValidator,
-        hashSelect
+        currencySnapshotValidator
       )
       globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make(stateChannelAllowanceLists)
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync
       globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
-        BlockAcceptanceManager.make[F](validators.blockValidator),
+        BlockAcceptanceManager.make[F](validators.blockValidator, txHasher),
         GlobalSnapshotStateChannelEventsProcessor
           .make[F](
             validators.stateChannelValidator,
@@ -106,7 +103,7 @@ object SharedServices {
           ),
         collateral.amount
       )
-      globalSnapshotContextFns = GlobalSnapshotContextFunctions.make(globalSnapshotAcceptanceManager, hashSelect)
+      globalSnapshotContextFns = GlobalSnapshotContextFunctions.make(globalSnapshotAcceptanceManager)
     } yield
       new SharedServices[F](
         localHealthcheck = localHealthcheck,

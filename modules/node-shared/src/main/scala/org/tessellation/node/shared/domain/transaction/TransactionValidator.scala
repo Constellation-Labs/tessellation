@@ -8,6 +8,7 @@ import org.tessellation.ext.cats.syntax.validated._
 import org.tessellation.node.shared.domain.transaction.TransactionValidator.TransactionValidationErrorOr
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction.Transaction
+import org.tessellation.security.Hasher
 import org.tessellation.security.signature.SignedValidator.SignedValidationError
 import org.tessellation.security.signature.{Signed, SignedValidator}
 
@@ -30,12 +31,15 @@ object TransactionValidator {
   )
 
   def make[F[_]: Async](
-    signedValidator: SignedValidator[F]
+    signedValidator: SignedValidator[F],
+    txHasher: Hasher[F]
   ): TransactionValidator[F] =
     new TransactionValidator[F] {
       def validate(
         signedTransaction: Signed[Transaction]
-      ): F[TransactionValidationErrorOr[Signed[Transaction]]] =
+      ): F[TransactionValidationErrorOr[Signed[Transaction]]] = {
+        implicit val hasher = txHasher
+
         for {
           signaturesV <- signedValidator
             .validateSignatures(signedTransaction)
@@ -48,6 +52,7 @@ object TransactionValidator {
             .productR(srcAddressSignatureV)
             .productR(differentSrcAndDstV)
             .productR(addressNotLockedV)
+      }
 
       private def validateSourceAddressSignature(
         signedTx: Signed[Transaction]

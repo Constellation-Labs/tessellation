@@ -18,7 +18,7 @@ import org.tessellation.schema.transaction.RewardTransaction
 import org.tessellation.security.hash.{Hash, ProofsHash}
 import org.tessellation.security.hex.Hex
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{HashSelect, Hashed, Hasher}
+import org.tessellation.security.{Hashed, Hasher}
 import org.tessellation.statechannel.StateChannelSnapshotBinary
 import org.tessellation.syntax.sortedCollection._
 
@@ -45,8 +45,8 @@ case class GlobalIncrementalSnapshot(
 ) extends IncrementalSnapshot[GlobalSnapshotStateProof]
 
 object GlobalIncrementalSnapshot {
-  def fromGlobalSnapshot[F[_]: Sync: Hasher](snapshot: GlobalSnapshot, hashSelect: HashSelect): F[GlobalIncrementalSnapshot] =
-    snapshot.info.stateProof(snapshot.ordinal, hashSelect).map { stateProof =>
+  def fromGlobalSnapshot[F[_]: Sync: Hasher](snapshot: GlobalSnapshot): F[GlobalIncrementalSnapshot] =
+    snapshot.info.stateProof(snapshot.ordinal).map { stateProof =>
       GlobalIncrementalSnapshot(
         snapshot.ordinal,
         snapshot.height,
@@ -99,10 +99,9 @@ object GlobalSnapshot {
     )
 
   def mkFirstIncrementalSnapshot[F[_]: Sync: Hasher](
-    genesis: Hashed[GlobalSnapshot],
-    hashSelect: HashSelect
+    genesis: Hashed[GlobalSnapshot]
   ): F[GlobalIncrementalSnapshot] =
-    genesis.info.stateProof(genesis.ordinal, hashSelect).map { stateProof =>
+    genesis.info.stateProof(genesis.ordinal).map { stateProof =>
       GlobalIncrementalSnapshot(
         genesis.ordinal.next,
         genesis.height,

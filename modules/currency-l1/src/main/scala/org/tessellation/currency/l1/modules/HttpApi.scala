@@ -18,7 +18,7 @@ import org.tessellation.node.shared.infrastructure.metrics.Metrics
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.semver.{MetagraphVersion, TessellationVersion}
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
-import org.tessellation.security.{Hasher, SecurityProvider}
+import org.tessellation.security.{Hasher, HasherSelector, SecurityProvider}
 
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
 import org.http4s.server.middleware.{CORS, RequestLogger, ResponseLogger}
@@ -27,7 +27,7 @@ import org.http4s.{HttpApp, HttpRoutes}
 object HttpApi {
 
   def make[
-    F[_]: Async: Hasher: SecurityProvider: Metrics: Supervisor: L1NodeContext,
+    F[_]: Async: HasherSelector: SecurityProvider: Metrics: Supervisor: L1NodeContext,
     P <: StateProof,
     S <: Snapshot,
     SI <: SnapshotInfo[P]
@@ -56,7 +56,8 @@ object HttpApi {
     selfId: PeerId,
     nodeVersion: TessellationVersion,
     httpCfg: HttpConfig,
-    maybeMetagraphVersion: Option[MetagraphVersion]
+    maybeMetagraphVersion: Option[MetagraphVersion],
+    txHasher: Hasher[F]
   ): HttpApi[F] =
     new HttpApi[F](
       maybeDataApplication,
@@ -68,12 +69,13 @@ object HttpApi {
       selfId,
       nodeVersion,
       httpCfg,
-      maybeMetagraphVersion
+      maybeMetagraphVersion,
+      txHasher
     ) {}
 }
 
 sealed abstract class HttpApi[
-  F[_]: Async: Hasher: SecurityProvider: Metrics: Supervisor: L1NodeContext
+  F[_]: Async: HasherSelector: SecurityProvider: Metrics: Supervisor: L1NodeContext
 ] private (
   maybeDataApplication: Option[BaseDataApplicationL1Service[F]],
   storages: Storages[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
@@ -84,29 +86,34 @@ sealed abstract class HttpApi[
   selfId: PeerId,
   nodeVersion: TessellationVersion,
   httpCfg: HttpConfig,
-  maybeMetagraphVersion: Option[MetagraphVersion]
+  maybeMetagraphVersion: Option[MetagraphVersion],
+  txHasher: Hasher[F]
 ) {
 
   private val clusterRoutes =
-    ClusterRoutes[F](programs.joining, programs.peerDiscovery, storages.cluster, services.cluster, services.collateral)
-  private val registrationRoutes = RegistrationRoutes[F](services.cluster)
+    HasherSelector[F].withCurrent { implicit hasher =>
+      ClusterRoutes[F](programs.joining, programs.peerDiscovery, storages.cluster, services.cluster, services.collateral)
+    }
+  private val registrationRoutes = HasherSelector[F].withCurrent(implicit hasher => RegistrationRoutes[F](services.cluster))
   private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip)
   private val routes = maybeDataApplication.map { da =>
-    DataApplicationRoutes[F](
-      queues.dataApplicationPeerConsensusInput,
-      storages.l0Cluster,
-      da,
-      queues.dataUpdates,
-      storages.lastGlobalSnapshot,
-      storages.lastSnapshot
-    )
+    HasherSelector[F].withCurrent { implicit hasher =>
+      DataApplicationRoutes[F](
+        queues.dataApplicationPeerConsensusInput,
+        storages.l0Cluster,
+        da,
+        queues.dataUpdates,
+        storages.lastGlobalSnapshot,
+        storages.lastSnapshot
+      )
+    }
   }
   private val currencyRoutes =
-    DAGRoutes[F](services.transaction, storages.transaction, storages.l0Cluster, queues.peerBlockConsensusInput)
+    DAGRoutes[F](services.transaction, storages.transaction, storages.l0Cluster, queues.peerBlockConsensusInput, txHasher)
   private val nodeRoutes = NodeRoutes[F](storages.node, storages.session, storages.cluster, nodeVersion, httpCfg, selfId)
 
   private val metricRoutes = MetricRoutes[F]().publicRoutes
-  private val targetRoutes = TargetRoutes[F](services.cluster).publicRoutes
+  private val targetRoutes = HasherSelector[F].withCurrent(implicit hasher => TargetRoutes[F](services.cluster).publicRoutes)
   private val metagraphNodeRoutes = maybeMetagraphVersion.map { metagraphVersion =>
     MetagraphRoutes[F](storages.node, storages.session, storages.cluster, httpCfg, selfId, nodeVersion, metagraphVersion)
   }

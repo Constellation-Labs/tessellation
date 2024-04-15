@@ -14,13 +14,15 @@ import org.tessellation.security.{Hashed, Hasher}
 
 object BlockRelations {
 
-  def dependsOn[F[_]: Async: Hasher](
-    blocks: Hashed[Block]
-  )(block: Signed[Block]): F[Boolean] = dependsOn[F](Set(blocks))(block)
+  def dependsOn[F[_]: Async](
+    blocks: Hashed[Block],
+    txHasher: Hasher[F]
+  )(block: Signed[Block]): F[Boolean] = dependsOn[F](Set(blocks), txHasher = txHasher)(block)
 
-  def dependsOn[F[_]: Async: Hasher](
+  def dependsOn[F[_]: Async](
     blocks: Set[Hashed[Block]],
-    references: Set[BlockReference] = Set.empty
+    references: Set[BlockReference] = Set.empty,
+    txHasher: Hasher[F]
   )(block: Signed[Block]): F[Boolean] = {
     def dstAddresses = blocks.flatMap(_.transactions.toSortedSet.toList.map(_.value.destination))
 
@@ -28,7 +30,10 @@ object BlockRelations {
       block.parent.exists(parentRef => (blocks.map(_.ownReference) ++ references).exists(_ === parentRef))
     def hasReferencedAddress = block.transactions.map(_.source).exists(srcAddress => dstAddresses.exists(_ === srcAddress))
     def hasReferencedTx = blocks.toList
-      .flatTraverse(_.transactions.toSortedSet.toList.traverse(TransactionReference.of(_)))
+      .flatTraverse(_.transactions.toSortedSet.toList.traverse { tx =>
+        implicit val hasher = txHasher
+        TransactionReference.of(tx)
+      })
       .map(_.toSet)
       .map { txRefs =>
         block.transactions.map(_.parent).exists(txnParentRef => txRefs.exists(_ === txnParentRef))

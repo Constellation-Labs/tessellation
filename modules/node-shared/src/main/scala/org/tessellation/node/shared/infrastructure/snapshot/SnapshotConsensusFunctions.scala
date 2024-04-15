@@ -65,7 +65,7 @@ abstract class SnapshotConsensusFunctions[
     trigger: ConsensusTrigger,
     artifact: Artifact,
     facilitators: Set[PeerId]
-  ): F[Either[InvalidArtifact, (Artifact, Context)]]
+  )(implicit hasher: Hasher[F]): F[Either[InvalidArtifact, (Artifact, Context)]]
 
   protected def getUpdatedTips(
     lastActive: SortedSet[ActiveTip],

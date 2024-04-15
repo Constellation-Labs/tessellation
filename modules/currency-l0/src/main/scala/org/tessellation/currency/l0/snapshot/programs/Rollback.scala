@@ -21,8 +21,8 @@ import org.tessellation.node.shared.infrastructure.consensus._
 import org.tessellation.node.shared.infrastructure.consensus.trigger.EventTrigger
 import org.tessellation.schema.GlobalIncrementalSnapshot
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.security._
 import org.tessellation.security.hash.Hash
-import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -31,11 +31,11 @@ case object LastSnapshotHashNotFound extends RollbackError
 case object LastSnapshotInfoNotFound extends RollbackError
 
 trait Rollback[F[_]] {
-  def rollback: F[Unit]
+  def rollback(implicit hasher: Hasher[F]): F[Unit]
 }
 
 object Rollback {
-  def make[F[_]: Async: KryoSerializer: JsonSerializer: Hasher: SecurityProvider](
+  def make[F[_]: Async: KryoSerializer: HasherSelector: JsonSerializer: SecurityProvider](
     nodeId: PeerId,
     globalL0Service: GlobalL0Service[F],
     identifierStorage: IdentifierStorage[F],
@@ -46,7 +46,7 @@ object Rollback {
   )(implicit context: L0NodeContext[F]): Rollback[F] = new Rollback[F] {
     private val logger = Slf4jLogger.getLogger[F]
 
-    def rollback: F[Unit] = for {
+    def rollback(implicit hasher: Hasher[F]): F[Unit] = for {
       (globalSnapshot, globalSnapshotInfo) <- globalL0Service.pullLatestSnapshotFromRandomPeer
 
       identifier <- identifierStorage.get

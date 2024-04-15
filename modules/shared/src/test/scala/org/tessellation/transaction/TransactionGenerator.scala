@@ -18,14 +18,17 @@ import eu.timepit.refined.types.numeric.PosInt
 
 trait TransactionGenerator {
 
-  def generateTransactions[F[_]: Async: Hasher: SecurityProvider](
+  def generateTransactions[F[_]: Async: SecurityProvider](
     src: Address,
     srcKey: KeyPair,
     dst: Address,
     count: PosInt,
     fee: TransactionFee = TransactionFee.zero,
-    lastTxRef: Option[TransactionReference] = None
+    lastTxRef: Option[TransactionReference] = None,
+    txHasher: Hasher[F]
   ): F[NonEmptyList[Hashed[Transaction]]] = {
+    implicit val h = txHasher
+
     def generate(src: Address, srcKey: KeyPair, dst: Address, lastTxRef: TransactionReference): F[Hashed[Transaction]] =
       forAsyncHasher[F, Transaction](
         Transaction(src, dst, TransactionAmount(1L), fee, lastTxRef, TransactionSalt(0L)),

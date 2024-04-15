@@ -23,20 +23,18 @@ object StateProofValidator {
 
   def validate[F[_]: Async: Hasher, P <: StateProof: Eq, A <: IncrementalSnapshot[P]: Encoder](
     snapshot: Signed[A],
-    si: SnapshotInfo[P],
-    hashSelect: HashSelect
+    si: SnapshotInfo[P]
   ): F[Validated[StateBroken, Unit]] = {
-    val stateProof = si.stateProof(snapshot.ordinal, hashSelect)
+    val stateProof = si.stateProof(snapshot.ordinal)
 
     (snapshot.toHashed, stateProof).mapN(validate(_, _))
   }
 
   def validate[F[_]: Sync: Hasher, P <: StateProof: Eq, A <: IncrementalSnapshot[P]](
     snapshot: Hashed[A],
-    si: SnapshotInfo[P],
-    hashSelect: HashSelect
+    si: SnapshotInfo[P]
   ): F[Validated[StateBroken, Unit]] = {
-    val stateProof = si.stateProof(snapshot.ordinal, hashSelect)
+    val stateProof = si.stateProof(snapshot.ordinal)
 
     stateProof.map(validate(snapshot, _))
   }

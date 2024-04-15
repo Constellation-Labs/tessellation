@@ -23,7 +23,7 @@ import org.tessellation.schema.height.Height
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.round.RoundId
 import org.tessellation.schema.transaction.{TransactionFee, TransactionReference}
-import org.tessellation.schema.{Block, BlockReference, SnapshotOrdinal}
+import org.tessellation.schema.{Block, BlockReference}
 import org.tessellation.security._
 import org.tessellation.security.hash.ProofsHash
 import org.tessellation.security.hex.Hex
@@ -48,13 +48,14 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
       implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](Main.kryoRegistrar ++ nodeSharedKryoRegistrar)
       implicit0(sp: SecurityProvider[IO]) <- SecurityProvider.forAsync[IO]
       implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
-      implicit0(h: Hasher[IO]) = Hasher.forSync[IO](new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash })
+      implicit0(h: Hasher[IO]) = Hasher.forKryo[IO]
       srcKey <- KeyPairGenerator.makeKeyPair[IO].asResource
       dstKey <- KeyPairGenerator.makeKeyPair[IO].asResource
       srcAddress = srcKey.getPublic.toAddress
       dstAddress = dstKey.getPublic.toAddress
       signedValidator = SignedValidator.make
-      txValidator = TransactionValidator.make[F](signedValidator)
+      txHasher = Hasher.forKryo[IO]
+      txValidator = TransactionValidator.make[F](signedValidator, txHasher)
     } yield (ks, h, sp, srcKey, dstKey, srcAddress, dstAddress, txValidator)
 
   implicit val logger: SelfAwareStructuredLogger[IO] = Slf4jLogger.getLogger[IO]
@@ -82,22 +83,22 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
     )
 
   test("formBlock should return None when there were no transactions in RoundData") {
-    case (_, h, _, _, _, _, _, txValidator) =>
-      implicit val hasher = h
+    case (ks, h, _, _, _, _, _, txValidator) =>
+      implicit val kryo = ks
 
-      baseRoundData.formBlock[IO](txValidator).map(maybeBlock => expect.same(None, maybeBlock))
+      baseRoundData.formBlock[IO](txValidator, Hasher.forKryo[IO]).map(maybeBlock => expect.same(None, maybeBlock))
   }
 
   test(
     "formBlock should return the block with properly selected transactions - preferring the ones with higher fee if there are concurrent chains of transactions"
   ) {
-    case (_, h, sp, srcKey, _, srcAddress, dstAddress, txValidator) =>
+    case (ks, h, sp, srcKey, _, srcAddress, dstAddress, txValidator) =>
       implicit val securityProvider = sp
-      implicit val hasher = h
+      implicit val kryo = ks
 
       for {
-        txsA <- generateTransactions(srcAddress, srcKey, dstAddress, 3)
-        txsA2 <- generateTransactions(srcAddress, srcKey, dstAddress, 3, TransactionFee(1L))
+        txsA <- generateTransactions(srcAddress, srcKey, dstAddress, 3, txHasher = Hasher.forKryo[IO])
+        txsA2 <- generateTransactions(srcAddress, srcKey, dstAddress, 3, TransactionFee(1L), txHasher = Hasher.forKryo[IO])
         roundData = baseRoundData.copy(
           ownProposal = baseRoundData.ownProposal.copy(transactions = txsA.toList.map(_.signed).toSet),
           peerProposals = Map(
@@ -105,7 +106,7 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
             peerIdC -> baseProposal.copy(senderId = peerIdC, transactions = Set.empty)
           )
         )
-        result <- roundData.formBlock(txValidator)
+        result <- roundData.formBlock(txValidator, Hasher.forKryo[IO])
       } yield
         expect.same(
           Block(baseProposal.tips.value, txsA2.map(_.signed).toNes).some,
@@ -114,14 +115,14 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
   }
 
   test("formBlock should pick transactions correctly from the pool of transactions from all facilitators") {
-    case (_, h, sp, srcKey, _, srcAddress, dstAddress, txValidator) =>
+    case (ks, h, sp, srcKey, _, srcAddress, dstAddress, txValidator) =>
       implicit val securityProvider = sp
-      implicit val hasher = h
+      implicit val kryo = ks
 
       for {
-        txsA <- generateTransactions(srcAddress, srcKey, dstAddress, 1)
+        txsA <- generateTransactions(srcAddress, srcKey, dstAddress, 1, txHasher = Hasher.forKryo[IO])
         txRef = TransactionReference.of(txsA.head).some
-        txsA2 <- generateTransactions(srcAddress, srcKey, dstAddress, 1, TransactionFee(1L), txRef)
+        txsA2 <- generateTransactions(srcAddress, srcKey, dstAddress, 1, TransactionFee(1L), txRef, txHasher = Hasher.forKryo[IO])
         roundData = baseRoundData.copy(
           ownProposal = baseRoundData.ownProposal.copy(transactions = txsA.toList.map(_.signed).toSet),
           peerProposals = Map(
@@ -129,7 +130,7 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
             peerIdC -> baseProposal.copy(senderId = peerIdC, transactions = Set.empty)
           )
         )
-        result <- roundData.formBlock(txValidator)
+        result <- roundData.formBlock(txValidator, Hasher.forKryo[IO])
       } yield
         expect.same(
           Block(baseProposal.tips.value, (txsA.map(_.signed) ++ txsA2.map(_.signed).toList).toNes).some,
@@ -138,14 +139,14 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
   }
 
   test("formBlock should pick transactions correctly when concurrent transactions are proposed by different facilitators") {
-    case (_, h, sp, srcKey, _, srcAddress, dstAddress, txValidator) =>
+    case (ks, h, sp, srcKey, _, srcAddress, dstAddress, txValidator) =>
       implicit val securityProvider = sp
-      implicit val hasher = h
+      implicit val kryo = ks
 
       for {
-        txsA <- generateTransactions(srcAddress, srcKey, dstAddress, 2)
+        txsA <- generateTransactions(srcAddress, srcKey, dstAddress, 2, txHasher = Hasher.forKryo[IO])
         txRef = TransactionReference.of(txsA.head).some
-        txsA2 <- generateTransactions(srcAddress, srcKey, dstAddress, 2, TransactionFee(1L), txRef)
+        txsA2 <- generateTransactions(srcAddress, srcKey, dstAddress, 2, TransactionFee(1L), txRef, txHasher = Hasher.forKryo[IO])
         roundData = baseRoundData.copy(
           ownProposal = baseRoundData.ownProposal.copy(transactions = txsA.toList.map(_.signed).toSet),
           peerProposals = Map(
@@ -153,7 +154,7 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
             peerIdC -> baseProposal.copy(senderId = peerIdC, transactions = Set.empty)
           )
         )
-        result <- roundData.formBlock(txValidator)
+        result <- roundData.formBlock(txValidator, Hasher.forKryo[IO])
       } yield
         expect.same(
           Block(baseProposal.tips.value, (NonEmptyList.one(txsA.head.signed) ++ txsA2.map(_.signed).toList).toNes).some,
@@ -162,12 +163,12 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
   }
 
   test("formBlock should discard transactions that are invalid") {
-    case (_, h, sp, srcKey, dstKey, srcAddress, dstAddress, txValidator) =>
+    case (ks, h, sp, srcKey, dstKey, srcAddress, dstAddress, txValidator) =>
       implicit val securityProvider = sp
-      implicit val hasher = h
+      implicit val kryo = ks
 
       for {
-        txsA <- generateTransactions(srcAddress, srcKey, dstAddress, 3)
+        txsA <- generateTransactions(srcAddress, srcKey, dstAddress, 3, txHasher = Hasher.forKryo[IO])
         txToBreak = txsA.toList(1).signed
         brokenTx = txToBreak.copy(proofs = txToBreak.proofs.map(sp => SignatureProof(dstKey.getPublic.toId, sp.signature)))
         txs = Set(txsA.head.signed, brokenTx, txsA.last.signed)
@@ -178,7 +179,7 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
             peerIdC -> baseProposal.copy(senderId = peerIdC, transactions = Set.empty)
           )
         )
-        result <- roundData.formBlock(txValidator)
+        result <- roundData.formBlock(txValidator, Hasher.forKryo[IO])
       } yield
         expect.same(
           Block(baseProposal.tips.value, NonEmptyList.one(txsA.head.signed).toNes).some,

@@ -25,7 +25,9 @@ import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 
 trait GlobalSnapshotStateChannelAcceptanceManager[F[_]] {
-  def accept(ordinal: SnapshotOrdinal, lastGlobalSnapshotInfo: GlobalSnapshotInfo, events: List[StateChannelOutput]): F[
+  def accept(ordinal: SnapshotOrdinal, lastGlobalSnapshotInfo: GlobalSnapshotInfo, events: List[StateChannelOutput])(
+    implicit hasher: Hasher[F]
+  ): F[
     (
       SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
       Set[StateChannelOutput]
@@ -34,7 +36,7 @@ trait GlobalSnapshotStateChannelAcceptanceManager[F[_]] {
 }
 
 object GlobalSnapshotStateChannelAcceptanceManager {
-  def make[F[_]: Async: Hasher](
+  def make[F[_]: Async](
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
     pullDelay: NonNegLong = NonNegLong.MinValue,
     purgeDelay: NonNegLong = NonNegLong.MinValue
@@ -42,7 +44,9 @@ object GlobalSnapshotStateChannelAcceptanceManager {
     Ref.of[F, Map[(Address, Hash), Long]](Map.empty).map { firstSeenKeysForOrdinalR =>
       new GlobalSnapshotStateChannelAcceptanceManager[F] {
 
-        def accept(ordinal: SnapshotOrdinal, lastGlobalSnapshotInfo: GlobalSnapshotInfo, events: List[StateChannelOutput]): F[
+        def accept(ordinal: SnapshotOrdinal, lastGlobalSnapshotInfo: GlobalSnapshotInfo, events: List[StateChannelOutput])(
+          implicit hasher: Hasher[F]
+        ): F[
           (
             SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
             Set[StateChannelOutput]
@@ -71,7 +75,7 @@ object GlobalSnapshotStateChannelAcceptanceManager {
         private def acceptForAddress(
           ordinal: SnapshotOrdinal,
           allowedPeers: Option[NonEmptySet[PeerId]]
-        )(lastHash: Hash, outputs: List[StateChannelOutput]) = for {
+        )(lastHash: Hash, outputs: List[StateChannelOutput])(implicit hasher: Hasher[F]) = for {
           outputsWithHashes <- outputs.traverse(stateChannelOutputWithHashes)
           (notAllowed, allowed) <- allowedForProcessing(ordinal, outputsWithHashes).map(_.partitionMap(identity))
           (impossibleCandidates, possibleCandidates) = onlyPossibleReferences(lastHash, allowed.flatten).partitionMap(identity)
@@ -154,7 +158,7 @@ object GlobalSnapshotStateChannelAcceptanceManager {
         )(signatures: NonEmptySet[SignatureProof]): SortedSet[SignatureProof] =
           signatures.filter(signature => allowedPeers.map(allowed => allowed.contains(signature.id.toPeerId)).getOrElse(true))
 
-        private def stateChannelOutputWithHashes(output: StateChannelOutput) =
+        private def stateChannelOutputWithHashes(output: StateChannelOutput)(implicit hasher: Hasher[F]) =
           output.snapshotBinary.toHashed.map(hashed => StateChannelOutputWithHash(output, hashed.hash, hashed.proofsHash))
 
         private def shouldPurge(seenAt: Long, ordinal: SnapshotOrdinal): Boolean =
