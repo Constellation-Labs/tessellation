@@ -42,7 +42,7 @@ trait Genesis[F[_]] {
 }
 
 object Genesis {
-  def make[F[_]: Async: Hasher: SecurityProvider](
+  def make[F[_]: Async: SecurityProvider](
     keyPair: KeyPair,
     collateral: Collateral[F],
     stateChannelSnapshotService: StateChannelSnapshotService[F],
@@ -52,8 +52,7 @@ object Genesis {
     nodeId: PeerId,
     consensusManager: CurrencyConsensusManager[F],
     genesisLoader: GenesisLoader[F, CurrencySnapshot],
-    identifierStorage: IdentifierStorage[F],
-    hashSelect: HashSelect
+    identifierStorage: IdentifierStorage[F]
   ): Genesis[F] = new Genesis[F] {
     private val logger = Slf4jLogger.getLogger
 
@@ -61,7 +60,7 @@ object Genesis {
       implicit context: L0NodeContext[F]
     ): F[Unit] = for {
       hashedGenesis <- genesis.toHashed[F]
-      firstIncrementalSnapshot <- CurrencySnapshot.mkFirstIncrementalSnapshot[F](hashedGenesis, hashSelect)
+      firstIncrementalSnapshot <- CurrencySnapshot.mkFirstIncrementalSnapshot[F](hashedGenesis)
       signedFirstIncrementalSnapshot <- firstIncrementalSnapshot.sign(keyPair)
       _ <- snapshotStorage.prepend(signedFirstIncrementalSnapshot, hashedGenesis.info.toCurrencySnapshotInfo)
 

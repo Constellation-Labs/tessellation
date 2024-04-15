@@ -32,7 +32,7 @@ import eu.timepit.refined.types.numeric.NonNegLong
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 abstract class SnapshotProcessor[
-  F[_]: Async: SecurityProvider: Hasher,
+  F[_]: Async: SecurityProvider,
   P <: StateProof,
   S <: Snapshot,
   SI <: SnapshotInfo[P]
@@ -41,15 +41,15 @@ abstract class SnapshotProcessor[
 
   def process(
     snapshot: Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), Hashed[GlobalIncrementalSnapshot]]
-  ): F[SnapshotProcessingResult]
+  )(implicit hasher: Hasher[F]): F[SnapshotProcessingResult]
 
   def applyGlobalSnapshotFn(
     lastGlobalState: GlobalSnapshotInfo,
     lastGlobalSnapshot: Signed[GlobalIncrementalSnapshot],
     globalSnapshot: Signed[GlobalIncrementalSnapshot]
-  ): F[GlobalSnapshotInfo]
+  )(implicit hasher: Hasher[F]): F[GlobalSnapshotInfo]
 
-  def applySnapshotFn(lastState: SI, lastSnapshot: Signed[S], snapshot: Signed[S]): F[SI]
+  def applySnapshotFn(lastState: SI, lastSnapshot: Signed[S], snapshot: Signed[S])(implicit hasher: Hasher[F]): F[SI]
 
   def processAlignment(
     alignment: Alignment,
@@ -209,7 +209,7 @@ abstract class SnapshotProcessor[
     snapshotWithState: Either[(Hashed[S], SI), Hashed[S]],
     blockStorage: BlockStorage[F],
     lastSnapshotStorage: LastSnapshotStorage[F, S, SI]
-  ): F[Alignment] = {
+  )(implicit hasher: Hasher[F]): F[Alignment] = {
     snapshotWithState
       .fold({ case (snapshot, _) => snapshot }, identity)
       .blocks

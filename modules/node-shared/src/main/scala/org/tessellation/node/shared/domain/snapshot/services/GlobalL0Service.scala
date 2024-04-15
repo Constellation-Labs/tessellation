@@ -32,11 +32,11 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait GlobalL0Service[F[_]] {
   type LatestSnapshotTuple = (Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)
-  def pullLatestSnapshot: F[LatestSnapshotTuple]
-  def pullLatestSnapshotFromRandomPeer: F[LatestSnapshotTuple]
-  def pullGlobalSnapshots: F[Either[LatestSnapshotTuple, List[Hashed[GlobalIncrementalSnapshot]]]]
-  def pullGlobalSnapshot(ordinal: SnapshotOrdinal): F[Option[Hashed[GlobalIncrementalSnapshot]]]
-  def pullGlobalSnapshot(hash: Hash): F[Option[Hashed[GlobalIncrementalSnapshot]]]
+  def pullLatestSnapshot(implicit hasher: Hasher[F]): F[LatestSnapshotTuple]
+  def pullLatestSnapshotFromRandomPeer(implicit hasher: Hasher[F]): F[LatestSnapshotTuple]
+  def pullGlobalSnapshots(implicit hasherSelector: Hasher[F]): F[Either[LatestSnapshotTuple, List[Hashed[GlobalIncrementalSnapshot]]]]
+  def pullGlobalSnapshot(ordinal: SnapshotOrdinal)(implicit hasher: Hasher[F]): F[Option[Hashed[GlobalIncrementalSnapshot]]]
+  def pullGlobalSnapshot(hash: Hash)(implicit hasher: Hasher[F]): F[Option[Hashed[GlobalIncrementalSnapshot]]]
 }
 
 object GlobalL0Service {
@@ -46,7 +46,7 @@ object GlobalL0Service {
   case object NoPeerAlignedWithMajority extends Exception("No peer available that is aligned with majority") with NoStackTrace
 
   def make[
-    F[_]: Async: Hasher: SecurityProvider
+    F[_]: Async: SecurityProvider
   ](
     l0GlobalSnapshotClient: L0GlobalSnapshotClient[F],
     globalL0ClusterStorage: L0ClusterStorage[F],
@@ -67,32 +67,34 @@ object GlobalL0Service {
 
       private val noSnapshots = List.empty[Hashed[GlobalIncrementalSnapshot]]
 
-      def pullLatestSnapshot: F[LatestSnapshotTuple] =
+      def pullLatestSnapshot(implicit hasherSelector: HasherSelector[F]): F[LatestSnapshotTuple] =
         maybeMajorityPeerIds.fold(pullLatestSnapshotFromRandomPeer)(pullLatestSnapshotWithMajorityHash)
 
-      def pullLatestSnapshotFromRandomPeer: F[LatestSnapshotTuple] =
+      def pullLatestSnapshotFromRandomPeer(implicit hasherSelector: HasherSelector[F]): F[LatestSnapshotTuple] =
         globalL0ClusterStorage.getRandomPeer >>= pullLatestSnapshotFromPeer
 
-      def pullGlobalSnapshot(hash: Hash): F[Option[Hashed[GlobalIncrementalSnapshot]]] =
+      def pullGlobalSnapshot(hash: Hash)(implicit hasher: Hasher[F]): F[Option[Hashed[GlobalIncrementalSnapshot]]] =
         pullGlobalSnapshot(l0GlobalSnapshotClient.get(hash)).handleErrorWith { e =>
           logger
             .warn(e)(s"Failure pulling single snapshot with hash=${hash.show}")
             .as(none)
         }
 
-      def pullGlobalSnapshot(ordinal: SnapshotOrdinal): F[Option[Hashed[GlobalIncrementalSnapshot]]] =
+      def pullGlobalSnapshot(ordinal: SnapshotOrdinal)(implicit hasher: Hasher[F]): F[Option[Hashed[GlobalIncrementalSnapshot]]] =
         pullGlobalSnapshot(l0GlobalSnapshotClient.get(ordinal)).handleErrorWith { e =>
           logger
             .warn(e)(s"Failure pulling single snapshot with ordinal=${ordinal.show}")
             .as(none)
         }
 
-      def pullGlobalSnapshots: F[Either[LatestSnapshotTuple, List[Hashed[GlobalIncrementalSnapshot]]]] =
+      def pullGlobalSnapshots(
+        implicit hasherSelector: HasherSelector[F]
+      ): F[Either[LatestSnapshotTuple, List[Hashed[GlobalIncrementalSnapshot]]]] =
         maybeMajorityPeerIds.fold(pullGlobalSnapshotsFromRandomPeer)(pullGlobalSnapshotsFromMajority)
 
       private def pullGlobalSnapshotsFromMajority(
         majorityPeerIds: NonEmptyList[PeerId]
-      ): F[Either[LatestSnapshotTuple, List[Hashed[GlobalIncrementalSnapshot]]]] =
+      )(implicit hasher: Hasher[F]): F[Either[LatestSnapshotTuple, List[Hashed[GlobalIncrementalSnapshot]]]] =
         lastGlobalSnapshotStorage.getOrdinal.flatMap {
           _.fold {
             pullLatestSnapshotWithMajorityHash(majorityPeerIds).map(_.asLeft[List[Hashed[GlobalIncrementalSnapshot]]])
@@ -116,7 +118,7 @@ object GlobalL0Service {
 
       private def pullLatestSnapshotWithMajorityHash(
         majorityPeerIds: NonEmptyList[PeerId]
-      ): F[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] = {
+      )(implicit hasherSelector: HasherSelector[F]): F[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] = {
         type Agg = SortedSet[L0Peer]
         type Result = LatestSnapshotTuple
         for {
@@ -148,18 +150,20 @@ object GlobalL0Service {
       private def verifyLatestSnapshot(
         snapshotTuple: LatestSnapshotTuple,
         majorityPeers: NonEmptyList[L0Peer]
-      ): F[Boolean] = {
+      )(implicit hasherSelector: HasherSelector[F]): F[Boolean] = {
         val (snapshot, info) = snapshotTuple
         List(
-          stateProofValidation(snapshot, info),
+          hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher => stateProofValidation(snapshot, info)),
           majorityOrdinalValidation(snapshot, majorityPeers),
           majorityHashValidation(snapshot, majorityPeers)
         ).forallM(identity)
       }
 
-      private def stateProofValidation(snapshot: Hashed[GlobalIncrementalSnapshot], info: GlobalSnapshotInfo): F[Boolean] =
+      private def stateProofValidation(snapshot: Hashed[GlobalIncrementalSnapshot], info: GlobalSnapshotInfo)(
+        implicit hasher: Hasher[F]
+      ): F[Boolean] =
         StateProofValidator
-          .validate(snapshot, info, hashSelect)
+          .validate(snapshot, info)
           .flatTap(v => logger.debug(s"Failed StateProofValidation: $v").whenA(v.isInvalid))
           .map(_.isValid)
 
@@ -183,22 +187,29 @@ object GlobalL0Service {
             .as(isMajority)
         }
 
-      private def pullLatestSnapshotFromPeer(l0Peer: L0Peer): F[LatestSnapshotTuple] =
+      private def pullLatestSnapshotFromPeer(l0Peer: L0Peer)(implicit hasherSelector: HasherSelector[F]): F[LatestSnapshotTuple] =
         l0GlobalSnapshotClient.getLatest(l0Peer).flatMap {
           case (snapshot, state) =>
-            snapshot.toHashedWithSignatureCheck.flatMap(_.liftTo[F]).map((_, state))
+            hasherSelector
+              .forOrdinal(snapshot.ordinal) { implicit hasher =>
+                snapshot.toHashedWithSignatureCheck
+              }
+              .flatMap(_.liftTo[F])
+              .map((_, state))
         }
 
       private def pullGlobalSnapshot(
         peerResponse: PeerResponse.PeerResponse[F, Signed[GlobalIncrementalSnapshot]]
-      ): F[Option[Hashed[GlobalIncrementalSnapshot]]] =
+      )(implicit hasher: Hasher[F]): F[Option[Hashed[GlobalIncrementalSnapshot]]] =
         globalL0ClusterStorage.getRandomPeer.flatMap { l0Peer =>
           peerResponse(l0Peer)
             .flatMap(_.toHashedWithSignatureCheck.flatMap(_.liftTo[F]))
             .map(_.some)
         }
 
-      private def pullGlobalSnapshotsFromRandomPeer: F[Either[LatestSnapshotTuple, List[Hashed[GlobalIncrementalSnapshot]]]] =
+      private def pullGlobalSnapshotsFromRandomPeer(
+        implicit hasherSelector: HasherSelector[F]
+      ): F[Either[LatestSnapshotTuple, List[Hashed[GlobalIncrementalSnapshot]]]] =
         lastGlobalSnapshotStorage.getOrdinal.flatMap {
           _.fold {
             pullLatestSnapshotFromRandomPeer.map(_.asLeft[List[Hashed[GlobalIncrementalSnapshot]]])
@@ -231,7 +242,7 @@ object GlobalL0Service {
         l0Peer: L0Peer,
         nextOrdinal: SnapshotOrdinal,
         lastOrdinal: SnapshotOrdinal
-      ): F[Chain[Hashed[GlobalIncrementalSnapshot]]] = {
+      )(implicit hasher: Hasher[F]): F[Chain[Hashed[GlobalIncrementalSnapshot]]] = {
         val ordinals = LazyList
           .range(nextOrdinal.value.value, lastOrdinal.value.value + 1)
           .map(SnapshotOrdinal.unsafeApply)
@@ -285,7 +296,7 @@ object GlobalL0Service {
         nextOrdinal: SnapshotOrdinal,
         msd: MajoritySnapshotData,
         peerSet: NonEmptySet[L0Peer]
-      ): F[List[Hashed[GlobalIncrementalSnapshot]]] = {
+      )(implicit hasher: Hasher[F]): F[List[Hashed[GlobalIncrementalSnapshot]]] = {
         type Agg = SortedSet[L0Peer]
         type Result = List[Hashed[GlobalIncrementalSnapshot]]
         Random

@@ -25,12 +25,13 @@ import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, S
 import org.tessellation.security.Hasher
 
 import fs2.io.file.Path
+import org.tessellation.security.HasherSelector
 
 object Storages {
 
   def dataApplicationCalculatedStatePath = Path("data/calculated_state")
 
-  def make[F[_]: Async: KryoSerializer: JsonSerializer: Hasher: Supervisor: Random](
+  def make[F[_]: Async: KryoSerializer: JsonSerializer: HasherSelector: Supervisor: Random](
     sharedStorages: SharedStorages[F],
     snapshotConfig: SnapshotConfig,
     globalL0Peer: L0Peer,

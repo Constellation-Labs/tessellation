@@ -42,7 +42,7 @@ object HttpApi {
 }
 
 sealed abstract class HttpApi[
-  F[_]: Async: KryoSerializer: Hasher: SecurityProvider: Metrics: Supervisor,
+  F[_]: Async: Hasher: SecurityProvider: Metrics: Supervisor,
   P <: StateProof,
   S <: Snapshot,
   SI <: SnapshotInfo[P]

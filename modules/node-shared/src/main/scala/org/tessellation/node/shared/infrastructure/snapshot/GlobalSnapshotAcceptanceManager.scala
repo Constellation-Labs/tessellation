@@ -8,7 +8,7 @@ import cats.syntax.all._
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
 
-import org.tessellation.currency.schema.currency.CurrencyIncrementalSnapshotV1
+import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshotV1, CurrencySnapshotInfoV1}
 import org.tessellation.ext.crypto._
 import org.tessellation.merkletree.Proof
 import org.tessellation.merkletree.syntax._
@@ -36,7 +36,7 @@ trait GlobalSnapshotAcceptanceManager[F[_]] {
     lastDeprecatedTips: SortedSet[DeprecatedTip],
     calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]],
     validationType: StateChannelValidationType
-  ): F[
+  )(implicit hasher: Hasher[F]): F[
     (
       BlockAcceptanceResult,
       SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
@@ -52,12 +52,13 @@ object GlobalSnapshotAcceptanceManager {
 
   case object InvalidMerkleTree extends NoStackTrace
 
-  def make[F[_]: Async: Hasher](
+  def make[F[_]: Async](
     blockAcceptanceManager: BlockAcceptanceManager[F],
     stateChannelEventsProcessor: GlobalSnapshotStateChannelEventsProcessor[F],
     collateral: Amount
   ) = new GlobalSnapshotAcceptanceManager[F] {
 
+    // NOTE: @mwadon Probably HASHER selector
     def accept(
       ordinal: SnapshotOrdinal,
       blocksForAcceptance: List[Signed[Block]],
@@ -67,7 +68,7 @@ object GlobalSnapshotAcceptanceManager {
       lastDeprecatedTips: SortedSet[DeprecatedTip],
       calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]],
       validationType: StateChannelValidationType
-    ) = for {
+    )(implicit hasher: Hasher[F]) = for {
       acceptanceResult <- acceptBlocks(blocksForAcceptance, lastSnapshotContext, lastActiveTips, lastDeprecatedTips, ordinal)
 
       (scSnapshots, currencySnapshots, returnedSCEvents) <- stateChannelEventsProcessor.process(
@@ -77,11 +78,7 @@ object GlobalSnapshotAcceptanceManager {
         validationType
       )
       sCSnapshotHashes <- scSnapshots.toList.traverse {
-        case (address, nel) =>
-          (Hasher[F].getLogic(ordinal) match {
-            case JsonHash => nel.head.toHashed
-            case KryoHash => nel.head.toKryoHashed
-          }).map(address -> _.hash)
+        case (address, nel) => nel.head.toHashed.map(address -> _.hash)
       }
         .map(_.toMap)
       updatedLastStateChannelSnapshotHashes = lastSnapshotContext.lastStateChannelSnapshotHashes ++ sCSnapshotHashes
@@ -120,17 +117,25 @@ object GlobalSnapshotAcceptanceManager {
           val updatedLastCurrencySnapshotsCompatible = updatedLastCurrencySnapshots.map {
             case (address, Left(snapshot)) => (address, Left(snapshot))
             case (address, Right((Signed(incrementalSnapshot, proofs), info))) =>
-              (address, Right((Signed(CurrencyIncrementalSnapshotV1.fromCurrencyIncrementalSnapshot(incrementalSnapshot), proofs), info)))
+              (
+                address,
+                Right(
+                  (
+                    Signed(CurrencyIncrementalSnapshotV1.fromCurrencyIncrementalSnapshot(incrementalSnapshot), proofs),
+                    CurrencySnapshotInfoV1.fromCurrencySnapshotInfo(info)
+                  )
+                )
+              )
           }
 
-          val maybeMerkleTree = updatedLastCurrencySnapshotsCompatible.compatibleMerkleTree[F]
+          val maybeMerkleTree = updatedLastCurrencySnapshotsCompatible.merkleTree[F] // TODO: @mwadon - HASHER - kryo
 
           val updatedLastCurrencySnapshotProofs = maybeMerkleTree.flatMap {
             _.traverse { merkleTree =>
               updatedLastCurrencySnapshotsCompatible.toList.traverse {
                 case (address, state) =>
                   Hasher[F]
-                    .hashKryo((address, state))
+                    .hash((address, state)) // TODO: @mwadon
                     .map(merkleTree.findPath(_))
                     .flatMap(MonadThrow[F].fromOption(_, InvalidMerkleTree))
                     .map((address, _))
@@ -167,7 +172,7 @@ object GlobalSnapshotAcceptanceManager {
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip],
       ordinal: SnapshotOrdinal
-    ) = {
+    )(implicit hasher: Hasher[F]) = {
       val tipUsages = getTipsUsages(lastActiveTips, lastDeprecatedTips)
       val context = BlockAcceptanceContext.fromStaticData(
         lastSnapshotContext.balances,

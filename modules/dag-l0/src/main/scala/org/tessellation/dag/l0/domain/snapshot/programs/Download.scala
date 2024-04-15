@@ -33,7 +33,7 @@ import retry.RetryPolicies._
 import retry._
 
 object Download {
-  def make[F[_]: Async: Hasher: Random](
+  def make[F[_]: Async: Random](
     snapshotStorage: SnapshotDownloadStorage[F],
     p2pClient: P2PClient[F],
     clusterStorage: ClusterStorage[F],
@@ -41,8 +41,7 @@ object Download {
     globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
     nodeStorage: NodeStorage[F],
     consensus: GlobalSnapshotConsensus[F],
-    peerSelect: PeerSelect[F],
-    hashSelect: HashSelect
+    peerSelect: PeerSelect[F]
   ): Download[F] = new Download[F] {
 
     val logger = Slf4jLogger.getLogger[F]
@@ -54,7 +53,7 @@ object Download {
     type DownloadResult = (Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)
     type ObservationLimit = SnapshotOrdinal
 
-    def download: F[Unit] =
+    def download(implicit hasherSelector: HasherSelector[F]): F[Unit] =
       nodeStorage
         .tryModifyState(NodeState.WaitingForDownload, NodeState.DownloadInProgress, NodeState.WaitingForObserving)(start)
         .flatMap(observe)
@@ -65,7 +64,7 @@ object Download {
         }
         .onError(logger.error(_)("Unexpected failure during download!"))
 
-    def start: F[DownloadResult] = {
+    def start(implicit hasherSelector: HasherSelector[F]): F[DownloadResult] = {
       def latestMetadata = peerSelect.select.flatMap {
         p2pClient.globalSnapshot.getLatestMetadata.run(_)
       }
@@ -74,7 +73,9 @@ object Download {
         latestMetadata.flatTap { metadata =>
           Async[F].whenA(result.isEmpty)(
             logger.info(s"[Download] Cleanup for snapshots greater than ${metadata.ordinal}") >>
-              snapshotStorage.cleanupAbove(metadata.ordinal)
+              hasherSelector.forOrdinal(metadata.ordinal) { implicit hasher =>
+                snapshotStorage.cleanupAbove(metadata.ordinal)
+              }
           )
         }.flatTap { metadata =>
           logger.info(s"Download for startingPoint=${startingPoint}. Latest metadata=${metadata.show}")
@@ -84,15 +85,19 @@ object Download {
           if (batchSize <= minBatchSizeToStartObserving && startingPoint =!= lastFullGlobalSnapshotOrdinal) {
             result.map(_.pure[F]).getOrElse(UnexpectedState.raiseError[F, DownloadResult])
           } else
-            download(metadata.hash, metadata.ordinal, result).flatMap {
-              case (snapshot, context) => go(snapshot.ordinal, (snapshot, context).some)
-            }
+            hasherSelector
+              .forOrdinal(metadata.ordinal) { implicit hasher =>
+                download(metadata.hash, metadata.ordinal, result)
+              }
+              .flatMap {
+                case (snapshot, context) => go(snapshot.ordinal, (snapshot, context).some)
+              }
         }
 
       go(lastFullGlobalSnapshotOrdinal, none[DownloadResult])
     }
 
-    def observe(result: DownloadResult): F[(DownloadResult, ObservationLimit)] = {
+    def observe(result: DownloadResult)(implicit hasherSelector: HasherSelector[F]): F[(DownloadResult, ObservationLimit)] = {
       val (lastSnapshot, _) = result
 
       val observationLimit = SnapshotOrdinal(lastSnapshot.ordinal.value |+| observationOffset)
@@ -109,7 +114,7 @@ object Download {
         go(result).map((_, observationLimit))
     }
 
-    def fetchNextSnapshot(result: DownloadResult): F[DownloadResult] = {
+    def fetchNextSnapshot(result: DownloadResult)(implicit hasherSelector: HasherSelector[F]): F[DownloadResult] = {
       def retryPolicy = constantDelay(fetchSnapshotDelayBetweenTrials)
 
       def isWorthRetrying(err: Throwable): F[Boolean] = err match {
@@ -120,24 +125,27 @@ object Download {
       retryingOnSomeErrors(retryPolicy, isWorthRetrying, retry.noop[F, Throwable]) {
         val (lastSnapshot, lastContext) = result
 
-        fetchSnapshot(none, lastSnapshot.ordinal.next).flatMap { snapshot =>
-          lastSnapshot.toHashed[F].flatMap { hashed =>
-            Applicative[F].unlessA {
-              Validator.isNextSnapshot(hashed, snapshot.value)
-            }(InvalidChain.raiseError[F, Unit])
-          } >>
-            globalSnapshotContextFns
-              .createContext(lastContext, lastSnapshot, snapshot)
-              .handleErrorWith(_ => InvalidChain.raiseError[F, GlobalSnapshotContext])
-              .flatTap { _ =>
-                snapshotStorage.writePersisted(snapshot)
-              }
-              .map((snapshot, _))
+        hasherSelector.forOrdinal(lastSnapshot.ordinal.next) { implicit hasher =>
+          fetchSnapshot(none, lastSnapshot.ordinal.next).flatMap { snapshot =>
+            lastSnapshot.toHashed[F].flatMap { hashed =>
+              Applicative[F].unlessA {
+                Validator.isNextSnapshot(hashed, snapshot.value)
+              }(InvalidChain.raiseError[F, Unit])
+            } >>
+              globalSnapshotContextFns
+                .createContext(lastContext, lastSnapshot, snapshot)
+                .handleErrorWith(_ => InvalidChain.raiseError[F, GlobalSnapshotContext])
+                .flatTap { _ =>
+                  snapshotStorage.writePersisted(snapshot)
+                }
+                .map((snapshot, _))
+          }
+
         }
       }
     }
 
-    def download(hash: Hash, ordinal: SnapshotOrdinal, state: Option[DownloadResult]): F[DownloadResult] = {
+    def download(hash: Hash, ordinal: SnapshotOrdinal, state: Option[DownloadResult])(implicit hasher: Hasher[F]): F[DownloadResult] = {
 
       def go(tmpMap: Map[SnapshotOrdinal, Hash], stepHash: Hash, stepOrdinal: SnapshotOrdinal): F[DownloadResult] =
         isSnapshotPersistedOrReachedGenesis(stepHash, stepOrdinal).ifM(
@@ -188,7 +196,7 @@ object Download {
       startingOrdinal: Option[SnapshotOrdinal],
       endingOrdinal: SnapshotOrdinal,
       state: Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]
-    ): F[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] = {
+    )(implicit hasher: Hasher[F]): F[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] = {
 
       type Agg = DownloadResult
 
@@ -226,11 +234,11 @@ object Download {
                       .hasCorrectSnapshotInfo(snapshot.ordinal, snapshot.stateProof)
                       .ifM(
                         ().pure[F],
-                        (hashSelect.select(snapshot.ordinal) match {
-                          case JsonHash => StateProofValidator.validate(snapshot, newContext, hashSelect).map(_.isValid)
+                        (Hasher[F].getLogic(snapshot.ordinal) match {
+                          case JsonHash => StateProofValidator.validate(snapshot, newContext).map(_.isValid)
                           case KryoHash =>
                             StateProofValidator
-                              .validate(snapshot, GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(newContext), hashSelect)
+                              .validate(snapshot, GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(newContext))
                               .map(_.isValid)
                         })
                           .ifM(
@@ -261,7 +269,7 @@ object Download {
 
     def getGenesisSnapshot(
       tmpMap: Map[SnapshotOrdinal, Hash]
-    ): F[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] =
+    )(implicit hasher: Hasher[F]): F[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] =
       snapshotStorage
         .readGenesis(lastFullGlobalSnapshotOrdinal)
         .flatMap {
@@ -284,7 +292,8 @@ object Download {
             .map { case (full, incremental) => (incremental, GlobalSnapshotInfoV1.toGlobalSnapshotInfo(full.info)) }
         }
 
-    def fetchSnapshot(hash: Option[Hash], ordinal: SnapshotOrdinal): F[Signed[GlobalIncrementalSnapshot]] =
+    // TODO: @mwadon - HASHER PER ORDINAL
+    def fetchSnapshot(hash: Option[Hash], ordinal: SnapshotOrdinal)(implicit hasher: Hasher[F]): F[Signed[GlobalIncrementalSnapshot]] =
       clusterStorage.getResponsivePeers
         .map(NodeState.ready)
         .map(_.toList)
@@ -321,7 +330,7 @@ object Download {
           case _              => CannotFetchSnapshot.raiseError[F, Signed[GlobalIncrementalSnapshot]]
         }
 
-    def fetchGenesis(ordinal: SnapshotOrdinal): F[Signed[GlobalSnapshot]] =
+    def fetchGenesis(ordinal: SnapshotOrdinal)(implicit hasher: Hasher[F]): F[Signed[GlobalSnapshot]] =
       clusterStorage.getResponsivePeers
         .map(NodeState.ready)
         .map(_.toList)

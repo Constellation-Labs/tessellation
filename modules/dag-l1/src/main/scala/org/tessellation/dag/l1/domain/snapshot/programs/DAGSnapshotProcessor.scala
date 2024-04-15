@@ -14,7 +14,7 @@ import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
 
 object DAGSnapshotProcessor {
 
-  def make[F[_]: Async: Hasher: SecurityProvider](
+  def make[F[_]: Async: SecurityProvider](
     addressStorage: AddressStorage[F],
     blockStorage: BlockStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
@@ -27,7 +27,7 @@ object DAGSnapshotProcessor {
 
       def process(
         snapshot: Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), Hashed[GlobalIncrementalSnapshot]]
-      ): F[SnapshotProcessingResult] =
+      )(implicit hasher: Hasher[F]): F[SnapshotProcessingResult] =
         checkAlignment(snapshot, blockStorage, lastGlobalSnapshotStorage)
           .flatMap(processAlignment(_, blockStorage, transactionStorage, lastGlobalSnapshotStorage, addressStorage))
 
@@ -35,12 +35,12 @@ object DAGSnapshotProcessor {
         lastState: GlobalSnapshotInfo,
         lastSnapshot: Signed[GlobalIncrementalSnapshot],
         snapshot: Signed[GlobalIncrementalSnapshot]
-      ): F[GlobalSnapshotInfo] = applyGlobalSnapshotFn(lastState, lastSnapshot, snapshot)
+      )(implicit hasher: Hasher[F]): F[GlobalSnapshotInfo] = applyGlobalSnapshotFn(lastState, lastSnapshot, snapshot)
 
       def applyGlobalSnapshotFn(
         lastGlobalState: GlobalSnapshotInfo,
         lastGlobalSnapshot: Signed[GlobalIncrementalSnapshot],
         globalSnapshot: Signed[GlobalIncrementalSnapshot]
-      ): F[GlobalSnapshotInfo] = globalSnapshotContextFns.createContext(lastGlobalState, lastGlobalSnapshot, globalSnapshot)
+      )(implicit hasher: Hasher[F]): F[GlobalSnapshotInfo] = globalSnapshotContextFns.createContext(lastGlobalState, lastGlobalSnapshot, globalSnapshot)
     }
 }

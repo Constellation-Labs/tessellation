@@ -24,11 +24,11 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object BlockAcceptanceManager {
 
-  def make[F[_]: Async: Hasher: SecurityProvider](
+  def make[F[_]: Async: SecurityProvider](
     blockValidator: BlockValidator[F]
   ): BlockAcceptanceManager[F] = make(BlockAcceptanceLogic.make[F], blockValidator)
 
-  def make[F[_]: Async: Hasher](
+  def make[F[_]: Async](
     logic: BlockAcceptanceLogic[F],
     blockValidator: BlockValidator[F]
   ): BlockAcceptanceManager[F] =
@@ -39,7 +39,7 @@ object BlockAcceptanceManager {
         blocks: List[Signed[Block]],
         context: BlockAcceptanceContext[F],
         snapshotOrdinal: SnapshotOrdinal
-      ): F[BlockAcceptanceResult] = {
+      )(implicit hasher: Hasher[F]): F[BlockAcceptanceResult] = {
 
         def go(
           initState: BlockAcceptanceState,
@@ -102,7 +102,7 @@ object BlockAcceptanceManager {
         block: Signed[Block],
         context: BlockAcceptanceContext[F],
         snapshotOrdinal: SnapshotOrdinal
-      ): F[Either[BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, NonNegLong)]] =
+      )(implicit hasher: Hasher[F]): F[Either[BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, NonNegLong)]] =
         blockValidator.validate(block, snapshotOrdinal).flatMap {
           _.toEither
             .leftMap(errors => ValidationFailed(errors.toNonEmptyList))
@@ -115,14 +115,14 @@ object BlockAcceptanceManager {
             .value
         }
 
-      private def logAcceptedBlock(tuple: (Signed[Block], NonNegLong)): F[Unit] = {
+      private def logAcceptedBlock(tuple: (Signed[Block], NonNegLong))(implicit hasher: Hasher[F]): F[Unit] = {
         val (signedBlock, blockUsages) = tuple
         BlockReference.of(signedBlock).flatMap { blockRef =>
           logger.info(s"Accepted block: ${blockRef.show}, usages: ${blockUsages.show}")
         }
       }
 
-      private def logNotAcceptedBlock(tuple: (Signed[Block], BlockNotAcceptedReason)): F[Unit] = {
+      private def logNotAcceptedBlock(tuple: (Signed[Block], BlockNotAcceptedReason))(implicit hasher: Hasher[F]): F[Unit] = {
         val (signedBlock, reason) = tuple
         BlockReference.of(signedBlock).flatMap { blockRef =>
           reason match {

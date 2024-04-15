@@ -19,10 +19,11 @@ import org.tessellation.node.shared.infrastructure.snapshot.{GlobalSnapshotConte
 import org.tessellation.node.shared.modules.SharedPrograms
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.security.{HashSelect, Hasher, SecurityProvider}
+import org.tessellation.security.HasherSelector
 
 object Programs {
 
-  def make[F[_]: Async: KryoSerializer: JsonSerializer: Hasher: SecurityProvider: Random](
+  def make[F[_]: Async: KryoSerializer: JsonSerializer: HasherSelector: SecurityProvider: Random](
     sharedPrograms: SharedPrograms[F],
     storages: Storages[F],
     services: Services[F],
@@ -48,8 +49,7 @@ object Programs {
         globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
         storages.node,
         services.consensus,
-        peerSelect,
-        hashSelect
+        peerSelect
       )
     val rollbackLoader = RollbackLoader.make(
       keyPair,

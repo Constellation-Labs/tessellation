@@ -14,8 +14,9 @@ import eu.timepit.refined.auto._
 import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder}
 import org.http4s.dsl.Http4sDsl
 import org.http4s.{EntityDecoder, HttpRoutes}
+import org.tessellation.security.Hasher
 
-final case class StateChannelRoutes[F[_]: Async](
+final case class StateChannelRoutes[F[_]: Async: Hasher](
   stateChannelService: StateChannelService[F]
 ) extends Http4sDsl[F]
     with PublicRoutes[F] {

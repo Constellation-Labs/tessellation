@@ -55,12 +55,12 @@ trait CurrencySnapshotCreator[F[_]] {
     events: Set[CurrencySnapshotEvent],
     rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
     facilitators: Set[PeerId]
-  ): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]
+  )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]
 }
 
 object CurrencySnapshotCreator {
 
-  def make[F[_]: Async: Hasher: JsonSerializer](
+  def make[F[_]: Async: JsonSerializer](
     currencySnapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F],
     dataApplicationSnapshotAcceptanceManager: Option[DataApplicationSnapshotAcceptanceManager[F]],
     snapshotSizeConfig: SnapshotSizeConfig,
@@ -82,7 +82,7 @@ object CurrencySnapshotCreator {
       events: Set[CurrencySnapshotEvent],
       rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
       facilitators: Set[PeerId]
-    ): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] = {
+    )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] = {
 
       val maxArtifactSize = maxProposalSizeInBytes(facilitators)
 

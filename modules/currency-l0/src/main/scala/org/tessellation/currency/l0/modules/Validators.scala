@@ -12,7 +12,7 @@ import org.tessellation.security.{Hasher, SecurityProvider}
 
 object Validators {
 
-  def make[F[_]: Async: Hasher: SecurityProvider](
+  def make[F[_]: Async: SecurityProvider](
     seedlist: Option[Set[SeedlistEntry]]
   ): Validators[F] = {
     val signedValidator = SignedValidator.make[F]

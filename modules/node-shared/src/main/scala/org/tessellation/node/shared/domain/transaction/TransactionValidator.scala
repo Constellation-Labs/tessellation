@@ -14,10 +14,11 @@ import org.tessellation.security.signature.{Signed, SignedValidator}
 import derevo.cats.{eqv, show}
 import derevo.derive
 import eu.timepit.refined.auto._
+import org.tessellation.security.Hasher
 
 trait TransactionValidator[F[_]] {
 
-  def validate(signedTransaction: Signed[Transaction]): F[TransactionValidationErrorOr[Signed[Transaction]]]
+  def validate(signedTransaction: Signed[Transaction])(implicit hasher: Hasher[F]): F[TransactionValidationErrorOr[Signed[Transaction]]]
 
 }
 
@@ -35,7 +36,7 @@ object TransactionValidator {
     new TransactionValidator[F] {
       def validate(
         signedTransaction: Signed[Transaction]
-      ): F[TransactionValidationErrorOr[Signed[Transaction]]] =
+      )(implicit hasher: Hasher[F]): F[TransactionValidationErrorOr[Signed[Transaction]]] =
         for {
           signaturesV <- signedValidator
             .validateSignatures(signedTransaction)

@@ -16,8 +16,9 @@ import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.dsl.Http4sDsl
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+import org.tessellation.security.Hasher
 
-final case class RegistrationRoutes[F[_]: Async](cluster: Cluster[F]) extends Http4sDsl[F] with P2PPublicRoutes[F] {
+final case class RegistrationRoutes[F[_]: Async: Hasher](cluster: Cluster[F]) extends Http4sDsl[F] with P2PPublicRoutes[F] {
 
   implicit val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLogger[F]
 

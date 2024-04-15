@@ -17,8 +17,9 @@ import monocle.Lens
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.dsl.Http4sDsl
+import org.tessellation.security.Hasher
 
-class ConsensusInfoRoutes[F[_]: Async, Key: Encoder, Outcome](
+class ConsensusInfoRoutes[F[_]: Async: Hasher, Key: Encoder, Outcome](
   cluster: Cluster[F],
   consensusStorage: ConsensusStorage[F, _, Key, _, _, _, Outcome, _],
   selfId: PeerId

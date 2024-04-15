@@ -17,17 +17,17 @@ trait TransactionChainValidator[F[_]] {
 
   def validate(
     transactions: NonEmptySet[Signed[Transaction]]
-  ): F[TransactionChainValidationErrorOr[Map[Address, TransactionNel]]]
+  )(implicit hasher: Hasher[F]): F[TransactionChainValidationErrorOr[Map[Address, TransactionNel]]]
 }
 
 object TransactionChainValidator {
 
-  def make[F[_]: Async: Hasher]: TransactionChainValidator[F] =
+  def make[F[_]: Async]: TransactionChainValidator[F] =
     new TransactionChainValidator[F] {
 
       def validate(
         transactions: NonEmptySet[Signed[Transaction]]
-      ): F[TransactionChainValidationErrorOr[Map[Address, TransactionNel]]] =
+      )(implicit hasher: Hasher[F]): F[TransactionChainValidationErrorOr[Map[Address, TransactionNel]]] =
         transactions.toNonEmptyList
           .groupBy(_.value.source)
           .toList
@@ -44,7 +44,7 @@ object TransactionChainValidator {
       private def validateChainForSingleAddress(
         address: Address,
         txs: TransactionNel
-      ): EitherT[F, TransactionChainBroken, TransactionNel] = {
+      )(implicit hasher: Hasher[F]): EitherT[F, TransactionChainBroken, TransactionNel] = {
         val sortedTxs = txs.sortBy(_.ordinal)
         val initChain = NonEmptyList.of(sortedTxs.head).asRight[TransactionChainBroken].toEitherT[F]
         sortedTxs.tail

@@ -27,7 +27,7 @@ import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-sealed abstract class CurrencySnapshotProcessor[F[_]: Async: Hasher: SecurityProvider]
+sealed abstract class CurrencySnapshotProcessor[F[_]: Async: SecurityProvider]
     extends SnapshotProcessor[
       F,
       CurrencySnapshotStateProof,
@@ -37,7 +37,7 @@ sealed abstract class CurrencySnapshotProcessor[F[_]: Async: Hasher: SecurityPro
 
 object CurrencySnapshotProcessor {
 
-  def make[F[_]: Async: Random: SecurityProvider: Hasher](
+  def make[F[_]: Async: Random: SecurityProvider](
     identifier: Address,
     addressStorage: AddressStorage[F],
     blockStorage: BlockStorage[F],
@@ -52,7 +52,7 @@ object CurrencySnapshotProcessor {
     new CurrencySnapshotProcessor[F] {
       def process(
         snapshot: Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), Hashed[GlobalIncrementalSnapshot]]
-      ): F[SnapshotProcessingResult] =
+      )(implicit hasher: Hasher[F]): F[SnapshotProcessingResult] =
         snapshot match {
           case Left((globalSnapshot, globalState)) =>
             val globalSnapshotReference = SnapshotReference.fromHashedSnapshot(globalSnapshot)
@@ -90,13 +90,13 @@ object CurrencySnapshotProcessor {
         lastState: GlobalSnapshotInfo,
         lastSnapshot: Signed[GlobalIncrementalSnapshot],
         snapshot: Signed[GlobalIncrementalSnapshot]
-      ): F[GlobalSnapshotInfo] = globalSnapshotContextFns.createContext(lastState, lastSnapshot, snapshot)
+      )(implicit hasher: Hasher[F]): F[GlobalSnapshotInfo] = globalSnapshotContextFns.createContext(lastState, lastSnapshot, snapshot)
 
       def applySnapshotFn(
         lastState: CurrencySnapshotInfo,
         lastSnapshot: Signed[CurrencyIncrementalSnapshot],
         snapshot: Signed[CurrencyIncrementalSnapshot]
-      ): F[CurrencySnapshotInfo] =
+      )(implicit hasher: Hasher[F]): F[CurrencySnapshotInfo] =
         currencySnapshotContextFns.createContext(CurrencySnapshotContext(identifier, lastState), lastSnapshot, snapshot).map(_.snapshotInfo)
 
       private def processCurrencySnapshots(
@@ -104,7 +104,7 @@ object CurrencySnapshotProcessor {
         globalState: GlobalSnapshotInfo,
         globalSnapshotReference: SnapshotReference,
         setGlobalSnapshot: F[SnapshotProcessingResult]
-      ): F[SnapshotProcessingResult] =
+      )(implicit hasher: Hasher[F]): F[SnapshotProcessingResult] =
         fetchCurrencySnapshots(globalSnapshot).flatMap {
           case Some(Validated.Valid(hashedSnapshots)) =>
             prepareIntermediateStorages(addressStorage, blockStorage, lastCurrencySnapshotStorage, transactionStorage).flatMap {
@@ -183,7 +183,7 @@ object CurrencySnapshotProcessor {
         blockStorage: BlockStorage[F],
         lastCurrencySnapshotStorage: LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
         transactionStorage: TransactionStorage[F]
-      ): F[
+      )(implicit hasher: Hasher[F]): F[
         (
           AddressStorage[F],
           BlockStorage[F],
@@ -211,7 +211,7 @@ object CurrencySnapshotProcessor {
       // currency snapshots. Binary that fails to deserialize as currency snapshot are ignored here.
       private def fetchCurrencySnapshots(
         globalSnapshot: GlobalIncrementalSnapshot
-      ): F[Option[ValidatedNel[InvalidSignatureForHash[CurrencyIncrementalSnapshot], NonEmptyList[Hashed[CurrencyIncrementalSnapshot]]]]] =
+      )(implicit hasher: Hasher[F]): F[Option[ValidatedNel[InvalidSignatureForHash[CurrencyIncrementalSnapshot], NonEmptyList[Hashed[CurrencyIncrementalSnapshot]]]]] =
         globalSnapshot.stateChannelSnapshots
           .get(identifier) match {
           case Some(snapshots) =>

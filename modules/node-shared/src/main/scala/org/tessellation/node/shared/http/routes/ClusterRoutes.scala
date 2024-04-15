@@ -24,8 +24,9 @@ import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import shapeless._
 import shapeless.syntax.singleton._
+import org.tessellation.security.Hasher
 
-final case class ClusterRoutes[F[_]: Async](
+final case class ClusterRoutes[F[_]: Async: Hasher](
   joining: Joining[F],
   peerDiscovery: PeerDiscovery[F],
   clusterStorage: ClusterStorage[F],

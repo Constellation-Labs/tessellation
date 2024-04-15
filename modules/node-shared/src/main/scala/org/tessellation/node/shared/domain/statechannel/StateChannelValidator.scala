@@ -24,11 +24,12 @@ import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.PosLong
+import org.tessellation.security.Hasher
 
 trait StateChannelValidator[F[_]] {
 
-  def validate(stateChannelOutput: StateChannelOutput): F[StateChannelValidationErrorOr[StateChannelOutput]]
-  def validateHistorical(stateChannelOutput: StateChannelOutput): F[StateChannelValidationErrorOr[StateChannelOutput]]
+  def validate(stateChannelOutput: StateChannelOutput)(implicit hasher: Hasher[F]): F[StateChannelValidationErrorOr[StateChannelOutput]]
+  def validateHistorical(stateChannelOutput: StateChannelOutput)(implicit hasher: Hasher[F]): F[StateChannelValidationErrorOr[StateChannelOutput]]
 
 }
 
@@ -41,10 +42,10 @@ object StateChannelValidator {
     maxBinarySizeInBytes: PosLong
   ): StateChannelValidator[F] = new StateChannelValidator[F] {
 
-    def validate(stateChannelOutput: StateChannelOutput): F[StateChannelValidationErrorOr[StateChannelOutput]] =
+    def validate(stateChannelOutput: StateChannelOutput)(implicit hasher: Hasher[F]): F[StateChannelValidationErrorOr[StateChannelOutput]] =
       validateHistorical(stateChannelOutput).map(_.product(validateAllowedSignatures(stateChannelOutput)).as(stateChannelOutput))
 
-    def validateHistorical(stateChannelOutput: StateChannelOutput): F[StateChannelValidationErrorOr[StateChannelOutput]] =
+    def validateHistorical(stateChannelOutput: StateChannelOutput)(implicit hasher: Hasher[F]): F[StateChannelValidationErrorOr[StateChannelOutput]] =
       for {
         signaturesV <- signedValidator
           .validateSignatures(stateChannelOutput.snapshotBinary)

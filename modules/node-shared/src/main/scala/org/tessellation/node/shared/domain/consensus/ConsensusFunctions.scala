@@ -6,6 +6,7 @@ import org.tessellation.node.shared.domain.consensus.ConsensusFunctions.InvalidA
 import org.tessellation.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.Hasher
 
 trait ConsensusFunctions[F[_], Event, Key, Artifact, Context] {
 
@@ -19,7 +20,7 @@ trait ConsensusFunctions[F[_], Event, Key, Artifact, Context] {
     trigger: ConsensusTrigger,
     artifact: Artifact,
     facilitators: Set[PeerId]
-  ): F[Either[InvalidArtifact, (Artifact, Context)]]
+  )(implicit hasher: Hasher[F]): F[Either[InvalidArtifact, (Artifact, Context)]]
 
   def createProposalArtifact(
     lastKey: Key,
@@ -28,7 +29,7 @@ trait ConsensusFunctions[F[_], Event, Key, Artifact, Context] {
     trigger: ConsensusTrigger,
     events: Set[Event],
     facilitators: Set[PeerId]
-  ): F[(Artifact, Context, Set[Event])]
+  )(implicit hasher: Hasher[F]): F[(Artifact, Context, Set[Event])]
 }
 
 object ConsensusFunctions {

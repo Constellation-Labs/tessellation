@@ -16,6 +16,7 @@ import derevo.cats.{eqv, show}
 import derevo.derive
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.PosInt
+import org.tessellation.security.Hasher
 
 trait BlockValidator[F[_]] {
 
@@ -25,20 +26,20 @@ trait BlockValidator[F[_]] {
     signedBlock: Signed[Block],
     snapshotOrdinal: SnapshotOrdinal,
     params: BlockValidationParams = BlockValidationParams.default
-  ): F[BlockValidationErrorOr[(Signed[Block], Map[Address, TransactionNel])]]
+  )(implicit hasher: Hasher[F]): F[BlockValidationErrorOr[(Signed[Block], Map[Address, TransactionNel])]]
 
   def validateGetBlock(
     signedBlock: Signed[Block],
     params: BlockValidationParams = BlockValidationParams.default,
     snapshotOrdinal: SnapshotOrdinal
-  )(implicit ev: Functor[F]): F[BlockValidationErrorOr[Signed[Block]]] =
+  )(implicit ev: Functor[F], hasher: Hasher[F]): F[BlockValidationErrorOr[Signed[Block]]] =
     validate(signedBlock, snapshotOrdinal, params).map(_.map(_._1))
 
   def validateGetTxChains(
     signedBlock: Signed[Block],
     snapshotOrdinal: SnapshotOrdinal,
     params: BlockValidationParams = BlockValidationParams.default
-  )(implicit ev: Functor[F]): F[BlockValidationErrorOr[Map[Address, TransactionNel]]] =
+  )(implicit ev: Functor[F], hasher: Hasher[F]): F[BlockValidationErrorOr[Map[Address, TransactionNel]]] =
     validate(signedBlock, snapshotOrdinal, params).map(_.map(_._2))
 }
 

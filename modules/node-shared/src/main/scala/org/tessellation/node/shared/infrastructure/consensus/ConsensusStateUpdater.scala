@@ -22,6 +22,7 @@ import org.tessellation.security.signature.Signed
 import eu.timepit.refined.auto._
 import io.circe.Encoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+import org.tessellation.security.Hasher
 
 trait ConsensusStateUpdater[F[_], Key, Artifact, Context, Status, Outcome, Kind] {
 
@@ -223,7 +224,7 @@ object ConsensusStateUpdater {
     proposals: List[Hash],
     facilitators: Set[PeerId],
     consensusFns: ConsensusFunctions[F, Event, Key, Artifact, Context]
-  ): F[Option[ArtifactInfo[Artifact, Context]]] = {
+  )(implicit hasher: Hasher[F]): F[Option[ArtifactInfo[Artifact, Context]]] = {
     def go(proposals: List[(Int, Hash)]): F[Option[ArtifactInfo[Artifact, Context]]] =
       proposals match {
         case (occurrences, majorityHash) :: tail =>

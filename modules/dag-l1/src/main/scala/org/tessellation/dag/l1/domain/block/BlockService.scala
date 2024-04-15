@@ -25,12 +25,12 @@ import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 
 trait BlockService[F[_]] {
-  def accept(signedBlock: Signed[Block]): F[Unit]
+  def accept(signedBlock: Signed[Block])(implicit hasher: Hasher[F]): F[Unit]
 }
 
 object BlockService {
 
-  def make[F[_]: Async: Hasher](
+  def make[F[_]: Async](
     blockAcceptanceManager: BlockAcceptanceManager[F],
     addressStorage: AddressStorage[F],
     blockStorage: BlockStorage[F],
@@ -40,7 +40,7 @@ object BlockService {
   ): BlockService[F] =
     new BlockService[F] {
 
-      def accept(signedBlock: Signed[Block]): F[Unit] =
+      def accept(signedBlock: Signed[Block])(implicit hasher: Hasher[F]): F[Unit] =
         signedBlock.toHashed.flatMap { hashedBlock =>
           EitherT
             .fromOptionF(lastGlobalSnapshotStorage.getOrdinal, SnapshotOrdinalUnavailable)
@@ -66,7 +66,7 @@ object BlockService {
         def getCollateral: Amount = collateral
       }
 
-      private def processAcceptanceSuccess(hashedBlock: Hashed[Block])(contextUpdate: BlockAcceptanceContextUpdate): F[Unit] = for {
+      private def processAcceptanceSuccess(hashedBlock: Hashed[Block])(contextUpdate: BlockAcceptanceContextUpdate)(implicit hasher: Hasher[F]): F[Unit] = for {
         hashedTransactions <- hashedBlock.signed.transactions.toNonEmptyList
           .sortBy(_.ordinal)
           .traverse(_.toHashed)

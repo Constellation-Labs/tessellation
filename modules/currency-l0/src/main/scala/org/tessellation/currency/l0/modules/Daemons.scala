@@ -12,10 +12,12 @@ import org.tessellation.node.shared.domain.Daemon
 import org.tessellation.node.shared.infrastructure.cluster.daemon.NodeStateDaemon
 import org.tessellation.node.shared.infrastructure.collateral.daemon.CollateralDaemon
 import org.tessellation.node.shared.infrastructure.snapshot.daemon.{DownloadDaemon, SelectablePeerDiscoveryDelay}
+import org.tessellation.security.Hasher
+import org.tessellation.security.HasherSelector
 
 object Daemons {
 
-  def start[F[_]: Async: Supervisor](
+  def start[F[_]: Async: Supervisor: HasherSelector](
     storages: Storages[F],
     services: Services[F],
     programs: Programs[F],

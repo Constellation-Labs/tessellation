@@ -39,9 +39,10 @@ import eu.timepit.refined.types.numeric.NonNegLong
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import retry.RetryPolicies._
 import retry._
+import org.tessellation.security.HasherSelector
 
 object Download {
-  def make[F[_]: Async: Hasher: Random](
+  def make[F[_]: Async: Random](
     p2pClient: P2PClient[F],
     clusterStorage: ClusterStorage[F],
     currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
@@ -50,7 +51,7 @@ object Download {
     peerSelect: PeerSelect[F],
     identifierStorage: IdentifierStorage[F],
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]]
-  )(implicit l0NodeContext: L0NodeContext[F]): Download[F] = new Download[F] {
+  )(implicit l0NodeContext: L0NodeContext[F], hasherSelector: HasherSelector[F]): Download[F] = new Download[F] {
 
     val logger = Slf4jLogger.getLogger[F]
 
@@ -129,18 +130,21 @@ object Download {
         val (lastSnapshot, lastContext) = result
 
         fetchSnapshot(none, lastSnapshot.ordinal.next).flatMap { snapshot =>
-          lastSnapshot.toHashed[F].flatMap { hashed =>
-            Applicative[F].unlessA {
-              Validator.isNextSnapshot(hashed, snapshot.value)
-            }(InvalidChain.raiseError[F, Unit])
-          } >>
-            identifierStorage.get
-              .flatMap(currencyAddress =>
-                currencySnapshotContextFns
-                  .createContext(CurrencySnapshotContext(currencyAddress, lastContext), lastSnapshot, snapshot)
-                  .handleErrorWith(_ => InvalidChain.raiseError[F, CurrencySnapshotContext])
-              )
-              .map(c => (snapshot, c.snapshotInfo))
+          hasherSelector
+            .forOrdinal(lastSnapshot.ordinal) { implicit hasher =>
+              lastSnapshot.toHashed[F].flatMap { hashed =>
+                Applicative[F].unlessA {
+                  Validator.isNextSnapshot(hashed, snapshot.value)
+                }(InvalidChain.raiseError[F, Unit])
+              } >>
+                identifierStorage.get
+                  .flatMap(currencyAddress =>
+                    currencySnapshotContextFns
+                      .createContext(CurrencySnapshotContext(currencyAddress, lastContext), lastSnapshot, snapshot)
+                      .handleErrorWith(_ => InvalidChain.raiseError[F, CurrencySnapshotContext])
+                  )
+                  .map(c => (snapshot, c.snapshotInfo))
+            }
         }
       }
     }
@@ -164,7 +168,7 @@ object Download {
               p2pClient.currencySnapshot
                 .get(ordinal)
                 .run(peer)
-                .flatMap(_.toHashed[F])
+                .flatMap(snapshot => hasherSelector.forOrdinal(snapshot.ordinal)(implicit hasher => snapshot.toHashed[F]))
                 .map(_.some)
                 .handleError(_ => none[Hashed[CurrencyIncrementalSnapshot]])
                 .map {

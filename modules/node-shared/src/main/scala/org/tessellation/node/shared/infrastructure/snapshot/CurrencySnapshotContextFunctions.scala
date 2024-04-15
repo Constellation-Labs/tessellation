@@ -24,19 +24,19 @@ abstract class CurrencySnapshotContextFunctions[F[_]]
     extends SnapshotContextFunctions[F, CurrencyIncrementalSnapshot, CurrencySnapshotContext]
 
 object CurrencySnapshotContextFunctions {
-  def make[F[_]: Async: Hasher](validator: CurrencySnapshotValidator[F], hashSelect: HashSelect) =
+  def make[F[_]: Async](validator: CurrencySnapshotValidator[F]) =
     new CurrencySnapshotContextFunctions[F] {
       def createContext(
         context: CurrencySnapshotContext,
         lastArtifact: Signed[CurrencyIncrementalSnapshot],
         signedArtifact: Signed[CurrencyIncrementalSnapshot]
-      ): F[CurrencySnapshotContext] = for {
+      )(implicit hasher: Hasher[F]): F[CurrencySnapshotContext] = for {
         validatedS <- validator.validateSignedSnapshot(lastArtifact, context, signedArtifact)
         validatedContext <- validatedS match {
           case Validated.Valid((_, validatedContext)) => validatedContext.pure[F]
           case Validated.Invalid(e)                   => CannotCreateContext(e).raiseError[F, CurrencySnapshotContext]
         }
-        _ <- StateProofValidator.validate(signedArtifact, validatedContext.snapshotInfo, hashSelect).flatMap {
+        _ <- StateProofValidator.validate(signedArtifact, validatedContext.snapshotInfo).flatMap {
           case Validated.Valid(_)   => Async[F].unit
           case Validated.Invalid(e) => e.raiseError[F, Unit]
         }

@@ -19,7 +19,7 @@ import org.tessellation.security.{Hasher, SecurityProvider}
 object Validators {
 
   def make[
-    F[_]: Async: Hasher: SecurityProvider,
+    F[_]: Async: SecurityProvider,
     P <: StateProof,
     S <: Snapshot,
     SI <: SnapshotInfo[P]

@@ -21,7 +21,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object RollbackLoader {
 
-  def make[F[_]: Async: KryoSerializer: JsonSerializer: Hasher: SecurityProvider](
+  def make[F[_]: Async: KryoSerializer: JsonSerializer: SecurityProvider](
     keyPair: KeyPair,
     snapshotConfig: SnapshotConfig,
     incrementalGlobalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
@@ -74,7 +74,7 @@ sealed abstract class RollbackLoader[F[_]: Async: KryoSerializer: JsonSerializer
               }
             case Some(fullSnapshot) =>
               logger.info("Rollback hash points to full global snapshot") >>
-                fullSnapshot.toHashed[F].flatMap(GlobalSnapshot.mkFirstIncrementalSnapshot[F](_, hashSelect)).flatMap {
+                fullSnapshot.toHashed[F].flatMap(GlobalSnapshot.mkFirstIncrementalSnapshot[F](_)).flatMap {
                   firstIncrementalSnapshot =>
                     Signed.forAsyncHasher[F, GlobalIncrementalSnapshot](firstIncrementalSnapshot, keyPair).map {
                       signedFirstIncrementalSnapshot =>

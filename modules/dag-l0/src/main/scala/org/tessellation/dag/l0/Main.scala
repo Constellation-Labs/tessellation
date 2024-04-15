@@ -188,7 +188,7 @@ object Main
                 SnapshotLocalFileSystemStorage.make[IO, GlobalSnapshot](cfg.snapshot.snapshotPath).flatMap {
                   fullGlobalSnapshotLocalFileSystemStorage =>
                     fullGlobalSnapshotLocalFileSystemStorage.write(hashedGenesis.signed) >>
-                      GlobalSnapshot.mkFirstIncrementalSnapshot[IO](hashedGenesis, hashSelect).flatMap { firstIncrementalSnapshot =>
+                      GlobalSnapshot.mkFirstIncrementalSnapshot[IO](hashedGenesis).flatMap { firstIncrementalSnapshot =>
                         Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](firstIncrementalSnapshot, keyPair).flatMap {
                           signedFirstIncrementalSnapshot =>
                             storages.globalSnapshot.prepend(signedFirstIncrementalSnapshot, hashedGenesis.info) >>

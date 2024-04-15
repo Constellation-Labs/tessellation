@@ -15,16 +15,17 @@ import org.tessellation.security.{Hashed, Hasher}
 
 import fs2.Stream
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+import org.tessellation.security.HasherSelector
 
 object StateChannel {
 
   private val awakePeriod = 10.seconds
 
-  def run[F[_]: Async: Hasher](
+  def run[F[_]: Async](
     services: Services[F],
     storages: Storages[F],
     programs: Programs[F]
-  )(implicit S: Supervisor[F]): Stream[F, Unit] = {
+  )(implicit S: Supervisor[F], hasherSelector: HasherSelector[F]): Stream[F, Unit] = {
     val logger = Slf4jLogger.getLogger[F]
 
     def globalL0SnapshotProcessing: Stream[F, Unit] =

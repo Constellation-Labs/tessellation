@@ -23,10 +23,10 @@ import org.tessellation.security.{Hashed, Hasher}
 import eu.timepit.refined.types.numeric.PosInt
 
 object GlobalSnapshotEventCutter {
-  def make[F[_]: Async: KryoSerializer: Hasher](maxBinarySizeBytes: PosInt): EventCutter[F, StateChannelEvent, DAGEvent] =
+  def make[F[_]: Async: KryoSerializer](maxBinarySizeBytes: PosInt): EventCutter[F, StateChannelEvent, DAGEvent] =
     new EventCutter[F, StateChannelEvent, DAGEvent] {
 
-      def cut(scEvents: List[StateChannelEvent], dagEvents: List[DAGEvent]): F[(List[StateChannelEvent], List[DAGEvent])] =
+      def cut(scEvents: List[StateChannelEvent], dagEvents: List[DAGEvent])(implicit hasher: Hasher[F]): F[(List[StateChannelEvent], List[DAGEvent])] =
         doesNotExceedMaxSize(scEvents, dagEvents)
           .ifM((scEvents, dagEvents).pure[F], removeEvents(scEvents, dagEvents))
 
@@ -34,7 +34,7 @@ object GlobalSnapshotEventCutter {
         (scEvents.toBinary.liftTo[F], dagEvents.toBinary.liftTo[F])
           .mapN((a, b) => a.length + b.length <= maxBinarySizeBytes.value)
 
-      def removeEvents(scEvents: List[StateChannelEvent], dagEvents: List[DAGEvent]): F[(List[StateChannelEvent], List[DAGEvent])] =
+      def removeEvents(scEvents: List[StateChannelEvent], dagEvents: List[DAGEvent])(implicit hasher: Hasher[F]): F[(List[StateChannelEvent], List[DAGEvent])] =
         (
           scEvents.traverse(evt => evt.pure[F].product(StateChannelEventWithFee(evt))).map(_.toMap),
           dagEvents.traverse(evt => evt.pure[F].product(DAGBlockEventWithFee(evt))).map(_.toMap)
@@ -91,7 +91,7 @@ object GlobalSnapshotEventCutter {
           }
       }
       object StateChannelEventWithFee {
-        def apply(event: StateChannelEvent): F[StateChannelEventWithFee] =
+        def apply(event: StateChannelEvent)(implicit hasher: Hasher[F]): F[StateChannelEventWithFee] =
           event.snapshotBinary.toHashed.map(hashed => StateChannelEventWithFee(event, hashed.hash))
       }
 
@@ -108,7 +108,7 @@ object GlobalSnapshotEventCutter {
 
       }
       object DAGBlockEventWithFee {
-        def apply(dagEvent: DAGEvent): F[DAGBlockEventWithFee] =
+        def apply(dagEvent: DAGEvent)(implicit hasher: Hasher[F]): F[DAGBlockEventWithFee] =
           dagEvent.toHashed[F].map(DAGBlockEventWithFee(_))
       }
 

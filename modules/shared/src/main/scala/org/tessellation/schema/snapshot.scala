@@ -56,7 +56,7 @@ object snapshot {
     val lastTxRefs: SortedMap[Address, TransactionReference]
     val balances: SortedMap[Address, Balance]
 
-    def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal, hashSelect: HashSelect): F[P]
+    def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[P]
   }
 
   @derive(encoder, decoder, show)

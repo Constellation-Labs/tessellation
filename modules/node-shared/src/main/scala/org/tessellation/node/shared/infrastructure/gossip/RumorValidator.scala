@@ -17,10 +17,11 @@ import org.tessellation.security.signature.{Signed, SignedValidator}
 
 import derevo.cats.{eqv, show}
 import derevo.derive
+import org.tessellation.security.Hasher
 
 trait RumorValidator[F[_]] {
 
-  def validate(signedRumor: Signed[RumorRaw]): F[RumorValidationErrorOr[Signed[RumorRaw]]]
+  def validate(signedRumor: Signed[RumorRaw])(implicit hasher: Hasher[F]): F[RumorValidationErrorOr[Signed[RumorRaw]]]
 
 }
 
@@ -33,7 +34,7 @@ object RumorValidator {
 
     def validate(
       signedRumor: Signed[RumorRaw]
-    ): F[RumorValidationErrorOr[Signed[RumorRaw]]] =
+    )(implicit hasher: Hasher[F]): F[RumorValidationErrorOr[Signed[RumorRaw]]] =
       validateSignature(signedRumor).map { signatureV =>
         signatureV
           .productR(validateOrigin(signedRumor))
@@ -52,7 +53,7 @@ object RumorValidator {
           )
       }
 
-    def validateSignature(signedRumor: Signed[RumorRaw]): F[RumorValidationErrorOr[Signed[RumorRaw]]] =
+    def validateSignature(signedRumor: Signed[RumorRaw])(implicit hasher: Hasher[F]): F[RumorValidationErrorOr[Signed[RumorRaw]]] =
       signedValidator.validateSignatures(signedRumor).map(_.errorMap(InvalidSigned))
 
     def validateSeedlist(signedRumor: Signed[RumorRaw]): RumorValidationErrorOr[Signed[RumorRaw]] =

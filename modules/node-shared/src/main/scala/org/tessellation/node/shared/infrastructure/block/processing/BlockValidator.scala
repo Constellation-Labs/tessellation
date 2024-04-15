@@ -26,7 +26,7 @@ import eu.timepit.refined.auto._
 
 object BlockValidator {
 
-  def make[F[_]: Async: Hasher](
+  def make[F[_]: Async](
     signedValidator: SignedValidator[F],
     transactionChainValidator: TransactionChainValidator[F],
     transactionValidator: TransactionValidator[F]
@@ -37,7 +37,7 @@ object BlockValidator {
         signedBlock: Signed[Block],
         snapshotOrdinal: SnapshotOrdinal,
         params: BlockValidationParams
-      ): F[BlockValidationErrorOr[(Signed[Block], Map[Address, TransactionNel])]] =
+      )(implicit hasher: Hasher[F]): F[BlockValidationErrorOr[(Signed[Block], Map[Address, TransactionNel])]] =
         for {
           signedV <- validateSigned(signedBlock, params)
           lockedV = validateNotLockedAtOrdinal(signedBlock, snapshotOrdinal)
@@ -54,7 +54,7 @@ object BlockValidator {
       private def validateSigned(
         signedBlock: Signed[Block],
         params: BlockValidationParams
-      ): F[BlockValidationErrorOr[Signed[Block]]] =
+      )(implicit hasher: Hasher[F]): F[BlockValidationErrorOr[Signed[Block]]] =
         signedValidator
           .validateSignatures(signedBlock)
           .map { signaturesV =>
@@ -66,7 +66,7 @@ object BlockValidator {
 
       private def validateTransactions(
         signedBlock: Signed[Block]
-      ): F[BlockValidationErrorOr[Signed[Block]]] =
+      )(implicit hasher: Hasher[F]): F[BlockValidationErrorOr[Signed[Block]]] =
         signedBlock.value.transactions.toNonEmptyList.traverse { signedTransaction =>
           for {
             txRef <- TransactionReference.of(signedTransaction)
@@ -80,7 +80,7 @@ object BlockValidator {
 
       private def validateTransactionChain(
         signedBlock: Signed[Block]
-      ): F[BlockValidationErrorOr[Map[Address, TransactionNel]]] =
+      )(implicit hasher: Hasher[F]): F[BlockValidationErrorOr[Map[Address, TransactionNel]]] =
         transactionChainValidator
           .validate(signedBlock.transactions)
           .map(_.errorMap[BlockValidationError](InvalidTransactionChain))

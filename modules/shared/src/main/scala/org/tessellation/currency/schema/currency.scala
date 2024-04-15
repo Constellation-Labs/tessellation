@@ -72,14 +72,8 @@ object currency {
     balances: SortedMap[Address, Balance],
     lastMessages: Option[SortedMap[MessageType, Signed[CurrencyMessage]]] = None
   ) extends SnapshotInfo[CurrencySnapshotStateProof] {
-    def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal, hashSelect: HashSelect): F[CurrencySnapshotStateProof] =
-      hashSelect.select(ordinal) match {
-        case KryoHash =>
-          (Hasher[F].hashKryo(lastTxRefs), Hasher[F].hashKryo(balances), lastMessages.traverse(Hasher[F].hashKryo)).tupled
-            .map(CurrencySnapshotStateProof.apply)
-        case JsonHash =>
-          (lastTxRefs.hash, balances.hash, lastMessages.traverse(_.hash)).tupled.map(CurrencySnapshotStateProof.apply)
-      }
+    def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[CurrencySnapshotStateProof] =
+      (lastTxRefs.hash, balances.hash, lastMessages.traverse(_.hash)).tupled.map(CurrencySnapshotStateProof.apply)
   }
 
   @derive(encoder, decoder, eqv, show)
@@ -87,14 +81,8 @@ object currency {
     lastTxRefs: SortedMap[Address, TransactionReference],
     balances: SortedMap[Address, Balance]
   ) extends SnapshotInfo[CurrencySnapshotStateProofV1] {
-    def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal, hashSelect: HashSelect): F[CurrencySnapshotStateProofV1] =
-      hashSelect.select(ordinal) match {
-        case KryoHash =>
-          (Hasher[F].hashKryo(lastTxRefs), Hasher[F].hashKryo(balances)).tupled
-            .map(CurrencySnapshotStateProofV1.apply)
-        case JsonHash =>
-          (lastTxRefs.hash, balances.hash).tupled.map(CurrencySnapshotStateProofV1.apply)
-      }
+    def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[CurrencySnapshotStateProofV1] =
+      (lastTxRefs.hash, balances.hash).tupled.map(CurrencySnapshotStateProofV1.apply)
 
     def toCurrencySnapshotInfo: CurrencySnapshotInfo = CurrencySnapshotInfo(lastTxRefs, balances, None)
   }
@@ -160,8 +148,8 @@ object currency {
   ) extends IncrementalSnapshot[CurrencySnapshotStateProof]
 
   object CurrencyIncrementalSnapshot {
-    def fromCurrencySnapshot[F[_]: Sync: Hasher](snapshot: CurrencySnapshot, hashSelect: HashSelect): F[CurrencyIncrementalSnapshot] =
-      snapshot.info.stateProof[F](snapshot.ordinal, hashSelect).map { stateProof =>
+    def fromCurrencySnapshot[F[_]: Sync: Hasher](snapshot: CurrencySnapshot): F[CurrencyIncrementalSnapshot] =
+      snapshot.info.stateProof[F](snapshot.ordinal).map { stateProof =>
         CurrencyIncrementalSnapshot(
           snapshot.ordinal,
           snapshot.height,
@@ -243,10 +231,9 @@ object currency {
       )
 
     def mkFirstIncrementalSnapshot[F[_]: Sync: Hasher](
-      genesis: Hashed[CurrencySnapshot],
-      hashSelect: HashSelect
+      genesis: Hashed[CurrencySnapshot]
     ): F[CurrencyIncrementalSnapshot] =
-      genesis.info.stateProof[F](genesis.ordinal, hashSelect).map { stateProof =>
+      genesis.info.stateProof[F](genesis.ordinal).map { stateProof =>
         CurrencyIncrementalSnapshot(
           genesis.ordinal.next,
           genesis.height,

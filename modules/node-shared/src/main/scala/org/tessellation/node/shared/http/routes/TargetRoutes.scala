@@ -16,8 +16,9 @@ import io.circe.refined.{refinedKeyDecoder, refinedKeyEncoder}
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.dsl.Http4sDsl
+import org.tessellation.security.Hasher
 
-final case class TargetRoutes[F[_]: Async](
+final case class TargetRoutes[F[_]: Async: Hasher](
   cluster: Cluster[F]
 ) extends Http4sDsl[F]
     with PublicRoutes[F] {

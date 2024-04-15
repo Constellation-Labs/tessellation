@@ -33,10 +33,11 @@ import org.tessellation.security.signature.SignedValidator
 import org.tessellation.security.{HashSelect, Hasher, SecurityProvider}
 
 import org.http4s.client.Client
+import org.tessellation.security.HasherSelector
 
 object Services {
 
-  def make[F[_]: Async: Random: JsonSerializer: SecurityProvider: Hasher: Metrics: Supervisor](
+  def make[F[_]: Async: Random: JsonSerializer: SecurityProvider: HasherSelector: Metrics: Supervisor](
     p2PClient: P2PClient[F],
     sharedServices: SharedServices[F],
     storages: Storages[F],

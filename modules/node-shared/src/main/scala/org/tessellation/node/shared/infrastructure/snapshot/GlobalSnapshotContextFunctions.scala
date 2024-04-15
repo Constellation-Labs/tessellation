@@ -27,13 +27,13 @@ import eu.timepit.refined.auto._
 abstract class GlobalSnapshotContextFunctions[F[_]] extends SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
 
 object GlobalSnapshotContextFunctions {
-  def make[F[_]: Async: Hasher](snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F], hashSelect: HashSelect) =
+  def make[F[_]: Async](snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F], hashSelect: HashSelect) =
     new GlobalSnapshotContextFunctions[F] {
       def createContext(
         context: GlobalSnapshotInfo,
         lastArtifact: Signed[GlobalIncrementalSnapshot],
         signedArtifact: Signed[GlobalIncrementalSnapshot]
-      ): F[GlobalSnapshotInfo] = for {
+      )(implicit hasher: Hasher[F]): F[GlobalSnapshotInfo] = for {
         lastActiveTips <- lastArtifact.activeTips
         lastDeprecatedTips = lastArtifact.tips.deprecated
 
@@ -60,8 +60,8 @@ object GlobalSnapshotContextFunctions {
         _ <- CannotApplyRewardsError(diffRewards).raiseError[F, Unit].whenA(diffRewards.nonEmpty)
         hashedArtifact <- signedArtifact.toHashed
         calculatedStateProof <- hashSelect.select(signedArtifact.ordinal) match {
-          case JsonHash => snapshotInfo.stateProof(signedArtifact.ordinal, hashSelect)
-          case KryoHash => GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(snapshotInfo).stateProof(signedArtifact.ordinal, hashSelect)
+          case JsonHash => snapshotInfo.stateProof(signedArtifact.ordinal)
+          case KryoHash => GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(snapshotInfo).stateProof(signedArtifact.ordinal)
         }
         _ <- StateProofValidator.validate(hashedArtifact, calculatedStateProof) match {
           case Validated.Valid(_)   => Async[F].unit

@@ -19,7 +19,7 @@ import eu.timepit.refined.types.numeric.PosLong
 
 object SharedValidators {
 
-  def make[F[_]: Async: JsonSerializer: Hasher: SecurityProvider](
+  def make[F[_]: Async: JsonSerializer: SecurityProvider](
     l0Seedlist: Option[Set[SeedlistEntry]],
     seedlist: Option[Set[SeedlistEntry]],
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],

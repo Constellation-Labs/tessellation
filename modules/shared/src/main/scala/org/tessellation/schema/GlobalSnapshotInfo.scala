@@ -29,8 +29,8 @@ case class GlobalSnapshotInfoV1(
   lastTxRefs: SortedMap[Address, TransactionReference],
   balances: SortedMap[Address, Balance]
 ) extends SnapshotInfo[GlobalSnapshotStateProof] {
-  def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal, hashSelect: HashSelect): F[GlobalSnapshotStateProof] =
-    GlobalSnapshotInfoV1.toGlobalSnapshotInfo(this).stateProof[F](ordinal, hashSelect)
+  def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
+    GlobalSnapshotInfoV1.toGlobalSnapshotInfo(this).stateProof[F](ordinal)
 }
 
 object GlobalSnapshotInfoV1 {
@@ -79,15 +79,8 @@ case class GlobalSnapshotInfoV2(
       lastCurrencySnapshotsProofs
     )
 
-  def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal, hashSelect: HashSelect): F[GlobalSnapshotStateProof] =
-    hashSelect.select(ordinal) match {
-      case KryoHash =>
-        lastCurrencySnapshots
-          .compatibleMerkleTree[F]
-          .flatMap(compatibleStateProof(_))
-      case JsonHash =>
-        lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
-    }
+  def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
+    lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
 
   def stateProof[F[_]: Sync: Hasher](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProof] =
     (
@@ -95,15 +88,6 @@ case class GlobalSnapshotInfoV2(
       lastTxRefs.hash,
       balances.hash
     ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot)))
-
-  def compatibleStateProof[F[_]: Sync: Hasher](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProof] = {
-    def compatibleHash[A](data: A) = Hasher[F].hashKryo[A](data)
-    (
-      compatibleHash(lastStateChannelSnapshotHashes),
-      compatibleHash(lastTxRefs),
-      compatibleHash(balances)
-    ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot)))
-  }
 
 }
 
@@ -134,15 +118,8 @@ case class GlobalSnapshotInfo(
   lastCurrencySnapshots: SortedMap[Address, Either[Signed[CurrencySnapshot], (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]],
   lastCurrencySnapshotsProofs: SortedMap[Address, Proof]
 ) extends SnapshotInfo[GlobalSnapshotStateProof] {
-  def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal, hashSelect: HashSelect): F[GlobalSnapshotStateProof] =
-    hashSelect.select(ordinal) match {
-      case KryoHash =>
-        lastCurrencySnapshots
-          .compatibleMerkleTree[F]
-          .flatMap(compatibleStateProof(_))
-      case JsonHash =>
-        lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
-    }
+  def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
+    lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
 
   def stateProof[F[_]: Sync: Hasher](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProof] =
     (
@@ -150,15 +127,6 @@ case class GlobalSnapshotInfo(
       lastTxRefs.hash,
       balances.hash
     ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot)))
-
-  def compatibleStateProof[F[_]: Sync: Hasher](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProof] = {
-    def compatibleHash[A](data: A) = Hasher[F].hashKryo[A](data)
-    (
-      compatibleHash(lastStateChannelSnapshotHashes),
-      compatibleHash(lastTxRefs),
-      compatibleHash(balances)
-    ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot)))
-  }
 
 }
 

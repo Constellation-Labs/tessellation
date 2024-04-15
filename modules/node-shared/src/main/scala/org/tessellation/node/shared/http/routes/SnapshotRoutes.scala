@@ -24,8 +24,9 @@ import org.http4s.dsl.Http4sDsl
 import org.http4s.{EntityEncoder, HttpRoutes, Response}
 import shapeless.HNil
 import shapeless.syntax.singleton._
+import org.tessellation.security.HasherSelector
 
-final case class SnapshotRoutes[F[_]: Async: Hasher, S <: Snapshot: Encoder, C: Encoder](
+final case class SnapshotRoutes[F[_]: Async: HasherSelector, S <: Snapshot: Encoder, C: Encoder](
   snapshotStorage: SnapshotStorage[F, S, C],
   fullGlobalSnapshotStorage: Option[SnapshotLocalFileSystemStorage[F, GlobalSnapshot]],
   prefixPath: InternalUrlPrefix,
@@ -61,7 +62,7 @@ final case class SnapshotRoutes[F[_]: Async: Hasher, S <: Snapshot: Encoder, C: 
         .map(validStateForSnapshotReturn)
         .ifM(
           snapshotStorage.headSnapshot
-            .flatMap(_.traverse(_.toHashed[F]))
+            .flatMap(_.traverse(snapshot => HasherSelector[F].forOrdinal(snapshot.ordinal) { implicit hasher => snapshot.toHashed[F] }))
             .map(_.map(snapshot => SnapshotMetadata(snapshot.ordinal, snapshot.hash, snapshot.lastSnapshotHash)))
             .flatMap {
               case Some(metadata) => Ok(metadata)

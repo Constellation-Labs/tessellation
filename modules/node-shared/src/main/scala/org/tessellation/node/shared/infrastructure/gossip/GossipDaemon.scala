@@ -25,6 +25,7 @@ import org.tessellation.security.{Hashed, Hasher}
 import eu.timepit.refined.auto._
 import fs2.Stream
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+import org.tessellation.security.HasherSelector
 
 trait GossipDaemon[F[_]] {
 
@@ -36,7 +37,7 @@ trait GossipDaemon[F[_]] {
 
 object GossipDaemon {
 
-  def make[F[_]: Async: Hasher: Random: Metrics](
+  def make[F[_]: Async: Random: Metrics](
     rumorStorage: RumorStorage[F],
     rumorQueue: Queue[F, Hashed[RumorRaw]],
     clusterStorage: ClusterStorage[F],
@@ -48,7 +49,7 @@ object GossipDaemon {
     generation: Generation,
     cfg: GossipDaemonConfig,
     collateral: Collateral[F]
-  )(implicit S: Supervisor[F]): GossipDaemon[F] = {
+  )(implicit S: Supervisor[F], hasherSelector: HasherSelector[F]): GossipDaemon[F] = {
     new GossipDaemon[F] {
       private val logger = Slf4jLogger.getLogger[F]
       private val rumorLogger = Slf4jLogger.getLoggerFromName[F](rumorLoggerName)
@@ -99,14 +100,15 @@ object GossipDaemon {
         )
 
       private def validateRumor(hashedRumor: Hashed[RumorRaw]): F[Boolean] =
-        rumorValidator
-          .validate(hashedRumor.signed)
-          .flatTap { signedRumorV =>
-            Applicative[F]
-              .whenA(signedRumorV.isInvalid)(
-                logger.warn(s"Discarding invalid rumor {hash=${hashedRumor.hash.show}, reason=${signedRumorV.show}")
-              )
-          }
+        hasherSelector.withCurrent { implicit hasher =>
+          rumorValidator
+            .validate(hashedRumor.signed)
+        }.flatTap { signedRumorV =>
+          Applicative[F]
+            .whenA(signedRumorV.isInvalid)(
+              logger.warn(s"Discarding invalid rumor {hash=${hashedRumor.hash.show}, reason=${signedRumorV.show}")
+            )
+        }
           .map(_.isValid)
 
       private def verifyCollateral(hashedRumor: Hashed[RumorRaw]): F[Boolean] =
@@ -157,7 +159,7 @@ object GossipDaemon {
       private def initPeerRumorStorage(peer: Peer): F[Unit] =
         gossipClient.getInitialPeerRumors
           .run(peer)
-          .evalMap(_.toHashed)
+          .evalMap(rumor => hasherSelector.withCurrent(implicit hasher => rumor.toHashed))
           .evalTap { hashedRumor =>
             rumorLogger.info(s"Initializing rumor {hash=${hashedRumor.hash.show}, rumor=${hashedRumor.signed.value.show}}")
           }
@@ -180,7 +182,7 @@ object GossipDaemon {
           gossipClient
             .queryPeerRumors(PeerRumorInquiryRequest(nextOrdinals))
             .run(peer)
-            .evalMap(_.toHashed)
+            .evalMap(rumor => hasherSelector.withCurrent(implicit hasher => rumor.toHashed))
             .enqueueUnterminated(rumorQueue)
             .compile
             .drain
@@ -197,7 +199,7 @@ object GossipDaemon {
             gossipClient
               .queryCommonRumors(QueryCommonRumorsRequest(missingHashes))
               .run(peer)
-              .evalMap(_.toHashed)
+              .evalMap(rumor => hasherSelector.withCurrent(implicit hasher => rumor.toHashed))
               .enqueueUnterminated(rumorQueue)
               .compile
               .drain

@@ -3,6 +3,7 @@ package org.tessellation.dag.l0.domain.snapshot.storages
 import org.tessellation.schema._
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.Hasher
 
 trait SnapshotDownloadStorage[F[_]] {
   def readPersisted(ordinal: SnapshotOrdinal): F[Option[Signed[GlobalIncrementalSnapshot]]]
@@ -15,9 +16,9 @@ trait SnapshotDownloadStorage[F[_]] {
 
   def isPersisted(hash: Hash): F[Boolean]
 
-  def hasCorrectSnapshotInfo(ordinal: SnapshotOrdinal, proof: GlobalSnapshotStateProof): F[Boolean]
+  def hasCorrectSnapshotInfo(ordinal: SnapshotOrdinal, proof: GlobalSnapshotStateProof)(implicit hasher: Hasher[F]): F[Boolean]
   def getHighestSnapshotInfoOrdinal(lte: SnapshotOrdinal): F[Option[SnapshotOrdinal]]
-  def readCombined(ordinal: SnapshotOrdinal): F[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]]
+  def readCombined(ordinal: SnapshotOrdinal)(implicit hasher: Hasher[F]): F[Option[(Signed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]]
   def persistSnapshotInfoWithCutoff(ordinal: SnapshotOrdinal, info: GlobalSnapshotInfo): F[Unit]
 
   def movePersistedToTmp(hash: Hash, ordinal: SnapshotOrdinal): F[Unit]
@@ -26,5 +27,5 @@ trait SnapshotDownloadStorage[F[_]] {
   def readGenesis(ordinal: SnapshotOrdinal): F[Option[Signed[GlobalSnapshot]]]
   def writeGenesis(genesis: Signed[GlobalSnapshot]): F[Unit]
 
-  def cleanupAbove(ordinal: SnapshotOrdinal): F[Unit]
+  def cleanupAbove(ordinal: SnapshotOrdinal)(implicit hasher: Hasher[F]): F[Unit]
 }

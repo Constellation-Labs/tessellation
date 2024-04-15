@@ -20,6 +20,7 @@ import org.tessellation.security.signature.{Signed, SignedValidator}
 import derevo.cats.{eqv, show}
 import derevo.derive
 import monocle.syntax.all._
+import org.tessellation.security.Hasher
 
 trait CurrencySnapshotValidator[F[_]] {
 
@@ -29,14 +30,14 @@ trait CurrencySnapshotValidator[F[_]] {
     lastArtifact: Signed[CurrencySnapshotArtifact],
     lastContext: CurrencySnapshotContext,
     artifact: Signed[CurrencySnapshotArtifact]
-  ): F[CurrencySnapshotValidationErrorOr[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotContext)]]
+  )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotContext)]]
 
   def validateSnapshot(
     lastArtifact: Signed[CurrencySnapshotArtifact],
     lastContext: CurrencySnapshotContext,
     artifact: CurrencySnapshotArtifact,
     facilitators: Set[PeerId]
-  ): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]]
+  )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]]
 }
 
 object CurrencySnapshotValidator {
@@ -48,11 +49,12 @@ object CurrencySnapshotValidator {
     maybeDataApplication: Option[BaseDataApplicationService[F]]
   ): CurrencySnapshotValidator[F] = new CurrencySnapshotValidator[F] {
 
+    // NOTE: @mwadon Probably both Hashers
     def validateSignedSnapshot(
       lastArtifact: Signed[CurrencySnapshotArtifact],
       lastContext: CurrencySnapshotContext,
       artifact: Signed[CurrencySnapshotArtifact]
-    ): F[CurrencySnapshotValidationErrorOr[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotContext)]] =
+    )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotContext)]] =
       validateSigned(artifact).flatMap { signedV =>
         val facilitators = artifact.proofs.map(_.id).map(PeerId.fromId).toSortedSet
 
@@ -61,12 +63,13 @@ object CurrencySnapshotValidator {
         }
       }
 
+    // NOTE: @mwadon Probably both Hashers
     def validateSnapshot(
       lastArtifact: Signed[CurrencySnapshotArtifact],
       lastContext: CurrencySnapshotContext,
       artifact: CurrencySnapshotArtifact,
       facilitators: Set[PeerId]
-    ): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]] = for {
+    )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]] = for {
       contentV <- validateRecreateContent(lastArtifact, lastContext, artifact, facilitators)
       blocksV <- contentV.map(validateNotAcceptedEvents).pure[F]
     } yield
@@ -76,7 +79,7 @@ object CurrencySnapshotValidator {
 
     def validateSigned(
       signedSnapshot: Signed[CurrencyIncrementalSnapshot]
-    ): F[CurrencySnapshotValidationErrorOr[Signed[CurrencyIncrementalSnapshot]]] = {
+    )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[Signed[CurrencyIncrementalSnapshot]]] = {
       val snapshot = signedSnapshot.value
       val proofs = signedSnapshot.proofs
 
@@ -98,7 +101,7 @@ object CurrencySnapshotValidator {
       lastContext: CurrencySnapshotContext,
       expected: CurrencySnapshotArtifact,
       facilitators: Set[PeerId]
-    ): F[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]] = {
+    )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]] = {
       def dataApplicationBlocks = maybeDataApplication.flatTraverse { service =>
         expected.dataApplication.map(_.blocks).traverse {
           _.traverse(b => service.deserializeBlock(b))

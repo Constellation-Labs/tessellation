@@ -27,10 +27,11 @@ import eu.timepit.refined.auto._
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
 import org.http4s.server.middleware.{CORS, RequestLogger, ResponseLogger}
 import org.http4s.{HttpApp, HttpRoutes}
+import org.tessellation.security.HasherSelector
 
 object HttpApi {
 
-  def make[F[_]: Async: SecurityProvider: Hasher: Metrics: L0NodeContext](
+  def make[F[_]: Async: SecurityProvider: HasherSelector: Metrics: L0NodeContext](
     storages: Storages[F],
     queues: Queues[F],
     services: Services[F],
@@ -58,7 +59,7 @@ object HttpApi {
     ) {}
 }
 
-sealed abstract class HttpApi[F[_]: Async: SecurityProvider: Hasher: Metrics: L0NodeContext] private (
+sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Metrics: L0NodeContext] private (
   storages: Storages[F],
   queues: Queues[F],
   services: Services[F],
@@ -82,7 +83,9 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: Hasher: Metrics: L0
     storages.node
   )
   private val clusterRoutes =
-    ClusterRoutes[F](programs.joining, programs.peerDiscovery, storages.cluster, services.cluster, services.collateral)
+    HasherSelector[F].withCurrent { implicit hasher =>
+      ClusterRoutes[F](programs.joining, programs.peerDiscovery, storages.cluster, services.cluster, services.collateral)
+    }
   private val nodeRoutes = NodeRoutes[F](storages.node, storages.session, storages.cluster, nodeVersion, httpCfg, selfId)
 
   private val registrationRoutes = RegistrationRoutes[F](services.cluster)
@@ -99,7 +102,9 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: Hasher: Metrics: L0
   private val walletRoutes = WalletRoutes[F, CurrencyIncrementalSnapshot]("/currency", services.address)
 
   private val consensusInfoRoutes =
-    new ConsensusInfoRoutes[F, CurrencySnapshotKey, CurrencyConsensusOutcome](services.cluster, services.consensus.storage, selfId)
+    HasherSelector[F].withCurrent { implicit hasher =>
+      new ConsensusInfoRoutes[F, CurrencySnapshotKey, CurrencyConsensusOutcome](services.cluster, services.consensus.storage, selfId)
+    }
   private val consensusRoutes = services.consensus.routes.p2pRoutes
 
   private val debugRoutes = DebugRoutes[F](
@@ -110,7 +115,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: Hasher: Metrics: L0
   ).publicRoutes
 
   private val metricRoutes = MetricRoutes[F]().publicRoutes
-  private val targetRoutes = TargetRoutes[F](services.cluster).publicRoutes
+  private val targetRoutes = HasherSelector[F].withCurrent(implicit hasher => TargetRoutes[F](services.cluster).publicRoutes)
 
   private val currencyMessageRoutes = new CurrencyMessageRoutes[F](mkCell, services.currencyMessageService).publicRoutes
 

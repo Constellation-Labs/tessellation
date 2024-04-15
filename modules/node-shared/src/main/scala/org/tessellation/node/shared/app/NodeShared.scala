@@ -18,6 +18,7 @@ import org.tessellation.schema.trust.PeerObservationAdjustmentUpdateBatch
 import org.tessellation.security.{HashSelect, Hasher, SecurityProvider}
 
 import fs2.concurrent.SignallingRef
+import org.tessellation.security.HasherSelector
 
 trait NodeShared[F[_]] {
   implicit val random: Random[F]
@@ -26,7 +27,7 @@ trait NodeShared[F[_]] {
   implicit val jsonSerializer: JsonSerializer[F]
   implicit val metrics: Metrics[F]
   implicit val supervisor: Supervisor[F]
-  implicit val hasher: Hasher[F]
+  implicit val hasherSelector: HasherSelector[F]
 
   val keyPair: KeyPair
   lazy val nodeId: PeerId = PeerId.fromPublic(keyPair.getPublic)

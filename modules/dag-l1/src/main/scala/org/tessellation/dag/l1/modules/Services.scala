@@ -25,7 +25,7 @@ import org.tessellation.security.{HashSelect, Hasher, SecurityProvider}
 object Services {
 
   def make[
-    F[_]: Async: SecurityProvider: Hasher,
+    F[_]: Async: SecurityProvider,
     P <: StateProof,
     S <: Snapshot,
     SI <: SnapshotInfo[P]

@@ -30,10 +30,11 @@ import org.tessellation.security.hash.Hash
 import org.tessellation.security.{HashSelect, Hasher, SecurityProvider}
 
 import fs2.concurrent.SignallingRef
+import org.tessellation.security.HasherSelector
 
 object SharedServices {
 
-  def make[F[_]: Async: KryoSerializer: Hasher: SecurityProvider: Metrics: Supervisor: JsonSerializer](
+  def make[F[_]: Async: HasherSelector: SecurityProvider: Metrics: Supervisor: JsonSerializer](
     cfg: SharedConfig,
     nodeId: PeerId,
     generation: Generation,
@@ -69,11 +70,10 @@ object SharedServices {
 
     for {
       localHealthcheck <- LocalHealthcheck.make[F](nodeClient, storages.cluster)
-      gossip <- Gossip.make[F](queues.rumor, nodeId, generation, keyPair)
+      gossip <- HasherSelector[F].withCurrent { implicit hasher => Gossip.make[F](queues.rumor, nodeId, generation, keyPair) }
       currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
         BlockAcceptanceManager.make[F](validators.currencyBlockValidator),
-        collateral.amount,
-        hashSelect
+        collateral.amount
       )
 
       currencyEventsCutter = CurrencyEventsCutter.make[F](None)
@@ -90,8 +90,7 @@ object SharedServices {
         None
       )
       currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(
-        currencySnapshotValidator,
-        hashSelect
+        currencySnapshotValidator
       )
       globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make(stateChannelAllowanceLists)
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync

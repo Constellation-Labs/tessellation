@@ -116,13 +116,13 @@ object Signed {
             },
           implicit encoder =>
             Hasher[F]
-              .hashJson(signed.value)
+              .hash(signed.value)
               .flatMap {
                 signature
                   .verifySignatureProof(_, proof)
                   .ifM(
                     true.pure[F],
-                    Hasher[F].hashKryo(signed.value) >>= { signature.verifySignatureProof(_, proof) }
+                    Hasher[F].hash(signed.value) >>= { signature.verifySignatureProof(_, proof) } // NOTE: @mwadon - HASHER FALLBACK
                   )
               }
               .map(result => proof -> result)
@@ -153,13 +153,6 @@ object Signed {
 
     def toHashed[F[_]: Async: Hasher](implicit encoder: Encoder[A]): F[Hashed[A]] =
       signed.value.hash.flatMap { hash =>
-        proofsHash.map { proofsHash =>
-          Hashed(signed, hash, proofsHash)
-        }
-      }
-
-    def toKryoHashed[F[_]: Async: Hasher]: F[Hashed[A]] =
-      Hasher[F].hashKryo(signed.value).flatMap { hash =>
         proofsHash.map { proofsHash =>
           Hashed(signed, hash, proofsHash)
         }

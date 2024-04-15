@@ -20,9 +20,10 @@ import org.tessellation.security.hash.Hash
 import fs2.Stream
 
 import ContextualTransactionValidator.ContextualTransactionValidationError
+import org.tessellation.security.Hasher
 
 trait TransactionService[F[_]] {
-  def offer(transaction: Hashed[Transaction]): F[Either[NonEmptyList[ContextualTransactionValidationError], Hash]]
+  def offer(transaction: Hashed[Transaction])(implicit hasher: Hasher[F]): F[Either[NonEmptyList[ContextualTransactionValidationError], Hash]]
 }
 
 object TransactionService {
@@ -40,7 +41,7 @@ object TransactionService {
 
     def offer(
       transaction: Hashed[Transaction]
-    ): F[Either[NonEmptyList[ContextualTransactionValidationError], Hash]] =
+    )(implicit hasher: Hasher[F]): F[Either[NonEmptyList[ContextualTransactionValidationError], Hash]] =
       transactionValidator
         .validate(transaction.signed)
         .map(_.errorMap(NonContextualValidationError))
