@@ -1,5 +1,7 @@
 package org.tessellation.node.shared.domain.event
 
+import org.tessellation.security.Hasher
+
 trait EventCutter[F[_], A, B] {
-  def cut(aEvents: List[A], bEvents: List[B]): F[(List[A], List[B])]
+  def cut(aEvents: List[A], bEvents: List[B])(implicit hasher: Hasher[F]): F[(List[A], List[B])]
 }

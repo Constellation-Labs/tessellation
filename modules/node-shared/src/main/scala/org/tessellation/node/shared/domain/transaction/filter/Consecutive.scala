@@ -21,13 +21,14 @@ object Consecutive {
 
   def hashedTxOrder: Order[Hashed[Transaction]] = signedTxOrder.contramap(_.signed)
 
-  def take[F[_]: Async: Hasher](txs: List[Signed[Transaction]]): F[List[Signed[Transaction]]] = {
+  def take[F[_]: Async](txs: List[Signed[Transaction]], txHasher: Hasher[F]): F[List[Signed[Transaction]]] = {
     val headTx =
       txs.sorted(Order.whenEqual(Order.by[Signed[Transaction], Long](_.ordinal.value.value), signedTxOrder).toOrdering).headOption
 
     headTx match {
       case None => Applicative[F].pure(List.empty)
       case Some(headTx) =>
+        implicit val hasher = txHasher
         TransactionReference
           .of(headTx)
           .flatMap { headTxReference =>

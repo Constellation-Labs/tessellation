@@ -22,7 +22,7 @@ trait TransactionChainValidator[F[_]] {
 
 object TransactionChainValidator {
 
-  def make[F[_]: Async: Hasher]: TransactionChainValidator[F] =
+  def make[F[_]: Async](txHasher: Hasher[F]): TransactionChainValidator[F] =
     new TransactionChainValidator[F] {
 
       def validate(
@@ -50,6 +50,7 @@ object TransactionChainValidator {
         sortedTxs.tail
           .foldLeft(initChain) { (errorOrParents, tx) =>
             errorOrParents.flatMap { parents =>
+              implicit val hasher = txHasher
               EitherT(TransactionReference.of(parents.head).map { parentRef =>
                 Either.cond(
                   parentRef === tx.parent,

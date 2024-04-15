@@ -7,6 +7,7 @@ import cats.syntax.functor._
 import org.tessellation.dag.l0.domain.statechannel.StateChannelService
 import org.tessellation.ext.http4s.AddressVar
 import org.tessellation.routes.internal._
+import org.tessellation.security.Hasher
 import org.tessellation.security.signature.Signed
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
 
@@ -15,7 +16,7 @@ import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder
 import org.http4s.dsl.Http4sDsl
 import org.http4s.{EntityDecoder, HttpRoutes}
 
-final case class StateChannelRoutes[F[_]: Async](
+final case class StateChannelRoutes[F[_]: Async: Hasher](
   stateChannelService: StateChannelService[F]
 ) extends Http4sDsl[F]
     with PublicRoutes[F] {

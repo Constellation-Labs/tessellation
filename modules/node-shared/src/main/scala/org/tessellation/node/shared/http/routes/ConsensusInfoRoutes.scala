@@ -8,6 +8,7 @@ import org.tessellation.node.shared.http.routes.ConsensusInfoRoutes.ConsensusInf
 import org.tessellation.node.shared.infrastructure.consensus.{ConsensusStorage, Facilitators}
 import org.tessellation.routes.internal._
 import org.tessellation.schema.peer.{PeerId, PeerInfo}
+import org.tessellation.security.Hasher
 
 import derevo.circe.magnolia.encoder
 import derevo.derive
@@ -18,7 +19,7 @@ import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.dsl.Http4sDsl
 
-class ConsensusInfoRoutes[F[_]: Async, Key: Encoder, Outcome](
+class ConsensusInfoRoutes[F[_]: Async: Hasher, Key: Encoder, Outcome](
   cluster: Cluster[F],
   consensusStorage: ConsensusStorage[F, _, Key, _, _, _, Outcome, _],
   selfId: PeerId

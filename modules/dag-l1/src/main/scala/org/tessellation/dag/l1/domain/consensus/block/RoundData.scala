@@ -52,7 +52,7 @@ case class RoundData(
   def addPeerCancellation(cancellation: CancelledBlockCreationRound): RoundData =
     this.focus(_.peerCancellations).modify(_ + (cancellation.senderId -> cancellation.reason))
 
-  def formBlock[F[_]: Async: Hasher](validator: TransactionValidator[F]): F[Option[Block]] =
+  def formBlock[F[_]: Async](validator: TransactionValidator[F], txHasher: Hasher[F]): F[Option[Block]] =
     (ownProposal.transactions ++ peerProposals.values.flatMap(_.transactions)).toList
       .traverse(validator.validate)
       .flatMap { validatedTxs =>
@@ -65,7 +65,7 @@ case class RoundData(
       }
       .flatMap {
         _.groupBy(_.source).values.toList
-          .traverse(txs => Consecutive.take(txs))
+          .traverse(txs => Consecutive.take(txs, txHasher))
           .map(listOfTxs => NonEmptySet.fromSet(listOfTxs.flatten.toSortedSet))
           .map(_.map(Block(tips.value, _)))
       }

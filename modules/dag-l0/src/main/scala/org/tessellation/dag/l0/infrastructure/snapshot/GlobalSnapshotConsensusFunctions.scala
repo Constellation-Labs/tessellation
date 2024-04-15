@@ -39,7 +39,7 @@ abstract class GlobalSnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
 
 object GlobalSnapshotConsensusFunctions {
 
-  def make[F[_]: Async: Hasher: SecurityProvider](
+  def make[F[_]: Async: SecurityProvider](
     globalSnapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     collateral: Amount,
     rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent],
@@ -56,7 +56,7 @@ object GlobalSnapshotConsensusFunctions {
       trigger: ConsensusTrigger,
       artifact: GlobalSnapshotArtifact,
       facilitators: Set[PeerId]
-    ): F[Either[InvalidArtifact, (GlobalSnapshotArtifact, GlobalSnapshotContext)]] = {
+    )(implicit hasher: Hasher[F]): F[Either[InvalidArtifact, (GlobalSnapshotArtifact, GlobalSnapshotContext)]] = {
       val dagEvents = artifact.blocks.unsorted.map(_.block.asRight[StateChannelOutput])
       val scEvents = artifact.stateChannelSnapshots.toList.flatMap {
         case (address, stateChannelBinaries) => stateChannelBinaries.map(StateChannelOutput(address, _).asLeft[DAGEvent]).toList
@@ -79,7 +79,7 @@ object GlobalSnapshotConsensusFunctions {
       trigger: ConsensusTrigger,
       events: Set[GlobalSnapshotEvent],
       facilitators: Set[PeerId]
-    ): F[(GlobalSnapshotArtifact, GlobalSnapshotContext, Set[GlobalSnapshotEvent])] = {
+    )(implicit hasher: Hasher[F]): F[(GlobalSnapshotArtifact, GlobalSnapshotContext, Set[GlobalSnapshotEvent])] = {
       val (scEventsBeforeCut, dagEventsBeforeCut) = events.partitionMap(identity)
 
       val dagEvents = dagEventsBeforeCut.filter(_.height > lastArtifact.height)

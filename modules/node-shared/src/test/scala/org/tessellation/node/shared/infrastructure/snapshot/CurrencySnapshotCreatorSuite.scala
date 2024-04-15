@@ -8,7 +8,6 @@ import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.SnapshotSizeConfig
 import org.tessellation.node.shared.nodeSharedKryoRegistrar
-import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.security._
 import org.tessellation.security.signature.{Signed, signature}
 
@@ -26,7 +25,7 @@ object CurrencySnapshotCreatorSuite extends MutableIOSuite with Checkers {
     for {
       implicit0(k: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](nodeSharedKryoRegistrar)
       implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
-      h = Hasher.forSync[IO](new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash })
+      h = Hasher.forJson[IO]
       sp <- SecurityProvider.forAsync[IO]
     } yield (j, h, sp)
 

@@ -16,9 +16,9 @@ import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo}
-import org.tessellation.security.Hasher
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hasher, HasherSelector}
 
 import eu.timepit.refined.types.numeric.NonNegLong
 import fs2.Stream
@@ -44,11 +44,12 @@ object SnapshotStorage {
     }
   }
 
-  def make[F[_]: Async: Hasher, S <: Snapshot: Encoder, C <: SnapshotInfo[_]](
+  def make[F[_]: Async, S <: Snapshot: Encoder, C <: SnapshotInfo[_]](
     snapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, S],
     snapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, _, C],
     inMemoryCapacity: NonNegLong,
-    snapshotInfoCutoffOrdinal: SnapshotOrdinal
+    snapshotInfoCutoffOrdinal: SnapshotOrdinal,
+    hasherSelector: HasherSelector[F]
   )(implicit supervisor: Supervisor[F]): F[SnapshotStorage[F, S, C] with LatestBalances[F]] =
     makeResources[F, S, C]().flatMap {
       case (headRef, ordinalCache, hashCache, notPersistedCache, offloadQueue, cutoffQueue, _) =>
@@ -62,11 +63,12 @@ object SnapshotStorage {
           snapshotLocalFileSystemStorage,
           snapshotInfoLocalFileSystemStorage,
           inMemoryCapacity,
-          snapshotInfoCutoffOrdinal
+          snapshotInfoCutoffOrdinal,
+          hasherSelector
         )
     }
 
-  def make[F[_]: Async: Hasher, S <: Snapshot: Encoder, C <: SnapshotInfo[_]](
+  def make[F[_]: Async, S <: Snapshot: Encoder, C <: SnapshotInfo[_]](
     headRef: SignallingRef[F, Option[(Signed[S], C)]],
     ordinalCache: MapRef[F, SnapshotOrdinal, Option[Hash]],
     hashCache: MapRef[F, Hash, Option[Signed[S]]],
@@ -76,7 +78,8 @@ object SnapshotStorage {
     snapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, S],
     snapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, _, C],
     inMemoryCapacity: NonNegLong,
-    snapshotInfoCutoffOrdinal: SnapshotOrdinal
+    snapshotInfoCutoffOrdinal: SnapshotOrdinal,
+    hasherSelector: HasherSelector[F]
   )(implicit supervisor: Supervisor[F]): F[SnapshotStorage[F, S, C] with LatestBalances[F]] = {
 
     def logger = Slf4jLogger.getLogger[F]
@@ -105,7 +108,9 @@ object SnapshotStorage {
                         hashCache(hash).get.flatMap {
                           case Some(snapshot) =>
                             Applicative[F].whenA(shouldPersist) {
-                              snapshotLocalFileSystemStorage.write(snapshot) >>
+                              hasherSelector.forOrdinal(snapshot.ordinal) { implicit hasher =>
+                                snapshotLocalFileSystemStorage.write(snapshot)
+                              } >>
                                 notPersistedCache.update(current => current - ordinal)
                             } >>
                               Applicative[F].whenA(shouldOffload) {
@@ -144,7 +149,7 @@ object SnapshotStorage {
         }
         .void
 
-    def enqueue(snapshot: Signed[S], snapshotInfo: C) =
+    def enqueue(snapshot: Signed[S], snapshotInfo: C)(implicit hasher: Hasher[F]) =
       snapshot.value.hash.flatMap { hash =>
         hashCache(hash).set(snapshot.some) >>
           ordinalCache(snapshot.ordinal).set(hash.some) >>
@@ -162,7 +167,7 @@ object SnapshotStorage {
             .fold(Applicative[F].unit)(offloadQueue.offer)
       }
 
-    def snapshotExists(snapshot: Signed[S]): F[Boolean] =
+    def snapshotExists(snapshot: Signed[S])(implicit hasher: Hasher[F]): F[Boolean] =
       snapshot.toHashed
         .flatMap(hashed =>
           List(snapshotLocalFileSystemStorage.read(hashed.hash), snapshotLocalFileSystemStorage.read(snapshot.value.ordinal))
@@ -172,11 +177,11 @@ object SnapshotStorage {
 
     supervisor.supervise(offloadProcess.merge(snapshotInfoCutoffProcess).compile.drain).map { _ =>
       new SnapshotStorage[F, S, C] with LatestBalances[F] {
-        def prepend(snapshot: Signed[S], state: C): F[Boolean] = {
+        def prepend(snapshot: Signed[S], state: C)(implicit hasher: Hasher[F]): F[Boolean] = {
 
           def offer = enqueue(snapshot, state).as(true)
 
-          def loop: F[Boolean] =
+          def loop(implicit hasher: Hasher[F]): F[Boolean] =
             headRef.access.flatMap {
               case (v, setter) =>
                 v match {
@@ -211,9 +216,10 @@ object SnapshotStorage {
             case None    => snapshotLocalFileSystemStorage.read(hash)
           }
 
-        def getHash(ordinal: SnapshotOrdinal): F[Option[Hash]] = get(ordinal).flatMap {
-          _.traverse(_.toHashed.map(_.hash))
-        }
+        def getHash(ordinal: SnapshotOrdinal)(implicit hasher: Hasher[F]): F[Option[Hash]] =
+          get(ordinal).flatMap {
+            _.traverse(_.toHashed.map(_.hash))
+          }
 
         def getLatestBalances: F[Option[Map[Address, Balance]]] =
           headRef.get.map(_.map(_._2.balances))
@@ -227,7 +233,7 @@ object SnapshotStorage {
         private def isNextSnapshot(
           current: Signed[S],
           snapshot: Signed[S]
-        ): F[Boolean] =
+        )(implicit hasher: Hasher[F]): F[Boolean] =
           current.value.hash.map { hash =>
             hash === snapshot.value.lastSnapshotHash && current.value.ordinal.next === snapshot.value.ordinal
           }

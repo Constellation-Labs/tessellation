@@ -44,7 +44,7 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
     sp <- SecurityProvider.forAsync[IO]
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
     implicit0(js: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
-    h = Hasher.forSync[IO]((_: SnapshotOrdinal) => JsonHash)
+    h = Hasher.forKryo[IO]
   } yield (h, sp)
 
   val config = TransactionLimitConfig(

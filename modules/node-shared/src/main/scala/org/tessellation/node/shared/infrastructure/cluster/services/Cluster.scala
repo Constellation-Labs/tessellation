@@ -27,7 +27,7 @@ import fs2.concurrent.SignallingRef
 
 object Cluster {
 
-  def make[F[_]: Async: Hasher: SecurityProvider](
+  def make[F[_]: Async: SecurityProvider](
     leavingDelay: FiniteDuration,
     httpConfig: HttpConfig,
     selfId: PeerId,
@@ -42,7 +42,7 @@ object Cluster {
   ): Cluster[F] =
     new Cluster[F] {
 
-      def getRegistrationRequest: F[RegistrationRequest] =
+      def getRegistrationRequest(implicit hasher: Hasher[F]): F[RegistrationRequest] =
         for {
           session <- sessionStorage.getToken.flatMap {
             case Some(s) => Applicative[F].pure(s)
@@ -70,7 +70,7 @@ object Cluster {
             environment
           )
 
-      def signRequest(signRequest: SignRequest): F[Signed[SignRequest]] =
+      def signRequest(signRequest: SignRequest)(implicit hasher: Hasher[F]): F[Signed[SignRequest]] =
         signRequest.sign(keyPair)
 
       def leave(): F[Unit] = {
@@ -84,7 +84,7 @@ object Cluster {
         Temporal[F].start(process).void
       }
 
-      def info: F[Set[PeerInfo]] =
+      def info(implicit hasher: Hasher[F]): F[Set[PeerInfo]] =
         getRegistrationRequest.flatMap { req =>
           def self = PeerInfo(
             req.id,

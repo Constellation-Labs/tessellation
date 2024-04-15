@@ -26,7 +26,7 @@ object TransactionSuite extends ResourceSuite with Checkers {
       .forAsync[IO](sharedKryoRegistrar, List.empty, setReferences = true)
       .flatMap { implicit res =>
         JsonSerializer.forSync[IO].asResource.map { implicit json =>
-          Hasher.forSync[IO](new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash })
+          Hasher.forKryo[IO]
         }
       }
 

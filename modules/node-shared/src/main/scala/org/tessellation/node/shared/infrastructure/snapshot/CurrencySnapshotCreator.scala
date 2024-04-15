@@ -32,7 +32,7 @@ import org.tessellation.schema.currencyMessage.CurrencyMessage
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.RewardTransaction
-import org.tessellation.security.Hasher
+import org.tessellation.security.HasherSelector
 import org.tessellation.security.signature.Signed
 import org.tessellation.syntax.sortedCollection.sortedSetSyntax
 
@@ -60,7 +60,7 @@ trait CurrencySnapshotCreator[F[_]] {
 
 object CurrencySnapshotCreator {
 
-  def make[F[_]: Async: Hasher: JsonSerializer](
+  def make[F[_]: Async: JsonSerializer: HasherSelector](
     currencySnapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F],
     dataApplicationSnapshotAcceptanceManager: Option[DataApplicationSnapshotAcceptanceManager[F]],
     snapshotSizeConfig: SnapshotSizeConfig,
@@ -92,14 +92,14 @@ object CurrencySnapshotCreator {
         awaitedEvents: Set[CurrencySnapshotEvent] = Set.empty[CurrencySnapshotEvent]
       ): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] =
         for {
-          lastArtifactHash <- lastArtifact.value.hash
+          lastArtifactHash <- HasherSelector[F].forOrdinal(lastArtifact.ordinal)(implicit hasher => lastArtifact.value.hash)
           currentOrdinal = lastArtifact.ordinal.next
 
           currentEpochProgress = trigger match {
             case EventTrigger => lastArtifact.epochProgress
             case TimeTrigger  => lastArtifact.epochProgress.next
           }
-          lastActiveTips <- lastArtifact.activeTips
+          lastActiveTips <- HasherSelector[F].forOrdinal(lastArtifact.ordinal)(implicit hasher => lastArtifact.activeTips)
           lastDeprecatedTips = lastArtifact.tips.deprecated
           maybeLastDataApplication = lastArtifact.dataApplication
 
@@ -129,28 +129,32 @@ object CurrencySnapshotCreator {
             _.accept(maybeLastDataApplication, dataBlocks, lastArtifact.ordinal, currentOrdinal)
           )
 
-          (acceptanceResult, messagesAcceptanceResult, acceptedRewardTxs, snapshotInfo, stateProof) <- currencySnapshotAcceptanceManager
-            .accept(
-              blocks,
-              messages,
-              lastContext,
-              currentOrdinal,
-              lastActiveTips,
-              lastDeprecatedTips,
-              transactions =>
-                rewards
-                  .map(
-                    _.distribute(
-                      lastArtifact,
-                      lastContext.snapshotInfo.balances,
-                      transactions,
-                      trigger,
-                      events,
-                      dataApplicationAcceptanceResult.map(_.calculatedState)
+          (acceptanceResult, messagesAcceptanceResult, acceptedRewardTxs, snapshotInfo, stateProof) <- HasherSelector[F].forOrdinal(
+            currentOrdinal
+          ) { implicit hasher =>
+            currencySnapshotAcceptanceManager
+              .accept(
+                blocks,
+                messages,
+                lastContext,
+                currentOrdinal,
+                lastActiveTips,
+                lastDeprecatedTips,
+                transactions =>
+                  rewards
+                    .map(
+                      _.distribute(
+                        lastArtifact,
+                        lastContext.snapshotInfo.balances,
+                        transactions,
+                        trigger,
+                        events,
+                        dataApplicationAcceptanceResult.map(_.calculatedState)
+                      )
                     )
-                  )
-                  .getOrElse(SortedSet.empty[RewardTransaction].pure[F])
-            )
+                    .getOrElse(SortedSet.empty[RewardTransaction].pure[F])
+              )
+          }
 
           (awaitingBlocks, rejectedBlocks) = acceptanceResult.notAccepted.partitionMap {
             case (b, _: BlockAwaitReason)     => b.asRight

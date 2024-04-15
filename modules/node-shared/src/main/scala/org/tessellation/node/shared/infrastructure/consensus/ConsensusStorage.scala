@@ -57,7 +57,9 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
 
   def clearTimeTrigger: F[Unit]
 
-  private[consensus] def addArtifact(key: Key, artifact: Artifact): F[Option[ConsensusResources[Artifact, Kind]]]
+  private[consensus] def addArtifact(key: Key, artifact: Artifact)(
+    implicit hasher: Hasher[F]
+  ): F[Option[ConsensusResources[Artifact, Kind]]]
 
   private[consensus] def addFacility(peerId: PeerId, key: Key, facility: Facility): F[Option[ConsensusResources[Artifact, Kind]]]
 
@@ -122,7 +124,7 @@ object ConsensusStorage {
         Option[ConsensusState[Key, Status, Outcome, Kind]] => F[Option[(Option[ConsensusState[Key, Status, Outcome, Kind]], B)]]
       )
 
-  def make[F[_]: Async: Hasher, Event, Key: Order: Next, Artifact: Encoder, Context, Status, Outcome, Kind](
+  def make[F[_]: Async, Event, Key: Order: Next, Artifact: Encoder, Context, Status, Outcome, Kind](
     consensusConfig: ConsensusConfig
   )(implicit _key: Lens[Outcome, Key]): F[ConsensusStorage[F, Event, Key, Artifact, Context, Status, Outcome, Kind]] = {
     case class ConsensusOutcomeWrapper(
@@ -337,7 +339,7 @@ object ConsensusStorage {
               }
           }
 
-        def addArtifact(key: Key, artifact: Artifact): F[Option[ConsensusResources[Artifact, Kind]]] =
+        def addArtifact(key: Key, artifact: Artifact)(implicit hasher: Hasher[F]): F[Option[ConsensusResources[Artifact, Kind]]] =
           artifact.hash.flatMap { hash =>
             updateResources(key) { resources =>
               resources

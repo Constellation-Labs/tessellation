@@ -27,11 +27,11 @@ import org.tessellation.node.shared.infrastructure.snapshot.storage.{
 import org.tessellation.node.shared.modules.SharedStorages
 import org.tessellation.schema._
 import org.tessellation.schema.trust.PeerObservationAdjustmentUpdateBatch
-import org.tessellation.security.{HashSelect, Hasher}
+import org.tessellation.security.{HashSelect, HasherSelector}
 
 object Storages {
 
-  def make[F[_]: Async: KryoSerializer: JsonSerializer: Hasher: Supervisor](
+  def make[F[_]: Async: KryoSerializer: JsonSerializer: HasherSelector: Supervisor](
     sharedStorages: SharedStorages[F],
     sharedConfig: SharedConfig,
     seedlist: Option[Set[SeedlistEntry]],
@@ -64,7 +64,8 @@ object Storages {
         incrementalGlobalSnapshotPersistedLocalFileSystemStorage,
         incrementalGlobalSnapshotInfoLocalFileSystemStorage,
         snapshotConfig.inMemoryCapacity,
-        incrementalConfig.lastFullGlobalSnapshotOrdinal.getOrElse(environment, SnapshotOrdinal.MinValue)
+        incrementalConfig.lastFullGlobalSnapshotOrdinal.getOrElse(environment, SnapshotOrdinal.MinValue),
+        HasherSelector[F]
       )
       snapshotDownloadStorage = SnapshotDownloadStorage
         .make[F](

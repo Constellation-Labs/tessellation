@@ -12,8 +12,8 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.currencyMessage._
 import org.tessellation.schema.transaction.{RewardTransaction, Transaction, TransactionReference}
+import org.tessellation.security.Hasher
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{HashSelect, Hasher}
 import org.tessellation.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._
@@ -34,7 +34,7 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
     lastActiveTips: SortedSet[ActiveTip],
     lastDeprecatedTips: SortedSet[DeprecatedTip],
     calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]]
-  ): F[
+  )(implicit hasher: Hasher[F]): F[
     (
       BlockAcceptanceResult,
       CurrencyMessagesAcceptanceResult,
@@ -46,10 +46,9 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
 }
 
 object CurrencySnapshotAcceptanceManager {
-  def make[F[_]: Async: Hasher](
+  def make[F[_]: Async](
     blockAcceptanceManager: BlockAcceptanceManager[F],
-    collateral: Amount,
-    hashSelect: HashSelect
+    collateral: Amount
   ) = new CurrencySnapshotAcceptanceManager[F] {
 
     def accept(
@@ -60,7 +59,7 @@ object CurrencySnapshotAcceptanceManager {
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip],
       calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]]
-    ): F[
+    )(implicit hasher: Hasher[F]): F[
       (
         BlockAcceptanceResult,
         CurrencyMessagesAcceptanceResult,
@@ -129,7 +128,7 @@ object CurrencySnapshotAcceptanceManager {
       )
 
       csi = CurrencySnapshotInfo(transactionsRefs, updatedBalancesByRewards)
-      stateProof <- csi.stateProof(snapshotOrdinal, hashSelect)
+      stateProof <- csi.stateProof(snapshotOrdinal)
 
     } yield (acceptanceResult, messagesAcceptanceResult, acceptedRewardTxs, csi, stateProof)
 
@@ -140,7 +139,7 @@ object CurrencySnapshotAcceptanceManager {
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip],
       initialTxRef: TransactionReference
-    ) = {
+    )(implicit hasher: Hasher[F]) = {
       val tipUsages = getTipsUsages(lastActiveTips, lastDeprecatedTips)
       val context = BlockAcceptanceContext.fromStaticData(
         lastSnapshotContext.snapshotInfo.balances,

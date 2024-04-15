@@ -27,14 +27,14 @@ import eu.timepit.refined.auto._
 abstract class GlobalSnapshotContextFunctions[F[_]] extends SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
 
 object GlobalSnapshotContextFunctions {
-  def make[F[_]: Async: Hasher](snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F], hashSelect: HashSelect) =
+  def make[F[_]: Async: HasherSelector](snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F]) =
     new GlobalSnapshotContextFunctions[F] {
       def createContext(
         context: GlobalSnapshotInfo,
         lastArtifact: Signed[GlobalIncrementalSnapshot],
         signedArtifact: Signed[GlobalIncrementalSnapshot]
       ): F[GlobalSnapshotInfo] = for {
-        lastActiveTips <- lastArtifact.activeTips
+        lastActiveTips <- HasherSelector[F].forOrdinal(lastArtifact.ordinal)(implicit hasher => lastArtifact.activeTips)
         lastDeprecatedTips = lastArtifact.tips.deprecated
 
         blocksForAcceptance = signedArtifact.blocks.toList.map(_.block)
@@ -58,10 +58,12 @@ object GlobalSnapshotContextFunctions {
         _ <- CannotApplyStateChannelsError(returnedSCEvents).raiseError[F, Unit].whenA(returnedSCEvents.nonEmpty)
         diffRewards = acceptedRewardTxs -- signedArtifact.rewards
         _ <- CannotApplyRewardsError(diffRewards).raiseError[F, Unit].whenA(diffRewards.nonEmpty)
-        hashedArtifact <- signedArtifact.toHashed
-        calculatedStateProof <- hashSelect.select(signedArtifact.ordinal) match {
-          case JsonHash => snapshotInfo.stateProof(signedArtifact.ordinal, hashSelect)
-          case KryoHash => GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(snapshotInfo).stateProof(signedArtifact.ordinal, hashSelect)
+        hashedArtifact <- HasherSelector[F].forOrdinal(signedArtifact.ordinal)(implicit hasher => signedArtifact.toHashed)
+        calculatedStateProof <- HasherSelector[F].forOrdinal(signedArtifact.ordinal) { implicit hasher =>
+          hasher.getLogic(signedArtifact.ordinal) match {
+            case JsonHash => snapshotInfo.stateProof(signedArtifact.ordinal)
+            case KryoHash => GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(snapshotInfo).stateProof(signedArtifact.ordinal)
+          }
         }
         _ <- StateProofValidator.validate(hashedArtifact, calculatedStateProof) match {
           case Validated.Valid(_)   => Async[F].unit

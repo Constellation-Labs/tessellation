@@ -9,12 +9,13 @@ import org.tessellation.node.shared.domain.consensus.ConsensusFunctions
 import org.tessellation.node.shared.infrastructure.consensus.declaration._
 import org.tessellation.node.shared.infrastructure.consensus.message._
 import org.tessellation.node.shared.infrastructure.gossip.RumorHandler
+import org.tessellation.security.HasherSelector
 
 import io.circe.Decoder
 
 class ConsensusRumorHandlers[F[
   _
-]: Async, Event: TypeTag: Decoder, Key: TypeTag: Decoder, Artifact: TypeTag: Decoder, Context, Status, Outcome, Kind: Decoder: TypeTag](
+]: Async: HasherSelector, Event: TypeTag: Decoder, Key: TypeTag: Decoder, Artifact: TypeTag: Decoder, Context, Status, Outcome, Kind: Decoder: TypeTag](
   storage: ConsensusStorage[F, Event, Key, Artifact, Context, Status, Outcome, Kind],
   manager: ConsensusManager[F, Key, Artifact, Context, Status, Outcome, Kind],
   fns: ConsensusFunctions[F, Event, Key, Artifact, Context]
@@ -43,7 +44,9 @@ class ConsensusRumorHandlers[F[
   }
 
   val artifactHandler = RumorHandler.fromCommonRumorConsumer[F, ConsensusArtifact[Key, Artifact]] { rumor =>
-    storage.addArtifact(rumor.content.key, rumor.content.artifact) >>=
+    HasherSelector[F].withCurrent { implicit hasher =>
+      storage.addArtifact(rumor.content.key, rumor.content.artifact)
+    } >>=
       checkForStateUpdate(rumor.content.key)
   }
 

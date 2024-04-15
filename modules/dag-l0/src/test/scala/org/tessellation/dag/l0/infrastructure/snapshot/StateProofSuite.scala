@@ -22,12 +22,10 @@ object StateProofSuite extends MutableIOSuite with Checkers {
 
   type Res = (KryoSerializer[IO], Hasher[IO])
 
-  val hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = KryoHash }
-
   def sharedResource: Resource[IO, Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](dagL0KryoRegistrar.union(nodeSharedKryoRegistrar))
     implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
-    h = Hasher.forSync[IO](hashSelect)
+    h = Hasher.forKryo[IO]
   } yield (ks, h)
 
   def deserializeInfo(path: File)(implicit k: KryoSerializer[IO]): IO[GlobalSnapshotInfoV2] = {
@@ -54,7 +52,7 @@ object StateProofSuite extends MutableIOSuite with Checkers {
 
       snapshotStateProof = snap.stateProof
 
-      infoStateProof <- info.stateProof(snap.ordinal, hashSelect)
+      infoStateProof <- info.stateProof(snap.ordinal)
 
     } yield expect.eql(snapshotStateProof, infoStateProof)
 

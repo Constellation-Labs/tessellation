@@ -19,10 +19,10 @@ import org.tessellation.node.shared.modules.SharedServices
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
-import org.tessellation.security.{HashSelect, Hasher, SecurityProvider}
+import org.tessellation.security.{Hasher, HasherSelector, SecurityProvider}
 
 object Services {
-  def make[F[_]: Async: Hasher: SecurityProvider](
+  def make[F[_]: Async: HasherSelector: SecurityProvider](
     storages: Storages[
       F,
       CurrencySnapshotStateProof,
@@ -37,24 +37,25 @@ object Services {
     cfg: AppConfig,
     maybeDataApplication: Option[BaseDataApplicationL1Service[F]],
     maybeMajorityPeerIds: Option[NonEmptySet[PeerId]],
-    hashSelect: HashSelect
+    txHasher: Hasher[F]
   ): Services[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo] =
     new Services[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo] {
 
       val localHealthcheck = sharedServices.localHealthcheck
       val block = BlockService.make[F](
-        BlockAcceptanceManager.make[F](validators.block),
+        BlockAcceptanceManager.make[F](validators.block, txHasher),
         storages.address,
         storages.block,
         storages.transaction,
         lastGlobalSnapshotStorage,
-        cfg.collateral.amount
+        cfg.collateral.amount,
+        txHasher
       )
       val cluster = sharedServices.cluster
       val gossip = sharedServices.gossip
       val globalL0 =
         GlobalL0Service
-          .make[F](p2PClient.l0GlobalSnapshot, globalL0Cluster, lastGlobalSnapshotStorage, None, maybeMajorityPeerIds, hashSelect)
+          .make[F](p2PClient.l0GlobalSnapshot, globalL0Cluster, lastGlobalSnapshotStorage, None, maybeMajorityPeerIds)
       val session = sharedServices.session
       val transaction = TransactionService.make[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
         storages.transaction,

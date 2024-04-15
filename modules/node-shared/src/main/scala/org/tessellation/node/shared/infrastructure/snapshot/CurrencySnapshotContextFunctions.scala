@@ -13,8 +13,8 @@ import scala.util.control.NoStackTrace
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotContext}
 import org.tessellation.merkletree.StateProofValidator
 import org.tessellation.node.shared.domain.snapshot.SnapshotContextFunctions
+import org.tessellation.security.HasherSelector
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{HashSelect, Hasher}
 
 import derevo.cats.{eqv, show}
 import derevo.derive
@@ -24,7 +24,7 @@ abstract class CurrencySnapshotContextFunctions[F[_]]
     extends SnapshotContextFunctions[F, CurrencyIncrementalSnapshot, CurrencySnapshotContext]
 
 object CurrencySnapshotContextFunctions {
-  def make[F[_]: Async: Hasher](validator: CurrencySnapshotValidator[F], hashSelect: HashSelect) =
+  def make[F[_]: Async: HasherSelector](validator: CurrencySnapshotValidator[F]) =
     new CurrencySnapshotContextFunctions[F] {
       def createContext(
         context: CurrencySnapshotContext,
@@ -36,10 +36,14 @@ object CurrencySnapshotContextFunctions {
           case Validated.Valid((_, validatedContext)) => validatedContext.pure[F]
           case Validated.Invalid(e)                   => CannotCreateContext(e).raiseError[F, CurrencySnapshotContext]
         }
-        _ <- StateProofValidator.validate(signedArtifact, validatedContext.snapshotInfo, hashSelect).flatMap {
-          case Validated.Valid(_)   => Async[F].unit
-          case Validated.Invalid(e) => e.raiseError[F, Unit]
-        }
+        _ <- HasherSelector[F]
+          .forOrdinal(signedArtifact.ordinal) { implicit hasher =>
+            StateProofValidator.validate(signedArtifact, validatedContext.snapshotInfo)
+          }
+          .flatMap {
+            case Validated.Valid(_)   => Async[F].unit
+            case Validated.Invalid(e) => e.raiseError[F, Unit]
+          }
       } yield validatedContext
 
     }

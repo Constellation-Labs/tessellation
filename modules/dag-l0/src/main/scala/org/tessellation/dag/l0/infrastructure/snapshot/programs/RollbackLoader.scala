@@ -15,13 +15,13 @@ import org.tessellation.node.shared.infrastructure.snapshot.storage.{SnapshotInf
 import org.tessellation.schema._
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{HashSelect, Hasher, SecurityProvider}
+import org.tessellation.security.{HashSelect, HasherSelector, SecurityProvider}
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object RollbackLoader {
 
-  def make[F[_]: Async: KryoSerializer: JsonSerializer: Hasher: SecurityProvider](
+  def make[F[_]: Async: KryoSerializer: JsonSerializer: SecurityProvider: HasherSelector](
     keyPair: KeyPair,
     snapshotConfig: SnapshotConfig,
     incrementalGlobalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
@@ -41,7 +41,7 @@ object RollbackLoader {
     ) {}
 }
 
-sealed abstract class RollbackLoader[F[_]: Async: KryoSerializer: JsonSerializer: Hasher: SecurityProvider] private (
+sealed abstract class RollbackLoader[F[_]: Async: KryoSerializer: JsonSerializer: HasherSelector: SecurityProvider] private (
   keyPair: KeyPair,
   snapshotConfig: SnapshotConfig,
   incrementalGlobalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
@@ -67,20 +67,24 @@ sealed abstract class RollbackLoader[F[_]: Async: KryoSerializer: JsonSerializer
                     fullGlobalSnapshotLocalFileSystemStorage.read(_),
                     snapshotInfoLocalFileSystemStorage.read(_),
                     snapshotContextFunctions,
-                    rollbackHash,
-                    hashSelect
+                    rollbackHash
                   )
                 snapshotTraverse.loadChain()
               }
             case Some(fullSnapshot) =>
               logger.info("Rollback hash points to full global snapshot") >>
-                fullSnapshot.toHashed[F].flatMap(GlobalSnapshot.mkFirstIncrementalSnapshot[F](_, hashSelect)).flatMap {
-                  firstIncrementalSnapshot =>
-                    Signed.forAsyncHasher[F, GlobalIncrementalSnapshot](firstIncrementalSnapshot, keyPair).map {
-                      signedFirstIncrementalSnapshot =>
-                        (GlobalSnapshotInfoV1.toGlobalSnapshotInfo(fullSnapshot.info), signedFirstIncrementalSnapshot)
-                    }
-                }
+                HasherSelector[F]
+                  .forOrdinal(fullSnapshot.ordinal) { implicit hasher =>
+                    fullSnapshot
+                      .toHashed[F]
+                      .flatMap(GlobalSnapshot.mkFirstIncrementalSnapshot[F](_))
+                      .flatMap { firstIncrementalSnapshot =>
+                        Signed.forAsyncHasher[F, GlobalIncrementalSnapshot](firstIncrementalSnapshot, keyPair).map {
+                          signedFirstIncrementalSnapshot =>
+                            (GlobalSnapshotInfoV1.toGlobalSnapshotInfo(fullSnapshot.info), signedFirstIncrementalSnapshot)
+                        }
+                      }
+                  }
           }
           .flatTap {
             case (_, lastInc) =>

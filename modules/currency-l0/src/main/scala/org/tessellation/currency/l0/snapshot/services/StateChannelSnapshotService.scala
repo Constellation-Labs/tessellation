@@ -26,13 +26,15 @@ trait StateChannelSnapshotService[F[_]] {
     signedArtifact: Signed[CurrencySnapshotArtifact],
     binaryHashed: Hashed[StateChannelSnapshotBinary],
     context: CurrencySnapshotContext
-  ): F[Unit]
-  def createGenesisBinary(snapshot: Signed[CurrencySnapshot]): F[Signed[StateChannelSnapshotBinary]]
-  def createBinary(snapshot: Signed[CurrencySnapshotArtifact], lastSnapshotBinaryHash: Hash): F[Signed[StateChannelSnapshotBinary]]
+  )(implicit hasher: Hasher[F]): F[Unit]
+  def createGenesisBinary(snapshot: Signed[CurrencySnapshot])(implicit hasher: Hasher[F]): F[Signed[StateChannelSnapshotBinary]]
+  def createBinary(snapshot: Signed[CurrencySnapshotArtifact], lastSnapshotBinaryHash: Hash)(
+    implicit hasher: Hasher[F]
+  ): F[Signed[StateChannelSnapshotBinary]]
 }
 
 object StateChannelSnapshotService {
-  def make[F[_]: Async: Hasher: SecurityProvider](
+  def make[F[_]: Async: SecurityProvider](
     keyPair: KeyPair,
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
     jsonBrotliBinarySerializer: JsonBrotliBinarySerializer[F],
@@ -42,12 +44,14 @@ object StateChannelSnapshotService {
     new StateChannelSnapshotService[F] {
       private val logger = Slf4jLogger.getLogger
 
-      def createGenesisBinary(snapshot: Signed[CurrencySnapshot]): F[Signed[StateChannelSnapshotBinary]] =
+      def createGenesisBinary(snapshot: Signed[CurrencySnapshot])(implicit hasher: Hasher[F]): F[Signed[StateChannelSnapshotBinary]] =
         jsonBrotliBinarySerializer
           .serialize(snapshot)
           .flatMap(StateChannelSnapshotBinary(Hash.empty, _, SnapshotFee.MinValue).sign(keyPair))
 
-      def createBinary(snapshot: Signed[CurrencySnapshotArtifact], lastSnapshotBinaryHash: Hash): F[Signed[StateChannelSnapshotBinary]] =
+      def createBinary(snapshot: Signed[CurrencySnapshotArtifact], lastSnapshotBinaryHash: Hash)(
+        implicit hasher: Hasher[F]
+      ): F[Signed[StateChannelSnapshotBinary]] =
         for {
           bytes <- jsonBrotliBinarySerializer.serialize(snapshot)
           binary <- StateChannelSnapshotBinary(lastSnapshotBinaryHash, bytes, SnapshotFee.MinValue).sign(keyPair)
@@ -57,7 +61,7 @@ object StateChannelSnapshotService {
         signedArtifact: Signed[CurrencySnapshotArtifact],
         binaryHashed: Hashed[StateChannelSnapshotBinary],
         context: CurrencySnapshotContext
-      ): F[Unit] = for {
+      )(implicit hasher: Hasher[F]): F[Unit] = for {
         _ <- dataApplicationSnapshotAcceptanceManager.traverse { manager =>
           snapshotStorage.head.map { lastSnapshot =>
             lastSnapshot.flatMap { case (value, _) => value.dataApplication }

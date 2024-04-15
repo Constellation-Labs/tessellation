@@ -29,25 +29,25 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
 
   type Res = (Supervisor[IO], KryoSerializer[IO], JsonSerializer[IO], Hasher[IO], SecurityProvider[IO])
 
-  val hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash }
-
   def sharedResource: Resource[IO, Res] = for {
     supervisor <- Supervisor[IO]
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](nodeSharedKryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
     implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
-    h = Hasher.forSync[IO](hashSelect)
+    h = Hasher.forJson[IO]
   } yield (supervisor, ks, j, h, sp)
 
   def mkStorage(tmpDir: File)(implicit K: KryoSerializer[IO], J: JsonSerializer[IO], H: Hasher[IO], S: Supervisor[IO]) =
     SnapshotLocalFileSystemStorage.make[IO, GlobalIncrementalSnapshot](Path(tmpDir.pathAsString)).flatMap { snapshotFileStorage =>
       SnapshotInfoLocalFileSystemStorage.make[IO, GlobalSnapshotStateProof, GlobalSnapshotInfo](Path(tmpDir.pathAsString)).flatMap {
         snapshotInfoFileStorage =>
+          implicit val hs = HasherSelector.forSyncAlwaysCurrent(H)
           SnapshotStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
             snapshotFileStorage,
             snapshotInfoFileStorage,
             inMemoryCapacity = 5L,
-            SnapshotOrdinal.MinValue
+            SnapshotOrdinal.MinValue,
+            hs
           )
       }
     }
@@ -58,7 +58,7 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
   ): IO[(Signed[GlobalSnapshot], Signed[GlobalIncrementalSnapshot])] =
     KeyPairGenerator.makeKeyPair[IO].flatMap { keyPair =>
       Signed.forAsyncHasher[IO, GlobalSnapshot](GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue), keyPair).flatMap { genesis =>
-        GlobalIncrementalSnapshot.fromGlobalSnapshot(genesis, hashSelect).flatMap { snapshot =>
+        GlobalIncrementalSnapshot.fromGlobalSnapshot(genesis).flatMap { snapshot =>
           Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](snapshot, keyPair).map((genesis, _))
         }
       }

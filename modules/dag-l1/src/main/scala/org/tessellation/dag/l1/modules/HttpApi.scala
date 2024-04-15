@@ -7,7 +7,6 @@ import cats.effect.std.Supervisor
 import cats.syntax.semigroupk._
 
 import org.tessellation.dag.l1.http.Routes
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.HttpConfig
 import org.tessellation.node.shared.http.p2p.middlewares.{PeerAuthMiddleware, `X-Id-Middleware`}
 import org.tessellation.node.shared.http.routes._
@@ -15,7 +14,7 @@ import org.tessellation.node.shared.infrastructure.metrics.Metrics
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.semver.TessellationVersion
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
-import org.tessellation.security.{Hasher, SecurityProvider}
+import org.tessellation.security.{Hasher, HasherSelector, SecurityProvider}
 
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
 import org.http4s.server.middleware.{CORS, RequestLogger, ResponseLogger}
@@ -24,7 +23,7 @@ import org.http4s.{HttpApp, HttpRoutes}
 object HttpApi {
 
   def make[
-    F[_]: Async: KryoSerializer: Hasher: SecurityProvider: Metrics: Supervisor,
+    F[_]: Async: HasherSelector: SecurityProvider: Metrics: Supervisor,
     P <: StateProof,
     S <: Snapshot,
     SI <: SnapshotInfo[P]
@@ -36,13 +35,14 @@ object HttpApi {
     programs: Programs[F, P, S, SI],
     selfId: PeerId,
     nodeVersion: TessellationVersion,
-    httpCfg: HttpConfig
+    httpCfg: HttpConfig,
+    txHasher: Hasher[F]
   ): HttpApi[F, P, S, SI] =
-    new HttpApi[F, P, S, SI](storages, queues, privateKey, services, programs, selfId, nodeVersion, httpCfg) {}
+    new HttpApi[F, P, S, SI](storages, queues, privateKey, services, programs, selfId, nodeVersion, httpCfg, txHasher) {}
 }
 
 sealed abstract class HttpApi[
-  F[_]: Async: KryoSerializer: Hasher: SecurityProvider: Metrics: Supervisor,
+  F[_]: Async: HasherSelector: SecurityProvider: Metrics: Supervisor,
   P <: StateProof,
   S <: Snapshot,
   SI <: SnapshotInfo[P]
@@ -54,17 +54,24 @@ sealed abstract class HttpApi[
   programs: Programs[F, P, S, SI],
   selfId: PeerId,
   nodeVersion: TessellationVersion,
-  httpCfg: HttpConfig
+  httpCfg: HttpConfig,
+  txHasher: Hasher[F]
 ) {
   private val clusterRoutes =
-    ClusterRoutes[F](programs.joining, programs.peerDiscovery, storages.cluster, services.cluster, services.collateral)
+    HasherSelector[F].withCurrent { implicit hasher =>
+      ClusterRoutes[F](programs.joining, programs.peerDiscovery, storages.cluster, services.cluster, services.collateral)
+    }
   private val registrationRoutes = RegistrationRoutes[F](services.cluster)
   private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip)
-  private val dagRoutes = Routes[F](services.transaction, storages.transaction, storages.l0Cluster, queues.peerBlockConsensusInput)
+  private val dagRoutes =
+    Routes[F](services.transaction, storages.transaction, storages.l0Cluster, queues.peerBlockConsensusInput, txHasher)
   private val nodeRoutes = NodeRoutes[F](storages.node, storages.session, storages.cluster, nodeVersion, httpCfg, selfId)
 
   private val metricRoutes = MetricRoutes[F]().publicRoutes
-  private val targetRoutes = TargetRoutes[F](services.cluster).publicRoutes
+  private val targetRoutes =
+    HasherSelector[F].withCurrent { implicit hasher =>
+      TargetRoutes[F](services.cluster).publicRoutes
+    }
 
   private val openRoutes: HttpRoutes[F] =
     CORS.policy.withAllowOriginAll.withAllowHeadersAll.withAllowCredentials(false).apply {

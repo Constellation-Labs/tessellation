@@ -8,11 +8,12 @@ import org.tessellation.currency.schema.currency.CurrencySnapshotContext
 import org.tessellation.node.shared.infrastructure.consensus.ConsensusRumorHandlers
 import org.tessellation.node.shared.infrastructure.gossip.RumorHandler
 import org.tessellation.node.shared.snapshot.currency._
+import org.tessellation.security.HasherSelector
 
 import io.circe.Decoder
 
 object CurrencyConsensusHandler {
-  def make[F[_]: Async](
+  def make[F[_]: Async: HasherSelector](
     storage: CurrencyConsensusStorage[F],
     manager: CurrencyConsensusManager[F],
     fns: CurrencySnapshotConsensusFunctions[F]

@@ -12,16 +12,18 @@ import org.tessellation.node.shared.domain.Daemon
 import org.tessellation.node.shared.infrastructure.cluster.daemon.NodeStateDaemon
 import org.tessellation.node.shared.infrastructure.collateral.daemon.CollateralDaemon
 import org.tessellation.node.shared.infrastructure.snapshot.daemon.{DownloadDaemon, SelectablePeerDiscoveryDelay}
+import org.tessellation.security.HasherSelector
 
 object Daemons {
 
-  def start[F[_]: Async: Supervisor](
+  def start[F[_]: Async: Supervisor: HasherSelector](
     storages: Storages[F],
     services: Services[F],
     programs: Programs[F],
     queues: Queues[F],
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
-    config: AppConfig
+    config: AppConfig,
+    hasherSelector: HasherSelector[F]
   ): F[Unit] = {
     val pddConfig = config.peerDiscovery.delay
     val peerDiscoveryDelay = SelectablePeerDiscoveryDelay.make(
@@ -35,7 +37,7 @@ object Daemons {
 
     List[Daemon[F]](
       NodeStateDaemon.make(storages.node, services.gossip),
-      DownloadDaemon.make(storages.node, programs.download, peerDiscoveryDelay),
+      DownloadDaemon.make(storages.node, programs.download, peerDiscoveryDelay, hasherSelector),
       CurrencySnapshotEventsPublisherDaemon.make(queues.l1Output, services.gossip, maybeDataApplication),
       CollateralDaemon.make(services.collateral, storages.snapshot, storages.cluster)
     ).traverse(_.start).void

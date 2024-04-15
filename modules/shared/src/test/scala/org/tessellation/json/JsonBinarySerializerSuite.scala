@@ -28,12 +28,10 @@ object JsonBinarySerializerSuite extends MutableIOSuite {
 
   type Res = Hasher[IO]
 
-  val hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash }
-
   override def sharedResource: Resource[IO, Res] =
     KryoSerializer.forAsync[IO](sharedKryoRegistrar).flatMap { implicit res =>
       JsonSerializer.forSync[IO].asResource.map { implicit json =>
-        Hasher.forSync[IO](hashSelect)
+        Hasher.forJson[IO]
       }
     }
 
@@ -57,7 +55,7 @@ object JsonBinarySerializerSuite extends MutableIOSuite {
     hash: Hash,
     currencySnapshotInfo: CurrencySnapshotInfo
   ): F[Signed[CurrencyIncrementalSnapshot]] =
-    currencySnapshotInfo.stateProof[F](SnapshotOrdinal(NonNegLong(56L)), hashSelect).map { sp =>
+    currencySnapshotInfo.stateProof[F](SnapshotOrdinal(NonNegLong(56L))).map { sp =>
       Signed(
         CurrencyIncrementalSnapshot(
           SnapshotOrdinal(NonNegLong(56L)),

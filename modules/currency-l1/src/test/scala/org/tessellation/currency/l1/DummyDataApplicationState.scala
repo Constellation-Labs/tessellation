@@ -13,7 +13,7 @@ object DummyDataApplicationState {
 
   implicit val dataUpateEncoder: Encoder[DataUpdate] = {
     case event: DummyUpdate => event.asJson
-    case _                 => Json.Null
+    case _                  => Json.Null
   }
 
   implicit val dataUpdateDecoder: Decoder[DataUpdate] =

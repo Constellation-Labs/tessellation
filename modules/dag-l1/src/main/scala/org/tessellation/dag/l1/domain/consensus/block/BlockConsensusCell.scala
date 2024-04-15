@@ -62,10 +62,12 @@ object BlockConsensusCell {
   private def deriveConsensusPeerIds(proposal: Proposal, selfId: PeerId): Set[PeerId] =
     proposal.facilitators + proposal.senderId + proposal.owner - selfId
 
-  private def returnTransactions[F[_]: Async: Hasher](
+  private def returnTransactions[F[_]: Async](
     ownProposal: Proposal,
-    transactionStorage: TransactionStorage[F]
-  ): F[Unit] =
+    transactionStorage: TransactionStorage[F],
+    txHasher: Hasher[F]
+  ): F[Unit] = {
+    implicit val hasher = txHasher
     ownProposal.transactions.toList
       .traverse(_.toHashed[F])
       .map(_.toSet)
@@ -76,6 +78,7 @@ object BlockConsensusCell {
       .flatMap {
         transactionStorage.putBack
       }
+  }
 
   private def cleanUpRoundData[F[_]: Async](
     ownProposal: Proposal,
@@ -94,12 +97,12 @@ object BlockConsensusCell {
       )
   }
 
-  private def cancelRound[F[_]: Async: Hasher](
+  private def cancelRound[F[_]: Async](
     ownProposal: Proposal,
     ctx: BlockConsensusContext[F]
   ): F[Unit] =
     for {
-      _ <- returnTransactions(ownProposal, ctx.transactionStorage)
+      _ <- returnTransactions(ownProposal, ctx.transactionStorage, ctx.txHasher)
       _ <- cleanUpRoundData(ownProposal, ctx)
     } yield ()
 
@@ -140,7 +143,7 @@ object BlockConsensusCell {
           sendOwnProposal(ownProposal, peers, ctx)
             .map(_ => NoData.asRight[CellError].widen[BlockConsensusOutput])
         case None =>
-          returnTransactions(roundData.ownProposal, ctx.transactionStorage)
+          returnTransactions(roundData.ownProposal, ctx.transactionStorage, ctx.txHasher)
             .map(_ => CellError("Another own round already in progress! Transactions returned.").asLeft[BlockConsensusOutput])
       }
 
@@ -162,7 +165,7 @@ object BlockConsensusCell {
               .debug(
                 s"Round with roundId=${roundData.roundId} already exists! Returning transactions and processing proposal!"
               )
-            _ <- returnTransactions(roundData.ownProposal, ctx.transactionStorage)
+            _ <- returnTransactions(roundData.ownProposal, ctx.transactionStorage, ctx.txHasher)
           } yield ()
       } >> persistProposal(peerProposal, ctx, ordinal)
 
@@ -251,7 +254,7 @@ object BlockConsensusCell {
     )
     .flatMap {
       case Some(roundData) if gotAllProposals(roundData) =>
-        roundData.formBlock(ctx.transactionValidator).flatMap {
+        roundData.formBlock(ctx.transactionValidator, ctx.txHasher).flatMap {
           case Some(block) =>
             Signed.forAsyncHasher(block, ctx.keyPair).flatMap { signedBlock =>
               ctx.blockValidator
@@ -442,7 +445,7 @@ object BlockConsensusCell {
       }
     } yield result
 
-  def cancelTimedOutRounds[F[_]: Async: Hasher](
+  def cancelTimedOutRounds[F[_]: Async](
     toCancel: Set[Proposal],
     ctx: BlockConsensusContext[F]
   ): F[Either[CellError, BlockConsensusOutput]] =
@@ -501,7 +504,7 @@ object BlockConsensusCell {
       }
     } yield result
 
-  def inspectConsensuses[F[_]: Async: Hasher](
+  def inspectConsensuses[F[_]: Async](
     ctx: BlockConsensusContext[F]
   ): F[Either[CellError, BlockConsensusOutput]] =
     for {

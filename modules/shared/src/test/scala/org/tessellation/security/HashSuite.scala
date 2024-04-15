@@ -20,7 +20,7 @@ import weaver.scalacheck.Checkers
 
 object HashSuite extends MutableIOSuite with Checkers {
 
-  type Res = Hasher[IO]
+  type Res = HasherSelector[IO]
 
   val registrar: Map[Class[_], SharedKryoRegistrationId] = sharedKryoRegistrar ++ Map(
     classOf[Foo] -> 638,
@@ -30,7 +30,11 @@ object HashSuite extends MutableIOSuite with Checkers {
   override def sharedResource: Resource[IO, Res] =
     KryoSerializer.forAsync(registrar).flatMap { implicit kryo =>
       JsonSerializer.forSync[IO].asResource.map { implicit json =>
-        Hasher.forSync[IO](new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash })
+        HasherSelector.forSync[IO](
+          Hasher.forJson[IO],
+          Hasher.forKryo[IO],
+          hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = KryoHash }
+        )
       }
     }
 
@@ -39,7 +43,7 @@ object HashSuite extends MutableIOSuite with Checkers {
 
     def genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
 
-    res.compare(genesis, oldHash).map(expect(_))
+    res.forOrdinal(genesis.ordinal)(implicit hasher => hasher.compare(genesis, oldHash).map(expect(_)))
   }
 
   test("ensure hash stability when a new optional field is empty") { implicit res =>
@@ -51,7 +55,7 @@ object HashSuite extends MutableIOSuite with Checkers {
     val test = Test(2)
     val testUpdated = TestUpdated(2, None)
 
-    (res.hash(test), res.hash(testUpdated)).mapN(expect.eql(_, _))
+    res.withCurrent(implicit hasher => (hasher.hash(test), hasher.hash(testUpdated)).mapN(expect.eql(_, _)))
   }
 
   @derive(encoder)

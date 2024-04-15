@@ -35,13 +35,11 @@ import weaver.scalacheck.Checkers
 object NetworkApiServiceSuite extends MutableIOSuite with Checkers {
   type Res = (SecurityProvider[IO], Hasher[IO])
 
-  val hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash }
-
   def sharedResource: Resource[IO, Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
     implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
-    h = Hasher.forSync[IO](hashSelect)
+    h = Hasher.forJson[IO]
   } yield (sp, h)
 
   private def errorResult[A]: IO[A] = IO.raiseError(new Exception("unexpected call"))
@@ -112,7 +110,7 @@ object NetworkApiServiceSuite extends MutableIOSuite with Checkers {
           ).flatMap(_.toHashed[IO])
 
           incrementalSnapshot <- GlobalSnapshot
-            .mkFirstIncrementalSnapshot(genesis, hashSelect)
+            .mkFirstIncrementalSnapshot(genesis)
             .flatMap(forAsyncHasher(_, keyPair))
             .flatMap(_.toHashed[IO])
 

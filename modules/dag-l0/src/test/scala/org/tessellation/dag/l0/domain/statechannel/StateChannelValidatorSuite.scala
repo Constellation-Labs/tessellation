@@ -16,7 +16,6 @@ import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
 import org.tessellation.node.shared.domain.statechannel.StateChannelValidator
 import org.tessellation.schema.ID.Id
-import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.security._
@@ -43,7 +42,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
     implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
-    h = Hasher.forSync[IO](new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash })
+    h = Hasher.forJson[IO]
   } yield (j, h, sp)
 
   private val testStateChannel = StateChannelSnapshotBinary(Hash.empty, "test".getBytes, SnapshotFee.MinValue)
@@ -123,32 +122,33 @@ object StateChannelValidatorSuite extends MutableIOSuite {
           SignatureProof(
             Id(
               Hex(
-                "c4960e903a9d05662b83332a9ee7059ec214e6d587ae5d80f97924bb1519be7ed60116887ce90cff6134697df3faebdfb6a6a04c06a7270b90685532d2fa85e1"
+                "d7cfd37cf032e855a3616f6bea1943569fdd94807e814e53062cc6a62da7d4dfac48f0e66d27020f3a9ca6507c776ccfc2042ee206181290c674b545132cc0fd"
               )
             ),
             Signature(
               Hex(
-                "304402201cf4a09b3a693f2627ca94df9715bb8b119c8518e79128b88d4d6531f01dac5502204f377d700ebb8f336f8eedb1a9dde9f2aacca4132612d6528aea4ec2570d89f3"
+                "304602210090a1bf0f79b0bb8cdf5d5df926c46258d980d3cbabf87413355e4e7a2fa7a72e022100dd27dc251c9032ab9bf9af28ef53b47a9bc4991e87c05d2cfdbab98d3946e1de"
               )
             )
           )
         )
       )
     )
+
     val address = testStateChannel.toAddress
     val scOutput = StateChannelOutput(address, signedSCBinary)
     val peerId = signedSCBinary.proofs.map(_.id.toPeerId)
     val validator = mkValidator(
       peerId.map(SeedlistEntry(_, none, none, none, none)).toSortedSet.some,
       Map(address -> peerId).some,
-      maxBinarySizeInBytes = 278L
+      maxBinarySizeInBytes = 282L
     )
 
     validator
       .validate(scOutput)
       .map(
         expect.same(
-          StateChannelValidator.BinaryExceedsMaxAllowedSize(278, 279).invalidNec,
+          StateChannelValidator.BinaryExceedsMaxAllowedSize(282, 283).invalidNec,
           _
         )
       )

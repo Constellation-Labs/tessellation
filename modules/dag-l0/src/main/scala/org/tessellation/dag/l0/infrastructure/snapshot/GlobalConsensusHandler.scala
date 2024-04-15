@@ -6,11 +6,12 @@ import cats.syntax.semigroupk._
 import org.tessellation.dag.l0.infrastructure.snapshot.schema.{GlobalConsensusKind, GlobalConsensusOutcome}
 import org.tessellation.node.shared.infrastructure.consensus.ConsensusRumorHandlers
 import org.tessellation.node.shared.infrastructure.gossip.RumorHandler
+import org.tessellation.security.HasherSelector
 
 import io.circe.disjunctionCodecs._
 
 object GlobalConsensusHandler {
-  def make[F[_]: Async](
+  def make[F[_]: Async: HasherSelector](
     storage: GlobalConsensusStorage[F],
     manager: GlobalConsensusManager[F],
     fns: GlobalSnapshotConsensusFunctions[F]

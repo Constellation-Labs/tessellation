@@ -20,6 +20,7 @@ import org.tessellation.json.JsonBrotliBinarySerializer
 import org.tessellation.node.shared.domain.statechannel.StateChannelValidator
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
+import org.tessellation.security.Hasher
 import org.tessellation.security.signature.Signed
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 
@@ -34,7 +35,7 @@ trait GlobalSnapshotStateChannelEventsProcessor[F[_]] {
     lastGlobalSnapshotInfo: GlobalSnapshotInfo,
     events: List[StateChannelOutput],
     validationType: StateChannelValidationType
-  ): F[
+  )(implicit hasher: Hasher[F]): F[
     (
       SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
       SortedMap[Address, CurrencySnapshotWithState],
@@ -45,7 +46,7 @@ trait GlobalSnapshotStateChannelEventsProcessor[F[_]] {
   def processCurrencySnapshots(
     lastGlobalSnapshotInfo: GlobalSnapshotInfo,
     events: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]]
-  ): F[SortedMap[Address, NonEmptyList[CurrencySnapshotWithState]]]
+  )(implicit hasher: Hasher[F]): F[SortedMap[Address, NonEmptyList[CurrencySnapshotWithState]]]
 }
 
 object GlobalSnapshotStateChannelEventsProcessor {
@@ -62,7 +63,7 @@ object GlobalSnapshotStateChannelEventsProcessor {
         lastGlobalSnapshotInfo: GlobalSnapshotInfo,
         events: List[StateChannelOutput],
         validationType: StateChannelValidationType
-      ): F[
+      )(implicit hasher: Hasher[F]): F[
         (
           SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
           SortedMap[Address, CurrencySnapshotWithState],
@@ -101,7 +102,7 @@ object GlobalSnapshotStateChannelEventsProcessor {
         lastState: CurrencySnapshotInfo,
         lastSnapshot: Signed[CurrencyIncrementalSnapshot],
         snapshot: Signed[CurrencyIncrementalSnapshot]
-      ): F[CurrencySnapshotInfo] =
+      )(implicit hasher: Hasher[F]): F[CurrencySnapshotInfo] =
         currencySnapshotContextFns
           .createContext(CurrencySnapshotContext(currencyAddress, lastState), lastSnapshot, snapshot)
           .map(_.snapshotInfo)
@@ -109,7 +110,7 @@ object GlobalSnapshotStateChannelEventsProcessor {
       def processCurrencySnapshots(
         lastGlobalSnapshotInfo: GlobalSnapshotInfo,
         events: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]]
-      ): F[SortedMap[Address, NonEmptyList[CurrencySnapshotWithState]]] =
+      )(implicit hasher: Hasher[F]): F[SortedMap[Address, NonEmptyList[CurrencySnapshotWithState]]] =
         events.toList
           .foldLeftM(SortedMap.empty[Address, NonEmptyList[CurrencySnapshotWithState]]) {
             case (agg, (address, binaries)) =>
@@ -180,7 +181,7 @@ object GlobalSnapshotStateChannelEventsProcessor {
         ordinal: SnapshotOrdinal,
         lastGlobalSnapshotInfo: GlobalSnapshotInfo,
         events: List[StateChannelOutput]
-      ): F[(SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set[StateChannelOutput])] =
+      )(implicit hasher: Hasher[F]): F[(SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]], Set[StateChannelOutput])] =
         stateChannelManager.accept(ordinal, lastGlobalSnapshotInfo, events)
 
     }

@@ -33,14 +33,14 @@ import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotStateProof}
-import org.tessellation.security.{Hasher, SecurityProvider}
+import org.tessellation.security.{Hasher, HasherSelector, SecurityProvider}
 
 import eu.timepit.refined.types.numeric.NonNegLong
 import org.http4s.client.Client
 
 object GlobalSnapshotConsensus {
 
-  def make[F[_]: Async: Random: KryoSerializer: Hasher: SecurityProvider: Metrics: Supervisor](
+  def make[F[_]: Async: Random: KryoSerializer: HasherSelector: SecurityProvider: Metrics: Supervisor](
     gossip: Gossip[F],
     selfId: PeerId,
     keyPair: KeyPair,
@@ -57,14 +57,15 @@ object GlobalSnapshotConsensus {
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
     client: Client[F],
     session: Session[F],
-    rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent]
+    rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent],
+    txHasher: Hasher[F]
   ): F[GlobalSnapshotConsensus[F]] =
     for {
       globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager
         .make[F](stateChannelAllowanceLists, pullDelay = stateChannelPullDelay, purgeDelay = stateChannelPurgeDelay)
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
-        BlockAcceptanceManager.make[F](validators.blockValidator),
+        BlockAcceptanceManager.make[F](validators.blockValidator, txHasher),
         GlobalSnapshotStateChannelEventsProcessor
           .make[F](
             validators.stateChannelValidator,

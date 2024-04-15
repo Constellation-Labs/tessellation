@@ -14,6 +14,7 @@ import org.tessellation.node.shared.infrastructure.consensus.trigger.{ConsensusT
 import org.tessellation.node.shared.snapshot.currency._
 import org.tessellation.schema._
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.security.HasherSelector
 import org.tessellation.security.signature.SignedValidator.SignedValidationError
 import org.tessellation.security.signature.{Signed, SignedValidator}
 
@@ -41,7 +42,7 @@ trait CurrencySnapshotValidator[F[_]] {
 
 object CurrencySnapshotValidator {
 
-  def make[F[_]: Async](
+  def make[F[_]: Async: HasherSelector](
     currencySnapshotCreator: CurrencySnapshotCreator[F],
     signedValidator: SignedValidator[F],
     maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
@@ -80,17 +81,19 @@ object CurrencySnapshotValidator {
       val snapshot = signedSnapshot.value
       val proofs = signedSnapshot.proofs
 
-      val validateSnapshot = signedValidator
-        .validateSignatures(signedSnapshot)
-        .map(_.errorMap[CurrencySnapshotValidationError](InvalidSigned(_)))
-      val validateKryoSnapshot = signedValidator
-        .validateSignatures(Signed(CurrencyIncrementalSnapshotV1.fromCurrencyIncrementalSnapshot(snapshot), proofs))
-        .map(_.errorMap[CurrencySnapshotValidationError](InvalidSigned(_)))
-        .map(_.map {
-          case Signed(s, p) => Signed(s.toCurrencyIncrementalSnapshot, p)
-        })
+      HasherSelector[F].forOrdinal(snapshot.ordinal) { implicit hasher =>
+        val validateSnapshot =
+          signedValidator.validateSignatures(signedSnapshot).map(_.errorMap[CurrencySnapshotValidationError](InvalidSigned(_)))
 
-      validateSnapshot.handleErrorWith(_ => validateKryoSnapshot)
+        val validateKryoSnapshot = signedValidator
+          .validateSignatures(Signed(CurrencyIncrementalSnapshotV1.fromCurrencyIncrementalSnapshot(snapshot), proofs))
+          .map(_.errorMap[CurrencySnapshotValidationError](InvalidSigned(_)))
+          .map(_.map {
+            case Signed(s, p) => Signed(s.toCurrencyIncrementalSnapshot, p)
+          })
+
+        validateSnapshot.handleErrorWith(_ => validateKryoSnapshot)
+      }
     }
 
     def validateRecreateContent(
@@ -140,6 +143,11 @@ object CurrencySnapshotValidator {
                 case None =>
                   creationResult.focus(_.artifact.dataApplication).replace(expected.dataApplication)
               }
+            }
+            .map { creationResult =>
+              if (creationResult.artifact.messages.forall(_.isEmpty))
+                creationResult.focus(_.artifact.messages).replace(expected.messages)
+              else creationResult
             }
             .map { creationResult =>
               if (creationResult.artifact =!= expected)

@@ -30,13 +30,13 @@ import org.tessellation.node.shared.modules.SharedServices
 import org.tessellation.node.shared.snapshot.currency._
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.security.signature.SignedValidator
-import org.tessellation.security.{HashSelect, Hasher, SecurityProvider}
+import org.tessellation.security.{Hasher, HasherSelector, SecurityProvider}
 
 import org.http4s.client.Client
 
 object Services {
 
-  def make[F[_]: Async: Random: JsonSerializer: SecurityProvider: Hasher: Metrics: Supervisor](
+  def make[F[_]: Async: Random: JsonSerializer: SecurityProvider: HasherSelector: Metrics: Supervisor](
     p2PClient: P2PClient[F],
     sharedServices: SharedServices[F],
     storages: Storages[F],
@@ -51,12 +51,13 @@ object Services {
     signedValidator: SignedValidator[F],
     globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
     maybeMajorityPeerIds: Option[NonEmptySet[PeerId]],
-    hashSelect: HashSelect
+    hasherSelector: HasherSelector[F]
   ): F[Services[F]] =
     for {
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync[F]
+      implicit0(hasher: Hasher[F]) = hasherSelector.getCurrent
 
-      l0NodeContext = L0NodeContext.make[F](storages.snapshot)
+      l0NodeContext = L0NodeContext.make[F](storages.snapshot, hasherSelector)
 
       dataApplicationAcceptanceManager = (maybeDataApplication, storages.calculatedStateStorage).mapN {
         case (service, storage) =>
@@ -110,12 +111,13 @@ object Services {
           stateChannelSnapshotService,
           maybeDataApplication,
           creator,
-          validator
+          validator,
+          hasherSelector
         )
       addressService = AddressService.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](storages.snapshot)
       collateralService = Collateral.make[F](cfg.collateral, storages.snapshot)
       globalL0Service = GlobalL0Service
-        .make[F](p2PClient.l0GlobalSnapshot, storages.globalL0Cluster, storages.lastGlobalSnapshot, None, maybeMajorityPeerIds, hashSelect)
+        .make[F](p2PClient.l0GlobalSnapshot, storages.globalL0Cluster, storages.lastGlobalSnapshot, None, maybeMajorityPeerIds)
     } yield
       new Services[F](
         localHealthcheck = sharedServices.localHealthcheck,

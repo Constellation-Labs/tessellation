@@ -25,22 +25,23 @@ import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 
 trait BlockService[F[_]] {
-  def accept(signedBlock: Signed[Block]): F[Unit]
+  def accept(signedBlock: Signed[Block])(implicit hasher: Hasher[F]): F[Unit]
 }
 
 object BlockService {
 
-  def make[F[_]: Async: Hasher](
+  def make[F[_]: Async](
     blockAcceptanceManager: BlockAcceptanceManager[F],
     addressStorage: AddressStorage[F],
     blockStorage: BlockStorage[F],
     transactionStorage: TransactionStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
-    collateral: Amount
+    collateral: Amount,
+    txHasher: Hasher[F]
   ): BlockService[F] =
     new BlockService[F] {
 
-      def accept(signedBlock: Signed[Block]): F[Unit] =
+      def accept(signedBlock: Signed[Block])(implicit hasher: Hasher[F]): F[Unit] =
         signedBlock.toHashed.flatMap { hashedBlock =>
           EitherT
             .fromOptionF(lastGlobalSnapshotStorage.getOrdinal, SnapshotOrdinalUnavailable)
@@ -66,17 +67,23 @@ object BlockService {
         def getCollateral: Amount = collateral
       }
 
-      private def processAcceptanceSuccess(hashedBlock: Hashed[Block])(contextUpdate: BlockAcceptanceContextUpdate): F[Unit] = for {
-        hashedTransactions <- hashedBlock.signed.transactions.toNonEmptyList
-          .sortBy(_.ordinal)
-          .traverse(_.toHashed)
+      private def processAcceptanceSuccess(
+        hashedBlock: Hashed[Block]
+      )(contextUpdate: BlockAcceptanceContextUpdate): F[Unit] = {
+        implicit val hasher = txHasher
 
-        _ <- hashedTransactions.traverse(transactionStorage.accept)
-        _ <- blockStorage.accept(hashedBlock)
-        _ <- addressStorage.updateBalances(contextUpdate.balances)
-        isDependent = (block: Signed[Block]) => BlockRelations.dependsOn[F](hashedBlock)(block)
-        _ <- blockStorage.restoreDependent(isDependent)
-      } yield ()
+        for {
+          hashedTransactions <- hashedBlock.signed.transactions.toNonEmptyList
+            .sortBy(_.ordinal)
+            .traverse(_.toHashed)
+
+          _ <- hashedTransactions.traverse(transactionStorage.accept)
+          _ <- blockStorage.accept(hashedBlock)
+          _ <- addressStorage.updateBalances(contextUpdate.balances)
+          isDependent = (block: Signed[Block]) => BlockRelations.dependsOn[F](hashedBlock, txHasher = txHasher)(block)
+          _ <- blockStorage.restoreDependent(isDependent)
+        } yield ()
+      }
 
       private def processAcceptanceError(hashedBlock: Hashed[Block])(reason: BlockNotAcceptedReason): F[BlockAcceptanceError] =
         blockStorage

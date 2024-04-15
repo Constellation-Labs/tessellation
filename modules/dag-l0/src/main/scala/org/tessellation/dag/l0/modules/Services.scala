@@ -30,13 +30,13 @@ import org.tessellation.node.shared.modules.{SharedServices, SharedValidators}
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalSnapshotStateProof}
-import org.tessellation.security.{Hasher, SecurityProvider}
+import org.tessellation.security.{Hasher, HasherSelector, SecurityProvider}
 
 import org.http4s.client.Client
 
 object Services {
 
-  def make[F[_]: Async: Random: KryoSerializer: Hasher: SecurityProvider: Metrics: Supervisor](
+  def make[F[_]: Async: Random: KryoSerializer: HasherSelector: SecurityProvider: Metrics: Supervisor](
     sharedServices: SharedServices[F],
     queues: Queues[F],
     storages: Storages[F],
@@ -47,7 +47,8 @@ object Services {
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
     selfId: PeerId,
     keyPair: KeyPair,
-    cfg: AppConfig
+    cfg: AppConfig,
+    txHasher: Hasher[F]
   ): F[Services[F]] =
     for {
       rewards <- Rewards
@@ -76,7 +77,8 @@ object Services {
           stateChannelAllowanceLists,
           client,
           session,
-          rewards
+          rewards,
+          txHasher
         )
       addressService = AddressService.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](storages.globalSnapshot)
       collateralService = Collateral.make[F](cfg.collateral, storages.globalSnapshot)

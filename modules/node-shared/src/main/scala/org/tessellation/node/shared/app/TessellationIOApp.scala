@@ -108,7 +108,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                 logger.info(s"App version: ${version.show}") >>
                 KryoSerializer.forAsync[IO](registrar).use { implicit _kryoPool =>
                   JsonSerializer.forSync[IO].asResource.use { implicit _jsonSerializer =>
-                    implicit val _hasher = Hasher.forSync[IO](_hashSelect)
+                    implicit val _hasherSelector = HasherSelector.forSync[IO](Hasher.forJson, Hasher.forKryo, _hashSelect)
                     Metrics.forAsync[IO](Seq(("application", name))).use { implicit _metrics =>
                       SignallingRef.of[IO, Boolean](false).flatMap { _stopSignal =>
                         SignallingRef.of[IO, Unit](()).flatMap { _restartSignal =>
@@ -128,7 +128,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                               for {
                                 _ <- logger.info(s"Self peerId: $selfId").asResource
                                 _generation <- Generation.make[IO].asResource
-                                versionHash <- _hasher.hash(version).asResource
+                                versionHash <- _hasherSelector.withCurrent(_.hash(version)).asResource
                                 _seedlist <- loadSeedlist("Seedlist", method.seedlistPath).asResource
                                 _l0Seedlist <- loadSeedlist("l0Seedlist", method.l0SeedlistPath).asResource
                                 _prioritySeedlist <- loadSeedlist("prioritySeedlist", method.prioritySeedlistPath).asResource
@@ -142,7 +142,8 @@ abstract class TessellationIOApp[A <: CliMethod](
                                   _l0Seedlist,
                                   _seedlist,
                                   method.stateChannelAllowanceLists,
-                                  cfg.snapshotSize.maxStateChannelSnapshotBinarySizeInBytes
+                                  cfg.snapshotSize.maxStateChannelSnapshotBinarySizeInBytes,
+                                  Hasher.forKryo[IO]
                                 )
                                 services <- SharedServices
                                   .make[IO](
@@ -161,7 +162,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                                     cfg.collateral,
                                     method.stateChannelAllowanceLists,
                                     cfg.environment,
-                                    _hashSelect
+                                    Hasher.forKryo[IO]
                                   )
                                   .asResource
 
@@ -186,7 +187,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                                   val jsonSerializer = _jsonSerializer
                                   val metrics = _metrics
                                   val supervisor = _supervisor
-                                  val hasher = _hasher
+                                  val hasherSelector = _hasherSelector
 
                                   val keyPair = _keyPair
                                   val seedlist = _seedlist

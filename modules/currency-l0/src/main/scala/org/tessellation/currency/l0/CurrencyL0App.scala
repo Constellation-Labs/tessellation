@@ -24,7 +24,7 @@ import org.tessellation.node.shared.{NodeSharedOrSharedRegistrationIdRange, node
 import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.semver.{MetagraphVersion, TessellationVersion}
-import org.tessellation.security.SecurityProvider
+import org.tessellation.security.{Hasher, HasherSelector, SecurityProvider}
 
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
@@ -67,11 +67,15 @@ abstract class CurrencyL0App(
 
       dataApplicationService <- dataApplication.sequence
 
+      hasherSelectorAlwaysCurrent = HasherSelector.forSyncAlwaysCurrent[IO](hasherSelector.getCurrent)
+
       queues <- Queues.make[IO](sharedQueues).asResource
-      storages <- Storages.make[IO](sharedStorages, cfg.snapshot, method.globalL0Peer, dataApplicationService).asResource
+      storages <- Storages
+        .make[IO](sharedStorages, cfg.snapshot, method.globalL0Peer, dataApplicationService, hasherSelectorAlwaysCurrent)
+        .asResource
       p2pClient = P2PClient.make[IO](sharedP2PClient, sharedResources.client, sharedServices.session)
-      validators = Validators.make[IO](seedlist)
-      implicit0(nodeContext: L0NodeContext[IO]) = L0NodeContext.make[IO](storages.snapshot)
+      validators = Validators.make[IO](seedlist, Hasher.forKryo[IO])
+      implicit0(nodeContext: L0NodeContext[IO]) = L0NodeContext.make[IO](storages.snapshot, hasherSelectorAlwaysCurrent)
       maybeMajorityPeerIds <- getMajorityPeerIds[IO](
         nodeShared.prioritySeedlist,
         sharedConfig.priorityPeerIds,
@@ -93,7 +97,7 @@ abstract class CurrencyL0App(
           validators.signedValidator,
           sharedServices.globalSnapshotContextFns,
           maybeMajorityPeerIds,
-          hashSelect
+          hasherSelectorAlwaysCurrent
         )
         .asResource
       programs = Programs.make[IO](
@@ -105,15 +109,14 @@ abstract class CurrencyL0App(
         services,
         p2pClient,
         services.snapshotContextFunctions,
-        dataApplicationService.zip(storages.calculatedStateStorage),
-        hashSelect
+        dataApplicationService.zip(storages.calculatedStateStorage)
       )
       rumorHandler = RumorHandlers
         .make[IO](storages.cluster, services.localHealthcheck, sharedStorages.forkInfo)
         .handlers <+>
         services.consensus.handler
       _ <- Daemons
-        .start(storages, services, programs, queues, services.dataApplication, cfg)
+        .start(storages, services, programs, queues, services.dataApplication, cfg, hasherSelectorAlwaysCurrent)
         .asResource
 
       api = HttpApi
@@ -150,10 +153,12 @@ abstract class CurrencyL0App(
 
       program <- (method match {
         case m: CreateGenesis =>
-          programs.genesis.create(dataApplicationService)(
-            m.genesisBalancesPath,
-            keyPair
-          ) >> nodeShared.stopSignal.set(true)
+          hasherSelectorAlwaysCurrent.withCurrent { implicit hasher =>
+            programs.genesis.create(dataApplicationService)(
+              m.genesisBalancesPath,
+              keyPair
+            )
+          } >> nodeShared.stopSignal.set(true)
 
         case other =>
           for {
@@ -170,7 +175,7 @@ abstract class CurrencyL0App(
                     NodeState.Initial,
                     NodeState.RollbackInProgress,
                     NodeState.RollbackDone
-                  )(programs.rollback.rollback) >>
+                  )(hasherSelector.withCurrent(implicit hasher => programs.rollback.rollback)) >>
                   gossipDaemon.startAsInitialValidator >>
                   services.cluster.createSession >>
                   services.session.createSession >>
@@ -182,7 +187,7 @@ abstract class CurrencyL0App(
                   NodeState.Initial,
                   NodeState.LoadingGenesis,
                   NodeState.GenesisReady
-                )(programs.genesis.accept(dataApplicationService)(m.genesisPath)) >>
+                )(hasherSelector.withCurrent(implicit hasher => programs.genesis.accept(dataApplicationService)(m.genesisPath))) >>
                   gossipDaemon.startAsInitialValidator >>
                   services.cluster.createSession >>
                   services.session.createSession >>

@@ -27,7 +27,7 @@ trait SignedValidator[F[_]] {
 
   def validateSignatures[A: Encoder](
     signed: Signed[A]
-  ): F[SignedValidationErrorOr[Signed[A]]]
+  )(implicit hasher: Hasher[F]): F[SignedValidationErrorOr[Signed[A]]]
 
   def validateUniqueSigners[A: Encoder](
     signed: Signed[A]
@@ -50,11 +50,11 @@ trait SignedValidator[F[_]] {
 
 object SignedValidator {
 
-  def make[F[_]: Async: Hasher: SecurityProvider]: SignedValidator[F] = new SignedValidator[F] {
+  def make[F[_]: Async: SecurityProvider]: SignedValidator[F] = new SignedValidator[F] {
 
     def validateSignatures[A: Encoder](
       signed: Signed[A]
-    ): F[SignedValidationErrorOr[Signed[A]]] =
+    )(implicit hasher: Hasher[F]): F[SignedValidationErrorOr[Signed[A]]] =
       signed.validProofs(implicitly[Encoder[A]].asRight).map { either =>
         either
           .leftMap(InvalidSignatures)

@@ -16,8 +16,8 @@ import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.security.SecurityProvider
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
     extends SnapshotConsensusFunctions[
@@ -47,7 +47,7 @@ object CurrencySnapshotConsensusFunctions {
       trigger: ConsensusTrigger,
       artifact: CurrencySnapshotArtifact,
       facilitators: Set[PeerId]
-    ): F[Either[ConsensusFunctions.InvalidArtifact, (CurrencySnapshotArtifact, CurrencySnapshotContext)]] =
+    )(implicit hasher: Hasher[F]): F[Either[ConsensusFunctions.InvalidArtifact, (CurrencySnapshotArtifact, CurrencySnapshotContext)]] =
       currencySnapshotValidator
         .validateSnapshot(lastSignedArtifact, lastContext, artifact, facilitators)
         .map(_.leftMap(_ => ArtifactMismatch).toEither)
@@ -59,7 +59,7 @@ object CurrencySnapshotConsensusFunctions {
       trigger: ConsensusTrigger,
       events: Set[CurrencySnapshotEvent],
       facilitators: Set[PeerId]
-    ): F[(CurrencySnapshotArtifact, CurrencySnapshotContext, Set[CurrencySnapshotEvent])] = {
+    )(implicit hasher: Hasher[F]): F[(CurrencySnapshotArtifact, CurrencySnapshotContext, Set[CurrencySnapshotEvent])] = {
       val blocksForAcceptance: Set[CurrencySnapshotEvent] = events.filter {
         case BlockEvent(currencyBlock) => currencyBlock.height > lastArtifact.height
         case _                         => true

@@ -12,8 +12,8 @@ import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.semver.SnapshotVersion
 import org.tessellation.schema.transaction.TransactionReference
+import org.tessellation.security.Hasher
 import org.tessellation.security.hash.Hash
-import org.tessellation.security.{HashSelect, Hasher}
 import org.tessellation.syntax.sortedCollection._
 
 import derevo.cats.show
@@ -56,7 +56,7 @@ object snapshot {
     val lastTxRefs: SortedMap[Address, TransactionReference]
     val balances: SortedMap[Address, Balance]
 
-    def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal, hashSelect: HashSelect): F[P]
+    def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[P]
   }
 
   @derive(encoder, decoder, show)

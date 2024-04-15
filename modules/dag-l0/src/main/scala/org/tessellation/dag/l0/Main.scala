@@ -26,6 +26,7 @@ import org.tessellation.schema.cluster.ClusterId
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.semver.TessellationVersion
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshot, SnapshotOrdinal}
+import org.tessellation.security.Hasher
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
@@ -85,7 +86,8 @@ object Main
           method.stateChannelAllowanceLists,
           nodeShared.nodeId,
           keyPair,
-          cfg
+          cfg,
+          Hasher.forKryo[IO]
         )
         .asResource
       programs = Programs.make[IO](
@@ -106,7 +108,7 @@ object Main
         trustHandler(storages.trust) <+> ordinalTrustHandler(storages.trust) <+> services.consensus.handler
 
       _ <- Daemons
-        .start(storages, services, programs, queues, nodeId, cfg)
+        .start(storages, services, programs, queues, nodeId, cfg, hasherSelector)
         .asResource
 
       api = HttpApi
@@ -151,8 +153,10 @@ object Main
           ) {
             programs.rollbackLoader.load(m.rollbackHash).flatMap {
               case (snapshotInfo, snapshot) =>
-                storages.globalSnapshot
-                  .prepend(snapshot, snapshotInfo) >>
+                hasherSelector.forOrdinal(snapshot.ordinal) { implicit hasher =>
+                  storages.globalSnapshot
+                    .prepend(snapshot, snapshotInfo)
+                } >>
                   services.consensus.manager.startFacilitatingAfterRollback(
                     snapshot.ordinal,
                     GlobalConsensusOutcome(
@@ -184,33 +188,54 @@ object Main
                 m.startingEpochProgress
               )
 
-              Signed.forAsyncHasher[IO, GlobalSnapshot](genesis, keyPair).flatMap(_.toHashed[IO]).flatMap { hashedGenesis =>
-                SnapshotLocalFileSystemStorage.make[IO, GlobalSnapshot](cfg.snapshot.snapshotPath).flatMap {
-                  fullGlobalSnapshotLocalFileSystemStorage =>
-                    fullGlobalSnapshotLocalFileSystemStorage.write(hashedGenesis.signed) >>
-                      GlobalSnapshot.mkFirstIncrementalSnapshot[IO](hashedGenesis, hashSelect).flatMap { firstIncrementalSnapshot =>
-                        Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](firstIncrementalSnapshot, keyPair).flatMap {
-                          signedFirstIncrementalSnapshot =>
-                            storages.globalSnapshot.prepend(signedFirstIncrementalSnapshot, hashedGenesis.info) >>
-                              services.collateral
-                                .hasCollateral(nodeShared.nodeId)
-                                .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
-                              services.consensus.manager
-                                .startFacilitatingAfterRollback(
-                                  signedFirstIncrementalSnapshot.ordinal,
-                                  GlobalConsensusOutcome(
-                                    signedFirstIncrementalSnapshot.ordinal,
-                                    Facilitators(List(nodeId)),
-                                    RemovedFacilitators.empty,
-                                    WithdrawnFacilitators.empty,
-                                    Finished(signedFirstIncrementalSnapshot, hashedGenesis.info, EventTrigger, Candidates.empty, Hash.empty)
-                                  )
-                                )
-
-                        }
-                      }
+              hasherSelector
+                .forOrdinal(genesis.ordinal) { implicit hasher =>
+                  Signed
+                    .forAsyncHasher[IO, GlobalSnapshot](genesis, keyPair)
+                    .flatMap(_.toHashed[IO])
                 }
-              }
+                .flatMap { hashedGenesis =>
+                  SnapshotLocalFileSystemStorage.make[IO, GlobalSnapshot](cfg.snapshot.snapshotPath).flatMap {
+                    fullGlobalSnapshotLocalFileSystemStorage =>
+                      hasherSelector
+                        .forOrdinal(genesis.ordinal) { implicit hasher =>
+                          fullGlobalSnapshotLocalFileSystemStorage.write(hashedGenesis.signed) >>
+                            GlobalSnapshot.mkFirstIncrementalSnapshot[IO](hashedGenesis)
+                        }
+                        .flatMap { firstIncrementalSnapshot =>
+                          hasherSelector
+                            .forOrdinal(firstIncrementalSnapshot.ordinal) { implicit hasher =>
+                              Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](firstIncrementalSnapshot, keyPair)
+                            }
+                            .flatMap { signedFirstIncrementalSnapshot =>
+                              hasherSelector.forOrdinal(signedFirstIncrementalSnapshot.ordinal) { implicit hasher =>
+                                storages.globalSnapshot.prepend(signedFirstIncrementalSnapshot, hashedGenesis.info)
+                              } >>
+                                services.collateral
+                                  .hasCollateral(nodeShared.nodeId)
+                                  .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
+                                services.consensus.manager
+                                  .startFacilitatingAfterRollback(
+                                    signedFirstIncrementalSnapshot.ordinal,
+                                    GlobalConsensusOutcome(
+                                      signedFirstIncrementalSnapshot.ordinal,
+                                      Facilitators(List(nodeId)),
+                                      RemovedFacilitators.empty,
+                                      WithdrawnFacilitators.empty,
+                                      Finished(
+                                        signedFirstIncrementalSnapshot,
+                                        hashedGenesis.info,
+                                        EventTrigger,
+                                        Candidates.empty,
+                                        Hash.empty
+                                      )
+                                    )
+                                  )
+
+                            }
+                        }
+                  }
+                }
             }
           } >>
             gossipDaemon.startAsInitialValidator >>

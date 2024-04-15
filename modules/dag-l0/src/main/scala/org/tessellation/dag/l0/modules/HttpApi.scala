@@ -12,7 +12,6 @@ import org.tessellation.dag.l0.infrastructure.snapshot.GlobalSnapshotKey
 import org.tessellation.dag.l0.infrastructure.snapshot.schema.GlobalConsensusOutcome
 import org.tessellation.env.AppEnvironment
 import org.tessellation.env.AppEnvironment._
-import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.HttpConfig
 import org.tessellation.node.shared.http.p2p.middlewares.{PeerAuthMiddleware, `X-Id-Middleware`}
 import org.tessellation.node.shared.http.routes._
@@ -21,7 +20,7 @@ import org.tessellation.schema._
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.semver.TessellationVersion
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{Hasher, SecurityProvider}
+import org.tessellation.security.{HasherSelector, SecurityProvider}
 
 import eu.timepit.refined.auto._
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
@@ -30,7 +29,7 @@ import org.http4s.{HttpApp, HttpRoutes}
 
 object HttpApi {
 
-  def make[F[_]: Async: SecurityProvider: KryoSerializer: Hasher: Metrics](
+  def make[F[_]: Async: SecurityProvider: HasherSelector: Metrics](
     storages: Storages[F],
     queues: Queues[F],
     services: Services[F],
@@ -54,7 +53,7 @@ object HttpApi {
     ) {}
 }
 
-sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Hasher: Metrics] private (
+sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Metrics] private (
   storages: Storages[F],
   queues: Queues[F],
   services: Services[F],
@@ -70,24 +69,35 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Has
     L0Cell.mkL0Cell(queues.l1Output, queues.stateChannelOutput).apply(L0CellInput.HandleDAGL1(block))
 
   private val clusterRoutes =
-    ClusterRoutes[F](programs.joining, programs.peerDiscovery, storages.cluster, services.cluster, services.collateral)
+    HasherSelector[F].withCurrent { implicit hasher =>
+      ClusterRoutes[F](programs.joining, programs.peerDiscovery, storages.cluster, services.cluster, services.collateral)
+    }
   private val nodeRoutes = NodeRoutes[F](storages.node, storages.session, storages.cluster, nodeVersion, httpCfg, selfId)
 
-  private val registrationRoutes = RegistrationRoutes[F](services.cluster)
+  private val registrationRoutes =
+    HasherSelector[F].withCurrent { implicit hasher =>
+      RegistrationRoutes[F](services.cluster)
+    }
   private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip)
   private val trustRoutes = TrustRoutes[F](storages.trust, programs.trustPush)
-  private val stateChannelRoutes = StateChannelRoutes[F](services.stateChannel)
+  private val stateChannelRoutes =
+    HasherSelector[F].withCurrent { implicit hasher =>
+      StateChannelRoutes[F](services.stateChannel)
+    }
   private val snapshotRoutes =
     SnapshotRoutes[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
       storages.globalSnapshot,
       storages.fullGlobalSnapshot.some,
       "/global-snapshots",
-      storages.node
+      storages.node,
+      HasherSelector[F]
     )
   private val dagRoutes = DAGBlockRoutes[F](mkDagCell)
   private val walletRoutes = WalletRoutes[F, GlobalIncrementalSnapshot]("/dag", services.address)
   private val consensusInfoRoutes =
-    new ConsensusInfoRoutes[F, GlobalSnapshotKey, GlobalConsensusOutcome](services.cluster, services.consensus.storage, selfId)
+    HasherSelector[F].withCurrent { implicit hasher =>
+      new ConsensusInfoRoutes[F, GlobalSnapshotKey, GlobalConsensusOutcome](services.cluster, services.consensus.storage, selfId)
+    }
   private val consensusRoutes = services.consensus.routes.p2pRoutes
 
   private val debugRoutes = DebugRoutes[F](
@@ -99,7 +109,10 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: KryoSerializer: Has
   ).publicRoutes
 
   private val metricRoutes = MetricRoutes[F]().publicRoutes
-  private val targetRoutes = TargetRoutes[F](services.cluster).publicRoutes
+  private val targetRoutes =
+    HasherSelector[F].withCurrent { implicit hasher =>
+      TargetRoutes[F](services.cluster).publicRoutes
+    }
 
   private val openRoutes: HttpRoutes[F] =
     CORS.policy.withAllowOriginAll.withAllowHeadersAll.withAllowCredentials(false).apply {

@@ -71,7 +71,7 @@ object Main
       SecurityProvider.forAsync[IO].use { implicit sp =>
         KryoSerializer.forAsync[IO](sharedKryoRegistrar).use { implicit kryo =>
           JsonSerializer.forSync[IO].asResource.use { implicit jsonSerializer =>
-            implicit val hasher = Hasher.forSync[IO](new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash })
+            implicit val hasher = Hasher.forJson[IO]
             EmberClientBuilder.default[IO].build.use { client =>
               Random.scalaUtilRandom[IO].flatMap { implicit random =>
                 (method match {

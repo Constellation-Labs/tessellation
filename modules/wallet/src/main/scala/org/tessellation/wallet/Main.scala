@@ -5,18 +5,13 @@ import java.security.KeyPair
 import cats.MonadThrow
 import cats.effect.std.Console
 import cats.effect.{Async, ExitCode, IO}
-import cats.syntax.applicative._
-import cats.syntax.applicativeError._
-import cats.syntax.contravariantSemigroupal._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
+import cats.syntax.all._
 
 import org.tessellation.BuildInfo
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.json.JsonSerializer
 import org.tessellation.keytool.KeyStoreUtils
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.currencyMessage.{CurrencyMessage, MessageOrdinal, MessageType}
 import org.tessellation.schema.transaction.{Transaction, TransactionAmount, TransactionFee}
@@ -51,7 +46,7 @@ object Main
         SecurityProvider.forAsync[IO].use { implicit sp =>
           KryoSerializer.forAsync[IO](sharedKryoRegistrar).use { implicit kryo =>
             JsonSerializer.forSync[IO].asResource.use { implicit jsonSerializer =>
-              implicit val hasher = Hasher.forSync[IO](new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = KryoHash })
+              implicit val hasher = Hasher.forKryo[IO]
               loadKeyPair[IO](envs).flatMap { keyPair =>
                 method match {
                   case ShowAddress() =>

@@ -51,8 +51,6 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
   type Res = (Supervisor[IO], KryoSerializer[IO], Hasher[IO], SecurityProvider[IO], Metrics[IO])
 
-  val hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash }
-
   def mkMockGossip[B](spreadRef: Ref[IO, List[B]]): Gossip[IO] =
     new Gossip[IO] {
       override def spread[A: TypeTag: Encoder](rumorContent: A): IO[Unit] =
@@ -71,7 +69,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
     signedGenesis <- Signed.forAsyncHasher[IO, GlobalSnapshot](genesis, keyPair)
 
-    lastArtifact <- GlobalIncrementalSnapshot.fromGlobalSnapshot(signedGenesis.value, hashSelect)
+    lastArtifact <- GlobalIncrementalSnapshot.fromGlobalSnapshot(signedGenesis.value)
     signedLastArtifact <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](lastArtifact, keyPair)
   } yield (signedLastArtifact, signedGenesis)
 
@@ -80,7 +78,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](nodeSharedKryoRegistrar ++ dagL0KryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
     implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
-    h = Hasher.forSync[IO](hashSelect)
+    h = Hasher.forJson[IO]
     metrics <- Metrics.forAsync[IO](Seq.empty)
   } yield (supervisor, ks, h, sp, metrics)
 
@@ -90,7 +88,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       blocks: List[Signed[Block]],
       context: BlockAcceptanceContext[IO],
       ordinal: SnapshotOrdinal
-    ): IO[BlockAcceptanceResult] =
+    )(implicit hasher: Hasher[F]): IO[BlockAcceptanceResult] =
       BlockAcceptanceResult(
         BlockAcceptanceContextUpdate.empty,
         List.empty,
@@ -101,7 +99,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       block: Signed[Block],
       context: BlockAcceptanceContext[IO],
       ordinal: SnapshotOrdinal
-    ): IO[Either[BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)]] = ???
+    )(implicit hasher: Hasher[F]): IO[Either[BlockNotAcceptedReason, (BlockAcceptanceContextUpdate, UsageCount)]] = ???
 
   }
 
@@ -111,7 +109,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       lastGlobalSnapshotInfo: GlobalSnapshotInfo,
       events: List[StateChannelEvent],
       validationType: StateChannelValidationType
-    ): IO[
+    )(implicit hasher: Hasher[F]): IO[
       (
         SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
         SortedMap[Address, CurrencySnapshotWithState],
@@ -124,7 +122,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     def processCurrencySnapshots(
       lastGlobalSnapshotInfo: GlobalSnapshotContext,
       events: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]]
-    ): IO[SortedMap[Address, NonEmptyList[CurrencySnapshotWithState]]] = ???
+    )(implicit hasher: Hasher[F]): IO[SortedMap[Address, NonEmptyList[CurrencySnapshotWithState]]] = ???
   }
 
   val collateral: Amount = Amount.empty
@@ -138,6 +136,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     h: Hasher[IO],
     m: Metrics[IO]
   ): GlobalSnapshotConsensusFunctions[IO] = {
+    implicit val hs = HasherSelector.forSyncAlwaysCurrent(h)
+
     val snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[IO] =
       GlobalSnapshotAcceptanceManager.make[IO](bam, scProcessor, collateral)
 
@@ -165,7 +165,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       genesis = GlobalSnapshot.mkGenesis(Map.empty, EpochProgress.MinValue)
       signedGenesis <- Signed.forAsyncHasher[F, GlobalSnapshot](genesis, keyPair)
 
-      lastArtifact <- GlobalIncrementalSnapshot.fromGlobalSnapshot(signedGenesis.value, hashSelect)
+      lastArtifact <- GlobalIncrementalSnapshot.fromGlobalSnapshot(signedGenesis.value)
       signedLastArtifact <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](lastArtifact, keyPair)
 
       scEvent <- mkStateChannelEvent()

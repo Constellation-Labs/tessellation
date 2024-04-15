@@ -7,7 +7,6 @@ import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.nodeSharedKryoRegistrar
-import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.generators.{addressGen, balanceGen}
@@ -27,7 +26,7 @@ object GenesisFSSuite extends MutableIOSuite with Checkers {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](nodeSharedKryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
     implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
-    h = Hasher.forSync[IO](new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash })
+    h = Hasher.forJson[IO]
   } yield (ks, h, sp)
 
   val gen: Gen[(Map[Address, Balance], Address)] = for {

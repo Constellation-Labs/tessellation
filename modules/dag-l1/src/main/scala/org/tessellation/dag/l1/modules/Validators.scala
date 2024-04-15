@@ -19,20 +19,21 @@ import org.tessellation.security.{Hasher, SecurityProvider}
 object Validators {
 
   def make[
-    F[_]: Async: Hasher: SecurityProvider,
+    F[_]: Async: SecurityProvider,
     P <: StateProof,
     S <: Snapshot,
     SI <: SnapshotInfo[P]
   ](
     seedlist: Option[Set[SeedlistEntry]],
     transactionLimitConfig: TransactionLimitConfig,
-    customContextualTransactionValidator: Option[CustomContextualTransactionValidator]
+    customContextualTransactionValidator: Option[CustomContextualTransactionValidator],
+    txHasher: Hasher[F]
   ): Validators[F] = {
     val signedValidator = SignedValidator.make[F]
-    val transactionChainValidator = TransactionChainValidator.make[F]
-    val transactionValidator = TransactionValidator.make[F](signedValidator)
+    val transactionChainValidator = TransactionChainValidator.make[F](txHasher)
+    val transactionValidator = TransactionValidator.make[F](signedValidator, txHasher)
     val blockValidator =
-      BlockValidator.make[F](signedValidator, transactionChainValidator, transactionValidator)
+      BlockValidator.make[F](signedValidator, transactionChainValidator, transactionValidator, txHasher)
 
     val contextualTransactionValidator = ContextualTransactionValidator.make(
       transactionLimitConfig,

@@ -21,28 +21,30 @@ import org.tessellation.node.shared.infrastructure.consensus.trigger.EventTrigge
 import org.tessellation.schema.peer.{L0Peer, PeerId}
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
-import org.tessellation.security.{HashSelect, Hasher, SecurityProvider}
+import org.tessellation.security.{Hasher, SecurityProvider}
 
 import fs2.io.file.Path
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait Genesis[F[_]] {
   def acceptSignedGenesis(dataApplication: Option[BaseDataApplicationL0Service[F]])(genesis: Signed[CurrencySnapshot])(
-    implicit context: L0NodeContext[F]
+    implicit context: L0NodeContext[F],
+    hasher: Hasher[F]
   ): F[Unit]
 
   def accept(dataApplication: Option[BaseDataApplicationL0Service[F]])(genesisPath: Path)(
-    implicit context: L0NodeContext[F]
+    implicit context: L0NodeContext[F],
+    hasher: Hasher[F]
   ): F[Unit]
 
   def create(dataApplication: Option[BaseDataApplicationL0Service[F]])(
     balancesPath: Path,
     keyPair: KeyPair
-  ): F[Unit]
+  )(implicit hasher: Hasher[F]): F[Unit]
 }
 
 object Genesis {
-  def make[F[_]: Async: Hasher: SecurityProvider](
+  def make[F[_]: Async: SecurityProvider](
     keyPair: KeyPair,
     collateral: Collateral[F],
     stateChannelSnapshotService: StateChannelSnapshotService[F],
@@ -52,16 +54,15 @@ object Genesis {
     nodeId: PeerId,
     consensusManager: CurrencyConsensusManager[F],
     genesisLoader: GenesisLoader[F, CurrencySnapshot],
-    identifierStorage: IdentifierStorage[F],
-    hashSelect: HashSelect
+    identifierStorage: IdentifierStorage[F]
   ): Genesis[F] = new Genesis[F] {
     private val logger = Slf4jLogger.getLogger
 
-    override def acceptSignedGenesis(dataApplication: Option[BaseDataApplicationL0Service[F]])(genesis: Signed[CurrencySnapshot])(
-      implicit context: L0NodeContext[F]
-    ): F[Unit] = for {
+    override def acceptSignedGenesis(
+      dataApplication: Option[BaseDataApplicationL0Service[F]]
+    )(genesis: Signed[CurrencySnapshot])(implicit context: L0NodeContext[F], hasher: Hasher[F]): F[Unit] = for {
       hashedGenesis <- genesis.toHashed[F]
-      firstIncrementalSnapshot <- CurrencySnapshot.mkFirstIncrementalSnapshot[F](hashedGenesis, hashSelect)
+      firstIncrementalSnapshot <- CurrencySnapshot.mkFirstIncrementalSnapshot[F](hashedGenesis)
       signedFirstIncrementalSnapshot <- firstIncrementalSnapshot.sign(keyPair)
       _ <- snapshotStorage.prepend(signedFirstIncrementalSnapshot, hashedGenesis.info.toCurrencySnapshotInfo)
 
@@ -104,7 +105,8 @@ object Genesis {
     } yield ()
 
     override def accept(dataApplication: Option[BaseDataApplicationL0Service[F]])(genesisPath: Path)(
-      implicit context: L0NodeContext[F]
+      implicit context: L0NodeContext[F],
+      hasher: Hasher[F]
     ): F[Unit] = genesisLoader
       .loadSignedGenesis(genesisPath)
       .flatTap { genesis =>
@@ -116,7 +118,7 @@ object Genesis {
     def create(dataApplication: Option[BaseDataApplicationL0Service[F]])(
       balancesPath: Path,
       keyPair: KeyPair
-    ): F[Unit] = {
+    )(implicit hasher: Hasher[F]): F[Unit] = {
       def mkBalances =
         genesisLoader
           .loadBalances(balancesPath)

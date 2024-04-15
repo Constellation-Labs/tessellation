@@ -46,14 +46,12 @@ object RewardsSuite extends MutableIOSuite with Checkers {
   type GenIdFn = () => Id
   type Res = (Hasher[IO], SecurityProvider[IO], GenIdFn)
 
-  val hashSelect = new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash }
-
   override def sharedResource: Resource[IO, Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar.union(nodeSharedKryoRegistrar))
     implicit0(sp: SecurityProvider[IO]) <- SecurityProvider.forAsync[IO]
     mkKeyPair = () => KeyPairGenerator.makeKeyPair.map(_.getPublic.toId).unsafeRunSync()
     implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
-    h = Hasher.forSync[IO](hashSelect)
+    h = Hasher.forJson[IO]
   } yield (h, sp, mkKeyPair)
 
   val config: RewardsConfig = RewardsConfig()
@@ -108,7 +106,7 @@ object RewardsSuite extends MutableIOSuite with Checkers {
     epochProgress <- epochProgressGen
     proofs <- withSignatures.map(Gen.delay(_)).getOrElse(signatureProofsGen)
     snapshot = Signed(GlobalSnapshot.mkGenesis(Map.empty, epochProgress), proofs)
-    incremental = Signed(GlobalIncrementalSnapshot.fromGlobalSnapshot(snapshot, hashSelect).unsafeRunSync(), proofs)
+    incremental = Signed(GlobalIncrementalSnapshot.fromGlobalSnapshot(snapshot).unsafeRunSync(), proofs)
   } yield incremental
 
   def makeRewards(config: RewardsConfig)(

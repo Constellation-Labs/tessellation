@@ -10,7 +10,6 @@ import cats.syntax.foldable._
 import cats.syntax.option._
 
 import org.tessellation.ext.cats.effect.ResourceIO
-import org.tessellation.ext.crypto._
 import org.tessellation.json.{JsonBinarySerializer, JsonSerializer}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.rosetta.domain._
@@ -22,7 +21,6 @@ import org.tessellation.rosetta.domain.error._
 import org.tessellation.rosetta.domain.generators._
 import org.tessellation.rosetta.domain.operation.OperationType.Transfer
 import org.tessellation.rosetta.domain.operation.{Operation, OperationIdentifier, OperationIndex}
-import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.generators.{addressGen, transactionSaltGen}
 import org.tessellation.schema.transaction._
@@ -45,14 +43,14 @@ import weaver.scalacheck.Checkers
 
 object ConstructionServiceSuite extends MutableIOSuite with Checkers with TransactionGenerator {
 
-  type Res = (SecurityProvider[IO], Hasher[IO])
+  type Res = (SecurityProvider[IO], Hasher[IO], KryoSerializer[IO])
 
   def sharedResource: Resource[IO, Res] = for {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
     implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
-    h = Hasher.forSync[IO](new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash })
-  } yield (sp, h)
+    h = Hasher.forKryo[IO]
+  } yield (sp, h, ks)
 
   def mkConstructionService(
     getLastRef: Address => IO[TransactionReference] = _ => TransactionReference.empty.pure[IO],
@@ -60,7 +58,7 @@ object ConstructionServiceSuite extends MutableIOSuite with Checkers with Transa
   )(implicit S: SecurityProvider[IO], H: Hasher[F]): ConstructionService[IO] =
     ConstructionService.make[IO](getLastRef, salt)
 
-  def generateTestTransactions(wantSignedTransaction: Boolean)(implicit S: SecurityProvider[IO], H: Hasher[IO]) = {
+  def generateTestTransactions(wantSignedTransaction: Boolean)(implicit S: SecurityProvider[IO], K: KryoSerializer[IO]) = {
     val getSignedTransaction = (transaction: Hashed[Transaction]) => transaction.signed
     val getUnsignedTransaction = (transaction: Hashed[Transaction]) => transaction.signed.value
 
@@ -71,7 +69,7 @@ object ConstructionServiceSuite extends MutableIOSuite with Checkers with Transa
           val dstAddress = dstKey.getPublic.toAddress
           val txCount = PosInt(100)
 
-          generateTransactions(srcAddress, srcKey, dstAddress, txCount)
+          generateTransactions(srcAddress, srcKey, dstAddress, txCount, txHasher = Hasher.forKryo[IO])
             .flatMap(_.traverse { hashedTransaction =>
               val bytes = JsonBinarySerializer
                 .serialize[A](transactionConverter(hashedTransaction))
@@ -91,7 +89,7 @@ object ConstructionServiceSuite extends MutableIOSuite with Checkers with Transa
     isSignedTransaction: Boolean,
     testCaseCallbackHandler: (EitherT[F, ConstructionError, ConstructionParse.ParseResult], Hashed[Transaction]) => F[Expectations]
   ): IO[Expectations] = sharedResource.use { res =>
-    implicit val (sp, h) = res
+    implicit val (sp, h, k) = res
 
     val cs = mkConstructionService()
     generateTestTransactions(wantSignedTransaction = isSignedTransaction)
@@ -103,7 +101,7 @@ object ConstructionServiceSuite extends MutableIOSuite with Checkers with Transa
   }
 
   test("derives public key") { res =>
-    implicit val (sp, h) = res
+    implicit val (sp, h, k) = res
 
     val publicKey = RosettaPublicKey(
       Hex(
@@ -121,7 +119,7 @@ object ConstructionServiceSuite extends MutableIOSuite with Checkers with Transa
   }
 
   test("returns InvalidPublicKey when cannot derive public key") { res =>
-    implicit val (sp, h) = res
+    implicit val (sp, h, k) = res
 
     val publicKey = RosettaPublicKey(Hex("foobarbaz"), CurveType.SECP256K1)
 
@@ -132,7 +130,7 @@ object ConstructionServiceSuite extends MutableIOSuite with Checkers with Transa
   }
 
   test("returns a transaction hash for a valid transaction hex") { res =>
-    implicit val (sp, h) = res
+    implicit val (sp, h, k) = res
 
     val cs = mkConstructionService()
     generateTestTransactions(wantSignedTransaction = true)
@@ -146,7 +144,7 @@ object ConstructionServiceSuite extends MutableIOSuite with Checkers with Transa
   }
 
   test("returns MalformedTransaction for an invalid transaction hex") { res =>
-    implicit val (sp, h) = res
+    implicit val (sp, h, k) = res
 
     val hex = Hex(
       "0483e4f38072fa59975fc796f220f4c07a7a6a3af1ad7fc091cbd6b8ebe78bac6a959da3587e6e761daf93693d4d2dc6b349fbc44dac5a9fcc5f809a59e93818ea"
@@ -161,7 +159,7 @@ object ConstructionServiceSuite extends MutableIOSuite with Checkers with Transa
   }
 
   test("returns the accountIdentifiers for negative operations") { res =>
-    implicit val (sp, h) = res
+    implicit val (sp, h, k) = res
 
     val cs = mkConstructionService()
     forall(addressGen) { address =>
@@ -183,7 +181,7 @@ object ConstructionServiceSuite extends MutableIOSuite with Checkers with Transa
   }
 
   test("returns no accountIdentifiers for non-negative operations") { res =>
-    implicit val (sp, h) = res
+    implicit val (sp, h, k) = res
 
     val cs = mkConstructionService()
     forall(addressGen) { address =>
@@ -202,7 +200,7 @@ object ConstructionServiceSuite extends MutableIOSuite with Checkers with Transa
   }
 
   test("returns operations for a valid signed transaction hex") { res =>
-    implicit val (sp, h) = res
+    implicit val (sp, h, k) = res
 
     val cs = mkConstructionService()
     generateTestTransactions(wantSignedTransaction = true)
@@ -216,7 +214,7 @@ object ConstructionServiceSuite extends MutableIOSuite with Checkers with Transa
   }
 
   test("returns operations for a valid unsigned transaction hex") { res =>
-    implicit val (sp, h) = res
+    implicit val (sp, h, k) = res
 
     val cs = mkConstructionService()
     generateTestTransactions(wantSignedTransaction = false)
@@ -310,7 +308,7 @@ object ConstructionServiceSuite extends MutableIOSuite with Checkers with Transa
   }
 
   test("getMetadata returns ExactlyOnePublicKeyRequired when more than one public key received") { res =>
-    implicit val (sp, h) = res
+    implicit val (sp, h, ks) = res
 
     val genUpToTenKeys = Gen.chooseNum(2, 10).flatMap(n => Gen.listOfN(n, rosettaPublicKeyGen))
     forall(genUpToTenKeys) { keys =>
@@ -322,7 +320,7 @@ object ConstructionServiceSuite extends MutableIOSuite with Checkers with Transa
   }
 
   test("getMetadata returns TransactionReference.empty when no reference found in storage") { res =>
-    implicit val (sp, h) = res
+    implicit val (sp, h, ks) = res
 
     val key = RosettaPublicKey(
       Hex(
@@ -338,7 +336,7 @@ object ConstructionServiceSuite extends MutableIOSuite with Checkers with Transa
   }
 
   test("getMetadata returns the TransactionReference found in storage") { res =>
-    implicit val (sp, h) = res
+    implicit val (sp, h, ks) = res
 
     val key = RosettaPublicKey(
       Hex(
@@ -368,7 +366,7 @@ object ConstructionServiceSuite extends MutableIOSuite with Checkers with Transa
   }
 
   test("getPayloads returns InvalidPayloadOperations when there's no operation with positive amount") { res =>
-    implicit val (sp, h) = res
+    implicit val (sp, h, ks) = res
 
     val gen: Gen[(Operation, MetadataResult)] =
       for {
@@ -386,7 +384,7 @@ object ConstructionServiceSuite extends MutableIOSuite with Checkers with Transa
   }
 
   test("getPayloads returns InvalidPayloadOperations when one operation amount is not negative of the other") { res =>
-    implicit val (sp, h) = res
+    implicit val (sp, h, ks) = res
 
     def adjustAmountByOne(amt: Amount): Amount = {
       val newValue = amt.value match {
@@ -426,7 +424,7 @@ object ConstructionServiceSuite extends MutableIOSuite with Checkers with Transa
   }
 
   test("getPayloads returns ParseResult on success") { res =>
-    implicit val (sp, h) = res
+    implicit val (sp, h, ks) = res
 
     val gen: Gen[(Operation, Operation, MetadataResult, TransactionSalt)] =
       for {
@@ -450,7 +448,7 @@ object ConstructionServiceSuite extends MutableIOSuite with Checkers with Transa
 
         val serializedTxn = JsonBinarySerializer.serialize(dagTransaction)
 
-        dagTransaction.hash.flatMap { txHash =>
+        Hasher.forKryo[IO].hash(dagTransaction).flatMap { txHash =>
           val txSignBytes = Hex.fromBytes(txHash.getBytes)
           val expected = PayloadsResult(
             Hex.fromBytes(serializedTxn),

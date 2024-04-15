@@ -36,6 +36,7 @@ import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.node.NodeState.SessionStarted
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.semver.{MetagraphVersion, TessellationVersion}
+import org.tessellation.security.Hasher
 
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
@@ -82,21 +83,24 @@ abstract class CurrencyL1App(
 
       dagL1Queues <- DAGL1Queues.make[IO](sharedQueues).asResource
       queues <- Queues.make[IO](dagL1Queues).asResource
+      txHasher = Hasher.forKryo[IO]
       validators = DAGL1Validators
         .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
           seedlist,
           cfg.transactionLimit,
-          transactionValidator
+          transactionValidator,
+          txHasher
         )
-      storages <- Storages
-        .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
-          sharedStorages,
-          method.l0Peer,
-          method.globalL0Peer,
-          method.identifier,
-          validators.transactionContextual
-        )
-        .asResource
+      storages <- hasherSelector.withCurrent { implicit hasher =>
+        Storages
+          .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
+            sharedStorages,
+            method.l0Peer,
+            method.globalL0Peer,
+            method.identifier,
+            validators.transactionContextual
+          )
+      }.asResource
       dagP2PClient = DAGP2PClient
         .make[IO](sharedP2PClient, sharedResources.client, currencyPathPrefix = "currency")
       p2pClient = P2PClient.make[IO](
@@ -120,7 +124,7 @@ abstract class CurrencyL1App(
           cfg,
           dataApplicationService,
           maybeMajorityPeerIds,
-          hashSelect
+          Hasher.forKryo[IO]
         )
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync[IO].asResource
       snapshotProcessor = CurrencySnapshotProcessor.make(
@@ -133,7 +137,8 @@ abstract class CurrencyL1App(
         sharedServices.globalSnapshotContextFns,
         sharedServices.currencySnapshotContextFns,
         jsonBrotliBinarySerializer,
-        cfg.transactionLimit
+        cfg.transactionLimit,
+        Hasher.forKryo[IO]
       )
       programs = Programs
         .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
@@ -165,7 +170,8 @@ abstract class CurrencyL1App(
           nodeShared.nodeId,
           tessellationVersion,
           cfg.http,
-          metagraphVersion.some
+          metagraphVersion.some,
+          txHasher
         )
       _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
       _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)
@@ -181,7 +187,8 @@ abstract class CurrencyL1App(
           nodeId,
           services,
           storages,
-          validators
+          validators,
+          txHasher
         )
         .asResource
 
@@ -226,19 +233,21 @@ abstract class CurrencyL1App(
               programs.globalL0PeerDiscovery.discover(latestSnapshot.signed.proofs.map(_.id).map(PeerId._Id.reverseGet))
           }
         }
-      _ <- services.dataApplication.map {
-        DataApplication
-          .run(
-            storages.cluster,
-            storages.l0Cluster,
-            p2pClient.l0BlockOutputClient,
-            p2pClient.consensusClient,
-            services,
-            queues,
-            _,
-            keyPair,
-            nodeId
-          )
+      _ <- services.dataApplication.map { da =>
+        hasherSelector.withCurrent { implicit hasher =>
+          DataApplication
+            .run(
+              storages.cluster,
+              storages.l0Cluster,
+              p2pClient.l0BlockOutputClient,
+              p2pClient.consensusClient,
+              services,
+              queues,
+              da,
+              keyPair,
+              nodeId
+            )
+        }
           .merge(globalL0PeerDiscovery)
           .merge(stateChannel.globalSnapshotProcessing)
           .compile

@@ -12,7 +12,7 @@ import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.statechannel.StateChannelValidator
-import org.tessellation.schema.{Block, SnapshotOrdinal}
+import org.tessellation.schema.Block
 import org.tessellation.security._
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.key.ops.PublicKeyOps
@@ -32,7 +32,7 @@ object StateChannelServiceSuite extends MutableIOSuite {
     implicit0(ks: KryoSerializer[IO]) <- KryoSerializer.forAsync[IO](sharedKryoRegistrar)
     sp <- SecurityProvider.forAsync[IO]
     implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
-    h = Hasher.forSync[IO](new HashSelect { def select(ordinal: SnapshotOrdinal): HashLogic = JsonHash })
+    h = Hasher.forJson[IO]
   } yield (h, sp)
 
   test("state channel output processed successfully") { res =>
@@ -60,10 +60,10 @@ object StateChannelServiceSuite extends MutableIOSuite {
 
   def mkService(failed: Option[StateChannelValidator.StateChannelValidationError] = None) = {
     val validator = new StateChannelValidator[IO] {
-      def validate(output: StateChannelOutput) =
+      def validate(output: StateChannelOutput)(implicit hasher: Hasher[IO]) =
         IO.pure(failed.fold[StateChannelValidator.StateChannelValidationErrorOr[StateChannelOutput]](output.validNec)(_.invalidNec))
 
-      def validateHistorical(output: StateChannelOutput) = validate(output)
+      def validateHistorical(output: StateChannelOutput)(implicit hasher: Hasher[IO]) = validate(output)
     }
 
     for {
