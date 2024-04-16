@@ -2,6 +2,7 @@ package org.tessellation.currency.l0
 
 import cats.Applicative
 import cats.effect.Async
+import cats.effect.std.Supervisor
 import cats.syntax.all._
 
 import scala.concurrent.duration._
@@ -24,7 +25,7 @@ object StateChannel {
     services: Services[F],
     storages: Storages[F],
     programs: Programs[F]
-  ): Stream[F, Unit] = {
+  )(implicit S: Supervisor[F]): Stream[F, Unit] = {
     val logger = Slf4jLogger.getLogger[F]
 
     def globalL0SnapshotProcessing: Stream[F, Unit] =
@@ -50,21 +51,13 @@ object StateChannel {
                       services.globalSnapshotContextFunctions.createContext(lastState, lastSnapshot.signed, snapshot.signed).flatMap {
                         context =>
                           storages.lastGlobalSnapshot.set(snapshot, context) >>
-                            services.sentStateChannelBinaryTrackingService.updateByGlobalSnapshot(snapshot)
+                            services.stateChannelBinarySender.confirm(snapshot) >> S
+                              .supervise(services.stateChannelBinarySender.processPending)
+                              .void
                       }
                   },
                   Applicative[F].unit
                 ) >> Applicative[F].pure(nextSnapshots.asLeft[Unit])
-            }
-        }
-        .evalTap { _ =>
-          services.sentStateChannelBinaryTrackingService.getRetriable
-            .flatMap(_.traverse(_.toHashed))
-            .flatMap {
-              _.traverse { binaryToRetry =>
-                logger.info(s"Snapshot binary hash=${binaryToRetry.hash} didn't reach global state. Resending to random Global L0 peer") >>
-                  services.stateChannelSnapshot.sendToGlobalL0(binaryToRetry)
-              }
             }
         }
         .handleErrorWith { error =>
