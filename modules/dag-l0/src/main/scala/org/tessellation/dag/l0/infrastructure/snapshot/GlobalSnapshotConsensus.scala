@@ -8,11 +8,11 @@ import cats.effect.std.{Random, Supervisor}
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
-import org.tessellation.dag.l0.domain.snapshot.programs.GlobalSnapshotEventCutter
+import org.tessellation.dag.l0.config.types.AppConfig
+import org.tessellation.dag.l0.domain.snapshot.programs.{GlobalSnapshotEventCutter, SnapshotBinaryFeeCalculator}
 import org.tessellation.dag.l0.infrastructure.snapshot.schema.{GlobalConsensusKind, GlobalConsensusOutcome}
 import org.tessellation.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.node.shared.config.types.SnapshotConfig
 import org.tessellation.node.shared.domain.cluster.services.Session
 import org.tessellation.node.shared.domain.cluster.storage.ClusterStorage
 import org.tessellation.node.shared.domain.gossip.Gossip
@@ -51,7 +51,7 @@ object GlobalSnapshotConsensus {
     globalSnapshotStorage: SnapshotStorage[F, GlobalSnapshotArtifact, GlobalSnapshotContext],
     validators: SharedValidators[F],
     sharedServices: SharedServices[F],
-    snapshotConfig: SnapshotConfig,
+    appConfig: AppConfig,
     stateChannelPullDelay: NonNegLong,
     stateChannelPurgeDelay: NonNegLong,
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
@@ -86,13 +86,16 @@ object GlobalSnapshotConsensus {
           GlobalConsensusOutcome,
           GlobalConsensusKind
         ](
-          snapshotConfig.consensus
+          appConfig.snapshot.consensus
         )
       consensusFunctions = GlobalSnapshotConsensusFunctions.make[F](
         snapshotAcceptanceManager,
         collateral,
         rewards,
-        GlobalSnapshotEventCutter.make[F](snapshotConfig.consensus.eventCutter.maxBinarySizeBytes)
+        GlobalSnapshotEventCutter.make[F](
+          appConfig.snapshot.consensus.eventCutter.maxBinarySizeBytes,
+          SnapshotBinaryFeeCalculator.make(appConfig.shared.feeConfigs)
+        )
       )
       consensusStateAdvancer = GlobalSnapshotConsensusStateAdvancer
         .make[F](keyPair, consensusStorage, globalSnapshotStorage, consensusFunctions, gossip)
@@ -107,7 +110,7 @@ object GlobalSnapshotConsensus {
       )
       consensusClient = ConsensusClient.make[F, GlobalSnapshotKey, GlobalConsensusOutcome](client, session)
       manager <- ConsensusManager.make(
-        snapshotConfig.consensus,
+        appConfig.snapshot.consensus,
         consensusStorage,
         consensusStateCreator,
         stateUpdater,

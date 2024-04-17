@@ -13,7 +13,7 @@ import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.PeerId
 
 import com.comcast.ip4s.{Host, Port}
-import eu.timepit.refined.types.numeric.{NonNegLong, PosInt, PosLong}
+import eu.timepit.refined.types.numeric.{NonNegLong, _}
 import fs2.io.file.Path
 
 object types {
@@ -101,7 +101,6 @@ object types {
     incrementalTmpSnapshotPath: Path,
     incrementalPersistedSnapshotPath: Path
   )
-
   case class HttpClientConfig(
     timeout: FiniteDuration,
     idleTimeInPool: FiniteDuration
