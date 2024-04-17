@@ -108,14 +108,14 @@ object GlobalSnapshotConsensusFunctions {
       val dagEvents = dagEventsBeforeCut.filter(_.height > lastArtifact.height)
 
       for {
-        (scEvents, blocksForAcceptance) <- eventCutter.cut(scEventsBeforeCut.toList, dagEvents.toList)
-
         lastArtifactHash <- lastArtifactHasher.hash(lastArtifact.value)
         currentOrdinal = lastArtifact.ordinal.next
         currentEpochProgress = trigger match {
           case EventTrigger => lastArtifact.epochProgress
           case TimeTrigger  => lastArtifact.epochProgress.next
         }
+
+        (scEvents, blocksForAcceptance) <- eventCutter.cut(scEventsBeforeCut.toList, dagEvents.toList, snapshotContext, currentOrdinal)
 
         lastActiveTips <- lastArtifact.activeTips(Async[F], lastArtifactHasher)
         lastDeprecatedTips = lastArtifact.tips.deprecated

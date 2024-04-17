@@ -12,7 +12,7 @@ import scala.reflect.runtime.universe.TypeTag
 
 import org.tessellation.currency.schema.currency.SnapshotFee
 import org.tessellation.dag.l0.dagL0KryoRegistrar
-import org.tessellation.dag.l0.domain.snapshot.programs.GlobalSnapshotEventCutter
+import org.tessellation.dag.l0.domain.snapshot.programs.{GlobalSnapshotEventCutter, SnapshotBinaryFeeCalculator}
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
 import org.tessellation.json.JsonSerializer
@@ -42,6 +42,7 @@ import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBi
 import org.tessellation.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._
+import eu.timepit.refined.types.numeric.NonNegLong
 import io.circe.Encoder
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
@@ -139,12 +140,20 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     val snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[IO] =
       GlobalSnapshotAcceptanceManager.make[IO](bam, scProcessor, collateral)
 
+    val feeCalculator = new SnapshotBinaryFeeCalculator[IO] {
+      override def calculateFee(
+        event: StateChannelEvent,
+        info: GlobalSnapshotContext,
+        ordinal: SnapshotOrdinal
+      ): IO[NonNegLong] =
+        event.snapshotBinary.value.fee.value.pure[IO]
+    }
     GlobalSnapshotConsensusFunctions
       .make[IO](
         snapshotAcceptanceManager,
         collateral,
         rewards,
-        GlobalSnapshotEventCutter.make[IO](20_000_000)
+        GlobalSnapshotEventCutter.make[IO](20_000_000, feeCalculator)
       )
   }
 

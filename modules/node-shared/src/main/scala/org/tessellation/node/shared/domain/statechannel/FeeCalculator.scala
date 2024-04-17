@@ -40,7 +40,7 @@ sealed trait FeeCalculator[F[_]] {
   def calculateRecommendedFee(
     maybeOrdinal: Option[SnapshotOrdinal],
     delay: NonNegLong = 0L
-  )(staked: Balance, sizeKb: NonNegInt, tip: NonNegLong = 0L, proScore: FeeCalculator.ProScore = 0.0d): F[SnapshotFee]
+  )(staked: Balance, sizeKb: NonNegInt, feePerKb: NonNegLong = 0L, proScore: FeeCalculator.ProScore = 0.0d): F[SnapshotFee]
 }
 
 object FeeCalculator {
@@ -56,7 +56,7 @@ object FeeCalculator {
       def calculateRecommendedFee(
         maybeOrdinal: Option[SnapshotOrdinal],
         delay: NonNegLong
-      )(staked: Balance, sizeKb: NonNegInt, tip: NonNegLong, proScore: ProScore): F[SnapshotFee] =
+      )(staked: Balance, sizeKb: NonNegInt, feePerKb: NonNegLong, proScore: ProScore): F[SnapshotFee] =
         maybeOrdinal
           .fold(allConfigs) { ordinal =>
             NonEmptySet
@@ -64,13 +64,13 @@ object FeeCalculator {
               .toNonEmptyList
               .map(getConfig)
           }
-          .traverse(calculate(_)(staked, sizeKb, tip, proScore))
+          .traverse(calculate(_)(staked, sizeKb, feePerKb, proScore))
           .map(_.maximum)
     }
 
   private def calculate[F[_]: MonadThrow](
     config: FeeCalculatorConfig
-  )(staked: Balance, sizeKb: NonNegInt, tip: NonNegLong, proScore: ProScore): F[SnapshotFee] = {
+  )(staked: Balance, sizeKb: NonNegInt, feePerKb: NonNegLong, proScore: ProScore): F[SnapshotFee] = {
     val FeeCalculatorConfig(baseFee, stakingWeight, computationalCost, proWeight) = config
     val workAmount: BigDecimal = BigDecimal(sizeKb) * BigDecimal(computationalCost)
 
@@ -78,7 +78,9 @@ object FeeCalculator {
       BigDecimal(1) / (BigDecimal(1) + BigDecimal(staked.value) * stakingWeight + BigDecimal(proScore) * proWeight)
 
     val roundUp = new MathContext(0, RoundingMode.UP)
-    val fee = (BigDecimal(baseFee) * workAmount * workMultiplier + BigDecimal(tip)).round(roundUp).toBigInt
+    val baseFeeAsDecimal = BigDecimal(baseFee)
+    val tip = BigDecimal(0).max(BigDecimal(feePerKb * sizeKb) - baseFeeAsDecimal)
+    val fee = (baseFeeAsDecimal * workAmount * workMultiplier + tip).round(roundUp).toBigInt
 
     Either
       .cond(fee.isValidLong, fee.longValue, "calculated fee exceeded long max value")

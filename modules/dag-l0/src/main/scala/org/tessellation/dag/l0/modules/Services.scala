@@ -72,7 +72,7 @@ object Services {
           storages.globalSnapshot,
           validators,
           sharedServices,
-          cfg.snapshot,
+          cfg,
           stateChannelPullDelay = cfg.stateChannel.pullDelay,
           stateChannelPurgeDelay = cfg.stateChannel.purgeDelay,
           stateChannelAllowanceLists,

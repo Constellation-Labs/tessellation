@@ -72,14 +72,25 @@ object FeeCalculatorSuite extends SimpleIOSuite {
       .map(actual => expect.eql(expected, actual))
   }
 
-  test("tip should be added to the fee") {
+  test("tip should not be added to the fee when fee for size is not large enough") {
     val calculator = FeeCalculator.make(configs)
-    val tip = NonNegLong(100L)
+    val feePerKb = NonNegLong(10000)
 
-    val expected: SnapshotFee = SnapshotFee(1000100L)
+    val expected: SnapshotFee = SnapshotFee(1000000L)
 
     calculator
-      .calculateRecommendedFee(snasphotOrdinal10.some, 0L)(staked = Balance.empty, sizeKb = 10, tip = tip)
+      .calculateRecommendedFee(snasphotOrdinal10.some, 0L)(staked = Balance.empty, sizeKb = 10, feePerKb = feePerKb)
+      .map(actual => expect.eql(expected, actual))
+  }
+
+  test("tip should be added to the fee when fee for size is large enough") {
+    val calculator = FeeCalculator.make(configs)
+    val feePerKb = NonNegLong(10001)
+
+    val expected: SnapshotFee = SnapshotFee(1000010L)
+
+    calculator
+      .calculateRecommendedFee(snasphotOrdinal10.some, 0L)(staked = Balance.empty, sizeKb = 10, feePerKb = feePerKb)
       .map(actual => expect.eql(expected, actual))
   }
 
