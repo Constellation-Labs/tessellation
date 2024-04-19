@@ -5,6 +5,7 @@ import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
+import org.tessellation.currency.schema.feeTransaction.FeeTransaction
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
 import org.tessellation.ext.crypto._
 import org.tessellation.schema._
@@ -42,12 +43,13 @@ object currency {
   case class CurrencySnapshotStateProof(
     lastTxRefsProof: Hash,
     balancesProof: Hash,
-    lastMessagesProof: Option[Hash] = None
+    lastMessagesProof: Option[Hash] = None,
+    lastFeeTxRefsProof: Option[Hash] = None
   ) extends StateProof
 
   object CurrencySnapshotStateProof {
-    def apply(a: (Hash, Hash, Option[Hash])): CurrencySnapshotStateProof =
-      CurrencySnapshotStateProof(a._1, a._2, a._3)
+    def apply(a: (Hash, Hash, Option[Hash], Option[Hash])): CurrencySnapshotStateProof =
+      CurrencySnapshotStateProof(a._1, a._2, a._3, a._4)
   }
 
   @derive(encoder, decoder, eqv, show)
@@ -55,7 +57,7 @@ object currency {
     lastTxRefsProof: Hash,
     balancesProof: Hash
   ) extends StateProof {
-    def toCurrencySnapshotStateProof: CurrencySnapshotStateProof = CurrencySnapshotStateProof(lastTxRefsProof, balancesProof, None)
+    def toCurrencySnapshotStateProof: CurrencySnapshotStateProof = CurrencySnapshotStateProof(lastTxRefsProof, balancesProof, None, None)
   }
 
   object CurrencySnapshotStateProofV1 {
@@ -70,10 +72,12 @@ object currency {
   case class CurrencySnapshotInfo(
     lastTxRefs: SortedMap[Address, TransactionReference],
     balances: SortedMap[Address, Balance],
-    lastMessages: Option[SortedMap[MessageType, Signed[CurrencyMessage]]] = None
+    lastMessages: Option[SortedMap[MessageType, Signed[CurrencyMessage]]] = None,
+    lastFeeTxRefs: Option[SortedMap[Address, TransactionReference]] = None
   ) extends SnapshotInfo[CurrencySnapshotStateProof] {
     def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[CurrencySnapshotStateProof] =
-      (lastTxRefs.hash, balances.hash, lastMessages.traverse(_.hash)).tupled.map(CurrencySnapshotStateProof.apply)
+      (lastTxRefs.hash, balances.hash, lastMessages.traverse(_.hash), lastFeeTxRefs.traverse(_.hash)).tupled
+        .map(CurrencySnapshotStateProof.apply)
   }
 
   @derive(encoder, decoder, eqv, show)
@@ -144,6 +148,7 @@ object currency {
     epochProgress: EpochProgress,
     dataApplication: Option[DataApplicationPart] = None,
     messages: Option[SortedSet[Signed[CurrencyMessage]]] = None,
+    feeTransactions: Option[SortedSet[Signed[FeeTransaction]]] = None,
     version: SnapshotVersion = SnapshotVersion("0.0.1")
   ) extends IncrementalSnapshot[CurrencySnapshotStateProof]
 
@@ -161,6 +166,7 @@ object currency {
           stateProof.toCurrencySnapshotStateProof,
           snapshot.epochProgress,
           snapshot.dataApplication,
+          None,
           None,
           snapshot.version
         )
@@ -193,6 +199,7 @@ object currency {
         stateProof.toCurrencySnapshotStateProof,
         epochProgress,
         dataApplication,
+        None,
         None,
         version
       )
@@ -245,6 +252,7 @@ object currency {
           stateProof.toCurrencySnapshotStateProof,
           genesis.epochProgress,
           genesis.dataApplication,
+          None,
           None,
           genesis.version
         )
