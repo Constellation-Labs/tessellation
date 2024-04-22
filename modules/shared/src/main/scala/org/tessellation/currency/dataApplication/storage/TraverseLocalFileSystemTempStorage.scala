@@ -35,7 +35,7 @@ final class TraverseLocalFileSystemTempStorage[F[_]: Async: KryoSerializer: Json
     exists(name)
       .flatMap(SnapshotAlreadyExistsInTempStorage(ordinal).raiseError[F, Unit].whenA)
       .flatMap { _ =>
-        write(ordinal, snapshot)
+        write(name, snapshot)
       }
   }
 
