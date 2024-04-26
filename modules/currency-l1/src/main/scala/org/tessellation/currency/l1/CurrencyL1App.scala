@@ -1,5 +1,7 @@
 package org.tessellation.currency.l1
 
+import java.security.KeyPair
+
 import cats.effect.{IO, Resource}
 import cats.syntax.applicativeError._
 import cats.syntax.option._
@@ -49,7 +51,7 @@ import pureconfig.module.catseffect.syntax._
 import pureconfig.module.enumeratum._
 
 trait OverridableL1 extends TessellationIOApp[Run] {
-  def dataApplication: Option[Resource[IO, BaseDataApplicationL1Service[IO]]] = None
+  def dataApplication(keyPair: KeyPair): Option[Resource[IO, BaseDataApplicationL1Service[IO]]] = None
   def transactionValidator: Option[CustomContextualTransactionValidator] = None
 }
 
@@ -112,7 +114,7 @@ abstract class CurrencyL1App(
         cfg.priorityPeerIds,
         cfg.environment
       ).asResource
-      dataApplicationService <- dataApplication.sequence
+      dataApplicationService <- dataApplication(nodeShared.keyPair).sequence
       services = Services
         .make[IO](
           storages,

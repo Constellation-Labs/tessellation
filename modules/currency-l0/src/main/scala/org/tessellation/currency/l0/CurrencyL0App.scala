@@ -1,5 +1,7 @@
 package org.tessellation.currency.l0
 
+import java.security.KeyPair
+
 import cats.effect.{IO, Resource}
 import cats.syntax.all._
 
@@ -35,7 +37,7 @@ import pureconfig.module.catseffect.syntax._
 import pureconfig.module.enumeratum._
 
 trait OverridableL0 extends TessellationIOApp[Run] {
-  def dataApplication: Option[Resource[IO, BaseDataApplicationL0Service[IO]]] = None
+  def dataApplication(keyPair: KeyPair): Option[Resource[IO, BaseDataApplicationL0Service[IO]]] = None
 
   def rewards(
     implicit sp: SecurityProvider[IO]
@@ -65,7 +67,7 @@ abstract class CurrencyL0App(
       cfgR <- ConfigSource.default.loadF[IO, AppConfigReader]().asResource
       cfg = method.appConfig(cfgR, sharedConfig)
 
-      dataApplicationService <- dataApplication.sequence
+      dataApplicationService <- dataApplication(nodeShared.keyPair).sequence
 
       hasherSelectorAlwaysCurrent = HasherSelector.forSyncAlwaysCurrent[IO](hasherSelector.getCurrent)
 
