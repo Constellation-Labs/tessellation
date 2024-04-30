@@ -13,7 +13,8 @@ import org.tessellation.dag.l1.domain.snapshot.programs.SnapshotProcessor
 import org.tessellation.dag.l1.domain.snapshot.programs.SnapshotProcessor._
 import org.tessellation.dag.l1.domain.transaction.{ContextualTransactionValidator, TransactionLimitConfig, TransactionStorage}
 import org.tessellation.dag.l1.infrastructure.address.storage.AddressStorage
-import org.tessellation.json.JsonBrotliBinarySerializer
+import org.tessellation.json.{JsonBrotliBinarySerializer, JsonSerializer}
+import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.node.shared.domain.snapshot.{SnapshotContextFunctions, Validator}
 import org.tessellation.node.shared.infrastructure.snapshot.storage.LastSnapshotStorage
@@ -37,7 +38,7 @@ sealed abstract class CurrencySnapshotProcessor[F[_]: Async: SecurityProvider]
 
 object CurrencySnapshotProcessor {
 
-  def make[F[_]: Async: Random: SecurityProvider](
+  def make[F[_]: Async: Random: SecurityProvider: KryoSerializer: JsonSerializer](
     identifier: Address,
     addressStorage: AddressStorage[F],
     blockStorage: BlockStorage[F],
@@ -212,8 +213,6 @@ object CurrencySnapshotProcessor {
       // currency snapshots. Binary that fails to deserialize as currency snapshot are ignored here.
       private def fetchCurrencySnapshots(
         globalSnapshot: GlobalIncrementalSnapshot
-      )(
-        implicit hasher: Hasher[F]
       ): F[Option[ValidatedNel[InvalidSignatureForHash[CurrencyIncrementalSnapshot], NonEmptyList[Hashed[CurrencyIncrementalSnapshot]]]]] =
         globalSnapshot.stateChannelSnapshots
           .get(identifier) match {
@@ -224,7 +223,22 @@ object CurrencySnapshotProcessor {
               .map(_.flatMap(_.toOption))
               .map(NonEmptyList.fromList)
               .map(_.map(_.sortBy(_.value.ordinal)))
-              .flatMap(_.map(_.traverse(_.toHashedWithSignatureCheck)).sequence)
+              .flatMap(_.map(_.traverse { snapshot =>
+                def usingKryo = {
+                  implicit val hasher = Hasher.forKryo[F]
+                  snapshot.toHashedWithSignatureCheck
+                }
+
+                def usingJson = {
+                  implicit val hasher = Hasher.forJson[F]
+                  snapshot.toHashedWithSignatureCheck
+                }
+
+                usingJson.flatMap {
+                  case Left(_)  => usingKryo
+                  case Right(s) => s.asRight[Signed.InvalidSignatureForHash[CurrencyIncrementalSnapshot]].pure[F]
+                }
+              }).sequence)
               .map(_.map(_.traverse(_.toValidatedNel)))
           case None => Async[F].pure(none)
         }
