@@ -10,6 +10,7 @@ import scala.util.control.NoStackTrace
 
 import org.tessellation.currency.dataApplication.dataApplication.{DataApplicationBlock, DataApplicationValidationErrorOr}
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
+import org.tessellation.currency.schema.feeTransaction.FeeTransaction
 import org.tessellation.routes.internal.ExternalUrlPrefix
 import org.tessellation.schema.round.RoundId
 import org.tessellation.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
@@ -96,6 +97,9 @@ trait BaseDataApplicationL0Service[F[_]] extends BaseDataApplicationService[F] w
   final def serializedOnChainGenesis: F[Array[Byte]] = serializeState(genesis.onChain)
 
   def onSnapshotConsensusResult(snapshot: Hashed[CurrencyIncrementalSnapshot]): F[Unit]
+
+  def calculateFees(ds: Seq[Signed[DataUpdate]])(implicit A: Applicative[F]): F[Seq[Signed[FeeTransaction]]] =
+    A.pure(Seq.empty[Signed[FeeTransaction]])
 }
 
 trait BaseDataApplicationL1Service[F[_]] extends BaseDataApplicationService[F] with BaseDataApplicationContextualOps[F, L1NodeContext[F]]
