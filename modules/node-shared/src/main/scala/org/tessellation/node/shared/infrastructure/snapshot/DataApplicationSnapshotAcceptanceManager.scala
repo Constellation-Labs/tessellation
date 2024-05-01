@@ -18,6 +18,7 @@ import org.tessellation.currency.dataApplication._
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
 import org.tessellation.currency.dataApplication.storage.CalculatedStateLocalFileSystemStorage
 import org.tessellation.currency.schema.currency.DataApplicationPart
+import org.tessellation.currency.schema.feeTransaction.FeeTransaction
 import org.tessellation.ext.cats.syntax.partialPrevious.catsSyntaxPartialPrevious
 import org.tessellation.node.shared.snapshot.currency.CurrencySnapshotArtifact
 import org.tessellation.schema.SnapshotOrdinal
@@ -42,7 +43,8 @@ trait DataApplicationSnapshotAcceptanceManager[F[_]] {
 
 case class DataApplicationAcceptanceResult(
   dataApplicationPart: DataApplicationPart,
-  calculatedState: DataCalculatedState
+  calculatedState: DataCalculatedState,
+  feeTransactions: Seq[Signed[FeeTransaction]] = Seq.empty
 )
 
 object DataApplicationSnapshotAcceptanceManager {
@@ -174,10 +176,14 @@ object DataApplicationSnapshotAcceptanceManager {
           service.hashCalculatedState(newDataState.calculated)
         )
 
+        feeTransactions <- OptionT.liftF(
+          service.extractFees(validatedUpdates)
+        )
       } yield
         DataApplicationAcceptanceResult(
           DataApplicationPart(serializedOnChainState, serializedBlocks, calculatedStateProof),
-          newDataState.calculated
+          newDataState.calculated,
+          feeTransactions
         )
 
       newDataState.value.handleErrorWith { err =>

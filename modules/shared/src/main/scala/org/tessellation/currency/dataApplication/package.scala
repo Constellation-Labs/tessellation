@@ -98,7 +98,7 @@ trait BaseDataApplicationL0Service[F[_]] extends BaseDataApplicationService[F] w
 
   def onSnapshotConsensusResult(snapshot: Hashed[CurrencyIncrementalSnapshot]): F[Unit]
 
-  def calculateFees(ds: Seq[Signed[DataUpdate]])(implicit A: Applicative[F]): F[Seq[Signed[FeeTransaction]]] =
+  def extractFees(ds: Seq[Signed[DataUpdate]])(implicit A: Applicative[F]): F[Seq[Signed[FeeTransaction]]] =
     A.pure(Seq.empty[Signed[FeeTransaction]])
 }
 
