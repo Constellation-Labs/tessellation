@@ -1,5 +1,6 @@
 package com.my.project_template.l0
 
+import cats.Applicative
 import cats.data.NonEmptyList
 import cats.effect.{IO, Resource}
 import cats.syntax.all._
@@ -48,6 +49,12 @@ object Main
         override def validateUpdate(
           update: UsageUpdate
         )(implicit context: L0NodeContext[IO]): IO[DataApplicationValidationErrorOr[Unit]] =
+          ().validNec.pure[IO]
+
+        override def validateFee(gsOrdinal: SnapshotOrdinal)(update: Signed[UsageUpdate])(
+          implicit context: L0NodeContext[IO],
+          A: Applicative[IO]
+        ): IO[DataApplicationValidationErrorOr[Unit]] =
           ().validNec.pure[IO]
 
         override def validateData(

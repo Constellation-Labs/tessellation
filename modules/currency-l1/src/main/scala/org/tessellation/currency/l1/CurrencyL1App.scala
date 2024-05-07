@@ -239,6 +239,7 @@ abstract class CurrencyL1App(
             .run(
               storages.cluster,
               storages.l0Cluster,
+              storages.lastGlobalSnapshot,
               p2pClient.l0BlockOutputClient,
               p2pClient.consensusClient,
               services,

@@ -6,7 +6,7 @@ import cats.data.NonEmptyList
 import cats.effect.{IO, Resource}
 import cats.implicits.catsStdShowForList
 import cats.syntax.all._
-import cats.{Eq, Show}
+import cats.{Applicative, Eq, Show}
 
 import org.tessellation.block.generators.signedBlockGen
 import org.tessellation.currency.dataApplication._
@@ -323,6 +323,11 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
 
     override def validateUpdate(update: DataUpdate)(
       implicit context: L0NodeContext[IO]
+    ): IO[dataApplication.DataApplicationValidationErrorOr[Unit]] = ???
+
+    override def validateFee(gsOrdinal: SnapshotOrdinal)(update: Signed[DataUpdate])(
+      implicit context: L0NodeContext[IO],
+      A: Applicative[IO]
     ): IO[dataApplication.DataApplicationValidationErrorOr[Unit]] = ???
 
     override def combine(state: DataState.Base, updates: List[Signed[DataUpdate]])(

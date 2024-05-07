@@ -1,5 +1,6 @@
 package com.my.project_template.data_l1
 
+import cats.Applicative
 import cats.data.NonEmptyList
 import cats.effect.{IO, Resource}
 import cats.syntax.all._
@@ -43,6 +44,11 @@ object Main extends CurrencyL1App(
       override def validateUpdate(
         update: UsageUpdate
       )(implicit context: L1NodeContext[IO]): IO[DataApplicationValidationErrorOr[Unit]] =
+        ().validNec.pure[IO]
+
+      override def validateFee(gsOrdinal: SnapshotOrdinal)(update: Signed[UsageUpdate])(
+        implicit context: L1NodeContext[IO], A: Applicative[IO]
+      ): IO[DataApplicationValidationErrorOr[Unit]] =
         ().validNec.pure[IO]
 
       override def combine(

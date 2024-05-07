@@ -5,10 +5,12 @@ import cats.data.{NonEmptyList, OptionT}
 import cats.effect.Async
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
+import cats.syntax.contravariantSemigroupal._
 import cats.syntax.eq._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
+import cats.syntax.semigroup._
 import cats.syntax.show._
 import cats.syntax.traverse._
 
@@ -140,14 +142,21 @@ object DataApplicationSnapshotAcceptanceManager {
             .flatMap(expectCalculatedStateOrdinal(lastOrdinal))
         )
 
+        dataState = DataState(lastOnChainState, lastCalculatedState)
         (validatedUpdates, validatedBlocks) <- OptionT.liftF {
           NonEmptyList
             .fromList(dataBlocks.distinctBy(_.value.roundId))
             .map { uniqueBlocks =>
               val updates = uniqueBlocks.flatMap(_.value.updates)
 
-              service
-                .validateData(DataState(lastOnChainState, lastCalculatedState), updates)
+              val feeValidation = updates
+                .traverse(service.validateFee(currentOrdinal))
+                .map(_.reduce)
+
+              val dataValidation = service.validateData(dataState, updates)
+
+              (feeValidation, dataValidation)
+                .mapN(_ |+| _)
                 .flatTap { validated =>
                   logger.warn(s"Data application is invalid, errors: ${validated.toString}").whenA(validated.isInvalid)
                 }
@@ -161,7 +170,7 @@ object DataApplicationSnapshotAcceptanceManager {
         }
 
         newDataState <- OptionT.liftF(
-          service.combine(DataState(lastOnChainState, lastCalculatedState), validatedUpdates)
+          service.combine(dataState, validatedUpdates)
         )
 
         serializedOnChainState <- OptionT.liftF(
