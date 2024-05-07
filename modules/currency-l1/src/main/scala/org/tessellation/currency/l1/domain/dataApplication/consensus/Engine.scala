@@ -3,7 +3,7 @@ package org.tessellation.currency.l1.domain.dataApplication.consensus
 import java.security.KeyPair
 
 import cats.Applicative
-import cats.data.NonEmptyList
+import cats.data.{NonEmptyList, OptionT}
 import cats.effect.kernel.{Async, Clock}
 import cats.effect.std.Random
 import cats.syntax.all._
@@ -18,9 +18,11 @@ import org.tessellation.effects.GenUUID
 import org.tessellation.fsm.FSM
 import org.tessellation.node.shared.domain.cluster.storage.ClusterStorage
 import org.tessellation.node.shared.domain.queue.ViewableQueue
+import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.schema.node.NodeState
 import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.schema.round.RoundId
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.SignatureProof
 import org.tessellation.security.{Hasher, SecurityProvider}
@@ -84,6 +86,7 @@ object Engine {
   def fsm[F[_]: Async: Random: SecurityProvider: Hasher: L1NodeContext](
     dataApplication: BaseDataApplicationL1Service[F],
     clusterStorage: ClusterStorage[F],
+    lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     consensusClient: ConsensusClient[F],
     dataUpdates: ViewableQueue[F, Signed[DataUpdate]],
     selfId: PeerId,
@@ -323,16 +326,22 @@ object Engine {
               }
             }
 
-          roundData
-            .formBlock(
-              a => dataApplication.validateUpdate(a).map(_.toEither.leftMap(_.toString).map(_ => a)),
-              combine
-            )
-            .flatMap {
+          for {
+            gsOrdinal <- OptionT(lastGlobalSnapshot.getOrdinal)
+              .getOrRaise(new IllegalStateException("Global SnapshotOrdinal unavailable"))
+            validate = (update: Signed[DataUpdate]) =>
+              (dataApplication.validateUpdate(update), dataApplication.validateFee(gsOrdinal)(update)).mapN(_ |+| _)
+
+            maybeBlock <- roundData
+              .formBlock(
+                a => validate(a).map(_.toEither.leftMap(_.toString).as(a)),
+                combine
+              )
+            result <- maybeBlock match {
               case Some(block) =>
                 Signed.forAsyncHasher(block, selfKeyPair).flatMap { signedBlock =>
                   signedBlock.updates
-                    .traverse(dataApplication.validateUpdate(_))
+                    .traverse(validate)
                     .map(_.forall(_.isValid))
                     .ifM(
                       processBlock(newState, proposal, signedBlock), {
@@ -357,7 +366,7 @@ object Engine {
                   )
                 processCancellation(newState, cancellation)
             }
-
+          } yield result
         case (newState, _) => ().pure[F].tupleLeft(newState)
       }.getOrElse(logger.warn(s"Couldn't persist proposal").tupleLeft(state))
 

@@ -79,6 +79,11 @@ trait BaseDataApplicationContextualOps[F[_], Context] {
 
   def validateUpdate(update: DataUpdate)(implicit context: Context): F[DataApplicationValidationErrorOr[Unit]]
 
+  def validateFee(gsOrdinal: SnapshotOrdinal)(update: Signed[DataUpdate])(
+    implicit context: Context,
+    A: Applicative[F]
+  ): F[DataApplicationValidationErrorOr[Unit]]
+
   def combine(state: DataState.Base, updates: List[Signed[DataUpdate]])(implicit context: Context): F[DataState.Base]
 
   def getCalculatedState(implicit context: Context): F[(SnapshotOrdinal, DataCalculatedState)]
@@ -133,6 +138,11 @@ trait DataApplicationContextualOps[F[_], D <: DataUpdate, DON <: DataOnChainStat
 
   def validateUpdate(update: D)(implicit context: Context): F[DataApplicationValidationErrorOr[Unit]]
 
+  def validateFee(gsOrdinal: SnapshotOrdinal)(update: Signed[D])(
+    implicit context: Context,
+    A: Applicative[F]
+  ): F[DataApplicationValidationErrorOr[Unit]]
+
   def combine(state: DataState[DON, DOF], updates: List[Signed[D]])(implicit context: Context): F[DataState[DON, DOF]]
 
   def getCalculatedState(implicit context: Context): F[(SnapshotOrdinal, DOF)]
@@ -186,6 +196,12 @@ object BaseDataApplicationContextualOps {
           case _    => Validated.invalidNec[DataApplicationValidationError, Unit](Noop).pure[F]
         }
 
+      def validateFee(gsOrdinal: SnapshotOrdinal)(update: Signed[DataUpdate])(
+        implicit context: Context,
+        A: Applicative[F]
+      ): F[DataApplicationValidationErrorOr[Unit]] =
+        service.validateFee(gsOrdinal)(update.asInstanceOf[Signed[D]])
+
       def combine(state: DataState.Base, updates: List[Signed[DataUpdate]])(
         implicit context: Context
       ): F[DataState.Base] =
@@ -237,6 +253,11 @@ object BaseDataApplicationService {
 
       def validateUpdate(update: DataUpdate)(implicit context: Context): F[DataApplicationValidationErrorOr[Unit]] =
         v.validateUpdate(update)
+
+      def validateFee(gsOrdinal: SnapshotOrdinal)(
+        update: Signed[DataUpdate]
+      )(implicit context: Context, A: Applicative[F]): F[DataApplicationValidationErrorOr[Unit]] =
+        v.validateFee(gsOrdinal)(update)
 
       def combine(state: DataState.Base, updates: List[Signed[DataUpdate]])(
         implicit context: Context
@@ -357,6 +378,11 @@ object BaseDataApplicationL0Service {
       def validateUpdate(update: DataUpdate)(implicit context: L0NodeContext[F]): F[DataApplicationValidationErrorOr[Unit]] =
         base.validateUpdate(update)
 
+      def validateFee(gsOrdinal: SnapshotOrdinal)(
+        update: Signed[DataUpdate]
+      )(implicit context: L0NodeContext[F], A: Applicative[F]): F[DataApplicationValidationErrorOr[Unit]] =
+        base.validateFee(gsOrdinal)(update)
+
       def combine(state: DataState.Base, updates: List[Signed[DataUpdate]])(
         implicit context: L0NodeContext[F]
       ): F[DataState.Base] =
@@ -424,6 +450,11 @@ object BaseDataApplicationL1Service {
         implicit context: L1NodeContext[F]
       ): F[DataApplicationValidationErrorOr[Unit]] =
         base.validateUpdate(update)
+
+      def validateFee(gsOrdinal: SnapshotOrdinal)(
+        update: Signed[DataUpdate]
+      )(implicit context: L1NodeContext[F], A: Applicative[F]): F[DataApplicationValidationErrorOr[Unit]] =
+        base.validateFee(gsOrdinal)(update)
 
       def combine(state: DataState.Base, updates: List[Signed[DataUpdate]])(
         implicit context: L1NodeContext[F]

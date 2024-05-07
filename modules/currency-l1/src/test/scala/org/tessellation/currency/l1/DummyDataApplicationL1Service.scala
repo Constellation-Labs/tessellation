@@ -1,5 +1,6 @@
 package org.tessellation.currency.l1
 
+import cats.Applicative
 import cats.data.NonEmptyList
 import cats.effect.IO
 
@@ -56,6 +57,11 @@ object DummyDataApplicationL1Service {
       ): IO[DataApplicationValidationErrorOr[Unit]] = ???
 
       override def validateUpdate(update: DataUpdate)(implicit context: L1NodeContext[IO]): IO[DataApplicationValidationErrorOr[Unit]] = ???
+
+      override def validateFee(gsOrdinal: SnapshotOrdinal)(update: Signed[DataUpdate])(
+        implicit context: L1NodeContext[IO],
+        A: Applicative[IO]
+      ): IO[dataApplication.DataApplicationValidationErrorOr[Unit]] = ???
 
       override def combine(state: Base, updates: List[Signed[DataUpdate]])(implicit context: L1NodeContext[IO]): IO[Base] = ???
 

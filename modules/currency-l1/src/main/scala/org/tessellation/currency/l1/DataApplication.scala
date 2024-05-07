@@ -16,7 +16,9 @@ import org.tessellation.currency.l1.modules.{Queues, Services}
 import org.tessellation.currency.schema.currency._
 import org.tessellation.dag.l1.http.p2p.L0BlockOutputClient
 import org.tessellation.node.shared.domain.cluster.storage.{ClusterStorage, L0ClusterStorage}
+import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hasher, SecurityProvider}
 
@@ -29,6 +31,7 @@ object DataApplication {
   def run[F[_]: Async: Random: Hasher: SecurityProvider: L1NodeContext](
     clusterStorage: ClusterStorage[F],
     l0ClusterStorage: L0ClusterStorage[F],
+    lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     blockOutputClient: L0BlockOutputClient[F],
     consensusClient: ConsensusClient[F],
     services: Services[
@@ -90,6 +93,7 @@ object DataApplication {
           .fsm(
             dataApplicationService,
             clusterStorage,
+            lastGlobalSnapshot,
             consensusClient,
             queues.dataUpdates,
             selfId,

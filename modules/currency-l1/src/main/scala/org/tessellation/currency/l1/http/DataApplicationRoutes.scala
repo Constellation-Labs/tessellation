@@ -1,5 +1,6 @@
 package org.tessellation.currency.l1.http
 
+import cats.data.OptionT
 import cats.data.Validated.{Invalid, Valid}
 import cats.effect.Async
 import cats.effect.std.{Queue, Supervisor}
@@ -51,8 +52,11 @@ final case class DataApplicationRoutes[F[_]: Async: Hasher: SecurityProvider: L1
           _.toHashedWithSignatureCheck[F](dataApplication.serializeUpdate _).flatMap {
             case Left(_) => InternalServerError(InvalidSignature.toApplicationError)
             case Right(hashed) =>
-              dataApplication
-                .validateUpdate(hashed.signed.value)
+              OptionT(lastGlobalSnapshotStorage.getOrdinal)
+                .getOrRaise(new IllegalStateException("Global SnapshotOrdinal unavailable"))
+                .flatMap { gsOrdinal =>
+                  (dataApplication.validateFee(gsOrdinal)(hashed.signed), dataApplication.validateUpdate(hashed.signed.value)).mapN(_ |+| _)
+                }
                 .flatMap {
                   case Invalid(e) => InternalServerError(InvalidDataUpdate(e.toString).toApplicationError)
                   case Valid(_) =>
