@@ -109,7 +109,9 @@ object GlobalSnapshotTraverse {
           (info, lastInc) <- incHashesNec.tail.foldLeftM((firstInfo, firstInc)) {
             case ((lastCtx, lastInc), hash) =>
               loadIncOrErr(hash).flatMap { inc =>
-                contextFns.createContext(lastCtx, lastInc, inc).map(_ -> inc)
+                HasherSelector[F].forOrdinal(inc.ordinal) { implicit hasher =>
+                  contextFns.createContext(lastCtx, lastInc, inc).map(_ -> inc)
+                }
               }
           }
         } yield (info, lastInc)

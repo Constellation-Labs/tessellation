@@ -10,6 +10,7 @@ import cats.syntax.functor._
 
 import org.tessellation.env.AppEnvironment
 import org.tessellation.json.{JsonBrotliBinarySerializer, JsonSerializer}
+import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.{CollateralConfig, SharedConfig}
 import org.tessellation.node.shared.domain.cluster.services.{Cluster, Session}
 import org.tessellation.node.shared.domain.gossip.Gossip
@@ -32,7 +33,7 @@ import fs2.concurrent.SignallingRef
 
 object SharedServices {
 
-  def make[F[_]: Async: HasherSelector: SecurityProvider: Metrics: Supervisor: JsonSerializer](
+  def make[F[_]: Async: HasherSelector: SecurityProvider: Metrics: Supervisor: JsonSerializer: KryoSerializer](
     cfg: SharedConfig,
     nodeId: PeerId,
     generation: Generation,

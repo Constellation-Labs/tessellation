@@ -56,6 +56,7 @@ object CurrencySnapshotConsensusFunctions {
       lastKey: SnapshotOrdinal,
       lastArtifact: Signed[CurrencySnapshotArtifact],
       lastContext: CurrencySnapshotContext,
+      lastArtifactHasher: Hasher[F],
       trigger: ConsensusTrigger,
       events: Set[CurrencySnapshotEvent],
       facilitators: Set[PeerId]
@@ -66,7 +67,7 @@ object CurrencySnapshotConsensusFunctions {
       }
 
       currencySnapshotCreator
-        .createProposalArtifact(lastKey, lastArtifact, lastContext, trigger, blocksForAcceptance, rewards, facilitators)
+        .createProposalArtifact(lastKey, lastArtifact, lastContext, lastArtifactHasher, trigger, blocksForAcceptance, rewards, facilitators)
         .map(created => (created.artifact, created.context, created.awaitingEvents))
     }
   }

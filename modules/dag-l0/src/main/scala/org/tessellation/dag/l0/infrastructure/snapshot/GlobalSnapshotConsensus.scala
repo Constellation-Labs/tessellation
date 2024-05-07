@@ -10,7 +10,7 @@ import cats.syntax.functor._
 
 import org.tessellation.dag.l0.domain.snapshot.programs.GlobalSnapshotEventCutter
 import org.tessellation.dag.l0.infrastructure.snapshot.schema.{GlobalConsensusKind, GlobalConsensusOutcome}
-import org.tessellation.json.JsonBrotliBinarySerializer
+import org.tessellation.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.SnapshotConfig
 import org.tessellation.node.shared.domain.cluster.services.Session
@@ -40,7 +40,7 @@ import org.http4s.client.Client
 
 object GlobalSnapshotConsensus {
 
-  def make[F[_]: Async: Random: KryoSerializer: HasherSelector: SecurityProvider: Metrics: Supervisor](
+  def make[F[_]: Async: Random: KryoSerializer: JsonSerializer: HasherSelector: SecurityProvider: Metrics: Supervisor](
     gossip: Gossip[F],
     selfId: PeerId,
     keyPair: KeyPair,

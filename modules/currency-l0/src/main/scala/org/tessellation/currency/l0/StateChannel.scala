@@ -47,13 +47,16 @@ object StateChannel {
                   storages.lastGlobalSnapshot.getCombined.flatMap {
                     case None => Applicative[F].unit
                     case Some((lastSnapshot, lastState)) =>
-                      services.globalSnapshotContextFunctions.createContext(lastState, lastSnapshot.signed, snapshot.signed).flatMap {
-                        context =>
+                      HasherSelector[F]
+                        .forOrdinal(snapshot.ordinal) { implicit hasher =>
+                          services.globalSnapshotContextFunctions.createContext(lastState, lastSnapshot.signed, snapshot.signed)
+                        }
+                        .flatMap { context =>
                           storages.lastGlobalSnapshot.set(snapshot, context) >>
                             services.stateChannelBinarySender.confirm(snapshot) >> S
                               .supervise(services.stateChannelBinarySender.processPending)
                               .void
-                      }
+                        }
                   },
                   Applicative[F].unit
                 ) >> Applicative[F].pure(nextSnapshots.asLeft[Unit])
