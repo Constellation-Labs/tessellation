@@ -30,7 +30,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 object SnapshotStorage {
 
   private def makeResources[F[_]: Async, S <: Snapshot, C <: SnapshotInfo[_]]() = {
-    def mkHeadRef = SignallingRef.of[F, Option[(Signed[S], C)]](none)
+    def mkHeadRef = SignallingRef.of[F, Option[(Signed[S], Hasher[F], C)]](none)
     def mkOrdinalCache = MapRef.ofSingleImmutableMap[F, SnapshotOrdinal, Hash](Map.empty)
     def mkHashCache = MapRef.ofSingleImmutableMap[F, Hash, Signed[S]](Map.empty)
     def mkNotPersistedCache = Ref.of(Set.empty[SnapshotOrdinal])
@@ -69,7 +69,7 @@ object SnapshotStorage {
     }
 
   def make[F[_]: Async, S <: Snapshot: Encoder, C <: SnapshotInfo[_]](
-    headRef: SignallingRef[F, Option[(Signed[S], C)]],
+    headRef: SignallingRef[F, Option[(Signed[S], Hasher[F], C)]],
     ordinalCache: MapRef[F, SnapshotOrdinal, Option[Hash]],
     hashCache: MapRef[F, Hash, Option[Signed[S]]],
     notPersistedCache: Ref[F, Set[SnapshotOrdinal]],
@@ -186,10 +186,10 @@ object SnapshotStorage {
               case (v, setter) =>
                 v match {
                   case None =>
-                    setter((snapshot, state).some).ifM(offer, loop)
-                  case Some((current, _)) =>
-                    isNextSnapshot(current, snapshot).flatMap { isNext =>
-                      if (isNext) setter((snapshot, state).some).ifM(offer, loop)
+                    setter((snapshot, hasher, state).some).ifM(offer, loop)
+                  case Some((current, currentHasher, _)) =>
+                    isNextSnapshot(current, currentHasher, snapshot).flatMap { isNext =>
+                      if (isNext) setter((snapshot, hasher, state).some).ifM(offer, loop)
                       else
                         logger
                           .debug(s"Trying to prepend ${snapshot.ordinal.show} but the current snapshot is: ${current.ordinal.show}")
@@ -201,7 +201,7 @@ object SnapshotStorage {
           loop
         }
 
-        def head: F[Option[(Signed[S], C)]] = headRef.get
+        def head: F[Option[(Signed[S], C)]] = headRef.get.map(_.map { case (snapshot, _, info) => (snapshot, info) })
         def headSnapshot: F[Option[Signed[S]]] = headRef.get.map(_.map(_._1))
 
         def get(ordinal: SnapshotOrdinal): F[Option[Signed[S]]] =
@@ -222,19 +222,20 @@ object SnapshotStorage {
           }
 
         def getLatestBalances: F[Option[Map[Address, Balance]]] =
-          headRef.get.map(_.map(_._2.balances))
+          headRef.get.map(_.map(_._3.balances))
 
         def getLatestBalancesStream: Stream[F, Map[Address, Balance]] =
           headRef.discrete
-            .map(_.map(_._2))
+            .map(_.map(_._3))
             .flatMap(_.fold[Stream[F, C]](Stream.empty)(Stream(_)))
             .map(_.balances)
 
         private def isNextSnapshot(
           current: Signed[S],
+          currentHasher: Hasher[F],
           snapshot: Signed[S]
-        )(implicit hasher: Hasher[F]): F[Boolean] =
-          current.value.hash.map { hash =>
+        ): F[Boolean] =
+          currentHasher.hash(current.value).map { hash =>
             hash === snapshot.value.lastSnapshotHash && current.value.ordinal.next === snapshot.value.ordinal
           }
       }
