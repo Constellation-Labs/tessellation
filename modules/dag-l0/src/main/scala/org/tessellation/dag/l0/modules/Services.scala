@@ -15,6 +15,7 @@ import org.tessellation.dag.l0.domain.statechannel.StateChannelService
 import org.tessellation.dag.l0.infrastructure.rewards._
 import org.tessellation.dag.l0.infrastructure.snapshot._
 import org.tessellation.dag.l0.infrastructure.trust.TrustStorageUpdater
+import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.cluster.services.{Cluster, Session}
 import org.tessellation.node.shared.domain.collateral.Collateral
@@ -36,7 +37,7 @@ import org.http4s.client.Client
 
 object Services {
 
-  def make[F[_]: Async: Random: KryoSerializer: HasherSelector: SecurityProvider: Metrics: Supervisor](
+  def make[F[_]: Async: Random: KryoSerializer: JsonSerializer: HasherSelector: SecurityProvider: Metrics: Supervisor](
     sharedServices: SharedServices[F],
     queues: Queues[F],
     storages: Storages[F],

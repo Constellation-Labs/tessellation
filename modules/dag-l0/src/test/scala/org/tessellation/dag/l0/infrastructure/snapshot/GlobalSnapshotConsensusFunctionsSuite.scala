@@ -49,7 +49,7 @@ import weaver.scalacheck.Checkers
 
 object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checkers {
 
-  type Res = (Supervisor[IO], KryoSerializer[IO], Hasher[IO], SecurityProvider[IO], Metrics[IO])
+  type Res = (Supervisor[IO], KryoSerializer[IO], JsonSerializer[IO], Hasher[IO], SecurityProvider[IO], Metrics[IO])
 
   def mkMockGossip[B](spreadRef: Ref[IO, List[B]]): Gossip[IO] =
     new Gossip[IO] {
@@ -80,7 +80,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
     h = Hasher.forJson[IO]
     metrics <- Metrics.forAsync[IO](Seq.empty)
-  } yield (supervisor, ks, h, sp, metrics)
+  } yield (supervisor, ks, j, h, sp, metrics)
 
   val bam: BlockAcceptanceManager[IO] = new BlockAcceptanceManager[IO] {
 
@@ -132,6 +132,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
   def mkGlobalSnapshotConsensusFunctions(
     implicit ks: KryoSerializer[IO],
+    j: JsonSerializer[IO],
     sp: SecurityProvider[IO],
     h: Hasher[IO],
     m: Metrics[IO]
@@ -153,6 +154,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
   def getTestData(
     implicit sp: SecurityProvider[F],
     kryo: KryoSerializer[F],
+    j: JsonSerializer[F],
     h: Hasher[IO],
     m: Metrics[F]
   ): IO[(GlobalSnapshotConsensusFunctions[IO], Set[PeerId], Signed[GlobalSnapshotArtifact], Signed[GlobalSnapshot], StateChannelEvent)] =
@@ -172,7 +174,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     } yield (gscf, facilitators, signedLastArtifact, signedGenesis, scEvent)
 
   test("validateArtifact - returns artifact for correct data") { res =>
-    implicit val (_, ks, h, sp, m) = res
+    implicit val (_, ks, j, h, sp, m) = res
 
     for {
       (gscf, facilitators, signedLastArtifact, signedGenesis, scEvent) <- getTestData
@@ -181,6 +183,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         SnapshotOrdinal.MinValue,
         signedLastArtifact,
         signedGenesis.value.info,
+        h,
         EventTrigger,
         Set(scEvent.asLeft[DAGEvent]),
         facilitators
@@ -200,7 +203,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
   }
 
   test("validateArtifact - returns invalid artifact error for incorrect data") { res =>
-    implicit val (_, ks, h, sp, m) = res
+    implicit val (_, ks, j, h, sp, m) = res
 
     for {
       (gscf, facilitators, signedLastArtifact, signedGenesis, scEvent) <- getTestData
@@ -209,6 +212,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         SnapshotOrdinal.MinValue,
         signedLastArtifact,
         signedGenesis.value.info,
+        h,
         EventTrigger,
         Set(scEvent.asLeft[DAGEvent]),
         facilitators
@@ -224,7 +228,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
   }
 
   test("gossip signed artifacts") { res =>
-    implicit val (_, _, h, sp, _) = res
+    implicit val (_, _, j, h, sp, _) = res
 
     for {
       gossiped <- Ref.of(List.empty[ForkInfo])

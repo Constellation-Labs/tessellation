@@ -129,8 +129,11 @@ object Download {
                 Validator.isNextSnapshot(hashed, snapshot.value)
               }(InvalidChain.raiseError[F, Unit])
             } >>
-            globalSnapshotContextFns
-              .createContext(lastContext, lastSnapshot, snapshot)
+            HasherSelector[F]
+              .forOrdinal(snapshot.ordinal) { implicit hasher =>
+                globalSnapshotContextFns
+                  .createContext(lastContext, lastSnapshot, snapshot)
+              }
               .handleErrorWith(_ => InvalidChain.raiseError[F, GlobalSnapshotContext])
               .flatTap { _ =>
                 snapshotStorage.writePersisted(snapshot)
@@ -228,8 +231,11 @@ object Download {
           } else
             readSnapshot.flatMap {
               case Some(snapshot) =>
-                globalSnapshotContextFns
-                  .createContext(context, lastSnapshot, snapshot)
+                HasherSelector[F]
+                  .forOrdinal(snapshot.ordinal) { implicit hasher =>
+                    globalSnapshotContextFns
+                      .createContext(context, lastSnapshot, snapshot)
+                  }
                   .flatTap(newContext =>
                     hasherSelector
                       .forOrdinal(snapshot.ordinal) { implicit hasher =>

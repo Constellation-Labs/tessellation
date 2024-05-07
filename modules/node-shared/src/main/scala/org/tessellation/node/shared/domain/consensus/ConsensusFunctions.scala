@@ -26,6 +26,7 @@ trait ConsensusFunctions[F[_], Event, Key, Artifact, Context] {
     lastKey: Key,
     lastArtifact: Signed[Artifact],
     lastContext: Context,
+    lastArtifactHasher: Hasher[F],
     trigger: ConsensusTrigger,
     events: Set[Event],
     facilitators: Set[PeerId]
