@@ -95,12 +95,13 @@ object GlobalSnapshotConsensusStateAdvancer {
                           peerEvents <- consensusStorage.pullEvents(bound)
                           events = peerEvents.toList.flatMap(_._2).map(_._2).toSet
                           (artifact, context, returnedEvents) <- HasherSelector[F].forOrdinal(state.key) { implicit hasher =>
+                            val lastArtifact = state.lastOutcome.finished.signedMajorityArtifact
                             consensusFns
                               .createProposalArtifact(
                                 state.key,
-                                state.lastOutcome.finished.signedMajorityArtifact,
+                                lastArtifact,
                                 state.lastOutcome.finished.context,
-                                hasher,
+                                HasherSelector[F].getForOrdinal(lastArtifact.ordinal),
                                 majorityTrigger,
                                 events,
                                 state.facilitators.value.toSet
