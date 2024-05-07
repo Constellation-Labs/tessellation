@@ -1,6 +1,7 @@
 package org.tessellation.node.shared.infrastructure.snapshot
 
-import cats.data.{Validated, ValidatedNec}
+import cats.data.Validated.Valid
+import cats.data.{NonEmptyChain, Validated, ValidatedNec}
 import cats.effect.kernel.Async
 import cats.syntax.all._
 
@@ -9,12 +10,14 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import org.tessellation.currency.dataApplication.{BaseDataApplicationService, DataCalculatedState}
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.cats.syntax.validated.validatedSyntax
+import org.tessellation.json.JsonSerializer
+import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.rewards.Rewards
 import org.tessellation.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import org.tessellation.node.shared.snapshot.currency._
 import org.tessellation.schema._
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.security.HasherSelector
+import org.tessellation.security.Hasher
 import org.tessellation.security.signature.SignedValidator.SignedValidationError
 import org.tessellation.security.signature.{Signed, SignedValidator}
 
@@ -30,19 +33,19 @@ trait CurrencySnapshotValidator[F[_]] {
     lastArtifact: Signed[CurrencySnapshotArtifact],
     lastContext: CurrencySnapshotContext,
     artifact: Signed[CurrencySnapshotArtifact]
-  ): F[CurrencySnapshotValidationErrorOr[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotContext)]]
+  )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotContext)]]
 
   def validateSnapshot(
     lastArtifact: Signed[CurrencySnapshotArtifact],
     lastContext: CurrencySnapshotContext,
     artifact: CurrencySnapshotArtifact,
     facilitators: Set[PeerId]
-  ): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]]
+  )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]]
 }
 
 object CurrencySnapshotValidator {
 
-  def make[F[_]: Async: HasherSelector](
+  def make[F[_]: Async: KryoSerializer: JsonSerializer](
     currencySnapshotCreator: CurrencySnapshotCreator[F],
     signedValidator: SignedValidator[F],
     maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
@@ -53,7 +56,7 @@ object CurrencySnapshotValidator {
       lastArtifact: Signed[CurrencySnapshotArtifact],
       lastContext: CurrencySnapshotContext,
       artifact: Signed[CurrencySnapshotArtifact]
-    ): F[CurrencySnapshotValidationErrorOr[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotContext)]] =
+    )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotContext)]] =
       validateSigned(artifact).flatMap { signedV =>
         val facilitators = artifact.proofs.map(_.id).map(PeerId.fromId).toSortedSet
 
@@ -67,7 +70,7 @@ object CurrencySnapshotValidator {
       lastContext: CurrencySnapshotContext,
       artifact: CurrencySnapshotArtifact,
       facilitators: Set[PeerId]
-    ): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]] = for {
+    )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]] = for {
       contentV <- validateRecreateContent(lastArtifact, lastContext, artifact, facilitators)
       blocksV <- contentV.map(validateNotAcceptedEvents).pure[F]
     } yield
@@ -77,23 +80,21 @@ object CurrencySnapshotValidator {
 
     def validateSigned(
       signedSnapshot: Signed[CurrencyIncrementalSnapshot]
-    ): F[CurrencySnapshotValidationErrorOr[Signed[CurrencyIncrementalSnapshot]]] = {
+    )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[Signed[CurrencyIncrementalSnapshot]]] = {
       val snapshot = signedSnapshot.value
       val proofs = signedSnapshot.proofs
 
-      HasherSelector[F].forOrdinal(snapshot.ordinal) { implicit hasher =>
-        val validateSnapshot =
-          signedValidator.validateSignatures(signedSnapshot).map(_.errorMap[CurrencySnapshotValidationError](InvalidSigned(_)))
+      val validateSnapshot =
+        signedValidator.validateSignatures(signedSnapshot).map(_.errorMap[CurrencySnapshotValidationError](InvalidSigned(_)))
 
-        val validateKryoSnapshot = signedValidator
-          .validateSignatures(Signed(CurrencyIncrementalSnapshotV1.fromCurrencyIncrementalSnapshot(snapshot), proofs))
-          .map(_.errorMap[CurrencySnapshotValidationError](InvalidSigned(_)))
-          .map(_.map {
-            case Signed(s, p) => Signed(s.toCurrencyIncrementalSnapshot, p)
-          })
+      val validateKryoSnapshot = signedValidator
+        .validateSignatures(Signed(CurrencyIncrementalSnapshotV1.fromCurrencyIncrementalSnapshot(snapshot), proofs))
+        .map(_.errorMap[CurrencySnapshotValidationError](InvalidSigned(_)))
+        .map(_.map {
+          case Signed(s, p) => Signed(s.toCurrencyIncrementalSnapshot, p)
+        })
 
-        validateSnapshot.handleErrorWith(_ => validateKryoSnapshot)
-      }
+      validateSnapshot.handleErrorWith(_ => validateKryoSnapshot)
     }
 
     def validateRecreateContent(
@@ -101,7 +102,7 @@ object CurrencySnapshotValidator {
       lastContext: CurrencySnapshotContext,
       expected: CurrencySnapshotArtifact,
       facilitators: Set[PeerId]
-    ): F[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]] = {
+    )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]] = {
       def dataApplicationBlocks = maybeDataApplication.flatTraverse { service =>
         expected.dataApplication.map(_.blocks).traverse {
           _.traverse(b => service.deserializeBlock(b))
@@ -132,29 +133,60 @@ object CurrencySnapshotValidator {
         }
       })
 
-      val recreateFn = (trigger: ConsensusTrigger) =>
+      def recreateFn(trigger: ConsensusTrigger) =
         mkEvents.flatMap { events =>
-          currencySnapshotCreator
-            .createProposalArtifact(lastArtifact.ordinal, lastArtifact, lastContext, trigger, events, rewards, facilitators)
+          def usingKryo =
+            currencySnapshotCreator
+              .createProposalArtifact(
+                lastArtifact.ordinal,
+                lastArtifact,
+                lastContext,
+                Hasher.forJson,
+                trigger,
+                events,
+                rewards,
+                facilitators
+              )
+
+          def usingJson =
+            currencySnapshotCreator
+              .createProposalArtifact(
+                lastArtifact.ordinal,
+                lastArtifact,
+                lastContext,
+                Hasher.forKryo,
+                trigger,
+                events,
+                rewards,
+                facilitators
+              )
+
+          def check(result: F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]) =
             // Rewrite if implementation not provided
-            .map { creationResult =>
+            result.map { creationResult =>
               maybeDataApplication match {
                 case Some(_) => creationResult
                 case None =>
                   creationResult.focus(_.artifact.dataApplication).replace(expected.dataApplication)
               }
-            }
-            .map { creationResult =>
+            }.map { creationResult =>
               if (creationResult.artifact.messages.forall(_.isEmpty))
                 creationResult.focus(_.artifact.messages).replace(expected.messages)
               else creationResult
-            }
-            .map { creationResult =>
+            }.map { creationResult =>
               if (creationResult.artifact =!= expected)
                 SnapshotDifferentThanExpected(expected, creationResult.artifact).invalidNec
               else
                 creationResult.validNec
             }
+
+          check(usingKryo).flatMap {
+            case Validated.Valid(a) =>
+              Async[F].pure[Validated[NonEmptyChain[SnapshotDifferentThanExpected], CurrencySnapshotCreationResult[CurrencySnapshotEvent]]](
+                Valid(a)
+              )
+            case Validated.Invalid(_) => check(usingJson)
+          }
         }
 
       recreateFn(TimeTrigger).flatMap { tV =>

@@ -20,7 +20,6 @@ import scala.util.control.NoStackTrace
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.cats.syntax.next._
-import org.tessellation.ext.crypto._
 import org.tessellation.json.JsonSerializer
 import org.tessellation.node.shared.config.types.SnapshotSizeConfig
 import org.tessellation.node.shared.domain.block.processing._
@@ -32,7 +31,7 @@ import org.tessellation.schema.currencyMessage.CurrencyMessage
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.transaction.RewardTransaction
-import org.tessellation.security.HasherSelector
+import org.tessellation.security.Hasher
 import org.tessellation.security.signature.Signed
 import org.tessellation.syntax.sortedCollection.sortedSetSyntax
 
@@ -51,16 +50,17 @@ trait CurrencySnapshotCreator[F[_]] {
     lastKey: SnapshotOrdinal,
     lastArtifact: Signed[CurrencySnapshotArtifact],
     lastContext: CurrencySnapshotContext,
+    lastArtifactHasher: Hasher[F],
     trigger: ConsensusTrigger,
     events: Set[CurrencySnapshotEvent],
     rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
     facilitators: Set[PeerId]
-  ): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]
+  )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]
 }
 
 object CurrencySnapshotCreator {
 
-  def make[F[_]: Async: JsonSerializer: HasherSelector](
+  def make[F[_]: Async: JsonSerializer](
     currencySnapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F],
     dataApplicationSnapshotAcceptanceManager: Option[DataApplicationSnapshotAcceptanceManager[F]],
     snapshotSizeConfig: SnapshotSizeConfig,
@@ -78,11 +78,12 @@ object CurrencySnapshotCreator {
       lastKey: SnapshotOrdinal,
       lastArtifact: Signed[CurrencySnapshotArtifact],
       lastContext: CurrencySnapshotContext,
+      lastArtifactHasher: Hasher[F],
       trigger: ConsensusTrigger,
       events: Set[CurrencySnapshotEvent],
       rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
       facilitators: Set[PeerId]
-    ): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] = {
+    )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] = {
 
       val maxArtifactSize = maxProposalSizeInBytes(facilitators)
 
@@ -92,14 +93,14 @@ object CurrencySnapshotCreator {
         awaitedEvents: Set[CurrencySnapshotEvent] = Set.empty[CurrencySnapshotEvent]
       ): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] =
         for {
-          lastArtifactHash <- HasherSelector[F].forOrdinal(lastArtifact.ordinal)(implicit hasher => lastArtifact.value.hash)
+          lastArtifactHash <- lastArtifactHasher.hash(lastArtifact.value)
           currentOrdinal = lastArtifact.ordinal.next
 
           currentEpochProgress = trigger match {
             case EventTrigger => lastArtifact.epochProgress
             case TimeTrigger  => lastArtifact.epochProgress.next
           }
-          lastActiveTips <- HasherSelector[F].forOrdinal(lastArtifact.ordinal)(implicit hasher => lastArtifact.activeTips)
+          lastActiveTips <- lastArtifact.activeTips(Async[F], lastArtifactHasher)
           lastDeprecatedTips = lastArtifact.tips.deprecated
           maybeLastDataApplication = lastArtifact.dataApplication
 
@@ -129,9 +130,7 @@ object CurrencySnapshotCreator {
             _.accept(maybeLastDataApplication, dataBlocks, lastArtifact.ordinal, currentOrdinal)
           )
 
-          (acceptanceResult, messagesAcceptanceResult, acceptedRewardTxs, snapshotInfo, stateProof) <- HasherSelector[F].forOrdinal(
-            currentOrdinal
-          ) { implicit hasher =>
+          (acceptanceResult, messagesAcceptanceResult, acceptedRewardTxs, snapshotInfo, stateProof) <-
             currencySnapshotAcceptanceManager
               .accept(
                 blocks,
@@ -154,7 +153,6 @@ object CurrencySnapshotCreator {
                     )
                     .getOrElse(SortedSet.empty[RewardTransaction].pure[F])
               )
-          }
 
           (awaitingBlocks, rejectedBlocks) = acceptanceResult.notAccepted.partitionMap {
             case (b, _: BlockAwaitReason)     => b.asRight

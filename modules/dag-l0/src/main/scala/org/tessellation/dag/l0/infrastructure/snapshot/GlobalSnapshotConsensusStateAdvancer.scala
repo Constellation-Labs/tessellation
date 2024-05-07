@@ -100,6 +100,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                                 state.key,
                                 state.lastOutcome.finished.signedMajorityArtifact,
                                 state.lastOutcome.finished.context,
+                                hasher,
                                 majorityTrigger,
                                 events,
                                 state.facilitators.value.toSet

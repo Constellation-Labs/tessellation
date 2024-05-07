@@ -1,17 +1,13 @@
 package org.tessellation.dag.l0.infrastructure.snapshot
 
 import cats.effect.Async
-import cats.syntax.either._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
-import cats.syntax.functorFilter._
-import cats.syntax.option._
-import cats.syntax.order._
+import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
 
 import org.tessellation.ext.cats.syntax.next._
-import org.tessellation.ext.crypto._
+import org.tessellation.json.JsonSerializer
+import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.block.processing._
 import org.tessellation.node.shared.domain.consensus.ConsensusFunctions.InvalidArtifact
 import org.tessellation.node.shared.domain.event.EventCutter
@@ -39,7 +35,7 @@ abstract class GlobalSnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
 
 object GlobalSnapshotConsensusFunctions {
 
-  def make[F[_]: Async: SecurityProvider](
+  def make[F[_]: Async: SecurityProvider: JsonSerializer: KryoSerializer](
     globalSnapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     collateral: Amount,
     rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent],
@@ -63,12 +59,38 @@ object GlobalSnapshotConsensusFunctions {
       }
       val events = dagEvents ++ scEvents
 
-      createProposalArtifact(lastSignedArtifact.ordinal, lastSignedArtifact, lastContext, trigger, events, facilitators).map {
-        case (recreatedArtifact, context, _) =>
-          if (recreatedArtifact === artifact)
-            (artifact, context).asRight[InvalidArtifact]
-          else
-            ArtifactMismatch.asLeft[(GlobalSnapshotArtifact, GlobalSnapshotContext)]
+      def usingKryo = createProposalArtifact(
+        lastSignedArtifact.ordinal,
+        lastSignedArtifact,
+        lastContext,
+        Hasher.forKryo[F],
+        trigger,
+        events,
+        facilitators
+      )
+
+      def usingJson = createProposalArtifact(
+        lastSignedArtifact.ordinal,
+        lastSignedArtifact,
+        lastContext,
+        Hasher.forJson[F],
+        trigger,
+        events,
+        facilitators
+      )
+
+      def check(result: F[(GlobalSnapshotArtifact, GlobalSnapshotContext, Set[GlobalSnapshotEvent])]) =
+        result.map {
+          case (recreatedArtifact, context, _) =>
+            if (recreatedArtifact === artifact)
+              (artifact, context).asRight[InvalidArtifact]
+            else
+              ArtifactMismatch.asLeft[(GlobalSnapshotArtifact, GlobalSnapshotContext)]
+        }
+
+      check(usingKryo).flatMap {
+        case Left(_)  => check(usingJson)
+        case Right(a) => Async[F].pure(Right(a))
       }
     }
 
@@ -76,6 +98,7 @@ object GlobalSnapshotConsensusFunctions {
       lastKey: GlobalSnapshotKey,
       lastArtifact: Signed[GlobalSnapshotArtifact],
       snapshotContext: GlobalSnapshotContext,
+      lastArtifactHasher: Hasher[F],
       trigger: ConsensusTrigger,
       events: Set[GlobalSnapshotEvent],
       facilitators: Set[PeerId]
@@ -87,14 +110,14 @@ object GlobalSnapshotConsensusFunctions {
       for {
         (scEvents, blocksForAcceptance) <- eventCutter.cut(scEventsBeforeCut.toList, dagEvents.toList)
 
-        lastArtifactHash <- lastArtifact.value.hash
+        lastArtifactHash <- lastArtifactHasher.hash(lastArtifact.value)
         currentOrdinal = lastArtifact.ordinal.next
         currentEpochProgress = trigger match {
           case EventTrigger => lastArtifact.epochProgress
           case TimeTrigger  => lastArtifact.epochProgress.next
         }
 
-        lastActiveTips <- lastArtifact.activeTips
+        lastActiveTips <- lastArtifact.activeTips(Async[F], lastArtifactHasher)
         lastDeprecatedTips = lastArtifact.tips.deprecated
 
         (acceptanceResult, scSnapshots, returnedSCEvents, acceptedRewardTxs, snapshotInfo, stateProof) <- globalSnapshotAcceptanceManager
