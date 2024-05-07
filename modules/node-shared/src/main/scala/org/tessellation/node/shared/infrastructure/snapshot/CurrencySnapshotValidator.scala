@@ -135,26 +135,13 @@ object CurrencySnapshotValidator {
 
       def recreateFn(trigger: ConsensusTrigger) =
         mkEvents.flatMap { events =>
-          def usingKryo =
+          def usingHasher = (lastArtifactHasher: Hasher[F]) =>
             currencySnapshotCreator
               .createProposalArtifact(
                 lastArtifact.ordinal,
                 lastArtifact,
                 lastContext,
-                Hasher.forJson,
-                trigger,
-                events,
-                rewards,
-                facilitators
-              )
-
-          def usingJson =
-            currencySnapshotCreator
-              .createProposalArtifact(
-                lastArtifact.ordinal,
-                lastArtifact,
-                lastContext,
-                Hasher.forKryo,
+                lastArtifactHasher,
                 trigger,
                 events,
                 rewards,
@@ -184,12 +171,12 @@ object CurrencySnapshotValidator {
                 creationResult.validNec
             }
 
-          check(usingKryo).flatMap {
+          check(usingHasher(Hasher.forKryo[F])).flatMap {
             case Validated.Valid(a) =>
               Async[F].pure[Validated[NonEmptyChain[SnapshotDifferentThanExpected], CurrencySnapshotCreationResult[CurrencySnapshotEvent]]](
                 Valid(a)
               )
-            case Validated.Invalid(_) => check(usingJson)
+            case Validated.Invalid(_) => check(usingHasher(Hasher.forJson[F]))
           }
         }
 
