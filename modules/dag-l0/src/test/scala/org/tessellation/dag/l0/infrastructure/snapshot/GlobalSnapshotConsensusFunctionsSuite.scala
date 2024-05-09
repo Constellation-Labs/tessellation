@@ -21,6 +21,8 @@ import org.tessellation.node.shared.domain.block.processing._
 import org.tessellation.node.shared.domain.fork.ForkInfo
 import org.tessellation.node.shared.domain.gossip.Gossip
 import org.tessellation.node.shared.domain.rewards.Rewards
+import org.tessellation.node.shared.domain.statechannel.StateChannelAcceptanceResult
+import org.tessellation.node.shared.domain.statechannel.StateChannelAcceptanceResult.CurrencySnapshotWithState
 import org.tessellation.node.shared.infrastructure.consensus.trigger.EventTrigger
 import org.tessellation.node.shared.infrastructure.snapshot.{
   GlobalSnapshotAcceptanceManager,
@@ -30,7 +32,7 @@ import org.tessellation.node.shared.infrastructure.snapshot.{
 import org.tessellation.node.shared.nodeSharedKryoRegistrar
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.balance.Amount
+import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.security._
@@ -108,20 +110,22 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       lastGlobalSnapshotInfo: GlobalSnapshotInfo,
       events: List[StateChannelEvent],
       validationType: StateChannelValidationType
-    )(implicit hasher: Hasher[F]): IO[
-      (
-        SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
-        SortedMap[Address, CurrencySnapshotWithState],
-        Set[StateChannelEvent]
+    )(implicit hasher: Hasher[F]): IO[StateChannelAcceptanceResult] = IO(
+      StateChannelAcceptanceResult(
+        events.groupByNel(_.address).view.mapValues(_.map(_.snapshotBinary)).toSortedMap,
+        SortedMap.empty,
+        Set.empty,
+        Map.empty
       )
-    ] = IO(
-      (events.groupByNel(_.address).view.mapValues(_.map(_.snapshotBinary)).toSortedMap, SortedMap.empty, Set.empty)
     )
 
     def processCurrencySnapshots(
+      snapshotOrdinal: SnapshotOrdinal,
       lastGlobalSnapshotInfo: GlobalSnapshotContext,
       events: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]]
-    )(implicit hasher: Hasher[F]): IO[SortedMap[Address, NonEmptyList[CurrencySnapshotWithState]]] = ???
+    )(implicit hasher: Hasher[F]): IO[
+      SortedMap[Address, (NonEmptyList[(Signed[StateChannelSnapshotBinary], Option[CurrencySnapshotWithState])], Map[Address, Balance])]
+    ] = ???
   }
 
   val collateral: Amount = Amount.empty

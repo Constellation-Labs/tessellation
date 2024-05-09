@@ -8,6 +8,8 @@ import cats.effect.std.{Random, Supervisor}
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
+import scala.collection.immutable.SortedMap
+
 import org.tessellation.dag.l0.config.types.AppConfig
 import org.tessellation.dag.l0.domain.snapshot.programs.{GlobalSnapshotEventCutter, SnapshotBinaryFeeCalculator}
 import org.tessellation.dag.l0.infrastructure.snapshot.schema.{GlobalConsensusKind, GlobalConsensusOutcome}
@@ -20,6 +22,7 @@ import org.tessellation.node.shared.domain.node.NodeStorage
 import org.tessellation.node.shared.domain.rewards.Rewards
 import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
 import org.tessellation.node.shared.domain.snapshot.storage.SnapshotStorage
+import org.tessellation.node.shared.domain.statechannel.{FeeCalculator, FeeCalculatorConfig}
 import org.tessellation.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import org.tessellation.node.shared.infrastructure.consensus._
 import org.tessellation.node.shared.infrastructure.metrics.Metrics
@@ -32,7 +35,7 @@ import org.tessellation.node.shared.modules.{SharedServices, SharedValidators}
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.peer.PeerId
-import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotStateProof}
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotStateProof, SnapshotOrdinal}
 import org.tessellation.security.{Hasher, HasherSelector, SecurityProvider}
 
 import eu.timepit.refined.types.numeric.NonNegLong
@@ -55,6 +58,7 @@ object GlobalSnapshotConsensus {
     stateChannelPullDelay: NonNegLong,
     stateChannelPurgeDelay: NonNegLong,
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
+    feeConfigs: SortedMap[SnapshotOrdinal, FeeCalculatorConfig],
     client: Client[F],
     session: Session[F],
     rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent],
@@ -64,6 +68,7 @@ object GlobalSnapshotConsensus {
       globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager
         .make[F](stateChannelAllowanceLists, pullDelay = stateChannelPullDelay, purgeDelay = stateChannelPurgeDelay)
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync
+      feeCalculator = FeeCalculator.make(feeConfigs)
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
         BlockAcceptanceManager.make[F](validators.blockValidator, txHasher),
         GlobalSnapshotStateChannelEventsProcessor
@@ -71,7 +76,8 @@ object GlobalSnapshotConsensus {
             validators.stateChannelValidator,
             globalSnapshotStateChannelManager,
             sharedServices.currencySnapshotContextFns,
-            jsonBrotliBinarySerializer
+            jsonBrotliBinarySerializer,
+            feeCalculator
           ),
         collateral
       )

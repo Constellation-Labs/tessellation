@@ -1,6 +1,6 @@
 package org.tessellation.node.shared.infrastructure.snapshot
 
-import cats.data.NonEmptyList
+import cats.data.{NonEmptyList, NonEmptySet}
 import cats.effect.Async
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
@@ -17,37 +17,43 @@ import scala.collection.immutable.SortedMap
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.cats.syntax.validated._
 import org.tessellation.json.JsonBrotliBinarySerializer
-import org.tessellation.node.shared.domain.statechannel.StateChannelValidator
+import org.tessellation.node.shared.domain.statechannel.StateChannelAcceptanceResult.CurrencySnapshotWithState
+import org.tessellation.node.shared.domain.statechannel.{FeeCalculator, StateChannelAcceptanceResult, StateChannelValidator}
+import org.tessellation.schema.ID.Id
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.currencyMessage.fetchStakingBalance
+import org.tessellation.schema.balance.Balance
+import org.tessellation.schema.currencyMessage.{MessageType, fetchStakingBalance}
 import org.tessellation.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
 import org.tessellation.security.Hasher
+import org.tessellation.security.hash.Hash
+import org.tessellation.security.hex.Hex
 import org.tessellation.security.signature.Signed
+import org.tessellation.security.signature.signature.{Signature, SignatureProof}
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 
 import eu.timepit.refined.auto._
+import io.circe.Decoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait GlobalSnapshotStateChannelEventsProcessor[F[_]] {
-  type CurrencySnapshotWithState = Either[Signed[CurrencySnapshot], (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]
+  type BinaryCurrencyPair = (Signed[StateChannelSnapshotBinary], Option[CurrencySnapshotWithState])
+  type BalanceUpdate = Map[Address, Balance]
+  type MetagraphAcceptanceResult = (NonEmptyList[BinaryCurrencyPair], BalanceUpdate)
 
   def process(
     snapshotOrdinal: SnapshotOrdinal,
     lastGlobalSnapshotInfo: GlobalSnapshotInfo,
     events: List[StateChannelOutput],
     validationType: StateChannelValidationType
-  )(implicit hasher: Hasher[F]): F[
-    (
-      SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
-      SortedMap[Address, CurrencySnapshotWithState],
-      Set[StateChannelOutput]
-    )
-  ]
+  )(implicit hasher: Hasher[F]): F[StateChannelAcceptanceResult]
 
   def processCurrencySnapshots(
+    snapshotOrdinal: SnapshotOrdinal,
     lastGlobalSnapshotInfo: GlobalSnapshotInfo,
     events: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]]
-  )(implicit hasher: Hasher[F]): F[SortedMap[Address, NonEmptyList[CurrencySnapshotWithState]]]
+  )(
+    implicit hasher: Hasher[F]
+  ): F[SortedMap[Address, MetagraphAcceptanceResult]]
 }
 
 object GlobalSnapshotStateChannelEventsProcessor {
@@ -55,7 +61,8 @@ object GlobalSnapshotStateChannelEventsProcessor {
     stateChannelValidator: StateChannelValidator[F],
     stateChannelManager: GlobalSnapshotStateChannelAcceptanceManager[F],
     currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
-    jsonBrotliBinarySerializer: JsonBrotliBinarySerializer[F]
+    jsonBrotliBinarySerializer: JsonBrotliBinarySerializer[F],
+    feeCalculator: FeeCalculator[F]
   ) =
     new GlobalSnapshotStateChannelEventsProcessor[F] {
       private val logger = Slf4jLogger.getLoggerFromClass[F](GlobalSnapshotStateChannelEventsProcessor.getClass)
@@ -65,13 +72,7 @@ object GlobalSnapshotStateChannelEventsProcessor {
         lastGlobalSnapshotInfo: GlobalSnapshotInfo,
         events: List[StateChannelOutput],
         validationType: StateChannelValidationType
-      )(implicit hasher: Hasher[F]): F[
-        (
-          SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
-          SortedMap[Address, CurrencySnapshotWithState],
-          Set[StateChannelOutput]
-        )
-      ] =
+      )(implicit hasher: Hasher[F]): F[StateChannelAcceptanceResult] =
         events.traverse { event =>
           val stakingBalance = fetchStakingBalance(event.address, lastGlobalSnapshotInfo)
 
@@ -84,21 +85,34 @@ object GlobalSnapshotStateChannelEventsProcessor {
         }
           .map(_.partitionMap(_.toEither))
           .flatTap {
-            case (invalid, _) => logger.warn(s"Invalid state channels events: ${invalid}").whenA(invalid.nonEmpty)
+            case (invalid, _) => logger.warn(s"Invalid state channels events: $invalid").whenA(invalid.nonEmpty)
           }
           .flatMap { case (_, validatedEvents) => processStateChannelEvents(snapshotOrdinal, lastGlobalSnapshotInfo, validatedEvents) }
           .flatMap {
             case (scSnapshots, returnedSCEvents) =>
-              processCurrencySnapshots(lastGlobalSnapshotInfo, scSnapshots)
-                .map(calculateLastCurrencySnapshots(_, lastGlobalSnapshotInfo))
-                .map((scSnapshots, _, returnedSCEvents))
+              processCurrencySnapshots(snapshotOrdinal, lastGlobalSnapshotInfo, scSnapshots).map { accepted =>
+                val lastCurrencyStates = calculateLastCurrencySnapshots(accepted, lastGlobalSnapshotInfo)
+                val finalScSnapshots = accepted.map { case (k, (v, _)) => k -> v.map(_._1) }
+                // TODO: ASSUMING that owner addresses are restricted from being shared at this point
+                val balanceUpdates = accepted.values.map(_._2).foldLeft(Map.empty[Address, Balance])(_ ++ _)
+
+                StateChannelAcceptanceResult(
+                  finalScSnapshots,
+                  lastCurrencyStates,
+                  returnedSCEvents,
+                  balanceUpdates
+                )
+              }
           }
 
       private def calculateLastCurrencySnapshots(
-        processedCurrencySnapshots: SortedMap[Address, NonEmptyList[CurrencySnapshotWithState]],
+        processedCurrencySnapshots: SortedMap[Address, MetagraphAcceptanceResult],
         lastGlobalSnapshotInfo: GlobalSnapshotInfo
       ): SortedMap[Address, CurrencySnapshotWithState] = {
-        val lastCurrencySnapshots = processedCurrencySnapshots.map { case (k, v) => k -> v.last }
+        val lastCurrencySnapshots =
+          processedCurrencySnapshots.map { case (k, (v, _)) => k -> v.toList.flatMap(_._2).lastOption }.collect {
+            case (key, Some(state)) => key -> state
+          }
 
         lastGlobalSnapshotInfo.lastCurrencySnapshots.concat(lastCurrencySnapshots)
       }
@@ -114,74 +128,125 @@ object GlobalSnapshotStateChannelEventsProcessor {
           .map(_.snapshotInfo)
 
       def processCurrencySnapshots(
+        snapshotOrdinal: SnapshotOrdinal,
         lastGlobalSnapshotInfo: GlobalSnapshotInfo,
         events: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]]
-      )(implicit hasher: Hasher[F]): F[SortedMap[Address, NonEmptyList[CurrencySnapshotWithState]]] =
-        events.toList
-          .foldLeftM(SortedMap.empty[Address, NonEmptyList[CurrencySnapshotWithState]]) {
-            case (agg, (address, binaries)) =>
-              type Success = NonEmptyList[CurrencySnapshotWithState]
-              type Result = Option[Success]
-              type Agg = (Result, List[Signed[StateChannelSnapshotBinary]])
+      )(implicit hasher: Hasher[F]): F[SortedMap[Address, MetagraphAcceptanceResult]] = {
+        val isFeeRequired = feeCalculator.isFeeRequired(snapshotOrdinal)
 
-              val initialState = lastGlobalSnapshotInfo.lastCurrencySnapshots.get(address)
+        def deserialize[A: Decoder](binary: Signed[StateChannelSnapshotBinary]): F[Option[A]] =
+          jsonBrotliBinarySerializer.deserialize[A](binary.value.content).map(_.toOption)
 
-              (NonEmptyList.fromList(initialState.toList), binaries.toList.reverse)
-                .tailRecM[F, Result] {
-                  case (state, Nil) => state.asRight[Agg].pure[F]
+        events.toList.foldLeftM(SortedMap.empty[Address, MetagraphAcceptanceResult]) {
+          case (agg, (address, binaries)) =>
+            type Result = Option[MetagraphAcceptanceResult]
+            type Agg = (Result, List[Signed[StateChannelSnapshotBinary]])
 
-                  case (None, head :: tail) =>
-                    jsonBrotliBinarySerializer
-                      .deserialize[Signed[CurrencySnapshot]](head.value.content)
-                      .map {
-                        _.toOption.map { snapshot =>
-                          (NonEmptyList.one(snapshot.asLeft).some, tail)
-                            .asLeft[Result]
-                        }
+            val stubBinary: Signed[StateChannelSnapshotBinary] = Signed(
+              StateChannelSnapshotBinary(Hash.empty, Array.emptyByteArray, SnapshotFee.MinValue),
+              NonEmptySet.one(SignatureProof(Id(Hex("")), Signature(Hex(""))))
+            )
+
+            val emptyBalanceUpdate = Map.empty[Address, Balance]
+
+            val initialState =
+              lastGlobalSnapshotInfo.lastCurrencySnapshots
+                .get(address)
+                .map(init => (stubBinary, init.some))
+                .map(s => (NonEmptyList.one(s), Map.empty[Address, Balance]))
+
+            (initialState, binaries.toList.reverse)
+              .tailRecM[F, Result] {
+                case (state, Nil) => state.asRight[Agg].pure[F]
+
+                case (None, head :: tail) =>
+                  deserialize[Signed[CurrencySnapshot]](head).map {
+                    case Some(snapshot) => // full snapshot - we don't subtract fee
+                      (
+                        (NonEmptyList.one((head, snapshot.asLeft.some)), emptyBalanceUpdate).some,
+                        tail
+                      ).asLeft
+                    case None => // no full snapshot yet - we only accept the binary if fee is not required
+                      if (isFeeRequired) none.asRight
+                      else ((NonEmptyList.one((head, none)), emptyBalanceUpdate).some, tail).asLeft
+                  }
+
+                case (current @ Some((nel, balanceUpdate)), head :: tail) =>
+                  nel.head match {
+                    case (_, None) =>
+                      deserialize[Signed[CurrencySnapshot]](head).map {
+                        case Some(snapshot) => // full snapshot - we don't subtract fee
+                          (
+                            (nel.prepend((head, snapshot.asLeft.some)), balanceUpdate).some,
+                            tail
+                          ).asLeft
+                        case None => // no full snapshot yet - we only accept the binary if fee is not required
+                          if (isFeeRequired) current.asRight
+                          else ((nel.prepend((head, none)), balanceUpdate).some, tail).asLeft
                       }
-                      .map(_.getOrElse((none[Success], tail).asLeft[Result]))
 
-                  case (Some(nel @ NonEmptyList(Left(fullSnapshot), _)), head :: tail) =>
-                    jsonBrotliBinarySerializer
-                      .deserialize[Signed[CurrencyIncrementalSnapshot]](head.value.content)
-                      .map(_.toOption)
-                      .map {
-                        case Some(snapshot) =>
-                          (nel.prepend((snapshot, fullSnapshot.value.info.toCurrencySnapshotInfo).asRight).some, tail).asLeft[Result]
-                        case None =>
-                          (nel.some, tail).asLeft[Result]
+                    case (_, lastCurrState @ Some(Left(fullSnapshot))) =>
+                      deserialize[Signed[CurrencyIncrementalSnapshot]](head).map {
+                        case Some(snapshot) => // first incremental - we don't subtract fee
+                          (
+                            (
+                              nel.prepend((head, (snapshot, fullSnapshot.value.info.toCurrencySnapshotInfo).asRight.some)),
+                              balanceUpdate
+                            ).some,
+                            tail
+                          ).asLeft
+                        case None => // no first incremental yet - we only accept the binary if fee is not required
+                          if (isFeeRequired) current.asRight
+                          else ((nel.prepend((head, lastCurrState)), balanceUpdate).some, tail).asLeft
                       }
 
-                  case (Some(nel @ NonEmptyList(Right((lastIncremental, lastState)), _)), head :: tail) =>
-                    jsonBrotliBinarySerializer
-                      .deserialize[Signed[CurrencyIncrementalSnapshot]](head.value.content)
-                      .map(_.toOption)
-                      .flatMap {
-                        case Some(snapshot) =>
+                    case (_, lastCurrState @ Some(Right((lastIncremental, lastState)))) =>
+                      deserialize[Signed[CurrencyIncrementalSnapshot]](head).flatMap {
+                        case Some(snapshot) => // second or subsequent incremental snapshot - we do subtract fee
                           applyCurrencySnapshot(address, lastState, lastIncremental, snapshot).map { state =>
-                            (nel.prepend((snapshot, state).asRight).some, tail).asLeft[Result]
-                          }.handleErrorWith { e =>
+                            val maybeFeeAddress = state.lastMessages.flatMap(_.get(MessageType.Owner)).map(_.address)
+
+                            val maybeBalanceUpdate = maybeFeeAddress.filter(_ => isFeeRequired).flatMap { feeAddress =>
+                              val balance = balanceUpdate
+                                .get(feeAddress)
+                                .orElse(lastGlobalSnapshotInfo.balances.get(feeAddress))
+                                .getOrElse(Balance.empty)
+                              balance.minus(head.fee).toOption.map(uBalance => balanceUpdate + (feeAddress -> uBalance))
+                            }
+
+                            maybeBalanceUpdate match {
+                              case Some(newBalanceUpdate) =>
+                                ((nel.prepend((head, (snapshot, state).asRight.some)), newBalanceUpdate).some, tail).asLeft
+                              case None if !isFeeRequired =>
+                                ((nel.prepend((head, (snapshot, state).asRight.some)), balanceUpdate).some, tail).asLeft[Result]
+                              case None => // balance update unsuccessful or impossible? we can't accept any more snapshots
+                                current.asRight
+                            }
+                          }.handleErrorWith { e => // we don't accept neither binary nor incremental
                             logger.warn(e)(
                               s"Currency snapshot of ordinal ${snapshot.value.ordinal.show} for address ${address.show} couldn't be applied"
-                            ) >> (nel.some, tail).asLeft[Result].pure[F]
+                            ) >> Async[F].pure(current.asRight)
                           }
-                        case None =>
-                          (nel.some, tail).asLeft[Result].pure[F]
+                        case None => // again we only let it through if fee is not required
+                          if (isFeeRequired)
+                            Async[F].pure(current.asRight) // was: none.asRight but why clean it out rather than using current state?
+                          else ((nel.prepend((head, lastCurrState)), balanceUpdate).some, tail).asLeft.pure[F]
                       }
-                }
-                .map(_.map(_.reverse))
-                .map { maybeProcessed =>
-                  initialState match {
-                    case Some(_) => maybeProcessed.flatMap(nel => NonEmptyList.fromList(nel.tail))
-                    case None    => maybeProcessed
                   }
+              }
+              .map(_.map { case (snaps, balances) => (snaps.reverse, balances) })
+              .map { maybeProcessed =>
+                initialState match {
+                  case Some(_) => maybeProcessed.flatMap { case (nel, balances) => NonEmptyList.fromList(nel.tail).map((_, balances)) }
+                  case None    => maybeProcessed
                 }
-                .map {
-                  case Some(updates) => agg + (address -> updates)
-                  case None          => agg
-                }
-
-          }
+              }
+              .map {
+                case Some(updates) => agg + (address -> updates)
+                case None          => agg
+              }
+        }
+      }
 
       private def processStateChannelEvents(
         ordinal: SnapshotOrdinal,

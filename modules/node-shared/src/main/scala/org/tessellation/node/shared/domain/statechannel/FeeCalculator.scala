@@ -12,11 +12,15 @@ import org.tessellation.currency.schema.currency.SnapshotFee
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.balance.Balance
 
+import derevo.cats.eqv
+import derevo.derive
 import eu.timepit.refined.api.Refined
 import eu.timepit.refined.auto._
+import eu.timepit.refined.cats._
 import eu.timepit.refined.numeric.Interval
 import eu.timepit.refined.types.numeric.{NonNegBigDecimal, NonNegInt, NonNegLong}
 
+@derive(eqv)
 case class FeeCalculatorConfig(
   baseFee: NonNegLong,
   stakingWeight: NonNegBigDecimal,
@@ -41,6 +45,8 @@ sealed trait FeeCalculator[F[_]] {
     maybeOrdinal: Option[SnapshotOrdinal],
     delay: NonNegLong = 0L
   )(staked: Balance, sizeKb: NonNegInt, feePerKb: NonNegLong = 0L, proScore: FeeCalculator.ProScore = 0.0d): F[SnapshotFee]
+
+  def isFeeRequired(ordinal: SnapshotOrdinal): Boolean
 }
 
 object FeeCalculator {
@@ -66,6 +72,9 @@ object FeeCalculator {
           }
           .traverse(calculate(_)(staked, sizeKb, feePerKb, proScore))
           .map(_.maximum)
+
+      def isFeeRequired(ordinal: SnapshotOrdinal): Boolean =
+        getConfig(ordinal) =!= FeeCalculatorConfig.noFee
     }
 
   private def calculate[F[_]: MonadThrow](
