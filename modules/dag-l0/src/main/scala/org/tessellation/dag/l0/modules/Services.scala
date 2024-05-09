@@ -76,6 +76,7 @@ object Services {
           stateChannelPullDelay = cfg.stateChannel.pullDelay,
           stateChannelPurgeDelay = cfg.stateChannel.purgeDelay,
           stateChannelAllowanceLists,
+          feeConfigs = cfg.shared.feeConfigs,
           client,
           session,
           rewards,

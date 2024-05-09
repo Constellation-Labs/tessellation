@@ -16,7 +16,7 @@ import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.SnapshotSizeConfig
-import org.tessellation.node.shared.domain.statechannel.StateChannelValidator
+import org.tessellation.node.shared.domain.statechannel.{FeeCalculator, StateChannelAcceptanceResult, StateChannelValidator}
 import org.tessellation.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import org.tessellation.node.shared.infrastructure.snapshot._
 import org.tessellation.node.shared.modules.SharedValidators
@@ -83,8 +83,9 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         ] = IO.pure((events.groupByNel(_.address).map { case (k, v) => k -> v.map(_.snapshotBinary) }, Set.empty))
       }
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync
+      feeCalculator = FeeCalculator.make(SortedMap.empty)
       processor = GlobalSnapshotStateChannelEventsProcessor
-        .make[IO](validator, manager, currencySnapshotContextFns, jsonBrotliBinarySerializer)
+        .make[IO](validator, manager, currencySnapshotContextFns, jsonBrotliBinarySerializer, feeCalculator)
     } yield processor
   }
 
@@ -97,13 +98,14 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       output <- mkStateChannelOutput(keyPair, serializer = serializer)
       snapshotInfo = mkGlobalSnapshotInfo()
       service <- mkProcessor(Map(address -> output.snapshotBinary.proofs.map(_.id.toPeerId)))
-      expected = (
+      expected = StateChannelAcceptanceResult(
         SortedMap((address, NonEmptyList.one(output.snapshotBinary))),
-        SortedMap.empty[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)],
-        Set.empty
+        SortedMap.empty[Address, StateChannelAcceptanceResult.CurrencySnapshotWithState],
+        Set.empty,
+        Map.empty
       )
       result <- service.process(SnapshotOrdinal(1L), snapshotInfo, output :: Nil, StateChannelValidationType.Full)
-    } yield expect.same(expected, result)
+    } yield expect.eql(expected, result)
 
   }
 
@@ -121,13 +123,14 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       service <- mkProcessor(
         Map(address1 -> output1.snapshotBinary.proofs.map(_.id.toPeerId), address2 -> output2.snapshotBinary.proofs.map(_.id.toPeerId))
       )
-      expected = (
+      expected = StateChannelAcceptanceResult(
         SortedMap((address1, NonEmptyList.of(output1.snapshotBinary)), (address2, NonEmptyList.of(output2.snapshotBinary))),
-        SortedMap.empty[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)],
-        Set.empty
+        SortedMap.empty[Address, StateChannelAcceptanceResult.CurrencySnapshotWithState],
+        Set.empty,
+        Map.empty
       )
       result <- service.process(SnapshotOrdinal(1L), snapshotInfo, output1 :: output2 :: Nil, StateChannelValidationType.Full)
-    } yield expect.same(expected, result)
+    } yield expect.eql(expected, result)
 
   }
 
@@ -146,13 +149,14 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         Map(address1 -> output1.snapshotBinary.proofs.map(_.id.toPeerId), address2 -> output2.snapshotBinary.proofs.map(_.id.toPeerId)),
         Some(address1 -> StateChannelValidator.NotSignedExclusivelyByStateChannelOwner)
       )
-      expected = (
+      expected = StateChannelAcceptanceResult(
         SortedMap((address2, NonEmptyList.of(output2.snapshotBinary))),
-        SortedMap.empty[Address, (Option[Signed[CurrencyIncrementalSnapshot]], CurrencySnapshotInfo)],
-        Set.empty
+        SortedMap.empty[Address, StateChannelAcceptanceResult.CurrencySnapshotWithState],
+        Set.empty,
+        Map.empty
       )
       result <- service.process(SnapshotOrdinal(1L), snapshotInfo, output1 :: output2 :: Nil, StateChannelValidationType.Full)
-    } yield expect.same(expected, result)
+    } yield expect.eql(expected, result)
 
   }
 

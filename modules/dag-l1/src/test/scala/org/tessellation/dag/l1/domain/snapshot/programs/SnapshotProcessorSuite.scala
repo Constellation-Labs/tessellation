@@ -21,6 +21,7 @@ import org.tessellation.ext.collection.MapRefUtils._
 import org.tessellation.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.config.types.SnapshotSizeConfig
+import org.tessellation.node.shared.domain.statechannel.FeeCalculator
 import org.tessellation.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import org.tessellation.node.shared.infrastructure.snapshot._
 import org.tessellation.node.shared.infrastructure.snapshot.storage.LastSnapshotStorage
@@ -105,6 +106,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
             globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, NonNegLong(10L)).asResource
             jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync[IO].asResource
+            feeCalculator = FeeCalculator.make(SortedMap.empty)
             globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
               BlockAcceptanceManager.make[IO](validators.blockValidator, Hasher.forKryo[IO]),
               GlobalSnapshotStateChannelEventsProcessor
@@ -112,7 +114,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   validators.stateChannelValidator,
                   globalSnapshotStateChannelManager,
                   currencySnapshotContextFns,
-                  jsonBrotliBinarySerializer
+                  jsonBrotliBinarySerializer,
+                  feeCalculator
                 ),
               Amount(0L)
             )

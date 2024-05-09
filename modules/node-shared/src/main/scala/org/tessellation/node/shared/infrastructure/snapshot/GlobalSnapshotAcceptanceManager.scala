@@ -13,6 +13,7 @@ import org.tessellation.ext.crypto._
 import org.tessellation.merkletree.Proof
 import org.tessellation.merkletree.syntax._
 import org.tessellation.node.shared.domain.block.processing._
+import org.tessellation.node.shared.domain.statechannel.StateChannelAcceptanceResult
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
@@ -73,14 +74,16 @@ object GlobalSnapshotAcceptanceManager {
       for {
         acceptanceResult <- acceptBlocks(blocksForAcceptance, lastSnapshotContext, lastActiveTips, lastDeprecatedTips, ordinal)
 
-        (scSnapshots, currencySnapshots, returnedSCEvents) <- stateChannelEventsProcessor.process(
-          ordinal,
-          lastSnapshotContext,
-          scEvents,
-          validationType
-        )
+        StateChannelAcceptanceResult(scSnapshots, currencySnapshots, returnedSCEvents, currencyAcceptanceBalanceUpdate) <-
+          stateChannelEventsProcessor
+            .process(
+              ordinal,
+              lastSnapshotContext.copy(balances = lastSnapshotContext.balances ++ acceptanceResult.contextUpdate.balances),
+              scEvents,
+              validationType
+            )
         sCSnapshotHashes <- scSnapshots.toList.traverse {
-          case (address, nel) => nel.head.toHashed.map(address -> _.hash)
+          case (address, nel) => nel.last.toHashed.map(address -> _.hash)
         }
           .map(_.toMap)
         updatedLastStateChannelSnapshotHashes = lastSnapshotContext.lastStateChannelSnapshotHashes ++ sCSnapshotHashes
@@ -93,7 +96,7 @@ object GlobalSnapshotAcceptanceManager {
         rewards <- calculateRewardsFn(acceptedTransactions)
 
         (updatedBalancesByRewards, acceptedRewardTxs) = acceptRewardTxs(
-          lastSnapshotContext.balances ++ acceptanceResult.contextUpdate.balances,
+          lastSnapshotContext.balances ++ acceptanceResult.contextUpdate.balances ++ currencyAcceptanceBalanceUpdate,
           rewards
         )
 

@@ -16,6 +16,7 @@ import org.tessellation.node.shared.domain.cluster.services.{Cluster, Session}
 import org.tessellation.node.shared.domain.gossip.Gossip
 import org.tessellation.node.shared.domain.healthcheck.LocalHealthcheck
 import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
+import org.tessellation.node.shared.domain.statechannel.FeeCalculator
 import org.tessellation.node.shared.http.p2p.clients.NodeClient
 import org.tessellation.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import org.tessellation.node.shared.infrastructure.cluster.services.Cluster
@@ -92,6 +93,7 @@ object SharedServices {
       currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(
         currencySnapshotValidator
       )
+      feeCalculator = FeeCalculator.make(cfg.feeConfigs)
       globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make(stateChannelAllowanceLists)
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync
       globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
@@ -101,7 +103,8 @@ object SharedServices {
             validators.stateChannelValidator,
             globalSnapshotStateChannelManager,
             currencySnapshotContextFns,
-            jsonBrotliBinarySerializer
+            jsonBrotliBinarySerializer,
+            feeCalculator
           ),
         collateral.amount
       )
