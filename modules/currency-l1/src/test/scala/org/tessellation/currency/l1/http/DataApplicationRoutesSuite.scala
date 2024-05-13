@@ -1,11 +1,14 @@
 package org.tessellation.currency.l1.http
 
+import cats.Applicative
 import cats.data.NonEmptySet
+import cats.data.Validated.invalidNec
 import cats.effect.std.{Queue, Random, Supervisor}
 import cats.effect.{IO, Resource}
 import cats.syntax.all._
 
-import org.tessellation.currency.dataApplication.{ConsensusInput, DataUpdate, L1NodeContext}
+import org.tessellation.currency.dataApplication._
+import org.tessellation.currency.dataApplication.dataApplication.DataApplicationValidationErrorOr
 import org.tessellation.currency.l1.DummyDataApplicationL1Service
 import org.tessellation.currency.l1.DummyDataApplicationState.{DummyUpdate, dummyUpdateGen}
 import org.tessellation.currency.l1.node.L1NodeContext
@@ -24,7 +27,7 @@ import org.tessellation.security._
 import org.tessellation.security.signature.Signed
 import org.tessellation.shared.sharedKryoRegistrar
 
-import org.http4s.Method.GET
+import org.http4s.Method.{GET, POST}
 import org.http4s._
 import org.http4s.client.dsl.io._
 import org.http4s.implicits.http4sLiteralsSyntax
@@ -35,23 +38,28 @@ object DataApplicationRoutesSuite extends HttpSuite {
 
   type Res = (SecurityProvider[IO], Hasher[IO], Supervisor[IO], Random[IO])
 
-  def construct(updateQueue: ViewableQueue[F, Signed[DataUpdate]]): IO[HttpRoutes[IO]] =
+  val defaultL1Service = new DummyDataApplicationL1Service
+  val defaultGlobalSnapshotStorage = mockLastSnapshotStorage[GlobalIncrementalSnapshot, GlobalSnapshotInfo]()
+  val defaultCurrencySnapshotStorage = mockLastSnapshotStorage[CurrencyIncrementalSnapshot, CurrencySnapshotInfo]()
+
+  def construct(
+    updateQueue: ViewableQueue[F, Signed[DataUpdate]],
+    l1Service: BaseDataApplicationL1Service[IO] = defaultL1Service,
+    lastGlobalSnapshotStorage: LastSnapshotStorage[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo] = defaultGlobalSnapshotStorage
+  ): IO[HttpRoutes[IO]] =
     sharedResource.use { res =>
       implicit val (sp, h, sv, r) = res
       for {
-        lastGlobalSnapshotStorage <- mockLastSnapshotStorage[GlobalIncrementalSnapshot, GlobalSnapshotInfo]
-        lastCurrencySnapshotStorage <- mockLastSnapshotStorage[CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
-        implicit0(ctx: L1NodeContext[IO]) = L1NodeContext.make[IO](lastGlobalSnapshotStorage, lastCurrencySnapshotStorage)
-        consensusQueue <- Queue.unbounded[F, Signed[ConsensusInput.PeerConsensusInput]]
+        consensusQueue <- Queue.unbounded[IO, Signed[ConsensusInput.PeerConsensusInput]]
+        implicit0(ctx: L1NodeContext[IO]) = L1NodeContext.make[IO](lastGlobalSnapshotStorage, defaultCurrencySnapshotStorage)
         l0ClusterStorage <- mockL0ClusterStorage
-        l1Service <- DummyDataApplicationL1Service.make[IO]
         dataApi = DataApplicationRoutes(
           consensusQueue,
           l0ClusterStorage,
           l1Service,
           updateQueue,
           lastGlobalSnapshotStorage,
-          lastCurrencySnapshotStorage
+          defaultCurrencySnapshotStorage
         )
       } yield dataApi.publicRoutes
     }
@@ -65,7 +73,9 @@ object DataApplicationRoutesSuite extends HttpSuite {
     r <- Random.scalaUtilRandom.asResource
   } yield (sp, h, sv, r)
 
-  def mockLastSnapshotStorage[A <: Snapshot, B <: SnapshotInfo[_]]: IO[LastSnapshotStorage[IO, A, B]] = IO.pure(
+  def mockLastSnapshotStorage[A <: Snapshot, B <: SnapshotInfo[_]](
+    getOrdinalFn: IO[Option[SnapshotOrdinal]] = SnapshotOrdinal.MinValue.some.pure[IO]
+  ): LastSnapshotStorage[IO, A, B] =
     new LastSnapshotStorage[IO, A, B] {
       override def set(snapshot: Hashed[A], state: B): IO[Unit] = ???
 
@@ -77,11 +87,10 @@ object DataApplicationRoutesSuite extends HttpSuite {
 
       override def getCombinedStream: fs2.Stream[IO, Option[(Hashed[A], B)]] = ???
 
-      override def getOrdinal: IO[Option[SnapshotOrdinal]] = ???
+      override def getOrdinal: IO[Option[SnapshotOrdinal]] = getOrdinalFn
 
       override def getHeight: IO[Option[height.Height]] = ???
     }
-  )
 
   def mockL0ClusterStorage: IO[L0ClusterStorage[IO]] = IO.pure(
     new L0ClusterStorage[IO] {
@@ -97,7 +106,24 @@ object DataApplicationRoutesSuite extends HttpSuite {
     }
   )
 
-  test("GET returns Http Status code 200 with empty array") {
+  def valid = ().validNec.pure[IO]
+  def invalid = invalidNec[DataApplicationValidationError, Unit](Noop).pure[IO]
+
+  def makeValidatingService(
+    validateUpdateFn: IO[dataApplication.DataApplicationValidationErrorOr[Unit]],
+    validateFeeFn: IO[dataApplication.DataApplicationValidationErrorOr[Unit]]
+  ): BaseDataApplicationL1Service[IO] =
+    new DummyDataApplicationL1Service {
+      override def validateUpdate(update: DataUpdate)(implicit context: L1NodeContext[IO]): IO[DataApplicationValidationErrorOr[Unit]] =
+        validateUpdateFn
+
+      override def validateFee(gsOrdinal: SnapshotOrdinal)(update: Signed[DataUpdate])(
+        implicit context: L1NodeContext[IO],
+        A: Applicative[IO]
+      ): IO[dataApplication.DataApplicationValidationErrorOr[Unit]] = validateFeeFn
+    }
+
+  test("GET /data returns Http Status code 200 with empty array") {
     val req: Request[IO] = GET(uri"/data")
 
     for {
@@ -107,7 +133,7 @@ object DataApplicationRoutesSuite extends HttpSuite {
     } yield testResult
   }
 
-  test("GET returns single value") {
+  test("GET /data returns single value") {
     val req: Request[IO] = GET(uri"/data")
 
     forall(signedOf(dummyUpdateGen)) { update =>
@@ -120,7 +146,7 @@ object DataApplicationRoutesSuite extends HttpSuite {
     }
   }
 
-  test("GET returns multiple values") {
+  test("GET /data returns multiple values") {
     val req: Request[IO] = GET(uri"/data")
 
     val gen = for {
@@ -136,6 +162,83 @@ object DataApplicationRoutesSuite extends HttpSuite {
         }
         endpoint <- construct(dataQueue)
         testResult <- expectHttpBodyAndStatus(endpoint, req)(updates, Status.Ok)
+      } yield testResult
+    }
+  }
+
+  test("POST /validate returns NoContent if all validations pass") {
+    import org.http4s.circe.CirceEntityEncoder._
+    val req: Request[IO] = POST(uri"/validate")
+
+    val l1Service = makeValidatingService(validateUpdateFn = valid, validateFeeFn = valid)
+
+    forall(signedOf(dummyUpdateGen)) { update =>
+      for {
+        dataQueue <- ViewableQueue.make[F, Signed[DataUpdate]]
+        endpoint <- construct(dataQueue, l1Service)
+        testResult <- expectHttpStatus(endpoint, req.withEntity(update))(Status.NoContent)
+      } yield testResult
+    }
+  }
+
+  test("POST /validate returns InternalServerError if validateFee fails") {
+    import org.http4s.circe.CirceEntityEncoder._
+    val req: Request[IO] = POST(uri"/validate")
+
+    val l1Service = makeValidatingService(validateUpdateFn = valid, validateFeeFn = invalid)
+
+    forall(signedOf(dummyUpdateGen)) { update =>
+      for {
+        dataQueue <- ViewableQueue.make[F, Signed[DataUpdate]]
+        endpoint <- construct(dataQueue, l1Service)
+        testResult <- expectHttpStatus(endpoint, req.withEntity(update))(Status.InternalServerError)
+      } yield testResult
+    }
+  }
+
+  test("POST /validate returns InternalServerError if validateUpdate fails") {
+    import org.http4s.circe.CirceEntityEncoder._
+    val req: Request[IO] = POST(uri"/validate")
+
+    val l1Service = makeValidatingService(validateUpdateFn = invalid, validateFeeFn = valid)
+
+    forall(signedOf(dummyUpdateGen)) { update =>
+      for {
+        dataQueue <- ViewableQueue.make[F, Signed[DataUpdate]]
+        endpoint <- construct(dataQueue, l1Service)
+        testResult <- expectHttpStatus(endpoint, req.withEntity(update))(Status.InternalServerError)
+      } yield testResult
+    }
+  }
+
+  test("POST /validate returns InternalServerError if validateUpdate and validateFee fails") {
+    import org.http4s.circe.CirceEntityEncoder._
+    val req: Request[IO] = POST(uri"/validate")
+
+    val l1Service = makeValidatingService(validateUpdateFn = invalid, validateFeeFn = invalid)
+
+    forall(signedOf(dummyUpdateGen)) { update =>
+      for {
+        dataQueue <- ViewableQueue.make[F, Signed[DataUpdate]]
+        endpoint <- construct(dataQueue, l1Service)
+        testResult <- expectHttpStatus(endpoint, req.withEntity(update))(Status.InternalServerError)
+      } yield testResult
+    }
+  }
+
+  test("POST /validate returns InternalServerError if global snapshot ordinal not available") {
+    import org.http4s.circe.CirceEntityEncoder._
+    val req: Request[IO] = POST(uri"/validate")
+
+    val l1Service = makeValidatingService(validateUpdateFn = valid, validateFeeFn = valid)
+    val globalSnapshotStorage = mockLastSnapshotStorage[GlobalIncrementalSnapshot, GlobalSnapshotInfo](
+      getOrdinalFn = none.pure[IO]
+    )
+    forall(signedOf(dummyUpdateGen)) { update =>
+      for {
+        dataQueue <- ViewableQueue.make[F, Signed[DataUpdate]]
+        endpoint <- construct(dataQueue, l1Service, globalSnapshotStorage)
+        testResult <- expectHttpStatus(endpoint, req.withEntity(update))(Status.InternalServerError)
       } yield testResult
     }
   }

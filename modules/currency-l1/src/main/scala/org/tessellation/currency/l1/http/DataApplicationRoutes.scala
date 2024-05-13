@@ -1,14 +1,14 @@
 package org.tessellation.currency.l1.http
 
-import cats.data.OptionT
 import cats.data.Validated.{Invalid, Valid}
 import cats.effect.Async
 import cats.effect.std.{Queue, Supervisor}
 import cats.syntax.all._
 
 import org.tessellation.currency.dataApplication._
-import org.tessellation.currency.l1.domain.error.{InvalidDataUpdate, InvalidSignature}
+import org.tessellation.currency.l1.domain.error.{GL0SnapshotOrdinalUnavailable, InvalidDataUpdate, InvalidSignature}
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
+import org.tessellation.error.ApplicationError._
 import org.tessellation.ext.http4s.error._
 import org.tessellation.node.shared.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.node.shared.domain.queue.ViewableQueue
@@ -23,7 +23,7 @@ import io.circe.syntax.EncoderOps
 import io.circe.{Decoder, Encoder}
 import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder}
 import org.http4s.dsl.Http4sDsl
-import org.http4s.{EntityDecoder, HttpRoutes}
+import org.http4s.{EntityDecoder, HttpRoutes, Response}
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -43,37 +43,42 @@ final case class DataApplicationRoutes[F[_]: Async: Hasher: SecurityProvider: L1
 
   protected val prefixPath: InternalUrlPrefix = "/"
 
+  private def validate(update: Signed[DataUpdate])(onValid: F[Response[F]]): F[Response[F]] =
+    lastGlobalSnapshotStorage.getOrdinal.flatMap {
+      _.traverse(ord => (dataApplication.validateFee(ord)(update), dataApplication.validateUpdate(update.value)).mapN(_ |+| _))
+    }.flatMap {
+      case None             => InternalServerError(GL0SnapshotOrdinalUnavailable.toApplicationError)
+      case Some(Invalid(e)) => InternalServerError(InvalidDataUpdate(e.toString).toApplicationError)
+      case Some(Valid(_))   => onValid
+    }
+
   protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
+    case req @ POST -> Root / "validate" =>
+      implicit val decoder: EntityDecoder[F, Signed[DataUpdate]] = dataApplication.signedDataEntityDecoder
+      req
+        .asR[Signed[DataUpdate]](validate(_)(NoContent()))
+        .handleUnknownError
+
+    case GET -> Root / "data" =>
+      implicit val signedEncoder: Encoder[Signed[DataUpdate]] = Signed.encoder(dataApplication.dataEncoder)
+      dataUpdatesQueue.view.flatMap(Ok(_))
+
     case req @ POST -> Root / "data" =>
       implicit val decoder: EntityDecoder[F, Signed[DataUpdate]] = dataApplication.signedDataEntityDecoder
-
       req
         .asR[Signed[DataUpdate]] {
           _.toHashedWithSignatureCheck[F](dataApplication.serializeUpdate _).flatMap {
             case Left(_) => InternalServerError(InvalidSignature.toApplicationError)
             case Right(hashed) =>
-              OptionT(lastGlobalSnapshotStorage.getOrdinal)
-                .getOrRaise(new IllegalStateException("Global SnapshotOrdinal unavailable"))
-                .flatMap { gsOrdinal =>
-                  (dataApplication.validateFee(gsOrdinal)(hashed.signed), dataApplication.validateUpdate(hashed.signed.value)).mapN(_ |+| _)
-                }
-                .flatMap {
-                  case Invalid(e) => InternalServerError(InvalidDataUpdate(e.toString).toApplicationError)
-                  case Valid(_) =>
-                    dataUpdatesQueue.offer(hashed.signed) >>
-                      Ok(("hash" -> hashed.hash.value).asJson)
-                }
+              validate(hashed.signed) {
+                dataUpdatesQueue.offer(hashed.signed) >> Ok(("hash" -> hashed.hash.value).asJson)
+              }
           }
         }
         .handleUnknownError
 
     case GET -> Root / "l0" / "peers" =>
       l0ClusterStorage.getPeers.flatMap(Ok(_))
-
-    case GET -> Root / "data" =>
-      implicit val signedEncoder: Encoder[Signed[DataUpdate]] = Signed.encoder(dataApplication.dataEncoder)
-
-      dataUpdatesQueue.view.flatMap(Ok(_))
   }
 
   protected val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
