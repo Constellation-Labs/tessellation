@@ -17,65 +17,61 @@ import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
 import org.http4s.circe.jsonEncoderOf
 import org.http4s.{EntityDecoder, EntityEncoder, HttpRoutes}
 
-object DummyDataApplicationL1Service {
-  def make[F[_]]: IO[BaseDataApplicationL1Service[IO]] = IO.pure {
-    new BaseDataApplicationL1Service[IO] {
-      override def serializeState(state: DataOnChainState): IO[Array[Byte]] = ???
+class DummyDataApplicationL1Service extends BaseDataApplicationL1Service[IO] {
+  override def serializeState(state: DataOnChainState): IO[Array[Byte]] = ???
 
-      override def deserializeState(bytes: Array[Byte]): IO[Either[Throwable, DataOnChainState]] = ???
+  override def deserializeState(bytes: Array[Byte]): IO[Either[Throwable, DataOnChainState]] = ???
 
-      override def serializeUpdate(update: DataUpdate): IO[Array[Byte]] = ???
+  override def serializeUpdate(update: DataUpdate): IO[Array[Byte]] = ???
 
-      override def deserializeUpdate(bytes: Array[Byte]): IO[Either[Throwable, DataUpdate]] = ???
+  override def deserializeUpdate(bytes: Array[Byte]): IO[Either[Throwable, DataUpdate]] = ???
 
-      override def serializeBlock(block: Signed[DataApplicationBlock]): IO[Array[Byte]] = ???
+  override def serializeBlock(block: Signed[DataApplicationBlock]): IO[Array[Byte]] = ???
 
-      override def deserializeBlock(bytes: Array[Byte]): IO[Either[Throwable, Signed[DataApplicationBlock]]] = ???
+  override def deserializeBlock(bytes: Array[Byte]): IO[Either[Throwable, Signed[DataApplicationBlock]]] = ???
 
-      override def serializeCalculatedState(state: DataCalculatedState): IO[Array[Byte]] = ???
+  override def serializeCalculatedState(state: DataCalculatedState): IO[Array[Byte]] = ???
 
-      override def deserializeCalculatedState(bytes: Array[Byte]): IO[Either[Throwable, DataCalculatedState]] = ???
+  override def deserializeCalculatedState(bytes: Array[Byte]): IO[Either[Throwable, DataCalculatedState]] = ???
 
-      override def dataEncoder: Encoder[DataUpdate] = DummyDataApplicationState.dataUpateEncoder
+  override def dataEncoder: Encoder[DataUpdate] = DummyDataApplicationState.dataUpateEncoder
 
-      override def dataDecoder: Decoder[DataUpdate] = DummyDataApplicationState.dataUpdateDecoder
+  override def dataDecoder: Decoder[DataUpdate] = DummyDataApplicationState.dataUpdateDecoder
 
-      override def signedDataEntityEncoder: EntityEncoder[IO, Signed[DataUpdate]] =
-        jsonEncoderOf[IO, Signed[DataUpdate]](Signed.encoder[DataUpdate](dataEncoder))
+  override def signedDataEntityEncoder: EntityEncoder[IO, Signed[DataUpdate]] =
+    jsonEncoderOf[IO, Signed[DataUpdate]](Signed.encoder[DataUpdate](dataEncoder))
 
-      override def signedDataEntityDecoder: EntityDecoder[IO, Signed[DataUpdate]] = {
-        implicit val signedDecoder: Decoder[Signed[DataUpdate]] = Signed.decoder[DataUpdate](dataDecoder)
-        circeEntityDecoder
-      }
-
-      override def calculatedStateEncoder: Encoder[DataCalculatedState] = ???
-
-      override def calculatedStateDecoder: Decoder[DataCalculatedState] = ???
-
-      override def validateData(state: Base, updates: NonEmptyList[Signed[DataUpdate]])(
-        implicit context: L1NodeContext[IO]
-      ): IO[DataApplicationValidationErrorOr[Unit]] = ???
-
-      override def validateUpdate(update: DataUpdate)(implicit context: L1NodeContext[IO]): IO[DataApplicationValidationErrorOr[Unit]] = ???
-
-      override def validateFee(gsOrdinal: SnapshotOrdinal)(update: Signed[DataUpdate])(
-        implicit context: L1NodeContext[IO],
-        A: Applicative[IO]
-      ): IO[dataApplication.DataApplicationValidationErrorOr[Unit]] = ???
-
-      override def combine(state: Base, updates: List[Signed[DataUpdate]])(implicit context: L1NodeContext[IO]): IO[Base] = ???
-
-      override def getCalculatedState(implicit context: L1NodeContext[IO]): IO[(SnapshotOrdinal, DataCalculatedState)] = ???
-
-      override def setCalculatedState(ordinal: SnapshotOrdinal, state: DataCalculatedState)(
-        implicit context: L1NodeContext[IO]
-      ): IO[Boolean] = ???
-
-      override def hashCalculatedState(state: DataCalculatedState)(implicit context: L1NodeContext[IO]): IO[Hash] = ???
-
-      override def routes(implicit context: L1NodeContext[IO]): HttpRoutes[IO] = ???
-
-      override def routesPrefix: ExternalUrlPrefix = ???
-    }
+  override def signedDataEntityDecoder: EntityDecoder[IO, Signed[DataUpdate]] = {
+    implicit val signedDecoder: Decoder[Signed[DataUpdate]] = Signed.decoder[DataUpdate](dataDecoder)
+    circeEntityDecoder
   }
+
+  override def calculatedStateEncoder: Encoder[DataCalculatedState] = ???
+
+  override def calculatedStateDecoder: Decoder[DataCalculatedState] = ???
+
+  override def validateData(state: Base, updates: NonEmptyList[Signed[DataUpdate]])(
+    implicit context: L1NodeContext[IO]
+  ): IO[DataApplicationValidationErrorOr[Unit]] = ???
+
+  override def validateUpdate(update: DataUpdate)(implicit context: L1NodeContext[IO]): IO[DataApplicationValidationErrorOr[Unit]] = ???
+
+  override def validateFee(gsOrdinal: SnapshotOrdinal)(update: Signed[DataUpdate])(
+    implicit context: L1NodeContext[IO],
+    A: Applicative[IO]
+  ): IO[dataApplication.DataApplicationValidationErrorOr[Unit]] = ???
+
+  override def combine(state: Base, updates: List[Signed[DataUpdate]])(implicit context: L1NodeContext[IO]): IO[Base] = ???
+
+  override def getCalculatedState(implicit context: L1NodeContext[IO]): IO[(SnapshotOrdinal, DataCalculatedState)] = ???
+
+  override def setCalculatedState(ordinal: SnapshotOrdinal, state: DataCalculatedState)(
+    implicit context: L1NodeContext[IO]
+  ): IO[Boolean] = ???
+
+  override def hashCalculatedState(state: DataCalculatedState)(implicit context: L1NodeContext[IO]): IO[Hash] = ???
+
+  override def routes(implicit context: L1NodeContext[IO]): HttpRoutes[IO] = ???
+
+  override def routesPrefix: ExternalUrlPrefix = ???
 }
