@@ -6,6 +6,7 @@ import cats.syntax.all._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import org.tessellation.currency.schema.currency._
+import org.tessellation.currency.schema.feeTransaction.FeeTransaction
 import org.tessellation.node.shared.domain.block.processing._
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
@@ -29,6 +30,7 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
   def accept(
     blocksForAcceptance: List[Signed[Block]],
     messagesForAcceptance: List[Signed[CurrencyMessage]],
+    feeTransactionsForAcceptance: Option[SortedSet[Signed[FeeTransaction]]],
     lastSnapshotContext: CurrencySnapshotContext,
     snapshotOrdinal: SnapshotOrdinal,
     lastActiveTips: SortedSet[ActiveTip],
@@ -39,6 +41,7 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
       BlockAcceptanceResult,
       CurrencyMessagesAcceptanceResult,
       SortedSet[RewardTransaction],
+      Option[SortedSet[Signed[FeeTransaction]]],
       CurrencySnapshotInfo,
       CurrencySnapshotStateProof
     )
@@ -54,6 +57,7 @@ object CurrencySnapshotAcceptanceManager {
     def accept(
       blocksForAcceptance: List[Signed[Block]],
       messagesForAcceptance: List[Signed[CurrencyMessage]],
+      feeTransactionsForAcceptance: Option[SortedSet[Signed[FeeTransaction]]],
       lastSnapshotContext: CurrencySnapshotContext,
       snapshotOrdinal: SnapshotOrdinal,
       lastActiveTips: SortedSet[ActiveTip],
@@ -64,6 +68,7 @@ object CurrencySnapshotAcceptanceManager {
         BlockAcceptanceResult,
         CurrencyMessagesAcceptanceResult,
         SortedSet[RewardTransaction],
+        Option[SortedSet[Signed[FeeTransaction]]],
         CurrencySnapshotInfo,
         CurrencySnapshotStateProof
       )
@@ -85,9 +90,16 @@ object CurrencySnapshotAcceptanceManager {
 
       rewards <- calculateRewardsFn(acceptedTransactions)
 
-      (updatedBalancesByRewards, acceptedRewardTxs) = acceptRewardTxs(
-        lastSnapshotContext.snapshotInfo.balances ++ acceptanceResult.contextUpdate.balances,
+      balancesAfterContextUpdate = lastSnapshotContext.snapshotInfo.balances ++ acceptanceResult.contextUpdate.balances
+
+      (balancesAfterRewards, acceptedRewardTxs) = acceptRewardTxs(
+        balancesAfterContextUpdate,
         rewards
+      )
+
+      (updatedBalances, acceptedFeeTxs) <- acceptFeeTxs(
+        balancesAfterRewards,
+        feeTransactionsForAcceptance
       )
 
       lastMessages = lastSnapshotContext.snapshotInfo.lastMessages.getOrElse(SortedMap.empty[MessageType, Signed[CurrencyMessage]])
@@ -127,10 +139,10 @@ object CurrencySnapshotAcceptanceManager {
         messagesToReject
       )
 
-      csi = CurrencySnapshotInfo(transactionsRefs, updatedBalancesByRewards)
+      csi = CurrencySnapshotInfo(transactionsRefs, updatedBalances)
       stateProof <- csi.stateProof(snapshotOrdinal)
 
-    } yield (acceptanceResult, messagesAcceptanceResult, acceptedRewardTxs, csi, stateProof)
+    } yield (acceptanceResult, messagesAcceptanceResult, acceptedRewardTxs, acceptedFeeTxs, csi, stateProof)
 
     private def acceptBlocks(
       blocksForAcceptance: List[Signed[Block]],
@@ -164,6 +176,41 @@ object CurrencySnapshotAcceptanceManager {
           .plus(tx.amount)
           .map(balance => (updatedBalances.updated(tx.destination, balance), acceptedTxs + tx))
           .getOrElse(acc)
+      }
+
+    private def acceptFeeTxs(
+      balances: SortedMap[Address, Balance],
+      maybeTxs: Option[SortedSet[Signed[FeeTransaction]]]
+    ): F[(SortedMap[Address, Balance], Option[SortedSet[Signed[FeeTransaction]]])] =
+      maybeTxs match {
+        case None => (balances, maybeTxs).pure[F]
+        case Some(txs) =>
+          val feeReferredAddresses = txs.flatMap(tx => Set(tx.value.source, tx.value.destination))
+          val feeReferredBalances = feeReferredAddresses.foldLeft(SortedMap.empty[Address, Long]) {
+            case (acc, address) =>
+              acc.updated(address, balances.getOrElse(address, Balance.empty).value.value)
+          }
+          val updatedFeeReferredBalances = txs
+            .foldLeft(feeReferredBalances) {
+              case (balances, tx) =>
+                balances
+                  .updatedWith(tx.source)(existing => (existing.getOrElse(Balance.empty.value.value) - tx.amount.value).some)
+                  .updatedWith(tx.destination)(existing => (existing.getOrElse(Balance.empty.value.value) + tx.amount.value).some)
+            }
+
+          updatedFeeReferredBalances.toList
+            .foldLeftM(SortedMap.empty[Address, Balance]) {
+              case (acc, (address, balance)) =>
+                NonNegLong
+                  .from(balance)
+                  .map(Balance(_))
+                  .map(acc.updated(address, _))
+                  .leftMap(e => new ArithmeticException(s"Unexpected state when applying fee transactions: $e"))
+                  .liftTo[F]
+            }
+            .map { updates =>
+              (balances ++ updates, txs.some)
+            }
       }
 
     def getTipsUsages(
