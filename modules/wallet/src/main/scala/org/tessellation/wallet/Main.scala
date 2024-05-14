@@ -46,7 +46,6 @@ object Main
         SecurityProvider.forAsync[IO].use { implicit sp =>
           KryoSerializer.forAsync[IO](sharedKryoRegistrar).use { implicit kryo =>
             JsonSerializer.forSync[IO].asResource.use { implicit jsonSerializer =>
-              implicit val hasher = Hasher.forKryo[IO]
               loadKeyPair[IO](envs).flatMap { keyPair =>
                 method match {
                   case ShowAddress() =>
@@ -62,14 +61,17 @@ object Main
                       .handleErrorWith(err => logger.error(err)(s"Error while showing public key."))
                       .as(ExitCode.Success)
                   case CreateTransaction(destination, fee, amount, prevTxPath, nextTxPath) =>
+                    implicit val hasher = Hasher.forKryo[IO]
                     createAndStoreTransaction[IO](keyPair, destination, fee, amount, prevTxPath, nextTxPath)
                       .handleErrorWith(err => logger.error(err)(s"Error while creating transaction."))
                       .as(ExitCode.Success)
                   case CreateOwnerSigningMessage(address, parentOrdinal, outputPath) =>
+                    implicit val hasher = Hasher.forJson[IO]
                     createCurrencyMessage[IO](keyPair, MessageType.Owner, address, parentOrdinal, outputPath)
                       .handleErrorWith(err => logger.error(err)(s"Error while creating owner signing message."))
                       .as(ExitCode.Success)
                   case CreateStakingSigningMessage(address, parentOrdinal, outputPath) =>
+                    implicit val hasher = Hasher.forJson[IO]
                     createCurrencyMessage[IO](keyPair, MessageType.Staking, address, parentOrdinal, outputPath)
                       .handleErrorWith(err => logger.error(err)(s"Error while creating staking signing message."))
                       .as(ExitCode.Success)
