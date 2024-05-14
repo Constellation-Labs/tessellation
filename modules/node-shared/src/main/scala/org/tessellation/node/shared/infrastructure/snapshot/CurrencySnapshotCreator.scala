@@ -130,11 +130,15 @@ object CurrencySnapshotCreator {
             _.accept(maybeLastDataApplication, dataBlocks, lastArtifact.ordinal, currentOrdinal)
           )
 
-          (acceptanceResult, messagesAcceptanceResult, acceptedRewardTxs, snapshotInfo, stateProof) <-
+          feeTransactions = dataApplicationAcceptanceResult
+            .map(result => SortedSet.from(result.feeTransactions))
+
+          (acceptanceResult, messagesAcceptanceResult, acceptedRewardTxs, acceptedFeeTxs, snapshotInfo, stateProof) <-
             currencySnapshotAcceptanceManager
               .accept(
                 blocks,
                 messages,
+                feeTransactions,
                 lastContext,
                 currentOrdinal,
                 lastActiveTips,
@@ -168,9 +172,6 @@ object CurrencySnapshotCreator {
 
           (height, subHeight) <- getHeightAndSubHeight(lastArtifact, deprecated, remainedActive, accepted)
 
-          feeTransactions = dataApplicationAcceptanceResult
-            .map(result => SortedSet.from(result.feeTransactions))
-
           artifact = CurrencyIncrementalSnapshot(
             currentOrdinal,
             height,
@@ -186,7 +187,7 @@ object CurrencySnapshotCreator {
             currentEpochProgress,
             dataApplicationAcceptanceResult.map(_.dataApplicationPart),
             messagesAcceptanceResult.accepted.toSortedSet.some,
-            feeTransactions
+            acceptedFeeTxs
           )
 
           context = CurrencySnapshotContext(lastContext.address, snapshotInfo)
