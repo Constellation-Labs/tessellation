@@ -93,15 +93,13 @@ object CurrencySnapshotAcceptanceManager {
 
       rewards <- calculateRewardsFn(acceptedTransactions)
 
-      balancesAfterContextUpdate = lastSnapshotContext.snapshotInfo.balances ++ acceptanceResult.contextUpdate.balances
-
-      (balancesAfterRewards, acceptedRewardTxs) = acceptRewardTxs(
-        balancesAfterContextUpdate,
+      (updatedBalancesByRewards, acceptedRewardTxs) = acceptRewardTxs(
+        lastSnapshotContext.snapshotInfo.balances ++ acceptanceResult.contextUpdate.balances,
         rewards
       )
 
       (updatedBalances, acceptedFeeTxs) <- acceptFeeTxs(
-        balancesAfterRewards,
+        updatedBalancesByRewards,
         feeTransactionsForAcceptance
       )
 
@@ -198,8 +196,8 @@ object CurrencySnapshotAcceptanceManager {
             .foldLeft(feeReferredBalances) {
               case (balances, tx) =>
                 balances
-                  .updatedWith(tx.source)(existing => (existing.getOrElse(Balance.empty.value.value) - tx.amount.value).some)
-                  .updatedWith(tx.destination)(existing => (existing.getOrElse(Balance.empty.value.value) + tx.amount.value).some)
+                  .updatedWith(tx.source)(existing => (existing.getOrElse(Balance.empty.value.value) - tx.amount.value.value).some)
+                  .updatedWith(tx.destination)(existing => (existing.getOrElse(Balance.empty.value.value) + tx.amount.value.value).some)
             }
 
           updatedFeeReferredBalances.toList
