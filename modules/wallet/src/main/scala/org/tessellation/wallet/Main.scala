@@ -3,6 +3,8 @@ package org.tessellation.wallet
 import java.security.KeyPair
 
 import cats.MonadThrow
+import cats.data.Validated.{Invalid, Valid}
+import cats.data._
 import cats.effect.std.Console
 import cats.effect.{Async, ExitCode, IO}
 import cats.syntax.all._
@@ -17,7 +19,7 @@ import org.tessellation.schema.currencyMessage.{CurrencyMessage, MessageOrdinal,
 import org.tessellation.schema.transaction.{Transaction, TransactionAmount, TransactionFee}
 import org.tessellation.security._
 import org.tessellation.security.key.ops._
-import org.tessellation.security.signature.Signed
+import org.tessellation.security.signature.{Signed, SignedValidator}
 import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.wallet.cli.env.EnvConfig
 import org.tessellation.wallet.cli.method._
@@ -27,6 +29,7 @@ import org.tessellation.wallet.transaction.createTransaction
 import com.monovore.decline._
 import com.monovore.decline.effect._
 import fs2.io.file.Path
+import io.circe.Encoder
 import io.circe.syntax._
 import io.estatico.newtype.ops._
 import org.typelevel.log4cats.SelfAwareStructuredLogger
@@ -49,38 +52,49 @@ object Main
               loadKeyPair[IO](envs).flatMap { keyPair =>
                 method match {
                   case ShowAddress() =>
-                    showAddress[IO](keyPair)
-                      .handleErrorWith(err => logger.error(err)(s"Error while showing address."))
-                      .as(ExitCode.Success)
+                    toExitCode("Error while showing address.") {
+                      showAddress[IO](keyPair)
+                    }
                   case ShowId() =>
-                    showId[IO](keyPair)
-                      .handleErrorWith(err => logger.error(err)(s"Error while showing id."))
-                      .as(ExitCode.Success)
+                    toExitCode("Error while showing id.") {
+                      showId[IO](keyPair)
+                    }
                   case ShowPublicKey() =>
-                    showPublicKey[IO](keyPair)
-                      .handleErrorWith(err => logger.error(err)(s"Error while showing public key."))
-                      .as(ExitCode.Success)
+                    toExitCode("Error while showing public key.") {
+                      showPublicKey[IO](keyPair)
+                    }
                   case CreateTransaction(destination, fee, amount, prevTxPath, nextTxPath) =>
                     implicit val hasher = Hasher.forKryo[IO]
-                    createAndStoreTransaction[IO](keyPair, destination, fee, amount, prevTxPath, nextTxPath)
-                      .handleErrorWith(err => logger.error(err)(s"Error while creating transaction."))
-                      .as(ExitCode.Success)
+                    toExitCode("Error while creating transaction.") {
+                      createAndStoreTransaction[IO](keyPair, destination, fee, amount, prevTxPath, nextTxPath)
+                    }
                   case CreateOwnerSigningMessage(address, parentOrdinal, outputPath) =>
                     implicit val hasher = Hasher.forJson[IO]
-                    createCurrencyMessage[IO](keyPair, MessageType.Owner, address, parentOrdinal, outputPath)
-                      .handleErrorWith(err => logger.error(err)(s"Error while creating owner signing message."))
-                      .as(ExitCode.Success)
+                    toExitCode("Error while creating owner signing message.") {
+                      createCurrencyMessage[IO](keyPair, MessageType.Owner, address, parentOrdinal, outputPath)
+                    }
                   case CreateStakingSigningMessage(address, parentOrdinal, outputPath) =>
                     implicit val hasher = Hasher.forJson[IO]
-                    createCurrencyMessage[IO](keyPair, MessageType.Staking, address, parentOrdinal, outputPath)
-                      .handleErrorWith(err => logger.error(err)(s"Error while creating staking signing message."))
-                      .as(ExitCode.Success)
+                    toExitCode("Error while creating staking signing message.") {
+                      createCurrencyMessage[IO](keyPair, MessageType.Staking, address, parentOrdinal, outputPath)
+                    }
+                  case MergeSigningMessages(files, outputPath: Option[Path]) =>
+                    implicit val hasher = Hasher.forJson[IO]
+                    toExitCode("Error merging currency messages.") {
+                      mergeMessages[IO](files)
+                        .flatMap(writeJson[IO, Signed[CurrencyMessage]](outputPath))
+                    }
                 }
               }
             }
           }
         }
     }
+
+  private def toExitCode(errorMessage: String)(ioa: IO[Unit]): IO[ExitCode] =
+    ioa
+      .as(ExitCode.Success)
+      .handleErrorWith(err => logger.error(err)(errorMessage).as(ExitCode.Error))
 
   private def showAddress[F[_]: Console](keyPair: KeyPair): F[Unit] =
     Console[F].println(keyPair.getPublic.toAddress)
@@ -124,7 +138,7 @@ object Main
   ): F[Unit] =
     Signed
       .forAsyncHasher[F, CurrencyMessage](CurrencyMessage(messageType, address, parentOrdinal), keyPair)
-      .flatMap(m => outputPath.fold(Console[F].println(m.asJson.noSpaces))(writeToJsonFile(_)(m)))
+      .flatMap(writeJson[F, Signed[CurrencyMessage]](outputPath))
 
   private def loadKeyPair[F[_]: Async: SecurityProvider](cfg: EnvConfig): F[KeyPair] =
     KeyStoreUtils
@@ -134,4 +148,37 @@ object Main
         cfg.storepass.coerce.value.toCharArray,
         cfg.keypass.coerce.value.toCharArray
       )
+
+  private def writeJson[F[_]: Async: Console, A: Encoder](outputPath: Option[Path])(a: A): F[Unit] =
+    outputPath.fold(Console[F].println(a.asJson.noSpaces))(writeToJsonFile(_)(a))
+
+  private def mergeMessages[F[_]: Async: Hasher: SecurityProvider](files: NonEmptyList[Path]): F[Signed[CurrencyMessage]] = {
+    type SignedMessages = NonEmptyList[Signed[CurrencyMessage]]
+    type SignedMessagesErrorOr[A] = ValidatedNec[String, A]
+
+    val signedValidator = SignedValidator.make[F]
+
+    def validateMessageValues(inputs: SignedMessages): SignedMessagesErrorOr[SignedMessages] =
+      Validated.condNec(
+        inputs.toIterable.map(_.value).toSet.size == 1,
+        inputs,
+        "Messages are not identical"
+      )
+
+    def validateProofs(inputs: SignedMessages): F[SignedMessagesErrorOr[SignedMessages]] =
+      inputs
+        .traverse(input => signedValidator.validateSignatures(input))
+        .map(_.reduceLeft(_ *> _))
+        .map(_.leftMap(_.map(_.show)).as(inputs))
+
+    files.traverse { p =>
+      OptionT(readFromJsonFile[F, Signed[CurrencyMessage]](p))
+        .getOrRaise(new Exception(s"Unable to load JSON from $p"))
+    }
+      .flatMap(inputs => validateProofs(inputs).map(_ *> validateMessageValues(inputs)))
+      .flatMap {
+        case Valid(inputs)   => Signed(inputs.head.value, inputs.map(_.proofs).reduceLeft(_ ++ _)).pure[F]
+        case Invalid(errors) => new Exception(errors.mkString_(",")).raiseError
+      }
+  }
 }
