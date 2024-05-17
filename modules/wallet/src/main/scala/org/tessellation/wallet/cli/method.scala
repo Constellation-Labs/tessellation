@@ -1,5 +1,6 @@
 package org.tessellation.wallet.cli
 
+import cats.data.NonEmptyList
 import cats.syntax.contravariantSemigroupal._
 import cats.syntax.either._
 import cats.syntax.validated._
@@ -95,6 +96,17 @@ object method {
       }
   }
 
+  case class MergeSigningMessages(files: NonEmptyList[Path], outputPath: Option[Path]) extends CliMethod
+
+  object MergeSigningMessages extends WithOpts[MergeSigningMessages] {
+    val opts: Opts[MergeSigningMessages] = Opts.subcommand("merge-messages", "Merge signing message files") {
+      (
+        Opts.arguments[Path]("files to merge"),
+        Opts.option[Path]("output", "Filename to write output: path must exist and any existing file is overwritten", "f").orNone
+      ).mapN(MergeSigningMessages.apply)
+    }
+  }
+
   private def parseMessageOpts: (Opts[Address], Opts[MessageOrdinal], Opts[Option[Path]]) = (
     Opts.option[Address]("address", "DAG Address", "a"),
     Opts
@@ -110,4 +122,5 @@ object method {
       .orElse(CreateTransaction.opts)
       .orElse(CreateOwnerSigningMessage.opts)
       .orElse(CreateStakingSigningMessage.opts)
+      .orElse(MergeSigningMessages.opts)
 }
