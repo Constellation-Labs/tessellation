@@ -161,10 +161,6 @@ object CurrencySnapshotValidator {
                 creationResult.focus(_.artifact.messages).replace(expected.messages)
               else creationResult
             }.map { creationResult =>
-              if (creationResult.artifact.feeTransactions.forall(_.isEmpty))
-                creationResult.focus(_.artifact.feeTransactions).replace(expected.feeTransactions)
-              else creationResult
-            }.map { creationResult =>
               if (creationResult.artifact =!= expected)
                 SnapshotDifferentThanExpected(expected, creationResult.artifact).invalidNec
               else

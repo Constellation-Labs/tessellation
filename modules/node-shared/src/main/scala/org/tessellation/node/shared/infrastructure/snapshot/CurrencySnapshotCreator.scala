@@ -168,9 +168,6 @@ object CurrencySnapshotCreator {
 
           (height, subHeight) <- getHeightAndSubHeight(lastArtifact, deprecated, remainedActive, accepted)
 
-          feeTransactions = dataApplicationAcceptanceResult
-            .map(result => SortedSet.from(result.feeTransactions))
-
           artifact = CurrencyIncrementalSnapshot(
             currentOrdinal,
             height,
@@ -186,7 +183,7 @@ object CurrencySnapshotCreator {
             currentEpochProgress,
             dataApplicationAcceptanceResult.map(_.dataApplicationPart),
             messagesAcceptanceResult.accepted.toSortedSet.some,
-            feeTransactions
+            feeTransactions = none
           )
 
           context = CurrencySnapshotContext(lastContext.address, snapshotInfo)
