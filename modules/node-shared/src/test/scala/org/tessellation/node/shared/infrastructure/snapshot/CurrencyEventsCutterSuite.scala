@@ -317,7 +317,7 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
 
     override def calculatedStateDecoder: Decoder[DataCalculatedState] = ???
 
-    override def validateData(state: DataState.Base, updates: NonEmptyList[Signed[DataUpdate]])(
+    override def validateData(state: DataState.Base, update: Signed[DataUpdate])(
       implicit context: L0NodeContext[IO]
     ): IO[dataApplication.DataApplicationValidationErrorOr[Unit]] = ???
 

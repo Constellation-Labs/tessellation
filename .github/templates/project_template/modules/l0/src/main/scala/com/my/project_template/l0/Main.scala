@@ -59,7 +59,7 @@ object Main
 
         override def validateData(
           state  : DataState[UsageUpdateState, UsageUpdateCalculatedState],
-          updates: NonEmptyList[Signed[UsageUpdate]]
+          update: Signed[UsageUpdate]
         )(implicit context: L0NodeContext[IO]): IO[DataApplicationValidationErrorOr[Unit]] =
           ().validNec.pure[IO]
 

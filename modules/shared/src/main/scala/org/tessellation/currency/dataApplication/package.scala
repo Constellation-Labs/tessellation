@@ -73,7 +73,7 @@ trait BaseDataApplicationService[F[_]] {
 }
 
 trait BaseDataApplicationContextualOps[F[_], Context] {
-  def validateData(state: DataState.Base, updates: NonEmptyList[Signed[DataUpdate]])(
+  def validateData(state: DataState.Base, update: Signed[DataUpdate])(
     implicit context: Context
   ): F[DataApplicationValidationErrorOr[Unit]]
 
@@ -132,7 +132,7 @@ trait DataApplicationService[F[_], D <: DataUpdate, DON <: DataOnChainState, DOF
 }
 
 trait DataApplicationContextualOps[F[_], D <: DataUpdate, DON <: DataOnChainState, DOF <: DataCalculatedState, Context] {
-  def validateData(state: DataState[DON, DOF], updates: NonEmptyList[Signed[D]])(
+  def validateData(state: DataState[DON, DOF], update: Signed[D])(
     implicit context: Context
   ): F[DataApplicationValidationErrorOr[Unit]]
 
@@ -181,12 +181,12 @@ object BaseDataApplicationContextualOps {
       def allKnown(updates: List[Signed[DataUpdate]]): Boolean =
         updates.map(_.value).forall { case _: D => true; case _ => false }
 
-      def validateData(state: DataState.Base, updates: NonEmptyList[Signed[DataUpdate]])(
+      def validateData(state: DataState.Base, update: Signed[DataUpdate])(
         implicit context: Context
       ): F[DataApplicationValidationErrorOr[Unit]] =
         (state.onChain, state.calculated) match {
-          case (on: DON, off: DOF) if allKnown(updates.toList) =>
-            service.validateData(DataState(on, off), updates.asInstanceOf[NonEmptyList[Signed[D]]])
+          case (on: DON, off: DOF) if allKnown(List(update)) =>
+            service.validateData(DataState(on, off), update.asInstanceOf[Signed[D]])
           case _ => Validated.invalidNec[DataApplicationValidationError, Unit](Noop).pure[F]
         }
 
@@ -246,10 +246,10 @@ object BaseDataApplicationService {
 
       val v = BaseDataApplicationContextualOps[F, D, DON, DOF, Context](validation)
 
-      def validateData(state: DataState.Base, updates: NonEmptyList[Signed[DataUpdate]])(
+      def validateData(state: DataState.Base, update: Signed[DataUpdate])(
         implicit context: Context
       ): F[DataApplicationValidationErrorOr[Unit]] =
-        v.validateData(state, updates)
+        v.validateData(state, update)
 
       def validateUpdate(update: DataUpdate)(implicit context: Context): F[DataApplicationValidationErrorOr[Unit]] =
         v.validateUpdate(update)
@@ -371,9 +371,9 @@ object BaseDataApplicationL0Service {
 
       def routes(implicit context: L0NodeContext[F]): HttpRoutes[F] = base.routes
 
-      def validateData(state: DataState.Base, updates: NonEmptyList[Signed[DataUpdate]])(
+      def validateData(state: DataState.Base, update: Signed[DataUpdate])(
         implicit context: L0NodeContext[F]
-      ): F[DataApplicationValidationErrorOr[Unit]] = base.validateData(state, updates)
+      ): F[DataApplicationValidationErrorOr[Unit]] = base.validateData(state, update)
 
       def validateUpdate(update: DataUpdate)(implicit context: L0NodeContext[F]): F[DataApplicationValidationErrorOr[Unit]] =
         base.validateUpdate(update)
@@ -442,9 +442,9 @@ object BaseDataApplicationL1Service {
 
       def routes(implicit context: L1NodeContext[F]): HttpRoutes[F] = base.routes
 
-      def validateData(state: DataState.Base, updates: NonEmptyList[Signed[DataUpdate]])(
+      def validateData(state: DataState.Base, update: Signed[DataUpdate])(
         implicit context: L1NodeContext[F]
-      ): F[DataApplicationValidationErrorOr[Unit]] = base.validateData(state, updates)
+      ): F[DataApplicationValidationErrorOr[Unit]] = base.validateData(state, update)
 
       def validateUpdate(update: DataUpdate)(
         implicit context: L1NodeContext[F]

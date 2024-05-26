@@ -37,7 +37,7 @@ object Main extends CurrencyL1App(
     new DataApplicationL1Service[IO, UsageUpdate, UsageUpdateState, UsageUpdateCalculatedState] {
       override def validateData(
         state  : DataState[UsageUpdateState, UsageUpdateCalculatedState],
-        updates: NonEmptyList[Signed[UsageUpdate]]
+        update: Signed[UsageUpdate]
       )(implicit context: L1NodeContext[IO]): IO[DataApplicationValidationErrorOr[Unit]] =
         ().validNec.pure[IO]
 

@@ -368,7 +368,11 @@ object Engine {
             }
           } yield result
         case (newState, _) => ().pure[F].tupleLeft(newState)
-      }.getOrElse(logger.warn(s"Couldn't persist proposal").tupleLeft(state))
+      }
+        .getOrElse(logger.warn(s"Couldn't persist proposal").tupleLeft(state))
+        .handleErrorWith { e =>
+          logger.error(e)(s"Error when persisting proposal: ${e}").tupleLeft(state)
+        }
 
     def informAboutInabilityToParticipate(proposal: Proposal, reason: DataCancellationReason): F[Unit] = {
       def cancellation = CancelledCreationRound(

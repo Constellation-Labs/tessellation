@@ -50,7 +50,7 @@ class DummyDataApplicationL1Service extends BaseDataApplicationL1Service[IO] {
 
   override def calculatedStateDecoder: Decoder[DataCalculatedState] = ???
 
-  override def validateData(state: Base, updates: NonEmptyList[Signed[DataUpdate]])(
+  override def validateData(state: Base, update: Signed[DataUpdate])(
     implicit context: L1NodeContext[IO]
   ): IO[DataApplicationValidationErrorOr[Unit]] = ???
 

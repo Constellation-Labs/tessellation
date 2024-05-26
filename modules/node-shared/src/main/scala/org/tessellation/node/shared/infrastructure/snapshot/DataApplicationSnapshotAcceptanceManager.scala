@@ -3,16 +3,7 @@ package org.tessellation.node.shared.infrastructure.snapshot
 import cats.Applicative
 import cats.data.{NonEmptyList, OptionT}
 import cats.effect.Async
-import cats.syntax.applicative._
-import cats.syntax.applicativeError._
-import cats.syntax.contravariantSemigroupal._
-import cats.syntax.eq._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
-import cats.syntax.option._
-import cats.syntax.semigroup._
-import cats.syntax.show._
-import cats.syntax.traverse._
+import cats.syntax.all._
 
 import scala.util.control.NoStackTrace
 
@@ -147,26 +138,34 @@ object DataApplicationSnapshotAcceptanceManager {
           NonEmptyList
             .fromList(dataBlocks.distinctBy(_.value.roundId))
             .map { uniqueBlocks =>
-              val updates = uniqueBlocks.flatMap(_.value.updates)
+              uniqueBlocks
+                .flatMap(_.value.updates)
+                .toList
+                .filterA { update =>
+                  val feeValidation = service.validateFee(currentOrdinal)(update)
+                  val dataValidation = service.validateData(dataState, update)
 
-              val feeValidation = updates
-                .traverse(service.validateFee(currentOrdinal))
-                .map(_.reduce)
-
-              val dataValidation = service.validateData(dataState, updates)
-
-              (feeValidation, dataValidation)
-                .mapN(_ |+| _)
-                .flatTap { validated =>
-                  logger.warn(s"Data application is invalid, errors: ${validated.toString}").whenA(validated.isInvalid)
+                  (feeValidation, dataValidation)
+                    .mapN(_ |+| _)
+                    .flatMap { validated =>
+                      if (validated.isInvalid) {
+                        logger.warn(s"Data application is invalid, errors: ${validated.toString}").as(false)
+                      } else {
+                        true.pure
+                      }
+                    }
+                    .handleErrorWith(err =>
+                      logger.error(err)("Unhandled exception during validating data application, assumed as invalid").as(false)
+                    )
                 }
-                .map(_.isValid)
-                .handleErrorWith(err =>
-                  logger.error(err)("Unhandled exception during validating data application, assumed as invalid").as(false)
-                )
-                .ifF((updates.toList, uniqueBlocks.toList), (List.empty, List.empty))
+                .map { validUpdates =>
+                  if (validUpdates.isEmpty)
+                    (List.empty, List.empty)
+                  else
+                    (validUpdates, uniqueBlocks.toList)
+                }
             }
-            .getOrElse((List.empty, List.empty).pure[F])
+            .getOrElse(logger.info("Empty blocks") >> (List.empty, List.empty).pure)
         }
 
         newDataState <- OptionT.liftF(
