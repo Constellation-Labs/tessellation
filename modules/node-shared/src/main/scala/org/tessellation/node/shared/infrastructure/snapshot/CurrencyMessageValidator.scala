@@ -1,0 +1,105 @@
+package org.tessellation.node.shared.infrastructure.snapshot
+
+import cats.data.{NonEmptySet, Validated, ValidatedNec}
+import cats.effect.Async
+import cats.syntax.all._
+
+import scala.collection.immutable.{SortedMap, SortedSet}
+
+import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
+import org.tessellation.node.shared.infrastructure.snapshot.CurrencyMessageValidator.CurrencyMessageOrError
+import org.tessellation.schema.address.Address
+import org.tessellation.schema.currencyMessage.{CurrencyMessage, MessageOrdinal, MessageType}
+import org.tessellation.schema.peer.PeerId
+import org.tessellation.security.signature.SignedValidator.SignedValidationError
+import org.tessellation.security.signature.{Signed, SignedValidator}
+import org.tessellation.security.{Hasher, SecurityProvider}
+
+import derevo.cats.{eqv, show}
+import derevo.derive
+
+trait CurrencyMessageValidator[F[_]] {
+  def validate(message: Signed[CurrencyMessage], lastMessages: SortedMap[MessageType, Signed[CurrencyMessage]], metagraphId: Address)(
+    implicit hasher: Hasher[F]
+  ): F[CurrencyMessageOrError]
+}
+
+object CurrencyMessageValidator {
+
+  def make[F[_]: Async: SecurityProvider](
+    validator: SignedValidator[F],
+    allowanceList: Option[Map[Address, NonEmptySet[PeerId]]],
+    seedlist: Option[Set[SeedlistEntry]]
+  ): CurrencyMessageValidator[F] =
+    new CurrencyMessageValidator[F] {
+      def validate(
+        message: Signed[CurrencyMessage],
+        lastMessages: SortedMap[MessageType, Signed[CurrencyMessage]],
+        metagraphId: Address
+      )(implicit hasher: Hasher[F]): F[CurrencyMessageOrError] = {
+
+        val allowancePeers = allowanceList
+          .map(
+            _.get(metagraphId)
+              .map(_.toSortedSet)
+              .getOrElse(SortedSet.empty[PeerId])
+          )
+
+        val seedlistPeers = seedlist.map(_.map(_.peerId))
+
+        val isMetagraphIdValid = metagraphId === message.metagraphId
+
+        def validateIfSignedBySeedlistPeersExcludingOwner(message: Signed[CurrencyMessage]) =
+          message.proofs.toList
+            .traverse(sp => sp.id.toAddress.map((sp.id, _)))
+            .map(_.collectFirst { case (id, addr) if addr === message.address => id })
+            .map(_.flatMap { ownerId =>
+              NonEmptySet
+                .fromSet(message.proofs.filter(_.id =!= ownerId))
+                .map(sigs => Signed(message.value, sigs))
+            })
+            .map {
+              case Some(noOwnerSigMsg) =>
+                validator
+                  .validateSignaturesWithSeedlist(seedlistPeers, noOwnerSigMsg)
+                  .as(message)
+              case None => Validated.validNec(message)
+            }
+
+        def validateSignatures(message: Signed[CurrencyMessage]) =
+          for {
+            isSignedByOwner <- validator.isSignedBy(message, message.address)
+            hasNoDuplicates = validator.validateUniqueSigners(message)
+            isSignedCorrectly <- validator.validateSignatures(message)
+            isSignedByMajority = validator.validateSignedBySeedlistMajority(allowancePeers, message)
+            isSignedBySeedlistPeers <- validateIfSignedBySeedlistPeersExcludingOwner(message)
+          } yield
+            isSignedByOwner
+              .productR(hasNoDuplicates)
+              .productR(isSignedCorrectly)
+              .productR(isSignedByMajority)
+              .productR(isSignedBySeedlistPeers)
+              .leftMap(_.map[CurrencyMessageValidationError](SignatureValidationError(_)))
+
+        lastMessages.get(message.messageType) match {
+          case Some(lastMessage) if message.parentOrdinal =!= lastMessage.ordinal =>
+            Async[F].pure(NotANextMessage.invalidNec)
+          case None if message.parentOrdinal =!= MessageOrdinal.MinValue =>
+            Async[F].pure(FirstMessageWithWrongOrdinal.invalidNec)
+          case _ if !isMetagraphIdValid =>
+            Async[F].pure(WrongMetagraphId.invalidNec)
+          case _ =>
+            validateSignatures(message)
+        }
+      }
+    }
+
+  @derive(eqv, show)
+  sealed trait CurrencyMessageValidationError
+  case class SignatureValidationError(error: SignedValidationError) extends CurrencyMessageValidationError
+  case object WrongMetagraphId extends CurrencyMessageValidationError
+  case object NotANextMessage extends CurrencyMessageValidationError
+  case object FirstMessageWithWrongOrdinal extends CurrencyMessageValidationError
+
+  type CurrencyMessageOrError = ValidatedNec[CurrencyMessageValidationError, Signed[CurrencyMessage]]
+}

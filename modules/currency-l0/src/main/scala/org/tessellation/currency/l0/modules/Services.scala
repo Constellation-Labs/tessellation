@@ -27,7 +27,7 @@ import org.tessellation.node.shared.domain.statechannel.FeeCalculator
 import org.tessellation.node.shared.infrastructure.collateral.Collateral
 import org.tessellation.node.shared.infrastructure.metrics.Metrics
 import org.tessellation.node.shared.infrastructure.snapshot._
-import org.tessellation.node.shared.infrastructure.snapshot.services.{AddressService, CurrencyMessageService}
+import org.tessellation.node.shared.infrastructure.snapshot.services.AddressService
 import org.tessellation.node.shared.modules.SharedServices
 import org.tessellation.node.shared.snapshot.currency._
 import org.tessellation.schema.peer.PeerId
@@ -140,8 +140,7 @@ object Services {
         snapshotContextFunctions = sharedServices.currencySnapshotContextFns,
         dataApplication = maybeDataApplication,
         globalSnapshotContextFunctions = globalSnapshotContextFns,
-        stateChannelBinarySender = stateChannelBinarySender,
-        currencyMessageService = CurrencyMessageService.make[F](signedValidator, seedlist, storages.snapshot)
+        stateChannelBinarySender = stateChannelBinarySender
       ) {}
 }
 
@@ -158,6 +157,5 @@ sealed abstract class Services[F[_]] private (
   val snapshotContextFunctions: CurrencySnapshotContextFunctions[F],
   val dataApplication: Option[BaseDataApplicationL0Service[F]],
   val globalSnapshotContextFunctions: GlobalSnapshotContextFunctions[F],
-  val stateChannelBinarySender: StateChannelBinarySender[F],
-  val currencyMessageService: CurrencyMessageService[F]
+  val stateChannelBinarySender: StateChannelBinarySender[F]
 )

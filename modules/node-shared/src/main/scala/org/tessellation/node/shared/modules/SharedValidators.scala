@@ -12,6 +12,7 @@ import org.tessellation.node.shared.domain.statechannel.{FeeCalculator, FeeCalcu
 import org.tessellation.node.shared.domain.transaction.{TransactionChainValidator, TransactionValidator}
 import org.tessellation.node.shared.infrastructure.block.processing.BlockValidator
 import org.tessellation.node.shared.infrastructure.gossip.RumorValidator
+import org.tessellation.node.shared.infrastructure.snapshot.CurrencyMessageValidator
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.PeerId
@@ -42,6 +43,7 @@ object SharedValidators {
     val feeCalculator = FeeCalculator.make(feeConfigs)
     val stateChannelValidator =
       StateChannelValidator.make[F](signedValidator, l0Seedlist, stateChannelAllowanceLists, maxBinarySizeInBytes, feeCalculator)
+    val currencyMessageValidator = CurrencyMessageValidator.make[F](signedValidator, stateChannelAllowanceLists, seedlist)
 
     new SharedValidators[F](
       signedValidator,
@@ -52,7 +54,8 @@ object SharedValidators {
       blockValidator,
       currencyBlockValidator,
       rumorValidator,
-      stateChannelValidator
+      stateChannelValidator,
+      currencyMessageValidator
     ) {}
   }
 }
@@ -66,5 +69,6 @@ sealed abstract class SharedValidators[F[_]] private (
   val blockValidator: BlockValidator[F],
   val currencyBlockValidator: BlockValidator[F],
   val rumorValidator: RumorValidator[F],
-  val stateChannelValidator: StateChannelValidator[F]
+  val stateChannelValidator: StateChannelValidator[F],
+  val currencyMessageValidator: CurrencyMessageValidator[F]
 )

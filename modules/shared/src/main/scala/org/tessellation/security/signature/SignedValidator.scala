@@ -38,6 +38,11 @@ trait SignedValidator[F[_]] {
     minSignatureCount: PosInt
   ): SignedValidationErrorOr[Signed[A]]
 
+  def isSignedBy[A: Encoder](
+    signed: Signed[A],
+    signerAddress: Address
+  ): F[SignedValidationErrorOr[Signed[A]]]
+
   def isSignedExclusivelyBy[A: Encoder](
     signed: Signed[A],
     signerAddress: Address
@@ -78,6 +83,14 @@ object SignedValidator {
         signed.validNec
       else
         NotEnoughSignatures(signed.proofs.size, minSignatureCount).invalidNec
+
+    def isSignedBy[A: Encoder](
+      signed: Signed[A],
+      signerAddress: Address
+    ): F[SignedValidationErrorOr[Signed[A]]] =
+      signed.proofs
+        .existsM(_.id.toAddress.map(_ === signerAddress))
+        .map(Validated.condNec(_, signed, NotSignedByAddressOwner))
 
     def isSignedExclusivelyBy[A: Encoder](
       signed: Signed[A],
@@ -141,6 +154,7 @@ object SignedValidator {
   case class MissingSigners(signers: NonEmptySet[Id]) extends SignedValidationError
   case class SignersNotInSeedlist(signers: NonEmptySet[Id]) extends SignedValidationError
   case object NotSignedExclusivelyByAddressOwner extends SignedValidationError
+  case object NotSignedByAddressOwner extends SignedValidationError
 
   type SignedValidationErrorOr[A] = ValidatedNec[SignedValidationError, A]
 }

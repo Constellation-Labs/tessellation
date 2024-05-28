@@ -52,7 +52,8 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
   val currencyMessageGen: Gen[Signed[CurrencyMessage]] = for {
     messageType <- Gen.oneOf(MessageType.Owner, MessageType.Staking)
     address <- addressGen
-    signed <- signedOf[CurrencyMessage](CurrencyMessage(messageType, address, MessageOrdinal.MinValue))
+    metagraphId <- addressGen
+    signed <- signedOf[CurrencyMessage](CurrencyMessage(messageType, address, metagraphId, MessageOrdinal.MinValue))
   } yield signed
 
   implicit val show: Show[DataApplicationBlock] = (t: DataApplicationBlock) => t.toString

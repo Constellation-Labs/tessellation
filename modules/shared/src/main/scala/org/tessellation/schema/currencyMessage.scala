@@ -59,7 +59,7 @@ object currencyMessage {
   }
 
   @derive(eqv, show, encoder, decoder, order, ordering)
-  case class CurrencyMessage(messageType: MessageType, address: Address, parentOrdinal: MessageOrdinal) {
+  case class CurrencyMessage(messageType: MessageType, address: Address, metagraphId: Address, parentOrdinal: MessageOrdinal) {
     def ordinal: MessageOrdinal = parentOrdinal.next
   }
 
