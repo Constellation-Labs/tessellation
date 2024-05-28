@@ -3,7 +3,6 @@ package org.tessellation.dag.l0.cli
 import cats.syntax.all._
 
 import org.tessellation.dag.l0.config.types._
-import org.tessellation.dag.l0.infrastructure.statechannel.StateChannelAllowanceLists
 import org.tessellation.env._
 import org.tessellation.env.env._
 import org.tessellation.ext.decline.WithOpts
@@ -11,6 +10,7 @@ import org.tessellation.ext.decline.decline._
 import org.tessellation.node.shared.cli.opts.{genesisPathOpts, trustRatingsPathOpts}
 import org.tessellation.node.shared.cli.{CliMethod, CollateralAmountOpts}
 import org.tessellation.node.shared.config.types._
+import org.tessellation.node.shared.infrastructure.statechannel.StateChannelAllowanceLists
 import org.tessellation.schema.balance.Amount
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.security.hash.Hash

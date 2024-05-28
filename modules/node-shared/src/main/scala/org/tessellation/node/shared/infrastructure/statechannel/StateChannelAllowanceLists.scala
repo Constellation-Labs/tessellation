@@ -1,4 +1,4 @@
-package org.tessellation.dag.l0.infrastructure.statechannel
+package org.tessellation.node.shared.infrastructure.statechannel
 
 import cats.data.NonEmptySet
 import cats.syntax.option._

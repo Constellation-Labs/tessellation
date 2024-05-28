@@ -1,6 +1,8 @@
 package org.tessellation.node.shared.infrastructure.snapshot
 
+import cats.data.Validated
 import cats.effect.Async
+import cats.kernel.Order
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
@@ -48,7 +50,8 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
 object CurrencySnapshotAcceptanceManager {
   def make[F[_]: Async](
     blockAcceptanceManager: BlockAcceptanceManager[F],
-    collateral: Amount
+    collateral: Amount,
+    messageValidator: CurrencyMessageValidator[F]
   ) = new CurrencySnapshotAcceptanceManager[F] {
 
     def accept(
@@ -92,42 +95,38 @@ object CurrencySnapshotAcceptanceManager {
 
       lastMessages = lastSnapshotContext.snapshotInfo.lastMessages.getOrElse(SortedMap.empty[MessageType, Signed[CurrencyMessage]])
 
-      messagesToAccept = messagesForAcceptance
-        .groupBy(_.messageType)
-        .view
-        .mapValues { messages =>
-          val sortedMessages = messages.sortBy(_.parentOrdinal)
+      msgOrdering = Order
+        .whenEqual[Signed[CurrencyMessage]](
+          Order.whenEqual(Order.by(_.parentOrdinal), Order.reverse(Order.by(_.proofs.size))),
+          Order[Signed[CurrencyMessage]]
+        )
+        .toOrdering
 
-          sortedMessages
-            .foldLeft(List.empty[Signed[CurrencyMessage]]) { (acc, curr) =>
-              lastMessages.get(curr.messageType) match {
-                case Some(lastMsg) if curr.parentOrdinal <= lastMsg.parentOrdinal => acc
-                case _ if acc.isEmpty || acc.head.ordinal == curr.parentOrdinal   => curr :: acc
-                case _                                                            => acc
+      (messagesForContextUpdate, messagesToAccept, messagesToReject) <-
+        messagesForAcceptance
+          .sorted(msgOrdering)
+          .foldLeftM((lastMessages, List.empty[Signed[CurrencyMessage]], List.empty[Signed[CurrencyMessage]])) {
+            case ((lastMsgs, toAdd, toReject), message) =>
+              messageValidator.validate(message, lastMsgs, lastSnapshotContext.address).map {
+                case Validated.Valid(_) =>
+                  val updatedLastMsgs = lastMsgs.updated(message.messageType, message)
+                  val updatedToAdd = message :: toAdd
+
+                  (updatedLastMsgs, updatedToAdd, toReject)
+                case Validated.Invalid(_) =>
+                  val updatedToReject = message :: toReject
+
+                  (lastMsgs, toAdd, updatedToReject)
               }
-            }
-        }
-        .filter {
-          case (_, messages) => messages.nonEmpty
-        }
-        .toMap
-
-      messagesToReject = messagesForAcceptance.filterNot(messagesToAccept.values.toList.flatten.contains)
-
-      messagesForContextUpdate = (lastMessages.view.mapValues(List(_)).toMap |+| messagesToAccept).view
-        .mapValues(_.maxByOption(_.ordinal))
-        .collect {
-          case (k, Some(v)) => k -> v
-        }
-        .toSortedMap
+          }
 
       messagesAcceptanceResult = CurrencyMessagesAcceptanceResult(
         messagesForContextUpdate,
-        messagesToAccept.values.toList.flatten,
+        messagesToAccept,
         messagesToReject
       )
 
-      csi = CurrencySnapshotInfo(transactionsRefs, updatedBalancesByRewards)
+      csi = CurrencySnapshotInfo(transactionsRefs, updatedBalancesByRewards, messagesForContextUpdate.some)
       stateProof <- csi.stateProof(snapshotOrdinal)
 
     } yield (acceptanceResult, messagesAcceptanceResult, acceptedRewardTxs, csi, stateProof)

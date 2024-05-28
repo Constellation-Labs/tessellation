@@ -72,7 +72,8 @@ object SharedServices {
       gossip <- HasherSelector[F].withCurrent(implicit hasher => Gossip.make[F](queues.rumor, nodeId, generation, keyPair))
       currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
         BlockAcceptanceManager.make[F](validators.currencyBlockValidator, txHasher),
-        collateral.amount
+        collateral.amount,
+        validators.currencyMessageValidator
       )
 
       currencyEventsCutter = CurrencyEventsCutter.make[F](None)

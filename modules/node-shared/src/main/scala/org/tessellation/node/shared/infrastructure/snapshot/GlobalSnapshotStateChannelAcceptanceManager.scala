@@ -57,7 +57,10 @@ object GlobalSnapshotStateChannelAcceptanceManager {
             .toList
             .traverse {
               case (address, outputs) =>
-                acceptForAddress(ordinal, stateChannelAllowanceLists.flatMap(_.get(address)))(
+                acceptForAddress(
+                  ordinal,
+                  stateChannelAllowanceLists.flatMap(_.get(address))
+                )(
                   lastGlobalSnapshotInfo.lastStateChannelSnapshotHashes.getOrElse(address, Hash.empty),
                   outputs
                 ).map {

@@ -1,6 +1,7 @@
 package org.tessellation.dag.l0.infrastructure.statechannel
 
 import org.tessellation.env.AppEnvironment
+import org.tessellation.node.shared.infrastructure.statechannel.StateChannelAllowanceLists
 
 import eu.timepit.refined.auto._
 import weaver._

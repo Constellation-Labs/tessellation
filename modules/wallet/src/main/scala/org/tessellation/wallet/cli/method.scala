@@ -78,7 +78,8 @@ object method {
     }
   }
 
-  case class CreateOwnerSigningMessage(dagAddress: Address, parentOrdinal: MessageOrdinal, outputPath: Option[Path]) extends CliMethod
+  case class CreateOwnerSigningMessage(dagAddress: Address, metagraphId: Address, parentOrdinal: MessageOrdinal, outputPath: Option[Path])
+      extends CliMethod
 
   object CreateOwnerSigningMessage extends WithOpts[CreateOwnerSigningMessage] {
     val opts: Opts[CreateOwnerSigningMessage] =
@@ -87,7 +88,8 @@ object method {
       }
   }
 
-  case class CreateStakingSigningMessage(dagAddress: Address, parentOrdinal: MessageOrdinal, outputPath: Option[Path]) extends CliMethod
+  case class CreateStakingSigningMessage(dagAddress: Address, metagraphId: Address, parentOrdinal: MessageOrdinal, outputPath: Option[Path])
+      extends CliMethod
 
   object CreateStakingSigningMessage extends WithOpts[CreateStakingSigningMessage] {
     val opts: Opts[CreateStakingSigningMessage] =
@@ -107,8 +109,9 @@ object method {
     }
   }
 
-  private def parseMessageOpts: (Opts[Address], Opts[MessageOrdinal], Opts[Option[Path]]) = (
+  private def parseMessageOpts: (Opts[Address], Opts[Address], Opts[MessageOrdinal], Opts[Option[Path]]) = (
     Opts.option[Address]("address", "DAG Address", "a"),
+    Opts.option[Address]("metagraphId", "Metagraph identifier", "m"),
     Opts
       .option[Long]("parentOrdinal", "Ordinal of the parent message", "o")
       .mapValidated(MessageOrdinal(_).toValidatedNel),

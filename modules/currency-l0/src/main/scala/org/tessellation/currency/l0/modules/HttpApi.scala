@@ -8,7 +8,7 @@ import cats.syntax.semigroupk._
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationCustomRoutes
 import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
 import org.tessellation.currency.l0.cell.{L0Cell, L0CellInput}
-import org.tessellation.currency.l0.http.routes.{CurrencyBlockRoutes, DataBlockRoutes}
+import org.tessellation.currency.l0.http.routes.{CurrencyBlockRoutes, CurrencyMessageRoutes, DataBlockRoutes}
 import org.tessellation.currency.l0.snapshot.CurrencySnapshotKey
 import org.tessellation.currency.l0.snapshot.schema.CurrencyConsensusOutcome
 import org.tessellation.currency.schema.currency._
@@ -31,6 +31,7 @@ import org.http4s.{HttpApp, HttpRoutes}
 object HttpApi {
 
   def make[F[_]: Async: SecurityProvider: HasherSelector: Metrics: L0NodeContext](
+    validators: Validators[F],
     storages: Storages[F],
     queues: Queues[F],
     services: Services[F],
@@ -44,6 +45,7 @@ object HttpApi {
     maybeMetagraphVersion: Option[MetagraphVersion]
   ): HttpApi[F] =
     new HttpApi[F](
+      validators,
       storages,
       queues,
       services,
@@ -59,6 +61,7 @@ object HttpApi {
 }
 
 sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Metrics: L0NodeContext] private (
+  validators: Validators[F],
   storages: Storages[F],
   queues: Queues[F],
   services: Services[F],
@@ -117,7 +120,9 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   private val metricRoutes = MetricRoutes[F]().publicRoutes
   private val targetRoutes = HasherSelector[F].withCurrent(implicit hasher => TargetRoutes[F](services.cluster).publicRoutes)
 
-  private val currencyMessageRoutes = new CurrencyMessageRoutes[F](mkCell, services.currencyMessageService).publicRoutes
+  private val currencyMessageRoutes = HasherSelector[F].withCurrent(implicit hasher =>
+    new CurrencyMessageRoutes[F](mkCell, validators.currencyMessageValidator, storages.snapshot, storages.identifier).publicRoutes
+  )
 
   private val openRoutes: HttpRoutes[F] =
     CORS.policy.withAllowOriginAll.withAllowHeadersAll.withAllowCredentials(false).apply {

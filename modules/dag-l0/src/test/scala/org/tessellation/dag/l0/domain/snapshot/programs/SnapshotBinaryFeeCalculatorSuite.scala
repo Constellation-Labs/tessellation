@@ -31,6 +31,7 @@ import weaver.scalacheck.Checkers
 object SnapshotBinaryFeeCalculatorSuite extends SimpleMutableIOSuite with Checkers {
   val eventAddress = Address(refineV[DAGAddressRefined].unsafeFrom("DAGSTARDUSTCOLLECTIVEHZOIPHXZUBFGNXWJETZVSPAPAHMLXS"))
   val stakingAddress = Address(refineV[DAGAddressRefined].unsafeFrom("DAG7coCMRPJah33MMcfAEZVeB1vYn3vDRe6WqeGU"))
+  val metagraphId = Address(refineV[DAGAddressRefined].unsafeFrom("DAG7coCMRPJah33MMcfAEZVeB1vYn3vDRe6WqeGU"))
 
   val configs: SortedMap[SnapshotOrdinal, FeeCalculatorConfig] =
     SortedMap(
@@ -132,19 +133,25 @@ object SnapshotBinaryFeeCalculatorSuite extends SimpleMutableIOSuite with Checke
       )
     )
 
-  def currencyMessageGen(address: Address): Gen[Signed[CurrencyMessage]] =
-    signedOf(CurrencyMessage(MessageType.Staking, address, MessageOrdinal.MinValue))
+  def currencyMessageGen(address: Address, metagraphId: Address): Gen[Signed[CurrencyMessage]] =
+    signedOf(CurrencyMessage(MessageType.Staking, address, metagraphId, MessageOrdinal.MinValue))
 
   def lastCurrencySnapshotsGen(
-    stakingAddress: Option[Address]
+    stakingAddress: Option[Address],
+    metagraphId: Option[Address]
   ): Gen[SortedMap[Address, Either[Signed[CurrencySnapshot], (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]]] =
     for {
       signedCis <- currencyIncrementalSnapshotGen
-      lastMessages <- stakingAddress.fold(
-        Gen.const(Option.empty[SortedMap[MessageType, Signed[CurrencyMessage]]])
-      )(address =>
-        currencyMessageGen(address).map(signedMsg => SortedMap[MessageType, Signed[CurrencyMessage]](Staking -> signedMsg)).map(_.some)
-      )
+      lastMessages <- stakingAddress
+        .zip(metagraphId)
+        .fold(
+          Gen.const(Option.empty[SortedMap[MessageType, Signed[CurrencyMessage]]])
+        ) {
+          case (address, metagraph) =>
+            currencyMessageGen(address, metagraph)
+              .map(signedMsg => SortedMap[MessageType, Signed[CurrencyMessage]](Staking -> signedMsg))
+              .map(_.some)
+        }
       currencySnapshotInfo = CurrencySnapshotInfo(
         lastTxRefs = SortedMap.empty,
         balances = SortedMap.empty,
@@ -152,11 +159,11 @@ object SnapshotBinaryFeeCalculatorSuite extends SimpleMutableIOSuite with Checke
       )
     } yield SortedMap(eventAddress -> (signedCis, currencySnapshotInfo).asRight[Signed[CurrencySnapshot]])
 
-  def testDataGen(stakingAddress: Option[Address]) =
+  def testDataGen(stakingAddress: Option[Address], metagraphId: Option[Address]) =
     for {
       input <- Gen.oneOf(sampleInputs)
       event <- signedOf(binary(input)).map(StateChannelOutput(eventAddress, _))
-      lastCurrencySnapshots <- lastCurrencySnapshotsGen(stakingAddress)
+      lastCurrencySnapshots <- lastCurrencySnapshotsGen(stakingAddress, metagraphId)
     } yield (input, event, lastCurrencySnapshots)
 
   implicit val showTestData: Show[
@@ -169,7 +176,7 @@ object SnapshotBinaryFeeCalculatorSuite extends SimpleMutableIOSuite with Checke
 
   test("when snapshot for event address is not found") { _ =>
     val calculator = SnapshotBinaryFeeCalculator.make[IO](configs)
-    forall(testDataGen(None)) {
+    forall(testDataGen(None, None)) {
       case (input, stateChannelEvent, _) =>
         val info = GlobalSnapshotInfo.empty.copy(balances = SortedMap(stakingAddress -> input.balance))
         calculator
@@ -180,7 +187,7 @@ object SnapshotBinaryFeeCalculatorSuite extends SimpleMutableIOSuite with Checke
 
   test("when message for staking address is not found") { _ =>
     val calculator = SnapshotBinaryFeeCalculator.make[IO](configs)
-    forall(testDataGen(None)) {
+    forall(testDataGen(None, None)) {
       case (input, stateChannelEvent, lastCurrencySnapshots) =>
         val info = GlobalSnapshotInfo.empty.copy(
           balances = SortedMap(stakingAddress -> input.balance),
@@ -194,7 +201,7 @@ object SnapshotBinaryFeeCalculatorSuite extends SimpleMutableIOSuite with Checke
 
   test("when balance is not unavailable") { _ =>
     val calculator = SnapshotBinaryFeeCalculator.make[IO](configs)
-    forall(testDataGen(stakingAddress.some)) {
+    forall(testDataGen(stakingAddress.some, metagraphId.some)) {
       case (input, stateChannelEvent, lastCurrencySnapshots) =>
         val info = GlobalSnapshotInfo.empty.copy(
           balances = SortedMap.empty,
@@ -208,7 +215,7 @@ object SnapshotBinaryFeeCalculatorSuite extends SimpleMutableIOSuite with Checke
 
   test("when balance is available") { _ =>
     val calculator = SnapshotBinaryFeeCalculator.make[IO](configs)
-    forall(testDataGen(stakingAddress.some)) {
+    forall(testDataGen(stakingAddress.some, metagraphId.some)) {
       case (input, stateChannelEvent, lastCurrencySnapshots) =>
         val info = GlobalSnapshotInfo.empty.copy(
           balances = SortedMap(stakingAddress -> input.balance),

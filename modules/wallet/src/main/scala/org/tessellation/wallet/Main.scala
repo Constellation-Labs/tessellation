@@ -68,15 +68,29 @@ object Main
                     toExitCode("Error while creating transaction.") {
                       createAndStoreTransaction[IO](keyPair, destination, fee, amount, prevTxPath, nextTxPath)
                     }
-                  case CreateOwnerSigningMessage(address, parentOrdinal, outputPath) =>
+                  case CreateOwnerSigningMessage(address, metagraphId, parentOrdinal, outputPath) =>
                     implicit val hasher = Hasher.forJson[IO]
                     toExitCode("Error while creating owner signing message.") {
-                      createCurrencyMessage[IO](keyPair, MessageType.Owner, address, parentOrdinal, outputPath)
+                      createCurrencyMessage[IO](
+                        keyPair,
+                        MessageType.Owner,
+                        address = address,
+                        metagraphId = metagraphId,
+                        parentOrdinal,
+                        outputPath
+                      )
                     }
-                  case CreateStakingSigningMessage(address, parentOrdinal, outputPath) =>
+                  case CreateStakingSigningMessage(address, metagraphId, parentOrdinal, outputPath) =>
                     implicit val hasher = Hasher.forJson[IO]
                     toExitCode("Error while creating staking signing message.") {
-                      createCurrencyMessage[IO](keyPair, MessageType.Staking, address, parentOrdinal, outputPath)
+                      createCurrencyMessage[IO](
+                        keyPair,
+                        MessageType.Staking,
+                        address = address,
+                        metagraphId = metagraphId,
+                        parentOrdinal,
+                        outputPath
+                      )
                     }
                   case MergeSigningMessages(files, outputPath: Option[Path]) =>
                     implicit val hasher = Hasher.forJson[IO]
@@ -133,11 +147,15 @@ object Main
     keyPair: KeyPair,
     messageType: MessageType,
     address: Address,
+    metagraphId: Address,
     parentOrdinal: MessageOrdinal,
     outputPath: Option[Path]
   ): F[Unit] =
     Signed
-      .forAsyncHasher[F, CurrencyMessage](CurrencyMessage(messageType, address, parentOrdinal), keyPair)
+      .forAsyncHasher[F, CurrencyMessage](
+        CurrencyMessage(messageType, address = address, metagraphId = metagraphId, parentOrdinal),
+        keyPair
+      )
       .flatMap(writeJson[F, Signed[CurrencyMessage]](outputPath))
 
   private def loadKeyPair[F[_]: Async: SecurityProvider](cfg: EnvConfig): F[KeyPair] =

@@ -17,6 +17,7 @@ import org.tessellation.node.shared.app.{NodeShared, TessellationIOApp, getMajor
 import org.tessellation.node.shared.domain.rewards.Rewards
 import org.tessellation.node.shared.ext.pureconfig._
 import org.tessellation.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
+import org.tessellation.node.shared.infrastructure.statechannel.StateChannelAllowanceLists
 import org.tessellation.node.shared.resources.MkHttpServer
 import org.tessellation.node.shared.resources.MkHttpServer.ServerName
 import org.tessellation.node.shared.snapshot.currency.CurrencySnapshotEvent
@@ -74,7 +75,8 @@ abstract class CurrencyL0App(
         .make[IO](sharedStorages, cfg.snapshot, method.globalL0Peer, dataApplicationService, hasherSelectorAlwaysCurrent)
         .asResource
       p2pClient = P2PClient.make[IO](sharedP2PClient, sharedResources.client, sharedServices.session)
-      validators = Validators.make[IO](seedlist, Hasher.forKryo[IO])
+      maybeAllowanceList = StateChannelAllowanceLists.get(cfg.environment)
+      validators = Validators.make[IO](seedlist, maybeAllowanceList, Hasher.forKryo[IO])
       implicit0(nodeContext: L0NodeContext[IO]) = L0NodeContext.make[IO](storages.snapshot, hasherSelectorAlwaysCurrent)
       maybeMajorityPeerIds <- getMajorityPeerIds[IO](
         nodeShared.prioritySeedlist,
@@ -121,6 +123,7 @@ abstract class CurrencyL0App(
 
       api = HttpApi
         .make[IO](
+          validators,
           storages,
           queues,
           services,
