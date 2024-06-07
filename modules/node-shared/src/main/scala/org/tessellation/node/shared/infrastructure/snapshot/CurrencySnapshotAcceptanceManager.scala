@@ -126,7 +126,11 @@ object CurrencySnapshotAcceptanceManager {
         messagesToReject
       )
 
-      csi = CurrencySnapshotInfo(transactionsRefs, updatedBalancesByRewards, messagesForContextUpdate.some)
+      csi = CurrencySnapshotInfo(
+        transactionsRefs,
+        updatedBalancesByRewards,
+        Option.when(messagesForContextUpdate.nonEmpty)(messagesForContextUpdate)
+      )
       stateProof <- csi.stateProof(snapshotOrdinal)
 
     } yield (acceptanceResult, messagesAcceptanceResult, acceptedRewardTxs, csi, stateProof)

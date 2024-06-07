@@ -182,7 +182,7 @@ object CurrencySnapshotCreator {
             stateProof,
             currentEpochProgress,
             dataApplicationAcceptanceResult.map(_.dataApplicationPart),
-            messagesAcceptanceResult.accepted.toSortedSet.some,
+            Option.when(snapshotInfo.lastMessages.nonEmpty)(messagesAcceptanceResult.accepted.toSortedSet),
             feeTransactions = none
           )
 
