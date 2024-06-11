@@ -11,7 +11,7 @@ import cats.syntax.traverse._
 
 import org.tessellation.currency.schema.currency._
 import org.tessellation.ext.crypto._
-import org.tessellation.json.{JsonBrotliBinarySerializer, JsonSerializer}
+import org.tessellation.json.{JsonBrotliBinarySerializer, JsonSerializer, SizeCalculator}
 import org.tessellation.node.shared.config.types.SnapshotSizeConfig
 import org.tessellation.node.shared.domain.snapshot.storage.{LastSnapshotStorage, SnapshotStorage}
 import org.tessellation.node.shared.domain.statechannel.FeeCalculator
@@ -29,7 +29,7 @@ import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
 import org.tessellation.statechannel.StateChannelSnapshotBinary
 
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.{NonNegInt, NonNegLong}
+import eu.timepit.refined.types.numeric.NonNegLong
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait StateChannelSnapshotService[F[_]] {
@@ -84,11 +84,8 @@ object StateChannelSnapshotService {
               )
               .map(_.length)
               .flatMap { noSigsBytesSize =>
-                val sizeKb = NonNegInt.unsafeFrom(
-                  (BigDecimal(noSigsBytesSize + signatureCount * snapshotSizeConfig.singleSignatureSizeInBytes) / BigDecimal(1024))
-                    .setScale(0, BigDecimal.RoundingMode.UP)
-                    .toInt
-                )
+                val bytesSize = noSigsBytesSize + signatureCount * snapshotSizeConfig.singleSignatureSizeInBytes
+                val sizeKb = SizeCalculator.toKilobytes(bytesSize)
 
                 feeCalculator.calculateRecommendedFee(maybeGlobalSnapshotOrdinal, feeCalculationDelay)(staked, sizeKb)
               }
