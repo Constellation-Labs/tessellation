@@ -10,7 +10,7 @@ import cats.syntax.validated._
 
 import org.tessellation.currency.schema.currency.SnapshotFee
 import org.tessellation.ext.cats.syntax.validated._
-import org.tessellation.json.JsonSerializer
+import org.tessellation.json.{JsonSerializer, SizeCalculator}
 import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
 import org.tessellation.node.shared.domain.statechannel.StateChannelValidator.StateChannelValidationErrorOr
 import org.tessellation.schema.SnapshotOrdinal
@@ -27,7 +27,7 @@ import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.{NonNegInt, PosLong}
+import eu.timepit.refined.types.numeric.PosLong
 
 trait StateChannelValidator[F[_]] {
 
@@ -84,15 +84,10 @@ object StateChannelValidator {
           .product(genesisAddressV)
           .as(stateChannelOutput)
 
-    private def calculateSnapshotSizeInBytes(signedSC: Signed[StateChannelSnapshotBinary]): F[NonNegInt] =
-      JsonSerializer[F].serialize(signedSC).map { binary =>
-        NonNegInt.unsafeFrom(binary.size)
-      }
-
     private def validateSnapshotSize(
       signedSC: Signed[StateChannelSnapshotBinary]
     ): F[StateChannelValidationErrorOr[Signed[StateChannelSnapshotBinary]]] =
-      calculateSnapshotSizeInBytes(signedSC).map { actualSize =>
+      SizeCalculator.bytes(signedSC).map { actualSize =>
         val isWithinLimit = actualSize <= maxBinarySizeInBytes
 
         if (isWithinLimit)
@@ -106,13 +101,7 @@ object StateChannelValidator {
       globalOrdinal: SnapshotOrdinal,
       staked: Balance
     ): F[StateChannelValidationErrorOr[Signed[StateChannelSnapshotBinary]]] =
-      calculateSnapshotSizeInBytes(signedSC).map { bytesSize =>
-        NonNegInt.unsafeFrom(
-          (BigDecimal(bytesSize) / BigDecimal(1024))
-            .setScale(0, BigDecimal.RoundingMode.UP)
-            .toInt
-        )
-      }.flatMap { sizeKb =>
+      SizeCalculator.kilobytes(signedSC).flatMap { sizeKb =>
         feeCalculator.calculateRecommendedFee(globalOrdinal.some)(staked, sizeKb).map { minFee =>
           val isSufficientFee = minFee.value <= signedSC.fee.value
 
