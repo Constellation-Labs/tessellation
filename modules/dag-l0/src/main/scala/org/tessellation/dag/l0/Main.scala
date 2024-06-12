@@ -11,6 +11,7 @@ import org.tessellation.dag.l0.infrastructure.snapshot.schema.{Finished, GlobalC
 import org.tessellation.dag.l0.infrastructure.trust.handler.{ordinalTrustHandler, trustHandler}
 import org.tessellation.dag.l0.modules._
 import org.tessellation.ext.cats.effect._
+import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
 import org.tessellation.ext.kryo._
 import org.tessellation.node.shared.app.{NodeShared, TessellationIOApp}
 import org.tessellation.node.shared.domain.collateral.OwnCollateralNotSatisfied
@@ -198,40 +199,34 @@ object Main
                   SnapshotLocalFileSystemStorage.make[IO, GlobalSnapshot](cfg.snapshot.snapshotPath).flatMap {
                     fullGlobalSnapshotLocalFileSystemStorage =>
                       hasherSelector
-                        .forOrdinal(genesis.ordinal) { implicit hasher =>
+                        .forOrdinal(genesis.ordinal.next) { implicit hasher =>
                           fullGlobalSnapshotLocalFileSystemStorage.write(hashedGenesis.signed) >>
-                            GlobalSnapshot.mkFirstIncrementalSnapshot[IO](hashedGenesis)
-                        }
-                        .flatMap { firstIncrementalSnapshot =>
-                          hasherSelector
-                            .forOrdinal(firstIncrementalSnapshot.ordinal) { implicit hasher =>
-                              Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](firstIncrementalSnapshot, keyPair)
-                            }
-                            .flatMap { signedFirstIncrementalSnapshot =>
-                              hasherSelector.forOrdinal(signedFirstIncrementalSnapshot.ordinal) { implicit hasher =>
-                                storages.globalSnapshot.prepend(signedFirstIncrementalSnapshot, hashedGenesis.info)
-                              } >>
-                                services.collateral
-                                  .hasCollateral(nodeShared.nodeId)
-                                  .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
-                                services.consensus.manager
-                                  .startFacilitatingAfterRollback(
-                                    signedFirstIncrementalSnapshot.ordinal,
-                                    GlobalConsensusOutcome(
-                                      signedFirstIncrementalSnapshot.ordinal,
-                                      Facilitators(List(nodeId)),
-                                      RemovedFacilitators.empty,
-                                      WithdrawnFacilitators.empty,
-                                      Finished(
-                                        signedFirstIncrementalSnapshot,
-                                        hashedGenesis.info,
-                                        EventTrigger,
-                                        Candidates.empty,
-                                        Hash.empty
+                            GlobalSnapshot.mkFirstIncrementalSnapshot[IO](hashedGenesis).flatMap { firstIncrementalSnapshot =>
+                              Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](firstIncrementalSnapshot, keyPair).flatMap {
+                                signedFirstIncrementalSnapshot =>
+                                  storages.globalSnapshot.prepend(signedFirstIncrementalSnapshot, hashedGenesis.info) >>
+                                    services.collateral
+                                      .hasCollateral(nodeShared.nodeId)
+                                      .flatMap(OwnCollateralNotSatisfied.raiseError[IO, Unit].unlessA) >>
+                                    services.consensus.manager
+                                      .startFacilitatingAfterRollback(
+                                        signedFirstIncrementalSnapshot.ordinal,
+                                        GlobalConsensusOutcome(
+                                          signedFirstIncrementalSnapshot.ordinal,
+                                          Facilitators(List(nodeId)),
+                                          RemovedFacilitators.empty,
+                                          WithdrawnFacilitators.empty,
+                                          Finished(
+                                            signedFirstIncrementalSnapshot,
+                                            hashedGenesis.info,
+                                            EventTrigger,
+                                            Candidates.empty,
+                                            Hash.empty
+                                          )
+                                        )
                                       )
-                                    )
-                                  )
 
+                              }
                             }
                         }
                   }
