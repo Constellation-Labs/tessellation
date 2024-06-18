@@ -84,6 +84,9 @@ trait BaseDataApplicationContextualOps[F[_], Context] {
     A: Applicative[F]
   ): F[DataApplicationValidationErrorOr[Unit]] = ().validNec[DataApplicationValidationError].pure[F]
 
+  def extractFees(ds: Seq[Signed[DataUpdate]])(implicit context: Context, A: Applicative[F]): F[Seq[Signed[FeeTransaction]]] =
+    A.pure(Seq.empty)
+
   def combine(state: DataState.Base, updates: List[Signed[DataUpdate]])(implicit context: Context): F[DataState.Base]
 
   def getCalculatedState(implicit context: Context): F[(SnapshotOrdinal, DataCalculatedState)]
@@ -102,9 +105,6 @@ trait BaseDataApplicationL0Service[F[_]] extends BaseDataApplicationService[F] w
   final def serializedOnChainGenesis: F[Array[Byte]] = serializeState(genesis.onChain)
 
   def onSnapshotConsensusResult(snapshot: Hashed[CurrencyIncrementalSnapshot]): F[Unit]
-
-  def extractFees(ds: Seq[Signed[DataUpdate]])(implicit A: Applicative[F]): F[Seq[Signed[FeeTransaction]]] =
-    A.pure(Seq.empty[Signed[FeeTransaction]])
 }
 
 trait BaseDataApplicationL1Service[F[_]] extends BaseDataApplicationService[F] with BaseDataApplicationContextualOps[F, L1NodeContext[F]]
@@ -142,6 +142,9 @@ trait DataApplicationContextualOps[F[_], D <: DataUpdate, DON <: DataOnChainStat
     implicit context: Context,
     A: Applicative[F]
   ): F[DataApplicationValidationErrorOr[Unit]] = ().validNec[DataApplicationValidationError].pure[F]
+
+  def extractFees(ds: Seq[Signed[D]])(implicit context: Context, A: Applicative[F]): F[Seq[Signed[FeeTransaction]]] =
+    A.pure(Seq.empty)
 
   def combine(state: DataState[DON, DOF], updates: List[Signed[D]])(implicit context: Context): F[DataState[DON, DOF]]
 
@@ -202,6 +205,9 @@ object BaseDataApplicationContextualOps {
       ): F[DataApplicationValidationErrorOr[Unit]] =
         service.validateFee(gsOrdinal)(update.asInstanceOf[Signed[D]])
 
+      override def extractFees(ds: Seq[Signed[DataUpdate]])(implicit context: Context, A: Applicative[F]): F[Seq[Signed[FeeTransaction]]] =
+        service.extractFees(ds.asInstanceOf[Seq[Signed[D]]])
+
       def combine(state: DataState.Base, updates: List[Signed[DataUpdate]])(
         implicit context: Context
       ): F[DataState.Base] =
@@ -258,6 +264,9 @@ object BaseDataApplicationService {
         update: Signed[DataUpdate]
       )(implicit context: Context, A: Applicative[F]): F[DataApplicationValidationErrorOr[Unit]] =
         v.validateFee(gsOrdinal)(update)
+
+      override def extractFees(ds: Seq[Signed[DataUpdate]])(implicit context: Context, A: Applicative[F]): F[Seq[Signed[FeeTransaction]]] =
+        v.extractFees(ds)
 
       def combine(state: DataState.Base, updates: List[Signed[DataUpdate]])(
         implicit context: Context
@@ -382,6 +391,11 @@ object BaseDataApplicationL0Service {
         update: Signed[DataUpdate]
       )(implicit context: L0NodeContext[F], A: Applicative[F]): F[DataApplicationValidationErrorOr[Unit]] =
         base.validateFee(gsOrdinal)(update)
+
+      override def extractFees(
+        ds: Seq[Signed[DataUpdate]]
+      )(implicit context: L0NodeContext[F], A: Applicative[F]): F[Seq[Signed[FeeTransaction]]] =
+        base.extractFees(ds)
 
       def combine(state: DataState.Base, updates: List[Signed[DataUpdate]])(
         implicit context: L0NodeContext[F]
