@@ -90,6 +90,9 @@ trait BaseDataApplicationContextualOps[F[_], Context] {
     A: Applicative[F]
   ): F[EstimatedFee] = EstimatedFee.empty.pure[F]
 
+  def extractFees(ds: Seq[Signed[DataUpdate]])(implicit context: Context, A: Applicative[F]): F[Seq[Signed[FeeTransaction]]] =
+    A.pure(Seq.empty)
+
   def combine(state: DataState.Base, updates: List[Signed[DataUpdate]])(implicit context: Context): F[DataState.Base]
 
   def getCalculatedState(implicit context: Context): F[(SnapshotOrdinal, DataCalculatedState)]
@@ -153,6 +156,9 @@ trait DataApplicationContextualOps[F[_], D <: DataUpdate, DON <: DataOnChainStat
     implicit context: Context,
     A: Applicative[F]
   ): F[EstimatedFee] = EstimatedFee.empty.pure[F]
+
+  def extractFees(ds: Seq[Signed[D]])(implicit context: Context, A: Applicative[F]): F[Seq[Signed[FeeTransaction]]] =
+    A.pure(Seq.empty)
 
   def combine(state: DataState[DON, DOF], updates: List[Signed[D]])(implicit context: Context): F[DataState[DON, DOF]]
 
@@ -219,6 +225,9 @@ object BaseDataApplicationContextualOps {
       ): F[EstimatedFee] =
         service.estimateFee(gsOrdinal)(update.asInstanceOf[D])
 
+      override def extractFees(ds: Seq[Signed[DataUpdate]])(implicit context: Context, A: Applicative[F]): F[Seq[Signed[FeeTransaction]]] =
+        service.extractFees(ds.asInstanceOf[Seq[Signed[D]]])
+
       def combine(state: DataState.Base, updates: List[Signed[DataUpdate]])(
         implicit context: Context
       ): F[DataState.Base] =
@@ -281,6 +290,9 @@ object BaseDataApplicationService {
         A: Applicative[F]
       ): F[EstimatedFee] =
         v.estimateFee(gsOrdinal)(update)
+
+      override def extractFees(ds: Seq[Signed[DataUpdate]])(implicit context: Context, A: Applicative[F]): F[Seq[Signed[FeeTransaction]]] =
+        v.extractFees(ds)
 
       def combine(state: DataState.Base, updates: List[Signed[DataUpdate]])(
         implicit context: Context
@@ -411,6 +423,11 @@ object BaseDataApplicationL0Service {
         A: Applicative[F]
       ): F[EstimatedFee] =
         base.estimateFee(gsOrdinal)(update)
+
+      override def extractFees(
+        ds: Seq[Signed[DataUpdate]]
+      )(implicit context: L0NodeContext[F], A: Applicative[F]): F[Seq[Signed[FeeTransaction]]] =
+        base.extractFees(ds)
 
       def combine(state: DataState.Base, updates: List[Signed[DataUpdate]])(
         implicit context: L0NodeContext[F]
