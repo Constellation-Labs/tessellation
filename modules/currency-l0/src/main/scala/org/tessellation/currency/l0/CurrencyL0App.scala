@@ -165,6 +165,8 @@ abstract class CurrencyL0App(
 
         case other =>
           for {
+            _ <- StateChannel.performGlobalL0PeerDiscovery[IO](storages, programs)
+
             innerProgram <- other match {
               case rv: RunValidator =>
                 storages.identifier.setInitial(rv.identifier) >>
