@@ -77,6 +77,7 @@ object Programs {
       services.globalL0,
       storages.identifier,
       storages.snapshot,
+      storages.lastGlobalSnapshot,
       services.collateral,
       services.consensus.manager,
       dataApplication

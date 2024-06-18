@@ -16,11 +16,11 @@ import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.collateral.{Collateral, OwnCollateralNotSatisfied}
 import org.tessellation.node.shared.domain.snapshot.services.GlobalL0Service
-import org.tessellation.node.shared.domain.snapshot.storage.SnapshotStorage
+import org.tessellation.node.shared.domain.snapshot.storage.{LastSnapshotStorage, SnapshotStorage}
 import org.tessellation.node.shared.infrastructure.consensus._
 import org.tessellation.node.shared.infrastructure.consensus.trigger.EventTrigger
-import org.tessellation.schema.GlobalIncrementalSnapshot
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import org.tessellation.security._
 import org.tessellation.security.hash.Hash
 
@@ -40,6 +40,7 @@ object Rollback {
     globalL0Service: GlobalL0Service[F],
     identifierStorage: IdentifierStorage[F],
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
+    lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     collateral: Collateral[F],
     consensusManager: CurrencyConsensusManager[F],
     dataApplication: Option[(BaseDataApplicationL0Service[F], CalculatedStateLocalFileSystemStorage[F])]
@@ -47,7 +48,7 @@ object Rollback {
     private val logger = Slf4jLogger.getLogger[F]
 
     def rollback(implicit hasher: Hasher[F]): F[Unit] = for {
-      (globalSnapshot, globalSnapshotInfo) <- globalL0Service.pullLatestSnapshotFromRandomPeer
+      (globalSnapshot, globalSnapshotInfo) <- globalL0Service.pullLatestSnapshot
 
       identifier <- identifierStorage.get
       lastBinaryHash <- globalSnapshotInfo.lastStateChannelSnapshotHashes
@@ -79,6 +80,12 @@ object Rollback {
           }
 
       }.getOrElse(Applicative[F].unit)
+
+      (globalSnapshotUpdated, globalSnapshotInfoUpdated) <- globalL0Service.pullLatestSnapshot
+      _ <- lastGlobalSnapshot.setInitial(globalSnapshotUpdated, globalSnapshotInfoUpdated)
+      _ <- logger.info(
+        s"Setting the last global snapshot as: ${globalSnapshotUpdated.ordinal.show}"
+      )
 
       _ <- consensusManager.startFacilitatingAfterRollback(
         lastIncremental.ordinal,
