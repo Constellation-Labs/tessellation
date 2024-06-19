@@ -2,12 +2,11 @@ package org.tessellation.currency.l1.modules
 
 import cats.effect.kernel.Async
 import cats.effect.std.Random
-import cats.syntax.flatMap._
-import cats.syntax.functor._
+import cats.syntax.all._
 
 import org.tessellation.dag.l1.domain.block.BlockStorage
 import org.tessellation.dag.l1.domain.consensus.block.storage.ConsensusStorage
-import org.tessellation.dag.l1.domain.transaction.{ContextualTransactionValidator, TransactionStorage}
+import org.tessellation.dag.l1.domain.transaction.{ContextualAllowSpendValidator, ContextualTransactionValidator, TransactionStorage}
 import org.tessellation.dag.l1.infrastructure.address.storage.AddressStorage
 import org.tessellation.dag.l1.modules.{Storages => BaseStorages}
 import org.tessellation.node.shared.domain.cluster.storage.L0ClusterStorage
@@ -18,6 +17,7 @@ import org.tessellation.node.shared.modules.SharedStorages
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.peer.L0Peer
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
+import org.tessellation.schema.swap.AllowSpendReference
 import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import org.tessellation.security.Hasher
@@ -34,7 +34,8 @@ object Storages {
     l0Peer: L0Peer,
     globalL0Peer: L0Peer,
     currencyIdentifier: Address,
-    contextualTransactionValidator: ContextualTransactionValidator
+    contextualTransactionValidator: ContextualTransactionValidator,
+    contextualAllowSpendValidator: ContextualAllowSpendValidator
   ): F[Storages[F, P, S, SI]] =
     for {
       blockStorage <- BlockStorage.make[F]
@@ -43,8 +44,11 @@ object Storages {
       globalL0ClusterStorage <- L0ClusterStorage.make[F](globalL0Peer)
       lastCurrencySnapshotStorage <- LastSnapshotStorage.make[F, S, SI]
       lastGlobalSnapshotStorage <- LastSnapshotStorage.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
-      transactionStorage <- TransactionReference.emptyCurrency(currencyIdentifier).flatMap {
-        TransactionStorage.make[F](_, contextualTransactionValidator)
+      transactionStorage <- (
+        TransactionReference.emptyCurrency(currencyIdentifier),
+        AllowSpendReference.emptyCurrency(currencyIdentifier)
+      ).flatMapN {
+        case (txRef, asRef) => TransactionStorage.make[F](txRef, asRef, contextualTransactionValidator, contextualAllowSpendValidator)
       }
       addressStorage <- AddressStorage.make[F]
     } yield

@@ -9,6 +9,7 @@ import org.tessellation.node.shared.domain.block.processing.{BlockAcceptanceCont
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.swap._
 import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.schema.{Block, BlockReference}
 import org.tessellation.security.SecurityProvider
@@ -62,6 +63,12 @@ object BlockAcceptanceLogicSuite extends MutableIOSuite with Checkers {
       def getParentUsage(blockReference: BlockReference): IO[Option[NonNegLong]] = ???
 
       def getCollateral: Amount = collateral
+
+      def getInitialAllowSpendRef: AllowSpendReference = ???
+
+      def getActiveAllowSpends(address: Address): IO[Option[List[Signed[AllowSpend]]]] = ???
+
+      def getLastAllowSpendRef(address: Address): IO[Option[AllowSpendReference]] = ???
     }
 
   test("accept block with signers with collateral") { implicit sc =>

@@ -9,7 +9,7 @@ import org.tessellation.dag.l1.domain.consensus.block.storage.ConsensusStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.node.shared.domain.block.processing.BlockValidator
 import org.tessellation.node.shared.domain.cluster.storage.ClusterStorage
-import org.tessellation.node.shared.domain.transaction.TransactionValidator
+import org.tessellation.node.shared.domain.transaction.{AllowSpendValidator, TransactionValidator}
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.security.Hasher
 
@@ -24,5 +24,6 @@ case class BlockConsensusContext[F[_]](
   selfId: PeerId,
   transactionStorage: TransactionStorage[F],
   transactionValidator: TransactionValidator[F],
+  allowSpendValidator: AllowSpendValidator[F],
   txHasher: Hasher[F]
 )

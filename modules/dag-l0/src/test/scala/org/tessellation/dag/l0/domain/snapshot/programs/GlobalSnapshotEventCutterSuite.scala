@@ -189,7 +189,7 @@ object GlobalSnapshotEventCutterSuite extends MutableIOSuite with Checkers {
     for {
       blockReferences <- blockReferencesGen
       signedTxn <- signedOf(transactionGen.map(_.copy(fee = TransactionFee(NonNegLong.unsafeFrom(fee)))))
-    } yield Block(blockReferences, NonEmptySet.fromSetUnsafe(SortedSet(signedTxn)))
+    } yield Block(blockReferences, NonEmptySet.fromSetUnsafe(SortedSet(signedTxn)), none)
 
   val parentBlockGen: Gen[Signed[Block]] =
     signedOf(blockWithFeeGen(0L))

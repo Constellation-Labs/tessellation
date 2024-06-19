@@ -17,6 +17,7 @@ import org.tessellation.schema.Block.HashedOps
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
+import org.tessellation.schema.swap._
 import org.tessellation.schema.transaction.TransactionReference
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hashed, Hasher}
@@ -65,6 +66,15 @@ object BlockService {
           blockStorage.getUsages(blockReference.hash)
 
         def getCollateral: Amount = collateral
+
+        def getActiveAllowSpends(address: Address): F[Option[List[Signed[AllowSpend]]]] =
+          transactionStorage.getActiveAllowSpends.map(_.map(_.map(_.signed)))
+
+        def getInitialAllowSpendRef: AllowSpendReference =
+          transactionStorage.getInitialAllowSpend.ref
+
+        def getLastAllowSpendRef(address: Address): F[Option[AllowSpendReference]] =
+          transactionStorage.getLastProcessedAllowSpend(address).map(_.ref.some)
       }
 
       private def processAcceptanceSuccess(

@@ -62,13 +62,15 @@ object Main
           seedlist,
           cfg.transactionLimit,
           None,
+          None,
           Hasher.forKryo[IO]
         )
       storages <- Storages
         .make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
           sharedStorages,
           method.l0Peer,
-          validators.transactionContextual
+          validators.transactionContextual,
+          validators.allowSpendContextual
         )
         .asResource
       p2pClient = P2PClient.make[IO](

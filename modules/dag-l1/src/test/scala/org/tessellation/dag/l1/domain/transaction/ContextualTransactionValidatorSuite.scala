@@ -84,7 +84,9 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
             .flatMap(_.toHashed)
             .map { tx =>
               val ref = TransactionReference.of(tx)
-              val stored = if (lastRef === TransactionReference.empty) MajorityTx(ref, SnapshotOrdinal.MinValue) else WaitingTx(tx)
+              val stored =
+                if (lastRef === TransactionReference.empty) StoredTransaction.MajorityTx(ref, SnapshotOrdinal.MinValue)
+                else StoredTransaction.WaitingTx(tx)
               acc + (tx.ordinal -> stored)
             }
       }
@@ -110,7 +112,7 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
             .flatMap(_.toHashed)
 
           txs = SortedMap(
-            majorityTx.ordinal -> MajorityTx(TransactionReference.of(majorityTx), SnapshotOrdinal.MinValue)
+            majorityTx.ordinal -> StoredTransaction.MajorityTx(TransactionReference.of(majorityTx), SnapshotOrdinal.MinValue)
           ).some
           balance = Balance(100000000L)
           lastSnapshotOrdinal = SnapshotOrdinal.unsafeApply(84L)
@@ -172,8 +174,8 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
             )
             .flatMap(_.toHashed)
           txs = SortedMap(
-            majorityTx.ordinal -> MajorityTx(TransactionReference.of(majorityTx), SnapshotOrdinal.MinValue),
-            waitingTx.ordinal -> WaitingTx(waitingTx)
+            majorityTx.ordinal -> StoredTransaction.MajorityTx(TransactionReference.of(majorityTx), SnapshotOrdinal.MinValue),
+            waitingTx.ordinal -> StoredTransaction.WaitingTx(waitingTx)
           )
 
           balance = Balance(100000001L)
@@ -240,8 +242,8 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
       conflictingTxRef = TransactionReference.of(conflictingTx)
 
       txs = SortedMap(
-        majorityTxRef.ordinal -> MajorityTx(majorityTxRef, SnapshotOrdinal.MinValue),
-        conflictingTxRef.ordinal -> WaitingTx(conflictingTx)
+        majorityTxRef.ordinal -> StoredTransaction.MajorityTx(majorityTxRef, SnapshotOrdinal.MinValue),
+        conflictingTxRef.ordinal -> StoredTransaction.WaitingTx(conflictingTx)
       )
       balance = Balance(NonNegLong.MaxValue)
       lastSnapshotOrdinal = SnapshotOrdinal.unsafeApply(durationToOrdinals(config.timeToWaitForBaseBalance))
@@ -281,9 +283,9 @@ object ContextualTransactionValidatorSuite extends MutableIOSuite with Checkers 
       processingTx <- genTransaction(kp, acceptedTxRef, TransactionFee(2L)).flatMap(_.toHashed)
 
       txs = SortedMap(
-        majorityTx.ordinal -> MajorityTx(majorityTxRef, SnapshotOrdinal.MinValue),
-        acceptedTx.ordinal -> AcceptedTx(acceptedTx), // LastTxRef
-        processingTx.ordinal -> ProcessingTx(processingTx)
+        majorityTx.ordinal -> StoredTransaction.MajorityTx(majorityTxRef, SnapshotOrdinal.MinValue),
+        acceptedTx.ordinal -> StoredTransaction.AcceptedTx(acceptedTx), // LastTxRef
+        processingTx.ordinal -> StoredTransaction.ProcessingTx(processingTx)
       )
       balance = Balance(NonNegLong.MaxValue)
       lastSnapshotOrdinal = SnapshotOrdinal.unsafeApply(durationToOrdinals(config.timeToWaitForBaseBalance))

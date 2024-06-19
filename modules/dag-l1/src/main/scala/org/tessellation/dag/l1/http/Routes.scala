@@ -12,6 +12,7 @@ import org.tessellation.ext.http4s.{AddressVar, HashVar}
 import org.tessellation.node.shared.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.routes.internal._
 import org.tessellation.schema.http.{ErrorCause, ErrorResponse}
+import org.tessellation.schema.swap._
 import org.tessellation.schema.transaction.{Transaction, TransactionStatus, TransactionView}
 import org.tessellation.security.Hasher
 import org.tessellation.security.signature.Signed
@@ -30,7 +31,8 @@ final case class Routes[F[_]: Async](
   transactionStorage: TransactionStorage[F],
   l0ClusterStorage: L0ClusterStorage[F],
   peerBlockConsensusInputQueue: Queue[F, Signed[PeerBlockConsensusInput]],
-  txHasher: Hasher[F]
+  txHasher: Hasher[F],
+  hasher: Hasher[F]
 )(implicit S: Supervisor[F])
     extends Http4sDsl[F]
     with PublicRoutes[F]
@@ -64,13 +66,39 @@ final case class Routes[F[_]: Async](
 
     case GET -> Root / "transactions" / HashVar(hash) =>
       transactionStorage.findWaiting(hash).flatMap {
-        case Some(WaitingTx(tx)) => Ok(TransactionView(tx.signed.value, tx.hash, TransactionStatus.Waiting))
-        case None                => NotFound()
+        case Some(StoredTransaction.WaitingTx(tx)) => Ok(TransactionView(tx.signed.value, tx.hash, TransactionStatus.Waiting))
+        case None                                  => NotFound()
       }
 
     case GET -> Root / "transactions" / "last-reference" / AddressVar(address) =>
       transactionStorage
         .getLastProcessedTransaction(address)
+        .map(_.ref)
+        .flatMap(Ok(_))
+
+    case req @ POST -> Root / "allow-spend" =>
+      implicit val _hasher = hasher
+
+      for {
+        allowSpend <- req.as[Signed[AllowSpend]]
+        hashedAllowSpend <- allowSpend.toHashed[F]
+        response <- transactionService
+          .offerAllowSpend(hashedAllowSpend)
+          .flatMap {
+            case Left(errors) => BadRequest(ErrorResponse(errors.map(e => ErrorCause(e.show))))
+            case Right(hash)  => Ok(("hash" ->> hash.value) :: HNil)
+          }
+      } yield response
+
+    case GET -> Root / "allow-spend" / HashVar(hash) =>
+      transactionStorage.findWaitingAllowSpend(hash).flatMap {
+        case Some(StoredAllowSpend.WaitingAllowSpend(tx)) => Ok(AllowSpendView(tx.signed.value, tx.hash, AllowSpendStatus.Waiting))
+        case None                                         => NotFound()
+      }
+
+    case GET -> Root / "allow-spend" / "last-reference" / AddressVar(address) =>
+      transactionStorage
+        .getLastProcessedAllowSpend(address)
         .map(_.ref)
         .flatMap(Ok(_))
 

@@ -5,14 +5,16 @@ import cats.data.Validated.{Invalid, Valid}
 import cats.effect.Async
 import cats.syntax.all._
 
+import org.tessellation.dag.l1.domain.transaction.ContextualAllowSpendValidator.ContextualAllowSpendValidationError
 import org.tessellation.dag.l1.domain.transaction.ContextualTransactionValidator.NonContextualValidationError
 import org.tessellation.ext.cats.syntax.validated.validatedSyntax
 import org.tessellation.node.shared.domain.collateral.LatestBalances
 import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
-import org.tessellation.node.shared.domain.transaction.TransactionValidator
+import org.tessellation.node.shared.domain.transaction.{AllowSpendValidator, TransactionValidator}
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
+import org.tessellation.schema.swap._
 import org.tessellation.schema.transaction.Transaction
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.{Hashed, Hasher}
@@ -25,6 +27,10 @@ trait TransactionService[F[_]] {
   def offer(transaction: Hashed[Transaction])(
     implicit hasher: Hasher[F]
   ): F[Either[NonEmptyList[ContextualTransactionValidationError], Hash]]
+
+  def offerAllowSpend(allowSpend: Hashed[AllowSpend])(
+    implicit hasher: Hasher[F]
+  ): F[Either[NonEmptyList[ContextualAllowSpendValidationError], Hash]]
 }
 
 object TransactionService {
@@ -37,7 +43,8 @@ object TransactionService {
   ](
     transactionStorage: TransactionStorage[F],
     lastSnapshotStorage: LastSnapshotStorage[F, S, SI] with LatestBalances[F],
-    transactionValidator: TransactionValidator[F]
+    transactionValidator: TransactionValidator[F],
+    allowSpendValidator: AllowSpendValidator[F]
   ): TransactionService[F] = new TransactionService[F] {
 
     def offer(
@@ -62,5 +69,29 @@ object TransactionService {
           case Invalid(e) =>
             e.toNonEmptyList.asLeft[Hash].leftWiden[NonEmptyList[ContextualTransactionValidationError]].pure[F]
         }
+
+    def offerAllowSpend(
+      allowSpend: Hashed[AllowSpend]
+    )(implicit hasher: Hasher[F]): F[Either[NonEmptyList[ContextualAllowSpendValidationError], Hash]] =
+      allowSpendValidator
+        .validate(allowSpend.signed)
+        .map(_.errorMap(ContextualAllowSpendValidator.NonContextualValidationError))
+        .flatMap {
+          case Valid(_) =>
+            lastSnapshotStorage.getCombinedStream.map {
+              case Some((s, si)) => (s.ordinal, si.balances.getOrElse(allowSpend.source, Balance.empty))
+              case None          => (SnapshotOrdinal.MinValue, Balance.empty)
+            }.changes.switchMap {
+              case (latestOrdinal, balance) => Stream.eval(transactionStorage.tryPutAllowSpend(allowSpend, latestOrdinal, balance))
+            }.head.compile.last.flatMap {
+              case Some(value) => value.pure[F]
+              case None =>
+                new Exception(s"Unexpected state, stream should always emit the first snapshot")
+                  .raiseError[F, Either[NonEmptyList[ContextualAllowSpendValidationError], Hash]]
+            }
+          case Invalid(e) =>
+            e.toNonEmptyList.asLeft[Hash].leftWiden[NonEmptyList[ContextualAllowSpendValidationError]].pure[F]
+        }
+
   }
 }

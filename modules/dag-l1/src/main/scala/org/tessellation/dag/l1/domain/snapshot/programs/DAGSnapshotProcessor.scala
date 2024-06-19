@@ -1,5 +1,6 @@
 package org.tessellation.dag.l1.domain.snapshot.programs
 
+import cats.Applicative
 import cats.effect.Async
 import cats.syntax.flatMap._
 
@@ -8,9 +9,12 @@ import org.tessellation.dag.l1.domain.block.BlockStorage
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage
 import org.tessellation.node.shared.domain.snapshot.SnapshotContextFunctions
 import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
-import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalSnapshotStateProof}
+import org.tessellation.schema._
+import org.tessellation.security.hash.ProofsHash
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
+
+import eu.timepit.refined.types.numeric.NonNegLong
 
 object DAGSnapshotProcessor {
 
@@ -25,6 +29,22 @@ object DAGSnapshotProcessor {
     new SnapshotProcessor[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo] {
 
       import SnapshotProcessor._
+
+      def onAlignedAtNewOrdinal(
+        acceptedInMajority: Map[ProofsHash, (Hashed[Block], NonNegLong)],
+        snapshot: Hashed[GlobalIncrementalSnapshot],
+        state: GlobalSnapshotInfo
+      ): F[Unit] = Applicative[F].unit
+
+      def onAlignedAtNewHeight(
+        acceptedInMajority: Map[ProofsHash, (Hashed[Block], NonNegLong)],
+        snapshot: Hashed[GlobalIncrementalSnapshot],
+        state: GlobalSnapshotInfo
+      ): F[Unit] = Applicative[F].unit
+
+      def onDownloadNeeded(state: GlobalSnapshotInfo, snapshot: Hashed[GlobalIncrementalSnapshot]): F[Unit] = Applicative[F].unit
+
+      def onRedownloadNeeded(state: GlobalSnapshotInfo, snapshot: Hashed[GlobalIncrementalSnapshot]): F[Unit] = Applicative[F].unit
 
       def process(
         snapshot: Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), Hashed[GlobalIncrementalSnapshot]]

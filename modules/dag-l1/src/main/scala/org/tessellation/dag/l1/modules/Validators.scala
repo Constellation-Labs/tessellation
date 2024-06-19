@@ -2,11 +2,7 @@ package org.tessellation.dag.l1.modules
 
 import cats.effect.Async
 
-import org.tessellation.dag.l1.domain.transaction.{
-  ContextualTransactionValidator,
-  CustomContextualTransactionValidator,
-  TransactionLimitConfig
-}
+import org.tessellation.dag.l1.domain.transaction._
 import org.tessellation.node.shared.domain.block.processing.BlockValidator
 import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
 import org.tessellation.node.shared.domain.transaction._
@@ -27,17 +23,23 @@ object Validators {
     seedlist: Option[Set[SeedlistEntry]],
     transactionLimitConfig: TransactionLimitConfig,
     customContextualTransactionValidator: Option[CustomContextualTransactionValidator],
+    customContextualAllowSpendValidator: Option[CustomContextualAllowSpendValidator],
     txHasher: Hasher[F]
   ): Validators[F] = {
     val signedValidator = SignedValidator.make[F]
     val transactionChainValidator = TransactionChainValidator.make[F](txHasher)
     val transactionValidator = TransactionValidator.make[F](signedValidator, txHasher)
+    val allowSpendValidator = AllowSpendValidator.make[F](signedValidator, txHasher)
     val blockValidator =
       BlockValidator.make[F](signedValidator, transactionChainValidator, transactionValidator, txHasher)
 
     val contextualTransactionValidator = ContextualTransactionValidator.make(
       transactionLimitConfig,
       customContextualTransactionValidator
+    )
+    val contextualAllowSpendValidator = ContextualAllowSpendValidator.make(
+      transactionLimitConfig,
+      customContextualAllowSpendValidator
     )
 
     val rumorValidator = RumorValidator.make[F](seedlist, signedValidator)
@@ -47,6 +49,8 @@ object Validators {
       blockValidator,
       transactionValidator,
       contextualTransactionValidator,
+      allowSpendValidator,
+      contextualAllowSpendValidator,
       rumorValidator
     ) {}
   }
@@ -57,5 +61,7 @@ sealed abstract class Validators[F[_]] private (
   val block: BlockValidator[F],
   val transaction: TransactionValidator[F],
   val transactionContextual: ContextualTransactionValidator,
+  val allowSpend: AllowSpendValidator[F],
+  val allowSpendContextual: ContextualAllowSpendValidator,
   val rumorValidator: RumorValidator[F]
 )

@@ -61,7 +61,8 @@ object Services {
       val transaction = TransactionService.make[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
         storages.transaction,
         storages.lastSnapshot,
-        validators.transaction
+        validators.transaction,
+        validators.allowSpend
       )
       val collateral = Collateral.make[F](cfg.collateral, storages.lastSnapshot)
       val dataApplication = maybeDataApplication

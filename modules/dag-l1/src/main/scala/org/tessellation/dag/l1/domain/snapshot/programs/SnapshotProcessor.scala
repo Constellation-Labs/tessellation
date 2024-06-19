@@ -51,6 +51,14 @@ abstract class SnapshotProcessor[
 
   def applySnapshotFn(lastState: SI, lastSnapshot: Signed[S], snapshot: Signed[S])(implicit hasher: Hasher[F]): F[SI]
 
+  def onAlignedAtNewOrdinal(acceptedInMajority: Map[ProofsHash, (Hashed[Block], NonNegLong)], snapshot: Hashed[S], state: SI): F[Unit]
+
+  def onAlignedAtNewHeight(acceptedInMajority: Map[ProofsHash, (Hashed[Block], NonNegLong)], snapshot: Hashed[S], state: SI): F[Unit]
+
+  def onDownloadNeeded(state: SI, snapshot: Hashed[S]): F[Unit]
+
+  def onRedownloadNeeded(state: SI, snapshot: Hashed[S]): F[Unit]
+
   def processAlignment(
     alignment: Alignment,
     blockStorage: BlockStorage[F],
@@ -59,7 +67,16 @@ abstract class SnapshotProcessor[
     addressStorage: AddressStorage[F]
   ): F[SnapshotProcessingResult] =
     alignment match {
-      case AlignedAtNewOrdinal(snapshot, state, toMarkMajority, tipsToDeprecate, tipsToRemove, txRefsToMarkMajority, postponedToWaiting) =>
+      case AlignedAtNewOrdinal(
+            snapshot,
+            state,
+            toMarkMajority,
+            tipsToDeprecate,
+            tipsToRemove,
+            txRefsToMarkMajority,
+            postponedToWaiting,
+            acceptedInMajority
+          ) =>
         val adjustToMajority: F[Unit] =
           blockStorage
             .adjustToMajority(
@@ -77,6 +94,7 @@ abstract class SnapshotProcessor[
 
         adjustToMajority >>
           markTxRefsAsMajority >>
+          onAlignedAtNewOrdinal(acceptedInMajority, snapshot, state) >>
           setSnapshot.as[SnapshotProcessingResult] {
             Aligned(
               SnapshotReference.fromHashedSnapshot(snapshot),
@@ -92,7 +110,8 @@ abstract class SnapshotProcessor[
             tipsToDeprecate,
             tipsToRemove,
             txRefsToMarkMajority,
-            postponedToWaiting
+            postponedToWaiting,
+            acceptedInMajority
           ) =>
         val adjustToMajority: F[Unit] =
           blockStorage
@@ -112,6 +131,7 @@ abstract class SnapshotProcessor[
 
         adjustToMajority >>
           markTxRefsAsMajority >>
+          onAlignedAtNewHeight(acceptedInMajority, snapshot, state) >>
           setSnapshot.as[SnapshotProcessingResult] {
             Aligned(
               SnapshotReference.fromHashedSnapshot(snapshot),
@@ -142,6 +162,7 @@ abstract class SnapshotProcessor[
         adjustToMajority >>
           setBalances >>
           setTransactionRefs >>
+          onDownloadNeeded(state, snapshot) >>
           setInitialSnapshot.as[SnapshotProcessingResult] {
             DownloadPerformed(
               SnapshotReference.fromHashedSnapshot(snapshot),
@@ -187,6 +208,7 @@ abstract class SnapshotProcessor[
         adjustToMajority >>
           setBalances >>
           setTransactionRefs >>
+          onRedownloadNeeded(state, snapshot) >>
           setSnapshot.as[SnapshotProcessingResult] {
             RedownloadPerformed(
               SnapshotReference.fromHashedSnapshot(snapshot),
@@ -289,7 +311,8 @@ abstract class SnapshotProcessor[
                                 tipsToDeprecate,
                                 tipsToRemove,
                                 txRefsToMarkMajority,
-                                postponedToWaiting
+                                postponedToWaiting,
+                                acceptedInMajority
                               )
                             )
                           else
@@ -353,7 +376,8 @@ abstract class SnapshotProcessor[
                                 tipsToDeprecate,
                                 tipsToRemove,
                                 txRefsToMarkMajority,
-                                postponedToWaiting
+                                postponedToWaiting,
+                                acceptedInMajority
                               )
                             )
                           else
@@ -417,7 +441,8 @@ abstract class SnapshotProcessor[
     tipsToDeprecate: Set[ProofsHash],
     tipsToRemove: Set[ProofsHash],
     txRefsToMarkMajority: Map[Address, TransactionReference],
-    postponedToWaiting: Set[ProofsHash]
+    postponedToWaiting: Set[ProofsHash],
+    acceptedInMajority: Map[ProofsHash, (Hashed[Block], NonNegLong)]
   ) extends Alignment
 
   case class AlignedAtNewHeight(
@@ -428,7 +453,8 @@ abstract class SnapshotProcessor[
     tipsToDeprecate: Set[ProofsHash],
     tipsToRemove: Set[ProofsHash],
     txRefsToMarkMajority: Map[Address, TransactionReference],
-    postponedToWaiting: Set[ProofsHash]
+    postponedToWaiting: Set[ProofsHash],
+    acceptedInMajority: Map[ProofsHash, (Hashed[Block], NonNegLong)]
   ) extends Alignment
 
   case class DownloadNeeded(

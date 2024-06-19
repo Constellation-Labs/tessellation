@@ -26,6 +26,7 @@ import org.tessellation.kernel._
 import org.tessellation.node.shared.domain.block.processing.BlockValidationParams
 import org.tessellation.schema.peer.{Peer, PeerId}
 import org.tessellation.schema.round.RoundId
+import org.tessellation.schema.swap.AllowSpend
 import org.tessellation.schema.transaction.Transaction
 import org.tessellation.schema.{Block, SnapshotOrdinal}
 import org.tessellation.security.signature.Signed
@@ -254,7 +255,7 @@ object BlockConsensusCell {
     )
     .flatMap {
       case Some(roundData) if gotAllProposals(roundData) =>
-        roundData.formBlock(ctx.transactionValidator, ctx.txHasher).flatMap {
+        roundData.formBlock(ctx.transactionValidator, ctx.allowSpendValidator, ctx.txHasher).flatMap {
           case Some(block) =>
             Signed.forAsyncHasher(block, ctx.keyPair).flatMap { signedBlock =>
               ctx.blockValidator
@@ -471,6 +472,13 @@ object BlockConsensusCell {
       .pull(ctx.consensusConfig.pullTxsCount)
       .map(_.map(_.toList.toSet).getOrElse(Set.empty))
 
+  private def pullAllowSpendTransactions[F[_]: Async](
+    ctx: BlockConsensusContext[F]
+  ): F[Set[Hashed[AllowSpend]]] =
+    ctx.transactionStorage
+      .pullAllowSpend(ctx.consensusConfig.pullAllowSpendTxsCount)
+      .map(_.map(_.toList.toSet).getOrElse(Set.empty))
+
   def startOwnRound[F[_]: Async: Random: SecurityProvider: Hasher](
     ctx: BlockConsensusContext[F]
   ): F[Either[CellError, BlockConsensusOutput]] =
@@ -482,6 +490,7 @@ object BlockConsensusCell {
         case (Some(peers), Some(tips)) =>
           for {
             transactions <- pullTransactions(ctx)
+            allowSpendTransactions <- pullAllowSpendTransactions(ctx)
             startedAt <- getTime()
             proposal = Proposal(
               roundId,
@@ -489,6 +498,7 @@ object BlockConsensusCell {
               owner = ctx.selfId,
               peers.map(_.id),
               transactions.map(_.signed),
+              allowSpendTransactions.map(_.signed),
               tips
             )
             roundData = RoundData(roundId, startedAt, peers, ctx.selfId, proposal, tips = tips)
@@ -558,6 +568,7 @@ object BlockConsensusCell {
         case (None, Some(peers)) =>
           for {
             transactions <- pullTransactions(ctx)
+            allowSpendTransactions <- pullAllowSpendTransactions(ctx)
             startedAt <- getTime()
             ownProposal = Proposal(
               proposal.roundId,
@@ -565,6 +576,7 @@ object BlockConsensusCell {
               owner = proposal.owner,
               peers.map(_.id),
               transactions.map(_.signed),
+              allowSpendTransactions.map(_.signed),
               proposal.tips
             )
             roundData = RoundData(
