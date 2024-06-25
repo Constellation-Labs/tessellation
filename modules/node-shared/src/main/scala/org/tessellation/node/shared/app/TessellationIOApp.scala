@@ -106,6 +106,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                 LoggerConfigurator.configureLogger[IO](cfg.environment) >>
                 logger.info(s"App environment: ${cfg.environment}") >>
                 logger.info(s"App version: ${version.show}") >>
+                logger.info(s"App collateral: ${cfg.collateral.amount.show}") >>
                 KryoSerializer.forAsync[IO](registrar).use { implicit _kryoPool =>
                   JsonSerializer.forSync[IO].asResource.use { implicit _jsonSerializer =>
                     implicit val _hasherSelector = HasherSelector.forSync[IO](Hasher.forJson, Hasher.forKryo, _hashSelect)
