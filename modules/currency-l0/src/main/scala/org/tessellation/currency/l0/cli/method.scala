@@ -2,6 +2,8 @@ package org.tessellation.currency.l0.cli
 
 import cats.syntax.all._
 
+import scala.collection.immutable.SortedMap
+
 import org.tessellation.currency.cli.{GlobalL0PeerOpts, L0TokenIdentifierOpts}
 import org.tessellation.currency.l0.cli.http.{opts => httpOpts}
 import org.tessellation.currency.l0.config.types._
@@ -18,6 +20,7 @@ import org.tessellation.schema.peer.L0Peer
 
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
+import eu.timepit.refined.types.numeric.NonNegLong
 import fs2.io.file.Path
 
 object method {
@@ -36,6 +39,22 @@ object method {
 
     val l0SeedlistPath = None
 
+    override def nodeSharedConfig(c: SharedConfigReader): SharedConfig = SharedConfig(
+      environment,
+      c.gossip,
+      httpConfig,
+      c.leavingDelay,
+      c.stateAfterJoining,
+      CollateralConfig(
+        amount = collateralAmount.getOrElse(Amount(NonNegLong.MinValue))
+      ),
+      c.trust.storage,
+      c.priorityPeerIds.get(environment),
+      c.snapshot.size,
+      c.feeConfigs.get(environment).map(SortedMap.from(_)).getOrElse(SortedMap.empty),
+      c.forkInfoStorage,
+      c.lastKryoHashOrdinal
+    )
   }
 
   case class CreateGenesis(
