@@ -70,12 +70,7 @@ object StateChannel {
       Stream
         .awakeEvery[F](awakePeriod)
         .evalMap { _ =>
-          storages.lastGlobalSnapshot.get.flatMap {
-            case None =>
-              storages.globalL0Cluster.getRandomPeer.flatMap(p => programs.globalL0PeerDiscovery.discoverFrom(p))
-            case Some(latestSnapshot) =>
-              programs.globalL0PeerDiscovery.discover(latestSnapshot.signed.proofs.map(_.id).map(PeerId._Id.reverseGet))
-          }
+          performGlobalL0PeerDiscovery(storages, programs)
         }
         .handleErrorWith { error =>
           Stream.eval(logger.error(error)("Error during global L0 peer discovery"))
@@ -83,4 +78,15 @@ object StateChannel {
 
     globalL0SnapshotProcessing.merge(globalL0PeerDiscovery)
   }
+
+  def performGlobalL0PeerDiscovery[F[_]: Async](
+    storages: Storages[F],
+    programs: Programs[F]
+  ): F[Unit] =
+    storages.lastGlobalSnapshot.get.flatMap {
+      case None =>
+        storages.globalL0Cluster.getRandomPeer.flatMap(p => programs.globalL0PeerDiscovery.discoverFrom(p))
+      case Some(latestSnapshot) =>
+        programs.globalL0PeerDiscovery.discover(latestSnapshot.signed.proofs.map(_.id).map(PeerId._Id.reverseGet))
+    }
 }
