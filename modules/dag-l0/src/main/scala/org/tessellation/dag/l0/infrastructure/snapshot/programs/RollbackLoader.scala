@@ -26,6 +26,7 @@ object RollbackLoader {
     snapshotConfig: SnapshotConfig,
     incrementalGlobalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
     snapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfo],
+    snapshotInfoLocalFileSystemKryoStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfoV2],
     snapshotStorage: SnapshotDownloadStorage[F],
     snapshotContextFunctions: GlobalSnapshotContextFunctions[F],
     hashSelect: HashSelect
@@ -37,6 +38,7 @@ object RollbackLoader {
       snapshotStorage: SnapshotDownloadStorage[F],
       snapshotContextFunctions,
       snapshotInfoLocalFileSystemStorage,
+      snapshotInfoLocalFileSystemKryoStorage,
       hashSelect
     ) {}
 }
@@ -48,6 +50,7 @@ sealed abstract class RollbackLoader[F[_]: Async: KryoSerializer: JsonSerializer
   snapshotStorage: SnapshotDownloadStorage[F],
   snapshotContextFunctions: GlobalSnapshotContextFunctions[F],
   snapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfo],
+  snapshotInfoLocalFileSystemKryoStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfoV2],
   hashSelect: HashSelect
 ) {
 
@@ -65,7 +68,10 @@ sealed abstract class RollbackLoader[F[_]: Async: KryoSerializer: JsonSerializer
                   .make[F](
                     incrementalGlobalSnapshotLocalFileSystemStorage.read(_),
                     fullGlobalSnapshotLocalFileSystemStorage.read(_),
-                    snapshotInfoLocalFileSystemStorage.read(_),
+                    (ordinal: SnapshotOrdinal) =>
+                      snapshotInfoLocalFileSystemStorage.read(ordinal).handleErrorWith { _ =>
+                        snapshotInfoLocalFileSystemKryoStorage.read(ordinal).map(_.map(_.toGlobalSnapshotInfo))
+                      },
                     snapshotContextFunctions,
                     rollbackHash
                   )
