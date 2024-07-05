@@ -3,12 +3,7 @@ package org.tessellation.node.shared.infrastructure.snapshot
 import cats.data.{NonEmptyChain, NonEmptyList}
 import cats.effect.std.Random
 import cats.effect.{IO, Resource}
-import cats.syntax.applicative._
-import cats.syntax.either._
-import cats.syntax.flatMap._
-import cats.syntax.foldable._
-import cats.syntax.option._
-import cats.syntax.traverse._
+import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
 
@@ -25,6 +20,8 @@ import org.tessellation.security.signature.Signed.forAsyncHasher
 import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
 
+import derevo.cats.eqv
+import derevo.derive
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 import org.scalacheck.Gen
@@ -43,6 +40,35 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
   } yield (h, sp)
 
   val address = Address("DAG0y4eLqhhXUafeE3mgBstezPTnr8L3tZjAtMWB")
+
+  test("groupBy breaks the order") { _ =>
+    @derive(eqv)
+    case class Binary(address: Address, lastHash: Hash, hash: Hash)
+
+    val list = List(
+      Binary(
+        Address("DAG2vXx4ZHUyXv8Q2mynqf1wMWYy1pEXoMoZtHp4"),
+        Hash.empty,
+        Hash("29cf73a9d3c0462a787bc1c6ab4caba15e6f011791b2fad868a01eb8e7abef5b")
+      ),
+      Binary(
+        Address("DAG2vXx4ZHUyXv8Q2mynqf1wMWYy1pEXoMoZtHp4"),
+        Hash("29cf73a9d3c0462a787bc1c6ab4caba15e6f011791b2fad868a01eb8e7abef5b"),
+        Hash("d99c8885e1010ed70ba3084e6e4f42a75d272303b239db88baa7417529f2f9e1")
+      )
+    )
+
+    val viaGroupBy: List[((Address, Hash), List[Binary])] = list.groupBy(o => (o.address, o.lastHash)).toList
+    val viaManual: List[((Address, Hash), List[Binary])] = list
+      .foldLeft(Map.empty[(Address, Hash), List[Binary]]) {
+        case (acc, o) =>
+          val key = (o.address, o.lastHash)
+          acc.updatedWith(key)(_.map(_ :+ o).orElse(List(o).some))
+      }
+      .toList
+
+    expect(viaGroupBy =!= viaManual).pure[F]
+  }
 
   test("valid state channels should be returned when ordinal doesn't exceed delay") { res =>
     implicit val (h, sp) = res

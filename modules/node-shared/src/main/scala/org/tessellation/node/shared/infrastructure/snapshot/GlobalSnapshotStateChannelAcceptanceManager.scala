@@ -3,10 +3,7 @@ package org.tessellation.node.shared.infrastructure.snapshot
 import cats.Eval
 import cats.data.{NonEmptyChain, NonEmptyList, NonEmptySet}
 import cats.effect.kernel.{Async, Ref}
-import cats.syntax.flatMap._
-import cats.syntax.functor._
-import cats.syntax.list._
-import cats.syntax.traverse._
+import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
@@ -87,23 +84,30 @@ object GlobalSnapshotStateChannelAcceptanceManager {
         } yield (toAdd, toReturn)
 
         private def allowedForProcessing(ordinal: SnapshotOrdinal, withHashes: List[StateChannelOutputWithHash]) =
-          withHashes.groupBy(o => (o.output.address, o.output.snapshotBinary.lastSnapshotHash)).toList.traverse {
-            case (key, outputs) =>
-              firstSeenKeysForOrdinalR.modify { current =>
-                current.get(key) match {
-                  case Some(seenAt) if shouldPurge(seenAt, ordinal) =>
-                    (current, Left(List.empty))
-                  case Some(seenAt) if shouldPull(seenAt, ordinal) =>
-                    (current, Right(outputs))
-                  case Some(_) =>
-                    (current, Left(outputs))
-                  case None if shouldPull(ordinal.value, ordinal) =>
-                    (current + (key -> ordinal.value.value), Right(outputs))
-                  case None =>
-                    (current + (key -> ordinal.value.value), Left(outputs))
+          withHashes
+            .foldLeft(Map.empty[(Address, Hash), List[StateChannelOutputWithHash]]) {
+              case (acc, o) =>
+                val key = (o.output.address, o.output.snapshotBinary.lastSnapshotHash)
+                acc.updatedWith(key)(_.map(_ :+ o).orElse(List(o).some))
+            }
+            .toList
+            .traverse {
+              case (key, outputs) =>
+                firstSeenKeysForOrdinalR.modify { current =>
+                  current.get(key) match {
+                    case Some(seenAt) if shouldPurge(seenAt, ordinal) =>
+                      (current, Left(List.empty))
+                    case Some(seenAt) if shouldPull(seenAt, ordinal) =>
+                      (current, Right(outputs))
+                    case Some(_) =>
+                      (current, Left(outputs))
+                    case None if shouldPull(ordinal.value, ordinal) =>
+                      (current + (key -> ordinal.value.value), Right(outputs))
+                    case None =>
+                      (current + (key -> ordinal.value.value), Left(outputs))
+                  }
                 }
-              }
-          }
+            }
 
         private def onlyPossibleReferences(
           lastHashReference: Hash,
