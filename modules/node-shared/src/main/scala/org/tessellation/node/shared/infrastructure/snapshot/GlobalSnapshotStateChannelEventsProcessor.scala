@@ -1,28 +1,21 @@
 package org.tessellation.node.shared.infrastructure.snapshot
 
-import cats.data.{NonEmptyList, NonEmptySet}
+import cats.data._
 import cats.effect.Async
-import cats.syntax.applicative._
-import cats.syntax.applicativeError._
-import cats.syntax.either._
-import cats.syntax.flatMap._
-import cats.syntax.foldable._
-import cats.syntax.functor._
-import cats.syntax.option._
-import cats.syntax.show._
-import cats.syntax.traverse._
+import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
 
 import org.tessellation.currency.schema.currency._
-import org.tessellation.ext.cats.syntax.validated._
+import org.tessellation.ext.cats.syntax.validated.validatedSyntax
 import org.tessellation.json.JsonBrotliBinarySerializer
 import org.tessellation.node.shared.domain.statechannel.StateChannelAcceptanceResult.CurrencySnapshotWithState
-import org.tessellation.node.shared.domain.statechannel.{FeeCalculator, StateChannelAcceptanceResult, StateChannelValidator}
+import org.tessellation.node.shared.domain.statechannel.StateChannelValidator.{StateChannelValidationError, getFeeAddresses}
+import org.tessellation.node.shared.domain.statechannel._
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
-import org.tessellation.schema.currencyMessage.{MessageType, fetchStakingBalance}
+import org.tessellation.schema.currencyMessage._
 import org.tessellation.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
 import org.tessellation.security.Hasher
 import org.tessellation.security.hash.Hash
@@ -31,7 +24,6 @@ import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.{Signature, SignatureProof}
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 
-import eu.timepit.refined.auto._
 import io.circe.Decoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -67,26 +59,64 @@ object GlobalSnapshotStateChannelEventsProcessor {
     new GlobalSnapshotStateChannelEventsProcessor[F] {
       private val logger = Slf4jLogger.getLoggerFromClass[F](GlobalSnapshotStateChannelEventsProcessor.getClass)
 
+      def deserialize[A: Decoder](binary: Signed[StateChannelSnapshotBinary]): F[Option[A]] =
+        jsonBrotliBinarySerializer.deserialize[A](binary.value.content).map(_.toOption)
+
+      def buildSnapshotFeesInfo(
+        lastGlobalSnapshotInfo: GlobalSnapshotInfo,
+        event: StateChannelOutput,
+        allFeesAddresses: Map[Address, Set[Address]]
+      ): F[SnapshotFeesInfo] =
+        event.snapshotBinary.value.lastSnapshotHash match {
+          case hash if hash == Hash.empty => SnapshotFeesInfo.empty.pure // genesis
+          case _ =>
+            deserialize[Signed[CurrencyIncrementalSnapshot]](event.snapshotBinary).flatMap {
+              case None => new Exception("Could not get snapshot after deserializing").raiseError[F, SnapshotFeesInfo]
+              case Some(snapshot) =>
+                Async[F].delay {
+                  val stakingBalance = fetchStakingBalance(event.address, lastGlobalSnapshotInfo)
+                  val sortedMessagesDesc = snapshot.value.messages.map(_.toList.sortBy(-_.ordinal.value.value))
+                  val maybeOwnerAddress = sortedMessagesDesc.flatMap(_.find(_.messageType === MessageType.Owner)).map(_.address)
+                  val maybeStakingAddress = sortedMessagesDesc.flatMap(_.find(_.messageType === MessageType.Staking)).map(_.address)
+                  SnapshotFeesInfo(allFeesAddresses, stakingBalance, maybeOwnerAddress, maybeStakingAddress)
+                }
+            }
+        }
+
       def process(
         snapshotOrdinal: SnapshotOrdinal,
         lastGlobalSnapshotInfo: GlobalSnapshotInfo,
         events: List[StateChannelOutput],
         validationType: StateChannelValidationType
-      )(implicit hasher: Hasher[F]): F[StateChannelAcceptanceResult] =
-        events.traverse { event =>
-          val stakingBalance = fetchStakingBalance(event.address, lastGlobalSnapshotInfo)
+      )(implicit hasher: Hasher[F]): F[StateChannelAcceptanceResult] = {
+        val allFeesAddresses: Map[Address, Set[Address]] = getFeeAddresses(lastGlobalSnapshotInfo)
+        type Acc = (Map[Address, Set[Address]], List[ValidatedNec[(Address, StateChannelValidationError), StateChannelOutput]])
 
-          (validationType match {
-            case StateChannelValidationType.Full =>
-              stateChannelValidator.validate(event, snapshotOrdinal, stakingBalance)
-            case StateChannelValidationType.Historical =>
-              stateChannelValidator.validateHistorical(event, snapshotOrdinal, stakingBalance)
-          }).map(_.errorMap(error => (event.address, error)))
-        }
-          .map(_.partitionMap(_.toEither))
-          .flatTap {
-            case (invalid, _) => logger.warn(s"Invalid state channels events: $invalid").whenA(invalid.nonEmpty)
+        events
+          .foldLeftM[F, Acc]((allFeesAddresses, List.empty)) {
+            case ((prevAllFeeAddresses, alreadyProcessed), event) =>
+              buildSnapshotFeesInfo(lastGlobalSnapshotInfo, event, prevAllFeeAddresses).flatMap { snapshotFeesInfo =>
+                val validationV = validationType match {
+                  case StateChannelValidationType.Full =>
+                    stateChannelValidator.validate(event, snapshotOrdinal, snapshotFeesInfo)
+                  case StateChannelValidationType.Historical =>
+                    stateChannelValidator.validateHistorical(event, snapshotOrdinal, snapshotFeesInfo)
+                }
+
+                validationV.map {
+                  case valid @ Validated.Valid(event) =>
+                    val updatedAllFeesAddresses = prevAllFeeAddresses.updatedWith(event.address) { existing =>
+                      val added = Set(snapshotFeesInfo.ownerAddress, snapshotFeesInfo.stakingAddress).flatten
+                      existing.map(_ ++ added).orElse(added.some)
+                    }
+                    (updatedAllFeesAddresses, alreadyProcessed :+ valid)
+                  case invalid @ Validated.Invalid(_) =>
+                    (prevAllFeeAddresses, alreadyProcessed :+ invalid.errorMap(error => (event.address, error)))
+                }
+              }
           }
+          .map { case (_, processedEvents) => processedEvents.partitionMap(_.toEither) }
+          .flatTap { case (invalid, _) => logger.warn(s"Invalid state channels events: $invalid").whenA(invalid.nonEmpty) }
           .flatMap { case (_, validatedEvents) => processStateChannelEvents(snapshotOrdinal, lastGlobalSnapshotInfo, validatedEvents) }
           .flatMap {
             case (scSnapshots, returnedSCEvents) =>
@@ -104,7 +134,7 @@ object GlobalSnapshotStateChannelEventsProcessor {
                 )
               }
           }
-
+      }
       private def calculateLastCurrencySnapshots(
         processedCurrencySnapshots: SortedMap[Address, MetagraphAcceptanceResult],
         lastGlobalSnapshotInfo: GlobalSnapshotInfo
@@ -133,9 +163,6 @@ object GlobalSnapshotStateChannelEventsProcessor {
         events: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]]
       )(implicit hasher: Hasher[F]): F[SortedMap[Address, MetagraphAcceptanceResult]] = {
         val isFeeRequired = feeCalculator.isFeeRequired(snapshotOrdinal)
-
-        def deserialize[A: Decoder](binary: Signed[StateChannelSnapshotBinary]): F[Option[A]] =
-          jsonBrotliBinarySerializer.deserialize[A](binary.value.content).map(_.toOption)
 
         events.toList.foldLeftM(SortedMap.empty[Address, MetagraphAcceptanceResult]) {
           case (agg, (address, binaries)) =>
