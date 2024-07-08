@@ -14,7 +14,6 @@ import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import enumeratum.values.{StringCirceEnum, StringEnum, StringEnumEntry}
-import eu.timepit.refined.auto.{autoInfer, autoUnwrap}
 import eu.timepit.refined.cats._
 import eu.timepit.refined.numeric.NonNegative
 import eu.timepit.refined.refineV
@@ -68,6 +67,11 @@ object currencyMessage {
       .flatMap(_.get(MessageType.Staking))
       .map(_.address)
 
+  def fetchOwnerAddress(state: CurrencySnapshotInfo): Option[Address] =
+    state.lastMessages
+      .flatMap(_.get(MessageType.Owner))
+      .map(_.address)
+
   def fetchStakingBalance(metagraphId: Address, state: GlobalSnapshotInfo): Balance =
     state.lastCurrencySnapshots
       .get(metagraphId)
@@ -79,4 +83,16 @@ object currencyMessage {
           maybeStakingAddress.flatMap(state.balances.get).getOrElse(Balance.empty)
       }
       .getOrElse(Balance.empty)
+
+  def fetchMetagraphFeesAddresses(metagraphId: Address, state: GlobalSnapshotInfo): (Option[Address], Option[Address]) =
+    state.lastCurrencySnapshots
+      .get(metagraphId)
+      .map {
+        case Left(_) => (None, None)
+        case Right((_, currencyState)) =>
+          val maybeOwnerAddress = fetchOwnerAddress(currencyState)
+          val maybeStakingAddress = fetchStakingAddress(currencyState)
+          (maybeOwnerAddress, maybeStakingAddress)
+      }
+      .getOrElse((None, None))
 }

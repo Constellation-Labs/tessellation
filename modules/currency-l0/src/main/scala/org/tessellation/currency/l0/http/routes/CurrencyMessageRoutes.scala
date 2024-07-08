@@ -9,12 +9,15 @@ import scala.collection.immutable.SortedMap
 import org.tessellation.currency.l0.node.IdentifierStorage
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import org.tessellation.kernel._
-import org.tessellation.node.shared.domain.snapshot.storage.SnapshotStorage
+import org.tessellation.node.shared.domain.snapshot.storage.{LastSnapshotStorage, SnapshotStorage}
+import org.tessellation.node.shared.domain.statechannel.StateChannelValidator.getFeeAddresses
 import org.tessellation.node.shared.infrastructure.snapshot.CurrencyMessageValidator
 import org.tessellation.node.shared.snapshot.currency.{CurrencyMessageEvent, CurrencySnapshotEvent}
 import org.tessellation.routes.internal._
+import org.tessellation.schema.address.Address
 import org.tessellation.schema.currencyMessage.{CurrencyMessage, MessageType}
 import org.tessellation.schema.http.{ErrorCause, ErrorResponse}
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import org.tessellation.security.Hasher
 import org.tessellation.security.signature.Signed
 
@@ -31,7 +34,8 @@ class CurrencyMessageRoutes[F[_]: Async: Hasher](
   mkCell: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _],
   validator: CurrencyMessageValidator[F],
   snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
-  identifierStorage: IdentifierStorage[F]
+  identifierStorage: IdentifierStorage[F],
+  lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
 ) extends Http4sDsl[F]
     with PublicRoutes[F] {
 
@@ -47,7 +51,13 @@ class CurrencyMessageRoutes[F[_]: Async: Hasher](
           _.map(_._2).map(_.lastMessages.getOrElse(SortedMap.empty[MessageType, Signed[CurrencyMessage]]))
         }
         metagraphId <- identifierStorage.get
-        maybeResult <- maybeLastMsgs.traverse(validator.validate(msg, _, metagraphId))
+        allFeesAddresses <- lastGlobalSnapshotStorage.getCombined.map {
+          case Some((_, info)) =>
+            getFeeAddresses(info)
+          case None => SortedMap.empty[Address, Set[Address]]
+        }
+
+        maybeResult <- maybeLastMsgs.traverse(validator.validate(msg, _, metagraphId, allFeesAddresses))
         response <- maybeResult match {
           case Some(Invalid(errors)) =>
             logger

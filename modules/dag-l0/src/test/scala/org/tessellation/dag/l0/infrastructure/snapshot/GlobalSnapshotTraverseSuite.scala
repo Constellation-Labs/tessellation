@@ -229,6 +229,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
     val feeCalculator = FeeCalculator.make(SortedMap.empty)
     val validators =
       SharedValidators.make[IO](None, None, Some(Map.empty[Address, NonEmptySet[PeerId]]), SortedMap.empty, Long.MaxValue, txHasher)
+
     val currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
       BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, txHasher),
       Amount(0L),

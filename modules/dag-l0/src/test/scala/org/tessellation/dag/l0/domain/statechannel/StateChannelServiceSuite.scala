@@ -13,9 +13,8 @@ import org.tessellation.dag.l0.domain.cell.L0Cell
 import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.node.shared.domain.statechannel.StateChannelValidator
+import org.tessellation.node.shared.domain.statechannel.{SnapshotFeesInfo, StateChannelValidator}
 import org.tessellation.schema._
-import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
@@ -71,11 +70,17 @@ object StateChannelServiceSuite extends MutableIOSuite {
 
   def mkService(failed: Option[StateChannelValidator.StateChannelValidationError] = None) = {
     val validator = new StateChannelValidator[IO] {
-      def validate(output: StateChannelOutput, globalOrdinal: SnapshotOrdinal, staked: Balance)(implicit hasher: Hasher[IO]) =
+      def validate(
+        output: StateChannelOutput,
+        globalOrdinal: SnapshotOrdinal,
+        snapshotFeesInfo: SnapshotFeesInfo
+      )(implicit hasher: Hasher[IO]) =
         IO.pure(failed.fold[StateChannelValidator.StateChannelValidationErrorOr[StateChannelOutput]](output.validNec)(_.invalidNec))
 
-      def validateHistorical(output: StateChannelOutput, globalOrdinal: SnapshotOrdinal, staked: Balance)(implicit hasher: Hasher[IO]) =
-        validate(output, globalOrdinal, staked)
+      def validateHistorical(output: StateChannelOutput, globalOrdinal: SnapshotOrdinal, snapshotFeesInfo: SnapshotFeesInfo)(
+        implicit hasher: Hasher[IO]
+      ) =
+        validate(output, globalOrdinal, snapshotFeesInfo)
     }
 
     for {

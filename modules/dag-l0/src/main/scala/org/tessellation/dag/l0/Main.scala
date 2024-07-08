@@ -155,8 +155,7 @@ object Main
             programs.rollbackLoader.load(m.rollbackHash).flatMap {
               case (snapshotInfo, snapshot) =>
                 hasherSelector.forOrdinal(snapshot.ordinal) { implicit hasher =>
-                  storages.globalSnapshot
-                    .prepend(snapshot, snapshotInfo)
+                  storages.globalSnapshot.prepend(snapshot, snapshotInfo)
                 } >>
                   services.consensus.manager.startFacilitatingAfterRollback(
                     snapshot.ordinal,

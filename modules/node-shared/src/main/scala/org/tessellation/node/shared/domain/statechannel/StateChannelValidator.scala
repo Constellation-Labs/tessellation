@@ -13,10 +13,10 @@ import org.tessellation.ext.cats.syntax.validated._
 import org.tessellation.json.{JsonSerializer, SizeCalculator}
 import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
 import org.tessellation.node.shared.domain.statechannel.StateChannelValidator.StateChannelValidationErrorOr
-import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
 import org.tessellation.security.Hasher
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.SignedValidator.SignedValidationError
@@ -34,19 +34,43 @@ trait StateChannelValidator[F[_]] {
   def validate(
     stateChannelOutput: StateChannelOutput,
     snapshotOrdinal: SnapshotOrdinal,
-    staked: Balance
+    snapshotFeesInfo: SnapshotFeesInfo
   )(implicit hasher: Hasher[F]): F[StateChannelValidationErrorOr[StateChannelOutput]]
+
   def validateHistorical(
     stateChannelOutput: StateChannelOutput,
     snapshotOrdinal: SnapshotOrdinal,
-    staked: Balance
+    snapshotFeesInfo: SnapshotFeesInfo
   )(
     implicit hasher: Hasher[F]
   ): F[StateChannelValidationErrorOr[StateChannelOutput]]
-
 }
 
 object StateChannelValidator {
+  def getFeeAddresses(info: GlobalSnapshotInfo): Map[Address, Set[Address]] =
+    info.lastCurrencySnapshots.collect {
+      case (address, Right((_, info))) => address -> info.lastMessages.toList.flatMap(_.values.map(_.address).toList).toSet
+    }
+
+  def validateIfAddressAlreadyUsed(
+    metagraphId: Address,
+    existingFeesAddresses: Map[Address, Set[Address]],
+    maybeAddress: Option[Address]
+  ): StateChannelValidationErrorOr[Unit] = maybeAddress match {
+    case None => ().validNec
+    case Some(address) =>
+      val existsInMetagraphAddresses = existingFeesAddresses.get(metagraphId).exists(_.contains(address))
+      if (existsInMetagraphAddresses) {
+        ().validNec
+      } else {
+        val existsInAllAddresses = existingFeesAddresses.exists { case (_, addresses) => addresses.contains(address) }
+        if (existsInAllAddresses) {
+          AddressAlreadyInUse.invalidNec
+        } else {
+          ().validNec
+        }
+      }
+  }
 
   def make[F[_]: Async: JsonSerializer](
     signedValidator: SignedValidator[F],
@@ -59,29 +83,45 @@ object StateChannelValidator {
     def validate(
       stateChannelOutput: StateChannelOutput,
       globalOrdinal: SnapshotOrdinal,
-      staked: Balance
+      snapshotFeesInfo: SnapshotFeesInfo
     )(implicit hasher: Hasher[F]): F[StateChannelValidationErrorOr[StateChannelOutput]] =
-      validateHistorical(stateChannelOutput, globalOrdinal, staked).map(
-        _.product(validateAllowedSignatures(stateChannelOutput)).as(stateChannelOutput)
-      )
+      for {
+        historical <- validateHistorical(stateChannelOutput, globalOrdinal, snapshotFeesInfo)
+        allowedSignatures = validateAllowedSignatures(stateChannelOutput)
+      } yield
+        historical
+          .product(allowedSignatures)
+          .as(stateChannelOutput)
 
     def validateHistorical(
       stateChannelOutput: StateChannelOutput,
       globalOrdinal: SnapshotOrdinal,
-      staked: Balance
+      snapshotFeesInfo: SnapshotFeesInfo
     )(implicit hasher: Hasher[F]): F[StateChannelValidationErrorOr[StateChannelOutput]] =
       for {
         signaturesV <- signedValidator
           .validateSignatures(stateChannelOutput.snapshotBinary)
           .map(_.errorMap[StateChannelValidationError](InvalidSigned))
         snapshotSizeV <- validateSnapshotSize(stateChannelOutput.snapshotBinary)
-        snapshotFeeV <- validateSnapshotFee(stateChannelOutput.snapshotBinary, globalOrdinal, staked)
+        snapshotFeeV <- validateSnapshotFee(stateChannelOutput.snapshotBinary, globalOrdinal, snapshotFeesInfo.stakingBalance)
         genesisAddressV = validateStateChannelGenesisAddress(stateChannelOutput.address, stateChannelOutput.snapshotBinary)
+        ownerAddressValidationV = validateIfAddressAlreadyUsed(
+          stateChannelOutput.address,
+          snapshotFeesInfo.allFeesAddresses,
+          snapshotFeesInfo.ownerAddress
+        )
+        stakingAddressValidationV = validateIfAddressAlreadyUsed(
+          stateChannelOutput.address,
+          snapshotFeesInfo.allFeesAddresses,
+          snapshotFeesInfo.stakingAddress
+        )
       } yield
         signaturesV
           .product(snapshotSizeV)
           .product(snapshotFeeV)
           .product(genesisAddressV)
+          .product(ownerAddressValidationV)
+          .product(stakingAddressValidationV)
           .as(stateChannelOutput)
 
     private def validateSnapshotSize(
@@ -157,7 +197,6 @@ object StateChannelValidator {
         StateChannellGenesisAddressNotGeneratedFromData(address).invalidNec
       else
         signedSC.validNec
-
   }
 
   @derive(eqv, show, decoder, encoder)
@@ -171,6 +210,7 @@ object StateChannelValidator {
   case class StateChannelAddressNotAllowed(address: Address) extends StateChannelValidationError
   case object NoSignerFromStateChannelAllowanceList extends StateChannelValidationError
   case class StateChannellGenesisAddressNotGeneratedFromData(address: Address) extends StateChannelValidationError
+  case object AddressAlreadyInUse extends StateChannelValidationError
 
   type StateChannelValidationErrorOr[A] = ValidatedNec[StateChannelValidationError, A]
 
