@@ -10,6 +10,7 @@ import scala.collection.immutable.SortedMap
 
 import org.tessellation.currency.schema.currency.SnapshotFee
 import org.tessellation.schema.SnapshotOrdinal
+import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
 
 import derevo.cats.eqv
@@ -27,6 +28,17 @@ case class FeeCalculatorConfig(
   computationalCost: NonNegLong,
   proWeight: NonNegBigDecimal
 )
+
+case class SnapshotFeesInfo(
+  allFeesAddresses: Map[Address, Set[Address]],
+  stakingBalance: Balance,
+  ownerAddress: Option[Address],
+  stakingAddress: Option[Address]
+)
+
+object SnapshotFeesInfo {
+  def empty: SnapshotFeesInfo = SnapshotFeesInfo(Map.empty, Balance.empty, none, none)
+}
 
 object FeeCalculatorConfig {
   val noFee: FeeCalculatorConfig =

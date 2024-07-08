@@ -7,6 +7,7 @@ import cats.syntax.all._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
+import org.tessellation.node.shared.domain.statechannel.StateChannelValidator.validateIfAddressAlreadyUsed
 import org.tessellation.node.shared.infrastructure.snapshot.CurrencyMessageValidator.CurrencyMessageOrError
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.currencyMessage.{CurrencyMessage, MessageOrdinal, MessageType}
@@ -19,7 +20,12 @@ import derevo.cats.{eqv, show}
 import derevo.derive
 
 trait CurrencyMessageValidator[F[_]] {
-  def validate(message: Signed[CurrencyMessage], lastMessages: SortedMap[MessageType, Signed[CurrencyMessage]], metagraphId: Address)(
+  def validate(
+    message: Signed[CurrencyMessage],
+    lastMessages: SortedMap[MessageType, Signed[CurrencyMessage]],
+    metagraphId: Address,
+    existingFeesAddresses: Map[Address, Set[Address]]
+  )(
     implicit hasher: Hasher[F]
   ): F[CurrencyMessageOrError]
 }
@@ -35,7 +41,8 @@ object CurrencyMessageValidator {
       def validate(
         message: Signed[CurrencyMessage],
         lastMessages: SortedMap[MessageType, Signed[CurrencyMessage]],
-        metagraphId: Address
+        metagraphId: Address,
+        existingFeesAddresses: Map[Address, Set[Address]]
       )(implicit hasher: Hasher[F]): F[CurrencyMessageOrError] = {
 
         val allowancePeers = allowanceList
@@ -89,7 +96,14 @@ object CurrencyMessageValidator {
           case _ if !isMetagraphIdValid =>
             Async[F].pure(WrongMetagraphId.invalidNec)
           case _ =>
-            validateSignatures(message)
+            for {
+              validSignature <- validateSignatures(message)
+              addressNotUsed =
+                if (validateIfAddressAlreadyUsed(metagraphId, existingFeesAddresses, message.address.some).isInvalid)
+                  AddressAlreadyInUse.invalidNec[CurrencyMessageValidationError].as(message)
+                else
+                  message.validNec[CurrencyMessageValidationError]
+            } yield validSignature.productR(addressNotUsed)
         }
       }
     }
@@ -100,6 +114,7 @@ object CurrencyMessageValidator {
   case object WrongMetagraphId extends CurrencyMessageValidationError
   case object NotANextMessage extends CurrencyMessageValidationError
   case object FirstMessageWithWrongOrdinal extends CurrencyMessageValidationError
+  case object AddressAlreadyInUse extends CurrencyMessageValidationError
 
   type CurrencyMessageOrError = ValidatedNec[CurrencyMessageValidationError, Signed[CurrencyMessage]]
 }
