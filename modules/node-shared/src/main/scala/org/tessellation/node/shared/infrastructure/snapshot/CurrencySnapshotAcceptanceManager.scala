@@ -18,7 +18,6 @@ import org.tessellation.security.Hasher
 import org.tessellation.security.signature.Signed
 import org.tessellation.syntax.sortedCollection._
 
-import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 
 case class CurrencyMessagesAcceptanceResult(
@@ -107,7 +106,7 @@ object CurrencySnapshotAcceptanceManager {
           .sorted(msgOrdering)
           .foldLeftM((lastMessages, List.empty[Signed[CurrencyMessage]], List.empty[Signed[CurrencyMessage]])) {
             case ((lastMsgs, toAdd, toReject), message) =>
-              messageValidator.validate(message, lastMsgs, lastSnapshotContext.address).map {
+              messageValidator.validate(message, lastMsgs, lastSnapshotContext.address, Map.empty).map {
                 case Validated.Valid(_) =>
                   val updatedLastMsgs = lastMsgs.updated(message.messageType, message)
                   val updatedToAdd = message :: toAdd
@@ -118,6 +117,7 @@ object CurrencySnapshotAcceptanceManager {
 
                   (lastMsgs, toAdd, updatedToReject)
               }
+
           }
 
       messagesAcceptanceResult = CurrencyMessagesAcceptanceResult(
