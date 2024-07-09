@@ -20,7 +20,7 @@ import org.tessellation.node.shared.infrastructure.consensus._
 import org.tessellation.node.shared.infrastructure.consensus.trigger.EventTrigger
 import org.tessellation.node.shared.infrastructure.genesis.{GenesisFS => GenesisLoader}
 import org.tessellation.node.shared.infrastructure.gossip.{GossipDaemon, RumorHandlers}
-import org.tessellation.node.shared.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage
+import org.tessellation.node.shared.infrastructure.snapshot.storage.GlobalSnapshotLocalFileSystemStorage
 import org.tessellation.node.shared.resources.MkHttpServer
 import org.tessellation.node.shared.resources.MkHttpServer.ServerName
 import org.tessellation.schema.cluster.ClusterId
@@ -196,7 +196,7 @@ object Main
                     .flatMap(_.toHashed[IO])
                 }
                 .flatMap { hashedGenesis =>
-                  SnapshotLocalFileSystemStorage.make[IO, GlobalSnapshot](cfg.snapshot.snapshotPath).flatMap {
+                  GlobalSnapshotLocalFileSystemStorage.make[IO](cfg.snapshot.snapshotPath).flatMap {
                     fullGlobalSnapshotLocalFileSystemStorage =>
                       hasherSelector
                         .forOrdinal(genesis.ordinal.next) { implicit hasher =>

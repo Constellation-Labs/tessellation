@@ -36,7 +36,7 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
     } yield (s, k, j, h, sp)
 
   private def mkLocalFileSystemStorage(tmpDir: File)(implicit K: KryoSerializer[IO], J: JsonSerializer[IO], H: Hasher[IO]) =
-    SnapshotLocalFileSystemStorage.make[IO, GlobalIncrementalSnapshot](Path(tmpDir.pathAsString))
+    GlobalIncrementalSnapshotLocalFileSystemStorage.make[IO](Path(tmpDir.pathAsString))
 
   private def mkSnapshots(
     implicit H: Hasher[IO],

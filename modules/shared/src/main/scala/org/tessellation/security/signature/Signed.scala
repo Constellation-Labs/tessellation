@@ -2,6 +2,7 @@ package org.tessellation.security.signature
 
 import java.security.KeyPair
 
+import cats._
 import cats.data.NonEmptySet
 import cats.effect.Async
 import cats.syntax.applicative._
@@ -12,7 +13,6 @@ import cats.syntax.functor._
 import cats.syntax.list._
 import cats.syntax.order._
 import cats.syntax.show._
-import cats.{Eq, Order, Show}
 
 import scala.collection.immutable.SortedSet
 import scala.util.control.NoStackTrace
@@ -33,6 +33,10 @@ import org.scalacheck.Arbitrary.arbitrary
 case class Signed[+A](value: A, proofs: NonEmptySet[SignatureProof])
 
 object Signed {
+  implicit val functor: Functor[Signed] = new Functor[Signed] {
+    def map[A, B](fa: Signed[A])(f: A => B): Signed[B] = Signed(f(fa.value), fa.proofs)
+  }
+
   case class InvalidSignatureForHash[A](signed: Signed[A]) extends NoStackTrace
 
   implicit def show[A: Show]: Show[Signed[A]] =

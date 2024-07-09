@@ -3,23 +3,22 @@ package org.tessellation.node.shared.infrastructure.snapshot.storage
 import cats.effect.kernel.Async
 import cats.syntax.all._
 
-import scala.reflect.ClassTag
-
+import org.tessellation.currency.schema.currency.{CurrencySnapshotInfo, CurrencySnapshotInfoV1, CurrencySnapshotStateProof}
 import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
-import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.snapshot.{SnapshotInfo, StateProof}
+import org.tessellation.schema.{SnapshotOrdinal, _}
 import org.tessellation.storage.SerializableLocalFileSystemStorage
 
 import fs2.Stream
 import fs2.io.file.Path
 import io.circe.{Decoder, Encoder}
 
-final class SnapshotInfoLocalFileSystemStorage[
-  F[_]: Async: KryoSerializer: JsonSerializer,
+abstract class SnapshotInfoLocalFileSystemStorage[
+  F[_]: Async: JsonSerializer,
   P <: StateProof,
-  S <: SnapshotInfo[P]: ClassTag: Encoder: Decoder
-] private (
+  S <: SnapshotInfo[P]: Encoder: Decoder
+](
   path: Path
 ) extends SerializableLocalFileSystemStorage[F, S](path) {
   def write(ordinal: SnapshotOrdinal, snapshotInfo: S): F[Unit] = {
@@ -58,11 +57,38 @@ final class SnapshotInfoLocalFileSystemStorage[
   private def toOrdinalName(ordinal: SnapshotOrdinal): String = ordinal.value.value.toString
 }
 
-object SnapshotInfoLocalFileSystemStorage {
-  def make[F[_]: Async: KryoSerializer: JsonSerializer, P <: StateProof, S <: SnapshotInfo[P]: ClassTag: Encoder: Decoder](
+object GlobalSnapshotInfoLocalFileSystemStorage {
+  def make[F[+_]: Async: KryoSerializer: JsonSerializer](
     path: Path
-  ): F[SnapshotInfoLocalFileSystemStorage[F, P, S]] =
-    new SnapshotInfoLocalFileSystemStorage[F, P, S](path).pure[F].flatTap { storage =>
+  ): F[SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfo]] =
+    (new SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfo](path) {
+      def deserializeFallback(bytes: Array[Byte]): Either[Throwable, GlobalSnapshotInfo] =
+        KryoSerializer[F].deserialize[GlobalSnapshotInfoV2](bytes).map(_.toGlobalSnapshotInfo)
+    }).pure[F].flatTap { storage =>
+      storage.createDirectoryIfNotExists().rethrowT
+    }
+}
+
+object GlobalSnapshotInfoKryoLocalFileSystemStorage {
+  def make[F[+_]: Async: KryoSerializer: JsonSerializer](
+    path: Path
+  ): F[SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfoV2]] =
+    (new SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfoV2](path) {
+      def deserializeFallback(bytes: Array[Byte]): Either[Throwable, GlobalSnapshotInfoV2] =
+        KryoSerializer[F].deserialize[GlobalSnapshotInfoV2](bytes)
+    }).pure[F].flatTap { storage =>
+      storage.createDirectoryIfNotExists().rethrowT
+    }
+}
+
+object CurrencySnapshotInfoLocalFileSystemStorage {
+  def make[F[+_]: Async: KryoSerializer: JsonSerializer](
+    path: Path
+  ): F[SnapshotInfoLocalFileSystemStorage[F, CurrencySnapshotStateProof, CurrencySnapshotInfo]] =
+    (new SnapshotInfoLocalFileSystemStorage[F, CurrencySnapshotStateProof, CurrencySnapshotInfo](path) {
+      def deserializeFallback(bytes: Array[Byte]): Either[Throwable, CurrencySnapshotInfo] =
+        KryoSerializer[F].deserialize[CurrencySnapshotInfoV1](bytes).map(_.toCurrencySnapshotInfo)
+    }).pure[F].flatTap { storage =>
       storage.createDirectoryIfNotExists().rethrowT
     }
 }

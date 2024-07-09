@@ -18,7 +18,7 @@ import org.tessellation.json.JsonSerializer
 import org.tessellation.keytool.KeyStoreUtils
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.genesis.types.GenesisCSVAccount
-import org.tessellation.node.shared.infrastructure.snapshot.storage.SnapshotInfoLocalFileSystemStorage
+import org.tessellation.node.shared.infrastructure.snapshot.storage.GlobalSnapshotInfoLocalFileSystemStorage
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.transaction._
@@ -93,7 +93,7 @@ object Main
       }
     }
 
-  def getLatestSnapshotInfo[F[_]: Async: KryoSerializer: JsonSerializer: Console](
+  def getLatestSnapshotInfo[F[+_]: Async: KryoSerializer: JsonSerializer: Console](
     client: Client[F],
     networkHost: Host,
     networkPort: Port
@@ -106,9 +106,8 @@ object Main
     getCombined.flatMap {
       case (snapshot, info) =>
         console.green(s"Fetched combined snapshot at ordinal=${snapshot.ordinal.show}") >>
-          SnapshotInfoLocalFileSystemStorage.make[F, GlobalSnapshotStateProof, GlobalSnapshotInfo](Path("./snapshot_info")).flatMap {
-            infoStorage =>
-              infoStorage.write(snapshot.ordinal, info) >> console.green(s"SnapshotInfo has been written on disk")
+          GlobalSnapshotInfoLocalFileSystemStorage.make[F](Path("./snapshot_info")).flatMap { infoStorage =>
+            infoStorage.write(snapshot.ordinal, info) >> console.green(s"SnapshotInfo has been written on disk")
           }
     }.handleErrorWith { err =>
       console.red(s"Error fetching or writing snapshot info on disk: ${err.getMessage()}")

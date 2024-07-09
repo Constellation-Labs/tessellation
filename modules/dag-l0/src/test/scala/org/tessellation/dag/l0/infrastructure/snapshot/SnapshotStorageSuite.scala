@@ -9,8 +9,8 @@ import org.tessellation.ext.crypto._
 import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.infrastructure.snapshot.storage.{
-  SnapshotInfoLocalFileSystemStorage,
-  SnapshotLocalFileSystemStorage,
+  GlobalIncrementalSnapshotLocalFileSystemStorage,
+  GlobalSnapshotInfoLocalFileSystemStorage,
   SnapshotStorage
 }
 import org.tessellation.node.shared.nodeSharedKryoRegistrar
@@ -38,17 +38,16 @@ object SnapshotStorageSuite extends MutableIOSuite with Checkers {
   } yield (supervisor, ks, j, h, sp)
 
   def mkStorage(tmpDir: File)(implicit K: KryoSerializer[IO], J: JsonSerializer[IO], H: Hasher[IO], S: Supervisor[IO]) =
-    SnapshotLocalFileSystemStorage.make[IO, GlobalIncrementalSnapshot](Path(tmpDir.pathAsString)).flatMap { snapshotFileStorage =>
-      SnapshotInfoLocalFileSystemStorage.make[IO, GlobalSnapshotStateProof, GlobalSnapshotInfo](Path(tmpDir.pathAsString)).flatMap {
-        snapshotInfoFileStorage =>
-          implicit val hs = HasherSelector.forSyncAlwaysCurrent(H)
-          SnapshotStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
-            snapshotFileStorage,
-            snapshotInfoFileStorage,
-            inMemoryCapacity = 5L,
-            SnapshotOrdinal.MinValue,
-            hs
-          )
+    GlobalIncrementalSnapshotLocalFileSystemStorage.make[IO](Path(tmpDir.pathAsString)).flatMap { snapshotFileStorage =>
+      GlobalSnapshotInfoLocalFileSystemStorage.make[IO](Path(tmpDir.pathAsString)).flatMap { snapshotInfoFileStorage =>
+        implicit val hs = HasherSelector.forSyncAlwaysCurrent(H)
+        SnapshotStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
+          snapshotFileStorage,
+          snapshotInfoFileStorage,
+          inMemoryCapacity = 5L,
+          SnapshotOrdinal.MinValue,
+          hs
+        )
       }
     }
 

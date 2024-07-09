@@ -19,11 +19,7 @@ import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
 import org.tessellation.node.shared.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.node.shared.domain.trust.storage.TrustStorage
 import org.tessellation.node.shared.infrastructure.gossip.RumorStorage
-import org.tessellation.node.shared.infrastructure.snapshot.storage.{
-  SnapshotInfoLocalFileSystemStorage,
-  SnapshotLocalFileSystemStorage,
-  SnapshotStorage
-}
+import org.tessellation.node.shared.infrastructure.snapshot.storage._
 import org.tessellation.node.shared.modules.SharedStorages
 import org.tessellation.schema._
 import org.tessellation.schema.trust.PeerObservationAdjustmentUpdateBatch
@@ -31,7 +27,7 @@ import org.tessellation.security.{HashSelect, HasherSelector}
 
 object Storages {
 
-  def make[F[_]: Async: KryoSerializer: JsonSerializer: HasherSelector: Supervisor](
+  def make[F[+_]: Async: KryoSerializer: JsonSerializer: HasherSelector: Supervisor](
     sharedStorages: SharedStorages[F],
     sharedConfig: SharedConfig,
     seedlist: Option[Set[SeedlistEntry]],
@@ -43,23 +39,22 @@ object Storages {
   ): F[Storages[F]] =
     for {
       trustStorage <- TrustStorage.make[F](trustUpdates, sharedConfig.trustStorage, seedlist.map(_.map(_.peerId)))
-      incrementalGlobalSnapshotTmpLocalFileSystemStorage <- SnapshotLocalFileSystemStorage.make[F, GlobalIncrementalSnapshot](
+      incrementalGlobalSnapshotTmpLocalFileSystemStorage <- GlobalIncrementalSnapshotLocalFileSystemStorage.make[F](
         snapshotConfig.incrementalTmpSnapshotPath
       )
-      incrementalGlobalSnapshotPersistedLocalFileSystemStorage <- SnapshotLocalFileSystemStorage.make[F, GlobalIncrementalSnapshot](
+      incrementalGlobalSnapshotPersistedLocalFileSystemStorage <- GlobalIncrementalSnapshotLocalFileSystemStorage.make[F](
         snapshotConfig.incrementalPersistedSnapshotPath
       )
-      fullGlobalSnapshotLocalFileSystemStorage <- SnapshotLocalFileSystemStorage.make[F, GlobalSnapshot](
+      fullGlobalSnapshotLocalFileSystemStorage <- GlobalSnapshotLocalFileSystemStorage.make[F](
         snapshotConfig.snapshotPath
       )
-      incrementalGlobalSnapshotInfoLocalFileSystemStorage <- SnapshotInfoLocalFileSystemStorage
-        .make[F, GlobalSnapshotStateProof, GlobalSnapshotInfo](
-          snapshotConfig.snapshotInfoPath
-        )
-      incrementalKryoGlobalSnapshotInfoLocalFileSystemStorage <- SnapshotInfoLocalFileSystemStorage
-        .make[F, GlobalSnapshotStateProof, GlobalSnapshotInfoV2](
-          snapshotConfig.snapshotInfoPath
-        )
+      incrementalGlobalSnapshotInfoLocalFileSystemStorage <- GlobalSnapshotInfoLocalFileSystemStorage.make[F](
+        snapshotConfig.snapshotInfoPath
+      )
+      incrementalKryoGlobalSnapshotInfoLocalFileSystemStorage <- GlobalSnapshotInfoKryoLocalFileSystemStorage.make[F](
+        snapshotConfig.snapshotInfoPath
+      )
+
       globalSnapshotStorage <- SnapshotStorage.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
         incrementalGlobalSnapshotPersistedLocalFileSystemStorage,
         incrementalGlobalSnapshotInfoLocalFileSystemStorage,
