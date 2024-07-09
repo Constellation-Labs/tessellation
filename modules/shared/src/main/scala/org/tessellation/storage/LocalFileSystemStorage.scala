@@ -7,27 +7,26 @@ import cats.data.EitherT
 import cats.effect.Async
 import cats.syntax.all._
 
-import scala.reflect.ClassTag
-
 import org.tessellation.json.JsonSerializer
-import org.tessellation.kryo.KryoSerializer
 
 import better.files._
 import fs2.Stream
 import fs2.io.file.Path
 import io.circe.{Decoder, Encoder}
 
-abstract class SerializableLocalFileSystemStorage[F[_]: KryoSerializer: JsonSerializer, A: Encoder: Decoder: ClassTag](
+abstract class SerializableLocalFileSystemStorage[F[_]: JsonSerializer, A: Encoder: Decoder](
   baseDir: Path
 )(
   implicit F: Async[F]
 ) extends LocalFileSystemStorage[F, A](baseDir)
     with SerializableFileSystemStorage[F, A] {
 
+  def deserializeFallback(bytes: Array[Byte]): Either[Throwable, A]
+
   def read(fileName: String): F[Option[A]] =
     readBytes(fileName).flatMap {
       _.traverse { bytes =>
-        JsonSerializer[F].deserialize[A](bytes).map(_.orElse(KryoSerializer[F].deserialize[A](bytes))).flatMap(_.liftTo[F])
+        JsonSerializer[F].deserialize[A](bytes).map(_.orElse(deserializeFallback(bytes))).flatMap(_.liftTo[F])
       }
     }
 

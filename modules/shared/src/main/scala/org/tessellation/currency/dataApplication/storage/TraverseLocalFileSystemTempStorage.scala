@@ -9,7 +9,7 @@ import org.tessellation.currency.dataApplication.storage.TraverseLocalFileSystem
   SnapshotAlreadyExistsInTempStorage,
   SnapshotNotFoundInTempStorage
 }
-import org.tessellation.currency.schema.currency.CurrencyIncrementalSnapshot
+import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencyIncrementalSnapshotV1}
 import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.schema.SnapshotOrdinal
@@ -20,6 +20,9 @@ import fs2.io.file.{Files, Path}
 
 final class TraverseLocalFileSystemTempStorage[F[_]: Async: KryoSerializer: JsonSerializer] private (path: Path)
     extends SerializableLocalFileSystemStorage[F, CurrencyIncrementalSnapshot](path) {
+
+  def deserializeFallback(bytes: Array[Byte]): Either[Throwable, CurrencyIncrementalSnapshot] =
+    KryoSerializer[F].deserialize[CurrencyIncrementalSnapshotV1](bytes).map(_.toCurrencyIncrementalSnapshot)
 
   def read(
     ordinal: SnapshotOrdinal

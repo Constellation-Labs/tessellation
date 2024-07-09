@@ -7,7 +7,6 @@ import cats.syntax.all._
 import org.tessellation.currency.dataApplication.BaseDataApplicationL0Service
 import org.tessellation.currency.dataApplication.storage.CalculatedStateLocalFileSystemStorage
 import org.tessellation.currency.l0.node.IdentifierStorage
-import org.tessellation.currency.schema.currency
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
@@ -30,7 +29,7 @@ object Storages {
 
   def dataApplicationCalculatedStatePath = Path("data/calculated_state")
 
-  def make[F[_]: Async: KryoSerializer: JsonSerializer: Supervisor: Random](
+  def make[F[+_]: Async: KryoSerializer: JsonSerializer: Supervisor: Random](
     sharedStorages: SharedStorages[F],
     snapshotConfig: SnapshotConfig,
     globalL0Peer: L0Peer,
@@ -38,13 +37,10 @@ object Storages {
     hasherSelector: HasherSelector[F]
   ): F[Storages[F]] =
     for {
-      snapshotLocalFileSystemStorage <- SnapshotLocalFileSystemStorage.make[F, CurrencyIncrementalSnapshot](
+      snapshotLocalFileSystemStorage <- CurrencyIncrementalSnapshotLocalFileSystemStorage.make[F](
         snapshotConfig.incrementalPersistedSnapshotPath
       )
-      snapshotInfoLocalFileSystemStorage <- SnapshotInfoLocalFileSystemStorage
-        .make[F, currency.CurrencySnapshotStateProof, CurrencySnapshotInfo](
-          snapshotConfig.snapshotInfoPath
-        )
+      snapshotInfoLocalFileSystemStorage <- CurrencySnapshotInfoLocalFileSystemStorage.make[F](snapshotConfig.snapshotInfoPath)
       snapshotStorage <- SnapshotStorage
         .make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
           snapshotLocalFileSystemStorage,

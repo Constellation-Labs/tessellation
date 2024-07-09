@@ -2,20 +2,17 @@ package org.tessellation.node.shared.infrastructure.snapshot.storage
 
 import cats.Applicative
 import cats.effect.Async
-import cats.syntax.applicative._
-import cats.syntax.applicativeError._
-import cats.syntax.contravariantSemigroupal._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
+import cats.syntax.all._
 
 import scala.util.control.NoStackTrace
 
+import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencyIncrementalSnapshotV1}
 import org.tessellation.ext.crypto._
 import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage.UnableToPersistSnapshot
-import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.snapshot.Snapshot
+import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshot, SnapshotOrdinal}
 import org.tessellation.security.Hasher
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
@@ -27,10 +24,10 @@ import io.circe.{Decoder, Encoder}
 import io.estatico.newtype.ops._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-final class SnapshotLocalFileSystemStorage[
-  F[_]: Async: KryoSerializer: JsonSerializer,
+abstract class SnapshotLocalFileSystemStorage[
+  F[_]: Async: JsonSerializer,
   S <: Snapshot: Encoder: Decoder
-] private (
+](
   path: Path
 ) extends SerializableLocalFileSystemStorage[F, Signed[S]](path) {
 
@@ -114,10 +111,49 @@ object SnapshotLocalFileSystemStorage {
     override val getMessage: String = s"Ordinal $ordinalName exists. File $hashName exists: $hashFileExists."
   }
 
-  def make[F[_]: Async: KryoSerializer: JsonSerializer, S <: Snapshot: Encoder: Decoder](
+}
+
+object GlobalSnapshotLocalFileSystemStorage {
+
+  def make[F[_]: Async: KryoSerializer: JsonSerializer](
     path: Path
-  ): F[SnapshotLocalFileSystemStorage[F, S]] =
-    Applicative[F].pure(new SnapshotLocalFileSystemStorage[F, S](path)).flatTap { storage =>
-      storage.createDirectoryIfNotExists().rethrowT
-    }
+  ): F[SnapshotLocalFileSystemStorage[F, GlobalSnapshot]] =
+    Applicative[F]
+      .pure(new SnapshotLocalFileSystemStorage[F, GlobalSnapshot](path) {
+        def deserializeFallback(bytes: Array[Byte]): Either[Throwable, Signed[GlobalSnapshot]] =
+          KryoSerializer[F].deserialize[Signed[GlobalSnapshot]](bytes)
+      })
+      .flatTap { storage =>
+        storage.createDirectoryIfNotExists().rethrowT
+      }
+}
+
+object GlobalIncrementalSnapshotLocalFileSystemStorage {
+
+  def make[F[_]: Async: KryoSerializer: JsonSerializer](
+    path: Path
+  ): F[SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot]] =
+    Applicative[F]
+      .pure(new SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot](path) {
+        def deserializeFallback(bytes: Array[Byte]): Either[Throwable, Signed[GlobalIncrementalSnapshot]] =
+          KryoSerializer[F].deserialize[Signed[GlobalIncrementalSnapshot]](bytes)
+      })
+      .flatTap { storage =>
+        storage.createDirectoryIfNotExists().rethrowT
+      }
+}
+
+object CurrencyIncrementalSnapshotLocalFileSystemStorage {
+
+  def make[F[_]: Async: KryoSerializer: JsonSerializer](
+    path: Path
+  ): F[SnapshotLocalFileSystemStorage[F, CurrencyIncrementalSnapshot]] =
+    Applicative[F]
+      .pure(new SnapshotLocalFileSystemStorage[F, CurrencyIncrementalSnapshot](path) {
+        def deserializeFallback(bytes: Array[Byte]): Either[Throwable, Signed[CurrencyIncrementalSnapshot]] =
+          KryoSerializer[F].deserialize[Signed[CurrencyIncrementalSnapshotV1]](bytes).map(_.map(_.toCurrencyIncrementalSnapshot))
+      })
+      .flatTap { storage =>
+        storage.createDirectoryIfNotExists().rethrowT
+      }
 }

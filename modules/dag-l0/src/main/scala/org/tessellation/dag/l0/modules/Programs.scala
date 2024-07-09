@@ -55,7 +55,6 @@ object Programs {
       config.snapshot,
       storages.incrementalGlobalSnapshotLocalFileSystemStorage,
       storages.globalSnapshotInfoLocalFileSystemStorage,
-      storages.globalSnapshotInfoLocalFileSystemKryoStorage,
       storages.snapshotDownload,
       globalSnapshotContextFns,
       hashSelect
