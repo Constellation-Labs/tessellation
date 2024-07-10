@@ -12,6 +12,7 @@ import io.constellationnetwork.currency.dataApplication.dataApplication.DataAppl
 import io.constellationnetwork.currency.l1.DummyDataApplicationL1Service
 import io.constellationnetwork.currency.l1.DummyDataApplicationState.{DummyUpdate, dummyUpdateGen}
 import io.constellationnetwork.currency.l1.node.L1NodeContext
+import io.constellationnetwork.currency.schema.EstimatedFee
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
@@ -20,14 +21,14 @@ import io.constellationnetwork.node.shared.domain.cluster.storage.L0ClusterStora
 import io.constellationnetwork.node.shared.domain.queue.ViewableQueue
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.schema._
-import io.constellationnetwork.schema.generators.signedOf
+import io.constellationnetwork.schema.generators.{addressGen, amountGen, signedOf}
 import io.constellationnetwork.schema.peer.L0Peer
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.shared.sharedKryoRegistrar
 
-import io.circe.Json
+import io.circe.syntax.EncoderOps
 import org.http4s.Method.{GET, POST}
 import org.http4s._
 import org.http4s.client.dsl.io._
@@ -112,7 +113,8 @@ object DataApplicationRoutesSuite extends HttpSuite {
 
   def makeValidatingService(
     validateUpdateFn: IO[dataApplication.DataApplicationValidationErrorOr[Unit]],
-    validateFeeFn: IO[dataApplication.DataApplicationValidationErrorOr[Unit]]
+    validateFeeFn: IO[dataApplication.DataApplicationValidationErrorOr[Unit]],
+    estimateFeeResult: Option[EstimatedFee] = None
   ): BaseDataApplicationL1Service[IO] =
     new DummyDataApplicationL1Service {
       override def validateUpdate(update: DataUpdate)(implicit context: L1NodeContext[IO]): IO[DataApplicationValidationErrorOr[Unit]] =
@@ -122,6 +124,14 @@ object DataApplicationRoutesSuite extends HttpSuite {
         implicit context: L1NodeContext[IO],
         A: Applicative[IO]
       ): IO[dataApplication.DataApplicationValidationErrorOr[Unit]] = validateFeeFn
+
+      override def estimateFee(
+        gsOrdinal: SnapshotOrdinal
+      )(update: DataUpdate)(implicit context: L1NodeContext[IO], A: Applicative[IO]): IO[EstimatedFee] =
+        estimateFeeResult match {
+          case None         => super.estimateFee(gsOrdinal)(update)
+          case Some(result) => result.pure[IO]
+        }
     }
 
   test("GET /data returns Http Status code 200 with empty array") {
@@ -167,54 +177,36 @@ object DataApplicationRoutesSuite extends HttpSuite {
     }
   }
 
-  test("POST /data/validate returns OK with empty JSON object if all validations pass") {
+  test("POST /data/estimate-fee returns OK and estimated fee object if validateUpdate passes") {
     import org.http4s.circe.CirceEntityEncoder._
-    val req: Request[IO] = POST(uri"/data/validate")
+    val req: Request[IO] = POST(uri"/data/estimate-fee")
 
-    val l1Service = makeValidatingService(validateUpdateFn = valid, validateFeeFn = valid)
+    val estimatedFeeGen = for {
+      fee <- amountGen
+      address <- addressGen
+    } yield EstimatedFee(fee, address)
 
-    forall(signedOf(dummyUpdateGen)) { update =>
-      for {
-        dataQueue <- ViewableQueue.make[F, Signed[DataUpdate]]
-        endpoint <- construct(dataQueue, l1Service)
-        testResult <- expectHttpBodyAndStatus(endpoint, req.withEntity(update))(Json.obj(), Status.Ok)
-      } yield testResult
+    val gen = for {
+      update <- signedOf(dummyUpdateGen)
+      maybeEstimatedFee <- Gen.option(estimatedFeeGen)
+    } yield (update, maybeEstimatedFee)
+
+    val defaultResponse = EstimatedFeeResponse(EstimatedFee.empty)
+    forall(gen) {
+      case (update, maybeEstimateFee) =>
+        for {
+          dataQueue <- ViewableQueue.make[F, Signed[DataUpdate]]
+          l1Service = makeValidatingService(validateUpdateFn = valid, validateFeeFn = invalid, estimateFeeResult = maybeEstimateFee)
+          expectedResponse = maybeEstimateFee.map(EstimatedFeeResponse(_).asJson).getOrElse(defaultResponse.asJson)
+          endpoint <- construct(dataQueue, l1Service)
+          testResult <- expectHttpBodyAndStatus(endpoint, req.withEntity(update.value))(expectedResponse, Status.Ok)
+        } yield testResult
     }
   }
 
-  test("POST /data/validate returns BadRequest if validateFee fails") {
+  test("POST /data/estimate-fee returns InternalServerError if validateUpdate fails") {
     import org.http4s.circe.CirceEntityEncoder._
-    val req: Request[IO] = POST(uri"/data/validate")
-
-    val l1Service = makeValidatingService(validateUpdateFn = valid, validateFeeFn = invalid)
-
-    forall(signedOf(dummyUpdateGen)) { update =>
-      for {
-        dataQueue <- ViewableQueue.make[F, Signed[DataUpdate]]
-        endpoint <- construct(dataQueue, l1Service)
-        testResult <- expectHttpStatus(endpoint, req.withEntity(update))(Status.BadRequest)
-      } yield testResult
-    }
-  }
-
-  test("POST /data/validate returns InternalServerError if validateUpdate fails") {
-    import org.http4s.circe.CirceEntityEncoder._
-    val req: Request[IO] = POST(uri"/data/validate")
-
-    val l1Service = makeValidatingService(validateUpdateFn = invalid, validateFeeFn = valid)
-
-    forall(signedOf(dummyUpdateGen)) { update =>
-      for {
-        dataQueue <- ViewableQueue.make[F, Signed[DataUpdate]]
-        endpoint <- construct(dataQueue, l1Service)
-        testResult <- expectHttpStatus(endpoint, req.withEntity(update))(Status.BadRequest)
-      } yield testResult
-    }
-  }
-
-  test("POST /data/validate returns InternalServerError if validateUpdate and validateFee fails") {
-    import org.http4s.circe.CirceEntityEncoder._
-    val req: Request[IO] = POST(uri"/data/validate")
+    val req: Request[IO] = POST(uri"/data/estimate-fee")
 
     val l1Service = makeValidatingService(validateUpdateFn = invalid, validateFeeFn = invalid)
 
@@ -222,16 +214,16 @@ object DataApplicationRoutesSuite extends HttpSuite {
       for {
         dataQueue <- ViewableQueue.make[F, Signed[DataUpdate]]
         endpoint <- construct(dataQueue, l1Service)
-        testResult <- expectHttpStatus(endpoint, req.withEntity(update))(Status.BadRequest)
+        testResult <- expectHttpStatus(endpoint, req.withEntity(update.value))(Status.BadRequest)
       } yield testResult
     }
   }
 
-  test("POST /data/validate returns InternalServerError if global snapshot ordinal not available") {
+  test("POST /data/estimate-fee returns InternalServerError if global snapshot ordinal not available") {
     import org.http4s.circe.CirceEntityEncoder._
-    val req: Request[IO] = POST(uri"/data/validate")
+    val req: Request[IO] = POST(uri"/data/estimate-fee")
 
-    val l1Service = makeValidatingService(validateUpdateFn = valid, validateFeeFn = valid)
+    val l1Service = makeValidatingService(validateUpdateFn = valid, validateFeeFn = invalid)
     val globalSnapshotStorage = mockLastSnapshotStorage[GlobalIncrementalSnapshot, GlobalSnapshotInfo](
       getOrdinalFn = none.pure[IO]
     )
@@ -239,7 +231,7 @@ object DataApplicationRoutesSuite extends HttpSuite {
       for {
         dataQueue <- ViewableQueue.make[F, Signed[DataUpdate]]
         endpoint <- construct(dataQueue, l1Service, globalSnapshotStorage)
-        testResult <- expectHttpStatus(endpoint, req.withEntity(update))(Status.InternalServerError)
+        testResult <- expectHttpStatus(endpoint, req.withEntity(update.value))(Status.InternalServerError)
       } yield testResult
     }
   }

@@ -9,6 +9,7 @@ import scala.reflect.ClassTag
 import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.currency.dataApplication.dataApplication.{DataApplicationBlock, DataApplicationValidationErrorOr}
+import io.constellationnetwork.currency.schema.EstimatedFee
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import io.constellationnetwork.currency.schema.feeTransaction.FeeTransaction
 import io.constellationnetwork.routes.internal.ExternalUrlPrefix
@@ -84,6 +85,11 @@ trait BaseDataApplicationContextualOps[F[_], Context] {
     A: Applicative[F]
   ): F[DataApplicationValidationErrorOr[Unit]] = ().validNec[DataApplicationValidationError].pure[F]
 
+  def estimateFee(gsOrdinal: SnapshotOrdinal)(update: DataUpdate)(
+    implicit context: Context,
+    A: Applicative[F]
+  ): F[EstimatedFee] = EstimatedFee.empty.pure[F]
+
   def combine(state: DataState.Base, updates: List[Signed[DataUpdate]])(implicit context: Context): F[DataState.Base]
 
   def getCalculatedState(implicit context: Context): F[(SnapshotOrdinal, DataCalculatedState)]
@@ -142,6 +148,11 @@ trait DataApplicationContextualOps[F[_], D <: DataUpdate, DON <: DataOnChainStat
     implicit context: Context,
     A: Applicative[F]
   ): F[DataApplicationValidationErrorOr[Unit]] = ().validNec[DataApplicationValidationError].pure[F]
+
+  def estimateFee(gsOrdinal: SnapshotOrdinal)(update: D)(
+    implicit context: Context,
+    A: Applicative[F]
+  ): F[EstimatedFee] = EstimatedFee.empty.pure[F]
 
   def combine(state: DataState[DON, DOF], updates: List[Signed[D]])(implicit context: Context): F[DataState[DON, DOF]]
 
@@ -202,6 +213,12 @@ object BaseDataApplicationContextualOps {
       ): F[DataApplicationValidationErrorOr[Unit]] =
         service.validateFee(gsOrdinal)(update.asInstanceOf[Signed[D]])
 
+      override def estimateFee(gsOrdinal: SnapshotOrdinal)(update: DataUpdate)(
+        implicit context: Context,
+        A: Applicative[F]
+      ): F[EstimatedFee] =
+        service.estimateFee(gsOrdinal)(update.asInstanceOf[D])
+
       def combine(state: DataState.Base, updates: List[Signed[DataUpdate]])(
         implicit context: Context
       ): F[DataState.Base] =
@@ -258,6 +275,12 @@ object BaseDataApplicationService {
         update: Signed[DataUpdate]
       )(implicit context: Context, A: Applicative[F]): F[DataApplicationValidationErrorOr[Unit]] =
         v.validateFee(gsOrdinal)(update)
+
+      override def estimateFee(gsOrdinal: SnapshotOrdinal)(update: DataUpdate)(
+        implicit context: Context,
+        A: Applicative[F]
+      ): F[EstimatedFee] =
+        v.estimateFee(gsOrdinal)(update)
 
       def combine(state: DataState.Base, updates: List[Signed[DataUpdate]])(
         implicit context: Context
@@ -383,6 +406,12 @@ object BaseDataApplicationL0Service {
       )(implicit context: L0NodeContext[F], A: Applicative[F]): F[DataApplicationValidationErrorOr[Unit]] =
         base.validateFee(gsOrdinal)(update)
 
+      override def estimateFee(gsOrdinal: SnapshotOrdinal)(update: DataUpdate)(
+        implicit context: L0NodeContext[F],
+        A: Applicative[F]
+      ): F[EstimatedFee] =
+        base.estimateFee(gsOrdinal)(update)
+
       def combine(state: DataState.Base, updates: List[Signed[DataUpdate]])(
         implicit context: L0NodeContext[F]
       ): F[DataState.Base] =
@@ -455,6 +484,11 @@ object BaseDataApplicationL1Service {
         update: Signed[DataUpdate]
       )(implicit context: L1NodeContext[F], A: Applicative[F]): F[DataApplicationValidationErrorOr[Unit]] =
         base.validateFee(gsOrdinal)(update)
+
+      override def estimateFee(gsOrdinal: SnapshotOrdinal)(
+        update: DataUpdate
+      )(implicit context: L1NodeContext[F], A: Applicative[F]): F[EstimatedFee] =
+        base.estimateFee(gsOrdinal)(update)
 
       def combine(state: DataState.Base, updates: List[Signed[DataUpdate]])(
         implicit context: L1NodeContext[F]
