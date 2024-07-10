@@ -7,7 +7,7 @@ import scala.collection.immutable.SortedSet
 import org.tessellation.generators.nesGen
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.address.{Address, DAGAddressRefined}
-import org.tessellation.schema.balance.Balance
+import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.cluster.SessionToken
 import org.tessellation.schema.generation.Generation
 import org.tessellation.schema.node.NodeState
@@ -89,6 +89,7 @@ object generators {
   val balanceGen: Gen[Balance] =
     Arbitrary.arbitrary[NonNegLong].map(Balance(_))
 
+  val amountGen: Gen[Amount] = Arbitrary.arbitrary[NonNegLong].map(Amount(_))
   val transactionAmountGen: Gen[TransactionAmount] = Arbitrary.arbitrary[PosLong].map(TransactionAmount(_))
 
   // total supply is lower than Long.MaxValue so generated fee needs to be limited to avoid cases which won't happen
