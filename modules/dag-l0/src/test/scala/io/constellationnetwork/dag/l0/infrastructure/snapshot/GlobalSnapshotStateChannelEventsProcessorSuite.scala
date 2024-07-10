@@ -75,6 +75,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
         Amount(0L),
         validators.currencyMessageValidator,
+        validators.feeTransactionValidator,
         validators.globalSnapshotSyncValidator
       )
       currencyEventsCutter = CurrencyEventsCutter.make[IO](None)

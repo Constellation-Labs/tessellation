@@ -8,7 +8,7 @@ import scala.collection.immutable.SortedSet
 import io.constellationnetwork.generators.nesGen
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.{Address, DAGAddressRefined}
-import io.constellationnetwork.schema.balance.Balance
+import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.cluster.{ClusterSessionToken, SessionToken}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.generation.Generation
@@ -96,6 +96,7 @@ object generators {
   val balanceGen: Gen[Balance] =
     Arbitrary.arbitrary[NonNegLong].map(Balance(_))
 
+  val amountGen: Gen[Amount] = Arbitrary.arbitrary[NonNegLong].map(Amount(_))
   val transactionAmountGen: Gen[TransactionAmount] = Arbitrary.arbitrary[PosLong].map(TransactionAmount(_))
   val tokenLockAmountGen: Gen[TokenLockAmount] = Arbitrary.arbitrary[PosLong].map(TokenLockAmount(_))
 

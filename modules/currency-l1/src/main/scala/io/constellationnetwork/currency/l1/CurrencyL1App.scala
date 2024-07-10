@@ -17,7 +17,7 @@ import io.constellationnetwork.currency.l1.modules._
 import io.constellationnetwork.currency.l1.node.L1NodeContext
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.dag.l1.config.types._
-import io.constellationnetwork.dag.l1.domain.transaction.CustomContextualTransactionValidator
+import io.constellationnetwork.dag.l1.domain.transaction.{CustomContextualTransactionValidator, TransactionFeeEstimator}
 import io.constellationnetwork.dag.l1.http.p2p.{P2PClient => DAGP2PClient}
 import io.constellationnetwork.dag.l1.infrastructure.block.rumor.handler.blockRumorHandler
 import io.constellationnetwork.dag.l1.infrastructure.swap.rumor.handler.allowSpendBlockRumorHandler
@@ -54,6 +54,7 @@ import pureconfig.module.enumeratum._
 trait OverridableL1 extends TessellationIOApp[Run] {
   def dataApplication: Option[Resource[IO, BaseDataApplicationL1Service[IO]]] = None
   def transactionValidator: Option[CustomContextualTransactionValidator] = None
+  def transactionFeeEstimator: Option[TransactionFeeEstimator[IO]] = None
 }
 
 abstract class CurrencyL1App(
@@ -132,6 +133,7 @@ abstract class CurrencyL1App(
           p2pClient,
           cfg,
           dataApplicationService,
+          transactionFeeEstimator,
           maybeMajorityPeerIds,
           Hasher.forKryo[IO]
         )
@@ -275,6 +277,7 @@ abstract class CurrencyL1App(
               storages.cluster,
               storages.l0Cluster,
               storages.lastGlobalSnapshot,
+              storages.lastSnapshot,
               storages.node,
               p2pClient.l0BlockOutputClient,
               p2pClient.consensusClient,

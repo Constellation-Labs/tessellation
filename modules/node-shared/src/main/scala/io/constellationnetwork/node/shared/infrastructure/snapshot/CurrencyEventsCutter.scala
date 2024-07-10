@@ -4,8 +4,8 @@ import cats.effect.Async
 import cats.effect.std.Random
 import cats.syntax.all._
 
-import io.constellationnetwork.currency.dataApplication.BaseDataApplicationL0Service
 import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationBlock
+import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataTransaction}
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema.currencyMessage.CurrencyMessage
@@ -14,6 +14,7 @@ import io.constellationnetwork.schema.{Block, SnapshotOrdinal}
 import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
+import io.circe.Encoder
 
 trait CurrencyEventsCutter[F[_]] {
   def cut(
@@ -59,7 +60,7 @@ object CurrencyEventsCutter {
           } else if (acceptedTokenLockBlocksLength > acceptedDataBlocksLength && acceptedTokenLockBlocksLength > acceptedBlocksLength) {
             tokenLockBlockEvents.widen[CurrencySnapshotEvent].some.pure[F]
           } else {
-            implicit val dataEncoder = dataApplication.dataEncoder
+            implicit val dataEncoder: Encoder[DataTransaction] = DataTransaction.encoder(dataApplication.dataEncoder)
 
             val lastBlockSize: F[Option[Int]] = acceptedBlocks.lastOption.traverse(a => JsonSerializer[F].serialize(a).map(_.length))
             val lastTokenLockBlockSize: F[Option[Int]] =
