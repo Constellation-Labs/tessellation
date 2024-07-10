@@ -20,7 +20,8 @@ import org.tessellation.security.{Hasher, SecurityProvider}
 
 import eu.timepit.refined.auto._
 import io.circe.shapes._
-import io.circe.{Decoder, Encoder, Json}
+import io.circe.syntax.EncoderOps
+import io.circe.{Decoder, Encoder}
 import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder}
 import org.http4s.dsl.Http4sDsl
 import org.http4s.{EntityDecoder, HttpRoutes, Response}
@@ -55,10 +56,23 @@ final case class DataApplicationRoutes[F[_]: Async: Hasher: SecurityProvider: L1
     }
 
   protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
-    case req @ POST -> Root / "data" / "validate" =>
-      implicit val decoder: EntityDecoder[F, Signed[DataUpdate]] = dataApplication.signedDataEntityDecoder
+    case req @ POST -> Root / "data" / "estimate-fee" =>
+      implicit val decoder: Decoder[DataUpdate] = dataApplication.dataDecoder
       req
-        .asR[Signed[DataUpdate]](validate(_)(Ok(Json.obj())))
+        .asR[DataUpdate] { update =>
+          dataApplication.validateUpdate(update).flatMap {
+            case Invalid(e) => BadRequest(InvalidDataUpdate(e.toString).toApplicationError)
+            case _ =>
+              lastGlobalSnapshotStorage.getOrdinal.flatMap {
+                case None => InternalServerError(GL0SnapshotOrdinalUnavailable.toApplicationError)
+                case Some(ord) =>
+                  dataApplication
+                    .estimateFee(ord)(update)
+                    .map(EstimatedFeeResponse(_))
+                    .flatMap(response => Ok(response.asJson.dropNullValues))
+              }
+          }
+        }
         .handleUnknownError
 
     case GET -> Root / "data" =>
@@ -105,7 +119,7 @@ final case class DataApplicationRoutes[F[_]: Async: Hasher: SecurityProvider: L1
         }
         .flatMap(_ => Ok())
         .handleErrorWith { err =>
-          logger.error(err)(s"An error occured") >> InternalServerError()
+          logger.error(err)(s"An error occurred") >> InternalServerError()
         }
   }
 }
