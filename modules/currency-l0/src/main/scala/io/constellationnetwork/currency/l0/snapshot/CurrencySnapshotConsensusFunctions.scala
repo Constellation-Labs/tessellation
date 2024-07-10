@@ -81,6 +81,7 @@ object CurrencySnapshotConsensusFunctions {
           blocksForAcceptance,
           rewards,
           facilitators,
+          None,
           None
         )
         .map(created => (created.artifact, created.context, created.awaitingEvents))

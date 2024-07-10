@@ -5,8 +5,9 @@ import cats.effect.std.Queue
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
+import io.constellationnetwork.currency.dataApplication.DataTransaction.DataTransactions
 import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationBlock
-import io.constellationnetwork.currency.dataApplication.{ConsensusInput => DataConsensusInput, DataUpdate}
+import io.constellationnetwork.currency.dataApplication.{ConsensusInput => DataConsensusInput}
 import io.constellationnetwork.currency.swap.{ConsensusInput => SwapConsensusInput}
 import io.constellationnetwork.currency.tokenlock.{ConsensusInput => TokenLockConsensusInput}
 import io.constellationnetwork.dag.l1.domain.consensus.block.BlockConsensusInput.PeerBlockConsensusInput
@@ -24,7 +25,7 @@ object Queues {
     for {
       dataApplicationPeerConsensusInputQueue <- Queue.unbounded[F, Signed[DataConsensusInput.PeerConsensusInput]]
       dataApplicationBlockQueue <- Queue.unbounded[F, Signed[DataApplicationBlock]]
-      dataUpdatesQueue <- ViewableQueue.make[F, Signed[DataUpdate]]
+      dataTransactionsQueue <- ViewableQueue.make[F, DataTransactions]
     } yield
       new Queues[F] {
         val rumor = dagL1Queues.rumor
@@ -32,7 +33,7 @@ object Queues {
         val peerBlock = dagL1Queues.peerBlock
         val dataApplicationPeerConsensusInput = dataApplicationPeerConsensusInputQueue
         val dataApplicationBlock = dataApplicationBlockQueue
-        val dataUpdates = dataUpdatesQueue
+        val dataTransactions = dataTransactionsQueue
         val swapPeerConsensusInput = dagL1Queues.swapPeerConsensusInput
         val allowSpendBlocks = dagL1Queues.allowSpendBlocks
         val tokenLockPeerConsensusInput = dagL1Queues.tokenLockConsensusInput
@@ -46,7 +47,7 @@ sealed abstract class Queues[F[_]] private {
   val peerBlock: Queue[F, Signed[Block]]
   val dataApplicationPeerConsensusInput: Queue[F, Signed[DataConsensusInput.PeerConsensusInput]]
   val dataApplicationBlock: Queue[F, Signed[DataApplicationBlock]]
-  val dataUpdates: ViewableQueue[F, Signed[DataUpdate]]
+  val dataTransactions: ViewableQueue[F, DataTransactions]
   val swapPeerConsensusInput: Queue[F, Signed[SwapConsensusInput.PeerConsensusInput]]
   val allowSpendBlocks: Queue[F, Signed[AllowSpendBlock]]
   val tokenLockPeerConsensusInput: Queue[F, Signed[TokenLockConsensusInput.PeerConsensusInput]]

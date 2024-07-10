@@ -84,6 +84,7 @@ object SharedServices {
         AllowSpendBlockAcceptanceManager.make[F](validators.allowSpendBlockValidator),
         collateral.amount,
         validators.currencyMessageValidator,
+        validators.feeTransactionValidator,
         validators.globalSnapshotSyncValidator
       )
 

@@ -12,11 +12,7 @@ import scala.concurrent.duration._
 import io.constellationnetwork.currency.dataApplication.ConsensusInput.OwnerConsensusInput
 import io.constellationnetwork.currency.dataApplication._
 import io.constellationnetwork.currency.l1.cli.method.Run
-import io.constellationnetwork.currency.l1.domain.dataApplication.consensus.Validator.{
-  canStartOwnDataConsensus,
-  isLastGlobalSnapshotPresent,
-  isPeerInputValid
-}
+import io.constellationnetwork.currency.l1.domain.dataApplication.consensus.Validator._
 import io.constellationnetwork.currency.l1.domain.dataApplication.consensus.{ConsensusClient, ConsensusState, Engine}
 import io.constellationnetwork.currency.l1.modules.{Queues, Services}
 import io.constellationnetwork.currency.schema.currency._
@@ -30,6 +26,7 @@ import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshot
 import io.constellationnetwork.security.{Hasher, SecurityProvider}
 
 import fs2.{Pipe, Stream}
+import io.circe.Encoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object DataApplication {
@@ -38,6 +35,7 @@ object DataApplication {
     clusterStorage: ClusterStorage[F],
     l0ClusterStorage: L0ClusterStorage[F],
     lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
+    lastCurrencySnapshot: LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
     nodeStorage: NodeStorage[F],
     blockOutputClient: L0BlockOutputClient[F],
     consensusClient: ConsensusClient[F],
@@ -59,7 +57,12 @@ object DataApplication {
     def inspectionTrigger: Stream[F, OwnerConsensusInput] =
       Stream
         .awakeEvery(5.seconds)
-        .evalFilter(_ => isLastGlobalSnapshotPresent(lastGlobalSnapshot))
+        .evalFilter { _ =>
+          for {
+            lastGlobalSnapshotPresent <- isLastGlobalSnapshotPresent(lastGlobalSnapshot)
+            lastCurrencySnapshotPresent <- isLastCurrencySnapshotPresent(lastCurrencySnapshot)
+          } yield lastGlobalSnapshotPresent && lastCurrencySnapshotPresent
+        }
         .as(ConsensusInput.InspectionTrigger)
 
     def ownRoundTrigger: Stream[F, OwnerConsensusInput] =
@@ -70,6 +73,7 @@ object DataApplication {
             nodeStorage,
             clusterStorage,
             lastGlobalSnapshot,
+            lastCurrencySnapshot,
             dataConsensusCfg.peersCount
           ).handleErrorWith { e =>
             logger.warn(e)("Failure checking if own consensus can be kicked off!").as(false)
@@ -84,7 +88,12 @@ object DataApplication {
       Stream
         .fromQueueUnterminated(queues.dataApplicationPeerConsensusInput)
         .evalFilter(isPeerInputValid(_, dataApplicationService))
-        .evalFilter(_ => isLastGlobalSnapshotPresent(lastGlobalSnapshot))
+        .evalFilter { _ =>
+          for {
+            lastGlobalSnapshotPresent <- isLastGlobalSnapshotPresent(lastGlobalSnapshot)
+            lastCurrencySnapshotPresent <- isLastCurrencySnapshotPresent(lastCurrencySnapshot)
+          } yield lastGlobalSnapshotPresent && lastCurrencySnapshotPresent
+        }
         .map(_.value)
 
     def blockConsensusInputs =
@@ -99,7 +108,7 @@ object DataApplication {
             clusterStorage,
             lastGlobalSnapshot,
             consensusClient,
-            queues.dataUpdates,
+            queues.dataTransactions,
             selfId,
             selfKeyPair
           )
@@ -124,9 +133,11 @@ object DataApplication {
           .flatMap(peers => Random[F].shuffleList(peers))
           .map(peers => peers.headOption)
           .flatMap { maybeL0Peer =>
+            implicit val dataUpdateEncoder: Encoder[DataUpdate] = dataApplicationService.dataEncoder
             maybeL0Peer.fold(logger.warn("No available L0 peer")) { l0Peer =>
               blockOutputClient
-                .sendDataApplicationBlock(fb.hashedBlock.signed)(dataApplicationService.dataEncoder)(l0Peer)
+                .sendDataApplicationBlock(fb.hashedBlock.signed)
+                .run(l0Peer)
                 .handleErrorWith(e => logger.error(e)("Error when sending block to L0").as(false))
                 .ifM(Applicative[F].unit, logger.warn("Sending block to L0 failed"))
             }
