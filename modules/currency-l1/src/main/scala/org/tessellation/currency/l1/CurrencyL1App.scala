@@ -237,9 +237,11 @@ abstract class CurrencyL1App(
         hasherSelector.withCurrent { implicit hasher =>
           DataApplication
             .run(
+              cfg.dataConsensus,
               storages.cluster,
               storages.l0Cluster,
               storages.lastGlobalSnapshot,
+              storages.node,
               p2pClient.l0BlockOutputClient,
               p2pClient.consensusClient,
               services,

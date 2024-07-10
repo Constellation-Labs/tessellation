@@ -11,27 +11,33 @@ import scala.concurrent.duration._
 
 import org.tessellation.currency.dataApplication.ConsensusInput.OwnerConsensusInput
 import org.tessellation.currency.dataApplication._
+import org.tessellation.currency.l1.domain.dataApplication.consensus.Validator.{
+  canStartOwnDataConsensus,
+  isLastGlobalSnapshotPresent,
+  isPeerInputValid
+}
 import org.tessellation.currency.l1.domain.dataApplication.consensus.{ConsensusClient, ConsensusState, Engine}
 import org.tessellation.currency.l1.modules.{Queues, Services}
 import org.tessellation.currency.schema.currency._
+import org.tessellation.dag.l1.domain.consensus.block.config.DataConsensusConfig
 import org.tessellation.dag.l1.http.p2p.L0BlockOutputClient
 import org.tessellation.node.shared.domain.cluster.storage.{ClusterStorage, L0ClusterStorage}
+import org.tessellation.node.shared.domain.node.NodeStorage
 import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
-import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hasher, SecurityProvider}
 
 import fs2.{Pipe, Stream}
-import io.circe.Encoder
-import io.circe.generic.semiauto.deriveEncoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object DataApplication {
   def run[F[_]: Async: Random: Hasher: SecurityProvider: L1NodeContext](
+    dataConsensusCfg: DataConsensusConfig,
     clusterStorage: ClusterStorage[F],
     l0ClusterStorage: L0ClusterStorage[F],
     lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
+    nodeStorage: NodeStorage[F],
     blockOutputClient: L0BlockOutputClient[F],
     consensusClient: ConsensusClient[F],
     services: Services[
@@ -49,39 +55,34 @@ object DataApplication {
     def logger = Slf4jLogger.getLogger[F]
 
     def inspectionTrigger: Stream[F, OwnerConsensusInput] =
-      Stream.awakeEvery(5.seconds).as(ConsensusInput.InspectionTrigger)
+      Stream
+        .awakeEvery(5.seconds)
+        .evalFilter(_ => isLastGlobalSnapshotPresent(lastGlobalSnapshot))
+        .as(ConsensusInput.InspectionTrigger)
 
     def ownRoundTrigger: Stream[F, OwnerConsensusInput] =
       Stream
         .awakeEvery(5.seconds)
+        .evalFilter { _ =>
+          canStartOwnDataConsensus(
+            nodeStorage,
+            clusterStorage,
+            lastGlobalSnapshot,
+            dataConsensusCfg.peersCount
+          ).handleErrorWith { e =>
+            logger.warn(e)("Failure checking if own consensus can be kicked off!").as(false)
+          }
+        }
         .as(ConsensusInput.OwnRoundTrigger)
 
     def ownerBlockConsensusInputs =
       inspectionTrigger.merge(ownRoundTrigger)
 
-    def isPeerInputValid(input: Signed[ConsensusInput.PeerConsensusInput]): F[Boolean] =
-      for {
-        validSignature <- input.value match {
-          case proposal: ConsensusInput.Proposal =>
-            implicit val e = ConsensusInput.Proposal.encoder(dataApplicationService.dataEncoder)
-            Signed(proposal, input.proofs).hasValidSignature
-
-          case signatureProposal: ConsensusInput.SignatureProposal =>
-            implicit val e: Encoder[ConsensusInput.SignatureProposal] = deriveEncoder
-            Signed(signatureProposal, input.proofs).hasValidSignature
-
-          case cancellation: ConsensusInput.CancelledCreationRound =>
-            implicit val e: Encoder[ConsensusInput.CancelledCreationRound] = deriveEncoder
-            Signed(cancellation, input.proofs).hasValidSignature
-        }
-
-        signedExclusively = input.isSignedExclusivelyBy(PeerId._Id.get(input.value.senderId))
-      } yield validSignature && signedExclusively
-
     def peerBlockConsensusInputs =
       Stream
         .fromQueueUnterminated(queues.dataApplicationPeerConsensusInput)
-        .evalFilter(isPeerInputValid(_))
+        .evalFilter(isPeerInputValid(_, dataApplicationService))
+        .evalFilter(_ => isLastGlobalSnapshotPresent(lastGlobalSnapshot))
         .map(_.value)
 
     def blockConsensusInputs =
@@ -91,6 +92,7 @@ object DataApplication {
       _.evalMapAccumulate(ConsensusState.Empty) {
         Engine
           .fsm(
+            dataConsensusCfg,
             dataApplicationService,
             clusterStorage,
             lastGlobalSnapshot,
@@ -108,7 +110,7 @@ object DataApplication {
             .eval(logger.debug(s"Data application block created! Hash=${hashedBlock.hash}, ProofsHash=${hashedBlock.proofsHash}"))
             .as(fb)
         case (_, ConsensusOutput.CleanedConsensuses(ids)) =>
-          Stream.eval(logger.debug(s"Cleaned consensuses ids=${ids}")) >> Stream.empty
+          Stream.eval(logger.debug(s"Cleaned consensuses ids=$ids")) >> Stream.empty
         case (_, ConsensusOutput.Noop) => Stream.empty
       }
 

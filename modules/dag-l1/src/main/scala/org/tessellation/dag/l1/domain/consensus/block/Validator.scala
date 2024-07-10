@@ -2,7 +2,6 @@ package org.tessellation.dag.l1.domain.consensus.block
 
 import cats.effect.Async
 import cats.syntax.flatMap._
-import cats.syntax.foldable._
 import cats.syntax.functor._
 import cats.{Applicative, Monad}
 

@@ -14,6 +14,7 @@ import org.tessellation.currency.dataApplication.ConsensusInput._
 import org.tessellation.currency.dataApplication.ConsensusOutput.Noop
 import org.tessellation.currency.dataApplication._
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
+import org.tessellation.dag.l1.domain.consensus.block.config.DataConsensusConfig
 import org.tessellation.effects.GenUUID
 import org.tessellation.fsm.FSM
 import org.tessellation.node.shared.domain.cluster.storage.ClusterStorage
@@ -84,6 +85,7 @@ object Engine {
   type State = ConsensusState
 
   def fsm[F[_]: Async: Random: SecurityProvider: Hasher: L1NodeContext](
+    dataConsensusCfg: DataConsensusConfig,
     dataApplication: BaseDataApplicationL1Service[F],
     clusterStorage: ClusterStorage[F],
     lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
@@ -95,9 +97,9 @@ object Engine {
 
     implicit val dataEncoder = dataApplication.dataEncoder
 
-    def peersCount = 2
-    def timeout = 10.seconds
-    def maxDataUpdatesToDequeue = 50
+    def peersCount = dataConsensusCfg.peersCount.value
+    def timeout = dataConsensusCfg.timeout
+    def maxDataUpdatesToDequeue = dataConsensusCfg.maxDataUpdatesToDequeue.value
 
     def logger = Slf4jLogger.getLogger[F]
     def getTime: F[FiniteDuration] = Clock[F].monotonic
