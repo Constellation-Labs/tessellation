@@ -16,6 +16,8 @@ object DataApplicationError {
       case InvalidDataUpdate(reason)     => ApplicationError.InvalidRequestBody(s"Invalid data update, reason: $reason")
       case InvalidSignature              => ApplicationError.InvalidRequestBody("Invalid signature")
       case GL0SnapshotOrdinalUnavailable => ApplicationError.InternalError("Last Global Snapshot ordinal not available", canRetry = true)
+      case CurrencySnapshotUnavailable   => ApplicationError.InternalError("Last Currency Snapshot not available", canRetry = true)
+      case EmptyValidDataTransactions    => ApplicationError.InternalError("Could not find any valid data transaction", canRetry = true)
     }
   }
 }
@@ -23,3 +25,5 @@ object DataApplicationError {
 case class InvalidDataUpdate(reason: String) extends DataApplicationError
 case object InvalidSignature extends DataApplicationError
 case object GL0SnapshotOrdinalUnavailable extends DataApplicationError
+case object CurrencySnapshotUnavailable extends DataApplicationError
+case object EmptyValidDataTransactions extends DataApplicationError

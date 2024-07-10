@@ -5,7 +5,8 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.{Applicative, Monad}
 
-import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL1Service, ConsensusInput}
+import io.constellationnetwork.currency.dataApplication.{DataTransaction, _}
+import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
@@ -32,6 +33,11 @@ object Validator {
   ): F[Boolean] =
     lastGlobalSnapshot.getOrdinal.map(_.isDefined)
 
+  def isLastCurrencySnapshotPresent[F[_]: Async](
+    lastCurrencySnapshot: LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
+  ): F[Boolean] =
+    lastCurrencySnapshot.getOrdinal.map(_.isDefined)
+
   private def enoughPeersForConsensus[F[_]: Monad](
     clusterStorage: ClusterStorage[F],
     peersCount: PosInt
@@ -47,7 +53,8 @@ object Validator {
     for {
       validSignature <- input.value match {
         case proposal: ConsensusInput.Proposal =>
-          implicit val e: Encoder[ConsensusInput.Proposal] = ConsensusInput.Proposal.encoder(dataApplicationService.dataEncoder)
+          implicit val dataUpdateEncoder: Encoder[DataUpdate] = dataApplicationService.dataEncoder
+          implicit val e: Encoder[ConsensusInput.Proposal] = ConsensusInput.Proposal.encoder(DataTransaction.encoder)
           Signed(proposal, input.proofs).hasValidSignature
 
         case signatureProposal: ConsensusInput.SignatureProposal =>
@@ -66,19 +73,22 @@ object Validator {
     nodeStorage: NodeStorage[F],
     clusterStorage: ClusterStorage[F],
     lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
+    lastCurrencySnapshot: LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
     peersCount: PosInt
   ): F[Boolean] =
     for {
       stateReadyForConsensus <- nodeStorage.getNodeState.map(isReadyForConsensus)
       enoughPeers <- enoughPeersForConsensus(clusterStorage, peersCount)
       lastGlobalSnapshotPresent <- isLastGlobalSnapshotPresent(lastGlobalSnapshot)
-      res = stateReadyForConsensus && enoughPeers && lastGlobalSnapshotPresent
+      lastCurrencySnapshotPresent <- isLastCurrencySnapshotPresent(lastCurrencySnapshot)
+      res = stateReadyForConsensus && enoughPeers && lastGlobalSnapshotPresent && lastCurrencySnapshotPresent
       _ <-
         Applicative[F].whenA(!res) {
           val reason = Seq(
             if (!stateReadyForConsensus) "State not ready for consensus" else "",
             if (!enoughPeers) "Not enough peers" else "",
-            if (!lastGlobalSnapshotPresent) "No global snapshot" else ""
+            if (!lastGlobalSnapshotPresent) "No global snapshot" else "",
+            if (!lastCurrencySnapshotPresent) "No currency snapshot" else ""
           ).filter(_.nonEmpty).mkString(", ")
           logger.debug(s"Cannot start data own consensus: ${reason}")
         }

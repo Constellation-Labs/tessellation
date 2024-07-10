@@ -38,7 +38,12 @@ object Signed {
   }
 
   case class InvalidSignatureForHash[A](signed: Signed[A]) extends NoStackTrace
-
+  object InvalidSignatureForHash {
+    implicit val functor: Functor[InvalidSignatureForHash] = new Functor[InvalidSignatureForHash] {
+      def map[A, B](fa: InvalidSignatureForHash[A])(f: A => B): InvalidSignatureForHash[B] =
+        InvalidSignatureForHash(fa.signed.map(f))
+    }
+  }
   implicit def show[A: Show]: Show[Signed[A]] =
     s => s"Signed(value=${s.value.show}, proofs=${s.proofs.show})"
 

@@ -1,12 +1,13 @@
 package io.constellationnetwork.node.shared.infrastructure.snapshot
 
 import cats.Order
-import cats.data.Validated
+import cats.data.{NonEmptyList, Validated}
 import cats.effect.Async
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
+import io.constellationnetwork.currency.dataApplication.FeeTransaction
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSnapshotSync
 import io.constellationnetwork.node.shared.domain.block.processing._
@@ -20,6 +21,7 @@ import io.constellationnetwork.node.shared.domain.tokenlock.block.{
   TokenLockBlockAcceptanceManager,
   TokenLockBlockAcceptanceResult
 }
+import io.constellationnetwork.node.shared.domain.transaction.FeeTransactionValidator
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.{SharedArtifact, TokenUnlock}
@@ -35,6 +37,7 @@ import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.syntax.sortedCollection._
 
+import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 
 case class CurrencyMessagesAcceptanceResult(
@@ -57,6 +60,7 @@ case class CurrencySnapshotAcceptanceResult(
   globalSnapshotSync: GlobalSnapshotSyncAcceptanceResult,
   rewards: SortedSet[RewardTransaction],
   sharedArtifacts: SortedSet[SharedArtifact],
+  feeTransactions: Option[SortedSet[Signed[FeeTransaction]]],
   info: CurrencySnapshotInfo,
   stateProof: CurrencySnapshotStateProof
 )
@@ -67,6 +71,7 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
     tokenLockBlocksForAcceptance: List[Signed[TokenLockBlock]],
     allowSpendBlocksForAcceptance: List[Signed[AllowSpendBlock]],
     messagesForAcceptance: List[Signed[CurrencyMessage]],
+    feeTransactionsForAcceptance: Option[SortedSet[Signed[FeeTransaction]]],
     globalSnapshotSyncsForAcceptance: List[Signed[GlobalSnapshotSync]],
     sharedArtifactsForAcceptance: SortedSet[SharedArtifact],
     lastSnapshotContext: CurrencySnapshotContext,
@@ -86,6 +91,7 @@ object CurrencySnapshotAcceptanceManager {
     allowSpendBlockAcceptanceManager: AllowSpendBlockAcceptanceManager[F],
     collateral: Amount,
     messageValidator: CurrencyMessageValidator[F],
+    feeTransactionValidator: FeeTransactionValidator[F],
     globalSnapshotSyncValidator: GlobalSnapshotSyncValidator[F]
   ) = new CurrencySnapshotAcceptanceManager[F] {
     def accept(
@@ -93,6 +99,7 @@ object CurrencySnapshotAcceptanceManager {
       tokenLockBlocksForAcceptance: List[Signed[TokenLockBlock]],
       allowSpendBlocksForAcceptance: List[Signed[AllowSpendBlock]],
       messagesForAcceptance: List[Signed[CurrencyMessage]],
+      feeTransactionsForAcceptance: Option[SortedSet[Signed[FeeTransaction]]],
       globalSnapshotSyncsForAcceptance: List[Signed[GlobalSnapshotSync]],
       sharedArtifactsForAcceptance: SortedSet[SharedArtifact],
       lastSnapshotContext: CurrencySnapshotContext,
@@ -150,6 +157,13 @@ object CurrencySnapshotAcceptanceManager {
         rewards
       )
 
+      _ <- validateFeeTxs(feeTransactionsForAcceptance)
+
+      (updatedBalancesByFeeTransactions, acceptedFeeTxs) <- acceptFeeTxs(
+        updatedBalancesByRewards,
+        feeTransactionsForAcceptance
+      )
+
       acceptedSharedArtifacts = acceptSharedArtifacts(sharedArtifactsForAcceptance)
 
       messagesAcceptanceResult <- acceptMessages(
@@ -198,7 +212,7 @@ object CurrencySnapshotAcceptanceManager {
       updatedBalancesByTokenLocks = updateBalancesByTokenLocks(
         acceptedTokenLocks,
         acceptedTokenUnlocks,
-        updatedBalancesByRewards
+        updatedBalancesByFeeTransactions
       )
 
       csi = CurrencySnapshotInfo(
@@ -224,6 +238,7 @@ object CurrencySnapshotAcceptanceManager {
         globalSnapshotSyncAcceptanceResult,
         acceptedRewardTxs,
         acceptedSharedArtifacts,
+        acceptedFeeTxs,
         csi,
         stateProof
       )
@@ -387,6 +402,54 @@ object CurrencySnapshotAcceptanceManager {
           .plus(tx.amount)
           .map(balance => (updatedBalances.updated(tx.destination, balance), acceptedTxs + tx))
           .getOrElse(acc)
+      }
+
+    private def validateFeeTxs(
+      maybeTxs: Option[SortedSet[Signed[FeeTransaction]]]
+    ): F[Unit] =
+      NonEmptyList.fromList(maybeTxs.toList.flatMap(_.toList)).fold(().pure[F]) { nonEmptyTxs =>
+        feeTransactionValidator.validate(nonEmptyTxs).flatMap {
+          case Validated.Valid(_) =>
+            ().pure[F]
+          case Validated.Invalid(errors) =>
+            new Exception(s"FeeTransaction validation failed: ${errors.toList.mkString(", ")}")
+              .raiseError[F, Unit]
+        }
+      }
+
+    private def acceptFeeTxs(
+      balances: SortedMap[Address, Balance],
+      maybeTxs: Option[SortedSet[Signed[FeeTransaction]]]
+    ): F[(SortedMap[Address, Balance], Option[SortedSet[Signed[FeeTransaction]]])] =
+      maybeTxs match {
+        case None => (balances, maybeTxs).pure[F]
+        case Some(txs) =>
+          val feeReferredAddresses = txs.flatMap(tx => Set(tx.value.source, tx.value.destination))
+          val feeReferredBalances = feeReferredAddresses.foldLeft(SortedMap.empty[Address, Long]) {
+            case (acc, address) =>
+              acc.updated(address, balances.getOrElse(address, Balance.empty).value.value)
+          }
+          val updatedFeeReferredBalances = txs
+            .foldLeft(feeReferredBalances) {
+              case (balances, tx) =>
+                balances
+                  .updatedWith(tx.source)(existing => (existing.getOrElse(Balance.empty.value.value) - tx.amount.value).some)
+                  .updatedWith(tx.destination)(existing => (existing.getOrElse(Balance.empty.value.value) + tx.amount.value).some)
+            }
+
+          updatedFeeReferredBalances.toList
+            .foldLeftM(SortedMap.empty[Address, Balance]) {
+              case (acc, (address, balance)) =>
+                NonNegLong
+                  .from(balance)
+                  .map(Balance(_))
+                  .map(acc.updated(address, _))
+                  .leftMap(e => new ArithmeticException(s"Unexpected state when applying fee transactions: $e"))
+                  .liftTo[F]
+            }
+            .map { updates =>
+              (balances ++ updates, txs.some)
+            }
       }
 
     private def acceptSharedArtifacts(

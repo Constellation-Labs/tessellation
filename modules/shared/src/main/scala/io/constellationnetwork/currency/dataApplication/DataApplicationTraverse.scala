@@ -6,6 +6,7 @@ import cats.syntax.all._
 
 import scala.collection.immutable.SortedSet
 
+import io.constellationnetwork.currency.dataApplication.DataUpdate.getDataUpdates
 import io.constellationnetwork.currency.dataApplication.storage.{CalculatedStateLocalFileSystemStorage, TraverseLocalFileSystemTempStorage}
 import io.constellationnetwork.currency.schema.currency.CurrencyIncrementalSnapshot
 import io.constellationnetwork.cutoff.{LogarithmicOrdinalCutoff, OrdinalCutoff}
@@ -103,7 +104,8 @@ object DataApplicationTraverse {
                           }
                         }
                         .map(_.toList.flatten)
-                        .map(_.flatMap(_.updates.toList))
+                        .map(_.flatMap(_.dataTransactions.toList))
+                        .map(getDataUpdates)
                         .flatMap(dataApplication.combine(state, _))
                         .flatTap {
                           case DataState(_, calculatedState, _) =>

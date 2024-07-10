@@ -6,7 +6,7 @@ import cats.data.NonEmptyList
 import cats.effect.{Async, IO, Resource}
 import cats.implicits.catsStdShowForList
 import cats.syntax.all._
-import cats.{Applicative, Eq, Show}
+import cats.{Eq, Show}
 
 import scala.collection.immutable.SortedSet
 
@@ -29,7 +29,6 @@ import io.constellationnetwork.security.{Hashed, Hasher}
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.encoder
 import derevo.derive
-import eu.timepit.refined.auto._
 import io.circe.syntax._
 import io.circe.{Decoder, Encoder, Json}
 import org.http4s.{EntityDecoder, EntityEncoder, HttpRoutes}
@@ -47,8 +46,9 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
     roundId <- Gen.delay(RoundId(UUID.randomUUID()))
     value <- Gen.delay(Gen.double)
     updates <- Gen.nonEmptyListOf(signedOf(SampleDataUpdate(value))).map(NonEmptyList.fromListUnsafe)
-    hashes = updates.map(_ => Hash.empty)
-    signed <- signedOf[DataApplicationBlock](DataApplicationBlock(roundId, updates, hashes))
+    formattedUpdates = updates.map(t => NonEmptyList.of(t))
+    hashes = updates.map(_ => NonEmptyList.of(Hash.empty))
+    signed <- signedOf[DataApplicationBlock](DataApplicationBlock(roundId, formattedUpdates, hashes))
   } yield signed
 
   val currencyMessageGen: Gen[Signed[CurrencyMessage]] = for {
@@ -63,13 +63,16 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
   implicit def eqDataApplicationBlock(
     implicit eqRoundId: Eq[RoundId],
     eqDataUpdate: Eq[NonEmptyList[Signed[SampleDataUpdate]]],
-    eqHash: Eq[NonEmptyList[Hash]]
+    eqHash: Eq[NonEmptyList[NonEmptyList[Hash]]]
   ): Eq[Signed[DataApplicationBlock]] = Eq.instance {
     case (a, b) =>
       eqRoundId.eqv(a.roundId, b.roundId) &&
       eqDataUpdate
-        .eqv(a.updates.map(_.asInstanceOf[Signed[SampleDataUpdate]]), b.updates.map(_.asInstanceOf[Signed[SampleDataUpdate]])) &&
-      eqHash.eqv(a.updatesHashes, b.updatesHashes)
+        .eqv(
+          a.dataTransactions.map(_.asInstanceOf[Signed[SampleDataUpdate]]),
+          b.dataTransactions.map(_.asInstanceOf[Signed[SampleDataUpdate]])
+        ) &&
+      eqHash.eqv(a.dataTransactionsHashes, b.dataTransactionsHashes)
   }
 
   def sharedResource: Resource[IO, JsonSerializer[IO]] =
@@ -207,7 +210,7 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
       messages = List(messageA)
     } yield (dataBlocks, blocks, tokenLockBlocks, messages)
 
-    implicit val dataUpdateEncoder: Encoder[DataUpdate] = testDataApplication.dataEncoder
+    implicit val dataUpdateEncoder: Encoder[DataTransaction] = DataTransaction.encoder(testDataApplication.dataEncoder)
     implicit val dataBlockEncoder = DataApplicationBlock.encoder
 
     forall(gen) {
@@ -323,15 +326,6 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
 
     override def validateData(state: DataState.Base, updates: NonEmptyList[Signed[DataUpdate]])(
       implicit context: L0NodeContext[IO]
-    ): IO[dataApplication.DataApplicationValidationErrorOr[Unit]] = ???
-
-    override def validateUpdate(update: DataUpdate)(
-      implicit context: L0NodeContext[IO]
-    ): IO[dataApplication.DataApplicationValidationErrorOr[Unit]] = ???
-
-    override def validateFee(gsOrdinal: SnapshotOrdinal)(update: Signed[DataUpdate])(
-      implicit context: L0NodeContext[IO],
-      A: Applicative[IO]
     ): IO[dataApplication.DataApplicationValidationErrorOr[Unit]] = ???
 
     override def combine(state: DataState.Base, updates: List[Signed[DataUpdate]])(

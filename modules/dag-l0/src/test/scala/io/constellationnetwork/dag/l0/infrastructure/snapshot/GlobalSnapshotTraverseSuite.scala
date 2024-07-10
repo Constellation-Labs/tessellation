@@ -245,6 +245,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
       Amount(0L),
       validators.currencyMessageValidator,
+      validators.feeTransactionValidator,
       validators.globalSnapshotSyncValidator
     )
     val currencyEventsCutter = CurrencyEventsCutter.make[IO](None)

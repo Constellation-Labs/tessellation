@@ -17,6 +17,7 @@ import cats.syntax.traverse._
 import scala.collection.immutable.SortedSet
 import scala.util.control.NoStackTrace
 
+import io.constellationnetwork.currency.dataApplication.FeeTransaction
 import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationBlock
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSnapshotSync
@@ -60,6 +61,7 @@ trait CurrencySnapshotCreator[F[_]] {
     events: Set[CurrencySnapshotEvent],
     rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
     facilitators: Set[PeerId],
+    feeTransactionFn: Option[() => SortedSet[Signed[FeeTransaction]]],
     artifactsFn: Option[() => SortedSet[SharedArtifact]]
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]
 }
@@ -89,6 +91,7 @@ object CurrencySnapshotCreator {
       events: Set[CurrencySnapshotEvent],
       rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
       facilitators: Set[PeerId],
+      feeTransactionFn: Option[() => SortedSet[Signed[FeeTransaction]]],
       artifactsFn: Option[() => SortedSet[SharedArtifact]]
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] = {
       val maxArtifactSize = maxProposalSizeInBytes(facilitators)
@@ -161,6 +164,10 @@ object CurrencySnapshotCreator {
             .orElse(artifactsFn.map(f => f()))
             .getOrElse(SortedSet.empty[SharedArtifact])
 
+          feeTransactions = dataApplicationAcceptanceResult
+            .map(result => SortedSet.from(result.feeTransactions))
+            .orElse(feeTransactionFn.map(f => f()))
+
           currencySnapshotAcceptanceResult <-
             currencySnapshotAcceptanceManager
               .accept(
@@ -168,6 +175,7 @@ object CurrencySnapshotCreator {
                 tokenLockBlocks,
                 allowSpendBlocks,
                 messages,
+                feeTransactions,
                 globalSnapshotSyncEvents,
                 sharedArtifactsForAcceptance,
                 lastContext,
@@ -241,7 +249,7 @@ object CurrencySnapshotCreator {
               currencySnapshotAcceptanceResult.messages.accepted.toSortedSet
             ),
             currencySnapshotAcceptanceResult.globalSnapshotSync.accepted.toSortedSet.some,
-            feeTransactions = none,
+            currencySnapshotAcceptanceResult.feeTransactions,
             currencySnapshotAcceptanceResult.sharedArtifacts.some,
             currencySnapshotAcceptanceResult.allowSpendBlock.accepted.toSortedSet.some,
             currencySnapshotAcceptanceResult.tokenLockBlock.accepted.toSortedSet.some

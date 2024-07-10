@@ -100,6 +100,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
               Amount(0L),
               validators.currencyMessageValidator,
+              validators.feeTransactionValidator,
               validators.globalSnapshotSyncValidator
             )
             implicit0(hs: HasherSelector[IO]) = HasherSelector.forSyncAlwaysCurrent(h)
