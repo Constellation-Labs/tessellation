@@ -19,11 +19,7 @@ import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
 import org.tessellation.node.shared.domain.snapshot.storage.SnapshotStorage
 import org.tessellation.node.shared.domain.trust.storage.TrustStorage
 import org.tessellation.node.shared.infrastructure.gossip.RumorStorage
-import org.tessellation.node.shared.infrastructure.snapshot.storage.{
-  SnapshotInfoLocalFileSystemStorage,
-  SnapshotLocalFileSystemStorage,
-  SnapshotStorage
-}
+import org.tessellation.node.shared.infrastructure.snapshot.storage._
 import org.tessellation.node.shared.modules.SharedStorages
 import org.tessellation.schema._
 import org.tessellation.schema.trust.PeerObservationAdjustmentUpdateBatch
@@ -76,6 +72,7 @@ object Storages {
           incrementalKryoGlobalSnapshotInfoLocalFileSystemStorage,
           hashSelect
         )
+
     } yield
       new Storages[F](
         cluster = sharedStorages.cluster,

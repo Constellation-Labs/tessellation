@@ -85,7 +85,10 @@ object Services {
       addressService = AddressService.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](storages.globalSnapshot)
       collateralService = Collateral.make[F](cfg.collateral, storages.globalSnapshot)
       stateChannelService = StateChannelService
-        .make[F](L0Cell.mkL0Cell(queues.l1Output, queues.stateChannelOutput), validators.stateChannelValidator)
+        .make[F](
+          L0Cell.mkL0Cell(queues.l1Output, queues.stateChannelOutput),
+          validators.stateChannelValidator
+        )
       getOrdinal = storages.globalSnapshot.headSnapshot.map(_.map(_.ordinal))
       trustUpdaterService = TrustStorageUpdater.make(getOrdinal, sharedServices.gossip, storages.trust)
     } yield

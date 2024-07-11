@@ -121,7 +121,13 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   private val targetRoutes = HasherSelector[F].withCurrent(implicit hasher => TargetRoutes[F](services.cluster).publicRoutes)
 
   private val currencyMessageRoutes = HasherSelector[F].withCurrent(implicit hasher =>
-    new CurrencyMessageRoutes[F](mkCell, validators.currencyMessageValidator, storages.snapshot, storages.identifier).publicRoutes
+    new CurrencyMessageRoutes[F](
+      mkCell,
+      validators.currencyMessageValidator,
+      storages.snapshot,
+      storages.identifier,
+      storages.lastGlobalSnapshot
+    ).publicRoutes
   )
 
   private val openRoutes: HttpRoutes[F] =

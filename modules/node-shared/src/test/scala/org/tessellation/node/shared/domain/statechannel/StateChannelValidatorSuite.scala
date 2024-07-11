@@ -14,11 +14,9 @@ import org.tessellation.ext.cats.effect.ResourceIO
 import org.tessellation.json.JsonSerializer
 import org.tessellation.kryo.KryoSerializer
 import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
-import org.tessellation.node.shared.domain.statechannel.{FeeCalculatorConfig, StateChannelValidator}
 import org.tessellation.schema.ID.Id
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
-import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.security._
 import org.tessellation.security.hash.Hash
@@ -32,7 +30,6 @@ import org.tessellation.shared.sharedKryoRegistrar
 import org.tessellation.statechannel.{StateChannelOutput, StateChannelSnapshotBinary}
 
 import eu.timepit.refined.auto._
-import eu.timepit.refined.internal.Adjacent.integralAdjacent
 import eu.timepit.refined.types.numeric.PosLong
 import weaver.MutableIOSuite
 
@@ -62,7 +59,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
         peerId.toSortedSet.map(SeedlistEntry(_, none, none, none, none)).some,
         Map(address -> peerId).some
       )
-      result <- validator.validate(scOutput, SnapshotOrdinal.MinValue, Balance.empty)
+      result <- validator.validate(scOutput, SnapshotOrdinal.MinValue, SnapshotFeesInfo.empty)
     } yield expect.same(Valid(scOutput), result)
 
   }
@@ -87,7 +84,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
         peerId.toSortedSet.map(SeedlistEntry(_, none, none, none, none)).some,
         Map(address -> peerId).some
       )
-      result <- validator.validate(scOutput, SnapshotOrdinal.MinValue, Balance.empty)
+      result <- validator.validate(scOutput, SnapshotOrdinal.MinValue, SnapshotFeesInfo.empty)
     } yield
       expect.same(
         StateChannelValidator.InvalidSigned(InvalidSignatures(signedSCBinary.proofs)).invalidNec,
@@ -110,7 +107,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
         peersIds.toSortedSet.map(SeedlistEntry(_, none, none, none, none)).some,
         Map(address -> peersIds).some
       )
-      result <- validator.validate(scOutput, SnapshotOrdinal.MinValue, Balance.empty)
+      result <- validator.validate(scOutput, SnapshotOrdinal.MinValue, SnapshotFeesInfo.empty)
     } yield expect.same(Valid(scOutput), result)
   }
 
@@ -147,7 +144,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
     )
 
     validator
-      .validate(scOutput, SnapshotOrdinal.MinValue, Balance.empty)
+      .validate(scOutput, SnapshotOrdinal.MinValue, SnapshotFeesInfo.empty)
       .map(
         expect.same(
           StateChannelValidator.BinaryExceedsMaxAllowedSize(282, 283).invalidNec,
@@ -171,7 +168,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
         peerId1.toSortedSet.map(SeedlistEntry(_, none, none, none, none)).some,
         Map(address -> peerId1).some
       )
-      result <- validator.validate(scOutput, SnapshotOrdinal.MinValue, Balance.empty)
+      result <- validator.validate(scOutput, SnapshotOrdinal.MinValue, SnapshotFeesInfo.empty)
     } yield
       expect.same(
         StateChannelValidator.SignersNotInSeedlist(SignedValidator.SignersNotInSeedlist(peerId2.map(_.toId))).invalidNec,
@@ -193,7 +190,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
         peerId1.toSortedSet.map(SeedlistEntry(_, none, none, none, none)).some,
         Map(address -> peerId1).some
       )
-      result <- validator.validateHistorical(scOutput, SnapshotOrdinal.MinValue, Balance.empty)
+      result <- validator.validateHistorical(scOutput, SnapshotOrdinal.MinValue, SnapshotFeesInfo.empty)
     } yield expect.same(Valid(scOutput), result)
   }
 
@@ -206,7 +203,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       signedSCBinary <- forAsyncHasher(testStateChannel, keyPair)
       scOutput = StateChannelOutput(address, signedSCBinary)
       validator = mkValidator(None, Map.empty[Address, NonEmptySet[PeerId]].some)
-      result <- validator.validate(scOutput, SnapshotOrdinal.MinValue, Balance.empty)
+      result <- validator.validate(scOutput, SnapshotOrdinal.MinValue, SnapshotFeesInfo.empty)
     } yield
       expect.same(
         StateChannelValidator.StateChannelAddressNotAllowed(address).invalidNec,
@@ -223,7 +220,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       signedSCBinary <- forAsyncHasher(testStateChannel, keyPair)
       scOutput = StateChannelOutput(address, signedSCBinary)
       validator = mkValidator(None, Map.empty[Address, NonEmptySet[PeerId]].some)
-      result <- validator.validateHistorical(scOutput, SnapshotOrdinal.MinValue, Balance.empty)
+      result <- validator.validateHistorical(scOutput, SnapshotOrdinal.MinValue, SnapshotFeesInfo.empty)
     } yield expect.same(Valid(scOutput), result)
   }
 
@@ -242,7 +239,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
         peerId1.union(peerId2).toSortedSet.map(SeedlistEntry(_, none, none, none, none)).some,
         Map(address -> peerId1).some
       )
-      result <- validator.validate(scOutput, SnapshotOrdinal.MinValue, Balance.empty)
+      result <- validator.validate(scOutput, SnapshotOrdinal.MinValue, SnapshotFeesInfo.empty)
     } yield
       expect.same(
         StateChannelValidator.NoSignerFromStateChannelAllowanceList.invalidNec,
@@ -265,7 +262,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
         peerId1.union(peerId2).toSortedSet.map(SeedlistEntry(_, none, none, none, none)).some,
         Map(address -> peerId1).some
       )
-      result <- validator.validateHistorical(scOutput, SnapshotOrdinal.MinValue, Balance.empty)
+      result <- validator.validateHistorical(scOutput, SnapshotOrdinal.MinValue, SnapshotFeesInfo.empty)
     } yield expect.same(Valid(scOutput), result)
   }
 
@@ -284,7 +281,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
         peerId1.union(peerId2).toSortedSet.map(SeedlistEntry(_, none, none, none, none)).some,
         Map(address -> peerId1).some
       )
-      result <- validator.validate(scOutput, SnapshotOrdinal.MinValue, Balance.empty)
+      result <- validator.validate(scOutput, SnapshotOrdinal.MinValue, SnapshotFeesInfo.empty)
     } yield expect.same(Valid(scOutput), result)
   }
 
@@ -297,7 +294,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       signedSCBinary <- forAsyncHasher(testStateChannel, keyPair)
       scOutput = StateChannelOutput(address, signedSCBinary)
       validator = mkValidator(None, None)
-      result <- validator.validate(scOutput, SnapshotOrdinal.MinValue, Balance.empty)
+      result <- validator.validate(scOutput, SnapshotOrdinal.MinValue, SnapshotFeesInfo.empty)
     } yield expect.same(Valid(scOutput), result)
   }
 
@@ -314,7 +311,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
         peerId.toSortedSet.map(SeedlistEntry(_, none, none, none, none)).some,
         Map(address -> peerId).some
       )
-      result <- validator.validate(scOutput, SnapshotOrdinal.MinValue, Balance.empty)
+      result <- validator.validate(scOutput, SnapshotOrdinal.MinValue, SnapshotFeesInfo.empty)
     } yield
       expect.same(
         StateChannelValidator.StateChannellGenesisAddressNotGeneratedFromData(address).invalidNec,
@@ -334,7 +331,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       scOutput = StateChannelOutput(address, signedSCBinary)
       feeConfigs = SortedMap(SnapshotOrdinal.MinValue -> FeeCalculatorConfig(1000L, BigDecimal(0.0d), 1L, BigDecimal(0.0d)))
       validator = mkValidator(None, None, feeConfigs = feeConfigs)
-      result <- validator.validate(scOutput, SnapshotOrdinal.MinValue, Balance.empty)
+      result <- validator.validate(scOutput, SnapshotOrdinal.MinValue, SnapshotFeesInfo.empty)
     } yield expect.same(Valid(scOutput), result)
   }
 
@@ -349,7 +346,7 @@ object StateChannelValidatorSuite extends MutableIOSuite {
       scOutput = StateChannelOutput(address, signedSCBinary)
       feeConfigs = SortedMap(SnapshotOrdinal.MinValue -> FeeCalculatorConfig(1001L, BigDecimal(0.0d), 1L, BigDecimal(0.0d)))
       validator = mkValidator(None, None, feeConfigs = feeConfigs)
-      result <- validator.validate(scOutput, SnapshotOrdinal.MinValue, Balance.empty)
+      result <- validator.validate(scOutput, SnapshotOrdinal.MinValue, SnapshotFeesInfo.empty)
     } yield
       expect.same(
         StateChannelValidator.BinaryFeeNotSufficient(SnapshotFee(1000L), SnapshotFee(1001L), 1, SnapshotOrdinal.MinValue).invalidNec,
