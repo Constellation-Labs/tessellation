@@ -27,6 +27,7 @@ import org.tessellation.security._
 import org.tessellation.security.signature.Signed
 import org.tessellation.shared.sharedKryoRegistrar
 
+import io.circe.Json
 import org.http4s.Method.{GET, POST}
 import org.http4s._
 import org.http4s.client.dsl.io._
@@ -166,9 +167,9 @@ object DataApplicationRoutesSuite extends HttpSuite {
     }
   }
 
-  test("POST /validate returns NoContent if all validations pass") {
+  test("POST /data/validate returns OK with empty JSON object if all validations pass") {
     import org.http4s.circe.CirceEntityEncoder._
-    val req: Request[IO] = POST(uri"/validate")
+    val req: Request[IO] = POST(uri"/data/validate")
 
     val l1Service = makeValidatingService(validateUpdateFn = valid, validateFeeFn = valid)
 
@@ -176,14 +177,14 @@ object DataApplicationRoutesSuite extends HttpSuite {
       for {
         dataQueue <- ViewableQueue.make[F, Signed[DataUpdate]]
         endpoint <- construct(dataQueue, l1Service)
-        testResult <- expectHttpStatus(endpoint, req.withEntity(update))(Status.NoContent)
+        testResult <- expectHttpBodyAndStatus(endpoint, req.withEntity(update))(Json.obj(), Status.Ok)
       } yield testResult
     }
   }
 
-  test("POST /validate returns InternalServerError if validateFee fails") {
+  test("POST /data/validate returns BadRequest if validateFee fails") {
     import org.http4s.circe.CirceEntityEncoder._
-    val req: Request[IO] = POST(uri"/validate")
+    val req: Request[IO] = POST(uri"/data/validate")
 
     val l1Service = makeValidatingService(validateUpdateFn = valid, validateFeeFn = invalid)
 
@@ -191,14 +192,14 @@ object DataApplicationRoutesSuite extends HttpSuite {
       for {
         dataQueue <- ViewableQueue.make[F, Signed[DataUpdate]]
         endpoint <- construct(dataQueue, l1Service)
-        testResult <- expectHttpStatus(endpoint, req.withEntity(update))(Status.InternalServerError)
+        testResult <- expectHttpStatus(endpoint, req.withEntity(update))(Status.BadRequest)
       } yield testResult
     }
   }
 
-  test("POST /validate returns InternalServerError if validateUpdate fails") {
+  test("POST /data/validate returns InternalServerError if validateUpdate fails") {
     import org.http4s.circe.CirceEntityEncoder._
-    val req: Request[IO] = POST(uri"/validate")
+    val req: Request[IO] = POST(uri"/data/validate")
 
     val l1Service = makeValidatingService(validateUpdateFn = invalid, validateFeeFn = valid)
 
@@ -206,14 +207,14 @@ object DataApplicationRoutesSuite extends HttpSuite {
       for {
         dataQueue <- ViewableQueue.make[F, Signed[DataUpdate]]
         endpoint <- construct(dataQueue, l1Service)
-        testResult <- expectHttpStatus(endpoint, req.withEntity(update))(Status.InternalServerError)
+        testResult <- expectHttpStatus(endpoint, req.withEntity(update))(Status.BadRequest)
       } yield testResult
     }
   }
 
-  test("POST /validate returns InternalServerError if validateUpdate and validateFee fails") {
+  test("POST /data/validate returns InternalServerError if validateUpdate and validateFee fails") {
     import org.http4s.circe.CirceEntityEncoder._
-    val req: Request[IO] = POST(uri"/validate")
+    val req: Request[IO] = POST(uri"/data/validate")
 
     val l1Service = makeValidatingService(validateUpdateFn = invalid, validateFeeFn = invalid)
 
@@ -221,14 +222,14 @@ object DataApplicationRoutesSuite extends HttpSuite {
       for {
         dataQueue <- ViewableQueue.make[F, Signed[DataUpdate]]
         endpoint <- construct(dataQueue, l1Service)
-        testResult <- expectHttpStatus(endpoint, req.withEntity(update))(Status.InternalServerError)
+        testResult <- expectHttpStatus(endpoint, req.withEntity(update))(Status.BadRequest)
       } yield testResult
     }
   }
 
-  test("POST /validate returns InternalServerError if global snapshot ordinal not available") {
+  test("POST /data/validate returns InternalServerError if global snapshot ordinal not available") {
     import org.http4s.circe.CirceEntityEncoder._
-    val req: Request[IO] = POST(uri"/validate")
+    val req: Request[IO] = POST(uri"/data/validate")
 
     val l1Service = makeValidatingService(validateUpdateFn = valid, validateFeeFn = valid)
     val globalSnapshotStorage = mockLastSnapshotStorage[GlobalIncrementalSnapshot, GlobalSnapshotInfo](

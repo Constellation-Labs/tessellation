@@ -20,7 +20,7 @@ import org.tessellation.security.{Hasher, SecurityProvider}
 
 import eu.timepit.refined.auto._
 import io.circe.syntax.EncoderOps
-import io.circe.{Decoder, Encoder}
+import io.circe.{Decoder, Encoder, Json}
 import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder}
 import org.http4s.dsl.Http4sDsl
 import org.http4s.{EntityDecoder, HttpRoutes, Response}
@@ -48,15 +48,15 @@ final case class DataApplicationRoutes[F[_]: Async: Hasher: SecurityProvider: L1
       _.traverse(ord => (dataApplication.validateFee(ord)(update), dataApplication.validateUpdate(update.value)).mapN(_ |+| _))
     }.flatMap {
       case None             => InternalServerError(GL0SnapshotOrdinalUnavailable.toApplicationError)
-      case Some(Invalid(e)) => InternalServerError(InvalidDataUpdate(e.toString).toApplicationError)
+      case Some(Invalid(e)) => BadRequest(InvalidDataUpdate(e.toString).toApplicationError)
       case Some(Valid(_))   => onValid
     }
 
   protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
-    case req @ POST -> Root / "validate" =>
+    case req @ POST -> Root / "data" / "validate" =>
       implicit val decoder: EntityDecoder[F, Signed[DataUpdate]] = dataApplication.signedDataEntityDecoder
       req
-        .asR[Signed[DataUpdate]](validate(_)(NoContent()))
+        .asR[Signed[DataUpdate]](validate(_)(Ok(Json.obj())))
         .handleUnknownError
 
     case GET -> Root / "data" =>
@@ -68,7 +68,7 @@ final case class DataApplicationRoutes[F[_]: Async: Hasher: SecurityProvider: L1
       req
         .asR[Signed[DataUpdate]] {
           _.toHashedWithSignatureCheck[F](dataApplication.serializeUpdate _).flatMap {
-            case Left(_) => InternalServerError(InvalidSignature.toApplicationError)
+            case Left(_) => BadRequest(InvalidSignature.toApplicationError)
             case Right(hashed) =>
               validate(hashed.signed) {
                 dataUpdatesQueue.offer(hashed.signed) >> Ok(("hash" -> hashed.hash.value).asJson)
