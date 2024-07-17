@@ -65,7 +65,7 @@ const sendDataTransactionsUsingUrls = async (
     } catch (e) {
         console.log('Error sending transaction', e.message);
     }
-    return;
+    return account.address;
 };
 
 const sendDataTransaction = async () => {
@@ -73,11 +73,11 @@ const sendDataTransaction = async () => {
     const metagraphL0Url = 'http://localhost:9400';
     const metagraphL1DataUrl = 'http://localhost:7000';
 
-    await sendDataTransactionsUsingUrls(globalL0Url, metagraphL1DataUrl);
+    const address = await sendDataTransactionsUsingUrls(globalL0Url, metagraphL1DataUrl);
 
     for (let idx = 0; idx < 20; idx++) {
         try {
-            const response = await axios.get(`${metagraphL0Url}/data-application/addresses`)
+            const response = await axios.get(`${metagraphL0Url}/data-application/addresses/${address}`)
             const responseData = response.data
             if (Object.keys(responseData).length > 0) {
                 console.log(`Transaction processed successfully, response: ${JSON.stringify(responseData)}`)
