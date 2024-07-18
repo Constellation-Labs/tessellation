@@ -19,6 +19,7 @@ import scala.util.control.NoStackTrace
 
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
 import org.tessellation.currency.schema.currency._
+import org.tessellation.currency.schema.feeTransaction.FeeTransaction
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.json.JsonSerializer
 import org.tessellation.node.shared.config.types.SnapshotSizeConfig
@@ -54,7 +55,8 @@ trait CurrencySnapshotCreator[F[_]] {
     trigger: ConsensusTrigger,
     events: Set[CurrencySnapshotEvent],
     rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
-    facilitators: Set[PeerId]
+    facilitators: Set[PeerId],
+    feeTransactionFn: Option[() => SortedSet[Signed[FeeTransaction]]]
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]
 }
 
@@ -82,7 +84,8 @@ object CurrencySnapshotCreator {
       trigger: ConsensusTrigger,
       events: Set[CurrencySnapshotEvent],
       rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
-      facilitators: Set[PeerId]
+      facilitators: Set[PeerId],
+      feeTransactionFn: Option[() => SortedSet[Signed[FeeTransaction]]]
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] = {
 
       val maxArtifactSize = maxProposalSizeInBytes(facilitators)
@@ -132,6 +135,7 @@ object CurrencySnapshotCreator {
 
           feeTransactions = dataApplicationAcceptanceResult
             .map(result => SortedSet.from(result.feeTransactions))
+            .orElse(feeTransactionFn.map(f => f()))
 
           (acceptanceResult, messagesAcceptanceResult, acceptedRewardTxs, acceptedFeeTxs, snapshotInfo, stateProof) <-
             currencySnapshotAcceptanceManager

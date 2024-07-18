@@ -135,18 +135,20 @@ object CurrencySnapshotValidator {
 
       def recreateFn(trigger: ConsensusTrigger) =
         mkEvents.flatMap { events =>
-          def usingHasher = (lastArtifactHasher: Hasher[F]) =>
-            currencySnapshotCreator
-              .createProposalArtifact(
-                lastArtifact.ordinal,
-                lastArtifact,
-                lastContext,
-                lastArtifactHasher,
-                trigger,
-                events,
-                rewards,
-                facilitators
-              )
+          def usingHasher: Hasher[F] => F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] =
+            (lastArtifactHasher: Hasher[F]) =>
+              currencySnapshotCreator
+                .createProposalArtifact(
+                  lastArtifact.ordinal,
+                  lastArtifact,
+                  lastContext,
+                  lastArtifactHasher,
+                  trigger,
+                  events,
+                  rewards,
+                  facilitators,
+                  expected.feeTransactions.map(() => _)
+                )
 
           def check(result: F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]) =
             // Rewrite if implementation not provided
@@ -156,6 +158,10 @@ object CurrencySnapshotValidator {
                 case None =>
                   creationResult.focus(_.artifact.dataApplication).replace(expected.dataApplication)
               }
+            }.map { creationResult =>
+              if (creationResult.artifact.messages.forall(_.isEmpty))
+                creationResult.focus(_.artifact.messages).replace(expected.messages)
+              else creationResult
             }.map { creationResult =>
               if (creationResult.artifact =!= expected)
                 SnapshotDifferentThanExpected(expected, creationResult.artifact).invalidNec
