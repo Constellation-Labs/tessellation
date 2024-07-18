@@ -47,6 +47,8 @@ case object Noop extends DataApplicationValidationError {
   val message = "invalid update"
 }
 
+case class DataApplicationFeeError(message: String) extends DataApplicationValidationError
+
 case object UnexpectedInput extends NoStackTrace
 
 trait BaseDataApplicationService[F[_]] {
