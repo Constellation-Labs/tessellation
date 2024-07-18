@@ -67,7 +67,17 @@ object CurrencySnapshotConsensusFunctions {
       }
 
       currencySnapshotCreator
-        .createProposalArtifact(lastKey, lastArtifact, lastContext, lastArtifactHasher, trigger, blocksForAcceptance, rewards, facilitators)
+        .createProposalArtifact(
+          lastKey,
+          lastArtifact,
+          lastContext,
+          lastArtifactHasher,
+          trigger,
+          blocksForAcceptance,
+          rewards,
+          facilitators,
+          None
+        )
         .map(created => (created.artifact, created.context, created.awaitingEvents))
     }
   }
