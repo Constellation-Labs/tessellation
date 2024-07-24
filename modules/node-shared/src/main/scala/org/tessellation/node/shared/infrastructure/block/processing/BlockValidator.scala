@@ -121,9 +121,7 @@ object BlockValidator {
               none
         }
 
-      private val addressesLockedAtOrdinal: Map[Address, SnapshotOrdinal] = Map(
-        Address("DAG6LvxLSdWoC9uJZPgXtcmkcWBaGYypF6smaPyH") -> SnapshotOrdinal(1447110L) // NOTE: BitForex
-      )
+      private val addressesLockedAtOrdinal: Map[Address, SnapshotOrdinal] = Map.empty
 
       private def validateNotLockedAtOrdinal(signedBlock: Signed[Block], ordinal: SnapshotOrdinal): BlockValidationErrorOr[Signed[Block]] =
         signedBlock.value.transactions.toNonEmptyList

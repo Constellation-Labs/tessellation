@@ -47,9 +47,7 @@ trait ContextualTransactionValidator {
 
 object ContextualTransactionValidator {
 
-  private val lockedAddresses = Set(
-    Address("DAG6LvxLSdWoC9uJZPgXtcmkcWBaGYypF6smaPyH") // NOTE: BitForex
-  )
+  private val lockedAddresses = Set.empty[Address]
 
   def make(
     transactionLimitConfig: TransactionLimitConfig,
