@@ -8,7 +8,7 @@ import cats.syntax.semigroupk._
 
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationCustomRoutes
 import org.tessellation.currency.dataApplication.{BaseDataApplicationL1Service, L1NodeContext}
-import org.tessellation.currency.l1.http.DataApplicationRoutes
+import org.tessellation.currency.l1.http.{DataApplicationRoutes, TransactionRoutes}
 import org.tessellation.currency.schema.currency._
 import org.tessellation.dag.l1.http.{Routes => DAGRoutes}
 import org.tessellation.node.shared.config.types.HttpConfig
@@ -110,6 +110,9 @@ sealed abstract class HttpApi[
   }
   private val currencyRoutes =
     DAGRoutes[F](services.transaction, storages.transaction, storages.l0Cluster, queues.peerBlockConsensusInput, txHasher)
+
+  private val transactionRoutes = TransactionRoutes[F](services.transactionFeeEstimator, txHasher)
+
   private val nodeRoutes = NodeRoutes[F](storages.node, storages.session, storages.cluster, nodeVersion, httpCfg, selfId)
 
   private val metricRoutes = MetricRoutes[F]().publicRoutes
@@ -126,6 +129,7 @@ sealed abstract class HttpApi[
           metricRoutes <+>
           targetRoutes <+>
           routes.map(_.publicRoutes).getOrElse(currencyRoutes.publicRoutes) <+>
+          transactionRoutes.publicRoutes <+>
           metagraphNodeRoutes.map(_.publicRoutes).getOrElse(HttpRoutes.empty) <+>
           DataApplicationCustomRoutes.publicRoutes[F, L1NodeContext[F]](maybeDataApplication)
       }
