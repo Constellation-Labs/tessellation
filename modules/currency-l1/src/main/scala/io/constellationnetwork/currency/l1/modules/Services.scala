@@ -8,7 +8,7 @@ import io.constellationnetwork.currency.l1.http.p2p.P2PClient
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.dag.l1.config.types.AppConfig
 import io.constellationnetwork.dag.l1.domain.block.BlockService
-import io.constellationnetwork.dag.l1.domain.transaction.TransactionService
+import io.constellationnetwork.dag.l1.domain.transaction.{TransactionFeeEstimator, TransactionService}
 import io.constellationnetwork.dag.l1.modules.{Services => BaseServices, Validators}
 import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.domain.cluster.storage.L0ClusterStorage
@@ -38,6 +38,7 @@ object Services {
     p2PClient: P2PClient[F],
     cfg: AppConfig,
     maybeDataApplication: Option[BaseDataApplicationL1Service[F]],
+    maybeTransactionFeeEstimator: Option[TransactionFeeEstimator[F]],
     maybeMajorityPeerIds: Option[NonEmptySet[PeerId]],
     txHasher: Hasher[F]
   ): Services[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, R] =
@@ -67,6 +68,7 @@ object Services {
       val collateral = Collateral.make[F](cfg.collateral, storages.lastSnapshot)
       val dataApplication = maybeDataApplication
       val restart = sharedServices.restart
+      val transactionFeeEstimator = maybeTransactionFeeEstimator
     }
 }
 
@@ -74,4 +76,5 @@ sealed abstract class Services[F[_], P <: StateProof, S <: Snapshot, SI <: Snaps
     extends BaseServices[F, P, S, SI, R] {
   val dataApplication: Option[BaseDataApplicationL1Service[F]]
   val restart: RestartService[F, R]
+  val transactionFeeEstimator: Option[TransactionFeeEstimator[F]]
 }

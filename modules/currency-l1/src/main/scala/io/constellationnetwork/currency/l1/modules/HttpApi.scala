@@ -8,7 +8,7 @@ import cats.syntax.semigroupk._
 
 import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationCustomRoutes
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL1Service, L1NodeContext}
-import io.constellationnetwork.currency.l1.http.DataApplicationRoutes
+import io.constellationnetwork.currency.l1.http.{DataApplicationRoutes, TransactionRoutes}
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.dag.l1.http.{Routes => DAGRoutes}
 import io.constellationnetwork.node.shared.cli.CliMethod
@@ -115,6 +115,9 @@ sealed abstract class HttpApi[
   }
   private val currencyRoutes =
     DAGRoutes[F](services.transaction, storages.transaction, storages.l0Cluster, queues.peerBlockConsensusInput, txHasher)
+
+  private val transactionRoutes = TransactionRoutes[F](services.transactionFeeEstimator, txHasher)
+
   private val nodeRoutes = NodeRoutes[F](storages.node, storages.session, storages.cluster, nodeVersion, httpCfg, selfId)
 
   private val metricRoutes = MetricRoutes[F]().publicRoutes
@@ -131,6 +134,7 @@ sealed abstract class HttpApi[
           metricRoutes <+>
           targetRoutes <+>
           routes.map(_.publicRoutes).getOrElse(currencyRoutes.publicRoutes) <+>
+          transactionRoutes.publicRoutes <+>
           metagraphNodeRoutes.map(_.publicRoutes).getOrElse(HttpRoutes.empty) <+>
           DataApplicationCustomRoutes.publicRoutes[F, L1NodeContext[F]](maybeDataApplication)
       }
