@@ -8,7 +8,7 @@ import cats.syntax.all._
 
 import scala.concurrent.duration.FiniteDuration
 
-import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, DataUpdate}
+import io.constellationnetwork.currency.dataApplication.{DataTransaction, _}
 import io.constellationnetwork.currency.l0.snapshot.schema.{CurrencyConsensusKind, CurrencyConsensusOutcome}
 import io.constellationnetwork.currency.l0.snapshot.services.StateChannelSnapshotService
 import io.constellationnetwork.currency.schema.currency._
@@ -56,9 +56,13 @@ object CurrencySnapshotConsensus {
     restartService: RestartService[F, _],
     leavingDelay: FiniteDuration
   ): F[CurrencySnapshotConsensus[F]] = {
-    def noopDecoder: Decoder[DataUpdate] = Decoder.failedWithMessage[DataUpdate]("not implemented")
+    def noopDecoder: Decoder[DataTransaction] = Decoder.failedWithMessage[DataTransaction]("not implemented")
 
-    implicit def daDecoder: Decoder[DataUpdate] = maybeDataApplication.map(_.dataDecoder).getOrElse(noopDecoder)
+    implicit def daDecoder: Decoder[DataTransaction] = maybeDataApplication.map { da =>
+      implicit val dataUpdateDecoder: Decoder[DataUpdate] = da.dataDecoder
+      DataTransaction.decoder
+    }.getOrElse(noopDecoder)
+
     implicit val hs: HasherSelector[F] = hasherSelector
 
     for {

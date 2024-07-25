@@ -46,12 +46,6 @@ object Main
         override def genesis: DataState[UsageUpdateState, UsageUpdateCalculatedState] =
           DataState(UsageUpdateState(List.empty), UsageUpdateCalculatedState(Map.empty))
 
-        override def validateFee(gsOrdinal: SnapshotOrdinal)(update: Signed[UsageUpdate])(
-          implicit context: L0NodeContext[IO],
-          A: Applicative[IO]
-        ): IO[DataApplicationValidationErrorOr[Unit]] =
-          ().validNec.pure[IO]
-
         override def validateData(
           state  : DataState[UsageUpdateState, UsageUpdateCalculatedState],
           updates: NonEmptyList[Signed[UsageUpdate]]

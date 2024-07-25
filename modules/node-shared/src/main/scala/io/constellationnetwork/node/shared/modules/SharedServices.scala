@@ -77,7 +77,8 @@ object SharedServices {
       currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
         BlockAcceptanceManager.make[F](validators.currencyBlockValidator, txHasher),
         collateral.amount,
-        validators.currencyMessageValidator
+        validators.currencyMessageValidator,
+        validators.feeTransactionValidator
       )
 
       currencyEventsCutter = CurrencyEventsCutter.make[F](None)

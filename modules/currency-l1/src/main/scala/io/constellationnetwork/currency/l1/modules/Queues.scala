@@ -5,8 +5,9 @@ import cats.effect.std.Queue
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
+import io.constellationnetwork.currency.dataApplication.ConsensusInput
+import io.constellationnetwork.currency.dataApplication.DataTransaction.DataTransactions
 import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationBlock
-import io.constellationnetwork.currency.dataApplication.{ConsensusInput, DataUpdate}
 import io.constellationnetwork.dag.l1.domain.consensus.block.BlockConsensusInput.PeerBlockConsensusInput
 import io.constellationnetwork.dag.l1.modules.{Queues => DAGL1Queues}
 import io.constellationnetwork.node.shared.domain.queue.ViewableQueue
@@ -20,7 +21,7 @@ object Queues {
     for {
       dataApplicationPeerConsensusInputQueue <- Queue.unbounded[F, Signed[ConsensusInput.PeerConsensusInput]]
       dataApplicationBlockQueue <- Queue.unbounded[F, Signed[DataApplicationBlock]]
-      dataUpdatesQueue <- ViewableQueue.make[F, Signed[DataUpdate]]
+      dataTransactionsQueue <- ViewableQueue.make[F, DataTransactions]
     } yield
       new Queues[F] {
         val rumor = dagL1Queues.rumor
@@ -28,7 +29,7 @@ object Queues {
         val peerBlock = dagL1Queues.peerBlock
         val dataApplicationPeerConsensusInput = dataApplicationPeerConsensusInputQueue
         val dataApplicationBlock = dataApplicationBlockQueue
-        val dataUpdates = dataUpdatesQueue
+        val dataTransactions = dataTransactionsQueue
       }
 }
 
@@ -38,5 +39,5 @@ sealed abstract class Queues[F[_]] private {
   val peerBlock: Queue[F, Signed[Block]]
   val dataApplicationPeerConsensusInput: Queue[F, Signed[ConsensusInput.PeerConsensusInput]]
   val dataApplicationBlock: Queue[F, Signed[DataApplicationBlock]]
-  val dataUpdates: ViewableQueue[F, Signed[DataUpdate]]
+  val dataTransactions: ViewableQueue[F, DataTransactions]
 }

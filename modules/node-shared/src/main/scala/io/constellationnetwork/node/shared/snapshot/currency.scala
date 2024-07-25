@@ -1,6 +1,6 @@
 package io.constellationnetwork.node.shared.snapshot
 
-import io.constellationnetwork.currency.dataApplication.DataUpdate
+import io.constellationnetwork.currency.dataApplication.DataTransaction
 import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationBlock
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.schema.Block
@@ -19,9 +19,9 @@ object currency {
   sealed trait CurrencySnapshotEvent
 
   object CurrencySnapshotEvent {
-    implicit def decoder(implicit d: Decoder[DataUpdate]): Decoder[CurrencySnapshotEvent] = deriveDecoder
+    implicit def decoder(implicit d: Decoder[DataTransaction]): Decoder[CurrencySnapshotEvent] = deriveDecoder
 
-    implicit def encoder(implicit e: Encoder[DataUpdate]): Encoder[CurrencySnapshotEvent] = deriveEncoder
+    implicit def encoder(implicit e: Encoder[DataTransaction]): Encoder[CurrencySnapshotEvent] = deriveEncoder
   }
 
   @derive(encoder, decoder, eqv)
@@ -31,9 +31,9 @@ object currency {
   case class DataApplicationBlockEvent(value: Signed[DataApplicationBlock]) extends CurrencySnapshotEvent
 
   object DataApplicationBlockEvent {
-    implicit def decoder(implicit d: Decoder[DataUpdate]): Decoder[DataApplicationBlockEvent] = deriveDecoder
+    implicit def decoder(implicit d: Decoder[DataTransaction]): Decoder[DataApplicationBlockEvent] = deriveDecoder
 
-    implicit def encoder(implicit e: Encoder[DataUpdate]): Encoder[DataApplicationBlockEvent] = deriveEncoder
+    implicit def encoder(implicit e: Encoder[DataTransaction]): Encoder[DataApplicationBlockEvent] = deriveEncoder
   }
 
   @derive(encoder, decoder, eqv)

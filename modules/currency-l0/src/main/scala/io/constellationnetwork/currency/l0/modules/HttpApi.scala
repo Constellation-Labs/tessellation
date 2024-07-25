@@ -6,7 +6,7 @@ import cats.effect.Async
 import cats.syntax.semigroupk._
 
 import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationCustomRoutes
-import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
+import io.constellationnetwork.currency.dataApplication.{DataTransaction, _}
 import io.constellationnetwork.currency.l0.cell.{L0Cell, L0CellInput}
 import io.constellationnetwork.currency.l0.cli.method.Run
 import io.constellationnetwork.currency.l0.http.routes.{CurrencyBlockRoutes, CurrencyMessageRoutes, DataBlockRoutes}
@@ -25,6 +25,7 @@ import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVers
 import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
 
 import eu.timepit.refined.auto._
+import io.circe.Decoder
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
 import org.http4s.server.middleware.{CORS, RequestLogger, ResponseLogger}
 import org.http4s.{HttpApp, HttpRoutes}
@@ -96,7 +97,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip)
   private val currencyBlockRoutes = CurrencyBlockRoutes[F](mkCell)
   private val dataBlockRoutes = maybeDataApplication.map { da =>
-    implicit val (d, e) = (da.dataDecoder, da.calculatedStateEncoder)
+    implicit val dataUpdateDecoder: Decoder[DataUpdate] = da.dataDecoder
+    implicit val (d, e) = (DataTransaction.decoder, da.calculatedStateEncoder)
     DataBlockRoutes[F](mkCell, da)
   }
   private val metagraphNodeRoutes = maybeMetagraphVersion.map { metagraphVersion =>

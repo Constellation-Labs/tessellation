@@ -5,7 +5,7 @@ import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import io.constellationnetwork.currency.schema.feeTransaction.FeeTransaction
+import io.constellationnetwork.currency.dataApplication.FeeTransaction
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.schema._

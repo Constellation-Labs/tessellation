@@ -196,6 +196,7 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.circeGenericExtras,
       Libraries.circeParser,
       Libraries.circeRefined,
+      Libraries.circeShapes,
       Libraries.cirisCore,
       Libraries.cirisEnum,
       Libraries.cirisRefined,

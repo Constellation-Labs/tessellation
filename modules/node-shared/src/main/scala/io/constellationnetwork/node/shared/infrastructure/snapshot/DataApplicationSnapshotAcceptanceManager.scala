@@ -3,27 +3,21 @@ package io.constellationnetwork.node.shared.infrastructure.snapshot
 import cats.Applicative
 import cats.data.{NonEmptyList, OptionT}
 import cats.effect.Async
-import cats.syntax.applicative._
-import cats.syntax.applicativeError._
-import cats.syntax.contravariantSemigroupal._
-import cats.syntax.eq._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
-import cats.syntax.option._
-import cats.syntax.semigroup._
-import cats.syntax.show._
-import cats.syntax.traverse._
+import cats.syntax.all._
 
 import scala.util.control.NoStackTrace
 
+import io.constellationnetwork.currency.dataApplication.DataUpdate.getDataUpdates
+import io.constellationnetwork.currency.dataApplication.FeeTransaction.getFeeTransactions
 import io.constellationnetwork.currency.dataApplication._
 import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationBlock
 import io.constellationnetwork.currency.dataApplication.storage.CalculatedStateLocalFileSystemStorage
 import io.constellationnetwork.currency.schema.currency.DataApplicationPart
-import io.constellationnetwork.currency.schema.feeTransaction.FeeTransaction
+import io.constellationnetwork.currency.validations.DataTransactionsValidator.validateDataTransactionsL0
 import io.constellationnetwork.ext.cats.syntax.partialPrevious.catsSyntaxPartialPrevious
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotArtifact
 import io.constellationnetwork.schema.SnapshotOrdinal
+import io.constellationnetwork.security.SecurityProvider
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 
@@ -62,7 +56,7 @@ object DataApplicationSnapshotAcceptanceManager {
       s"Calculated state hash=${current.show} does not match expected hash=${expected.show} from majority"
   }
 
-  def make[F[_]: Async](
+  def make[F[_]: Async: SecurityProvider](
     service: BaseDataApplicationL0Service[F],
     nodeContext: L0NodeContext[F],
     calculatedStateStorage: CalculatedStateLocalFileSystemStorage[F]
@@ -136,6 +130,14 @@ object DataApplicationSnapshotAcceptanceManager {
               logger.error(err)(s"Unhandled exception during deserialization data application, fallback to empty state").as(none)
             )
         }
+        balances <- OptionT.liftF {
+          context.getLastCurrencySnapshotCombined.flatMap { snapshot =>
+            OptionT
+              .fromOption(snapshot)
+              .map { case (_, snapshotInfo) => snapshotInfo.balances }
+              .getOrRaise(new IllegalStateException("Last currency snapshot unavailable"))
+          }
+        }
 
         lastCalculatedState <- OptionT.liftF(
           service.getCalculatedState
@@ -143,35 +145,32 @@ object DataApplicationSnapshotAcceptanceManager {
         )
 
         dataState = DataState(lastOnChainState, lastCalculatedState)
+
         (validatedUpdates, validatedBlocks) <- OptionT.liftF {
           NonEmptyList
             .fromList(dataBlocks.distinctBy(_.value.roundId))
             .map { uniqueBlocks =>
-              val updates = uniqueBlocks.flatMap(_.value.updates)
+              val dataTransactions = uniqueBlocks.flatMap(_.value.dataTransactions)
 
-              val feeValidation = updates
-                .traverse(service.validateFee(currentOrdinal))
-                .map(_.reduce)
+              val dataTransactionsValidations =
+                dataTransactions.traverse(validateDataTransactionsL0(_, service, balances, currentOrdinal, dataState)).map(_.reduce)
 
-              val dataValidation = service.validateData(dataState, updates)
-
-              (feeValidation, dataValidation)
-                .mapN(_ |+| _)
-                .flatTap { validated =>
-                  logger.warn(s"Data application is invalid, errors: ${validated.toString}").whenA(validated.isInvalid)
-                }
+              dataTransactionsValidations.flatTap { validated =>
+                logger.warn(s"Data application is invalid, errors: ${validated.toString}").whenA(validated.isInvalid)
+              }
                 .map(_.isValid)
                 .handleErrorWith(err =>
                   logger.error(err)("Unhandled exception during validating data application, assumed as invalid").as(false)
                 )
-                .ifF((updates.toList, uniqueBlocks.toList), (List.empty, List.empty))
+                .ifF((dataTransactions.toList, uniqueBlocks.toList), (List.empty, List.empty))
             }
             .getOrElse((List.empty, List.empty).pure[F])
         }
 
-        newDataState <- OptionT.liftF(
-          service.combine(dataState, validatedUpdates)
-        )
+        newDataState <- OptionT.liftF {
+          val dataUpdates = getDataUpdates(validatedUpdates)
+          service.combine(dataState, dataUpdates)
+        }
 
         serializedOnChainState <- OptionT.liftF(
           service.serializeState(newDataState.onChain)
@@ -181,13 +180,12 @@ object DataApplicationSnapshotAcceptanceManager {
           validatedBlocks.traverse(service.serializeBlock)
         )
 
+        feeTransactions = getFeeTransactions(validatedUpdates)
+
         calculatedStateProof <- OptionT.liftF(
           service.hashCalculatedState(newDataState.calculated)
         )
 
-        feeTransactions <- OptionT.liftF(
-          service.extractFees(validatedUpdates)
-        )
       } yield
         DataApplicationAcceptanceResult(
           DataApplicationPart(serializedOnChainState, serializedBlocks, calculatedStateProof),

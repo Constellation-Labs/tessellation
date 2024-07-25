@@ -107,7 +107,7 @@ sealed abstract class HttpApi[
         queues.dataApplicationPeerConsensusInput,
         storages.l0Cluster,
         da,
-        queues.dataUpdates,
+        queues.dataTransactions,
         storages.lastGlobalSnapshot,
         storages.lastSnapshot
       )

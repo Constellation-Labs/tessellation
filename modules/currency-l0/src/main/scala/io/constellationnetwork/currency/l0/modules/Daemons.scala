@@ -17,7 +17,7 @@ import io.constellationnetwork.security.HasherSelector
 
 object Daemons {
 
-  def start[F[_]: Async: Supervisor: HasherSelector](
+  def start[F[_]: Async: Supervisor](
     storages: Storages[F],
     services: Services[F, Run],
     programs: Programs[F],

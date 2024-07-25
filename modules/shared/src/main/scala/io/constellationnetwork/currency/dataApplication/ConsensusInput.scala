@@ -1,12 +1,13 @@
 package io.constellationnetwork.currency.dataApplication
 
 import cats.Show
+import cats.data.NonEmptyList
 
+import io.constellationnetwork.currency.dataApplication.DataTransaction.DataTransactions
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.round.RoundId
 import io.constellationnetwork.security.Encodable
 import io.constellationnetwork.security.hash.Hash
-import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature.Signature
 
 import derevo.circe.magnolia.{decoder, encoder}
@@ -28,8 +29,8 @@ object ConsensusInput {
   }
 
   object PeerConsensusInput {
-    def encoder(implicit e: Encoder[DataUpdate]): Encoder[PeerConsensusInput] = deriveEncoder
-    def decoder(implicit d: Decoder[DataUpdate]): Decoder[PeerConsensusInput] = deriveDecoder
+    def encoder(implicit e: Encoder[DataTransaction]): Encoder[PeerConsensusInput] = deriveEncoder
+    def decoder(implicit d: Decoder[DataTransaction]): Decoder[PeerConsensusInput] = deriveDecoder
   }
 
   case class Proposal(
@@ -37,17 +38,17 @@ object ConsensusInput {
     senderId: PeerId,
     owner: PeerId,
     facilitators: Set[PeerId],
-    dataUpdates: Set[Signed[DataUpdate]],
-    dataHashes: Set[Hash]
+    dataUpdates: Set[DataTransactions],
+    dataHashes: Set[NonEmptyList[Hash]]
   ) extends PeerConsensusInput
-      with Encodable[(RoundId, PeerId, PeerId, Set[PeerId], Set[Hash])] {
+      with Encodable[(RoundId, PeerId, PeerId, Set[PeerId], Set[NonEmptyList[Hash]])] {
     override def toEncode = (roundId, senderId, owner, facilitators, dataHashes)
     override def jsonEncoder = implicitly
   }
 
   object Proposal {
-    def encoder(implicit e: Encoder[DataUpdate]): Encoder[Proposal] = deriveEncoder
-    def decoder(implicit d: Decoder[DataUpdate]): Decoder[Proposal] = deriveDecoder
+    def encoder(implicit e: Encoder[DataTransaction]): Encoder[Proposal] = deriveEncoder
+    def decoder(implicit d: Decoder[DataTransaction]): Decoder[Proposal] = deriveDecoder
   }
 
   @derive(encoder, decoder)
