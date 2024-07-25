@@ -120,6 +120,10 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         }
         .map(SortedMap.from(_))
         .map(lastInfo.lastTxRefs ++ _)
+        .map { src =>
+          val dst = txs.map(_.destination).toSet.filterNot(src.contains).map(_ -> TransactionReference.empty)
+          src ++ dst
+        }
       balances = SortedMap.from(
         txs
           .map(_.value)

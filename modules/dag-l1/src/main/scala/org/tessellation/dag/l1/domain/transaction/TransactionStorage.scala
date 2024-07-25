@@ -1,19 +1,18 @@
 package org.tessellation.dag.l1.domain.transaction
 
 import cats._
-import cats.data.{NonEmptyList, Validated}
+import cats.data.NonEmptyList
+import cats.data.Validated
 import cats.effect.Async
 import cats.syntax.all._
 
 import scala.annotation.tailrec
-import scala.collection.immutable.{SortedMap, SortedSet}
+import scala.collection.immutable.SortedMap
+import scala.collection.immutable.SortedSet
 import scala.util.control.NoStackTrace
-
-import org.tessellation.dag.l1.domain.transaction.ContextualTransactionValidator.{
-  CanOverride,
-  ContextualTransactionValidationError,
-  NoConflict
-}
+import org.tessellation.dag.l1.domain.transaction.ContextualTransactionValidator.CanOverride
+import org.tessellation.dag.l1.domain.transaction.ContextualTransactionValidator.ContextualTransactionValidationError
+import org.tessellation.dag.l1.domain.transaction.ContextualTransactionValidator.NoConflict
 import org.tessellation.dag.l1.domain.transaction.TransactionStorage._
 import org.tessellation.ext.collection.MapRefUtils._
 import org.tessellation.schema.SnapshotOrdinal
@@ -22,7 +21,6 @@ import org.tessellation.schema.balance.Balance
 import org.tessellation.schema.transaction._
 import org.tessellation.security.Hashed
 import org.tessellation.security.hash.Hash
-
 import derevo.cats.eqv
 import derevo.derive
 import eu.timepit.refined.auto._
@@ -78,13 +76,18 @@ class TransactionStorage[F[_]: Async](
         transactionsR(source).modify[Either[MarkingTransactionReferenceAsMajorityError, Unit]] { maybeStored =>
           val stored = maybeStored.getOrElse(SortedMap.empty[TransactionOrdinal, StoredTransaction])
 
-          stored.collectFirst { case (_, a @ AcceptedTx(tx)) if a.ref === majorityTxRef => tx }.map { majorityTx =>
-            val remaining = stored.filter { case (ordinal, _) => ordinal > majorityTx.ordinal }
+          if (stored.isEmpty && majorityTxRef === TransactionReference.empty) {
+            val updated = stored + (majorityTxRef.ordinal -> MajorityTx(majorityTxRef, snapshotOrdinal))
+            (updated.some, ().asRight)
+          } else {
+            stored.collectFirst { case (_, a @ AcceptedTx(tx)) if a.ref === majorityTxRef => tx }.map { majorityTx =>
+              val remaining = stored.filter { case (ordinal, _) => ordinal > majorityTx.ordinal }
 
-            remaining + (majorityTx.ordinal -> MajorityTx(TransactionReference.of(majorityTx), snapshotOrdinal))
-          } match {
-            case Some(updated) => (updated.some, ().asRight)
-            case None          => (maybeStored, UnexpectedStateWhenMarkingTxRefAsMajority(source, majorityTxRef, None).asLeft)
+              remaining + (majorityTx.ordinal -> MajorityTx(TransactionReference.of(majorityTx), snapshotOrdinal))
+            } match {
+              case Some(updated) => (updated.some, ().asRight)
+              case None          => (maybeStored, UnexpectedStateWhenMarkingTxRefAsMajority(source, majorityTxRef, None).asLeft)
+            }
           }
         }
     }
