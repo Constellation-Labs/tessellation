@@ -399,13 +399,11 @@ abstract class SnapshotProcessor[
     acceptedInMajority: Map[ProofsHash, (Hashed[Block], NonNegLong)],
     state: SI
   ): Map[Address, TransactionReference] = {
-    val sourceAddresses =
-      acceptedInMajority.values
-        .flatMap(_._1.transactions.toSortedSet)
-        .map(_.source)
-        .toSet
+    val transactions = acceptedInMajority.values.flatMap(_._1.transactions.toSortedSet)
+    val sourceAddresses = transactions.map(_.source).toSet
+    val newDestinationAddresses = transactions.map(_.destination).toSet -- sourceAddresses
 
-    state.lastTxRefs.view.filterKeys(sourceAddresses.contains).toMap
+    state.lastTxRefs.view.filterKeys(address => sourceAddresses.contains(address) || newDestinationAddresses.contains(address)).toMap
   }
 
   sealed trait Alignment

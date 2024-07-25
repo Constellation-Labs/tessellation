@@ -88,7 +88,7 @@ const batchMetagraphTransaction = async (
 
         logMessage(
             `Transaction from: ${
-                origin
+                origin.address
             } sent - batch. Generated transaction response body: ${JSON.stringify(
                 generatedTransactions
             )}. Post hashes: ${hashes}`
