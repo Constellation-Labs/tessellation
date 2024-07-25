@@ -8,7 +8,7 @@ import org.tessellation.currency.l1.http.p2p.P2PClient
 import org.tessellation.currency.schema.currency._
 import org.tessellation.dag.l1.config.types.AppConfig
 import org.tessellation.dag.l1.domain.block.BlockService
-import org.tessellation.dag.l1.domain.transaction.TransactionService
+import org.tessellation.dag.l1.domain.transaction.{TransactionFeeEstimator, TransactionService}
 import org.tessellation.dag.l1.modules.{Services => BaseServices, Validators}
 import org.tessellation.node.shared.domain.cluster.storage.L0ClusterStorage
 import org.tessellation.node.shared.domain.snapshot.services.GlobalL0Service
@@ -36,6 +36,7 @@ object Services {
     p2PClient: P2PClient[F],
     cfg: AppConfig,
     maybeDataApplication: Option[BaseDataApplicationL1Service[F]],
+    maybeTransactionFeeEstimator: Option[TransactionFeeEstimator[F]],
     maybeMajorityPeerIds: Option[NonEmptySet[PeerId]],
     txHasher: Hasher[F]
   ): Services[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo] =
@@ -64,9 +65,11 @@ object Services {
       )
       val collateral = Collateral.make[F](cfg.collateral, storages.lastSnapshot)
       val dataApplication = maybeDataApplication
+      val transactionFeeEstimator = maybeTransactionFeeEstimator
     }
 }
 
 sealed abstract class Services[F[_], P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P]] extends BaseServices[F, P, S, SI] {
   val dataApplication: Option[BaseDataApplicationL1Service[F]]
+  val transactionFeeEstimator: Option[TransactionFeeEstimator[F]]
 }
