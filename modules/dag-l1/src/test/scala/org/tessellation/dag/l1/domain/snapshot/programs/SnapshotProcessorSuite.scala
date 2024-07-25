@@ -854,7 +854,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           }
           newSnapshotInfo = {
             val balances = SortedMap(srcAddress -> Balance(48L), dstAddress -> Balance(2L))
-            val lastTxRefs = SortedMap(srcAddress -> TransactionReference.of(correctTxs(1)))
+            val lastTxRefs = SortedMap(srcAddress -> TransactionReference.of(correctTxs(1)), dstAddress -> TransactionReference.empty)
 
             lastSnapshotInfo.copy(
               lastTxRefs = lastTxRefs,
@@ -980,7 +980,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               ),
               Map.empty,
               Some((hashedNextSnapshot, newSnapshotInfo)),
-              Map(srcAddress -> AcceptedTx(lastTx))
+              Map(srcAddress -> AcceptedTx(lastTx), dstAddress -> MajorityTx(TransactionReference.empty, snapshotOrdinal11))
             )
           )
     }
@@ -1107,7 +1107,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           newSnapshotInfo = {
             val balances = SortedMap(srcAddress -> Balance(44L), dstAddress -> Balance(6L))
-            val lastTxRefs = SortedMap(srcAddress -> TransactionReference.of(correctTxs(5)))
+            val lastTxRefs = SortedMap(srcAddress -> TransactionReference.of(correctTxs(5)), dstAddress -> TransactionReference.empty)
 
             lastSnapshotInfo.copy(
               lastTxRefs = lastTxRefs,
@@ -1257,7 +1257,10 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               ),
               newSnapshotInfo.balances,
               Some((hashedNextSnapshot, newSnapshotInfo)),
-              snapshotTxRefs.map { case (k, v) => k -> MajorityTx(v, hashedNextSnapshot.ordinal) }
+              snapshotTxRefs.map { case (k, v) => k -> MajorityTx(v, hashedNextSnapshot.ordinal) } + (dstAddress -> MajorityTx(
+                TransactionReference.empty,
+                hashedNextSnapshot.ordinal
+              ))
             )
           )
     }

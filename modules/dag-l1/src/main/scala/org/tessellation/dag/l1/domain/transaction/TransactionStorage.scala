@@ -78,13 +78,18 @@ class TransactionStorage[F[_]: Async](
         transactionsR(source).modify[Either[MarkingTransactionReferenceAsMajorityError, Unit]] { maybeStored =>
           val stored = maybeStored.getOrElse(SortedMap.empty[TransactionOrdinal, StoredTransaction])
 
-          stored.collectFirst { case (_, a @ AcceptedTx(tx)) if a.ref === majorityTxRef => tx }.map { majorityTx =>
-            val remaining = stored.filter { case (ordinal, _) => ordinal > majorityTx.ordinal }
+          if (stored.isEmpty && majorityTxRef === TransactionReference.empty) {
+            val updated = stored + (majorityTxRef.ordinal -> MajorityTx(majorityTxRef, snapshotOrdinal))
+            (updated.some, ().asRight)
+          } else {
+            stored.collectFirst { case (_, a @ AcceptedTx(tx)) if a.ref === majorityTxRef => tx }.map { majorityTx =>
+              val remaining = stored.filter { case (ordinal, _) => ordinal > majorityTx.ordinal }
 
-            remaining + (majorityTx.ordinal -> MajorityTx(TransactionReference.of(majorityTx), snapshotOrdinal))
-          } match {
-            case Some(updated) => (updated.some, ().asRight)
-            case None          => (maybeStored, UnexpectedStateWhenMarkingTxRefAsMajority(source, majorityTxRef, None).asLeft)
+              remaining + (majorityTx.ordinal -> MajorityTx(TransactionReference.of(majorityTx), snapshotOrdinal))
+            } match {
+              case Some(updated) => (updated.some, ().asRight)
+              case None          => (maybeStored, UnexpectedStateWhenMarkingTxRefAsMajority(source, majorityTxRef, None).asLeft)
+            }
           }
         }
     }

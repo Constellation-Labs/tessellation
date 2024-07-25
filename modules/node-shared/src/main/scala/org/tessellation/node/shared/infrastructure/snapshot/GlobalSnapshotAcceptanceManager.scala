@@ -89,9 +89,13 @@ object GlobalSnapshotAcceptanceManager {
         updatedLastStateChannelSnapshotHashes = lastSnapshotContext.lastStateChannelSnapshotHashes ++ sCSnapshotHashes
         updatedLastCurrencySnapshots = lastSnapshotContext.lastCurrencySnapshots ++ currencySnapshots
 
-        transactionsRefs = lastSnapshotContext.lastTxRefs ++ acceptanceResult.contextUpdate.lastTxRefs
-
         acceptedTransactions = acceptanceResult.accepted.flatMap { case (block, _) => block.value.transactions.toSortedSet }.toSortedSet
+
+        transactionsRefs = acceptTransactionRefs(
+          lastSnapshotContext.lastTxRefs,
+          acceptanceResult.contextUpdate.lastTxRefs,
+          acceptedTransactions
+        )
 
         rewards <- calculateRewardsFn(acceptedTransactions)
 
@@ -170,6 +174,16 @@ object GlobalSnapshotAcceptanceManager {
           gsi,
           stateProof
         )
+    }
+
+    private def acceptTransactionRefs(
+      lastTxRefs: SortedMap[Address, TransactionReference],
+      lastTxRefsContextUpdate: Map[Address, TransactionReference],
+      acceptedTransactions: SortedSet[Signed[Transaction]]
+    ): SortedMap[Address, TransactionReference] = {
+      val updatedRefs = lastTxRefs ++ lastTxRefsContextUpdate
+      val newDestinationAddresses = acceptedTransactions.map(_.destination) -- updatedRefs.keySet
+      updatedRefs ++ newDestinationAddresses.toList.map(_ -> TransactionReference.empty)
     }
 
     private def acceptBlocks(
