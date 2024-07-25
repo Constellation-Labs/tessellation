@@ -20,7 +20,7 @@ import org.http4s.dsl.Http4sDsl
 final case class DataBlockRoutes[F[_]: Async](
   mkCell: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _],
   dataApplication: BaseDataApplicationL0Service[F]
-)(implicit context: L0NodeContext[F], decoder: Decoder[DataUpdate], encoder: Encoder[DataCalculatedState])
+)(implicit context: L0NodeContext[F], decoder: Decoder[DataTransaction], encoder: Encoder[DataCalculatedState])
     extends Http4sDsl[F]
     with PublicRoutes[F]
     with P2PRoutes[F] {

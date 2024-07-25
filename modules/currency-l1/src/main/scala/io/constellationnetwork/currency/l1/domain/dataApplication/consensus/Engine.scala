@@ -12,8 +12,10 @@ import scala.concurrent.duration._
 
 import io.constellationnetwork.currency.dataApplication.ConsensusInput._
 import io.constellationnetwork.currency.dataApplication.ConsensusOutput.Noop
+import io.constellationnetwork.currency.dataApplication.DataTransaction.{DataTransactions, getHashes}
 import io.constellationnetwork.currency.dataApplication._
 import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationBlock
+import io.constellationnetwork.currency.validations.DataTransactionsValidator.validateDataTransactionsL1
 import io.constellationnetwork.dag.l1.domain.consensus.block.config.DataConsensusConfig
 import io.constellationnetwork.effects.GenUUID
 import io.constellationnetwork.fsm.FSM
@@ -61,14 +63,14 @@ case class RoundData(
     this.focus(_.peerCancellations).modify(_ + (cancellation.senderId -> cancellation.reason))
 
   def formBlock[F[_]: Async](
-    validateUpdate: Signed[DataUpdate] => F[Either[String, Signed[DataUpdate]]],
-    constructBlock: RoundId => List[Signed[DataUpdate]] => F[Option[DataApplicationBlock]]
+    validateTransactions: DataTransactions => F[Either[String, DataTransactions]],
+    constructBlock: RoundId => List[DataTransactions] => F[Option[DataApplicationBlock]]
   ): F[Option[DataApplicationBlock]] =
     NonEmptyList
       .fromList((ownProposal.dataUpdates ++ peerProposals.values.flatMap(_.dataUpdates)).toList)
       .traverse {
         _.toList
-          .traverse(validateUpdate)
+          .traverse(validateTransactions)
           .flatMap { validatedUpdates =>
             val (_, valid) = validatedUpdates.partitionMap(identity)
 
@@ -84,18 +86,17 @@ object Engine {
   type Out = ConsensusOutput
   type State = ConsensusState
 
-  def fsm[F[_]: Async: Random: SecurityProvider: Hasher: L1NodeContext](
+  def fsm[F[_]: Async: Random: SecurityProvider: Hasher](
     dataConsensusCfg: DataConsensusConfig,
     dataApplication: BaseDataApplicationL1Service[F],
     clusterStorage: ClusterStorage[F],
     lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     consensusClient: ConsensusClient[F],
-    dataUpdates: ViewableQueue[F, Signed[DataUpdate]],
+    dataTransactions: ViewableQueue[F, DataTransactions],
     selfId: PeerId,
     selfKeyPair: KeyPair
-  ): FSM[F, State, In, Out] = {
-
-    implicit val dataEncoder = dataApplication.dataEncoder
+  )(implicit nodeContext: L1NodeContext[F]): FSM[F, State, In, Out] = {
+    implicit val dataUpdateEncoder: Encoder[DataUpdate] = dataApplication.dataEncoder
 
     def peersCount = dataConsensusCfg.peersCount.value
     def timeout = dataConsensusCfg.timeout
@@ -116,13 +117,13 @@ object Engine {
           case _                                  => None
         })
 
-    def pullDataUpdates: F[Set[Signed[DataUpdate]]] =
-      dataUpdates.tryTakeN(maxDataUpdatesToDequeue.some).map(_.toSet).flatTap { updates =>
-        logger.debug(s"Fetched ${updates.size} updates")
+    def pullDataUpdates: F[Set[DataTransactions]] =
+      dataTransactions.tryTakeN(maxDataUpdatesToDequeue.some).map(_.toSet).flatTap { updates =>
+        logger.debug(s"Fetched ${updates.size} data transactions")
       }
 
     def returnDataUpdates(round: RoundData): F[Unit] =
-      round.ownProposal.dataUpdates.toList.traverse(dataUpdates.offer).void
+      round.ownProposal.dataUpdates.toList.traverse(dataTransactions.offer).void
 
     def removeRound(state: State, round: RoundData): State =
       if (round.owner === selfId)
@@ -321,29 +322,40 @@ object Engine {
     def persistProposal(state: State, proposal: Proposal): F[(State, Unit)] =
       tryPersistProposal(state, proposal).map {
         case (newState, roundData) if gotAllProposals(roundData) =>
-          def combine(roundId: RoundId)(updates: List[Signed[DataUpdate]]): F[Option[DataApplicationBlock]] =
-            NonEmptyList.fromList(updates).traverse { u =>
-              u.traverse(_.toHashed(dataApplication.serializeUpdate).map(_.hash)).map { hashes =>
-                DataApplicationBlock(roundId, u, hashes)
+          def combine(roundId: RoundId)(updates: List[DataTransactions]): F[Option[DataApplicationBlock]] =
+            NonEmptyList.fromList(updates).traverse { allUpdates =>
+              getHashes(allUpdates.toList, dataApplication.serializeUpdate).flatMap { hashesList =>
+                NonEmptyList
+                  .fromList(hashesList)
+                  .fold(
+                    new IllegalStateException("Could not find DataApplicationBlock hashes").raiseError[F, DataApplicationBlock]
+                  ) { hashes =>
+                    DataApplicationBlock(roundId, allUpdates, hashes).pure[F]
+                  }
               }
             }
 
           for {
             gsOrdinal <- OptionT(lastGlobalSnapshot.getOrdinal)
               .getOrRaise(new IllegalStateException("Global SnapshotOrdinal unavailable"))
-            validate = (update: Signed[DataUpdate]) =>
-              (dataApplication.validateUpdate(update), dataApplication.validateFee(gsOrdinal)(update)).mapN(_ |+| _)
+            balances <- nodeContext.getLastCurrencySnapshotCombined.flatMap { snapshot =>
+              OptionT
+                .fromOption(snapshot)
+                .map { case (_, snapshotInfo) => snapshotInfo.balances }
+                .getOrRaise(new IllegalStateException("Last currency snapshot unavailable"))
+            }
 
             maybeBlock <- roundData
               .formBlock(
-                a => validate(a).map(_.toEither.leftMap(_.toString).as(a)),
+                a => validateDataTransactionsL1(a, dataApplication, balances, gsOrdinal).map(_.toEither.leftMap(_.toString).as(a)),
                 combine
               )
+
             result <- maybeBlock match {
               case Some(block) =>
                 Signed.forAsyncHasher(block, selfKeyPair).flatMap { signedBlock =>
-                  signedBlock.updates
-                    .traverse(validate)
+                  signedBlock.dataTransactions
+                    .traverse(validateDataTransactionsL1(_, dataApplication, balances, gsOrdinal))
                     .map(_.forall(_.isValid))
                     .ifM(
                       processBlock(newState, proposal, signedBlock), {
@@ -390,7 +402,7 @@ object Engine {
     }
 
     def sendOwnProposal(ownProposal: Proposal, peers: Set[Peer]): F[Unit] = {
-      implicit val e = Proposal.encoder(dataApplication.dataEncoder)
+      implicit val e: Encoder[Proposal] = Proposal.encoder(DataTransaction.encoder)
 
       Signed
         .forAsyncHasher[F, Proposal](ownProposal, selfKeyPair)
@@ -409,8 +421,9 @@ object Engine {
           case (None, Some(peers)) =>
             getTime.flatMap { startedAt =>
               pullDataUpdates.flatMap { data =>
-                data.toList.traverse(_.toHashed(dataApplication.serializeUpdate)).map(_.map(_.hash)).map(_.toSet).flatMap { dataHashes =>
-                  val ownProposal = Proposal(proposal.roundId, senderId = selfId, owner = proposal.owner, peers.map(_.id), data, dataHashes)
+                getHashes(data.toList, dataApplication.serializeUpdate).flatMap { dataHashes =>
+                  val ownProposal =
+                    Proposal(proposal.roundId, senderId = selfId, owner = proposal.owner, peers.map(_.id), data, dataHashes.toSet)
                   val roundData =
                     RoundData(proposal.roundId, startedAt, peers, owner = proposal.owner, ownProposal)
 
@@ -456,14 +469,14 @@ object Engine {
           case Some(peers) =>
             (mkRoundId, pullDataUpdates, getTime).mapN {
               case (roundId, dataUpdates, startedAt) =>
-                dataUpdates.toList.traverse(_.toHashed(dataApplication.serializeUpdate)).map(_.map(_.hash)).map(_.toSet).flatMap {
-                  dataHashes =>
-                    val proposal = Proposal(roundId, senderId = selfId, owner = selfId, peers.map(_.id), dataUpdates, dataHashes)
-                    val roundData = RoundData(roundId, startedAt, peers, selfId, proposal)
+                getHashes(dataUpdates.toList, dataApplication.serializeUpdate).flatMap { dataHashes =>
+                  val proposal =
+                    Proposal(roundId, senderId = selfId, owner = selfId, peers.map(_.id), dataUpdates, dataHashes.toSet)
+                  val roundData = RoundData(roundId, startedAt, peers, selfId, proposal)
 
-                    val newState = state.focus(_.ownConsensus).replace(roundData.some)
+                  val newState = state.focus(_.ownConsensus).replace(roundData.some)
 
-                    sendOwnProposal(proposal, peers).tupleLeft(newState)
+                  sendOwnProposal(proposal, peers).tupleLeft(newState)
                 }
             }.flatten
           case _ => logger.warn(s"Missing peers").tupleLeft(state)
