@@ -10,10 +10,12 @@ import org.tessellation.security.Hasher
 import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto._
-import io.circe.syntax.EncoderOps
+import io.circe.shapes._
 import org.http4s.HttpRoutes
 import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder}
 import org.http4s.dsl.Http4sDsl
+import shapeless._
+import shapeless.syntax.singleton._
 
 final case class TransactionRoutes[F[_]: Async](
   transactionFeeEstimator: Option[TransactionFeeEstimator[F]],
@@ -25,7 +27,7 @@ final case class TransactionRoutes[F[_]: Async](
 
   protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root / "estimate-fee" =>
-      implicit val hasher = txHasher
+      implicit val hasher: Hasher[F] = txHasher
 
       for {
         transaction <- req.as[Signed[Transaction]]
@@ -34,7 +36,7 @@ final case class TransactionRoutes[F[_]: Async](
           case Some(estimator) => estimator.estimate(hashedTransaction)
           case None            => TransactionFee.zero.pure[F]
         }
-        response <- Ok(("fee" -> fee.value.value).asJson)
+        response <- Ok(("fee" ->> fee.value.value) :: HNil)
       } yield response
   }
 }
