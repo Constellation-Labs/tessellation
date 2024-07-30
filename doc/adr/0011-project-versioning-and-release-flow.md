@@ -4,7 +4,7 @@ Date: 2022-05-26
 
 ## Status
 
-Accepted
+Superseded by [ADR#0015](./0015-conventional-commits.md)
 
 ## Context
 
