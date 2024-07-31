@@ -1,8 +1,9 @@
-# tessellation
-
+# Tessellation
 
 ![build](https://img.shields.io/github/actions/workflow/status/Constellation-Labs/tessellation/release.yml?label=build)
-![version](https://img.shields.io/github/v/release/Constellation-Labs/tessellation?sort=semver)
+![Dynamic JSON Badge](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fl0-lb-testnet.constellationnetwork.io%2Fnode%2Finfo&query=%24.version&label=TestNet)
+![Dynamic JSON Badge](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fl0-lb-integrationnet.constellationnetwork.io%2Fnode%2Finfo&query=%24.version&label=IntegrationNet)
+![Dynamic JSON Badge](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fl0-lb-mainnet.constellationnetwork.io%2Fnode%2Finfo&query=%24.version&label=MainNet)
 
 The Constellation Network Node Software, written in Scala, ready for Kubernetes Deployment.
 
