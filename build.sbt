@@ -533,7 +533,7 @@ lazy val sdk = (project in file("modules/sdk"))
   .enablePlugins(AshScriptPlugin)
   .enablePlugins(BuildInfoPlugin)
   .enablePlugins(JavaAppPackaging)
-  .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test, nodeShared)
+  .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test, nodeShared, currencyL0, currencyL1)
   .settings(
     name := "tessellation-sdk",
     Defaults.itSettings,
