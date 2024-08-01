@@ -19,6 +19,7 @@ import org.tessellation.security.signature.Signed
 import org.tessellation.security.{Hasher, SecurityProvider}
 
 import eu.timepit.refined.auto._
+import io.circe.shapes._
 import io.circe.syntax.EncoderOps
 import io.circe.{Decoder, Encoder, Json}
 import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder}
@@ -26,6 +27,8 @@ import org.http4s.dsl.Http4sDsl
 import org.http4s.{EntityDecoder, HttpRoutes, Response}
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+import shapeless._
+import shapeless.syntax.singleton._
 
 final case class DataApplicationRoutes[F[_]: Async: Hasher: SecurityProvider: L1NodeContext](
   dataApplicationPeerConsensusInput: Queue[F, Signed[ConsensusInput.PeerConsensusInput]],
@@ -71,7 +74,7 @@ final case class DataApplicationRoutes[F[_]: Async: Hasher: SecurityProvider: L1
             case Left(_) => BadRequest(InvalidSignature.toApplicationError)
             case Right(hashed) =>
               validate(hashed.signed) {
-                dataUpdatesQueue.offer(hashed.signed) >> Ok(("hash" -> hashed.hash.value).asJson)
+                dataUpdatesQueue.offer(hashed.signed) >> Ok(("hash" ->> hashed.hash.value) :: HNil)
               }
           }
         }
