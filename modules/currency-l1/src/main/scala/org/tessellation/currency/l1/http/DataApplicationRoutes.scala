@@ -20,7 +20,6 @@ import org.tessellation.security.{Hasher, SecurityProvider}
 
 import eu.timepit.refined.auto._
 import io.circe.shapes._
-import io.circe.syntax.EncoderOps
 import io.circe.{Decoder, Encoder, Json}
 import org.http4s.circe.CirceEntityCodec.{circeEntityDecoder, circeEntityEncoder}
 import org.http4s.dsl.Http4sDsl
