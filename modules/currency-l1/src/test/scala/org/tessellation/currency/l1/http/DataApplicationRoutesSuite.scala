@@ -1,5 +1,8 @@
 package org.tessellation.currency.l1.http
 
+import java.nio.charset.StandardCharsets
+import java.util.Base64
+
 import cats.Applicative
 import cats.data.NonEmptySet
 import cats.data.Validated.invalidNec
@@ -29,6 +32,7 @@ import org.tessellation.security.signature.Signed
 import org.tessellation.shared.sharedKryoRegistrar
 
 import io.circe.syntax.EncoderOps
+import io.circe.{Encoder, Json}
 import org.http4s.Method.{GET, POST}
 import org.http4s._
 import org.http4s.client.dsl.io._
@@ -45,7 +49,7 @@ object DataApplicationRoutesSuite extends HttpSuite {
   val defaultCurrencySnapshotStorage = mockLastSnapshotStorage[CurrencyIncrementalSnapshot, CurrencySnapshotInfo]()
 
   def construct(
-    updateQueue: ViewableQueue[F, Signed[DataUpdate]],
+    updateQueue: ViewableQueue[IO, Signed[DataUpdate]],
     l1Service: BaseDataApplicationL1Service[IO] = defaultL1Service,
     lastGlobalSnapshotStorage: LastSnapshotStorage[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo] = defaultGlobalSnapshotStorage
   ): IO[HttpRoutes[IO]] =
@@ -132,13 +136,26 @@ object DataApplicationRoutesSuite extends HttpSuite {
           case None         => super.estimateFee(gsOrdinal)(update)
           case Some(result) => result.pure[IO]
         }
+
+      override def serializeUpdate(update: DataUpdate): IO[Array[Byte]] = IO {
+        val data_sign_prefix = "\u0019Constellation Signed Data:\n"
+        implicit val encoder: Encoder[DataUpdate] = this.dataEncoder
+
+        val updateBytes = update.asJson.deepDropNullValues.noSpaces.getBytes(StandardCharsets.UTF_8)
+        val encodedBytes = Base64.getEncoder.encode(updateBytes)
+
+        val encodedString = new String(encodedBytes, "UTF-8")
+        val completeString = s"$data_sign_prefix${encodedString.length}\n$encodedString"
+
+        completeString.getBytes(StandardCharsets.UTF_8)
+      }
     }
 
   test("GET /data returns Http Status code 200 with empty array") {
     val req: Request[IO] = GET(uri"/data")
 
     for {
-      dataQueue <- ViewableQueue.make[F, Signed[DataUpdate]]
+      dataQueue <- ViewableQueue.make[IO, Signed[DataUpdate]]
       endpoint <- construct(dataQueue)
       testResult <- expectHttpBodyAndStatus(endpoint, req)(List.empty[Signed[DummyUpdate]], Status.Ok)
     } yield testResult
@@ -149,7 +166,7 @@ object DataApplicationRoutesSuite extends HttpSuite {
 
     forall(signedOf(dummyUpdateGen)) { update =>
       for {
-        dataQueue <- ViewableQueue.make[F, Signed[DataUpdate]]
+        dataQueue <- ViewableQueue.make[IO, Signed[DataUpdate]]
         _ <- dataQueue.offer(update)
         endpoint <- construct(dataQueue)
         testResult <- expectHttpBodyAndStatus(endpoint, req)(List(update), Status.Ok)
@@ -167,12 +184,37 @@ object DataApplicationRoutesSuite extends HttpSuite {
 
     forall(gen) { updates =>
       for {
-        dataQueue <- ViewableQueue.make[F, Signed[DataUpdate]]
+        dataQueue <- ViewableQueue.make[IO, Signed[DataUpdate]]
         _ <- dataQueue.tryOfferN(updates).flatMap { rejected =>
           IO.raiseError(new RuntimeException("Updates failed to enter queue")).whenA(rejected.nonEmpty)
         }
         endpoint <- construct(dataQueue)
         testResult <- expectHttpBodyAndStatus(endpoint, req)(updates, Status.Ok)
+      } yield testResult
+    }
+  }
+
+  test("POST /data returns OK and response as JSON object for valid updates") {
+    import org.http4s.circe.CirceEntityEncoder._
+    val req: Request[IO] = POST(uri"/data")
+
+    forall(dummyUpdateGen) { update0 =>
+      for {
+        dataQueue <- ViewableQueue.make[IO, Signed[DataUpdate]]
+        l1Service = makeValidatingService(validateUpdateFn = valid, validateFeeFn = valid)
+
+        (update, expectedBody) <- sharedResource.use { res =>
+          implicit val (a, b, c, d) = res
+          implicit val toBytes = l1Service.serializeUpdate _
+          for {
+            kp <- KeyPairGenerator.makeKeyPair[IO]
+            signed <- Signed.forAsync(update0, kp)
+            expectedJson <- signed.toHashed[IO](toBytes).map(h => Json.obj("hash" -> h.hash.asJson))
+          } yield (signed, expectedJson)
+        }
+
+        endpoint <- construct(dataQueue, l1Service)
+        testResult <- expectHttpBodyAndStatus(endpoint, req.withEntity(update))(expectedBody, Status.Ok)
       } yield testResult
     }
   }
@@ -195,11 +237,11 @@ object DataApplicationRoutesSuite extends HttpSuite {
     forall(gen) {
       case (update, maybeEstimateFee) =>
         for {
-          dataQueue <- ViewableQueue.make[F, Signed[DataUpdate]]
+          dataQueue <- ViewableQueue.make[IO, Signed[DataUpdate]]
           l1Service = makeValidatingService(validateUpdateFn = valid, validateFeeFn = invalid, estimateFeeResult = maybeEstimateFee)
-          expectedResponse = maybeEstimateFee.map(EstimatedFeeResponse(_).asJson).getOrElse(defaultResponse.asJson)
+          expectedBody = maybeEstimateFee.map(EstimatedFeeResponse(_).asJson).getOrElse(defaultResponse.asJson)
           endpoint <- construct(dataQueue, l1Service)
-          testResult <- expectHttpBodyAndStatus(endpoint, req.withEntity(update.value))(expectedResponse, Status.Ok)
+          testResult <- expectHttpBodyAndStatus(endpoint, req.withEntity(update.value))(expectedBody, Status.Ok)
         } yield testResult
     }
   }
@@ -212,14 +254,14 @@ object DataApplicationRoutesSuite extends HttpSuite {
 
     forall(signedOf(dummyUpdateGen)) { update =>
       for {
-        dataQueue <- ViewableQueue.make[F, Signed[DataUpdate]]
+        dataQueue <- ViewableQueue.make[IO, Signed[DataUpdate]]
         endpoint <- construct(dataQueue, l1Service)
         testResult <- expectHttpStatus(endpoint, req.withEntity(update.value))(Status.BadRequest)
       } yield testResult
     }
   }
 
-  test("POST /data/estimate-fee returns InternalServerError if global snapshot ordinal not available") {
+  test("POST /data returns 200 Ok and update's hash as a json object") {
     import org.http4s.circe.CirceEntityEncoder._
     val req: Request[IO] = POST(uri"/data/estimate-fee")
 
@@ -229,7 +271,7 @@ object DataApplicationRoutesSuite extends HttpSuite {
     )
     forall(signedOf(dummyUpdateGen)) { update =>
       for {
-        dataQueue <- ViewableQueue.make[F, Signed[DataUpdate]]
+        dataQueue <- ViewableQueue.make[IO, Signed[DataUpdate]]
         endpoint <- construct(dataQueue, l1Service, globalSnapshotStorage)
         testResult <- expectHttpStatus(endpoint, req.withEntity(update.value))(Status.InternalServerError)
       } yield testResult
