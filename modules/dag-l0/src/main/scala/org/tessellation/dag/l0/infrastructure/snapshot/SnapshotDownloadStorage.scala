@@ -6,6 +6,7 @@ import cats.syntax.all._
 
 import org.tessellation.cutoff.{LogarithmicOrdinalCutoff, OrdinalCutoff}
 import org.tessellation.dag.l0.domain.snapshot.storages.SnapshotDownloadStorage
+import org.tessellation.kryo.KryoSerializer
 import org.tessellation.merkletree.StateProofValidator
 import org.tessellation.node.shared.infrastructure.snapshot.storage.{SnapshotInfoLocalFileSystemStorage, SnapshotLocalFileSystemStorage}
 import org.tessellation.schema._
@@ -13,8 +14,10 @@ import org.tessellation.security._
 import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
+import org.typelevel.log4cats.slf4j.Slf4jLogger
+
 object SnapshotDownloadStorage {
-  def make[F[_]: Async: HasherSelector](
+  def make[F[_]: Async: HasherSelector: KryoSerializer](
     tmpStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
     persistedStorage: SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot],
     fullGlobalSnapshotStorage: SnapshotLocalFileSystemStorage[F, GlobalSnapshot],
@@ -23,6 +26,8 @@ object SnapshotDownloadStorage {
     hashSelect: HashSelect
   ): SnapshotDownloadStorage[F] =
     new SnapshotDownloadStorage[F] {
+
+      val logger = Slf4jLogger.getLogger[F]
 
       val cutoffLogic: OrdinalCutoff = LogarithmicOrdinalCutoff.make
 
@@ -124,6 +129,13 @@ object SnapshotDownloadStorage {
                       HasherSelector[F]
                         .forOrdinal(snapshot.ordinal) { implicit hasher =>
                           snapshot.toHashed.flatMap(s => movePersistedToTmp(s.hash, s.ordinal))
+                        }
+                        .handleErrorWith { error =>
+                          implicit val kryoHasher = Hasher.forKryo[F]
+                          logger.warn(error)(s"cleanupAbove failed for ordinal=${snapshot.ordinal}, retrying with Kryo hasher") >>
+                            snapshot.toHashed.flatMap { s =>
+                              movePersistedToTmp(s.hash, s.ordinal)
+                            }
                         }
                     case None => Async[F].unit
                   }
