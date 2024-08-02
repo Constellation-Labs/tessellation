@@ -13,6 +13,7 @@ import org.tessellation.dag.l0.http.p2p.P2PClient
 import org.tessellation.dag.l0.infrastructure.snapshot.{GlobalSnapshotConsensus, GlobalSnapshotContext}
 import org.tessellation.ext.cats.kernel.PartialPrevious
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
+import org.tessellation.kryo.KryoSerializer
 import org.tessellation.merkletree.StateProofValidator
 import org.tessellation.node.shared.domain.cluster.storage.ClusterStorage
 import org.tessellation.node.shared.domain.node.NodeStorage
@@ -33,7 +34,7 @@ import retry.RetryPolicies._
 import retry._
 
 object Download {
-  def make[F[_]: Async: Random](
+  def make[F[_]: Async: Random: KryoSerializer](
     snapshotStorage: SnapshotDownloadStorage[F],
     p2pClient: P2PClient[F],
     clusterStorage: ClusterStorage[F],
@@ -219,6 +220,12 @@ object Download {
                   .forOrdinal(lastSnapshot.ordinal)(implicit hasher => snapshot.toHashed[F])
                   .map(_.hash)
                   .flatMap(snapshotStorage.movePersistedToTmp(_, lastSnapshot.ordinal))
+                  .handleErrorWith { error =>
+                    implicit val kryoHasher = Hasher.forKryo[F]
+                    logger.warn(error)(s"movePersistedToTmp failed for ordinal=${lastSnapshot.ordinal}, retrying with Kryo hasher") >>
+                      snapshot.toHashed[F].map(_.hash).flatMap(snapshotStorage.movePersistedToTmp(_, lastSnapshot.ordinal))
+
+                  }
               ).getOrElse(Applicative[F].unit)
             } >>
               snapshotStorage
