@@ -1,0 +1,14 @@
+{
+  "name": "tessellation",
+  "repository": "git@github.com:Constellation-Labs/tessellation.git",
+  "devDependencies": {
+    "@commitlint/cli": "^19.3.0",
+    "@commitlint/config-conventional": "^19.2.2"
+  },
+  "scripts": {
+    "prepare": "husky"
+  },
+  "dependencies": {
+    "conventional-changelog-conventionalcommits": "^5.0.0"
+  }
+}
