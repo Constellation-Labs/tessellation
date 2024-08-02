@@ -53,6 +53,7 @@
               sbt
               bloop
               scala-cli-native
+              nodejs
             ];
 
             shellHook = ''

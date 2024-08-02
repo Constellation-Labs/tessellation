@@ -1,0 +1,26 @@
+name: "PR commits validation"
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  main:
+    name: Validate PR title
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.1.2
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          cache: "npm"
+          node-version: 20
+      - run: npm install @commitlint/config-conventional @commitlint/cli conventional-changelog-conventionalcommits@5.0.0
+      - run: echo "${{ github.event.pull_request.title }}" | npx commitlint --config .commitlintrc
+      - run: npx commitlint --config .commitlintrc --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }} --verbose
