@@ -1,34 +1,41 @@
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - release/integrationnet
+      - release/mainnet
 
-name: Create Release
+name: Release
+
+permissions:
+  contents: write
+  pull-requests: write
 
 jobs:
   build:
-    if: startsWith(github.ref, 'refs/tags/')
-    name: Create Release
+    name: Release
     runs-on: ubuntu-20.04
     steps:
       - uses: actions/checkout@v3
-
-      - name: Check if project version is release version
-        run:  test "v$(cut -d \" -f 2 version.sbt)" = "${{ github.ref_name }}"
-
-      - name: Build Changelog
-        id: build_changelog
-        uses: mikepenz/release-changelog-builder-action@v2.4.2
         with:
-          configuration: ".github/config/changelog.json"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
-      - uses: little-core-labs/get-git-tag@v3.0.1
-        id: tagName
-        with:
-          tagRegex: "v(.*)"
-          tagRegexGroup: 1
+      - name: Check if the commit already has a tag starting with "v"
+        id: check_tag
+        run: |
+          TAG=$(git tag --contains HEAD | grep -E '^v')
+          if [ -n "$TAG" ]; then
+            echo "This commit has a tag starting with 'v': $TAG"
+            echo "TAG_EXISTS=true" >> "$GITHUB_ENV"
+          else
+            echo "This commit does not have a tag starting with 'v'."
+            echo "TAG_EXISTS=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Check branch and abort if necessary
+        if: env.TAG_EXISTS == 'true' && github.ref_name == 'release/integrationnet'
+        run: |
+          echo "Aborting the action because the release should already exist."
+          exit 1
 
       - name: Setup Java and scala
         env:
@@ -37,30 +44,76 @@ jobs:
           JAVA_VERSION: openjdk@1.11.0
         uses: "./.github/templates/setup_java_and_scala"
 
-      - name: Test and assembly 🚀
-        run: sbt 'scalafixAll --check --rules OrganizeImports;scalafmtCheckAll;test;keytool/assembly;wallet/assembly;dagL0/assembly;dagL1/assembly'
+      - name: Test
+        run: sbt 'scalafixAll --check --rules OrganizeImports;scalafmtCheckAll;test'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get the release version
+        id: get_version
+        run: |
+          {
+            if [[ "${{ github.ref_name }}" == "release/mainnet" ]]; then
+              echo 'VERSION<<EOF'
+              npx commit-and-tag-version --dry-run | grep -oP 'tagging release v\K[0-9]+\.[0-9]+\.[0-9]+'
+              echo EOF
+            elif [[ "${{ github.ref_name }}" == "release/integrationnet" ]]; then
+              echo 'VERSION<<EOF'
+              npx commit-and-tag-version --dry-run --prerelease rc | grep -oP 'tagging release v\K(.*)'
+              echo EOF
+            fi
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build Changelog
+        id: get_changelog
+        run: |
+          {
+            echo "CHANGELOG<<EOF"
+            npx commit-and-tag-version --dry-run | sed -n '/---/,/---/p' | sed '1d;$d'
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set Git config
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+
+      - name: Create release tag
+        env:
+          VERSION: ${{ steps.get_version.outputs.VERSION }}
+        run: |
+          echo "Release-As: $VERSION" >> $GITHUB_STEP_SUMMARY
+
+          git tag -a v$VERSION -m "Release $VERSION"
+          git push origin v$VERSION -f
+
+      - name: Assembly 🚀
+        run: sbt 'keytool/assembly;wallet/assembly;dagL0/assembly;dagL1/assembly'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Copy dependencies
+        env:
+          VERSION: ${{ steps.get_version.outputs.VERSION }}
         run: |
-          cp ./modules/keytool/target/scala-2.13/tessellation-keytool-assembly-${{ steps.tagName.outputs.tag }}.jar ./cl-keytool.jar
-          cp ./modules/wallet/target/scala-2.13/tessellation-wallet-assembly-${{ steps.tagName.outputs.tag }}.jar ./cl-wallet.jar
-          cp ./modules/dag-l0/target/scala-2.13/tessellation-dag-l0-assembly-${{ steps.tagName.outputs.tag }}.jar ./cl-node.jar
-          cp ./modules/dag-l1/target/scala-2.13/tessellation-dag-l1-assembly-${{ steps.tagName.outputs.tag }}.jar ./cl-dag-l1.jar
+          cp ./modules/keytool/target/scala-2.13/tessellation-keytool-assembly-$VERSION.jar ./cl-keytool.jar
+          cp ./modules/wallet/target/scala-2.13/tessellation-wallet-assembly-$VERSION.jar ./cl-wallet.jar
+          cp ./modules/dag-l0/target/scala-2.13/tessellation-dag-l0-assembly-$VERSION.jar ./cl-node.jar
+          cp ./modules/dag-l1/target/scala-2.13/tessellation-dag-l1-assembly-$VERSION.jar ./cl-dag-l1.jar
 
-      - name: Upload release assets
+      - name: Create release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         uses: softprops/action-gh-release@v1
         with:
-          name: Release ${{ steps.tagName.outputs.tag }}
+          name: Release ${{ steps.get_version.outputs.VERSION }}
+          tag_name: v${{ steps.get_version.outputs.VERSION }}
           draft: true
           prerelease: false
-          body: ${{ steps.build_changelog.outputs.changelog }}
+          body: ${{ steps.get_changelog.outputs.CHANGELOG }}
           files: |
             ./cl-keytool.jar
             ./cl-wallet.jar
             ./cl-node.jar
             ./cl-dag-l1.jar
             ./mainnet/mainnet-seedlist
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
