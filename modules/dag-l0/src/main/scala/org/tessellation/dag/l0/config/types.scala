@@ -91,7 +91,11 @@ object types {
     oneTimeRewards: List[OneTimeReward] = List(
       // Transferring final balance of 4,343,029,488,479,231 from DAGSTARDUSTCOLLECTIVEHZOIPHXZUBFGNXWJETZVSPAPAHMLXS
       // as of the last minting it received awards (Epoch 1352274)
-      OneTimeReward(EpochProgress(1353745L), stardustNewPrimary, TransactionAmount(4_343_029_488_479_231L))
+      OneTimeReward(EpochProgress(1353745L), stardustNewPrimary, TransactionAmount(4_343_029_488_479_231L)),
+      // One-time minting to treasure wallets according to new metanomics
+      OneTimeReward(EpochProgress(1927873L), treasureWalletMetanomics1, TransactionAmount(150_000_000_000_000_00L)),
+      OneTimeReward(EpochProgress(1927873L), treasureWalletMetanomics2, TransactionAmount(150_000_000_000_000_00L)),
+      OneTimeReward(EpochProgress(1927873L), treasureWalletMetanomics3, TransactionAmount(150_000_000_000_000_00L)),
     )
   )
 
@@ -102,6 +106,9 @@ object types {
     val testnet: Address = Address("DAG0qE5tkz6cMUD5M2dkqgfV4TQCzUUdAP5MFM9P")
     val dataPool: Address = Address("DAG3RXBWBJq1Bf38rawASakLHKYMbRhsDckaGvGu")
     val integrationNet: Address = Address("DAG8jE4CHy9T2izWFEv8K6rp5hNJq11SyLEVYnt8")
+    val treasureWalletMetanomics1: Address = Address("DAG3tC21XtXvoUD8hTMQzHm7T21MHahuFPVrPBtR")
+    val treasureWalletMetanomics2: Address = Address("DAG86Joz5S7hkL8N9yqTuVs5vo1bzQLwF3MUTUMX")
+    val treasureWalletMetanomics3: Address = Address("DAG1nw5WkZdQf96Df3PkrjLxeHj2EV3oLkWPZQcD")
 
     val mainnetProgramsDistributionConfig: EpochProgress => ProgramsDistributionConfig = {
       case epoch if epoch < EpochProgress(1336392L) =>
