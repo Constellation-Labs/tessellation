@@ -93,9 +93,9 @@ object types {
       // as of the last minting it received awards (Epoch 1352274)
       OneTimeReward(EpochProgress(1353745L), stardustNewPrimary, TransactionAmount(4_343_029_488_479_231L)),
       // One-time minting to treasure wallets according to new metanomics
-      OneTimeReward(EpochProgress(1927873L), treasureWalletMetanomics1, TransactionAmount(150_000_000_000_000_00L)),
-      OneTimeReward(EpochProgress(1927873L), treasureWalletMetanomics2, TransactionAmount(150_000_000_000_000_00L)),
-      OneTimeReward(EpochProgress(1927873L), treasureWalletMetanomics3, TransactionAmount(150_000_000_000_000_00L)),
+      OneTimeReward(EpochProgress(1928500L), treasureWalletMetanomics1, TransactionAmount(150_000_000_000_000_00L)),
+      OneTimeReward(EpochProgress(1928500L), treasureWalletMetanomics2, TransactionAmount(150_000_000_000_000_00L)),
+      OneTimeReward(EpochProgress(1928500L), treasureWalletMetanomics3, TransactionAmount(150_000_000_000_000_00L)),
     )
   )
 
