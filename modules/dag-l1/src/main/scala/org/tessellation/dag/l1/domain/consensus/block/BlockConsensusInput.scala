@@ -1,11 +1,13 @@
 package org.tessellation.dag.l1.domain.consensus.block
 
 import cats.Show
+import cats.syntax.show._
 
 import org.tessellation.kernel.Ω
 import org.tessellation.schema.block.Tips
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.round.RoundId
+import org.tessellation.schema.swap.AllowSpend
 import org.tessellation.schema.transaction.Transaction
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.Signature
@@ -32,6 +34,7 @@ object BlockConsensusInput {
     owner: PeerId,
     facilitators: Set[PeerId],
     transactions: Set[Signed[Transaction]],
+    allowSpendTransactions: Set[Signed[AllowSpend]],
     tips: Tips
   ) extends PeerBlockConsensusInput
 
@@ -43,11 +46,17 @@ object BlockConsensusInput {
   implicit def showBlockConsensusInput: Show[BlockConsensusInput] = {
     case OwnRoundTrigger   => "OwnRoundTrigger"
     case InspectionTrigger => "InspectionTrigger"
-    case Proposal(roundId, senderId, _, _, txs, _) =>
-      s"Proposal(roundId=${roundId.value.toString.take(8)}, senderId=${senderId.value.value.take(8)} txsCount=${txs.size})"
+    case Proposal(roundId, senderId, _, _, txs, allowSpendTxs, _) =>
+      implicit val peerIdShow = PeerId.shortShow
+      implicit val roundIdShow = RoundId.shortShow
+      s"Proposal(roundId=${roundId.show}, senderId=${senderId.show} txsCount=${txs.size}, allowSpendTxsCount=${allowSpendTxs.size})"
     case BlockSignatureProposal(roundId, senderId, _, _) =>
-      s"BlockSignatureProposal(roundId=${roundId.value.toString.take(8)}, senderId=${senderId.value.value.take(8)})"
+      implicit val peerIdShow = PeerId.shortShow
+      implicit val roundIdShow = RoundId.shortShow
+      s"BlockSignatureProposal(roundId=${roundId.show}, senderId=${senderId.show})"
     case CancelledBlockCreationRound(roundId, senderId, _, reason) =>
-      s"CancelledBlockCreationRound(roundId=${roundId.value.toString.take(8)}, senderId=${senderId.value.value.take(8)}, reason=$reason)"
+      implicit val peerIdShow = PeerId.shortShow
+      implicit val roundIdShow = RoundId.shortShow
+      s"CancelledBlockCreationRound(roundId=${roundId.show}, senderId=${senderId.show}, reason=$reason)"
   }
 }

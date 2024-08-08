@@ -17,7 +17,7 @@ import org.tessellation.currency.l1.modules._
 import org.tessellation.currency.l1.node.L1NodeContext
 import org.tessellation.currency.schema.currency._
 import org.tessellation.dag.l1.config.types._
-import org.tessellation.dag.l1.domain.transaction.{CustomContextualTransactionValidator, TransactionFeeEstimator}
+import org.tessellation.dag.l1.domain.transaction.{CustomContextualAllowSpendValidator,TransactionFeeEstimator, CustomContextualTransactionValidator}
 import org.tessellation.dag.l1.http.p2p.{P2PClient => DAGP2PClient}
 import org.tessellation.dag.l1.infrastructure.block.rumor.handler.blockRumorHandler
 import org.tessellation.dag.l1.modules.{Daemons => DAGL1Daemons, Queues => DAGL1Queues, Validators => DAGL1Validators}
@@ -52,6 +52,7 @@ trait OverridableL1 extends TessellationIOApp[Run] {
   def dataApplication: Option[Resource[IO, BaseDataApplicationL1Service[IO]]] = None
   def transactionValidator: Option[CustomContextualTransactionValidator] = None
   def transactionFeeEstimator: Option[TransactionFeeEstimator[IO]] = None
+  def allowSpendValidator: Option[CustomContextualAllowSpendValidator] = None
 }
 
 abstract class CurrencyL1App(
@@ -90,6 +91,7 @@ abstract class CurrencyL1App(
           seedlist,
           cfg.transactionLimit,
           transactionValidator,
+          allowSpendValidator,
           txHasher
         )
       storages <- hasherSelector.withCurrent { implicit hasher =>
@@ -99,7 +101,8 @@ abstract class CurrencyL1App(
             method.l0Peer,
             method.globalL0Peer,
             method.identifier,
-            validators.transactionContextual
+            validators.transactionContextual,
+            validators.allowSpendContextual
           )
       }.asResource
       dagP2PClient = DAGP2PClient

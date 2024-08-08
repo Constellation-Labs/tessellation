@@ -4,4 +4,10 @@ import scala.concurrent.duration.FiniteDuration
 
 import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
 
-case class ConsensusConfig(peersCount: PosInt, tipsCount: PosInt, timeout: FiniteDuration, pullTxsCount: NonNegLong)
+case class ConsensusConfig(
+  peersCount: PosInt,
+  tipsCount: PosInt,
+  timeout: FiniteDuration,
+  pullTxsCount: NonNegLong,
+  pullAllowSpendTxsCount: NonNegLong
+)

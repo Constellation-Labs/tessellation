@@ -7,8 +7,8 @@ import cats.syntax.all._
 import scala.concurrent.duration.FiniteDuration
 
 import org.tessellation.dag.l1.domain.consensus.block.BlockConsensusInput.{BlockSignatureProposal, CancelledBlockCreationRound, Proposal}
-import org.tessellation.node.shared.domain.transaction.TransactionValidator
-import org.tessellation.node.shared.domain.transaction.filter.Consecutive
+import org.tessellation.node.shared.domain.transaction.filter.{Consecutive, ConsecutiveAllowSpend}
+import org.tessellation.node.shared.domain.transaction.{AllowSpendValidator, TransactionValidator}
 import org.tessellation.schema.Block
 import org.tessellation.schema.block.Tips
 import org.tessellation.schema.peer.{Peer, PeerId}
@@ -52,21 +52,49 @@ case class RoundData(
   def addPeerCancellation(cancellation: CancelledBlockCreationRound): RoundData =
     this.focus(_.peerCancellations).modify(_ + (cancellation.senderId -> cancellation.reason))
 
-  def formBlock[F[_]: Async](validator: TransactionValidator[F], txHasher: Hasher[F]): F[Option[Block]] =
-    (ownProposal.transactions ++ peerProposals.values.flatMap(_.transactions)).toList
-      .traverse(validator.validate)
-      .flatMap { validatedTxs =>
-        val (invalid, valid) = validatedTxs.partitionMap(_.toEither)
+  def formBlock[F[_]: Async](
+    validator: TransactionValidator[F],
+    allowSpendValidator: AllowSpendValidator[F],
+    txHasher: Hasher[F]
+  ): F[Option[Block]] = {
+    def formTransactions =
+      (ownProposal.transactions ++ peerProposals.values.flatMap(_.transactions)).toList
+        .traverse(validator.validate)
+        .flatMap { validatedTxs =>
+          val (invalid, valid) = validatedTxs.partitionMap(_.toEither)
 
-        invalid.traverse { errors =>
-          logger.warn(s"Discarded invalid transaction during L1 consensus with roundId=$roundId. Reasons: ${errors.show}")
-        } >>
-          valid.pure[F]
-      }
-      .flatMap {
-        _.groupBy(_.source).values.toList
-          .traverse(txs => Consecutive.take(txs, txHasher))
-          .map(listOfTxs => NonEmptySet.fromSet(listOfTxs.flatten.toSortedSet))
-          .map(_.map(Block(tips.value, _)))
-      }
+          invalid.traverse { errors =>
+            logger.warn(s"Discarded invalid transaction during L1 consensus with roundId=$roundId. Reasons: ${errors.show}")
+          } >>
+            valid.pure[F]
+        }
+        .flatMap {
+
+          _.groupBy(_.source).values.toList
+            .traverse(txs => Consecutive.take(txs, txHasher))
+            .map(listOfTxs => NonEmptySet.fromSet(listOfTxs.flatten.toSortedSet))
+        }
+
+    def formAllowSpends =
+      (ownProposal.allowSpendTransactions ++ peerProposals.values.flatMap(_.allowSpendTransactions)).toList
+        .traverse(allowSpendValidator.validate)
+        .flatMap { validatedTxs =>
+          val (invalid, valid) = validatedTxs.partitionMap(_.toEither)
+
+          invalid.traverse { errors =>
+            logger.warn(s"Discarded invalid allow spend transaction during L1 consensus with roundId=$roundId. Reasons: ${errors.show}")
+          } >>
+            valid.pure[F]
+        }
+        .flatMap {
+          _.groupBy(_.source).values.toList
+            .traverse(txs => ConsecutiveAllowSpend.take(txs, txHasher))
+            .map(listOfTxs => NonEmptySet.fromSet(listOfTxs.flatten.toSortedSet))
+        }
+
+    (formTransactions, formAllowSpends).mapN {
+      case (txs, allowSpends) =>
+        txs.map(t => Block(tips.value, t, allowSpends))
+    }
+  }
 }

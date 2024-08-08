@@ -17,6 +17,7 @@ import org.tessellation.node.shared.nodeSharedKryoRegistrar
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.Balance
+import org.tessellation.schema.swap.{AllowSpendOrdinal, AllowSpendReference}
 import org.tessellation.schema.transaction._
 import org.tessellation.security._
 import org.tessellation.security.key.ops.PublicKeyOps
@@ -50,12 +51,18 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
           implicit0(jhs: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
           implicit0(h: Hasher[IO]) = Hasher.forJson[IO]
           transactions <- MapRef.ofConcurrentHashMap[IO, Address, SortedMap[TransactionOrdinal, StoredTransaction]]().asResource
+          allowSpends <- MapRef.ofConcurrentHashMap[IO, Address, SortedMap[AllowSpendOrdinal, StoredAllowSpend]]().asResource
           contextualTransactionValidator = ContextualTransactionValidator
+            .make(TransactionLimitConfig(Balance(100000000L), 20.hours, TransactionFee(200000L), 43.seconds), None)
+          contextualAllowSpendValidator = ContextualAllowSpendValidator
             .make(TransactionLimitConfig(Balance(100000000L), 20.hours, TransactionFee(200000L), 43.seconds), None)
           transactionStorage = new TransactionStorage[IO](
             transactions,
+            allowSpends,
             TransactionReference.empty,
-            contextualTransactionValidator
+            AllowSpendReference.empty,
+            contextualTransactionValidator,
+            contextualAllowSpendValidator
           )
           key1 <- KeyPairGenerator.makeKeyPair.asResource
           address1 = key1.getPublic.toAddress
@@ -92,9 +99,9 @@ object TransactionStorageSuite extends SimpleIOSuite with TransactionGenerator {
         for {
           _ <- transactionStorage
             .initByRefs(Map(address1 -> ref), ordinal)
-          txs <- transactionStorage.getState
+          txs <- transactionStorage.getState.map(_._1)
 
-          expected = Map(address1 -> SortedMap(ref.ordinal -> MajorityTx(ref, ordinal)))
+          expected = Map(address1 -> SortedMap(ref.ordinal -> StoredTransaction.MajorityTx(ref, ordinal)))
         } yield expect.eql(txs, expected)
     }
   }

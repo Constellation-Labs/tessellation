@@ -6,25 +6,30 @@ import cats.effect.Async
 import cats.effect.std.Random
 import cats.syntax.all._
 
+import scala.collection.immutable.{SortedMap, SortedSet}
+
 import org.tessellation.currency.schema.currency._
 import org.tessellation.dag.l1.domain.address.storage.AddressStorage
 import org.tessellation.dag.l1.domain.block.BlockStorage
 import org.tessellation.dag.l1.domain.snapshot.programs.SnapshotProcessor
 import org.tessellation.dag.l1.domain.snapshot.programs.SnapshotProcessor._
-import org.tessellation.dag.l1.domain.transaction.{ContextualTransactionValidator, TransactionLimitConfig, TransactionStorage}
+import org.tessellation.dag.l1.domain.transaction._
 import org.tessellation.dag.l1.infrastructure.address.storage.AddressStorage
 import org.tessellation.json.JsonBrotliBinarySerializer
 import org.tessellation.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import org.tessellation.node.shared.domain.snapshot.{SnapshotContextFunctions, Validator}
 import org.tessellation.node.shared.infrastructure.snapshot.storage.LastSnapshotStorage
+import org.tessellation.schema._
 import org.tessellation.schema.address.Address
+import org.tessellation.schema.swap.AllowSpendReference
 import org.tessellation.schema.transaction.TransactionReference
-import org.tessellation.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotReference}
+import org.tessellation.security.hash.ProofsHash
 import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.Signed.InvalidSignatureForHash
 import org.tessellation.security.{Hashed, Hasher, SecurityProvider}
 
 import eu.timepit.refined.auto._
+import eu.timepit.refined.types.numeric.NonNegLong
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 sealed abstract class CurrencySnapshotProcessor[F[_]: Async: SecurityProvider]
@@ -51,6 +56,30 @@ object CurrencySnapshotProcessor {
     txHasher: Hasher[F]
   ): CurrencySnapshotProcessor[F] =
     new CurrencySnapshotProcessor[F] {
+      override def onAlignedAtNewOrdinal(
+        acceptedInMajority: Map[ProofsHash, (Hashed[Block], NonNegLong)],
+        snapshot: Hashed[CurrencyIncrementalSnapshot],
+        state: CurrencySnapshotInfo
+      ): F[Unit] = {
+        val refs = extractMajorityAllowSpendRefs(acceptedInMajority, state)
+        transactionStorage.advanceAllowSpendMajorityRefs(refs, snapshot.ordinal)
+      }
+
+      override def onAlignedAtNewHeight(
+        acceptedInMajority: Map[ProofsHash, (Hashed[Block], NonNegLong)],
+        snapshot: Hashed[CurrencyIncrementalSnapshot],
+        state: CurrencySnapshotInfo
+      ): F[Unit] = {
+        val refs = extractMajorityAllowSpendRefs(acceptedInMajority, state)
+        transactionStorage.advanceAllowSpendMajorityRefs(refs, snapshot.ordinal)
+      }
+
+      override def onDownloadNeeded(state: CurrencySnapshotInfo, snapshot: Hashed[CurrencyIncrementalSnapshot]): F[Unit] =
+        transactionStorage.initAllowSpendByRefs(state.lastAllowSpendRefs.getOrElse(SortedMap.empty), snapshot.ordinal)
+
+      override def onRedownloadNeeded(state: CurrencySnapshotInfo, snapshot: Hashed[CurrencyIncrementalSnapshot]): F[Unit] =
+        transactionStorage.replaceAllowSpendByRefs(state.lastAllowSpendRefs.getOrElse(SortedMap.empty), snapshot.ordinal)
+
       def process(
         snapshot: Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), Hashed[GlobalIncrementalSnapshot]]
       )(implicit hasher: Hasher[F]): F[SnapshotProcessingResult] =
@@ -197,15 +226,30 @@ object CurrencySnapshotProcessor {
           lastCurrencySnapshotStorage.getCombined.flatMap(LastSnapshotStorage.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](_))
         val as = addressStorage.getState.flatMap(AddressStorage.make(_))
         val cv = ContextualTransactionValidator.make(transactionLimitConfig, None)
+        val av = ContextualAllowSpendValidator.make(transactionLimitConfig, None)
         val ts =
           transactionStorage.getState.flatMap {
-            case (lastTxs) =>
-              TransactionReference.emptyCurrency(identifier).flatMap {
-                TransactionStorage.make(lastTxs, _, cv)
+            case (lastTxs, lastAllowSpends) =>
+              (TransactionReference.emptyCurrency(identifier), AllowSpendReference.emptyCurrency(identifier)).flatMapN {
+                case (txRef, asRef) => TransactionStorage.make(lastTxs, lastAllowSpends, txRef, asRef, cv, av)
               }
           }
 
         (as, bs, lcss, ts).mapN((_, _, _, _))
+      }
+
+      private def extractMajorityAllowSpendRefs(
+        acceptedInMajority: Map[ProofsHash, (Hashed[Block], NonNegLong)],
+        state: CurrencySnapshotInfo
+      ): Map[Address, AllowSpendReference] = {
+
+        val sourceAddresses: Set[Address] =
+          acceptedInMajority.values
+            .map(_._1.allowSpendTransactions.map(_.map(_.source).toSortedSet))
+            .flatMap(_.getOrElse(SortedSet.empty[Address]))
+            .toSet
+
+        state.lastAllowSpendRefs.map(_.view.filterKeys(sourceAddresses.contains).toMap).getOrElse(Map.empty[Address, AllowSpendReference])
       }
 
       // We are extracting all currency snapshots, but we don't assume that all the state channel binaries need to be

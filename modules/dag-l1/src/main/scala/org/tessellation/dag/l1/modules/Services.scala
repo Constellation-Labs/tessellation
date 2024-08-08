@@ -56,7 +56,8 @@ object Services {
       val globalL0 = GlobalL0Service
         .make[F](p2PClient.l0GlobalSnapshot, globalL0Cluster, lastGlobalSnapshotStorage, None, maybeMajorityPeerIds)
       val session = sharedServices.session
-      val transaction = TransactionService.make[F, P, S, SI](storages.transaction, storages.lastSnapshot, validators.transaction)
+      val transaction =
+        TransactionService.make[F, P, S, SI](storages.transaction, storages.lastSnapshot, validators.transaction, validators.allowSpend)
       val collateral = Collateral.make[F](cfg.collateral, storages.lastSnapshot)
     }
 }

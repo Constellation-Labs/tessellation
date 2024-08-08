@@ -126,7 +126,7 @@ object SnapshotBinaryFeeCalculatorSuite extends SimpleMutableIOSuite with Checke
         blocks = SortedSet.empty,
         rewards = SortedSet.empty,
         tips = SnapshotTips(SortedSet.empty, SortedSet.empty),
-        stateProof = CurrencySnapshotStateProof(Hash.empty, Hash.empty),
+        stateProof = CurrencySnapshotStateProof(Hash.empty, Hash.empty, None, None, None, None),
         epochProgress = EpochProgress.MinValue,
         dataApplication = None,
         messages = None
@@ -155,7 +155,10 @@ object SnapshotBinaryFeeCalculatorSuite extends SimpleMutableIOSuite with Checke
       currencySnapshotInfo = CurrencySnapshotInfo(
         lastTxRefs = SortedMap.empty,
         balances = SortedMap.empty,
-        lastMessages = lastMessages
+        lastMessages = lastMessages,
+        None,
+        None,
+        None
       )
     } yield SortedMap(eventAddress -> (signedCis, currencySnapshotInfo).asRight[Signed[CurrencySnapshot]])
 

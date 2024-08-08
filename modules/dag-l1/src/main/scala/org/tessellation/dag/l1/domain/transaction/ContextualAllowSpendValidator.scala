@@ -6,14 +6,13 @@ import cats.syntax.all._
 import scala.annotation.tailrec
 import scala.collection.immutable.SortedMap
 
-import org.tessellation.dag.l1.domain.transaction.ContextualTransactionValidator.CustomValidationError
+import org.tessellation.dag.l1.domain.transaction.ContextualAllowSpendValidator.CustomValidationError
 import org.tessellation.ext.cats.syntax.next.catsSyntaxNext
-import org.tessellation.node.shared.domain.transaction.TransactionValidator.TransactionValidationError
+import org.tessellation.node.shared.domain.transaction.AllowSpendValidator.AllowSpendTransactionValidationError
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
-import org.tessellation.schema.transaction.TransactionAmount._
-import org.tessellation.schema.transaction._
+import org.tessellation.schema.swap._
 import org.tessellation.security.Hashed
 import org.tessellation.security.hash.Hash
 
@@ -21,46 +20,48 @@ import derevo.cats.{eqv, show}
 import derevo.derive
 import eu.timepit.refined.auto._
 
-import StoredTransaction.{MajorityTx, NonMajorityTx, WaitingTx}
+import StoredAllowSpend.{MajorityAllowSpend, NonMajorityAllowSpend, WaitingAllowSpend}
 
-trait CustomContextualTransactionValidator {
+trait CustomContextualAllowSpendValidator {
   def validate(
-    hashedTransaction: Hashed[Transaction],
-    context: TransactionValidatorContext
-  ): Either[CustomValidationError, Hashed[Transaction]]
+    hashedTransaction: Hashed[AllowSpend],
+    context: AllowSpendValidatorContext
+  ): Either[CustomValidationError, Hashed[AllowSpend]]
 }
 
-case class TransactionValidatorContext(
-  sourceTransactions: Option[SortedMap[TransactionOrdinal, StoredTransaction]],
+case class AllowSpendValidatorContext(
+  sourceTransactions: Option[SortedMap[AllowSpendOrdinal, StoredAllowSpend]],
   sourceBalance: Balance,
-  sourceLastTransactionRef: TransactionReference,
+  sourceLastTransactionRef: AllowSpendReference,
   currentOrdinal: SnapshotOrdinal
 )
 
-trait ContextualTransactionValidator {
+trait ContextualAllowSpendValidator {
 
-  import ContextualTransactionValidator._
+  import ContextualAllowSpendValidator._
 
   def validate(
-    hashedTransaction: Hashed[Transaction],
-    context: TransactionValidatorContext
-  ): ContextualTransactionValidationErrorOr[ValidConflictResolveResult]
+    hashedTransaction: Hashed[AllowSpend],
+    context: AllowSpendValidatorContext
+  ): ContextualAllowSpendValidationErrorOr[ValidConflictResolveResult]
 }
 
-object ContextualTransactionValidator {
+object ContextualAllowSpendValidator {
 
-  private val lockedAddresses = Set.empty[Address]
+  private val lockedAddresses = Set(
+    Address("DAG6LvxLSdWoC9uJZPgXtcmkcWBaGYypF6smaPyH") // NOTE: BitForex
+  )
 
   def make(
     transactionLimitConfig: TransactionLimitConfig,
-    customValidator: Option[CustomContextualTransactionValidator]
-  ): ContextualTransactionValidator =
-    new ContextualTransactionValidator {
+    customValidator: Option[CustomContextualAllowSpendValidator]
+  ): ContextualAllowSpendValidator =
+    new ContextualAllowSpendValidator {
 
       def validate(
-        hashedTransaction: Hashed[Transaction],
-        context: TransactionValidatorContext
-      ): ContextualTransactionValidationErrorOr[ValidConflictResolveResult] =
+        hashedTransaction: Hashed[AllowSpend],
+        context: AllowSpendValidatorContext
+      ): ContextualAllowSpendValidationErrorOr[ValidConflictResolveResult] =
         validateNotLocked(hashedTransaction)
           .flatMap(validateLastTransactionRef(_, context.sourceTransactions, context.sourceLastTransactionRef))
           .flatMap(validateConflictAtOrdinal(_, context.sourceTransactions))
@@ -75,7 +76,7 @@ object ContextualTransactionValidator {
               case Some(validator) =>
                 validator
                   .validate(hashedTransaction, context)
-                  .leftWiden[ContextualTransactionValidationError]
+                  .leftWiden[ContextualAllowSpendValidationError]
                   .as(conflictResolveResult)
               case None => conflictResolveResult.asRight
             }
@@ -83,10 +84,10 @@ object ContextualTransactionValidator {
           .toValidatedNec
 
       private def validateBalances(
-        transaction: Hashed[Transaction],
-        txs: Option[SortedMap[TransactionOrdinal, StoredTransaction]],
+        transaction: Hashed[AllowSpend],
+        txs: Option[SortedMap[AllowSpendOrdinal, StoredAllowSpend]],
         balance: Balance
-      ): Either[ContextualTransactionValidationError, Hashed[Transaction]] = {
+      ): Either[ContextualAllowSpendValidationError, Hashed[AllowSpend]] = {
         val availableBalance = getBalanceAffectedByTxs(txs, balance)
         if (transaction.amount.value <= availableBalance.value)
           transaction.asRight
@@ -95,12 +96,12 @@ object ContextualTransactionValidator {
       }
 
       private[transaction] def validateLimit(
-        transaction: Hashed[Transaction],
-        txs: Option[SortedMap[TransactionOrdinal, StoredTransaction]],
+        transaction: Hashed[AllowSpend],
+        txs: Option[SortedMap[AllowSpendOrdinal, StoredAllowSpend]],
         balance: Balance,
         currentOrdinal: SnapshotOrdinal
-      ): Either[ContextualTransactionValidationError, Hashed[Transaction]] = {
-        val stored = txs.getOrElse(SortedMap.empty[TransactionOrdinal, StoredTransaction])
+      ): Either[ContextualAllowSpendValidationError, Hashed[AllowSpend]] = {
+        val stored = txs.getOrElse(SortedMap.empty[AllowSpendOrdinal, StoredAllowSpend])
         val nonMajorityTransactions = getTransactionsAboveMajority(stored).values.map(_.transaction).toList
         val majorityTxSnapshotOrdinal = getSnapshotOrdinalOfMajorityTx(stored)
         val lastAllowed = calculateLastAllowedTransactionWithinCap(
@@ -112,16 +113,16 @@ object ContextualTransactionValidator {
 
         lastAllowed match {
           case Some(allowed) if allowed === transaction => allowed.asRight
-          case _                                        => TransactionLimited(TransactionReference.of(transaction), transaction.fee).asLeft
+          case _                                        => TransactionLimited(AllowSpendReference.of(transaction), transaction.fee).asLeft
         }
       }
 
       private def validateConflictAtOrdinal(
-        transaction: Hashed[Transaction],
-        txs: Option[SortedMap[TransactionOrdinal, StoredTransaction]]
+        transaction: Hashed[AllowSpend],
+        txs: Option[SortedMap[AllowSpendOrdinal, StoredAllowSpend]]
       ): Either[
-        ContextualTransactionValidationError,
-        (ValidConflictResolveResult, Option[SortedMap[TransactionOrdinal, StoredTransaction]])
+        ContextualAllowSpendValidationError,
+        (ValidConflictResolveResult, Option[SortedMap[AllowSpendOrdinal, StoredAllowSpend]])
       ] =
         txs match {
           case Some(txs) =>
@@ -135,10 +136,10 @@ object ContextualTransactionValidator {
         }
 
       private def validateLastTransactionRef(
-        transaction: Hashed[Transaction],
-        txs: Option[SortedMap[TransactionOrdinal, StoredTransaction]],
-        lastProcessedTransactionRef: TransactionReference
-      ): Either[ContextualTransactionValidationError, Hashed[Transaction]] =
+        transaction: Hashed[AllowSpend],
+        txs: Option[SortedMap[AllowSpendOrdinal, StoredAllowSpend]],
+        lastProcessedTransactionRef: AllowSpendReference
+      ): Either[ContextualAllowSpendValidationError, Hashed[AllowSpend]] =
         if (transaction.parent.ordinal < lastProcessedTransactionRef.ordinal)
           ParentOrdinalLowerThenLastProcessedTxOrdinal(transaction.parent.ordinal, lastProcessedTransactionRef.ordinal).asLeft
         else if (transaction.parent === lastProcessedTransactionRef) {
@@ -152,8 +153,8 @@ object ContextualTransactionValidator {
         }
 
       private def validateNotLocked(
-        transaction: Hashed[Transaction]
-      ): Either[ContextualTransactionValidationError, Hashed[Transaction]] =
+        transaction: Hashed[AllowSpend]
+      ): Either[ContextualAllowSpendValidationError, Hashed[AllowSpend]] =
         Either
           .cond(
             !lockedAddresses.contains(transaction.source),
@@ -162,23 +163,23 @@ object ContextualTransactionValidator {
           )
 
       private def calculateLastAllowedTransactionWithinCap(
-        transactions: List[Hashed[Transaction]],
+        transactions: List[Hashed[AllowSpend]],
         balance: Balance,
         lastMajorityTransactionOrdinal: SnapshotOrdinal,
         currentOrdinal: SnapshotOrdinal
-      ): Option[Hashed[Transaction]] = {
+      ): Option[Hashed[AllowSpend]] = {
         val ordinalDistanceForBaseBalance = Math
           .floor(transactionLimitConfig.timeToWaitForBaseBalance / transactionLimitConfig.timeTriggerInterval)
           .toLong
 
         @tailrec
         def loop(
-          remainingTransactions: List[Hashed[Transaction]],
+          remainingTransactions: List[Hashed[AllowSpend]],
           balance: Balance,
           lastTxRefOrdinal: SnapshotOrdinal,
           totalConsumedCap: Double,
-          lastAcceptedWithinCap: Option[Hashed[Transaction]]
-        ): Option[Hashed[Transaction]] =
+          lastAcceptedWithinCap: Option[Hashed[AllowSpend]]
+        ): Option[Hashed[AllowSpend]] =
           remainingTransactions match {
             case head :: tail =>
               val consumedCap =
@@ -192,7 +193,7 @@ object ContextualTransactionValidator {
                 }
 
               val updatedTotalConsumedCap = totalConsumedCap + consumedCap
-              val maybeRemainingBalance = toAmount(head.amount).plus(head.fee).flatMap(balance.minus)
+              val maybeRemainingBalance = SwapAmount.toAmount(head.amount).plus(head.fee).flatMap(balance.minus)
 
               maybeRemainingBalance match {
                 case Right(remainingBalance) if updatedTotalConsumedCap <= 1 && remainingBalance.value > 0 && tail.nonEmpty =>
@@ -222,7 +223,7 @@ object ContextualTransactionValidator {
       }
 
       private def getBalanceAffectedByTxs(
-        txs: Option[SortedMap[TransactionOrdinal, StoredTransaction]],
+        txs: Option[SortedMap[AllowSpendOrdinal, StoredAllowSpend]],
         latestBalance: Balance
       ): Balance =
         txs match {
@@ -230,32 +231,32 @@ object ContextualTransactionValidator {
             getTransactionsAboveMajority(txs)
               .foldLeftM(latestBalance) {
                 case (acc, curr) =>
-                  toAmount(curr.transaction.amount).plus(curr.transaction.fee).flatMap(acc.minus)
+                  SwapAmount.toAmount(curr.transaction.amount).plus(curr.transaction.fee).flatMap(acc.minus)
               }
               .getOrElse(Balance.empty)
           case None => latestBalance
         }
 
       private def resolveConflict(
-        transaction: Hashed[Transaction],
-        txs: SortedMap[TransactionOrdinal, StoredTransaction]
+        transaction: Hashed[AllowSpend],
+        txs: SortedMap[AllowSpendOrdinal, StoredAllowSpend]
       ): ConflictResolveResult =
         txs.get(transaction.ordinal) match {
-          case Some(WaitingTx(existing)) if existing.fee < transaction.fee => CanOverride(transaction)
-          case Some(tx) => CannotOverride(transaction, tx.ref, TransactionReference.of(transaction))
+          case Some(WaitingAllowSpend(existing)) if existing.fee < transaction.fee => CanOverride(transaction)
+          case Some(tx) => CannotOverride(transaction, tx.ref, AllowSpendReference.of(transaction))
           case None     => NoConflict(transaction)
         }
 
       private def getSnapshotOrdinalOfMajorityTx(
-        txs: SortedMap[TransactionOrdinal, StoredTransaction]
+        txs: SortedMap[AllowSpendOrdinal, StoredAllowSpend]
       ): SnapshotOrdinal =
-        txs.collectFirst { case (_, MajorityTx(_, snapshotOrdinal)) => snapshotOrdinal }.getOrElse(SnapshotOrdinal.MinValue)
+        txs.collectFirst { case (_, MajorityAllowSpend(_, snapshotOrdinal)) => snapshotOrdinal }.getOrElse(SnapshotOrdinal.MinValue)
 
       private def getTransactionsAboveMajority(
-        txs: SortedMap[TransactionOrdinal, StoredTransaction]
-      ): SortedMap[TransactionOrdinal, NonMajorityTx] =
+        txs: SortedMap[AllowSpendOrdinal, StoredAllowSpend]
+      ): SortedMap[AllowSpendOrdinal, NonMajorityAllowSpend] =
         txs.collect {
-          case (ordinal, stored: NonMajorityTx) => (ordinal, stored)
+          case (ordinal, stored: NonMajorityAllowSpend) => (ordinal, stored)
         }
     }
 
@@ -263,24 +264,24 @@ object ContextualTransactionValidator {
   sealed trait ConflictResolveResult
   @derive(eqv)
   sealed trait ValidConflictResolveResult extends ConflictResolveResult {
-    val tx: Hashed[Transaction]
+    val tx: Hashed[AllowSpend]
   }
-  case class NoConflict(tx: Hashed[Transaction]) extends ValidConflictResolveResult
-  case class CanOverride(tx: Hashed[Transaction]) extends ValidConflictResolveResult
-  case class CannotOverride(tx: Hashed[Transaction], existingRef: TransactionReference, newRef: TransactionReference)
+  case class NoConflict(tx: Hashed[AllowSpend]) extends ValidConflictResolveResult
+  case class CanOverride(tx: Hashed[AllowSpend]) extends ValidConflictResolveResult
+  case class CannotOverride(tx: Hashed[AllowSpend], existingRef: AllowSpendReference, newRef: AllowSpendReference)
       extends ConflictResolveResult
 
   @derive(eqv, show)
-  sealed trait ContextualTransactionValidationError
-  case class ParentOrdinalLowerThenLastProcessedTxOrdinal(parentOrdinal: TransactionOrdinal, lastTxOrdinal: TransactionOrdinal)
-      extends ContextualTransactionValidationError
-  case class HasNoMatchingParent(parentHash: Hash) extends ContextualTransactionValidationError
-  case class Conflict(ordinal: TransactionOrdinal, existingHash: Hash, newHash: Hash) extends ContextualTransactionValidationError
-  case class InsufficientBalance(amount: Amount, balance: Balance) extends ContextualTransactionValidationError
-  case class TransactionLimited(ref: TransactionReference, fee: TransactionFee) extends ContextualTransactionValidationError
-  case class NonContextualValidationError(error: TransactionValidationError) extends ContextualTransactionValidationError
-  case class LockedAddressError(address: Address) extends ContextualTransactionValidationError
-  case class CustomValidationError(message: String) extends ContextualTransactionValidationError
+  sealed trait ContextualAllowSpendValidationError
+  case class ParentOrdinalLowerThenLastProcessedTxOrdinal(parentOrdinal: AllowSpendOrdinal, lastTxOrdinal: AllowSpendOrdinal)
+      extends ContextualAllowSpendValidationError
+  case class HasNoMatchingParent(parentHash: Hash) extends ContextualAllowSpendValidationError
+  case class Conflict(ordinal: AllowSpendOrdinal, existingHash: Hash, newHash: Hash) extends ContextualAllowSpendValidationError
+  case class InsufficientBalance(amount: Amount, balance: Balance) extends ContextualAllowSpendValidationError
+  case class TransactionLimited(ref: AllowSpendReference, fee: AllowSpendFee) extends ContextualAllowSpendValidationError
+  case class NonContextualValidationError(error: AllowSpendTransactionValidationError) extends ContextualAllowSpendValidationError
+  case class LockedAddressError(address: Address) extends ContextualAllowSpendValidationError
+  case class CustomValidationError(message: String) extends ContextualAllowSpendValidationError
 
-  type ContextualTransactionValidationErrorOr[A] = ValidatedNec[ContextualTransactionValidationError, A]
+  type ContextualAllowSpendValidationErrorOr[A] = ValidatedNec[ContextualAllowSpendValidationError, A]
 }

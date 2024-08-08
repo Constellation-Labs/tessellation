@@ -14,6 +14,7 @@ import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.currencyMessage._
+import org.tessellation.schema.swap._
 import org.tessellation.schema.transaction.{RewardTransaction, Transaction, TransactionReference}
 import org.tessellation.security.Hasher
 import org.tessellation.security.signature.Signed
@@ -77,6 +78,7 @@ object CurrencySnapshotAcceptanceManager {
       )
     ] = for {
       initialTxRef <- TransactionReference.emptyCurrency(lastSnapshotContext.address)
+      initialAllowSpendRef <- AllowSpendReference.emptyCurrency(lastSnapshotContext.address)
 
       acceptanceResult <- acceptBlocks(
         blocksForAcceptance,
@@ -84,12 +86,15 @@ object CurrencySnapshotAcceptanceManager {
         snapshotOrdinal,
         lastActiveTips,
         lastDeprecatedTips,
-        initialTxRef
+        initialTxRef,
+        initialAllowSpendRef
       )
 
       transactionsRefs = lastSnapshotContext.snapshotInfo.lastTxRefs ++ acceptanceResult.contextUpdate.lastTxRefs
+      allowSpendRefs = (lastSnapshotContext.snapshotInfo.lastAllowSpendRefs, acceptanceResult.contextUpdate.lastAllowSpendRefs).mapN(_ ++ _)
 
       acceptedTransactions = acceptanceResult.accepted.flatMap { case (block, _) => block.value.transactions.toSortedSet }.toSortedSet
+        .map(_.flatten.groupBy(_.source).toSortedMap)
 
       rewards <- calculateRewardsFn(acceptedTransactions)
 
@@ -139,10 +144,22 @@ object CurrencySnapshotAcceptanceManager {
         messagesToReject
       )
 
+      filterActiveAllowSpends = (allowSpend: Signed[AllowSpend]) => allowSpend.lastValidOrdinal <= snapshotOrdinal
+      activeAllowSpends = acceptedAllowSpends match {
+        case None => lastSnapshotContext.snapshotInfo.activeAllowSpends.map(_.view.mapValues(_.filter(filterActiveAllowSpends)).toSortedMap)
+        case Some(accepted) =>
+          lastSnapshotContext.snapshotInfo.activeAllowSpends
+            .map(_ ++ accepted)
+            .map(_.view.mapValues(_.filter(filterActiveAllowSpends)).toSortedMap)
+      }
+
       csi = CurrencySnapshotInfo(
         transactionsRefs,
         updatedBalances,
-        Option.when(messagesForContextUpdate.nonEmpty)(messagesForContextUpdate)
+        Option.when(messagesForContextUpdate.nonEmpty)(messagesForContextUpdate),
+        None,
+        allowSpendRefs,
+        activeAllowSpends
       )
       stateProof <- csi.stateProof(snapshotOrdinal)
 
@@ -154,7 +171,8 @@ object CurrencySnapshotAcceptanceManager {
       snapshotOrdinal: SnapshotOrdinal,
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip],
-      initialTxRef: TransactionReference
+      initialTxRef: TransactionReference,
+      initialAllowSpendRef: AllowSpendReference
     )(implicit hasher: Hasher[F]) = {
       val tipUsages = getTipsUsages(lastActiveTips, lastDeprecatedTips)
       val context = BlockAcceptanceContext.fromStaticData(
@@ -162,7 +180,10 @@ object CurrencySnapshotAcceptanceManager {
         lastSnapshotContext.snapshotInfo.lastTxRefs,
         tipUsages,
         collateral,
-        initialTxRef
+        initialTxRef,
+        lastSnapshotContext.snapshotInfo.activeAllowSpends,
+        lastSnapshotContext.snapshotInfo.lastAllowSpendRefs,
+        initialAllowSpendRef
       )
 
       blockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context, snapshotOrdinal)

@@ -5,10 +5,7 @@ import java.security.KeyPair
 import cats.data.{NonEmptyList, NonEmptySet}
 import cats.effect.Async
 import cats.effect.std.Random
-import cats.syntax.applicative._
-import cats.syntax.applicativeError._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
+import cats.syntax.all._
 
 import org.tessellation.ext.crypto._
 import org.tessellation.schema.transaction.Transaction
@@ -33,7 +30,7 @@ object DAGBlockGenerator {
           .shuffleList(references.distinct.toList)
           .map(_.take(2))
         _ <- (new Throwable("Not enough parents")).raiseError[F, Unit].whenA(parents.size < 2)
-        block = Block(NonEmptyList.fromListUnsafe(parents), transactions)
+        block = Block(NonEmptyList.fromListUnsafe(parents), transactions, None)
         signedBlock <- block.sign(keys)
       } yield signedBlock
 

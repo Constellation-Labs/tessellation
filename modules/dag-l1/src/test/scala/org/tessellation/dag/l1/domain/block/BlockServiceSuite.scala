@@ -25,6 +25,7 @@ import org.tessellation.node.shared.nodeSharedKryoRegistrar
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
+import org.tessellation.schema.swap._
 import org.tessellation.schema.transaction._
 import org.tessellation.security.hash.ProofsHash
 import org.tessellation.security.signature.Signed
@@ -50,6 +51,7 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
   def mkBlockService(
     blocksR: MapRef[IO, ProofsHash, Option[StoredBlock]],
     ts: MapRef[IO, Address, Option[SortedMap[TransactionOrdinal, StoredTransaction]]],
+    as: MapRef[IO, Address, Option[SortedMap[AllowSpendOrdinal, StoredAllowSpend]]],
     notAcceptanceReason: Option[BlockNotAcceptedReason] = None,
     txHasher: Hasher[IO]
   ) = {
@@ -92,8 +94,19 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
         TransactionLimitConfig(Balance.empty, 0.hours, TransactionFee.zero, 1.second),
         None
       )
+      val contextualAllowSpendValidator = ContextualAllowSpendValidator.make(
+        TransactionLimitConfig(Balance.empty, 0.hours, TransactionFee.zero, 1.second),
+        None
+      )
       val transactionStorage =
-        new TransactionStorage[IO](ts, TransactionReference.empty, contextualValidator)
+        new TransactionStorage[IO](
+          ts,
+          as,
+          TransactionReference.empty,
+          AllowSpendReference.empty,
+          contextualValidator,
+          contextualAllowSpendValidator
+        )
 
       val lastGlobalSnapshotStorage = new LastSnapshotStorage[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo] {
         override def set(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): IO[Unit] = ???
@@ -133,9 +146,9 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
           blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]()
           _ <- blocksR(hashedBlock.proofsHash).set(Some(WaitingBlock(hashedBlock.signed)))
           _ <- addParents(blocksR, block)
-          lastAccTxR <- setupTxsStorage(Some(block))
+          (lastAccTxR, lastAccAsR) <- setupTxsStorage(Some(block))
 
-          blockService <- mkBlockService(blocksR, lastAccTxR, txHasher = txHasher)
+          blockService <- mkBlockService(blocksR, lastAccTxR, lastAccAsR, txHasher = txHasher)
 
           _ <- blockService.accept(block)
           blocksRes <- blocksR.toMap
@@ -161,9 +174,9 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
           _ <- blocksR(hashedBlock.proofsHash).set(Some(WaitingBlock(hashedBlock.signed)))
           _ <- blocksR(hashedNotRelatedBlock.proofsHash).set(Some(PostponedBlock(hashedNotRelatedBlock.signed)))
           _ <- addParents(blocksR, block)
-          lastAccTxR <- setupTxsStorage(Some(block))
+          (lastAccTxR, lastAccAsR) <- setupTxsStorage(Some(block))
 
-          blockService <- mkBlockService(blocksR, lastAccTxR, txHasher = txHasher)
+          blockService <- mkBlockService(blocksR, lastAccTxR, lastAccAsR, txHasher = txHasher)
 
           _ <- blockService.accept(block)
           blocksRes <- blocksR.toMap
@@ -194,9 +207,9 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
           _ <- blocksR(hashedBlock.proofsHash).set(Some(WaitingBlock(hashedBlock.signed)))
           _ <- blocksR(hashedRelatedBlock.proofsHash).set(Some(PostponedBlock(hashedRelatedBlock.signed)))
           _ <- addParents(blocksR, block)
-          lastAccTxR <- setupTxsStorage(Some(block))
+          (lastAccTxR, lastAccAsR) <- setupTxsStorage(Some(block))
 
-          blockService <- mkBlockService(blocksR, lastAccTxR, txHasher = txHasher)
+          blockService <- mkBlockService(blocksR, lastAccTxR, lastAccAsR, txHasher = txHasher)
 
           _ <- blockService.accept(block)
           blocksRes <- blocksR.toMap
@@ -223,9 +236,9 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
           blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]()
           _ <- blocksR(hashedBlock.proofsHash).set(Some(WaitingBlock(hashedBlock.signed)))
           _ <- addParents(blocksR, block)
-          lastAccTxR <- setupTxsStorage(Some(block))
+          (lastAccTxR, lastAccAsR) <- setupTxsStorage(Some(block))
 
-          blockService <- mkBlockService(blocksR, lastAccTxR, Some(ParentNotFound(block.parent.head)), txHasher = txHasher)
+          blockService <- mkBlockService(blocksR, lastAccTxR, lastAccAsR, Some(ParentNotFound(block.parent.head)), txHasher = txHasher)
 
           error <- blockService.accept(block).attempt
           blocksRes <- blocksR.toMap
@@ -257,9 +270,9 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
           _ <- blocksR(hashedBlock.proofsHash).set(Some(WaitingBlock(hashedBlock.signed)))
           _ <- blocksR(hashedNotRelatedBlock.proofsHash).set(Some(PostponedBlock(hashedNotRelatedBlock.signed)))
           _ <- addParents(blocksR, block)
-          lastAccTxR <- setupTxsStorage(Some(block))
+          (lastAccTxR, lastAccAsR) <- setupTxsStorage(Some(block))
 
-          blockService <- mkBlockService(blocksR, lastAccTxR, Some(ParentNotFound(block.parent.head)), txHasher = txHasher)
+          blockService <- mkBlockService(blocksR, lastAccTxR, lastAccAsR, Some(ParentNotFound(block.parent.head)), txHasher = txHasher)
 
           error <- blockService.accept(block).attempt
           blocksRes <- blocksR.toMap
@@ -288,14 +301,15 @@ object BlockServiceSuite extends MutableIOSuite with Checkers {
 
   private def setupTxsStorage(maybeBlock: Option[Signed[Block]]) = for {
     transactionsR <- MapRef.ofConcurrentHashMap[IO, Address, SortedMap[TransactionOrdinal, StoredTransaction]]()
+    allowSpendsR <- MapRef.ofConcurrentHashMap[IO, Address, SortedMap[AllowSpendOrdinal, StoredAllowSpend]]()
     _ <- maybeBlock.traverse(block =>
       block.transactions.toNonEmptyList.toList.traverse(txn =>
         transactionsR(txn.source).update { maybeStored =>
           val updated = maybeStored.getOrElse(SortedMap.empty[TransactionOrdinal, StoredTransaction])
-          updated.updated(txn.parent.ordinal, MajorityTx(txn.parent, SnapshotOrdinal.MinValue)).some
+          updated.updated(txn.parent.ordinal, StoredTransaction.MajorityTx(txn.parent, SnapshotOrdinal.MinValue)).some
         }
       )
     )
-  } yield transactionsR
+  } yield (transactionsR, allowSpendsR)
 
 }

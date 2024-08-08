@@ -33,6 +33,7 @@ import org.tessellation.schema.balance.{Amount, Balance}
 import org.tessellation.schema.epoch.EpochProgress
 import org.tessellation.schema.height.{Height, SubHeight}
 import org.tessellation.schema.peer.PeerId
+import org.tessellation.schema.swap._
 import org.tessellation.schema.transaction._
 import org.tessellation.security._
 import org.tessellation.security.hash.{Hash, ProofsHash}
@@ -82,13 +83,21 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             transactionsR <- MapRef
               .ofConcurrentHashMap[IO, Address, SortedMap[TransactionOrdinal, StoredTransaction]]()
               .asResource
+            allowSpendsR <- MapRef
+              .ofConcurrentHashMap[IO, Address, SortedMap[AllowSpendOrdinal, StoredAllowSpend]]()
+              .asResource
             validators = SharedValidators.make[IO](None, None, Some(Map.empty), SortedMap.empty, Long.MaxValue, Hasher.forKryo[IO])
             contextualTransactionValidator = ContextualTransactionValidator
               .make(TransactionLimitConfig(Balance.empty, 0.hours, TransactionFee.zero, 1.second), None)
+            contextualAllowSpendValidator = ContextualAllowSpendValidator
+              .make(TransactionLimitConfig(Balance.empty, 0.hours, TransactionFee.zero, 1.second), None)
             transactionStorage = new TransactionStorage[IO](
               transactionsR,
+              allowSpendsR,
               TransactionReference.empty,
-              contextualTransactionValidator
+              AllowSpendReference.empty,
+              contextualTransactionValidator,
+              contextualAllowSpendValidator
             )
 
             currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
@@ -257,7 +266,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
         for {
           correctTxs <- generateTransactions(srcAddress, srcKey, dstAddress, 1, txHasher = Hasher.forKryo[IO])
-          block = Block(NonEmptyList.one(parent2), NonEmptySet.fromSetUnsafe(SortedSet(correctTxs.head.signed)))
+          block = Block(NonEmptyList.one(parent2), NonEmptySet.fromSetUnsafe(SortedSet(correctTxs.head.signed)), none)
           hashedBlock <- forAsyncHasher(block, srcKey).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           snapshotBalances = generateSnapshotBalances(Set(srcAddress))
           snapshotTxRefs = generateSnapshotLastAccTxRefs(Map(srcAddress -> correctTxs.head))
@@ -285,8 +294,9 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           balancesAfter <- balancesR.get
           blocksAfter <- blocksR.toMap
           lastGlobalSnapshotAfter <- lastSnapR.get
-          lastAcceptedTxRAfter <- ts.getState.flatMap { m =>
-            m.toList.traverse { case (address, _) => ts.getLastProcessedTransaction(address).map(address -> _) }.map(_.toMap)
+          lastAcceptedTxRAfter <- ts.getState.flatMap {
+            case (m, _) =>
+              m.toList.traverse { case (address, _) => ts.getLastProcessedTransaction(address).map(address -> _) }.map(_.toMap)
           }
         } yield
           expect
@@ -329,8 +339,10 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 ),
                 None,
                 Some((hashedSnapshot, snapshotInfo)),
-                snapshotTxRefs.map { case (k, _) => k -> MajorityTx(TransactionReference.empty, SnapshotOrdinal.MinValue) },
-                snapshotTxRefs.map { case (k, v) => k -> MajorityTx(v, hashedSnapshot.ordinal) }
+                snapshotTxRefs.map {
+                  case (k, _) => k -> StoredTransaction.MajorityTx(TransactionReference.empty, SnapshotOrdinal.MinValue)
+                },
+                snapshotTxRefs.map { case (k, v) => k -> StoredTransaction.MajorityTx(v, hashedSnapshot.ordinal) }
               )
             )
     }
@@ -446,8 +458,9 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           balancesAfter <- balancesR.get
           blocksAfter <- blocksR.toMap
           lastGlobalSnapshotAfter <- lastSnapR.get
-          lastAcceptedTxRAfter <- ts.getState.flatMap { m =>
-            m.toList.traverse { case (address, _) => ts.getLastProcessedTransaction(address).map(address -> _) }.map(_.toMap)
+          lastAcceptedTxRAfter <- ts.getState.flatMap {
+            case (m, _) =>
+              m.toList.traverse { case (address, _) => ts.getLastProcessedTransaction(address).map(address -> _) }.map(_.toMap)
           }
         } yield
           expect.same(
@@ -492,7 +505,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               ),
               snapshotBalances,
               Some((hashedSnapshot, snapshotInfo)),
-              snapshotTxRefs.map { case (k, v) => k -> MajorityTx(v, hashedSnapshot.ordinal) }
+              snapshotTxRefs.map { case (k, v) => k -> StoredTransaction.MajorityTx(v, hashedSnapshot.ordinal) }
             )
           )
     }
@@ -623,8 +636,9 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           balancesAfter <- balancesR.get
           blocksAfter <- blocksR.toMap
           lastGlobalSnapshotAfter <- lastSnapR.get
-          lastAcceptedTxRAfter <- ts.getState.flatMap { m =>
-            m.toList.traverse { case (address, _) => ts.getLastProcessedTransaction(address).map(address -> _) }.map(_.toMap)
+          lastAcceptedTxRAfter <- ts.getState.flatMap {
+            case (m, _) =>
+              m.toList.traverse { case (address, _) => ts.getLastProcessedTransaction(address).map(address -> _) }.map(_.toMap)
           }
         } yield
           expect.same(
@@ -671,7 +685,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               ),
               snapshotBalances,
               Some((hashedSnapshot, snapshotInfo)),
-              snapshotTxRefs.map { case (k, v) => k -> MajorityTx(v, hashedSnapshot.ordinal) }
+              snapshotTxRefs.map { case (k, v) => k -> StoredTransaction.MajorityTx(v, hashedSnapshot.ordinal) }
             )
           )
     }
@@ -705,8 +719,9 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           balancesAfter <- balancesR.get
           blocksAfter <- blocksR.toMap
           lastGlobalSnapshotAfter <- lastSnapR.get
-          lastAcceptedTxRAfter <- ts.getState.flatMap { m =>
-            m.toList.traverse { case (address, _) => ts.getLastProcessedTransaction(address).map(address -> _) }.map(_.toMap)
+          lastAcceptedTxRAfter <- ts.getState.flatMap {
+            case (m, _) =>
+              m.toList.traverse { case (address, _) => ts.getLastProcessedTransaction(address).map(address -> _) }.map(_.toMap)
           }
         } yield
           expect.same(
@@ -929,8 +944,9 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           balancesAfter <- balancesR.get
           blocksAfter <- blocksR.toMap
           lastGlobalSnapshotAfter <- lastSnapR.get
-          lastAcceptedTxRAfter <- ts.getState.flatMap { m =>
-            m.toList.traverse { case (address, _) => ts.getLastProcessedTransaction(address).map(address -> _) }.map(_.toMap)
+          lastAcceptedTxRAfter <- ts.getState.flatMap {
+            case (m, _) =>
+              m.toList.traverse { case (address, _) => ts.getLastProcessedTransaction(address).map(address -> _) }.map(_.toMap)
           }
           lastTx <- {
             implicit val hasher = txHasher
@@ -980,7 +996,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               ),
               Map.empty,
               Some((hashedNextSnapshot, newSnapshotInfo)),
-              Map(srcAddress -> AcceptedTx(lastTx))
+              Map(srcAddress -> StoredTransaction.AcceptedTx(lastTx))
             )
           )
     }
@@ -1187,8 +1203,9 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
           balancesAfter <- balancesR.get
           blocksAfter <- blocksR.toMap
           lastGlobalSnapshotAfter <- lastSnapR.get
-          lastAcceptedTxRAfter <- ts.getState.flatMap { m =>
-            m.toList.traverse { case (address, _) => ts.getLastProcessedTransaction(address).map(address -> _) }.map(_.toMap)
+          lastAcceptedTxRAfter <- ts.getState.flatMap {
+            case (m, _) =>
+              m.toList.traverse { case (address, _) => ts.getLastProcessedTransaction(address).map(address -> _) }.map(_.toMap)
           }
         } yield
           expect.same(
@@ -1257,7 +1274,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               ),
               newSnapshotInfo.balances,
               Some((hashedNextSnapshot, newSnapshotInfo)),
-              snapshotTxRefs.map { case (k, v) => k -> MajorityTx(v, hashedNextSnapshot.ordinal) }
+              snapshotTxRefs.map { case (k, v) => k -> StoredTransaction.MajorityTx(v, hashedNextSnapshot.ordinal) }
             )
           )
     }
@@ -1357,9 +1374,9 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
   )(implicit sc: SecurityProvider[IO], h: Hasher[IO]) =
     (parent: NonEmptyList[BlockReference], transactions: NonEmptySet[Signed[Transaction]]) =>
       (
-        forAsyncHasher(Block(parent, transactions), keys._1),
-        forAsyncHasher(Block(parent, transactions), keys._2),
-        forAsyncHasher(Block(parent, transactions), keys._3)
+        forAsyncHasher(Block(parent, transactions, none), keys._1),
+        forAsyncHasher(Block(parent, transactions, none), keys._2),
+        forAsyncHasher(Block(parent, transactions, none), keys._3)
       ).tupled.flatMap {
         case (b1, b2, b3) =>
           b1.addProof(b2.proofs.head).addProof(b3.proofs.head).toHashedWithSignatureCheck.map(_.toOption.get)

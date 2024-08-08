@@ -17,6 +17,7 @@ import org.tessellation.node.shared.domain.statechannel.StateChannelAcceptanceRe
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
+import org.tessellation.schema.swap._
 import org.tessellation.schema.transaction.{RewardTransaction, Transaction, TransactionReference}
 import org.tessellation.security._
 import org.tessellation.security.signature.Signed
@@ -185,7 +186,10 @@ object GlobalSnapshotAcceptanceManager {
         lastSnapshotContext.lastTxRefs,
         tipUsages,
         collateral,
-        TransactionReference.empty
+        TransactionReference.empty,
+        None,
+        None,
+        AllowSpendReference.empty
       )
 
       blockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context, ordinal)

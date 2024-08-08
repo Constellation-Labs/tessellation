@@ -2,8 +2,6 @@ package org.tessellation.block
 
 import cats.data.{NonEmptyList, NonEmptySet}
 
-import scala.collection.immutable.SortedSet
-
 import org.tessellation.schema.generators.{signedOf, signedTransactionGen}
 import org.tessellation.schema.{Block, BlockReference}
 import org.tessellation.security.signature.Signed
@@ -19,7 +17,7 @@ object generators {
     for {
       blockReferences <- blockReferencesGen
       signedTxn <- signedTransactionGen
-    } yield Block(blockReferences, NonEmptySet.fromSetUnsafe(SortedSet(signedTxn)))
+    } yield Block(blockReferences, NonEmptySet.one(signedTxn), None)
 
   val signedBlockGen: Gen[Signed[Block]] = signedOf(blockGen)
   implicit val signedBlockArbitrary: Arbitrary[Signed[Block]] = Arbitrary(signedBlockGen)

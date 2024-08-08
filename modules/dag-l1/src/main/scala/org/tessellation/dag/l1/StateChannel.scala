@@ -73,6 +73,7 @@ class StateChannel[
       selfId,
       storages.transaction,
       validators.transaction,
+      validators.allowSpend,
       txHasher
     )
 
