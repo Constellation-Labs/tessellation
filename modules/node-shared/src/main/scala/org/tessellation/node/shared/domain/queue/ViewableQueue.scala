@@ -33,7 +33,10 @@ object ViewableQueue {
           }
 
         def tryOfferN(items: List[A]): F[List[A]] =
-          queue.update(_ ++ items).as(List.empty[A])
+          queue.modify { currentQueue =>
+            val updatedQueue = currentQueue.enqueueAll(items)
+            (updatedQueue, updatedQueue.toList)
+          }
 
         def tryTakeN(n: Option[Int]): F[List[A]] =
           queue.modify { q =>
