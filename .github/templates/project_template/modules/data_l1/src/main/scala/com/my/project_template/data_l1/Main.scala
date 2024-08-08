@@ -35,12 +35,6 @@ object Main extends CurrencyL1App(
     calculatedStateService: CalculatedStateService[IO]
   ): BaseDataApplicationL1Service[IO] = BaseDataApplicationL1Service(
     new DataApplicationL1Service[IO, UsageUpdate, UsageUpdateState, UsageUpdateCalculatedState] {
-      override def validateData(
-        state  : DataState[UsageUpdateState, UsageUpdateCalculatedState],
-        updates: NonEmptyList[Signed[UsageUpdate]]
-      )(implicit context: L1NodeContext[IO]): IO[DataApplicationValidationErrorOr[Unit]] =
-        ().validNec.pure[IO]
-
       override def validateUpdate(
         update: UsageUpdate
       )(implicit context: L1NodeContext[IO]): IO[DataApplicationValidationErrorOr[Unit]] =
@@ -50,12 +44,6 @@ object Main extends CurrencyL1App(
         implicit context: L1NodeContext[IO], A: Applicative[IO]
       ): IO[DataApplicationValidationErrorOr[Unit]] =
         ().validNec.pure[IO]
-
-      override def combine(
-        state  : DataState[UsageUpdateState, UsageUpdateCalculatedState],
-        updates: List[Signed[UsageUpdate]]
-      )(implicit context: L1NodeContext[IO]): IO[DataState[UsageUpdateState, UsageUpdateCalculatedState]] =
-        state.pure[IO]
 
       override def routes(implicit context: L1NodeContext[IO]): HttpRoutes[IO] =
         HttpRoutes.empty
@@ -104,20 +92,6 @@ object Main extends CurrencyL1App(
         bytes: Array[Byte]
       ): IO[Either[Throwable, UsageUpdate]] =
         IO(Deserializers.deserializeUpdate(bytes))
-
-      override def getCalculatedState(implicit context: L1NodeContext[IO]): IO[(SnapshotOrdinal, UsageUpdateCalculatedState)] =
-        calculatedStateService.getCalculatedState.map(calculatedState => (calculatedState.ordinal, calculatedState.state))
-
-      override def setCalculatedState(
-        ordinal: SnapshotOrdinal,
-        state  : UsageUpdateCalculatedState
-      )(implicit context: L1NodeContext[IO]): IO[Boolean] =
-        calculatedStateService.setCalculatedState(ordinal, state)
-
-      override def hashCalculatedState(
-        state: UsageUpdateCalculatedState
-      )(implicit context: L1NodeContext[IO]): IO[Hash] =
-        calculatedStateService.hashCalculatedState(state)
 
       override def serializeCalculatedState(
         state: UsageUpdateCalculatedState
