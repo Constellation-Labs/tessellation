@@ -38,7 +38,7 @@ runs:
           cp ../../assets/basic_rewards_implementation.txt  modules/l0/src/main/scala/com/my/project_template/l0/Main.scala
         fi
         
-        sbt currencyL0/assembly
+        sbt -Dversion.override=99.99.99 currencyL0/assembly
 
     - name: Move Metagraph L0 JAR
       shell: bash

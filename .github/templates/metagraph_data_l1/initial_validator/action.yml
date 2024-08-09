@@ -30,7 +30,7 @@ runs:
       shell: bash
       run: |
         cd .github/templates/project_template/
-        sbt dataL1/assembly
+        sbt -Dversion.override=99.99.99 dataL1/assembly
 
     - name: Move Metagraph L1 - Data JAR
       shell: bash

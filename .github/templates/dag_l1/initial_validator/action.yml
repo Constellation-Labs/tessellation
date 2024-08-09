@@ -25,7 +25,7 @@ runs:
     - name: Generate DAG L1 JAR
       shell: bash
       run: |
-        sbt dagL1/assembly
+        sbt -Dversion.override=99.99.99 dagL1/assembly
         
         mv modules/dag-l1/target/scala-2.13/tessellation-dag-l1-assembly-* .github/config/containers/jars/dag-l1.jar
 
