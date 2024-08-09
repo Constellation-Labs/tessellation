@@ -37,16 +37,11 @@ jobs:
           JAVA_VERSION: ${{ matrix.java }}
         uses: "./.github/templates/setup_java_and_scala"
 
-      - name: Update version.sbt to github-action-test-version
-        shell: bash
-        run: |
-          echo 'ThisBuild / version := "99.99.99"' > version.sbt
-
       - name: Generating Metagraph dependencies
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          sbt --error clean compile shared/publishM2 kernel/publishM2 keytool/publishM2 nodeShared/publishM2 currencyL0/publishM2 currencyL1/publishM2 dagL1/publishM2
+          sbt -Dversion.override=99.99.99 --error clean compile sdk/publishM2 shared/publishM2 kernel/publishM2 keytool/publishM2 nodeShared/publishM2 currencyL0/publishM2 currencyL1/publishM2 dagL1/publishM2
 
       - name: Run Global L0 Cluster
         env:
