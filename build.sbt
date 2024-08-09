@@ -7,6 +7,8 @@ ThisBuild / organizationName := "tessellation"
 ThisBuild / evictionErrorLevel := Level.Warn
 ThisBuild / scalafixDependencies += Libraries.organizeImports
 
+enablePlugins(GitVersioningPlugin)
+
 resolvers += Resolver.sonatypeRepo("snapshots")
 
 val scalafixCommonSettings = inConfig(IntegrationTest)(scalafixConfigSettings(IntegrationTest))
@@ -23,7 +25,8 @@ lazy val commonSettings = Seq(
   scalafixOnCompile := true,
   resolvers ++= List(
     Resolver.sonatypeRepo("snapshots"),
-    Resolver.githubPackages("abankowski", "http-request-signer")
+    Resolver.githubPackages("abankowski", "http-request-signer"),
+    Resolver.bintrayRepo("rallyhealth", "sbt-plugins")
   ),
   githubTokenSource := ghTokenSource
 )
@@ -41,7 +44,15 @@ lazy val commonTestSettings = Seq(
 ThisBuild / assemblyMergeStrategy := {
   case "logback.xml"                                       => MergeStrategy.first
   case x if x.contains("io.netty.versions.properties")     => MergeStrategy.discard
+  case x if x.contains("rally-version.properties")         => MergeStrategy.concat
   case PathList(xs @ _*) if xs.last == "module-info.class" => MergeStrategy.first
+  case x =>
+    val oldStrategy = (assembly / assemblyMergeStrategy).value
+    oldStrategy(x)
+}
+
+sdk / assemblyMergeStrategy := {
+  case x if x.contains("rally-version.properties")         => MergeStrategy.concat
   case x =>
     val oldStrategy = (assembly / assemblyMergeStrategy).value
     oldStrategy(x)
