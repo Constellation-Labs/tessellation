@@ -10,6 +10,7 @@ import org.tessellation.currency.dataApplication.storage.CalculatedStateLocalFil
 import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, DataApplicationTraverse, L0NodeContext}
 import org.tessellation.currency.l0.node.IdentifierStorage
 import org.tessellation.currency.l0.snapshot.CurrencyConsensusManager
+import org.tessellation.currency.l0.snapshot.programs.Download.CannotFetchSnapshot
 import org.tessellation.currency.l0.snapshot.schema.{CurrencyConsensusOutcome, Finished}
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotContext, CurrencySnapshotInfo}
 import org.tessellation.json.JsonSerializer
@@ -70,7 +71,20 @@ object Rollback {
 
       _ <- dataApplication.map {
         case ((da, cs)) =>
-          val fetchSnapshot: Hash => F[Option[Hashed[GlobalIncrementalSnapshot]]] = (hash: Hash) => globalL0Service.pullGlobalSnapshot(hash)
+          val attempts_to_fetch_global_snapshot = 10
+          val fetchSnapshot: Hash => F[Option[Hashed[GlobalIncrementalSnapshot]]] = (hash: Hash) => {
+            def attemptFetch(remainingAttempts: Int): F[Option[Hashed[GlobalIncrementalSnapshot]]] =
+              globalL0Service.pullGlobalSnapshot(hash).flatMap {
+                case Some(snapshot) => snapshot.some.pure
+                case None if remainingAttempts > 1 =>
+                  logger.warn("Could not get global snapshot, trying again with another peer") >> attemptFetch(remainingAttempts - 1)
+                case None =>
+                  logger.error("Could not get global snapshot after 10 tries") >>
+                    CannotFetchSnapshot.raiseError[F, Option[Hashed[GlobalIncrementalSnapshot]]]
+              }
+
+            attemptFetch(attempts_to_fetch_global_snapshot)
+          }
 
           DataApplicationTraverse.make[F](globalSnapshot, fetchSnapshot, da, cs, identifier).flatMap { dat =>
             dat.loadChain().flatMap {
