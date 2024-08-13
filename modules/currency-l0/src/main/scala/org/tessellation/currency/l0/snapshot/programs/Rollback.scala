@@ -4,6 +4,7 @@ import cats.Applicative
 import cats.effect.Async
 import cats.syntax.all._
 
+import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
 
 import org.tessellation.currency.dataApplication.storage.CalculatedStateLocalFileSystemStorage
@@ -25,6 +26,8 @@ import org.tessellation.security._
 import org.tessellation.security.hash.Hash
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+import retry.RetryPolicies.{constantDelay, limitRetries}
+import retry.syntax.all._
 
 sealed trait RollbackError extends NoStackTrace
 case object LastSnapshotHashNotFound extends RollbackError
@@ -46,6 +49,8 @@ object Rollback {
     dataApplication: Option[(BaseDataApplicationL0Service[F], CalculatedStateLocalFileSystemStorage[F])]
   )(implicit context: L0NodeContext[F]): Rollback[F] = new Rollback[F] {
     private val logger = Slf4jLogger.getLogger[F]
+
+    val fetchGlobalSnapshotsRetryPolicy = limitRetries[F](10).join(constantDelay(3.seconds))
 
     def rollback(implicit hasher: Hasher[F]): F[Unit] = for {
       (globalSnapshot, globalSnapshotInfo) <- globalL0Service.pullLatestSnapshot
@@ -70,7 +75,17 @@ object Rollback {
 
       _ <- dataApplication.map {
         case ((da, cs)) =>
-          val fetchSnapshot: Hash => F[Option[Hashed[GlobalIncrementalSnapshot]]] = (hash: Hash) => globalL0Service.pullGlobalSnapshot(hash)
+          val fetchSnapshot: Hash => F[Option[Hashed[GlobalIncrementalSnapshot]]] = (hash: Hash) =>
+            globalL0Service
+              .pullGlobalSnapshot(hash)
+              .retryingOnFailuresAndAllErrors(
+                wasSuccessful = maybeSnapshot => maybeSnapshot.isDefined.pure[F],
+                policy = fetchGlobalSnapshotsRetryPolicy,
+                onFailure = (_, retryDetails) =>
+                  logger.warn(s"Failure when trying to fetch incremental global snapshot {attempt=${retryDetails.retriesSoFar}}"),
+                onError = (err, retryDetails) =>
+                  logger.error(err)(s"Error when trying to fetch incremental global snapshot {attempt=${retryDetails.retriesSoFar}}")
+              )
 
           DataApplicationTraverse.make[F](globalSnapshot, fetchSnapshot, da, cs, identifier).flatMap { dat =>
             dat.loadChain().flatMap {
