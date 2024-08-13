@@ -124,7 +124,7 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
 
   }
 
-  test("valid state channel with more occurrences should be preffered") { res =>
+  test("valid state channel with more occurrences should be preferred") { res =>
     implicit val (h, sp) = res
 
     for {
@@ -174,7 +174,7 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
     }
   }
 
-  test("valid state channel with more signatures should be preffered over more occurrences") { res =>
+  test("valid state channel with more signatures should be preferred over more occurrences") { res =>
     implicit val (h, sp) = res
 
     for {

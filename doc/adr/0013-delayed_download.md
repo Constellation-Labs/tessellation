@@ -12,7 +12,7 @@ In order to increase security, it is desirable to observe only peers that are on
 This can be determined by querying discovered peers for their latest ordinal values prior to
 selecting one to observe. Afterwards, the majority ordinal can be determined and each peer is queried
 again for the `Signed[GlobalSnapshot]` corresponding to that ordinal. The hashes of the snapshots
-are compared to determine the most prevelant hash among the peers. A peer with that snapshot is then
+are compared to determine the most prevalent hash among the peers. A peer with that snapshot is then
 randomly chosen to be the one to be observed.
 
 Right now, the peer discovery process is a non-terminating process that runs alongside the main
