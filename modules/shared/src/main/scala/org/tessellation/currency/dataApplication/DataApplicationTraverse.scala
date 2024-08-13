@@ -150,7 +150,8 @@ object DataApplicationTraverse {
                         }
 
                       case _ =>
-                        updateCache(snapshot).as(tail.asLeft[Output])
+                        logger.info(s"Could not get calculated state of ordinal=${snapshot.ordinal.show}, updating cache") >>
+                          updateCache(snapshot).as(tail.asLeft[Output])
                     }
               } >>= {
               case Some((state, ordinal)) =>
@@ -169,7 +170,7 @@ object DataApplicationTraverse {
                   )).raiseError[F, Either[Acc, Output]]
                 case Validated.Valid(snapshots) =>
                   logger.info(
-                    s"Found ${snapshots.size.show} snapshots at global snapshot ordinal=${globalSnapshot.ordinal.show}, performing nested recursion."
+                    s"Found ${snapshots.size.show} snapshots at global snapshot ordinal=${globalSnapshot.ordinal.show}, ordinals=${snapshots.map(_.ordinal).show}. Performing nested recursion."
                   ) >> nestedRecursion(snapshots).flatMap {
                     case Right(Some((state, ordinal))) => (state, ordinal).some.asRight[Acc].pure[F]
                     case _ =>
