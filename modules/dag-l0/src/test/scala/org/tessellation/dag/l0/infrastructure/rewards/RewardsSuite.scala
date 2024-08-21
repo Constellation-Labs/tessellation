@@ -64,10 +64,12 @@ object RewardsSuite extends MutableIOSuite with Checkers {
 
   val secondMintingLogicLowerBound: NonNegLong = 1336392L
   val thirdMintingLogicLowerBound: NonNegLong = 1352274L
+  val fourthMintingLogicLowerBound: NonNegLong = 1947530L
 
   val firstMintingLogicUpperBound: NonNegLong = NonNegLong.unsafeFrom(secondMintingLogicLowerBound.value - 1)
   val secondMintingLogicUpperBound: NonNegLong = NonNegLong.unsafeFrom(thirdMintingLogicLowerBound.value - 1)
-  val thirdMintingLogicUpperBound: NonNegLong = upperBound
+  val thirdMintingLogicUpperBound: NonNegLong = NonNegLong.unsafeFrom(fourthMintingLogicLowerBound.value - 1)
+  val fourthMintingLogicUpperBound: NonNegLong = upperBound
 
   val lowerBoundNoMinting: NonNegLong = NonNegLong.unsafeFrom(upperBound.value + 1)
   val special: Seq[NonNegLong] =
@@ -87,6 +89,9 @@ object RewardsSuite extends MutableIOSuite with Checkers {
 
   val thirdMintingLogicEpochProgressGen: Gen[EpochProgress] =
     chooseNumRefined(thirdMintingLogicLowerBound, thirdMintingLogicUpperBound).map(EpochProgress(_))
+
+  val fourthMintingLogicEpochProgressGen: Gen[EpochProgress] =
+    chooseNumRefined(fourthMintingLogicLowerBound, fourthMintingLogicUpperBound).map(EpochProgress(_))
 
   val meaningfulEpochProgressGen: Gen[EpochProgress] =
     chooseNumRefined(lowerBound, upperBound, special: _*).map(EpochProgress(_))
@@ -278,13 +283,44 @@ object RewardsSuite extends MutableIOSuite with Checkers {
     }
   }
 
-  test("minted rewards for the logic at epoch progress 1352274 and later are as expected") { res =>
+  test("minted rewards for the logic at epoch progress 1352274 until 1947530 are as expected") { res =>
     implicit val (h, sp, makeIdFn) = res
 
     val facilitator = makeIdFn.apply()
 
     val gen = for {
       epochProgress <- thirdMintingLogicEpochProgressGen
+      signature <- signatureGen
+      signatures = NonEmptySet.fromSetUnsafe(SortedSet(SignatureProof(facilitator, signature)))
+      snapshot <- snapshotWithoutTransactionsGen(signatures.some)
+    } yield snapshot.focus(_.value.epochProgress).replace(epochProgress)
+
+    forall(gen) { snapshot =>
+      for {
+        rewards <- makeRewards(singleEpochRewardsConfig).pure[F]
+
+        txs <- rewards.distribute(snapshot, SortedMap.empty, SortedSet.empty, TimeTrigger, Set.empty)
+
+        facilitatorAddress <- facilitator.toAddress
+        expected = SortedSet(
+          RewardTransaction(stardustNewPrimary, TransactionAmount(5L)),
+          RewardTransaction(stardustSecondary, TransactionAmount(5L)),
+          RewardTransaction(testnet, TransactionAmount(3L)),
+          RewardTransaction(dataPool, TransactionAmount(55L)),
+          RewardTransaction(integrationNet, TransactionAmount(15L)),
+          RewardTransaction(facilitatorAddress, TransactionAmount(17L))
+        )
+      } yield expect.eql(expected, txs)
+    }
+  }
+
+  test("minted rewards for the logic at epoch progress 1947530 and later are as expected") { res =>
+    implicit val (h, sp, makeIdFn) = res
+
+    val facilitator = makeIdFn.apply()
+
+    val gen = for {
+      epochProgress <- fourthMintingLogicEpochProgressGen
       signature <- signatureGen
       signatures = NonEmptySet.fromSetUnsafe(SortedSet(SignatureProof(facilitator, signature)))
       snapshot <- snapshotWithoutTransactionsGen(signatures.some)
@@ -301,12 +337,11 @@ object RewardsSuite extends MutableIOSuite with Checkers {
 
         facilitatorAddress <- facilitator.toAddress
         expected = SortedSet(
-          RewardTransaction(stardustNewPrimary, TransactionAmount(5L)),
-          RewardTransaction(stardustSecondary, TransactionAmount(5L)),
-          RewardTransaction(testnet, TransactionAmount(3L)),
-          RewardTransaction(dataPool, TransactionAmount(55L)),
-          RewardTransaction(integrationNet, TransactionAmount(15L)),
-          RewardTransaction(facilitatorAddress, TransactionAmount(17L))
+          RewardTransaction(stardustNewPrimary, TransactionAmount(7L)),
+          RewardTransaction(testnet, TransactionAmount(7L)),
+          RewardTransaction(dataPool, TransactionAmount(42L)),
+          RewardTransaction(integrationNet, TransactionAmount(20L)),
+          RewardTransaction(facilitatorAddress, TransactionAmount(24L))
         )
       } yield expect.eql(expected, txs)
     }
