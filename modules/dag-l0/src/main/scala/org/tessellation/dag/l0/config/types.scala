@@ -95,7 +95,7 @@ object types {
       // One-time minting to treasure wallets according to new metanomics
       OneTimeReward(EpochProgress(1928500L), treasureWalletMetanomics1, TransactionAmount(150_000_000_000_000_00L)),
       OneTimeReward(EpochProgress(1928500L), treasureWalletMetanomics2, TransactionAmount(150_000_000_000_000_00L)),
-      OneTimeReward(EpochProgress(1928500L), treasureWalletMetanomics3, TransactionAmount(150_000_000_000_000_00L)),
+      OneTimeReward(EpochProgress(1928500L), treasureWalletMetanomics3, TransactionAmount(150_000_000_000_000_00L))
     )
   )
 
@@ -132,7 +132,7 @@ object types {
           ),
           remainingWeight = Weight(30L) // facilitators
         )
-      case _ =>
+      case epoch if epoch < EpochProgress(1947530L) =>
         ProgramsDistributionConfig(
           weights = Map(
             stardustNewPrimary -> Weight(5L),
@@ -142,6 +142,16 @@ object types {
             integrationNet -> Weight(15L)
           ),
           remainingWeight = Weight(17L) // facilitators
+        )
+      case _ =>
+        ProgramsDistributionConfig(
+          weights = Map(
+            stardustNewPrimary -> Weight(7L),
+            testnet -> Weight(7L),
+            dataPool -> Weight(42L),
+            integrationNet -> Weight(20L)
+          ),
+          remainingWeight = Weight(24L) // facilitators
         )
     }
 
