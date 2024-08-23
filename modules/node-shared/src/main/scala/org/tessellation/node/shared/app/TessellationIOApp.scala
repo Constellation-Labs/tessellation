@@ -71,6 +71,9 @@ abstract class TessellationIOApp[A <: CliMethod](
 
   protected val logger = Slf4jLogger.getLogger[IO]
 
+  override protected def computeWorkerThreadCount: Int =
+    Math.max(2, Runtime.getRuntime().availableProcessors() - 1)
+
   def run(method: A, nodeShared: NodeShared[IO]): Resource[IO, Unit]
 
   override final def main: Opts[IO[ExitCode]] =
