@@ -1,0 +1,69 @@
+on:
+  push:
+    branches:
+      - release/testnet
+
+name: Testnet release
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  build:
+    name: Testnet release
+    runs-on: ubuntu-20.04
+    environment: testnet
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Setup Java and scala
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          JAVA_VERSION: openjdk@1.11.0
+        uses: "./.github/templates/setup_java_and_scala"
+
+      - name: Test
+        run: sbt 'scalafixAll --check --rules OrganizeImports;scalafmtCheckAll;test'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get the pre-release version
+        id: get_version
+        run: |
+          export VERSIONFILE=$(mktemp)
+          sbt "writeVersion $VERSIONFILE"
+          {
+            echo 'VERSION<<EOF'
+              cat $VERSIONFILE
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Assembly 🚀
+        run: sbt 'keytool/assembly;wallet/assembly;dagL0/assembly;dagL1/assembly'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Copy dependencies
+        env:
+          VERSION: ${{ steps.get_version.outputs.VERSION }}
+        run: |
+          mkdir ./$VERSION
+          cp ./modules/keytool/target/scala-2.13/tessellation-keytool-assembly-$VERSION.jar ./$VERSION/cl-keytool.jar
+          cp ./modules/wallet/target/scala-2.13/tessellation-wallet-assembly-$VERSION.jar ./$VERSION/cl-wallet.jar
+          cp ./modules/dag-l0/target/scala-2.13/tessellation-dag-l0-assembly-$VERSION.jar ./$VERSION/cl-node.jar
+          cp ./modules/dag-l1/target/scala-2.13/tessellation-dag-l1-assembly-$VERSION.jar ./$VERSION/cl-dag-l1.jar
+
+      - name: Send artifacts to S3
+        uses: wscourge/gha-s3-upload@main
+        with:
+          source: "./$VERSION"
+          destination: "testnet/tessellation/$VERSION"
+          region: ${{ secrets.S3_REGION }}
+          bucket: ${{ secrets.S3_BUCKET }}
+          access_key_id: ${{ secrets.S3_ACCESS_KEY_ID }}
+          secret_access_key: ${{ secrets.S3_SECRET_ACCESS_KEY }
+
