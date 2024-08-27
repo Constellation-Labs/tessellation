@@ -36,6 +36,7 @@ jobs:
         run: |
           sbt "writeVersion ./version"
           echo "VERSION=$(cat ./version)" >> "$GITHUB_OUTPUT"
+          echo "Release-As: $(cat ./version)" >> $GITHUB_STEP_SUMMARY
           rm ./version
 
       - name: Assembly 🚀
