@@ -1,15 +1,12 @@
 package org.tessellation.currency.l1
 
 import cats.Applicative
-import cats.data.NonEmptyList
 import cats.effect.IO
 
-import org.tessellation.currency.dataApplication.DataState.Base
 import org.tessellation.currency.dataApplication._
 import org.tessellation.currency.dataApplication.dataApplication.{DataApplicationBlock, DataApplicationValidationErrorOr}
 import org.tessellation.routes.internal.ExternalUrlPrefix
 import org.tessellation.schema.SnapshotOrdinal
-import org.tessellation.security.hash.Hash
 import org.tessellation.security.signature.Signed
 
 import io.circe.{Decoder, Encoder}
@@ -50,26 +47,12 @@ class DummyDataApplicationL1Service extends BaseDataApplicationL1Service[IO] {
 
   override def calculatedStateDecoder: Decoder[DataCalculatedState] = ???
 
-  override def validateData(state: Base, updates: NonEmptyList[Signed[DataUpdate]])(
-    implicit context: L1NodeContext[IO]
-  ): IO[DataApplicationValidationErrorOr[Unit]] = ???
-
   override def validateUpdate(update: DataUpdate)(implicit context: L1NodeContext[IO]): IO[DataApplicationValidationErrorOr[Unit]] = ???
 
   override def validateFee(gsOrdinal: SnapshotOrdinal)(update: Signed[DataUpdate])(
     implicit context: L1NodeContext[IO],
     A: Applicative[IO]
   ): IO[dataApplication.DataApplicationValidationErrorOr[Unit]] = ???
-
-  override def combine(state: Base, updates: List[Signed[DataUpdate]])(implicit context: L1NodeContext[IO]): IO[Base] = ???
-
-  override def getCalculatedState(implicit context: L1NodeContext[IO]): IO[(SnapshotOrdinal, DataCalculatedState)] = ???
-
-  override def setCalculatedState(ordinal: SnapshotOrdinal, state: DataCalculatedState)(
-    implicit context: L1NodeContext[IO]
-  ): IO[Boolean] = ???
-
-  override def hashCalculatedState(state: DataCalculatedState)(implicit context: L1NodeContext[IO]): IO[Hash] = ???
 
   override def routes(implicit context: L1NodeContext[IO]): HttpRoutes[IO] = ???
 
