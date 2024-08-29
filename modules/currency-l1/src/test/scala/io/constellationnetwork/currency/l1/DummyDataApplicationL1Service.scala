@@ -1,15 +1,12 @@
 package io.constellationnetwork.currency.l1
 
 import cats.Applicative
-import cats.data.NonEmptyList
 import cats.effect.IO
 
-import io.constellationnetwork.currency.dataApplication.DataState.Base
 import io.constellationnetwork.currency.dataApplication._
 import io.constellationnetwork.currency.dataApplication.dataApplication.{DataApplicationBlock, DataApplicationValidationErrorOr}
 import io.constellationnetwork.routes.internal.ExternalUrlPrefix
 import io.constellationnetwork.schema.SnapshotOrdinal
-import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 
 import io.circe.{Decoder, Encoder}
@@ -50,26 +47,12 @@ class DummyDataApplicationL1Service extends BaseDataApplicationL1Service[IO] {
 
   override def calculatedStateDecoder: Decoder[DataCalculatedState] = ???
 
-  override def validateData(state: Base, updates: NonEmptyList[Signed[DataUpdate]])(
-    implicit context: L1NodeContext[IO]
-  ): IO[DataApplicationValidationErrorOr[Unit]] = ???
-
   override def validateUpdate(update: DataUpdate)(implicit context: L1NodeContext[IO]): IO[DataApplicationValidationErrorOr[Unit]] = ???
 
   override def validateFee(gsOrdinal: SnapshotOrdinal)(update: Signed[DataUpdate])(
     implicit context: L1NodeContext[IO],
     A: Applicative[IO]
   ): IO[dataApplication.DataApplicationValidationErrorOr[Unit]] = ???
-
-  override def combine(state: Base, updates: List[Signed[DataUpdate]])(implicit context: L1NodeContext[IO]): IO[Base] = ???
-
-  override def getCalculatedState(implicit context: L1NodeContext[IO]): IO[(SnapshotOrdinal, DataCalculatedState)] = ???
-
-  override def setCalculatedState(ordinal: SnapshotOrdinal, state: DataCalculatedState)(
-    implicit context: L1NodeContext[IO]
-  ): IO[Boolean] = ???
-
-  override def hashCalculatedState(state: DataCalculatedState)(implicit context: L1NodeContext[IO]): IO[Hash] = ???
 
   override def routes(implicit context: L1NodeContext[IO]): HttpRoutes[IO] = ???
 
