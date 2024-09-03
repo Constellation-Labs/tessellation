@@ -144,7 +144,7 @@
         <appender-ref ref="APP_JSON" />
     </root>
 
-    <logger name="org.tessellation" level="DEBUG" />
+    <logger name="io.constellationnetwork" level="DEBUG" />
     <logger name="org.http4s.server.middleware.RequestLogger" level="OFF" />
     <logger name="org.http4s.server.middleware.ResponseLogger" level="OFF" />
     <logger name="org.http4s.client.middleware.RequestLogger" level="OFF" />

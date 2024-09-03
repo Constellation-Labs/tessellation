@@ -1,6 +1,6 @@
 package org.example
 
-import org.tessellation.kernel.Ω
-import org.tessellation.security.hash.Hash
+import io.constellationnetwork.kernel.Ω
+import io.constellationnetwork.security.hash.Hash
 
 case class EmitSimpleSnapshot(lastSnapshotHash: Hash) extends Ω

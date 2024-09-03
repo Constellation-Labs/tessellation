@@ -12,10 +12,10 @@ import cats.syntax.validated._
 import com.monovore.decline.Opts
 import com.monovore.decline.effect.CommandIOApp
 import org.example.SimpleSnapshotPublisherDef.kryoRegistrar
-import org.tessellation.ext.crypto._
-import org.tessellation.ext.kryo._
-import org.tessellation.kryo.KryoSerializer
-import org.tessellation.security.hash.Hash
+import io.constellationnetwork.ext.crypto._
+import io.constellationnetwork.ext.kryo._
+import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.security.hash.Hash
 
 object GenerateInputApp
     extends CommandIOApp(

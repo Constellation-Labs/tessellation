@@ -1,8 +1,8 @@
 import Dependencies._
 
 ThisBuild / scalaVersion := "2.13.12"
-ThisBuild / organization := "org.constellation"
-ThisBuild / organizationName := "tessellation"
+ThisBuild / organization := "io.constellationnetwork"
+ThisBuild / organizationName := "constellationnetwork"
 
 ThisBuild / evictionErrorLevel := Level.Warn
 ThisBuild / scalafixDependencies += Libraries.organizeImports
@@ -170,7 +170,7 @@ lazy val shared = (project in file("modules/shared"))
   .settings(
     name := "tessellation-shared",
     buildInfoKeys := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion),
-    buildInfoPackage := "org.tessellation",
+    buildInfoPackage := "io.constellationnetwork",
     Defaults.itSettings,
     scalafixCommonSettings,
     commonSettings,
@@ -528,7 +528,7 @@ lazy val currencyL0 = (project in file("modules/currency-l0"))
   .settings(
     name := "tessellation-currency-l0",
     buildInfoKeys := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion),
-    buildInfoPackage := "org.tessellation.currency",
+    buildInfoPackage := "io.constellationnetwork.currency",
     Defaults.itSettings,
     scalafixCommonSettings,
     commonSettings,
