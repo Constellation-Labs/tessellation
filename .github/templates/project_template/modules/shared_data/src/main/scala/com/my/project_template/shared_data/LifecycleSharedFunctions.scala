@@ -4,8 +4,8 @@ import cats.effect.Async
 import cats.syntax.all._
 import com.my.project_template.shared_data.combiners.Combiners.combineUpdateUsage
 import com.my.project_template.shared_data.types.Types.{UsageUpdate, UsageUpdateCalculatedState, UsageUpdateState}
-import org.tessellation.currency.dataApplication.DataState
-import org.tessellation.security.signature.Signed
+import io.constellationnetwork.currency.dataApplication.DataState
+import io.constellationnetwork.security.signature.Signed
 
 object LifecycleSharedFunctions {
   def combine[F[_] : Async](

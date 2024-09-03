@@ -5,8 +5,8 @@ import cats.effect.kernel.Async
 import cats.syntax.all._
 import com.my.project_template.shared_data.types.Types.UsageUpdateCalculatedState
 import io.circe.syntax.EncoderOps
-import org.tessellation.schema.SnapshotOrdinal
-import org.tessellation.security.hash.Hash
+import io.constellationnetwork.schema.SnapshotOrdinal
+import io.constellationnetwork.security.hash.Hash
 
 trait CalculatedStateService[F[_]] {
   def getCalculatedState: F[CalculatedState]

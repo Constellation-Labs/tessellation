@@ -8,8 +8,8 @@ import cats.syntax.flatMap._
 import cats.syntax.show._
 import eu.timepit.refined.auto._
 import higherkindness.droste.{AlgebraM, CoalgebraM, scheme}
-import org.tessellation.kernel._
-import org.tessellation.schema.address.Address
+import io.constellationnetwork.kernel._
+import io.constellationnetwork.schema.address.Address
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object SimpleSnapshotPublisherDef extends StateChannelDef[EmitSimpleSnapshot, Ω, EmitSimpleSnapshot] {

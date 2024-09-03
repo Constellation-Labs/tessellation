@@ -2,8 +2,8 @@ package com.my.project_template.shared_data.types
 
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
-import org.tessellation.currency.dataApplication.{DataCalculatedState, DataOnChainState, DataUpdate}
-import org.tessellation.schema.address.Address
+import io.constellationnetwork.currency.dataApplication.{DataCalculatedState, DataOnChainState, DataUpdate}
+import io.constellationnetwork.schema.address.Address
 
 object Types {
   @derive(decoder, encoder)

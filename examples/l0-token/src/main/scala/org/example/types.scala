@@ -1,8 +1,8 @@
 package org.example
 
-import org.tessellation.kernel.Ω
-import org.tessellation.kernel.StateChannelSnapshot
-import org.tessellation.security.hash.Hash
+import io.constellationnetwork.kernel.Ω
+import io.constellationnetwork.kernel.StateChannelSnapshot
+import io.constellationnetwork.security.hash.Hash
 
 object types {
 

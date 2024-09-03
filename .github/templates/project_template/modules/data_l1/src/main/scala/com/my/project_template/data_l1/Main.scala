@@ -11,15 +11,15 @@ import com.my.project_template.shared_data.types.Types.{UsageUpdate, UsageUpdate
 import io.circe.{Decoder, Encoder}
 import org.http4s.{EntityDecoder, _}
 import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
-import org.tessellation.currency.dataApplication._
-import org.tessellation.currency.dataApplication.dataApplication.{DataApplicationBlock, DataApplicationValidationErrorOr}
-import org.tessellation.currency.l1.CurrencyL1App
-import org.tessellation.ext.cats.effect.ResourceIO
-import org.tessellation.schema.SnapshotOrdinal
-import org.tessellation.schema.cluster.ClusterId
-import org.tessellation.schema.semver.{MetagraphVersion, TessellationVersion}
-import org.tessellation.security.hash.Hash
-import org.tessellation.security.signature.Signed
+import io.constellationnetwork.currency.dataApplication._
+import io.constellationnetwork.currency.dataApplication.dataApplication.{DataApplicationBlock, DataApplicationValidationErrorOr}
+import io.constellationnetwork.currency.l1.CurrencyL1App
+import io.constellationnetwork.ext.cats.effect.ResourceIO
+import io.constellationnetwork.schema.SnapshotOrdinal
+import io.constellationnetwork.schema.cluster.ClusterId
+import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
+import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.signature.Signed
 
 import java.util.UUID
 

@@ -1,9 +1,9 @@
 package com.my.project_template.shared_data.combiners
 
 import com.my.project_template.shared_data.types.Types._
-import org.tessellation.currency.dataApplication.DataState
-import org.tessellation.schema.address.Address
-import org.tessellation.security.signature.Signed
+import io.constellationnetwork.currency.dataApplication.DataState
+import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.security.signature.Signed
 
 object Combiners {
   private def getUpdatedDeviceUsage(

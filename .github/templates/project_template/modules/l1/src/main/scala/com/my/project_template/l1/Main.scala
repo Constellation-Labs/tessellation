@@ -1,10 +1,10 @@
 package com.my.project_template.l1
 
 import java.util.UUID
-import org.tessellation.BuildInfo
-import org.tessellation.currency.l1.CurrencyL1App
-import org.tessellation.schema.cluster.ClusterId
-import org.tessellation.schema.semver.{MetagraphVersion, TessellationVersion}
+import io.constellationnetwork.BuildInfo
+import io.constellationnetwork.currency.l1.CurrencyL1App
+import io.constellationnetwork.schema.cluster.ClusterId
+import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
 
 object Main extends CurrencyL1App(
   "currency-l1",
