@@ -120,7 +120,7 @@ object SnapshotDownloadStorage {
       def cleanupAbove(ordinal: SnapshotOrdinal): F[Unit] =
         snapshotInfoStorage.deleteAbove(ordinal) >>
           persistedStorage
-            .findFiles(_.name.toLongOption.exists(_ > ordinal.value.value))
+            .findAbove(ordinal)
             .map {
               _.map(_.name.toLongOption.flatMap(SnapshotOrdinal(_))).collect { case Some(a) => a }
             }
