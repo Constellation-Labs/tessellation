@@ -13,6 +13,8 @@ import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.shared.sharedKryoRegistrar
+import io.constellationnetwork.storage.PathGenerator
+import io.constellationnetwork.storage.PathGenerator._
 
 import better.files._
 import eu.timepit.refined.auto._
@@ -23,6 +25,9 @@ import weaver.scalacheck.Checkers
 import SnapshotLocalFileSystemStorage.UnableToPersistSnapshot
 
 object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers {
+
+  val hashPathGenerator = PathGenerator.forHash(Depth(2), PrefixSize(3))
+  val ordinalPathGenerator = PathGenerator.forOrdinal(ChunkSize(20000))
 
   type Res = (Supervisor[IO], KryoSerializer[IO], JsonSerializer[IO], Hasher[IO], SecurityProvider[IO])
 
@@ -55,8 +60,8 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
   ): IO[UnableToPersistSnapshot] =
     snapshot.toHashed.map(hashed =>
       UnableToPersistSnapshot(
-        hashed.ordinal.value.toString,
-        hashed.hash.value,
+        "ordinal/" + ordinalPathGenerator.get(hashed.ordinal.value.toString),
+        "hash/" + hashPathGenerator.get(hashed.hash.value),
         hashFileExists = hashFileExists
       )
     )
@@ -64,10 +69,10 @@ object SnapshotLocalFileSystemStorageSuite extends MutableIOSuite with Checkers 
   private def mkHashFile(tmpDir: File, snapshot: Signed[GlobalIncrementalSnapshot])(
     implicit H: Hasher[IO]
   ): IO[File] =
-    snapshot.toHashed.map(hashed => tmpDir / hashed.hash.value)
+    snapshot.toHashed.map(hashed => tmpDir / "hash" / hashPathGenerator.get(hashed.hash.value))
 
   private def mkOrdinalFile(tmpDir: File, snapshot: Signed[GlobalIncrementalSnapshot]): File =
-    tmpDir / snapshot.ordinal.value.value.toString
+    tmpDir / "ordinal" / ordinalPathGenerator.get(snapshot.ordinal.value.value.toString)
 
   test("write - fail if ordinal file and hash file already exist") { res =>
     implicit val (_, kryo, j, h, sp) = res

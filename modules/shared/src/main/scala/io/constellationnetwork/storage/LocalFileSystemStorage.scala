@@ -40,12 +40,12 @@ abstract class LocalFileSystemStorage[F[_], A](baseDir: Path)(
 ) extends FileSystemStorage[F, A]
     with DiskSpace[F] {
 
-  private lazy val dir: F[File] = F.delay {
+  protected lazy val dir: F[File] = F.blocking {
     baseDir.toNioPath
   }
 
   private lazy val jDir: F[JFile] = dir.flatMap { a =>
-    F.delay(a.toJava)
+    F.blocking(a.toJava)
   }
 
   def createDirectoryIfNotExists(): EitherT[F, Throwable, Unit] =
@@ -71,18 +71,22 @@ abstract class LocalFileSystemStorage[F[_], A](baseDir: Path)(
     dir
       .map(_ / fileName)
       .flatMap { a =>
-        F.blocking(a.writeByteArray(bytes))
+        F.blocking(a.parent.createDirectoryIfNotExists(createParents = true)) >>
+          F.blocking(a.writeByteArray(bytes))
       }
       .void
 
   def link(fileName: String, to: String): F[Unit] =
     (dir.map(_ / fileName), dir.map(_ / to)).mapN {
-      case (src, dst) => F.blocking(src.linkTo(dst)).void
+      case (src, dst) =>
+        F.blocking(dst.parent.createDirectoryIfNotExists(createParents = true)) >>
+          F.blocking(src.linkTo(dst)).void
     }.flatten
 
   def move(fileName: String, to: File): F[Unit] =
     dir.map(_ / fileName).flatMap { src =>
-      F.blocking(src.moveTo(to)(File.CopyOptions(overwrite = true))).void
+      F.blocking(to.parent.createDirectoryIfNotExists(createParents = true)) >>
+        F.blocking(src.moveTo(to)(File.CopyOptions(overwrite = true))).void
     }
 
   def getPath(fileName: String): F[File] =
@@ -106,11 +110,11 @@ abstract class LocalFileSystemStorage[F[_], A](baseDir: Path)(
 
   def listFiles: F[Stream[F, File]] =
     dir
-      .flatMap(a => F.blocking(a.list))
+      .flatMap(a => F.blocking(a.list(f => !f.isDirectory, maxDepth = 1)))
       .map(Stream.fromIterator(_, 1))
 
   def findFiles(condition: File => Boolean): F[Stream[F, File]] =
     dir
-      .flatMap(a => F.blocking(a.list(condition)))
+      .flatMap(a => F.blocking(a.list(f => !f.isDirectory && condition(f), maxDepth = 1)))
       .map(Stream.fromIterator(_, 1))
 }
