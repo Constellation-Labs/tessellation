@@ -49,7 +49,7 @@ object Main
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
     dagL1KryoRegistrar.union(sharedKryoRegistrar)
 
-  def run(method: Run, nodeShared: NodeShared[IO]): Resource[IO, Unit] = {
+  def run(method: Run, nodeShared: NodeShared[IO, Run]): Resource[IO, Unit] = {
     import nodeShared._
 
     for {

@@ -45,7 +45,7 @@ object SharedServices {
     nodeClient: NodeClient[F],
     validators: SharedValidators[F],
     seedlist: Option[Set[SeedlistEntry]],
-    restartSignal: SignallingRef[F, Unit],
+    restartSignal: SignallingRef[F, Boolean],
     versionHash: Hash,
     collateral: CollateralConfig,
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
