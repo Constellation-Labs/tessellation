@@ -74,7 +74,7 @@ abstract class CurrencyL1App(
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
     nodeSharedKryoRegistrar.union(dagL1KryoRegistrar)
 
-  def run(method: Run, nodeShared: NodeShared[IO]): Resource[IO, Unit] = {
+  def run(method: Run, nodeShared: NodeShared[IO, Run]): Resource[IO, Unit] = {
     import nodeShared._
 
     for {
@@ -214,7 +214,23 @@ abstract class CurrencyL1App(
               storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
               services.cluster.createSession >>
               services.session.createSession >>
-              storages.node.tryModifyState(SessionStarted, NodeState.Ready)
+              storages.node.tryModifyState(SessionStarted, NodeState.Ready) >>
+              restartMethodR.set(
+                RunValidator(
+                  cfg.keyStore,
+                  cfg.alias,
+                  cfg.password,
+                  cfg.environment,
+                  cfg.httpConfig,
+                  cfg.l0Peer,
+                  cfg.globalL0Peer,
+                  cfg.identifier,
+                  cfg.seedlistPath,
+                  cfg.collateralAmount,
+                  cfg.trustRatingsPath,
+                  cfg.prioritySeedlistPath
+                ).some
+              )
 
           case cfg: RunValidator =>
             gossipDaemon.startAsRegularValidator >>

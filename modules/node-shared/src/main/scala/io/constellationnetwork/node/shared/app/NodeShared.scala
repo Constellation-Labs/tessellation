@@ -2,10 +2,12 @@ package io.constellationnetwork.node.shared.app
 
 import java.security.KeyPair
 
+import cats.effect.Ref
 import cats.effect.std.{Random, Supervisor}
 
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.types.SharedConfig
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.http.p2p.SharedP2PClient
@@ -19,7 +21,7 @@ import io.constellationnetwork.security.{HashSelect, HasherSelector, SecurityPro
 
 import fs2.concurrent.SignallingRef
 
-trait NodeShared[F[_]] {
+trait NodeShared[F[_], A <: CliMethod] {
   implicit val random: Random[F]
   implicit val securityProvider: SecurityProvider[F]
   implicit val kryoPool: KryoSerializer[F]
@@ -47,6 +49,7 @@ trait NodeShared[F[_]] {
 
   val hashSelect: HashSelect
 
-  def restartSignal: SignallingRef[F, Unit]
+  def restartSignal: SignallingRef[F, Boolean]
   def stopSignal: SignallingRef[F, Boolean]
+  def restartMethodR: Ref[F, Option[A]]
 }

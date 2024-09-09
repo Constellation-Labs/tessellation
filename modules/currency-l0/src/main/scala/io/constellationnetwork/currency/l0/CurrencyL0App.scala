@@ -59,7 +59,7 @@ abstract class CurrencyL0App(
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
     nodeSharedKryoRegistrar
 
-  def run(method: Run, nodeShared: NodeShared[IO]): Resource[IO, Unit] = {
+  def run(method: Run, nodeShared: NodeShared[IO, Run]): Resource[IO, Unit] = {
     import nodeShared._
 
     for {
@@ -185,7 +185,22 @@ abstract class CurrencyL0App(
                   services.cluster.createSession >>
                   services.session.createSession >>
                   programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
-                  storages.node.setNodeState(NodeState.Ready)
+                  storages.node.setNodeState(NodeState.Ready) >>
+                  restartMethodR.set(
+                    RunValidator(
+                      rr.keyStore,
+                      rr.alias,
+                      rr.password,
+                      rr.httpConfig,
+                      rr.environment,
+                      rr.seedlistPath,
+                      rr.prioritySeedlistPath,
+                      rr.collateralAmount,
+                      rr.globalL0Peer,
+                      rr.identifier,
+                      rr.trustRatingsPath
+                    ).some
+                  )
 
               case m: RunGenesis =>
                 storages.node.tryModifyState(
@@ -197,7 +212,24 @@ abstract class CurrencyL0App(
                   services.cluster.createSession >>
                   services.session.createSession >>
                   programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
-                  storages.node.setNodeState(NodeState.Ready)
+                  storages.node.setNodeState(NodeState.Ready) >>
+                  storages.identifier.get.flatMap { identifier =>
+                    restartMethodR.set(
+                      RunValidator(
+                        m.keyStore,
+                        m.alias,
+                        m.password,
+                        m.httpConfig,
+                        m.environment,
+                        m.seedlistPath,
+                        m.prioritySeedlistPath,
+                        m.collateralAmount,
+                        m.globalL0Peer,
+                        identifier,
+                        m.trustRatingsPath
+                      ).some
+                    )
+                  }
 
               case _ => IO.unit
             }

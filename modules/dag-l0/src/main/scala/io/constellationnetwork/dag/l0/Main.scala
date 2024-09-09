@@ -54,7 +54,7 @@ object Main
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
     dagL0KryoRegistrar
 
-  def run(method: Run, nodeShared: NodeShared[IO]): Resource[IO, Unit] = {
+  def run(method: Run, nodeShared: NodeShared[IO, Run]): Resource[IO, Unit] = {
     import nodeShared._
 
     for {
@@ -175,7 +175,21 @@ object Main
             gossipDaemon.startAsInitialValidator >>
             services.cluster.createSession >>
             services.session.createSession >>
-            storages.node.setNodeState(NodeState.Ready)
+            storages.node.setNodeState(NodeState.Ready) >>
+            restartMethodR.set(
+              RunValidator(
+                m.keyStore,
+                m.alias,
+                m.password,
+                m.dbConfig,
+                m.httpConfig,
+                m.environment,
+                m.seedlistPath,
+                m.collateralAmount,
+                m.trustRatingsPath,
+                m.prioritySeedlistPath
+              ).some
+            )
         case m: RunGenesis =>
           storages.node.tryModifyState(
             NodeState.Initial,
@@ -235,7 +249,21 @@ object Main
             gossipDaemon.startAsInitialValidator >>
             services.cluster.createSession >>
             services.session.createSession >>
-            storages.node.setNodeState(NodeState.Ready)
+            storages.node.setNodeState(NodeState.Ready) >>
+            restartMethodR.set(
+              RunValidator(
+                m.keyStore,
+                m.alias,
+                m.password,
+                m.dbConfig,
+                m.httpConfig,
+                m.environment,
+                m.seedlistPath,
+                m.collateralAmount,
+                m.trustRatingsPath,
+                m.prioritySeedlistPath
+              ).some
+            )
       }).asResource
     } yield ()
   }

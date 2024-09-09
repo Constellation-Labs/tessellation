@@ -36,7 +36,7 @@ object Cluster {
     sessionStorage: SessionStorage[F],
     nodeStorage: NodeStorage[F],
     seedlist: Option[Set[SeedlistEntry]],
-    restartSignal: SignallingRef[F, Unit],
+    restartSignal: SignallingRef[F, Boolean],
     versionHash: Hash,
     environment: AppEnvironment
   ): Cluster[F] =
@@ -79,7 +79,7 @@ object Cluster {
             Temporal[F].sleep(leavingDelay) >>
             nodeStorage.setNodeState(NodeState.Offline) >>
             Temporal[F].sleep(5.seconds) >>
-            restartSignal.set(())
+            restartSignal.set(true)
 
         Temporal[F].start(process).void
       }
