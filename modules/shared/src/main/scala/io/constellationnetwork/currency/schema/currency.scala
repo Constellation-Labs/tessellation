@@ -16,6 +16,7 @@ import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
 import io.constellationnetwork.schema.semver.SnapshotVersion
 import io.constellationnetwork.schema.snapshot._
+import io.constellationnetwork.schema.swap.{AllowSpend, AllowSpendReference}
 import io.constellationnetwork.schema.transaction._
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.{Hash, ProofsHash}
@@ -43,13 +44,15 @@ object currency {
   case class CurrencySnapshotStateProof(
     lastTxRefsProof: Hash,
     balancesProof: Hash,
-    lastMessagesProof: Option[Hash] = None,
-    lastFeeTxRefsProof: Option[Hash] = None
+    lastMessagesProof: Option[Hash],
+    lastFeeTxRefsProof: Option[Hash],
+    lastAllowSpendRefsProof: Option[Hash],
+    activeAllowSpends: Option[Hash]
   ) extends StateProof
 
   object CurrencySnapshotStateProof {
-    def apply(a: (Hash, Hash, Option[Hash], Option[Hash])): CurrencySnapshotStateProof =
-      CurrencySnapshotStateProof(a._1, a._2, a._3, a._4)
+    def apply(a: (Hash, Hash, Option[Hash], Option[Hash], Option[Hash], Option[Hash])): CurrencySnapshotStateProof =
+      CurrencySnapshotStateProof(a._1, a._2, a._3, a._4, a._5, a._6)
   }
 
   @derive(encoder, decoder, eqv, show)
@@ -57,7 +60,8 @@ object currency {
     lastTxRefsProof: Hash,
     balancesProof: Hash
   ) extends StateProof {
-    def toCurrencySnapshotStateProof: CurrencySnapshotStateProof = CurrencySnapshotStateProof(lastTxRefsProof, balancesProof, None, None)
+    def toCurrencySnapshotStateProof: CurrencySnapshotStateProof =
+      CurrencySnapshotStateProof(lastTxRefsProof, balancesProof, None, None, None, None)
   }
 
   object CurrencySnapshotStateProofV1 {
@@ -72,11 +76,20 @@ object currency {
   case class CurrencySnapshotInfo(
     lastTxRefs: SortedMap[Address, TransactionReference],
     balances: SortedMap[Address, Balance],
-    lastMessages: Option[SortedMap[MessageType, Signed[CurrencyMessage]]] = None,
-    lastFeeTxRefs: Option[SortedMap[Address, TransactionReference]] = None
+    lastMessages: Option[SortedMap[MessageType, Signed[CurrencyMessage]]],
+    lastFeeTxRefs: Option[SortedMap[Address, TransactionReference]],
+    lastAllowSpendRefsProof: Option[SortedMap[Address, AllowSpendReference]],
+    activeAllowSpends: Option[SortedMap[Address, List[Signed[AllowSpend]]]]
   ) extends SnapshotInfo[CurrencySnapshotStateProof] {
     def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[CurrencySnapshotStateProof] =
-      (lastTxRefs.hash, balances.hash, lastMessages.traverse(_.hash), lastFeeTxRefs.traverse(_.hash)).tupled
+      (
+        lastTxRefs.hash,
+        balances.hash,
+        lastMessages.traverse(_.hash),
+        lastFeeTxRefs.traverse(_.hash),
+        lastAllowSpendRefsProof.traverse(_.hash),
+        activeAllowSpends.traverse(_.hash)
+      ).tupled
         .map(CurrencySnapshotStateProof.apply)
   }
 
@@ -88,7 +101,7 @@ object currency {
     def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[CurrencySnapshotStateProofV1] =
       (lastTxRefs.hash, balances.hash).tupled.map(CurrencySnapshotStateProofV1.apply)
 
-    def toCurrencySnapshotInfo: CurrencySnapshotInfo = CurrencySnapshotInfo(lastTxRefs, balances, None)
+    def toCurrencySnapshotInfo: CurrencySnapshotInfo = CurrencySnapshotInfo(lastTxRefs, balances, None, None, None, None)
   }
 
   object CurrencySnapshotInfoV1 {
