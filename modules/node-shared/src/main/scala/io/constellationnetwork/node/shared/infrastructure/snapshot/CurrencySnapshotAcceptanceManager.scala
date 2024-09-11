@@ -133,7 +133,10 @@ object CurrencySnapshotAcceptanceManager {
       csi = CurrencySnapshotInfo(
         transactionsRefs,
         updatedBalancesByRewards,
-        Option.when(messagesForContextUpdate.nonEmpty)(messagesForContextUpdate)
+        Option.when(messagesForContextUpdate.nonEmpty)(messagesForContextUpdate),
+        None,
+        None,
+        None
       )
       stateProof <- csi.stateProof(snapshotOrdinal)
 
