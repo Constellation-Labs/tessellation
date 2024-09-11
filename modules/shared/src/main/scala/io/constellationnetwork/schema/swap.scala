@@ -1,13 +1,33 @@
 package io.constellationnetwork.schema
 
-import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.transaction.TransactionOrdinal
-import io.constellationnetwork.security.hash.Hash
+import cats.Order._
+import cats.Show
+import cats.data.NonEmptySet
+import cats.effect.kernel.{Async, Sync}
+import cats.syntax.functor._
+import cats.syntax.semigroup._
 
-import derevo.cats.{order, show}
+import scala.util.Try
+
+import io.constellationnetwork.ext.cats.data.OrderBasedOrdering
+import io.constellationnetwork.ext.codecs._
+import io.constellationnetwork.ext.crypto._
+import io.constellationnetwork.ext.derevo.ordering
+import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.balance.Amount
+import io.constellationnetwork.schema.round.RoundId
+import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.{Encodable, Hashed, Hasher}
+
+import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
-import eu.timepit.refined.types.numeric.PosLong
+import enumeratum._
+import eu.timepit.refined.auto.{autoRefineV, autoUnwrap, _}
+import eu.timepit.refined.cats._
+import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
+import io.circe.{Decoder, Encoder}
 import io.estatico.newtype.macros.newtype
 
 object swap {
@@ -15,16 +35,54 @@ object swap {
   @newtype
   case class SwapAmount(value: PosLong)
 
+  object SwapAmount {
+    implicit def toAmount(amount: SwapAmount): Amount = Amount(amount.value)
+  }
+
   @derive(decoder, encoder, order, show)
   @newtype
   case class AllowSpendFee(value: PosLong)
+
+  object AllowSpendFee {
+    implicit def toAmount(fee: AllowSpendFee): Amount = Amount(fee.value)
+  }
 
   @derive(decoder, encoder, order, show)
   @newtype
   case class CurrencyId(value: Address)
 
+  @derive(decoder, encoder, show, order, ordering)
+  @newtype
+  case class AllowSpendOrdinal(value: NonNegLong) {
+    def next: AllowSpendOrdinal = AllowSpendOrdinal(value |+| 1L)
+  }
+
+  object AllowSpendOrdinal {
+    val first: AllowSpendOrdinal = AllowSpendOrdinal(1L)
+  }
+
   @derive(decoder, encoder, order, show)
-  case class AllowSpendReference(ordinal: TransactionOrdinal, hash: Hash)
+  case class AllowSpendReference(ordinal: AllowSpendOrdinal, hash: Hash)
+
+  object AllowSpendReference {
+    def of(hashedTransaction: Hashed[AllowSpend]): AllowSpendReference =
+      AllowSpendReference(hashedTransaction.ordinal, hashedTransaction.hash)
+
+    def of[F[_]: Async: Hasher](signedTransaction: Signed[AllowSpend]): F[AllowSpendReference] =
+      signedTransaction.value.hash.map(AllowSpendReference(signedTransaction.ordinal, _))
+
+    val empty: AllowSpendReference = AllowSpendReference(AllowSpendOrdinal(0L), Hash.empty)
+
+    def emptyCurrency[F[_]: Sync: Hasher](currencyAddress: Address): F[AllowSpendReference] =
+      currencyAddress.value.value.hash.map(emptyCurrency(_))
+
+    def emptyCurrency(currencyIdentifier: Hash): AllowSpendReference =
+      AllowSpendReference(AllowSpendOrdinal(0L), currencyIdentifier)
+
+  }
+
+  @derive(decoder, encoder, order, show, ordering)
+  sealed trait SwapTransaction
 
   @derive(decoder, encoder, order, show)
   case class AllowSpend(
@@ -36,7 +94,50 @@ object swap {
     parent: AllowSpendReference,
     lastValidOrdinal: SnapshotOrdinal,
     approvers: List[Address]
+  ) extends SwapTransaction {
+    val ordinal: AllowSpendOrdinal = parent.ordinal.next
+  }
+
+  object AllowSpend {
+    implicit object OrderingInstance extends OrderBasedOrdering[AllowSpend]
+  }
+
+  @derive(encoder)
+  case class AllowSpendView(
+    transaction: AllowSpend,
+    hash: Hash,
+    status: AllowSpendStatus
   )
+
+  @derive(eqv, show)
+  sealed trait AllowSpendStatus extends EnumEntry
+
+  object AllowSpendStatus extends Enum[AllowSpendStatus] with AllowSpendStatusCodecs {
+    val values = findValues
+
+    case object Waiting extends AllowSpendStatus
+  }
+
+  trait AllowSpendStatusCodecs {
+    implicit val encode: Encoder[AllowSpendStatus] = Encoder.encodeString.contramap[AllowSpendStatus](_.entryName)
+    implicit val decode: Decoder[AllowSpendStatus] =
+      Decoder.decodeString.emapTry(s => Try(AllowSpendStatus.withName(s)))
+  }
+
+  @derive(decoder, encoder, show)
+  case class SwapBlock(
+    roundId: RoundId,
+    transactions: NonEmptySet[Signed[SwapTransaction]]
+  ) extends Encodable[(RoundId, NonEmptySet[Signed[SwapTransaction]])] {
+    override def toEncode = (roundId, transactions)
+    override def jsonEncoder = implicitly
+  }
+
+  object SwapBlock {
+    implicit val roundIdShow: Show[RoundId] = RoundId.shortShow
+    implicit val transactionsDecoder: Decoder[NonEmptySet[Signed[SwapTransaction]]] =
+      NonEmptySetCodec.decoder[Signed[SwapTransaction]]
+  }
 
   @derive(decoder, encoder, order, show)
   @newtype
