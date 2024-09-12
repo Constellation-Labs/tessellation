@@ -10,11 +10,13 @@ import io.constellationnetwork.dag.l1.config.types.AppConfig
 import io.constellationnetwork.dag.l1.domain.block.BlockService
 import io.constellationnetwork.dag.l1.domain.transaction.TransactionService
 import io.constellationnetwork.dag.l1.modules.{Services => BaseServices, Validators}
+import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.domain.cluster.storage.L0ClusterStorage
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.collateral.Collateral
+import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.modules.SharedServices
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
@@ -22,7 +24,7 @@ import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshot
 import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
 
 object Services {
-  def make[F[_]: Async: HasherSelector: SecurityProvider](
+  def make[F[_]: Async: HasherSelector: SecurityProvider, R <: CliMethod](
     storages: Storages[
       F,
       CurrencySnapshotStateProof,
@@ -32,14 +34,14 @@ object Services {
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     globalL0Cluster: L0ClusterStorage[F],
     validators: Validators[F],
-    sharedServices: SharedServices[F],
+    sharedServices: SharedServices[F, R],
     p2PClient: P2PClient[F],
     cfg: AppConfig,
     maybeDataApplication: Option[BaseDataApplicationL1Service[F]],
     maybeMajorityPeerIds: Option[NonEmptySet[PeerId]],
     txHasher: Hasher[F]
-  ): Services[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo] =
-    new Services[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo] {
+  ): Services[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, R] =
+    new Services[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, R] {
 
       val localHealthcheck = sharedServices.localHealthcheck
       val block = BlockService.make[F](
@@ -64,9 +66,12 @@ object Services {
       )
       val collateral = Collateral.make[F](cfg.collateral, storages.lastSnapshot)
       val dataApplication = maybeDataApplication
+      val restart = sharedServices.restart
     }
 }
 
-sealed abstract class Services[F[_], P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P]] extends BaseServices[F, P, S, SI] {
+sealed abstract class Services[F[_], P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P], R <: CliMethod]
+    extends BaseServices[F, P, S, SI, R] {
   val dataApplication: Option[BaseDataApplicationL1Service[F]]
+  val restart: RestartService[F, R]
 }

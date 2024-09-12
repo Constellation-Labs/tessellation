@@ -11,6 +11,7 @@ import cats.syntax.functor._
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.types.{CollateralConfig, SharedConfig}
 import io.constellationnetwork.node.shared.domain.cluster.services.{Cluster, Session}
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
@@ -23,6 +24,7 @@ import io.constellationnetwork.node.shared.infrastructure.cluster.services.Clust
 import io.constellationnetwork.node.shared.infrastructure.gossip.Gossip
 import io.constellationnetwork.node.shared.infrastructure.healthcheck.LocalHealthcheck
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.generation.Generation
@@ -34,7 +36,7 @@ import fs2.concurrent.SignallingRef
 
 object SharedServices {
 
-  def make[F[_]: Async: HasherSelector: SecurityProvider: Metrics: Supervisor: JsonSerializer: KryoSerializer](
+  def make[F[_]: Async: HasherSelector: SecurityProvider: Metrics: Supervisor: JsonSerializer: KryoSerializer, A <: CliMethod](
     cfg: SharedConfig,
     nodeId: PeerId,
     generation: Generation,
@@ -45,30 +47,31 @@ object SharedServices {
     nodeClient: NodeClient[F],
     validators: SharedValidators[F],
     seedlist: Option[Set[SeedlistEntry]],
-    restartSignal: SignallingRef[F, Boolean],
+    restartSignal: SignallingRef[F, Option[A]],
     versionHash: Hash,
     collateral: CollateralConfig,
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
     environment: AppEnvironment,
     txHasher: Hasher[F]
-  ): F[SharedServices[F]] = {
-
-    val cluster = Cluster
-      .make[F](
-        cfg.leavingDelay,
-        cfg.http,
-        nodeId,
-        keyPair,
-        storages.cluster,
-        storages.session,
-        storages.node,
-        seedlist,
-        restartSignal,
-        versionHash,
-        environment
-      )
-
+  ): F[SharedServices[F, A]] =
     for {
+      restartService <- RestartService.make(restartSignal, storages.cluster)
+
+      cluster = Cluster
+        .make[F](
+          cfg.leavingDelay,
+          cfg.http,
+          nodeId,
+          keyPair,
+          storages.cluster,
+          storages.session,
+          storages.node,
+          seedlist,
+          restartService,
+          versionHash,
+          environment
+        )
+
       localHealthcheck <- LocalHealthcheck.make[F](nodeClient, storages.cluster)
       gossip <- HasherSelector[F].withCurrent(implicit hasher => Gossip.make[F](queues.rumor, nodeId, generation, keyPair))
       currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
@@ -110,7 +113,7 @@ object SharedServices {
       )
       globalSnapshotContextFns = GlobalSnapshotContextFunctions.make(globalSnapshotAcceptanceManager)
     } yield
-      new SharedServices[F](
+      new SharedServices[F, A](
         localHealthcheck = localHealthcheck,
         cluster = cluster,
         session = session,
@@ -118,12 +121,12 @@ object SharedServices {
         globalSnapshotContextFns = globalSnapshotContextFns,
         currencySnapshotContextFns = currencySnapshotContextFns,
         currencySnapshotAcceptanceManager = currencySnapshotAcceptanceManager,
-        currencyEventsCutter = currencyEventsCutter
+        currencyEventsCutter = currencyEventsCutter,
+        restart = restartService
       ) {}
-  }
 }
 
-sealed abstract class SharedServices[F[_]] private (
+sealed abstract class SharedServices[F[_], A <: CliMethod] private (
   val localHealthcheck: LocalHealthcheck[F],
   val cluster: Cluster[F],
   val session: Session[F],
@@ -131,5 +134,6 @@ sealed abstract class SharedServices[F[_]] private (
   val globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
   val currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
   val currencySnapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F],
-  val currencyEventsCutter: CurrencyEventsCutter[F]
+  val currencyEventsCutter: CurrencyEventsCutter[F],
+  val restart: RestartService[F, A]
 )

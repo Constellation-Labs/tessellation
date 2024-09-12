@@ -1,5 +1,6 @@
 package io.constellationnetwork.dag.l0.cli
 
+import cats.data.NonEmptySet
 import cats.syntax.all._
 
 import io.constellationnetwork.dag.l0.config.types._
@@ -12,6 +13,7 @@ import io.constellationnetwork.node.shared.cli.{CliMethod, CollateralAmountOpts}
 import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.infrastructure.statechannel.StateChannelAllowanceLists
 import io.constellationnetwork.schema.balance.Amount
+import io.constellationnetwork.schema.cluster.PeerToJoin
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.security.hash.Hash
 
@@ -119,6 +121,20 @@ object method {
       ).mapN(RunRollback.apply)
     }
   }
+
+  case class RunValidatorWithJoinAttempt(
+    keyStore: StorePath,
+    alias: KeyAlias,
+    password: Password,
+    dbConfig: DBConfig,
+    httpConfig: HttpConfig,
+    environment: AppEnvironment,
+    seedlistPath: Option[SeedListPath],
+    collateralAmount: Option[Amount],
+    trustRatingsPath: Option[Path],
+    prioritySeedlistPath: Option[SeedListPath],
+    peerToJoinPool: NonEmptySet[PeerToJoin]
+  ) extends Run
 
   case class RunValidator(
     keyStore: StorePath,

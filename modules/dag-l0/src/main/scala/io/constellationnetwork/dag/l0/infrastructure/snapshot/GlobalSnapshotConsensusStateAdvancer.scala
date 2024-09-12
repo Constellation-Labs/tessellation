@@ -7,10 +7,13 @@ import cats.data.{NonEmptySet, StateT}
 import cats.effect.Async
 import cats.syntax.all._
 
+import scala.concurrent.duration.FiniteDuration
+
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema._
 import io.constellationnetwork.ext.collection.FoldableOps.pickMajority
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
+import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusStateUpdater._
 import io.constellationnetwork.node.shared.infrastructure.consensus._
@@ -18,6 +21,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.
 import io.constellationnetwork.node.shared.infrastructure.consensus.message._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.TimeTrigger
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.SnapshotConsensusFunctions.gossipForkInfo
 import io.constellationnetwork.schema.GlobalIncrementalSnapshot
 import io.constellationnetwork.schema.peer.PeerId
@@ -46,7 +50,10 @@ object GlobalSnapshotConsensusStateAdvancer {
     consensusStorage: GlobalConsensusStorage[F],
     globalSnapshotStorage: SnapshotStorage[F, GlobalSnapshotArtifact, GlobalSnapshotContext],
     consensusFns: GlobalSnapshotConsensusFunctions[F],
-    gossip: Gossip[F]
+    gossip: Gossip[F],
+    restartService: RestartService[F, _],
+    nodeStorage: NodeStorage[F],
+    leavingDelay: FiniteDuration
   ): GlobalSnapshotConsensusStateAdvancer[F] = new GlobalSnapshotConsensusStateAdvancer[F] {
     val logger = Slf4jLogger.getLogger[F]
     val facilitatorsObservationName = "facilitators"
@@ -78,10 +85,14 @@ object GlobalSnapshotConsensusStateAdvancer {
 
           state.status match {
             case CollectingFacilities(_, ownFacilitatorsHash) =>
-              val maybeFacilities = maybeGetAllDeclarations(state, resources)(_.facility).map(_.values.toList)
+              val maybeFacilities = maybeGetAllDeclarations(state, resources)(_.facility)
 
               maybeFacilities.traverseTap { facilities =>
-                warnIfForking[F](ownFacilitatorsHash, facilitatorsObservationName)(facilities.map(_.facilitatorsHash))
+                recoverIfForking[F](ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage, leavingDelay)(
+                  facilities.map {
+                    case (peer, facility) => (peer, facility.facilitatorsHash)
+                  }
+                )
               }.flatMap {
                 _.map(_.foldMap(f => (f.upperBound, f.candidates.value, f.trigger.toList))).flatMap {
                   case (bound, candidates, triggers) => pickMajority(triggers).map((bound, candidates, _))
@@ -133,13 +144,15 @@ object GlobalSnapshotConsensusStateAdvancer {
             case CollectingProposals(majorityTrigger, proposalInfo, candidates, ownFacilitatorsHash) =>
               HasherSelector[F].withCurrent { implicit hasher =>
                 val maybeAllProposals =
-                  maybeGetAllDeclarations(state, resources)(_.proposal).map(_.values.toList)
+                  maybeGetAllDeclarations(state, resources)(_.proposal)
 
                 maybeAllProposals.traverseTap(d =>
-                  warnIfForking(ownFacilitatorsHash, facilitatorsObservationName)(d.map(_.facilitatorsHash))
+                  recoverIfForking(ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage, leavingDelay)(d.map {
+                    case (peerId, proposal) => (peerId, proposal.facilitatorsHash)
+                  })
                 ) >>
                   maybeAllProposals
-                    .map(allProposals => allProposals.map(_.hash))
+                    .map(allProposals => allProposals.values.toList.map(_.hash))
                     .flatTraverse { allProposalHashes =>
                       pickValidatedMajorityArtifact(
                         proposalInfo,
@@ -182,7 +195,11 @@ object GlobalSnapshotConsensusStateAdvancer {
 
               maybeAllSignatures
                 .traverseTap(signatures =>
-                  warnIfForking(ownFacilitatorsHash, facilitatorsObservationName)(signatures.values.toList.map(_.facilitatorsHash))
+                  recoverIfForking(ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage, leavingDelay)(
+                    signatures.map {
+                      case (peerId, majoritySignature) => (peerId, majoritySignature.facilitatorsHash)
+                    }
+                  )
                 )
                 .flatMap {
                   _.map(_.map { case (id, signature) => SignatureProof(PeerId._Id.get(id), signature.signature) }.toList).traverse {

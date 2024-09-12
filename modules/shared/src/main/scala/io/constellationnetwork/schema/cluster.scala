@@ -2,8 +2,8 @@ package io.constellationnetwork.schema
 
 import java.util.UUID
 
-import cats.Show
-import cats.syntax.show._
+import cats.syntax.all._
+import cats.{Order, Show}
 
 import scala.util.control.NoStackTrace
 
@@ -39,6 +39,8 @@ object cluster {
   case class PeerToJoin(id: PeerId, ip: Host, p2pPort: Port)
 
   object PeerToJoin {
+
+    implicit val order: Order[PeerToJoin] = Order[PeerId].contramap(_.id)
 
     implicit def apply(p2PContext: P2PContext): PeerToJoin =
       PeerToJoin(p2PContext.id, p2PContext.ip, p2PContext.port)

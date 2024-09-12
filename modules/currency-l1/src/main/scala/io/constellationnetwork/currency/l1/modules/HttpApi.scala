@@ -11,6 +11,7 @@ import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL1Se
 import io.constellationnetwork.currency.l1.http.DataApplicationRoutes
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.dag.l1.http.{Routes => DAGRoutes}
+import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.types.HttpConfig
 import io.constellationnetwork.node.shared.http.p2p.middlewares.{PeerAuthMiddleware, `X-Id-Middleware`}
 import io.constellationnetwork.node.shared.http.routes._
@@ -30,7 +31,8 @@ object HttpApi {
     F[_]: Async: HasherSelector: SecurityProvider: Metrics: Supervisor: L1NodeContext,
     P <: StateProof,
     S <: Snapshot,
-    SI <: SnapshotInfo[P]
+    SI <: SnapshotInfo[P],
+    R <: CliMethod
   ](
     maybeDataApplication: Option[BaseDataApplicationL1Service[F]],
     storages: Storages[
@@ -45,21 +47,23 @@ object HttpApi {
       F,
       CurrencySnapshotStateProof,
       CurrencyIncrementalSnapshot,
-      CurrencySnapshotInfo
+      CurrencySnapshotInfo,
+      R
     ],
     programs: Programs[
       F,
       CurrencySnapshotStateProof,
       CurrencyIncrementalSnapshot,
-      CurrencySnapshotInfo
+      CurrencySnapshotInfo,
+      R
     ],
     selfId: PeerId,
     nodeVersion: TessellationVersion,
     httpCfg: HttpConfig,
     maybeMetagraphVersion: Option[MetagraphVersion],
     txHasher: Hasher[F]
-  ): HttpApi[F] =
-    new HttpApi[F](
+  ): HttpApi[F, R] =
+    new HttpApi[F, R](
       maybeDataApplication,
       storages,
       queues,
@@ -75,14 +79,15 @@ object HttpApi {
 }
 
 sealed abstract class HttpApi[
-  F[_]: Async: HasherSelector: SecurityProvider: Metrics: Supervisor: L1NodeContext
+  F[_]: Async: HasherSelector: SecurityProvider: Metrics: Supervisor: L1NodeContext,
+  R <: CliMethod
 ] private (
   maybeDataApplication: Option[BaseDataApplicationL1Service[F]],
   storages: Storages[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
   queues: Queues[F],
   privateKey: PrivateKey,
-  services: Services[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
-  programs: Programs[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
+  services: Services[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, R],
+  programs: Programs[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, R],
   selfId: PeerId,
   nodeVersion: TessellationVersion,
   httpCfg: HttpConfig,

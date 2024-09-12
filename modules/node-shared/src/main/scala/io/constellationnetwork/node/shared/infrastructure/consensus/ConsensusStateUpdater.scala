@@ -2,19 +2,24 @@ package io.constellationnetwork.node.shared.infrastructure.consensus
 
 import cats._
 import cats.data.StateT
-import cats.effect.{Async, Sync}
+import cats.effect.{Async, Sync, Temporal}
 import cats.syntax.all._
 
+import scala.collection.immutable.SortedMap
+import scala.concurrent.duration._
 import scala.reflect.runtime.universe.TypeTag
 
 import io.constellationnetwork.ext.collection.FoldableOps.pickMajority
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
+import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusState._
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusStorage.ModifyStateFn
 import io.constellationnetwork.node.shared.infrastructure.consensus.message._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.infrastructure.consensus.update.UnlockConsensusUpdate
+import io.constellationnetwork.node.shared.infrastructure.node.RestartService
+import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
@@ -205,14 +210,35 @@ object ConsensusStateUpdater {
       }
     }
 
-  def warnIfForking[F[_]: Sync](ownObservationHash: Hash, observationName: String)(
-    observations: List[Hash]
+  def recoverIfForking[F[_]: Async](
+    ownObservationHash: Hash,
+    observationName: String,
+    restartService: RestartService[F, _],
+    nodeStorage: NodeStorage[F],
+    leavingDelay: FiniteDuration
+  )(
+    observations: SortedMap[PeerId, Hash]
   ): F[Unit] =
-    pickMajority(observations).traverse { majorityObservationHash =>
-      Slf4jLogger
-        .getLogger[F]
-        .warn(s"Different hash observations [$observationName]. This node is in fork")
-        .whenA(majorityObservationHash =!= ownObservationHash)
+    pickMajority(observations.values.toList).traverse { majorityObservationHash =>
+      val isForked = majorityObservationHash =!= ownObservationHash
+
+      if (isForked) {
+        val majorityForkPeers = observations.collect {
+          case (peerId, observationHash) if observationHash === majorityObservationHash => peerId
+        }.toList
+
+        val forkRecovery = Slf4jLogger
+          .getLogger[F]
+          .warn(s"Different hash observations [$observationName]. This node is in fork") >>
+          nodeStorage.setNodeState(NodeState.Leaving) >>
+          Temporal[F].sleep(leavingDelay) >>
+          nodeStorage.setNodeState(NodeState.Offline) >>
+          Temporal[F].sleep(5.seconds) >>
+          restartService.signalNodeForkedRestart(majorityForkPeers)
+
+        Temporal[F].start(forkRecovery).void
+
+      } else Applicative[F].unit
     }.void
 
   def pickValidatedMajorityArtifact[F[_]: Sync, Event, Key, Artifact, Context, Kind](

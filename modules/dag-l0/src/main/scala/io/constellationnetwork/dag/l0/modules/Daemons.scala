@@ -8,6 +8,7 @@ import cats.syntax.traverse._
 import io.constellationnetwork.dag.l0.config.types.AppConfig
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.GlobalSnapshotEventsPublisherDaemon
 import io.constellationnetwork.dag.l0.infrastructure.trust.TrustStorageUpdater
+import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.domain.Daemon
 import io.constellationnetwork.node.shared.infrastructure.cluster.daemon.NodeStateDaemon
 import io.constellationnetwork.node.shared.infrastructure.collateral.daemon.CollateralDaemon
@@ -17,9 +18,9 @@ import io.constellationnetwork.security.HasherSelector
 
 object Daemons {
 
-  def start[F[_]: Async: Supervisor](
+  def start[F[_]: Async: Supervisor, R <: CliMethod](
     storages: Storages[F],
-    services: Services[F],
+    services: Services[F, R],
     programs: Programs[F],
     queues: Queues[F],
     nodeId: PeerId,
