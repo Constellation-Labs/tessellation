@@ -39,7 +39,7 @@ trait HttpSuite extends MutableIOSuite with Checkers {
   def expectLocationHeader(routes: HttpRoutes[IO], req: Request[IO])(path: Path): IO[Expectations] =
     routes.run(req).value.map {
       case Some(res) => expect.same(res.headers.get[Location], Some(Location(Uri(path = path))))
-      case None      => failure("""route not found"""")
+      case None      => failure("route not found")
     }
 
   def expectHttpFailure(routes: HttpRoutes[IO], req: Request[IO]): IO[Expectations] =
