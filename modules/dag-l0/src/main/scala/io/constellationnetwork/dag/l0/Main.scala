@@ -76,7 +76,7 @@ object Main
         )
         .asResource
       services <- Services
-        .make[IO](
+        .make[IO, Run](
           sharedServices,
           queues,
           storages,
@@ -91,7 +91,7 @@ object Main
           Hasher.forKryo[IO]
         )
         .asResource
-      programs = Programs.make[IO](
+      programs = Programs.make[IO, Run](
         sharedPrograms,
         storages,
         services,
@@ -113,7 +113,7 @@ object Main
         .asResource
 
       api = HttpApi
-        .make[IO](
+        .make[IO, Run](
           storages,
           queues,
           services,
@@ -143,9 +143,57 @@ object Main
       )
 
       _ <- (method match {
-        case _: RunValidator =>
+        case m: RunValidator =>
           gossipDaemon.startAsRegularValidator >>
-            storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
+            storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
+            services.restart.setNodeForkedRestartMethod(
+              RunValidatorWithJoinAttempt(
+                m.keyStore,
+                m.alias,
+                m.password,
+                m.dbConfig,
+                m.httpConfig,
+                m.environment,
+                m.seedlistPath,
+                m.collateralAmount,
+                m.trustRatingsPath,
+                m.prioritySeedlistPath,
+                _
+              )
+            )
+        case m: RunValidatorWithJoinAttempt =>
+          gossipDaemon.startAsRegularValidator >>
+            storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
+            programs.joining.joinOneOf(m.peerToJoinPool) >>
+            services.restart.setClusterLeaveRestartMethod(
+              RunValidator(
+                m.keyStore,
+                m.alias,
+                m.password,
+                m.dbConfig,
+                m.httpConfig,
+                m.environment,
+                m.seedlistPath,
+                m.collateralAmount,
+                m.trustRatingsPath,
+                m.prioritySeedlistPath
+              )
+            ) >>
+            services.restart.setNodeForkedRestartMethod(
+              RunValidatorWithJoinAttempt(
+                m.keyStore,
+                m.alias,
+                m.password,
+                m.dbConfig,
+                m.httpConfig,
+                m.environment,
+                m.seedlistPath,
+                m.collateralAmount,
+                m.trustRatingsPath,
+                m.prioritySeedlistPath,
+                _
+              )
+            )
         case m: RunRollback =>
           storages.node.tryModifyState(
             NodeState.Initial,
@@ -176,7 +224,7 @@ object Main
             services.cluster.createSession >>
             services.session.createSession >>
             storages.node.setNodeState(NodeState.Ready) >>
-            restartMethodR.set(
+            services.restart.setClusterLeaveRestartMethod(
               RunValidator(
                 m.keyStore,
                 m.alias,
@@ -188,7 +236,22 @@ object Main
                 m.collateralAmount,
                 m.trustRatingsPath,
                 m.prioritySeedlistPath
-              ).some
+              )
+            ) >>
+            services.restart.setNodeForkedRestartMethod(
+              RunValidatorWithJoinAttempt(
+                m.keyStore,
+                m.alias,
+                m.password,
+                m.dbConfig,
+                m.httpConfig,
+                m.environment,
+                m.seedlistPath,
+                m.collateralAmount,
+                m.trustRatingsPath,
+                m.prioritySeedlistPath,
+                _
+              )
             )
         case m: RunGenesis =>
           storages.node.tryModifyState(
@@ -250,7 +313,7 @@ object Main
             services.cluster.createSession >>
             services.session.createSession >>
             storages.node.setNodeState(NodeState.Ready) >>
-            restartMethodR.set(
+            services.restart.setClusterLeaveRestartMethod(
               RunValidator(
                 m.keyStore,
                 m.alias,
@@ -262,7 +325,22 @@ object Main
                 m.collateralAmount,
                 m.trustRatingsPath,
                 m.prioritySeedlistPath
-              ).some
+              )
+            ) >>
+            services.restart.setNodeForkedRestartMethod(
+              RunValidatorWithJoinAttempt(
+                m.keyStore,
+                m.alias,
+                m.password,
+                m.dbConfig,
+                m.httpConfig,
+                m.environment,
+                m.seedlistPath,
+                m.collateralAmount,
+                m.trustRatingsPath,
+                m.prioritySeedlistPath,
+                _
+              )
             )
       }).asResource
     } yield ()

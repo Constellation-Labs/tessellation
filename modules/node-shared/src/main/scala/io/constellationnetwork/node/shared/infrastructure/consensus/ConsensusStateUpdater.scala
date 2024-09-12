@@ -5,6 +5,7 @@ import cats.data.StateT
 import cats.effect.{Async, Sync}
 import cats.syntax.all._
 
+import scala.collection.immutable.SortedMap
 import scala.reflect.runtime.universe.TypeTag
 
 import io.constellationnetwork.ext.collection.FoldableOps.pickMajority
@@ -15,6 +16,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusSto
 import io.constellationnetwork.node.shared.infrastructure.consensus.message._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.infrastructure.consensus.update.UnlockConsensusUpdate
+import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
@@ -205,14 +207,22 @@ object ConsensusStateUpdater {
       }
     }
 
-  def warnIfForking[F[_]: Sync](ownObservationHash: Hash, observationName: String)(
-    observations: List[Hash]
+  def recoverIfForking[F[_]: Sync](ownObservationHash: Hash, observationName: String, restartService: RestartService[F, _])(
+    observations: SortedMap[PeerId, Hash]
   ): F[Unit] =
-    pickMajority(observations).traverse { majorityObservationHash =>
-      Slf4jLogger
-        .getLogger[F]
-        .warn(s"Different hash observations [$observationName]. This node is in fork")
-        .whenA(majorityObservationHash =!= ownObservationHash)
+    pickMajority(observations.values.toList).traverse { majorityObservationHash =>
+      val isForked = majorityObservationHash =!= ownObservationHash
+
+      if (isForked) {
+        val majorityForkPeers = observations.collect {
+          case (peerId, observationHash) if observationHash === majorityObservationHash => peerId
+        }.toList
+
+        Slf4jLogger
+          .getLogger[F]
+          .warn(s"Different hash observations [$observationName]. This node is in fork") >>
+          restartService.signalNodeForkedRestart(majorityForkPeers)
+      } else Applicative[F].unit
     }.void
 
   def pickValidatedMajorityArtifact[F[_]: Sync, Event, Key, Artifact, Context, Kind](

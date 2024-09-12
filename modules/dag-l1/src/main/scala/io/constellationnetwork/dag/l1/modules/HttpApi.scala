@@ -7,6 +7,7 @@ import cats.effect.std.Supervisor
 import cats.syntax.semigroupk._
 
 import io.constellationnetwork.dag.l1.http.Routes
+import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.types.HttpConfig
 import io.constellationnetwork.node.shared.http.p2p.middlewares.{PeerAuthMiddleware, `X-Id-Middleware`}
 import io.constellationnetwork.node.shared.http.routes._
@@ -26,31 +27,33 @@ object HttpApi {
     F[_]: Async: HasherSelector: SecurityProvider: Metrics: Supervisor,
     P <: StateProof,
     S <: Snapshot,
-    SI <: SnapshotInfo[P]
+    SI <: SnapshotInfo[P],
+    R <: CliMethod
   ](
     storages: Storages[F, P, S, SI],
     queues: Queues[F],
     privateKey: PrivateKey,
-    services: Services[F, P, S, SI],
+    services: Services[F, P, S, SI, R],
     programs: Programs[F, P, S, SI],
     selfId: PeerId,
     nodeVersion: TessellationVersion,
     httpCfg: HttpConfig,
     txHasher: Hasher[F]
-  ): HttpApi[F, P, S, SI] =
-    new HttpApi[F, P, S, SI](storages, queues, privateKey, services, programs, selfId, nodeVersion, httpCfg, txHasher) {}
+  ): HttpApi[F, P, S, SI, R] =
+    new HttpApi[F, P, S, SI, R](storages, queues, privateKey, services, programs, selfId, nodeVersion, httpCfg, txHasher) {}
 }
 
 sealed abstract class HttpApi[
   F[_]: Async: HasherSelector: SecurityProvider: Metrics: Supervisor,
   P <: StateProof,
   S <: Snapshot,
-  SI <: SnapshotInfo[P]
+  SI <: SnapshotInfo[P],
+  R <: CliMethod
 ] private (
   storages: Storages[F, P, S, SI],
   queues: Queues[F],
   privateKey: PrivateKey,
-  services: Services[F, P, S, SI],
+  services: Services[F, P, S, SI, R],
   programs: Programs[F, P, S, SI],
   selfId: PeerId,
   nodeVersion: TessellationVersion,

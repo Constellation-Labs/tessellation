@@ -2,7 +2,6 @@ package io.constellationnetwork.node.shared.app
 
 import java.security.KeyPair
 
-import cats.effect.Ref
 import cats.effect.std.{Random, Supervisor}
 
 import io.constellationnetwork.json.JsonSerializer
@@ -42,14 +41,13 @@ trait NodeShared[F[_], A <: CliMethod] {
   val sharedP2PClient: SharedP2PClient[F]
   val sharedQueues: SharedQueues[F]
   val sharedStorages: SharedStorages[F]
-  val sharedServices: SharedServices[F]
-  val sharedPrograms: SharedPrograms[F]
+  val sharedServices: SharedServices[F, A]
+  val sharedPrograms: SharedPrograms[F, A]
   val sharedValidators: SharedValidators[F]
   val prioritySeedlist: Option[Set[SeedlistEntry]]
 
   val hashSelect: HashSelect
 
-  def restartSignal: SignallingRef[F, Boolean]
+  def restartSignal: SignallingRef[F, Option[A]]
   def stopSignal: SignallingRef[F, Boolean]
-  def restartMethodR: Ref[F, Option[A]]
 }

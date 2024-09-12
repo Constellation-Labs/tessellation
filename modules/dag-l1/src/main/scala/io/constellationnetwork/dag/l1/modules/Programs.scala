@@ -5,14 +5,15 @@ import cats.effect.std.Random
 
 import io.constellationnetwork.dag.l1.domain.snapshot.programs.SnapshotProcessor
 import io.constellationnetwork.dag.l1.http.p2p.P2PClient
+import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.domain.cluster.programs.{Joining, L0PeerDiscovery, PeerDiscovery}
 import io.constellationnetwork.node.shared.modules.SharedPrograms
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 
 object Programs {
 
-  def make[F[_]: Async: Random, P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P]](
-    sharedPrograms: SharedPrograms[F],
+  def make[F[_]: Async: Random, P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P], R <: CliMethod](
+    sharedPrograms: SharedPrograms[F, R],
     p2pClient: P2PClient[F],
     storages: Storages[F, P, S, SI],
     snapshotProcessorProgram: SnapshotProcessor[F, P, S, SI]

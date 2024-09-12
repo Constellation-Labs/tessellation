@@ -20,6 +20,7 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.declaration.
 import io.constellationnetwork.node.shared.infrastructure.consensus.message._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.TimeTrigger
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.SnapshotConsensusFunctions.gossipForkInfo
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema.currencyMessage.fetchStakingAddress
@@ -51,7 +52,8 @@ object CurrencySnapshotConsensusStateAdvancer {
     consensusFns: CurrencySnapshotConsensusFunctions[F],
     stateChannelSnapshotService: StateChannelSnapshotService[F],
     gossip: Gossip[F],
-    maybeDataApplication: Option[BaseDataApplicationL0Service[F]]
+    maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
+    restartService: RestartService[F, _]
   ): CurrencySnapshotConsensusStateAdvancer[F] =
     new CurrencySnapshotConsensusStateAdvancer[F] {
       val logger = Slf4jLogger.getLogger[F]
@@ -80,10 +82,12 @@ object CurrencySnapshotConsensusStateAdvancer {
 
               state.status match {
                 case CollectingFacilities(_, ownFacilitatorsHash) =>
-                  val maybeFacilities = maybeGetAllDeclarations(state, resources)(_.facility).map(_.values.toList)
+                  val maybeFacilities = maybeGetAllDeclarations(state, resources)(_.facility)
 
                   maybeFacilities.traverseTap { facilities =>
-                    warnIfForking[F](ownFacilitatorsHash, facilitatorsObservationName)(facilities.map(_.facilitatorsHash))
+                    recoverIfForking[F](ownFacilitatorsHash, facilitatorsObservationName, restartService)(facilities.map {
+                      case (peerId, facility) => (peerId, facility.facilitatorsHash)
+                    })
                   }.flatMap {
                     _.map(_.foldMap(f => (f.upperBound, f.candidates.value, f.trigger.toList))).flatMap {
                       case (bound, candidates, triggers) => pickMajority(triggers).map((bound, candidates, _))
@@ -129,13 +133,15 @@ object CurrencySnapshotConsensusStateAdvancer {
                   }
                 case CollectingProposals(majorityTrigger, proposalInfo, candidates, ownFacilitatorsHash) =>
                   val maybeAllProposals =
-                    maybeGetAllDeclarations(state, resources)(_.proposal).map(_.values.toList)
+                    maybeGetAllDeclarations(state, resources)(_.proposal)
 
                   maybeAllProposals.traverseTap(d =>
-                    warnIfForking(ownFacilitatorsHash, facilitatorsObservationName)(d.map(_.facilitatorsHash))
+                    recoverIfForking(ownFacilitatorsHash, facilitatorsObservationName, restartService)(d.map {
+                      case (peerId, proposal) => (peerId, proposal.facilitatorsHash)
+                    })
                   ) >>
                     maybeAllProposals
-                      .map(allProposals => allProposals.map(_.hash))
+                      .map(allProposals => allProposals.values.toList.map(_.hash))
                       .flatTraverse { allProposalHashes =>
                         pickValidatedMajorityArtifact(
                           proposalInfo,
@@ -184,7 +190,9 @@ object CurrencySnapshotConsensusStateAdvancer {
                   maybeGlobalSnapshotOrdinal.flatTraverse { globalSnapshotOrdinal =>
                     maybeAllSignatures
                       .traverseTap(signatures =>
-                        warnIfForking(ownFacilitatorsHash, facilitatorsObservationName)(signatures.values.toList.map(_.facilitatorsHash))
+                        recoverIfForking(ownFacilitatorsHash, facilitatorsObservationName, restartService)(signatures.map {
+                          case (peerId, majoritySignature) => (peerId, majoritySignature.facilitatorsHash)
+                        })
                       )
                       .flatMap {
                         _.map(_.map { case (id, signature) => SignatureProof(PeerId._Id.get(id), signature.signature) }.toList).traverse {
@@ -254,8 +262,8 @@ object CurrencySnapshotConsensusStateAdvancer {
                     for {
                       binarySignatures <- OptionT.fromOption[F](maybeAllBinarySignatures)
                       _ <- OptionT.liftF(
-                        warnIfForking(ownFacilitatorsHash, facilitatorsObservationName)(
-                          binarySignatures.values.toList.map(_.facilitatorsHash)
+                        recoverIfForking(ownFacilitatorsHash, facilitatorsObservationName, restartService)(
+                          binarySignatures.map { case (peerId, binarySignature) => (peerId, binarySignature.facilitatorsHash) }
                         )
                       )
                       allSignatures = binarySignatures.map { case (id, bs) => SignatureProof(PeerId._Id.get(id), bs.signature) }.toList

@@ -16,14 +16,13 @@ import io.constellationnetwork.node.shared.domain.cluster.services.Cluster
 import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorage, SessionStorage}
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
+import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.schema.cluster._
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hasher, SecurityProvider}
-
-import fs2.concurrent.SignallingRef
 
 object Cluster {
 
@@ -36,7 +35,7 @@ object Cluster {
     sessionStorage: SessionStorage[F],
     nodeStorage: NodeStorage[F],
     seedlist: Option[Set[SeedlistEntry]],
-    restartSignal: SignallingRef[F, Boolean],
+    restartService: RestartService[F, _],
     versionHash: Hash,
     environment: AppEnvironment
   ): Cluster[F] =
@@ -79,7 +78,7 @@ object Cluster {
             Temporal[F].sleep(leavingDelay) >>
             nodeStorage.setNodeState(NodeState.Offline) >>
             Temporal[F].sleep(5.seconds) >>
-            restartSignal.set(true)
+            restartService.signalClusterLeaveRestart()
 
         Temporal[F].start(process).void
       }

@@ -10,7 +10,7 @@ import scala.concurrent.duration._
 
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL1Service, L1NodeContext}
 import io.constellationnetwork.currency.l1.cli.method
-import io.constellationnetwork.currency.l1.cli.method.{Run, RunInitialValidator, RunValidator}
+import io.constellationnetwork.currency.l1.cli.method._
 import io.constellationnetwork.currency.l1.domain.snapshot.programs.CurrencySnapshotProcessor
 import io.constellationnetwork.currency.l1.http.p2p.P2PClient
 import io.constellationnetwork.currency.l1.modules._
@@ -114,7 +114,7 @@ abstract class CurrencyL1App(
       ).asResource
       dataApplicationService <- dataApplication.sequence
       services = Services
-        .make[IO](
+        .make[IO, Run](
           storages,
           storages.lastGlobalSnapshot,
           storages.globalL0Cluster,
@@ -141,7 +141,7 @@ abstract class CurrencyL1App(
         Hasher.forKryo[IO]
       )
       programs = Programs
-        .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
+        .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](
           sharedPrograms,
           p2pClient,
           storages,
@@ -160,7 +160,7 @@ abstract class CurrencyL1App(
       implicit0(nodeContext: L1NodeContext[IO]) = L1NodeContext.make[IO](storages.lastGlobalSnapshot, storages.lastSnapshot)
 
       api = HttpApi
-        .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
+        .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](
           services.dataApplication,
           storages,
           queues,
@@ -178,7 +178,7 @@ abstract class CurrencyL1App(
       _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.http.cliHttp, api.cliApp)
 
       stateChannel <- StateChannel
-        .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
+        .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](
           cfg,
           keyPair,
           dagP2PClient,
@@ -215,7 +215,7 @@ abstract class CurrencyL1App(
               services.cluster.createSession >>
               services.session.createSession >>
               storages.node.tryModifyState(SessionStarted, NodeState.Ready) >>
-              restartMethodR.set(
+              services.restart.setClusterLeaveRestartMethod(
                 RunValidator(
                   cfg.keyStore,
                   cfg.alias,
@@ -229,7 +229,7 @@ abstract class CurrencyL1App(
                   cfg.collateralAmount,
                   cfg.trustRatingsPath,
                   cfg.prioritySeedlistPath
-                ).some
+                )
               )
 
           case cfg: RunValidator =>
@@ -237,6 +237,13 @@ abstract class CurrencyL1App(
               programs.l0PeerDiscovery.discoverFrom(cfg.l0Peer) >>
               programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
               storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
+
+          case cfg: RunValidatorWithJoinAttempt =>
+            gossipDaemon.startAsRegularValidator >>
+              programs.l0PeerDiscovery.discoverFrom(cfg.l0Peer) >>
+              programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
+              storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
+              programs.joining.joinOneOf(cfg.majorityForkPeerIds)
         }
       }.asResource
       globalL0PeerDiscovery = Stream

@@ -1,8 +1,8 @@
 package io.constellationnetwork.node.shared.domain.cluster.programs
 
-import cats.data.EitherT
+import cats.data.{EitherT, NonEmptySet}
 import cats.effect.Async
-import cats.effect.std.Supervisor
+import cats.effect.std.{Random, Supervisor}
 import cats.syntax.applicative._
 import cats.syntax.applicativeError._
 import cats.syntax.either._
@@ -50,7 +50,7 @@ case class FailedToDiscoverFrom(peer: Peer, err: Throwable) extends NoStackTrace
 }
 
 class Joining[
-  F[_]: Async: GenUUID: SecurityProvider: Hasher: Supervisor: Parallel
+  F[_]: Async: GenUUID: SecurityProvider: Hasher: Supervisor: Parallel: Random
 ](
   environment: AppEnvironment,
   nodeStorage: NodeStorage[F],
@@ -68,6 +68,9 @@ class Joining[
 ) {
 
   private val logger = Slf4jLogger.getLogger[F]
+
+  def joinOneOf(peers: NonEmptySet[PeerToJoin]): F[Unit] =
+    Random[F].shuffleList(peers.toList).map(_.head).flatMap(join)
 
   def join(toPeer: PeerToJoin): F[Unit] =
     validateJoinConditions() >>

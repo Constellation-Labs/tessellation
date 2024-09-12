@@ -5,7 +5,7 @@ import cats.syntax.applicativeError._
 import cats.syntax.semigroupk._
 
 import io.constellationnetwork.BuildInfo
-import io.constellationnetwork.dag.l1.cli.method.{Run, RunInitialValidator, RunValidator}
+import io.constellationnetwork.dag.l1.cli.method._
 import io.constellationnetwork.dag.l1.config.types._
 import io.constellationnetwork.dag.l1.domain.snapshot.programs.DAGSnapshotProcessor
 import io.constellationnetwork.dag.l1.http.p2p.P2PClient
@@ -81,7 +81,7 @@ object Main
         cfg.priorityPeerIds,
         cfg.environment
       ).asResource
-      services = Services.make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
+      services = Services.make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo, Run](
         storages,
         storages.lastSnapshot,
         storages.l0Cluster,
@@ -112,7 +112,7 @@ object Main
         .asResource
 
       api = HttpApi
-        .make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
+        .make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo, Run](
           storages,
           queues,
           keyPair.getPrivate,
@@ -128,7 +128,7 @@ object Main
       _ <- MkHttpServer[IO].newEmber(ServerName("cli"), cfg.http.cliHttp, api.cliApp)
 
       stateChannel <- StateChannel
-        .make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
+        .make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo, Run](
           cfg,
           keyPair,
           p2pClient,
@@ -163,12 +163,91 @@ object Main
               storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
               services.cluster.createSession >>
               services.session.createSession >>
-              storages.node.tryModifyState(SessionStarted, NodeState.Ready)
+              storages.node.tryModifyState(SessionStarted, NodeState.Ready) >>
+              services.restart.setClusterLeaveRestartMethod(
+                RunValidator(
+                  cfg.keyStore,
+                  cfg.alias,
+                  cfg.password,
+                  cfg.environment,
+                  cfg.httpConfig,
+                  cfg.l0Peer,
+                  cfg.seedlistPath,
+                  cfg.collateralAmount,
+                  cfg.trustRatingsPath,
+                  cfg.prioritySeedlistPath
+                )
+              ) >>
+              services.restart.setNodeForkedRestartMethod(
+                RunValidatorWithJoinAttempt(
+                  cfg.keyStore,
+                  cfg.alias,
+                  cfg.password,
+                  cfg.environment,
+                  cfg.httpConfig,
+                  cfg.l0Peer,
+                  cfg.seedlistPath,
+                  cfg.collateralAmount,
+                  cfg.trustRatingsPath,
+                  cfg.prioritySeedlistPath,
+                  _
+                )
+              )
 
           case cfg: RunValidator =>
             gossipDaemon.startAsRegularValidator >>
               programs.l0PeerDiscovery.discoverFrom(cfg.l0Peer) >>
-              storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
+              storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
+              services.restart.setNodeForkedRestartMethod(
+                RunValidatorWithJoinAttempt(
+                  cfg.keyStore,
+                  cfg.alias,
+                  cfg.password,
+                  cfg.environment,
+                  cfg.httpConfig,
+                  cfg.l0Peer,
+                  cfg.seedlistPath,
+                  cfg.collateralAmount,
+                  cfg.trustRatingsPath,
+                  cfg.prioritySeedlistPath,
+                  _
+                )
+              )
+
+          case cfg: RunValidatorWithJoinAttempt =>
+            gossipDaemon.startAsRegularValidator >>
+              programs.l0PeerDiscovery.discoverFrom(cfg.l0Peer) >>
+              storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
+              programs.joining.joinOneOf(cfg.majorityForkPeerIds) >>
+              services.restart.setClusterLeaveRestartMethod(
+                RunValidator(
+                  cfg.keyStore,
+                  cfg.alias,
+                  cfg.password,
+                  cfg.environment,
+                  cfg.httpConfig,
+                  cfg.l0Peer,
+                  cfg.seedlistPath,
+                  cfg.collateralAmount,
+                  cfg.trustRatingsPath,
+                  cfg.prioritySeedlistPath
+                )
+              ) >>
+              services.restart.setNodeForkedRestartMethod(
+                RunValidatorWithJoinAttempt(
+                  cfg.keyStore,
+                  cfg.alias,
+                  cfg.password,
+                  cfg.environment,
+                  cfg.httpConfig,
+                  cfg.l0Peer,
+                  cfg.seedlistPath,
+                  cfg.collateralAmount,
+                  cfg.trustRatingsPath,
+                  cfg.prioritySeedlistPath,
+                  _
+                )
+              )
         }
       }.asResource
       _ <- stateChannel.runtime.compile.drain.handleErrorWith { error =>

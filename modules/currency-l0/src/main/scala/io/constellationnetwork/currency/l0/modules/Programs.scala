@@ -12,6 +12,7 @@ import io.constellationnetwork.currency.l0.snapshot.programs.{Download, Genesis,
 import io.constellationnetwork.currency.schema.currency.CurrencySnapshot
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.domain.cluster.programs.{Joining, L0PeerDiscovery, PeerDiscovery}
 import io.constellationnetwork.node.shared.domain.snapshot.PeerSelect
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
@@ -23,13 +24,13 @@ import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
 
 object Programs {
 
-  def make[F[_]: Async: Random: KryoSerializer: JsonSerializer: SecurityProvider: HasherSelector](
+  def make[F[_]: Async: Random: KryoSerializer: JsonSerializer: SecurityProvider: HasherSelector, R <: CliMethod](
     keyPair: KeyPair,
     nodeId: PeerId,
     globalL0Peer: L0Peer,
-    sharedPrograms: SharedPrograms[F],
+    sharedPrograms: SharedPrograms[F, R],
     storages: Storages[F],
-    services: Services[F],
+    services: Services[F, R],
     p2pClient: P2PClient[F],
     currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
     dataApplication: Option[(BaseDataApplicationL0Service[F], CalculatedStateLocalFileSystemStorage[F])]

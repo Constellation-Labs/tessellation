@@ -28,6 +28,7 @@ import io.constellationnetwork.dag.l1.http.p2p.P2PClient
 import io.constellationnetwork.dag.l1.modules._
 import io.constellationnetwork.ext.fs2.StreamOps
 import io.constellationnetwork.kernel.CellError
+import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.height.Height
 import io.constellationnetwork.schema.peer.PeerId
@@ -42,7 +43,8 @@ class StateChannel[
   F[_]: Async: HasherSelector: SecurityProvider: Random,
   P <: StateProof,
   S <: Snapshot,
-  SI <: SnapshotInfo[P]
+  SI <: SnapshotInfo[P],
+  R <: CliMethod
 ](
   appConfig: AppConfig,
   blockAcceptanceS: Semaphore[F],
@@ -53,7 +55,7 @@ class StateChannel[
   programs: Programs[F, P, S, SI],
   queues: Queues[F],
   selfId: PeerId,
-  services: Services[F, P, S, SI],
+  services: Services[F, P, S, SI, R],
   storages: Storages[F, P, S, SI],
   validators: Validators[F],
   txHasher: Hasher[F]
@@ -276,7 +278,8 @@ object StateChannel {
     F[_]: Async: HasherSelector: SecurityProvider: Random,
     P <: StateProof,
     S <: Snapshot,
-    SI <: SnapshotInfo[P]
+    SI <: SnapshotInfo[P],
+    R <: CliMethod
   ](
     appConfig: AppConfig,
     keyPair: KeyPair,
@@ -284,17 +287,17 @@ object StateChannel {
     programs: Programs[F, P, S, SI],
     queues: Queues[F],
     selfId: PeerId,
-    services: Services[F, P, S, SI],
+    services: Services[F, P, S, SI, R],
     storages: Storages[F, P, S, SI],
     validators: Validators[F],
     txHasher: Hasher[F]
-  ): F[StateChannel[F, P, S, SI]] =
+  ): F[StateChannel[F, P, S, SI, R]] =
     for {
       blockAcceptanceS <- Semaphore(1)
       blockCreationS <- Semaphore(1)
       blockStoringS <- Semaphore(1)
     } yield
-      new StateChannel[F, P, S, SI](
+      new StateChannel[F, P, S, SI, R](
         appConfig,
         blockAcceptanceS,
         blockCreationS,

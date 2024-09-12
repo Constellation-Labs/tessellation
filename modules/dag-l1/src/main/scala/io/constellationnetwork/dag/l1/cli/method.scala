@@ -1,5 +1,6 @@
 package io.constellationnetwork.dag.l1.cli
 
+import cats.data.NonEmptySet
 import cats.syntax.all._
 
 import io.constellationnetwork.dag.l1.config.types._
@@ -9,6 +10,7 @@ import io.constellationnetwork.node.shared.cli.opts.trustRatingsPathOpts
 import io.constellationnetwork.node.shared.cli.{CliMethod, CollateralAmountOpts, L0PeerOpts}
 import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.schema.balance.Amount
+import io.constellationnetwork.schema.cluster.PeerToJoin
 import io.constellationnetwork.schema.peer.L0Peer
 
 import com.monovore.decline.Opts
@@ -63,6 +65,20 @@ object method {
       ).mapN(RunInitialValidator.apply)
     }
   }
+
+  case class RunValidatorWithJoinAttempt(
+    keyStore: StorePath,
+    alias: KeyAlias,
+    password: Password,
+    environment: AppEnvironment,
+    httpConfig: HttpConfig,
+    l0Peer: L0Peer,
+    seedlistPath: Option[SeedListPath],
+    collateralAmount: Option[Amount],
+    trustRatingsPath: Option[Path],
+    prioritySeedlistPath: Option[SeedListPath],
+    majorityForkPeerIds: NonEmptySet[PeerToJoin]
+  ) extends Run
 
   case class RunValidator(
     keyStore: StorePath,

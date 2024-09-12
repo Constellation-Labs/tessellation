@@ -84,7 +84,7 @@ abstract class CurrencyL0App(
         cfg.environment
       ).asResource
       services <- Services
-        .make[IO](
+        .make[IO, Run](
           p2pClient,
           sharedServices,
           storages,
@@ -102,7 +102,7 @@ abstract class CurrencyL0App(
           hasherSelectorAlwaysCurrent
         )
         .asResource
-      programs = Programs.make[IO](
+      programs = Programs.make[IO, Run](
         keyPair,
         nodeShared.nodeId,
         cfg.globalL0Peer,
@@ -172,7 +172,61 @@ abstract class CurrencyL0App(
                 storages.identifier.setInitial(rv.identifier) >>
                   gossipDaemon.startAsRegularValidator >>
                   programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
-                  storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin)
+                  storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
+                  services.restart.setNodeForkedRestartMethod(
+                    RunValidatorWithJoinAttempt(
+                      rv.keyStore,
+                      rv.alias,
+                      rv.password,
+                      rv.httpConfig,
+                      rv.environment,
+                      rv.seedlistPath,
+                      rv.prioritySeedlistPath,
+                      rv.collateralAmount,
+                      rv.globalL0Peer,
+                      rv.identifier,
+                      rv.trustRatingsPath,
+                      _
+                    )
+                  )
+
+              case m: RunValidatorWithJoinAttempt =>
+                storages.identifier.setInitial(m.identifier) >>
+                  gossipDaemon.startAsRegularValidator >>
+                  programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
+                  storages.node.tryModifyState(NodeState.Initial, NodeState.ReadyToJoin) >>
+                  programs.joining.joinOneOf(m.majorityForkPeerIds) >>
+                  services.restart.setClusterLeaveRestartMethod(
+                    RunValidator(
+                      m.keyStore,
+                      m.alias,
+                      m.password,
+                      m.httpConfig,
+                      m.environment,
+                      m.seedlistPath,
+                      m.prioritySeedlistPath,
+                      m.collateralAmount,
+                      m.globalL0Peer,
+                      m.identifier,
+                      m.trustRatingsPath
+                    )
+                  ) >>
+                  services.restart.setNodeForkedRestartMethod(
+                    RunValidatorWithJoinAttempt(
+                      m.keyStore,
+                      m.alias,
+                      m.password,
+                      m.httpConfig,
+                      m.environment,
+                      m.seedlistPath,
+                      m.prioritySeedlistPath,
+                      m.collateralAmount,
+                      m.globalL0Peer,
+                      m.identifier,
+                      m.trustRatingsPath,
+                      _
+                    )
+                  )
 
               case rr: RunRollback =>
                 storages.identifier.setInitial(rr.identifier) >>
@@ -186,7 +240,7 @@ abstract class CurrencyL0App(
                   services.session.createSession >>
                   programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
                   storages.node.setNodeState(NodeState.Ready) >>
-                  restartMethodR.set(
+                  services.restart.setClusterLeaveRestartMethod(
                     RunValidator(
                       rr.keyStore,
                       rr.alias,
@@ -199,7 +253,23 @@ abstract class CurrencyL0App(
                       rr.globalL0Peer,
                       rr.identifier,
                       rr.trustRatingsPath
-                    ).some
+                    )
+                  ) >>
+                  services.restart.setNodeForkedRestartMethod(
+                    RunValidatorWithJoinAttempt(
+                      rr.keyStore,
+                      rr.alias,
+                      rr.password,
+                      rr.httpConfig,
+                      rr.environment,
+                      rr.seedlistPath,
+                      rr.prioritySeedlistPath,
+                      rr.collateralAmount,
+                      rr.globalL0Peer,
+                      rr.identifier,
+                      rr.trustRatingsPath,
+                      _
+                    )
                   )
 
               case m: RunGenesis =>
@@ -214,7 +284,7 @@ abstract class CurrencyL0App(
                   programs.globalL0PeerDiscovery.discoverFrom(cfg.globalL0Peer) >>
                   storages.node.setNodeState(NodeState.Ready) >>
                   storages.identifier.get.flatMap { identifier =>
-                    restartMethodR.set(
+                    services.restart.setClusterLeaveRestartMethod(
                       RunValidator(
                         m.keyStore,
                         m.alias,
@@ -227,8 +297,24 @@ abstract class CurrencyL0App(
                         m.globalL0Peer,
                         identifier,
                         m.trustRatingsPath
-                      ).some
-                    )
+                      )
+                    ) >>
+                      services.restart.setNodeForkedRestartMethod(
+                        RunValidatorWithJoinAttempt(
+                          m.keyStore,
+                          m.alias,
+                          m.password,
+                          m.httpConfig,
+                          m.environment,
+                          m.seedlistPath,
+                          m.prioritySeedlistPath,
+                          m.collateralAmount,
+                          m.globalL0Peer,
+                          identifier,
+                          m.trustRatingsPath,
+                          _
+                        )
+                      )
                   }
 
               case _ => IO.unit

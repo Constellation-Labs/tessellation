@@ -20,6 +20,7 @@ import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{CurrencySnapshotCreator, CurrencySnapshotValidator}
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema.balance.Amount
@@ -49,7 +50,8 @@ object CurrencySnapshotConsensus {
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
     creator: CurrencySnapshotCreator[F],
     validator: CurrencySnapshotValidator[F],
-    hasherSelector: HasherSelector[F]
+    hasherSelector: HasherSelector[F],
+    restartService: RestartService[F, _]
   ): F[CurrencySnapshotConsensus[F]] = {
     def noopDecoder: Decoder[DataUpdate] = Decoder.failedWithMessage[DataUpdate]("not implemented")
 
@@ -75,7 +77,7 @@ object CurrencySnapshotConsensus {
         validator
       )
       consensusStateAdvancer = CurrencySnapshotConsensusStateAdvancer
-        .make[F](keyPair, consensusStorage, consensusFunctions, stateChannelSnapshotService, gossip, maybeDataApplication)
+        .make[F](keyPair, consensusStorage, consensusFunctions, stateChannelSnapshotService, gossip, maybeDataApplication, restartService)
       consensusStateCreator = CurrencySnapshotConsensusStateCreator
         .make[F](consensusFunctions, consensusStorage, lastGlobalSnapshotStorage, gossip, selfId, seedlist)
       consensusStateRemover = CurrencySnapshotConsensusStateRemover.make[F](consensusStorage, gossip)
