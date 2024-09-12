@@ -7,6 +7,7 @@ import cats.syntax.all._
 
 import scala.concurrent.duration._
 
+import io.constellationnetwork.currency.l0.cli.method.Run
 import io.constellationnetwork.currency.l0.modules.{Programs, Services, Storages}
 import io.constellationnetwork.node.shared.domain.snapshot.Validator
 import io.constellationnetwork.schema.GlobalIncrementalSnapshot
@@ -21,7 +22,7 @@ object StateChannel {
   private val awakePeriod = 10.seconds
 
   def run[F[_]: Async: HasherSelector](
-    services: Services[F],
+    services: Services[F, Run],
     storages: Storages[F],
     programs: Programs[F]
   )(implicit S: Supervisor[F]): Stream[F, Unit] = {

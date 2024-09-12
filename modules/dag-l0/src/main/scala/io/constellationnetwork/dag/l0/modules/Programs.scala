@@ -12,6 +12,7 @@ import io.constellationnetwork.dag.l0.http.p2p.P2PClient
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.programs.RollbackLoader
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.domain.cluster.programs.{Joining, PeerDiscovery}
 import io.constellationnetwork.node.shared.domain.snapshot.PeerSelect
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
@@ -22,10 +23,10 @@ import io.constellationnetwork.security.{HashSelect, HasherSelector, SecurityPro
 
 object Programs {
 
-  def make[F[_]: Async: KryoSerializer: JsonSerializer: HasherSelector: SecurityProvider: Random](
-    sharedPrograms: SharedPrograms[F],
+  def make[F[_]: Async: KryoSerializer: JsonSerializer: HasherSelector: SecurityProvider: Random, R <: CliMethod](
+    sharedPrograms: SharedPrograms[F, R],
     storages: Storages[F],
-    services: Services[F],
+    services: Services[F, R],
     keyPair: KeyPair,
     config: AppConfig,
     lastFullGlobalSnapshotOrdinal: SnapshotOrdinal,

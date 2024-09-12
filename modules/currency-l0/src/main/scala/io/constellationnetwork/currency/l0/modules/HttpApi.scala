@@ -8,6 +8,7 @@ import cats.syntax.semigroupk._
 import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationCustomRoutes
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
 import io.constellationnetwork.currency.l0.cell.{L0Cell, L0CellInput}
+import io.constellationnetwork.currency.l0.cli.method.Run
 import io.constellationnetwork.currency.l0.http.routes.{CurrencyBlockRoutes, CurrencyMessageRoutes, DataBlockRoutes}
 import io.constellationnetwork.currency.l0.snapshot.CurrencySnapshotKey
 import io.constellationnetwork.currency.l0.snapshot.schema.CurrencyConsensusOutcome
@@ -34,7 +35,7 @@ object HttpApi {
     validators: Validators[F],
     storages: Storages[F],
     queues: Queues[F],
-    services: Services[F],
+    services: Services[F, Run],
     programs: Programs[F],
     privateKey: PrivateKey,
     environment: AppEnvironment,
@@ -64,7 +65,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   validators: Validators[F],
   storages: Storages[F],
   queues: Queues[F],
-  services: Services[F],
+  services: Services[F, Run],
   programs: Programs[F],
   privateKey: PrivateKey,
   environment: AppEnvironment,

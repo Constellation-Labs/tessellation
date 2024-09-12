@@ -15,6 +15,7 @@ import io.constellationnetwork.dag.l0.domain.snapshot.programs.{GlobalSnapshotEv
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{GlobalConsensusKind, GlobalConsensusOutcome}
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.domain.cluster.services.Session
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
@@ -26,6 +27,7 @@ import io.constellationnetwork.node.shared.domain.statechannel.{FeeCalculator, F
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{
   GlobalSnapshotAcceptanceManager,
   GlobalSnapshotStateChannelAcceptanceManager,
@@ -43,7 +45,7 @@ import org.http4s.client.Client
 
 object GlobalSnapshotConsensus {
 
-  def make[F[_]: Async: Random: KryoSerializer: JsonSerializer: HasherSelector: SecurityProvider: Metrics: Supervisor](
+  def make[F[_]: Async: Random: KryoSerializer: JsonSerializer: HasherSelector: SecurityProvider: Metrics: Supervisor, R <: CliMethod](
     gossip: Gossip[F],
     selfId: PeerId,
     keyPair: KeyPair,
@@ -53,7 +55,7 @@ object GlobalSnapshotConsensus {
     nodeStorage: NodeStorage[F],
     globalSnapshotStorage: SnapshotStorage[F, GlobalSnapshotArtifact, GlobalSnapshotContext],
     validators: SharedValidators[F],
-    sharedServices: SharedServices[F],
+    sharedServices: SharedServices[F, R],
     appConfig: AppConfig,
     stateChannelPullDelay: NonNegLong,
     stateChannelPurgeDelay: NonNegLong,
@@ -62,7 +64,8 @@ object GlobalSnapshotConsensus {
     client: Client[F],
     session: Session[F],
     rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent],
-    txHasher: Hasher[F]
+    txHasher: Hasher[F],
+    restartService: RestartService[F, R]
   ): F[GlobalSnapshotConsensus[F]] =
     for {
       globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager
@@ -104,7 +107,16 @@ object GlobalSnapshotConsensus {
         )
       )
       consensusStateAdvancer = GlobalSnapshotConsensusStateAdvancer
-        .make[F](keyPair, consensusStorage, globalSnapshotStorage, consensusFunctions, gossip)
+        .make[F](
+          keyPair,
+          consensusStorage,
+          globalSnapshotStorage,
+          consensusFunctions,
+          gossip,
+          restartService,
+          nodeStorage,
+          appConfig.shared.leavingDelay
+        )
       consensusStateCreator = GlobalSnapshotConsensusStateCreator.make[F](consensusFunctions, consensusStorage, gossip, selfId, seedlist)
       consensusStateRemover = GlobalSnapshotConsensusStateRemover.make[F](consensusStorage, gossip)
       consensusStatusOps = GlobalSnapshotConsensusOps.make

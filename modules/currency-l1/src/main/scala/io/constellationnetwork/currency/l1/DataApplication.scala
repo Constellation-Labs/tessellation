@@ -11,6 +11,7 @@ import scala.concurrent.duration._
 
 import io.constellationnetwork.currency.dataApplication.ConsensusInput.OwnerConsensusInput
 import io.constellationnetwork.currency.dataApplication._
+import io.constellationnetwork.currency.l1.cli.method.Run
 import io.constellationnetwork.currency.l1.domain.dataApplication.consensus.Validator.{
   canStartOwnDataConsensus,
   isLastGlobalSnapshotPresent,
@@ -44,7 +45,8 @@ object DataApplication {
       F,
       CurrencySnapshotStateProof,
       CurrencyIncrementalSnapshot,
-      CurrencySnapshotInfo
+      CurrencySnapshotInfo,
+      Run
     ],
     queues: Queues[F],
     dataApplicationService: BaseDataApplicationL1Service[F],

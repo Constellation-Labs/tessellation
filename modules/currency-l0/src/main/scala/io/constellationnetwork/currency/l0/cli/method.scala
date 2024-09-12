@@ -1,5 +1,6 @@
 package io.constellationnetwork.currency.l0.cli
 
+import cats.data.NonEmptySet
 import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
@@ -16,6 +17,7 @@ import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
+import io.constellationnetwork.schema.cluster.PeerToJoin
 import io.constellationnetwork.schema.peer.L0Peer
 
 import com.monovore.decline.Opts
@@ -139,6 +141,21 @@ object method {
     globalL0Peer: L0Peer,
     identifier: Address,
     trustRatingsPath: Option[Path]
+  ) extends Run
+
+  case class RunValidatorWithJoinAttempt(
+    keyStore: StorePath,
+    alias: KeyAlias,
+    password: Password,
+    httpConfig: HttpConfig,
+    environment: AppEnvironment,
+    seedlistPath: Option[SeedListPath],
+    prioritySeedlistPath: Option[SeedListPath],
+    collateralAmount: Option[Amount],
+    globalL0Peer: L0Peer,
+    identifier: Address,
+    trustRatingsPath: Option[Path],
+    majorityForkPeerIds: NonEmptySet[PeerToJoin]
   ) extends Run
 
   object RunValidator extends WithOpts[RunValidator] {

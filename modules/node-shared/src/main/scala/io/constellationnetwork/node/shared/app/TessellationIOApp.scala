@@ -93,7 +93,7 @@ abstract class TessellationIOApp[A <: CliMethod](
             if (ordinal <= cfg.lastKryoHashOrdinal.getOrElse(cfg.environment, SnapshotOrdinal.MinValue)) KryoHash else JsonHash
         }
 
-        Random.scalaUtilRandom[IO].flatMap { _random =>
+        Random.scalaUtilRandom[IO].flatMap { implicit _random =>
           SecurityProvider.forAsync[IO].use { implicit _securityProvider =>
             loadKeyPair[IO](keyStore, alias, password).flatMap { _keyPair =>
               val selfId = PeerId.fromPublic(_keyPair.getPublic)
@@ -115,7 +115,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                     implicit val _hasherSelector = HasherSelector.forSync[IO](Hasher.forJson, Hasher.forKryo, _hashSelect)
                     Metrics.forAsync[IO](Seq(("application", name))).use { implicit _metrics =>
                       SignallingRef.of[IO, Boolean](false).flatMap { _stopSignal =>
-                        SignallingRef.of[IO, Boolean](false).flatMap { _restartSignal =>
+                        SignallingRef.of[IO, Option[A]](None).flatMap { _restartSignal =>
                           Ref.of[IO, Option[A]](None).flatMap { _restartMethodR =>
                             def mkNodeShared =
                               Supervisor[IO].flatMap { implicit _supervisor =>
@@ -152,7 +152,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                                     Hasher.forKryo[IO]
                                   )
                                   services <- SharedServices
-                                    .make[IO](
+                                    .make[IO, A](
                                       cfg,
                                       selfId,
                                       _generation,
@@ -173,7 +173,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                                     .asResource
 
                                   programs <- SharedPrograms
-                                    .make[IO](
+                                    .make[IO, A](
                                       cfg,
                                       storages,
                                       services,
@@ -215,7 +215,6 @@ abstract class TessellationIOApp[A <: CliMethod](
 
                                     def restartSignal = _restartSignal
                                     def stopSignal = _stopSignal
-                                    def restartMethodR = _restartMethodR
                                   }
                                 } yield nodeShared
                               }
@@ -230,18 +229,8 @@ abstract class TessellationIOApp[A <: CliMethod](
                                 }
                               }
 
-                            _restartSignal.discrete.switchMap { isRestarting =>
-                              Stream.eval {
-                                _restartMethodR.get.flatMap {
-                                  case Some(restartMethod) if isRestarting =>
-                                    logger.info(s"Restarting node with method: ${restartMethod.getClass.getSimpleName}").as(restartMethod)
-                                  case None if isRestarting =>
-                                    logger
-                                      .warn(s"Restart method was not set. Restarting node with method: ${method.getClass.getSimpleName}")
-                                      .as(method)
-                                  case _ => logger.info(s"Starting node with method: ${method.getClass.getSimpleName}").as(method)
-                                }.flatMap(startup(_).useForever)
-                              }
+                            _restartSignal.discrete.switchMap { restartMethod =>
+                              Stream.eval(startup(restartMethod.getOrElse(method)).useForever)
                             }.interruptWhen {
                               _stopSignal.discrete
                             }.compile.drain.as(ExitCode.Success)

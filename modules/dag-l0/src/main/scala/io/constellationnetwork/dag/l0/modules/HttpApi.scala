@@ -12,6 +12,7 @@ import io.constellationnetwork.dag.l0.infrastructure.snapshot.GlobalSnapshotKey
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.GlobalConsensusOutcome
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.env.AppEnvironment._
+import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.types.HttpConfig
 import io.constellationnetwork.node.shared.http.p2p.middlewares.{PeerAuthMiddleware, `X-Id-Middleware`}
 import io.constellationnetwork.node.shared.http.routes._
@@ -29,18 +30,18 @@ import org.http4s.{HttpApp, HttpRoutes}
 
 object HttpApi {
 
-  def make[F[_]: Async: SecurityProvider: HasherSelector: Metrics](
+  def make[F[_]: Async: SecurityProvider: HasherSelector: Metrics, R <: CliMethod](
     storages: Storages[F],
     queues: Queues[F],
-    services: Services[F],
+    services: Services[F, R],
     programs: Programs[F],
     privateKey: PrivateKey,
     environment: AppEnvironment,
     selfId: PeerId,
     nodeVersion: TessellationVersion,
     httpCfg: HttpConfig
-  ): HttpApi[F] =
-    new HttpApi[F](
+  ): HttpApi[F, R] =
+    new HttpApi[F, R](
       storages,
       queues,
       services,
@@ -53,10 +54,10 @@ object HttpApi {
     ) {}
 }
 
-sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Metrics] private (
+sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Metrics, R <: CliMethod] private (
   storages: Storages[F],
   queues: Queues[F],
-  services: Services[F],
+  services: Services[F, R],
   programs: Programs[F],
   privateKey: PrivateKey,
   environment: AppEnvironment,

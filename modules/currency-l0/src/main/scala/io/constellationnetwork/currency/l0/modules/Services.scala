@@ -16,6 +16,7 @@ import io.constellationnetwork.currency.l0.snapshot.services.{StateChannelBinary
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.domain.cluster.services.{Cluster, Session}
 import io.constellationnetwork.node.shared.domain.collateral.Collateral
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
@@ -26,6 +27,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.services.{AddressServ
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
 import io.constellationnetwork.node.shared.infrastructure.collateral.Collateral
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.node.shared.infrastructure.snapshot.services.AddressService
 import io.constellationnetwork.node.shared.modules.SharedServices
@@ -38,9 +40,9 @@ import org.http4s.client.Client
 
 object Services {
 
-  def make[F[_]: Async: Random: JsonSerializer: KryoSerializer: SecurityProvider: HasherSelector: Metrics: Supervisor](
+  def make[F[_]: Async: Random: JsonSerializer: KryoSerializer: SecurityProvider: HasherSelector: Metrics: Supervisor, R <: CliMethod](
     p2PClient: P2PClient[F],
-    sharedServices: SharedServices[F],
+    sharedServices: SharedServices[F, R],
     storages: Storages[F],
     client: Client[F],
     session: Session[F],
@@ -54,7 +56,7 @@ object Services {
     globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
     maybeMajorityPeerIds: Option[NonEmptySet[PeerId]],
     hasherSelector: HasherSelector[F]
-  ): F[Services[F]] =
+  ): F[Services[F, R]] =
     for {
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync[F]
       implicit0(hasher: Hasher[F]) = hasherSelector.getCurrent
@@ -120,14 +122,16 @@ object Services {
           maybeDataApplication,
           creator,
           validator,
-          hasherSelector
+          hasherSelector,
+          sharedServices.restart,
+          cfg.shared.leavingDelay
         )
       addressService = AddressService.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](storages.snapshot)
       collateralService = Collateral.make[F](cfg.collateral, storages.snapshot)
       globalL0Service = GlobalL0Service
         .make[F](p2PClient.l0GlobalSnapshot, storages.globalL0Cluster, storages.lastGlobalSnapshot, None, maybeMajorityPeerIds)
     } yield
-      new Services[F](
+      new Services[F, R](
         localHealthcheck = sharedServices.localHealthcheck,
         cluster = sharedServices.cluster,
         session = sharedServices.session,
@@ -140,11 +144,12 @@ object Services {
         snapshotContextFunctions = sharedServices.currencySnapshotContextFns,
         dataApplication = maybeDataApplication,
         globalSnapshotContextFunctions = globalSnapshotContextFns,
-        stateChannelBinarySender = stateChannelBinarySender
+        stateChannelBinarySender = stateChannelBinarySender,
+        restart = sharedServices.restart
       ) {}
 }
 
-sealed abstract class Services[F[_]] private (
+sealed abstract class Services[F[_], R <: CliMethod] private (
   val localHealthcheck: LocalHealthcheck[F],
   val cluster: Cluster[F],
   val session: Session[F],
@@ -157,5 +162,6 @@ sealed abstract class Services[F[_]] private (
   val snapshotContextFunctions: CurrencySnapshotContextFunctions[F],
   val dataApplication: Option[BaseDataApplicationL0Service[F]],
   val globalSnapshotContextFunctions: GlobalSnapshotContextFunctions[F],
-  val stateChannelBinarySender: StateChannelBinarySender[F]
+  val stateChannelBinarySender: StateChannelBinarySender[F],
+  val restart: RestartService[F, R]
 )

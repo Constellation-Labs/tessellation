@@ -6,6 +6,7 @@ import cats.syntax.functor._
 import cats.syntax.traverse._
 
 import io.constellationnetwork.currency.dataApplication.BaseDataApplicationL0Service
+import io.constellationnetwork.currency.l0.cli.method.Run
 import io.constellationnetwork.currency.l0.config.types.AppConfig
 import io.constellationnetwork.currency.l0.snapshot.CurrencySnapshotEventsPublisherDaemon
 import io.constellationnetwork.node.shared.domain.Daemon
@@ -18,7 +19,7 @@ object Daemons {
 
   def start[F[_]: Async: Supervisor: HasherSelector](
     storages: Storages[F],
-    services: Services[F],
+    services: Services[F, Run],
     programs: Programs[F],
     queues: Queues[F],
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
