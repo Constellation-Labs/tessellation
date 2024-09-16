@@ -25,8 +25,10 @@ abstract class SerializableLocalFileSystemStorage[F[_]: JsonSerializer, A: Encod
 
   def read(fileName: String): F[Option[A]] =
     readBytes(fileName).flatMap {
-      _.traverse { bytes =>
-        JsonSerializer[F].deserialize[A](bytes).map(_.orElse(deserializeFallback(bytes))).flatMap(_.liftTo[F])
+      _.flatTraverse { bytes =>
+        JsonSerializer[F].deserialize[A](bytes).map {
+          _.fold(_ => deserializeFallback(bytes).toOption, _.some)
+        }
       }
     }
 
