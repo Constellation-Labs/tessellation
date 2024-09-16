@@ -191,13 +191,16 @@ object DataApplicationRoutesSuite extends HttpSuite {
       maybeEstimatedFee <- Gen.option(estimatedFeeGen)
     } yield (update, maybeEstimatedFee)
 
-    val defaultResponse = EstimatedFeeResponse(EstimatedFee.empty)
     forall(gen) {
       case (update, maybeEstimateFee) =>
         for {
           dataQueue <- ViewableQueue.make[F, Signed[DataUpdate]]
           l1Service = makeValidatingService(validateUpdateFn = valid, validateFeeFn = invalid, estimateFeeResult = maybeEstimateFee)
-          expectedResponse = maybeEstimateFee.map(EstimatedFeeResponse(_).asJson).getOrElse(defaultResponse.asJson)
+          updateHash <- EstimatedFee.getUpdateHash(update, l1Service.serializeUpdate)
+          defaultResponse = EstimatedFeeResponse(EstimatedFee.empty, updateHash)
+          expectedResponse = maybeEstimateFee
+            .map(estimatedFee => EstimatedFeeResponse(estimatedFee, updateHash).asJson)
+            .getOrElse(defaultResponse.asJson)
           endpoint <- construct(dataQueue, l1Service)
           testResult <- expectHttpBodyAndStatus(endpoint, req.withEntity(update.value))(expectedResponse, Status.Ok)
         } yield testResult

@@ -5,6 +5,7 @@ import cats.effect.IO
 
 import org.tessellation.currency.dataApplication._
 import org.tessellation.currency.dataApplication.dataApplication.{DataApplicationBlock, DataApplicationValidationErrorOr}
+import org.tessellation.json.JsonBinarySerializer
 import org.tessellation.routes.internal.ExternalUrlPrefix
 import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.security.signature.Signed
@@ -19,7 +20,7 @@ class DummyDataApplicationL1Service extends BaseDataApplicationL1Service[IO] {
 
   override def deserializeState(bytes: Array[Byte]): IO[Either[Throwable, DataOnChainState]] = ???
 
-  override def serializeUpdate(update: DataUpdate): IO[Array[Byte]] = ???
+  override def serializeUpdate(update: DataUpdate): IO[Array[Byte]] = IO.delay(JsonBinarySerializer.serialize(update)(dataEncoder))
 
   override def deserializeUpdate(bytes: Array[Byte]): IO[Either[Throwable, DataUpdate]] = ???
 
