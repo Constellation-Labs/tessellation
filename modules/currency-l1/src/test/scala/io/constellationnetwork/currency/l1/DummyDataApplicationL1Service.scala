@@ -5,6 +5,7 @@ import cats.effect.IO
 
 import io.constellationnetwork.currency.dataApplication._
 import io.constellationnetwork.currency.dataApplication.dataApplication.{DataApplicationBlock, DataApplicationValidationErrorOr}
+import io.constellationnetwork.json.JsonBinarySerializer
 import io.constellationnetwork.routes.internal.ExternalUrlPrefix
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.security.signature.Signed
@@ -19,7 +20,7 @@ class DummyDataApplicationL1Service extends BaseDataApplicationL1Service[IO] {
 
   override def deserializeState(bytes: Array[Byte]): IO[Either[Throwable, DataOnChainState]] = ???
 
-  override def serializeUpdate(update: DataUpdate): IO[Array[Byte]] = ???
+  override def serializeUpdate(update: DataUpdate): IO[Array[Byte]] = IO.delay(JsonBinarySerializer.serialize(update)(dataEncoder))
 
   override def deserializeUpdate(bytes: Array[Byte]): IO[Either[Throwable, DataUpdate]] = ???
 
