@@ -7,6 +7,7 @@ import cats.syntax.all._
 
 import org.tessellation.currency.dataApplication._
 import org.tessellation.currency.l1.domain.error.{GL0SnapshotOrdinalUnavailable, InvalidDataUpdate, InvalidSignature}
+import org.tessellation.currency.schema.EstimatedFee
 import org.tessellation.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import org.tessellation.error.ApplicationError._
 import org.tessellation.ext.http4s.error._
@@ -68,7 +69,11 @@ final case class DataApplicationRoutes[F[_]: Async: Hasher: SecurityProvider: L1
                 case Some(ord) =>
                   dataApplication
                     .estimateFee(ord)(update)
-                    .map(EstimatedFeeResponse(_))
+                    .flatMap { estimatedFee =>
+                      EstimatedFee
+                        .getUpdateHash(update, dataApplication.serializeUpdate)
+                        .map(EstimatedFeeResponse(estimatedFee, _))
+                    }
                     .flatMap(response => Ok(response.asJson.dropNullValues))
               }
           }
