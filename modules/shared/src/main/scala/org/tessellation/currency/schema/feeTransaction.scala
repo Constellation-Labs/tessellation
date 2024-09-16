@@ -21,7 +21,8 @@ object feeTransaction {
     destination: Address,
     amount: Amount,
     parent: FeeTransactionReference,
-    salt: TransactionSalt
+    salt: TransactionSalt,
+    dataUpdateReference: Hash
   ) {
 
     val ordinal: TransactionOrdinal = parent.ordinal.next
