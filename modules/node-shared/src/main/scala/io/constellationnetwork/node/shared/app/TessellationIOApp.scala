@@ -133,7 +133,9 @@ abstract class TessellationIOApp[A <: CliMethod](
                                 for {
                                   _ <- logger.info(s"Self peerId: $selfId").asResource
                                   _generation <- Generation.make[IO].asResource
-                                  versionHash <- _hasherSelector.withCurrent(_.hash(version)).asResource
+                                  versionHash <- _hasherSelector
+                                    .withCurrent(_.hash(TessellationVersion("2.12.1-17-970fb7cf-SNAPSHOT")))
+                                    .asResource
                                   _seedlist <- loadSeedlist("Seedlist", method.seedlistPath).asResource
                                   _l0Seedlist <- loadSeedlist("l0Seedlist", method.l0SeedlistPath).asResource
                                   _prioritySeedlist <- loadSeedlist("prioritySeedlist", method.prioritySeedlistPath).asResource

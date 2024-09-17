@@ -3,21 +3,24 @@ package io.constellationnetwork.node.shared.infrastructure.consensus
 import cats._
 import cats.data.StateT
 import cats.effect.std.Random
-import cats.effect.{Async, Sync}
+import cats.effect.{Async, Sync, Temporal}
 import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
+import scala.concurrent.duration._
 import scala.reflect.runtime.universe.TypeTag
 
 import io.constellationnetwork.ext.collection.FoldableOps.pickMajority
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
+import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusState._
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusStorage.ModifyStateFn
 import io.constellationnetwork.node.shared.infrastructure.consensus.message._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.infrastructure.consensus.update.UnlockConsensusUpdate
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
+import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
@@ -210,7 +213,12 @@ object ConsensusStateUpdater {
       }
     }
 
-  def recoverIfForking[F[_]: Sync: Random](ownObservationHash: Hash, observationName: String, restartService: RestartService[F, _])(
+  def recoverIfForking[F[_]: Async: Random](
+    ownObservationHash: Hash,
+    observationName: String,
+    restartService: RestartService[F, _],
+    nodeStorage: NodeStorage[F]
+  )(
     observations: SortedMap[PeerId, Hash]
   ): F[Unit] = {
     def forkRandomly(forkProbability: Double Refined Interval.Closed[0.0d, 1.0d]) =
@@ -224,10 +232,17 @@ object ConsensusStateUpdater {
           case (peerId, observationHash) if observationHash === majorityObservationHash => peerId
         }.toList
 
-        Slf4jLogger
-          .getLogger[F]
-          .warn(s"Different hash observations [$observationName]. This node is in fork") >>
-          restartService.signalNodeForkedRestart(majorityForkPeers)
+        def process =
+          Slf4jLogger
+            .getLogger[F]
+            .warn(s"Different hash observations [$observationName]. This node is in fork") >>
+            nodeStorage.setNodeState(NodeState.Leaving) >>
+            Temporal[F].sleep(30.seconds) >>
+            nodeStorage.setNodeState(NodeState.Offline) >>
+            Temporal[F].sleep(5.seconds) >>
+            restartService.signalNodeForkedRestart(majorityForkPeers)
+
+        Temporal[F].start(process).void
       }
 
       isForked.ifM(

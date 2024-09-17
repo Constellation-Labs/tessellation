@@ -107,7 +107,7 @@ object GlobalSnapshotConsensus {
         )
       )
       consensusStateAdvancer = GlobalSnapshotConsensusStateAdvancer
-        .make[F](keyPair, consensusStorage, globalSnapshotStorage, consensusFunctions, gossip, restartService)
+        .make[F](keyPair, consensusStorage, globalSnapshotStorage, consensusFunctions, gossip, restartService, nodeStorage)
       consensusStateCreator = GlobalSnapshotConsensusStateCreator.make[F](consensusFunctions, consensusStorage, gossip, selfId, seedlist)
       consensusStateRemover = GlobalSnapshotConsensusStateRemover.make[F](consensusStorage, gossip)
       consensusStatusOps = GlobalSnapshotConsensusOps.make

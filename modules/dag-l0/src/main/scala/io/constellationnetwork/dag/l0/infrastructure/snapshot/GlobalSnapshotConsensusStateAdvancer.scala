@@ -12,6 +12,7 @@ import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema._
 import io.constellationnetwork.ext.collection.FoldableOps.pickMajority
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
+import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusStateUpdater._
 import io.constellationnetwork.node.shared.infrastructure.consensus._
@@ -49,7 +50,8 @@ object GlobalSnapshotConsensusStateAdvancer {
     globalSnapshotStorage: SnapshotStorage[F, GlobalSnapshotArtifact, GlobalSnapshotContext],
     consensusFns: GlobalSnapshotConsensusFunctions[F],
     gossip: Gossip[F],
-    restartService: RestartService[F, _]
+    restartService: RestartService[F, _],
+    nodeStorage: NodeStorage[F]
   ): GlobalSnapshotConsensusStateAdvancer[F] = new GlobalSnapshotConsensusStateAdvancer[F] {
     val logger = Slf4jLogger.getLogger[F]
     val facilitatorsObservationName = "facilitators"
@@ -84,7 +86,7 @@ object GlobalSnapshotConsensusStateAdvancer {
               val maybeFacilities = maybeGetAllDeclarations(state, resources)(_.facility)
 
               maybeFacilities.traverseTap { facilities =>
-                recoverIfForking[F](ownFacilitatorsHash, facilitatorsObservationName, restartService)(facilities.map {
+                recoverIfForking[F](ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage)(facilities.map {
                   case (peer, facility) => (peer, facility.facilitatorsHash)
                 })
               }.flatMap {
@@ -141,7 +143,7 @@ object GlobalSnapshotConsensusStateAdvancer {
                   maybeGetAllDeclarations(state, resources)(_.proposal)
 
                 maybeAllProposals.traverseTap(d =>
-                  recoverIfForking(ownFacilitatorsHash, facilitatorsObservationName, restartService)(d.map {
+                  recoverIfForking(ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage)(d.map {
                     case (peerId, proposal) => (peerId, proposal.facilitatorsHash)
                   })
                 ) >>
@@ -189,7 +191,7 @@ object GlobalSnapshotConsensusStateAdvancer {
 
               maybeAllSignatures
                 .traverseTap(signatures =>
-                  recoverIfForking(ownFacilitatorsHash, facilitatorsObservationName, restartService)(signatures.map {
+                  recoverIfForking(ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage)(signatures.map {
                     case (peerId, majoritySignature) => (peerId, majoritySignature.facilitatorsHash)
                   })
                 )

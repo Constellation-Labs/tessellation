@@ -33,6 +33,7 @@ import io.constellationnetwork.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+import io.constellationnetwork.node.shared.domain.node.NodeStorage
 
 abstract class CurrencySnapshotConsensusStateAdvancer[F[_]]
     extends ConsensusStateAdvancer[
@@ -54,7 +55,8 @@ object CurrencySnapshotConsensusStateAdvancer {
     stateChannelSnapshotService: StateChannelSnapshotService[F],
     gossip: Gossip[F],
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
-    restartService: RestartService[F, _]
+    restartService: RestartService[F, _],
+    nodeStorage: NodeStorage[F]
   ): CurrencySnapshotConsensusStateAdvancer[F] =
     new CurrencySnapshotConsensusStateAdvancer[F] {
       val logger = Slf4jLogger.getLogger[F]
@@ -86,7 +88,7 @@ object CurrencySnapshotConsensusStateAdvancer {
                   val maybeFacilities = maybeGetAllDeclarations(state, resources)(_.facility)
 
                   maybeFacilities.traverseTap { facilities =>
-                    recoverIfForking[F](ownFacilitatorsHash, facilitatorsObservationName, restartService)(facilities.map {
+                    recoverIfForking[F](ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage)(facilities.map {
                       case (peerId, facility) => (peerId, facility.facilitatorsHash)
                     })
                   }.flatMap {
@@ -137,7 +139,7 @@ object CurrencySnapshotConsensusStateAdvancer {
                     maybeGetAllDeclarations(state, resources)(_.proposal)
 
                   maybeAllProposals.traverseTap(d =>
-                    recoverIfForking(ownFacilitatorsHash, facilitatorsObservationName, restartService)(d.map {
+                    recoverIfForking(ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage)(d.map {
                       case (peerId, proposal) => (peerId, proposal.facilitatorsHash)
                     })
                   ) >>
@@ -191,7 +193,7 @@ object CurrencySnapshotConsensusStateAdvancer {
                   maybeGlobalSnapshotOrdinal.flatTraverse { globalSnapshotOrdinal =>
                     maybeAllSignatures
                       .traverseTap(signatures =>
-                        recoverIfForking(ownFacilitatorsHash, facilitatorsObservationName, restartService)(signatures.map {
+                        recoverIfForking(ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage)(signatures.map {
                           case (peerId, majoritySignature) => (peerId, majoritySignature.facilitatorsHash)
                         })
                       )
@@ -263,7 +265,7 @@ object CurrencySnapshotConsensusStateAdvancer {
                     for {
                       binarySignatures <- OptionT.fromOption[F](maybeAllBinarySignatures)
                       _ <- OptionT.liftF(
-                        recoverIfForking(ownFacilitatorsHash, facilitatorsObservationName, restartService)(
+                        recoverIfForking(ownFacilitatorsHash, facilitatorsObservationName, restartService, nodeStorage)(
                           binarySignatures.map { case (peerId, binarySignature) => (peerId, binarySignature.facilitatorsHash) }
                         )
                       )
