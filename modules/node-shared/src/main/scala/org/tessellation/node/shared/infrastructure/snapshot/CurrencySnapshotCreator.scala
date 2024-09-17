@@ -17,9 +17,9 @@ import cats.syntax.traverse._
 import scala.collection.immutable.SortedSet
 import scala.util.control.NoStackTrace
 
+import org.tessellation.currency.dataApplication.FeeTransaction
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
 import org.tessellation.currency.schema.currency._
-import org.tessellation.currency.schema.feeTransaction.FeeTransaction
 import org.tessellation.ext.cats.syntax.next._
 import org.tessellation.json.JsonSerializer
 import org.tessellation.node.shared.config.types.SnapshotSizeConfig

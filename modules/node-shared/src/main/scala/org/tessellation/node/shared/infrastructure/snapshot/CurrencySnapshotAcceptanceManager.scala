@@ -1,15 +1,16 @@
 package org.tessellation.node.shared.infrastructure.snapshot
 
-import cats.data.Validated
+import cats.data.{NonEmptyList, Validated}
 import cats.effect.Async
 import cats.kernel.Order
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
+import org.tessellation.currency.dataApplication.FeeTransaction
 import org.tessellation.currency.schema.currency._
-import org.tessellation.currency.schema.feeTransaction.FeeTransaction
 import org.tessellation.node.shared.domain.block.processing._
+import org.tessellation.node.shared.domain.transaction.FeeTransactionValidator
 import org.tessellation.schema._
 import org.tessellation.schema.address.Address
 import org.tessellation.schema.balance.{Amount, Balance}
@@ -54,7 +55,8 @@ object CurrencySnapshotAcceptanceManager {
   def make[F[_]: Async](
     blockAcceptanceManager: BlockAcceptanceManager[F],
     collateral: Amount,
-    messageValidator: CurrencyMessageValidator[F]
+    messageValidator: CurrencyMessageValidator[F],
+    feeTransactionValidator: FeeTransactionValidator[F]
   ) = new CurrencySnapshotAcceptanceManager[F] {
 
     def accept(
@@ -99,6 +101,8 @@ object CurrencySnapshotAcceptanceManager {
         balancesAfterContextUpdate,
         rewards
       )
+
+      _ <- validateFeeTxs(feeTransactionsForAcceptance)
 
       (updatedBalances, acceptedFeeTxs) <- acceptFeeTxs(
         balancesAfterRewards,
@@ -180,6 +184,19 @@ object CurrencySnapshotAcceptanceManager {
           .plus(tx.amount)
           .map(balance => (updatedBalances.updated(tx.destination, balance), acceptedTxs + tx))
           .getOrElse(acc)
+      }
+
+    private def validateFeeTxs(
+      maybeTxs: Option[SortedSet[Signed[FeeTransaction]]]
+    ): F[Unit] =
+      NonEmptyList.fromList(maybeTxs.toList.flatMap(_.toList)).fold(().pure[F]) { nonEmptyTxs =>
+        feeTransactionValidator.validate(nonEmptyTxs).flatMap {
+          case Validated.Valid(_) =>
+            ().pure[F]
+          case Validated.Invalid(errors) =>
+            new Exception(s"FeeTransaction validation failed: ${errors.toList.mkString(", ")}")
+              .raiseError[F, Unit]
+        }
       }
 
     private def acceptFeeTxs(

@@ -4,8 +4,8 @@ import cats.effect.Async
 import cats.effect.std.Random
 import cats.syntax.all._
 
-import org.tessellation.currency.dataApplication.BaseDataApplicationL0Service
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
+import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, DataTransaction}
 import org.tessellation.json.JsonSerializer
 import org.tessellation.node.shared.snapshot.currency._
 import org.tessellation.schema.currencyMessage.CurrencyMessage
@@ -13,6 +13,7 @@ import org.tessellation.schema.{Block, SnapshotOrdinal}
 import org.tessellation.security.signature.Signed
 
 import eu.timepit.refined.auto._
+import io.circe.Encoder
 
 trait CurrencyEventsCutter[F[_]] {
   def cut(
@@ -47,7 +48,7 @@ object CurrencyEventsCutter {
           } else if (acceptedBlocksLength > acceptedDataBlocksLength) {
             blockEvents.widen[CurrencySnapshotEvent].some.pure[F]
           } else {
-            implicit val dataEncoder = dataApplication.dataEncoder
+            implicit val dataEncoder: Encoder[DataTransaction] = DataTransaction.encoder(dataApplication.dataEncoder)
 
             val lastBlockSize: F[Option[Int]] = acceptedBlocks.lastOption.traverse(a => JsonSerializer[F].serialize(a).map(_.length))
             val lastDataBlockSize: F[Option[Int]] =

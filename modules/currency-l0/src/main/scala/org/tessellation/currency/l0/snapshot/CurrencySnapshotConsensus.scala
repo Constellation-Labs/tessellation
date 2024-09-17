@@ -6,7 +6,7 @@ import cats.effect.kernel.Async
 import cats.effect.std.{Random, Supervisor}
 import cats.syntax.all._
 
-import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, DataUpdate}
+import org.tessellation.currency.dataApplication.{DataTransaction, _}
 import org.tessellation.currency.l0.snapshot.schema.{CurrencyConsensusKind, CurrencyConsensusOutcome}
 import org.tessellation.currency.l0.snapshot.services.StateChannelSnapshotService
 import org.tessellation.currency.schema.currency._
@@ -51,9 +51,13 @@ object CurrencySnapshotConsensus {
     validator: CurrencySnapshotValidator[F],
     hasherSelector: HasherSelector[F]
   ): F[CurrencySnapshotConsensus[F]] = {
-    def noopDecoder: Decoder[DataUpdate] = Decoder.failedWithMessage[DataUpdate]("not implemented")
+    def noopDecoder: Decoder[DataTransaction] = Decoder.failedWithMessage[DataTransaction]("not implemented")
 
-    implicit def daDecoder: Decoder[DataUpdate] = maybeDataApplication.map(_.dataDecoder).getOrElse(noopDecoder)
+    implicit def daDecoder: Decoder[DataTransaction] = maybeDataApplication.map { da =>
+      implicit val dataUpdateDecoder: Decoder[DataUpdate] = da.dataDecoder
+      DataTransaction.decoder
+    }.getOrElse(noopDecoder)
+
     implicit val hs: HasherSelector[F] = hasherSelector
 
     for {

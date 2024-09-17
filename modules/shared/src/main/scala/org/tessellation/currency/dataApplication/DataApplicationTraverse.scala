@@ -4,6 +4,7 @@ import cats.data._
 import cats.effect.Async
 import cats.syntax.all._
 
+import org.tessellation.currency.dataApplication.DataUpdate.getDataUpdates
 import org.tessellation.currency.dataApplication.storage.{CalculatedStateLocalFileSystemStorage, TraverseLocalFileSystemTempStorage}
 import org.tessellation.currency.schema.currency.CurrencyIncrementalSnapshot
 import org.tessellation.cutoff.{LogarithmicOrdinalCutoff, OrdinalCutoff}
@@ -102,7 +103,10 @@ object DataApplicationTraverse {
                         }
                         .map(_.toList.flatten)
                         .map(_.flatMap(_.updates.toList))
-                        .flatMap(dataApplication.combine(state, _))
+                        .flatMap { dataTransactions =>
+                          val updates: List[Signed[DataUpdate]] = getDataUpdates(dataTransactions)
+                          dataApplication.combine(state, updates)
+                        }
                         .flatTap {
                           case DataState(_, calculatedState) =>
                             logger.info(s"Persisting calculated state for ordinal=${currentOrdinal.show}") >>

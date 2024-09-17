@@ -1,15 +1,17 @@
 package org.tessellation.currency.l1
 
-import cats.Applicative
 import cats.effect.IO
+import cats.effect.kernel.Async
 
+import org.tessellation.currency.dataApplication.DataTransaction.DataTransactions
+import org.tessellation.currency.dataApplication.FeeTransaction.feeTransactionRequestDecoder
 import org.tessellation.currency.dataApplication._
 import org.tessellation.currency.dataApplication.dataApplication.{DataApplicationBlock, DataApplicationValidationErrorOr}
 import org.tessellation.json.JsonBinarySerializer
 import org.tessellation.routes.internal.ExternalUrlPrefix
-import org.tessellation.schema.SnapshotOrdinal
 import org.tessellation.security.signature.Signed
 
+import io.circe.generic.semiauto.deriveDecoder
 import io.circe.{Decoder, Encoder}
 import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
 import org.http4s.circe.jsonEncoderOf
@@ -50,12 +52,14 @@ class DummyDataApplicationL1Service extends BaseDataApplicationL1Service[IO] {
 
   override def validateUpdate(update: DataUpdate)(implicit context: L1NodeContext[IO]): IO[DataApplicationValidationErrorOr[Unit]] = ???
 
-  override def validateFee(gsOrdinal: SnapshotOrdinal)(update: Signed[DataUpdate])(
-    implicit context: L1NodeContext[IO],
-    A: Applicative[IO]
-  ): IO[dataApplication.DataApplicationValidationErrorOr[Unit]] = ???
-
   override def routes(implicit context: L1NodeContext[IO]): HttpRoutes[IO] = ???
 
   override def routesPrefix: ExternalUrlPrefix = ???
+
+  override def requestDecoder(implicit a: Async[IO]): EntityDecoder[IO, DataTransactions] = {
+    implicit val dataUpdateDecoder: Decoder[DataUpdate] = dataDecoder
+    implicit val feeTransactionDecoder: Decoder[FeeTransaction] = deriveDecoder[FeeTransaction]
+
+    feeTransactionRequestDecoder
+  }
 }

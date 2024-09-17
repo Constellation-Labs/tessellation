@@ -1,12 +1,13 @@
 package org.tessellation.currency.dataApplication
 
 import cats.Show
+import cats.data.NonEmptyList
 
+import org.tessellation.currency.dataApplication.DataTransaction.DataTransactions
 import org.tessellation.schema.peer.PeerId
 import org.tessellation.schema.round.RoundId
 import org.tessellation.security.Encodable
 import org.tessellation.security.hash.Hash
-import org.tessellation.security.signature.Signed
 import org.tessellation.security.signature.signature.Signature
 
 import derevo.circe.magnolia.{decoder, encoder}
@@ -28,8 +29,8 @@ object ConsensusInput {
   }
 
   object PeerConsensusInput {
-    def encoder(implicit e: Encoder[DataUpdate]): Encoder[PeerConsensusInput] = deriveEncoder
-    def decoder(implicit d: Decoder[DataUpdate]): Decoder[PeerConsensusInput] = deriveDecoder
+    def encoder(implicit e: Encoder[DataTransaction]): Encoder[PeerConsensusInput] = deriveEncoder
+    def decoder(implicit d: Decoder[DataTransaction]): Decoder[PeerConsensusInput] = deriveDecoder
   }
 
   case class Proposal(
@@ -37,17 +38,17 @@ object ConsensusInput {
     senderId: PeerId,
     owner: PeerId,
     facilitators: Set[PeerId],
-    dataUpdates: Set[Signed[DataUpdate]],
-    dataHashes: Set[Hash]
+    dataUpdates: Set[DataTransactions],
+    dataHashes: Set[NonEmptyList[Hash]]
   ) extends PeerConsensusInput
-      with Encodable[(RoundId, PeerId, PeerId, Set[PeerId], Set[Hash])] {
+      with Encodable[(RoundId, PeerId, PeerId, Set[PeerId], Set[NonEmptyList[Hash]])] {
     override def toEncode = (roundId, senderId, owner, facilitators, dataHashes)
     override def jsonEncoder = implicitly
   }
 
   object Proposal {
-    def encoder(implicit e: Encoder[DataUpdate]): Encoder[Proposal] = deriveEncoder
-    def decoder(implicit d: Decoder[DataUpdate]): Decoder[Proposal] = deriveDecoder
+    def encoder(implicit e: Encoder[DataTransaction]): Encoder[Proposal] = deriveEncoder
+    def decoder(implicit d: Decoder[DataTransaction]): Decoder[Proposal] = deriveDecoder
   }
 
   @derive(encoder, decoder)

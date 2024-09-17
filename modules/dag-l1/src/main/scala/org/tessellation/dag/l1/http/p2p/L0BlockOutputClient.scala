@@ -1,6 +1,6 @@
 package org.tessellation.dag.l1.http.p2p
 
-import org.tessellation.currency.dataApplication.DataUpdate
+import org.tessellation.currency.dataApplication.DataTransaction
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationBlock
 import org.tessellation.node.shared.http.p2p.PeerResponse
 import org.tessellation.node.shared.http.p2p.PeerResponse.PeerResponse
@@ -15,7 +15,7 @@ import org.http4s.client.Client
 trait L0BlockOutputClient[F[_]] {
   def sendL1Output(output: Signed[Block]): PeerResponse[F, Boolean]
   def sendDataApplicationBlock(block: Signed[DataApplicationBlock])(
-    implicit encoder: Encoder[DataUpdate]
+    implicit encoder: Encoder[DataTransaction]
   ): PeerResponse[F, Boolean]
 }
 
@@ -29,7 +29,9 @@ object L0BlockOutputClient {
           c.successful(req.withEntity(output))
         }
 
-      def sendDataApplicationBlock(block: Signed[DataApplicationBlock])(implicit encoder: Encoder[DataUpdate]): PeerResponse[F, Boolean] =
+      def sendDataApplicationBlock(
+        block: Signed[DataApplicationBlock]
+      )(implicit encoder: Encoder[DataTransaction]): PeerResponse[F, Boolean] =
         PeerResponse(s"$pathPrefix/l1-data-output", POST)(client) { (req, c) =>
           c.successful(req.withEntity(block))
         }

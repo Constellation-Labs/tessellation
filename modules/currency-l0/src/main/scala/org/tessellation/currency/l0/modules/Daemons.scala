@@ -16,7 +16,7 @@ import org.tessellation.security.HasherSelector
 
 object Daemons {
 
-  def start[F[_]: Async: Supervisor: HasherSelector](
+  def start[F[_]: Async: Supervisor](
     storages: Storages[F],
     services: Services[F],
     programs: Programs[F],

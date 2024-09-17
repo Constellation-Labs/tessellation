@@ -40,11 +40,6 @@ object Main extends CurrencyL1App(
       )(implicit context: L1NodeContext[IO]): IO[DataApplicationValidationErrorOr[Unit]] =
         ().validNec.pure[IO]
 
-      override def validateFee(gsOrdinal: SnapshotOrdinal)(update: Signed[UsageUpdate])(
-        implicit context: L1NodeContext[IO], A: Applicative[IO]
-      ): IO[DataApplicationValidationErrorOr[Unit]] =
-        ().validNec.pure[IO]
-
       override def routes(implicit context: L1NodeContext[IO]): HttpRoutes[IO] =
         HttpRoutes.empty
 

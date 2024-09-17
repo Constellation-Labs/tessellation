@@ -6,7 +6,7 @@ import cats.effect.Async
 import cats.syntax.semigroupk._
 
 import org.tessellation.currency.dataApplication.dataApplication.DataApplicationCustomRoutes
-import org.tessellation.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
+import org.tessellation.currency.dataApplication.{DataTransaction, _}
 import org.tessellation.currency.l0.cell.{L0Cell, L0CellInput}
 import org.tessellation.currency.l0.http.routes.{CurrencyBlockRoutes, CurrencyMessageRoutes, DataBlockRoutes}
 import org.tessellation.currency.l0.snapshot.CurrencySnapshotKey
@@ -24,6 +24,7 @@ import org.tessellation.schema.semver.{MetagraphVersion, TessellationVersion}
 import org.tessellation.security.{HasherSelector, SecurityProvider}
 
 import eu.timepit.refined.auto._
+import io.circe.Decoder
 import org.http4s.implicits.http4sKleisliResponseSyntaxOptionT
 import org.http4s.server.middleware.{CORS, RequestLogger, ResponseLogger}
 import org.http4s.{HttpApp, HttpRoutes}
@@ -95,7 +96,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip)
   private val currencyBlockRoutes = CurrencyBlockRoutes[F](mkCell)
   private val dataBlockRoutes = maybeDataApplication.map { da =>
-    implicit val (d, e) = (da.dataDecoder, da.calculatedStateEncoder)
+    implicit val dataUpdateDecoder: Decoder[DataUpdate] = da.dataDecoder
+    implicit val (d, e) = (DataTransaction.decoder, da.calculatedStateEncoder)
     DataBlockRoutes[F](mkCell, da)
   }
   private val metagraphNodeRoutes = maybeMetagraphVersion.map { metagraphVersion =>

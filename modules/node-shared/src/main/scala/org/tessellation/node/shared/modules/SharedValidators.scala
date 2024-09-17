@@ -9,7 +9,7 @@ import org.tessellation.json.JsonSerializer
 import org.tessellation.node.shared.domain.block.processing.BlockValidator
 import org.tessellation.node.shared.domain.seedlist.SeedlistEntry
 import org.tessellation.node.shared.domain.statechannel.{FeeCalculator, FeeCalculatorConfig, StateChannelValidator}
-import org.tessellation.node.shared.domain.transaction.{TransactionChainValidator, TransactionValidator}
+import org.tessellation.node.shared.domain.transaction.{FeeTransactionValidator, TransactionChainValidator, TransactionValidator}
 import org.tessellation.node.shared.infrastructure.block.processing.BlockValidator
 import org.tessellation.node.shared.infrastructure.gossip.RumorValidator
 import org.tessellation.node.shared.infrastructure.snapshot.CurrencyMessageValidator
@@ -34,6 +34,7 @@ object SharedValidators {
     val signedValidator = SignedValidator.make[F]
     val transactionChainValidator = TransactionChainValidator.make[F](txHasher)
     val transactionValidator = TransactionValidator.make[F](signedValidator, txHasher)
+    val feeTransactionValidator = FeeTransactionValidator.make[F](signedValidator)
     val blockValidator = BlockValidator.make[F](signedValidator, transactionChainValidator, transactionValidator, txHasher)
     val currencyTransactionChainValidator = TransactionChainValidator.make[F](txHasher)
     val currencyTransactionValidator = TransactionValidator.make[F](signedValidator, txHasher)
@@ -49,6 +50,7 @@ object SharedValidators {
       signedValidator,
       transactionChainValidator,
       transactionValidator,
+      feeTransactionValidator,
       currencyTransactionChainValidator,
       currencyTransactionValidator,
       blockValidator,
@@ -64,6 +66,7 @@ sealed abstract class SharedValidators[F[_]] private (
   val signedValidator: SignedValidator[F],
   val transactionChainValidator: TransactionChainValidator[F],
   val transactionValidator: TransactionValidator[F],
+  val feeTransactionValidator: FeeTransactionValidator[F],
   val currencyTransactionChainValidator: TransactionChainValidator[F],
   val currencyTransactionValidator: TransactionValidator[F],
   val blockValidator: BlockValidator[F],
