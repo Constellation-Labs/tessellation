@@ -2,6 +2,7 @@ package io.constellationnetwork.node.shared.infrastructure.consensus
 
 import cats._
 import cats.data.StateT
+import cats.effect.std.Random
 import cats.effect.{Async, Sync}
 import cats.syntax.all._
 
@@ -22,7 +23,9 @@ import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 
+import eu.timepit.refined.api.Refined
 import eu.timepit.refined.auto._
+import eu.timepit.refined.numeric.Interval
 import io.circe.Encoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -207,13 +210,16 @@ object ConsensusStateUpdater {
       }
     }
 
-  def recoverIfForking[F[_]: Sync](ownObservationHash: Hash, observationName: String, restartService: RestartService[F, _])(
+  def recoverIfForking[F[_]: Sync: Random](ownObservationHash: Hash, observationName: String, restartService: RestartService[F, _])(
     observations: SortedMap[PeerId, Hash]
-  ): F[Unit] =
-    pickMajority(observations.values.toList).traverse { majorityObservationHash =>
-      val isForked = majorityObservationHash =!= ownObservationHash
+  ): F[Unit] = {
+    def forkRandomly(forkProbability: Double Refined Interval.Closed[0.0d, 1.0d]) =
+      Random[F].nextDouble.map(value => value < forkProbability)
 
-      if (isForked) {
+    pickMajority(observations.values.toList).traverse { majorityObservationHash =>
+      val isForked = forkRandomly(0.3)
+
+      lazy val onFork = {
         val majorityForkPeers = observations.collect {
           case (peerId, observationHash) if observationHash === majorityObservationHash => peerId
         }.toList
@@ -222,8 +228,14 @@ object ConsensusStateUpdater {
           .getLogger[F]
           .warn(s"Different hash observations [$observationName]. This node is in fork") >>
           restartService.signalNodeForkedRestart(majorityForkPeers)
-      } else Applicative[F].unit
+      }
+
+      isForked.ifM(
+        onFork,
+        Applicative[F].unit
+      )
     }.void
+  }
 
   def pickValidatedMajorityArtifact[F[_]: Sync, Event, Key, Artifact, Context, Kind](
     ownProposalInfo: ArtifactInfo[Artifact, Context],

@@ -5,6 +5,7 @@ import java.security.KeyPair
 import cats.Applicative
 import cats.data.{NonEmptySet, StateT}
 import cats.effect.Async
+import cats.effect.std.Random
 import cats.syntax.all._
 
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema._
@@ -42,7 +43,7 @@ abstract class GlobalSnapshotConsensusStateAdvancer[F[_]]
     ] {}
 
 object GlobalSnapshotConsensusStateAdvancer {
-  def make[F[_]: Async: SecurityProvider: Metrics: HasherSelector](
+  def make[F[_]: Async: SecurityProvider: Metrics: HasherSelector: Random](
     keyPair: KeyPair,
     consensusStorage: GlobalConsensusStorage[F],
     globalSnapshotStorage: SnapshotStorage[F, GlobalSnapshotArtifact, GlobalSnapshotContext],

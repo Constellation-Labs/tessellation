@@ -5,6 +5,7 @@ import java.security.KeyPair
 import cats.Applicative
 import cats.data.{NonEmptySet, OptionT, StateT}
 import cats.effect.Async
+import cats.effect.std.Random
 import cats.syntax.all._
 
 import io.constellationnetwork.currency.dataApplication.BaseDataApplicationL0Service
@@ -46,7 +47,7 @@ abstract class CurrencySnapshotConsensusStateAdvancer[F[_]]
 
 object CurrencySnapshotConsensusStateAdvancer {
 
-  def make[F[_]: Async: SecurityProvider: Metrics: HasherSelector](
+  def make[F[_]: Async: SecurityProvider: Metrics: HasherSelector: Random](
     keyPair: KeyPair,
     consensusStorage: CurrencyConsensusStorage[F],
     consensusFns: CurrencySnapshotConsensusFunctions[F],
