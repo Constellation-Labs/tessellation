@@ -6,21 +6,25 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 
 import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationBlock
-import io.constellationnetwork.currency.dataApplication.{ConsensusInput, DataUpdate}
+import io.constellationnetwork.currency.dataApplication.{ConsensusInput => DataConsensusInput, DataUpdate}
+import io.constellationnetwork.currency.swap.{ConsensusInput => SwapConsensusInput}
 import io.constellationnetwork.dag.l1.domain.consensus.block.BlockConsensusInput.PeerBlockConsensusInput
 import io.constellationnetwork.dag.l1.modules.{Queues => DAGL1Queues}
 import io.constellationnetwork.node.shared.domain.queue.ViewableQueue
 import io.constellationnetwork.schema.Block
 import io.constellationnetwork.schema.gossip.RumorRaw
+import io.constellationnetwork.schema.swap.SwapTransaction
 import io.constellationnetwork.security.Hashed
 import io.constellationnetwork.security.signature.Signed
 
 object Queues {
   def make[F[_]: Concurrent](dagL1Queues: DAGL1Queues[F]): F[Queues[F]] =
     for {
-      dataApplicationPeerConsensusInputQueue <- Queue.unbounded[F, Signed[ConsensusInput.PeerConsensusInput]]
+      dataApplicationPeerConsensusInputQueue <- Queue.unbounded[F, Signed[DataConsensusInput.PeerConsensusInput]]
       dataApplicationBlockQueue <- Queue.unbounded[F, Signed[DataApplicationBlock]]
       dataUpdatesQueue <- ViewableQueue.make[F, Signed[DataUpdate]]
+      swapPeerConsensusInputQueue <- Queue.unbounded[F, Signed[SwapConsensusInput.PeerConsensusInput]]
+      swapTransactionsQueue <- ViewableQueue.make[F, Signed[SwapTransaction]]
     } yield
       new Queues[F] {
         val rumor = dagL1Queues.rumor
@@ -29,6 +33,8 @@ object Queues {
         val dataApplicationPeerConsensusInput = dataApplicationPeerConsensusInputQueue
         val dataApplicationBlock = dataApplicationBlockQueue
         val dataUpdates = dataUpdatesQueue
+        val swapPeerConsensusInput = swapPeerConsensusInputQueue
+        val swapTransactions = swapTransactionsQueue
       }
 }
 
@@ -36,7 +42,9 @@ sealed abstract class Queues[F[_]] private {
   val rumor: Queue[F, Hashed[RumorRaw]]
   val peerBlockConsensusInput: Queue[F, Signed[PeerBlockConsensusInput]]
   val peerBlock: Queue[F, Signed[Block]]
-  val dataApplicationPeerConsensusInput: Queue[F, Signed[ConsensusInput.PeerConsensusInput]]
+  val dataApplicationPeerConsensusInput: Queue[F, Signed[DataConsensusInput.PeerConsensusInput]]
   val dataApplicationBlock: Queue[F, Signed[DataApplicationBlock]]
   val dataUpdates: ViewableQueue[F, Signed[DataUpdate]]
+  val swapPeerConsensusInput: Queue[F, Signed[SwapConsensusInput.PeerConsensusInput]]
+  val swapTransactions: ViewableQueue[F, Signed[SwapTransaction]]
 }
