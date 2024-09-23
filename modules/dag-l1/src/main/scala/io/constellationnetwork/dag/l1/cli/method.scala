@@ -24,6 +24,7 @@ object method {
     def appConfig(c: AppConfigReader, shared: SharedConfig): AppConfig = AppConfig(
       c.consensus,
       c.dataConsensus,
+      c.swap,
       c.transactionLimit,
       shared
     )
