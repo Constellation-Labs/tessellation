@@ -8,7 +8,7 @@ import cats.syntax.semigroupk._
 
 import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationCustomRoutes
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL1Service, L1NodeContext}
-import io.constellationnetwork.currency.l1.http.DataApplicationRoutes
+import io.constellationnetwork.currency.l1.http.{DataApplicationRoutes, SwapRoutes}
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.dag.l1.http.{Routes => DAGRoutes}
 import io.constellationnetwork.node.shared.cli.CliMethod
@@ -113,6 +113,16 @@ sealed abstract class HttpApi[
       )
     }
   }
+  private val swapRoutes =
+    HasherSelector[F].withCurrent { implicit hasher =>
+      SwapRoutes[F](
+        queues.swapPeerConsensusInput,
+        storages.l0Cluster,
+        queues.swapTransactions,
+        storages.lastGlobalSnapshot,
+        storages.lastSnapshot
+      )
+    }
   private val currencyRoutes =
     DAGRoutes[F](services.transaction, storages.transaction, storages.l0Cluster, queues.peerBlockConsensusInput, txHasher)
   private val nodeRoutes = NodeRoutes[F](storages.node, storages.session, storages.cluster, nodeVersion, httpCfg, selfId)
@@ -132,7 +142,8 @@ sealed abstract class HttpApi[
           targetRoutes <+>
           routes.map(_.publicRoutes).getOrElse(currencyRoutes.publicRoutes) <+>
           metagraphNodeRoutes.map(_.publicRoutes).getOrElse(HttpRoutes.empty) <+>
-          DataApplicationCustomRoutes.publicRoutes[F, L1NodeContext[F]](maybeDataApplication)
+          DataApplicationCustomRoutes.publicRoutes[F, L1NodeContext[F]](maybeDataApplication) <+>
+          swapRoutes.publicRoutes
       }
     }
 
@@ -146,7 +157,8 @@ sealed abstract class HttpApi[
               nodeRoutes.p2pRoutes <+>
               gossipRoutes.p2pRoutes <+>
               routes.map(_.p2pRoutes).getOrElse(currencyRoutes.p2pRoutes) <+>
-              metagraphNodeRoutes.map(_.p2pRoutes).getOrElse(HttpRoutes.empty)
+              metagraphNodeRoutes.map(_.p2pRoutes).getOrElse(HttpRoutes.empty) <+>
+              swapRoutes.p2pRoutes
           )
         )
     )
