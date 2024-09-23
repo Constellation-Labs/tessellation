@@ -3,6 +3,7 @@ package io.constellationnetwork.currency.l1.http.p2p
 import cats.effect.Async
 
 import io.constellationnetwork.currency.l1.domain.dataApplication.consensus.ConsensusClient
+import io.constellationnetwork.currency.l1.domain.swap.consensus.{ConsensusClient => SwapConsensusClient}
 import io.constellationnetwork.dag.l1.domain.consensus.block.http.p2p.clients.BlockConsensusClient
 import io.constellationnetwork.dag.l1.http.p2p.{L0BlockOutputClient, P2PClient => DagL1P2PClient}
 import io.constellationnetwork.node.shared.http.p2p.clients._
@@ -27,6 +28,7 @@ object P2PClient {
       dagL1P2PClient.blockConsensus,
       dagL1P2PClient.l0GlobalSnapshot,
       ConsensusClient.make(client),
+      SwapConsensusClient.make(client),
       L0TrustClient.make(client)
     ) {}
 }
@@ -41,5 +43,6 @@ sealed abstract class P2PClient[F[_]] private (
   val blockConsensus: BlockConsensusClient[F],
   val l0GlobalSnapshot: L0GlobalSnapshotClient[F],
   val consensusClient: ConsensusClient[F],
+  val swapConsensusClient: SwapConsensusClient[F],
   val l0Trust: L0TrustClient[F]
 )
