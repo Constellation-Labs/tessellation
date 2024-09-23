@@ -274,6 +274,21 @@ abstract class CurrencyL1App(
               keyPair,
               nodeId
             )
+            .merge {
+              Swap.run(
+                cfg.swap,
+                storages.cluster,
+                storages.l0Cluster,
+                storages.lastGlobalSnapshot,
+                storages.node,
+                p2pClient.l0BlockOutputClient,
+                p2pClient.swapConsensusClient,
+                services,
+                queues,
+                keyPair,
+                nodeId
+              )
+            }
         }
           .merge(globalL0PeerDiscovery)
           .merge(stateChannel.globalSnapshotProcessing)
