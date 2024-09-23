@@ -30,7 +30,7 @@ object method {
     val identifier: Address
 
     def appConfig(c: AppConfigReader, shared: SharedConfig): AppConfig =
-      AppConfig(c.consensus, c.dataConsensus, c.transactionLimit, shared)
+      AppConfig(c.consensus, c.dataConsensus, c.swap, c.transactionLimit, shared)
 
     val stateChannelAllowanceLists = None
 
