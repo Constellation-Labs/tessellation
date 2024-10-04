@@ -15,6 +15,7 @@ import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.ext.derevo.ordering
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.round.RoundId
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -24,7 +25,7 @@ import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import enumeratum._
-import eu.timepit.refined.auto.{autoRefineV, autoUnwrap, _}
+import eu.timepit.refined.auto.{autoRefineV, _}
 import eu.timepit.refined.cats._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
 import io.circe.{Decoder, Encoder}
@@ -158,14 +159,30 @@ object swap {
   @newtype
   case class SpendTransactionFee(value: PosLong)
 
+  @derive(decoder, encoder, order, ordering, show)
+  sealed trait SpendTransaction
+
   @derive(decoder, encoder, order, show)
-  case class SpendTransaction(
+  @newtype
+  case class SpendTransactionReference(hash: Hash)
+
+  object SpendTransactionReference {
+    def of[F[_]: Async](spendTransaction: SpendTransaction)(implicit hasher: Hasher[F]): F[SpendTransactionReference] =
+      hasher.hash(spendTransaction).map(SpendTransactionReference(_))
+  }
+  @derive(decoder, encoder, order, show)
+  case class PendingSpendTransaction(
     fee: SpendTransactionFee,
-    lastValidOrdinal: SnapshotOrdinal,
+    lastValidEpochProgress: EpochProgress,
     allowSpendRef: Hash,
     currency: Option[CurrencyId],
     amount: SwapAmount
-  )
+  ) extends SpendTransaction
+
+  @derive(decoder, encoder, order, show)
+  case class ConcludedSpendTransaction(
+    spendTransactionRef: SpendTransactionReference
+  ) extends SpendTransaction
 
   sealed trait SwapAction
 
