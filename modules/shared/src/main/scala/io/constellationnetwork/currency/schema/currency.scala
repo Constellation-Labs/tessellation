@@ -16,7 +16,7 @@ import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
 import io.constellationnetwork.schema.semver.SnapshotVersion
 import io.constellationnetwork.schema.snapshot._
-import io.constellationnetwork.schema.swap.{AllowSpend, AllowSpendReference}
+import io.constellationnetwork.schema.swap._
 import io.constellationnetwork.schema.transaction._
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.{Hash, ProofsHash}
@@ -162,6 +162,7 @@ object currency {
     dataApplication: Option[DataApplicationPart] = None,
     messages: Option[SortedSet[Signed[CurrencyMessage]]] = None,
     feeTransactions: Option[SortedSet[Signed[FeeTransaction]]] = None,
+    spendTransactions: Option[SortedSet[SpendTransaction]] = None,
     version: SnapshotVersion = SnapshotVersion("0.0.1")
   ) extends IncrementalSnapshot[CurrencySnapshotStateProof]
 
@@ -179,6 +180,7 @@ object currency {
           stateProof.toCurrencySnapshotStateProof,
           snapshot.epochProgress,
           snapshot.dataApplication,
+          None,
           None,
           None,
           snapshot.version
@@ -212,6 +214,7 @@ object currency {
         stateProof.toCurrencySnapshotStateProof,
         epochProgress,
         dataApplication,
+        None,
         None,
         None,
         version
@@ -265,6 +268,7 @@ object currency {
           stateProof.toCurrencySnapshotStateProof,
           genesis.epochProgress,
           genesis.dataApplication,
+          None,
           None,
           None,
           genesis.version
