@@ -294,7 +294,7 @@ object CurrencySnapshotConsensusStateAdvancer {
                         gossipForkInfo(gossip, signedMajorityArtifact) >>
                         maybeDataApplication.traverse_ { da =>
                           signedMajorityArtifact.toHashed >>= da.onSnapshotConsensusResult
-                        }
+                        }.handleErrorWith(logger.error(_)("Unhandled exception during onSnapshotConsensusResult"))
 
                       newState = state.copy(status =
                         identity[CurrencySnapshotStatus](
