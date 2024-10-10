@@ -7,11 +7,12 @@ import cats.syntax.all._
 
 import scala.concurrent.duration._
 
+import io.constellationnetwork.currency.dataApplication.BaseDataApplicationL0Service
 import io.constellationnetwork.currency.l0.cli.method.Run
 import io.constellationnetwork.currency.l0.modules.{Programs, Services, Storages}
 import io.constellationnetwork.node.shared.domain.snapshot.Validator
-import io.constellationnetwork.schema.GlobalIncrementalSnapshot
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import io.constellationnetwork.security.{Hashed, HasherSelector}
 
 import fs2.Stream
@@ -24,17 +25,27 @@ object StateChannel {
   def run[F[_]: Async: HasherSelector](
     services: Services[F, Run],
     storages: Storages[F],
-    programs: Programs[F]
+    programs: Programs[F],
+    dataApplicationService: Option[BaseDataApplicationL0Service[F]]
   )(implicit S: Supervisor[F]): Stream[F, Unit] = {
     val logger = Slf4jLogger.getLogger[F]
 
-    def globalL0SnapshotProcessing: Stream[F, Unit] =
+    def globalL0SnapshotProcessing: Stream[F, Unit] = {
+      def triggerOnGlobalSnapshotPullHook(snapshot: Hashed[GlobalIncrementalSnapshot], context: GlobalSnapshotInfo) =
+        dataApplicationService match {
+          case Some(service) =>
+            service
+              .onGlobalSnapshotPull(snapshot, context)
+              .handleErrorWith(error => logger.error(error)("An unexpected error occurred in onGlobalSnapshotPull"))
+          case None => Applicative[F].unit
+        }
+
       Stream
         .awakeEvery[F](awakePeriod)
         .evalMap(_ => services.globalL0.pullGlobalSnapshots)
         .evalMap {
           case Left((snapshot, state)) =>
-            storages.lastGlobalSnapshot.setInitial(snapshot, state)
+            storages.lastGlobalSnapshot.setInitial(snapshot, state) >> triggerOnGlobalSnapshotPullHook(snapshot, state)
 
           case Right(snapshots) =>
             snapshots.tailRecM {
@@ -54,6 +65,7 @@ object StateChannel {
                         }
                         .flatMap { context =>
                           storages.lastGlobalSnapshot.set(snapshot, context) >>
+                            triggerOnGlobalSnapshotPullHook(snapshot, context) >>
                             services.stateChannelBinarySender.confirm(snapshot) >> S
                               .supervise(services.stateChannelBinarySender.processPending)
                               .void
@@ -66,6 +78,7 @@ object StateChannel {
         .handleErrorWith { error =>
           Stream.eval(logger.error(error)("Error during global L0 snapshot processing"))
         }
+    }
 
     def globalL0PeerDiscovery: Stream[F, Unit] =
       Stream
