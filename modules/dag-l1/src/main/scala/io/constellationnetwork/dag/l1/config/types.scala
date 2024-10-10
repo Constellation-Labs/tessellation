@@ -1,8 +1,9 @@
 package io.constellationnetwork.dag.l1.config
 
-import io.constellationnetwork.dag.l1.domain.consensus.block.config.{ConsensusConfig, DataConsensusConfig, SwapConsensusConfig}
+import io.constellationnetwork.dag.l1.domain.consensus.block.config.{ConsensusConfig, DataConsensusConfig}
 import io.constellationnetwork.dag.l1.domain.transaction.TransactionLimitConfig
 import io.constellationnetwork.node.shared.config.types._
+import io.constellationnetwork.node.shared.domain.consensus.config.SwapConsensusConfig
 
 object types {
 
