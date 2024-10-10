@@ -1,4 +1,4 @@
-package io.constellationnetwork.dag.l1.domain.consensus.block.config
+package io.constellationnetwork.node.shared.domain.consensus.config
 
 import scala.concurrent.duration.FiniteDuration
 
