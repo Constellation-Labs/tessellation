@@ -1,4 +1,4 @@
-package io.constellationnetwork.currency.l1.domain.swap.consensus
+package io.constellationnetwork.node.shared.domain.swap.consensus
 
 import cats.effect.Sync
 import cats.syntax.functor._
