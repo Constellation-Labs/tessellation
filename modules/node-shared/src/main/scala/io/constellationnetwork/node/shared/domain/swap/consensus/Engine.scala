@@ -1,4 +1,4 @@
-package io.constellationnetwork.currency.l1.domain.swap.consensus
+package io.constellationnetwork.node.shared.domain.swap.consensus
 
 import java.security.KeyPair
 
@@ -13,10 +13,10 @@ import scala.concurrent.duration.FiniteDuration
 import io.constellationnetwork.currency.swap.ConsensusInput._
 import io.constellationnetwork.currency.swap.ConsensusOutput.Noop
 import io.constellationnetwork.currency.swap._
-import io.constellationnetwork.dag.l1.domain.consensus.block.config.SwapConsensusConfig
 import io.constellationnetwork.effects.GenUUID
 import io.constellationnetwork.fsm.FSM
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
+import io.constellationnetwork.node.shared.domain.consensus.config.SwapConsensusConfig
 import io.constellationnetwork.node.shared.domain.queue.ViewableQueue
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.schema.node.NodeState
