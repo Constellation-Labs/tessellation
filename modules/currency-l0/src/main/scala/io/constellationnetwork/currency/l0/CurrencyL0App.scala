@@ -77,7 +77,8 @@ abstract class CurrencyL0App(
       p2pClient = P2PClient.make[IO](sharedP2PClient, sharedResources.client, sharedServices.session)
       maybeAllowanceList = StateChannelAllowanceLists.get(cfg.environment)
       validators = Validators.make[IO](seedlist, maybeAllowanceList, Hasher.forKryo[IO])
-      implicit0(nodeContext: L0NodeContext[IO]) = L0NodeContext.make[IO](storages.snapshot, hasherSelectorAlwaysCurrent)
+      implicit0(nodeContext: L0NodeContext[IO]) = L0NodeContext
+        .make[IO](storages.snapshot, storages.lastGlobalSnapshot, hasherSelectorAlwaysCurrent)
       maybeMajorityPeerIds <- getMajorityPeerIds[IO](
         nodeShared.prioritySeedlist,
         sharedConfig.priorityPeerIds,

@@ -61,7 +61,7 @@ object Services {
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync[F]
       implicit0(hasher: Hasher[F]) = hasherSelector.getCurrent
 
-      l0NodeContext = L0NodeContext.make[F](storages.snapshot, hasherSelector)
+      l0NodeContext = L0NodeContext.make[F](storages.snapshot, storages.lastGlobalSnapshot, hasherSelector)
 
       dataApplicationAcceptanceManager = (maybeDataApplication, storages.calculatedStateStorage).mapN {
         case (service, storage) =>
