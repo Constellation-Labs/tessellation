@@ -3,9 +3,9 @@ package io.constellationnetwork.currency.l1.http.p2p
 import cats.effect.Async
 
 import io.constellationnetwork.currency.l1.domain.dataApplication.consensus.ConsensusClient
-import io.constellationnetwork.currency.l1.domain.swap.consensus.{ConsensusClient => SwapConsensusClient}
 import io.constellationnetwork.dag.l1.domain.consensus.block.http.p2p.clients.BlockConsensusClient
 import io.constellationnetwork.dag.l1.http.p2p.{L0BlockOutputClient, P2PClient => DagL1P2PClient}
+import io.constellationnetwork.node.shared.domain.swap.consensus.{ConsensusClient => SwapConsensusClient}
 import io.constellationnetwork.node.shared.http.p2p.clients._
 import io.constellationnetwork.node.shared.infrastructure.gossip.p2p.GossipClient
 import io.constellationnetwork.security.SecurityProvider
