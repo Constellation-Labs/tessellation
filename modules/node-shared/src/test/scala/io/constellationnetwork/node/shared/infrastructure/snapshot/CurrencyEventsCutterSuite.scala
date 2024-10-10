@@ -16,10 +16,10 @@ import io.constellationnetwork.ext.cats.effect._
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.routes.internal
-import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.currencyMessage.{CurrencyMessage, MessageOrdinal, MessageType}
 import io.constellationnetwork.schema.generators.{addressGen, signedOf}
 import io.constellationnetwork.schema.round.RoundId
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.Hashed
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -350,6 +350,8 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
     override def genesis: DataState.Base = ???
 
     override def onSnapshotConsensusResult(snapshot: Hashed[currency.CurrencyIncrementalSnapshot]): IO[Unit] = ???
+
+    def onGlobalSnapshotPull(snapshot: Hashed[GlobalIncrementalSnapshot], context: GlobalSnapshotInfo): IO[Unit] = ???
   }
 
 }
