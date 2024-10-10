@@ -10,17 +10,17 @@ import cats.syntax.all._
 import scala.concurrent.duration._
 
 import io.constellationnetwork.currency.l1.cli.method.Run
-import io.constellationnetwork.currency.l1.domain.swap.consensus.Validator._
-import io.constellationnetwork.currency.l1.domain.swap.consensus.{ConsensusClient, ConsensusState, Engine}
 import io.constellationnetwork.currency.l1.modules.{Queues, Services}
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo, CurrencySnapshotStateProof}
 import io.constellationnetwork.currency.swap.ConsensusInput.OwnerConsensusInput
 import io.constellationnetwork.currency.swap.{ConsensusInput, ConsensusOutput}
-import io.constellationnetwork.dag.l1.domain.consensus.block.config.SwapConsensusConfig
 import io.constellationnetwork.dag.l1.http.p2p.L0BlockOutputClient
 import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorage, L0ClusterStorage}
+import io.constellationnetwork.node.shared.domain.consensus.config.SwapConsensusConfig
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
+import io.constellationnetwork.node.shared.domain.swap.consensus.Validator._
+import io.constellationnetwork.node.shared.domain.swap.consensus.{ConsensusClient, ConsensusState, Engine}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import io.constellationnetwork.security.{Hasher, SecurityProvider}
