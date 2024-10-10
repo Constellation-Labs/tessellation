@@ -320,7 +320,7 @@ abstract class CurrencyL0App(
               case _ => IO.unit
             }
             _ <- StateChannel
-              .run[IO](services, storages, programs)
+              .run[IO](services, storages, programs, dataApplicationService)
               .compile
               .drain
           } yield innerProgram
