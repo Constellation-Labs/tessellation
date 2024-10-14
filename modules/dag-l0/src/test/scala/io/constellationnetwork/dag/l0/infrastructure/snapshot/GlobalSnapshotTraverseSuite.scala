@@ -18,7 +18,7 @@ import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.kryo.KryoSerializer
-import io.constellationnetwork.node.shared.config.types.SnapshotSizeConfig
+import io.constellationnetwork.node.shared.config.types.{AddressesConfig, SnapshotSizeConfig}
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
 import io.constellationnetwork.node.shared.domain.transaction.{TransactionChainValidator, TransactionValidator}
 import io.constellationnetwork.node.shared.infrastructure.block.processing.{BlockAcceptanceLogic, BlockAcceptanceManager, BlockValidator}
@@ -221,18 +221,21 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
 
     val txHasher = Hasher.forKryo[IO]
 
+    val addressesConfig = AddressesConfig(Set())
+
     val signedValidator = SignedValidator.make[IO]
     val blockValidator =
       BlockValidator.make[IO](
         signedValidator,
         TransactionChainValidator.make[IO](Hasher.forKryo[IO]),
-        TransactionValidator.make[IO](signedValidator, txHasher),
+        TransactionValidator.make[IO](addressesConfig, signedValidator, txHasher),
         txHasher
       )
     val blockAcceptanceManager = BlockAcceptanceManager.make(BlockAcceptanceLogic.make[IO](txHasher), blockValidator, txHasher)
     val feeCalculator = FeeCalculator.make(SortedMap.empty)
     val validators =
-      SharedValidators.make[IO](None, None, Some(Map.empty[Address, NonEmptySet[PeerId]]), SortedMap.empty, Long.MaxValue, txHasher)
+      SharedValidators
+        .make[IO](addressesConfig, None, None, Some(Map.empty[Address, NonEmptySet[PeerId]]), SortedMap.empty, Long.MaxValue, txHasher)
 
     val currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
       BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, txHasher),

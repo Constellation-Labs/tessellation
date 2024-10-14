@@ -8,6 +8,7 @@ import scala.concurrent.duration.FiniteDuration
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculatorConfig
 import io.constellationnetwork.schema.SnapshotOrdinal
+import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.PeerId
@@ -28,7 +29,8 @@ object types {
     feeConfigs: Map[AppEnvironment, Map[SnapshotOrdinal, FeeCalculatorConfig]],
     forkInfoStorage: ForkInfoStorageConfig,
     priorityPeerIds: Map[AppEnvironment, NonEmptySet[PeerId]],
-    lastKryoHashOrdinal: Map[AppEnvironment, SnapshotOrdinal]
+    lastKryoHashOrdinal: Map[AppEnvironment, SnapshotOrdinal],
+    addresses: AddressesConfig
   )
 
   case class SharedConfig(
@@ -43,7 +45,8 @@ object types {
     snapshotSize: SnapshotSizeConfig,
     feeConfigs: SortedMap[SnapshotOrdinal, FeeCalculatorConfig],
     forkInfoStorage: ForkInfoStorageConfig,
-    lastKryoHashOrdinal: Map[AppEnvironment, SnapshotOrdinal]
+    lastKryoHashOrdinal: Map[AppEnvironment, SnapshotOrdinal],
+    addresses: AddressesConfig
   )
 
   case class SharedTrustConfig(
@@ -141,5 +144,7 @@ object types {
   case class ForkInfoStorageConfig(
     maxSize: PosInt
   )
+
+  case class AddressesConfig(locked: Set[Address])
 
 }

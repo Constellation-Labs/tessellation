@@ -15,6 +15,7 @@ import io.constellationnetwork.dag.l1.domain.consensus.block.BlockConsensusInput
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.node.shared.config.types.AddressesConfig
 import io.constellationnetwork.node.shared.domain.transaction.TransactionValidator
 import io.constellationnetwork.node.shared.nodeSharedKryoRegistrar
 import io.constellationnetwork.schema.address.Address
@@ -55,7 +56,7 @@ object RoundDataSuite extends ResourceSuite with Checkers with TransactionGenera
       dstAddress = dstKey.getPublic.toAddress
       signedValidator = SignedValidator.make
       txHasher = Hasher.forKryo[IO]
-      txValidator = TransactionValidator.make[F](signedValidator, txHasher)
+      txValidator = TransactionValidator.make[F](AddressesConfig(Set()), signedValidator, txHasher)
     } yield (ks, h, sp, srcKey, dstKey, srcAddress, dstAddress, txValidator)
 
   implicit val logger: SelfAwareStructuredLogger[IO] = Slf4jLogger.getLogger[IO]

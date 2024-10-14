@@ -126,7 +126,7 @@ object Services {
           sharedServices.restart,
           cfg.shared.leavingDelay
         )
-      addressService = AddressService.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](storages.snapshot)
+      addressService = AddressService.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](cfg.shared.addresses, storages.snapshot)
       collateralService = Collateral.make[F](cfg.collateral, storages.snapshot)
       globalL0Service = GlobalL0Service
         .make[F](p2PClient.l0GlobalSnapshot, storages.globalL0Cluster, storages.lastGlobalSnapshot, None, maybeMajorityPeerIds)

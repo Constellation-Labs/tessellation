@@ -5,6 +5,7 @@ import cats.effect.Async
 import cats.syntax.all._
 
 import io.constellationnetwork.ext.cats.syntax.validated._
+import io.constellationnetwork.node.shared.config.types.AddressesConfig
 import io.constellationnetwork.node.shared.domain.transaction.TransactionValidator.TransactionValidationErrorOr
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.transaction.Transaction
@@ -23,17 +24,8 @@ trait TransactionValidator[F[_]] {
 }
 
 object TransactionValidator {
-  val stardustPrimary: Address = Address("DAGSTARDUSTCOLLECTIVEHZOIPHXZUBFGNXWJETZVSPAPAHMLXS")
-  val lockedAddresses: Set[Address] = Set(
-    Address("DAG0qgcEbMk8vQL6VrnbhMreNeEFXk12v1BvERCb"),
-    Address("DAG2KQrN97LpA5gRerJAQ5mDuy6kjC2dDtMr58fe"),
-    stardustPrimary
-  )
 
-  def make[F[_]: Async](
-    signedValidator: SignedValidator[F],
-    txHasher: Hasher[F]
-  ): TransactionValidator[F] =
+  def make[F[_]: Async](cfg: AddressesConfig, signedValidator: SignedValidator[F], txHasher: Hasher[F]): TransactionValidator[F] =
     new TransactionValidator[F] {
       def validate(
         signedTransaction: Signed[Transaction]
@@ -74,6 +66,8 @@ object TransactionValidator {
           AddressLocked(signedTx.value.source).invalidNec[Signed[Transaction]]
         else
           signedTx.validNec[TransactionValidationError]
+
+      private val lockedAddresses = cfg.locked
 
     }
 

@@ -55,7 +55,8 @@ object method {
       c.snapshot.size,
       c.feeConfigs.get(environment).map(SortedMap.from(_)).getOrElse(SortedMap.empty),
       c.forkInfoStorage,
-      c.lastKryoHashOrdinal
+      c.lastKryoHashOrdinal,
+      c.addresses
     )
   }
 

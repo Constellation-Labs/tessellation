@@ -3,6 +3,7 @@ package io.constellationnetwork.currency.l0.modules
 import cats.data.NonEmptySet
 import cats.effect.Async
 
+import io.constellationnetwork.node.shared.config.types.SharedConfig
 import io.constellationnetwork.node.shared.domain.block.processing.BlockValidator
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.domain.transaction.{TransactionChainValidator, TransactionValidator}
@@ -17,13 +18,14 @@ import io.constellationnetwork.security.{Hasher, SecurityProvider}
 object Validators {
 
   def make[F[_]: Async: SecurityProvider](
+    cfg: SharedConfig,
     seedlist: Option[Set[SeedlistEntry]],
     allowanceList: Option[Map[Address, NonEmptySet[PeerId]]],
     txHasher: Hasher[F]
   ): Validators[F] = {
     val signedValidator = SignedValidator.make[F]
     val transactionChainValidator = TransactionChainValidator.make[F](txHasher)
-    val transactionValidator = TransactionValidator.make[F](signedValidator, txHasher)
+    val transactionValidator = TransactionValidator.make[F](cfg.addresses, signedValidator, txHasher)
     val blockValidator =
       BlockValidator.make[F](signedValidator, transactionChainValidator, transactionValidator, txHasher)
     val rumorValidator = RumorValidator.make[F](seedlist, signedValidator)
