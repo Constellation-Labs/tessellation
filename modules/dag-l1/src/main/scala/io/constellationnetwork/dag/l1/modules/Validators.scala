@@ -7,6 +7,7 @@ import io.constellationnetwork.dag.l1.domain.transaction.{
   CustomContextualTransactionValidator,
   TransactionLimitConfig
 }
+import io.constellationnetwork.node.shared.config.types.SharedConfig
 import io.constellationnetwork.node.shared.domain.block.processing.BlockValidator
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.domain.transaction._
@@ -24,6 +25,7 @@ object Validators {
     S <: Snapshot,
     SI <: SnapshotInfo[P]
   ](
+    cfg: SharedConfig,
     seedlist: Option[Set[SeedlistEntry]],
     transactionLimitConfig: TransactionLimitConfig,
     customContextualTransactionValidator: Option[CustomContextualTransactionValidator],
@@ -31,7 +33,7 @@ object Validators {
   ): Validators[F] = {
     val signedValidator = SignedValidator.make[F]
     val transactionChainValidator = TransactionChainValidator.make[F](txHasher)
-    val transactionValidator = TransactionValidator.make[F](signedValidator, txHasher)
+    val transactionValidator = TransactionValidator.make[F](cfg.addresses, signedValidator, txHasher)
     val blockValidator =
       BlockValidator.make[F](signedValidator, transactionChainValidator, transactionValidator, txHasher)
 

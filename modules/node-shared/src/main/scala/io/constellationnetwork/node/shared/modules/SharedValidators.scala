@@ -6,6 +6,7 @@ import cats.effect.Async
 import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.json.JsonSerializer
+import io.constellationnetwork.node.shared.config.types.AddressesConfig
 import io.constellationnetwork.node.shared.domain.block.processing.BlockValidator
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.domain.statechannel.{FeeCalculator, FeeCalculatorConfig, StateChannelValidator}
@@ -24,6 +25,7 @@ import eu.timepit.refined.types.numeric.PosLong
 object SharedValidators {
 
   def make[F[_]: Async: JsonSerializer: SecurityProvider](
+    addressesCfg: AddressesConfig,
     l0Seedlist: Option[Set[SeedlistEntry]],
     seedlist: Option[Set[SeedlistEntry]],
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
@@ -33,10 +35,10 @@ object SharedValidators {
   ): SharedValidators[F] = {
     val signedValidator = SignedValidator.make[F]
     val transactionChainValidator = TransactionChainValidator.make[F](txHasher)
-    val transactionValidator = TransactionValidator.make[F](signedValidator, txHasher)
+    val transactionValidator = TransactionValidator.make[F](addressesCfg, signedValidator, txHasher)
     val blockValidator = BlockValidator.make[F](signedValidator, transactionChainValidator, transactionValidator, txHasher)
     val currencyTransactionChainValidator = TransactionChainValidator.make[F](txHasher)
-    val currencyTransactionValidator = TransactionValidator.make[F](signedValidator, txHasher)
+    val currencyTransactionValidator = TransactionValidator.make[F](addressesCfg, signedValidator, txHasher)
     val currencyBlockValidator = BlockValidator
       .make[F](signedValidator, currencyTransactionChainValidator, currencyTransactionValidator, txHasher)
     val rumorValidator = RumorValidator.make[F](seedlist, signedValidator)

@@ -59,6 +59,7 @@ object Main
       queues <- Queues.make[IO](sharedQueues).asResource
       validators = Validators
         .make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
+          cfg.shared,
           seedlist,
           cfg.transactionLimit,
           None,

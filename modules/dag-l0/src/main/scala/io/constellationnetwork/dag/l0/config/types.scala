@@ -7,7 +7,6 @@ import scala.concurrent.duration.FiniteDuration
 
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.node.shared.config.types._
-import io.constellationnetwork.node.shared.domain.transaction.TransactionValidator.stardustPrimary
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
@@ -100,7 +99,8 @@ object types {
   )
 
   object RewardsConfig {
-    val stardustNewPrimary = Address("DAG8vD8BUhCpTnYXEadQVGhHjgxEZZiafbzwmKKh")
+    val stardustPrimary: Address = Address("DAGSTARDUSTCOLLECTIVEHZOIPHXZUBFGNXWJETZVSPAPAHMLXS")
+    val stardustNewPrimary: Address = Address("DAG8vD8BUhCpTnYXEadQVGhHjgxEZZiafbzwmKKh")
     val stardustSecondary: Address = Address("DAG8VT7bxjs1XXBAzJGYJDaeyNxuThikHeUTp9XY")
     val softStaking: Address = Address("DAG77VVVRvdZiYxZ2hCtkHz68h85ApT5b2xzdTkn")
     val testnet: Address = Address("DAG0qE5tkz6cMUD5M2dkqgfV4TQCzUUdAP5MFM9P")

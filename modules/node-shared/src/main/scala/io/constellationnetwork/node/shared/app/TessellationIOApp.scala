@@ -144,6 +144,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                                   p2pClient = SharedP2PClient.make[IO](res.client, session)
                                   queues <- SharedQueues.make[IO].asResource
                                   validators = SharedValidators.make[IO](
+                                    cfg.addresses,
                                     _l0Seedlist,
                                     _seedlist,
                                     method.stateChannelAllowanceLists,

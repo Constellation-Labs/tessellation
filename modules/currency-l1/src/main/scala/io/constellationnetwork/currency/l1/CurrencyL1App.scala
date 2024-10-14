@@ -86,6 +86,7 @@ abstract class CurrencyL1App(
       txHasher = Hasher.forKryo[IO]
       validators = DAGL1Validators
         .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
+          cfg.shared,
           seedlist,
           cfg.transactionLimit,
           transactionValidator,
