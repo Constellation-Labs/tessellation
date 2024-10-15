@@ -154,7 +154,12 @@ object CurrencySnapshotValidator {
               maybeDataApplication match {
                 case Some(_) => creationResult
                 case None =>
-                  creationResult.focus(_.artifact.dataApplication).replace(expected.dataApplication)
+                  creationResult
+                    .focus(_.artifact.dataApplication)
+                    .replace(expected.dataApplication)
+                    .focus(_.artifact.artifacts)
+                    .replace(expected.artifacts)
+
               }
             }.map { creationResult =>
               if (creationResult.artifact =!= expected)

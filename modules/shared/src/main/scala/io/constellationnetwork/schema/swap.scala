@@ -14,6 +14,7 @@ import io.constellationnetwork.ext.codecs._
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.ext.derevo.ordering
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.artifact.SpendTransaction
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.round.RoundId
@@ -154,35 +155,6 @@ object swap {
   @derive(decoder, encoder, order, show)
   @newtype
   case class SwapReference(value: Address)
-
-  @derive(decoder, encoder, order, show)
-  @newtype
-  case class SpendTransactionFee(value: PosLong)
-
-  @derive(decoder, encoder, order, ordering, show)
-  sealed trait SpendTransaction
-
-  @derive(decoder, encoder, order, show)
-  @newtype
-  case class SpendTransactionReference(hash: Hash)
-
-  object SpendTransactionReference {
-    def of[F[_]: Async](spendTransaction: SpendTransaction)(implicit hasher: Hasher[F]): F[SpendTransactionReference] =
-      hasher.hash(spendTransaction).map(SpendTransactionReference(_))
-  }
-  @derive(decoder, encoder, order, show)
-  case class PendingSpendTransaction(
-    fee: SpendTransactionFee,
-    lastValidEpochProgress: EpochProgress,
-    allowSpendRef: Hash,
-    currency: Option[CurrencyId],
-    amount: SwapAmount
-  ) extends SpendTransaction
-
-  @derive(decoder, encoder, order, show)
-  case class ConcludedSpendTransaction(
-    spendTransactionRef: SpendTransactionReference
-  ) extends SpendTransaction
 
   sealed trait SwapAction
 
