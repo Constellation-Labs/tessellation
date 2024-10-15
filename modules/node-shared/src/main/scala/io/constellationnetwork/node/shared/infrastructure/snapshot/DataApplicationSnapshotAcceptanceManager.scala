@@ -14,6 +14,7 @@ import cats.syntax.semigroup._
 import cats.syntax.show._
 import cats.syntax.traverse._
 
+import scala.collection.immutable.SortedSet
 import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.currency.dataApplication._
@@ -24,6 +25,7 @@ import io.constellationnetwork.currency.schema.feeTransaction.FeeTransaction
 import io.constellationnetwork.ext.cats.syntax.partialPrevious.catsSyntaxPartialPrevious
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotArtifact
 import io.constellationnetwork.schema.SnapshotOrdinal
+import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 
@@ -46,7 +48,8 @@ trait DataApplicationSnapshotAcceptanceManager[F[_]] {
 case class DataApplicationAcceptanceResult(
   dataApplicationPart: DataApplicationPart,
   calculatedState: DataCalculatedState,
-  feeTransactions: Seq[Signed[FeeTransaction]] = Seq.empty
+  feeTransactions: Seq[Signed[FeeTransaction]] = Seq.empty,
+  sharedArtifacts: SortedSet[SharedArtifact] = SortedSet.empty[SharedArtifact]
 )
 
 object DataApplicationSnapshotAcceptanceManager {
@@ -192,7 +195,8 @@ object DataApplicationSnapshotAcceptanceManager {
         DataApplicationAcceptanceResult(
           DataApplicationPart(serializedOnChainState, serializedBlocks, calculatedStateProof),
           newDataState.calculated,
-          feeTransactions
+          feeTransactions,
+          newDataState.sharedArtifacts
         )
 
       newDataState.value.handleErrorWith { err =>
