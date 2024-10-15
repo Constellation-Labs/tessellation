@@ -4,6 +4,8 @@ import cats.data._
 import cats.effect.Async
 import cats.syntax.all._
 
+import scala.collection.immutable.SortedSet
+
 import io.constellationnetwork.currency.dataApplication.storage.{CalculatedStateLocalFileSystemStorage, TraverseLocalFileSystemTempStorage}
 import io.constellationnetwork.currency.schema.currency.CurrencyIncrementalSnapshot
 import io.constellationnetwork.cutoff.{LogarithmicOrdinalCutoff, OrdinalCutoff}
@@ -104,7 +106,7 @@ object DataApplicationTraverse {
                         .map(_.flatMap(_.updates.toList))
                         .flatMap(dataApplication.combine(state, _))
                         .flatTap {
-                          case DataState(_, calculatedState) =>
+                          case DataState(_, calculatedState, _) =>
                             logger.info(s"Persisting calculated state for ordinal=${currentOrdinal.show}") >>
                               calculatedStateStorage.write(currentOrdinal, calculatedState)(dataApplication.serializeCalculatedState) >>
                               cutoffPersistedCalculatedStates(currentOrdinal)
@@ -141,7 +143,9 @@ object DataApplicationTraverse {
                       case Some(calculatedState) =>
                         readOnChainState(snapshot).flatMap {
                           case Some(onChainState) =>
-                            (DataState(onChainState, calculatedState), snapshot.ordinal).some.asRight[NestedAcc].pure[F]
+                            (DataState(onChainState, calculatedState, snapshot.artifacts.getOrElse(SortedSet.empty)), snapshot.ordinal).some
+                              .asRight[NestedAcc]
+                              .pure[F]
                           case _ =>
                             logger
                               .warn(

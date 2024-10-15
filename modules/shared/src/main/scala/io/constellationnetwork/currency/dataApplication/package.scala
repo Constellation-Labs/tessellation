@@ -5,6 +5,7 @@ import cats.kernel.Eq
 import cats.syntax.all._
 import cats.{Applicative, Monad, MonadThrow}
 
+import scala.collection.immutable.SortedSet
 import scala.reflect.ClassTag
 import scala.util.control.NoStackTrace
 
@@ -12,6 +13,7 @@ import io.constellationnetwork.currency.dataApplication.dataApplication.{DataApp
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import io.constellationnetwork.currency.schema.feeTransaction.FeeTransaction
 import io.constellationnetwork.routes.internal.ExternalUrlPrefix
+import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.round.RoundId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
@@ -33,9 +35,11 @@ trait DataCalculatedState
 
 case class DataState[A <: DataOnChainState, B <: DataCalculatedState](
   onChain: A,
-  calculated: B
+  calculated: B,
+  sharedArtifacts: SortedSet[SharedArtifact] = SortedSet.empty[SharedArtifact]
 ) {
-  def asBase: DataState[DataOnChainState, DataCalculatedState] = DataState(onChain, calculated)
+  def asBase: DataState[DataOnChainState, DataCalculatedState] =
+    DataState(onChain, calculated, sharedArtifacts)
 }
 
 object DataState {
@@ -189,9 +193,9 @@ object BaseDataApplicationContextualOps {
       def validateData(state: DataState.Base, updates: NonEmptyList[Signed[DataUpdate]])(
         implicit context: Context
       ): F[DataApplicationValidationErrorOr[Unit]] =
-        (state.onChain, state.calculated) match {
-          case (on: DON, off: DOF) if allKnown(updates.toList) =>
-            service.validateData(DataState(on, off), updates.asInstanceOf[NonEmptyList[Signed[D]]])
+        (state.onChain, state.calculated, state.sharedArtifacts) match {
+          case (on: DON, off: DOF, sharedArtifacts: SortedSet[SharedArtifact]) if allKnown(updates.toList) =>
+            service.validateData(DataState(on, off, sharedArtifacts), updates.asInstanceOf[NonEmptyList[Signed[D]]])
           case _ => Validated.invalidNec[DataApplicationValidationError, Unit](Noop).pure[F]
         }
 
@@ -210,10 +214,10 @@ object BaseDataApplicationContextualOps {
       def combine(state: DataState.Base, updates: List[Signed[DataUpdate]])(
         implicit context: Context
       ): F[DataState.Base] =
-        (state.onChain, state.calculated) match {
-          case (on: DON, off: DOF) if allKnown(updates) =>
-            service.combine(DataState(on, off), updates.asInstanceOf[List[Signed[D]]]).map(_.asBase)
-          case (_, _) => UnexpectedInput.raiseError[F, DataState.Base]
+        (state.onChain, state.calculated, state.sharedArtifacts) match {
+          case (on: DON, off: DOF, sharedArtifacts: SortedSet[SharedArtifact]) if allKnown(updates) =>
+            service.combine(DataState(on, off, sharedArtifacts), updates.asInstanceOf[List[Signed[D]]]).map(_.asBase)
+          case (_, _, _) => UnexpectedInput.raiseError[F, DataState.Base]
         }
 
       def getCalculatedState(implicit context: Context): F[(SnapshotOrdinal, DataCalculatedState)] =
