@@ -27,6 +27,7 @@ import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.currencyMessage.CurrencyMessage
 import io.constellationnetwork.schema.height.{Height, SubHeight}
 import io.constellationnetwork.schema.peer.PeerId
@@ -84,7 +85,6 @@ object CurrencySnapshotCreator {
       rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
       facilitators: Set[PeerId]
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] = {
-
       val maxArtifactSize = maxProposalSizeInBytes(facilitators)
 
       def createProposalWithSizeLimit(
@@ -130,11 +130,16 @@ object CurrencySnapshotCreator {
             _.accept(maybeLastDataApplication, dataBlocks, lastArtifact.ordinal, currentOrdinal)
           )
 
-          (acceptanceResult, messagesAcceptanceResult, acceptedRewardTxs, snapshotInfo, stateProof) <-
+          sharedArtifactsForAcceptance = dataApplicationAcceptanceResult
+            .map(_.sharedArtifacts)
+            .getOrElse(SortedSet.empty[SharedArtifact])
+
+          (acceptanceResult, messagesAcceptanceResult, acceptedRewardTxs, acceptedSharedArtifacts, snapshotInfo, stateProof) <-
             currencySnapshotAcceptanceManager
               .accept(
                 blocks,
                 messages,
+                sharedArtifactsForAcceptance,
                 lastContext,
                 currentOrdinal,
                 lastActiveTips,
@@ -183,7 +188,8 @@ object CurrencySnapshotCreator {
             currentEpochProgress,
             dataApplicationAcceptanceResult.map(_.dataApplicationPart),
             Option.when(snapshotInfo.lastMessages.nonEmpty)(messagesAcceptanceResult.accepted.toSortedSet),
-            feeTransactions = none
+            feeTransactions = none,
+            acceptedSharedArtifacts.some
           )
 
           context = CurrencySnapshotContext(lastContext.address, snapshotInfo)
