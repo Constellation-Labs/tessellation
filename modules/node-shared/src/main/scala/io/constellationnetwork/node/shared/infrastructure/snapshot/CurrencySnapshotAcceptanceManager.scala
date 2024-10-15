@@ -11,6 +11,7 @@ import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.currencyMessage._
 import io.constellationnetwork.schema.transaction.{RewardTransaction, Transaction, TransactionReference}
@@ -30,6 +31,7 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
   def accept(
     blocksForAcceptance: List[Signed[Block]],
     messagesForAcceptance: List[Signed[CurrencyMessage]],
+    sharedArtifactsForAcceptance: SortedSet[SharedArtifact],
     lastSnapshotContext: CurrencySnapshotContext,
     snapshotOrdinal: SnapshotOrdinal,
     lastActiveTips: SortedSet[ActiveTip],
@@ -40,6 +42,7 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
       BlockAcceptanceResult,
       CurrencyMessagesAcceptanceResult,
       SortedSet[RewardTransaction],
+      SortedSet[SharedArtifact],
       CurrencySnapshotInfo,
       CurrencySnapshotStateProof
     )
@@ -56,6 +59,7 @@ object CurrencySnapshotAcceptanceManager {
     def accept(
       blocksForAcceptance: List[Signed[Block]],
       messagesForAcceptance: List[Signed[CurrencyMessage]],
+      sharedArtifactsForAcceptance: SortedSet[SharedArtifact],
       lastSnapshotContext: CurrencySnapshotContext,
       snapshotOrdinal: SnapshotOrdinal,
       lastActiveTips: SortedSet[ActiveTip],
@@ -66,6 +70,7 @@ object CurrencySnapshotAcceptanceManager {
         BlockAcceptanceResult,
         CurrencyMessagesAcceptanceResult,
         SortedSet[RewardTransaction],
+        SortedSet[SharedArtifact],
         CurrencySnapshotInfo,
         CurrencySnapshotStateProof
       )
@@ -95,6 +100,8 @@ object CurrencySnapshotAcceptanceManager {
         lastSnapshotContext.snapshotInfo.balances ++ acceptanceResult.contextUpdate.balances,
         rewards
       )
+
+      acceptedSharedArtifacts = acceptSharedArtifacts(sharedArtifactsForAcceptance)
 
       lastMessages = lastSnapshotContext.snapshotInfo.lastMessages.getOrElse(SortedMap.empty[MessageType, Signed[CurrencyMessage]])
 
@@ -140,7 +147,7 @@ object CurrencySnapshotAcceptanceManager {
       )
       stateProof <- csi.stateProof(snapshotOrdinal)
 
-    } yield (acceptanceResult, messagesAcceptanceResult, acceptedRewardTxs, csi, stateProof)
+    } yield (acceptanceResult, messagesAcceptanceResult, acceptedRewardTxs, acceptedSharedArtifacts, csi, stateProof)
 
     private def acceptTransactionRefs(
       lastTxRefs: SortedMap[Address, TransactionReference],
@@ -185,6 +192,11 @@ object CurrencySnapshotAcceptanceManager {
           .map(balance => (updatedBalances.updated(tx.destination, balance), acceptedTxs + tx))
           .getOrElse(acc)
       }
+
+    private def acceptSharedArtifacts(
+      sharedArtifactsForAcceptance: SortedSet[SharedArtifact]
+    ): SortedSet[SharedArtifact] =
+      sharedArtifactsForAcceptance
 
     def getTipsUsages(
       lastActive: Set[ActiveTip],
