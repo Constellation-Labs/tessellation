@@ -109,7 +109,8 @@ object peer {
     p2pPort: Port,
     session: SessionToken,
     state: NodeState,
-    responsiveness: PeerResponsiveness
+    responsiveness: PeerResponsiveness,
+    jar: Hash
   )
 
   object Peer {
@@ -130,12 +131,13 @@ object peer {
     publicPort: Port,
     p2pPort: Port,
     session: String,
-    state: NodeState
+    state: NodeState,
+    jar: Hash
   )
 
   object PeerInfo {
     def fromPeer(peer: Peer): PeerInfo =
-      PeerInfo(peer.id, peer.ip, peer.publicPort, peer.p2pPort, peer.session.value.toString, peer.state)
+      PeerInfo(peer.id, peer.ip, peer.publicPort, peer.p2pPort, peer.session.value.toString, peer.state, peer.jar)
   }
 
   @derive(eqv, encoder, decoder, order, ordering, show)
@@ -169,6 +171,7 @@ object peer {
     state: NodeState,
     seedlist: Hash,
     version: Hash,
+    jar: Hash,
     environment: AppEnvironment
   )
 

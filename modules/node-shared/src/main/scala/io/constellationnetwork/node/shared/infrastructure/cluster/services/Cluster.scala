@@ -9,7 +9,7 @@ import cats.{Applicative, MonadThrow}
 
 import scala.concurrent.duration._
 
-import io.constellationnetwork.env.AppEnvironment
+import io.constellationnetwork.env.{AppEnvironment, JarSignature}
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.node.shared.config.types.HttpConfig
 import io.constellationnetwork.node.shared.domain.cluster.services.Cluster
@@ -66,6 +66,7 @@ object Cluster {
             state,
             seedlistHash,
             versionHash,
+            JarSignature.hash,
             environment
           )
 
@@ -91,7 +92,8 @@ object Cluster {
             req.publicPort,
             req.p2pPort,
             req.session.value.toString,
-            req.state
+            req.state,
+            JarSignature.hash
           )
 
           clusterStorage.getResponsivePeers.map(_.map(PeerInfo.fromPeer) + self)
