@@ -44,6 +44,7 @@ lazy val commonTestSettings = Seq(
 ThisBuild / assemblyMergeStrategy := {
   case "logback.xml"                                       => MergeStrategy.first
   case x if x.contains("io.netty.versions.properties")     => MergeStrategy.discard
+  case x if x.contains("scala.semanticdb")                 => MergeStrategy.discard
   case x if x.contains("rally-version.properties")         => MergeStrategy.concat
   case PathList(xs @ _*) if xs.last == "module-info.class" => MergeStrategy.first
   case x =>
