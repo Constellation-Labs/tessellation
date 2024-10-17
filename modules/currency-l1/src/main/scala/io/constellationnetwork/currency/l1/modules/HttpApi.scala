@@ -124,7 +124,14 @@ sealed abstract class HttpApi[
       )
     }
   private val currencyRoutes =
-    DAGRoutes[F](services.transaction, storages.transaction, storages.l0Cluster, queues.peerBlockConsensusInput, txHasher)
+    DAGRoutes[F](
+      services.transaction,
+      storages.transaction,
+      storages.l0Cluster,
+      queues.peerBlockConsensusInput,
+      queues.swapPeerConsensusInput,
+      txHasher
+    )
   private val nodeRoutes = NodeRoutes[F](storages.node, storages.session, storages.cluster, nodeVersion, httpCfg, selfId)
 
   private val metricRoutes = MetricRoutes[F]().publicRoutes
