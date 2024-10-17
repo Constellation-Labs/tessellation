@@ -3,6 +3,7 @@ package io.constellationnetwork.dag.l1.http.p2p
 import cats.effect.Async
 
 import io.constellationnetwork.dag.l1.domain.consensus.block.http.p2p.clients.BlockConsensusClient
+import io.constellationnetwork.node.shared.domain.swap.consensus.{ConsensusClient => SwapConsensusClient}
 import io.constellationnetwork.node.shared.http.p2p.SharedP2PClient
 import io.constellationnetwork.node.shared.http.p2p.clients._
 import io.constellationnetwork.node.shared.infrastructure.gossip.p2p.GossipClient
@@ -26,6 +27,7 @@ object P2PClient {
       sharedP2PClient.gossip,
       BlockConsensusClient.make(client),
       L0GlobalSnapshotClient.make(client),
+      SwapConsensusClient.make(client),
       L0TrustClient.make(client)
     ) {}
 }
@@ -39,5 +41,6 @@ sealed abstract class P2PClient[F[_]] private (
   val gossip: GossipClient[F],
   val blockConsensus: BlockConsensusClient[F],
   val l0GlobalSnapshot: L0GlobalSnapshotClient[F],
+  val swapConsensusClient: SwapConsensusClient[F],
   val l0Trust: L0TrustClient[F]
 )
