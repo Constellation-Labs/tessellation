@@ -6,6 +6,7 @@ import cats.effect._
 import cats.effect.std.{Random, Supervisor}
 import cats.syntax.all._
 
+import io.constellationnetwork.env.JarSignature
 import io.constellationnetwork.env.env._
 import io.constellationnetwork.ext.cats.effect._
 import io.constellationnetwork.ext.kryo._
@@ -110,6 +111,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                 logger.info(s"App environment: ${cfg.environment}") >>
                 logger.info(s"App version: ${version.show}") >>
                 logger.info(s"App collateral: ${cfg.collateral.amount.show}") >>
+                logger.info(s"Jar hash: ${JarSignature.hash.value}") >>
                 KryoSerializer.forAsync[IO](registrar).use { implicit _kryoPool =>
                   JsonSerializer.forSync[IO].asResource.use { implicit _jsonSerializer =>
                     implicit val _hasherSelector = HasherSelector.forSync[IO](Hasher.forJson, Hasher.forKryo, _hashSelect)
