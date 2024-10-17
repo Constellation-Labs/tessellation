@@ -4,7 +4,7 @@ import cats.effect.kernel.Sync
 import cats.syntax.contravariantSemigroupal._
 import cats.syntax.flatMap._
 
-import scala.collection.immutable.SortedMap
+import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.crypto._
@@ -13,6 +13,7 @@ import io.constellationnetwork.merkletree.{MerkleRoot, MerkleTree, Proof}
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.snapshot.{SnapshotInfo, StateProof}
+import io.constellationnetwork.schema.swap.AllowSpend
 import io.constellationnetwork.schema.transaction.TransactionReference
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
@@ -21,6 +22,7 @@ import io.constellationnetwork.security.signature.Signed
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
+import eu.timepit.refined.auto._
 import io.circe.disjunctionCodecs._
 
 @derive(encoder, decoder, eqv, show)
@@ -39,6 +41,7 @@ object GlobalSnapshotInfoV1 {
       gsi.lastStateChannelSnapshotHashes,
       gsi.lastTxRefs,
       gsi.balances,
+      SortedMap.empty,
       SortedMap.empty,
       SortedMap.empty
     )
@@ -76,7 +79,8 @@ case class GlobalSnapshotInfoV2(
       lastCurrencySnapshots.view.mapValues {
         _.map { case (Signed(inc, proofs), info) => (Signed(inc.toCurrencyIncrementalSnapshot, proofs), info.toCurrencySnapshotInfo) }
       }.to(lastCurrencySnapshots.sortedMapFactory),
-      lastCurrencySnapshotsProofs
+      lastCurrencySnapshotsProofs,
+      SortedMap.empty
     )
 
   def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
@@ -116,7 +120,8 @@ case class GlobalSnapshotInfo(
   lastTxRefs: SortedMap[Address, TransactionReference],
   balances: SortedMap[Address, Balance],
   lastCurrencySnapshots: SortedMap[Address, Either[Signed[CurrencySnapshot], (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]],
-  lastCurrencySnapshotsProofs: SortedMap[Address, Proof]
+  lastCurrencySnapshotsProofs: SortedMap[Address, Proof],
+  activeAllowSpends: SortedMap[Address, SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
 ) extends SnapshotInfo[GlobalSnapshotStateProof] {
   def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
     lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
@@ -131,5 +136,5 @@ case class GlobalSnapshotInfo(
 }
 
 object GlobalSnapshotInfo {
-  def empty = GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.empty, SortedMap.empty, SortedMap.empty)
+  def empty = GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.empty, SortedMap.empty, SortedMap.empty, SortedMap.empty)
 }

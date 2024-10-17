@@ -14,9 +14,12 @@ import io.constellationnetwork.merkletree.Proof
 import io.constellationnetwork.merkletree.syntax._
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult
+import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult.CurrencySnapshotWithState
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
+import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.swap.AllowSpend
 import io.constellationnetwork.schema.transaction.{RewardTransaction, Transaction, TransactionReference}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.Signed
@@ -30,6 +33,7 @@ import io.circe.disjunctionCodecs._
 trait GlobalSnapshotAcceptanceManager[F[_]] {
   def accept(
     ordinal: SnapshotOrdinal,
+    epochProgress: EpochProgress,
     blocksForAcceptance: List[Signed[Block]],
     scEvents: List[StateChannelOutput],
     lastSnapshotContext: GlobalSnapshotInfo,
@@ -61,6 +65,7 @@ object GlobalSnapshotAcceptanceManager {
 
     def accept(
       ordinal: SnapshotOrdinal,
+      epochProgress: EpochProgress,
       blocksForAcceptance: List[Signed[Block]],
       scEvents: List[StateChannelOutput],
       lastSnapshotContext: GlobalSnapshotInfo,
@@ -82,12 +87,14 @@ object GlobalSnapshotAcceptanceManager {
               scEvents,
               validationType
             )
+
         sCSnapshotHashes <- scSnapshots.toList.traverse {
           case (address, nel) => nel.last.toHashed.map(address -> _.hash)
         }
           .map(_.toMap)
         updatedLastStateChannelSnapshotHashes = lastSnapshotContext.lastStateChannelSnapshotHashes ++ sCSnapshotHashes
         updatedLastCurrencySnapshots = lastSnapshotContext.lastCurrencySnapshots ++ currencySnapshots
+        updatedAllowSpends = acceptAllowSpends(epochProgress, currencySnapshots, lastSnapshotContext.activeAllowSpends)
 
         acceptedTransactions = acceptanceResult.accepted.flatMap { case (block, _) => block.value.transactions.toSortedSet }.toSortedSet
 
@@ -160,7 +167,8 @@ object GlobalSnapshotAcceptanceManager {
           transactionsRefs,
           updatedBalancesByRewards,
           updatedLastCurrencySnapshots,
-          updatedLastCurrencySnapshotProofs
+          updatedLastCurrencySnapshotProofs,
+          updatedAllowSpends
         )
 
         stateProof <- gsi.stateProof(maybeMerkleTree)
@@ -174,6 +182,32 @@ object GlobalSnapshotAcceptanceManager {
           gsi,
           stateProof
         )
+    }
+
+    private def acceptAllowSpends(
+      epochProgress: EpochProgress,
+      currencySnapshots: SortedMap[Address, CurrencySnapshotWithState],
+      lastActiveAllowSpends: SortedMap[Address, SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
+    ): SortedMap[Address, SortedMap[Address, SortedSet[Signed[AllowSpend]]]] = {
+      val allowSpendsFromCurrencySnapshots = currencySnapshots.mapFilter(_.toOption.flatMap { case (_, info) => info.activeAllowSpends })
+
+      allowSpendsFromCurrencySnapshots.foldLeft(lastActiveAllowSpends) {
+        case (accAllowSpends, (metagraphId, metagraphAllowSpends)) =>
+          val lastActiveMetagraphAllowSpends =
+            accAllowSpends.getOrElse(metagraphId, SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]])
+
+          val updatedMetagraphAllowSpends =
+            metagraphAllowSpends.foldLeft(lastActiveMetagraphAllowSpends) {
+              case (accMetagraphAllowSpends, (address, addressAllowSpends)) =>
+                val lastAddressAllowSpends = accMetagraphAllowSpends.getOrElse(address, SortedSet.empty[Signed[AllowSpend]])
+
+                val unexpired = (lastAddressAllowSpends ++ addressAllowSpends)
+                  .filter(_.lastValidEpochProgress >= epochProgress)
+                accMetagraphAllowSpends + (address -> unexpired)
+            }
+
+          accAllowSpends + (metagraphId -> updatedMetagraphAllowSpends)
+      }
     }
 
     private def acceptTransactionRefs(
