@@ -67,7 +67,14 @@ sealed abstract class HttpApi[
   private val registrationRoutes = RegistrationRoutes[F](services.cluster)
   private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip)
   private val dagRoutes =
-    Routes[F](services.transaction, storages.transaction, storages.l0Cluster, queues.peerBlockConsensusInput, txHasher)
+    Routes[F](
+      services.transaction,
+      storages.transaction,
+      storages.l0Cluster,
+      queues.peerBlockConsensusInput,
+      queues.swapPeerConsensusInput,
+      txHasher
+    )
   private val nodeRoutes = NodeRoutes[F](storages.node, storages.session, storages.cluster, nodeVersion, httpCfg, selfId)
 
   private val metricRoutes = MetricRoutes[F]().publicRoutes
