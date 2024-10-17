@@ -279,7 +279,10 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       traverser <- gst(snapshots._1, snapshots._2.toList, snapshots._2.head.hash)
       state <- traverser.loadChain()
     } yield
-      expect.eql(GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.from(balances), SortedMap.empty, SortedMap.empty), state._1)
+      expect.eql(
+        GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.from(balances), SortedMap.empty, SortedMap.empty, SortedMap.empty),
+        state._1
+      )
   }
 
   test("computed state contains last refs and preserve total amount of balances when no fees or rewards ") {

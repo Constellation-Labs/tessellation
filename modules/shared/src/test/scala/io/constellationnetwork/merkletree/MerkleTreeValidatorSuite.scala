@@ -43,6 +43,7 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
       SortedMap.empty,
       SortedMap(Address("DAG2AUdecqFwEGcgAcH1ac2wrsg8acrgGwrQojzw") -> Balance(100L)),
       SortedMap.empty,
+      SortedMap.empty,
       SortedMap.empty
     )
     for {
@@ -56,6 +57,7 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
       SortedMap.empty,
       SortedMap.empty,
       SortedMap(Address("DAG2AUdecqFwEGcgAcH1ac2wrsg8acrgGwrQojzw") -> Balance(100L)),
+      SortedMap.empty,
       SortedMap.empty,
       SortedMap.empty
     )
