@@ -123,6 +123,7 @@ object GlobalSnapshotConsensusFunctions {
         (acceptanceResult, scSnapshots, returnedSCEvents, acceptedRewardTxs, snapshotInfo, stateProof) <- globalSnapshotAcceptanceManager
           .accept(
             currentOrdinal,
+            currentEpochProgress,
             blocksForAcceptance,
             scEvents,
             snapshotContext,
