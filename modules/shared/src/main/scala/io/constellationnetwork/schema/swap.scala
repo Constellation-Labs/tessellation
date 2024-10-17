@@ -93,7 +93,7 @@ object swap {
     amount: SwapAmount,
     fee: AllowSpendFee,
     parent: AllowSpendReference,
-    lastValidOrdinal: SnapshotOrdinal,
+    lastValidEpochProgress: EpochProgress,
     approvers: List[Address]
   ) extends SwapTransaction {
     val ordinal: AllowSpendOrdinal = parent.ordinal.next
