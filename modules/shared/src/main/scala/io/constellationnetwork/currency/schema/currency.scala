@@ -79,7 +79,7 @@ object currency {
     lastMessages: Option[SortedMap[MessageType, Signed[CurrencyMessage]]],
     lastFeeTxRefs: Option[SortedMap[Address, TransactionReference]],
     lastAllowSpendRefsProof: Option[SortedMap[Address, AllowSpendReference]],
-    activeAllowSpends: Option[SortedMap[Address, List[Signed[AllowSpend]]]]
+    activeAllowSpends: Option[SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
   ) extends SnapshotInfo[CurrencySnapshotStateProof] {
     def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[CurrencySnapshotStateProof] =
       (
