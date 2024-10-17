@@ -44,6 +44,7 @@ object GlobalSnapshotContextFunctions {
         }
         (acceptanceResult, scSnapshots, returnedSCEvents, acceptedRewardTxs, snapshotInfo, _) <- snapshotAcceptanceManager.accept(
           signedArtifact.ordinal,
+          signedArtifact.epochProgress,
           blocksForAcceptance,
           scEvents,
           context,
