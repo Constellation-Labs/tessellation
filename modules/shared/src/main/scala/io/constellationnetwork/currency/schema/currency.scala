@@ -10,6 +10,7 @@ import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.currencyMessage.{CurrencyMessage, MessageType}
 import io.constellationnetwork.schema.epoch.EpochProgress
@@ -162,7 +163,7 @@ object currency {
     dataApplication: Option[DataApplicationPart] = None,
     messages: Option[SortedSet[Signed[CurrencyMessage]]] = None,
     feeTransactions: Option[SortedSet[Signed[FeeTransaction]]] = None,
-    spendTransactions: Option[SortedSet[SpendTransaction]] = None,
+    artifacts: Option[SortedSet[SharedArtifact]] = SortedSet.empty[SharedArtifact].some,
     version: SnapshotVersion = SnapshotVersion("0.0.1")
   ) extends IncrementalSnapshot[CurrencySnapshotStateProof]
 

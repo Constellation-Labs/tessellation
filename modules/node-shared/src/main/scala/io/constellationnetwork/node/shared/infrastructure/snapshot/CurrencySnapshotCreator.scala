@@ -84,7 +84,6 @@ object CurrencySnapshotCreator {
       rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
       facilitators: Set[PeerId]
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] = {
-
       val maxArtifactSize = maxProposalSizeInBytes(facilitators)
 
       def createProposalWithSizeLimit(
@@ -130,11 +129,15 @@ object CurrencySnapshotCreator {
             _.accept(maybeLastDataApplication, dataBlocks, lastArtifact.ordinal, currentOrdinal)
           )
 
-          (acceptanceResult, messagesAcceptanceResult, acceptedRewardTxs, snapshotInfo, stateProof) <-
+          sharedArtifactsForAcceptance = dataApplicationAcceptanceResult
+            .map(_.sharedArtifacts)
+
+          (acceptanceResult, messagesAcceptanceResult, acceptedRewardTxs, acceptedSharedArtifacts, snapshotInfo, stateProof) <-
             currencySnapshotAcceptanceManager
               .accept(
                 blocks,
                 messages,
+                sharedArtifactsForAcceptance,
                 lastContext,
                 currentOrdinal,
                 lastActiveTips,
@@ -183,7 +186,8 @@ object CurrencySnapshotCreator {
             currentEpochProgress,
             dataApplicationAcceptanceResult.map(_.dataApplicationPart),
             Option.when(snapshotInfo.lastMessages.nonEmpty)(messagesAcceptanceResult.accepted.toSortedSet),
-            feeTransactions = none
+            feeTransactions = none,
+            acceptedSharedArtifacts
           )
 
           context = CurrencySnapshotContext(lastContext.address, snapshotInfo)
