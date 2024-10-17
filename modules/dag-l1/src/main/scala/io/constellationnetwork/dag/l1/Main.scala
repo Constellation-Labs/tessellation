@@ -143,6 +143,22 @@ object Main
         )
         .asResource
 
+      swapRuntime = hasherSelector.withCurrent { implicit hasher =>
+        Swap.run(
+          cfg.swap,
+          storages.cluster,
+          storages.l0Cluster,
+          storages.lastSnapshot,
+          storages.node,
+          p2pClient.l0BlockOutputClient,
+          p2pClient.swapConsensusClient,
+          services,
+          queues,
+          keyPair,
+          nodeId
+        )
+      }
+
       gossipDaemon = GossipDaemon.make[IO](
         storages.rumor,
         queues.rumor,
@@ -156,6 +172,7 @@ object Main
         cfg.gossip.daemon,
         services.collateral
       )
+
       _ <- {
         method match {
           case cfg: RunInitialValidator =>
@@ -251,9 +268,14 @@ object Main
               )
         }
       }.asResource
-      _ <- stateChannel.runtime.compile.drain.handleErrorWith { error =>
-        logger.error(error)("An error occured during state channel runtime") >> error.raiseError[IO, Unit]
-      }.asResource
+      _ <- stateChannel.runtime
+        .merge(swapRuntime)
+        .compile
+        .drain
+        .handleErrorWith { error =>
+          logger.error(error)("An error occured during state channel runtime") >> error.raiseError[IO, Unit]
+        }
+        .asResource
     } yield ()
   }
 }
