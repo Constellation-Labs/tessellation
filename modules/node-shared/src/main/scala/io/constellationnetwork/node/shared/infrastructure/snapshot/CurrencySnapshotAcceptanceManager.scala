@@ -274,28 +274,35 @@ object CurrencySnapshotAcceptanceManager {
     )(implicit hs: Hasher[F]) = {
       val ordering = Order
         .whenEqual[Signed[GlobalSnapshotSync]](
-          Order.by(_.session),
-          Order.whenEqual(
-            Order[SnapshotOrdinal].contramap(_.ordinal),
-            Order[Signed[GlobalSnapshotSync]]
-          )
+          Order.by(_.parentOrdinal),
+          Order[Signed[GlobalSnapshotSync]]
         )
         .toOrdering
 
-      globalSnapshotSyncsForAcceptance.partitionEitherM { sync =>
-        globalSnapshotSyncValidator
-          .validate(sync, metagraphId, facilitators)
-          .map(_.toEither.leftMap(_ => sync))
-      }.map {
-        case (toReject, toAdd) =>
-          val newestSyncs = toAdd.groupBy(_.proofs.head.id.toPeerId).collect {
-            case (peerId, syncs) if syncs.nonEmpty => peerId -> syncs.max(ordering)
-          }
-          val lastGlobalSnapshotSyncs = lastGlobalSnapshotSyncView.getOrElse(
-            SortedMap.empty[PeerId, Signed[GlobalSnapshotSync]]
+      globalSnapshotSyncsForAcceptance
+        .sorted(ordering)
+        .foldLeftM(
+          (
+            lastGlobalSnapshotSyncView.getOrElse(SortedMap.empty[PeerId, Signed[GlobalSnapshotSync]]),
+            List.empty[Signed[GlobalSnapshotSync]],
+            List.empty[Signed[GlobalSnapshotSync]]
           )
-          GlobalSnapshotSyncAcceptanceResult(lastGlobalSnapshotSyncs ++ newestSyncs, toAdd, toReject)
-      }
+        ) {
+          case ((lastSyncs, toAdd, toReject), sync) =>
+            globalSnapshotSyncValidator.validate(sync, metagraphId, facilitators, lastSyncs).map {
+              case Validated.Valid(_) =>
+                val peerId = sync.proofs.head.id.toPeerId
+                val updatedLastSyncs = lastSyncs.updated(peerId, sync)
+                val updatedToAdd = sync :: toAdd
+
+                (updatedLastSyncs, updatedToAdd, toReject)
+              case Validated.Invalid(_) =>
+                val updatedToReject = sync :: toReject
+
+                (lastSyncs, toAdd, updatedToReject)
+            }
+        }
+        .map { case (contextUpdate, toAdd, toReject) => GlobalSnapshotSyncAcceptanceResult(contextUpdate, toAdd, toReject) }
     }
 
     private def acceptTransactionRefs(
