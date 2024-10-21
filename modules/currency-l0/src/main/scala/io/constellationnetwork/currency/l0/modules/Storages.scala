@@ -7,7 +7,7 @@ import cats.syntax.all._
 import io.constellationnetwork.currency.dataApplication.BaseDataApplicationL0Service
 import io.constellationnetwork.currency.dataApplication.storage.CalculatedStateLocalFileSystemStorage
 import io.constellationnetwork.currency.l0.node.IdentifierStorage
-import io.constellationnetwork.currency.l0.snapshot.storage.LastSynchronizedGlobalSnapshotStorage
+import io.constellationnetwork.currency.l0.snapshot.storage.{LastSentGlobalSnapshotSyncStorage, LastSynchronizedGlobalSnapshotStorage}
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
@@ -56,6 +56,7 @@ object Storages {
       maybeCalculatedStateStorage <- dataApplication.traverse { _ =>
         CalculatedStateLocalFileSystemStorage.make[F](dataApplicationCalculatedStatePath)
       }
+      lastGlobalSnapshotSyncStorage <- hasherSelector.withCurrent(implicit hs => LastSentGlobalSnapshotSyncStorage.make())
     } yield
       new Storages[F](
         globalL0Cluster = globalL0ClusterStorage,
@@ -67,7 +68,8 @@ object Storages {
         lastGlobalSnapshot = lastGlobalSnapshotStorage,
         incrementalSnapshotLocalFileSystemStorage = snapshotLocalFileSystemStorage,
         identifier = identifierStorage,
-        calculatedStateStorage = maybeCalculatedStateStorage
+        calculatedStateStorage = maybeCalculatedStateStorage,
+        lastGlobalSnapshotSync = lastGlobalSnapshotSyncStorage
       ) {}
 }
 
@@ -82,5 +84,6 @@ sealed abstract class Storages[F[_]] private (
     with LastSynchronizedGlobalSnapshotStorage[F],
   val incrementalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, CurrencyIncrementalSnapshot],
   val identifier: IdentifierStorage[F],
-  val calculatedStateStorage: Option[CalculatedStateLocalFileSystemStorage[F]]
+  val calculatedStateStorage: Option[CalculatedStateLocalFileSystemStorage[F]],
+  val lastGlobalSnapshotSync: LastSentGlobalSnapshotSyncStorage[F]
 )
