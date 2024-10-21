@@ -3,6 +3,7 @@ package io.constellationnetwork.currency.l0
 import java.security.KeyPair
 
 import cats.Applicative
+import cats.data.OptionT
 import cats.effect.Async
 import cats.effect.std.Supervisor
 import cats.syntax.all._
@@ -12,13 +13,14 @@ import scala.concurrent.duration._
 import io.constellationnetwork.currency.dataApplication.BaseDataApplicationL0Service
 import io.constellationnetwork.currency.l0.cli.method.Run
 import io.constellationnetwork.currency.l0.modules.{Programs, Services, Storages}
-import io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSnapshotSync
+import io.constellationnetwork.currency.schema.globalSnapshotSync.{GlobalSnapshotSync, GlobalSnapshotSyncReference}
 import io.constellationnetwork.kernel.{:: => _, _}
 import io.constellationnetwork.node.shared.domain.snapshot.Validator
 import io.constellationnetwork.node.shared.snapshot.currency.{CurrencySnapshotEvent, GlobalSnapshotSyncEvent}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import io.constellationnetwork.security._
+import io.constellationnetwork.security.key.ops.PublicKeyOps
 import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
@@ -48,6 +50,39 @@ object StateChannel {
               .handleErrorWith(error => logger.error(error)("An unexpected error occurred in onGlobalSnapshotPull"))
           case None => Applicative[F].unit
         }
+
+      def sendGlobalSnapshotSyncConsensusEvent(snapshot: Hashed[GlobalIncrementalSnapshot])(implicit hs: Hasher[F]) = {
+        val selfPeerId = selfKeyPair.getPublic.toId.toPeerId
+
+        val lastSentGlobalSnapshotSync = OptionT(storages.lastGlobalSnapshotSync.get).orElse {
+          OptionT(storages.snapshot.head).flatMapF {
+            case (_, info) =>
+              info.globalSnapshotSyncView
+                .flatMap(_.get(selfPeerId))
+                .traverse(GlobalSnapshotSyncReference.of[F])
+                .map(_.orElse(GlobalSnapshotSyncReference.empty.some))
+          }
+        }.value
+
+        (lastSentGlobalSnapshotSync, storages.session.getToken).flatMapN {
+          case (Some(lastGlobalSnapshotSyncRef), Some(session)) =>
+            val sync = GlobalSnapshotSync(lastGlobalSnapshotSyncRef.ordinal.next, snapshot.ordinal, snapshot.hash, session)
+            Signed
+              .forAsyncHasher(sync, selfKeyPair)
+              .map(GlobalSnapshotSyncEvent(_))
+              .map(enqueueConsensusEventFn)
+              .flatMap(_.run())
+              .void
+          case (Some(_), None) =>
+            logger.error("Couldn't send GlobalSnapshotSyncEvent. Session is missing.")
+          case (None, Some(_)) =>
+            logger.error("Couldn't send GlobalSnapshotSyncEvent. Last sent reference and fallback snapshot info are missing.")
+          case _ =>
+            logger.error(
+              "Couldn't construct GlobalSnapshotSyncEvent. Last sent reference, fallback snapshot info and session are missing."
+            )
+        }
+      }
 
       Stream
         .awakeEvery[F](awakePeriod)
@@ -90,21 +125,6 @@ object StateChannel {
           Stream.eval(logger.error(error)("Error during global L0 snapshot processing"))
         }
     }
-
-    def sendGlobalSnapshotSyncConsensusEvent(snapshot: Hashed[GlobalIncrementalSnapshot])(implicit hs: Hasher[F]) =
-      storages.session.getToken.flatMap {
-        case Some(session) =>
-          val sync = GlobalSnapshotSync(snapshot.ordinal, snapshot.hash, session)
-
-          Signed
-            .forAsyncHasher(sync, selfKeyPair)
-            .map(GlobalSnapshotSyncEvent(_))
-            .map(enqueueConsensusEventFn)
-            .flatMap(_.run())
-            .void
-        case None =>
-          logger.error("Couldn't construct GlobalSnapshotSyncEvent. Session does not exist")
-      }
 
     def globalL0PeerDiscovery: Stream[F, Unit] =
       Stream
