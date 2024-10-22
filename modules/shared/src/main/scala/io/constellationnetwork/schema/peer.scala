@@ -107,6 +107,7 @@ object peer {
     ip: Host,
     publicPort: Port,
     p2pPort: Port,
+    clusterSession: ClusterSessionToken,
     session: SessionToken,
     state: NodeState,
     responsiveness: PeerResponsiveness,
@@ -130,6 +131,7 @@ object peer {
     ip: Host,
     publicPort: Port,
     p2pPort: Port,
+    clusterSession: String,
     session: String,
     state: NodeState,
     jar: Hash
@@ -137,7 +139,16 @@ object peer {
 
   object PeerInfo {
     def fromPeer(peer: Peer): PeerInfo =
-      PeerInfo(peer.id, peer.ip, peer.publicPort, peer.p2pPort, peer.session.value.toString, peer.state, peer.jar)
+      PeerInfo(
+        peer.id,
+        peer.ip,
+        peer.publicPort,
+        peer.p2pPort,
+        peer.clusterSession.toString,
+        peer.session.value.toString,
+        peer.state,
+        peer.jar
+      )
   }
 
   @derive(eqv, encoder, decoder, order, ordering, show)

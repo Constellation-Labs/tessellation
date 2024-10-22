@@ -197,6 +197,7 @@ class Joining[
         registrationRequest.ip,
         registrationRequest.publicPort,
         registrationRequest.p2pPort,
+        registrationRequest.clusterSession,
         registrationRequest.session,
         registrationRequest.state,
         Responsive,

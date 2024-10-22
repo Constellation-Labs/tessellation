@@ -8,7 +8,7 @@ import io.constellationnetwork.generators.nesGen
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.{Address, DAGAddressRefined}
 import io.constellationnetwork.schema.balance.Balance
-import io.constellationnetwork.schema.cluster.SessionToken
+import io.constellationnetwork.schema.cluster.{ClusterSessionToken, SessionToken}
 import io.constellationnetwork.schema.generation.Generation
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer._
@@ -70,11 +70,12 @@ object generators {
       h <- hostGen
       p <- portGen
       p2 <- portGen
+      cs <- generationGen.map(ClusterSessionToken.apply)
       s <- generationGen.map(SessionToken.apply)
       st <- nodeStateGen
       r <- peerResponsivenessGen
       j <- Arbitrary.arbitrary[Hash]
-    } yield Peer(i, h, p, p2, s, st, r, j)
+    } yield Peer(i, h, p, p2, cs, s, st, r, j)
 
   def peersGen(n: Option[Int] = None): Gen[Set[Peer]] =
     n.map(Gen.const).getOrElse(Gen.chooseNum(1, 20)).flatMap { n =>
