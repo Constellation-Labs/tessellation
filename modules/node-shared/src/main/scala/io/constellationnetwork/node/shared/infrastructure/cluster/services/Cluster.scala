@@ -92,6 +92,7 @@ object Cluster {
             req.ip,
             req.publicPort,
             req.p2pPort,
+            req.clusterSession.value.toString,
             req.session.value.toString,
             req.state,
             req.jar
