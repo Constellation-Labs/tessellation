@@ -24,8 +24,8 @@ object address {
   object Address {
 
     def fromBytes(bytes: Array[Byte]): Address = {
-      val hashCode = Hash.hashCodeFromBytes(bytes)
-      val encoded = Base58.encode(hashCode.asBytes().toIndexedSeq)
+      val hashCode = Hash.sha256FromBytes(bytes)
+      val encoded = Base58.encode(hashCode.toIndexedSeq)
       val end = encoded.slice(encoded.length - 36, encoded.length)
       val validInt = end.filter(Character.isDigit)
       val ints = validInt.map(_.toString.toInt)

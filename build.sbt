@@ -20,7 +20,7 @@ val ghTokenSource = TokenSource.GitConfig("github.token") || TokenSource.Environ
 githubTokenSource := ghTokenSource
 
 lazy val commonSettings = Seq(
-  scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info", "-language:reflectiveCalls"),
+  scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info", "-language:reflectiveCalls", "-Wconf:msg=While parsing annotations in:silent"),
   scalafmtOnCompile := true,
   scalafixOnCompile := true,
   resolvers ++= List(
@@ -214,7 +214,6 @@ lazy val shared = (project in file("modules/shared"))
       Libraries.fs2Core,
       Libraries.fs2DataCsv,
       Libraries.fs2DataCsvGeneric,
-      Libraries.guava,
       Libraries.log4cats,
       Libraries.logback % Runtime,
       Libraries.logstashLogbackEncoder % Runtime,

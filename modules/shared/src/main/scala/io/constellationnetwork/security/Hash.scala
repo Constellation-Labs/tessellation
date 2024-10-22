@@ -1,16 +1,15 @@
 package io.constellationnetwork.security
 
 import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 
 import cats.Show
 
 import io.constellationnetwork.ext.derevo.ordering
 
-import com.google.common.hash.{HashCode, Hashing}
 import derevo.cats.{order, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
-import eu.timepit.refined.auto._
 import io.estatico.newtype.macros.newtype
 import io.estatico.newtype.ops._
 import org.scalacheck.{Arbitrary, Gen}
@@ -25,11 +24,19 @@ object hash {
 
   object Hash {
 
-    def hashCodeFromBytes(bytes: Array[Byte]): HashCode =
-      Hashing.sha256().hashBytes(bytes)
+    def sha256FromBytes(bytes: Array[Byte]): Array[Byte] = {
+      val md = MessageDigest.getInstance("SHA-256")
+      md.update(bytes)
+      md.digest()
+    }
 
-    def fromBytes(bytes: Array[Byte]): Hash =
-      Hash(hashCodeFromBytes(bytes).toString)
+    def fromBytes(bytes: Array[Byte]): Hash = {
+      val sha256Bytes = sha256FromBytes(bytes)
+      val sha256String = sha256Bytes
+        .foldLeft(new StringBuilder(64))((acc, x) => acc.append(s"%02x".format(x)))
+        .toString
+      Hash(sha256String)
+    }
 
     def empty: Hash = Hash(s"%064d".format(0))
 
