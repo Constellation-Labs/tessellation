@@ -158,8 +158,6 @@ object Dependencies {
     val log4cats = "org.typelevel" %% "log4cats-slf4j" % V.log4cats
     val newtype = "io.estatico" %% "newtype" % V.newtype
 
-    val javaxCrypto = "javax.xml.crypto" % "jsr105-api" % V.javaxCrypto
-
     val redis4catsEffects = "dev.profunktor" %% "redis4cats-effects" % V.redis4cats
     val redis4catsLog4cats = "dev.profunktor" %% "redis4cats-log4cats" % V.redis4cats
 

@@ -488,7 +488,6 @@ lazy val dagL0 = (project in file("modules/dag-l0"))
       Libraries.http4sJwtAuth,
       Libraries.httpSignerCore,
       Libraries.httpSignerHttp4s,
-      Libraries.javaxCrypto,
       Libraries.log4cats,
       Libraries.logback % Runtime,
       Libraries.logstashLogbackEncoder % Runtime,
