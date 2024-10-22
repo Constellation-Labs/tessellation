@@ -73,7 +73,8 @@ object generators {
       s <- generationGen.map(SessionToken.apply)
       st <- nodeStateGen
       r <- peerResponsivenessGen
-    } yield Peer(i, h, p, p2, s, st, r)
+      j <- Arbitrary.arbitrary[Hash]
+    } yield Peer(i, h, p, p2, s, st, r, j)
 
   def peersGen(n: Option[Int] = None): Gen[Set[Peer]] =
     n.map(Gen.const).getOrElse(Gen.chooseNum(1, 20)).flatMap { n =>
