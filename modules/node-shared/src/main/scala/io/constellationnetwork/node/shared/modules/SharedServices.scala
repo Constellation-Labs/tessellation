@@ -49,6 +49,7 @@ object SharedServices {
     seedlist: Option[Set[SeedlistEntry]],
     restartSignal: SignallingRef[F, Option[A]],
     versionHash: Hash,
+    jarHash: Hash,
     collateral: CollateralConfig,
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
     environment: AppEnvironment,
@@ -69,6 +70,7 @@ object SharedServices {
           seedlist,
           restartService,
           versionHash,
+          jarHash,
           environment
         )
 

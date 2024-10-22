@@ -199,7 +199,8 @@ class Joining[
         registrationRequest.p2pPort,
         registrationRequest.session,
         registrationRequest.state,
-        Responsive
+        Responsive,
+        registrationRequest.jar
       )
 
       _ <- clusterStorage
