@@ -138,8 +138,6 @@ object Dependencies {
     val httpSignerCore = "pl.abankowski" %% "http-request-signer-core" % V.httpSigner
     val httpSignerHttp4s = "pl.abankowski" %% "http4s-request-signer" % V.httpSigner
 
-    val guava = "com.google.guava" % "guava" % V.guava
-
     val http4sJwtAuth = "dev.profunktor" %% "http4s-jwt-auth" % V.http4sJwtAuth
 
     val jawnParser = jawn("jawn-parser")
