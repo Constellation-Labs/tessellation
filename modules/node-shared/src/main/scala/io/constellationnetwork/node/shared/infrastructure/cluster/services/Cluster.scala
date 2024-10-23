@@ -37,6 +37,7 @@ object Cluster {
     seedlist: Option[Set[SeedlistEntry]],
     restartService: RestartService[F, _],
     versionHash: Hash,
+    jarHash: Hash,
     environment: AppEnvironment
   ): Cluster[F] =
     new Cluster[F] {
@@ -66,6 +67,7 @@ object Cluster {
             state,
             seedlistHash,
             versionHash,
+            jarHash,
             environment
           )
 
@@ -91,7 +93,8 @@ object Cluster {
             req.publicPort,
             req.p2pPort,
             req.session.value.toString,
-            req.state
+            req.state,
+            req.jar
           )
 
           clusterStorage.getResponsivePeers.map(_.map(PeerInfo.fromPeer) + self)
