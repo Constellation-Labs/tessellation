@@ -4,6 +4,7 @@ import cats.effect.{IO, Resource}
 import cats.syntax.all._
 
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
+import io.constellationnetwork.currency.l0.cell.{L0Cell, L0CellInput}
 import io.constellationnetwork.currency.l0.cli.method
 import io.constellationnetwork.currency.l0.cli.method._
 import io.constellationnetwork.currency.l0.config.types._
@@ -77,8 +78,6 @@ abstract class CurrencyL0App(
       p2pClient = P2PClient.make[IO](sharedP2PClient, sharedResources.client, sharedServices.session)
       maybeAllowanceList = StateChannelAllowanceLists.get(cfg.environment)
       validators = Validators.make[IO](cfg.shared, seedlist, maybeAllowanceList, Hasher.forKryo[IO])
-      implicit0(nodeContext: L0NodeContext[IO]) = L0NodeContext
-        .make[IO](storages.snapshot, hasherSelectorAlwaysCurrent, storages.identifier)
       maybeMajorityPeerIds <- getMajorityPeerIds[IO](
         nodeShared.prioritySeedlist,
         sharedConfig.priorityPeerIds,
@@ -103,6 +102,13 @@ abstract class CurrencyL0App(
           hasherSelectorAlwaysCurrent
         )
         .asResource
+      implicit0(nodeContext: L0NodeContext[IO]) = L0NodeContext
+        .make[IO](
+          storages.snapshot,
+          hasherSelectorAlwaysCurrent,
+          storages.lastGlobalSnapshot,
+          storages.identifier
+        )
       programs = Programs.make[IO, Run](
         keyPair,
         nodeShared.nodeId,
@@ -122,11 +128,12 @@ abstract class CurrencyL0App(
         .start(storages, services, programs, queues, services.dataApplication, cfg, hasherSelectorAlwaysCurrent)
         .asResource
 
+      mkCell = (event: CurrencySnapshotEvent) => L0Cell.mkL0Cell(queues.l1Output).apply(L0CellInput.HandleCurrencySnapshotEvent(event))
+
       api = HttpApi
         .make[IO](
           validators,
           storages,
-          queues,
           services,
           programs,
           keyPair.getPrivate,
@@ -134,6 +141,7 @@ abstract class CurrencyL0App(
           nodeShared.nodeId,
           tessellationVersion,
           cfg.http,
+          mkCell,
           services.dataApplication,
           metagraphVersion.some
         )
@@ -321,7 +329,7 @@ abstract class CurrencyL0App(
               case _ => IO.unit
             }
             _ <- StateChannel
-              .run[IO](services, storages, programs, dataApplicationService)
+              .run[IO](services, storages, programs, dataApplicationService, keyPair, mkCell)
               .compile
               .drain
           } yield innerProgram

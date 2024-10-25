@@ -61,19 +61,20 @@ object Services {
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync[F]
       implicit0(hasher: Hasher[F]) = hasherSelector.getCurrent
 
-      l0NodeContext = L0NodeContext.make[F](storages.snapshot, hasherSelector, storages.identifier)
+      stateChannelBinarySender <- StateChannelBinarySender.make(
+        storages.identifier,
+        storages.globalL0Cluster,
+        storages.lastGlobalSnapshot,
+        p2PClient.stateChannelSnapshot
+      )
+
+      l0NodeContext = L0NodeContext
+        .make[F](storages.snapshot, hasherSelector, storages.lastGlobalSnapshot, storages.identifier)
 
       dataApplicationAcceptanceManager = (maybeDataApplication, storages.calculatedStateStorage).mapN {
         case (service, storage) =>
           DataApplicationSnapshotAcceptanceManager.make[F](service, l0NodeContext, storage)
       }
-
-      stateChannelBinarySender <- StateChannelBinarySender.make(
-        storages.identifier,
-        storages.globalL0Cluster,
-        storages.lastNGlobalSnapshot,
-        p2PClient.stateChannelSnapshot
-      )
 
       feeCalculator = FeeCalculator.make(cfg.shared.feeConfigs)
 
@@ -81,7 +82,7 @@ object Services {
         .make[F](
           keyPair,
           storages.snapshot,
-          storages.lastNGlobalSnapshot,
+          storages.lastGlobalSnapshot,
           jsonBrotliBinarySerializer,
           dataApplicationAcceptanceManager,
           stateChannelBinarySender,
@@ -113,7 +114,7 @@ object Services {
           cfg.collateral.amount,
           storages.cluster,
           storages.node,
-          storages.lastNGlobalSnapshot,
+          storages.lastGlobalSnapshot,
           maybeRewards,
           cfg.snapshot,
           client,
@@ -129,7 +130,7 @@ object Services {
       addressService = AddressService.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](cfg.shared.addresses, storages.snapshot)
       collateralService = Collateral.make[F](cfg.collateral, storages.snapshot)
       globalL0Service = GlobalL0Service
-        .make[F](p2PClient.l0GlobalSnapshot, storages.globalL0Cluster, storages.lastNGlobalSnapshot, None, maybeMajorityPeerIds)
+        .make[F](p2PClient.l0GlobalSnapshot, storages.globalL0Cluster, storages.lastGlobalSnapshot, None, maybeMajorityPeerIds)
     } yield
       new Services[F, R](
         localHealthcheck = sharedServices.localHealthcheck,
