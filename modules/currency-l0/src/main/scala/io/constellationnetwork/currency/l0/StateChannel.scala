@@ -45,18 +45,18 @@ object StateChannel {
         .evalMap(_ => services.globalL0.pullGlobalSnapshots)
         .evalMap {
           case Left((snapshot, state)) =>
-            storages.lastGlobalSnapshot.setInitial(snapshot, state) >> triggerOnGlobalSnapshotPullHook(snapshot, state)
+            storages.lastNGlobalSnapshot.setInitial(snapshot, state) >> triggerOnGlobalSnapshotPullHook(snapshot, state)
 
           case Right(snapshots) =>
             snapshots.tailRecM {
               case Nil => Applicative[F].pure(().asRight[List[Hashed[GlobalIncrementalSnapshot]]])
 
               case snapshot :: nextSnapshots =>
-                storages.lastGlobalSnapshot.get.map {
+                storages.lastNGlobalSnapshot.get.map {
                   case Some(lastSnapshot) => Validator.isNextSnapshot(lastSnapshot, snapshot.signed.value)
                   case None               => true
                 }.ifM(
-                  storages.lastGlobalSnapshot.getCombined.flatMap {
+                  storages.lastNGlobalSnapshot.getCombined.flatMap {
                     case None => Applicative[F].unit
                     case Some((lastSnapshot, lastState)) =>
                       HasherSelector[F]
@@ -64,7 +64,7 @@ object StateChannel {
                           services.globalSnapshotContextFunctions.createContext(lastState, lastSnapshot.signed, snapshot.signed)
                         }
                         .flatMap { context =>
-                          storages.lastGlobalSnapshot.set(snapshot, context) >>
+                          storages.lastNGlobalSnapshot.set(snapshot, context) >>
                             triggerOnGlobalSnapshotPullHook(snapshot, context) >>
                             services.stateChannelBinarySender.confirm(snapshot) >> S
                               .supervise(services.stateChannelBinarySender.processPending)
@@ -97,7 +97,7 @@ object StateChannel {
     storages: Storages[F],
     programs: Programs[F]
   ): F[Unit] =
-    storages.lastGlobalSnapshot.get.flatMap {
+    storages.lastNGlobalSnapshot.get.flatMap {
       case None =>
         storages.globalL0Cluster.getRandomPeer.flatMap(p => programs.globalL0PeerDiscovery.discoverFrom(p))
       case Some(latestSnapshot) =>
