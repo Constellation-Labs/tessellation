@@ -71,7 +71,7 @@ object Services {
       stateChannelBinarySender <- StateChannelBinarySender.make(
         storages.identifier,
         storages.globalL0Cluster,
-        storages.lastGlobalSnapshot,
+        storages.lastNGlobalSnapshot,
         p2PClient.stateChannelSnapshot
       )
 
@@ -81,7 +81,7 @@ object Services {
         .make[F](
           keyPair,
           storages.snapshot,
-          storages.lastGlobalSnapshot,
+          storages.lastNGlobalSnapshot,
           jsonBrotliBinarySerializer,
           dataApplicationAcceptanceManager,
           stateChannelBinarySender,
@@ -113,7 +113,7 @@ object Services {
           cfg.collateral.amount,
           storages.cluster,
           storages.node,
-          storages.lastGlobalSnapshot,
+          storages.lastNGlobalSnapshot,
           maybeRewards,
           cfg.snapshot,
           client,
@@ -129,7 +129,7 @@ object Services {
       addressService = AddressService.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](cfg.shared.addresses, storages.snapshot)
       collateralService = Collateral.make[F](cfg.collateral, storages.snapshot)
       globalL0Service = GlobalL0Service
-        .make[F](p2PClient.l0GlobalSnapshot, storages.globalL0Cluster, storages.lastGlobalSnapshot, None, maybeMajorityPeerIds)
+        .make[F](p2PClient.l0GlobalSnapshot, storages.globalL0Cluster, storages.lastNGlobalSnapshot, None, maybeMajorityPeerIds)
     } yield
       new Services[F, R](
         localHealthcheck = sharedServices.localHealthcheck,
