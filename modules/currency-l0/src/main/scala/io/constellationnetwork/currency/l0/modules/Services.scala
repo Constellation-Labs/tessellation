@@ -61,19 +61,21 @@ object Services {
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync[F]
       implicit0(hasher: Hasher[F]) = hasherSelector.getCurrent
 
-      l0NodeContext = L0NodeContext.make[F](storages.snapshot, hasherSelector, storages.identifier)
+      stateChannelBinarySender <- StateChannelBinarySender.make(
+        storages.identifier,
+        storages.globalL0Cluster,
+        storages.lastNGlobalSnapshot,
+        p2PClient.stateChannelSnapshot,
+        cfg.snapshotConfirmation
+      )
+
+      l0NodeContext = L0NodeContext
+        .make[F](storages.snapshot, hasherSelector, stateChannelBinarySender, storages.lastNGlobalSnapshot, storages.identifier)
 
       dataApplicationAcceptanceManager = (maybeDataApplication, storages.calculatedStateStorage).mapN {
         case (service, storage) =>
           DataApplicationSnapshotAcceptanceManager.make[F](service, l0NodeContext, storage)
       }
-
-      stateChannelBinarySender <- StateChannelBinarySender.make(
-        storages.identifier,
-        storages.globalL0Cluster,
-        storages.lastNGlobalSnapshot,
-        p2PClient.stateChannelSnapshot
-      )
 
       feeCalculator = FeeCalculator.make(cfg.shared.feeConfigs)
 

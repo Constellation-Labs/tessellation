@@ -9,12 +9,14 @@ import scala.concurrent.duration._
 
 import io.constellationnetwork.currency.dataApplication.BaseDataApplicationL0Service
 import io.constellationnetwork.currency.l0.cli.method.Run
+import io.constellationnetwork.currency.l0.config.types.SnapshotConfirmationConfig
 import io.constellationnetwork.currency.l0.modules.{Programs, Services, Storages}
 import io.constellationnetwork.node.shared.domain.snapshot.Validator
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import io.constellationnetwork.security.{Hashed, HasherSelector}
 
+import eu.timepit.refined.auto._
 import fs2.Stream
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -26,7 +28,8 @@ object StateChannel {
     services: Services[F, Run],
     storages: Storages[F],
     programs: Programs[F],
-    dataApplicationService: Option[BaseDataApplicationL0Service[F]]
+    dataApplicationService: Option[BaseDataApplicationL0Service[F]],
+    snapshotConfirmationConfig: SnapshotConfirmationConfig
   )(implicit S: Supervisor[F]): Stream[F, Unit] = {
     val logger = Slf4jLogger.getLogger[F]
 
@@ -66,9 +69,12 @@ object StateChannel {
                         .flatMap { context =>
                           storages.lastNGlobalSnapshot.set(snapshot, context) >>
                             triggerOnGlobalSnapshotPullHook(snapshot, context) >>
-                            services.stateChannelBinarySender.confirm(snapshot) >> S
-                              .supervise(services.stateChannelBinarySender.processPending)
-                              .void
+                            services.stateChannelBinarySender.confirm(snapshot) >>
+                            services.stateChannelBinarySender.getLastConfirmedWithinFixedWindow.flatMap {
+                              _.traverse_ { confirmed =>
+                                storages.lastNGlobalSnapshot.deleteBelow(confirmed.confirmationProof.globalOrdinal)
+                              }
+                            } >> S.supervise(services.stateChannelBinarySender.processPending).void
                         }
                   },
                   Applicative[F].unit
