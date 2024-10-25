@@ -11,7 +11,7 @@ import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
-import io.constellationnetwork.node.shared.snapshot.currency.{BlockEvent, CurrencySnapshotArtifact, CurrencySnapshotEvent}
+import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
@@ -36,6 +36,11 @@ object CurrencySnapshotConsensusFunctions {
     currencySnapshotCreator: CurrencySnapshotCreator[F],
     currencySnapshotValidator: CurrencySnapshotValidator[F]
   ): CurrencySnapshotConsensusFunctions[F] = new CurrencySnapshotConsensusFunctions[F] {
+
+    override def triggerPredicate(event: CurrencySnapshotEvent): Boolean = event match {
+      case GlobalSnapshotSyncEvent(_) => false // NOTE: Sync events should not trigger consensus to avoid infinite loop
+      case _                          => true
+    }
 
     def getRequiredCollateral: Amount = collateral
 

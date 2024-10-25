@@ -110,14 +110,14 @@ object CurrencySnapshotValidator {
       }.map(_.map(_.flatMap(_.toOption)))
         .map(_.getOrElse(List.empty))
 
-      def mkEvents: F[Set[CurrencySnapshotEvent]] =
-        dataApplicationBlocks
-          .map(_.map(DataApplicationBlockEvent(_)))
-          .map(
-            _.toSet ++ expected.blocks.unsorted.map(_.block).map(BlockEvent(_)) ++ expected.messages
-              .map(_.toSet.map(CurrencyMessageEvent(_)))
-              .getOrElse(Set.empty[CurrencyMessageEvent])
-          )
+      def mkEvents: F[Set[CurrencySnapshotEvent]] = for {
+        dataApplicationEvents <- dataApplicationBlocks.map(_.map(DataApplicationBlockEvent(_)).toSet)
+        blockEvents = expected.blocks.unsorted.map(_.block).map(BlockEvent(_))
+        messageEvents = expected.messages.map(_.toSet.map(CurrencyMessageEvent(_))).getOrElse(Set.empty[CurrencyMessageEvent])
+        globalSnapshotSyncEvents = expected.globalSnapshotSyncs
+          .map(_.toSet.map(GlobalSnapshotSyncEvent(_)))
+          .getOrElse(Set.empty[GlobalSnapshotSyncEvent])
+      } yield dataApplicationEvents ++ blockEvents ++ messageEvents ++ globalSnapshotSyncEvents
 
       // Rewrite if implementation not provided
       val rewards = maybeRewards.orElse(Some {

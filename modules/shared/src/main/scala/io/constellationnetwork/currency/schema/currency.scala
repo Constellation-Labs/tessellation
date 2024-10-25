@@ -6,6 +6,7 @@ import cats.syntax.all._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.schema.feeTransaction.FeeTransaction
+import io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSnapshotSync
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.schema._
@@ -15,6 +16,7 @@ import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.currencyMessage.{CurrencyMessage, MessageType}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
+import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.SnapshotVersion
 import io.constellationnetwork.schema.snapshot._
 import io.constellationnetwork.schema.swap._
@@ -48,12 +50,13 @@ object currency {
     lastMessagesProof: Option[Hash],
     lastFeeTxRefsProof: Option[Hash],
     lastAllowSpendRefsProof: Option[Hash],
-    activeAllowSpends: Option[Hash]
+    activeAllowSpends: Option[Hash],
+    globalSnapshotSync: Option[Hash]
   ) extends StateProof
 
   object CurrencySnapshotStateProof {
-    def apply(a: (Hash, Hash, Option[Hash], Option[Hash], Option[Hash], Option[Hash])): CurrencySnapshotStateProof =
-      CurrencySnapshotStateProof(a._1, a._2, a._3, a._4, a._5, a._6)
+    def apply(a: (Hash, Hash, Option[Hash], Option[Hash], Option[Hash], Option[Hash], Option[Hash])): CurrencySnapshotStateProof =
+      CurrencySnapshotStateProof(a._1, a._2, a._3, a._4, a._5, a._6, a._7)
   }
 
   @derive(encoder, decoder, eqv, show)
@@ -62,7 +65,7 @@ object currency {
     balancesProof: Hash
   ) extends StateProof {
     def toCurrencySnapshotStateProof: CurrencySnapshotStateProof =
-      CurrencySnapshotStateProof(lastTxRefsProof, balancesProof, None, None, None, None)
+      CurrencySnapshotStateProof(lastTxRefsProof, balancesProof, None, None, None, None, None)
   }
 
   object CurrencySnapshotStateProofV1 {
@@ -80,7 +83,8 @@ object currency {
     lastMessages: Option[SortedMap[MessageType, Signed[CurrencyMessage]]],
     lastFeeTxRefs: Option[SortedMap[Address, TransactionReference]],
     lastAllowSpendRefsProof: Option[SortedMap[Address, AllowSpendReference]],
-    activeAllowSpends: Option[SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
+    activeAllowSpends: Option[SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
+    globalSnapshotSyncView: Option[SortedMap[PeerId, Signed[GlobalSnapshotSync]]]
   ) extends SnapshotInfo[CurrencySnapshotStateProof] {
     def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[CurrencySnapshotStateProof] =
       (
@@ -89,7 +93,8 @@ object currency {
         lastMessages.traverse(_.hash),
         lastFeeTxRefs.traverse(_.hash),
         lastAllowSpendRefsProof.traverse(_.hash),
-        activeAllowSpends.traverse(_.hash)
+        activeAllowSpends.traverse(_.hash),
+        globalSnapshotSyncView.traverse(_.hash)
       ).tupled
         .map(CurrencySnapshotStateProof.apply)
   }
@@ -102,7 +107,7 @@ object currency {
     def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[CurrencySnapshotStateProofV1] =
       (lastTxRefs.hash, balances.hash).tupled.map(CurrencySnapshotStateProofV1.apply)
 
-    def toCurrencySnapshotInfo: CurrencySnapshotInfo = CurrencySnapshotInfo(lastTxRefs, balances, None, None, None, None)
+    def toCurrencySnapshotInfo: CurrencySnapshotInfo = CurrencySnapshotInfo(lastTxRefs, balances, None, None, None, None, None)
   }
 
   object CurrencySnapshotInfoV1 {
@@ -162,6 +167,7 @@ object currency {
     epochProgress: EpochProgress,
     dataApplication: Option[DataApplicationPart] = None,
     messages: Option[SortedSet[Signed[CurrencyMessage]]] = None,
+    globalSnapshotSyncs: Option[SortedSet[Signed[GlobalSnapshotSync]]] = SortedSet.empty[Signed[GlobalSnapshotSync]].some,
     feeTransactions: Option[SortedSet[Signed[FeeTransaction]]] = None,
     artifacts: Option[SortedSet[SharedArtifact]] = SortedSet.empty[SharedArtifact].some,
     version: SnapshotVersion = SnapshotVersion("0.0.1")
@@ -181,6 +187,7 @@ object currency {
           stateProof.toCurrencySnapshotStateProof,
           snapshot.epochProgress,
           snapshot.dataApplication,
+          None,
           None,
           None,
           None,
@@ -215,6 +222,7 @@ object currency {
         stateProof.toCurrencySnapshotStateProof,
         epochProgress,
         dataApplication,
+        None,
         None,
         None,
         None,
@@ -269,6 +277,7 @@ object currency {
           stateProof.toCurrencySnapshotStateProof,
           genesis.epochProgress,
           genesis.dataApplication,
+          None,
           None,
           None,
           None,
