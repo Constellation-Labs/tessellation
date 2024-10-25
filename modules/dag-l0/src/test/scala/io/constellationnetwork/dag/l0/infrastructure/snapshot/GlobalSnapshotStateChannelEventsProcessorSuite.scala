@@ -72,7 +72,8 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
         BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, Hasher.forKryo[IO]),
         Amount(0L),
-        validators.currencyMessageValidator
+        validators.currencyMessageValidator,
+        validators.globalSnapshotSyncValidator
       )
       currencyEventsCutter = CurrencyEventsCutter.make[IO](None)
       creator = CurrencySnapshotCreator

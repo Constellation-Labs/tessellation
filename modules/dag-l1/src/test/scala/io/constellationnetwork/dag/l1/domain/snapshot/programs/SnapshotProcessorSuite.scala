@@ -95,7 +95,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
               BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, Hasher.forKryo[IO]),
               Amount(0L),
-              validators.currencyMessageValidator
+              validators.currencyMessageValidator,
+              validators.globalSnapshotSyncValidator
             )
             implicit0(hs: HasherSelector[IO]) = HasherSelector.forSyncAlwaysCurrent(h)
             currencyEventsCutter = CurrencyEventsCutter.make[IO](None)

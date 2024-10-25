@@ -7,7 +7,6 @@ import cats.syntax.semigroupk._
 
 import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationCustomRoutes
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
-import io.constellationnetwork.currency.l0.cell.{L0Cell, L0CellInput}
 import io.constellationnetwork.currency.l0.cli.method.Run
 import io.constellationnetwork.currency.l0.http.routes.{CurrencyBlockRoutes, CurrencyMessageRoutes, DataBlockRoutes}
 import io.constellationnetwork.currency.l0.snapshot.CurrencySnapshotKey
@@ -15,6 +14,7 @@ import io.constellationnetwork.currency.l0.snapshot.schema.CurrencyConsensusOutc
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.env.AppEnvironment.{Dev, Integrationnet, Testnet}
+import io.constellationnetwork.kernel._
 import io.constellationnetwork.node.shared.config.types.HttpConfig
 import io.constellationnetwork.node.shared.http.p2p.middlewares.{PeerAuthMiddleware, `X-Id-Middleware`}
 import io.constellationnetwork.node.shared.http.routes._
@@ -34,7 +34,6 @@ object HttpApi {
   def make[F[_]: Async: SecurityProvider: HasherSelector: Metrics: L0NodeContext](
     validators: Validators[F],
     storages: Storages[F],
-    queues: Queues[F],
     services: Services[F, Run],
     programs: Programs[F],
     privateKey: PrivateKey,
@@ -42,13 +41,13 @@ object HttpApi {
     selfId: PeerId,
     nodeVersion: TessellationVersion,
     httpCfg: HttpConfig,
+    mkCell: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _],
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
     maybeMetagraphVersion: Option[MetagraphVersion]
   ): HttpApi[F] =
     new HttpApi[F](
       validators,
       storages,
-      queues,
       services,
       programs,
       privateKey,
@@ -56,6 +55,7 @@ object HttpApi {
       selfId,
       nodeVersion,
       httpCfg,
+      mkCell,
       maybeDataApplication,
       maybeMetagraphVersion
     ) {}
@@ -64,7 +64,6 @@ object HttpApi {
 sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Metrics: L0NodeContext] private (
   validators: Validators[F],
   storages: Storages[F],
-  queues: Queues[F],
   services: Services[F, Run],
   programs: Programs[F],
   privateKey: PrivateKey,
@@ -72,12 +71,10 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   selfId: PeerId,
   nodeVersion: TessellationVersion,
   httpCfg: HttpConfig,
+  mkCell: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _],
   maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
   maybeMetagraphVersion: Option[MetagraphVersion]
 ) {
-
-  private val mkCell = (event: CurrencySnapshotEvent) =>
-    L0Cell.mkL0Cell(queues.l1Output).apply(L0CellInput.HandleCurrencySnapshotEvent(event))
 
   private val snapshotRoutes = SnapshotRoutes[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
     storages.snapshot,
@@ -127,7 +124,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
       validators.currencyMessageValidator,
       storages.snapshot,
       storages.identifier,
-      storages.lastNGlobalSnapshot
+      storages.lastGlobalSnapshot
     ).publicRoutes
   )
 
