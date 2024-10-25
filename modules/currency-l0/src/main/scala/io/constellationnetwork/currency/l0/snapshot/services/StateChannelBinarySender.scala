@@ -12,44 +12,24 @@ import io.constellationnetwork.node.shared.domain.cluster.storage.L0ClusterStora
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelValidator.StateChannelValidationError
 import io.constellationnetwork.node.shared.http.p2p.clients.StateChannelSnapshotClient
-import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
-import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.{Hashed, Hasher}
 import io.constellationnetwork.statechannel.StateChannelSnapshotBinary
 
-import derevo.cats.eqv
-import derevo.derive
 import eu.timepit.refined.auto._
-import eu.timepit.refined.cats._
 import eu.timepit.refined.types.all.NonNegLong
 import eu.timepit.refined.types.numeric.PosLong
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import retry._
 
-case class GlobalSnapshotConfirmationProof(globalHash: Hash, globalOrdinal: SnapshotOrdinal, globalEpochProgress: EpochProgress)
-
-object GlobalSnapshotConfirmationProof {
-  def fromGlobalSnapshot(snapshot: Hashed[GlobalIncrementalSnapshot]): GlobalSnapshotConfirmationProof =
-    GlobalSnapshotConfirmationProof(snapshot.hash, snapshot.ordinal, snapshot.epochProgress)
-}
-
-@derive(eqv)
-sealed trait TrackedBinary
-
-case class PendingBinary(
+case class TrackedBinary(
   binary: Hashed[StateChannelSnapshotBinary],
   enqueuedAtOrdinal: SnapshotOrdinal,
   sendsSoFar: NonNegLong
-) extends TrackedBinary
-
-case class ConfirmedBinary(
-  pendingBinary: PendingBinary,
-  confirmationProof: GlobalSnapshotConfirmationProof
-) extends TrackedBinary
+)
 
 case class State(
-  tracked: Queue[TrackedBinary],
+  pending: Queue[TrackedBinary],
   cap: NonNegLong,
   retryMode: Boolean,
   noConfirmationsSinceRetryCount: NonNegLong,
@@ -58,7 +38,7 @@ case class State(
 
 object State {
   def empty: State = State(
-    tracked = Queue.empty[TrackedBinary],
+    pending = Queue.empty[TrackedBinary],
     cap = 4L,
     retryMode = false,
     noConfirmationsSinceRetryCount = 0L,
@@ -69,8 +49,7 @@ object State {
 trait StateChannelBinarySender[F[_]] {
   def processPending: F[Unit]
   def clearPending: F[Unit]
-
-  def confirm(globalSnapshot: Hashed[GlobalIncrementalSnapshot]): F[Unit]
+  def confirm(globalSnapshot: GlobalIncrementalSnapshot): F[Unit]
   def process(binaryHashed: Hashed[StateChannelSnapshotBinary]): F[Unit]
 }
 
@@ -103,60 +82,44 @@ object StateChannelBinarySender {
         lastGlobalSnapshotStorage.getOrdinal.map(_.getOrElse(SnapshotOrdinal.MinValue)).flatMap { currentOrdinal =>
           stateR.modify {
             case state @ State(pending, _, retryMode, _, _) =>
-              val updatedPending = pending :+ PendingBinary(binary, enqueuedAtOrdinal = currentOrdinal, 0L)
+              val updatedPending = pending :+ TrackedBinary(binary, enqueuedAtOrdinal = currentOrdinal, 0L)
               val action =
                 if (retryMode) logger.warn(s"[RetryMode] Snapshot binary of hash ${binary.hash} enqueued.")
                 else
                   post(binary).flatTap(_ => logger.info(s"Snapshot binary of hash ${binary.hash} enqueued and sent to GL0"))
-              val newState = state.copy(tracked = updatedPending)
+              val newState = state.copy(pending = updatedPending)
               (newState, action)
           }.flatMap(identity)
         }
 
-      def confirm(globalSnapshot: Hashed[GlobalIncrementalSnapshot]): F[Unit] = for {
+      def confirm(globalSnapshot: GlobalIncrementalSnapshot): F[Unit] = for {
         identifier <- identifierStorage.get
         binaries = globalSnapshot.stateChannelSnapshots.get(identifier).toList.flatMap(_.toList)
         confirmedHashesInGlobalSnapshot <- binaries.traverse(_.toHashed).map(_.map(_.hash)).map(_.toSet)
 
         _ <- stateR.update { state =>
-          val indexedTracked = state.tracked.zipWithIndex
-
-          val maybeHighestConfirmationIndex = indexedTracked.collect {
-            case (PendingBinary(tracked, _, _), index) if confirmedHashesInGlobalSnapshot.contains(tracked.hash) => index
-          }.maxOption
-
-          val updatedTracked = indexedTracked.map {
-            case (pendingBinary @ PendingBinary(tracked, enqueuedAtOrdinal, sendsSoFar), index)
-                if index <= maybeHighestConfirmationIndex.getOrElse(-1) =>
-              ConfirmedBinary(pendingBinary, GlobalSnapshotConfirmationProof.fromGlobalSnapshot(globalSnapshot))
-            case (other, _) => other
+          val confirmedWithIndex = state.pending.zipWithIndex.filter {
+            case (TrackedBinary(tracked, _, _), _) => confirmedHashesInGlobalSnapshot.contains(tracked.hash)
+          }
+          val maybeConfirmationIndex = confirmedWithIndex.maxByOption { case (_, i) => i }.map { case (_, i) => i }
+          val updatedPending = maybeConfirmationIndex.fold(state.pending) { cutAt =>
+            state.pending.splitAt(cutAt + 1)._2
           }
 
           val updatedRetryMode = {
             val hasStalled =
-              updatedTracked.exists {
-                case PendingBinary(_, enqueuedAtOrdinal, _) =>
-                  globalSnapshot.ordinal.value - enqueuedAtOrdinal.value >= noConfirmationsToTriggerRetryMode
-                case _ => false
-              }
+              updatedPending.exists(p => globalSnapshot.ordinal.value - p.enqueuedAtOrdinal.value >= noConfirmationsToTriggerRetryMode)
 
             if (!state.retryMode) {
               hasStalled
-            } else {
-              val pendingCount = state.tracked.collect { case _: PendingBinary => 1 }.sum
-              val allPendingAlreadySent = updatedTracked.forall {
-                case PendingBinary(_, _, sendsSoFar) => sendsSoFar >= 1
-                case _                               => true
-              }
-              if (pendingCount <= state.cap && allPendingAlreadySent && !hasStalled) {
-                false
-              } else
-                state.retryMode
-            }
+            } else if (state.cap >= state.pending.length && updatedPending.forall(_.sendsSoFar >= 1) && !hasStalled) {
+              false
+            } else
+              state.retryMode
           }
 
           val (updatedCap, updatedBackoffExponent, updatedNoConfirmationsSinceRetryCount) =
-            if ((!updatedRetryMode && state.retryMode) || updatedTracked.isEmpty) {
+            if ((!updatedRetryMode && state.retryMode) || updatedPending.isEmpty) {
               val empty = State.empty
               val cap = empty.cap
               val backoffExponent = empty.backoffExponent
@@ -164,14 +127,14 @@ object StateChannelBinarySender {
 
               (cap, backoffExponent, noConfirmationsSinceRetryCount)
             } else if (updatedRetryMode) {
-              val confirmedCount = maybeHighestConfirmationIndex.map(_ + 1L).getOrElse(0L)
+              val confirmedCount = maybeConfirmationIndex.map(_ + 1L).getOrElse(0L)
 
               if (confirmedCount > 0) {
                 val cap = {
                   val maxCap = confirmedCount * confirmedCountMultiplier
                   val log2 = (x: Double) => Math.log10(x) / Math.log10(2.0)
                   val surplus = NonNegLong.from {
-                    Math.ceil(log2(updatedTracked.length.toDouble)).toLong
+                    Math.ceil(log2(updatedPending.length.toDouble)).toLong
                   }.getOrElse(NonNegLong.MinValue)
                   val proposedCap = state.cap + surplus
                   NonNegLong.from(Math.min(proposedCap, maxCap)).getOrElse(NonNegLong.MinValue)
@@ -208,7 +171,7 @@ object StateChannelBinarySender {
             }
 
           State(
-            tracked = updatedTracked,
+            pending = updatedPending,
             cap = updatedCap,
             retryMode = updatedRetryMode,
             noConfirmationsSinceRetryCount = updatedNoConfirmationsSinceRetryCount,
@@ -219,7 +182,7 @@ object StateChannelBinarySender {
 
       def processPending: F[Unit] = stateR.get.flatMap { state =>
         if (state.retryMode) {
-          val toRetry = state.tracked.collect { case pendingBinary: PendingBinary => pendingBinary }.take(state.cap.toInt)
+          val toRetry = state.pending.take(state.cap.toInt)
           logger.warn(s"[RetryMode] Retrying ${toRetry.size} pending binaries").whenA(toRetry.nonEmpty) >> toRetry.traverse_(tracked =>
             post(tracked.binary)
           )
@@ -258,12 +221,12 @@ object StateChannelBinarySender {
                   case Right(_) =>
                     logger.info(s"Sent ${binary.hash.show} to Global L0 peer ${l0Peer.show}") >>
                       stateR.update { state =>
-                        val updatedPending = state.tracked.map {
-                          case PendingBinary(alreadyTrackedBinary, enqueuedAtOrdinal, sendsSoFar) if alreadyTrackedBinary === binary =>
-                            PendingBinary(alreadyTrackedBinary, enqueuedAtOrdinal, NonNegLong.unsafeFrom(sendsSoFar + 1))
-                          case tracked => tracked
+                        val updatedPending = state.pending.map { tracked =>
+                          if (tracked.binary === binary) {
+                            tracked.copy(sendsSoFar = NonNegLong.unsafeFrom(tracked.sendsSoFar + 1))
+                          } else tracked
                         }
-                        state.copy(tracked = updatedPending)
+                        state.copy(pending = updatedPending)
                       }
 
                   case Left(errors) =>

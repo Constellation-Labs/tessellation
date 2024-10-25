@@ -1,19 +1,21 @@
 package io.constellationnetwork.node.shared.infrastructure.snapshot
 
+import cats.Order
 import cats.data.Validated
 import cats.effect.Async
-import cats.kernel.Order
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.schema.currency._
+import io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSnapshotSync
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.currencyMessage._
+import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.transaction.{RewardTransaction, Transaction, TransactionReference}
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.Signed
@@ -27,54 +29,57 @@ case class CurrencyMessagesAcceptanceResult(
   notAccepted: List[Signed[CurrencyMessage]]
 )
 
+case class GlobalSnapshotSyncAcceptanceResult(
+  contextUpdate: SortedMap[PeerId, Signed[GlobalSnapshotSync]],
+  accepted: List[Signed[GlobalSnapshotSync]],
+  notAccepted: List[Signed[GlobalSnapshotSync]]
+)
+
+case class CurrencySnapshotAcceptanceResult(
+  block: BlockAcceptanceResult,
+  messages: CurrencyMessagesAcceptanceResult,
+  globalSnapshotSync: GlobalSnapshotSyncAcceptanceResult,
+  rewards: SortedSet[RewardTransaction],
+  sharedArtifacts: SortedSet[SharedArtifact],
+  info: CurrencySnapshotInfo,
+  stateProof: CurrencySnapshotStateProof
+)
+
 trait CurrencySnapshotAcceptanceManager[F[_]] {
   def accept(
     blocksForAcceptance: List[Signed[Block]],
     messagesForAcceptance: List[Signed[CurrencyMessage]],
+    globalSnapshotSyncsForAcceptance: List[Signed[GlobalSnapshotSync]],
     sharedArtifactsForAcceptance: SortedSet[SharedArtifact],
     lastSnapshotContext: CurrencySnapshotContext,
     snapshotOrdinal: SnapshotOrdinal,
     lastActiveTips: SortedSet[ActiveTip],
     lastDeprecatedTips: SortedSet[DeprecatedTip],
-    calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]]
-  )(implicit hasher: Hasher[F]): F[
-    (
-      BlockAcceptanceResult,
-      CurrencyMessagesAcceptanceResult,
-      SortedSet[RewardTransaction],
-      SortedSet[SharedArtifact],
-      CurrencySnapshotInfo,
-      CurrencySnapshotStateProof
-    )
-  ]
+    calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]],
+    facilitators: Set[PeerId]
+  )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult]
 }
 
 object CurrencySnapshotAcceptanceManager {
   def make[F[_]: Async](
     blockAcceptanceManager: BlockAcceptanceManager[F],
     collateral: Amount,
-    messageValidator: CurrencyMessageValidator[F]
+    messageValidator: CurrencyMessageValidator[F],
+    globalSnapshotSyncValidator: GlobalSnapshotSyncValidator[F]
   ) = new CurrencySnapshotAcceptanceManager[F] {
 
     def accept(
       blocksForAcceptance: List[Signed[Block]],
       messagesForAcceptance: List[Signed[CurrencyMessage]],
+      globalSnapshotSyncsForAcceptance: List[Signed[GlobalSnapshotSync]],
       sharedArtifactsForAcceptance: SortedSet[SharedArtifact],
       lastSnapshotContext: CurrencySnapshotContext,
       snapshotOrdinal: SnapshotOrdinal,
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip],
-      calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]]
-    )(implicit hasher: Hasher[F]): F[
-      (
-        BlockAcceptanceResult,
-        CurrencyMessagesAcceptanceResult,
-        SortedSet[RewardTransaction],
-        SortedSet[SharedArtifact],
-        CurrencySnapshotInfo,
-        CurrencySnapshotStateProof
-      )
-    ] = for {
+      calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]],
+      facilitators: Set[PeerId]
+    )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult] = for {
       initialTxRef <- TransactionReference.emptyCurrency(lastSnapshotContext.address)
 
       acceptanceResult <- acceptBlocks(
@@ -103,51 +108,110 @@ object CurrencySnapshotAcceptanceManager {
 
       acceptedSharedArtifacts = acceptSharedArtifacts(sharedArtifactsForAcceptance)
 
-      lastMessages = lastSnapshotContext.snapshotInfo.lastMessages.getOrElse(SortedMap.empty[MessageType, Signed[CurrencyMessage]])
+      messagesAcceptanceResult <- acceptMessages(
+        lastSnapshotContext.snapshotInfo.lastMessages,
+        messagesForAcceptance,
+        lastSnapshotContext.address
+      )
 
-      msgOrdering = Order
+      globalSnapshotSyncAcceptanceResult <- acceptGlobalSnapshotSyncs(
+        lastSnapshotContext.snapshotInfo.globalSnapshotSyncView,
+        globalSnapshotSyncsForAcceptance,
+        lastSnapshotContext.address,
+        facilitators
+      )
+
+      csi = CurrencySnapshotInfo(
+        transactionsRefs,
+        updatedBalancesByRewards,
+        Option.when(messagesAcceptanceResult.contextUpdate.nonEmpty)(messagesAcceptanceResult.contextUpdate),
+        None,
+        None,
+        None,
+        globalSnapshotSyncAcceptanceResult.contextUpdate.some
+      )
+      stateProof <- csi.stateProof(snapshotOrdinal)
+
+    } yield
+      CurrencySnapshotAcceptanceResult(
+        acceptanceResult,
+        messagesAcceptanceResult,
+        globalSnapshotSyncAcceptanceResult,
+        acceptedRewardTxs,
+        acceptedSharedArtifacts,
+        csi,
+        stateProof
+      )
+
+    private def acceptMessages(
+      lastContextMessages: Option[SortedMap[MessageType, Signed[CurrencyMessage]]],
+      messagesForAcceptance: List[Signed[CurrencyMessage]],
+      metagraphId: Address
+    )(implicit hs: Hasher[F]) = {
+      val msgOrdering = Order
         .whenEqual[Signed[CurrencyMessage]](
           Order.whenEqual(Order.by(_.parentOrdinal), Order.reverse(Order.by(_.proofs.size))),
           Order[Signed[CurrencyMessage]]
         )
         .toOrdering
 
-      (messagesForContextUpdate, messagesToAccept, messagesToReject) <-
-        messagesForAcceptance
-          .sorted(msgOrdering)
-          .foldLeftM((lastMessages, List.empty[Signed[CurrencyMessage]], List.empty[Signed[CurrencyMessage]])) {
-            case ((lastMsgs, toAdd, toReject), message) =>
-              messageValidator.validate(message, lastMsgs, lastSnapshotContext.address, Map.empty).map {
-                case Validated.Valid(_) =>
-                  val updatedLastMsgs = lastMsgs.updated(message.messageType, message)
-                  val updatedToAdd = message :: toAdd
+      messagesForAcceptance
+        .sorted(msgOrdering)
+        .foldLeftM(
+          (
+            lastContextMessages.getOrElse(SortedMap.empty[MessageType, Signed[CurrencyMessage]]),
+            List.empty[Signed[CurrencyMessage]],
+            List.empty[Signed[CurrencyMessage]]
+          )
+        ) {
+          case ((lastMsgs, toAdd, toReject), message) =>
+            messageValidator.validate(message, lastMsgs, metagraphId, Map.empty).map {
+              case Validated.Valid(_) =>
+                val updatedLastMsgs = lastMsgs.updated(message.messageType, message)
+                val updatedToAdd = message :: toAdd
 
-                  (updatedLastMsgs, updatedToAdd, toReject)
-                case Validated.Invalid(_) =>
-                  val updatedToReject = message :: toReject
+                (updatedLastMsgs, updatedToAdd, toReject)
+              case Validated.Invalid(_) =>
+                val updatedToReject = message :: toReject
 
-                  (lastMsgs, toAdd, updatedToReject)
-              }
+                (lastMsgs, toAdd, updatedToReject)
+            }
+        }
+        .map { case (contextUpdate, toAdd, toReject) => CurrencyMessagesAcceptanceResult(contextUpdate, toAdd, toReject) }
 
+    }
+
+    private def acceptGlobalSnapshotSyncs(
+      lastGlobalSnapshotSyncView: Option[SortedMap[PeerId, Signed[GlobalSnapshotSync]]],
+      globalSnapshotSyncsForAcceptance: List[Signed[GlobalSnapshotSync]],
+      metagraphId: Address,
+      facilitators: Set[PeerId]
+    )(implicit hs: Hasher[F]) = {
+      val ordering = Order
+        .whenEqual[Signed[GlobalSnapshotSync]](
+          Order.by(_.session),
+          Order.whenEqual(
+            Order[SnapshotOrdinal].contramap(_.ordinal),
+            Order[Signed[GlobalSnapshotSync]]
+          )
+        )
+        .toOrdering
+
+      globalSnapshotSyncsForAcceptance.partitionEitherM { sync =>
+        globalSnapshotSyncValidator
+          .validate(sync, metagraphId, facilitators)
+          .map(_.toEither.leftMap(_ => sync))
+      }.map {
+        case (toReject, toAdd) =>
+          val newestSyncs = toAdd.groupBy(_.proofs.head.id.toPeerId).collect {
+            case (peerId, syncs) if syncs.nonEmpty => peerId -> syncs.max(ordering)
           }
-
-      messagesAcceptanceResult = CurrencyMessagesAcceptanceResult(
-        messagesForContextUpdate,
-        messagesToAccept,
-        messagesToReject
-      )
-
-      csi = CurrencySnapshotInfo(
-        transactionsRefs,
-        updatedBalancesByRewards,
-        Option.when(messagesForContextUpdate.nonEmpty)(messagesForContextUpdate),
-        None,
-        None,
-        None
-      )
-      stateProof <- csi.stateProof(snapshotOrdinal)
-
-    } yield (acceptanceResult, messagesAcceptanceResult, acceptedRewardTxs, acceptedSharedArtifacts, csi, stateProof)
+          val lastGlobalSnapshotSyncs = lastGlobalSnapshotSyncView.getOrElse(
+            SortedMap.empty[PeerId, Signed[GlobalSnapshotSync]]
+          )
+          GlobalSnapshotSyncAcceptanceResult(lastGlobalSnapshotSyncs ++ newestSyncs, toAdd, toReject)
+      }
+    }
 
     private def acceptTransactionRefs(
       lastTxRefs: SortedMap[Address, TransactionReference],

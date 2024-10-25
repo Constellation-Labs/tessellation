@@ -3,6 +3,7 @@ package io.constellationnetwork.node.shared.snapshot
 import io.constellationnetwork.currency.dataApplication.DataUpdate
 import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationBlock
 import io.constellationnetwork.currency.schema.currency._
+import io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSnapshotSync
 import io.constellationnetwork.schema.Block
 import io.constellationnetwork.schema.currencyMessage.CurrencyMessage
 import io.constellationnetwork.security.signature.Signed
@@ -38,6 +39,9 @@ object currency {
 
   @derive(encoder, decoder, eqv)
   case class CurrencyMessageEvent(value: Signed[CurrencyMessage]) extends CurrencySnapshotEvent
+
+  @derive(encoder, decoder, eqv)
+  case class GlobalSnapshotSyncEvent(value: Signed[GlobalSnapshotSync]) extends CurrencySnapshotEvent
 
   type CurrencySnapshotArtifact = CurrencyIncrementalSnapshot
 }

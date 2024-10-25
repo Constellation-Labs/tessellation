@@ -9,6 +9,7 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.traverse._
 
+import io.constellationnetwork.currency.l0.snapshot.storage.LastSynchronizedGlobalSnapshotStorage
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer, SizeCalculator}
@@ -53,7 +54,8 @@ object StateChannelSnapshotService {
   def make[F[_]: Async: JsonSerializer: SecurityProvider](
     keyPair: KeyPair,
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
-    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
+    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
+      with LastSynchronizedGlobalSnapshotStorage[F],
     jsonBrotliBinarySerializer: JsonBrotliBinarySerializer[F],
     dataApplicationSnapshotAcceptanceManager: Option[DataApplicationSnapshotAcceptanceManager[F]],
     stateChannelBinarySender: StateChannelBinarySender[F],
@@ -130,6 +132,7 @@ object StateChannelSnapshotService {
               s"Cannot save CurrencySnapshot ordinal=${signedArtifact.ordinal} for metagraph identifier=${context.address} into the storage."
             )
           )
+        _ <- lastGlobalSnapshotStorage.deleteOlderThanSynchronized()
         _ <- stateChannelBinarySender.process(binaryHashed)
       } yield ()
 
