@@ -22,7 +22,7 @@ import io.constellationnetwork.schema.peer.L0Peer
 
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
+import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
 import fs2.io.file.Path
 
 object method {
@@ -33,7 +33,7 @@ object method {
     def appConfig(c: AppConfigReader, shared: SharedConfig): AppConfig = AppConfig(
       snapshot = c.snapshot,
       snapshotConfirmation = SnapshotConfirmationConfig(
-        confirmationWindowSize = PosLong(5L)
+        fixedWindowSize = PosInt(5)
       ),
       globalL0Peer = globalL0Peer,
       peerDiscovery = c.peerDiscovery,

@@ -8,6 +8,7 @@ import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
 
+import io.constellationnetwork.currency.l0.config.types.SnapshotConfirmationConfig
 import io.constellationnetwork.currency.l0.node.IdentifierStorage
 import io.constellationnetwork.currency.schema.currency.SnapshotFee
 import io.constellationnetwork.ext.cats.effect.ResourceIO
@@ -34,7 +35,7 @@ import io.constellationnetwork.statechannel.StateChannelSnapshotBinary
 
 import com.comcast.ip4s.{Host, Port}
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.NonNegLong
+import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
 import org.scalacheck.Gen
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
@@ -99,6 +100,8 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         def getHeight: StateChannelBinarySenderSuite.F[Option[height.Height]] = ???
       }
 
+      snapshotConfirmationConfig = SnapshotConfirmationConfig(PosInt.MaxValue)
+
       postedRef <- Ref.of[IO, List[Hashed[StateChannelSnapshotBinary]]](List.empty)
       stateChannelSnapshotClient = new StateChannelSnapshotClient[F] {
         def send(
@@ -117,7 +120,8 @@ object StateChannelBinarySenderSuite extends MutableIOSuite with Checkers {
         identifierStorage,
         globalL0ClusterStorage,
         lastSnapshotStorage,
-        stateChannelSnapshotClient
+        stateChannelSnapshotClient,
+        snapshotConfirmationConfig
       )
     } yield (sender, stateRef, postedRef)
 

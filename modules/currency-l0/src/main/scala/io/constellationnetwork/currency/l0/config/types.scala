@@ -3,7 +3,7 @@ package io.constellationnetwork.currency.l0.config
 import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.schema.peer.L0Peer
 
-import eu.timepit.refined.types.numeric.PosLong
+import eu.timepit.refined.types.numeric.PosInt
 
 object types {
   case class AppConfigReader(
@@ -30,6 +30,6 @@ object types {
   )
 
   case class SnapshotConfirmationConfig(
-    confirmationWindowSize: PosLong
+    fixedWindowSize: PosInt
   )
 }

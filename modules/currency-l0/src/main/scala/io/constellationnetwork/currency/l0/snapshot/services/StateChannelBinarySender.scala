@@ -7,6 +7,7 @@ import cats.syntax.all._
 
 import scala.collection.immutable.Queue
 
+import io.constellationnetwork.currency.l0.config.types.SnapshotConfirmationConfig
 import io.constellationnetwork.currency.l0.node.IdentifierStorage
 import io.constellationnetwork.node.shared.domain.cluster.storage.L0ClusterStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
@@ -37,12 +38,14 @@ object GlobalSnapshotConfirmationProof {
 @derive(eqv)
 sealed trait TrackedBinary
 
+@derive(eqv)
 case class PendingBinary(
   binary: Hashed[StateChannelSnapshotBinary],
   enqueuedAtOrdinal: SnapshotOrdinal,
   sendsSoFar: NonNegLong
 ) extends TrackedBinary
 
+@derive(eqv)
 case class ConfirmedBinary(
   pendingBinary: PendingBinary,
   confirmationProof: GlobalSnapshotConfirmationProof
@@ -69,9 +72,9 @@ object State {
 trait StateChannelBinarySender[F[_]] {
   def processPending: F[Unit]
   def clearPending: F[Unit]
-
   def confirm(globalSnapshot: Hashed[GlobalIncrementalSnapshot]): F[Unit]
   def process(binaryHashed: Hashed[StateChannelSnapshotBinary]): F[Unit]
+  def getLastConfirmedWithinFixedWindow: F[Option[ConfirmedBinary]]
 }
 
 object StateChannelBinarySender {
@@ -79,18 +82,29 @@ object StateChannelBinarySender {
     identifierStorage: IdentifierStorage[F],
     globalL0ClusterStorage: L0ClusterStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
-    stateChannelSnapshotClient: StateChannelSnapshotClient[F]
+    stateChannelSnapshotClient: StateChannelSnapshotClient[F],
+    snapshotConfirmationConfig: SnapshotConfirmationConfig
   ): F[StateChannelBinarySender[F]] =
     Ref
       .of[F, State](State.empty)
-      .map(make[F](_, identifierStorage, globalL0ClusterStorage, lastGlobalSnapshotStorage, stateChannelSnapshotClient))
+      .map(
+        make[F](
+          _,
+          identifierStorage,
+          globalL0ClusterStorage,
+          lastGlobalSnapshotStorage,
+          stateChannelSnapshotClient,
+          snapshotConfirmationConfig
+        )
+      )
 
   def make[F[_]: Async: Hasher](
     stateR: Ref[F, State],
     identifierStorage: IdentifierStorage[F],
     globalL0ClusterStorage: L0ClusterStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
-    stateChannelSnapshotClient: StateChannelSnapshotClient[F]
+    stateChannelSnapshotClient: StateChannelSnapshotClient[F],
+    snapshotConfirmationConfig: SnapshotConfirmationConfig
   ): StateChannelBinarySender[F] =
     new StateChannelBinarySender[F] {
 
@@ -125,11 +139,19 @@ object StateChannelBinarySender {
             case (PendingBinary(tracked, _, _), index) if confirmedHashesInGlobalSnapshot.contains(tracked.hash) => index
           }.maxOption
 
-          val updatedTracked = indexedTracked.map {
-            case (pendingBinary @ PendingBinary(tracked, enqueuedAtOrdinal, sendsSoFar), index)
-                if index <= maybeHighestConfirmationIndex.getOrElse(-1) =>
+          val afterConfirmation = indexedTracked.map {
+            case (pendingBinary @ PendingBinary(_, _, _), index) if maybeHighestConfirmationIndex.exists(_ >= index) =>
               ConfirmedBinary(pendingBinary, GlobalSnapshotConfirmationProof.fromGlobalSnapshot(globalSnapshot))
             case (other, _) => other
+          }
+
+          val maybeLowestConfirmationIndexWithinFixedWindow = maybeHighestConfirmationIndex
+            .map(_ - snapshotConfirmationConfig.fixedWindowSize)
+            .filter(_ > 0)
+
+          val updatedTracked = maybeLowestConfirmationIndexWithinFixedWindow match {
+            case Some(outsideWindow) => afterConfirmation.drop(outsideWindow)
+            case None                => afterConfirmation
           }
 
           val updatedRetryMode = {
@@ -272,6 +294,11 @@ object StateChannelBinarySender {
             }
           }
         ).void
+      }
+
+      def getLastConfirmedWithinFixedWindow: F[Option[ConfirmedBinary]] = stateR.get.map { state =>
+        val confirmed = state.tracked.toList.collect { case confirmed @ ConfirmedBinary(_, _) => confirmed }
+        confirmed.headOption.filter(_ => confirmed.length > snapshotConfirmationConfig.fixedWindowSize)
       }
     }
 }
