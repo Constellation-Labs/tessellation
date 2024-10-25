@@ -127,7 +127,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
       validators.currencyMessageValidator,
       storages.snapshot,
       storages.identifier,
-      storages.lastGlobalSnapshot
+      storages.lastNGlobalSnapshot
     ).publicRoutes
   )
 
