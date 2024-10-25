@@ -13,7 +13,7 @@ import io.constellationnetwork.node.shared.domain.statechannel.{FeeCalculator, F
 import io.constellationnetwork.node.shared.domain.transaction.{TransactionChainValidator, TransactionValidator}
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockValidator
 import io.constellationnetwork.node.shared.infrastructure.gossip.RumorValidator
-import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencyMessageValidator
+import io.constellationnetwork.node.shared.infrastructure.snapshot.{CurrencyMessageValidator, GlobalSnapshotSyncValidator}
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.peer.PeerId
@@ -46,6 +46,7 @@ object SharedValidators {
     val stateChannelValidator =
       StateChannelValidator.make[F](signedValidator, l0Seedlist, stateChannelAllowanceLists, maxBinarySizeInBytes, feeCalculator)
     val currencyMessageValidator = CurrencyMessageValidator.make[F](signedValidator, stateChannelAllowanceLists, seedlist)
+    val globalSnapshotSyncValidator = GlobalSnapshotSyncValidator.make[F](signedValidator, seedlist)
 
     new SharedValidators[F](
       signedValidator,
@@ -57,7 +58,8 @@ object SharedValidators {
       currencyBlockValidator,
       rumorValidator,
       stateChannelValidator,
-      currencyMessageValidator
+      currencyMessageValidator,
+      globalSnapshotSyncValidator
     ) {}
   }
 }
@@ -72,5 +74,6 @@ sealed abstract class SharedValidators[F[_]] private (
   val currencyBlockValidator: BlockValidator[F],
   val rumorValidator: RumorValidator[F],
   val stateChannelValidator: StateChannelValidator[F],
-  val currencyMessageValidator: CurrencyMessageValidator[F]
+  val currencyMessageValidator: CurrencyMessageValidator[F],
+  val globalSnapshotSyncValidator: GlobalSnapshotSyncValidator[F]
 )

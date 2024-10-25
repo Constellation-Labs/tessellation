@@ -38,6 +38,11 @@ trait SignedValidator[F[_]] {
     minSignatureCount: PosInt
   ): SignedValidationErrorOr[Signed[A]]
 
+  def validateMaxSignatureCount[A: Encoder](
+    signed: Signed[A],
+    maxSignatureCount: PosInt
+  ): SignedValidationErrorOr[Signed[A]]
+
   def isSignedBy[A: Encoder](
     signed: Signed[A],
     signerAddress: Address
@@ -83,6 +88,13 @@ object SignedValidator {
         signed.validNec
       else
         NotEnoughSignatures(signed.proofs.size, minSignatureCount).invalidNec
+
+    def validateMaxSignatureCount[A: Encoder](signed: Signed[A], maxSignatureCount: PosInt): SignedValidationErrorOr[Signed[A]] =
+      Validated.condNec(
+        signed.proofs.size <= maxSignatureCount,
+        signed,
+        TooManySignatures(signed.proofs.size, maxSignatureCount)
+      )
 
     def isSignedBy[A: Encoder](
       signed: Signed[A],
@@ -149,6 +161,7 @@ object SignedValidator {
   sealed trait SignedValidationError
   case class InvalidSignatures(invalidSignatures: NonEmptySet[SignatureProof]) extends SignedValidationError
   case class NotEnoughSignatures(signatureCount: Long, minSignatureCount: PosInt) extends SignedValidationError
+  case class TooManySignatures(signatureCount: Long, maxSignatureCount: PosInt) extends SignedValidationError
   case class NotEnoughSeedlistSignatures(signatureCount: Int, minSignatureCount: Int) extends SignedValidationError
   case class DuplicateSigners(signers: NonEmptySet[Id]) extends SignedValidationError
   case class MissingSigners(signers: NonEmptySet[Id]) extends SignedValidationError
