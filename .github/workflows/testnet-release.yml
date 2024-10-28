@@ -54,6 +54,29 @@ jobs:
           cp ./modules/dag-l0/target/scala-2.13/tessellation-dag-l0-assembly-$VERSION.jar ./$VERSION/cl-node.jar
           cp ./modules/dag-l1/target/scala-2.13/tessellation-dag-l1-assembly-$VERSION.jar ./$VERSION/cl-dag-l1.jar
 
+      - name: Create SHA-256 signature
+        env:
+          VERSION: ${{ steps.get_version.outputs.VERSION }}
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          umask 007
+          mkdir ./ramdisk 
+          sudo mount -t tmpfs -o size=1M tmpfs ./ramdisk
+          export KEY_NAME="$(uuidgen)"
+          touch ./ramdisk/$KEY_NAME
+          chmod 600 ./ramdisk/$KEY_NAME
+          echo "$RELEASE_SIGNING_KEY" >  ./ramdisk/$KEY_NAME        
+          for jar in cl-keytool cl-wallet cl-node cl-dag-l1; do
+            echo "$(sha256sum ./$VERSION/$jar.jar | sed 's/ .*//')" > ./$VERSION/$jar.sha256
+            openssl dgst -sha256 -sign ./ramdisk/$KEY_NAME -out /dev/stdout ./$VERSION/$jar.sha256 | base64 > ./$VERSION/$jar.sig
+          done
+
+      - name: Cleanup ramdisk
+        if: always()
+        run: |
+          sudo umount ./ramdisk
+          rm -rf ./ramdisk 
+
       - name: Send artifacts to S3
         env:
           VERSION: ${{ steps.get_version.outputs.VERSION }}

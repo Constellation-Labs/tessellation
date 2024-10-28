@@ -101,6 +101,28 @@ jobs:
           cp ./modules/dag-l0/target/scala-2.13/tessellation-dag-l0-assembly-$VERSION.jar ./cl-node.jar
           cp ./modules/dag-l1/target/scala-2.13/tessellation-dag-l1-assembly-$VERSION.jar ./cl-dag-l1.jar
 
+      - name: Create SHA-256 signature
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          umask 007
+          mkdir ./ramdisk 
+          sudo mount -t tmpfs -o size=1M tmpfs ./ramdisk
+          export KEY_NAME="$(uuidgen)"
+          touch ./ramdisk/$KEY_NAME
+          chmod 600 ./ramdisk/$KEY_NAME
+          echo "$RELEASE_SIGNING_KEY" >  ./ramdisk/$KEY_NAME        
+          for jar in cl-keytool cl-wallet cl-node cl-dag-l1; do
+            echo "$(sha256sum ./$jar.jar | sed 's/ .*//')" > ./$jar.sha256
+            openssl dgst -sha256 -sign ./ramdisk/$KEY_NAME -out /dev/stdout ./$jar.sha256 | base64 > ./$jar.sig
+          done
+
+      - name: Cleanup ramdisk
+        if: always()
+        run: |
+          sudo umount ./ramdisk
+          rm -rf ./ramdisk 
+
       - name: Create release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -113,7 +135,12 @@ jobs:
           body: ${{ steps.get_changelog.outputs.CHANGELOG }}
           files: |
             ./cl-keytool.jar
+            ./cl-keytool.sha256
+            ./cl-keytool.sig
             ./cl-wallet.jar
+            ./cl-wallet.sha256
             ./cl-node.jar
+            ./cl-node.sha256
             ./cl-dag-l1.jar
+            ./cl-dag-l1.sha256
             ./mainnet/mainnet-seedlist
