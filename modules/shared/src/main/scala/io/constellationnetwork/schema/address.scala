@@ -3,6 +3,7 @@ package io.constellationnetwork.schema
 import io.constellationnetwork.ext.cats.data.OrderBasedOrdering
 import io.constellationnetwork.ext.refined._
 import io.constellationnetwork.schema.balance.Balance
+import io.constellationnetwork.schema.swap.CurrencyId
 import io.constellationnetwork.security.Base58
 import io.constellationnetwork.security.hash.Hash
 
@@ -22,6 +23,9 @@ object address {
   case class Address(value: DAGAddress)
 
   object Address {
+    implicit class AddressOps(address: Address) {
+      def toCurrencyId: CurrencyId = CurrencyId(address)
+    }
 
     def fromBytes(bytes: Array[Byte]): Address = {
       val hashCode = Hash.hashCodeFromBytes(bytes)
