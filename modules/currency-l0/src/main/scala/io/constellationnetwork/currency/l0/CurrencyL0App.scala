@@ -102,7 +102,13 @@ abstract class CurrencyL0App(
         )
         .asResource
       implicit0(nodeContext: L0NodeContext[IO]) = L0NodeContext
-        .make[IO](storages.snapshot, hasherSelectorAlwaysCurrent, services.stateChannelBinarySender, storages.lastNGlobalSnapshot)
+        .make[IO](
+          storages.snapshot,
+          hasherSelectorAlwaysCurrent,
+          services.stateChannelBinarySender,
+          storages.lastNGlobalSnapshot,
+          storages.identifier
+        )
       programs = Programs.make[IO, Run](
         keyPair,
         nodeShared.nodeId,

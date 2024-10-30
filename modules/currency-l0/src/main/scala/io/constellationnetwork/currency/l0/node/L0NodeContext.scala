@@ -9,6 +9,7 @@ import io.constellationnetwork.currency.l0.snapshot.services.StateChannelBinaryS
 import io.constellationnetwork.currency.l0.snapshot.storage.LastNGlobalSnapshotStorage
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastSnapshotStorage, SnapshotStorage}
+import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.{Hashed, HasherSelector, SecurityProvider}
 
@@ -17,8 +18,12 @@ object L0NodeContext {
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
     hasherSelector: HasherSelector[F],
     stateChannelBinarySender: StateChannelBinarySender[F],
-    lastNGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo] with LastNGlobalSnapshotStorage[F]
+    lastNGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo] with LastNGlobalSnapshotStorage[F],
+    identifierStorage: IdentifierStorage[F]
   ): L0NodeContext[F] = new L0NodeContext[F] {
+    def getMetagraphId: F[Address] =
+      identifierStorage.get
+
     def securityProvider: SecurityProvider[F] = SecurityProvider[F]
 
     def getLastCurrencySnapshot: F[Option[Hashed[CurrencyIncrementalSnapshot]]] =

@@ -13,6 +13,7 @@ import io.constellationnetwork.currency.dataApplication.dataApplication.{DataApp
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import io.constellationnetwork.currency.schema.feeTransaction.FeeTransaction
 import io.constellationnetwork.routes.internal.ExternalUrlPrefix
+import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.round.RoundId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
@@ -545,4 +546,5 @@ trait L0NodeContext[F[_]] {
   def getCurrencySnapshot(ordinal: SnapshotOrdinal): F[Option[Hashed[CurrencyIncrementalSnapshot]]]
   def getLastCurrencySnapshotCombined: F[Option[(Hashed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]]
   def securityProvider: SecurityProvider[F]
+  def getMetagraphId: F[Address]
 }

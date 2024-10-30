@@ -69,7 +69,8 @@ object Services {
         cfg.snapshotConfirmation
       )
 
-      l0NodeContext = L0NodeContext.make[F](storages.snapshot, hasherSelector, stateChannelBinarySender, storages.lastNGlobalSnapshot)
+      l0NodeContext = L0NodeContext
+        .make[F](storages.snapshot, hasherSelector, stateChannelBinarySender, storages.lastNGlobalSnapshot, storages.identifier)
 
       dataApplicationAcceptanceManager = (maybeDataApplication, storages.calculatedStateStorage).mapN {
         case (service, storage) =>
