@@ -1,7 +1,10 @@
 package io.constellationnetwork.security
 
+import cats.Show
 import cats.effect.{IO, Resource}
 import cats.syntax.all._
+
+import scala.annotation.nowarn
 
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
@@ -9,12 +12,14 @@ import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.{GlobalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.shared.{SharedKryoRegistrationId, sharedKryoRegistrar}
 
 import derevo.circe.magnolia.encoder
 import derevo.derive
 import eu.timepit.refined.auto._
 import io.circe.Encoder
+import org.scalacheck.{Arbitrary, Gen}
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
 
@@ -56,6 +61,20 @@ object HashSuite extends MutableIOSuite with Checkers {
     val testUpdated = TestUpdated(2, None)
 
     res.withCurrent(implicit hasher => (hasher.hash(test), hasher.hash(testUpdated)).mapN(expect.eql(_, _)))
+  }
+
+  test("ensure guava/JSA compatibility") {
+    implicit val byteArrayShow: Show[Array[Byte]] = Show.show(a => Hex.fromBytes(a).toString)
+
+    val byte = Arbitrary.arbitrary[Byte]
+    val bytes = Gen.listOfN(1024, byte).map(_.toArray)
+
+    forall(bytes) { data =>
+      @nowarn
+      val hashCode = Hash.hashCodeFromBytes(data)
+      val sha256Digest = Hash.sha256DigestFromBytes(data)
+      expect.eql(hashCode.toString, sha256Digest.toHexString)
+    }
   }
 
   @derive(encoder)
