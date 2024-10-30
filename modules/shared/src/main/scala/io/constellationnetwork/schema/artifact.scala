@@ -34,7 +34,7 @@ object artifact {
     def of[F[_]: Async](spendTransaction: SpendTransaction)(implicit hasher: Hasher[F]): F[SpendTransactionReference] =
       hasher.hash(spendTransaction).map(SpendTransactionReference(_))
   }
-  @derive(decoder, encoder, order, show)
+  @derive(decoder, encoder, order, ordering, show)
   case class PendingSpendTransaction(
     fee: SpendTransactionFee,
     lastValidEpochProgress: EpochProgress,
@@ -43,7 +43,7 @@ object artifact {
     amount: SwapAmount
   ) extends SpendTransaction
 
-  @derive(decoder, encoder, order, show)
+  @derive(decoder, encoder, order, ordering, show)
   case class ConcludedSpendTransaction(
     spendTransactionRef: SpendTransactionReference
   ) extends SpendTransaction

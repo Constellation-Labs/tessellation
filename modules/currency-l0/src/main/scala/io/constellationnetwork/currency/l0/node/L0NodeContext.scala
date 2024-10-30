@@ -2,19 +2,24 @@ package io.constellationnetwork.currency.l0.node
 
 import cats.data.OptionT
 import cats.effect.Async
-import cats.syntax.functor._
+import cats.syntax.all._
 
 import io.constellationnetwork.currency.dataApplication.L0NodeContext
-import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
+import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
 import io.constellationnetwork.schema.SnapshotOrdinal
-import io.constellationnetwork.security.{Hashed, HasherSelector, SecurityProvider}
+import io.constellationnetwork.schema.swap.CurrencyId
+import io.constellationnetwork.security._
 
 object L0NodeContext {
   def make[F[_]: SecurityProvider: Async](
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
-    hasherSelector: HasherSelector[F]
+    hasherSelector: HasherSelector[F],
+    identifierStorage: IdentifierStorage[F]
   ): L0NodeContext[F] = new L0NodeContext[F] {
+    def getCurrencyId: F[CurrencyId] =
+      identifierStorage.get.map(_.toCurrencyId)
+
     def securityProvider: SecurityProvider[F] = SecurityProvider[F]
 
     def getLastCurrencySnapshot: F[Option[Hashed[CurrencyIncrementalSnapshot]]] =
