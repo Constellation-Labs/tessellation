@@ -49,7 +49,7 @@ object swap {
     implicit def toAmount(fee: AllowSpendFee): Amount = Amount(fee.value)
   }
 
-  @derive(decoder, encoder, order, show)
+  @derive(decoder, encoder, order, show, ordering)
   @newtype
   case class CurrencyId(value: Address)
 
@@ -90,7 +90,7 @@ object swap {
   case class AllowSpend(
     source: Address,
     destination: Address,
-    currency: CurrencyId,
+    currency: Option[CurrencyId],
     amount: SwapAmount,
     fee: AllowSpendFee,
     parent: AllowSpendReference,
