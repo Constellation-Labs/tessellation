@@ -14,7 +14,6 @@ import io.constellationnetwork.ext.codecs._
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.ext.derevo.ordering
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.artifact.SpendTransaction
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.round.RoundId
@@ -155,9 +154,4 @@ object swap {
   @derive(decoder, encoder, order, show)
   @newtype
   case class SwapReference(value: Address)
-
-  sealed trait SwapAction
-
-  @derive(decoder, encoder, order, show)
-  case class SpendAction(pending: SpendTransaction, transaction: SpendTransaction) extends SwapAction
 }
