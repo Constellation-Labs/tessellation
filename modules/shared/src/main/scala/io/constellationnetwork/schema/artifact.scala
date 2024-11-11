@@ -20,7 +20,7 @@ object artifact {
   sealed trait SharedArtifact
 
   @derive(decoder, encoder, order, ordering, show)
-  sealed trait SpendTransaction extends SharedArtifact
+  sealed trait SpendTransaction
 
   @derive(decoder, encoder, order, show)
   @newtype
@@ -29,6 +29,9 @@ object artifact {
   @derive(decoder, encoder, order, show)
   @newtype
   case class SpendTransactionReference(hash: Hash)
+
+  @derive(decoder, encoder, order, ordering, show)
+  case class SpendAction(input: SpendTransaction, output: SpendTransaction) extends SharedArtifact
 
   object SpendTransactionReference {
     def of[F[_]: Async](spendTransaction: SpendTransaction)(implicit hasher: Hasher[F]): F[SpendTransactionReference] =
