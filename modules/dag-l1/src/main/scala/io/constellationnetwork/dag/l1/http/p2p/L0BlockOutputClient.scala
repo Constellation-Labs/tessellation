@@ -5,7 +5,7 @@ import io.constellationnetwork.currency.dataApplication.dataApplication.DataAppl
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse.PeerResponse
 import io.constellationnetwork.schema.Block
-import io.constellationnetwork.schema.swap.SwapBlock
+import io.constellationnetwork.schema.swap.AllowSpendBlock
 import io.constellationnetwork.security.signature.Signed
 
 import io.circe.Encoder
@@ -18,7 +18,7 @@ trait L0BlockOutputClient[F[_]] {
   def sendDataApplicationBlock(block: Signed[DataApplicationBlock])(
     implicit encoder: Encoder[DataUpdate]
   ): PeerResponse[F, Boolean]
-  def sendSwapBlock(block: Signed[SwapBlock]): PeerResponse[F, Boolean]
+  def sendAllowSpendBlock(block: Signed[AllowSpendBlock]): PeerResponse[F, Boolean]
 }
 
 object L0BlockOutputClient {
@@ -36,8 +36,8 @@ object L0BlockOutputClient {
           c.successful(req.withEntity(block))
         }
 
-      def sendSwapBlock(block: Signed[SwapBlock]): PeerResponse[F, Boolean] =
-        PeerResponse(s"$pathPrefix/l1-swap-output", POST)(client) { (req, c) =>
+      def sendAllowSpendBlock(block: Signed[AllowSpendBlock]): PeerResponse[F, Boolean] =
+        PeerResponse(s"$pathPrefix/l1-allow-spend-output", POST)(client) { (req, c) =>
           c.successful(req.withEntity(block))
         }
 

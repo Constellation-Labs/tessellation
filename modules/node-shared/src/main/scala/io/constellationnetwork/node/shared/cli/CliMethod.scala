@@ -60,7 +60,8 @@ trait CliMethod {
     c.feeConfigs.get(environment).map(SortedMap.from(_)).getOrElse(SortedMap.empty),
     c.forkInfoStorage,
     c.lastKryoHashOrdinal,
-    c.addresses
+    c.addresses,
+    c.allowSpends
   )
 
 }
