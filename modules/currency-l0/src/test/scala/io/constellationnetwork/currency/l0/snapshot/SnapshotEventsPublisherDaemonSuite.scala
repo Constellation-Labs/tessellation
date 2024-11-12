@@ -34,7 +34,7 @@ import weaver.scalacheck.Checkers
 object SnapshotEventsPublisherDaemonSuite extends MutableIOSuite with Checkers {
 
   override type Res =
-    (Supervisor[IO], Hasher[IO], SecurityProvider[IO], Metrics[IO], Encoder[CurrencySnapshotEvent], KeyPair)
+    (Supervisor[IO], Hasher[IO], SecurityProvider[IO], KeyPair)
 
   override def sharedResource: Resource[IO, Res] =
     for {
@@ -50,7 +50,7 @@ object SnapshotEventsPublisherDaemonSuite extends MutableIOSuite with Checkers {
         CurrencySnapshotEvent.encoder
       }
       kp <- KeyPairGenerator.makeKeyPair[IO].toResource
-    } yield (s, h, sp, m, e, kp)
+    } yield (s, h, sp, kp)
 
   private def waitUntilQueueSize(queue: Queue[IO, _], expectedSize: Int, attempt: Int = 0): IO[Unit] =
     for {
@@ -66,7 +66,16 @@ object SnapshotEventsPublisherDaemonSuite extends MutableIOSuite with Checkers {
     } yield res
 
   test("should publish events to gossip without duplicates") { res =>
-    implicit val (s, h, sp, m, e, keyPair) = res
+    implicit val (s, h, sp, keyPair) = res
+
+    implicit val m = NoOpMetrics.make
+
+    implicit val e = {
+      implicit val noopEncoder: Encoder[DataUpdate] = new Encoder[DataUpdate] {
+        final def apply(a: DataUpdate): Json = Json.Null
+      }
+      CurrencySnapshotEvent.encoder
+    }
 
     val blockEvent1 = signedBlockGen.sample.map(BlockEvent(_)).get
     val blockEvent2 = signedBlockGen.sample.map(BlockEvent(_)).get
@@ -112,12 +121,12 @@ object SnapshotEventsPublisherDaemonSuite extends MutableIOSuite with Checkers {
       _ <- waitUntilQueueSize(rumorQueue, 1)
       rumorQueueSize <- rumorQueue.size
       maybeRumor <- rumorQueue.tryTake
-    } yield {
-      val maybeEitherBlockEvent = maybeRumor.map { rumor =>
+      maybeEitherBlockEvent = maybeRumor.map { rumor =>
         val cur = rumor.signed.value.content.hcursor
         cur.downField("value").get[BlockEvent]("BlockEvent")
       }
-      assert.eql(1, rumorQueueSize).and(expect(maybeEitherBlockEvent.contains(Right(blockEvent2))))
+    } yield {
+      expect.eql(1, rumorQueueSize).and(expect(maybeEitherBlockEvent.contains(Right(blockEvent2))))
     }
   }
 }
