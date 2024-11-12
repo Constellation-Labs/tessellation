@@ -69,7 +69,8 @@ object Main
         .make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
           sharedStorages,
           method.l0Peer,
-          validators.transactionContextual
+          validators.transactionContextual,
+          validators.allowSpendContextual
         )
         .asResource
       p2pClient = P2PClient.make[IO](
@@ -154,6 +155,7 @@ object Main
           p2pClient.swapConsensusClient,
           services,
           queues,
+          validators.allowSpend,
           keyPair,
           nodeId
         )

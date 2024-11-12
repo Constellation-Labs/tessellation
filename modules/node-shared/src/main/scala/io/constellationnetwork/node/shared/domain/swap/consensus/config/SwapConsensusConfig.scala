@@ -4,4 +4,4 @@ import scala.concurrent.duration.FiniteDuration
 
 import eu.timepit.refined.types.numeric.PosInt
 
-case class SwapConsensusConfig(peersCount: PosInt, timeout: FiniteDuration, maxSwapTransactionsToDequeue: PosInt)
+case class SwapConsensusConfig(peersCount: PosInt, timeout: FiniteDuration, maxAllowSpendsToDequeue: PosInt)

@@ -19,6 +19,7 @@ import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.consensus.config.SwapConsensusConfig
 import io.constellationnetwork.node.shared.domain.queue.ViewableQueue
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
+import io.constellationnetwork.node.shared.domain.swap.AllowSpendValidator
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.{Peer, PeerId}
 import io.constellationnetwork.schema.round.RoundId
@@ -38,7 +39,7 @@ case class RoundData(
   peers: Set[Peer],
   owner: PeerId,
   ownProposal: Proposal,
-  ownBlock: Option[Signed[SwapBlock]] = None,
+  ownBlock: Option[Signed[AllowSpendBlock]] = None,
   ownCancellation: Option[SwapCancellationReason] = None,
   peerProposals: Map[PeerId, Proposal] = Map.empty[PeerId, Proposal],
   peerBlockSignatures: Map[PeerId, SignatureProof] = Map.empty,
@@ -47,7 +48,7 @@ case class RoundData(
   def addPeerProposal(proposal: Proposal): RoundData =
     this.focus(_.peerProposals).modify(_ + (proposal.senderId -> proposal))
 
-  def setOwnBlock(block: Signed[SwapBlock]): RoundData = this.focus(_.ownBlock).replace(block.some)
+  def setOwnBlock(block: Signed[AllowSpendBlock]): RoundData = this.focus(_.ownBlock).replace(block.some)
 
   def addPeerSignature(signatureProposal: SignatureProposal): RoundData = {
     val proof = SignatureProof(PeerId._Id.get(signatureProposal.senderId), signatureProposal.signature)
@@ -61,9 +62,9 @@ case class RoundData(
     this.focus(_.peerCancellations).modify(_ + (cancellation.senderId -> cancellation.reason))
 
   def formBlock[F[_]: Async](
-    validateAllowSpend: Signed[SwapTransaction] => F[Either[String, Signed[SwapTransaction]]],
-    constructBlock: RoundId => List[Signed[SwapTransaction]] => F[Option[SwapBlock]]
-  ): F[Option[SwapBlock]] =
+    validateAllowSpend: Signed[AllowSpend] => F[Either[String, Signed[AllowSpend]]],
+    constructBlock: RoundId => List[Signed[AllowSpend]] => F[Option[AllowSpendBlock]]
+  ): F[Option[AllowSpendBlock]] =
     NonEmptyList
       .fromList((ownProposal.transactions ++ peerProposals.values.flatMap(_.transactions)).toList)
       .traverse {
@@ -89,14 +90,15 @@ object Engine {
     clusterStorage: ClusterStorage[F],
     lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     consensusClient: ConsensusClient[F],
-    swapTransactions: ViewableQueue[F, Signed[SwapTransaction]],
+    allowSpends: ViewableQueue[F, Signed[AllowSpend]],
+    allowSpendValidator: AllowSpendValidator[F],
     selfId: PeerId,
     selfKeyPair: KeyPair
   ): FSM[F, State, In, Out] = {
 
     def peersCount = swapConsensusCfg.peersCount.value
     def timeout = swapConsensusCfg.timeout
-    def maxSwapTransactionsToDequeue = swapConsensusCfg.maxSwapTransactionsToDequeue.value
+    def maxAllowSpendsToDequeue = swapConsensusCfg.maxAllowSpendsToDequeue.value
 
     def logger = Slf4jLogger.getLogger[F]
     def getTime: F[FiniteDuration] = Clock[F].monotonic
@@ -113,13 +115,13 @@ object Engine {
           case _                                  => None
         })
 
-    def pullSwapTransactions: F[Set[Signed[SwapTransaction]]] =
-      swapTransactions.tryTakeN(maxSwapTransactionsToDequeue.some).map(_.toSet).flatTap { updates =>
+    def pullAllowSpends: F[Set[Signed[AllowSpend]]] =
+      allowSpends.tryTakeN(maxAllowSpendsToDequeue.some).map(_.toSet).flatTap { updates =>
         logger.debug(s"Fetched ${updates.size} updates")
       }
 
-    def returnSwapTransactions(round: RoundData): F[Unit] =
-      round.ownProposal.transactions.toList.traverse(swapTransactions.offer).void
+    def returnAllowSpends(round: RoundData): F[Unit] =
+      round.ownProposal.transactions.toList.traverse(allowSpends.offer).void
 
     def removeRound(state: State, round: RoundData): State =
       if (round.owner === selfId)
@@ -128,13 +130,13 @@ object Engine {
         state.focus(_.peerConsensuses).modify(_.removed(round.roundId))
 
     def cancelRound(state: State, round: RoundData): F[(State, Unit)] =
-      returnSwapTransactions(round).tupleLeft(removeRound(state, round))
+      returnAllowSpends(round).tupleLeft(removeRound(state, round))
 
     def cancelTimeoutedRounds(state: State, rounds: Set[RoundData]): F[(State, Out)] = {
       val newState = rounds.toList.foldLeft(state)(removeRound(_, _))
 
       rounds.toList
-        .traverse(returnSwapTransactions)
+        .traverse(returnAllowSpends)
         .as[Out](ConsensusOutput.CleanedConsensuses(rounds.map(_.roundId)))
         .tupleLeft(newState)
     }
@@ -265,7 +267,7 @@ object Engine {
         .traverse(consensusClient.sendConsensusData(data)(e)(_))
         .void
 
-    def sendBlockProposal(signedBlock: Signed[SwapBlock], roundData: RoundData): F[Unit] = {
+    def sendBlockProposal(signedBlock: Signed[AllowSpendBlock], roundData: RoundData): F[Unit] = {
       val proposal = SignatureProposal(
         roundData.roundId,
         selfId,
@@ -279,7 +281,7 @@ object Engine {
       }
     }
 
-    def processBlock(state: State, proposal: Proposal, signedBlock: Signed[SwapBlock]): F[(State, Unit)] = {
+    def processBlock(state: State, proposal: Proposal, signedBlock: Signed[AllowSpendBlock]): F[(State, Unit)] = {
       val maybeRoundData = if (proposal.owner === selfId) state.ownConsensus else state.peerConsensuses.get(proposal.roundId)
 
       val newState = maybeRoundData.fproductLeft { roundData =>
@@ -318,13 +320,13 @@ object Engine {
     def persistProposal(state: State, proposal: Proposal): F[(State, Unit)] =
       tryPersistProposal(state, proposal).map {
         case (newState, roundData) if gotAllProposals(roundData) =>
-          def combine(roundId: RoundId)(transactions: List[Signed[SwapTransaction]]): F[Option[SwapBlock]] =
-            NonEmptyList.fromList(transactions).map(_.toNes).map(SwapBlock(roundId, _)).pure[F]
+          def combine(roundId: RoundId)(transactions: List[Signed[AllowSpend]]): F[Option[AllowSpendBlock]] =
+            NonEmptyList.fromList(transactions).map(_.toNes).map(AllowSpendBlock(roundId, _)).pure[F]
 
           for {
             gsOrdinal <- OptionT(lastGlobalSnapshot.getOrdinal)
               .getOrRaise(new IllegalStateException("Global SnapshotOrdinal unavailable"))
-            validate = (transaction: Signed[SwapTransaction]) => transaction.valid[Throwable].pure[F] // TODO: @mwadon - validation
+            validate = (allowSpend: Signed[AllowSpend]) => allowSpendValidator.validate(allowSpend)
 
             maybeBlock <- roundData
               .formBlock(
@@ -397,7 +399,7 @@ object Engine {
             informAboutInabilityToParticipate(proposal, SwapCancellationReason.ReceivedProposalForNonExistentOwnRound).tupleLeft(state)
           case (None, Some(peers)) =>
             getTime.flatMap { startedAt =>
-              pullSwapTransactions.flatMap { transactions =>
+              pullAllowSpends.flatMap { transactions =>
                 val ownProposal = Proposal(proposal.roundId, senderId = selfId, owner = proposal.owner, peers.map(_.id), transactions)
                 val roundData =
                   RoundData(proposal.roundId, startedAt, peers, owner = proposal.owner, ownProposal)
@@ -441,7 +443,7 @@ object Engine {
       state.ownConsensus.fold {
         pullNewConsensusPeers.flatMap {
           case Some(peers) =>
-            (mkRoundId, pullSwapTransactions, getTime).mapN {
+            (mkRoundId, pullAllowSpends, getTime).mapN {
               case (roundId, transactions, startedAt) =>
                 val proposal = Proposal(roundId, senderId = selfId, owner = selfId, peers.map(_.id), transactions)
                 val roundData = RoundData(roundId, startedAt, peers, selfId, proposal)

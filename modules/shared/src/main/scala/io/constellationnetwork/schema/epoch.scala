@@ -16,7 +16,7 @@ import io.estatico.newtype.macros.newtype
 
 object epoch {
 
-  @derive(eqv, encoder, decoder, show, order, ordering)
+  @derive(eqv, encoder, decoder, show, order, ordering, derevo.cats.semigroup)
   @newtype
   case class EpochProgress(value: NonNegLong)
 

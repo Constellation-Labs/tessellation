@@ -1,19 +1,17 @@
-package io.constellationnetwork.currency.l1.http
+package io.constellationnetwork.node.shared.http.routes
 
 import cats.effect.Async
 import cats.effect.std.{Queue, Supervisor}
 import cats.syntax.all._
 
-import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import io.constellationnetwork.currency.swap.ConsensusInput
+import io.constellationnetwork.ext.http4s.{AddressVar, HashVar}
 import io.constellationnetwork.node.shared.domain.cluster.storage.L0ClusterStorage
 import io.constellationnetwork.node.shared.domain.queue.ViewableQueue
-import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
-import io.constellationnetwork.node.shared.domain.swap.{AllowSpendService, allowSpendLoggerName}
+import io.constellationnetwork.node.shared.domain.swap._
 import io.constellationnetwork.routes.internal.{InternalUrlPrefix, _}
 import io.constellationnetwork.schema.http.{ErrorCause, ErrorResponse}
-import io.constellationnetwork.schema.swap.AllowSpend
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
+import io.constellationnetwork.schema.swap.{AllowSpend, AllowSpendStatus, AllowSpendView}
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hasher, SecurityProvider}
 
@@ -26,13 +24,12 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 import shapeless._
 import shapeless.syntax.singleton._
 
-final case class SwapRoutes[F[_]: Async: Hasher: SecurityProvider](
-  swapPeerConsensusInput: Queue[F, Signed[ConsensusInput.PeerConsensusInput]],
+final case class AllowSpendRoutes[F[_]: Async: Hasher: SecurityProvider](
+  allowSpendConsensusInput: Queue[F, Signed[ConsensusInput.PeerConsensusInput]],
   l0ClusterStorage: L0ClusterStorage[F],
   allowSpendsQueue: ViewableQueue[F, Signed[AllowSpend]],
   allowSpendService: AllowSpendService[F],
-  lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
-  lastCurrencySnapshotStorage: LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
+  allowSpendStorage: AllowSpendStorage[F]
 )(implicit S: Supervisor[F])
     extends Http4sDsl[F]
     with PublicRoutes[F]
@@ -40,15 +37,15 @@ final case class SwapRoutes[F[_]: Async: Hasher: SecurityProvider](
 
   def logger = Slf4jLogger.getLogger[F]
 
-  protected val prefixPath: InternalUrlPrefix = "/"
-
   private val allowSpendLogger = Slf4jLogger.getLoggerFromName[F](allowSpendLoggerName)
 
+  protected val prefixPath: InternalUrlPrefix = "/"
+
   protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
-    case GET -> Root / "swap" =>
+    case GET -> Root / "allow-spends" =>
       allowSpendsQueue.view.flatMap(Ok(_))
 
-    case req @ POST -> Root / "swap" =>
+    case req @ POST -> Root / "allow-spends" =>
       for {
         transaction <- req.as[Signed[AllowSpend]]
         hashedTransaction <- transaction.toHashed[F]
@@ -66,10 +63,22 @@ final case class SwapRoutes[F[_]: Async: Hasher: SecurityProvider](
             case Right(hash)  => Ok(("hash" ->> hash.value) :: HNil)
           }
       } yield response
+
+    case GET -> Root / "allow-spends" / HashVar(hash) =>
+      allowSpendStorage.findWaiting(hash).flatMap {
+        case Some(WaitingAllowSpend(tx)) => Ok(AllowSpendView(tx.signed.value, tx.hash, AllowSpendStatus.Waiting))
+        case None                        => NotFound()
+      }
+
+    case GET -> Root / "allow-spends" / "last-reference" / AddressVar(address) =>
+      allowSpendStorage
+        .getLastProcessedAllowSpend(address)
+        .map(_.ref)
+        .flatMap(Ok(_))
   }
 
   protected val p2p: HttpRoutes[F] = HttpRoutes.of[F] {
-    case req @ POST -> Root / "consensus" / "swap" =>
+    case req @ POST -> Root / "consensus" / "allow-spends" =>
       req
         .as[Signed[ConsensusInput.Proposal]]
         .map(_.asInstanceOf[Signed[ConsensusInput.PeerConsensusInput]])
@@ -85,7 +94,7 @@ final case class SwapRoutes[F[_]: Async: Hasher: SecurityProvider](
             }
         }
         .flatMap { consensusInput =>
-          S.supervise(swapPeerConsensusInput.offer(consensusInput))
+          S.supervise(allowSpendConsensusInput.offer(consensusInput))
         }
         .flatMap(_ => Ok())
         .handleErrorWith { err =>

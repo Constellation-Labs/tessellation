@@ -19,6 +19,7 @@ import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorag
 import io.constellationnetwork.node.shared.domain.consensus.config.SwapConsensusConfig
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
+import io.constellationnetwork.node.shared.domain.swap.AllowSpendValidator
 import io.constellationnetwork.node.shared.domain.swap.consensus.Validator._
 import io.constellationnetwork.node.shared.domain.swap.consensus.{ConsensusClient, ConsensusState, Engine}
 import io.constellationnetwork.schema.peer.PeerId
@@ -39,6 +40,7 @@ object Swap {
     consensusClient: ConsensusClient[F],
     services: Services[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run],
     queues: Queues[F],
+    allowSpendValidator: AllowSpendValidator[F],
     selfKeyPair: KeyPair,
     selfId: PeerId
   ): Stream[F, Unit] = {
@@ -82,7 +84,8 @@ object Swap {
             clusterStorage,
             lastGlobalSnapshot,
             consensusClient,
-            queues.swapTransactions,
+            queues.allowSpends,
+            allowSpendValidator,
             selfId,
             selfKeyPair
           )
@@ -109,7 +112,7 @@ object Swap {
           .flatMap { maybeL0Peer =>
             maybeL0Peer.fold(logger.warn("No available L0 peer")) { l0Peer =>
               blockOutputClient
-                .sendSwapBlock(fb.hashedBlock.signed)(l0Peer)
+                .sendAllowSpendBlock(fb.hashedBlock.signed)(l0Peer)
                 .handleErrorWith(e => logger.error(e)("Error when sending block to L0").as(false))
                 .ifM(Applicative[F].unit, logger.warn("Sending block to L0 failed"))
             }

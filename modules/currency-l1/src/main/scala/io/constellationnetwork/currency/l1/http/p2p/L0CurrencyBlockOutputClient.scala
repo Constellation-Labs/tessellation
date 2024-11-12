@@ -5,7 +5,7 @@ import io.constellationnetwork.dag.l1.http.p2p.L0BlockOutputClient
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse.PeerResponse
 import io.constellationnetwork.schema.Block
-import io.constellationnetwork.schema.swap.SwapBlock
+import io.constellationnetwork.schema.swap.AllowSpendBlock
 import io.constellationnetwork.security.signature.Signed
 
 import io.circe.Encoder
@@ -16,7 +16,7 @@ import org.http4s.client.Client
 trait L0CurrencyBlockOutputClient[F[_]] {
   def sendL1Output(output: Signed[Block]): PeerResponse[F, Boolean]
   def sendL1DataOutput(output: Signed[DataApplicationBlock]): PeerResponse[F, Boolean]
-  def sendL1SwapOutput(output: Signed[SwapBlock]): PeerResponse[F, Boolean]
+  def sendL1AllowSpendOutput(output: Signed[AllowSpendBlock]): PeerResponse[F, Boolean]
 }
 
 object L0CurrencyBlockOutputClient {
@@ -32,8 +32,8 @@ object L0CurrencyBlockOutputClient {
           c.successful(req.withEntity(output))
         }
 
-      def sendL1SwapOutput(output: Signed[SwapBlock]): PeerResponse[F, Boolean] =
-        PeerResponse(s"currency/l1-swap-output", POST)(client) { (req, c) =>
+      def sendL1AllowSpendOutput(output: Signed[AllowSpendBlock]): PeerResponse[F, Boolean] =
+        PeerResponse(s"currency/l1-allow-spend-output", POST)(client) { (req, c) =>
           c.successful(req.withEntity(output))
         }
     }

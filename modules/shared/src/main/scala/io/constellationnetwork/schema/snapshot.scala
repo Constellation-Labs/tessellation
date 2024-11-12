@@ -9,6 +9,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
 import io.constellationnetwork.schema.semver.SnapshotVersion
 import io.constellationnetwork.schema.transaction.TransactionReference
@@ -43,6 +44,7 @@ object snapshot {
     val lastSnapshotHash: Hash
     val blocks: SortedSet[BlockAsActiveTip]
     val tips: SnapshotTips
+    val epochProgress: EpochProgress
 
     def activeTips[F[_]: Async: Hasher]: F[SortedSet[ActiveTip]] =
       blocks.toList.traverse { blockAsActiveTip =>
