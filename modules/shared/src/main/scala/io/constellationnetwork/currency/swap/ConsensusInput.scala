@@ -4,7 +4,7 @@ import cats.Show
 
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.round.RoundId
-import io.constellationnetwork.schema.swap.SwapTransaction
+import io.constellationnetwork.schema.swap.AllowSpend
 import io.constellationnetwork.security.Encodable
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature.Signature
@@ -32,9 +32,9 @@ object ConsensusInput {
     senderId: PeerId,
     owner: PeerId,
     facilitators: Set[PeerId],
-    transactions: Set[Signed[SwapTransaction]]
+    transactions: Set[Signed[AllowSpend]]
   ) extends PeerConsensusInput
-      with Encodable[(RoundId, PeerId, PeerId, Set[PeerId], Set[Signed[SwapTransaction]])] {
+      with Encodable[(RoundId, PeerId, PeerId, Set[PeerId], Set[Signed[AllowSpend]])] {
     override def toEncode = (roundId, senderId, owner, facilitators, transactions)
     override def jsonEncoder = implicitly
   }

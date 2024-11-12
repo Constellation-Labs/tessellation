@@ -12,12 +12,14 @@ import io.constellationnetwork.dag.l1.infrastructure.address.storage.AddressStor
 import io.constellationnetwork.dag.l1.modules.{Storages => BaseStorages}
 import io.constellationnetwork.node.shared.domain.cluster.storage.L0ClusterStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
+import io.constellationnetwork.node.shared.domain.swap.{AllowSpendStorage, ContextualAllowSpendValidator}
 import io.constellationnetwork.node.shared.infrastructure.cluster.storage.L0ClusterStorage
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.peer.L0Peer
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
+import io.constellationnetwork.schema.swap.AllowSpendReference
 import io.constellationnetwork.schema.transaction.TransactionReference
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import io.constellationnetwork.security.Hasher
@@ -34,7 +36,8 @@ object Storages {
     l0Peer: L0Peer,
     globalL0Peer: L0Peer,
     currencyIdentifier: Address,
-    contextualTransactionValidator: ContextualTransactionValidator
+    contextualTransactionValidator: ContextualTransactionValidator,
+    contextualAllowSpendValidator: ContextualAllowSpendValidator
   ): F[Storages[F, P, S, SI]] =
     for {
       blockStorage <- BlockStorage.make[F]
@@ -45,6 +48,9 @@ object Storages {
       lastGlobalSnapshotStorage <- LastSnapshotStorage.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
       transactionStorage <- TransactionReference.emptyCurrency(currencyIdentifier).flatMap {
         TransactionStorage.make[F](_, contextualTransactionValidator)
+      }
+      allowSpendStorage <- AllowSpendReference.emptyCurrency(currencyIdentifier).flatMap {
+        AllowSpendStorage.make[F](_, contextualAllowSpendValidator)
       }
       addressStorage <- AddressStorage.make[F]
     } yield
@@ -61,6 +67,7 @@ object Storages {
         val session = sharedStorages.session
         val rumor = sharedStorages.rumor
         val transaction = transactionStorage
+        val allowSpend = allowSpendStorage
       }
 }
 

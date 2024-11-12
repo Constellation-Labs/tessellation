@@ -3,6 +3,7 @@ package io.constellationnetwork.schema
 import cats.effect.kernel.Sync
 import cats.syntax.contravariantSemigroupal._
 import cats.syntax.flatMap._
+import cats.syntax.option._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
@@ -43,7 +44,7 @@ object GlobalSnapshotInfoV1 {
       gsi.balances,
       SortedMap.empty,
       SortedMap.empty,
-      SortedMap.empty
+      None
     )
 }
 
@@ -80,7 +81,7 @@ case class GlobalSnapshotInfoV2(
         _.map { case (Signed(inc, proofs), info) => (Signed(inc.toCurrencyIncrementalSnapshot, proofs), info.toCurrencySnapshotInfo) }
       }.to(lastCurrencySnapshots.sortedMapFactory),
       lastCurrencySnapshotsProofs,
-      SortedMap.empty
+      None
     )
 
   def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
@@ -121,7 +122,7 @@ case class GlobalSnapshotInfo(
   balances: SortedMap[Address, Balance],
   lastCurrencySnapshots: SortedMap[Address, Either[Signed[CurrencySnapshot], (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]],
   lastCurrencySnapshotsProofs: SortedMap[Address, Proof],
-  activeAllowSpends: SortedMap[Address, SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
+  activeAllowSpends: Option[SortedMap[Address, SortedMap[Address, SortedSet[Signed[AllowSpend]]]]]
 ) extends SnapshotInfo[GlobalSnapshotStateProof] {
   def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
     lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
@@ -136,5 +137,12 @@ case class GlobalSnapshotInfo(
 }
 
 object GlobalSnapshotInfo {
-  def empty = GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.empty, SortedMap.empty, SortedMap.empty, SortedMap.empty)
+  def empty = GlobalSnapshotInfo(
+    SortedMap.empty,
+    SortedMap.empty,
+    SortedMap.empty,
+    SortedMap.empty,
+    SortedMap.empty,
+    SortedMap.empty[Address, SortedMap[Address, SortedSet[Signed[AllowSpend]]]].some
+  )
 }
