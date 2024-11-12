@@ -14,12 +14,14 @@ import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorag
 import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
+import io.constellationnetwork.node.shared.domain.swap.{AllowSpendStorage, ContextualAllowSpendValidator}
 import io.constellationnetwork.node.shared.infrastructure.cluster.storage.L0ClusterStorage
 import io.constellationnetwork.node.shared.infrastructure.gossip.RumorStorage
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.schema.peer.L0Peer
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
+import io.constellationnetwork.schema.swap.AllowSpendReference
 import io.constellationnetwork.schema.transaction.TransactionReference
 
 object Storages {
@@ -27,7 +29,8 @@ object Storages {
   def make[F[_]: Async: Random, P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P]](
     sharedStorages: SharedStorages[F],
     l0Peer: L0Peer,
-    contextualTransactionValidator: ContextualTransactionValidator
+    contextualTransactionValidator: ContextualTransactionValidator,
+    contextualAllowSpendValidator: ContextualAllowSpendValidator
   ): F[Storages[F, P, S, SI]] =
     for {
       blockStorage <- BlockStorage.make[F]
@@ -36,6 +39,7 @@ object Storages {
       lastSnapshotStorage <- LastSnapshotStorage.make[F, S, SI]
       transactionStorage <- TransactionStorage.make[F](TransactionReference.empty, contextualTransactionValidator)
       addressStorage <- AddressStorage.make[F]
+      allowSpendStorage <- AllowSpendStorage.make[F](AllowSpendReference.empty, contextualAllowSpendValidator)
     } yield
       new Storages[F, P, S, SI] {
         val address = addressStorage
@@ -48,6 +52,7 @@ object Storages {
         val session = sharedStorages.session
         val rumor = sharedStorages.rumor
         val transaction = transactionStorage
+        val allowSpend = allowSpendStorage
       }
 }
 
@@ -62,4 +67,5 @@ trait Storages[F[_], P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P]] {
   val session: SessionStorage[F]
   val rumor: RumorStorage[F]
   val transaction: TransactionStorage[F]
+  val allowSpend: AllowSpendStorage[F]
 }

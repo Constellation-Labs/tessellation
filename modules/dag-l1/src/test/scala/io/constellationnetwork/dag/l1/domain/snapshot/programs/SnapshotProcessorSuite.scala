@@ -279,7 +279,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             snapshotBalances,
             SortedMap.empty,
             SortedMap.empty,
-            SortedMap.empty
+            None
           )
           balancesBefore <- balancesR.get
           blocksBefore <- blocksR.toMap
@@ -439,7 +439,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             snapshotBalances,
             SortedMap.empty,
             SortedMap.empty,
-            SortedMap.empty
+            None
           )
 
           // Inserting blocks in required state
@@ -617,7 +617,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             snapshotBalances,
             SortedMap.empty,
             SortedMap.empty,
-            SortedMap.empty
+            None
           )
 
           // Inserting blocks in required state
@@ -849,7 +849,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             snapshotBalances,
             SortedMap.empty,
             SortedMap.empty,
-            SortedMap.empty
+            None
           )
           lastSnapshotStateProof <- {
             implicit val hasher = currentHasher
@@ -1117,7 +1117,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             snapshotBalances,
             SortedMap.empty,
             SortedMap.empty,
-            SortedMap.empty
+            None
           )
           lastSnapshotInfoStateProof <- lastSnapshotInfo.stateProof(snapshotOrdinal10)
           hashedLastSnapshot <- forAsyncHasher(
