@@ -1,0 +1,56 @@
+type: object
+properties:
+  ordinal:
+    $ref: 'SnapshotOrdinal.yml'
+  height:
+    $ref: 'Height.yml'
+  subHeight:
+    $ref: 'SubHeight.yml'
+  lastSnapshotHash:
+    $ref: 'Hash.yml'
+  blocks:
+    type: array
+    items:
+      $ref: 'BlockAsActiveTip.yml'
+  stateChannelSnapshots:
+    type: object
+    additionalProperties:
+      type: array
+      items:
+        $ref: 'SignedStateChannelSnapshotBinary.yml'
+    example:
+      DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack:
+        - value:
+            lastSnapsthoHash: 893d9697bf76731edb6f92ad2396844724cd47a9c22195f02483cc84c3afafce
+            content: [11, 22, 33, 44]
+            fee: 0
+          proofs:
+            - id: c7f9a08bdea7ff5f51c8af16e223a1d751bac9c541125d9aef5658e9b7597aee8cba374119ebe83fb9edd8c0b4654af273f2d052e2d7dd5c6160b6d6c284a17c
+              signature: 3045022017607e6f32295b0ba73b372e31780bd373322b6342c3d234b77bea46adc78dde022100e6ffe2bca011f4850b7c76d549f6768b88d0f4c09745c6567bbbe45983a28bf1
+      DAG2rMPHX4w1cMMJowmewRMjD1in53yRURt6Eijh:
+        - value:
+            lastSnapsthoHash: 893d9697bf76731edb6f92ad2396844724cd47a9c22195f02483cc84c3afafce
+            content: [11, 22, 33, 44]
+            fee: 0
+          proofs:
+            - id: c7f9a08bdea7ff5f51c8af16e223a1d751bac9c541125d9aef5658e9b7597aee8cba374119ebe83fb9edd8c0b4654af273f2d052e2d7dd5c6160b6d6c284a17c
+              signature: 3045022017607e6f32295b0ba73b372e31780bd373322b6342c3d234b77bea46adc78dde022100e6ffe2bca011f4850b7c76d549f6768b88d0f4c09745c6567bbbe45983a28bf1
+  rewards:
+    type: array
+    items:
+      $ref: 'RewardTransaction.yml'
+  epochProgress:
+    type: integer
+    description: Progress throughout epochs used for rewards minting
+    format: int64
+    example: 348603
+  nextFacilitators:
+    type: array
+    items:
+      $ref: 'PeerId.yml'
+  tips:
+    $ref: 'SnapshotTips.yml'
+  stateProof:
+    $ref: 'GlobalSnapshotStateProof.yml'
+  version:
+    $ref: 'SnapshotVersion.yml'

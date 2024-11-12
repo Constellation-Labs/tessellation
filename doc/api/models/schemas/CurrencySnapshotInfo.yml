@@ -1,0 +1,20 @@
+type: object
+properties:
+  lastTxRefs:
+    type: object
+    additionalProperties:
+      $ref: 'TransactionReference.yml'
+    example:
+      DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack:
+        ordinal: 15
+        hash: 893d9697bf76731edb6f92ad2396844724cd47a9c22195f02483cc84c3afafce
+      DAG2rMPHX4w1cMMJowmewRMjD1in53yRURt6Eijh:
+        ordinal: 15
+        hash: 893d9697bf76731edb6f92ad2396844724cd47a9c22195f02483cc84c3afafce
+  balances:
+    type: object
+    additionalProperties:
+      $ref: 'Balance.yml'
+    example:
+      DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack: 1234
+      DAG2rMPHX4w1cMMJowmewRMjD1in53yRURt6Eijh: 1234

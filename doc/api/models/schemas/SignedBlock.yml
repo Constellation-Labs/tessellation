@@ -1,0 +1,8 @@
+type: object
+properties:
+  value:
+    $ref: 'Block.yml'
+  proofs:
+    type: array
+    items:
+      $ref: 'SignatureProof.yml'

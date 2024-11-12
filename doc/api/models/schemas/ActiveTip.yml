@@ -1,0 +1,10 @@
+type: object
+properties:
+  block:
+    $ref: 'BlockReference.yml'
+  usageCount:
+    type: integer
+    format: int64
+    example: 1
+  introducedAt:
+    $ref: 'SnapshotOrdinal.yml'

@@ -1,0 +1,171 @@
+type: object
+properties:
+  lastStateChannelSnapshotHashes:
+    type: object
+    additionalProperties:
+      $ref: 'Hash.yml'
+    example:
+      DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack: 893d9697bf76731edb6f92ad2396844724cd47a9c22195f02483cc84c3afafce
+      DAG2rMPHX4w1cMMJowmewRMjD1in53yRURt6Eijh: 893d9697bf76731edb6f92ad2396844724cd47a9c22195f02483cc84c3afafce
+  lastTxRefs:
+    type: object
+    additionalProperties:
+      $ref: 'TransactionReference.yml'
+    example:
+      DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack:
+        ordinal: 15
+        hash: 893d9697bf76731edb6f92ad2396844724cd47a9c22195f02483cc84c3afafce
+      DAG2rMPHX4w1cMMJowmewRMjD1in53yRURt6Eijh:
+        ordinal: 15
+        hash: 893d9697bf76731edb6f92ad2396844724cd47a9c22195f02483cc84c3afafce
+  balances:
+    type: object
+    additionalProperties:
+      $ref: 'Balance.yml'
+    example:
+      DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack: 1234
+      DAG2rMPHX4w1cMMJowmewRMjD1in53yRURt6Eijh: 1234
+  lastCurrencySnapshots:
+    type: object
+    additionalProperties:
+      type: array
+      items:
+        type: object
+        oneOf:
+          - $ref: 'NullableSignedCurrencyIncrementalSnapshot.yml'
+          - $ref: 'CurrencySnapshotInfo.yml'
+    example:
+      DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack:
+        - value:
+            ordinal: 156
+            height: 10
+            subHeight: 20
+            lastSnapshotHash: 893d9697bf76731edb6f92ad2396844724cd47a9c22195f02483cc84c3afafce
+            blocks:
+              - block:
+                  value:
+                    parent:
+                      - height: 10,
+                        hash: 893d9697bf76731edb6f92ad2396844724cd47a9c22195f02483cc84c3afafce
+                    transactions:
+                      - value:
+                          source: DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack
+                          destination: DAG2rMPHX4w1cMMJowmewRMjD1in53yRURt6Eijh
+                          amount: 100000000,
+                          fee: 0,
+                          parent:
+                            hash: ""
+                            ordinal: 0
+                          salt: 6018762703199813000
+                        proofs:
+                          - id: c7f9a08bdea7ff5f51c8af16e223a1d751bac9c541125d9aef5658e9b7597aee8cba374119ebe83fb9edd8c0b4654af273f2d052e2d7dd5c6160b6d6c284a17c
+                            signature: 3045022017607e6f32295b0ba73b372e31780bd373322b6342c3d234b77bea46adc78dde022100e6ffe2bca011f4850b7c76d549f6768b88d0f4c09745c6567bbbe45983a28bf1
+                  proofs:
+                    - id: c7f9a08bdea7ff5f51c8af16e223a1d751bac9c541125d9aef5658e9b7597aee8cba374119ebe83fb9edd8c0b4654af273f2d052e2d7dd5c6160b6d6c284a17c
+                      signature: 3045022017607e6f32295b0ba73b372e31780bd373322b6342c3d234b77bea46adc78dde022100e6ffe2bca011f4850b7c76d549f6768b88d0f4c09745c6567bbbe45983a28bf1
+                usageCount: 0
+            tips:
+              deprecated:
+                - block:
+                    height: 10
+                    hash: 893d9697bf76731edb6f92ad2396844724cd47a9c22195f02483cc84c3afafce
+                  deprecatedAt: 156
+              remainedActive:
+                - block:
+                    height: 10
+                    hash: 893d9697bf76731edb6f92ad2396844724cd47a9c22195f02483cc84c3afafce
+                  usageCount: 1,
+                  introducedAt: 156
+            stateProof:
+              lastTxRefsProof: 893d9697bf76731edb6f92ad2396844724cd47a9c22195f02483cc84c3afafce
+              balancesProof: 893d9697bf76731edb6f92ad2396844724cd47a9c22195f02483cc84c3afafce
+            data: [11, 22, 33, 44]
+            version: 0.0.1
+          proofs:
+            - id: c7f9a08bdea7ff5f51c8af16e223a1d751bac9c541125d9aef5658e9b7597aee8cba374119ebe83fb9edd8c0b4654af273f2d052e2d7dd5c6160b6d6c284a17c
+              signature: 3045022017607e6f32295b0ba73b372e31780bd373322b6342c3d234b77bea46adc78dde022100e6ffe2bca011f4850b7c76d549f6768b88d0f4c09745c6567bbbe45983a28bf1
+        - lastTxRefs:
+            DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack:
+              ordinal: 15
+              hash: 893d9697bf76731edb6f92ad2396844724cd47a9c22195f02483cc84c3afafce
+            DAG2rMPHX4w1cMMJowmewRMjD1in53yRURt6Eijh:
+              ordinal: 15
+              hash: 893d9697bf76731edb6f92ad2396844724cd47a9c22195f02483cc84c3afafce
+          balances:
+            DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack: 1234
+            DAG2rMPHX4w1cMMJowmewRMjD1in53yRURt6Eijh: 1234
+      DAG2rMPHX4w1cMMJowmewRMjD1in53yRURt6Eijh:
+        - value:
+            ordinal: 156
+            height: 10
+            subHeight: 20
+            lastSnapshotHash: 893d9697bf76731edb6f92ad2396844724cd47a9c22195f02483cc84c3afafce
+            blocks:
+              - block:
+                  value:
+                    parent:
+                      - height: 10,
+                        hash: 893d9697bf76731edb6f92ad2396844724cd47a9c22195f02483cc84c3afafce
+                    transactions:
+                      - value:
+                          source: DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack
+                          destination: DAG2rMPHX4w1cMMJowmewRMjD1in53yRURt6Eijh
+                          amount: 100000000,
+                          fee: 0,
+                          parent:
+                            hash: ""
+                            ordinal: 0
+                          salt: 6018762703199813000
+                        proofs:
+                          - id: c7f9a08bdea7ff5f51c8af16e223a1d751bac9c541125d9aef5658e9b7597aee8cba374119ebe83fb9edd8c0b4654af273f2d052e2d7dd5c6160b6d6c284a17c
+                            signature: 3045022017607e6f32295b0ba73b372e31780bd373322b6342c3d234b77bea46adc78dde022100e6ffe2bca011f4850b7c76d549f6768b88d0f4c09745c6567bbbe45983a28bf1
+                  proofs:
+                    - id: c7f9a08bdea7ff5f51c8af16e223a1d751bac9c541125d9aef5658e9b7597aee8cba374119ebe83fb9edd8c0b4654af273f2d052e2d7dd5c6160b6d6c284a17c
+                      signature: 3045022017607e6f32295b0ba73b372e31780bd373322b6342c3d234b77bea46adc78dde022100e6ffe2bca011f4850b7c76d549f6768b88d0f4c09745c6567bbbe45983a28bf1
+                usageCount: 0
+            tips:
+              deprecated:
+                - block:
+                    height: 10
+                    hash: 893d9697bf76731edb6f92ad2396844724cd47a9c22195f02483cc84c3afafce
+                  deprecatedAt: 156
+              remainedActive:
+                - block:
+                    height: 10
+                    hash: 893d9697bf76731edb6f92ad2396844724cd47a9c22195f02483cc84c3afafce
+                  usageCount: 1,
+                  introducedAt: 156
+            stateProof:
+              lastTxRefsProof: 893d9697bf76731edb6f92ad2396844724cd47a9c22195f02483cc84c3afafce
+              balancesProof: 893d9697bf76731edb6f92ad2396844724cd47a9c22195f02483cc84c3afafce
+            data: [11, 22, 33, 44]
+            version: 0.0.1
+          proofs:
+            - id: c7f9a08bdea7ff5f51c8af16e223a1d751bac9c541125d9aef5658e9b7597aee8cba374119ebe83fb9edd8c0b4654af273f2d052e2d7dd5c6160b6d6c284a17c
+              signature: 3045022017607e6f32295b0ba73b372e31780bd373322b6342c3d234b77bea46adc78dde022100e6ffe2bca011f4850b7c76d549f6768b88d0f4c09745c6567bbbe45983a28bf1
+        - lastTxRefs:
+            DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack:
+              ordinal: 15
+              hash: 893d9697bf76731edb6f92ad2396844724cd47a9c22195f02483cc84c3afafce
+            DAG2rMPHX4w1cMMJowmewRMjD1in53yRURt6Eijh:
+              ordinal: 15
+              hash: 893d9697bf76731edb6f92ad2396844724cd47a9c22195f02483cc84c3afafce
+          balances:
+            DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack: 1234
+            DAG2rMPHX4w1cMMJowmewRMjD1in53yRURt6Eijh: 1234
+        
+  lastCurrencySnapshotsProofs:
+    type: object
+    additionalProperties:
+      $ref: 'Proof.yml'
+    example:
+      DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack:
+        entries:
+          - target: 893d9697bf76731edb6f92ad2396844724cd47a9c22195f02483cc84c3afafce
+            sibling:
+              Left: 893d9697bf76731edb6f92ad2396844724cd47a9c22195f02483cc84c3afafce
+      DAG2rMPHX4w1cMMJowmewRMjD1in53yRURt6Eijh:
+        entries:
+          - target: 893d9697bf76731edb6f92ad2396844724cd47a9c22195f02483cc84c3afafce
+            sibling:
+              Right: 893d9697bf76731edb6f92ad2396844724cd47a9c22195f02483cc84c3afafce

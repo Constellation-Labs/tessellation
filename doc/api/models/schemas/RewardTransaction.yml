@@ -1,0 +1,8 @@
+type: object
+properties:
+  destinatiion:
+    $ref: 'Address.yml'
+  amount:
+    type: integer
+    format: int64
+    example: 10

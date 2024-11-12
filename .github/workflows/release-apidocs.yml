@@ -1,0 +1,125 @@
+on:
+  push:
+    branches:
+      - release/mainnet
+      - release/testnet
+      - release/integrationnet
+      - develop
+  pull_request:
+
+name: Publish API docs
+
+env:
+  GITHUB_TOKEN: ${{ github.token }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.DOCS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.DOCS_SECRET_ACCESS_KEY }}
+  AWS_REGION: us-west-1
+  AWS_BUCKET: ${{ secrets.DOCS_BUCKET }}
+
+jobs:
+  terraform:
+    name: Terraform
+    environment:
+      name: ${{ (github.ref == 'refs/heads/release/mainnet' && 'mainnet') || (github.ref == 'refs/heads/release/integrationnnet' && 'integrationnet') || (github.ref == 'refs/heads/release/testnet' && 'testnet') || 'dev' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Setup redocly
+        run: npm i -g @redocly/cli@1.0.0-beta.124
+
+      - name: Bundle DAG api docs
+        working-directory: doc/api/dag/
+        run: |
+          redocly bundle l0/public.yml -o l0/public.yml
+          redocly bundle l1/public.yml -o l1/public.yml
+          redocly bundle cli/cli.yml -o cli/cli.yml
+
+      - name: Bundle Currency api docs
+        working-directory: doc/api/currency/
+        run: |
+          redocly bundle l0/public.yml -o l0/public.yml
+          redocly bundle l1/public.yml -o l1/public.yml
+          redocly bundle cli/cli.yml -o cli/cli.yml
+
+      - name: Bundle Data api docs
+        working-directory: doc/api/currency/
+        run: |
+          redocly bundle l1-data/public.yml -o l1-data/public.yml
+
+      - name: Setup terraform
+        uses: hashicorp/setup-terraform@v1
+
+      - name: Terraform Format
+        working-directory: doc/api/terraform
+        id: fmt
+        run: terraform fmt -check
+
+      - name: Terraform init
+        working-directory: doc/api/terraform
+        id: init
+        run: terraform init
+
+      - name: Terraform workspace select
+        working-directory: doc/api/terraform
+        id: workspace
+        run: terraform workspace select ${{ (github.ref == 'refs/heads/release/mainnet' && 'mainnet') || (github.ref == 'refs/heads/release/integrationnnet' && 'integrationnet') || (github.ref == 'refs/heads/release/testnet' && 'testnet') || 'dev' }}
+
+
+      - name: Terraform Validate
+        working-directory: doc/api/terraform
+        id: validate
+        run: terraform validate -no-color
+
+      - name: Terraform Refresh
+        working-directory: doc/api/terraform
+        run: terraform refresh -var="bucket=${{ env.AWS_BUCKET }}"
+
+      - name: Terraform Plan
+        working-directory: doc/api/terraform
+        id: plan
+        if: github.event_name == 'pull_request'
+        run: terraform plan -no-color -var="bucket=${{ env.AWS_BUCKET }}"
+        continue-on-error: true
+
+      - name: Update Pull Request
+        uses: actions/github-script@v6
+        if: github.event_name == 'pull_request'
+        env:
+          PLAN: "terraform\n${{ steps.plan.outputs.stdout }}"
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const output = `#### Terraform Format and Style 🖌\`${{ steps.fmt.outcome }}\`
+            #### Terraform Initialization ⚙️\`${{ steps.init.outcome }}\`
+            #### Terraform Plan 📖\`${{ steps.plan.outcome }}\`
+            #### Terraform Validation 🤖\`${{ steps.validate.outcome }}\`
+
+            <details><summary>Show Plan</summary>
+
+            \`\`\`\n
+            ${process.env.PLAN}
+            \`\`\`
+
+            </details>
+
+            *Pusher: @${{ github.actor }}, Action: \`${{ github.event_name }}\`*`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            })
+
+      - name: Terraform Plan Status
+        working-directory: doc/api/terraform
+        if: steps.plan.outcome == 'failure'
+        run: exit 1
+
+      - name: Terraform Apply
+        working-directory: doc/api/terraform
+        if: (github.ref == 'refs/heads/release/mainnet' || github.ref == 'refs/heads/release/integrationnet' || github.ref == 'refs/heads/release/testnet' || github.ref == 'refs/heads/develop' ) && github.event_name == 'push'
+        run: terraform apply -auto-approve -var="bucket=${{ env.AWS_BUCKET }}"
+

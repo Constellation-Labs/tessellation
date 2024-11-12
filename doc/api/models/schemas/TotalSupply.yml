@@ -1,0 +1,7 @@
+type: object
+properties:
+  total:
+    type: integer
+    example: 12345678
+  ordinal:
+    $ref: 'SnapshotOrdinal.yml'

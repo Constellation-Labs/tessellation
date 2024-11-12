@@ -1,0 +1,8 @@
+type: object
+properties:
+  leafCount:
+    type: integer
+    format: int64
+    example: 1
+  hash:
+    $ref: 'Hash.yml'

@@ -1,0 +1,6 @@
+type: object
+properties:
+  ordinal:
+    $ref: 'SnapshotOrdinal.yml'
+  balance:
+    $ref: 'Balance.yml'

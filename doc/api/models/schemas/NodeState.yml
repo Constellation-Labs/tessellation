@@ -1,0 +1,14 @@
+description: Node state
+type: string
+enum:
+  - Ready
+  - Initial
+  - ReadyToJoin
+  - LoadingGenesis
+  - GenesisReady
+  - StartingSession
+  - SessionStarted
+  - WaitingForDownload
+  - DownloadInProgress
+  - Leaving
+  - Offline

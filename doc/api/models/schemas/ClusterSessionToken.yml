@@ -1,0 +1,6 @@
+type: object
+properties:
+  token:
+    type: string
+    format: int64
+    example: 20180203073000

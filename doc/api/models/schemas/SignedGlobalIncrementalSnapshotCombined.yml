@@ -1,0 +1,6 @@
+type: array
+items:
+  type: object
+  oneOf:
+    - $ref: 'SignedGlobalIncrementalSnapshot.yml'
+    - $ref: 'GlobalSnapshotInfo.yml'

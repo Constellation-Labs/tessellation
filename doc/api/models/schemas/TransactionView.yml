@@ -1,0 +1,8 @@
+type: object
+properties:
+  transaction:
+    $ref: 'Transaction.yml'
+  hash:
+    $ref: 'Hash.yml'
+  status:
+    $ref: 'TransactionStatus.yml'

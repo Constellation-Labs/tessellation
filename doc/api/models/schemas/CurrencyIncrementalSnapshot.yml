@@ -1,0 +1,27 @@
+type: object
+properties:
+  ordinal:
+    $ref: 'SnapshotOrdinal.yml'
+  height:
+    $ref: 'Height.yml'
+  subHeight:
+    $ref: 'SubHeight.yml'
+  lastSnapshotHash:
+    $ref: 'Hash.yml'
+  blocks:
+    type: array
+    items:
+      $ref: 'BlockAsActiveTip.yml'
+  tips:
+    $ref: 'SnapshotTips.yml'
+  stateProof:
+    $ref: 'CurrencySnapshotStateProof.yml'
+  data:
+    type: array
+    items:
+      type: string
+      format: byte
+    nullable: true
+    example: [11, 22, 33, 44]
+  version:
+    $ref: 'SnapshotVersion.yml'

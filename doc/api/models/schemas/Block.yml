@@ -1,0 +1,10 @@
+type: object
+properties:
+  parent:
+    type: array
+    items:
+      $ref: 'BlockReference.yml'
+  transactions:
+    type: array
+    items:
+      $ref: 'SignedTransaction.yml'

@@ -1,0 +1,5 @@
+type: object
+properties:
+  message:
+    type: string
+    example: ParentOrdinalLowerThenLastTxOrdinal{parentOrdinal=3,lastTxOrdinal=4}
