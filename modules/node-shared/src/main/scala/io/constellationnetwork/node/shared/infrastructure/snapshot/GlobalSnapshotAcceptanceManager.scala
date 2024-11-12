@@ -94,7 +94,7 @@ object GlobalSnapshotAcceptanceManager {
           .map(_.toMap)
         updatedLastStateChannelSnapshotHashes = lastSnapshotContext.lastStateChannelSnapshotHashes ++ sCSnapshotHashes
         updatedLastCurrencySnapshots = lastSnapshotContext.lastCurrencySnapshots ++ currencySnapshots
-        updatedAllowSpends = acceptAllowSpends(epochProgress, currencySnapshots, lastSnapshotContext.activeAllowSpends)
+        updatedAllowSpends = lastSnapshotContext.activeAllowSpends.map(acceptAllowSpends(epochProgress, currencySnapshots, _))
 
         acceptedTransactions = acceptanceResult.accepted.flatMap { case (block, _) => block.value.transactions.toSortedSet }.toSortedSet
 
