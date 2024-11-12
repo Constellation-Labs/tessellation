@@ -139,19 +139,4 @@ object swap {
     implicit val transactionsDecoder: Decoder[NonEmptySet[Signed[SwapTransaction]]] =
       NonEmptySetCodec.decoder[Signed[SwapTransaction]]
   }
-
-  @derive(decoder, encoder, order, show)
-  @newtype
-  case class SwapAMMDataUpdateFee(value: PosLong)
-
-  @derive(decoder, encoder, order, show)
-  case class PriceRange(min: SwapAmount, max: SwapAmount)
-
-  @derive(decoder, encoder, order, show)
-  @newtype
-  case class PoolId(value: Address)
-
-  @derive(decoder, encoder, order, show)
-  @newtype
-  case class SwapReference(value: Address)
 }
