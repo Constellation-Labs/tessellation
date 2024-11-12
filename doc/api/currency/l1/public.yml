@@ -1,0 +1,200 @@
+openapi: 3.0.3
+info:
+  title: L1 Currency Node - Public API
+  description: ""
+  contact:
+    email: operators@constellationnetwork.io
+  version: 2.3.4
+
+tags:
+  - name: Cluster
+  - name: Currency
+  - name: Metric
+
+paths:
+  /cluster/info:
+    get:
+      tags:
+        - Cluster
+      description: Get Cluster info
+      responses:
+        200:
+          description: Cluster info
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '../../models/schemas/Peer.yml'
+
+  /transactions:
+    post:
+      tags:
+        - Currency
+      description: Post $Currency transaction
+      requestBody:
+        description: Signed $Currency transaction
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '../../models/schemas/SignedTransaction.yml'
+      responses:
+        200:
+          description: $Currency transaction has been accepted for processing. Returned hash of the transaction.
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hash:
+                    $ref: '../../models/schemas/Hash.yml'
+        400:
+          description: |
+            $Currency transaction has been rejected. Returned one of rejection reasons:
+               - TransactionLimited - the limit for fee-less transactions per address depends on the address balance and time passed since last accepted transaction.
+               - ParentOrdinalLowerThenLastTxOrdinal - The transaction's ordinal number must be +1 relative to the last accepted transaction.
+               - HasNoMatchingParent - the parent's hash of the transaction must point to the existing accepted transaction.
+               - InsufficientBalance - the amount value of the transaction is higher than the balance of the source address.
+               - AddressLocked - the address is locked by the network, and transactions can't be made.
+               - Conflict - such transaction has been already accepted by the network.
+               - SameSourceAndDestinationAddress - the source and destination addresses should be different.
+               - NotSignedBySourceAddressOwner - the transaction should be signed exclusively by the key of the source address.
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                $ref: '../../models/schemas/ErrorResponse.yml'
+
+  /transactions/estimate-fee:
+    post:
+      tags:
+        - Currency
+      description: Estimate $Currency transaction's fee
+      requestBody:
+        description: Signed $Currency transaction
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '../../models/schemas/SignedTransaction.yml'
+      responses:
+        200:
+          description: Estimated fee for posted $Currency transaction.
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hash:
+                    $ref: '../../models/schemas/Hash.yml'
+
+  /transactions/{hash}:
+    get:
+      tags:
+        - Currency
+      description: Get the view of the $Currency transaction for the given hash
+      parameters:
+        - name: hash
+          in: path
+          description: Transaction hash
+          required: true
+          schema:
+            $ref: '../../models/schemas/Hash.yml'
+      responses:
+        200:
+          description: Found the transaction with given hash. Returned the view of the transaction
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                $ref: '../../models/schemas/TransactionView.yml'
+        400:
+          description: Transaction with the given hash not found on the node
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+
+  /transactions/last-reference/{address}:
+    get:
+      tags:
+        - Currency
+      description: Get last transaction reference of the given address
+      parameters:
+        - name: address
+          in: path
+          description: Wallet address
+          required: true
+          schema:
+            $ref: '../../models/schemas/Address.yml'
+      responses:
+        200:
+          description: Last $Currency transaction reference for given wallet address
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                $ref: '../../models/schemas/TransactionReference.yml'
+
+  /metrics:
+    get:
+      tags:
+        - Metric
+      description: Micrometer metrics
+      responses:
+        200:
+          description: Micrometer metrics
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            text/html:
+              schema:
+                type: string

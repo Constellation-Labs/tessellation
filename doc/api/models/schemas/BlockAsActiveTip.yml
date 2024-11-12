@@ -1,0 +1,7 @@
+type: object
+properties:
+  block:
+    $ref: 'SignedBlock.yml'
+  usageCount:
+    type: integer
+    example: 0

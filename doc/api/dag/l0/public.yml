@@ -1,0 +1,340 @@
+openapi: 3.0.3
+info:
+  title: L0 Node - Public API
+  description: ''
+  contact:
+    email: operators@constellationnetwork.io
+  version: 2.0.0
+
+tags:
+  - name: Cluster
+  - name: Global snapshot
+  - name: DAG
+  - name: State channel
+  - name: Metric
+
+paths:
+  /cluster/info:
+    get:
+      tags:
+        - Cluster
+      description: Get Cluster info
+      responses:
+        200:
+          description: Cluster info
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '../../models/schemas/Peer.yml'
+
+  /cluster/session:
+    get:
+      tags:
+        - Cluster
+      summary: Get current cluster session token
+      responses:
+        200:
+          description: Cluster session token
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            'application/json':
+              schema:
+                $ref: '../../models/schemas/ClusterSessionToken.yml'
+        404:
+          description: Cluster session not found
+
+  /dag/total-supply:
+    get:
+      tags:
+        - DAG
+      description: Get $DAG total supply on latest snapshot
+      responses:
+        200:
+          description: Total supply on latest snapshot
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                $ref: '../../models/schemas/TotalSupply.yml'
+
+  /dag/{address}/balance:
+    get:
+      tags:
+        - DAG
+      description: Get $DAG balance for given address
+      parameters:
+        - name: address
+          in: path
+          description: DAG Address
+          required: true
+          schema:
+            $ref: '../../models/schemas/Address.yml'
+      responses:
+        200:
+          description: $DAG balance for given address
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                $ref: '../../models/schemas/BalanceWithOrdinal.yml'
+
+  /global-snapshots/latest/ordinal:
+    get:
+      tags:
+        - Global snapshot
+      description: Get latest global snapshot ordinal
+      responses:
+        200:
+          description: Latest global snapshot ordinal
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  value:
+                    $ref: '../../models/schemas/SnapshotOrdinal.yml'
+        404:
+          description: Latest global snapshot ordinal not found
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        503:
+          description: Node is not Ready yet
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+
+  /global-snapshots/latest:
+    get:
+      tags:
+        - Global snapshot
+      description: Get latest global snapshot
+      responses:
+        200:
+          description: Latest global snapshot
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            application/json:
+              schema:
+                $ref: '../../models/schemas/SignedGlobalIncrementalSnapshot.yml'
+        404:
+          description: Latest global snapshot not found
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        503:
+          description: Node is not Ready yet
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+
+  /global-snapshots/latest/combined:
+    get:
+      tags:
+        - Global snapshot
+      description: Get latest global snapshot with state
+      responses:
+        200:
+          description: Latest signed global snapshot with state
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            application/json:
+              schema:
+                $ref: '../../models/schemas/SignedGlobalIncrementalSnapshotCombined.yml'
+        404:
+          description: Latest signed global snapshot with state not found
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        503:
+          description: Node is not Ready yet
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+
+  /global-snapshots/{ordinal}:
+    get:
+      tags:
+        - Global snapshot
+      description: Get global snapshot by given ordinal
+      parameters:
+        - name: ordinal
+          in: path
+          description: Snapshot ordinal
+          required: true
+          schema:
+            $ref: '../../models/schemas/SnapshotOrdinal.yml'
+      responses:
+        200:
+          description: Global snapshot for given ordinal
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            application/json:
+              schema:
+                $ref: '../../models/schemas/SignedGlobalIncrementalSnapshot.yml'
+        404:
+          description: Global snapshot for given ordinal not found
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        503:
+          description: Node is not Ready yet
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+
+  /state-channels/{address}/snapshot:
+    post:
+      tags:
+        - State channel
+      description: Post snapshot for given state channel
+      parameters:
+        - name: address
+          in: path
+          description: State channel address
+          required: true
+          schema:
+            $ref: '../../models/schemas/Address.yml'
+      requestBody:
+        description: Signed state channel snapshot
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        204:
+          description: Received snapshot for a given state channel
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        404:
+          description: State channel not found
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+
+  /metrics:
+    get:
+      tags:
+        - Metric
+      description: Micrometer metrics
+      responses:
+        200:
+          description: Micrometer metrics
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            text/html:
+              schema:
+                type: string

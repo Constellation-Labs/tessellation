@@ -1,0 +1,8 @@
+type: object
+properties:
+  id:
+    $ref: 'PeerId.yml'
+  ip:
+    $ref: 'Host.yml'
+  p2pPort:
+    $ref: 'Port.yml'

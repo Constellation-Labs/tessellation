@@ -1,0 +1,4 @@
+description: RSA signature of the response
+schema:
+  type: string
+  example: MEQCIE35YM9i8xekL7P9M9Nx3858d9rlY+k2xCIRhgVM/O0nAiBlC4x+GqJ07LVhT5svcn5UWJGOXbch2ampvNkCE2nVOQ==

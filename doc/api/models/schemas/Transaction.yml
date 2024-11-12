@@ -1,0 +1,26 @@
+type: object
+properties:
+  source:
+    $ref: 'Address.yml'
+  destination:
+    $ref: 'Address.yml'
+  amount:
+    type: integer
+    format: int64
+  fee:
+    type: integer
+    format: int64
+  parent:
+    $ref: 'TransactionReference.yml'
+  salt:
+    type: integer
+    format: int64
+example:
+  source: DAG3hZTBgtb2iH9ZdLNvaKqPT4ZncCuW6uYxZack
+  destination: DAG2rMPHX4w1cMMJowmewRMjD1in53yRURt6Eijh
+  amount: 100000000
+  fee: 0
+  parent:
+    hash: ""
+    ordinal: 0
+  salt: 6018762703199813000

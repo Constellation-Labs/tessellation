@@ -1,0 +1,59 @@
+openapi: 3.0.3
+info:
+  title: L0/L1 Currency Node - CLI API
+  description: ""
+  contact:
+    email: operators@constellationnetwork.io
+  version: 2.3.4
+
+tags:
+  - name: Cluster
+
+paths:
+  /cluster/join:
+    post:
+      tags:
+        - Cluster
+      description: Join cluster
+      requestBody:
+        description: Peer to join
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '../../models/schemas/PeerToJoin.yml'
+      responses:
+        200:
+          description: Join triggered
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        409:
+          description: An error occured - peer not allowed to join the network
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+
+  /cluster/leave:
+    post:
+      tags:
+        - Cluster
+      description: Leave cluster
+      responses:
+        200:
+          description: Leave triggered
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'

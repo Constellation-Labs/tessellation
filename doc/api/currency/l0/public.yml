@@ -1,0 +1,299 @@
+openapi: 3.0.3
+info:
+  title: L0 Currency Node - Public API
+  description: ""
+  contact:
+    email: operators@constellationnetwork.io
+  version: 2.3.4
+
+tags:
+  - name: Cluster
+  - name: Snapshot
+  - name: Currency
+  - name: Metric
+
+paths:
+  /cluster/info:
+    get:
+      tags:
+        - Cluster
+      description: Get Cluster info
+      responses:
+        200:
+          description: Cluster info
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '../../models/schemas/Peer.yml'
+
+  /cluster/session:
+    get:
+      tags:
+        - Cluster
+      summary: Get current cluster session token
+      responses:
+        200:
+          description: Cluster session token
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            "application/json":
+              schema:
+                $ref: '../../models/schemas/ClusterSessionToken.yml'
+        404:
+          description: Cluster session not found
+
+  /currency/total-supply:
+    get:
+      tags:
+        - Currency
+      description: Get $Currency total supply on latest snapshot
+      responses:
+        200:
+          description: Total supply on latest snapshot
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                $ref: '../../models/schemas/TotalSupply.yml'
+
+  /currency/{address}/balance:
+    get:
+      tags:
+        - Currency
+      description: Get $Currency balance for given address
+      parameters:
+        - name: address
+          in: path
+          description: Currency Address
+          required: true
+          schema:
+            $ref: '../../models/schemas/Address.yml'
+      responses:
+        200:
+          description: $Currency balance for given address
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                $ref: '../../models/schemas/BalanceWithOrdinal.yml'
+
+  /snapshots/latest/ordinal:
+    get:
+      tags:
+        - Snapshot
+      description: Get latest snapshot ordinal
+      responses:
+        200:
+          description: Latest snapshot ordinal
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  value:
+                    $ref: '../../models/schemas/SnapshotOrdinal.yml'
+        404:
+          description: Snapshot not found
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        503:
+          description: Node is not Ready yet
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+
+  /snapshots/latest:
+    get:
+      tags:
+        - Snapshot
+      description: Get latest snapshot
+      responses:
+        200:
+          description: Latest snapshot
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            application/json:
+              schema:
+                $ref: '../../models/schemas/SignedCurrencyIncrementalSnapshot.yml'
+        404:
+          description: Snapshot not found
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        503:
+          description: Node is not Ready yet
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+
+  /snapshots/latest/combined:
+    get:
+      tags:
+        - Snapshot
+      description: Get latest snapshot with state
+      responses:
+        200:
+          description: Latest signed snapshot with state
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            application/json:
+              schema:
+                $ref: '../../models/schemas/SignedCurrencyIncrementalSnapshotCombined.yml'
+        404:
+          description: Latest signed snapshot with state not found
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        503:
+          description: Node is not Ready yet
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+
+  /snapshots/{ordinal}:
+    get:
+      tags:
+        - Snapshot
+      description: Get snapshot by given ordinal
+      parameters:
+        - name: ordinal
+          in: path
+          description: Snapshot ordinal
+          required: true
+          schema:
+            $ref: '../../models/schemas/SnapshotOrdinal.yml'
+      responses:
+        200:
+          description: Snapshot for given ordinal
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            application/json:
+              schema:
+                $ref: '../../models/schemas/SignedCurrencyIncrementalSnapshot.yml'
+        404:
+          description: Snapshot not found
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        503:
+          description: Node is not Ready yet
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+
+  /metrics:
+    get:
+      tags:
+        - Metric
+      description: Micrometer metrics
+      responses:
+        200:
+          description: Micrometer metrics
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            text/html:
+              schema:
+                type: string

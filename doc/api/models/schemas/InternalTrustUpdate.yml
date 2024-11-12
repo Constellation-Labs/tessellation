@@ -1,0 +1,8 @@
+description: Internal trust update
+type: object
+properties:
+  id:
+    $ref: 'PeerId.yml'
+  trust:
+    type: integer
+    example: 0.5

@@ -1,0 +1,10 @@
+type: object
+properties:
+  deprecated:
+    type: array
+    items:
+      $ref: 'DeprecatedTip.yml'
+  remainedActive:
+    type: array
+    items:
+      $ref: 'ActiveTip.yml'

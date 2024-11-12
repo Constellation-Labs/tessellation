@@ -1,0 +1,12 @@
+type: object
+properties:
+  lastStateChannelSnapshotHashesProof:
+    $ref: 'Hash.yml'
+  lastTxRefsProof:
+    $ref: 'Hash.yml'
+  balancesProof:
+    $ref: 'Hash.yml'
+  lastCurrencySnapshotsProof:
+    allOf:
+      - $ref: 'MerkleRoot.yml'
+    nullable: true

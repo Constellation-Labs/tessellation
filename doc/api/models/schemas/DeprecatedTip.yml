@@ -1,0 +1,6 @@
+type: object
+properties:
+  block:
+    $ref: 'BlockReference.yml'
+  deprecatedAt:
+    $ref: 'SnapshotOrdinal.yml'

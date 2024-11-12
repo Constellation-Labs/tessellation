@@ -1,0 +1,131 @@
+openapi: 3.0.3
+info:
+  title: L1 Data Node - Public API
+  description: ""
+  contact:
+    email: operators@constellationnetwork.io
+  version: 2.3.4
+
+tags:
+  - name: Cluster
+  - name: Data
+  - name: Metric
+
+paths:
+  /cluster/info:
+    get:
+      tags:
+        - Cluster
+      description: Get Cluster info
+      responses:
+        200:
+          description: Cluster info
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '../../models/schemas/Peer.yml'
+
+  /metrics:
+    get:
+      tags:
+        - Metric
+      description: Micrometer metrics
+      responses:
+        200:
+          description: Micrometer metrics
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /data:
+    get:
+      tags:
+        - Data
+      description: Get enqueued data update objects.
+      responses:
+        200:
+          description: Data update objects.
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                    $ref: '../../models/schemas/SignedDataUpdate.yml'
+    post:
+      tags:
+        - Data
+      description: Offer data update object for processing.
+      requestBody:
+        description: Signed data update.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '../../models/schemas/SignedDataUpdate.yml'
+      responses:
+        200:
+          description: Data update object accepted. Returned hash of the data update.
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  hash:
+                    $ref: '../../models/schemas/Hash.yml'
+        400:
+          description: Invalid data update or signature.
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                $ref: '../../models/schemas/ErrorResponse.yml'
+        503:
+          description: Last Global Snapshot ordinal not available.
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                $ref: '../../models/schemas/ErrorResponse.yml'

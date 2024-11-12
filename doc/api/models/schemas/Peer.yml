@@ -1,0 +1,14 @@
+type: object
+properties:
+  id:
+    $ref: 'PeerId.yml'
+  ip:
+    $ref: 'Host.yml'
+  publicPort:
+    $ref: 'Port.yml'
+  p2pPort:
+    $ref: 'Port.yml'
+  session:
+    $ref: 'SessionToken.yml'
+  state:
+    $ref: 'NodeState.yml'

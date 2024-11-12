@@ -1,0 +1,3 @@
+type: string
+description: Semantic version string
+example: 0.0.1
