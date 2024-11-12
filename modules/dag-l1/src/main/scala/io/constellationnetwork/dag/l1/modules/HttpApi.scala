@@ -66,6 +66,16 @@ sealed abstract class HttpApi[
     }
   private val registrationRoutes = RegistrationRoutes[F](services.cluster)
   private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip)
+  private val allowSpendRoutes =
+    HasherSelector[F].withCurrent { implicit hasher =>
+      AllowSpendRoutes[F](
+        queues.swapPeerConsensusInput,
+        storages.l0Cluster,
+        queues.allowSpends,
+        services.allowSpend,
+        storages.allowSpend
+      )
+    }
   private val dagRoutes =
     Routes[F](
       services.transaction,
@@ -90,7 +100,8 @@ sealed abstract class HttpApi[
           clusterRoutes.publicRoutes <+>
           nodeRoutes.publicRoutes <+>
           metricRoutes <+>
-          targetRoutes
+          targetRoutes <+>
+          allowSpendRoutes.publicRoutes
       }
     }
 
@@ -103,7 +114,8 @@ sealed abstract class HttpApi[
             clusterRoutes.p2pRoutes <+>
               nodeRoutes.p2pRoutes <+>
               gossipRoutes.p2pRoutes <+>
-              dagRoutes.p2pRoutes
+              dagRoutes.p2pRoutes <+>
+              allowSpendRoutes.p2pRoutes
           )
         )
     )

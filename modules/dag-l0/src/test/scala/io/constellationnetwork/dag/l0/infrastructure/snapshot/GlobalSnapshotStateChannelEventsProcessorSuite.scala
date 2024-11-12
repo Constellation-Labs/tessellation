@@ -178,6 +178,6 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
   } yield StateChannelOutput(keyPair.getPublic.toAddress, signedSC)
 
   def mkGlobalSnapshotInfo(lastStateChannelSnapshotHashes: SortedMap[Address, Hash] = SortedMap.empty) =
-    GlobalSnapshotInfo(lastStateChannelSnapshotHashes, SortedMap.empty, SortedMap.empty, SortedMap.empty, SortedMap.empty, SortedMap.empty)
+    GlobalSnapshotInfo(lastStateChannelSnapshotHashes, SortedMap.empty, SortedMap.empty, SortedMap.empty, SortedMap.empty, None)
 
 }

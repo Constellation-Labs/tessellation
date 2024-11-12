@@ -22,7 +22,7 @@ object ConsensusClient {
     new ConsensusClient[F] {
 
       def sendConsensusData[A <: ConsensusInput.PeerConsensusInput](data: Signed[A])(implicit e: Encoder[A]): PeerResponse[F, Unit] =
-        PeerResponse("consensus/swap-transaction", POST)(client) { (req, c) =>
+        PeerResponse("consensus/allow-spends", POST)(client) { (req, c) =>
           c.successful(req.withEntity(data)).void
         }
     }

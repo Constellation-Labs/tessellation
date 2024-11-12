@@ -87,12 +87,5 @@ final case class Routes[F[_]: Async](
         _ <- S.supervise(peerBlockConsensusInputQueue.offer(peerBlockConsensusInput))
         response <- Ok()
       } yield response
-
-    case req @ POST -> Root / "consensus" / "swap-transaction" =>
-      for {
-        swapPeerConsensusInput <- req.as[Signed[SwapConsensusInput.PeerConsensusInput]]
-        _ <- S.supervise(swapPeerConsensusInputQueue.offer(swapPeerConsensusInput))
-        response <- Ok()
-      } yield response
   }
 }
