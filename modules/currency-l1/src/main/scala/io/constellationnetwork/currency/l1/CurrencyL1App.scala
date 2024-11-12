@@ -99,7 +99,8 @@ abstract class CurrencyL1App(
             method.l0Peer,
             method.globalL0Peer,
             method.identifier,
-            validators.transactionContextual
+            validators.transactionContextual,
+            validators.allowSpendContextual
           )
       }.asResource
       dagP2PClient = DAGP2PClient
@@ -285,6 +286,7 @@ abstract class CurrencyL1App(
                 p2pClient.swapConsensusClient,
                 services,
                 queues,
+                validators.allowSpend,
                 keyPair,
                 nodeId
               )

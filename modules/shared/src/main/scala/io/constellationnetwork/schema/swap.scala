@@ -82,9 +82,6 @@ object swap {
 
   }
 
-  @derive(decoder, encoder, order, show, ordering)
-  sealed trait SwapTransaction
-
   @derive(decoder, encoder, order, show)
   case class AllowSpend(
     source: Address,
@@ -95,7 +92,7 @@ object swap {
     parent: AllowSpendReference,
     lastValidEpochProgress: EpochProgress,
     approvers: List[Address]
-  ) extends SwapTransaction {
+  ) {
     val ordinal: AllowSpendOrdinal = parent.ordinal.next
   }
 
@@ -126,17 +123,17 @@ object swap {
   }
 
   @derive(decoder, encoder, show)
-  case class SwapBlock(
+  case class AllowSpendBlock(
     roundId: RoundId,
-    transactions: NonEmptySet[Signed[SwapTransaction]]
-  ) extends Encodable[(RoundId, NonEmptySet[Signed[SwapTransaction]])] {
+    transactions: NonEmptySet[Signed[AllowSpend]]
+  ) extends Encodable[(RoundId, NonEmptySet[Signed[AllowSpend]])] {
     override def toEncode = (roundId, transactions)
     override def jsonEncoder = implicitly
   }
 
-  object SwapBlock {
+  object AllowSpendBlock {
     implicit val roundIdShow: Show[RoundId] = RoundId.shortShow
-    implicit val transactionsDecoder: Decoder[NonEmptySet[Signed[SwapTransaction]]] =
-      NonEmptySetCodec.decoder[Signed[SwapTransaction]]
+    implicit val transactionsDecoder: Decoder[NonEmptySet[Signed[AllowSpend]]] =
+      NonEmptySetCodec.decoder[Signed[AllowSpend]]
   }
 }
