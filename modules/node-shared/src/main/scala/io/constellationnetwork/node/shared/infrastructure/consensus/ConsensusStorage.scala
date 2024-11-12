@@ -43,6 +43,8 @@ trait ConsensusStorage[F[_], Event, Key, Artifact, Context, Status, Outcome, Kin
 
   private[consensus] def addEvent(peerId: PeerId, peerEvent: (Ordinal, Event)): F[Unit]
 
+  def containsEvent(events: Event): F[Boolean]
+
   def addEvents(events: Map[PeerId, List[(Ordinal, Event)]]): F[Unit]
 
   def pullEvents(upperBound: Bound): F[Map[PeerId, List[(Ordinal, Event)]]]
@@ -221,6 +223,14 @@ object ConsensusStorage {
             keys.existsM { peerId =>
               eventsR(peerId).get
                 .map(_.flatMap(_.trigger).isDefined)
+            }
+          }
+
+        def containsEvent(event: Event): F[Boolean] =
+          eventsR.keys.flatMap { keys =>
+            keys.existsM { peerId =>
+              eventsR(peerId).get
+                .map(_.exists(_.events.exists { case (_, e) => e == event }))
             }
           }
 

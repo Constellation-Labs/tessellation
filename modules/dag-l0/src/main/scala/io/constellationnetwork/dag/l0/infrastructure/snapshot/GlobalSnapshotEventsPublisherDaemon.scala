@@ -6,6 +6,7 @@ import cats.syntax.all._
 
 import io.constellationnetwork.node.shared.domain.Daemon
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
+import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusStorage
 import io.constellationnetwork.node.shared.infrastructure.snapshot.daemon.SnapshotEventsPublisherDaemon
 import io.constellationnetwork.schema.Block
 import io.constellationnetwork.security.signature.Signed
@@ -19,7 +20,8 @@ object GlobalSnapshotEventsPublisherDaemon {
   def make[F[_]: Async: Supervisor](
     stateChannelOutputs: Queue[F, StateChannelOutput],
     l1OutputQueue: Queue[F, Signed[Block]],
-    gossip: Gossip[F]
+    gossip: Gossip[F],
+    consensusStorage: ConsensusStorage[F, GlobalSnapshotEvent, _, _, _, _, _, _]
   ): Daemon[F] = {
     val events: Stream[F, GlobalSnapshotEvent] = Stream
       .fromQueueUnterminated(stateChannelOutputs)
@@ -33,7 +35,8 @@ object GlobalSnapshotEventsPublisherDaemon {
     SnapshotEventsPublisherDaemon
       .make(
         gossip,
-        events
+        events,
+        consensusStorage
       )
       .spawn
   }
