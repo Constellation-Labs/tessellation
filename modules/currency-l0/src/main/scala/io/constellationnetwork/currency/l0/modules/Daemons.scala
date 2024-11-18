@@ -39,7 +39,7 @@ object Daemons {
     List[Daemon[F]](
       NodeStateDaemon.make(storages.node, services.gossip),
       DownloadDaemon.make(storages.node, programs.download, peerDiscoveryDelay, hasherSelector),
-      CurrencySnapshotEventsPublisherDaemon.make(queues.l1Output, services.gossip, maybeDataApplication),
+      CurrencySnapshotEventsPublisherDaemon.make(queues.l1Output, services.gossip, maybeDataApplication, services.consensus.storage),
       CollateralDaemon.make(services.collateral, storages.snapshot, storages.cluster)
     ).traverse(_.start).void
   }
