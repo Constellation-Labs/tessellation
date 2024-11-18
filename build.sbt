@@ -523,7 +523,7 @@ lazy val currencyL0 = (project in file("modules/currency-l0"))
   .enablePlugins(AshScriptPlugin)
   .enablePlugins(BuildInfoPlugin)
   .enablePlugins(JavaAppPackaging)
-  .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test, nodeShared)
+  .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test, nodeShared % "compile->compile;test->test")
   .settings(
     name := "tessellation-currency-l0",
     buildInfoKeys := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion),
