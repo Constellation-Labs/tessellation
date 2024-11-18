@@ -52,16 +52,16 @@ object SnapshotEventsPublisherDaemonSuite extends MutableIOSuite with Checkers {
       kp <- KeyPairGenerator.makeKeyPair[IO].toResource
     } yield (s, h, sp, m, e, kp)
 
-  private def waitUntilQueueIsEmpty(queue: Queue[IO, _], attempt: Int = 0): IO[Unit] =
+  private def waitUntilQueueSize(queue: Queue[IO, _], expectedSize: Int, attempt: Int = 0): IO[Unit] =
     for {
       size <- queue.size
       res <-
-        if (size == 0) {
+        if (size == expectedSize) {
           IO.unit
-        } else if (attempt >= 300) {
+        } else if (attempt >= 30) {
           IO.raiseError(new TimeoutException)
         } else {
-          IO.sleep(100.millis).flatMap(_ => waitUntilQueueIsEmpty(queue, attempt + 1))
+          IO.sleep(1.second).flatMap(_ => waitUntilQueueSize(queue, expectedSize, attempt + 1))
         }
     } yield res
 
@@ -108,7 +108,8 @@ object SnapshotEventsPublisherDaemonSuite extends MutableIOSuite with Checkers {
       events = Stream.fromQueueNoneTerminated(l1OutputQueue)
       gossip <- Gossip.make[IO](rumorQueue, selfId, Generation(PosLong(1)), keyPair)
       _ <- SnapshotEventsPublisherDaemon.make(gossip, events, consensusStorage).spawn.start
-      _ <- waitUntilQueueIsEmpty(l1OutputQueue)
+      _ <- waitUntilQueueSize(l1OutputQueue, 0)
+      _ <- waitUntilQueueSize(rumorQueue, 1)
       rumorQueueSize <- rumorQueue.size
       maybeRumor <- rumorQueue.tryTake
     } yield {
