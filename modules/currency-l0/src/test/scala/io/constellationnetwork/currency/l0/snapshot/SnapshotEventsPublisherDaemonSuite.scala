@@ -5,6 +5,7 @@ import java.security.KeyPair
 import cats.effect.std.{Queue, Supervisor}
 import cats.effect.{IO, Resource}
 
+import scala.concurrent.TimeoutException
 import scala.concurrent.duration.DurationInt
 
 import io.constellationnetwork.block.generators.signedBlockGen
@@ -15,7 +16,7 @@ import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.types.{ConsensusConfig, EventCutterConfig}
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusStorage
 import io.constellationnetwork.node.shared.infrastructure.gossip.Gossip
-import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.node.shared.infrastructure.metrics.{Metrics, NoOpMetrics}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.daemon.SnapshotEventsPublisherDaemon
 import io.constellationnetwork.node.shared.snapshot.currency.{BlockEvent, CurrencySnapshotArtifact, CurrencySnapshotEvent}
 import io.constellationnetwork.schema.generation.Generation
@@ -33,15 +34,15 @@ import weaver.scalacheck.Checkers
 object SnapshotEventsPublisherDaemonSuite extends MutableIOSuite with Checkers {
 
   override type Res =
-    (Supervisor[IO], JsonSerializer[IO], Hasher[IO], SecurityProvider[IO], Metrics[IO], Encoder[CurrencySnapshotEvent], KeyPair)
+    (Supervisor[IO], Hasher[IO], SecurityProvider[IO], Metrics[IO], Encoder[CurrencySnapshotEvent], KeyPair)
 
   override def sharedResource: Resource[IO, Res] =
     for {
-      s <- Supervisor[IO](await = false)
+      s <- Supervisor[IO](await = true)
       implicit0(js: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].toResource
       implicit0(sp: SecurityProvider[IO]) <- SecurityProvider.forAsync[IO]
       h = Hasher.forJson[IO]
-      m = Metrics.noopIO
+      m = NoOpMetrics.make
       e = {
         implicit val noopEncoder: Encoder[DataUpdate] = new Encoder[DataUpdate] {
           final def apply(a: DataUpdate): Json = Json.Null
@@ -49,11 +50,23 @@ object SnapshotEventsPublisherDaemonSuite extends MutableIOSuite with Checkers {
         CurrencySnapshotEvent.encoder
       }
       kp <- KeyPairGenerator.makeKeyPair[IO].toResource
-    } yield (s, js, h, sp, m, e, kp)
+    } yield (s, h, sp, m, e, kp)
 
-  test("test gossip deduplcation") { res =>
+  private def waitUntilQueueIsEmpty(queue: Queue[IO, _], attempt: Int = 0): IO[Unit] =
+    for {
+      size <- queue.size
+      res <-
+        if (size == 0) {
+          IO.unit
+        } else if (attempt >= 300) {
+          IO.raiseError(new TimeoutException)
+        } else {
+          IO.sleep(100.millis).flatMap(_ => waitUntilQueueIsEmpty(queue, attempt + 1))
+        }
+    } yield res
 
-    implicit val (s, js, h, sp, m, e, keyPair) = res
+  test("should publish events to gossip without duplicates") { res =>
+    implicit val (s, h, sp, m, e, keyPair) = res
 
     val blockEvent1 = signedBlockGen.sample.map(BlockEvent(_)).get
     val blockEvent2 = signedBlockGen.sample.map(BlockEvent(_)).get
@@ -84,8 +97,7 @@ object SnapshotEventsPublisherDaemonSuite extends MutableIOSuite with Checkers {
 
       _ <- consensusStorage.addEvents(Map(selfId -> List((Ordinal(Generation(PosLong(1)), Counter(PosLong(1))), blockEvent1))))
 
-      rumorQueue <- Queue.unbounded[IO, Hashed[RumorRaw]]
-      rumors = Stream.fromQueueUnterminated(rumorQueue)
+      rumorQueue: Queue[IO, Hashed[RumorRaw]] <- Queue.unbounded[IO, Hashed[RumorRaw]]
 
       l1OutputQueue <- Queue.unbounded[IO, Option[CurrencySnapshotEvent]]
       _ <- l1OutputQueue.offer(Some(blockEvent1))
@@ -95,17 +107,16 @@ object SnapshotEventsPublisherDaemonSuite extends MutableIOSuite with Checkers {
 
       events = Stream.fromQueueNoneTerminated(l1OutputQueue)
       gossip <- Gossip.make[IO](rumorQueue, selfId, Generation(PosLong(1)), keyPair)
-      daemon = SnapshotEventsPublisherDaemon.make(gossip, events, consensusStorage).spawn
-      _ <- daemon.start
-      count <- rumors.map { r =>
-        println(r)
-        r
-      }.compile.count
-      _ = println(count)
+      _ <- SnapshotEventsPublisherDaemon.make(gossip, events, consensusStorage).spawn.start
+      _ <- waitUntilQueueIsEmpty(l1OutputQueue)
+      rumorQueueSize <- rumorQueue.size
+      maybeRumor <- rumorQueue.tryTake
     } yield {
-      println("...")
-      println(count)
-      success
+      val maybeEitherBlockEvent = maybeRumor.map { rumor =>
+        val cur = rumor.signed.value.content.hcursor
+        cur.downField("value").get[BlockEvent]("BlockEvent")
+      }
+      assert.eql(1, rumorQueueSize).and(expect(maybeEitherBlockEvent.contains(Right(blockEvent2))))
     }
   }
 }

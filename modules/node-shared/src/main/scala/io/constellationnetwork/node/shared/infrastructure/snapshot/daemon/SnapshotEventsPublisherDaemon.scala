@@ -26,10 +26,7 @@ object SnapshotEventsPublisherDaemon {
   ): SnapshotEventsPublisherDaemon[F] =
     new SnapshotEventsPublisherDaemon[F] {
       def spawn: Daemon[F] = Daemon.spawn {
-        consensusEvents.map { e =>
-          println(e)
-          e
-        }
+        consensusEvents
           .evalFilterNot(consensusStorage.containsEvent)
           .map(ConsensusEvent(_))
           .evalMap(gossip.spread[ConsensusEvent[E]])
