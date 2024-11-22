@@ -118,7 +118,6 @@ sealed abstract class HttpApi[
       AllowSpendRoutes[F](
         queues.swapPeerConsensusInput,
         storages.l0Cluster,
-        queues.allowSpends,
         services.allowSpend,
         storages.allowSpend
       )

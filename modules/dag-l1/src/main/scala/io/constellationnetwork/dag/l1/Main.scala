@@ -154,6 +154,7 @@ object Main
           p2pClient.l0BlockOutputClient,
           p2pClient.swapConsensusClient,
           services,
+          storages.allowSpend,
           queues,
           validators.allowSpend,
           keyPair,
