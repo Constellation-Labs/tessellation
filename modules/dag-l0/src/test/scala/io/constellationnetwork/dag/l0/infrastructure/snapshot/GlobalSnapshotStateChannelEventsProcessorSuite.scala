@@ -5,9 +5,7 @@ import java.security.KeyPair
 import cats.data.{NonEmptyList, NonEmptySet}
 import cats.effect.std.Random
 import cats.effect.{IO, Resource}
-import cats.syntax.applicative._
-import cats.syntax.list._
-import cats.syntax.validated._
+import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
 
@@ -179,6 +177,14 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
   } yield StateChannelOutput(keyPair.getPublic.toAddress, signedSC)
 
   def mkGlobalSnapshotInfo(lastStateChannelSnapshotHashes: SortedMap[Address, Hash] = SortedMap.empty) =
-    GlobalSnapshotInfo(lastStateChannelSnapshotHashes, SortedMap.empty, SortedMap.empty, SortedMap.empty, SortedMap.empty, None)
+    GlobalSnapshotInfo(
+      lastStateChannelSnapshotHashes,
+      SortedMap.empty,
+      SortedMap.empty,
+      SortedMap.empty,
+      SortedMap.empty,
+      None,
+      None
+    )
 
 }
