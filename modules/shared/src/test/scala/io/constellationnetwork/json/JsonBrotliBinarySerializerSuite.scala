@@ -38,7 +38,10 @@ object JsonBrotliBinarySerializerSuite extends MutableIOSuite {
 
       for {
         signedSnapshot <- JsonBinarySerializerSuite
-          .currencyIncrementalSnapshot[IO](Hash.empty, CurrencySnapshotInfo(SortedMap.empty, SortedMap.empty, None, None, None, None, None))
+          .currencyIncrementalSnapshot[IO](
+            Hash.empty,
+            CurrencySnapshotInfo(SortedMap.empty, SortedMap.empty, None, None, None, None, None, None, None)
+          )
         serialized <- serializer.serialize(signedSnapshot)
         deserialized <- serializer.deserialize[Signed[CurrencyIncrementalSnapshot]](serialized)
       } yield expect.same(Right(signedSnapshot), deserialized)
@@ -50,7 +53,10 @@ object JsonBrotliBinarySerializerSuite extends MutableIOSuite {
 
       for {
         signedSnapshot <- JsonBinarySerializerSuite
-          .currencyIncrementalSnapshot[IO](Hash.empty, CurrencySnapshotInfo(SortedMap.empty, SortedMap.empty, None, None, None, None, None))
+          .currencyIncrementalSnapshot[IO](
+            Hash.empty,
+            CurrencySnapshotInfo(SortedMap.empty, SortedMap.empty, None, None, None, None, None, None, None)
+          )
         serialized <- serializer.serialize(signedSnapshot)
         deserialized <- serializer.deserialize[CurrencySnapshot](serialized)
       } yield expect.same(true, deserialized.isLeft)

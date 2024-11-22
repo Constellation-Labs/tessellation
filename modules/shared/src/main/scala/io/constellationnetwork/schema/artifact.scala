@@ -3,6 +3,7 @@ package io.constellationnetwork.schema
 import io.constellationnetwork.ext.derevo.ordering
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.swap.{CurrencyId, SwapAmount}
+import io.constellationnetwork.schema.tokenLock.{TokenLockAmount, TokenLockReference}
 import io.constellationnetwork.security.hash.Hash
 
 import derevo.cats.{order, show}
@@ -23,4 +24,12 @@ object artifact {
     amount: SwapAmount,
     destination: Address
   )
+
+  @derive(decoder, encoder, order, ordering, show)
+  case class TokenUnlock(
+    lockReference: TokenLockReference,
+    amount: TokenLockAmount,
+    currencyId: CurrencyId,
+    address: Address
+  ) extends SharedArtifact
 }
