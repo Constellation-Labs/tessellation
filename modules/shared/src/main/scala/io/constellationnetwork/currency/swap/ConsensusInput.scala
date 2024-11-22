@@ -40,7 +40,12 @@ object ConsensusInput {
   }
 
   @derive(encoder, decoder)
-  case class SignatureProposal(roundId: RoundId, senderId: PeerId, owner: PeerId, signature: Signature) extends PeerConsensusInput
+  case class SignatureProposal(roundId: RoundId, senderId: PeerId, owner: PeerId, signature: Signature)
+      extends PeerConsensusInput
+      with Encodable[(RoundId, PeerId, PeerId, Signature)] {
+    override def toEncode = (roundId, senderId, owner, signature)
+    override def jsonEncoder = implicitly
+  }
 
   @derive(encoder, decoder)
   case class CancelledCreationRound(roundId: RoundId, senderId: PeerId, owner: PeerId, reason: SwapCancellationReason)

@@ -8,6 +8,7 @@ import io.constellationnetwork.currency.swap.ConsensusInput
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
+import io.constellationnetwork.node.shared.domain.swap.AllowSpendStorage
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
@@ -43,25 +44,33 @@ object Validator {
       signedExclusively = input.isSignedExclusivelyBy(PeerId._Id.get(input.value.senderId))
     } yield validSignature && signedExclusively
 
+  def atLeastOneAllowSpend[F[_]](
+    allowSpendStorage: AllowSpendStorage[F]
+  ): F[Boolean] = allowSpendStorage.areWaiting
+
   def canStartOwnSwapConsensus[F[_]: Async](
     nodeStorage: NodeStorage[F],
     clusterStorage: ClusterStorage[F],
     lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
-    peersCount: PosInt
+    peersCount: PosInt,
+    allowSpendStorage: AllowSpendStorage[F]
   ): F[Boolean] =
     for {
       stateReadyForConsensus <- nodeStorage.getNodeState.map(isReadyForConsensus)
       enoughPeers <- enoughPeersForConsensus(clusterStorage, peersCount)
       lastGlobalSnapshotPresent <- isLastGlobalSnapshotPresent(lastGlobalSnapshot)
-      res = stateReadyForConsensus && enoughPeers && lastGlobalSnapshotPresent
+      enoughTxs <- atLeastOneAllowSpend(allowSpendStorage)
+
+      res = stateReadyForConsensus && enoughPeers && lastGlobalSnapshotPresent && enoughTxs
       _ <-
         Applicative[F].whenA(!res) {
           val reason = Seq(
             if (!stateReadyForConsensus) "State not ready for consensus" else "",
             if (!enoughPeers) "Not enough peers" else "",
-            if (!lastGlobalSnapshotPresent) "No global snapshot" else ""
+            if (!lastGlobalSnapshotPresent) "No global snapshot" else "",
+            if (!enoughTxs) "No allow spends" else ""
           ).filter(_.nonEmpty).mkString(", ")
-          logger.debug(s"Cannot start data own consensus: ${reason}")
+          logger.debug(s"Cannot start swap own consensus: ${reason}")
         }
     } yield res
 }
