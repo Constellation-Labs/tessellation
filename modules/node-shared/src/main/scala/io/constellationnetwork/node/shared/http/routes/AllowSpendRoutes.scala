@@ -7,7 +7,6 @@ import cats.syntax.all._
 import io.constellationnetwork.currency.swap.ConsensusInput
 import io.constellationnetwork.ext.http4s.{AddressVar, HashVar}
 import io.constellationnetwork.node.shared.domain.cluster.storage.L0ClusterStorage
-import io.constellationnetwork.node.shared.domain.queue.ViewableQueue
 import io.constellationnetwork.node.shared.domain.swap._
 import io.constellationnetwork.routes.internal.{InternalUrlPrefix, _}
 import io.constellationnetwork.schema.http.{ErrorCause, ErrorResponse}
@@ -27,7 +26,6 @@ import shapeless.syntax.singleton._
 final case class AllowSpendRoutes[F[_]: Async: Hasher: SecurityProvider](
   allowSpendConsensusInput: Queue[F, Signed[ConsensusInput.PeerConsensusInput]],
   l0ClusterStorage: L0ClusterStorage[F],
-  allowSpendsQueue: ViewableQueue[F, Signed[AllowSpend]],
   allowSpendService: AllowSpendService[F],
   allowSpendStorage: AllowSpendStorage[F]
 )(implicit S: Supervisor[F])
@@ -42,9 +40,6 @@ final case class AllowSpendRoutes[F[_]: Async: Hasher: SecurityProvider](
   protected val prefixPath: InternalUrlPrefix = "/"
 
   protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
-    case GET -> Root / "allow-spends" =>
-      allowSpendsQueue.view.flatMap(Ok(_))
-
     case req @ POST -> Root / "allow-spends" =>
       for {
         transaction <- req.as[Signed[AllowSpend]]

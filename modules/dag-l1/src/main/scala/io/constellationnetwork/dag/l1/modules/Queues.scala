@@ -7,11 +7,10 @@ import cats.syntax.functor._
 
 import io.constellationnetwork.currency.swap.{ConsensusInput => SwapConsensusInput}
 import io.constellationnetwork.dag.l1.domain.consensus.block.BlockConsensusInput.PeerBlockConsensusInput
-import io.constellationnetwork.node.shared.domain.queue.ViewableQueue
 import io.constellationnetwork.node.shared.modules.SharedQueues
 import io.constellationnetwork.schema.Block
 import io.constellationnetwork.schema.gossip.RumorRaw
-import io.constellationnetwork.schema.swap.AllowSpend
+import io.constellationnetwork.schema.swap.AllowSpendBlock
 import io.constellationnetwork.security.Hashed
 import io.constellationnetwork.security.signature.Signed
 
@@ -22,14 +21,14 @@ object Queues {
       peerBlockConsensusInputQueue <- Queue.unbounded[F, Signed[PeerBlockConsensusInput]]
       peerBlockQueue <- Queue.unbounded[F, Signed[Block]]
       swapPeerConsensusInputQueue <- Queue.unbounded[F, Signed[SwapConsensusInput.PeerConsensusInput]]
-      allowSpendsQueue <- ViewableQueue.make[F, Signed[AllowSpend]]
+      allowSpendBlocksQueue <- Queue.unbounded[F, Signed[AllowSpendBlock]]
     } yield
       new Queues[F] {
         val rumor: Queue[F, Hashed[RumorRaw]] = sharedQueues.rumor
         val peerBlockConsensusInput: Queue[F, Signed[PeerBlockConsensusInput]] = peerBlockConsensusInputQueue
         val peerBlock: Queue[F, Signed[Block]] = peerBlockQueue
         val swapPeerConsensusInput = swapPeerConsensusInputQueue
-        val allowSpends = allowSpendsQueue
+        val allowSpendBlocks = allowSpendBlocksQueue
       }
 }
 
@@ -38,5 +37,5 @@ sealed abstract class Queues[F[_]] private {
   val peerBlockConsensusInput: Queue[F, Signed[PeerBlockConsensusInput]]
   val peerBlock: Queue[F, Signed[Block]]
   val swapPeerConsensusInput: Queue[F, Signed[SwapConsensusInput.PeerConsensusInput]]
-  val allowSpends: ViewableQueue[F, Signed[AllowSpend]]
+  val allowSpendBlocks: Queue[F, Signed[AllowSpendBlock]]
 }
