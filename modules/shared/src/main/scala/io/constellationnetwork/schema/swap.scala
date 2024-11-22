@@ -19,7 +19,7 @@ import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.round.RoundId
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
-import io.constellationnetwork.security.{Encodable, Hashed, Hasher}
+import io.constellationnetwork.security.{Hashed, Hasher}
 
 import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia.{decoder, encoder}
@@ -126,10 +126,7 @@ object swap {
   case class AllowSpendBlock(
     roundId: RoundId,
     transactions: NonEmptySet[Signed[AllowSpend]]
-  ) extends Encodable[(RoundId, NonEmptySet[Signed[AllowSpend]])] {
-    override def toEncode = (roundId, transactions)
-    override def jsonEncoder = implicitly
-  }
+  )
 
   object AllowSpendBlock {
     implicit val roundIdShow: Show[RoundId] = RoundId.shortShow

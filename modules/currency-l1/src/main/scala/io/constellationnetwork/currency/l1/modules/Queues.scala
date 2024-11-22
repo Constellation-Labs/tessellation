@@ -13,7 +13,7 @@ import io.constellationnetwork.dag.l1.modules.{Queues => DAGL1Queues}
 import io.constellationnetwork.node.shared.domain.queue.ViewableQueue
 import io.constellationnetwork.schema.Block
 import io.constellationnetwork.schema.gossip.RumorRaw
-import io.constellationnetwork.schema.swap.AllowSpend
+import io.constellationnetwork.schema.swap.AllowSpendBlock
 import io.constellationnetwork.security.Hashed
 import io.constellationnetwork.security.signature.Signed
 
@@ -23,8 +23,6 @@ object Queues {
       dataApplicationPeerConsensusInputQueue <- Queue.unbounded[F, Signed[DataConsensusInput.PeerConsensusInput]]
       dataApplicationBlockQueue <- Queue.unbounded[F, Signed[DataApplicationBlock]]
       dataUpdatesQueue <- ViewableQueue.make[F, Signed[DataUpdate]]
-      swapPeerConsensusInputQueue <- Queue.unbounded[F, Signed[SwapConsensusInput.PeerConsensusInput]]
-      allowSpendsQueue <- ViewableQueue.make[F, Signed[AllowSpend]]
     } yield
       new Queues[F] {
         val rumor = dagL1Queues.rumor
@@ -33,8 +31,8 @@ object Queues {
         val dataApplicationPeerConsensusInput = dataApplicationPeerConsensusInputQueue
         val dataApplicationBlock = dataApplicationBlockQueue
         val dataUpdates = dataUpdatesQueue
-        val swapPeerConsensusInput = swapPeerConsensusInputQueue
-        val allowSpends = allowSpendsQueue
+        val swapPeerConsensusInput = dagL1Queues.swapPeerConsensusInput
+        val allowSpendBlocks = dagL1Queues.allowSpendBlocks
       }
 }
 
@@ -46,5 +44,5 @@ sealed abstract class Queues[F[_]] private {
   val dataApplicationBlock: Queue[F, Signed[DataApplicationBlock]]
   val dataUpdates: ViewableQueue[F, Signed[DataUpdate]]
   val swapPeerConsensusInput: Queue[F, Signed[SwapConsensusInput.PeerConsensusInput]]
-  val allowSpends: ViewableQueue[F, Signed[AllowSpend]]
+  val allowSpendBlocks: Queue[F, Signed[AllowSpendBlock]]
 }
