@@ -128,7 +128,9 @@ object CurrencySnapshotAcceptanceManager {
         None,
         None,
         None,
-        globalSnapshotSyncAcceptanceResult.contextUpdate.some
+        globalSnapshotSyncAcceptanceResult.contextUpdate.some,
+        None,
+        None
       )
       stateProof <- csi.stateProof(snapshotOrdinal)
 

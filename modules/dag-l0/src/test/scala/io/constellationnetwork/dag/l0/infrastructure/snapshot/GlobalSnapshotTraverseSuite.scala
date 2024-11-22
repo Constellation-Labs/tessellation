@@ -281,7 +281,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       state <- traverser.loadChain()
     } yield
       expect.eql(
-        GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.from(balances), SortedMap.empty, SortedMap.empty, None),
+        GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.from(balances), SortedMap.empty, SortedMap.empty, None, None),
         state._1
       )
   }
