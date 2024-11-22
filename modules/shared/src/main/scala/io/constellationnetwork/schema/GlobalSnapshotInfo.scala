@@ -3,6 +3,7 @@ package io.constellationnetwork.schema
 import cats.effect.kernel.Sync
 import cats.syntax.contravariantSemigroupal._
 import cats.syntax.flatMap._
+import cats.syntax.option._
 
 import scala.collection.immutable.SortedMap
 
@@ -21,6 +22,7 @@ import io.constellationnetwork.security.signature.Signed
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
+import eu.timepit.refined.auto._
 import io.circe.disjunctionCodecs._
 
 @derive(encoder, decoder, eqv, show)
@@ -40,7 +42,8 @@ object GlobalSnapshotInfoV1 {
       gsi.lastTxRefs,
       gsi.balances,
       SortedMap.empty,
-      SortedMap.empty
+      SortedMap.empty,
+      None
     )
 }
 
@@ -76,7 +79,8 @@ case class GlobalSnapshotInfoV2(
       lastCurrencySnapshots.view.mapValues {
         _.map { case (Signed(inc, proofs), info) => (Signed(inc.toCurrencyIncrementalSnapshot, proofs), info.toCurrencySnapshotInfo) }
       }.to(lastCurrencySnapshots.sortedMapFactory),
-      lastCurrencySnapshotsProofs
+      lastCurrencySnapshotsProofs,
+      None
     )
 
   def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
@@ -116,7 +120,8 @@ case class GlobalSnapshotInfo(
   lastTxRefs: SortedMap[Address, TransactionReference],
   balances: SortedMap[Address, Balance],
   lastCurrencySnapshots: SortedMap[Address, Either[Signed[CurrencySnapshot], (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]],
-  lastCurrencySnapshotsProofs: SortedMap[Address, Proof]
+  lastCurrencySnapshotsProofs: SortedMap[Address, Proof],
+  tokenLockBalances: Option[SortedMap[Address, SortedMap[Address, Balance]]]
 ) extends SnapshotInfo[GlobalSnapshotStateProof] {
   def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
     lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
@@ -131,5 +136,12 @@ case class GlobalSnapshotInfo(
 }
 
 object GlobalSnapshotInfo {
-  def empty = GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.empty, SortedMap.empty, SortedMap.empty)
+  def empty = GlobalSnapshotInfo(
+    SortedMap.empty,
+    SortedMap.empty,
+    SortedMap.empty,
+    SortedMap.empty,
+    SortedMap.empty,
+    SortedMap.empty[Address, SortedMap[Address, Balance]].some
+  )
 }

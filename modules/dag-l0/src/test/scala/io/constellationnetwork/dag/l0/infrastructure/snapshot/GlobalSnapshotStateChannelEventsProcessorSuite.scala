@@ -5,9 +5,7 @@ import java.security.KeyPair
 import cats.data.{NonEmptyList, NonEmptySet}
 import cats.effect.std.Random
 import cats.effect.{IO, Resource}
-import cats.syntax.applicative._
-import cats.syntax.list._
-import cats.syntax.validated._
+import cats.syntax.all._
 
 import scala.collection.immutable.SortedMap
 
@@ -21,7 +19,7 @@ import io.constellationnetwork.node.shared.infrastructure.block.processing.Block
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.node.shared.modules.SharedValidators
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.balance.Amount
+import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security._
@@ -178,6 +176,13 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
   } yield StateChannelOutput(keyPair.getPublic.toAddress, signedSC)
 
   def mkGlobalSnapshotInfo(lastStateChannelSnapshotHashes: SortedMap[Address, Hash] = SortedMap.empty) =
-    GlobalSnapshotInfo(lastStateChannelSnapshotHashes, SortedMap.empty, SortedMap.empty, SortedMap.empty, SortedMap.empty)
+    GlobalSnapshotInfo(
+      lastStateChannelSnapshotHashes,
+      SortedMap.empty,
+      SortedMap.empty,
+      SortedMap.empty,
+      SortedMap.empty,
+      SortedMap.empty[Address, SortedMap[Address, Balance]].some
+    )
 
 }

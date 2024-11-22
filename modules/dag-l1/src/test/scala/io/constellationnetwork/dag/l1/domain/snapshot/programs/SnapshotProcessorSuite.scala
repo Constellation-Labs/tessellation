@@ -273,7 +273,14 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               ),
             srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
-          snapshotInfo = GlobalSnapshotInfo(SortedMap.empty, snapshotTxRefs, snapshotBalances, SortedMap.empty, SortedMap.empty)
+          snapshotInfo = GlobalSnapshotInfo(
+            SortedMap.empty,
+            snapshotTxRefs,
+            snapshotBalances,
+            SortedMap.empty,
+            SortedMap.empty,
+            SortedMap.empty[Address, SortedMap[Address, Balance]].some
+          )
           balancesBefore <- balancesR.get
           blocksBefore <- blocksR.toMap
           lastGlobalSnapshotBefore <- lastSnapR.get
@@ -426,7 +433,14 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             ),
             srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
-          snapshotInfo = GlobalSnapshotInfo(SortedMap.empty, snapshotTxRefs, snapshotBalances, SortedMap.empty, SortedMap.empty)
+          snapshotInfo = GlobalSnapshotInfo(
+            SortedMap.empty,
+            snapshotTxRefs,
+            snapshotBalances,
+            SortedMap.empty,
+            SortedMap.empty,
+            SortedMap.empty[Address, SortedMap[Address, Balance]].some
+          )
 
           // Inserting blocks in required state
           _ <- blocksR(aboveRangeBlock.proofsHash).set(WaitingBlock(aboveRangeBlock.signed).some)
@@ -597,7 +611,14 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             ),
             srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
-          snapshotInfo = GlobalSnapshotInfo(SortedMap.empty, snapshotTxRefs, snapshotBalances, SortedMap.empty, SortedMap.empty)
+          snapshotInfo = GlobalSnapshotInfo(
+            SortedMap.empty,
+            snapshotTxRefs,
+            snapshotBalances,
+            SortedMap.empty,
+            SortedMap.empty,
+            SortedMap.empty[Address, SortedMap[Address, Balance]].some
+          )
 
           // Inserting blocks in required state
           _ <- blocksR(aboveRangeBlock.proofsHash).set(PostponedBlock(aboveRangeBlock.signed).some)
@@ -697,7 +718,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             ),
             srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
-          _ <- lastSnapR.set((hashedLastSnapshot, GlobalSnapshotInfo.empty).some)
+          globalSnapshotInfo = generateGlobalSnapshotInfo
+          _ <- lastSnapR.set((hashedLastSnapshot, globalSnapshotInfo).some)
 
           processingResult <- snapshotProcessor.process(
             hashedNextSnapshot.asRight[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]
@@ -726,7 +748,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               ),
               Map.empty,
               Map.empty,
-              Some((hashedNextSnapshot, GlobalSnapshotInfo.empty)),
+              Some((hashedNextSnapshot, globalSnapshotInfo)),
               Map.empty
             )
           )
@@ -822,7 +844,14 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               aboveRangeAcceptedBlock.signed.value.transactions.toNonEmptyList.traverse(_.toHashed.flatMap(ts.accept))
           }
 
-          lastSnapshotInfo = GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, snapshotBalances, SortedMap.empty, SortedMap.empty)
+          lastSnapshotInfo = GlobalSnapshotInfo(
+            SortedMap.empty,
+            SortedMap.empty,
+            snapshotBalances,
+            SortedMap.empty,
+            SortedMap.empty,
+            SortedMap.empty[Address, SortedMap[Address, Balance]].some
+          )
           lastSnapshotStateProof <- {
             implicit val hasher = currentHasher
 
@@ -1083,7 +1112,14 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
           snapshotBalances = generateSnapshotBalances(Set(srcAddress))
           snapshotTxRefs = generateSnapshotLastAccTxRefs(Map(srcAddress -> correctTxs(5)))
-          lastSnapshotInfo = GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, snapshotBalances, SortedMap.empty, SortedMap.empty)
+          lastSnapshotInfo = GlobalSnapshotInfo(
+            SortedMap.empty,
+            SortedMap.empty,
+            snapshotBalances,
+            SortedMap.empty,
+            SortedMap.empty,
+            SortedMap.empty[Address, SortedMap[Address, Balance]].some
+          )
           lastSnapshotInfoStateProof <- lastSnapshotInfo.stateProof(snapshotOrdinal10)
           hashedLastSnapshot <- forAsyncHasher(
             generateSnapshot(peerId).copy(

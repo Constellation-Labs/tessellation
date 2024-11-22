@@ -13,6 +13,7 @@ import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.currencyMessage._
+import io.constellationnetwork.schema.tokenLock.TokenLock
 import io.constellationnetwork.schema.transaction.{RewardTransaction, Transaction, TransactionReference}
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.Signed
@@ -133,7 +134,10 @@ object CurrencySnapshotAcceptanceManager {
       csi = CurrencySnapshotInfo(
         transactionsRefs,
         updatedBalancesByRewards,
-        Option.when(messagesForContextUpdate.nonEmpty)(messagesForContextUpdate)
+        Option.when(messagesForContextUpdate.nonEmpty)(messagesForContextUpdate),
+        None,
+        None,
+        SortedMap.empty[Address, SortedSet[Signed[TokenLock]]].some
       )
       stateProof <- csi.stateProof(snapshotOrdinal)
 

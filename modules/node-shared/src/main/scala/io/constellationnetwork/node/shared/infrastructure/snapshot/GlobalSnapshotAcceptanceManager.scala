@@ -160,7 +160,8 @@ object GlobalSnapshotAcceptanceManager {
           transactionsRefs,
           updatedBalancesByRewards,
           updatedLastCurrencySnapshots,
-          updatedLastCurrencySnapshotProofs
+          updatedLastCurrencySnapshotProofs,
+          SortedMap.empty[Address, SortedMap[Address, Balance]].some
         )
 
         stateProof <- gsi.stateProof(maybeMerkleTree)

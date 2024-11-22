@@ -17,6 +17,7 @@ import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
@@ -314,6 +315,13 @@ object GlobalSnapshotStateChannelAcceptanceManagerSuite extends MutableIOSuite w
     .map(content => StateChannelSnapshotBinary(hash, content.getBytes, SnapshotFee.MinValue))
 
   private def mkGlobalSnapshotInfo(lastStateChannelSnapshotHashes: SortedMap[Address, Hash]) =
-    GlobalSnapshotInfo(lastStateChannelSnapshotHashes, SortedMap.empty, SortedMap.empty, SortedMap.empty, SortedMap.empty)
+    GlobalSnapshotInfo(
+      lastStateChannelSnapshotHashes,
+      SortedMap.empty,
+      SortedMap.empty,
+      SortedMap.empty,
+      SortedMap.empty,
+      SortedMap.empty[Address, SortedMap[Address, Balance]].some
+    )
 
 }
