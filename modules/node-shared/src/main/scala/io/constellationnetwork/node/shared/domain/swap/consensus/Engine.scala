@@ -17,9 +17,8 @@ import io.constellationnetwork.effects.GenUUID
 import io.constellationnetwork.fsm.FSM
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.consensus.config.SwapConsensusConfig
-import io.constellationnetwork.node.shared.domain.queue.ViewableQueue
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
-import io.constellationnetwork.node.shared.domain.swap.AllowSpendValidator
+import io.constellationnetwork.node.shared.domain.swap.{AllowSpendStorage, AllowSpendValidator}
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.{Peer, PeerId}
 import io.constellationnetwork.schema.round.RoundId
@@ -29,6 +28,7 @@ import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature.SignatureProof
 import io.constellationnetwork.security.{Hasher, SecurityProvider}
 
+import eu.timepit.refined.types.numeric.NonNegLong
 import io.circe.Encoder
 import monocle.syntax.all._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -90,15 +90,15 @@ object Engine {
     clusterStorage: ClusterStorage[F],
     lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     consensusClient: ConsensusClient[F],
-    allowSpends: ViewableQueue[F, Signed[AllowSpend]],
     allowSpendValidator: AllowSpendValidator[F],
+    allowSpendStorage: AllowSpendStorage[F],
     selfId: PeerId,
     selfKeyPair: KeyPair
   ): FSM[F, State, In, Out] = {
 
     def peersCount = swapConsensusCfg.peersCount.value
     def timeout = swapConsensusCfg.timeout
-    def maxAllowSpendsToDequeue = swapConsensusCfg.maxAllowSpendsToDequeue.value
+    def maxAllowSpendsToDequeue = swapConsensusCfg.maxAllowSpendsToDequeue
 
     def logger = Slf4jLogger.getLogger[F]
     def getTime: F[FiniteDuration] = Clock[F].monotonic
@@ -116,12 +116,15 @@ object Engine {
         })
 
     def pullAllowSpends: F[Set[Signed[AllowSpend]]] =
-      allowSpends.tryTakeN(maxAllowSpendsToDequeue.some).map(_.toSet).flatTap { updates =>
-        logger.debug(s"Fetched ${updates.size} updates")
-      }
+      allowSpendStorage
+        .pull(NonNegLong.unsafeFrom(maxAllowSpendsToDequeue.value.toLong))
+        .map(_.map(_.map(_.signed).toList.toSet).getOrElse(Set.empty))
 
     def returnAllowSpends(round: RoundData): F[Unit] =
-      round.ownProposal.transactions.toList.traverse(allowSpends.offer).void
+      round.ownProposal.transactions.toList
+        .traverse(_.toHashed[F])
+        .map(_.toSet)
+        .flatMap(allowSpendStorage.putBack)
 
     def removeRound(state: State, round: RoundData): State =
       if (round.owner === selfId)

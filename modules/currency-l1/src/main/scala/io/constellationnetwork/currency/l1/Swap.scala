@@ -19,9 +19,9 @@ import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorag
 import io.constellationnetwork.node.shared.domain.consensus.config.SwapConsensusConfig
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
-import io.constellationnetwork.node.shared.domain.swap.AllowSpendValidator
 import io.constellationnetwork.node.shared.domain.swap.consensus.Validator._
 import io.constellationnetwork.node.shared.domain.swap.consensus.{ConsensusClient, ConsensusState, Engine}
+import io.constellationnetwork.node.shared.domain.swap.{AllowSpendStorage, AllowSpendValidator}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import io.constellationnetwork.security.{Hasher, SecurityProvider}
@@ -39,6 +39,7 @@ object Swap {
     blockOutputClient: L0BlockOutputClient[F],
     consensusClient: ConsensusClient[F],
     services: Services[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run],
+    allowSpendStorage: AllowSpendStorage[F],
     queues: Queues[F],
     allowSpendValidator: AllowSpendValidator[F],
     selfKeyPair: KeyPair,
@@ -57,7 +58,13 @@ object Swap {
       Stream
         .awakeEvery(5.seconds)
         .evalFilter { _ =>
-          canStartOwnSwapConsensus(nodeStorage, clusterStorage, lastGlobalSnapshot, swapConsensusCfg.peersCount).handleErrorWith { e =>
+          canStartOwnSwapConsensus(
+            nodeStorage,
+            clusterStorage,
+            lastGlobalSnapshot,
+            swapConsensusCfg.peersCount,
+            allowSpendStorage
+          ).handleErrorWith { e =>
             logger.warn(e)("Failure checking if own consensus can be kicked off!").as(false)
           }
         }
@@ -84,8 +91,8 @@ object Swap {
             clusterStorage,
             lastGlobalSnapshot,
             consensusClient,
-            queues.allowSpends,
             allowSpendValidator,
+            allowSpendStorage,
             selfId,
             selfKeyPair
           )
