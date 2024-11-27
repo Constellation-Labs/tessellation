@@ -20,6 +20,7 @@ import io.constellationnetwork.dag.l1.config.types._
 import io.constellationnetwork.dag.l1.domain.transaction.CustomContextualTransactionValidator
 import io.constellationnetwork.dag.l1.http.p2p.{P2PClient => DAGP2PClient}
 import io.constellationnetwork.dag.l1.infrastructure.block.rumor.handler.blockRumorHandler
+import io.constellationnetwork.dag.l1.infrastructure.swap.rumor.handler.allowSpendBlockRumorHandler
 import io.constellationnetwork.dag.l1.modules.{Daemons => DAGL1Daemons, Queues => DAGL1Queues, Validators => DAGL1Validators}
 import io.constellationnetwork.dag.l1.{DagL1KryoRegistrationIdRange, StateChannel, dagL1KryoRegistrar}
 import io.constellationnetwork.ext.cats.effect.ResourceIO
@@ -84,14 +85,16 @@ abstract class CurrencyL1App(
       dagL1Queues <- DAGL1Queues.make[IO](sharedQueues).asResource
       queues <- Queues.make[IO](dagL1Queues).asResource
       txHasher = Hasher.forKryo[IO]
-      validators = DAGL1Validators
-        .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
-          cfg.shared,
-          seedlist,
-          cfg.transactionLimit,
-          transactionValidator,
-          txHasher
-        )
+      validators = hasherSelector.withCurrent { implicit hasher =>
+        DAGL1Validators
+          .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
+            cfg.shared,
+            seedlist,
+            cfg.transactionLimit,
+            transactionValidator,
+            txHasher
+          )
+      }
       storages <- hasherSelector.withCurrent { implicit hasher =>
         Storages
           .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
@@ -154,7 +157,8 @@ abstract class CurrencyL1App(
       rumorHandler = RumorHandlers
         .make[IO](storages.cluster, services.localHealthcheck, sharedStorages.forkInfo)
         .handlers <+>
-        blockRumorHandler[IO](queues.peerBlock)
+        blockRumorHandler[IO](queues.peerBlock) <+>
+        allowSpendBlockRumorHandler[IO](queues.allowSpendBlocks)
 
       _ <- DAGL1Daemons
         .start(storages, services)
@@ -284,7 +288,8 @@ abstract class CurrencyL1App(
               logger.error(error)("An error occured during state channel runtime") >> error.raiseError[IO, Unit]
             }
         }.getOrElse {
-          Swap.run(
+          Swap
+            .run(
               cfg.swap,
               storages.cluster,
               storages.l0Cluster,
@@ -294,6 +299,7 @@ abstract class CurrencyL1App(
               p2pClient.swapConsensusClient,
               services,
               storages.allowSpend,
+              storages.allowSpendBlock,
               queues,
               validators.allowSpend,
               keyPair,

@@ -4,14 +4,14 @@ import java.util.UUID
 
 import cats.Show
 
-import derevo.cats.eqv
+import derevo.cats.{eqv, order}
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import io.estatico.newtype.macros.newtype
 
 object round {
 
-  @derive(eqv, encoder, decoder)
+  @derive(eqv, encoder, decoder, order)
   @newtype
   case class RoundId(value: UUID)
 
