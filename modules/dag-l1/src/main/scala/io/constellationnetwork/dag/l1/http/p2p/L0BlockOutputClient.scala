@@ -6,6 +6,7 @@ import io.constellationnetwork.node.shared.http.p2p.PeerResponse
 import io.constellationnetwork.node.shared.http.p2p.PeerResponse.PeerResponse
 import io.constellationnetwork.schema.Block
 import io.constellationnetwork.schema.swap.AllowSpendBlock
+import io.constellationnetwork.schema.tokenLock.TokenLockBlock
 import io.constellationnetwork.security.signature.Signed
 
 import io.circe.Encoder
@@ -19,6 +20,7 @@ trait L0BlockOutputClient[F[_]] {
     implicit encoder: Encoder[DataUpdate]
   ): PeerResponse[F, Boolean]
   def sendAllowSpendBlock(block: Signed[AllowSpendBlock]): PeerResponse[F, Boolean]
+  def sendTokenLockBlock(block: Signed[TokenLockBlock]): PeerResponse[F, Boolean]
 }
 
 object L0BlockOutputClient {
@@ -38,6 +40,11 @@ object L0BlockOutputClient {
 
       def sendAllowSpendBlock(block: Signed[AllowSpendBlock]): PeerResponse[F, Boolean] =
         PeerResponse(s"$pathPrefix/l1-allow-spend-output", POST)(client) { (req, c) =>
+          c.successful(req.withEntity(block))
+        }
+
+      def sendTokenLockBlock(block: Signed[TokenLockBlock]): PeerResponse[F, Boolean] =
+        PeerResponse(s"$pathPrefix/l1-token-lock-output", POST)(client) { (req, c) =>
           c.successful(req.withEntity(block))
         }
 

@@ -25,6 +25,7 @@ object method {
       c.consensus,
       c.dataConsensus,
       c.swap,
+      c.tokenLock,
       c.transactionLimit,
       shared
     )

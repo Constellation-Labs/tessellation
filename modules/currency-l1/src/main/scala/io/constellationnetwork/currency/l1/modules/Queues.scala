@@ -8,12 +8,14 @@ import cats.syntax.functor._
 import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationBlock
 import io.constellationnetwork.currency.dataApplication.{ConsensusInput => DataConsensusInput, DataUpdate}
 import io.constellationnetwork.currency.swap.{ConsensusInput => SwapConsensusInput}
+import io.constellationnetwork.currency.tokenlock.{ConsensusInput => TokenLockConsensusInput}
 import io.constellationnetwork.dag.l1.domain.consensus.block.BlockConsensusInput.PeerBlockConsensusInput
 import io.constellationnetwork.dag.l1.modules.{Queues => DAGL1Queues}
 import io.constellationnetwork.node.shared.domain.queue.ViewableQueue
 import io.constellationnetwork.schema.Block
 import io.constellationnetwork.schema.gossip.RumorRaw
 import io.constellationnetwork.schema.swap.AllowSpendBlock
+import io.constellationnetwork.schema.tokenLock.TokenLockBlock
 import io.constellationnetwork.security.Hashed
 import io.constellationnetwork.security.signature.Signed
 
@@ -33,6 +35,8 @@ object Queues {
         val dataUpdates = dataUpdatesQueue
         val swapPeerConsensusInput = dagL1Queues.swapPeerConsensusInput
         val allowSpendBlocks = dagL1Queues.allowSpendBlocks
+        val tokenLockPeerConsensusInput = dagL1Queues.tokenLockConsensusInput
+        val tokenLocksBlocks = dagL1Queues.tokenLocksBlocks
       }
 }
 
@@ -45,4 +49,6 @@ sealed abstract class Queues[F[_]] private {
   val dataUpdates: ViewableQueue[F, Signed[DataUpdate]]
   val swapPeerConsensusInput: Queue[F, Signed[SwapConsensusInput.PeerConsensusInput]]
   val allowSpendBlocks: Queue[F, Signed[AllowSpendBlock]]
+  val tokenLockPeerConsensusInput: Queue[F, Signed[TokenLockConsensusInput.PeerConsensusInput]]
+  val tokenLocksBlocks: Queue[F, Signed[TokenLockBlock]]
 }

@@ -70,7 +70,8 @@ object Main
           sharedStorages,
           method.l0Peer,
           validators.transactionContextual,
-          validators.allowSpendContextual
+          validators.allowSpendContextual,
+          validators.tokenLockContextual
         )
         .asResource
       p2pClient = P2PClient.make[IO](
@@ -157,6 +158,24 @@ object Main
           storages.allowSpend,
           queues,
           validators.allowSpend,
+          keyPair,
+          nodeId
+        )
+      }
+
+      tokenLockRuntime = hasherSelector.withCurrent { implicit hasher =>
+        TokenLock.run(
+          cfg.tokenLock,
+          storages.cluster,
+          storages.l0Cluster,
+          storages.lastSnapshot,
+          storages.node,
+          p2pClient.l0BlockOutputClient,
+          p2pClient.tokenLockConsensusClient,
+          services,
+          storages.tokenLock,
+          queues,
+          validators.tokenLock,
           keyPair,
           nodeId
         )
@@ -273,6 +292,7 @@ object Main
       }.asResource
       _ <- stateChannel.runtime
         .merge(swapRuntime)
+        .merge(tokenLockRuntime)
         .compile
         .drain
         .handleErrorWith { error =>

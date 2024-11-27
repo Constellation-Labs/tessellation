@@ -57,7 +57,8 @@ object method {
       c.forkInfoStorage,
       c.lastKryoHashOrdinal,
       c.addresses,
-      c.allowSpends
+      c.allowSpends,
+      c.tokenLocks
     )
   }
 
