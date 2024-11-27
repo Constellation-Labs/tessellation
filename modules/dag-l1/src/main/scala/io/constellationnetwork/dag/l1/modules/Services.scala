@@ -16,6 +16,7 @@ import io.constellationnetwork.node.shared.domain.healthcheck.LocalHealthcheck
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.domain.swap.AllowSpendService
+import io.constellationnetwork.node.shared.domain.tokenlock.TokenLockService
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.collateral.Collateral
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
@@ -62,6 +63,7 @@ object Services {
       val session = sharedServices.session
       val transaction = TransactionService.make[F, P, S, SI](storages.transaction, storages.lastSnapshot, validators.transaction)
       val allowSpend = AllowSpendService.make[F, P, S, SI](storages.allowSpend, storages.lastSnapshot, validators.allowSpend)
+      val tokenLock = TokenLockService.make[F, P, S, SI](storages.tokenLock, storages.lastSnapshot, validators.tokenLock)
       val collateral = Collateral.make[F](cfg.collateral, storages.lastSnapshot)
       val restart = sharedServices.restart
     }
@@ -76,6 +78,7 @@ trait Services[F[_], P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P], R <:
   val session: Session[F]
   val transaction: TransactionService[F]
   val allowSpend: AllowSpendService[F]
+  val tokenLock: TokenLockService[F]
   val collateral: Collateral[F]
   val restart: RestartService[F, R]
 }

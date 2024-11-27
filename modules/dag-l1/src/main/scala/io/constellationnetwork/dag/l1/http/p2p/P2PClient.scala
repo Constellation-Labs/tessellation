@@ -4,6 +4,7 @@ import cats.effect.Async
 
 import io.constellationnetwork.dag.l1.domain.consensus.block.http.p2p.clients.BlockConsensusClient
 import io.constellationnetwork.node.shared.domain.swap.consensus.{ConsensusClient => SwapConsensusClient}
+import io.constellationnetwork.node.shared.domain.tokenlock.consensus.{ConsensusClient => TokenLockConsensusClient}
 import io.constellationnetwork.node.shared.http.p2p.SharedP2PClient
 import io.constellationnetwork.node.shared.http.p2p.clients._
 import io.constellationnetwork.node.shared.infrastructure.gossip.p2p.GossipClient
@@ -28,6 +29,7 @@ object P2PClient {
       BlockConsensusClient.make(client),
       L0GlobalSnapshotClient.make(client),
       SwapConsensusClient.make(client),
+      TokenLockConsensusClient.make(client),
       L0TrustClient.make(client)
     ) {}
 }
@@ -42,5 +44,6 @@ sealed abstract class P2PClient[F[_]] private (
   val blockConsensus: BlockConsensusClient[F],
   val l0GlobalSnapshot: L0GlobalSnapshotClient[F],
   val swapConsensusClient: SwapConsensusClient[F],
+  val tokenLockConsensusClient: TokenLockConsensusClient[F],
   val l0Trust: L0TrustClient[F]
 )

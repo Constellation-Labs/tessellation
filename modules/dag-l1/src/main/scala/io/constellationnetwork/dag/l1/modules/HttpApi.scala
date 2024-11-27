@@ -75,6 +75,15 @@ sealed abstract class HttpApi[
         storages.allowSpend
       )
     }
+  private val tokenLockRoutes =
+    HasherSelector[F].withCurrent { implicit hasher =>
+      TokenLockRoutes[F](
+        queues.tokenLockConsensusInput,
+        storages.l0Cluster,
+        services.tokenLock,
+        storages.tokenLock
+      )
+    }
   private val dagRoutes =
     Routes[F](
       services.transaction,
@@ -82,6 +91,7 @@ sealed abstract class HttpApi[
       storages.l0Cluster,
       queues.peerBlockConsensusInput,
       queues.swapPeerConsensusInput,
+      queues.tokenLockConsensusInput,
       txHasher
     )
   private val nodeRoutes = NodeRoutes[F](storages.node, storages.session, storages.cluster, nodeVersion, httpCfg, selfId)
@@ -100,7 +110,8 @@ sealed abstract class HttpApi[
           nodeRoutes.publicRoutes <+>
           metricRoutes <+>
           targetRoutes <+>
-          allowSpendRoutes.publicRoutes
+          allowSpendRoutes.publicRoutes <+>
+          tokenLockRoutes.publicRoutes
       }
     }
 
@@ -114,7 +125,8 @@ sealed abstract class HttpApi[
               nodeRoutes.p2pRoutes <+>
               gossipRoutes.p2pRoutes <+>
               dagRoutes.p2pRoutes <+>
-              allowSpendRoutes.p2pRoutes
+              allowSpendRoutes.p2pRoutes <+>
+              tokenLockRoutes.p2pRoutes
           )
         )
     )

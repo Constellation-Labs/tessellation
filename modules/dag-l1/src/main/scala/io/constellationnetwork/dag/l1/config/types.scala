@@ -4,6 +4,7 @@ import io.constellationnetwork.dag.l1.domain.consensus.block.config.{ConsensusCo
 import io.constellationnetwork.dag.l1.domain.transaction.TransactionLimitConfig
 import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.domain.consensus.config.SwapConsensusConfig
+import io.constellationnetwork.node.shared.domain.tokenlock.consensus.config.TokenLockConsensusConfig
 
 object types {
 
@@ -11,6 +12,7 @@ object types {
     consensus: ConsensusConfig,
     dataConsensus: DataConsensusConfig,
     swap: SwapConsensusConfig,
+    tokenLock: TokenLockConsensusConfig,
     transactionLimit: TransactionLimitConfig
   )
 
@@ -18,6 +20,7 @@ object types {
     consensus: ConsensusConfig,
     dataConsensus: DataConsensusConfig,
     swap: SwapConsensusConfig,
+    tokenLock: TokenLockConsensusConfig,
     transactionLimit: TransactionLimitConfig,
     shared: SharedConfig
   ) {
