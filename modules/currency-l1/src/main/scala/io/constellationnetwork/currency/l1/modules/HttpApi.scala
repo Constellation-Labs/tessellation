@@ -101,7 +101,7 @@ sealed abstract class HttpApi[
     }
   private val registrationRoutes = HasherSelector[F].withCurrent(implicit hasher => RegistrationRoutes[F](services.cluster))
   private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip)
-  private val routes = maybeDataApplication.map { da =>
+  private val dataApplicationRoutes = maybeDataApplication.map { da =>
     HasherSelector[F].withCurrent { implicit hasher =>
       DataApplicationRoutes[F](
         queues.dataApplicationPeerConsensusInput,
@@ -122,6 +122,17 @@ sealed abstract class HttpApi[
         storages.allowSpend
       )
     }
+
+  private val tokenLockRoutes =
+    HasherSelector[F].withCurrent { implicit hasher =>
+      TokenLockRoutes[F](
+        queues.tokenLockPeerConsensusInput,
+        storages.l0Cluster,
+        services.tokenLock,
+        storages.tokenLock
+      )
+    }
+
   private val currencyRoutes =
     DAGRoutes[F](
       services.transaction,
@@ -129,6 +140,7 @@ sealed abstract class HttpApi[
       storages.l0Cluster,
       queues.peerBlockConsensusInput,
       queues.swapPeerConsensusInput,
+      queues.tokenLockPeerConsensusInput,
       txHasher
     )
   private val nodeRoutes = NodeRoutes[F](storages.node, storages.session, storages.cluster, nodeVersion, httpCfg, selfId)
@@ -146,10 +158,13 @@ sealed abstract class HttpApi[
           nodeRoutes.publicRoutes <+>
           metricRoutes <+>
           targetRoutes <+>
-          routes.map(_.publicRoutes).getOrElse(currencyRoutes.publicRoutes) <+>
+          dataApplicationRoutes.map(_.publicRoutes).getOrElse {
+            currencyRoutes.publicRoutes <+>
+              allowSpendRoutes.publicRoutes <+>
+              tokenLockRoutes.publicRoutes
+          } <+>
           metagraphNodeRoutes.map(_.publicRoutes).getOrElse(HttpRoutes.empty) <+>
-          DataApplicationCustomRoutes.publicRoutes[F, L1NodeContext[F]](maybeDataApplication) <+>
-          allowSpendRoutes.publicRoutes
+          DataApplicationCustomRoutes.publicRoutes[F, L1NodeContext[F]](maybeDataApplication)
       }
     }
 
@@ -162,9 +177,12 @@ sealed abstract class HttpApi[
             clusterRoutes.p2pRoutes <+>
               nodeRoutes.p2pRoutes <+>
               gossipRoutes.p2pRoutes <+>
-              routes.map(_.p2pRoutes).getOrElse(currencyRoutes.p2pRoutes) <+>
-              metagraphNodeRoutes.map(_.p2pRoutes).getOrElse(HttpRoutes.empty) <+>
-              allowSpendRoutes.p2pRoutes
+              dataApplicationRoutes.map(_.p2pRoutes).getOrElse {
+                currencyRoutes.p2pRoutes <+>
+                  allowSpendRoutes.p2pRoutes <+>
+                  tokenLockRoutes.p2pRoutes
+              } <+>
+              metagraphNodeRoutes.map(_.p2pRoutes).getOrElse(HttpRoutes.empty)
           )
         )
     )
