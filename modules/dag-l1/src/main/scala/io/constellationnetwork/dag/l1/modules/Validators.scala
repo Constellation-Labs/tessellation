@@ -10,7 +10,8 @@ import io.constellationnetwork.dag.l1.domain.transaction.{
 import io.constellationnetwork.node.shared.config.types.SharedConfig
 import io.constellationnetwork.node.shared.domain.block.processing.BlockValidator
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
-import io.constellationnetwork.node.shared.domain.swap.{AllowSpendValidator, ContextualAllowSpendValidator}
+import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockValidator
+import io.constellationnetwork.node.shared.domain.swap.{AllowSpendChainValidator, AllowSpendValidator, ContextualAllowSpendValidator}
 import io.constellationnetwork.node.shared.domain.tokenlock.{ContextualTokenLockValidator, TokenLockValidator}
 import io.constellationnetwork.node.shared.domain.transaction._
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockValidator
@@ -22,7 +23,7 @@ import io.constellationnetwork.security.{Hasher, SecurityProvider}
 object Validators {
 
   def make[
-    F[_]: Async: SecurityProvider,
+    F[_]: Async: SecurityProvider: Hasher,
     P <: StateProof,
     S <: Snapshot,
     SI <: SnapshotInfo[P]
@@ -46,8 +47,10 @@ object Validators {
 
     val rumorValidator = RumorValidator.make[F](seedlist, signedValidator)
 
-    val allowSpend = AllowSpendValidator.make[F](signedValidator)
+    val allowSpendValidator = AllowSpendValidator.make[F](signedValidator)
+    val allowSpendChainValidator = AllowSpendChainValidator.make[F]
     val contextualAllowSpendValidator = ContextualAllowSpendValidator.make(None, cfg.allowSpends)
+    val allowSpendBlockValidator = AllowSpendBlockValidator.make[F](signedValidator, allowSpendChainValidator, allowSpendValidator)
 
     val tokenLock = TokenLockValidator.make[F](signedValidator)
     val contextualTokenLockValidator = ContextualTokenLockValidator.make(None, cfg.tokenLocks)
@@ -58,8 +61,9 @@ object Validators {
       transactionValidator,
       contextualTransactionValidator,
       rumorValidator,
-      allowSpend,
+      allowSpendValidator,
       contextualAllowSpendValidator,
+      allowSpendBlockValidator,
       tokenLock,
       contextualTokenLockValidator
     ) {}
@@ -74,6 +78,7 @@ sealed abstract class Validators[F[_]] private (
   val rumorValidator: RumorValidator[F],
   val allowSpend: AllowSpendValidator[F],
   val allowSpendContextual: ContextualAllowSpendValidator,
+  val allowSpendBlock: AllowSpendBlockValidator[F],
   val tokenLock: TokenLockValidator[F],
   val tokenLockContextual: ContextualTokenLockValidator
 )
