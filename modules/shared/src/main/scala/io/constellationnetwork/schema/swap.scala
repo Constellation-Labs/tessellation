@@ -122,7 +122,7 @@ object swap {
       Decoder.decodeString.emapTry(s => Try(AllowSpendStatus.withName(s)))
   }
 
-  @derive(decoder, encoder, show)
+  @derive(decoder, encoder, show, order)
   case class AllowSpendBlock(
     roundId: RoundId,
     transactions: NonEmptySet[Signed[AllowSpend]]
@@ -132,5 +132,6 @@ object swap {
     implicit val roundIdShow: Show[RoundId] = RoundId.shortShow
     implicit val transactionsDecoder: Decoder[NonEmptySet[Signed[AllowSpend]]] =
       NonEmptySetCodec.decoder[Signed[AllowSpend]]
+    implicit object OrderingInstance extends OrderBasedOrdering[AllowSpendBlock]
   }
 }

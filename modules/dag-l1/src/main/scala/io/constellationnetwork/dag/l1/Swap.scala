@@ -18,6 +18,7 @@ import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorag
 import io.constellationnetwork.node.shared.domain.consensus.config.SwapConsensusConfig
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
+import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockStorage
 import io.constellationnetwork.node.shared.domain.swap.consensus.Validator.{
   canStartOwnSwapConsensus,
   isLastGlobalSnapshotPresent,
@@ -25,8 +26,8 @@ import io.constellationnetwork.node.shared.domain.swap.consensus.Validator.{
 }
 import io.constellationnetwork.node.shared.domain.swap.consensus.{ConsensusClient, ConsensusState, Engine}
 import io.constellationnetwork.node.shared.domain.swap.{AllowSpendStorage, AllowSpendValidator}
+import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalSnapshotStateProof}
 import io.constellationnetwork.security.{Hasher, SecurityProvider}
 
 import fs2.{Pipe, Stream}
@@ -46,6 +47,7 @@ object Swap {
     consensusClient: ConsensusClient[F],
     services: Services[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo, R],
     allowSpendStorage: AllowSpendStorage[F],
+    allowSpendBlockStorage: AllowSpendBlockStorage[F],
     queues: Queues[F],
     allowSpendValidator: AllowSpendValidator[F],
     selfKeyPair: KeyPair,
@@ -152,7 +154,28 @@ object Swap {
 
     def storeBlock: Pipe[F, ConsensusOutput.FinalBlock, Unit] =
       _.evalMap { fb =>
-        logger.debug(s"TODO: Store block! ${fb.hashedBlock.hash}")
+        allowSpendBlockStorage.store(fb.hashedBlock).handleErrorWith(e => logger.debug(e)("AllowSpendBlock storing failed."))
+      }
+
+    def blockAcceptance: Stream[F, Unit] = Stream
+      .awakeEvery(1.seconds)
+      .evalMap { _ =>
+        lastGlobalSnapshot.getOrdinal.flatMap {
+          case Some(snapshotOrdinal) =>
+            allowSpendBlockStorage.getWaiting.flatTap { awaiting =>
+              Applicative[F].whenA(awaiting.nonEmpty) {
+                logger.debug(s"Pulled following allow spend blocks for acceptance ${awaiting.keySet}")
+              }
+            }.flatMap {
+              _.toList.traverse {
+                case (hash, signedBlock) =>
+                  services.allowSpendBlock
+                    .accept(signedBlock, snapshotOrdinal)
+                    .handleErrorWith(logger.warn(_)(s"Failed acceptance of an allow spend block with ${hash.show}"))
+              }
+            }.void
+          case None => ().pure[F]
+        }
       }
 
     def blockConsensus: Stream[F, Unit] =
@@ -164,6 +187,7 @@ object Swap {
         .through(storeBlock)
 
     blockConsensus
+      .merge(blockAcceptance)
 
   }
 }

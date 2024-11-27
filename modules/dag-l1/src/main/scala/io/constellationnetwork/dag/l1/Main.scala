@@ -10,6 +10,7 @@ import io.constellationnetwork.dag.l1.config.types._
 import io.constellationnetwork.dag.l1.domain.snapshot.programs.DAGSnapshotProcessor
 import io.constellationnetwork.dag.l1.http.p2p.P2PClient
 import io.constellationnetwork.dag.l1.infrastructure.block.rumor.handler.blockRumorHandler
+import io.constellationnetwork.dag.l1.infrastructure.swap.rumor.handler.allowSpendBlockRumorHandler
 import io.constellationnetwork.dag.l1.modules._
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.kryo._
@@ -57,14 +58,16 @@ object Main
       cfg = method.appConfig(cfgR, sharedConfig)
 
       queues <- Queues.make[IO](sharedQueues).asResource
-      validators = Validators
-        .make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
-          cfg.shared,
-          seedlist,
-          cfg.transactionLimit,
-          None,
-          Hasher.forKryo[IO]
-        )
+      validators = hasherSelector.withCurrent { implicit hasher =>
+        Validators
+          .make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
+            cfg.shared,
+            seedlist,
+            cfg.transactionLimit,
+            None,
+            Hasher.forKryo[IO]
+          )
+      }
       storages <- Storages
         .make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo](
           sharedStorages,
@@ -108,7 +111,8 @@ object Main
       rumorHandler = RumorHandlers
         .make[IO](storages.cluster, services.localHealthcheck, sharedStorages.forkInfo)
         .handlers <+>
-        blockRumorHandler(queues.peerBlock)
+        blockRumorHandler[IO](queues.peerBlock) <+>
+        allowSpendBlockRumorHandler[IO](queues.allowSpendBlocks)
 
       _ <- Daemons
         .start(storages, services)
@@ -156,6 +160,7 @@ object Main
           p2pClient.swapConsensusClient,
           services,
           storages.allowSpend,
+          storages.allowSpendBlock,
           queues,
           validators.allowSpend,
           keyPair,

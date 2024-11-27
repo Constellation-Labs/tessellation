@@ -5,6 +5,7 @@ import cats.effect.kernel.Async
 
 import io.constellationnetwork.dag.l1.config.types.AppConfig
 import io.constellationnetwork.dag.l1.domain.block.BlockService
+import io.constellationnetwork.dag.l1.domain.swap.block.AllowSpendBlockService
 import io.constellationnetwork.dag.l1.domain.transaction.TransactionService
 import io.constellationnetwork.dag.l1.http.p2p.P2PClient
 import io.constellationnetwork.node.shared.cli.CliMethod
@@ -16,6 +17,7 @@ import io.constellationnetwork.node.shared.domain.healthcheck.LocalHealthcheck
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.domain.swap.AllowSpendService
+import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcceptanceManager
 import io.constellationnetwork.node.shared.domain.tokenlock.TokenLockService
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.collateral.Collateral
@@ -63,6 +65,13 @@ object Services {
       val session = sharedServices.session
       val transaction = TransactionService.make[F, P, S, SI](storages.transaction, storages.lastSnapshot, validators.transaction)
       val allowSpend = AllowSpendService.make[F, P, S, SI](storages.allowSpend, storages.lastSnapshot, validators.allowSpend)
+      val allowSpendBlock = AllowSpendBlockService.make[F](
+        AllowSpendBlockAcceptanceManager.make[F](validators.allowSpendBlock),
+        storages.address,
+        storages.allowSpendBlock,
+        storages.allowSpend,
+        cfg.collateral.amount
+      )
       val tokenLock = TokenLockService.make[F, P, S, SI](storages.tokenLock, storages.lastSnapshot, validators.tokenLock)
       val collateral = Collateral.make[F](cfg.collateral, storages.lastSnapshot)
       val restart = sharedServices.restart
@@ -78,6 +87,7 @@ trait Services[F[_], P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P], R <:
   val session: Session[F]
   val transaction: TransactionService[F]
   val allowSpend: AllowSpendService[F]
+  val allowSpendBlock: AllowSpendBlockService[F]
   val tokenLock: TokenLockService[F]
   val collateral: Collateral[F]
   val restart: RestartService[F, R]

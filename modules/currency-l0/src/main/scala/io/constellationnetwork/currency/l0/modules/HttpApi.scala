@@ -8,7 +8,7 @@ import cats.syntax.semigroupk._
 import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationCustomRoutes
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL0Service, L0NodeContext}
 import io.constellationnetwork.currency.l0.cli.method.Run
-import io.constellationnetwork.currency.l0.http.routes.{CurrencyBlockRoutes, CurrencyMessageRoutes, DataBlockRoutes}
+import io.constellationnetwork.currency.l0.http.routes._
 import io.constellationnetwork.currency.l0.snapshot.CurrencySnapshotKey
 import io.constellationnetwork.currency.l0.snapshot.schema.CurrencyConsensusOutcome
 import io.constellationnetwork.currency.schema.currency._
@@ -43,7 +43,8 @@ object HttpApi {
     httpCfg: HttpConfig,
     mkCell: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _],
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
-    maybeMetagraphVersion: Option[MetagraphVersion]
+    maybeMetagraphVersion: Option[MetagraphVersion],
+    queues: Queues[F]
   ): HttpApi[F] =
     new HttpApi[F](
       validators,
@@ -57,7 +58,8 @@ object HttpApi {
       httpCfg,
       mkCell,
       maybeDataApplication,
-      maybeMetagraphVersion
+      maybeMetagraphVersion,
+      queues
     ) {}
 }
 
@@ -73,7 +75,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   httpCfg: HttpConfig,
   mkCell: CurrencySnapshotEvent => Cell[F, StackF, _, Either[CellError, Ω], _],
   maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
-  maybeMetagraphVersion: Option[MetagraphVersion]
+  maybeMetagraphVersion: Option[MetagraphVersion],
+  queues: Queues[F]
 ) {
 
   private val snapshotRoutes = SnapshotRoutes[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
@@ -92,6 +95,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   private val registrationRoutes = RegistrationRoutes[F](services.cluster)
   private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip)
   private val currencyBlockRoutes = CurrencyBlockRoutes[F](mkCell)
+  private val allowSpendBlockRoutes = AllowSpendBlockRoutes[F](queues.l1Output)
   private val dataBlockRoutes = maybeDataApplication.map { da =>
     implicit val (d, e) = (da.dataDecoder, da.calculatedStateEncoder)
     DataBlockRoutes[F](mkCell, da)
@@ -145,7 +149,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
               consensusInfoRoutes.publicRoutes <+>
               metagraphNodeRoutes.map(_.publicRoutes).getOrElse(HttpRoutes.empty) <+>
               currencyMessageRoutes <+>
-              DataApplicationCustomRoutes.publicRoutes[F, L0NodeContext[F]](maybeDataApplication)
+              DataApplicationCustomRoutes.publicRoutes[F, L0NodeContext[F]](maybeDataApplication) <+>
+              allowSpendBlockRoutes.publicRoutes
           }
         }
     }
