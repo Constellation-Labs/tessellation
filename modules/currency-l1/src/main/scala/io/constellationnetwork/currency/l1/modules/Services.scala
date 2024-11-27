@@ -15,6 +15,7 @@ import io.constellationnetwork.node.shared.domain.cluster.storage.L0ClusterStora
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.domain.swap.AllowSpendService
+import io.constellationnetwork.node.shared.domain.tokenlock.TokenLockService
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.collateral.Collateral
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
@@ -69,6 +70,11 @@ object Services {
         storages.allowSpend,
         storages.lastSnapshot,
         validators.allowSpend
+      )
+      val tokenLock = TokenLockService.make[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](
+        storages.tokenLock,
+        storages.lastSnapshot,
+        validators.tokenLock
       )
       val collateral = Collateral.make[F](cfg.collateral, storages.lastSnapshot)
       val dataApplication = maybeDataApplication

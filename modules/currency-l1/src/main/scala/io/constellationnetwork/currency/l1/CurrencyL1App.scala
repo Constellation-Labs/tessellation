@@ -100,7 +100,8 @@ abstract class CurrencyL1App(
             method.globalL0Peer,
             method.identifier,
             validators.transactionContextual,
-            validators.allowSpendContextual
+            validators.allowSpendContextual,
+            validators.tokenLockContextual
           )
       }.asResource
       dagP2PClient = DAGP2PClient
@@ -258,8 +259,8 @@ abstract class CurrencyL1App(
               programs.globalL0PeerDiscovery.discover(latestSnapshot.signed.proofs.map(_.id).map(PeerId._Id.reverseGet))
           }
         }
-      _ <- services.dataApplication.map { da =>
-        hasherSelector.withCurrent { implicit hasher =>
+      _ <- hasherSelector.withCurrent { implicit hasher =>
+        services.dataApplication.map { da =>
           DataApplication
             .run(
               cfg.dataConsensus,
@@ -275,32 +276,52 @@ abstract class CurrencyL1App(
               keyPair,
               nodeId
             )
+            .merge(globalL0PeerDiscovery)
+            .merge(stateChannel.globalSnapshotProcessing)
+            .compile
+            .drain
+            .handleErrorWith { error =>
+              logger.error(error)("An error occured during state channel runtime") >> error.raiseError[IO, Unit]
+            }
+        }.getOrElse {
+          Swap.run(
+              cfg.swap,
+              storages.cluster,
+              storages.l0Cluster,
+              storages.lastGlobalSnapshot,
+              storages.node,
+              p2pClient.l0BlockOutputClient,
+              p2pClient.swapConsensusClient,
+              services,
+              storages.allowSpend,
+              queues,
+              validators.allowSpend,
+              keyPair,
+              nodeId
+            )
             .merge {
-              Swap.run(
-                cfg.swap,
+              TokenLock.run(
+                cfg.tokenLock,
                 storages.cluster,
                 storages.l0Cluster,
                 storages.lastGlobalSnapshot,
                 storages.node,
                 p2pClient.l0BlockOutputClient,
-                p2pClient.swapConsensusClient,
+                p2pClient.tokenLockConsensusClient,
                 services,
-                storages.allowSpend,
+                storages.tokenLock,
                 queues,
-                validators.allowSpend,
+                validators.tokenLock,
                 keyPair,
                 nodeId
               )
             }
-        }
-          .merge(globalL0PeerDiscovery)
-          .merge(stateChannel.globalSnapshotProcessing)
-          .compile
-          .drain
-          .handleErrorWith { error =>
-            logger.error(error)("An error occured during state channel runtime") >> error.raiseError[IO, Unit]
-          }
-      }.getOrElse(stateChannel.runtime.merge(globalL0PeerDiscovery).compile.drain).asResource
+            .merge(stateChannel.runtime)
+            .merge(globalL0PeerDiscovery)
+            .compile
+            .drain
+        }.asResource
+      }
     } yield ()
   }
 }
