@@ -31,7 +31,8 @@ object types {
     priorityPeerIds: Map[AppEnvironment, NonEmptySet[PeerId]],
     lastKryoHashOrdinal: Map[AppEnvironment, SnapshotOrdinal],
     addresses: AddressesConfig,
-    allowSpends: AllowSpendsConfig
+    allowSpends: AllowSpendsConfig,
+    tokenLocks: TokenLocksConfig
   )
 
   case class SharedConfig(
@@ -48,7 +49,8 @@ object types {
     forkInfoStorage: ForkInfoStorageConfig,
     lastKryoHashOrdinal: Map[AppEnvironment, SnapshotOrdinal],
     addresses: AddressesConfig,
-    allowSpends: AllowSpendsConfig
+    allowSpends: AllowSpendsConfig,
+    tokenLocks: TokenLocksConfig
   )
 
   case class SharedTrustConfig(
@@ -152,4 +154,5 @@ object types {
   case class MinMax(min: NonNegLong, max: NonNegLong)
   case class AllowSpendsConfig(lastValidEpochProgress: MinMax)
 
+  case class TokenLocksConfig(minEpochProgressesToLock: NonNegLong)
 }

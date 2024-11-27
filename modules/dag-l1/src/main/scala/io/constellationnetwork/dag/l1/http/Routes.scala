@@ -7,6 +7,7 @@ import cats.syntax.functor._
 import cats.syntax.show._
 
 import io.constellationnetwork.currency.swap.{ConsensusInput => SwapConsensusInput}
+import io.constellationnetwork.currency.tokenlock.{ConsensusInput => TokenLockConsensusInput}
 import io.constellationnetwork.dag.l1.domain.consensus.block.BlockConsensusInput.PeerBlockConsensusInput
 import io.constellationnetwork.dag.l1.domain.transaction._
 import io.constellationnetwork.ext.http4s.{AddressVar, HashVar}
@@ -32,6 +33,7 @@ final case class Routes[F[_]: Async](
   l0ClusterStorage: L0ClusterStorage[F],
   peerBlockConsensusInputQueue: Queue[F, Signed[PeerBlockConsensusInput]],
   swapPeerConsensusInputQueue: Queue[F, Signed[SwapConsensusInput.PeerConsensusInput]],
+  tokenLockPeerConsensusInputQueue: Queue[F, Signed[TokenLockConsensusInput.PeerConsensusInput]],
   txHasher: Hasher[F]
 )(implicit S: Supervisor[F])
     extends Http4sDsl[F]

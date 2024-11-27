@@ -20,7 +20,7 @@ import io.constellationnetwork.schema.round.RoundId
 import io.constellationnetwork.schema.swap.CurrencyId
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
-import io.constellationnetwork.security.{Encodable, Hashed, Hasher}
+import io.constellationnetwork.security.{Hashed, Hasher}
 
 import derevo.cats.{eqv, order, show}
 import derevo.circe.magnolia.{decoder, encoder}
@@ -112,10 +112,7 @@ object tokenLock {
   case class TokenLockBlock(
     roundId: RoundId,
     transactions: NonEmptySet[Signed[TokenLock]]
-  ) extends Encodable[(RoundId, NonEmptySet[Signed[TokenLock]])] {
-    override def toEncode = (roundId, transactions)
-    override def jsonEncoder = implicitly
-  }
+  )
 
   object TokenLockBlock {
     implicit val roundIdShow: Show[RoundId] = RoundId.shortShow
