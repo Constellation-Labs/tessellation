@@ -6,6 +6,7 @@ import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSnapshotSync
 import io.constellationnetwork.schema.Block
 import io.constellationnetwork.schema.currencyMessage.CurrencyMessage
+import io.constellationnetwork.schema.swap.AllowSpendBlock
 import io.constellationnetwork.security.signature.Signed
 
 import derevo.cats.eqv
@@ -27,6 +28,9 @@ object currency {
 
   @derive(encoder, decoder, eqv)
   case class BlockEvent(value: Signed[Block]) extends CurrencySnapshotEvent
+
+  @derive(encoder, decoder, eqv)
+  case class AllowSpendBlockEvent(value: Signed[AllowSpendBlock]) extends CurrencySnapshotEvent
 
   @derive(eqv)
   case class DataApplicationBlockEvent(value: Signed[DataApplicationBlock]) extends CurrencySnapshotEvent
