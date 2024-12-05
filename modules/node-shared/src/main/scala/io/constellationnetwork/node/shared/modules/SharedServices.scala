@@ -18,6 +18,7 @@ import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.healthcheck.LocalHealthcheck
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
+import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcceptanceManager
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
 import io.constellationnetwork.node.shared.http.p2p.clients.NodeClient
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
@@ -80,6 +81,7 @@ object SharedServices {
       currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
         BlockAcceptanceManager.make[F](validators.currencyBlockValidator, txHasher),
         TokenLockBlockAcceptanceManager.make[F](validators.tokenLockBlockValidator),
+        AllowSpendBlockAcceptanceManager.make[F](validators.allowSpendBlockValidator),
         collateral.amount,
         validators.currencyMessageValidator,
         validators.globalSnapshotSyncValidator
