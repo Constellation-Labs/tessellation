@@ -9,6 +9,7 @@ import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.dag.l1.config.types.AppConfig
 import io.constellationnetwork.dag.l1.domain.block.BlockService
 import io.constellationnetwork.dag.l1.domain.swap.block.AllowSpendBlockService
+import io.constellationnetwork.dag.l1.domain.tokenlock.block.TokenLockBlockService
 import io.constellationnetwork.dag.l1.domain.transaction.TransactionService
 import io.constellationnetwork.dag.l1.modules.{Services => BaseServices, Validators}
 import io.constellationnetwork.node.shared.cli.CliMethod
@@ -18,6 +19,7 @@ import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotS
 import io.constellationnetwork.node.shared.domain.swap.AllowSpendService
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcceptanceManager
 import io.constellationnetwork.node.shared.domain.tokenlock.TokenLockService
+import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.collateral.Collateral
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
@@ -84,6 +86,13 @@ object Services {
         storages.tokenLock,
         storages.lastSnapshot,
         validators.tokenLock
+      )
+      val tokenLockBlock = TokenLockBlockService.make[F](
+        TokenLockBlockAcceptanceManager.make[F](validators.tokenLockBlock),
+        storages.address,
+        storages.tokenLockBlock,
+        storages.tokenLock,
+        cfg.collateral.amount
       )
       val collateral = Collateral.make[F](cfg.collateral, storages.lastSnapshot)
       val dataApplication = maybeDataApplication

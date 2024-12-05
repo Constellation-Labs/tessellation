@@ -17,12 +17,13 @@ import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorage, L0ClusterStorage}
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
+import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockStorage
 import io.constellationnetwork.node.shared.domain.tokenlock.consensus.Validator._
 import io.constellationnetwork.node.shared.domain.tokenlock.consensus.config.TokenLockConsensusConfig
 import io.constellationnetwork.node.shared.domain.tokenlock.consensus.{ConsensusClient, ConsensusState, Engine}
 import io.constellationnetwork.node.shared.domain.tokenlock.{TokenLockStorage, TokenLockValidator}
+import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalSnapshotStateProof}
 import io.constellationnetwork.security.{Hasher, SecurityProvider}
 
 import fs2.{Pipe, Stream}
@@ -42,6 +43,7 @@ object TokenLock {
     consensusClient: ConsensusClient[F],
     services: Services[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo, R],
     tokenLockStorage: TokenLockStorage[F],
+    tokenLockBlockStorage: TokenLockBlockStorage[F],
     queues: Queues[F],
     tokenLockValidator: TokenLockValidator[F],
     selfKeyPair: KeyPair,
@@ -148,7 +150,24 @@ object TokenLock {
 
     def storeBlock: Pipe[F, ConsensusOutput.FinalBlock, Unit] =
       _.evalMap { fb =>
-        logger.debug(s"TODO: Store block! ${fb.hashedBlock.hash}")
+        tokenLockBlockStorage.store(fb.hashedBlock).handleErrorWith(e => logger.debug(e)("TokenLockBlock storing failed."))
+      }
+
+    def blockAcceptance: Stream[F, Unit] = Stream
+      .awakeEvery(1.seconds)
+      .evalMap { _ =>
+        tokenLockBlockStorage.getWaiting.flatTap { awaiting =>
+          Applicative[F].whenA(awaiting.nonEmpty) {
+            logger.debug(s"Pulled following token lock blocks for acceptance ${awaiting.keySet}")
+          }
+        }.flatMap {
+          _.toList.traverse {
+            case (hash, signedBlock) =>
+              services.tokenLockBlock
+                .accept(signedBlock, SnapshotOrdinal.MinValue)
+                .handleErrorWith(logger.warn(_)(s"Failed acceptance of an token lock block with ${hash.show}"))
+          }
+        }.void
       }
 
     def blockConsensus: Stream[F, Unit] =
@@ -160,6 +179,6 @@ object TokenLock {
         .through(storeBlock)
 
     blockConsensus
-
+      .merge(blockAcceptance)
   }
 }

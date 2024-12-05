@@ -76,7 +76,7 @@ object tokenLock {
     source: Address,
     amount: TokenLockAmount,
     parent: TokenLockReference,
-    currencyId: CurrencyId,
+    currencyId: Option[CurrencyId],
     unlockEpoch: EpochProgress
   ) {
     val ordinal: TokenLockOrdinal = parent.ordinal.next
@@ -108,15 +108,16 @@ object tokenLock {
       Decoder.decodeString.emapTry(s => Try(TokenLockStatus.withName(s)))
   }
 
-  @derive(decoder, encoder, show)
+  @derive(decoder, encoder, show, order)
   case class TokenLockBlock(
     roundId: RoundId,
-    transactions: NonEmptySet[Signed[TokenLock]]
+    tokenLocks: NonEmptySet[Signed[TokenLock]]
   )
 
   object TokenLockBlock {
     implicit val roundIdShow: Show[RoundId] = RoundId.shortShow
     implicit val transactionsDecoder: Decoder[NonEmptySet[Signed[TokenLock]]] =
       NonEmptySetCodec.decoder[Signed[TokenLock]]
+    implicit object OrderingInstance extends OrderBasedOrdering[TokenLockBlock]
   }
 }

@@ -195,7 +195,10 @@ object CurrencySnapshotProcessor {
         val bs = blockStorage.getState().flatMap(BlockStorage.make[F](_))
         val lcss =
           lastCurrencySnapshotStorage.getCombined.flatMap(LastSnapshotStorage.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](_))
-        val as = addressStorage.getState.flatMap(AddressStorage.make(_))
+        val as = addressStorage.getState.flatMap { state =>
+          val (balances) = state
+          AddressStorage.make(balances)
+        }
         val cv = ContextualTransactionValidator.make(transactionLimitConfig, None)
         val ts =
           transactionStorage.getState.flatMap {

@@ -116,7 +116,8 @@ object currency {
     def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[CurrencySnapshotStateProofV1] =
       (lastTxRefs.hash, balances.hash).tupled.map(CurrencySnapshotStateProofV1.apply)
 
-    def toCurrencySnapshotInfo: CurrencySnapshotInfo = CurrencySnapshotInfo(lastTxRefs, balances, None, None, None, None, None, None, None)
+    def toCurrencySnapshotInfo: CurrencySnapshotInfo =
+      CurrencySnapshotInfo(lastTxRefs, balances, None, None, None, None, None, None, None)
   }
 
   object CurrencySnapshotInfoV1 {
@@ -179,6 +180,7 @@ object currency {
     globalSnapshotSyncs: Option[SortedSet[Signed[GlobalSnapshotSync]]] = SortedSet.empty[Signed[GlobalSnapshotSync]].some,
     feeTransactions: Option[SortedSet[Signed[FeeTransaction]]] = None,
     artifacts: Option[SortedSet[SharedArtifact]] = SortedSet.empty[SharedArtifact].some,
+    tokenLockBlocks: Option[SortedSet[Signed[TokenLockBlock]]] = SortedSet.empty[Signed[TokenLockBlock]].some,
     version: SnapshotVersion = SnapshotVersion("0.0.1")
   ) extends IncrementalSnapshot[CurrencySnapshotStateProof]
 
@@ -196,6 +198,7 @@ object currency {
           stateProof.toCurrencySnapshotStateProof,
           snapshot.epochProgress,
           snapshot.dataApplication,
+          None,
           None,
           None,
           None,
@@ -231,6 +234,7 @@ object currency {
         stateProof.toCurrencySnapshotStateProof,
         epochProgress,
         dataApplication,
+        None,
         None,
         None,
         None,
@@ -286,6 +290,7 @@ object currency {
           stateProof.toCurrencySnapshotStateProof,
           genesis.epochProgress,
           genesis.dataApplication,
+          None,
           None,
           None,
           None,

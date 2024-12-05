@@ -21,6 +21,7 @@ import io.constellationnetwork.dag.l1.domain.transaction.CustomContextualTransac
 import io.constellationnetwork.dag.l1.http.p2p.{P2PClient => DAGP2PClient}
 import io.constellationnetwork.dag.l1.infrastructure.block.rumor.handler.blockRumorHandler
 import io.constellationnetwork.dag.l1.infrastructure.swap.rumor.handler.allowSpendBlockRumorHandler
+import io.constellationnetwork.dag.l1.infrastructure.tokenlock.rumor.handler.tokenLockBlockRumorHandler
 import io.constellationnetwork.dag.l1.modules.{Daemons => DAGL1Daemons, Queues => DAGL1Queues, Validators => DAGL1Validators}
 import io.constellationnetwork.dag.l1.{DagL1KryoRegistrationIdRange, StateChannel, dagL1KryoRegistrar}
 import io.constellationnetwork.ext.cats.effect.ResourceIO
@@ -37,6 +38,7 @@ import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.node.NodeState.SessionStarted
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
+import io.constellationnetwork.schema.swap.CurrencyId
 import io.constellationnetwork.security.Hasher
 
 import com.monovore.decline.Opts
@@ -92,7 +94,8 @@ abstract class CurrencyL1App(
             seedlist,
             cfg.transactionLimit,
             transactionValidator,
-            txHasher
+            txHasher,
+            CurrencyId(method.identifier).some
           )
       }
       storages <- hasherSelector.withCurrent { implicit hasher =>
@@ -158,7 +161,8 @@ abstract class CurrencyL1App(
         .make[IO](storages.cluster, services.localHealthcheck, sharedStorages.forkInfo)
         .handlers <+>
         blockRumorHandler[IO](queues.peerBlock) <+>
-        allowSpendBlockRumorHandler[IO](queues.allowSpendBlocks)
+        allowSpendBlockRumorHandler[IO](queues.allowSpendBlocks) <+>
+        tokenLockBlockRumorHandler[IO](queues.tokenLocksBlocks)
 
       _ <- DAGL1Daemons
         .start(storages, services)
@@ -316,6 +320,7 @@ abstract class CurrencyL1App(
                 p2pClient.tokenLockConsensusClient,
                 services,
                 storages.tokenLock,
+                storages.tokenLockBlock,
                 queues,
                 validators.tokenLock,
                 keyPair,

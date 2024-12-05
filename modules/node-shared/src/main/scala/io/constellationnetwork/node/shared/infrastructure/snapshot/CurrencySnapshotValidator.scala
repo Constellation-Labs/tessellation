@@ -113,11 +113,12 @@ object CurrencySnapshotValidator {
       def mkEvents: F[Set[CurrencySnapshotEvent]] = for {
         dataApplicationEvents <- dataApplicationBlocks.map(_.map(DataApplicationBlockEvent(_)).toSet)
         blockEvents = expected.blocks.unsorted.map(_.block).map(BlockEvent(_))
+        tokenLockBlockEvents = expected.tokenLockBlocks.map(_.unsorted.map(TokenLockBlockEvent(_))).getOrElse(Set.empty)
         messageEvents = expected.messages.map(_.toSet.map(CurrencyMessageEvent(_))).getOrElse(Set.empty[CurrencyMessageEvent])
         globalSnapshotSyncEvents = expected.globalSnapshotSyncs
           .map(_.toSet.map(GlobalSnapshotSyncEvent(_)))
           .getOrElse(Set.empty[GlobalSnapshotSyncEvent])
-      } yield dataApplicationEvents ++ blockEvents ++ messageEvents ++ globalSnapshotSyncEvents
+      } yield dataApplicationEvents ++ blockEvents ++ messageEvents ++ globalSnapshotSyncEvents ++ tokenLockBlockEvents
 
       // Rewrite if implementation not provided
       val rewards = maybeRewards.orElse(Some {
@@ -145,7 +146,8 @@ object CurrencySnapshotValidator {
                 trigger,
                 events,
                 rewards,
-                facilitators
+                facilitators,
+                expected.artifacts.map(() => _)
               )
 
           def check(result: F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]) =
