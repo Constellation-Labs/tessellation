@@ -78,7 +78,14 @@ object JsonBinarySerializerSuite extends MutableIOSuite {
             SortedSet(ActiveTip(BlockReference(Height(122L), ProofsHash("bbbb")), 2L, SnapshotOrdinal(55L)))
           ),
           stateProof = sp,
-          epochProgress = EpochProgress.MinValue
+          epochProgress = EpochProgress.MinValue,
+          None,
+          None,
+          None,
+          None,
+          None,
+          None,
+          None
         ),
         NonEmptySet.one(SignatureProof(ID.Id(Hex("")), Signature(Hex(""))))
       )

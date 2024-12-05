@@ -10,6 +10,8 @@ import io.constellationnetwork.node.shared.config.types.AddressesConfig
 import io.constellationnetwork.node.shared.domain.block.processing.BlockValidator
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.domain.statechannel.{FeeCalculator, FeeCalculatorConfig, StateChannelValidator}
+import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockValidator
+import io.constellationnetwork.node.shared.domain.swap.{AllowSpendChainValidator, AllowSpendValidator}
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockValidator
 import io.constellationnetwork.node.shared.domain.tokenlock.{TokenLockChainValidator, TokenLockValidator}
 import io.constellationnetwork.node.shared.domain.transaction.{TransactionChainValidator, TransactionValidator}
@@ -49,6 +51,9 @@ object SharedValidators {
       StateChannelValidator.make[F](signedValidator, l0Seedlist, stateChannelAllowanceLists, maxBinarySizeInBytes, feeCalculator)
     val currencyMessageValidator = CurrencyMessageValidator.make[F](signedValidator, stateChannelAllowanceLists, seedlist)
     val globalSnapshotSyncValidator = GlobalSnapshotSyncValidator.make[F](signedValidator, seedlist)
+    val allowSpendChainValidator = AllowSpendChainValidator.make[F]
+    val allowSpendValidator = AllowSpendValidator.make[F](signedValidator)
+    val allowSpendBlockValidator = AllowSpendBlockValidator.make[F](signedValidator, allowSpendChainValidator, allowSpendValidator)
 
     val tokenLockValidator = TokenLockValidator.make[F](signedValidator)
     val tokenLockChainValidator = TokenLockChainValidator.make[F]
@@ -66,7 +71,8 @@ object SharedValidators {
       stateChannelValidator,
       currencyMessageValidator,
       globalSnapshotSyncValidator,
-      tokenLockBlockValidator
+      tokenLockBlockValidator,
+      allowSpendBlockValidator
     ) {}
   }
 }
@@ -83,5 +89,6 @@ sealed abstract class SharedValidators[F[_]] private (
   val stateChannelValidator: StateChannelValidator[F],
   val currencyMessageValidator: CurrencyMessageValidator[F],
   val globalSnapshotSyncValidator: GlobalSnapshotSyncValidator[F],
-  val tokenLockBlockValidator: TokenLockBlockValidator[F]
+  val tokenLockBlockValidator: TokenLockBlockValidator[F],
+  val allowSpendBlockValidator: AllowSpendBlockValidator[F]
 )
