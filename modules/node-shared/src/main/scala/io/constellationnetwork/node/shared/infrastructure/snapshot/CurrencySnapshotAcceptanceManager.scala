@@ -10,12 +10,20 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSnapshotSync
 import io.constellationnetwork.node.shared.domain.block.processing._
+import io.constellationnetwork.node.shared.domain.tokenlock.block.{
+  TokenLockBlockAcceptanceContext,
+  TokenLockBlockAcceptanceManager,
+  TokenLockBlockAcceptanceResult
+}
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.artifact.SharedArtifact
+import io.constellationnetwork.schema.artifact.{SharedArtifact, TokenUnlock}
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.currencyMessage._
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.tokenLock.TokenLockAmount.toAmount
+import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockBlock, TokenLockReference}
 import io.constellationnetwork.schema.transaction.{RewardTransaction, Transaction, TransactionReference}
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.Signed
@@ -37,6 +45,7 @@ case class GlobalSnapshotSyncAcceptanceResult(
 
 case class CurrencySnapshotAcceptanceResult(
   block: BlockAcceptanceResult,
+  tokenLockBlock: TokenLockBlockAcceptanceResult,
   messages: CurrencyMessagesAcceptanceResult,
   globalSnapshotSync: GlobalSnapshotSyncAcceptanceResult,
   rewards: SortedSet[RewardTransaction],
@@ -48,11 +57,13 @@ case class CurrencySnapshotAcceptanceResult(
 trait CurrencySnapshotAcceptanceManager[F[_]] {
   def accept(
     blocksForAcceptance: List[Signed[Block]],
+    tokenLockBlocksForAcceptance: List[Signed[TokenLockBlock]],
     messagesForAcceptance: List[Signed[CurrencyMessage]],
     globalSnapshotSyncsForAcceptance: List[Signed[GlobalSnapshotSync]],
     sharedArtifactsForAcceptance: SortedSet[SharedArtifact],
     lastSnapshotContext: CurrencySnapshotContext,
     snapshotOrdinal: SnapshotOrdinal,
+    epochProgress: EpochProgress,
     lastActiveTips: SortedSet[ActiveTip],
     lastDeprecatedTips: SortedSet[DeprecatedTip],
     calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]],
@@ -63,26 +74,29 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
 object CurrencySnapshotAcceptanceManager {
   def make[F[_]: Async](
     blockAcceptanceManager: BlockAcceptanceManager[F],
+    tokenLockBlockAcceptanceManager: TokenLockBlockAcceptanceManager[F],
     collateral: Amount,
     messageValidator: CurrencyMessageValidator[F],
     globalSnapshotSyncValidator: GlobalSnapshotSyncValidator[F]
   ) = new CurrencySnapshotAcceptanceManager[F] {
-
     def accept(
       blocksForAcceptance: List[Signed[Block]],
+      tokenLockBlocksForAcceptance: List[Signed[TokenLockBlock]],
       messagesForAcceptance: List[Signed[CurrencyMessage]],
       globalSnapshotSyncsForAcceptance: List[Signed[GlobalSnapshotSync]],
       sharedArtifactsForAcceptance: SortedSet[SharedArtifact],
       lastSnapshotContext: CurrencySnapshotContext,
       snapshotOrdinal: SnapshotOrdinal,
+      epochProgress: EpochProgress,
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip],
       calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]],
       facilitators: Set[PeerId]
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult] = for {
       initialTxRef <- TransactionReference.emptyCurrency(lastSnapshotContext.address)
+      tokenLockInitialTxRef <- TokenLockReference.emptyCurrency(lastSnapshotContext.address)
 
-      acceptanceResult <- acceptBlocks(
+      acceptanceBlocksResult <- acceptBlocks(
         blocksForAcceptance,
         lastSnapshotContext,
         snapshotOrdinal,
@@ -91,18 +105,30 @@ object CurrencySnapshotAcceptanceManager {
         initialTxRef
       )
 
-      acceptedTransactions = acceptanceResult.accepted.flatMap { case (block, _) => block.value.transactions.toSortedSet }.toSortedSet
+      acceptanceTokenLockBlocksResult <- acceptTokenLockBlocks(
+        tokenLockBlocksForAcceptance,
+        lastSnapshotContext,
+        snapshotOrdinal,
+        tokenLockInitialTxRef
+      )
+
+      acceptedTransactions = acceptanceBlocksResult.accepted.flatMap { case (block, _) => block.value.transactions.toSortedSet }.toSortedSet
 
       transactionsRefs = acceptTransactionRefs(
         lastSnapshotContext.snapshotInfo.lastTxRefs,
-        acceptanceResult.contextUpdate.lastTxRefs,
+        acceptanceBlocksResult.contextUpdate.lastTxRefs,
         acceptedTransactions
+      )
+
+      tokenLockRefs = acceptTokenLockRefs(
+        lastSnapshotContext.snapshotInfo.lastTokenLockRefsProof.getOrElse(SortedMap.empty[Address, TokenLockReference]),
+        acceptanceTokenLockBlocksResult.contextUpdate.lastTokenLocksRefs
       )
 
       rewards <- calculateRewardsFn(acceptedTransactions)
 
       (updatedBalancesByRewards, acceptedRewardTxs) = acceptRewardTxs(
-        lastSnapshotContext.snapshotInfo.balances ++ acceptanceResult.contextUpdate.balances,
+        lastSnapshotContext.snapshotInfo.balances ++ acceptanceBlocksResult.contextUpdate.balances,
         rewards
       )
 
@@ -121,22 +147,60 @@ object CurrencySnapshotAcceptanceManager {
         facilitators
       )
 
+      incomingTokenLocks = acceptanceTokenLockBlocksResult.accepted.flatMap { tokenLockBlock =>
+        tokenLockBlock.value.tokenLocks.toSortedSet
+      }.toSortedSet
+
+      activeTokenLocks = lastSnapshotContext.snapshotInfo.activeTokenLocks
+
+      tokenLocksReferences <-
+        (incomingTokenLocks.toList ++ activeTokenLocks.toList.flatMap(_.values).flatten)
+          .traverse(tl => TokenLockReference.of(tl))
+
+      tokenUnlocks = acceptedSharedArtifacts.collect {
+        case tokenUnlock: TokenUnlock => tokenUnlock
+      }
+
+      acceptedTokenLocks = acceptTokenLocks(
+        incomingTokenLocks,
+        EpochProgress.MinValue // TODO: Get last sync global snapshot epoch progress
+      )
+
+      acceptedTokenUnlocks = acceptTokenUnlocks(
+        tokenUnlocks,
+        tokenLocksReferences
+      )
+
+      updatedActiveTokenLocks <- updateActiveTokenLocks(
+        activeTokenLocks,
+        acceptedTokenLocks,
+        acceptedTokenUnlocks
+      )
+
+      updatedBalancesByTokenLocks = updateBalancesByTokenLocks(
+        acceptedTokenLocks,
+        acceptedTokenUnlocks,
+        updatedBalancesByRewards
+      )
+
       csi = CurrencySnapshotInfo(
         transactionsRefs,
-        updatedBalancesByRewards,
+        updatedBalancesByTokenLocks,
         Option.when(messagesAcceptanceResult.contextUpdate.nonEmpty)(messagesAcceptanceResult.contextUpdate),
         None,
         None,
         None,
         globalSnapshotSyncAcceptanceResult.contextUpdate.some,
-        None,
-        None
+        tokenLockRefs.some,
+        updatedActiveTokenLocks
       )
+
       stateProof <- csi.stateProof(snapshotOrdinal)
 
     } yield
       CurrencySnapshotAcceptanceResult(
-        acceptanceResult,
+        acceptanceBlocksResult,
+        acceptanceTokenLockBlocksResult,
         messagesAcceptanceResult,
         globalSnapshotSyncAcceptanceResult,
         acceptedRewardTxs,
@@ -225,6 +289,14 @@ object CurrencySnapshotAcceptanceManager {
       updatedRefs ++ newDestinationAddresses.toList.map(_ -> TransactionReference.empty)
     }
 
+    private def acceptTokenLockRefs(
+      lastTxRefs: SortedMap[Address, TokenLockReference],
+      lastTxRefsContextUpdate: Map[Address, TokenLockReference]
+    ): SortedMap[Address, TokenLockReference] = {
+      val updatedRefs = lastTxRefs ++ lastTxRefsContextUpdate
+      updatedRefs
+    }
+
     private def acceptBlocks(
       blocksForAcceptance: List[Signed[Block]],
       lastSnapshotContext: CurrencySnapshotContext,
@@ -245,6 +317,22 @@ object CurrencySnapshotAcceptanceManager {
       blockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context, snapshotOrdinal)
     }
 
+    private def acceptTokenLockBlocks(
+      tokenLockBlocksForAcceptance: List[Signed[TokenLockBlock]],
+      lastSnapshotContext: CurrencySnapshotContext,
+      snapshotOrdinal: SnapshotOrdinal,
+      initialTxRef: TokenLockReference
+    )(implicit hasher: Hasher[F]) = {
+      val context = TokenLockBlockAcceptanceContext.fromStaticData(
+        lastSnapshotContext.snapshotInfo.balances,
+        lastSnapshotContext.snapshotInfo.lastTokenLockRefsProof.getOrElse(SortedMap.empty),
+        collateral,
+        initialTxRef
+      )
+
+      tokenLockBlockAcceptanceManager.acceptBlocksIteratively(tokenLockBlocksForAcceptance, context, snapshotOrdinal)
+    }
+
     private def acceptRewardTxs(
       balances: SortedMap[Address, Balance],
       txs: SortedSet[RewardTransaction]
@@ -263,6 +351,86 @@ object CurrencySnapshotAcceptanceManager {
       sharedArtifactsForAcceptance: SortedSet[SharedArtifact]
     ): SortedSet[SharedArtifact] =
       sharedArtifactsForAcceptance
+
+    private def acceptTokenLocks(
+      incomingTokenLocks: SortedSet[Signed[TokenLock]],
+      lastSyncGlobalSnapshotEpochProgress: EpochProgress
+    ): SortedSet[Signed[TokenLock]] =
+      incomingTokenLocks.filter(itl => itl.unlockEpoch >= lastSyncGlobalSnapshotEpochProgress)
+
+    private def acceptTokenUnlocks(
+      incomingTokenUnlocks: SortedSet[TokenUnlock],
+      activeTokenLocksReferences: List[TokenLockReference]
+    ): SortedSet[TokenUnlock] =
+      incomingTokenUnlocks.filter { itu =>
+        activeTokenLocksReferences.contains(itu.lockReference)
+      }
+
+    private def updateActiveTokenLocks(
+      maybeActiveTokenLocks: Option[SortedMap[Address, SortedSet[Signed[TokenLock]]]],
+      acceptedTokenLocks: SortedSet[Signed[TokenLock]],
+      acceptedTokenUnlocks: SortedSet[TokenUnlock]
+    )(implicit hasher: Hasher[F]): F[Option[SortedMap[Address, SortedSet[Signed[TokenLock]]]]] =
+      if (acceptedTokenLocks.isEmpty && acceptedTokenUnlocks.isEmpty) {
+        maybeActiveTokenLocks.pure
+      } else {
+        val incomingTokenLocks = acceptedTokenLocks.groupBy(_.source).toSortedMap
+        val activeTokenLocks = maybeActiveTokenLocks.getOrElse(SortedMap.empty[Address, SortedSet[Signed[TokenLock]]])
+
+        val allTokenLocks = (incomingTokenLocks.keySet ++ activeTokenLocks.keySet).toList.map { address =>
+          address -> (incomingTokenLocks.getOrElse(address, SortedSet.empty[Signed[TokenLock]]) ++ activeTokenLocks.getOrElse(
+            address,
+            SortedSet.empty[Signed[TokenLock]]
+          ))
+        }.toSortedMap
+
+        if (acceptedTokenUnlocks.isEmpty) {
+          allTokenLocks.some.pure
+        } else {
+          allTokenLocks.toList.traverse {
+            case (address, set) =>
+              set.toList.filterA { signedTokenLock =>
+                TokenLockReference.of(signedTokenLock).map { tokenLockReference =>
+                  acceptedTokenUnlocks.forall(_.lockReference =!= tokenLockReference)
+                }
+              }.map(filteredSet => address -> filteredSet.toSortedSet)
+          }.map(_.toSortedMap.some)
+        }
+      }
+
+    private def updateBalancesByTokenLocks(
+      acceptedTokenLocks: SortedSet[Signed[TokenLock]],
+      acceptedTokenUnlocks: SortedSet[TokenUnlock],
+      balances: SortedMap[Address, Balance]
+    ): SortedMap[Address, Balance] =
+      if (acceptedTokenLocks.isEmpty && acceptedTokenUnlocks.isEmpty) {
+        balances
+      } else {
+        val balancesAfterTokenLocks = acceptedTokenLocks.foldLeft(balances) {
+          case (accBalances, signedTokenLock) =>
+            val tokenLock = signedTokenLock.value
+            val sourceAddress = tokenLock.source
+            val lastAddressBalance = accBalances.getOrElse(sourceAddress, Balance.empty)
+
+            val updatedBalance = lastAddressBalance
+              .minus(toAmount(tokenLock.amount))
+              .getOrElse(lastAddressBalance)
+
+            accBalances.updated(sourceAddress, updatedBalance)
+        }
+
+        acceptedTokenUnlocks.foldLeft(balancesAfterTokenLocks) {
+          case (accBalances, tokenUnlock) =>
+            val sourceAddress = tokenUnlock.address
+            val lastAddressBalance = accBalances.getOrElse(sourceAddress, Balance.empty)
+
+            val updatedBalance = lastAddressBalance
+              .plus(toAmount(tokenUnlock.amount))
+              .getOrElse(lastAddressBalance)
+
+            accBalances.updated(sourceAddress, updatedBalance)
+        }
+      }
 
     def getTipsUsages(
       lastActive: Set[ActiveTip],

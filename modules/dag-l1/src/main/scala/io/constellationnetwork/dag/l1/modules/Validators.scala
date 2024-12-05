@@ -12,11 +12,13 @@ import io.constellationnetwork.node.shared.domain.block.processing.BlockValidato
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockValidator
 import io.constellationnetwork.node.shared.domain.swap.{AllowSpendChainValidator, AllowSpendValidator, ContextualAllowSpendValidator}
-import io.constellationnetwork.node.shared.domain.tokenlock.{ContextualTokenLockValidator, TokenLockValidator}
+import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockValidator
+import io.constellationnetwork.node.shared.domain.tokenlock.{ContextualTokenLockValidator, TokenLockChainValidator, TokenLockValidator}
 import io.constellationnetwork.node.shared.domain.transaction._
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockValidator
 import io.constellationnetwork.node.shared.infrastructure.gossip.RumorValidator
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
+import io.constellationnetwork.schema.swap.CurrencyId
 import io.constellationnetwork.security.signature.SignedValidator
 import io.constellationnetwork.security.{Hasher, SecurityProvider}
 
@@ -32,7 +34,8 @@ object Validators {
     seedlist: Option[Set[SeedlistEntry]],
     transactionLimitConfig: TransactionLimitConfig,
     customContextualTransactionValidator: Option[CustomContextualTransactionValidator],
-    txHasher: Hasher[F]
+    txHasher: Hasher[F],
+    currencyId: Option[CurrencyId]
   ): Validators[F] = {
     val signedValidator = SignedValidator.make[F]
     val transactionChainValidator = TransactionChainValidator.make[F](txHasher)
@@ -52,8 +55,10 @@ object Validators {
     val contextualAllowSpendValidator = ContextualAllowSpendValidator.make(None, cfg.allowSpends)
     val allowSpendBlockValidator = AllowSpendBlockValidator.make[F](signedValidator, allowSpendChainValidator, allowSpendValidator)
 
-    val tokenLock = TokenLockValidator.make[F](signedValidator)
-    val contextualTokenLockValidator = ContextualTokenLockValidator.make(None, cfg.tokenLocks)
+    val tokenLockValidator = TokenLockValidator.make[F](signedValidator)
+    val tokenLockChainValidator = TokenLockChainValidator.make[F]
+    val contextualTokenLockValidator = ContextualTokenLockValidator.make(None, cfg.tokenLocks, currencyId)
+    val tokenLockBlockValidator = TokenLockBlockValidator.make[F](signedValidator, tokenLockChainValidator, tokenLockValidator)
 
     new Validators[F](
       signedValidator,
@@ -64,8 +69,9 @@ object Validators {
       allowSpendValidator,
       contextualAllowSpendValidator,
       allowSpendBlockValidator,
-      tokenLock,
-      contextualTokenLockValidator
+      tokenLockValidator,
+      contextualTokenLockValidator,
+      tokenLockBlockValidator
     ) {}
   }
 }
@@ -80,5 +86,6 @@ sealed abstract class Validators[F[_]] private (
   val allowSpendContextual: ContextualAllowSpendValidator,
   val allowSpendBlock: AllowSpendBlockValidator[F],
   val tokenLock: TokenLockValidator[F],
-  val tokenLockContextual: ContextualTokenLockValidator
+  val tokenLockContextual: ContextualTokenLockValidator,
+  val tokenLockBlock: TokenLockBlockValidator[F]
 )

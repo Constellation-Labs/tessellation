@@ -115,7 +115,7 @@ object TokenLockRoutesSuite extends HttpSuite {
     new TokenLockStorage[IO](
       emr,
       TokenLockReference.empty,
-      ContextualTokenLockValidator.make(none, TokenLocksConfig(NonNegLong(100L)))
+      ContextualTokenLockValidator.make(none, TokenLocksConfig(NonNegLong(100L)), currencyId.some)
     )
   }
 
@@ -136,7 +136,7 @@ object TokenLockRoutesSuite extends HttpSuite {
       src,
       amount,
       parent,
-      currencyId,
+      currencyId.some,
       lastValidEpochProgress
     )
 
