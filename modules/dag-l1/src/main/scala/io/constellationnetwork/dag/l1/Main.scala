@@ -11,6 +11,7 @@ import io.constellationnetwork.dag.l1.domain.snapshot.programs.DAGSnapshotProces
 import io.constellationnetwork.dag.l1.http.p2p.P2PClient
 import io.constellationnetwork.dag.l1.infrastructure.block.rumor.handler.blockRumorHandler
 import io.constellationnetwork.dag.l1.infrastructure.swap.rumor.handler.allowSpendBlockRumorHandler
+import io.constellationnetwork.dag.l1.infrastructure.tokenlock.rumor.handler.tokenLockBlockRumorHandler
 import io.constellationnetwork.dag.l1.modules._
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.kryo._
@@ -65,7 +66,8 @@ object Main
             seedlist,
             cfg.transactionLimit,
             None,
-            Hasher.forKryo[IO]
+            Hasher.forKryo[IO],
+            None
           )
       }
       storages <- Storages
@@ -112,7 +114,8 @@ object Main
         .make[IO](storages.cluster, services.localHealthcheck, sharedStorages.forkInfo)
         .handlers <+>
         blockRumorHandler[IO](queues.peerBlock) <+>
-        allowSpendBlockRumorHandler[IO](queues.allowSpendBlocks)
+        allowSpendBlockRumorHandler[IO](queues.allowSpendBlocks) <+>
+        tokenLockBlockRumorHandler[IO](queues.tokenLocksBlocks)
 
       _ <- Daemons
         .start(storages, services)
@@ -179,6 +182,7 @@ object Main
           p2pClient.tokenLockConsensusClient,
           services,
           storages.tokenLock,
+          storages.tokenLockBlock,
           queues,
           validators.tokenLock,
           keyPair,

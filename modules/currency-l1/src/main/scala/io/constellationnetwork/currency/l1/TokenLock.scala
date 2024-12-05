@@ -19,6 +19,7 @@ import io.constellationnetwork.dag.l1.http.p2p.L0BlockOutputClient
 import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorage, L0ClusterStorage}
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
+import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockStorage
 import io.constellationnetwork.node.shared.domain.tokenlock.consensus.Validator._
 import io.constellationnetwork.node.shared.domain.tokenlock.consensus.config.TokenLockConsensusConfig
 import io.constellationnetwork.node.shared.domain.tokenlock.consensus.{ConsensusClient, ConsensusState, Engine}
@@ -41,6 +42,7 @@ object TokenLock {
     consensusClient: ConsensusClient[F],
     services: Services[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run],
     tokenLockStorage: TokenLockStorage[F],
+    tokenLockBlockStorage: TokenLockBlockStorage[F],
     queues: Queues[F],
     tokenLockValidator: TokenLockValidator[F],
     selfKeyPair: KeyPair,
@@ -127,10 +129,60 @@ object TokenLock {
           }
       }
 
-    blockConsensusInputs
-      .through(runConsensus)
-      .through(sendBlockToL0)
-      .void
+    def gossipBlock: Pipe[F, ConsensusOutput.FinalBlock, ConsensusOutput.FinalBlock] =
+      _.evalTap { fb =>
+        services.gossip
+          .spreadCommon(fb.hashedBlock.signed)
+          .handleErrorWith(e => logger.warn(e)("TokenLockBlock gossip spread failed!"))
+      }
+
+    def peerBlocks: Stream[F, ConsensusOutput.FinalBlock] = Stream
+      .fromQueueUnterminated(queues.tokenLocksBlocks)
+      .evalMap(_.toHashedWithSignatureCheck)
+      .evalTap {
+        case Left(e)  => logger.warn(e)("Received an invalidly signed token lock block!")
+        case Right(_) => Async[F].unit
+      }
+      .collect {
+        case Right(hashedBlock) => ConsensusOutput.FinalBlock(hashedBlock)
+      }
+
+    def storeBlock: Pipe[F, ConsensusOutput.FinalBlock, Unit] =
+      _.evalMap { fb =>
+        tokenLockBlockStorage.store(fb.hashedBlock).handleErrorWith(e => logger.debug(e)("TokenLockBlock storing failed."))
+      }
+
+    def blockAcceptance: Stream[F, Unit] = Stream
+      .awakeEvery(1.seconds)
+      .evalMap { _ =>
+        lastGlobalSnapshot.getOrdinal.flatMap {
+          case Some(snapshotOrdinal) =>
+            tokenLockBlockStorage.getWaiting.flatTap { awaiting =>
+              Applicative[F].whenA(awaiting.nonEmpty) {
+                logger.debug(s"Pulled following token lock blocks for acceptance ${awaiting.keySet}")
+              }
+            }.flatMap {
+              _.toList.traverse {
+                case (hash, signedBlock) =>
+                  services.tokenLockBlock
+                    .accept(signedBlock, snapshotOrdinal)
+                    .handleErrorWith(logger.warn(_)(s"Failed acceptance of an token lock block with ${hash.show}"))
+              }
+            }.void
+          case None => ().pure[F]
+        }
+      }
+
+    def blockConsensus: Stream[F, Unit] =
+      blockConsensusInputs
+        .through(runConsensus)
+        .through(gossipBlock)
+        .through(sendBlockToL0)
+        .merge(peerBlocks)
+        .through(storeBlock)
+
+    blockConsensus
+      .merge(blockAcceptance)
 
   }
 }

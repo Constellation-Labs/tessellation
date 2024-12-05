@@ -18,6 +18,7 @@ import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.healthcheck.LocalHealthcheck
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
+import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
 import io.constellationnetwork.node.shared.http.p2p.clients.NodeClient
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.cluster.services.Cluster
@@ -78,6 +79,7 @@ object SharedServices {
       gossip <- HasherSelector[F].withCurrent(implicit hasher => Gossip.make[F](queues.rumor, nodeId, generation, keyPair))
       currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
         BlockAcceptanceManager.make[F](validators.currencyBlockValidator, txHasher),
+        TokenLockBlockAcceptanceManager.make[F](validators.tokenLockBlockValidator),
         collateral.amount,
         validators.currencyMessageValidator,
         validators.globalSnapshotSyncValidator

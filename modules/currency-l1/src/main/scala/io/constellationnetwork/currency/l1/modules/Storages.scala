@@ -14,6 +14,7 @@ import io.constellationnetwork.node.shared.domain.cluster.storage.L0ClusterStora
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockStorage
 import io.constellationnetwork.node.shared.domain.swap.{AllowSpendStorage, ContextualAllowSpendValidator}
+import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockStorage
 import io.constellationnetwork.node.shared.domain.tokenlock.{ContextualTokenLockValidator, TokenLockStorage}
 import io.constellationnetwork.node.shared.infrastructure.cluster.storage.L0ClusterStorage
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastSnapshotStorage
@@ -60,6 +61,7 @@ object Storages {
         TokenLockStorage.make[F](_, contextualTokenLockValidator)
       }
       addressStorage <- AddressStorage.make[F]
+      tokenLockBlockStorage <- TokenLockBlockStorage.make[F]
       allowSpendBlockStorage <- AllowSpendBlockStorage.make[F]
     } yield
       new Storages[F, P, S, SI] {
@@ -78,6 +80,7 @@ object Storages {
         val allowSpend = allowSpendStorage
         val allowSpendBlock = allowSpendBlockStorage
         val tokenLock = tokenLockStorage
+        val tokenLockBlock = tokenLockBlockStorage
       }
 }
 

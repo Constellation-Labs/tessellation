@@ -340,7 +340,7 @@ object Engine {
             result <- maybeBlock match {
               case Some(block) =>
                 Signed.forAsyncHasher(block, selfKeyPair).flatMap { signedBlock =>
-                  signedBlock.transactions.toList
+                  signedBlock.tokenLocks.toList
                     .traverse(validate)
                     .map(_.forall(_.isValid))
                     .ifM(

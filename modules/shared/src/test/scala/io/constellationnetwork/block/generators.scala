@@ -1,10 +1,14 @@
 package io.constellationnetwork.block
 
+import java.util.UUID
+
 import cats.data.{NonEmptyList, NonEmptySet}
 
 import scala.collection.immutable.SortedSet
 
-import io.constellationnetwork.schema.generators.{signedOf, signedTransactionGen}
+import io.constellationnetwork.schema.generators.{signedOf, signedTokenLockGen, signedTransactionGen}
+import io.constellationnetwork.schema.round.RoundId
+import io.constellationnetwork.schema.tokenLock.TokenLockBlock
 import io.constellationnetwork.schema.{Block, BlockReference}
 import io.constellationnetwork.security.signature.Signed
 
@@ -21,7 +25,14 @@ object generators {
       signedTxn <- signedTransactionGen
     } yield Block(blockReferences, NonEmptySet.fromSetUnsafe(SortedSet(signedTxn)))
 
+  val tokenLockBlockGen: Gen[TokenLockBlock] =
+    for {
+      signedTxn <- signedTokenLockGen
+      roundId <- Gen.delay(RoundId(UUID.randomUUID()))
+    } yield TokenLockBlock(roundId, NonEmptySet.fromSetUnsafe(SortedSet(signedTxn)))
+
   val signedBlockGen: Gen[Signed[Block]] = signedOf(blockGen)
+  val signedTokenLockBlockGen: Gen[Signed[TokenLockBlock]] = signedOf(tokenLockBlockGen)
   implicit val signedBlockArbitrary: Arbitrary[Signed[Block]] = Arbitrary(signedBlockGen)
 
 }

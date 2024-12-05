@@ -95,6 +95,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
     )
   private val dagRoutes = DAGBlockRoutes[F](mkDagCell)
   private val allowSpendRoutes = AllowSpendBlockRoutes[F](queues.l1AllowSpendOutput)
+  private val tokenLockRoutes = TokenLockBlockRoutes[F](queues.l1TokenLockOutput)
+
   private val walletRoutes = WalletRoutes[F, GlobalIncrementalSnapshot]("/dag", services.address)
   private val consensusInfoRoutes =
     HasherSelector[F].withCurrent { implicit hasher =>
@@ -132,7 +134,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
               nodeRoutes.publicRoutes <+>
               consensusInfoRoutes.publicRoutes <+>
               trustRoutes.publicRoutes <+>
-              allowSpendRoutes.publicRoutes
+              allowSpendRoutes.publicRoutes <+>
+              tokenLockRoutes.publicRoutes
           }
         }
     }

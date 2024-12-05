@@ -10,6 +10,8 @@ import io.constellationnetwork.node.shared.config.types.AddressesConfig
 import io.constellationnetwork.node.shared.domain.block.processing.BlockValidator
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.domain.statechannel.{FeeCalculator, FeeCalculatorConfig, StateChannelValidator}
+import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockValidator
+import io.constellationnetwork.node.shared.domain.tokenlock.{TokenLockChainValidator, TokenLockValidator}
 import io.constellationnetwork.node.shared.domain.transaction.{TransactionChainValidator, TransactionValidator}
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockValidator
 import io.constellationnetwork.node.shared.infrastructure.gossip.RumorValidator
@@ -24,7 +26,7 @@ import eu.timepit.refined.types.numeric.PosLong
 
 object SharedValidators {
 
-  def make[F[_]: Async: JsonSerializer: SecurityProvider](
+  def make[F[_]: Async: JsonSerializer: SecurityProvider: Hasher](
     addressesCfg: AddressesConfig,
     l0Seedlist: Option[Set[SeedlistEntry]],
     seedlist: Option[Set[SeedlistEntry]],
@@ -48,6 +50,10 @@ object SharedValidators {
     val currencyMessageValidator = CurrencyMessageValidator.make[F](signedValidator, stateChannelAllowanceLists, seedlist)
     val globalSnapshotSyncValidator = GlobalSnapshotSyncValidator.make[F](signedValidator, seedlist)
 
+    val tokenLockValidator = TokenLockValidator.make[F](signedValidator)
+    val tokenLockChainValidator = TokenLockChainValidator.make[F]
+    val tokenLockBlockValidator = TokenLockBlockValidator.make[F](signedValidator, tokenLockChainValidator, tokenLockValidator)
+
     new SharedValidators[F](
       signedValidator,
       transactionChainValidator,
@@ -59,7 +65,8 @@ object SharedValidators {
       rumorValidator,
       stateChannelValidator,
       currencyMessageValidator,
-      globalSnapshotSyncValidator
+      globalSnapshotSyncValidator,
+      tokenLockBlockValidator
     ) {}
   }
 }
@@ -75,5 +82,6 @@ sealed abstract class SharedValidators[F[_]] private (
   val rumorValidator: RumorValidator[F],
   val stateChannelValidator: StateChannelValidator[F],
   val currencyMessageValidator: CurrencyMessageValidator[F],
-  val globalSnapshotSyncValidator: GlobalSnapshotSyncValidator[F]
+  val globalSnapshotSyncValidator: GlobalSnapshotSyncValidator[F],
+  val tokenLockBlockValidator: TokenLockBlockValidator[F]
 )
