@@ -29,7 +29,7 @@ object artifact {
   case class TokenUnlock(
     lockReference: TokenLockReference,
     amount: TokenLockAmount,
-    currencyId: CurrencyId,
+    currencyId: Option[CurrencyId],
     address: Address
   ) extends SharedArtifact
 }

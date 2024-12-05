@@ -16,6 +16,7 @@ import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.swap.CurrencyId
 import io.constellationnetwork.schema.tokenLock.TokenLockAmount._
 import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockOrdinal, TokenLockReference}
 import io.constellationnetwork.security.Hashed
@@ -52,7 +53,8 @@ object ContextualTokenLockValidator {
 
   def make(
     customValidator: Option[CustomContextualTokenLockValidator],
-    tokenLocksConfig: TokenLocksConfig
+    tokenLocksConfig: TokenLocksConfig,
+    currencyId: Option[CurrencyId]
   ): ContextualTokenLockValidator =
     new ContextualTokenLockValidator {
       def validate(
@@ -61,6 +63,7 @@ object ContextualTokenLockValidator {
       ): ContextualTokenLockValidationErrorOr[ValidConflictResolveResult] =
         validateLastTokenLockRef(hashedTokenLocks, context.sourceTokenLocks, context.sourceLastTokenLocksRef)
           .flatMap(validateEpochProgress(_, context.currentEpochProgress))
+          .flatMap(validateCurrencyId(_))
           .flatMap(validateConflictAtOrdinal(_, context.sourceTokenLocks))
           .flatMap {
             case (conflictResolveResult, conflictResolvedStoredTxs) =>
@@ -103,6 +106,18 @@ object ContextualTokenLockValidator {
         } else
           TooShortUnlockEpochProgress(tokenLock.unlockEpoch).asLeft
       }
+
+      private def validateCurrencyId(
+        tokenLock: Hashed[TokenLock]
+      ): Either[ContextualTokenLockValidationError, Hashed[TokenLock]] =
+        (tokenLock.currencyId, currencyId) match {
+          case (None, None) =>
+            tokenLock.asRight
+          case (Some(tokenLockCurrencyId), Some(currencyId)) if tokenLockCurrencyId === currencyId =>
+            tokenLock.asRight
+          case _ =>
+            InvalidCurrencyId(tokenLock.currencyId).asLeft
+        }
 
       private def validateConflictAtOrdinal(
         tokenLock: Hashed[TokenLock],
@@ -193,6 +208,7 @@ object ContextualTokenLockValidator {
   case class NonContextualValidationError(error: TokenLockValidationError) extends ContextualTokenLockValidationError
   case class LockedAddressError(address: Address) extends ContextualTokenLockValidationError
   case class TooShortUnlockEpochProgress(epochProgress: EpochProgress) extends ContextualTokenLockValidationError
+  case class InvalidCurrencyId(currencyId: Option[CurrencyId]) extends ContextualTokenLockValidationError
   case class CustomValidationError(message: String) extends ContextualTokenLockValidationError
 
   type ContextualTokenLockValidationErrorOr[A] = ValidatedNec[ContextualTokenLockValidationError, A]

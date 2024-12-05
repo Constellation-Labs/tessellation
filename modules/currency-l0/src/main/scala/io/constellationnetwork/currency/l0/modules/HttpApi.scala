@@ -96,6 +96,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip)
   private val currencyBlockRoutes = CurrencyBlockRoutes[F](mkCell)
   private val allowSpendBlockRoutes = AllowSpendBlockRoutes[F](queues.l1Output)
+  private val tokenLockBlockRoutes = TokenLockBlockRoutes[F](queues.l1Output)
   private val dataBlockRoutes = maybeDataApplication.map { da =>
     implicit val (d, e) = (da.dataDecoder, da.calculatedStateEncoder)
     DataBlockRoutes[F](mkCell, da)
@@ -150,7 +151,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
               metagraphNodeRoutes.map(_.publicRoutes).getOrElse(HttpRoutes.empty) <+>
               currencyMessageRoutes <+>
               DataApplicationCustomRoutes.publicRoutes[F, L0NodeContext[F]](maybeDataApplication) <+>
-              allowSpendBlockRoutes.publicRoutes
+              allowSpendBlockRoutes.publicRoutes <+>
+              tokenLockBlockRoutes.publicRoutes
           }
         }
     }

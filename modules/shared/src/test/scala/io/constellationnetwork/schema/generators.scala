@@ -1,6 +1,7 @@
 package io.constellationnetwork.schema
 
 import cats.data.NonEmptySet
+import cats.syntax.all._
 
 import scala.collection.immutable.SortedSet
 
@@ -9,9 +10,12 @@ import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.{Address, DAGAddressRefined}
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.cluster.{ClusterSessionToken, SessionToken}
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.generation.Generation
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer._
+import io.constellationnetwork.schema.swap.CurrencyId
+import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.schema.transaction._
 import io.constellationnetwork.security.generators._
 import io.constellationnetwork.security.hash.Hash
@@ -21,6 +25,7 @@ import io.constellationnetwork.security.signature.signature.{Signature, Signatur
 
 import com.comcast.ip4s.{Host, Port}
 import eu.timepit.refined.api.{RefType, Validate}
+import eu.timepit.refined.auto._
 import eu.timepit.refined.refineV
 import eu.timepit.refined.scalacheck.numeric._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosLong}
@@ -92,6 +97,7 @@ object generators {
     Arbitrary.arbitrary[NonNegLong].map(Balance(_))
 
   val transactionAmountGen: Gen[TransactionAmount] = Arbitrary.arbitrary[PosLong].map(TransactionAmount(_))
+  val tokenLockAmountGen: Gen[TokenLockAmount] = Arbitrary.arbitrary[PosLong].map(TokenLockAmount(_))
 
   // total supply is lower than Long.MaxValue so generated fee needs to be limited to avoid cases which won't happen
   val feeMaxVal: TransactionFee = TransactionFee(NonNegLong(99999999_00000000L))
@@ -100,12 +106,19 @@ object generators {
     chooseRefinedNum(NonNegLong(0L), feeMaxVal.value).map(TransactionFee(_))
 
   val transactionOrdinalGen: Gen[TransactionOrdinal] = Arbitrary.arbitrary[NonNegLong].map(TransactionOrdinal(_))
+  val tokenLockOrdinalGen: Gen[TokenLockOrdinal] = Arbitrary.arbitrary[NonNegLong].map(TokenLockOrdinal(_))
 
   val transactionReferenceGen: Gen[TransactionReference] =
     for {
       ordinal <- transactionOrdinalGen
       hash <- Arbitrary.arbitrary[Hash]
     } yield TransactionReference(ordinal, hash)
+
+  val tokenLockReferenceGen: Gen[TokenLockReference] =
+    for {
+      ordinal <- tokenLockOrdinalGen
+      hash <- Arbitrary.arbitrary[Hash]
+    } yield TokenLockReference(ordinal, hash)
 
   val transactionSaltGen: Gen[TransactionSalt] = Gen.long.map(TransactionSalt(_))
 
@@ -120,6 +133,15 @@ object generators {
       txnReference <- transactionReferenceGen
       txnSalt <- transactionSaltGen
     } yield Transaction(src, dst, txnAmount, txnFee, txnReference, txnSalt)
+
+  val tokenLockGen: Gen[TokenLock] =
+    for {
+      src <- addressGen
+      metagraphAddress <- addressGen
+      tokenLockAmount <- tokenLockAmountGen
+      tokenLockReference <- tokenLockReferenceGen
+      currencyId = CurrencyId(metagraphAddress).some
+    } yield TokenLock(src, tokenLockAmount, tokenLockReference, currencyId, EpochProgress.MaxValue)
 
   val signatureGen: Gen[Signature] =
     /* BouncyCastle encodes ECDSA with ASN.1 DER which which is variable length. That generator should be changed to
@@ -153,6 +175,7 @@ object generators {
     } yield Signed(value, proofs)
 
   val signedTransactionGen: Gen[Signed[Transaction]] = signedOf(transactionGen)
+  val signedTokenLockGen: Gen[Signed[TokenLock]] = signedOf(tokenLockGen)
 
   val snapshotOrdinalGen: Gen[SnapshotOrdinal] =
     Arbitrary.arbitrary[NonNegLong].map(SnapshotOrdinal(_))

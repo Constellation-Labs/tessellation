@@ -3,16 +3,7 @@ package io.constellationnetwork.node.shared.infrastructure.snapshot
 import cats.Applicative
 import cats.data.{NonEmptyList, OptionT}
 import cats.effect.Async
-import cats.syntax.applicative._
-import cats.syntax.applicativeError._
-import cats.syntax.contravariantSemigroupal._
-import cats.syntax.eq._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
-import cats.syntax.option._
-import cats.syntax.semigroup._
-import cats.syntax.show._
-import cats.syntax.traverse._
+import cats.syntax.all._
 
 import scala.collection.immutable.SortedSet
 import scala.util.control.NoStackTrace
@@ -25,7 +16,8 @@ import io.constellationnetwork.currency.schema.feeTransaction.FeeTransaction
 import io.constellationnetwork.ext.cats.syntax.partialPrevious.catsSyntaxPartialPrevious
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotArtifact
 import io.constellationnetwork.schema.SnapshotOrdinal
-import io.constellationnetwork.schema.artifact.SharedArtifact
+import io.constellationnetwork.schema.artifact.{SharedArtifact, TokenUnlock}
+import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 
@@ -65,7 +57,7 @@ object DataApplicationSnapshotAcceptanceManager {
       s"Calculated state hash=${current.show} does not match expected hash=${expected.show} from majority"
   }
 
-  def make[F[_]: Async](
+  def make[F[_]: Async: Hasher](
     service: BaseDataApplicationL0Service[F],
     nodeContext: L0NodeContext[F],
     calculatedStateStorage: CalculatedStateLocalFileSystemStorage[F]
@@ -191,12 +183,20 @@ object DataApplicationSnapshotAcceptanceManager {
         feeTransactions <- OptionT.liftF(
           service.extractFees(validatedUpdates)
         )
+
+        tokenUnlocks <- OptionT.liftF(
+          service
+            .getTokenUnlocks(newDataState)
+            .handleErrorWith(e => logger.error(e)("An error occurred when extracting tokenUnlocks").as(SortedSet.empty[TokenUnlock]))
+        )
+
+        sharedArtifacts = newDataState.sharedArtifacts ++ tokenUnlocks
       } yield
         DataApplicationAcceptanceResult(
           DataApplicationPart(serializedOnChainState, serializedBlocks, calculatedStateProof),
           newDataState.calculated,
           feeTransactions,
-          newDataState.sharedArtifacts
+          sharedArtifacts
         )
 
       newDataState.value.handleErrorWith { err =>

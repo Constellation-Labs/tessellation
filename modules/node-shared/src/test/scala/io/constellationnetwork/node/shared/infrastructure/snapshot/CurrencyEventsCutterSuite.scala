@@ -3,12 +3,14 @@ package io.constellationnetwork.node.shared.infrastructure.snapshot
 import java.util.UUID
 
 import cats.data.NonEmptyList
-import cats.effect.{IO, Resource}
+import cats.effect.{Async, IO, Resource}
 import cats.implicits.catsStdShowForList
 import cats.syntax.all._
 import cats.{Applicative, Eq, Show}
 
-import io.constellationnetwork.block.generators.signedBlockGen
+import scala.collection.immutable.SortedSet
+
+import io.constellationnetwork.block.generators.{signedBlockGen, signedTokenLockBlockGen}
 import io.constellationnetwork.currency.dataApplication._
 import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationBlock
 import io.constellationnetwork.currency.schema.currency
@@ -16,13 +18,13 @@ import io.constellationnetwork.ext.cats.effect._
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.routes.internal
+import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.currencyMessage.{CurrencyMessage, MessageOrdinal, MessageType}
 import io.constellationnetwork.schema.generators.{addressGen, signedOf}
 import io.constellationnetwork.schema.round.RoundId
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
-import io.constellationnetwork.security.Hashed
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.{Hashed, Hasher}
 
 import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.encoder
@@ -83,7 +85,7 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
 
     forall(gen) {
       case (messages) =>
-        cutter.cut(SnapshotOrdinal.MinValue, List.empty, List.empty, messages).map { result =>
+        cutter.cut(SnapshotOrdinal.MinValue, List.empty, List.empty, List.empty, messages).map { result =>
           expect.eql(
             result match {
               case Some(_) => false
@@ -111,7 +113,7 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
 
     forall(gen) {
       case (dataBlocks, blocks, messages) =>
-        cutter.cut(SnapshotOrdinal.MinValue, blocks, dataBlocks, messages).map { result =>
+        cutter.cut(SnapshotOrdinal.MinValue, blocks, List.empty, dataBlocks, messages).map { result =>
           expect.eql(
             result match {
               case Some((remaining, rejected)) =>
@@ -144,7 +146,7 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
 
     forall(gen) {
       case (dataBlocks, blocks, messages) =>
-        cutter.cut(SnapshotOrdinal.MinValue, blocks, dataBlocks, messages).map { result =>
+        cutter.cut(SnapshotOrdinal.MinValue, blocks, List.empty, dataBlocks, messages).map { result =>
           expect.eql(
             result match {
               case Some((remaining, rejected)) =>
@@ -177,7 +179,7 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
 
     forall(gen) {
       case (dataBlocks, blocks, messages) =>
-        cutter.cut(SnapshotOrdinal.MinValue, blocks, dataBlocks, messages).map { result =>
+        cutter.cut(SnapshotOrdinal.MinValue, blocks, List.empty, dataBlocks, messages).map { result =>
           expect.eql(
             result match {
               case Some((remaining, rejected)) =>
@@ -200,19 +202,20 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
       n <- Gen.chooseNum(1, 100)
       dataBlocks <- Gen.listOfN(n, dataApplicationBlockGen)
       blocks <- Gen.listOfN(n, signedBlockGen)
+      tokenLockBlocks <- Gen.listOfN(n, signedTokenLockBlockGen)
       messageA <- currencyMessageGen
       messages = List(messageA)
-    } yield (dataBlocks, blocks, messages)
+    } yield (dataBlocks, blocks, tokenLockBlocks, messages)
 
     implicit val dataUpdateEncoder: Encoder[DataUpdate] = testDataApplication.dataEncoder
     implicit val dataBlockEncoder = DataApplicationBlock.encoder
 
     forall(gen) {
-      case (dataBlocks, blocks, messages) =>
+      case (dataBlocks, blocks, tokenLockBlocks, messages) =>
         for {
           dataBlockSize: Int <- dataBlocks.lastOption.map(a => JsonSerializer[IO].serialize(a).map(_.length)).getOrElse(0.pure[IO])
           blockSize: Int <- blocks.lastOption.map(a => JsonSerializer[IO].serialize(a).map(_.length)).getOrElse(0.pure[IO])
-          result <- cutter.cut(SnapshotOrdinal.MinValue, blocks, dataBlocks, messages)
+          result <- cutter.cut(SnapshotOrdinal.MinValue, blocks, tokenLockBlocks, dataBlocks, messages)
           expected = result match {
             case Some((remaining, rejected)) =>
               if (dataBlockSize > blockSize)
@@ -250,7 +253,7 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
 
     forall(gen) {
       case (dataBlocks, blocks, messages) =>
-        cutter.cut(SnapshotOrdinal.MinValue, blocks, dataBlocks, messages).map { result =>
+        cutter.cut(SnapshotOrdinal.MinValue, blocks, List.empty, dataBlocks, messages).map { result =>
           expect.eql(
             result.isEmpty,
             true
@@ -273,7 +276,7 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
 
     forall(gen) {
       case (dataBlocks, blocks, messages) =>
-        cutter.cut(SnapshotOrdinal.MinValue, blocks, dataBlocks, messages).map { result =>
+        cutter.cut(SnapshotOrdinal.MinValue, blocks, List.empty, dataBlocks, messages).map { result =>
           expect.eql(
             result.isEmpty,
             true
@@ -352,6 +355,10 @@ object CurrencyEventsCutterSuite extends MutableIOSuite with Checkers {
     override def onSnapshotConsensusResult(snapshot: Hashed[currency.CurrencyIncrementalSnapshot]): IO[Unit] = ???
 
     def onGlobalSnapshotPull(snapshot: Hashed[GlobalIncrementalSnapshot], context: GlobalSnapshotInfo): IO[Unit] = ???
+
+    override def getTokenUnlocks(
+      state: DataState[DataOnChainState, DataCalculatedState]
+    )(implicit context: L0NodeContext[IO], async: Async[IO], hasher: Hasher[IO]): IO[SortedSet[artifact.TokenUnlock]] = ???
   }
 
 }

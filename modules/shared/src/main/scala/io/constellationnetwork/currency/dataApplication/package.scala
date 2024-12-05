@@ -1,6 +1,7 @@
 package io.constellationnetwork.currency.dataApplication
 
-import cats.data.{NonEmptyList, Validated, ValidatedNec}
+import cats.data._
+import cats.effect.Async
 import cats.kernel.Eq
 import cats.syntax.all._
 import cats.{Applicative, Monad, MonadThrow}
@@ -13,13 +14,15 @@ import io.constellationnetwork.currency.dataApplication.dataApplication.{DataApp
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import io.constellationnetwork.currency.schema.feeTransaction.FeeTransaction
 import io.constellationnetwork.routes.internal.ExternalUrlPrefix
-import io.constellationnetwork.schema.artifact.SharedArtifact
+import io.constellationnetwork.schema.artifact.{SharedArtifact, TokenUnlock}
 import io.constellationnetwork.schema.round.RoundId
 import io.constellationnetwork.schema.swap.CurrencyId
+import io.constellationnetwork.schema.tokenLock.TokenLockReference
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
+import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
-import io.constellationnetwork.security.{Encodable, Hashed, SecurityProvider}
+import io.constellationnetwork.syntax.sortedCollection.sortedSetSyntax
 
 import eu.timepit.refined.auto._
 import io.circe._
@@ -101,7 +104,6 @@ trait BaseDataApplicationContextualOps[F[_], Context] {
 }
 
 trait BaseDataApplicationL0Service[F[_]] extends BaseDataApplicationService[F] with BaseDataApplicationContextualOps[F, L0NodeContext[F]] {
-
   def genesis: DataState.Base
 
   final def serializedOnChainGenesis: F[Array[Byte]] = serializeState(genesis.onChain)
@@ -112,6 +114,10 @@ trait BaseDataApplicationL0Service[F[_]] extends BaseDataApplicationService[F] w
 
   def extractFees(ds: Seq[Signed[DataUpdate]])(implicit A: Applicative[F]): F[Seq[Signed[FeeTransaction]]] =
     A.pure(Seq.empty[Signed[FeeTransaction]])
+
+  def getTokenUnlocks(
+    state: DataState[DataOnChainState, DataCalculatedState]
+  )(implicit context: L0NodeContext[F], async: Async[F], hasher: Hasher[F]): F[SortedSet[TokenUnlock]]
 }
 
 trait BaseDataApplicationL1Service[F[_]] extends BaseDataApplicationService[F] with BaseDataApplicationContextualOps[F, L1NodeContext[F]]
@@ -172,6 +178,38 @@ trait DataApplicationL0Service[F[_], D <: DataUpdate, DON <: DataOnChainState, D
 
   def onGlobalSnapshotPull(snapshot: Hashed[GlobalIncrementalSnapshot], context: GlobalSnapshotInfo)(implicit A: Applicative[F]): F[Unit] =
     A.unit
+
+  def getTokenUnlocks(
+    state: DataState[DataOnChainState, DataCalculatedState]
+  )(implicit context: L0NodeContext[F], async: Async[F], hasher: Hasher[F]): F[SortedSet[TokenUnlock]] = for {
+    maybeLastSynchronizedGlobalSnapshot <- context.getLastSynchronizedGlobalSnapshot
+    maybeLastCurrencySnapshotCombined <- context.getLastCurrencySnapshotCombined
+
+    lastSynchronizedGlobalSnapshot <- OptionT
+      .fromOption(maybeLastSynchronizedGlobalSnapshot)
+      .getOrRaise(new IllegalStateException("lastSynchronizedGlobalSnapshot unavailable"))
+
+    (_, lastCurrencySnapshotState) <- OptionT
+      .fromOption(maybeLastCurrencySnapshotCombined)
+      .getOrRaise(new IllegalStateException("lastCurrencySnapshot unavailable"))
+
+    lastGlobalEpochProgress = lastSynchronizedGlobalSnapshot.epochProgress
+    expiredTokenLocks = lastCurrencySnapshotState.activeTokenLocks.collect { activeTokenLocks =>
+      activeTokenLocks.values.flatten.toList
+        .filter(_.unlockEpoch <= lastGlobalEpochProgress)
+    }.getOrElse(List.empty)
+
+    result <- expiredTokenLocks.traverse { tokenLock =>
+      TokenLockReference.of(tokenLock).map { tokenLockReference =>
+        TokenUnlock(
+          tokenLockReference,
+          tokenLock.amount,
+          tokenLock.currencyId,
+          tokenLock.source
+        )
+      }
+    }
+  } yield result.toSortedSet
 }
 
 trait DataApplicationL1Service[F[_], D <: DataUpdate, DON <: DataOnChainState, DOF <: DataCalculatedState]
@@ -417,6 +455,11 @@ object BaseDataApplicationL0Service {
 
       def onGlobalSnapshotPull(snapshot: Hashed[GlobalIncrementalSnapshot], context: GlobalSnapshotInfo): F[Unit] =
         service.onGlobalSnapshotPull(snapshot, context)
+
+      def getTokenUnlocks(
+        state: DataState[DataOnChainState, DataCalculatedState]
+      )(implicit context: L0NodeContext[F], async: Async[F], hasher: Hasher[F]): F[SortedSet[TokenUnlock]] =
+        service.getTokenUnlocks(state)
     }
   }
 }
