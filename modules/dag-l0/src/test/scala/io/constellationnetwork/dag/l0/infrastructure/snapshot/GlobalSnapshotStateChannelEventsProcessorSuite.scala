@@ -15,6 +15,7 @@ import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.config.types.{AddressesConfig, SnapshotSizeConfig}
 import io.constellationnetwork.node.shared.domain.statechannel._
+import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcceptanceManager
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
@@ -71,6 +72,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
         BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, Hasher.forKryo[IO]),
         TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
+        AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
         Amount(0L),
         validators.currencyMessageValidator,
         validators.globalSnapshotSyncValidator

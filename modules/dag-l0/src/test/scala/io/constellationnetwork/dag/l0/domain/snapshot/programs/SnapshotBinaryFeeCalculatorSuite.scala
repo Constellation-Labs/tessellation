@@ -129,7 +129,12 @@ object SnapshotBinaryFeeCalculatorSuite extends SimpleMutableIOSuite with Checke
         stateProof = CurrencySnapshotStateProof(Hash.empty, Hash.empty, None, None, None, None, None, None, None),
         epochProgress = EpochProgress.MinValue,
         dataApplication = None,
-        messages = None
+        messages = None,
+        globalSnapshotSyncs = None,
+        feeTransactions = None,
+        artifacts = None,
+        allowSpendBlocks = None,
+        tokenLockBlocks = None
       )
     )
 
