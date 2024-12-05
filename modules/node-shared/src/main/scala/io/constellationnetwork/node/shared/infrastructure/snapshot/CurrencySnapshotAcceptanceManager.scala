@@ -10,6 +10,11 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSnapshotSync
 import io.constellationnetwork.node.shared.domain.block.processing._
+import io.constellationnetwork.node.shared.domain.swap.block.{
+  AllowSpendBlockAcceptanceContext,
+  AllowSpendBlockAcceptanceManager,
+  AllowSpendBlockAcceptanceResult
+}
 import io.constellationnetwork.node.shared.domain.tokenlock.block.{
   TokenLockBlockAcceptanceContext,
   TokenLockBlockAcceptanceManager,
@@ -22,6 +27,7 @@ import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.currencyMessage._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.swap.{AllowSpendBlock, AllowSpendReference}
 import io.constellationnetwork.schema.tokenLock.TokenLockAmount.toAmount
 import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockBlock, TokenLockReference}
 import io.constellationnetwork.schema.transaction.{RewardTransaction, Transaction, TransactionReference}
@@ -46,6 +52,7 @@ case class GlobalSnapshotSyncAcceptanceResult(
 case class CurrencySnapshotAcceptanceResult(
   block: BlockAcceptanceResult,
   tokenLockBlock: TokenLockBlockAcceptanceResult,
+  allowSpendBlock: AllowSpendBlockAcceptanceResult,
   messages: CurrencyMessagesAcceptanceResult,
   globalSnapshotSync: GlobalSnapshotSyncAcceptanceResult,
   rewards: SortedSet[RewardTransaction],
@@ -58,6 +65,7 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
   def accept(
     blocksForAcceptance: List[Signed[Block]],
     tokenLockBlocksForAcceptance: List[Signed[TokenLockBlock]],
+    allowSpendBlocksForAcceptance: List[Signed[AllowSpendBlock]],
     messagesForAcceptance: List[Signed[CurrencyMessage]],
     globalSnapshotSyncsForAcceptance: List[Signed[GlobalSnapshotSync]],
     sharedArtifactsForAcceptance: SortedSet[SharedArtifact],
@@ -75,6 +83,7 @@ object CurrencySnapshotAcceptanceManager {
   def make[F[_]: Async](
     blockAcceptanceManager: BlockAcceptanceManager[F],
     tokenLockBlockAcceptanceManager: TokenLockBlockAcceptanceManager[F],
+    allowSpendBlockAcceptanceManager: AllowSpendBlockAcceptanceManager[F],
     collateral: Amount,
     messageValidator: CurrencyMessageValidator[F],
     globalSnapshotSyncValidator: GlobalSnapshotSyncValidator[F]
@@ -82,6 +91,7 @@ object CurrencySnapshotAcceptanceManager {
     def accept(
       blocksForAcceptance: List[Signed[Block]],
       tokenLockBlocksForAcceptance: List[Signed[TokenLockBlock]],
+      allowSpendBlocksForAcceptance: List[Signed[AllowSpendBlock]],
       messagesForAcceptance: List[Signed[CurrencyMessage]],
       globalSnapshotSyncsForAcceptance: List[Signed[GlobalSnapshotSync]],
       sharedArtifactsForAcceptance: SortedSet[SharedArtifact],
@@ -95,6 +105,7 @@ object CurrencySnapshotAcceptanceManager {
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult] = for {
       initialTxRef <- TransactionReference.emptyCurrency(lastSnapshotContext.address)
       tokenLockInitialTxRef <- TokenLockReference.emptyCurrency(lastSnapshotContext.address)
+      initialAllowSpendRef <- AllowSpendReference.emptyCurrency(lastSnapshotContext.address)
 
       acceptanceBlocksResult <- acceptBlocks(
         blocksForAcceptance,
@@ -105,6 +116,8 @@ object CurrencySnapshotAcceptanceManager {
         initialTxRef
       )
 
+      acceptedTransactions = acceptanceBlocksResult.accepted.flatMap { case (block, _) => block.value.transactions.toSortedSet }.toSortedSet
+
       acceptanceTokenLockBlocksResult <- acceptTokenLockBlocks(
         tokenLockBlocksForAcceptance,
         lastSnapshotContext,
@@ -112,7 +125,12 @@ object CurrencySnapshotAcceptanceManager {
         tokenLockInitialTxRef
       )
 
-      acceptedTransactions = acceptanceBlocksResult.accepted.flatMap { case (block, _) => block.value.transactions.toSortedSet }.toSortedSet
+      allowSpendBlockAcceptanceResult <- acceptAllowSpendBlocks(
+        allowSpendBlocksForAcceptance,
+        lastSnapshotContext,
+        snapshotOrdinal,
+        initialAllowSpendRef
+      )
 
       transactionsRefs = acceptTransactionRefs(
         lastSnapshotContext.snapshotInfo.lastTxRefs,
@@ -201,6 +219,7 @@ object CurrencySnapshotAcceptanceManager {
       CurrencySnapshotAcceptanceResult(
         acceptanceBlocksResult,
         acceptanceTokenLockBlocksResult,
+        allowSpendBlockAcceptanceResult,
         messagesAcceptanceResult,
         globalSnapshotSyncAcceptanceResult,
         acceptedRewardTxs,
@@ -331,6 +350,22 @@ object CurrencySnapshotAcceptanceManager {
       )
 
       tokenLockBlockAcceptanceManager.acceptBlocksIteratively(tokenLockBlocksForAcceptance, context, snapshotOrdinal)
+    }
+
+    private def acceptAllowSpendBlocks(
+      blocksForAcceptance: List[Signed[AllowSpendBlock]],
+      lastSnapshotContext: CurrencySnapshotContext,
+      snapshotOrdinal: SnapshotOrdinal,
+      initialTxRef: AllowSpendReference
+    )(implicit hasher: Hasher[F]) = {
+      val context = AllowSpendBlockAcceptanceContext.fromStaticData(
+        lastSnapshotContext.snapshotInfo.balances,
+        lastSnapshotContext.snapshotInfo.lastAllowSpendRefs.getOrElse(Map.empty),
+        collateral,
+        initialTxRef
+      )
+
+      allowSpendBlockAcceptanceManager.acceptBlocksIteratively(blocksForAcceptance, context, snapshotOrdinal)
     }
 
     private def acceptRewardTxs(

@@ -33,6 +33,7 @@ import io.constellationnetwork.schema.artifact.SharedArtifact
 import io.constellationnetwork.schema.currencyMessage.CurrencyMessage
 import io.constellationnetwork.schema.height.{Height, SubHeight}
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.swap.AllowSpendBlock
 import io.constellationnetwork.schema.tokenLock.TokenLockBlock
 import io.constellationnetwork.schema.transaction.RewardTransaction
 import io.constellationnetwork.security.Hasher
@@ -114,7 +115,8 @@ object CurrencySnapshotCreator {
             dataBlocks: List[Signed[DataApplicationBlock]],
             messages: List[Signed[CurrencyMessage]],
             globalSnapshotSyncEvents: List[Signed[GlobalSnapshotSync]],
-            tokenLockBlocks: List[Signed[TokenLockBlock]]
+            tokenLockBlocks: List[Signed[TokenLockBlock]],
+            allowSpendBlocks: List[Signed[AllowSpendBlock]]
           ) =
             dataApplicationSnapshotAcceptanceManager match {
               case Some(_) =>
@@ -124,17 +126,19 @@ object CurrencySnapshotCreator {
                     List.empty[Signed[DataApplicationBlock]],
                     List.empty[Signed[CurrencyMessage]],
                     List.empty[Signed[GlobalSnapshotSync]],
-                    List.empty[Signed[TokenLockBlock]]
+                    List.empty[Signed[TokenLockBlock]],
+                    List.empty[Signed[AllowSpendBlock]]
                   )
                 ) {
-                  case ((l1, l2, l3, l4, l5), elem) =>
+                  case ((l1, l2, l3, l4, l5, l6), elem) =>
                     elem match {
-                      case BlockEvent(b)                 => (b :: l1, l2, l3, l4, l5)
-                      case DataApplicationBlockEvent(db) => (l1, db :: l2, l3, l4, l5)
-                      case CurrencyMessageEvent(cm)      => (l1, l2, cm :: l3, l4, l5)
-                      case GlobalSnapshotSyncEvent(gsse) => (l1, l2, l3, gsse :: l4, l5)
-                      case TokenLockBlockEvent(tlb)      => (l1, l2, l3, l4, tlb :: l5)
-                      case _                             => (l1, l2, l3, l4, l5)
+                      case BlockEvent(b)                 => (b :: l1, l2, l3, l4, l5, l6)
+                      case DataApplicationBlockEvent(db) => (l1, db :: l2, l3, l4, l5, l6)
+                      case CurrencyMessageEvent(cm)      => (l1, l2, cm :: l3, l4, l5, l6)
+                      case GlobalSnapshotSyncEvent(gsse) => (l1, l2, l3, gsse :: l4, l5, l6)
+                      case TokenLockBlockEvent(tlb)      => (l1, l2, l3, l4, tlb :: l5, l6)
+                      case AllowSpendBlockEvent(asb)     => (l1, l2, l3, l4, l5, asb :: l6)
+                      case _                             => (l1, l2, l3, l4, l5, l6)
                     }
                 }
               case None =>
@@ -143,7 +147,8 @@ object CurrencySnapshotCreator {
                   List.empty,
                   eventsForAcceptance.collect { case CurrencyMessageEvent(cm) => cm }.toList,
                   eventsForAcceptance.collect { case GlobalSnapshotSyncEvent(gsse) => gsse }.toList,
-                  eventsForAcceptance.collect { case TokenLockBlockEvent(tlb) => tlb }.toList
+                  eventsForAcceptance.collect { case TokenLockBlockEvent(tlb) => tlb }.toList,
+                  eventsForAcceptance.collect { case AllowSpendBlockEvent(asb) => asb }.toList
                 )
             }
 
@@ -161,6 +166,7 @@ object CurrencySnapshotCreator {
               .accept(
                 blocks,
                 tokenLockBlocks,
+                allowSpendBlocks,
                 messages,
                 globalSnapshotSyncEvents,
                 sharedArtifactsForAcceptance,
@@ -207,22 +213,15 @@ object CurrencySnapshotCreator {
           context = CurrencySnapshotContext(lastContext.address, currencySnapshotAcceptanceResult.info)
 
           newAwaitingEvents = awaitingBlocks.map(BlockEvent(_)).toSet[CurrencySnapshotEvent] ++ awaitedEvents
-          newRejectedEvents = rejectedBlocks
-            .map(BlockEvent(_))
-            .toSet[CurrencySnapshotEvent] ++ currencySnapshotAcceptanceResult.messages.notAccepted
-            .map(CurrencyMessageEvent(_))
-            .toSet[CurrencySnapshotEvent] ++ currencySnapshotAcceptanceResult.globalSnapshotSync.notAccepted
-            .map(GlobalSnapshotSyncEvent(_)) ++ rejectedEvents
-          acceptedEvents = currencySnapshotAcceptanceResult.block.accepted.map(_._1)
 
-          newTokenLockAwaitingEvents = awaitingTokenLockBlocks.map(TokenLockBlockEvent(_)).toSet[CurrencySnapshotEvent] ++ awaitedEvents
-          newTokenLockRejectedEvents = rejectedTokenLockBlocks
-            .map(TokenLockBlockEvent(_))
-            .toSet[CurrencySnapshotEvent] ++ currencySnapshotAcceptanceResult.messages.notAccepted
-            .map(CurrencyMessageEvent(_))
-            .toSet[CurrencySnapshotEvent] ++ currencySnapshotAcceptanceResult.globalSnapshotSync.notAccepted
-            .map(GlobalSnapshotSyncEvent(_)) ++ rejectedEvents
-          tokenLockAcceptedEvents = currencySnapshotAcceptanceResult.tokenLockBlock.accepted
+          newRejectedEvents = rejectedBlocks.map(BlockEvent(_)).toSet[CurrencySnapshotEvent] ++
+            currencySnapshotAcceptanceResult.messages.notAccepted.map(CurrencyMessageEvent(_)).toSet[CurrencySnapshotEvent] ++
+            currencySnapshotAcceptanceResult.globalSnapshotSync.notAccepted.map(GlobalSnapshotSyncEvent(_)) ++
+            currencySnapshotAcceptanceResult.tokenLockBlock.notAccepted.map { case (block, _) => TokenLockBlockEvent(block) } ++
+            currencySnapshotAcceptanceResult.allowSpendBlock.notAccepted.map { case (block, _) => AllowSpendBlockEvent(block) } ++
+            rejectedEvents
+
+          acceptedEvents = currencySnapshotAcceptanceResult.block.accepted.map(_._1)
 
           artifact = CurrencyIncrementalSnapshot(
             currentOrdinal,
@@ -244,7 +243,8 @@ object CurrencySnapshotCreator {
             currencySnapshotAcceptanceResult.globalSnapshotSync.accepted.toSortedSet.some,
             feeTransactions = none,
             currencySnapshotAcceptanceResult.sharedArtifacts.some,
-            tokenLockAcceptedEvents.toSortedSet.some
+            currencySnapshotAcceptanceResult.allowSpendBlock.accepted.toSortedSet.some,
+            currencySnapshotAcceptanceResult.tokenLockBlock.accepted.toSortedSet.some
           )
 
           artifactSize: Int <- JsonSerializer[F].serialize(artifact).map(_.length)
@@ -254,15 +254,15 @@ object CurrencySnapshotCreator {
               CurrencySnapshotCreationResult[CurrencySnapshotEvent](
                 artifact,
                 context,
-                newAwaitingEvents ++ newTokenLockAwaitingEvents,
-                newRejectedEvents ++ newTokenLockRejectedEvents
+                newAwaitingEvents,
+                newRejectedEvents
               ).pure[F]
             } else {
               currencyEventsCutter
                 .cut(
                   currentOrdinal,
                   acceptedEvents,
-                  tokenLockAcceptedEvents,
+                  currencySnapshotAcceptanceResult.tokenLockBlock.accepted,
                   dataBlocks,
                   currencySnapshotAcceptanceResult.messages.accepted
                 )
