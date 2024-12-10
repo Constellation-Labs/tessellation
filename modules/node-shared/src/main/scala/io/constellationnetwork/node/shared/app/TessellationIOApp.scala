@@ -6,8 +6,9 @@ import cats.effect._
 import cats.effect.std.{Random, Supervisor}
 import cats.syntax.all._
 
-import io.constellationnetwork.env.JarSignature
+import io.constellationnetwork.env.AppEnvironment.Dev
 import io.constellationnetwork.env.env._
+import io.constellationnetwork.env.{AppEnvironment, JarSignature}
 import io.constellationnetwork.ext.cats.effect._
 import io.constellationnetwork.ext.kryo._
 import io.constellationnetwork.json.JsonSerializer
@@ -32,6 +33,7 @@ import io.constellationnetwork.schema.generation.Generation
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.TessellationVersion
 import io.constellationnetwork.security._
+import io.constellationnetwork.security.hash.Hash
 
 import com.monovore.decline.Opts
 import com.monovore.decline.effect.CommandIOApp
@@ -111,7 +113,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                 logger.info(s"App environment: ${cfg.environment}") >>
                 logger.info(s"App version: ${version.show}") >>
                 logger.info(s"App collateral: ${cfg.collateral.amount.show}") >>
-                JarSignature.jarHash[IO].flatMap { jarHash =>
+                jarHash(cfg.environment).flatMap { jarHash =>
                   logger.info(s"Jar hash: ${jarHash.value}") >>
                     KryoSerializer.forAsync[IO](registrar).use { implicit _kryoPool =>
                       JsonSerializer.forSync[IO].asResource.use { implicit _jsonSerializer =>
@@ -252,6 +254,15 @@ abstract class TessellationIOApp[A <: CliMethod](
         }
       }
     }
+
+  private def jarHash(currentEnv: AppEnvironment): IO[Hash] =
+    JarSignature
+      .jarHash[IO]
+      .onError(logger.error(_)(s"Error calculating jar's hash."))
+      .recoverWith {
+        case _ if currentEnv === Dev =>
+          logger.warn(s"Using mock value for dev environment.") >> Hash.empty.pure[IO]
+      }
 
   private def loadKeyPair[F[_]: Async: SecurityProvider](
     keyStore: StorePath,
