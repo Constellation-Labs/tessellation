@@ -3,7 +3,7 @@ package io.constellationnetwork.env
 import java.security.MessageDigest
 
 import cats.effect.Async
-import cats.implicits.{catsSyntaxFlatMapOps, toFunctorOps}
+import cats.syntax.all._
 
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
@@ -14,8 +14,8 @@ import fs2.{Chunk, Stream}
 object JarSignature {
 
   def jarHash[F[_]: Async: Files]: F[Hash] = {
-    val jarPath = JarSignature.getClass.getProtectionDomain.getCodeSource.getLocation.toURI
-    digestOf(Files[F].readAll(Path(jarPath.getPath)))
+    val jarPath = Path(JarSignature.getClass.getProtectionDomain.getCodeSource.getLocation.toURI.getPath)
+    digestOf(Files[F].readAll(jarPath))
   }
 
   def digestOf[F[_]: Async](bytes: Stream[F, Byte]): F[Hash] = {
