@@ -26,6 +26,7 @@ import io.constellationnetwork.node.shared.domain.swap.block.{AllowSpendBlockAcc
 import io.constellationnetwork.node.shared.domain.swap.{AllowSpendStorage, ContextualAllowSpendValidator}
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
+import io.constellationnetwork.node.shared.infrastructure.consensus.CurrencySnapshotEventValidationErrorStorage
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
 import io.constellationnetwork.node.shared.modules.SharedValidators
@@ -54,6 +55,7 @@ import org.scalacheck.rng.Seed
 import weaver.SimpleIOSuite
 
 object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
+  val TestValidationErrorStorageMaxSize: PosInt = PosInt(16)
 
   type TestResources = (
     SnapshotProcessor[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
@@ -119,8 +121,15 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             )
             implicit0(hs: HasherSelector[IO]) = HasherSelector.forSyncAlwaysCurrent(h)
             currencyEventsCutter = CurrencyEventsCutter.make[IO](None)
+            validationErrorStorage <- CurrencySnapshotEventValidationErrorStorage.make(TestValidationErrorStorageMaxSize).asResource
             currencySnapshotCreator = CurrencySnapshotCreator
-              .make[IO](currencySnapshotAcceptanceManager, None, SnapshotSizeConfig(Long.MaxValue, Long.MaxValue), currencyEventsCutter)
+              .make[IO](
+                currencySnapshotAcceptanceManager,
+                None,
+                SnapshotSizeConfig(Long.MaxValue, Long.MaxValue),
+                currencyEventsCutter,
+                validationErrorStorage
+              )
             currencySnapshotValidator = CurrencySnapshotValidator
               .make[IO](currencySnapshotCreator, validators.signedValidator, None, None)
 

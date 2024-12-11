@@ -5,8 +5,7 @@ import java.security.KeyPair
 import cats.data.NonEmptySet
 import cats.effect.Async
 import cats.effect.std.Supervisor
-import cats.syntax.flatMap._
-import cats.syntax.functor._
+import cats.syntax.all._
 
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
@@ -96,7 +95,8 @@ object SharedServices {
           currencySnapshotAcceptanceManager,
           None,
           cfg.snapshotSize,
-          currencyEventsCutter
+          currencyEventsCutter,
+          storages.currencySnapshotEventValidationError
         ),
         validators.signedValidator,
         None,

@@ -97,7 +97,8 @@ object Services {
         sharedServices.currencySnapshotAcceptanceManager,
         dataApplicationAcceptanceManager,
         cfg.snapshotSize,
-        sharedServices.currencyEventsCutter
+        sharedServices.currencyEventsCutter,
+        storages.currencySnapshotEventValidationError
       )
 
       validator = CurrencySnapshotValidator.make[F](

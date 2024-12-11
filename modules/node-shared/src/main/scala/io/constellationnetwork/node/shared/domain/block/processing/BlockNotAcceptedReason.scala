@@ -9,6 +9,7 @@ import io.constellationnetwork.schema.{BlockReference, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
 
 import derevo.cats.{eqv, show}
+import derevo.circe.magnolia.encoder
 import derevo.derive
 
 // NOTE: @derive(eqv, show) should not be required for each individual case class, but otherwise it throws in runtime
@@ -16,20 +17,26 @@ import derevo.derive
 @derive(eqv, show)
 sealed trait BlockNotAcceptedReason
 
-@derive(eqv, show)
+@derive(eqv, show, encoder)
 sealed trait BlockRejectionReason extends BlockNotAcceptedReason
 
-@derive(eqv, show)
+@derive(eqv, show, encoder)
 case class ValidationFailed(reasons: NonEmptyList[BlockValidationError]) extends BlockRejectionReason
 
-@derive(eqv, show)
+@derive(eqv, show, encoder)
 case class ParentNotFound(parent: BlockReference) extends BlockRejectionReason
 
-@derive(eqv, show)
+@derive(eqv, show, encoder)
 case object SnapshotOrdinalUnavailable extends BlockRejectionReason
+
+@derive(eqv, show, encoder)
+case object InvalidCurrencyMessageEvent extends BlockRejectionReason
 
 @derive(eqv, show)
 case class RejectedTransaction(tx: TransactionReference, reason: TransactionRejectionReason) extends BlockRejectionReason
+
+@derive(eqv, show, encoder)
+case class DataBlockNotAccepted(reason: String) extends BlockRejectionReason
 
 @derive(eqv, show)
 sealed trait BlockAwaitReason extends BlockNotAcceptedReason
@@ -53,7 +60,7 @@ sealed trait TransactionAwaitReason
 case class ParentOrdinalAboveLastTxOrdinal(parentOrdinal: TransactionOrdinal, lastTxOrdinal: TransactionOrdinal)
     extends TransactionAwaitReason
 
-@derive(eqv, show)
+@derive(eqv, show, encoder)
 sealed trait TransactionRejectionReason
 
 @derive(eqv, show)

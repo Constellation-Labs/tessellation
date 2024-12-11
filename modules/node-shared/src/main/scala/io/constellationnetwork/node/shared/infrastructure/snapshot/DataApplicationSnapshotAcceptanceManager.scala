@@ -16,6 +16,7 @@ import io.constellationnetwork.currency.dataApplication.storage.CalculatedStateL
 import io.constellationnetwork.currency.schema.currency.DataApplicationPart
 import io.constellationnetwork.currency.validations.DataTransactionsValidator.validateDataTransactionsL0
 import io.constellationnetwork.ext.cats.syntax.partialPrevious.catsSyntaxPartialPrevious
+import io.constellationnetwork.node.shared.domain.block.processing.{BlockNotAcceptedReason, DataBlockNotAccepted}
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotArtifact
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.artifact.{SharedArtifact, TokenUnlock}
@@ -43,7 +44,8 @@ case class DataApplicationAcceptanceResult(
   dataApplicationPart: DataApplicationPart,
   calculatedState: DataCalculatedState,
   feeTransactions: Seq[Signed[FeeTransaction]] = Seq.empty,
-  sharedArtifacts: SortedSet[SharedArtifact] = SortedSet.empty[SharedArtifact]
+  sharedArtifacts: SortedSet[SharedArtifact] = SortedSet.empty[SharedArtifact],
+  notAccepted: List[(Signed[DataApplicationBlock], BlockNotAcceptedReason)] = List.empty
 )
 
 object DataApplicationSnapshotAcceptanceManager {
@@ -149,25 +151,35 @@ object DataApplicationSnapshotAcceptanceManager {
 
         dataState = DataState(lastOnChainState, lastCalculatedState)
 
-        (validatedUpdates, validatedBlocks) <- OptionT.liftF {
+        (validatedUpdates, validatedBlocks, notAccepted) <- OptionT.liftF {
           NonEmptyList
             .fromList(dataBlocks.distinctBy(_.value.roundId))
             .map { uniqueBlocks =>
-              val dataTransactions = uniqueBlocks.flatMap(_.value.dataTransactions)
+              uniqueBlocks.toList.traverse { dataBlock =>
+                val dataTransactions = dataBlock.value.dataTransactions
 
-              val dataTransactionsValidations =
-                dataTransactions.traverse(validateDataTransactionsL0(_, service, balances, currentOrdinal, dataState)).map(_.reduce)
+                val dataTransactionsValidations =
+                  dataTransactions.traverse(validateDataTransactionsL0(_, service, balances, currentOrdinal, dataState)).map(_.reduce)
 
-              dataTransactionsValidations.flatTap { validated =>
-                logger.warn(s"Data application is invalid, errors: ${validated.toString}").whenA(validated.isInvalid)
+                dataTransactionsValidations.flatTap { validated =>
+                  logger.warn(s"Data application is invalid, errors: ${validated.toString}").whenA(validated.isInvalid)
+                }
+                  .map(x => if (x.isInvalid) Some((dataBlock, DataBlockNotAccepted(x.toString))) else None)
+                  .handleErrorWith(err =>
+                    logger
+                      .error(err)("Unhandled exception during validating data application, assumed as invalid")
+                      .as(Some((dataBlock, DataBlockNotAccepted(err.getMessage))))
+                  )
+              }.map(_.flatten).map { invalidDataBlocks =>
+                if (invalidDataBlocks.isEmpty) {
+                  val updates = uniqueBlocks.flatMap(_.value.dataTransactions)
+                  (updates.toList, uniqueBlocks.toList, List.empty)
+                } else {
+                  (List.empty, List.empty, invalidDataBlocks)
+                }
               }
-                .map(_.isValid)
-                .handleErrorWith(err =>
-                  logger.error(err)("Unhandled exception during validating data application, assumed as invalid").as(false)
-                )
-                .ifF((dataTransactions.toList, uniqueBlocks.toList), (List.empty, List.empty))
             }
-            .getOrElse((List.empty, List.empty).pure[F])
+            .getOrElse((List.empty, List.empty, List.empty).pure[F])
         }
 
         newDataState <- OptionT.liftF {
@@ -201,7 +213,8 @@ object DataApplicationSnapshotAcceptanceManager {
           DataApplicationPart(serializedOnChainState, serializedBlocks, calculatedStateProof),
           newDataState.calculated,
           feeTransactions,
-          sharedArtifacts
+          sharedArtifacts,
+          notAccepted
         )
 
       newDataState.value.handleErrorWith { err =>
@@ -210,7 +223,8 @@ object DataApplicationSnapshotAcceptanceManager {
             maybeLastDataApplication.map(
               DataApplicationAcceptanceResult(
                 _,
-                lastCalculatedState._2
+                lastCalculatedState._2,
+                notAccepted = dataBlocks.map(signedBlock => (signedBlock, DataBlockNotAccepted(err.getMessage)))
               )
             )
           }

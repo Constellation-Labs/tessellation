@@ -18,6 +18,7 @@ import io.constellationnetwork.node.shared.domain.statechannel._
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcceptanceManager
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
+import io.constellationnetwork.node.shared.infrastructure.consensus.CurrencySnapshotEventValidationErrorStorage
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.node.shared.modules.SharedValidators
 import io.constellationnetwork.schema._
@@ -40,6 +41,7 @@ import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
 import weaver.MutableIOSuite
 object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
+  val TestValidationErrorStorageMaxSize: PosInt = PosInt(16)
 
   type Res = (KryoSerializer[IO], Hasher[IO], JsonSerializer[IO], SecurityProvider[IO], JsonBrotliBinarySerializer[IO])
 
@@ -85,8 +87,15 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         validators.globalSnapshotSyncValidator
       )
       currencyEventsCutter = CurrencyEventsCutter.make[IO](None)
+      validationErrorStorage <- CurrencySnapshotEventValidationErrorStorage.make(TestValidationErrorStorageMaxSize)
       creator = CurrencySnapshotCreator
-        .make[IO](currencySnapshotAcceptanceManager, None, SnapshotSizeConfig(Long.MaxValue, Long.MaxValue), currencyEventsCutter)
+        .make[IO](
+          currencySnapshotAcceptanceManager,
+          None,
+          SnapshotSizeConfig(Long.MaxValue, Long.MaxValue),
+          currencyEventsCutter,
+          validationErrorStorage
+        )
       currencySnapshotValidator = CurrencySnapshotValidator.make[IO](creator, validators.signedValidator, None, None)
       currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
       manager = new GlobalSnapshotStateChannelAcceptanceManager[IO] {

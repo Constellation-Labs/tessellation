@@ -11,14 +11,17 @@ import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnap
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.config.types.{SharedConfig, SnapshotConfig}
+import io.constellationnetwork.node.shared.domain.block.processing.BlockRejectionReason
 import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorage, L0ClusterStorage, SessionStorage}
 import io.constellationnetwork.node.shared.domain.collateral.LatestBalances
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastSyncGlobalSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.infrastructure.cluster.storage.L0ClusterStorage
+import io.constellationnetwork.node.shared.infrastructure.consensus.ValidationErrorStorage
 import io.constellationnetwork.node.shared.infrastructure.gossip.RumorStorage
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage._
 import io.constellationnetwork.node.shared.modules.SharedStorages
+import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEvent
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.L0Peer
 import io.constellationnetwork.security.HasherSelector
@@ -69,7 +72,8 @@ object Storages {
         incrementalSnapshotLocalFileSystemStorage = snapshotLocalFileSystemStorage,
         identifier = identifierStorage,
         calculatedStateStorage = maybeCalculatedStateStorage,
-        lastGlobalSnapshotSync = lastGlobalSnapshotSyncStorage
+        lastGlobalSnapshotSync = lastGlobalSnapshotSyncStorage,
+        currencySnapshotEventValidationError = sharedStorages.currencySnapshotEventValidationError
       ) {}
 }
 
@@ -84,5 +88,6 @@ sealed abstract class Storages[F[_]] private (
   val incrementalSnapshotLocalFileSystemStorage: SnapshotLocalFileSystemStorage[F, CurrencyIncrementalSnapshot],
   val identifier: IdentifierStorage[F],
   val calculatedStateStorage: Option[CalculatedStateLocalFileSystemStorage[F]],
-  val lastGlobalSnapshotSync: LastSentGlobalSnapshotSyncStorage[F]
+  val lastGlobalSnapshotSync: LastSentGlobalSnapshotSyncStorage[F],
+  val currencySnapshotEventValidationError: ValidationErrorStorage[F, CurrencySnapshotEvent, BlockRejectionReason]
 )

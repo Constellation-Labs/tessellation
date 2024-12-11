@@ -14,6 +14,7 @@ import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.SignedValidator.SignedValidationError
 
 import derevo.cats.{eqv, show}
+import derevo.circe.magnolia.encoder
 import derevo.derive
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.PosInt
@@ -49,7 +50,7 @@ object BlockValidationParams {
   val default: BlockValidationParams = BlockValidationParams(minSignatureCount = 3, minParentCount = 2)
 }
 
-@derive(eqv, show)
+@derive(eqv, show, encoder)
 sealed trait BlockValidationError
 
 case class InvalidTransactionChain(error: TransactionChainBroken) extends BlockValidationError
