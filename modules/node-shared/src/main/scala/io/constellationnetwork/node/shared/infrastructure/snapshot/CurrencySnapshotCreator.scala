@@ -26,6 +26,7 @@ import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.types.SnapshotSizeConfig
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
+import io.constellationnetwork.node.shared.infrastructure.consensus.ValidationErrorStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema._
@@ -72,7 +73,8 @@ object CurrencySnapshotCreator {
     currencySnapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F],
     dataApplicationSnapshotAcceptanceManager: Option[DataApplicationSnapshotAcceptanceManager[F]],
     snapshotSizeConfig: SnapshotSizeConfig,
-    currencyEventsCutter: CurrencyEventsCutter[F]
+    currencyEventsCutter: CurrencyEventsCutter[F],
+    currencySnapshotValidationErrorStorage: ValidationErrorStorage[F, CurrencySnapshotEvent, BlockRejectionReason]
   ): CurrencySnapshotCreator[F] = new CurrencySnapshotCreator[F] {
 
     private def maxProposalSizeInBytes(facilitators: Set[PeerId]): PosLong =
@@ -200,6 +202,21 @@ object CurrencySnapshotCreator {
                 facilitators,
                 lastGlobalSnapshots
               )
+
+          rejectedBlockEvents = currencySnapshotAcceptanceResult.block.notAccepted.collect {
+            case (b, r: BlockRejectionReason) => (BlockEvent(b), r)
+          }
+          _ <- currencySnapshotValidationErrorStorage.add(rejectedBlockEvents)
+
+          rejectedDataBlockEvents = dataApplicationAcceptanceResult.map(_.notAccepted).getOrElse(List.empty).collect {
+            case (b, r: BlockRejectionReason) => (DataApplicationBlockEvent(b), r)
+          }
+          _ <- currencySnapshotValidationErrorStorage.add(rejectedDataBlockEvents)
+
+          rejectedMessageEvents = currencySnapshotAcceptanceResult.messages.notAccepted.map(m =>
+            (CurrencyMessageEvent(m), InvalidCurrencyMessageEvent)
+          )
+          _ <- currencySnapshotValidationErrorStorage.add(rejectedMessageEvents)
 
           (awaitingBlocks, rejectedBlocks) = currencySnapshotAcceptanceResult.block.notAccepted.partitionMap {
             case (b, _: BlockAwaitReason)     => b.asRight

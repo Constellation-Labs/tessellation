@@ -278,6 +278,44 @@ paths:
             Request-Signature:
               $ref: '../../models/headers/Request-Signature.yml'
 
+  /transactions/{hash}/errors:
+    get:
+      tags:
+        - Transactions
+      description: Get validation error by given transaction hash
+      responses:
+        '200':
+          description: Validation error
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                $ref: '../../models/schemas/ValidationError.yml'
+        404:
+          description: Transaction not found
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        '503':
+          description: Node is not Ready yet
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+
   /metrics:
     get:
       tags:

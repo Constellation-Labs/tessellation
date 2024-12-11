@@ -33,7 +33,8 @@ object types {
     addresses: AddressesConfig,
     allowSpends: AllowSpendsConfig,
     tokenLocks: TokenLocksConfig,
-    lastGlobalSnapshotsSync: LastGlobalSnapshotsSyncConfig
+    lastGlobalSnapshotsSync: LastGlobalSnapshotsSyncConfig,
+    validationErrorStorage: ValidationErrorStorageConfig
   )
 
   case class SharedConfig(
@@ -52,7 +53,8 @@ object types {
     addresses: AddressesConfig,
     allowSpends: AllowSpendsConfig,
     tokenLocks: TokenLocksConfig,
-    lastGlobalSnapshotsSync: LastGlobalSnapshotsSyncConfig
+    lastGlobalSnapshotsSync: LastGlobalSnapshotsSyncConfig,
+    validationErrorStorage: ValidationErrorStorageConfig
   )
 
   case class SharedTrustConfig(
@@ -159,4 +161,6 @@ object types {
   case class TokenLocksConfig(minEpochProgressesToLock: NonNegLong)
 
   case class LastGlobalSnapshotsSyncConfig(syncOffset: NonNegLong, minGlobalSnapshotsToParticipateConsensus: PosInt)
+
+  case class ValidationErrorStorageConfig(maxSize: PosInt)
 }

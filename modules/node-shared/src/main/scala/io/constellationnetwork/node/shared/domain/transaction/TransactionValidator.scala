@@ -14,6 +14,7 @@ import io.constellationnetwork.security.signature.SignedValidator.SignedValidati
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 
 import derevo.cats.{eqv, show}
+import derevo.circe.magnolia.encoder
 import derevo.derive
 import eu.timepit.refined.auto._
 
@@ -71,7 +72,7 @@ object TransactionValidator {
 
     }
 
-  @derive(eqv, show)
+  @derive(eqv, show, encoder)
   sealed trait TransactionValidationError
   case class InvalidSigned(error: SignedValidationError) extends TransactionValidationError
   case object NotSignedBySourceAddressOwner extends TransactionValidationError

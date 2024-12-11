@@ -11,6 +11,7 @@ import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.Signed
 
 import derevo.cats.{eqv, show}
+import derevo.circe.magnolia.encoder
 import derevo.derive
 
 trait TransactionChainValidator[F[_]] {
@@ -64,7 +65,7 @@ object TransactionChainValidator {
       }
     }
 
-  @derive(eqv, show)
+  @derive(eqv, show, encoder)
   case class TransactionChainBroken(address: Address, referenceNotFound: TransactionReference)
 
   type TransactionNel = NonEmptyList[Signed[Transaction]]

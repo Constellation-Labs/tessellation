@@ -56,7 +56,8 @@ object method {
       c.addresses,
       c.allowSpends,
       c.tokenLocks,
-      c.lastGlobalSnapshotsSync
+      c.lastGlobalSnapshotsSync,
+      c.validationErrorStorage
     )
   }
 

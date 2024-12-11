@@ -103,6 +103,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
     implicit val (d, e) = (DataTransaction.decoder, da.calculatedStateEncoder)
     DataBlockRoutes[F](mkCell, da)
   }
+  private val transactionValidationErrorRoutes = TransactionValidationErrorRoutes(storages.currencySnapshotEventValidationError)
   private val metagraphNodeRoutes = maybeMetagraphVersion.map { metagraphVersion =>
     MetagraphRoutes[F](storages.node, storages.session, storages.cluster, httpCfg, selfId, nodeVersion, metagraphVersion)
   }
@@ -147,6 +148,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
               clusterRoutes.publicRoutes <+>
               currencyBlockRoutes.publicRoutes <+>
               dataBlockRoutes.map(_.publicRoutes).getOrElse(HttpRoutes.empty) <+>
+              transactionValidationErrorRoutes.publicRoutes <+>
               walletRoutes.publicRoutes <+>
               nodeRoutes.publicRoutes <+>
               consensusInfoRoutes.publicRoutes <+>

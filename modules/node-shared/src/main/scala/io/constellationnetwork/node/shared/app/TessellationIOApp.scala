@@ -154,7 +154,9 @@ abstract class TessellationIOApp[A <: CliMethod](
                                       _l0Seedlist <- loadSeedlist("l0Seedlist", method.l0SeedlistPath).asResource
                                       _prioritySeedlist <- loadSeedlist("prioritySeedlist", method.prioritySeedlistPath).asResource
                                       _trustRatings <- method.trustRatingsPath.traverse(TrustRatingCsvLoader.make[IO].load).asResource
-                                      storages <- SharedStorages.make[IO](clusterId, cfg).asResource
+                                      storages <- _hasherSelector
+                                        .withCurrent(implicit hasher => SharedStorages.make[IO](clusterId, cfg))
+                                        .asResource
                                       res <- SharedResources.make[IO](cfg, _keyPair.getPrivate, storages.session, selfId)
                                       session = Session.make[IO](storages.session, storages.node, storages.cluster)
                                       p2pClient = SharedP2PClient.make[IO](res.client, session)

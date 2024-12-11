@@ -1,0 +1,12 @@
+type: object
+properties:
+  message:
+    type: string
+    example: "data block not accepted: Invalid application data"
+  description:
+    type: string
+    example: "Data block not accepted"
+  details:
+    type: object
+    example:
+      reason: "Invalid application data"

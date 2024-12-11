@@ -13,7 +13,6 @@ import cats.syntax.traverse._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
-import io.constellationnetwork.dag.l0.infrastructure.snapshot._
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
@@ -29,6 +28,7 @@ import io.constellationnetwork.node.shared.domain.swap.{AllowSpendChainValidator
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
 import io.constellationnetwork.node.shared.domain.transaction.{TransactionChainValidator, TransactionValidator}
 import io.constellationnetwork.node.shared.infrastructure.block.processing.{BlockAcceptanceLogic, BlockAcceptanceManager, BlockValidator}
+import io.constellationnetwork.node.shared.infrastructure.consensus.CurrencySnapshotEventValidationErrorStorage
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.node.shared.modules.SharedValidators
@@ -56,6 +56,8 @@ import weaver._
 import weaver.scalacheck.Checkers
 
 object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
+  val TestValidationErrorStorageMaxSize: PosInt = PosInt(16)
+
   type GenKeyPairFn = () => KeyPair
 
   type Res = (KryoSerializer[IO], Hasher[IO], JsonSerializer[IO], SecurityProvider[IO], Metrics[IO], Random[IO])
@@ -265,13 +267,20 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
 
     implicit val hs = HasherSelector.forSyncAlwaysCurrent(H)
 
-    val currencySnapshotCreator =
-      CurrencySnapshotCreator
-        .make[IO](currencySnapshotAcceptanceManager, None, SnapshotSizeConfig(Long.MaxValue, Long.MaxValue), currencyEventsCutter)
-    val currencySnapshotValidator = CurrencySnapshotValidator.make[IO](currencySnapshotCreator, validators.signedValidator, None, None)
-
-    val currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
     for {
+      validationErrorStorage <- CurrencySnapshotEventValidationErrorStorage.make(TestValidationErrorStorageMaxSize)
+      currencySnapshotCreator =
+        CurrencySnapshotCreator
+          .make[IO](
+            currencySnapshotAcceptanceManager,
+            None,
+            SnapshotSizeConfig(Long.MaxValue, Long.MaxValue),
+            currencyEventsCutter,
+            validationErrorStorage
+          )
+      currencySnapshotValidator = CurrencySnapshotValidator.make[IO](currencySnapshotCreator, validators.signedValidator, None, None)
+
+      currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
       stateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, NonNegLong(10L))
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync
       feeCalculator = FeeCalculator.make(SortedMap.empty)
