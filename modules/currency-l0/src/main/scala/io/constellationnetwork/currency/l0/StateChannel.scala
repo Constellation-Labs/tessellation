@@ -66,20 +66,21 @@ object StateChannel {
 
         (lastSentGlobalSnapshotSync, storages.session.getToken).flatMapN {
           case (Some(lastGlobalSnapshotSyncRef), Some(session)) =>
-            val sync = GlobalSnapshotSync(lastGlobalSnapshotSyncRef.ordinal.next, snapshot.ordinal, snapshot.hash, session)
+            val sync = GlobalSnapshotSync(lastGlobalSnapshotSyncRef.ordinal, snapshot.ordinal, snapshot.hash, session)
             Signed
               .forAsyncHasher(sync, selfKeyPair)
               .map(GlobalSnapshotSyncEvent(_))
-              .map(enqueueConsensusEventFn)
-              .flatMap(_.run())
+              .flatMap { event =>
+                enqueueConsensusEventFn(event).run() >> storages.lastGlobalSnapshotSync.set(event.value)
+              }
               .void
           case (Some(_), None) =>
-            logger.error("Couldn't send GlobalSnapshotSyncEvent. Session is missing.")
+            logger.warn("Couldn't send GlobalSnapshotSyncEvent. Session is missing.")
           case (None, Some(_)) =>
-            logger.error("Couldn't send GlobalSnapshotSyncEvent. Last sent reference and fallback snapshot info are missing.")
+            logger.warn("Couldn't send GlobalSnapshotSyncEvent. Last sent reference is missing")
           case _ =>
             logger.error(
-              "Couldn't construct GlobalSnapshotSyncEvent. Last sent reference, fallback snapshot info and session are missing."
+              "Couldn't construct GlobalSnapshotSyncEvent. Last sent reference and session are missing"
             )
         }
       }
