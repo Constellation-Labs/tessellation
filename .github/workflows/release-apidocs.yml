@@ -7,6 +7,9 @@ on:
       - develop
     paths:
       - 'doc/api/**'
+  pull_request:
+    paths:
+      - 'doc/api/**'
 
 name: Publish API docs
 
