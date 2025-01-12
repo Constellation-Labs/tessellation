@@ -12,7 +12,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.dag.l0.config.types.RewardsConfig._
 import io.constellationnetwork.dag.l0.config.types._
-import io.constellationnetwork.dag.l0.infrastructure.snapshot.GlobalSnapshotEvent
+import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.ext.kryo._

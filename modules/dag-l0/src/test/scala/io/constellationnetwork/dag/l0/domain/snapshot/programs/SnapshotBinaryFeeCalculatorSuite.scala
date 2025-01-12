@@ -8,6 +8,7 @@ import cats.syntax.option._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.schema.currency._
+import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.StateChannelEvent
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculatorConfig
 import io.constellationnetwork.schema.address.{Address, DAGAddressRefined}
 import io.constellationnetwork.schema.balance.Balance
@@ -173,14 +174,14 @@ object SnapshotBinaryFeeCalculatorSuite extends SimpleMutableIOSuite with Checke
   def testDataGen(stakingAddress: Option[Address], metagraphId: Option[Address]) =
     for {
       input <- Gen.oneOf(sampleInputs)
-      event <- signedOf(binary(input)).map(StateChannelOutput(eventAddress, _))
+      event <- signedOf(binary(input)).map(StateChannelOutput(eventAddress, _)).map(StateChannelEvent(_))
       lastCurrencySnapshots <- lastCurrencySnapshotsGen(stakingAddress, metagraphId)
     } yield (input, event, lastCurrencySnapshots)
 
   implicit val showTestData: Show[
     (
       SampleInput,
-      StateChannelOutput,
+      StateChannelEvent,
       SortedMap[Address, Either[Signed[CurrencySnapshot], (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]]
     )
   ] = Show.show(_.toString)

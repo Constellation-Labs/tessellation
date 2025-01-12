@@ -37,7 +37,7 @@ object StateProofSuite extends MutableIOSuite with Checkers {
   def deserializeSnapshot(path: File)(implicit k: KryoSerializer[IO]): IO[Signed[GlobalIncrementalSnapshot]] = {
     val bytes = path.loadBytes
 
-    k.deserialize[Signed[GlobalIncrementalSnapshot]](bytes).liftTo[IO]
+    k.deserialize[Signed[GlobalIncrementalSnapshotV1]](bytes).map(_.map(_.toGlobalIncrementalSnapshot)).liftTo[IO]
   }
 
   test("state proof matches for kryo deserialization") { res =>
@@ -51,7 +51,6 @@ object StateProofSuite extends MutableIOSuite with Checkers {
       snap <- deserializeSnapshot(snapshotFile)
 
       snapshotStateProof = snap.stateProof
-
       infoStateProof <- info.stateProof(snap.ordinal)
 
     } yield expect.eql(snapshotStateProof, infoStateProof)

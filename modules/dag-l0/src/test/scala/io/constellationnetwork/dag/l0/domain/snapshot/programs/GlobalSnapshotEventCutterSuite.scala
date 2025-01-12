@@ -10,9 +10,9 @@ import scala.collection.immutable.SortedSet
 import io.constellationnetwork.block.generators.{blockReferencesGen, signedBlockGen}
 import io.constellationnetwork.currency.schema.currency.SnapshotFee
 import io.constellationnetwork.dag.l0.dagL0KryoRegistrar
-import io.constellationnetwork.dag.l0.infrastructure.snapshot.{DAGEvent, GlobalSnapshotContext, StateChannelEvent}
+import io.constellationnetwork.dag.l0.infrastructure.snapshot.GlobalSnapshotContext
+import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.{DAGEvent, StateChannelEvent}
 import io.constellationnetwork.ext.cats.effect.ResourceIO
-import io.constellationnetwork.ext.kryo.RefinedSerializer
 import io.constellationnetwork.generators.nonEmptyStringGen
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
@@ -33,7 +33,7 @@ import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
 
 object GlobalSnapshotEventCutterSuite extends MutableIOSuite with Checkers {
-  type Res = (KryoSerializer[IO], Hasher[IO], SecurityProvider[IO])
+  type Res = (JsonSerializer[IO], Hasher[IO], SecurityProvider[IO])
 
   override def sharedResource: Resource[IO, Res] =
     for {
@@ -41,10 +41,10 @@ object GlobalSnapshotEventCutterSuite extends MutableIOSuite with Checkers {
       sp <- SecurityProvider.forAsync[IO]
       implicit0(j: JsonSerializer[IO]) <- JsonSerializer.forSync[IO].asResource
       h = Hasher.forJson[IO]
-    } yield (ks, h, sp)
+    } yield (j, h, sp)
 
   test("no events should not raise error") { res =>
-    implicit val (ks, h, _) = res
+    implicit val (j, h, _) = res
 
     makeCutter(PosInt.MaxValue)
       .cut(Nil, Nil, makeSnapshotInfo(), SnapshotOrdinal.MinValue)
@@ -59,20 +59,25 @@ object GlobalSnapshotEventCutterSuite extends MutableIOSuite with Checkers {
       case (scEvents, dagEvents) =>
         for {
           cutter <- makeCutter(PosInt.MinValue).pure[F]
-          actual <- cutter.cut(scEvents, dagEvents, makeSnapshotInfo(), SnapshotOrdinal.MinValue)
+          actual <- cutter.cut(
+            scEvents,
+            dagEvents,
+            makeSnapshotInfo(),
+            SnapshotOrdinal.MinValue
+          )
         } yield expect.all(actual == (Nil, Nil))
     }
   }
 
   test("no events cut") { res =>
-    implicit val (ks, h, _) = res
+    implicit val (j, h, _) = res
 
     val gen = eventsGen(5, 15)
     forall(gen) {
       case (scEvents, dagEvents) =>
         for {
-          scEventsSize <- scEvents.toBinary.liftTo[IO].map(_.length)
-          dagEventsSize <- dagEvents.toBinary.liftTo[IO].map(_.length)
+          scEventsSize <- j.serialize(scEvents).map(_.length)
+          dagEventsSize <- j.serialize(dagEvents).map(_.length)
           cutter = makeCutter(PosInt.unsafeFrom(scEventsSize + dagEventsSize))
           (scEventsAfterCut, dagEventsAfterCut) <- cutter.cut(scEvents, dagEvents, makeSnapshotInfo(), SnapshotOrdinal.MinValue)
         } yield expect.all(scEvents == scEventsAfterCut, dagEvents == dagEventsAfterCut)
@@ -80,10 +85,10 @@ object GlobalSnapshotEventCutterSuite extends MutableIOSuite with Checkers {
   }
 
   test("remove lowest fees but not parents") { res =>
-    implicit val (ks, h, _) = res
+    implicit val (j, h, _) = res
 
     val gen = for {
-      scEvents <- listOfN(5, 10, stateChannelOutputGenWithFee(posLongGen))
+      scEvents <- listOfN(5, 10, stateChannelOutputGenWithFee(posLongGen)).map(_.map(StateChannelEvent(_)))
       scParent <- stateChannelOutputGenWithFee(zeroLongGen)
       dagEvents <- childrenBlockGen
       dagParent <- parentBlockGen
@@ -94,13 +99,13 @@ object GlobalSnapshotEventCutterSuite extends MutableIOSuite with Checkers {
         for {
           scParentHash <- scParent.snapshotBinary.toHashed[IO].map(_.hash)
           adjustedScEvents = scEvents.map { posFeeEvent =>
-            val childBinary = posFeeEvent.snapshotBinary.value.copy(lastSnapshotHash = scParentHash)
-            posFeeEvent.copy(
+            val childBinary = posFeeEvent.value.snapshotBinary.value.copy(lastSnapshotHash = scParentHash)
+            posFeeEvent.value.copy(
               address = scParent.address,
               // NOTE: Safe to overwrite value of signed Signed[StateChannelSnapshotBinary]
-              snapshotBinary = posFeeEvent.snapshotBinary.copy(value = childBinary)
+              snapshotBinary = posFeeEvent.value.snapshotBinary.copy(value = childBinary)
             )
-          }
+          }.map(StateChannelEvent(_))
 
           sortedScEvents <- adjustedScEvents
             .traverse(WrappedStateChannelEvent(_))
@@ -109,24 +114,24 @@ object GlobalSnapshotEventCutterSuite extends MutableIOSuite with Checkers {
           dagParentRef <- dagParent.toHashed[IO].map(_.ownReference).map(NonEmptyList.of(_))
 
           // NOTE: Safe to remap since generated Signed[Block] not dependent on parent refs
-          adjustedDagEvents = dagEvents.map(sb => Signed(sb.value.copy(parent = dagParentRef), sb.proofs))
+          adjustedDagEvents = dagEvents.map(sb => Signed(sb.value.copy(parent = dagParentRef), sb.proofs)).map(DAGEvent(_))
           sortedDagEvents <- adjustedDagEvents
             .traverse(WrappedDAGEvent(_))
             .map(_.sorted)
 
           (prunedScEvents, prunedDagEvents) = dropEvents(5, sortedScEvents, sortedDagEvents)
-          expectedScEvents = prunedScEvents.map(_.event) :+ scParent
-          expectedDagEvents = prunedDagEvents.map(_.event) :+ dagParent
+          expectedScEvents = prunedScEvents.map(_.event) :+ StateChannelEvent(scParent)
+          expectedDagEvents = prunedDagEvents.map(_.event) :+ DAGEvent(dagParent)
 
           expectedSize <- (
-            expectedScEvents.toBinary.liftTo[IO].map(_.length),
-            expectedDagEvents.toBinary.liftTo[IO].map(_.length)
+            j.serialize(expectedScEvents).map(_.length),
+            j.serialize(expectedDagEvents).map(_.length)
           ).mapN(_ + _)
 
           cutter = makeCutter(PosInt.unsafeFrom(expectedSize))
           (actualScEvents, actualDagEvents) <- cutter.cut(
-            scParent :: adjustedScEvents,
-            dagParent :: adjustedDagEvents,
+            StateChannelEvent(scParent) :: adjustedScEvents,
+            DAGEvent(dagParent) :: adjustedDagEvents,
             makeSnapshotInfo(),
             SnapshotOrdinal.MinValue
           )
@@ -147,10 +152,10 @@ object GlobalSnapshotEventCutterSuite extends MutableIOSuite with Checkers {
       info: GlobalSnapshotContext,
       ordinal: SnapshotOrdinal
     ): IO[NonNegLong] =
-      event.snapshotBinary.value.fee.value.pure[IO]
+      event.value.snapshotBinary.value.fee.value.pure[IO]
   }
 
-  def makeCutter(maxSize: PosInt)(implicit K: KryoSerializer[IO], H: Hasher[IO]) =
+  def makeCutter(maxSize: PosInt)(implicit J: JsonSerializer[IO], H: Hasher[IO]) =
     GlobalSnapshotEventCutter.make[IO](maxSize, feeCalculator)
 
   val zeroLongGen: Gen[Long] = Gen.const(0L)
@@ -179,11 +184,11 @@ object GlobalSnapshotEventCutterSuite extends MutableIOSuite with Checkers {
   def listOfN[A](min: Int, max: Int, gen: Gen[A]): Gen[List[A]] =
     Gen.choose(min, max).flatMap(Gen.listOfN(_, gen))
 
-  def eventsGen(min: Int, max: Int): Gen[(List[StateChannelOutput], List[Signed[Block]])] =
+  def eventsGen(min: Int, max: Int): Gen[(List[StateChannelEvent], List[DAGEvent])] =
     for {
       scEvents <- listOfN(min, max, stateChannelOutputGen)
       dagEvents <- listOfN(min, max, signedBlockGen)
-    } yield (scEvents, dagEvents)
+    } yield (scEvents.map(StateChannelEvent(_)), dagEvents.map(DAGEvent(_)))
 
   def blockWithFeeGen(fee: Long): Gen[Block] =
     for {
@@ -201,8 +206,8 @@ object GlobalSnapshotEventCutterSuite extends MutableIOSuite with Checkers {
 
   object WrappedStateChannelEvent {
     def apply(event: StateChannelEvent)(implicit hasher: Hasher[IO]): IO[WrappedStateChannelEvent] = {
-      val fee = event.snapshotBinary.fee.value.value
-      event.snapshotBinary.toHashed[IO].map(h => WrappedStateChannelEvent(event, fee, h.hash))
+      val fee = event.value.snapshotBinary.fee.value.value
+      event.value.snapshotBinary.toHashed[IO].map(h => WrappedStateChannelEvent(event, fee, h.hash))
     }
     implicit val ordering: Ordering[WrappedStateChannelEvent] = Ordering.by(w => (w.fee, w.hash))
   }
@@ -212,7 +217,7 @@ object GlobalSnapshotEventCutterSuite extends MutableIOSuite with Checkers {
   object WrappedDAGEvent {
     def apply(event: DAGEvent)(implicit hasher: Hasher[IO]): IO[WrappedDAGEvent] = {
       val fee = event.value.transactions.toIterable.map(_.value.fee.value.value).sum
-      event.toHashed[IO].map(h => WrappedDAGEvent(event, fee, h.hash))
+      event.value.toHashed[IO].map(h => WrappedDAGEvent(event, fee, h.hash))
     }
     implicit val ordering: Ordering[WrappedDAGEvent] = Ordering.by(w => (w.fee, w.hash))
   }

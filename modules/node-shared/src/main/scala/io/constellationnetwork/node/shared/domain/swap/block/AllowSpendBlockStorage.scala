@@ -3,27 +3,21 @@ package io.constellationnetwork.node.shared.domain.swap.block
 import cats.Show
 import cats.effect.Sync
 import cats.effect.std.Random
-import cats.syntax.either._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
-import cats.syntax.option._
-import cats.syntax.show._
-import cats.syntax.traverse._
-import cats.syntax.traverseFilter._
+import cats.syntax.all._
 
 import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.ext.collection.MapRefUtils.MapRefOps
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockStorage._
-import io.constellationnetwork.schema.swap.AllowSpendBlock
+import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.swap.{AllowSpend, AllowSpendBlock}
 import io.constellationnetwork.security.Hashed
 import io.constellationnetwork.security.hash.ProofsHash
 import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.NonNegLong
 import io.chrisdavenport.mapref.MapRef
-import monocle.macros.syntax.lens._
 
 class AllowSpendBlockStorage[F[_]: Sync: Random](blocks: MapRef[F, ProofsHash, Option[AllowSpendStoredBlock]]) {
 
@@ -43,8 +37,8 @@ class AllowSpendBlockStorage[F[_]: Sync: Random](blocks: MapRef[F, ProofsHash, O
     }.flatMap(_.liftTo[F]).void
 
   def adjustToMajority(
-    toAdd: Set[(Hashed[AllowSpendBlock], NonNegLong)] = Set.empty,
-    toMarkMajority: Set[(ProofsHash, NonNegLong)] = Set.empty,
+    toAdd: Set[Hashed[AllowSpendBlock]] = Set.empty,
+    toMarkMajority: Set[ProofsHash] = Set.empty,
     acceptedToRemove: Set[ProofsHash] = Set.empty,
     obsoleteToRemove: Set[ProofsHash] = Set.empty,
     toReset: Set[ProofsHash] = Set.empty,
@@ -52,23 +46,22 @@ class AllowSpendBlockStorage[F[_]: Sync: Random](blocks: MapRef[F, ProofsHash, O
   ): F[Unit] = {
 
     def addMajorityBlocks: F[Unit] =
-      toAdd.toList.traverse {
-        case (block, initialUsages) =>
-          val reference = block.proofsHash
-          blocks(block.proofsHash).modify {
-            case Some(WaitingBlock(_)) | Some(PostponedBlock(_)) | None =>
-              (MajorityBlock(reference, initialUsages, Active).some, block.asRight)
-            case other => (other, UnexpectedBlockStateWhenAddingMajorityBlock(block.proofsHash, other).asLeft)
-          }.flatMap(_.liftTo[F])
+      toAdd.toList.traverse { block =>
+        val reference = block.proofsHash
+        blocks(block.proofsHash).modify {
+          case Some(WaitingBlock(_)) | Some(PostponedBlock(_)) | None =>
+            (MajorityBlock(reference).some, block.asRight)
+          case other => (other, UnexpectedBlockStateWhenAddingMajorityBlock(block.proofsHash, other).asLeft)
+        }.flatMap(_.liftTo[F])
       }.void
 
     def markMajorityBlocks: F[Unit] =
       toMarkMajority.toList.traverse {
-        case (hash, initialUsages) =>
+        case hash =>
           blocks(hash).modify {
             case Some(AcceptedBlock(block)) =>
               val reference = block.proofsHash
-              (MajorityBlock(reference, initialUsages, Active).some, ().asRight)
+              (MajorityBlock(reference).some, ().asRight)
             case other =>
               (other, UnexpectedBlockStateWhenMarkingAsMajority(hash, other).asLeft)
           }.flatMap(_.liftTo[F])
@@ -134,11 +127,20 @@ class AllowSpendBlockStorage[F[_]: Sync: Random](blocks: MapRef[F, ProofsHash, O
   def getWaiting: F[Map[ProofsHash, Signed[AllowSpendBlock]]] =
     blocks.toMap.map(_.collect { case (hash, WaitingBlock(block)) => hash -> block })
 
-  def getUsages(hash: ProofsHash): F[Option[NonNegLong]] =
-    blocks(hash).get.map {
-      case Some(block: MajorityBlock) => block.usages.some
-      case _                          => none[NonNegLong]
-    }
+  def getBlocksForMajorityReconciliation(
+    currentEpochProgress: EpochProgress
+  ): F[Map[Address, List[Signed[AllowSpend]]]] = for {
+    all <- blocks.toMap
+    allowSpendBlocks = all.values.flatMap {
+      case MajorityBlock(reference) => List.empty // TODO: @mwadon ???
+      case WaitingBlock(b)          => b.transactions.toNonEmptyList.toList
+      case PostponedBlock(b)        => b.transactions.toNonEmptyList.toList
+      case AcceptedBlock(b)         => b.transactions.toNonEmptyList.toList
+    }.toList
+    allowSpends = allowSpendBlocks
+      .filter(as => as.lastValidEpochProgress <= currentEpochProgress)
+      .groupBy(_.source)
+  } yield allowSpends
 }
 
 object AllowSpendBlockStorage {
@@ -153,13 +155,7 @@ object AllowSpendBlockStorage {
   case class WaitingBlock(block: Signed[AllowSpendBlock]) extends AllowSpendStoredBlock
   case class PostponedBlock(block: Signed[AllowSpendBlock]) extends AllowSpendStoredBlock
   case class AcceptedBlock(block: Hashed[AllowSpendBlock]) extends AllowSpendStoredBlock
-  case class MajorityBlock(blockReference: ProofsHash, usages: NonNegLong, tipStatus: TipStatus) extends AllowSpendStoredBlock {
-    def addUsage: MajorityBlock = this.focus(_.usages).modify(usages => NonNegLong.unsafeFrom(usages + 1L))
-
-    def removeUsage: MajorityBlock =
-      this.focus(_.usages).modify(usages => NonNegLong.from(usages - 1L).toOption.getOrElse(NonNegLong.MinValue))
-    def deprecate: MajorityBlock = this.focus(_.tipStatus).replace(Deprecated)
-  }
+  case class MajorityBlock(blockReference: ProofsHash) extends AllowSpendStoredBlock
 
   implicit val showAllowSpendStoredBlock: Show[AllowSpendStoredBlock] = {
     case _: WaitingBlock   => "Waiting"

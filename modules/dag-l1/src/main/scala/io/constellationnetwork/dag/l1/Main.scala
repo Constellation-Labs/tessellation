@@ -111,6 +111,8 @@ object Main
         storages.block,
         storages.lastSnapshot,
         storages.transaction,
+        storages.allowSpendBlock,
+        storages.allowSpend,
         sharedServices.globalSnapshotContextFns,
         Hasher.forKryo[IO]
       )
@@ -157,6 +159,12 @@ object Main
           Hasher.forKryo[IO]
         )
         .asResource
+
+      alignment = Alignment.make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo, Run](
+        services,
+        programs,
+        storages
+      )
 
       swapRuntime = hasherSelector.withCurrent { implicit hasher =>
         Swap.run(
@@ -306,6 +314,7 @@ object Main
         }
       }.asResource
       _ <- stateChannel.runtime
+        .merge(alignment.runtime)
         .merge(swapRuntime)
         .merge(tokenLockRuntime)
         .compile

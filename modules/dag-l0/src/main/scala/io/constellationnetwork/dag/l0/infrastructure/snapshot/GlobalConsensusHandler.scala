@@ -3,12 +3,11 @@ package io.constellationnetwork.dag.l0.infrastructure.snapshot
 import cats.effect.Async
 import cats.syntax.semigroupk._
 
+import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{GlobalConsensusKind, GlobalConsensusOutcome}
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusRumorHandlers
 import io.constellationnetwork.node.shared.infrastructure.gossip.RumorHandler
 import io.constellationnetwork.security.HasherSelector
-
-import io.circe.disjunctionCodecs._
 
 object GlobalConsensusHandler {
   def make[F[_]: Async: HasherSelector](

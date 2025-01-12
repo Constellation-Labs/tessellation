@@ -12,6 +12,7 @@ import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.dag.l0.config.types.AppConfig
 import io.constellationnetwork.dag.l0.domain.snapshot.programs.{GlobalSnapshotEventCutter, SnapshotBinaryFeeCalculator}
+import io.constellationnetwork.dag.l0.infrastructure.snapshot.event._
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{GlobalConsensusKind, GlobalConsensusOutcome}
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.kryo.KryoSerializer
@@ -24,6 +25,7 @@ import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
 import io.constellationnetwork.node.shared.domain.statechannel.{FeeCalculator, FeeCalculatorConfig}
+import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
@@ -74,6 +76,7 @@ object GlobalSnapshotConsensus {
       feeCalculator = FeeCalculator.make(feeConfigs)
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
         BlockAcceptanceManager.make[F](validators.blockValidator, txHasher),
+        AllowSpendBlockAcceptanceManager.make[F](validators.allowSpendBlockValidator),
         GlobalSnapshotStateChannelEventsProcessor
           .make[F](
             validators.stateChannelValidator,

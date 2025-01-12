@@ -20,7 +20,12 @@ import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.config.types.{AddressesConfig, SnapshotSizeConfig}
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
-import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcceptanceManager
+import io.constellationnetwork.node.shared.domain.swap.block.{
+  AllowSpendBlockAcceptanceLogic,
+  AllowSpendBlockAcceptanceManager,
+  AllowSpendBlockValidator
+}
+import io.constellationnetwork.node.shared.domain.swap.{AllowSpendChainValidator, AllowSpendValidator}
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
 import io.constellationnetwork.node.shared.domain.transaction.{TransactionChainValidator, TransactionValidator}
 import io.constellationnetwork.node.shared.infrastructure.block.processing.{BlockAcceptanceLogic, BlockAcceptanceManager, BlockValidator}
@@ -155,7 +160,9 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         lastSnapshot.epochProgress,
         NonEmptyList.of(PeerId(Hex("peer1"))),
         lastSnapshot.tips.copy(remainedActive = activeTips),
-        newSnapshotInfoStateProof
+        newSnapshotInfoStateProof,
+        Some(SortedSet.empty),
+        Some(SortedMap.empty)
       )
       signed <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](snapshot, keyPair)
       hashed <- signed.toHashed
@@ -234,6 +241,11 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         txHasher
       )
     val blockAcceptanceManager = BlockAcceptanceManager.make(BlockAcceptanceLogic.make[IO](txHasher), blockValidator, txHasher)
+
+    val allowSpendBlockValidator =
+      AllowSpendBlockValidator.make[IO](signedValidator, AllowSpendChainValidator.make[IO], AllowSpendValidator.make[IO](signedValidator))
+    val allowSpendBlockAcceptanceManager =
+      AllowSpendBlockAcceptanceManager.make(AllowSpendBlockAcceptanceLogic.make[IO], allowSpendBlockValidator)
     val feeCalculator = FeeCalculator.make(SortedMap.empty)
     val validators =
       SharedValidators
@@ -270,7 +282,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           jsonBrotliBinarySerializer,
           feeCalculator
         )
-      snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make[IO](blockAcceptanceManager, stateChannelProcessor, Amount.empty)
+      snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager
+        .make[IO](blockAcceptanceManager, allowSpendBlockAcceptanceManager, stateChannelProcessor, Amount.empty)
       snapshotContextFunctions = GlobalSnapshotContextFunctions.make[IO](snapshotAcceptanceManager)
     } yield
       GlobalSnapshotTraverse
@@ -286,7 +299,16 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       state <- traverser.loadChain()
     } yield
       expect.eql(
-        GlobalSnapshotInfo(SortedMap.empty, SortedMap.empty, SortedMap.from(balances), SortedMap.empty, SortedMap.empty, None, Some(SortedMap.empty)),
+        GlobalSnapshotInfo(
+          SortedMap.empty,
+          SortedMap.empty,
+          SortedMap.from(balances),
+          SortedMap.empty,
+          SortedMap.empty,
+          Some(SortedMap.empty),
+          Some(SortedMap.empty),
+          Some(SortedMap.empty)
+        ),
         state._1
       )
   }
