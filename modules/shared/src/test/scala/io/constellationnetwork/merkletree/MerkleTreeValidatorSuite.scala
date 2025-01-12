@@ -45,7 +45,8 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
       SortedMap.empty,
       SortedMap.empty,
       None,
-      Some(SortedMap.empty)
+      None,
+      None
     )
     for {
       snapshot <- globalIncrementalSnapshot(globalSnapshotInfo)
@@ -61,7 +62,8 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
       SortedMap.empty,
       SortedMap.empty,
       None,
-      Some(SortedMap.empty)
+      None,
+      None
     )
 
     for {
@@ -86,7 +88,9 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
           EpochProgress.MinValue,
           NonEmptyList.of(PeerId(Hex(""))),
           SnapshotTips(SortedSet.empty, SortedSet.empty),
-          stateProof = sp
+          stateProof = sp,
+          Some(SortedSet.empty),
+          Some(SortedMap.empty)
         ),
         NonEmptySet.fromSetUnsafe(SortedSet(SignatureProof(ID.Id(Hex("")), Signature(Hex("")))))
       ).toHashed[F]

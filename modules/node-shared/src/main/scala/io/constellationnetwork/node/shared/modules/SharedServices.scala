@@ -109,6 +109,7 @@ object SharedServices {
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync
       globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
         BlockAcceptanceManager.make[F](validators.blockValidator, txHasher),
+        AllowSpendBlockAcceptanceManager.make[F](validators.allowSpendBlockValidator),
         GlobalSnapshotStateChannelEventsProcessor
           .make[F](
             validators.stateChannelValidator,

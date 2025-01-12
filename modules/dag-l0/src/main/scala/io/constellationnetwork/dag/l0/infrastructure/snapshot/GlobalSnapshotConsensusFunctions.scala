@@ -3,8 +3,9 @@ package io.constellationnetwork.dag.l0.infrastructure.snapshot
 import cats.effect.Async
 import cats.syntax.all._
 
-import scala.collection.immutable.SortedMap
+import scala.collection.immutable.{SortedMap, SortedSet}
 
+import io.constellationnetwork.dag.l0.infrastructure.snapshot.event._
 import io.constellationnetwork.ext.cats.syntax.next._
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
@@ -18,8 +19,8 @@ import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.Signed
-import io.constellationnetwork.security.{Hasher, SecurityProvider}
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelValidationType}
 
 import eu.timepit.refined.auto._
@@ -53,11 +54,12 @@ object GlobalSnapshotConsensusFunctions {
       artifact: GlobalSnapshotArtifact,
       facilitators: Set[PeerId]
     )(implicit hasher: Hasher[F]): F[Either[InvalidArtifact, (GlobalSnapshotArtifact, GlobalSnapshotContext)]] = {
-      val dagEvents = artifact.blocks.unsorted.map(_.block.asRight[StateChannelOutput])
+      val dagEvents = artifact.blocks.unsorted.map(_.block).map(DAGEvent(_))
       val scEvents = artifact.stateChannelSnapshots.toList.flatMap {
-        case (address, stateChannelBinaries) => stateChannelBinaries.map(StateChannelOutput(address, _).asLeft[DAGEvent]).toList
+        case (address, stateChannelBinaries) => stateChannelBinaries.map(StateChannelOutput(address, _)).map(StateChannelEvent(_)).toList
       }
-      val events = dagEvents ++ scEvents
+      val allowSpendEvents = artifact.allowSpendBlocks.map(_.toList.map(AllowSpendEvent(_))).getOrElse(List.empty)
+      val events: Set[GlobalSnapshotEvent] = dagEvents ++ scEvents ++ allowSpendEvents
 
       def usingKryo = createProposalArtifact(
         lastSignedArtifact.ordinal,
@@ -88,8 +90,8 @@ object GlobalSnapshotConsensusFunctions {
               ArtifactMismatch.asLeft[(GlobalSnapshotArtifact, GlobalSnapshotContext)]
         }
 
-      check(usingKryo).flatMap {
-        case Left(_)  => check(usingJson)
+      check(usingJson).flatMap {
+        case Left(_)  => check(usingKryo)
         case Right(a) => Async[F].pure(Right(a))
       }
     }
@@ -103,35 +105,58 @@ object GlobalSnapshotConsensusFunctions {
       events: Set[GlobalSnapshotEvent],
       facilitators: Set[PeerId]
     )(implicit hasher: Hasher[F]): F[(GlobalSnapshotArtifact, GlobalSnapshotContext, Set[GlobalSnapshotEvent])] = {
-      val (scEventsBeforeCut, dagEventsBeforeCut) = events.partitionMap(identity)
+      val scEventsBeforeCut = events.collect { case sc: StateChannelEvent => sc }
+      val dagEventsBeforeCut = events.collect { case d: DAGEvent => d }
+      val allowSpendEventsForAcceptance = events.collect { case as: AllowSpendEvent => as }
 
-      val dagEvents = dagEventsBeforeCut.filter(_.height > lastArtifact.height)
+      val dagEvents = dagEventsBeforeCut.filter(_.value.height > lastArtifact.height)
+
+      def getLastArtifactHash = lastArtifactHasher.getLogic(lastArtifact.value.ordinal) match {
+        case JsonHash => lastArtifactHasher.hash(lastArtifact.value)
+        case KryoHash => lastArtifactHasher.hash(GlobalIncrementalSnapshotV1.fromGlobalIncrementalSnapshot(lastArtifact.value))
+      }
 
       for {
-        lastArtifactHash <- lastArtifactHasher.hash(lastArtifact.value)
+        lastArtifactHash <- getLastArtifactHash
         currentOrdinal = lastArtifact.ordinal.next
         currentEpochProgress = trigger match {
           case EventTrigger => lastArtifact.epochProgress
           case TimeTrigger  => lastArtifact.epochProgress.next
         }
 
-        (scEvents, blocksForAcceptance) <- eventCutter.cut(scEventsBeforeCut.toList, dagEvents.toList, snapshotContext, currentOrdinal)
+        (scEvents, blocksForAcceptance) <- eventCutter.cut(
+          scEventsBeforeCut.toList,
+          dagEvents.toList,
+          snapshotContext,
+          currentOrdinal
+        )
 
         lastActiveTips <- lastArtifact.activeTips(Async[F], lastArtifactHasher)
         lastDeprecatedTips = lastArtifact.tips.deprecated
 
-        (acceptanceResult, scSnapshots, returnedSCEvents, acceptedRewardTxs, snapshotInfo, stateProof) <- globalSnapshotAcceptanceManager
-          .accept(
-            currentOrdinal,
-            currentEpochProgress,
-            blocksForAcceptance,
-            scEvents,
-            snapshotContext,
-            lastActiveTips,
-            lastDeprecatedTips,
-            rewards.distribute(lastArtifact, snapshotContext.balances, _, trigger, events),
-            StateChannelValidationType.Full
-          )
+        (
+          acceptanceResult,
+          allowSpendBlockAcceptanceResult,
+          scSnapshots,
+          returnedSCEvents,
+          acceptedRewardTxs,
+          snapshotInfo,
+          stateProof,
+          spendActions
+        ) <-
+          globalSnapshotAcceptanceManager
+            .accept(
+              currentOrdinal,
+              currentEpochProgress,
+              blocksForAcceptance.map(_.value),
+              allowSpendEventsForAcceptance.toList.map(_.value),
+              scEvents.map(_.value),
+              snapshotContext,
+              lastActiveTips,
+              lastDeprecatedTips,
+              rewards.distribute(lastArtifact, snapshotContext.balances, _, trigger, events),
+              StateChannelValidationType.Full
+            )
         (deprecated, remainedActive, accepted) = getUpdatedTips(
           lastActiveTips,
           lastDeprecatedTips,
@@ -157,9 +182,11 @@ object GlobalSnapshotConsensusFunctions {
             deprecated = deprecated,
             remainedActive = remainedActive
           ),
-          stateProof
+          stateProof,
+          SortedSet.from(allowSpendBlockAcceptanceResult.accepted).some,
+          SortedMap.from(spendActions).some
         )
-        returnedEvents = returnedSCEvents.map(_.asLeft[DAGEvent]).union(returnedDAGEvents)
+        returnedEvents = returnedSCEvents.map(StateChannelEvent(_)) ++ returnedDAGEvents
       } yield (globalSnapshot, snapshotInfo, returnedEvents)
     }
 
@@ -167,7 +194,7 @@ object GlobalSnapshotConsensusFunctions {
       acceptanceResult: BlockAcceptanceResult
     ): Set[GlobalSnapshotEvent] =
       acceptanceResult.notAccepted.mapFilter {
-        case (signedBlock, _: BlockAwaitReason) => signedBlock.asRight[StateChannelEvent].some
+        case (signedBlock, _: BlockAwaitReason) => DAGEvent(signedBlock).some
         case _                                  => none
       }.toSet
   }

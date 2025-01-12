@@ -16,7 +16,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.dataApplication.DataCalculatedState
 import io.constellationnetwork.dag.l0.config.types.RewardsConfig
-import io.constellationnetwork.dag.l0.infrastructure.snapshot.GlobalSnapshotEvent
+import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.schema.ID.Id

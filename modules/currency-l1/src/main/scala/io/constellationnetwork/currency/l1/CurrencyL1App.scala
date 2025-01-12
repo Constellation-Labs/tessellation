@@ -6,8 +6,6 @@ import cats.syntax.option._
 import cats.syntax.semigroupk._
 import cats.syntax.traverse._
 
-import scala.concurrent.duration._
-
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL1Service, L1NodeContext}
 import io.constellationnetwork.currency.l1.cli.method
 import io.constellationnetwork.currency.l1.cli.method._
@@ -16,6 +14,7 @@ import io.constellationnetwork.currency.l1.http.p2p.P2PClient
 import io.constellationnetwork.currency.l1.modules._
 import io.constellationnetwork.currency.l1.node.L1NodeContext
 import io.constellationnetwork.currency.schema.currency._
+import io.constellationnetwork.dag.l1._
 import io.constellationnetwork.dag.l1.config.types._
 import io.constellationnetwork.dag.l1.domain.transaction.{CustomContextualTransactionValidator, TransactionFeeEstimator}
 import io.constellationnetwork.dag.l1.http.p2p.{P2PClient => DAGP2PClient}
@@ -23,7 +22,6 @@ import io.constellationnetwork.dag.l1.infrastructure.block.rumor.handler.blockRu
 import io.constellationnetwork.dag.l1.infrastructure.swap.rumor.handler.allowSpendBlockRumorHandler
 import io.constellationnetwork.dag.l1.infrastructure.tokenlock.rumor.handler.tokenLockBlockRumorHandler
 import io.constellationnetwork.dag.l1.modules.{Daemons => DAGL1Daemons, Queues => DAGL1Queues, Validators => DAGL1Validators}
-import io.constellationnetwork.dag.l1.{DagL1KryoRegistrationIdRange, StateChannel, dagL1KryoRegistrar}
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.kryo.{KryoRegistrationId, MapRegistrationId}
 import io.constellationnetwork.json.JsonBrotliBinarySerializer
@@ -36,7 +34,6 @@ import io.constellationnetwork.node.shared.{NodeSharedOrSharedRegistrationIdRang
 import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.node.NodeState.SessionStarted
-import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
 import io.constellationnetwork.schema.swap.CurrencyId
 import io.constellationnetwork.security.Hasher
@@ -45,7 +42,6 @@ import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
 import eu.timepit.refined.boolean.Or
 import eu.timepit.refined.pureconfig._
-import fs2.Stream
 import pureconfig.ConfigSource
 import pureconfig.generic.auto._
 import pureconfig.module.catseffect.syntax._
@@ -156,7 +152,10 @@ abstract class CurrencyL1App(
         sharedServices.currencySnapshotContextFns,
         jsonBrotliBinarySerializer,
         cfg.transactionLimit,
-        Hasher.forKryo[IO]
+        Hasher.forKryo[IO],
+        storages.allowSpendBlock,
+        storages.allowSpend,
+        cfg.shared.allowSpends
       )
       programs = Programs
         .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](
@@ -266,16 +265,8 @@ abstract class CurrencyL1App(
               programs.joining.joinOneOf(cfg.majorityForkPeerIds)
         }
       }.asResource
-      globalL0PeerDiscovery = Stream
-        .awakeEvery[IO](10.seconds)
-        .evalMap { _ =>
-          storages.lastGlobalSnapshot.get.flatMap {
-            case None =>
-              storages.globalL0Cluster.getRandomPeer.flatMap(p => programs.globalL0PeerDiscovery.discoverFrom(p))
-            case Some(latestSnapshot) =>
-              programs.globalL0PeerDiscovery.discover(latestSnapshot.signed.proofs.map(_.id).map(PeerId._Id.reverseGet))
-          }
-        }
+      alignment = Alignment
+        .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](services, programs, storages)
       _ <- hasherSelector.withCurrent { implicit hasher =>
         services.dataApplication.map { da =>
           DataApplication
@@ -294,8 +285,7 @@ abstract class CurrencyL1App(
               keyPair,
               nodeId
             )
-            .merge(globalL0PeerDiscovery)
-            .merge(stateChannel.globalSnapshotProcessing)
+            .merge(alignment.runtime)
             .compile
             .drain
             .handleErrorWith { error =>
@@ -303,7 +293,7 @@ abstract class CurrencyL1App(
             }
         }.getOrElse {
           Swap
-            .run(
+            .run[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](
               cfg.swap,
               storages.cluster,
               storages.l0Cluster,
@@ -314,13 +304,13 @@ abstract class CurrencyL1App(
               services,
               storages.allowSpend,
               storages.allowSpendBlock,
-              queues,
+              dagL1Queues,
               validators.allowSpend,
               keyPair,
               nodeId
             )
             .merge {
-              TokenLock.run(
+              TokenLock.run[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](
                 cfg.tokenLock,
                 storages.cluster,
                 storages.l0Cluster,
@@ -331,14 +321,14 @@ abstract class CurrencyL1App(
                 services,
                 storages.tokenLock,
                 storages.tokenLockBlock,
-                queues,
+                dagL1Queues,
                 validators.tokenLock,
                 keyPair,
                 nodeId
               )
             }
             .merge(stateChannel.runtime)
-            .merge(globalL0PeerDiscovery)
+            .merge(alignment.runtime)
             .compile
             .drain
         }.asResource

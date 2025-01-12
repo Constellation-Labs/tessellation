@@ -11,8 +11,8 @@ import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage.UnableToPersistSnapshot
+import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.snapshot.Snapshot
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -180,7 +180,7 @@ object GlobalIncrementalSnapshotLocalFileSystemStorage {
     Applicative[F]
       .pure(new SnapshotLocalFileSystemStorage[F, GlobalIncrementalSnapshot](path) {
         def deserializeFallback(bytes: Array[Byte]): Either[Throwable, Signed[GlobalIncrementalSnapshot]] =
-          KryoSerializer[F].deserialize[Signed[GlobalIncrementalSnapshot]](bytes)
+          KryoSerializer[F].deserialize[Signed[GlobalIncrementalSnapshotV1]](bytes).map(_.map(_.toGlobalIncrementalSnapshot))
       })
       .flatTap { storage =>
         storage.createDirectoryIfNotExists().rethrowT

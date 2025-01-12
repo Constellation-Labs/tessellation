@@ -3,7 +3,7 @@ package io.constellationnetwork.dag.l1
 import java.security.KeyPair
 
 import cats.Applicative
-import cats.data.{NonEmptyList, OptionT}
+import cats.data.OptionT
 import cats.effect.Async
 import cats.effect.std.{Random, Semaphore}
 import cats.syntax.applicative._
@@ -23,13 +23,11 @@ import io.constellationnetwork.dag.l1.domain.consensus.block.BlockConsensusInput
 import io.constellationnetwork.dag.l1.domain.consensus.block.BlockConsensusOutput.{CleanedConsensuses, FinalBlock, NoData}
 import io.constellationnetwork.dag.l1.domain.consensus.block.Validator.{canStartOwnConsensus, isPeerInputValid}
 import io.constellationnetwork.dag.l1.domain.consensus.block._
-import io.constellationnetwork.dag.l1.domain.snapshot.programs.SnapshotProcessor.SnapshotProcessingResult
 import io.constellationnetwork.dag.l1.http.p2p.P2PClient
 import io.constellationnetwork.dag.l1.modules._
 import io.constellationnetwork.ext.fs2.StreamOps
 import io.constellationnetwork.kernel.CellError
 import io.constellationnetwork.node.shared.cli.CliMethod
-import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.height.Height
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
@@ -99,17 +97,6 @@ class StateChannel[
     }
     .filter(identity)
     .as(OwnRoundTrigger)
-
-  private val l0PeerDiscovery: Stream[F, Unit] = Stream
-    .awakeEvery(10.seconds)
-    .evalMap { _ =>
-      storages.lastSnapshot.get.flatMap {
-        case None =>
-          storages.l0Cluster.getRandomPeer.flatMap(p => programs.l0PeerDiscovery.discoverFrom(p))
-        case Some(latestSnapshot) =>
-          programs.l0PeerDiscovery.discover(latestSnapshot.signed.proofs.map(_.id).map(PeerId._Id.reverseGet))
-      }
-    }
 
   private val ownerBlockConsensusInputs: Stream[F, OwnerBlockConsensusInput] =
     inspectionTriggerInput.merge(ownRoundTriggerInput)
@@ -222,40 +209,6 @@ class StateChannel[
       )
     }
 
-  val globalSnapshotProcessing: Stream[F, Unit] = Stream
-    .awakeEvery(10.seconds)
-    .evalMap(_ => services.globalL0.pullGlobalSnapshots)
-    .evalTap { snapshots =>
-      def log(snapshot: Hashed[GlobalIncrementalSnapshot]) =
-        logger.info(s"Pulled following global snapshot: ${SnapshotReference.fromHashedSnapshot(snapshot).show}")
-
-      snapshots match {
-        case Left((snapshot, _)) => log(snapshot)
-        case Right(snapshots)    => snapshots.traverse(log).void
-      }
-    }
-    .evalMapLocked(NonEmptyList.of(blockAcceptanceS, blockCreationS, blockStoringS)) {
-      case Left((snapshot, state)) =>
-        HasherSelector[F].withCurrent { implicit hasher =>
-          programs.snapshotProcessor.process((snapshot, state).asLeft[Hashed[GlobalIncrementalSnapshot]]).map(List(_))
-        }
-      case Right(snapshots) =>
-        (snapshots, List.empty[SnapshotProcessingResult]).tailRecM {
-          case (snapshot :: nextSnapshots, aggResults) =>
-            HasherSelector[F].withCurrent { implicit hasher =>
-              programs.snapshotProcessor
-                .process(snapshot.asRight[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)])
-            }
-              .map(result => (nextSnapshots, aggResults :+ result).asLeft[List[SnapshotProcessingResult]])
-
-          case (Nil, aggResults) =>
-            aggResults.asRight[(List[Hashed[GlobalIncrementalSnapshot]], List[SnapshotProcessingResult])].pure[F]
-        }
-    }
-    .evalMap {
-      _.traverse(result => logger.info(s"Snapshot processing result: ${result.show}")).void
-    }
-
   private val blockConsensus: Stream[F, Unit] =
     blockConsensusInputs
       .through(runConsensus)
@@ -267,8 +220,6 @@ class StateChannel[
   val runtime: Stream[F, Unit] =
     blockConsensus
       .merge(blockAcceptance)
-      .merge(globalSnapshotProcessing)
-      .merge(l0PeerDiscovery)
 
 }
 

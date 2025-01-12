@@ -24,6 +24,7 @@ import io.constellationnetwork.node.shared.domain.tokenlock.consensus.{Consensus
 import io.constellationnetwork.node.shared.domain.tokenlock.{TokenLockStorage, TokenLockValidator}
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
 import io.constellationnetwork.security.{Hasher, SecurityProvider}
 
 import fs2.{Pipe, Stream}
@@ -32,6 +33,9 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 object TokenLock {
   def run[
     F[_]: Async: Hasher: SecurityProvider: Random,
+    P <: StateProof,
+    S <: Snapshot,
+    SI <: SnapshotInfo[P],
     R <: CliMethod
   ](
     tokenLockConsensusConfig: TokenLockConsensusConfig,
@@ -41,7 +45,7 @@ object TokenLock {
     nodeStorage: NodeStorage[F],
     blockOutputClient: L0BlockOutputClient[F],
     consensusClient: ConsensusClient[F],
-    services: Services[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo, R],
+    services: Services[F, P, S, SI, R],
     tokenLockStorage: TokenLockStorage[F],
     tokenLockBlockStorage: TokenLockBlockStorage[F],
     queues: Queues[F],

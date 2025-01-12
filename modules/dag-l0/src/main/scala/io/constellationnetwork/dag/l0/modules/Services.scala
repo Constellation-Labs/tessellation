@@ -14,6 +14,7 @@ import io.constellationnetwork.dag.l0.domain.cell.L0Cell
 import io.constellationnetwork.dag.l0.domain.statechannel.StateChannelService
 import io.constellationnetwork.dag.l0.infrastructure.rewards._
 import io.constellationnetwork.dag.l0.infrastructure.snapshot._
+import io.constellationnetwork.dag.l0.infrastructure.snapshot.event._
 import io.constellationnetwork.dag.l0.infrastructure.trust.TrustStorageUpdater
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer

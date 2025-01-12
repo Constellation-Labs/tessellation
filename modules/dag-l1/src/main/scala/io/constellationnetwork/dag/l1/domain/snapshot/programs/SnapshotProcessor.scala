@@ -17,6 +17,8 @@ import io.constellationnetwork.dag.l1.domain.block.{BlockRelations, BlockStorage
 import io.constellationnetwork.dag.l1.domain.transaction.TransactionStorage
 import io.constellationnetwork.node.shared.domain.snapshot.Validator
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
+import io.constellationnetwork.node.shared.domain.swap.AllowSpendStorage
+import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockStorage
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.height.{Height, SubHeight}
@@ -51,15 +53,28 @@ abstract class SnapshotProcessor[
 
   def applySnapshotFn(lastState: SI, lastSnapshot: Signed[S], snapshot: Signed[S])(implicit hasher: Hasher[F]): F[SI]
 
+  def onDownload(snapshot: Hashed[S], state: SI): F[Unit] = Applicative[F].unit
+  def onRedownload(snapshot: Hashed[S], state: SI): F[Unit] = Applicative[F].unit
+
   def processAlignment(
     alignment: Alignment,
     blockStorage: BlockStorage[F],
     transactionStorage: TransactionStorage[F],
+    allowSpendBlockStorage: AllowSpendBlockStorage[F],
+    allowSpendStorage: AllowSpendStorage[F],
     lastSnapshotStorage: LastSnapshotStorage[F, S, SI],
     addressStorage: AddressStorage[F]
   ): F[SnapshotProcessingResult] =
     alignment match {
-      case AlignedAtNewOrdinal(snapshot, state, toMarkMajority, tipsToDeprecate, tipsToRemove, txRefsToMarkMajority, postponedToWaiting) =>
+      case AlignedAtNewOrdinal(
+            snapshot,
+            state,
+            toMarkMajority,
+            tipsToDeprecate,
+            tipsToRemove,
+            txRefsToMarkMajority,
+            postponedToWaiting
+          ) =>
         val adjustToMajority: F[Unit] =
           blockStorage
             .adjustToMajority(
@@ -127,7 +142,7 @@ abstract class SnapshotProcessor[
             activeTipsToAdd = activeTips,
             deprecatedTipsToAdd = deprecatedTips,
             postponedToWaiting = relatedPostponed
-          )
+          ) >> onDownload(snapshot, state)
 
         val setBalances: F[Unit] =
           addressStorage.clean >>
@@ -172,7 +187,7 @@ abstract class SnapshotProcessor[
             tipsToDeprecate = tipsToDeprecate,
             tipsToRemove = tipsToRemove,
             postponedToWaiting = postponedToWaiting
-          )
+          ) >> onRedownload(snapshot, state)
 
         val setBalances: F[Unit] =
           addressStorage.clean >>
@@ -224,6 +239,7 @@ abstract class SnapshotProcessor[
         snapshotWithState match {
           case Left((snapshot, state)) =>
             val SnapshotTips(snapshotDeprecatedTips, snapshotRemainedActive) = snapshot.tips
+
             lastSnapshotStorage.getCombined.flatMap {
               case None =>
                 val isDependent = (block: Signed[Block]) =>
