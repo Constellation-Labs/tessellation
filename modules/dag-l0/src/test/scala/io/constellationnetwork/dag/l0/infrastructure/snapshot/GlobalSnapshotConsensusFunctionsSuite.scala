@@ -4,7 +4,6 @@ import cats.data.NonEmptyList
 import cats.effect.std.Supervisor
 import cats.effect.{IO, Ref, Resource}
 import cats.syntax.applicative._
-import cats.syntax.either._
 import cats.syntax.list._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
@@ -13,6 +12,7 @@ import scala.reflect.runtime.universe.TypeTag
 import io.constellationnetwork.currency.schema.currency.SnapshotFee
 import io.constellationnetwork.dag.l0.dagL0KryoRegistrar
 import io.constellationnetwork.dag.l0.domain.snapshot.programs.{GlobalSnapshotEventCutter, SnapshotBinaryFeeCalculator}
+import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.{GlobalSnapshotEvent, StateChannelEvent}
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.json.JsonSerializer
@@ -23,6 +23,7 @@ import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult.CurrencySnapshotWithState
+import io.constellationnetwork.node.shared.domain.swap.block._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{
   GlobalSnapshotAcceptanceManager,
@@ -104,11 +105,30 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
   }
 
+  val asbam: AllowSpendBlockAcceptanceManager[IO] = new AllowSpendBlockAcceptanceManager[IO] {
+    override def acceptBlock(
+      block: Signed[swap.AllowSpendBlock],
+      context: AllowSpendBlockAcceptanceContext[IO],
+      snapshotOrdinal: SnapshotOrdinal
+    )(implicit hasher: Hasher[IO]): IO[Either[AllowSpendBlockNotAcceptedReason, AllowSpendBlockAcceptanceContextUpdate]] = ???
+
+    override def acceptBlocksIteratively(
+      blocks: List[Signed[swap.AllowSpendBlock]],
+      context: AllowSpendBlockAcceptanceContext[IO],
+      snapshotOrdinal: SnapshotOrdinal
+    )(implicit hasher: Hasher[IO]): IO[AllowSpendBlockAcceptanceResult] =
+      AllowSpendBlockAcceptanceResult(
+        AllowSpendBlockAcceptanceContextUpdate.empty,
+        List.empty,
+        List.empty
+      ).pure[IO]
+  }
+
   val scProcessor: GlobalSnapshotStateChannelEventsProcessor[IO] = new GlobalSnapshotStateChannelEventsProcessor[IO] {
     def process(
       ordinal: SnapshotOrdinal,
       lastGlobalSnapshotInfo: GlobalSnapshotInfo,
-      events: List[StateChannelEvent],
+      events: List[StateChannelOutput],
       validationType: StateChannelValidationType
     )(implicit hasher: Hasher[F]): IO[StateChannelAcceptanceResult] = IO(
       StateChannelAcceptanceResult(
@@ -142,7 +162,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     implicit val hs = HasherSelector.forSyncAlwaysCurrent(h)
 
     val snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[IO] =
-      GlobalSnapshotAcceptanceManager.make[IO](bam, scProcessor, collateral)
+      GlobalSnapshotAcceptanceManager.make[IO](bam, asbam, scProcessor, collateral)
 
     val feeCalculator = new SnapshotBinaryFeeCalculator[IO] {
       override def calculateFee(
@@ -150,7 +170,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         info: GlobalSnapshotContext,
         ordinal: SnapshotOrdinal
       ): IO[NonNegLong] =
-        event.snapshotBinary.value.fee.value.pure[IO]
+        event.value.snapshotBinary.value.fee.value.pure[IO]
     }
     GlobalSnapshotConsensusFunctions
       .make[IO](
@@ -194,7 +214,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         signedGenesis.value.info,
         h,
         EventTrigger,
-        Set(scEvent.asLeft[DAGEvent]),
+        Set(scEvent),
         facilitators
       )
       result <- gscf.validateArtifact(
@@ -205,8 +225,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         facilitators
       )
 
-      expected = Right(NonEmptyList.one(scEvent.snapshotBinary))
-      actual = result.map(_._1.stateChannelSnapshots(scEvent.address))
+      expected = Right(NonEmptyList.one(scEvent.value.snapshotBinary))
+      actual = result.map(_._1.stateChannelSnapshots(scEvent.value.address))
       expectation = expect.same(true, result.isRight) && expect.same(expected, actual)
     } yield expectation
   }
@@ -223,7 +243,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         signedGenesis.value.info,
         h,
         EventTrigger,
-        Set(scEvent.asLeft[DAGEvent]),
+        Set(scEvent),
         facilitators
       )
       result <- gscf.validateArtifact(
@@ -261,6 +281,6 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     keyPair <- KeyPairGenerator.makeKeyPair[IO]
     binary = StateChannelSnapshotBinary(Hash.empty, "test".getBytes, SnapshotFee.MinValue)
     signedSC <- forAsyncHasher(binary, keyPair)
-  } yield StateChannelOutput(keyPair.getPublic.toAddress, signedSC)
+  } yield StateChannelEvent(StateChannelOutput(keyPair.getPublic.toAddress, signedSC))
 
 }

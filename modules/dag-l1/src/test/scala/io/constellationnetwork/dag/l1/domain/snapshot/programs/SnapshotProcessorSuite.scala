@@ -20,9 +20,10 @@ import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.collection.MapRefUtils._
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.kryo.KryoSerializer
-import io.constellationnetwork.node.shared.config.types.{AddressesConfig, SnapshotSizeConfig}
+import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
-import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcceptanceManager
+import io.constellationnetwork.node.shared.domain.swap.block.{AllowSpendBlockAcceptanceManager, AllowSpendBlockStorage}
+import io.constellationnetwork.node.shared.domain.swap.{AllowSpendStorage, ContextualAllowSpendValidator}
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
@@ -35,6 +36,7 @@ import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.swap.AllowSpendReference
 import io.constellationnetwork.schema.transaction._
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.{Hash, ProofsHash}
@@ -93,6 +95,13 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               TransactionReference.empty,
               contextualTransactionValidator
             )
+            allowSpendBlockStorage <- AllowSpendBlockStorage.make[IO].asResource
+            allowSpendStorage <- AllowSpendStorage
+              .make[IO](
+                AllowSpendReference.empty,
+                ContextualAllowSpendValidator.make(None, AllowSpendsConfig(MinMax(min = NonNegLong(1L), max = NonNegLong(100L))))
+              )
+              .asResource
 
             currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
               BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, Hasher.forKryo[IO]),
@@ -116,6 +125,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             feeCalculator = FeeCalculator.make(SortedMap.empty)
             globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
               BlockAcceptanceManager.make[IO](validators.blockValidator, Hasher.forKryo[IO]),
+              AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
               GlobalSnapshotStateChannelEventsProcessor
                 .make[IO](
                   validators.stateChannelValidator,
@@ -150,6 +160,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   blockStorage,
                   lastSnapshotStorage,
                   transactionStorage,
+                  allowSpendBlockStorage,
+                  allowSpendStorage,
                   globalSnapshotContextFns,
                   Hasher.forKryo[IO]
                 )
@@ -229,8 +241,13 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
         emptySortedMapHash,
         emptySortedMapHash,
         emptySortedMapHash,
-        None
-      )
+        None,
+        Some(emptySortedMapHash),
+        Some(emptySortedMapHash),
+        Some(emptySortedMapHash)
+      ),
+      Some(SortedSet.empty),
+      Some(SortedMap.empty)
     )
   }
 
@@ -285,7 +302,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             snapshotBalances,
             SortedMap.empty,
             SortedMap.empty,
-            None,
+            Some(SortedMap.empty),
+            Some(SortedMap.empty),
             Some(SortedMap.empty)
           )
           balancesBefore <- balancesR.get
@@ -446,7 +464,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             snapshotBalances,
             SortedMap.empty,
             SortedMap.empty,
-            None,
+            Some(SortedMap.empty),
+            Some(SortedMap.empty),
             Some(SortedMap.empty)
           )
 
@@ -625,7 +644,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             snapshotBalances,
             SortedMap.empty,
             SortedMap.empty,
-            None,
+            Some(SortedMap.empty),
+            Some(SortedMap.empty),
             Some(SortedMap.empty)
           )
 
@@ -858,7 +878,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             snapshotBalances,
             SortedMap.empty,
             SortedMap.empty,
-            None,
+            Some(SortedMap.empty),
+            Some(SortedMap.empty),
             Some(SortedMap.empty)
           )
           lastSnapshotStateProof <- {
@@ -1127,7 +1148,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             snapshotBalances,
             SortedMap.empty,
             SortedMap.empty,
-            None,
+            Some(SortedMap.empty),
+            Some(SortedMap.empty),
             Some(SortedMap.empty)
           )
           lastSnapshotInfoStateProof <- lastSnapshotInfo.stateProof(snapshotOrdinal10)

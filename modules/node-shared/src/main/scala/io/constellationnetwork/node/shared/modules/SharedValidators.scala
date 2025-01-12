@@ -74,7 +74,8 @@ object SharedValidators {
       currencyMessageValidator,
       globalSnapshotSyncValidator,
       tokenLockBlockValidator,
-      allowSpendBlockValidator
+      allowSpendBlockValidator,
+      allowSpendValidator
     ) {}
   }
 }
@@ -93,5 +94,6 @@ sealed abstract class SharedValidators[F[_]] private (
   val currencyMessageValidator: CurrencyMessageValidator[F],
   val globalSnapshotSyncValidator: GlobalSnapshotSyncValidator[F],
   val tokenLockBlockValidator: TokenLockBlockValidator[F],
-  val allowSpendBlockValidator: AllowSpendBlockValidator[F]
+  val allowSpendBlockValidator: AllowSpendBlockValidator[F],
+  val allowSpendValidator: AllowSpendValidator[F]
 )

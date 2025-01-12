@@ -1,19 +1,12 @@
 package io.constellationnetwork.dag.l0.infrastructure
 
+import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.GlobalSnapshotEvent
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{GlobalConsensusKind, GlobalConsensusOutcome, GlobalConsensusStep}
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.snapshot.SnapshotConsensus
 import io.constellationnetwork.schema._
-import io.constellationnetwork.security.signature.Signed
-import io.constellationnetwork.statechannel.StateChannelOutput
 
 package object snapshot {
-
-  type DAGEvent = Signed[Block]
-
-  type StateChannelEvent = StateChannelOutput
-
-  type GlobalSnapshotEvent = Either[StateChannelEvent, DAGEvent]
 
   type GlobalSnapshotKey = SnapshotOrdinal
 

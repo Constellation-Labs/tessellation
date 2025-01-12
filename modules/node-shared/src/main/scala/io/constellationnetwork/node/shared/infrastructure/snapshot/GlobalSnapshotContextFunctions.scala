@@ -38,21 +38,24 @@ object GlobalSnapshotContextFunctions {
         lastDeprecatedTips = lastArtifact.tips.deprecated
 
         blocksForAcceptance = signedArtifact.blocks.toList.map(_.block)
+        allowSpendBlocksForAcceptance = signedArtifact.allowSpendBlocks.map(_.toList).getOrElse(List.empty)
 
         scEvents = signedArtifact.stateChannelSnapshots.toList.flatMap {
           case (address, stateChannelBinaries) => stateChannelBinaries.map(StateChannelOutput(address, _)).toList
         }
-        (acceptanceResult, scSnapshots, returnedSCEvents, acceptedRewardTxs, snapshotInfo, _) <- snapshotAcceptanceManager.accept(
-          signedArtifact.ordinal,
-          signedArtifact.epochProgress,
-          blocksForAcceptance,
-          scEvents,
-          context,
-          lastActiveTips,
-          lastDeprecatedTips,
-          _ => signedArtifact.rewards.pure[F],
-          StateChannelValidationType.Historical
-        )
+        (acceptanceResult, allowSpendBlockAcceptanceResult, scSnapshots, returnedSCEvents, acceptedRewardTxs, snapshotInfo, _, _) <-
+          snapshotAcceptanceManager.accept(
+            signedArtifact.ordinal,
+            signedArtifact.epochProgress,
+            blocksForAcceptance,
+            allowSpendBlocksForAcceptance,
+            scEvents,
+            context,
+            lastActiveTips,
+            lastDeprecatedTips,
+            _ => signedArtifact.rewards.pure[F],
+            StateChannelValidationType.Historical
+          )
         _ <- CannotApplyBlocksError(acceptanceResult.notAccepted.map { case (_, reason) => reason })
           .raiseError[F, Unit]
           .whenA(acceptanceResult.notAccepted.nonEmpty)

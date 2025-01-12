@@ -2,7 +2,7 @@ package io.constellationnetwork.dag.l0.http.routes
 
 import cats.effect.Async
 import cats.effect.std.Queue
-import cats.syntax.flatMap._
+import cats.syntax.all._
 
 import io.constellationnetwork.routes.internal._
 import io.constellationnetwork.schema.swap.AllowSpendBlock
