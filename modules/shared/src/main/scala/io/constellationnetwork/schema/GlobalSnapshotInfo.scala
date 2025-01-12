@@ -1,8 +1,7 @@
 package io.constellationnetwork.schema
 
 import cats.effect.kernel.Sync
-import cats.syntax.contravariantSemigroupal._
-import cats.syntax.flatMap._
+import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
@@ -13,7 +12,7 @@ import io.constellationnetwork.merkletree.{MerkleRoot, MerkleTree, Proof}
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.snapshot.{SnapshotInfo, StateProof}
-import io.constellationnetwork.schema.swap.AllowSpend
+import io.constellationnetwork.schema.swap.{AllowSpend, AllowSpendReference}
 import io.constellationnetwork.schema.transaction.TransactionReference
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
@@ -24,6 +23,7 @@ import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import eu.timepit.refined.auto._
 import io.circe.disjunctionCodecs._
+import io.circe.{KeyDecoder, KeyEncoder}
 
 @derive(encoder, decoder, eqv, show)
 case class GlobalSnapshotInfoV1(
@@ -43,8 +43,42 @@ object GlobalSnapshotInfoV1 {
       gsi.balances,
       SortedMap.empty,
       SortedMap.empty,
+      Some(SortedMap.empty[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]),
+      Some(SortedMap.empty),
+      Some(SortedMap.empty[Address, AllowSpendReference])
+    )
+}
+
+@derive(encoder, decoder, eqv, show)
+case class GlobalSnapshotStateProofV1(
+  lastStateChannelSnapshotHashesProof: Hash,
+  lastTxRefsProof: Hash,
+  balancesProof: Hash,
+  lastCurrencySnapshotsProof: Option[MerkleRoot]
+) extends StateProof {
+  def toGlobalSnapshotStateProof: GlobalSnapshotStateProof =
+    GlobalSnapshotStateProof(
+      lastStateChannelSnapshotHashesProof,
+      lastTxRefsProof,
+      balancesProof,
+      lastCurrencySnapshotsProof,
       None,
-      Some(SortedMap.empty)
+      None,
+      None
+    )
+}
+
+object GlobalSnapshotStateProofV1 {
+  def apply: ((Hash, Hash, Hash, Option[MerkleRoot])) => GlobalSnapshotStateProofV1 = {
+    case (x1, x2, x3, x4) => GlobalSnapshotStateProofV1.apply(x1, x2, x3, x4)
+  }
+
+  def fromGlobalSnapshotStateProof(proof: GlobalSnapshotStateProof): GlobalSnapshotStateProofV1 =
+    GlobalSnapshotStateProofV1(
+      proof.lastStateChannelSnapshotHashesProof,
+      proof.lastTxRefsProof,
+      proof.balancesProof,
+      proof.lastCurrencySnapshotsProof
     )
 }
 
@@ -53,12 +87,15 @@ case class GlobalSnapshotStateProof(
   lastStateChannelSnapshotHashesProof: Hash,
   lastTxRefsProof: Hash,
   balancesProof: Hash,
-  lastCurrencySnapshotsProof: Option[MerkleRoot]
+  lastCurrencySnapshotsProof: Option[MerkleRoot],
+  activeAllowSpends: Option[Hash],
+  tokenLockBalances: Option[Hash],
+  lastAllowSpendRefs: Option[Hash]
 ) extends StateProof
 
 object GlobalSnapshotStateProof {
-  def apply: ((Hash, Hash, Hash, Option[MerkleRoot])) => GlobalSnapshotStateProof = {
-    case (x1, x2, x3, x4) => GlobalSnapshotStateProof.apply(x1, x2, x3, x4)
+  def apply: ((Hash, Hash, Hash, Option[MerkleRoot], Option[Hash], Option[Hash], Option[Hash])) => GlobalSnapshotStateProof = {
+    case (x1, x2, x3, x4, x5, x6, x7) => GlobalSnapshotStateProof.apply(x1, x2, x3, x4, x5, x6, x7)
   }
 }
 
@@ -82,18 +119,15 @@ case class GlobalSnapshotInfoV2(
       }.to(lastCurrencySnapshots.sortedMapFactory),
       lastCurrencySnapshotsProofs,
       None,
-      Some(SortedMap.empty)
+      None,
+      None
     )
 
   def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
     lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
 
   def stateProof[F[_]: Sync: Hasher](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProof] =
-    (
-      lastStateChannelSnapshotHashes.hash,
-      lastTxRefs.hash,
-      balances.hash
-    ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot)))
+    toGlobalSnapshotInfo.stateProof[F](lastCurrencySnapshots)
 
 }
 
@@ -123,18 +157,29 @@ case class GlobalSnapshotInfo(
   balances: SortedMap[Address, Balance],
   lastCurrencySnapshots: SortedMap[Address, Either[Signed[CurrencySnapshot], (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]],
   lastCurrencySnapshotsProofs: SortedMap[Address, Proof],
-  activeAllowSpends: Option[SortedMap[Address, SortedMap[Address, SortedSet[Signed[AllowSpend]]]]],
-  tokenLockBalances: Option[SortedMap[Address, SortedMap[Address, Balance]]]
+  activeAllowSpends: Option[SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]],
+  tokenLockBalances: Option[SortedMap[Address, SortedMap[Address, Balance]]],
+  lastAllowSpendRefs: Option[SortedMap[Address, AllowSpendReference]]
 ) extends SnapshotInfo[GlobalSnapshotStateProof] {
   def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
     lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
+
+  implicit val optionAddressKeyEncoder: KeyEncoder[Option[Address]] = new KeyEncoder[Option[Address]] {
+    def apply(key: Option[Address]): String = key match {
+      case None          => KeyEncoder[String].apply("")
+      case Some(address) => KeyEncoder[Address].apply(address)
+    }
+  }
 
   def stateProof[F[_]: Sync: Hasher](lastCurrencySnapshots: Option[MerkleTree]): F[GlobalSnapshotStateProof] =
     (
       lastStateChannelSnapshotHashes.hash,
       lastTxRefs.hash,
-      balances.hash
-    ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot)))
+      balances.hash,
+      activeAllowSpends.traverse(_.hash),
+      tokenLockBalances.traverse(_.hash),
+      lastAllowSpendRefs.traverse(_.hash)
+    ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot), _, _, _))
 
 }
 
@@ -146,6 +191,19 @@ object GlobalSnapshotInfo {
     SortedMap.empty,
     SortedMap.empty,
     Some(SortedMap.empty),
+    Some(SortedMap.empty),
     Some(SortedMap.empty)
   )
+
+  implicit val optionAddressKeyEncoder: KeyEncoder[Option[Address]] = new KeyEncoder[Option[Address]] {
+    def apply(key: Option[Address]): String = key match {
+      case None          => KeyEncoder[String].apply("")
+      case Some(address) => KeyEncoder[Address].apply(address)
+    }
+  }
+
+  implicit val optionAddressKeyDecoder: KeyDecoder[Option[Address]] = new KeyDecoder[Option[Address]] {
+    def apply(key: String): Option[Option[Address]] =
+      if (key === "") Some(None) else KeyDecoder[Address].apply(key).map(_.some)
+  }
 }

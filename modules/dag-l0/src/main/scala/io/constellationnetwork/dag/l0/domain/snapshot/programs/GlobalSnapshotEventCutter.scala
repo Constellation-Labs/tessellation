@@ -12,9 +12,8 @@ import cats.syntax.semigroupal._
 import cats.syntax.traverse._
 import cats.syntax.unorderedFoldable._
 
-import io.constellationnetwork.dag.l0.infrastructure.snapshot.{DAGEvent, StateChannelEvent}
-import io.constellationnetwork.ext.kryo._
-import io.constellationnetwork.kryo.KryoSerializer
+import io.constellationnetwork.dag.l0.infrastructure.snapshot.event._
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.domain.event.EventCutter
 import io.constellationnetwork.schema.{Block, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.hash._
@@ -23,7 +22,8 @@ import io.constellationnetwork.security.{Hashed, Hasher}
 import eu.timepit.refined.types.numeric.PosInt
 
 object GlobalSnapshotEventCutter {
-  def make[F[_]: Async: KryoSerializer](
+
+  def make[F[_]: Async: JsonSerializer](
     maxBinarySizeBytes: PosInt,
     snapshotFeeCalculator: SnapshotBinaryFeeCalculator[F]
   ): EventCutter[F, StateChannelEvent, DAGEvent] =
@@ -39,7 +39,7 @@ object GlobalSnapshotEventCutter {
           .ifM((scEvents, dagEvents).pure[F], removeEvents(scEvents, dagEvents, info, ordinal))
 
       def doesNotExceedMaxSize(scEvents: List[StateChannelEvent], dagEvents: List[DAGEvent]): F[Boolean] =
-        (scEvents.toBinary.liftTo[F], dagEvents.toBinary.liftTo[F])
+        (JsonSerializer[F].serialize(scEvents), JsonSerializer[F].serialize(dagEvents))
           .mapN((a, b) => a.length + b.length <= maxBinarySizeBytes.value)
 
       def removeEvents(
@@ -97,7 +97,7 @@ object GlobalSnapshotEventCutter {
       case class StateChannelEventWithFee(event: StateChannelEvent, hash: Hash, fee: Long) extends EventWithFee {
         def isMyChild(that: EventWithFee): Boolean =
           that match {
-            case evt: StateChannelEventWithFee => evt.event.snapshotBinary.lastSnapshotHash === hash
+            case evt: StateChannelEventWithFee => evt.event.value.snapshotBinary.lastSnapshotHash === hash
             case _                             => false
           }
       }
@@ -106,7 +106,7 @@ object GlobalSnapshotEventCutter {
           implicit hasher: Hasher[F]
         ): F[StateChannelEventWithFee] =
           for {
-            hashed <- event.snapshotBinary.toHashed
+            hashed <- event.value.snapshotBinary.toHashed
             fee <- snapshotFeeCalculator.calculateFee(event, info, ordinal)
           } yield StateChannelEventWithFee(event, hashed.hash, fee.value)
       }
@@ -125,7 +125,7 @@ object GlobalSnapshotEventCutter {
       }
       object DAGBlockEventWithFee {
         def apply(dagEvent: DAGEvent)(implicit hasher: Hasher[F]): F[DAGBlockEventWithFee] =
-          dagEvent.toHashed[F].map(DAGBlockEventWithFee(_))
+          dagEvent.value.toHashed[F].map(DAGBlockEventWithFee(_))
       }
 
     }

@@ -14,10 +14,14 @@ import io.constellationnetwork.dag.l1.domain.snapshot.programs.SnapshotProcessor
 import io.constellationnetwork.dag.l1.domain.transaction.{ContextualTransactionValidator, TransactionLimitConfig, TransactionStorage}
 import io.constellationnetwork.dag.l1.infrastructure.address.storage.AddressStorage
 import io.constellationnetwork.json.JsonBrotliBinarySerializer
+import io.constellationnetwork.node.shared.config.types.AllowSpendsConfig
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.domain.snapshot.{SnapshotContextFunctions, Validator}
+import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockStorage
+import io.constellationnetwork.node.shared.domain.swap.{AllowSpendStorage, ContextualAllowSpendValidator}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.swap.AllowSpendReference
 import io.constellationnetwork.schema.transaction.TransactionReference
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotReference}
 import io.constellationnetwork.security.signature.Signed
@@ -48,7 +52,10 @@ object CurrencySnapshotProcessor {
     currencySnapshotContextFns: SnapshotContextFunctions[F, CurrencyIncrementalSnapshot, CurrencySnapshotContext],
     jsonBrotliBinarySerializer: JsonBrotliBinarySerializer[F],
     transactionLimitConfig: TransactionLimitConfig,
-    txHasher: Hasher[F]
+    txHasher: Hasher[F],
+    allowSpendBlockStorage: AllowSpendBlockStorage[F],
+    allowSpendStorage: AllowSpendStorage[F],
+    allowSpendsConfig: AllowSpendsConfig
   ): CurrencySnapshotProcessor[F] =
     new CurrencySnapshotProcessor[F] {
       def process(
@@ -100,6 +107,12 @@ object CurrencySnapshotProcessor {
       )(implicit hasher: Hasher[F]): F[CurrencySnapshotInfo] =
         currencySnapshotContextFns.createContext(CurrencySnapshotContext(identifier, lastState), lastSnapshot, snapshot).map(_.snapshotInfo)
 
+      override def onDownload(snapshot: Hashed[CurrencyIncrementalSnapshot], state: CurrencySnapshotInfo): F[Unit] =
+        allowSpendStorage.initByRefs(state.lastAllowSpendRefs.map(_.toMap).getOrElse(Map.empty), snapshot.ordinal)
+
+      override def onRedownload(snapshot: Hashed[CurrencyIncrementalSnapshot], state: CurrencySnapshotInfo): F[Unit] =
+        allowSpendStorage.replaceByRefs(state.lastAllowSpendRefs.map(_.toMap).getOrElse(Map.empty), snapshot.ordinal)
+
       private def processCurrencySnapshots(
         globalSnapshot: Hashed[GlobalIncrementalSnapshot],
         globalState: GlobalSnapshotInfo,
@@ -109,7 +122,7 @@ object CurrencySnapshotProcessor {
         fetchCurrencySnapshots(globalSnapshot).flatMap {
           case Some(Validated.Valid(hashedSnapshots)) =>
             prepareIntermediateStorages(addressStorage, blockStorage, lastCurrencySnapshotStorage, transactionStorage).flatMap {
-              case (as, bs, lcss, ts) =>
+              case (as, bs, lcss, ts, albs, als) =>
                 type Success = NonEmptyList[Alignment]
                 type Agg = (NonEmptyList[Hashed[CurrencyIncrementalSnapshot]], List[Alignment])
                 type Result = Option[Success]
@@ -136,7 +149,7 @@ object CurrencySnapshotProcessor {
                           case _: Ignore =>
                             Applicative[F].pure(none[Success].asRight[Agg])
                           case alignment =>
-                            processAlignment(alignment, bs, ts, lcss, as).as {
+                            processAlignment(alignment, bs, ts, albs, als, lcss, as).as {
                               val updatedAgg = agg :+ alignment
 
                               NonEmptyList.fromList(nextSnapshots) match {
@@ -159,6 +172,8 @@ object CurrencySnapshotProcessor {
                     alignment,
                     blockStorage,
                     transactionStorage,
+                    allowSpendBlockStorage,
+                    allowSpendStorage,
                     lastCurrencySnapshotStorage,
                     addressStorage
                   )
@@ -189,7 +204,9 @@ object CurrencySnapshotProcessor {
           AddressStorage[F],
           BlockStorage[F],
           LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
-          TransactionStorage[F]
+          TransactionStorage[F],
+          AllowSpendBlockStorage[F],
+          AllowSpendStorage[F]
         )
       ] = {
         val bs = blockStorage.getState().flatMap(BlockStorage.make[F](_))
@@ -208,7 +225,11 @@ object CurrencySnapshotProcessor {
               }
           }
 
-        (as, bs, lcss, ts).mapN((_, _, _, _))
+        val casv = ContextualAllowSpendValidator.make(None, allowSpendsConfig)
+        val albs = AllowSpendBlockStorage.make[F]
+        val als = AllowSpendReference.emptyCurrency[F](identifier).flatMap(AllowSpendStorage.make(_, casv))
+
+        (as, bs, lcss, ts, albs, als).mapN((_, _, _, _, _, _))
       }
 
       // We are extracting all currency snapshots, but we don't assume that all the state channel binaries need to be

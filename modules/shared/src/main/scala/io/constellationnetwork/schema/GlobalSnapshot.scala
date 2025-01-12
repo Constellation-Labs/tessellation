@@ -8,12 +8,14 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.artifact.SpendAction
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.SnapshotVersion
 import io.constellationnetwork.schema.snapshot.{FullSnapshot, IncrementalSnapshot}
+import io.constellationnetwork.schema.swap.AllowSpendBlock
 import io.constellationnetwork.schema.transaction.RewardTransaction
 import io.constellationnetwork.security.hash.{Hash, ProofsHash}
 import io.constellationnetwork.security.hex.Hex
@@ -41,6 +43,8 @@ case class GlobalIncrementalSnapshot(
   nextFacilitators: NonEmptyList[PeerId],
   tips: SnapshotTips,
   stateProof: GlobalSnapshotStateProof,
+  allowSpendBlocks: Option[SortedSet[Signed[AllowSpendBlock]]],
+  spendActions: Option[SortedMap[Address, List[SpendAction]]],
   version: SnapshotVersion = SnapshotVersion("0.0.1")
 ) extends IncrementalSnapshot[GlobalSnapshotStateProof]
 
@@ -58,9 +62,63 @@ object GlobalIncrementalSnapshot {
         snapshot.epochProgress,
         snapshot.nextFacilitators,
         snapshot.tips,
-        stateProof
+        stateProof,
+        Some(SortedSet.empty),
+        Some(SortedMap.empty)
       )
     }
+}
+
+@derive(eqv, show, encoder, decoder)
+case class GlobalIncrementalSnapshotV1(
+  ordinal: SnapshotOrdinal,
+  height: Height,
+  subHeight: SubHeight,
+  lastSnapshotHash: Hash,
+  blocks: SortedSet[BlockAsActiveTip],
+  stateChannelSnapshots: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
+  rewards: SortedSet[RewardTransaction],
+  epochProgress: EpochProgress,
+  nextFacilitators: NonEmptyList[PeerId],
+  tips: SnapshotTips,
+  stateProof: GlobalSnapshotStateProofV1,
+  version: SnapshotVersion = SnapshotVersion("0.0.1")
+) extends IncrementalSnapshot[GlobalSnapshotStateProofV1] {
+  def toGlobalIncrementalSnapshot: GlobalIncrementalSnapshot =
+    GlobalIncrementalSnapshot(
+      ordinal,
+      height,
+      subHeight,
+      lastSnapshotHash,
+      blocks,
+      stateChannelSnapshots,
+      rewards,
+      epochProgress,
+      nextFacilitators,
+      tips,
+      stateProof.toGlobalSnapshotStateProof,
+      Some(SortedSet.empty),
+      Some(SortedMap.empty),
+      version
+    )
+}
+
+object GlobalIncrementalSnapshotV1 {
+  def fromGlobalIncrementalSnapshot(snapshot: GlobalIncrementalSnapshot): GlobalIncrementalSnapshotV1 =
+    GlobalIncrementalSnapshotV1(
+      snapshot.ordinal,
+      snapshot.height,
+      snapshot.subHeight,
+      snapshot.lastSnapshotHash,
+      snapshot.blocks,
+      snapshot.stateChannelSnapshots,
+      snapshot.rewards,
+      snapshot.epochProgress,
+      snapshot.nextFacilitators,
+      snapshot.tips,
+      GlobalSnapshotStateProofV1.fromGlobalSnapshotStateProof(snapshot.stateProof),
+      snapshot.version
+    )
 }
 
 @derive(eqv, show, encoder, decoder)
@@ -113,7 +171,9 @@ object GlobalSnapshot {
         genesis.epochProgress.next,
         nextFacilitators,
         genesis.tips,
-        stateProof
+        stateProof,
+        Some(SortedSet.empty),
+        Some(SortedMap.empty)
       )
     }
 

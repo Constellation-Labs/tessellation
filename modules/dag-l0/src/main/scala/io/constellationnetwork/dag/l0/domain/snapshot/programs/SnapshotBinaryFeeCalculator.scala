@@ -7,7 +7,7 @@ import cats.syntax.functor._
 
 import scala.collection.immutable.SortedMap
 
-import io.constellationnetwork.dag.l0.infrastructure.snapshot.StateChannelEvent
+import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.StateChannelEvent
 import io.constellationnetwork.node.shared.domain.statechannel.{FeeCalculator, FeeCalculatorConfig}
 import io.constellationnetwork.schema.currencyMessage.fetchStakingBalance
 import io.constellationnetwork.schema.{GlobalSnapshotInfo, SnapshotOrdinal}
@@ -24,11 +24,11 @@ object SnapshotBinaryFeeCalculator {
 
   def make[F[_]: MonadThrow](feeCalculator: FeeCalculator[F]): SnapshotBinaryFeeCalculator[F] =
     (event: StateChannelEvent, info: GlobalSnapshotInfo, ordinal: SnapshotOrdinal) =>
-      event.address
+      event.value.address
         .pure[F]
         .map(fetchStakingBalance(_, info))
         .flatMap { balance =>
-          val binary = event.snapshotBinary.value
+          val binary = event.value.snapshotBinary.value
           val kbytes = NonNegInt.unsafeFrom(binary.content.length / 1024)
           feeCalculator
             .calculateRecommendedFee(Some(ordinal))(balance, kbytes, binary.fee.value)
