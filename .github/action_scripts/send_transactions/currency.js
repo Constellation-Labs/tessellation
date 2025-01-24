@@ -1,4 +1,19 @@
 const { dag4 } = require( '@stardust-collective/dag4' );
+const { parseSharedArgs } = require('../shared');
+
+const createConfig = () => {
+    const args = process.argv.slice(2);
+
+    if (args.length < 5) {
+        throw new Error(
+            "Usage: node script.js <dagl0-port-prefix> <dagl1-port-prefix> <ml0-port-prefix> <cl1-port-prefix> <datal1-port-prefix>"
+        );
+    }
+
+    const sharedArgs = parseSharedArgs(args.slice(0, 5));
+    return { ...sharedArgs };
+};
+
 
 const SLEEP_TIME_UNTIL_QUERY = 120 * 1000;
 
@@ -350,17 +365,18 @@ const sendTransactionsUsingUrls = async (
 };
 
 const sendTransactions = async () => {
+    const {dagL0PortPrefix, dagL1PortPrefix, metagraphL0PortPrefix, currencyL1PortPrefix} = createConfig()
     const metagraphId = 'custom_id';
     const l0GlobalUrl =
-    'http://localhost:9000';
+    `http://localhost:${dagL0PortPrefix}00`;
     const dagL1UrlFirstNode =
-    'http://localhost:9100';
+    `http://localhost:${dagL1PortPrefix}00`;
     const dagL1UrlSecondNode =
-    'http://localhost:9200';
+    `http://localhost:${dagL1PortPrefix}10`;
     const l0MetagraphUrl =
-    'http://localhost:9400';
+    `http://localhost:${metagraphL0PortPrefix}00`;
     const l1MetagraphUrl =
-    'http://localhost:9700';
+    `http://localhost:${currencyL1PortPrefix}00`;
 
     await sendTransactionsUsingUrls(
         metagraphId,

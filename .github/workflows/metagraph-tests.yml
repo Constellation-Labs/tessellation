@@ -1,0 +1,24 @@
+name: Metagraph Tests
+
+on:
+  pull_request: {}
+
+jobs:
+  call-workflow-setup-environment:
+    uses: ./.github/workflows/setup-environment.yml
+    secrets: inherit
+
+  call-test-currency-transactions:
+    needs: call-workflow-setup-environment
+    uses: ./.github/workflows/test-currency-transactions.yml
+    secrets: inherit
+
+  call-test-data-transactions:
+    needs: call-workflow-setup-environment
+    uses: ./.github/workflows/test-data-transactions.yml
+    secrets: inherit
+
+  call-test-metagraph-rewards:
+    needs: call-workflow-setup-environment
+    uses: ./.github/workflows/test-metagraph-rewards.yml
+    secrets: inherit

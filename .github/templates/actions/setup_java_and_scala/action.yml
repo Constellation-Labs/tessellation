@@ -1,0 +1,30 @@
+name: Setup Java and Scala
+
+inputs:
+  JAVA_VERSION:
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install required dependencies
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y curl
+
+    - name: Set up Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: ${{ inputs.JAVA_VERSION }}
+
+    - name: Install Scala and sbt
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y curl gnupg
+        echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
+        sudo curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x99E82A75642AC823" | sudo apt-key add -
+        sudo apt-get update
+        sudo apt-get install -y sbt scala

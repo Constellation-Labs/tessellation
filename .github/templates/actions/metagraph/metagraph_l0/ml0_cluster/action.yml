@@ -1,0 +1,52 @@
+name: Metagraph L0 Cluster
+
+inputs:
+  METAGRAPH_NAME:
+    required: true
+  PORT_PREFIX:
+    required: true
+  GLOBAL_L0_PEER_HTTP_PORT:
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Run Metagraph L0 Genesis
+      uses: "./.github/templates/actions/metagraph/metagraph_l0/genesis"
+      with:
+        METAGRAPH_NAME: ${{ inputs.METAGRAPH_NAME }}
+        CL_PUBLIC_HTTP_PORT: ${{ inputs.PORT_PREFIX }}00
+        CL_P2P_HTTP_PORT: ${{ inputs.PORT_PREFIX }}01
+        CL_CLI_HTTP_PORT: ${{ inputs.PORT_PREFIX }}02
+        CL_GLOBAL_L0_PEER_HTTP_PORT: ${{ inputs.GLOBAL_L0_PEER_HTTP_PORT }}
+
+    - name: Get the Metagraph ID
+      shell: bash
+      run: |
+        cd .github/code/metagraphs/${{inputs.METAGRAPH_NAME}}/metagraph-l0/genesis-node
+        export METAGRAPH_ID=$(head -n 1 genesis.address)
+        echo "METAGRAPH_ID=$METAGRAPH_ID" >> $GITHUB_ENV
+
+    - name: Run Metagraph L0 Validator - 1
+      uses: "./.github/templates/actions/metagraph/metagraph_l0/validator"
+      with:
+        METAGRAPH_ID: ${{ env.METAGRAPH_ID }}
+        METAGRAPH_NAME: ${{ inputs.METAGRAPH_NAME }}
+        CL_PUBLIC_HTTP_PORT: ${{ inputs.PORT_PREFIX }}10
+        CL_P2P_HTTP_PORT: ${{ inputs.PORT_PREFIX }}11
+        CL_CLI_HTTP_PORT: ${{ inputs.PORT_PREFIX }}12
+        CL_GLOBAL_L0_PEER_HTTP_PORT: ${{ inputs.GLOBAL_L0_PEER_HTTP_PORT }}
+        CL_L0_P2P_HTTP_PORT: ${{ inputs.PORT_PREFIX }}01
+        NODE_NUMBER: 1
+
+    - name: Run Metagraph L0 Validator - 2
+      uses: "./.github/templates/actions/metagraph/metagraph_l0/validator"
+      with:
+        METAGRAPH_ID: ${{ env.METAGRAPH_ID }}
+        METAGRAPH_NAME: ${{ inputs.METAGRAPH_NAME }}
+        CL_PUBLIC_HTTP_PORT: ${{ inputs.PORT_PREFIX }}20
+        CL_P2P_HTTP_PORT: ${{ inputs.PORT_PREFIX }}21
+        CL_CLI_HTTP_PORT: ${{ inputs.PORT_PREFIX }}22
+        CL_GLOBAL_L0_PEER_HTTP_PORT: ${{ inputs.GLOBAL_L0_PEER_HTTP_PORT }}
+        CL_L0_P2P_HTTP_PORT: ${{ inputs.PORT_PREFIX }}01
+        NODE_NUMBER: 2

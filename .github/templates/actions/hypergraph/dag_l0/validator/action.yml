@@ -1,0 +1,60 @@
+name: Global L0 Validator
+
+inputs:
+  CL_PUBLIC_HTTP_PORT:
+    required: true
+  CL_P2P_HTTP_PORT:
+    required: true
+  CL_CLI_HTTP_PORT:
+    required: true
+  CL_L0_P2P_HTTP_PORT:
+    required: true
+  NODE_NUMBER:
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Running Global L0 validator - ${{ inputs.NODE_NUMBER }}
+      shell: bash
+      env:
+        CL_KEYSTORE: token-key.p12
+        CL_KEYALIAS: token-key
+        CL_PASSWORD: password
+        CL_PUBLIC_HTTP_PORT: ${{ inputs.CL_PUBLIC_HTTP_PORT }}
+        CL_P2P_HTTP_PORT: ${{ inputs.CL_P2P_HTTP_PORT }}
+        CL_CLI_HTTP_PORT: ${{ inputs.CL_CLI_HTTP_PORT }}
+        CL_APP_ENV: dev
+        CL_COLLATERAL: 0
+      run: |
+        ROOT_DIRECTORY=$(pwd)
+
+        cd .github/code/hypergraph/dag-l0/validator-${{ inputs.NODE_NUMBER }}
+        java -jar $ROOT_DIRECTORY/.github/code/shared_jars/cl-keytool.jar generate
+
+        touch dag-l0-validator-${{ inputs.NODE_NUMBER }}.log
+        nohup java -Denvironment=dev -jar $ROOT_DIRECTORY/.github/code/hypergraph/dag-l0.jar run-validator --ip 127.0.0.1 > dag-l0-validator-${{ inputs.NODE_NUMBER }}.log 2>&1 &
+        sleep 5
+
+    - name: Join node after started - ${{ inputs.NODE_NUMBER }}
+      shell: bash
+      env:
+        CL_KEYSTORE: token-key.p12
+        CL_KEYALIAS: token-key
+        CL_PASSWORD: password
+        CL_PUBLIC_HTTP_PORT: ${{ inputs.CL_PUBLIC_HTTP_PORT }}
+        CL_CLI_HTTP_PORT: ${{ inputs.CL_CLI_HTTP_PORT }}
+        CL_L0_P2P_HTTP_PORT: ${{ inputs.CL_L0_P2P_HTTP_PORT }}
+      run: |
+        ROOT_DIRECTORY=$(pwd)
+
+        cd $ROOT_DIRECTORY/.github/code/hypergraph/dag-l0/genesis-node
+        GLOBAL_L0_NODE_ID=$(java -jar $ROOT_DIRECTORY/.github/code/shared_jars/cl-wallet.jar show-id)
+
+        if node $ROOT_DIRECTORY/.github/action_scripts/check_if_node_started.js -url=http://127.0.0.1:${CL_PUBLIC_HTTP_PORT}/node/info -cluster_name=DAG-L0-Validator-${{ inputs.NODE_NUMBER }}; then
+          sleep 5
+          echo "Joining DAG L0 validator node ${{ inputs.NODE_NUMBER }} ..."
+          curl -X POST http://127.0.0.1:${CL_CLI_HTTP_PORT}/cluster/join -H "Content-type: application/json" -d "{ \"id\":\"$GLOBAL_L0_NODE_ID\", \"ip\": \"127.0.0.1\", \"p2pPort\": ${CL_L0_P2P_HTTP_PORT} }"
+          echo "Joined"
+          exit 0
+        fi

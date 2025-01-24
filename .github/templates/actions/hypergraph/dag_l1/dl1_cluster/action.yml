@@ -1,0 +1,37 @@
+name: DAG L1 Cluster
+
+inputs:
+  PORT_PREFIX:
+    required: true
+  GLOBAL_L0_PEER_HTTP_PORT:
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - name: Run DAG L1 Initial Validator
+      uses: "./.github/templates/actions/hypergraph/dag_l1/initial_validator"
+      with:
+        CL_PUBLIC_HTTP_PORT: ${{ inputs.PORT_PREFIX }}00
+        CL_P2P_HTTP_PORT: ${{ inputs.PORT_PREFIX }}01
+        CL_CLI_HTTP_PORT: ${{ inputs.PORT_PREFIX }}02
+        CL_GLOBAL_L0_PEER_HTTP_PORT: ${{ inputs.GLOBAL_L0_PEER_HTTP_PORT }}
+
+    - name: Run DAG L1 Validator - 1
+      uses: "./.github/templates/actions/hypergraph/dag_l1/validator"
+      with:
+        CL_PUBLIC_HTTP_PORT: ${{ inputs.PORT_PREFIX }}10
+        CL_P2P_HTTP_PORT: ${{ inputs.PORT_PREFIX }}11
+        CL_CLI_HTTP_PORT: ${{ inputs.PORT_PREFIX }}12
+        CL_GLOBAL_L0_PEER_HTTP_PORT: ${{ inputs.GLOBAL_L0_PEER_HTTP_PORT }}
+        CL_L1_INITIAL_VALIDATOR_P2P_PORT: ${{ inputs.PORT_PREFIX }}01
+        NODE_NUMBER: 1
+
+    - name: Run DAG L1 Validator - 2
+      uses: "./.github/templates/actions/hypergraph/dag_l1/validator"
+      with:
+        CL_PUBLIC_HTTP_PORT: ${{ inputs.PORT_PREFIX }}20
+        CL_P2P_HTTP_PORT: ${{ inputs.PORT_PREFIX }}21
+        CL_CLI_HTTP_PORT: ${{ inputs.PORT_PREFIX }}22
+        CL_GLOBAL_L0_PEER_HTTP_PORT: ${{ inputs.GLOBAL_L0_PEER_HTTP_PORT }}
+        CL_L1_INITIAL_VALIDATOR_P2P_PORT: ${{ inputs.PORT_PREFIX }}01
+        NODE_NUMBER: 2
