@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-20.04
     environment: testnet
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -23,8 +23,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          JAVA_VERSION: openjdk@1.11.0
-        uses: "./.github/templates/setup_java_and_scala"
+          JAVA_VERSION: 11
+        uses: "./.github/templates/actions/setup_java_and_scala"
 
       - name: Test
         run: sbt 'scalafixAll --check --rules OrganizeImports;scalafmtCheckAll;test'

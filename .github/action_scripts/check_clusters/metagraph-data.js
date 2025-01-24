@@ -1,27 +1,44 @@
 const { clusterCheck, checkGlobalL0Node, checkCurrencyL0Node } = require("./shared")
+const { parseSharedArgs } = require('../shared');
 
-const checkDataL1Node = async () => {
+const createConfig = () => {
+    const args = process.argv.slice(2);
+
+    if (args.length < 5) {
+        throw new Error(
+            "Usage: node script.js <dagl0-port-prefix> <dagl1-port-prefix> <ml0-port-prefix> <cl1-port-prefix> <datal1-port-prefix>"
+        );
+    }
+
+    const sharedArgs = parseSharedArgs(args.slice(0, 5));
+    return { ...sharedArgs };
+};
+
+const checkDataL1Node = async (config) => {
+    const { dataL1PortPrefix } = config
     const infos = [
         {
             name: 'Data L1 - 1',
-            baseUrl: 'http://localhost:7000'
+            baseUrl: `http://localhost:${dataL1PortPrefix}00`
         },
         {
             name: 'Data L1 - 2',
-            baseUrl: 'http://localhost:7100'
+            baseUrl: `http://localhost:${dataL1PortPrefix}10`
         },
         {
             name: 'Data L1 - 3',
-            baseUrl: 'http://localhost:7200'
+            baseUrl: `http://localhost:${dataL1PortPrefix}20`
         }
     ];
     await clusterCheck( infos, false, 'Data L1', 3, false );
 };
 
 const main = async () => {
-    await checkGlobalL0Node();
-    await checkCurrencyL0Node();
-    await checkDataL1Node();
+    const config = createConfig()
+
+    await checkGlobalL0Node(config);
+    await checkCurrencyL0Node(config);
+    await checkDataL1Node(config);
 };
 
 main();

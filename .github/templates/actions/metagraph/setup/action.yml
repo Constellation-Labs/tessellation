@@ -1,0 +1,84 @@
+name: Metagraph - jar build
+
+inputs:
+  METAGRAPH_NAME:
+    required: true
+  TEMPLATE_NAME:
+    required: true
+  INCLUDE_DATA_LAYER:
+    required: true
+  GITHUB_TOKEN:
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Create directories - ${{ inputs.METAGRAPH_NAME }}
+      shell: bash
+      run: |
+        cd .github
+        mkdir -p code/metagraphs/${{ inputs.METAGRAPH_NAME }}/metagraph-l0/genesis-node
+        echo "empty" > code/metagraphs/${{ inputs.METAGRAPH_NAME }}/metagraph-l0/genesis-node/placeholder.txt
+        
+        mkdir -p code/metagraphs/${{ inputs.METAGRAPH_NAME }}/metagraph-l0/validator-1
+        echo "empty" > code/metagraphs/${{ inputs.METAGRAPH_NAME }}/metagraph-l0/validator-1/placeholder.txt
+        
+        mkdir -p code/metagraphs/${{ inputs.METAGRAPH_NAME }}/metagraph-l0/validator-2
+        echo "empty" > code/metagraphs/${{ inputs.METAGRAPH_NAME }}/metagraph-l0/validator-2/placeholder.txt
+        
+        mkdir -p code/metagraphs/${{ inputs.METAGRAPH_NAME }}/currency-l1/initial-validator
+        echo "empty" > code/metagraphs/${{ inputs.METAGRAPH_NAME }}/currency-l1/initial-validator/placeholder.txt
+        
+        mkdir -p code/metagraphs/${{ inputs.METAGRAPH_NAME }}/currency-l1/validator-1
+        echo "empty" > code/metagraphs/${{ inputs.METAGRAPH_NAME }}/currency-l1/validator-1/placeholder.txt
+        
+        mkdir -p code/metagraphs/${{ inputs.METAGRAPH_NAME }}/currency-l1/validator-2
+        echo "empty" > code/metagraphs/${{ inputs.METAGRAPH_NAME }}/currency-l1/validator-2/placeholder.txt
+        
+
+    - name: Create data layer directories if needed
+      if: ${{ inputs.INCLUDE_DATA_LAYER == 'true' }}
+      shell: bash
+      run: |
+        cd .github
+        
+        mkdir -p code/metagraphs/${{ inputs.METAGRAPH_NAME }}/data-l1/initial-validator
+        echo "empty" > code/metagraphs/${{ inputs.METAGRAPH_NAME }}/data-l1/initial-validator/placeholder.txt
+        
+        mkdir -p code/metagraphs/${{ inputs.METAGRAPH_NAME }}/data-l1/validator-1
+        echo "empty" > code/metagraphs/${{ inputs.METAGRAPH_NAME }}/data-l1/validator-1/placeholder.txt
+        
+        mkdir -p code/metagraphs/${{ inputs.METAGRAPH_NAME }}/data-l1/validator-2
+        echo "empty" > code/metagraphs/${{ inputs.METAGRAPH_NAME }}/data-l1/validator-2/placeholder.txt
+
+    - name: Copy genesis to metagraph L0 - ${{ inputs.METAGRAPH_NAME }}
+      shell: bash
+      run: |  
+        cp .github/config/genesis.csv .github/code/metagraphs/${{ inputs.METAGRAPH_NAME }}/metagraph-l0/genesis-node
+
+    - name: Generate metagraph dependencies and hypergraph JARs - Template 🔥
+      shell: bash
+      run: |
+        cp -r .github/templates/metagraphs/${{ inputs.TEMPLATE_NAME }} .github/code
+        cd .github/code/${{ inputs.TEMPLATE_NAME }}
+        
+        sbt --error clean compile currencyL0/assembly currencyL1/assembly
+        mv modules/l0/target/scala-2.13/*-assembly-* ../metagraphs/${{inputs.METAGRAPH_NAME}}/metagraph-l0/metagraph-l0.jar
+        mv modules/l1/target/scala-2.13/*-assembly-* ../metagraphs/${{inputs.METAGRAPH_NAME}}/currency-l1/currency-l1.jar
+      env:
+        GITHUB_TOKEN: ${{ inputs.GITHUB_TOKEN }}
+
+    - name: Copy data layer JARs if needed - Template
+      if: ${{ inputs.INCLUDE_DATA_LAYER == 'true' }}
+      shell: bash
+      run: |
+        cd .github/code/${{inputs.TEMPLATE_NAME}}
+        sbt --error clean compile dataL1/assembly
+        mv modules/data_l1/target/scala-2.13/*-assembly-* ../metagraphs/${{ inputs.METAGRAPH_NAME }}/data-l1/data-l1.jar
+      env:
+        GITHUB_TOKEN: ${{ inputs.GITHUB_TOKEN }}
+
+    - name: Cleaning directory
+      shell: bash
+      run: |
+        rm -rf .github/code/${{inputs.TEMPLATE_NAME}}

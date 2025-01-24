@@ -142,37 +142,39 @@ const clusterCheck = async (
   }
 };
 
-const checkGlobalL0Node = async () => {
+const checkGlobalL0Node = async (config) => {
+  const { dagL0PortPrefix } = config
   const infos = [
     {
       name: 'Global L0 Genesis',
-      baseUrl: 'http://localhost:9000'
+      baseUrl: `http://localhost:${dagL0PortPrefix}00`
     },
     {
       name: 'Global L0 Validator 1',
-      baseUrl: 'http://localhost:8000'
+      baseUrl: `http://localhost:${dagL0PortPrefix}10`
     },
     {
       name: 'Global L0 Validator 2',
-      baseUrl: 'http://localhost:8100'
+      baseUrl: `http://localhost:${dagL0PortPrefix}20`
     }
   ];
   await clusterCheck(infos, true, 'Global L0', 3, true);
 };
 
-const checkCurrencyL0Node = async () => {
+const checkCurrencyL0Node = async (config) => {
+  const { metagraphL0PortPrefix } = config
   const infos = [
     {
       name: 'Currency L0 - 1',
-      baseUrl: 'http://localhost:9400'
+      baseUrl: `http://localhost:${metagraphL0PortPrefix}00`
     },
     {
       name: 'Currency L0 - 2',
-      baseUrl: 'http://localhost:9500'
+      baseUrl: `http://localhost:${metagraphL0PortPrefix}10`
     },
     {
       name: 'Currency L0 - 3',
-      baseUrl: 'http://localhost:9600'
+      baseUrl: `http://localhost:${metagraphL0PortPrefix}20`
     }
   ];
   await clusterCheck(infos, true, 'Currency L0', 3, false);

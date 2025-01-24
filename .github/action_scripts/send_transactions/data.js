@@ -1,6 +1,21 @@
 const { dag4 } = require('@stardust-collective/dag4');
 const jsSha256 = require('js-sha256');
 const axios = require('axios');
+const { parseSharedArgs } = require('../shared');
+
+const createConfig = () => {
+    const args = process.argv.slice(2);
+
+    if (args.length < 5) {
+        throw new Error(
+            "Usage: node script.js <dagl0-port-prefix> <dagl1-port-prefix> <ml0-port-prefix> <cl1-port-prefix> <datal1-port-prefix>"
+        );
+    }
+
+    const sharedArgs = parseSharedArgs(args.slice(0, 5));
+    return { ...sharedArgs };
+};
+
 
 const sleep = (ms) => {
     return new Promise(resolve => setTimeout(resolve, ms))
@@ -69,9 +84,11 @@ const sendDataTransactionsUsingUrls = async (
 };
 
 const sendDataTransaction = async () => {
-    const globalL0Url = 'http://localhost:9000';
-    const metagraphL0Url = 'http://localhost:9400';
-    const metagraphL1DataUrl = 'http://localhost:7000';
+    const {dagL0PortPrefix, metagraphL0PortPrefix, dataL1PortPrefix} = createConfig()
+
+    const globalL0Url = `http://localhost:${dagL0PortPrefix}00`;
+    const metagraphL0Url = `http://localhost:${metagraphL0PortPrefix}00`;
+    const metagraphL1DataUrl = `http://localhost:${dataL1PortPrefix}00`;
 
     const address = await sendDataTransactionsUsingUrls(globalL0Url, metagraphL1DataUrl);
 
