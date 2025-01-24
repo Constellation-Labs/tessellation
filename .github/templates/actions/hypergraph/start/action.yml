@@ -1,0 +1,33 @@
+name: Start hypergraph
+
+inputs:
+  INCLUDE_DAG_L1:
+    required: true
+  DAG_L0_PORT_PREFIX:
+    required: true
+  DAG_L1_PORT_PREFIX:
+    required: false
+
+runs:
+  using: "composite"
+  steps:
+    - name: Validate DAG L1 inputs
+      if: ${{ inputs.INCLUDE_DAG_L1 == 'true' }}
+      shell: bash
+      run: |
+        if [ -z "${{ inputs.DAG_L1_PORT_PREFIX }}" ]; then
+          echo "Error: DAG_L1_PORT_PREFIX must be provided when INCLUDE_DAG_L1 is true."
+          exit 1
+        fi
+
+    - name: Start DAG L0
+      uses: "./.github/templates/actions/hypergraph/dag_l0/dl0_cluster"
+      with:
+        PORT_PREFIX: ${{ inputs.DAG_L0_PORT_PREFIX }}
+
+    - name: Start DAG L1
+      if: ${{ inputs.INCLUDE_DAG_L1 == 'true' }}
+      uses: "./.github/templates/actions/hypergraph/dag_l1/dl1_cluster"
+      with:
+        PORT_PREFIX: ${{ inputs.DAG_L1_PORT_PREFIX }}
+        GLOBAL_L0_PEER_HTTP_PORT: ${{ inputs.DAG_L0_PORT_PREFIX }}00

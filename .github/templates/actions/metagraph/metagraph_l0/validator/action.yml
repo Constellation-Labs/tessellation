@@ -1,0 +1,74 @@
+name: Metagraph L0 Validator
+
+inputs:
+  METAGRAPH_ID:
+    required: true
+  CL_PUBLIC_HTTP_PORT:
+    required: true
+  CL_P2P_HTTP_PORT:
+    required: true
+  CL_CLI_HTTP_PORT:
+    required: true
+  CL_GLOBAL_L0_PEER_HTTP_PORT:
+    required: true
+  CL_L0_P2P_HTTP_PORT:
+    required: true
+  NODE_NUMBER:
+    required: true
+  METAGRAPH_NAME:
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Running Metagraph L0 validator - ${{ inputs.NODE_NUMBER }}
+      shell: bash
+      env:
+        CL_KEYSTORE: token-key.p12
+        CL_KEYALIAS: token-key
+        CL_PASSWORD: password
+        CL_PUBLIC_HTTP_PORT: ${{ inputs.CL_PUBLIC_HTTP_PORT }}
+        CL_P2P_HTTP_PORT: ${{ inputs.CL_P2P_HTTP_PORT }}
+        CL_CLI_HTTP_PORT: ${{ inputs.CL_CLI_HTTP_PORT }}
+        CL_APP_ENV: dev
+        CL_COLLATERAL: 0
+        CL_GLOBAL_L0_PEER_HTTP_HOST: 127.0.0.1
+        CL_GLOBAL_L0_PEER_HTTP_PORT: ${{ inputs.CL_GLOBAL_L0_PEER_HTTP_PORT }}
+        CL_L0_TOKEN_IDENTIFIER: ${{ inputs.METAGRAPH_ID }}
+      run: |
+        ROOT_DIRECTORY=$(pwd)
+
+        cd $ROOT_DIRECTORY/.github/code/hypergraph/dag-l0/genesis-node
+        GLOBAL_L0_NODE_ID=$(java -jar $ROOT_DIRECTORY/.github/code/shared_jars/cl-wallet.jar show-id)
+
+        cd $ROOT_DIRECTORY/.github/code/metagraphs/${{ inputs.METAGRAPH_NAME }}/metagraph-l0/validator-${{ inputs.NODE_NUMBER }}
+        
+        export CL_GLOBAL_L0_PEER_ID=$GLOBAL_L0_NODE_ID
+        java -jar $ROOT_DIRECTORY/.github/code/shared_jars/cl-keytool.jar generate
+
+        touch metagraph-l0-validator-${{ inputs.NODE_NUMBER }}.log
+        nohup java -Denvironment=dev -jar $ROOT_DIRECTORY/.github/code/metagraphs/${{inputs.METAGRAPH_NAME}}/metagraph-l0/metagraph-l0.jar run-validator --ip 127.0.0.1 > metagraph-l0-validator-${{ inputs.NODE_NUMBER }}.log 2>&1 &
+        sleep 5
+
+    - name: Join node after started - ${{ inputs.NODE_NUMBER }}
+      shell: bash
+      env:
+        CL_KEYSTORE: token-key.p12
+        CL_KEYALIAS: token-key
+        CL_PASSWORD: password
+        CL_PUBLIC_HTTP_PORT: ${{ inputs.CL_PUBLIC_HTTP_PORT }}
+        CL_CLI_HTTP_PORT: ${{ inputs.CL_CLI_HTTP_PORT }}
+        CL_L0_P2P_HTTP_PORT: ${{ inputs.CL_L0_P2P_HTTP_PORT }}
+        METAGRAPH_NAME: ${{ inputs.METAGRAPH_NAME }}
+      run: |
+        ROOT_DIRECTORY=$(pwd)
+
+        cd $ROOT_DIRECTORY/.github/code/metagraphs/${METAGRAPH_NAME}/metagraph-l0/genesis-node
+        CURRENCY_L0_GENESIS_NODE_ID=$(java -jar $ROOT_DIRECTORY/.github/code/shared_jars/cl-wallet.jar show-id)
+
+        if node $ROOT_DIRECTORY/.github/action_scripts/check_if_node_started.js -url=http://127.0.0.1:${CL_PUBLIC_HTTP_PORT}/node/info -cluster_name=Metagraph-L0-Validator-${{ inputs.NODE_NUMBER }}; then
+            sleep 5
+            echo "Joining Metagraph L0 validator node ${{ inputs.NODE_NUMBER }} ..."
+            curl -X POST http://127.0.0.1:${CL_CLI_HTTP_PORT}/cluster/join -H "Content-type: application/json" -d "{ \"id\":\"$CURRENCY_L0_GENESIS_NODE_ID\", \"ip\": \"127.0.0.1\", \"p2pPort\": ${CL_L0_P2P_HTTP_PORT} }"
+            echo "Joined"
+        fi

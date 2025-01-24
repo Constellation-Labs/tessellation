@@ -1,0 +1,51 @@
+name: Start metagraph
+
+inputs:
+  METAGRAPH_NAME:
+    required: true
+  INCLUDE_DATA_L1:
+    required: true
+  DL0_PORT_PREFIX:
+    required: true
+  ML0_PORT_PREFIX:
+    required: true
+  CL1_PORT_PREFIX:
+    required: true
+  DL1_PORT_PREFIX:
+    required: false
+
+runs:
+  using: "composite"
+  steps:
+    - name: Validate DATA L1 inputs
+      if: ${{ inputs.INCLUDE_DATA_L1 == 'true' }}
+      shell: bash
+      run: |
+        if [ -z "${{ inputs.DL1_PORT_PREFIX }}" ]; then
+          echo "Error: DL1_PORT_PREFIX must be provided when INCLUDE_DATA_L1 is true."
+          exit 1
+        fi
+
+    - name: Start ${{ inputs.METAGRAPH_NAME }} - ML0
+      with:
+        METAGRAPH_NAME: ${{ inputs.METAGRAPH_NAME }}
+        PORT_PREFIX: ${{ inputs.ML0_PORT_PREFIX }}
+        GLOBAL_L0_PEER_HTTP_PORT: ${{ inputs.DL0_PORT_PREFIX }}00
+      uses: "./.github/templates/actions/metagraph/metagraph_l0/ml0_cluster"
+
+    - name: Start ${{ inputs.METAGRAPH_NAME }} - CL1
+      with:
+        METAGRAPH_NAME: ${{ inputs.METAGRAPH_NAME }}
+        PORT_PREFIX: ${{ inputs.CL1_PORT_PREFIX }}
+        GLOBAL_L0_PEER_HTTP_PORT: ${{ inputs.DL0_PORT_PREFIX }}00
+        METAGRAPH_L0_PEER_HTTP_PORT: ${{ inputs.ML0_PORT_PREFIX }}00
+      uses: "./.github/templates/actions/metagraph/currency_l1/cl1_cluster"
+
+    - name: Start ${{ inputs.METAGRAPH_NAME }} - DL1
+      if: ${{ inputs.INCLUDE_DATA_L1 == 'true' }}
+      with:
+        METAGRAPH_NAME: ${{ inputs.METAGRAPH_NAME }}
+        PORT_PREFIX: ${{ inputs.DL1_PORT_PREFIX }}
+        GLOBAL_L0_PEER_HTTP_PORT: ${{ inputs.DL0_PORT_PREFIX }}00
+        METAGRAPH_L0_PEER_HTTP_PORT: ${{ inputs.ML0_PORT_PREFIX }}00
+      uses: "./.github/templates/actions/metagraph/data_l1/dl1_cluster"

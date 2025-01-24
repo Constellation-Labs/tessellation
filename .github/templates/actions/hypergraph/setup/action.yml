@@ -1,0 +1,51 @@
+name: Hypergraph jar build
+
+inputs:
+  GITHUB_TOKEN:
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Create hypergraph directories
+      shell: bash
+      run: |
+        cd .github
+        mkdir -p code/hypergraph/dag-l0/genesis-node
+        echo "empty" > code/hypergraph/dag-l0/genesis-node/placeholder.txt
+        
+        mkdir -p code/hypergraph/dag-l0/validator-1
+        echo "empty" > code/hypergraph/dag-l0/validator-1/placeholder.txt
+        
+        mkdir -p code/hypergraph/dag-l0/validator-2
+        echo "empty" > code/hypergraph/dag-l0/validator-2/placeholder.txt
+        
+        mkdir -p code/hypergraph/dag-l1/initial-validator
+        echo "empty" > code/hypergraph/dag-l1/initial-validator/placeholder.txt
+        
+        mkdir -p code/hypergraph/dag-l1/validator-1
+        echo "empty" > code/hypergraph/dag-l1/validator-1/placeholder.txt
+        
+        mkdir -p code/hypergraph/dag-l1/validator-2
+        echo "empty" > code/hypergraph/dag-l1/validator-2/placeholder.txt
+        
+        mkdir -p code/shared_jars
+
+    - name: Copy genesis to DAG L0
+      shell: bash
+      run: |  
+        cp .github/config/genesis.csv .github/code/hypergraph/dag-l0/genesis-node
+
+    - name: Generate metagraph dependencies and hypergraph JARs 🔥
+      shell: bash
+      run: |
+        sbt -Dversion.override=99.99.99 --error clean compile dagL0/assembly dagL1/assembly keytool/assembly wallet/assembly sdk/publishM2 shared/publishM2 kernel/publishM2 keytool/publishM2 nodeShared/publishM2 currencyL0/publishM2 currencyL1/publishM2 dagL1/publishM2
+        
+        mv modules/dag-l0/target/scala-2.13/tessellation-dag-l0-assembly-* .github/code/hypergraph/dag-l0.jar
+        mv modules/dag-l1/target/scala-2.13/tessellation-dag-l1-assembly-* .github/code/hypergraph/dag-l1.jar
+        
+        mv modules/keytool/target/scala-2.13/tessellation-keytool-assembly-* .github/code/shared_jars/cl-keytool.jar
+        mv modules/wallet/target/scala-2.13/tessellation-wallet-assembly-* .github/code/shared_jars/cl-wallet.jar
+
+      env:
+        GITHUB_TOKEN: ${{ inputs.GITHUB_TOKEN }}

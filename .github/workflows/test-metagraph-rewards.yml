@@ -1,76 +1,79 @@
 name: Test metagraph rewards
 
 on:
-  pull_request: {}
-  push:
-    branches:
-      - develop
-      - hotfix/*
-      - release/*
+  workflow_call:
 
 jobs:
-  build:
-    name: Test rewards
-    runs-on: ubuntu-20.04
-    timeout-minutes: 45
-    strategy:
-      matrix:
-        java:
-          - openjdk@1.11.0
+  metagraph-rewards-tests:
+    runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v3
+      - uses: actions/setup-node@v4
         with:
-          node-version: 16.14.2
+          node-version: 18
           cache: 'npm'
           cache-dependency-path: .github/action_scripts/package-lock.json
 
-      - name: Installing node-fetch@2.6.6
+      - name: Installing node dependencies
+        shell: bash
         run: |
           cd .github/action_scripts
-          npm i node-fetch@2.6.6
+          npm i @stardust-collective/dag4
+          npm i js-sha256
+          npm i axios
+          npm i brotli
+          npm i zod
 
-      - name: Setup Java and scala
+      - name: Download shared_jars artifacts
+        uses: actions/download-artifact@v4
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          JAVA_VERSION: ${{ matrix.java }}
-        uses: "./.github/templates/setup_java_and_scala"
+          name: shared_jars
+          path: .github/code/shared_jars
 
-      - name: Generating Metagraph dependencies
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          sbt -Dversion.override=99.99.99 --error clean compile sdk/publishM2 shared/publishM2 kernel/publishM2 keytool/publishM2 nodeShared/publishM2 currencyL0/publishM2 currencyL1/publishM2 dagL1/publishM2
-
-      - name: Run Global L0 Cluster
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        uses: "./.github/templates/global_l0/gl0_cluster"
-
-      - name: Run Metagraph L0 Cluster
+      - name: Download Hypergraph Artifact
+        uses: actions/download-artifact@v4
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          IMPLEMENT_REWARDS: true
-        uses: "./.github/templates/metagraph_l0/ml0_cluster"
+          name: hypergraph
+          path: .github/code/hypergraph
 
-      - name: Run Metagraph L1 Cluster
+      - name: Download project template Artifact
+        uses: actions/download-artifact@v4
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        uses: "./.github/templates/metagraph_currency_l1/ml1_cluster"
+        with:
+          name: project-template-metagraph
+          path: .github/code/metagraphs/project-template-metagraph
+
+      - name: Start Hypergraph
+        uses: "./.github/templates/actions/hypergraph/start"
+        with:
+          INCLUDE_DAG_L1: true
+          DAG_L0_PORT_PREFIX: 90
+          DAG_L1_PORT_PREFIX: 91
+
+      - name: Start Metagraph - Project Template
+        uses: "./.github/templates/actions/metagraph/start"
+        with:
+          INCLUDE_DATA_L1: false
+          METAGRAPH_NAME: project-template-metagraph
+          DL0_PORT_PREFIX: 90
+          ML0_PORT_PREFIX: 80
+          CL1_PORT_PREFIX: 81
 
       - name: Check Metagraph cluster
         run: |
           cd .github/action_scripts/check_clusters
-          npm install axios
-          node metagraph-currency.js
+          node metagraph-currency.js 90 91 80 81 82
 
       - name: Check rewards
         run: |
-          cd .github/action_scripts/rewards
-          node index.js
+          cd .github/action_scripts
+          node rewards.js 90 91 80 81 82
 
       - name: Wait 1 minute before check cluster
         run: |
@@ -80,68 +83,67 @@ jobs:
       - name: Check Metagraph cluster
         run: |
           cd .github/action_scripts/check_clusters
-          npm install axios
-          node metagraph-currency.js
+          node metagraph-currency.js 90 91 80 81 82
 
       - name: Save Global L0 Genesis logs
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: rewards-global-l0-genesis-java-${{ matrix.java }}
-          path: .github/config/containers/global-l0/genesis/global-l0-genesis.log
+          name: rewards-global-l0-genesis-java-11
+          path: .github/code/hypergraph/dag-l0/genesis-node/dag-l0-genesis.log
 
       - name: Save Global L0 - Validator 1 logs
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: rewards-global-l0-validator-1-java-${{ matrix.java }}
-          path: .github/config/containers/global-l0/validator-1/global-l0-validator-1.log
+          name: rewards-global-l0-validator-1-java-11
+          path: .github/code/hypergraph/dag-l0/validator-1/dag-l0-validator-1.log
 
       - name: Save Global L0 - Validator 2 logs
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: rewards-global-l0-validator-2-java-${{ matrix.java }}
-          path: .github/config/containers/global-l0/validator-2/global-l0-validator-2.log
+          name: rewards-global-l0-validator-2-java-11
+          path: .github/code/hypergraph/dag-l0/validator-2/dag-l0-validator-2.log
 
       - name: Save Metagraph L0 - Genesis logs
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: rewards-metagraph-l0-genesis-java-${{ matrix.java }}
-          path: .github/config/containers/metagraph-l0/genesis/metagraph-l0-genesis.log
+          name: rewards-metagraph-l0-genesis-java-11
+          path: .github/code/metagraphs/project-template-metagraph/metagraph-l0/genesis-node/metagraph-l0-run-genesis.log
 
       - name: Save Metagraph L0 - Validator 1 logs
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: rewards-metagraph-l0-validator-1-java-${{ matrix.java }}
-          path: .github/config/containers/metagraph-l0/validator-1/metagraph-l0-validator-1.log
+          name: rewards-metagraph-l0-validator-1-java-11
+          path: .github/code/metagraphs/project-template-metagraph/metagraph-l0/validador-1/metagraph-l0-validator-1.log
 
       - name: Save Metagraph L0 - Validator 2 logs
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: rewards-metagraph-l0-validator-2-java-${{ matrix.java }}
-          path: .github/config/containers/metagraph-l0/validator-2/metagraph-l0-validator-2.log
+          name: rewards-metagraph-l0-validator-2-java-11
+          path: .github/code/metagraphs/project-template-metagraph/metagraph-l0/validator-2/metagraph-l0-validator-2.log
 
       - name: Save Currency L1 - Initial Validator logs
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: rewards-currency-l1-initial-validator-java-${{ matrix.java }}
-          path: .github/config/containers/currency-l1/initial-validator/currency-l1-initial-validator.log
+          name: rewards-currency-l1-initial-validator-java-11
+          path: .github/code/metagraphs/project-template-metagraph/currency-l1/initial-validator/currency-l1-initial-validator.log
 
       - name: Save Currency L1 - Validator 1 logs
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: rewards-currency-l1-validator-1-java-${{ matrix.java }}
-          path: .github/config/containers/currency-l1/validator-1/currency-l1-1.log
+          name: rewards-currency-l1-validator-1-java-11
+          path: .github/code/metagraphs/project-template-metagraph/currency-l1/validator-1/currency-l1-1.log
 
       - name: Save Currency L1 - Validator 2 logs
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: rewards-currency-l1-validator-2-java-${{ matrix.java }}
-          path: .github/config/containers/currency-l1/validator-2/currency-l1-2.log
+          name: rewards-currency-l1-validator-2-java-11
+          path: .github/code/metagraphs/project-template-metagraph/currency-l1/validator-2/currency-l1-2.log
