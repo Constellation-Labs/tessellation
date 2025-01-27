@@ -4,16 +4,23 @@ import sbt._
 ThisBuild / organization := "com.my.project_template"
 ThisBuild / scalaVersion := "2.13.10"
 ThisBuild / evictionErrorLevel := Level.Warn
+ThisBuild / scalafixDependencies += Libraries.organizeImports
 
 ThisBuild / assemblyMergeStrategy := {
-  case "logback.xml"                                       => MergeStrategy.first
-  case x if x.contains("io.netty.versions.properties")     => MergeStrategy.discard
-  case PathList(xs @ _*) if xs.last == "module-info.class" => MergeStrategy.first
-  case x if x.contains("rally-version.properties")         => MergeStrategy.concat
+  case "logback.xml" => MergeStrategy.first
+  case x if x.contains("io.netty.versions.properties") => MergeStrategy.discard
+  case PathList(xs@_*) if xs.last == "module-info.class" => MergeStrategy.first
+  case x if x.contains("rally-version.properties") => MergeStrategy.concat
   case x =>
     val oldStrategy = (assembly / assemblyMergeStrategy).value
     oldStrategy(x)
 }
+
+lazy val commonSettings = Seq(
+  testFrameworks += new TestFramework("weaver.framework.CatsEffect"),
+  scalafmtOnCompile := true,
+  scalafixOnCompile := true
+)
 
 lazy val root = (project in file(".")).
   settings(
@@ -32,6 +39,7 @@ lazy val sharedData = (project in file("modules/shared_data"))
     resolvers += Resolver.mavenLocal,
     resolvers += Resolver.githubPackages("abankowski", "http-request-signer"),
     Defaults.itSettings,
+    commonSettings,
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
       CompilerPlugin.betterMonadicFor,
@@ -52,6 +60,7 @@ lazy val currencyL1 = (project in file("modules/l1"))
     resolvers += Resolver.mavenLocal,
     resolvers += Resolver.githubPackages("abankowski", "http-request-signer"),
     Defaults.itSettings,
+    commonSettings,
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
       CompilerPlugin.betterMonadicFor,
@@ -73,6 +82,7 @@ lazy val currencyL0 = (project in file("modules/l0"))
     resolvers += Resolver.mavenLocal,
     resolvers += Resolver.githubPackages("abankowski", "http-request-signer"),
     Defaults.itSettings,
+    commonSettings,
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
       CompilerPlugin.betterMonadicFor,
@@ -97,6 +107,7 @@ lazy val dataL1 = (project in file("modules/data_l1"))
     resolvers += Resolver.mavenLocal,
     resolvers += Resolver.githubPackages("abankowski", "http-request-signer"),
     Defaults.itSettings,
+    commonSettings,
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
       CompilerPlugin.betterMonadicFor,

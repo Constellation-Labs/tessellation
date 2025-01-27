@@ -1,17 +1,20 @@
-import sbt._
+import sbt.*
 
 object Dependencies {
 
   object V {
     val tessellation = "99.99.99"
     val decline = "2.4.1"
+    val organizeImports = "0.5.0"
   }
+
   def tessellation(artifact: String): ModuleID = "io.constellationnetwork" %% s"tessellation-$artifact" % V.tessellation
 
   def decline(artifact: String = ""): ModuleID =
     "com.monovore" %% {
       if (artifact.isEmpty) "decline" else s"decline-$artifact"
     } % V.decline
+
   object Libraries {
     val tessellationKernel = tessellation("kernel")
     val tessellationDAGL1 = tessellation("dag-l1")
@@ -24,6 +27,7 @@ object Dependencies {
     val declineEffect = decline("effect")
     val declineRefined = decline("refined")
     val requests = "com.lihaoyi" %% "requests" % "0.8.0"
+    val organizeImports = "com.github.liancheng" %% "organize-imports" % V.organizeImports
   }
 
 

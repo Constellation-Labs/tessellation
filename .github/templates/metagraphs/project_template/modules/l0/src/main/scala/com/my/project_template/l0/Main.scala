@@ -1,41 +1,43 @@
 package com.my.project_template.l0
 
+import java.util.UUID
+
 import cats.Applicative
 import cats.data.NonEmptyList
 import cats.effect.{IO, Resource}
 import cats.syntax.all._
+
+import scala.collection.immutable.{SortedMap, SortedSet}
+
+import io.constellationnetwork.currency.dataApplication.Errors.{MissingFeeTransaction, NotEnoughFee}
+import io.constellationnetwork.currency.dataApplication._
+import io.constellationnetwork.currency.dataApplication.dataApplication.{DataApplicationBlock, DataApplicationValidationErrorOr}
+import io.constellationnetwork.currency.l0.CurrencyL0App
+import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotStateProof}
+import io.constellationnetwork.ext.cats.effect.ResourceIO
+import io.constellationnetwork.node.shared.domain.rewards.Rewards
+import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
+import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEvent
+import io.constellationnetwork.schema.SnapshotOrdinal
+import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.balance.{Amount, Balance}
+import io.constellationnetwork.schema.cluster.ClusterId
+import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
+import io.constellationnetwork.schema.transaction.{RewardTransaction, Transaction, TransactionAmount}
+import io.constellationnetwork.security.SecurityProvider
+import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.signature.Signed
+
 import com.my.project_template.l0.custom_routes.CustomRoutes
 import com.my.project_template.shared_data.LifecycleSharedFunctions
 import com.my.project_template.shared_data.calculated_state.CalculatedStateService
 import com.my.project_template.shared_data.deserializers.Deserializers
 import com.my.project_template.shared_data.serializers.Serializers
-import com.my.project_template.shared_data.types.Types.{UsageUpdate, UsageUpdateCalculatedState, UsageUpdateState}
+import com.my.project_template.shared_data.types.Types._
+import eu.timepit.refined.auto._
 import io.circe.{Decoder, Encoder}
 import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
 import org.http4s.{EntityDecoder, HttpRoutes}
-import io.constellationnetwork.currency.dataApplication.dataApplication.{DataApplicationBlock, DataApplicationValidationErrorOr}
-import io.constellationnetwork.currency.dataApplication._
-import io.constellationnetwork.currency.l0.CurrencyL0App
-import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotStateProof}
-import io.constellationnetwork.ext.cats.effect.ResourceIO
-import io.constellationnetwork.node.shared.domain.rewards.Rewards
-import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotEvent
-import io.constellationnetwork.schema.SnapshotOrdinal
-import io.constellationnetwork.schema.cluster.ClusterId
-import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
-import io.constellationnetwork.security.SecurityProvider
-import io.constellationnetwork.security.hash.Hash
-import io.constellationnetwork.security.signature.Signed
-import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.balance.Balance
-import io.constellationnetwork.schema.transaction.{RewardTransaction, Transaction, TransactionAmount}
-import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
-import io.constellationnetwork.currency.dataApplication.DataCalculatedState
-import eu.timepit.refined.auto._
-import cats.syntax.applicative._
-
-import java.util.UUID
-import scala.collection.immutable.{SortedMap, SortedSet}
 
 object Main
     extends CurrencyL0App(
@@ -136,6 +138,26 @@ object Main
         bytes: Array[Byte]
       ): IO[Either[Throwable, UsageUpdateCalculatedState]] =
         IO(Deserializers.deserializeCalculatedState(bytes))
+
+      override def validateFee(
+        gsOrdinal: SnapshotOrdinal
+      )(dataUpdate: Signed[UsageUpdate], maybeFeeTransaction: Option[Signed[FeeTransaction]])(
+        implicit context: L0NodeContext[IO],
+        A: Applicative[IO]
+      ): IO[DataApplicationValidationErrorOr[Unit]] =
+        dataUpdate.value match {
+          case _: UsageUpdateNoFee => ().validNec[DataApplicationValidationError].pure[IO]
+          case _: UsageUpdateWithFee =>
+            maybeFeeTransaction match {
+              case Some(feeTransaction) =>
+                val minFee = Amount(100L)
+                if (feeTransaction.value.amount.value.value < minFee.value.value)
+                  NotEnoughFee.invalidNec[Unit].pure[IO]
+                else
+                  ().validNec[DataApplicationValidationError].pure[IO]
+              case None => MissingFeeTransaction.invalidNec[Unit].pure[IO]
+            }
+        }
     })
 
   private def makeL0Service: IO[BaseDataApplicationL0Service[IO]] =
