@@ -1,29 +1,31 @@
 package com.my.project_template.shared_data.combiners
 
-import com.my.project_template.shared_data.types.Types._
 import io.constellationnetwork.currency.dataApplication.DataState
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.security.signature.Signed
 
+import com.my.project_template.shared_data.types.Types._
+import eu.timepit.refined.types.numeric.NonNegLong
+
 object Combiners {
   private def getUpdatedDeviceUsage(
-    usage  : Long,
-    acc    : DataState[UsageUpdateState, UsageUpdateCalculatedState],
+    usage: NonNegLong,
+    acc: DataState[UsageUpdateState, UsageUpdateCalculatedState],
     address: Address
-  ): UsageUpdate = {
+  ): UsageUpdateInfo = {
     val deviceCalculatedState = acc.calculated.devices.getOrElse(
       address,
-      DeviceCalculatedState(UsageUpdate(address, 0))
+      DeviceCalculatedState(UsageUpdateInfo(address, NonNegLong.MinValue))
     )
-    UsageUpdate(
+    UsageUpdateInfo(
       address,
-      deviceCalculatedState.usages.usage + usage
+      NonNegLong.unsafeFrom(deviceCalculatedState.usages.deviceUsage.value + usage.value)
     )
   }
 
   def combineUpdateUsage(
     signedUpdate: Signed[UsageUpdate],
-    acc         : DataState[UsageUpdateState, UsageUpdateCalculatedState]
+    acc: DataState[UsageUpdateState, UsageUpdateCalculatedState]
   ): DataState[UsageUpdateState, UsageUpdateCalculatedState] = {
     val update = signedUpdate.value
     val address = update.address

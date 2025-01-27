@@ -1,20 +1,20 @@
 package com.my.project_template.shared_data.serializers
 
-import com.my.project_template.shared_data.types.Types.{UsageUpdate, UsageUpdateCalculatedState, UsageUpdateState}
-import io.circe.Encoder
-import io.circe.syntax.EncoderOps
+import java.nio.charset.StandardCharsets
+
 import io.constellationnetwork.currency.dataApplication.DataUpdate
 import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationBlock
 import io.constellationnetwork.security.signature.Signed
 
-import java.nio.charset.StandardCharsets
+import com.my.project_template.shared_data.types.Types.{UsageUpdate, UsageUpdateCalculatedState, UsageUpdateState}
+import io.circe.Encoder
+import io.circe.syntax.EncoderOps
 
 object Serializers {
   private def serialize[A: Encoder](
     serializableData: A
-  ): Array[Byte] = {
+  ): Array[Byte] =
     serializableData.asJson.deepDropNullValues.noSpaces.getBytes(StandardCharsets.UTF_8)
-  }
 
   def serializeUpdate(
     update: UsageUpdate

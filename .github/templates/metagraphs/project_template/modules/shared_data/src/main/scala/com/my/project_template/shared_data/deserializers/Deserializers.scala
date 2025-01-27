@@ -1,13 +1,14 @@
 package com.my.project_template.shared_data.deserializers
 
-import com.my.project_template.shared_data.types.Types.{UsageUpdate, UsageUpdateCalculatedState, UsageUpdateState}
-import io.circe.Decoder
-import io.circe.jawn.decode
+import java.nio.charset.StandardCharsets
+
 import io.constellationnetwork.currency.dataApplication.DataUpdate
 import io.constellationnetwork.currency.dataApplication.dataApplication.DataApplicationBlock
 import io.constellationnetwork.security.signature.Signed
 
-import java.nio.charset.StandardCharsets
+import com.my.project_template.shared_data.types.Types.{UsageUpdate, UsageUpdateCalculatedState, UsageUpdateState}
+import io.circe.Decoder
+import io.circe.jawn.decode
 
 object Deserializers {
   private def deserialize[A: Decoder](

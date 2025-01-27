@@ -2,15 +2,17 @@ package com.my.project_template.shared_data
 
 import cats.effect.Async
 import cats.syntax.all._
-import com.my.project_template.shared_data.combiners.Combiners.combineUpdateUsage
-import com.my.project_template.shared_data.types.Types.{UsageUpdate, UsageUpdateCalculatedState, UsageUpdateState}
+
 import io.constellationnetwork.currency.dataApplication.DataState
 import io.constellationnetwork.security.signature.Signed
 
+import com.my.project_template.shared_data.combiners.Combiners.combineUpdateUsage
+import com.my.project_template.shared_data.types.Types.{UsageUpdate, UsageUpdateCalculatedState, UsageUpdateState}
+
 object LifecycleSharedFunctions {
-  def combine[F[_] : Async](
+  def combine[F[_]: Async](
     oldState: DataState[UsageUpdateState, UsageUpdateCalculatedState],
-    updates : List[Signed[UsageUpdate]]
+    updates: List[Signed[UsageUpdate]]
   ): F[DataState[UsageUpdateState, UsageUpdateCalculatedState]] = {
     val newState = DataState(
       UsageUpdateState(List.empty),
@@ -22,8 +24,7 @@ object LifecycleSharedFunctions {
     } else {
       Async[F].delay(updates.foldLeft(newState) { (acc, signedUpdate) =>
         combineUpdateUsage(signedUpdate, acc)
-      }
-      )
+      })
     }
   }
 }

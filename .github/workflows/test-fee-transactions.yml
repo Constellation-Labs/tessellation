@@ -4,7 +4,7 @@ on:
   workflow_call:
 
 jobs:
-  data-transactions-tests:
+  fee-transactions-tests:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -74,73 +74,67 @@ jobs:
       - name: Send transactions
         run: |
           cd .github/action_scripts
-          node send_transactions/data-without-fee.js 90 91 80 81 82 ${{ secrets.CI_PRIVATE_KEY }}
+          node send_transactions/data-with-fee.js 90 91 80 81 82 ${{ secrets.CI_PRIVATE_KEY }}
           
       - name: Save Global L0 Genesis logs
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: data-transactions-global-l0-genesis-java-11
+          name: fee-transactions-global-l0-genesis-java-11
           path: .github/code/hypergraph/dag-l0/genesis-node/dag-l0-genesis.log
 
       - name: Save Global L0 - Validator 1 logs
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: data-transactions-global-l0-validator-1-java-11
+          name: fee-transactions-global-l0-validator-1-java-11
           path: .github/code/hypergraph/dag-l0/validator-1/dag-l0-validator-1.log
 
       - name: Save Global L0 - Validator 2 logs
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: rewards-global-l0-validator-2-java-${{ matrix.java }}
-          path: .github/config/containers/global-l0/validator-2/global-l0-validator-2.log
-
-      - name: Save Metagraph L0 - Create genesis logs
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: send-transactions-metagraph-l0-create-genesis-java-${{ matrix.java }}
-          path: .github/config/containers/metagraph-l0/genesis/metagraph-l0-create-genesis.log
+          name: fee-transactions-global-l0-validator-2-java-11
+          path: .github/code/hypergraph/dag-l0/validator-2/dag-l0-validator-2.log
 
       - name: Save Metagraph L0 - Genesis logs
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: data-transactions-metagraph-l0-genesis-java-11
+          name: fee-transactions-metagraph-l0-genesis-java-11
           path: .github/code/metagraphs/project-template-metagraph/metagraph-l0/genesis-node/metagraph-l0-run-genesis.log
 
       - name: Save Metagraph L0 - Validator 1 logs
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: data-transactions-metagraph-l0-validator-1-java-11
+          name: fee-transactions-metagraph-l0-validator-1-java-11
           path: .github/code/metagraphs/project-template-metagraph/metagraph-l0/validador-1/metagraph-l0-validator-1.log
 
       - name: Save Metagraph L0 - Validator 2 logs
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: data-transactions-metagraph-l0-validator-2-java-11
+          name: fee-transactions-metagraph-l0-validator-2-java-11
           path: .github/code/metagraphs/project-template-metagraph/metagraph-l0/validator-2/metagraph-l0-validator-2.log
 
-      - name: Save Data L1 - Initial Validator logs
+      - name: Save Currency L1 - Initial Validator logs
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: data-transactions-currency-l1-initial-validator-java-11
+          name: fee-transactions-currency-l1-initial-validator-java-11
           path: .github/code/metagraphs/project-template-metagraph/currency-l1/initial-validator/currency-l1-initial-validator.log
 
-      - name: Save Data L1 - Validator 1 logs
+      - name: Save Currency L1 - Validator 1 logs
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: data-transactions-currency-l1-validator-1-java-11
+          name: fee-transactions-currency-l1-validator-1-java-11
           path: .github/code/metagraphs/project-template-metagraph/currency-l1/validator-1/currency-l1-1.log
 
-      - name: Save Data L1 - Validator 2 logs
+      - name: Save Currency L1 - Validator 2 logs
         uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: data-transactions-currency-l1-validator-2-java-11
+          name: fee-transactions-currency-l1-validator-2-java-11
           path: .github/code/metagraphs/project-template-metagraph/currency-l1/validator-2/currency-l1-2.log
