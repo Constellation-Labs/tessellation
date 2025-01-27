@@ -1,21 +1,30 @@
 const { dag4 } = require('@stardust-collective/dag4');
 const jsSha256 = require('js-sha256');
 const axios = require('axios');
+const { z } = require('zod');
 const { parseSharedArgs } = require('../shared');
+
+const CliArgsSchema = z.object({
+    privateKey: z.string()
+        .min(1, "Private key cannot be empty"),
+});
 
 const createConfig = () => {
     const args = process.argv.slice(2);
 
-    if (args.length < 5) {
+    if (args.length < 6) {
         throw new Error(
-            "Usage: node script.js <dagl0-port-prefix> <dagl1-port-prefix> <ml0-port-prefix> <cl1-port-prefix> <datal1-port-prefix>"
+            "Usage: node script.js <dagl0-port-prefix> <dagl1-port-prefix> <ml0-port-prefix> <cl1-port-prefix> <datal1-port-prefix> <private-key>"
         );
     }
 
     const sharedArgs = parseSharedArgs(args.slice(0, 5));
-    return { ...sharedArgs };
-};
+    const [privateKey] = args.slice(5);
 
+    const specificArgs = CliArgsSchema.parse({ privateKey });
+
+    return { ...sharedArgs, ...specificArgs };
+};
 
 const sleep = (ms) => {
     return new Promise(resolve => setTimeout(resolve, ms))
@@ -49,10 +58,10 @@ const generateProof = async (message, walletPrivateKey, account) => {
 
 const sendDataTransactionsUsingUrls = async (
     globalL0Url,
-    metagraphL1DataUrl
+    metagraphL1DataUrl,
+    privateKey
 ) => {
-    const exampleWalletPrivateKey = 'e948da6dce90ebb10d73d829330e6a9d940fc5b95a71f27e874934f904c840bb'
-    const account = dag4.createAccount(exampleWalletPrivateKey);
+    const account = dag4.createAccount(privateKey);
 
     account.connect({
         networkVersion: '2.0',
@@ -61,10 +70,12 @@ const sendDataTransactionsUsingUrls = async (
     });
 
     const message = {
-        address: account.address,
-        usage: 10
+        UsageUpdateNoFee: {
+            address: account.address,
+            usage: 10
+        }
     }
-    const proof = await generateProof(message, exampleWalletPrivateKey, account);
+    const proof = await generateProof(message, privateKey, account);
     const body = {
         value: {
             ...message
@@ -84,35 +95,35 @@ const sendDataTransactionsUsingUrls = async (
 };
 
 const sendDataTransaction = async () => {
-    const {dagL0PortPrefix, metagraphL0PortPrefix, dataL1PortPrefix} = createConfig()
+    const {dagL0PortPrefix, metagraphL0PortPrefix, dataL1PortPrefix, privateKey} = createConfig()
 
     const globalL0Url = `http://localhost:${dagL0PortPrefix}00`;
     const metagraphL0Url = `http://localhost:${metagraphL0PortPrefix}00`;
     const metagraphL1DataUrl = `http://localhost:${dataL1PortPrefix}00`;
 
-    const address = await sendDataTransactionsUsingUrls(globalL0Url, metagraphL1DataUrl);
+    const address = await sendDataTransactionsUsingUrls(globalL0Url, metagraphL1DataUrl, privateKey);
 
-    for (let idx = 0; idx < 20; idx++) {
+    const maxAttempts = 60
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
-            const response = await axios.get(`${metagraphL0Url}/data-application/addresses/${address}`)
-            const responseData = response.data
+            const response = await axios.get(`${metagraphL0Url}/data-application/addresses/${address}`);
+            const responseData = response.data;
+
             if (Object.keys(responseData).length > 0) {
-                console.log(`Transaction processed successfully, response: ${JSON.stringify(responseData)}`)
-                return
-            }
-            if (idx === 19) {
-                throw Error(`Could not get state updated after sending data transaction, please check the logs`)
+                console.log(`Transaction processed successfully. Response: ${JSON.stringify(responseData)}`);
+                return;
             }
 
-            console.log(`Data transaction not processed yet, trying again in 10s (${idx + 1} / 20)`)
-            await sleep(10 * 1000)
-        } catch (e) {
-            if (idx === 19) {
-                throw Error(`Could not get state updated after sending data transaction, please check the logs`)
-            }
-            console.log(`Data transaction not processed yet, trying again in 10s (${idx + 1} / 20)`)
-            await sleep(10 * 1000)
+            console.log(`Data transaction not processed yet. Retrying in 1 seconds (${attempt}/${maxAttempts})`);
+        } catch (error) {
+            console.error(`Attempt ${attempt} failed: ${error.message}`);
         }
+
+        if (attempt === maxAttempts) {
+            throw new Error(`Max attempts reached. Could not get state updated after sending data transaction. Please check the logs.`);
+        }
+
+        await sleep(1000);
     }
 };
 

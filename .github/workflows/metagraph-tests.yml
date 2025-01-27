@@ -18,6 +18,11 @@ jobs:
     uses: ./.github/workflows/test-data-transactions.yml
     secrets: inherit
 
+  call-test-fee-transactions:
+    needs: call-workflow-setup-environment
+    uses: ./.github/workflows/test-fee-transactions.yml
+    secrets: inherit
+
   call-test-metagraph-rewards:
     needs: call-workflow-setup-environment
     uses: ./.github/workflows/test-metagraph-rewards.yml

@@ -1,39 +1,43 @@
 package com.my.project_template.data_l1
 
+import java.util.UUID
+
 import cats.Applicative
-import cats.data.NonEmptyList
 import cats.effect.{IO, Resource}
 import cats.syntax.all._
-import com.my.project_template.shared_data.calculated_state.CalculatedStateService
-import com.my.project_template.shared_data.deserializers.Deserializers
-import com.my.project_template.shared_data.serializers.Serializers
-import com.my.project_template.shared_data.types.Types.{UsageUpdate, UsageUpdateCalculatedState, UsageUpdateState}
-import io.circe.{Decoder, Encoder}
-import org.http4s.{EntityDecoder, _}
-import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
+
+import io.constellationnetwork.currency.dataApplication.Errors.{MissingFeeTransaction, NotEnoughFee}
 import io.constellationnetwork.currency.dataApplication._
 import io.constellationnetwork.currency.dataApplication.dataApplication.{DataApplicationBlock, DataApplicationValidationErrorOr}
 import io.constellationnetwork.currency.l1.CurrencyL1App
+import io.constellationnetwork.currency.schema.EstimatedFee
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.schema.SnapshotOrdinal
+import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
-import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 
-import java.util.UUID
+import com.my.project_template.shared_data.deserializers.Deserializers
+import com.my.project_template.shared_data.serializers.Serializers
+import com.my.project_template.shared_data.types.Types._
+import eu.timepit.refined.auto._
+import eu.timepit.refined.types.all.NonNegLong
+import io.circe.{Decoder, Encoder}
+import org.http4s.circe.CirceEntityCodec.circeEntityDecoder
+import org.http4s.{EntityDecoder, _}
 
-object Main extends CurrencyL1App(
-  "currency-data_l1",
-  "currency data L1 node",
-  ClusterId(UUID.fromString("517c3a05-9219-471b-a54c-21b7d72f4ae5")),
-  tessellationVersion = TessellationVersion.unsafeFrom("1.0.0"),
-  metagraphVersion = MetagraphVersion.unsafeFrom("1.0.0")
-) {
+object Main
+    extends CurrencyL1App(
+      "currency-data_l1",
+      "currency data L1 node",
+      ClusterId(UUID.fromString("517c3a05-9219-471b-a54c-21b7d72f4ae5")),
+      tessellationVersion = TessellationVersion.unsafeFrom("1.0.0"),
+      metagraphVersion = MetagraphVersion.unsafeFrom("1.0.0")
+    ) {
 
-  private def makeBaseDataApplicationL1Service(
-    calculatedStateService: CalculatedStateService[IO]
-  ): BaseDataApplicationL1Service[IO] = BaseDataApplicationL1Service(
+  private def makeBaseDataApplicationL1Service: BaseDataApplicationL1Service[IO] = BaseDataApplicationL1Service(
     new DataApplicationL1Service[IO, UsageUpdate, UsageUpdateState, UsageUpdateCalculatedState] {
       override def validateUpdate(
         update: UsageUpdate
@@ -97,14 +101,40 @@ object Main extends CurrencyL1App(
         bytes: Array[Byte]
       ): IO[Either[Throwable, UsageUpdateCalculatedState]] =
         IO(Deserializers.deserializeCalculatedState(bytes))
+
+      override def estimateFee(
+        gsOrdinal: SnapshotOrdinal
+      )(update: UsageUpdate)(implicit context: L1NodeContext[IO], A: Applicative[IO]): IO[EstimatedFee] =
+        update match {
+          case _: UsageUpdateNoFee =>
+            IO.pure(EstimatedFee(Amount(NonNegLong.MinValue), Address("DAG88C9WDSKH451sisyEP3hAkgCKn5DN72fuwjfQ")))
+          case _: UsageUpdateWithFee => IO.pure(EstimatedFee(Amount(NonNegLong(100)), Address("DAG88C9WDSKH451sisyEP3hAkgCKn5DN72fuwjfQ")))
+        }
+
+      override def validateFee(
+        gsOrdinal: SnapshotOrdinal
+      )(dataUpdate: Signed[UsageUpdate], maybeFeeTransaction: Option[Signed[FeeTransaction]])(
+        implicit context: L1NodeContext[IO],
+        A: Applicative[IO]
+      ): IO[DataApplicationValidationErrorOr[Unit]] =
+        dataUpdate.value match {
+          case _: UsageUpdateNoFee => ().validNec[DataApplicationValidationError].pure[IO]
+          case _: UsageUpdateWithFee =>
+            maybeFeeTransaction match {
+              case Some(feeTransaction) =>
+                val minFee = Amount(100L)
+                if (feeTransaction.value.amount.value.value < minFee.value.value)
+                  NotEnoughFee.invalidNec[Unit].pure[IO]
+                else
+                  ().validNec[DataApplicationValidationError].pure[IO]
+              case None => MissingFeeTransaction.invalidNec[Unit].pure[IO]
+            }
+        }
     }
   )
 
-  private def makeL1Service: IO[BaseDataApplicationL1Service[IO]] = {
-    for {
-      calculatedStateService <- CalculatedStateService.make[IO]
-      dataApplicationL1Service = makeBaseDataApplicationL1Service(calculatedStateService)
-    } yield dataApplicationL1Service
+  private def makeL1Service: IO[BaseDataApplicationL1Service[IO]] = IO.delay {
+    makeBaseDataApplicationL1Service
   }
 
   override def dataApplication: Option[Resource[IO, BaseDataApplicationL1Service[IO]]] =
