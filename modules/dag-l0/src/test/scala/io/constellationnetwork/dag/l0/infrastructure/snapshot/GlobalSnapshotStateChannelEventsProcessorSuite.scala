@@ -189,7 +189,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       SortedMap.empty,
       SortedMap.empty,
       None,
-      None
+      Some(SortedMap.empty)
     )
 
 }
