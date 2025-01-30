@@ -44,7 +44,7 @@ object GlobalSnapshotInfoV1 {
       SortedMap.empty,
       SortedMap.empty,
       None,
-      None
+      Some(SortedMap.empty)
     )
 }
 
@@ -82,7 +82,7 @@ case class GlobalSnapshotInfoV2(
       }.to(lastCurrencySnapshots.sortedMapFactory),
       lastCurrencySnapshotsProofs,
       None,
-      None
+      Some(SortedMap.empty)
     )
 
   def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
