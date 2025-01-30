@@ -52,7 +52,6 @@ trait CliMethod {
     c.gossip,
     httpConfig,
     c.leavingDelay,
-    c.stateAfterJoining,
     CliMethod.collateralConfig(environment, collateralAmount),
     c.trust.storage,
     c.priorityPeerIds.get(environment),

@@ -54,11 +54,17 @@ object Main
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
     dagL0KryoRegistrar
 
+  val networkStateAfterJoining: NodeState = NodeState.WaitingForDownload
+
   def run(method: Run, nodeShared: NodeShared[IO, Run]): Resource[IO, Unit] = {
     import nodeShared._
 
     for {
-      cfgR <- ConfigSource.default.loadF[IO, AppConfigReader]().asResource
+      cfgR <- ConfigSource
+        .resources("dag-l0.conf")
+        .withFallback(ConfigSource.default)
+        .loadF[IO, AppConfigReader]()
+        .asResource
       cfg = method.appConfig(cfgR, sharedConfig)
       queues <- Queues.make[IO](sharedQueues).asResource
 
