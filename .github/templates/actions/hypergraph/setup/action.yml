@@ -39,7 +39,7 @@ runs:
     - name: Generate metagraph dependencies and hypergraph JARs 🔥
       shell: bash
       run: |
-        sbt -Dversion.override=99.99.99 --error clean compile dagL0/assembly dagL1/assembly keytool/assembly wallet/assembly sdk/publishM2 shared/publishM2 kernel/publishM2 keytool/publishM2 nodeShared/publishM2 currencyL0/publishM2 currencyL1/publishM2 dagL1/publishM2
+        sbt -Dversion.override=99.99.99 --error clean compile dagL0/assembly dagL1/assembly keytool/assembly wallet/assembly sdk/publishM2
         
         mv modules/dag-l0/target/scala-2.13/tessellation-dag-l0-assembly-* .github/code/hypergraph/dag-l0.jar
         mv modules/dag-l1/target/scala-2.13/tessellation-dag-l1-assembly-* .github/code/hypergraph/dag-l1.jar

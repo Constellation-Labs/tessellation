@@ -10,7 +10,6 @@ import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculatorConf
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
-import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.PeerId
 
 import com.comcast.ip4s.{Host, Port}
@@ -22,7 +21,6 @@ object types {
   case class SharedConfigReader(
     gossip: GossipConfig,
     leavingDelay: FiniteDuration,
-    stateAfterJoining: NodeState,
     collateral: Option[CollateralConfig],
     trust: SharedTrustConfig,
     snapshot: SharedSnapshotConfig,
@@ -40,7 +38,6 @@ object types {
     gossip: GossipConfig,
     http: HttpConfig,
     leavingDelay: FiniteDuration,
-    stateAfterJoining: NodeState,
     collateral: CollateralConfig,
     trustStorage: TrustStorageConfig,
     priorityPeerIds: Option[NonEmptySet[PeerId]],
