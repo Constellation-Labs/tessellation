@@ -36,36 +36,41 @@ lazy val sharedData = (project in file("modules/shared_data"))
     scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info", "-language:reflectiveCalls"),
     buildInfoKeys := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion),
     buildInfoPackage := "com.my.project_template.shared_data",
-    resolvers += Resolver.mavenLocal,
-    resolvers += Resolver.githubPackages("abankowski", "http-request-signer"),
+    resolvers ++= Seq(
+      Resolver.mavenLocal,
+      Resolver.githubPackages("abankowski", "http-request-signer")
+    ),
     Defaults.itSettings,
     commonSettings,
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
       CompilerPlugin.betterMonadicFor,
       CompilerPlugin.semanticDB,
-      Libraries.tessellationNodeShared,
-      Libraries.requests
+      Libraries.tessellationSdk,
+      Libraries.requests,
     )
   )
+
 lazy val currencyL1 = (project in file("modules/l1"))
   .enablePlugins(AshScriptPlugin)
   .enablePlugins(BuildInfoPlugin)
   .enablePlugins(JavaAppPackaging)
+  .dependsOn(sharedData)
   .settings(
     name := "project_template-currency-l1",
     scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info", "-language:reflectiveCalls"),
     buildInfoKeys := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion),
     buildInfoPackage := "com.my.project_template.l1",
-    resolvers += Resolver.mavenLocal,
-    resolvers += Resolver.githubPackages("abankowski", "http-request-signer"),
+    resolvers ++= Seq(
+      Resolver.mavenLocal,
+      Resolver.githubPackages("abankowski", "http-request-signer")
+    ),
     Defaults.itSettings,
     commonSettings,
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
       CompilerPlugin.betterMonadicFor,
-      CompilerPlugin.semanticDB,
-      Libraries.tessellationCurrencyL1
+      CompilerPlugin.semanticDB
     )
   )
 
@@ -79,8 +84,10 @@ lazy val currencyL0 = (project in file("modules/l0"))
     scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info", "-language:reflectiveCalls"),
     buildInfoKeys := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion),
     buildInfoPackage := "com.my.project_template.l0",
-    resolvers += Resolver.mavenLocal,
-    resolvers += Resolver.githubPackages("abankowski", "http-request-signer"),
+    resolvers ++= Seq(
+      Resolver.mavenLocal,
+      Resolver.githubPackages("abankowski", "http-request-signer")
+    ),
     Defaults.itSettings,
     commonSettings,
     libraryDependencies ++= Seq(
@@ -89,8 +96,7 @@ lazy val currencyL0 = (project in file("modules/l0"))
       CompilerPlugin.semanticDB,
       Libraries.declineRefined,
       Libraries.declineCore,
-      Libraries.declineEffect,
-      Libraries.tessellationCurrencyL0
+      Libraries.declineEffect
     )
   )
 
@@ -104,14 +110,15 @@ lazy val dataL1 = (project in file("modules/data_l1"))
     scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info", "-language:reflectiveCalls"),
     buildInfoKeys := Seq[BuildInfoKey](name, version, scalaVersion, sbtVersion),
     buildInfoPackage := "com.my.project_template.data_l1",
-    resolvers += Resolver.mavenLocal,
-    resolvers += Resolver.githubPackages("abankowski", "http-request-signer"),
+    resolvers ++= Seq(
+      Resolver.mavenLocal,
+      Resolver.githubPackages("abankowski", "http-request-signer")
+    ),
     Defaults.itSettings,
     commonSettings,
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
       CompilerPlugin.betterMonadicFor,
-      CompilerPlugin.semanticDB,
-      Libraries.tessellationCurrencyL1
+      CompilerPlugin.semanticDB
     )
   )

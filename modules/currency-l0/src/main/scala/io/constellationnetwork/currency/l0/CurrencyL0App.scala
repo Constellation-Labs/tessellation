@@ -60,11 +60,17 @@ abstract class CurrencyL0App(
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
     nodeSharedKryoRegistrar
 
+  val networkStateAfterJoining: NodeState = NodeState.WaitingForDownload
+
   def run(method: Run, nodeShared: NodeShared[IO, Run]): Resource[IO, Unit] = {
     import nodeShared._
 
     for {
-      cfgR <- ConfigSource.default.loadF[IO, AppConfigReader]().asResource
+      cfgR <- ConfigSource
+        .resources("currency-l0.conf")
+        .withFallback(ConfigSource.default)
+        .loadF[IO, AppConfigReader]()
+        .asResource
       cfg = method.appConfig(cfgR, sharedConfig)
 
       dataApplicationService <- dataApplication.sequence

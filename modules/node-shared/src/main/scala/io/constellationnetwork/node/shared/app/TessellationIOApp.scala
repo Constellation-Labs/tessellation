@@ -30,6 +30,7 @@ import io.constellationnetwork.node.shared.resources.SharedResources
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.schema.generation.Generation
+import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.TessellationVersion
 import io.constellationnetwork.security._
@@ -71,6 +72,8 @@ abstract class TessellationIOApp[A <: CliMethod](
   /** Kryo registration is required for (de)serialization.
     */
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]]
+
+  val networkStateAfterJoining: NodeState
 
   protected val logger = Slf4jLogger.getLogger[IO]
 
@@ -191,7 +194,8 @@ abstract class TessellationIOApp[A <: CliMethod](
                                           services.localHealthcheck,
                                           _seedlist,
                                           selfId,
-                                          versionHash
+                                          versionHash,
+                                          networkStateAfterJoining
                                         )
                                         .asResource
 

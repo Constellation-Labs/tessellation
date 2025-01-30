@@ -4,10 +4,22 @@ ThisBuild / scalaVersion := "2.13.12"
 ThisBuild / organization := "io.constellationnetwork"
 ThisBuild / organizationName := "constellationnetwork"
 
+ThisBuild / homepage := Some(url("https://github.com/Constellation-Labs/tessellation"))
+ThisBuild / licenses := List("Apache-2.0" -> url("http://www.apache.org/licenses/LICENSE-2.0"))
+ThisBuild / sonatypeCredentialHost := "central.sonatype.com"
+ThisBuild / developers := List(
+  Developer(
+    "tessellation-contributors",
+    "Tessellation Contributors",
+    "contact@constellationnetwork.io",
+    url("https://github.com/Constellation-Labs/tessellation/graphs/contributors")
+  )
+)
+
 ThisBuild / evictionErrorLevel := Level.Warn
 ThisBuild / scalafixDependencies += Libraries.organizeImports
 
-enablePlugins(GitVersioningPlugin)
+enablePlugins(GitVersioningPlugin, TessellationCiRelease)
 
 resolvers += Resolver.sonatypeRepo("snapshots")
 
@@ -16,8 +28,6 @@ val scalafixCommonSettings = inConfig(IntegrationTest)(scalafixConfigSettings(In
 bloopExportJarClassifiers in Global := Some(Set("sources"))
 
 val ghTokenSource = TokenSource.GitConfig("github.token") || TokenSource.Environment("GITHUB_TOKEN")
-
-githubTokenSource := ghTokenSource
 
 lazy val commonSettings = Seq(
   scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info", "-language:reflectiveCalls"),
@@ -70,7 +80,8 @@ lazy val dockerSettings = Seq(
 
 lazy val root = (project in file("."))
   .settings(
-    name := "tessellation"
+    name := "tessellation",
+    publish / skip := true
   )
   .aggregate(testShared, shared, keytool, kernel, wallet, nodeShared, sdk, dagL0, dagL1, currencyL0, currencyL1, tools, rosetta)
 
@@ -83,6 +94,7 @@ lazy val kernel = (project in file("modules/kernel"))
     scalafixCommonSettings,
     commonSettings,
     commonTestSettings,
+    publish / skip := true,
     makeBatScripts := Seq(),
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
@@ -101,6 +113,7 @@ lazy val wallet = (project in file("modules/wallet"))
     scalafixCommonSettings,
     commonSettings,
     commonTestSettings,
+    publish / skip := true,
     makeBatScripts := Seq(),
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
@@ -131,6 +144,7 @@ lazy val keytool = (project in file("modules/keytool"))
     scalafixCommonSettings,
     commonSettings,
     commonTestSettings,
+    publish / skip := true,
     makeBatScripts := Seq(),
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
@@ -176,6 +190,7 @@ lazy val shared = (project in file("modules/shared"))
     scalafixCommonSettings,
     commonSettings,
     commonTestSettings,
+    publish / skip := true,
     makeBatScripts := Seq(),
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
@@ -249,6 +264,7 @@ lazy val testShared = (project in file("modules/test-shared"))
     scalafixCommonSettings,
     commonSettings,
     commonTestSettings,
+    publish / skip := true,
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
       CompilerPlugin.betterMonadicFor,
@@ -284,6 +300,7 @@ lazy val nodeShared = (project in file("modules/node-shared"))
     scalafixCommonSettings,
     commonSettings,
     commonTestSettings,
+    publish / skip := true,
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
       CompilerPlugin.betterMonadicFor,
@@ -339,6 +356,7 @@ lazy val rosetta = (project in file("modules/rosetta"))
     scalafixCommonSettings,
     commonSettings,
     commonTestSettings,
+    publish / skip := true,
     makeBatScripts := Seq(),
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
@@ -366,6 +384,7 @@ lazy val dagL1 = (project in file("modules/dag-l1"))
     commonSettings,
     commonTestSettings,
     dockerSettings,
+    publish / skip := true,
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
       CompilerPlugin.betterMonadicFor,
@@ -406,6 +425,7 @@ lazy val tools = (project in file("modules/tools"))
     scalafixCommonSettings,
     commonSettings,
     commonTestSettings,
+    publish / skip := true,
     run / connectInput := true,
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
@@ -454,6 +474,7 @@ lazy val dagL0 = (project in file("modules/dag-l0"))
     commonSettings,
     commonTestSettings,
     dockerSettings,
+    publish / skip := true,
     makeBatScripts := Seq(),
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
@@ -514,6 +535,7 @@ lazy val currencyL1 = (project in file("modules/currency-l1"))
     scalafixCommonSettings,
     commonSettings,
     commonTestSettings,
+    publish / skip := true,
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
       CompilerPlugin.betterMonadicFor,
@@ -534,6 +556,7 @@ lazy val currencyL0 = (project in file("modules/currency-l0"))
     scalafixCommonSettings,
     commonSettings,
     commonTestSettings,
+    publish / skip := true,
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
       CompilerPlugin.betterMonadicFor,
@@ -545,18 +568,64 @@ lazy val sdk = (project in file("modules/sdk"))
   .enablePlugins(AshScriptPlugin)
   .enablePlugins(BuildInfoPlugin)
   .enablePlugins(JavaAppPackaging)
-  .dependsOn(keytool, kernel, shared % "compile->compile;test->test", testShared % Test, nodeShared, currencyL0, currencyL1)
+  .dependsOn(
+    keytool % "provided",
+    kernel % "provided",
+    shared % "provided",
+    nodeShared % "provided",
+    currencyL0 % "provided",
+    currencyL1 % "provided",
+    dagL1 % "provided"
+  )
   .settings(
     name := "tessellation-sdk",
     Defaults.itSettings,
     scalafixCommonSettings,
     commonSettings,
     commonTestSettings,
+    publishArtifact in Test := false,
+    pomIncludeRepository := { _ => false },
+    Compile / publishMavenStyle := true,
     libraryDependencies ++= Seq(
       CompilerPlugin.kindProjector,
       CompilerPlugin.betterMonadicFor,
-      CompilerPlugin.semanticDB
-    )
+      CompilerPlugin.semanticDB,
+    ) ++ Seq(
+      (keytool / Compile / libraryDependencies).value,
+      (kernel / Compile / libraryDependencies).value,
+      (shared / Compile / libraryDependencies).value,
+      (nodeShared / Compile / libraryDependencies).value,
+      (currencyL0 / Compile / libraryDependencies).value,
+      (currencyL1 / Compile / libraryDependencies).value,
+      (dagL1 / Compile / libraryDependencies).value
+    ).flatten,
+    Compile / packageBin / mappings ++= Seq(
+        (keytool / Compile / packageBin / mappings).value,
+        (kernel / Compile / packageBin / mappings).value,
+        (shared / Compile / packageBin / mappings).value,
+        (nodeShared / Compile / packageBin / mappings).value,
+        (currencyL0 / Compile / packageBin / mappings).value,
+        (currencyL1 / Compile / packageBin / mappings).value,
+        (dagL1 / Compile / packageBin / mappings).value
+      ).flatten.filterNot { case (_, path) => path.endsWith("rally-version.properties")},
+    Compile / packageSrc / mappings ++= Seq(
+      (keytool / Compile / packageSrc / mappings).value,
+      (kernel / Compile / packageSrc / mappings).value,
+      (shared / Compile / packageSrc / mappings).value,
+      (nodeShared / Compile / packageSrc / mappings).value,
+      (currencyL0 / Compile / packageSrc / mappings).value,
+      (currencyL1 / Compile / packageSrc / mappings).value,
+      (dagL1 / Compile / packageSrc / mappings).value
+    ).flatten,
+    Compile / doc / sources ++= Seq(
+      (keytool / Compile / doc / sources).value,
+      (kernel / Compile / doc / sources).value,
+      (shared / Compile / doc / sources).value,
+      (nodeShared / Compile / doc / sources).value,
+      (currencyL0 / Compile / doc / sources).value,
+      (currencyL1 / Compile / doc / sources).value,
+      (dagL1 / Compile / doc / sources).value
+    ).flatten,
   )
 
 addCommandAlias("runLinter", ";scalafixAll --rules OrganizeImports")

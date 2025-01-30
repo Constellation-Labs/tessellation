@@ -78,11 +78,18 @@ abstract class CurrencyL1App(
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
     nodeSharedKryoRegistrar.union(dagL1KryoRegistrar)
 
+  val networkStateAfterJoining: NodeState = NodeState.Ready
+
   def run(method: Run, nodeShared: NodeShared[IO, Run]): Resource[IO, Unit] = {
     import nodeShared._
 
     for {
-      cfgR <- ConfigSource.default.loadF[IO, AppConfigReader]().asResource
+      cfgR <- ConfigSource
+        .resources("currency-l1.conf")
+        .withFallback(ConfigSource.resources("dag-l1.conf"))
+        .withFallback(ConfigSource.default)
+        .loadF[IO, AppConfigReader]()
+        .asResource
       cfg = method.appConfig(cfgR, sharedConfig)
 
       dagL1Queues <- DAGL1Queues.make[IO](sharedQueues).asResource
