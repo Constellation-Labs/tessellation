@@ -45,7 +45,7 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
       SortedMap.empty,
       SortedMap.empty,
       None,
-      None
+      Some(SortedMap.empty)
     )
     for {
       snapshot <- globalIncrementalSnapshot(globalSnapshotInfo)
@@ -61,7 +61,7 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
       SortedMap.empty,
       SortedMap.empty,
       None,
-      None
+      Some(SortedMap.empty)
     )
 
     for {
