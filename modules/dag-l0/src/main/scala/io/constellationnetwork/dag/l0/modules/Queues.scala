@@ -8,6 +8,7 @@ import cats.syntax.functor._
 import io.constellationnetwork.node.shared.modules.SharedQueues
 import io.constellationnetwork.schema.Block
 import io.constellationnetwork.schema.gossip.RumorRaw
+import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.swap.AllowSpendBlock
 import io.constellationnetwork.schema.tokenLock.TokenLockBlock
 import io.constellationnetwork.security.Hashed
@@ -22,6 +23,7 @@ object Queues {
       l1OutputQueue <- Queue.unbounded[F, Signed[Block]]
       l1AllowSpendOutputQueue <- Queue.unbounded[F, Signed[AllowSpendBlock]]
       l1TokenLockOutputQueue <- Queue.unbounded[F, Signed[TokenLockBlock]]
+      updateNodeParametersQueue <- Queue.unbounded[F, Signed[UpdateNodeParameters]]
     } yield
       new Queues[F] {
         val rumor = sharedQueues.rumor
@@ -29,6 +31,7 @@ object Queues {
         val l1Output = l1OutputQueue
         val l1AllowSpendOutput = l1AllowSpendOutputQueue
         val l1TokenLockOutput = l1TokenLockOutputQueue
+        val updateNodeParametersOutput = updateNodeParametersQueue
       }
 }
 
@@ -38,4 +41,5 @@ sealed abstract class Queues[F[_]] private {
   val l1Output: Queue[F, Signed[Block]]
   val l1AllowSpendOutput: Queue[F, Signed[AllowSpendBlock]]
   val l1TokenLockOutput: Queue[F, Signed[TokenLockBlock]]
+  val updateNodeParametersOutput: Queue[F, Signed[UpdateNodeParameters]]
 }

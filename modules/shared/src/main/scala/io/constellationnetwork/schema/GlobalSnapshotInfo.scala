@@ -9,8 +9,10 @@ import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.merkletree.syntax._
 import io.constellationnetwork.merkletree.{MerkleRoot, MerkleTree, Proof}
+import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
+import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.snapshot.{SnapshotInfo, StateProof}
 import io.constellationnetwork.schema.swap.{AllowSpend, AllowSpendReference}
 import io.constellationnetwork.schema.transaction.TransactionReference
@@ -45,7 +47,8 @@ object GlobalSnapshotInfoV1 {
       SortedMap.empty,
       Some(SortedMap.empty[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]),
       Some(SortedMap.empty),
-      Some(SortedMap.empty[Address, AllowSpendReference])
+      Some(SortedMap.empty[Address, AllowSpendReference]),
+      Some(SortedMap.empty)
     )
 }
 
@@ -62,6 +65,7 @@ case class GlobalSnapshotStateProofV1(
       lastTxRefsProof,
       balancesProof,
       lastCurrencySnapshotsProof,
+      None,
       None,
       None,
       None
@@ -90,12 +94,14 @@ case class GlobalSnapshotStateProof(
   lastCurrencySnapshotsProof: Option[MerkleRoot],
   activeAllowSpends: Option[Hash],
   tokenLockBalances: Option[Hash],
-  lastAllowSpendRefs: Option[Hash]
+  lastAllowSpendRefs: Option[Hash],
+  updateNodeParameters: Option[Hash]
 ) extends StateProof
 
 object GlobalSnapshotStateProof {
-  def apply: ((Hash, Hash, Hash, Option[MerkleRoot], Option[Hash], Option[Hash], Option[Hash])) => GlobalSnapshotStateProof = {
-    case (x1, x2, x3, x4, x5, x6, x7) => GlobalSnapshotStateProof.apply(x1, x2, x3, x4, x5, x6, x7)
+  def apply
+    : ((Hash, Hash, Hash, Option[MerkleRoot], Option[Hash], Option[Hash], Option[Hash], Option[Hash])) => GlobalSnapshotStateProof = {
+    case (x1, x2, x3, x4, x5, x6, x7, x8) => GlobalSnapshotStateProof.apply(x1, x2, x3, x4, x5, x6, x7, x8)
   }
 }
 
@@ -118,6 +124,7 @@ case class GlobalSnapshotInfoV2(
         _.map { case (Signed(inc, proofs), info) => (Signed(inc.toCurrencyIncrementalSnapshot, proofs), info.toCurrencySnapshotInfo) }
       }.to(lastCurrencySnapshots.sortedMapFactory),
       lastCurrencySnapshotsProofs,
+      None,
       None,
       None,
       None
@@ -159,7 +166,8 @@ case class GlobalSnapshotInfo(
   lastCurrencySnapshotsProofs: SortedMap[Address, Proof],
   activeAllowSpends: Option[SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]],
   tokenLockBalances: Option[SortedMap[Address, SortedMap[Address, Balance]]],
-  lastAllowSpendRefs: Option[SortedMap[Address, AllowSpendReference]]
+  lastAllowSpendRefs: Option[SortedMap[Address, AllowSpendReference]],
+  updateNodeParameters: Option[SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)]]
 ) extends SnapshotInfo[GlobalSnapshotStateProof] {
   def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
     lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
@@ -178,8 +186,9 @@ case class GlobalSnapshotInfo(
       balances.hash,
       activeAllowSpends.traverse(_.hash),
       tokenLockBalances.traverse(_.hash),
-      lastAllowSpendRefs.traverse(_.hash)
-    ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot), _, _, _))
+      lastAllowSpendRefs.traverse(_.hash),
+      updateNodeParameters.traverse(_.hash)
+    ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot), _, _, _, _))
 
 }
 
@@ -190,6 +199,7 @@ object GlobalSnapshotInfo {
     SortedMap.empty,
     SortedMap.empty,
     SortedMap.empty,
+    Some(SortedMap.empty),
     Some(SortedMap.empty),
     Some(SortedMap.empty),
     Some(SortedMap.empty)

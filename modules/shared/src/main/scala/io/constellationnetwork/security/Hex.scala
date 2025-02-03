@@ -9,6 +9,7 @@ import cats.effect.Async
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
+import io.constellationnetwork.ext.derevo.ordering
 import io.constellationnetwork.security.key.{ECDSA, PublicKeyHexPrefix, secp256k}
 
 import derevo.cats.{eqv, order}
@@ -22,7 +23,7 @@ import org.scalacheck.{Arbitrary, Gen}
 
 object hex {
 
-  @derive(decoder, encoder, eqv, order, keyEncoder, keyDecoder)
+  @derive(decoder, encoder, eqv, order, ordering, keyEncoder, keyDecoder)
   @newtype
   case class Hex(value: String) {
 

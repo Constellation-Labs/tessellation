@@ -15,6 +15,7 @@ import io.constellationnetwork.node.shared.config.types.{CollateralConfig, Share
 import io.constellationnetwork.node.shared.domain.cluster.services.{Cluster, Session}
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.healthcheck.LocalHealthcheck
+import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersAcceptanceManager
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcceptanceManager
@@ -108,6 +109,7 @@ object SharedServices {
       feeCalculator = FeeCalculator.make(cfg.feeConfigs)
       globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make(stateChannelAllowanceLists)
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync
+      updateNodeParametersAcceptanceManager = UpdateNodeParametersAcceptanceManager.make(validators.updateNodeParametersValidator)
       globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
         BlockAcceptanceManager.make[F](validators.blockValidator, txHasher),
         AllowSpendBlockAcceptanceManager.make[F](validators.allowSpendBlockValidator),
@@ -119,6 +121,7 @@ object SharedServices {
             jsonBrotliBinarySerializer,
             feeCalculator
           ),
+        updateNodeParametersAcceptanceManager,
         collateral.amount
       )
       globalSnapshotContextFns = GlobalSnapshotContextFunctions.make(globalSnapshotAcceptanceManager)
@@ -132,7 +135,8 @@ object SharedServices {
         currencySnapshotContextFns = currencySnapshotContextFns,
         currencySnapshotAcceptanceManager = currencySnapshotAcceptanceManager,
         currencyEventsCutter = currencyEventsCutter,
-        restart = restartService
+        restart = restartService,
+        updateNodeParametersAcceptanceManager = updateNodeParametersAcceptanceManager
       ) {}
 }
 
@@ -145,5 +149,6 @@ sealed abstract class SharedServices[F[_], A <: CliMethod] private (
   val currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
   val currencySnapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F],
   val currencyEventsCutter: CurrencyEventsCutter[F],
-  val restart: RestartService[F, A]
+  val restart: RestartService[F, A],
+  val updateNodeParametersAcceptanceManager: UpdateNodeParametersAcceptanceManager[F]
 )

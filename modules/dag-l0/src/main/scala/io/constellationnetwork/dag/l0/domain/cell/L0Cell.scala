@@ -10,6 +10,7 @@ import cats.syntax.functor._
 import io.constellationnetwork.kernel.Cell.NullTerminal
 import io.constellationnetwork.kernel._
 import io.constellationnetwork.schema.Block
+import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.statechannel.StateChannelOutput
 
@@ -25,12 +26,14 @@ sealed trait L0CellInput
 object L0CellInput {
   case class HandleDAGL1(data: Signed[Block]) extends L0CellInput
   case class HandleStateChannelSnapshot(snapshot: StateChannelOutput) extends L0CellInput
+  case class HandleUpdateNodeParameters(updateNodeParameters: Signed[UpdateNodeParameters]) extends L0CellInput
 }
 
 class L0Cell[F[_]: Async](
   data: L0CellInput,
   l1OutputQueue: Queue[F, Signed[Block]],
-  stateChannelOutputQueue: Queue[F, StateChannelOutput]
+  stateChannelOutputQueue: Queue[F, StateChannelOutput],
+  updateNodeParametersQueue: Queue[F, Signed[UpdateNodeParameters]]
 ) extends Cell[F, StackF, L0CellInput, Either[CellError, Ω], CoalgebraCommand](
       data,
       scheme.hyloM(
@@ -42,19 +45,23 @@ class L0Cell[F[_]: Async](
                 Algebra.enqueueStateChannelSnapshot(stateChannelOutputQueue)(snapshot)
               case EnqueueDAGL1Data(data) =>
                 Algebra.enqueueDAGL1Data(l1OutputQueue)(data)
+              case EnqueueUpdateNodeParameters(updateNodeParameters) =>
+                Algebra.enqueueUpdateNodeParameters(updateNodeParametersQueue)(updateNodeParameters)
               case NoAction =>
                 NullTerminal.asRight[CellError].widen[Ω].pure[F]
             }
           case Done(other) => other.pure[F]
         },
         CoalgebraM[F, StackF, CoalgebraCommand] {
-          case ProcessDAGL1(data)                    => Coalgebra.processDAGL1(data)
-          case ProcessStateChannelSnapshot(snapshot) => Coalgebra.processStateChannelSnapshot(snapshot)
+          case ProcessDAGL1(data)                                => Coalgebra.processDAGL1(data)
+          case ProcessStateChannelSnapshot(snapshot)             => Coalgebra.processStateChannelSnapshot(snapshot)
+          case ProcessUpdateNodeParameters(updateNodeParameters) => Coalgebra.processUpdateNodeParameters(updateNodeParameters)
         }
       ),
       {
-        case HandleDAGL1(data)                    => ProcessDAGL1(data)
-        case HandleStateChannelSnapshot(snapshot) => ProcessStateChannelSnapshot(snapshot)
+        case HandleDAGL1(data)                                => ProcessDAGL1(data)
+        case HandleStateChannelSnapshot(snapshot)             => ProcessStateChannelSnapshot(snapshot)
+        case HandleUpdateNodeParameters(updateNodeParameters) => ProcessUpdateNodeParameters(updateNodeParameters)
       }
     )
 
@@ -64,9 +71,10 @@ object L0Cell {
 
   def mkL0Cell[F[_]: Async](
     l1OutputQueue: Queue[F, Signed[Block]],
-    stateChannelOutputQueue: Queue[F, StateChannelOutput]
+    stateChannelOutputQueue: Queue[F, StateChannelOutput],
+    updateNodeParametersQueue: Queue[F, Signed[UpdateNodeParameters]]
   ): Mk[F] =
-    data => new L0Cell(data, l1OutputQueue, stateChannelOutputQueue)
+    data => new L0Cell(data, l1OutputQueue, stateChannelOutputQueue, updateNodeParametersQueue)
 
   type AlgebraR[F[_]] = F[Either[CellError, Ω]]
   type CoalgebraR[F[_]] = F[StackF[CoalgebraCommand]]
@@ -83,6 +91,11 @@ object L0Cell {
       queue.offer(data) >>
         NullTerminal.asRight[CellError].widen[Ω].pure[F]
 
+    def enqueueUpdateNodeParameters[F[_]: Async](queue: Queue[F, Signed[UpdateNodeParameters]])(
+      updateNodeParameters: Signed[UpdateNodeParameters]
+    ): AlgebraR[F] =
+      queue.offer(updateNodeParameters) >>
+        NullTerminal.asRight[CellError].widen[Ω].pure[F]
   }
 
   object Coalgebra {
@@ -95,6 +108,12 @@ object L0Cell {
 
     def processStateChannelSnapshot[F[_]: Async](snapshot: StateChannelOutput): CoalgebraR[F] = {
       def res: StackF[CoalgebraCommand] = Done(AlgebraCommand.EnqueueStateChannelSnapshot(snapshot).asRight[CellError])
+
+      res.pure[F]
+    }
+
+    def processUpdateNodeParameters[F[_]: Async](updateNodeParameters: Signed[UpdateNodeParameters]): CoalgebraR[F] = {
+      def res: StackF[CoalgebraCommand] = Done(AlgebraCommand.EnqueueUpdateNodeParameters(updateNodeParameters).asRight[CellError])
 
       res.pure[F]
     }

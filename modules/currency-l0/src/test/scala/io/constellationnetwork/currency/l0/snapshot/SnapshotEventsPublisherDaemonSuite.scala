@@ -81,7 +81,8 @@ object SnapshotEventsPublisherDaemonSuite extends MutableIOSuite with Checkers {
       declarationRangeLimit = NonNegLong(10),
       lockDuration = 10.seconds,
       eventCutter = EventCutterConfig(
-        maxBinarySizeBytes = PosInt(5000000)
+        maxBinarySizeBytes = PosInt(5000000),
+        maxUpdateNodeParametersSize = PosInt(100)
       )
     )
 

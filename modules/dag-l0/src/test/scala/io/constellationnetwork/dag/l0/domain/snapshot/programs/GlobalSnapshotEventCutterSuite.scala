@@ -52,7 +52,7 @@ object GlobalSnapshotEventCutterSuite extends MutableIOSuite with Checkers {
   }
 
   test("all events cut because max size too small") { res =>
-    implicit val (ks, h, _) = res
+    implicit val (j, h, _) = res
 
     val gen = eventsGen(5, 10)
     forall(gen) {
@@ -79,8 +79,13 @@ object GlobalSnapshotEventCutterSuite extends MutableIOSuite with Checkers {
           scEventsSize <- j.serialize(scEvents).map(_.length)
           dagEventsSize <- j.serialize(dagEvents).map(_.length)
           cutter = makeCutter(PosInt.unsafeFrom(scEventsSize + dagEventsSize))
-          (scEventsAfterCut, dagEventsAfterCut) <- cutter.cut(scEvents, dagEvents, makeSnapshotInfo(), SnapshotOrdinal.MinValue)
-        } yield expect.all(scEvents == scEventsAfterCut, dagEvents == dagEventsAfterCut)
+          (scEventsAfterCut, dagEventsAfterCut) <- cutter.cut(
+            scEvents,
+            dagEvents,
+            makeSnapshotInfo(),
+            SnapshotOrdinal.MinValue
+          )
+        } yield expect.all(scEvents.toSet == scEventsAfterCut.toSet, dagEvents.toSet == dagEventsAfterCut.toSet)
     }
   }
 
@@ -209,6 +214,9 @@ object GlobalSnapshotEventCutterSuite extends MutableIOSuite with Checkers {
       val fee = event.value.snapshotBinary.fee.value.value
       event.value.snapshotBinary.toHashed[IO].map(h => WrappedStateChannelEvent(event, fee, h.hash))
     }
+    def apply(stateChannelOutput: StateChannelOutput)(implicit hasher: Hasher[IO]): IO[WrappedStateChannelEvent] = apply(
+      StateChannelEvent(stateChannelOutput)
+    )
     implicit val ordering: Ordering[WrappedStateChannelEvent] = Ordering.by(w => (w.fee, w.hash))
   }
 
@@ -219,6 +227,7 @@ object GlobalSnapshotEventCutterSuite extends MutableIOSuite with Checkers {
       val fee = event.value.transactions.toIterable.map(_.value.fee.value.value).sum
       event.value.toHashed[IO].map(h => WrappedDAGEvent(event, fee, h.hash))
     }
+    def apply(block: Signed[Block])(implicit hasher: Hasher[IO]): IO[WrappedDAGEvent] = apply(DAGEvent(block))
     implicit val ordering: Ordering[WrappedDAGEvent] = Ordering.by(w => (w.fee, w.hash))
   }
 

@@ -17,6 +17,7 @@ import io.constellationnetwork.node.shared.domain.statechannel.{SnapshotFeesInfo
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
+import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
@@ -86,7 +87,8 @@ object StateChannelServiceSuite extends MutableIOSuite {
     for {
       dagQueue <- Queue.unbounded[IO, Signed[Block]]
       scQueue <- Queue.unbounded[IO, StateChannelOutput]
-    } yield StateChannelService.make[IO](L0Cell.mkL0Cell[IO](dagQueue, scQueue), validator)
+      unpQueue <- Queue.unbounded[IO, Signed[UpdateNodeParameters]]
+    } yield StateChannelService.make[IO](L0Cell.mkL0Cell[IO](dagQueue, scQueue, unpQueue), validator)
   }
 
   def mkStateChannelOutput()(implicit S: SecurityProvider[IO], H: Hasher[IO]) = for {
@@ -110,7 +112,8 @@ object StateChannelServiceSuite extends MutableIOSuite {
           EpochProgress.MinValue,
           NonEmptyList.of(PeerId(Hex(""))),
           SnapshotTips(SortedSet.empty, SortedSet.empty),
-          stateProof = GlobalSnapshotStateProof(Hash.empty, Hash.empty, Hash.empty, None, None, None, None),
+          stateProof = GlobalSnapshotStateProof(Hash.empty, Hash.empty, Hash.empty, None, None, None, None, None),
+          None,
           None,
           None
         ),

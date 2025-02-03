@@ -61,6 +61,7 @@ object internal {
       :: Equal["/trust"]
       :: Equal["/debug"]
       :: Equal["/node"]
+      :: Equal["/node-params"]
       :: Equal["/currency"]
       :: Equal["/dag"]
       :: Equal["/network"]

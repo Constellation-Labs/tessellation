@@ -123,7 +123,8 @@ object Main
           sharedConfig.environment,
           nodeShared.nodeId,
           TessellationVersion.unsafeFrom(BuildInfo.version),
-          cfg.http
+          cfg.http,
+          sharedValidators
         )
       _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
       _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)

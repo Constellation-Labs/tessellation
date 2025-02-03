@@ -13,6 +13,7 @@ import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.merkletree.Proof
 import io.constellationnetwork.merkletree.syntax._
 import io.constellationnetwork.node.shared.domain.block.processing._
+import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersAcceptanceManager
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult.CurrencySnapshotWithState
 import io.constellationnetwork.node.shared.domain.swap.block.{
@@ -20,12 +21,14 @@ import io.constellationnetwork.node.shared.domain.swap.block.{
   AllowSpendBlockAcceptanceManager,
   AllowSpendBlockAcceptanceResult
 }
+import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.{SharedArtifact, SpendAction, TokenUnlock}
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
-import io.constellationnetwork.schema.swap._
+import io.constellationnetwork.schema.node.UpdateNodeParameters
+import io.constellationnetwork.schema.swap.{AllowSpend, AllowSpendBlock, AllowSpendReference, _}
 import io.constellationnetwork.schema.tokenLock.TokenLock
 import io.constellationnetwork.schema.tokenLock.TokenLockAmount.toAmount
 import io.constellationnetwork.schema.transaction.{RewardTransaction, Transaction, TransactionReference}
@@ -33,7 +36,7 @@ import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
-import io.constellationnetwork.syntax.sortedCollection.sortedSetSyntax
+import io.constellationnetwork.syntax.sortedCollection.{sortedMapSyntax, sortedSetSyntax}
 
 import eu.timepit.refined.types.numeric.NonNegLong
 import io.circe.disjunctionCodecs._
@@ -46,6 +49,7 @@ trait GlobalSnapshotAcceptanceManager[F[_]] {
     blocksForAcceptance: List[Signed[Block]],
     allowSpendBlocksForAcceptance: List[Signed[AllowSpendBlock]],
     scEvents: List[StateChannelOutput],
+    unpEvents: List[Signed[UpdateNodeParameters]],
     lastSnapshotContext: GlobalSnapshotInfo,
     lastActiveTips: SortedSet[ActiveTip],
     lastDeprecatedTips: SortedSet[DeprecatedTip],
@@ -61,7 +65,8 @@ trait GlobalSnapshotAcceptanceManager[F[_]] {
       SortedSet[RewardTransaction],
       GlobalSnapshotInfo,
       GlobalSnapshotStateProof,
-      Map[Address, List[SpendAction]]
+      Map[Address, List[SpendAction]],
+      SortedMap[Id, Signed[UpdateNodeParameters]]
     )
   ]
 }
@@ -74,6 +79,7 @@ object GlobalSnapshotAcceptanceManager {
     blockAcceptanceManager: BlockAcceptanceManager[F],
     allowSpendBlockAcceptanceManager: AllowSpendBlockAcceptanceManager[F],
     stateChannelEventsProcessor: GlobalSnapshotStateChannelEventsProcessor[F],
+    updateNodeParametersAcceptanceManager: UpdateNodeParametersAcceptanceManager[F],
     collateral: Amount
   ) = new GlobalSnapshotAcceptanceManager[F] {
 
@@ -83,6 +89,7 @@ object GlobalSnapshotAcceptanceManager {
       blocksForAcceptance: List[Signed[Block]],
       allowSpendBlocksForAcceptance: List[Signed[AllowSpendBlock]],
       scEvents: List[StateChannelOutput],
+      unpEvents: List[Signed[UpdateNodeParameters]],
       lastSnapshotContext: GlobalSnapshotInfo,
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip],
@@ -254,6 +261,18 @@ object GlobalSnapshotAcceptanceManager {
             (maybeMerkleTree, updatedLastCurrencySnapshotProofs).tupled
         }
 
+        acceptedUpdateNodeParameters <- updateNodeParametersAcceptanceManager
+          .acceptUpdateNodeParameters(unpEvents, lastSnapshotContext)
+          .map(acceptanceResult =>
+            acceptanceResult.accepted.flatMap(signed => signed.proofs.toList.map(proof => (proof.id, signed))).toSortedMap
+          )
+
+        lastSnapshotUpdateNodeParameters = lastSnapshotContext.updateNodeParameters.getOrElse(
+          SortedMap.empty[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)]
+        )
+
+        updatedUpdateNodeParameters = lastSnapshotUpdateNodeParameters ++ acceptedUpdateNodeParameters.view.mapValues(unp => (unp, ordinal))
+
         gsi = GlobalSnapshotInfo(
           updatedLastStateChannelSnapshotHashes,
           transactionsRefs,
@@ -262,7 +281,8 @@ object GlobalSnapshotAcceptanceManager {
           updatedLastCurrencySnapshotProofs,
           updatedAllowSpends.some,
           updatedTokenLockBalances.some,
-          updatedAllowSpendRefs.some
+          updatedAllowSpendRefs.some,
+          updatedUpdateNodeParameters.some
         )
 
         stateProof <- gsi.stateProof(maybeMerkleTree)
@@ -276,7 +296,8 @@ object GlobalSnapshotAcceptanceManager {
           acceptedRewardTxs,
           gsi,
           stateProof,
-          acceptedSpendActions
+          acceptedSpendActions,
+          acceptedUpdateNodeParameters
         )
     }
 

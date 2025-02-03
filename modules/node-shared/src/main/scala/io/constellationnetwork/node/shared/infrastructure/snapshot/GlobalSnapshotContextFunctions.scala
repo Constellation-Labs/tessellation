@@ -8,13 +8,15 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.show._
 
-import scala.collection.immutable.SortedSet
+import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.merkletree.StateProofValidator
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.snapshot.SnapshotContextFunctions
+import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.transaction.RewardTransaction
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.Signed
@@ -43,13 +45,20 @@ object GlobalSnapshotContextFunctions {
         scEvents = signedArtifact.stateChannelSnapshots.toList.flatMap {
           case (address, stateChannelBinaries) => stateChannelBinaries.map(StateChannelOutput(address, _)).toList
         }
-        (acceptanceResult, allowSpendBlockAcceptanceResult, scSnapshots, returnedSCEvents, acceptedRewardTxs, snapshotInfo, _, _) <-
+
+        unpEventsForAcceptance = signedArtifact.updateNodeParameters
+          .getOrElse(SortedMap.empty[Id, Signed[UpdateNodeParameters]])
+          .values
+          .toList
+
+        (acceptanceResult, allowSpendBlockAcceptanceResult, scSnapshots, returnedSCEvents, acceptedRewardTxs, snapshotInfo, _, _, _) <-
           snapshotAcceptanceManager.accept(
             signedArtifact.ordinal,
             signedArtifact.epochProgress,
             blocksForAcceptance,
             allowSpendBlocksForAcceptance,
             scEvents,
+            unpEventsForAcceptance,
             context,
             lastActiveTips,
             lastDeprecatedTips,
