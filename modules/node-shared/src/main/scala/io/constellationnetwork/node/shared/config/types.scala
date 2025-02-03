@@ -10,7 +10,7 @@ import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculatorConf
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
-import io.constellationnetwork.schema.node.NodeState
+import io.constellationnetwork.schema.node.{NodeState, RewardFraction}
 import io.constellationnetwork.schema.peer.PeerId
 
 import com.comcast.ip4s.{Host, Port}
@@ -34,7 +34,8 @@ object types {
     allowSpends: AllowSpendsConfig,
     tokenLocks: TokenLocksConfig,
     lastGlobalSnapshotsSync: LastGlobalSnapshotsSyncConfig,
-    validationErrorStorage: ValidationErrorStorageConfig
+    validationErrorStorage: ValidationErrorStorageConfig,
+    delegatedStaking: DelegatedStakingConfig
   )
 
   case class SharedConfig(
@@ -54,7 +55,8 @@ object types {
     allowSpends: AllowSpendsConfig,
     tokenLocks: TokenLocksConfig,
     lastGlobalSnapshotsSync: LastGlobalSnapshotsSyncConfig,
-    validationErrorStorage: ValidationErrorStorageConfig
+    validationErrorStorage: ValidationErrorStorageConfig,
+    delegatedStaking: DelegatedStakingConfig
   )
 
   case class SharedTrustConfig(
@@ -101,7 +103,8 @@ object types {
   )
 
   case class EventCutterConfig(
-    maxBinarySizeBytes: PosInt
+    maxBinarySizeBytes: PosInt,
+    maxUpdateNodeParametersSize: PosInt
   )
 
   case class SnapshotConfig(
@@ -133,6 +136,11 @@ object types {
 
   case class CollateralConfig(
     amount: Amount
+  )
+
+  case class DelegatedStakingConfig(
+    minRewardFraction: RewardFraction,
+    maxRewardFraction: RewardFraction
   )
 
   case class TrustStorageConfig(

@@ -1,6 +1,7 @@
 package io.constellationnetwork.dag.l0.infrastructure.snapshot
 
 import cats.data.NonEmptyList
+import cats.data.Validated.Valid
 import cats.effect.std.Supervisor
 import cats.effect.{IO, Ref, Resource}
 import cats.implicits.none
@@ -12,7 +13,11 @@ import scala.reflect.runtime.universe.TypeTag
 
 import io.constellationnetwork.currency.schema.currency.SnapshotFee
 import io.constellationnetwork.dag.l0.dagL0KryoRegistrar
-import io.constellationnetwork.dag.l0.domain.snapshot.programs.{GlobalSnapshotEventCutter, SnapshotBinaryFeeCalculator}
+import io.constellationnetwork.dag.l0.domain.snapshot.programs.{
+  GlobalSnapshotEventCutter,
+  SnapshotBinaryFeeCalculator,
+  UpdateNodeParametersCutter
+}
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event.{GlobalSnapshotEvent, StateChannelEvent}
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
@@ -21,6 +26,7 @@ import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.fork.ForkInfo
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
+import io.constellationnetwork.node.shared.domain.node.{UpdateNodeParametersAcceptanceManager, UpdateNodeParametersValidator}
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult.CurrencySnapshotWithState
@@ -36,17 +42,19 @@ import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
+import io.constellationnetwork.schema.node.RewardFraction
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.key.ops.PublicKeyOps
-import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.Signed.forAsyncHasher
+import io.constellationnetwork.security.signature.SignedValidator.SignedValidationErrorOr
+import io.constellationnetwork.security.signature.{Signed, SignedValidator}
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 import io.constellationnetwork.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.NonNegLong
+import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
 import io.circe.Encoder
 import weaver.MutableIOSuite
 import weaver.scalacheck.Checkers
@@ -127,8 +135,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
   val scProcessor: GlobalSnapshotStateChannelEventsProcessor[IO] = new GlobalSnapshotStateChannelEventsProcessor[IO] {
     def process(
-      ordinal: SnapshotOrdinal,
-      lastGlobalSnapshotInfo: GlobalSnapshotInfo,
+      snapshotOrdinal: GlobalSnapshotKey,
+      lastGlobalSnapshotInfo: GlobalSnapshotContext,
       events: List[StateChannelOutput],
       validationType: StateChannelValidationType,
       lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
@@ -149,6 +157,40 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     )(implicit hasher: Hasher[F]): IO[
       SortedMap[Address, (NonEmptyList[(Signed[StateChannelSnapshotBinary], Option[CurrencySnapshotWithState])], Map[Address, Balance])]
     ] = ???
+
+  }
+
+  def updateNodeParametersAcceptanceManager(implicit txHasher: Hasher[IO]) = {
+    val signedValidator = new SignedValidator[IO] {
+      override def validateSignatures[A: Encoder](signed: Signed[A])(implicit hasher: Hasher[IO]): IO[SignedValidationErrorOr[Signed[A]]] =
+        IO.pure(Valid(signed))
+
+      override def validateUniqueSigners[A: Encoder](signed: Signed[A]): SignedValidationErrorOr[Signed[A]] = ???
+
+      override def validateMinSignatureCount[A: Encoder](signed: Signed[A], minSignatureCount: PosInt): SignedValidationErrorOr[Signed[A]] =
+        ???
+
+      override def validateMaxSignatureCount[A: Encoder](signed: Signed[A], maxSignatureCount: PosInt): SignedValidationErrorOr[Signed[A]] =
+        ???
+
+      override def isSignedBy[A: Encoder](signed: Signed[A], signerAddress: Address): IO[SignedValidationErrorOr[Signed[A]]] = ???
+
+      override def isSignedExclusivelyBy[A: Encoder](signed: Signed[A], signerAddress: Address): IO[SignedValidationErrorOr[Signed[A]]] =
+        ???
+
+      override def validateSignaturesWithSeedlist[A <: AnyRef](
+        seedlist: Option[Set[PeerId]],
+        signed: Signed[A]
+      ): SignedValidationErrorOr[Signed[A]] = ???
+
+      override def validateSignedBySeedlistMajority[A](
+        seedlist: Option[Set[PeerId]],
+        signed: Signed[A]
+      ): SignedValidationErrorOr[Signed[A]] = ???
+    }
+    val updateNodeParametersValidator =
+      UpdateNodeParametersValidator.make(signedValidator, RewardFraction(5_000_000), RewardFraction(10_000_000))
+    UpdateNodeParametersAcceptanceManager.make(updateNodeParametersValidator)
   }
 
   val collateral: Amount = Amount.empty
@@ -165,7 +207,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     implicit val hs = HasherSelector.forSyncAlwaysCurrent(h)
 
     val snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[IO] =
-      GlobalSnapshotAcceptanceManager.make[IO](bam, asbam, scProcessor, collateral)
+      GlobalSnapshotAcceptanceManager.make[IO](bam, asbam, scProcessor, updateNodeParametersAcceptanceManager, collateral)
 
     val feeCalculator = new SnapshotBinaryFeeCalculator[IO] {
       override def calculateFee(
@@ -180,7 +222,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         snapshotAcceptanceManager,
         collateral,
         rewards,
-        GlobalSnapshotEventCutter.make[IO](20_000_000, feeCalculator)
+        GlobalSnapshotEventCutter.make[IO](20_000_000, feeCalculator),
+        UpdateNodeParametersCutter.make(100)
       )
   }
 

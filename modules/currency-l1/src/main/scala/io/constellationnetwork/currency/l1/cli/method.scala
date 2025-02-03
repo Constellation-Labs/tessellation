@@ -57,7 +57,8 @@ object method {
       c.allowSpends,
       c.tokenLocks,
       c.lastGlobalSnapshotsSync,
-      c.validationErrorStorage
+      c.validationErrorStorage,
+      c.delegatedStaking
     )
   }
 

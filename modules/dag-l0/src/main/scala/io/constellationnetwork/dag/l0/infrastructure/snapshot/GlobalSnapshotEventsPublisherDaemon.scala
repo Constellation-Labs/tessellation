@@ -9,6 +9,7 @@ import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusStorage
 import io.constellationnetwork.node.shared.infrastructure.snapshot.daemon.SnapshotEventsPublisherDaemon
 import io.constellationnetwork.schema.Block
+import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.swap.AllowSpendBlock
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.statechannel.StateChannelOutput
@@ -21,6 +22,7 @@ object GlobalSnapshotEventsPublisherDaemon {
     stateChannelOutputs: Queue[F, StateChannelOutput],
     l1OutputQueue: Queue[F, Signed[Block]],
     allowSpendOutputQueue: Queue[F, Signed[AllowSpendBlock]],
+    updateNodeParametersQueue: Queue[F, Signed[UpdateNodeParameters]],
     gossip: Gossip[F],
     consensusStorage: ConsensusStorage[F, GlobalSnapshotEvent, _, _, _, _, _, _]
   ): Daemon[F] = {
@@ -36,6 +38,11 @@ object GlobalSnapshotEventsPublisherDaemon {
         Stream
           .fromQueueUnterminated(allowSpendOutputQueue)
           .map(AllowSpendEvent(_))
+      )
+      .merge(
+        Stream
+          .fromQueueUnterminated(updateNodeParametersQueue)
+          .map(UpdateNodeParametersEvent(_))
       )
 
     SnapshotEventsPublisherDaemon

@@ -13,7 +13,7 @@ import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.kryo.KryoSerializer
-import io.constellationnetwork.node.shared.config.types.{AddressesConfig, LastGlobalSnapshotsSyncConfig, SnapshotSizeConfig}
+import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.domain.statechannel._
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcceptanceManager
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
@@ -26,6 +26,7 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
+import io.constellationnetwork.schema.node.RewardFraction
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
@@ -75,7 +76,16 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       }
 
       validators = SharedValidators
-        .make[IO](AddressesConfig(Set()), None, None, Some(stateChannelAllowanceLists), SortedMap.empty, Long.MaxValue, Hasher.forKryo[IO])
+        .make[IO](
+          AddressesConfig(Set()),
+          None,
+          None,
+          Some(stateChannelAllowanceLists),
+          SortedMap.empty,
+          Long.MaxValue,
+          Hasher.forKryo[IO],
+          DelegatedStakingConfig(RewardFraction(5_000_000), RewardFraction(10_000_000))
+        )
       currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
         LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10)),
         BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, Hasher.forKryo[IO]),
@@ -229,6 +239,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
           SnapshotTips(SortedSet.empty, SortedSet.empty),
           stateProof = sp,
           Some(SortedSet.empty),
+          Some(SortedMap.empty),
           Some(SortedMap.empty)
         ),
         NonEmptySet.fromSetUnsafe(SortedSet(SignatureProof(ID.Id(Hex("")), Signature(Hex("")))))
@@ -244,7 +255,8 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       SortedMap.empty,
       None,
       None,
-      None
+      None,
+      Some(SortedMap.empty)
     )
 
 }

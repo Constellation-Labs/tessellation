@@ -1,19 +1,30 @@
 package io.constellationnetwork.schema
 
+import cats.syntax.semigroup._
 import cats.syntax.show._
+import cats.{Eq, Order, Show}
 
 import scala.util.Try
 
+import io.constellationnetwork.ext.cats.data.OrderBasedOrdering
+import io.constellationnetwork.ext.derevo.ordering
 import io.constellationnetwork.schema.cluster.{ClusterSessionToken, SessionToken}
 import io.constellationnetwork.schema.peer.{Peer, PeerId}
 import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
+import io.constellationnetwork.security.hash.Hash
 
 import com.comcast.ip4s.{Host, Port}
-import derevo.cats.{eqv, show}
-import derevo.circe.magnolia.encoder
+import derevo.cats.{eqv, order, show}
+import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
 import enumeratum._
+import eu.timepit.refined.api.{Refined, RefinedTypeOps}
+import eu.timepit.refined.auto.{autoRefineV, _}
+import eu.timepit.refined.cats._
+import eu.timepit.refined.numeric.Interval.Closed
+import eu.timepit.refined.types.numeric.NonNegLong
 import io.circe._
+import io.estatico.newtype.macros.newtype
 
 object node {
 
@@ -116,4 +127,50 @@ object node {
     tessellationVersion: TessellationVersion,
     metagraphVersion: MetagraphVersion
   )
+
+  type RewardFraction = Int Refined Closed[0, 100_000_000]
+  object RewardFraction extends RefinedTypeOps.Numeric[RewardFraction, Int] {}
+
+  implicit val rewardFractionEncoder: Encoder[RewardFraction] = Encoder.encodeInt.contramap(_.value)
+  implicit val rewardFractionDecoder: Decoder[RewardFraction] = Decoder.decodeInt.emap(RewardFraction.from)
+  implicit val rewardFractionEq: Eq[RewardFraction] = Eq.by(_.value)
+  implicit val rewardFractionShow: Show[RewardFraction] = Show.show(_.value.toString)
+  implicit val rewardFractionOrder: Order[RewardFraction] = Order.by(_.value)
+
+  implicit object OrderingInstance extends OrderBasedOrdering[NonNegLong]
+
+  @derive(decoder, encoder, show, order, ordering)
+  @newtype
+  case class UpdateNodeParametersOrdinal(value: NonNegLong) {
+    def next: UpdateNodeParametersOrdinal = UpdateNodeParametersOrdinal(value |+| 1L)
+  }
+
+  @derive(decoder, encoder, order, show)
+  case class UpdateNodeParametersReference(ordinal: UpdateNodeParametersOrdinal, hash: Hash)
+
+  object UpdateNodeParametersReference {
+    val empty = UpdateNodeParametersReference(UpdateNodeParametersOrdinal(0L), Hash.empty)
+  }
+
+  @derive(eqv, show, encoder, decoder)
+  case class DelegatedStakeRewardParameters(rewardFraction: RewardFraction) {
+    def reward: Double = rewardFraction.toDouble / DelegatedStakeRewardParameters.MaxRewardFraction
+  }
+
+  object DelegatedStakeRewardParameters {
+    val MaxRewardFraction = RewardFraction(100_000_000)
+  }
+
+  @derive(eqv, show, encoder, decoder)
+  case class NodeMetadataParameters(name: String, description: String)
+
+  @derive(eqv, show, encoder, decoder, order, ordering)
+  case class UpdateNodeParameters(
+    delegatedStakeRewardParameters: DelegatedStakeRewardParameters,
+    nodeMetadataParameters: NodeMetadataParameters,
+    parent: UpdateNodeParametersReference
+  ) {
+    def ordinal: UpdateNodeParametersOrdinal = parent.ordinal.next
+  }
+
 }

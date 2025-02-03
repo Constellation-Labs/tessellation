@@ -46,7 +46,8 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
       SortedMap.empty,
       None,
       None,
-      None
+      None,
+      Some(SortedMap.empty)
     )
     for {
       snapshot <- globalIncrementalSnapshot(globalSnapshotInfo)
@@ -63,7 +64,8 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
       SortedMap.empty,
       None,
       None,
-      None
+      None,
+      Some(SortedMap.empty)
     )
 
     for {
@@ -90,7 +92,8 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
           SnapshotTips(SortedSet.empty, SortedSet.empty),
           stateProof = sp,
           Some(SortedSet.empty),
-          Some(SortedMap.empty)
+          Some(SortedMap.empty),
+          None
         ),
         NonEmptySet.fromSetUnsafe(SortedSet(SignatureProof(ID.Id(Hex("")), Signature(Hex("")))))
       ).toHashed[F]

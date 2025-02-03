@@ -11,7 +11,11 @@ import cats.syntax.functor._
 import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.dag.l0.config.types.AppConfig
-import io.constellationnetwork.dag.l0.domain.snapshot.programs.{GlobalSnapshotEventCutter, SnapshotBinaryFeeCalculator}
+import io.constellationnetwork.dag.l0.domain.snapshot.programs.{
+  GlobalSnapshotEventCutter,
+  SnapshotBinaryFeeCalculator,
+  UpdateNodeParametersCutter
+}
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event._
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{GlobalConsensusKind, GlobalConsensusOutcome}
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
@@ -87,6 +91,7 @@ object GlobalSnapshotConsensus {
             jsonBrotliBinarySerializer,
             feeCalculator
           ),
+        sharedServices.updateNodeParametersAcceptanceManager,
         collateral
       )
       consensusStorage <- ConsensusStorage
@@ -102,6 +107,8 @@ object GlobalSnapshotConsensus {
         ](
           appConfig.snapshot.consensus
         )
+      updateNodeParametersCutter = UpdateNodeParametersCutter.make(appConfig.snapshot.consensus.eventCutter.maxUpdateNodeParametersSize)
+
       consensusFunctions = GlobalSnapshotConsensusFunctions.make[F](
         snapshotAcceptanceManager,
         collateral,
@@ -109,7 +116,8 @@ object GlobalSnapshotConsensus {
         GlobalSnapshotEventCutter.make[F](
           appConfig.snapshot.consensus.eventCutter.maxBinarySizeBytes,
           SnapshotBinaryFeeCalculator.make(appConfig.shared.feeConfigs)
-        )
+        ),
+        updateNodeParametersCutter
       )
       consensusStateAdvancer = GlobalSnapshotConsensusStateAdvancer
         .make[F](

@@ -6,8 +6,9 @@ import cats.effect.Async
 import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.json.JsonSerializer
-import io.constellationnetwork.node.shared.config.types.AddressesConfig
+import io.constellationnetwork.node.shared.config.types.{AddressesConfig, DelegatedStakingConfig}
 import io.constellationnetwork.node.shared.domain.block.processing.BlockValidator
+import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersValidator
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.domain.statechannel.{FeeCalculator, FeeCalculatorConfig, StateChannelValidator}
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockValidator
@@ -35,7 +36,8 @@ object SharedValidators {
     stateChannelAllowanceLists: Option[Map[Address, NonEmptySet[PeerId]]],
     feeConfigs: SortedMap[SnapshotOrdinal, FeeCalculatorConfig],
     maxBinarySizeInBytes: PosLong,
-    txHasher: Hasher[F]
+    txHasher: Hasher[F],
+    delegatedStaking: DelegatedStakingConfig
   ): SharedValidators[F] = {
     val signedValidator = SignedValidator.make[F]
     val transactionChainValidator = TransactionChainValidator.make[F](txHasher)
@@ -60,6 +62,12 @@ object SharedValidators {
     val tokenLockChainValidator = TokenLockChainValidator.make[F]
     val tokenLockBlockValidator = TokenLockBlockValidator.make[F](signedValidator, tokenLockChainValidator, tokenLockValidator)
 
+    val updateNodeParametersValidator = UpdateNodeParametersValidator.make(
+      signedValidator,
+      delegatedStaking.minRewardFraction,
+      delegatedStaking.maxRewardFraction
+    )
+
     new SharedValidators[F](
       signedValidator,
       transactionChainValidator,
@@ -76,7 +84,8 @@ object SharedValidators {
       tokenLockBlockValidator,
       allowSpendBlockValidator,
       allowSpendValidator,
-      tokenLockValidator
+      tokenLockValidator,
+      updateNodeParametersValidator
     ) {}
   }
 }
@@ -97,5 +106,6 @@ sealed abstract class SharedValidators[F[_]] private (
   val tokenLockBlockValidator: TokenLockBlockValidator[F],
   val allowSpendBlockValidator: AllowSpendBlockValidator[F],
   val allowSpendValidator: AllowSpendValidator[F],
-  val tokenLockValidator: TokenLockValidator[F]
+  val tokenLockValidator: TokenLockValidator[F],
+  val updateNodeParametersValidator: UpdateNodeParametersValidator[F]
 )

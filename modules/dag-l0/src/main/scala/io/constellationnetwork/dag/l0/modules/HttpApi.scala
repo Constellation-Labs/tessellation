@@ -17,7 +17,9 @@ import io.constellationnetwork.node.shared.config.types.HttpConfig
 import io.constellationnetwork.node.shared.http.p2p.middlewares.{PeerAuthMiddleware, `X-Id-Middleware`}
 import io.constellationnetwork.node.shared.http.routes._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
+import io.constellationnetwork.node.shared.modules.SharedValidators
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.TessellationVersion
 import io.constellationnetwork.security.signature.Signed
@@ -39,7 +41,8 @@ object HttpApi {
     environment: AppEnvironment,
     selfId: PeerId,
     nodeVersion: TessellationVersion,
-    httpCfg: HttpConfig
+    httpCfg: HttpConfig,
+    sharedValidators: SharedValidators[F]
   ): HttpApi[F, R] =
     new HttpApi[F, R](
       storages,
@@ -50,7 +53,8 @@ object HttpApi {
       environment,
       selfId,
       nodeVersion,
-      httpCfg
+      httpCfg,
+      sharedValidators
     ) {}
 }
 
@@ -63,11 +67,17 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   environment: AppEnvironment,
   selfId: PeerId,
   nodeVersion: TessellationVersion,
-  httpCfg: HttpConfig
+  httpCfg: HttpConfig,
+  sharedValidators: SharedValidators[F]
 ) {
 
   private val mkDagCell = (block: Signed[Block]) =>
-    L0Cell.mkL0Cell(queues.l1Output, queues.stateChannelOutput).apply(L0CellInput.HandleDAGL1(block))
+    L0Cell.mkL0Cell(queues.l1Output, queues.stateChannelOutput, queues.updateNodeParametersOutput).apply(L0CellInput.HandleDAGL1(block))
+
+  private val mkNodeParametersCell = (params: Signed[UpdateNodeParameters]) =>
+    L0Cell
+      .mkL0Cell(queues.l1Output, queues.stateChannelOutput, queues.updateNodeParametersOutput)
+      .apply(L0CellInput.HandleUpdateNodeParameters(params))
 
   private val clusterRoutes =
     HasherSelector[F].withCurrent { implicit hasher =>
@@ -75,10 +85,7 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
     }
   private val nodeRoutes = NodeRoutes[F](storages.node, storages.session, storages.cluster, nodeVersion, httpCfg, selfId)
 
-  private val registrationRoutes =
-    HasherSelector[F].withCurrent { implicit hasher =>
-      RegistrationRoutes[F](services.cluster)
-    }
+  private val registrationRoutes = RegistrationRoutes[F](services.cluster)
   private val gossipRoutes = GossipRoutes[F](storages.rumor, services.gossip)
   private val trustRoutes = TrustRoutes[F](storages.trust, programs.trustPush)
   private val stateChannelRoutes =
@@ -96,6 +103,14 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   private val dagRoutes = DAGBlockRoutes[F](mkDagCell)
   private val allowSpendRoutes = AllowSpendBlockRoutes[F](queues.l1AllowSpendOutput)
   private val tokenLockRoutes = TokenLockBlockRoutes[F](queues.l1TokenLockOutput)
+  private val nodeParametersRoutes =
+    NodeParametersRoutes[F](
+      mkNodeParametersCell,
+      storages.globalSnapshot,
+      storages.fullGlobalSnapshot,
+      storages.node,
+      sharedValidators.updateNodeParametersValidator
+    )
 
   private val walletRoutes = WalletRoutes[F, GlobalIncrementalSnapshot]("/dag", services.address)
   private val consensusInfoRoutes =
@@ -135,7 +150,8 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
               consensusInfoRoutes.publicRoutes <+>
               trustRoutes.publicRoutes <+>
               allowSpendRoutes.publicRoutes <+>
-              tokenLockRoutes.publicRoutes
+              tokenLockRoutes.publicRoutes <+>
+              nodeParametersRoutes.publicRoutes
           }
         }
     }

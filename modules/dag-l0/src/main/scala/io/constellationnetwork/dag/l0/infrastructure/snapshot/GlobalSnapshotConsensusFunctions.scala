@@ -5,6 +5,7 @@ import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
+import io.constellationnetwork.dag.l0.domain.snapshot.programs.UpdateNodeParametersCutter
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event._
 import io.constellationnetwork.ext.cats.syntax.next._
 import io.constellationnetwork.json.JsonSerializer
@@ -15,9 +16,11 @@ import io.constellationnetwork.node.shared.domain.event.EventCutter
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
+import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
+import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.Signed
@@ -40,7 +43,8 @@ object GlobalSnapshotConsensusFunctions {
     globalSnapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[F],
     collateral: Amount,
     rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent],
-    eventCutter: EventCutter[F, StateChannelEvent, DAGEvent]
+    eventCutter: EventCutter[F, StateChannelEvent, DAGEvent],
+    updateNodeParametersCutter: UpdateNodeParametersCutter[F]
   ): GlobalSnapshotConsensusFunctions[F] = new GlobalSnapshotConsensusFunctions[F] {
 
     def getRequiredCollateral: Amount = collateral
@@ -60,7 +64,9 @@ object GlobalSnapshotConsensusFunctions {
         case (address, stateChannelBinaries) => stateChannelBinaries.map(StateChannelOutput(address, _)).map(StateChannelEvent(_)).toList
       }
       val allowSpendEvents = artifact.allowSpendBlocks.map(_.toList.map(AllowSpendEvent(_))).getOrElse(List.empty)
-      val events: Set[GlobalSnapshotEvent] = dagEvents ++ scEvents ++ allowSpendEvents
+      val unpEvents =
+        artifact.updateNodeParameters.getOrElse(SortedMap.empty[Id, Signed[UpdateNodeParameters]]).values.map(UpdateNodeParametersEvent(_))
+      val events: Set[GlobalSnapshotEvent] = dagEvents ++ scEvents ++ allowSpendEvents ++ unpEvents
 
       def usingKryo = createProposalArtifact(
         lastSignedArtifact.ordinal,
@@ -112,6 +118,7 @@ object GlobalSnapshotConsensusFunctions {
       val scEventsBeforeCut = events.collect { case sc: StateChannelEvent => sc }
       val dagEventsBeforeCut = events.collect { case d: DAGEvent => d }
       val allowSpendEventsForAcceptance = events.collect { case as: AllowSpendEvent => as }
+      val unpEventsBeforeCut = events.collect { case unp: UpdateNodeParametersEvent => unp }
 
       val dagEvents = dagEventsBeforeCut.filter(_.value.height > lastArtifact.height)
 
@@ -135,6 +142,8 @@ object GlobalSnapshotConsensusFunctions {
           currentOrdinal
         )
 
+        unpEventsForAcceptance <- updateNodeParametersCutter.cut(unpEventsBeforeCut.toList, snapshotContext, currentOrdinal)
+
         lastActiveTips <- lastArtifact.activeTips(Async[F], lastArtifactHasher)
         lastDeprecatedTips = lastArtifact.tips.deprecated
 
@@ -146,7 +155,8 @@ object GlobalSnapshotConsensusFunctions {
           acceptedRewardTxs,
           snapshotInfo,
           stateProof,
-          spendActions
+          spendActions,
+          updateNodeParameters
         ) <-
           globalSnapshotAcceptanceManager
             .accept(
@@ -155,6 +165,7 @@ object GlobalSnapshotConsensusFunctions {
               blocksForAcceptance.map(_.value),
               allowSpendEventsForAcceptance.toList.map(_.value),
               scEvents.map(_.value),
+              unpEventsForAcceptance.map(_.updateNodeParameters),
               snapshotContext,
               lastActiveTips,
               lastDeprecatedTips,
@@ -189,7 +200,8 @@ object GlobalSnapshotConsensusFunctions {
           ),
           stateProof,
           SortedSet.from(allowSpendBlockAcceptanceResult.accepted).some,
-          SortedMap.from(spendActions).some
+          SortedMap.from(spendActions).some,
+          updateNodeParameters.some
         )
         returnedEvents = returnedSCEvents.map(StateChannelEvent(_)) ++ returnedDAGEvents
       } yield (globalSnapshot, snapshotInfo, returnedEvents)

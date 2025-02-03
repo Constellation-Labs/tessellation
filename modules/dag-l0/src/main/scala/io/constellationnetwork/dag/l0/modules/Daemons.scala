@@ -42,7 +42,14 @@ object Daemons {
       DownloadDaemon.make(storages.node, programs.download, peerDiscoveryDelay, hasherSelector),
       Daemon.periodic(storages.trust.updateTrustWithBiases(nodeId), cfg.trust.daemon.interval),
       GlobalSnapshotEventsPublisherDaemon
-        .make(queues.stateChannelOutput, queues.l1Output, queues.l1AllowSpendOutput, services.gossip, services.consensus.storage),
+        .make(
+          queues.stateChannelOutput,
+          queues.l1Output,
+          queues.l1AllowSpendOutput,
+          queues.updateNodeParametersOutput,
+          services.gossip,
+          services.consensus.storage
+        ),
       CollateralDaemon.make(services.collateral, storages.globalSnapshot, storages.cluster),
       TrustStorageUpdater.daemon(services.trustStorageUpdater)
     ).traverse(_.start).void

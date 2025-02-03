@@ -169,7 +169,8 @@ abstract class TessellationIOApp[A <: CliMethod](
                                           method.stateChannelAllowanceLists,
                                           cfg.feeConfigs,
                                           cfg.snapshotSize.maxStateChannelSnapshotBinarySizeInBytes,
-                                          Hasher.forKryo[IO]
+                                          Hasher.forKryo[IO],
+                                          cfg.delegatedStaking
                                         )
                                       }
                                       services <- SharedServices
