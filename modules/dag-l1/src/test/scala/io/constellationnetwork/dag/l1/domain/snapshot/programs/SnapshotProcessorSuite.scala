@@ -160,7 +160,6 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   blockStorage,
                   lastSnapshotStorage,
                   transactionStorage,
-                  allowSpendBlockStorage,
                   allowSpendStorage,
                   globalSnapshotContextFns,
                   Hasher.forKryo[IO]

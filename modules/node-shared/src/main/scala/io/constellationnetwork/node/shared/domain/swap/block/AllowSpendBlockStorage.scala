@@ -9,9 +9,7 @@ import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.ext.collection.MapRefUtils.MapRefOps
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockStorage._
-import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.epoch.EpochProgress
-import io.constellationnetwork.schema.swap.{AllowSpend, AllowSpendBlock}
+import io.constellationnetwork.schema.swap.AllowSpendBlock
 import io.constellationnetwork.security.Hashed
 import io.constellationnetwork.security.hash.ProofsHash
 import io.constellationnetwork.security.signature.Signed
@@ -113,34 +111,8 @@ class AllowSpendBlockStorage[F[_]: Sync: Random](blocks: MapRef[F, ProofsHash, O
       case other => (other, BlockAlreadyStoredError(hashedBlock.proofsHash, other).asLeft)
     }.flatMap(_.liftTo[F])
 
-  def restoreDependent(isDependent: Signed[AllowSpendBlock] => F[Boolean]): F[Unit] =
-    blocks.toMap
-      .flatMap(_.collect { case (hash, PostponedBlock(block)) => hash -> block }.toList.filterA { case (_, block) => isDependent(block) })
-      .flatMap(_.traverse {
-        case (proofsHash, block) =>
-          blocks(proofsHash).modify {
-            case Some(PostponedBlock(_)) => (WaitingBlock(block).some, block.asRight)
-            case other                   => (other, BlockRestorationError(proofsHash, other).asLeft)
-          }.flatMap(_.liftTo[F])
-      }.void)
-
   def getWaiting: F[Map[ProofsHash, Signed[AllowSpendBlock]]] =
     blocks.toMap.map(_.collect { case (hash, WaitingBlock(block)) => hash -> block })
-
-  def getBlocksForMajorityReconciliation(
-    currentEpochProgress: EpochProgress
-  ): F[Map[Address, List[Signed[AllowSpend]]]] = for {
-    all <- blocks.toMap
-    allowSpendBlocks = all.values.flatMap {
-      case MajorityBlock(reference) => List.empty // TODO: @mwadon ???
-      case WaitingBlock(b)          => b.transactions.toNonEmptyList.toList
-      case PostponedBlock(b)        => b.transactions.toNonEmptyList.toList
-      case AcceptedBlock(b)         => b.transactions.toNonEmptyList.toList
-    }.toList
-    allowSpends = allowSpendBlocks
-      .filter(as => as.lastValidEpochProgress <= currentEpochProgress)
-      .groupBy(_.source)
-  } yield allowSpends
 }
 
 object AllowSpendBlockStorage {
@@ -163,20 +135,6 @@ object AllowSpendBlockStorage {
     case _: AcceptedBlock  => "Accepted"
     case _: MajorityBlock  => "Majority"
   }
-
-  case class MajorityReconciliationData(
-    deprecatedTips: Set[ProofsHash],
-    activeTips: Set[ProofsHash],
-    waitingInRange: Set[ProofsHash],
-    postponedInRange: Set[ProofsHash],
-    relatedPostponed: Set[ProofsHash],
-    acceptedInRange: Set[ProofsHash],
-    acceptedAbove: Set[ProofsHash]
-  )
-
-  sealed trait TipStatus
-  case object Active extends TipStatus
-  case object Deprecated extends TipStatus
 
   sealed trait AllowSpendBlockStorageError extends NoStackTrace {
     val errorMessage: String
@@ -240,29 +198,8 @@ object AllowSpendBlockStorage {
       s"Block to be added during majority update with hash: $hash not found in expected state! But got: $got"
   }
 
-  sealed trait TipUpdateError extends AllowSpendBlockStorageError
-
-  case class TipDeprecatingError(hash: ProofsHash, got: Option[AllowSpendStoredBlock]) extends TipUpdateError {
-    override val errorMessage: String =
-      s"Active tip to be deprecated with hash: $hash not found in expected state! But got: $got"
-  }
-
-  case class TipRemovalError(hash: ProofsHash, got: Option[AllowSpendStoredBlock]) extends TipUpdateError {
-    override val errorMessage: String =
-      s"Deprecated tip to be removed with hash: $hash not found in expected state! But got: $got"
-  }
-
-  case class ActiveTipAddingError(hash: ProofsHash, got: Option[AllowSpendStoredBlock]) extends TipUpdateError {
-    override val errorMessage: String =
-      s"Active tip to be added with hash: $hash not found in expected state! But got: $got"
-  }
-
-  case class DeprecatedTipAddingError(hash: ProofsHash, got: Option[AllowSpendStoredBlock]) extends TipUpdateError {
-    override val errorMessage: String =
-      s"Deprecated tip to be added with hash: $hash not found in expected state! But got: $got"
-  }
-
-  case class UnexpectedBlockStateWhenResettingPostponed(hash: ProofsHash, got: Option[AllowSpendStoredBlock]) extends TipUpdateError {
+  case class UnexpectedBlockStateWhenResettingPostponed(hash: ProofsHash, got: Option[AllowSpendStoredBlock])
+      extends AllowSpendBlockStorageError {
     val errorMessage: String =
       s"Postponed block to be reset to waiting block with hash: $hash not found in expected state! But got: $got"
   }

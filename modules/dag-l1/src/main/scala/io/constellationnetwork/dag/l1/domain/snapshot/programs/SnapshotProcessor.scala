@@ -17,8 +17,6 @@ import io.constellationnetwork.dag.l1.domain.block.{BlockRelations, BlockStorage
 import io.constellationnetwork.dag.l1.domain.transaction.TransactionStorage
 import io.constellationnetwork.node.shared.domain.snapshot.Validator
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
-import io.constellationnetwork.node.shared.domain.swap.AllowSpendStorage
-import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockStorage
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.height.{Height, SubHeight}
@@ -60,8 +58,6 @@ abstract class SnapshotProcessor[
     alignment: Alignment,
     blockStorage: BlockStorage[F],
     transactionStorage: TransactionStorage[F],
-    allowSpendBlockStorage: AllowSpendBlockStorage[F],
-    allowSpendStorage: AllowSpendStorage[F],
     lastSnapshotStorage: LastSnapshotStorage[F, S, SI],
     addressStorage: AddressStorage[F]
   ): F[SnapshotProcessingResult] =
