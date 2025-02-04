@@ -153,9 +153,8 @@ abstract class CurrencyL1App(
         jsonBrotliBinarySerializer,
         cfg.transactionLimit,
         Hasher.forKryo[IO],
-        storages.allowSpendBlock,
         storages.allowSpend,
-        cfg.shared.allowSpends
+        storages.tokenLock
       )
       programs = Programs
         .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](

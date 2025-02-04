@@ -75,7 +75,8 @@ object SharedValidators {
       globalSnapshotSyncValidator,
       tokenLockBlockValidator,
       allowSpendBlockValidator,
-      allowSpendValidator
+      allowSpendValidator,
+      tokenLockValidator
     ) {}
   }
 }
@@ -95,5 +96,6 @@ sealed abstract class SharedValidators[F[_]] private (
   val globalSnapshotSyncValidator: GlobalSnapshotSyncValidator[F],
   val tokenLockBlockValidator: TokenLockBlockValidator[F],
   val allowSpendBlockValidator: AllowSpendBlockValidator[F],
-  val allowSpendValidator: AllowSpendValidator[F]
+  val allowSpendValidator: AllowSpendValidator[F],
+  val tokenLockValidator: TokenLockValidator[F]
 )

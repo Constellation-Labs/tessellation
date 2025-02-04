@@ -9,7 +9,6 @@ import io.constellationnetwork.dag.l1.domain.transaction.TransactionStorage
 import io.constellationnetwork.node.shared.domain.snapshot.SnapshotContextFunctions
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.domain.swap.AllowSpendStorage
-import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockStorage
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalSnapshotStateProof}
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher, SecurityProvider}
@@ -21,7 +20,6 @@ object DAGSnapshotProcessor {
     blockStorage: BlockStorage[F],
     lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     transactionStorage: TransactionStorage[F],
-    allowSpendBlockStorage: AllowSpendBlockStorage[F],
     allowSpendStorage: AllowSpendStorage[F],
     globalSnapshotContextFns: SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
     txHasher: Hasher[F]
@@ -45,8 +43,6 @@ object DAGSnapshotProcessor {
               _,
               blockStorage,
               transactionStorage,
-              allowSpendBlockStorage,
-              allowSpendStorage,
               lastGlobalSnapshotStorage,
               addressStorage
             )
