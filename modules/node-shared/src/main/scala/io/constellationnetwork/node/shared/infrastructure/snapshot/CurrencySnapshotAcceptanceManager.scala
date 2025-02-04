@@ -146,7 +146,7 @@ object CurrencySnapshotAcceptanceManager {
       )
 
       tokenLockRefs = acceptTokenLockRefs(
-        lastSnapshotContext.snapshotInfo.lastTokenLockRefsProof.getOrElse(SortedMap.empty[Address, TokenLockReference]),
+        lastSnapshotContext.snapshotInfo.lastTokenLockRefs.getOrElse(SortedMap.empty[Address, TokenLockReference]),
         acceptanceTokenLockBlocksResult.contextUpdate.lastTokenLocksRefs
       )
 
@@ -366,7 +366,7 @@ object CurrencySnapshotAcceptanceManager {
     )(implicit hasher: Hasher[F]) = {
       val context = TokenLockBlockAcceptanceContext.fromStaticData(
         lastSnapshotContext.snapshotInfo.balances,
-        lastSnapshotContext.snapshotInfo.lastTokenLockRefsProof.getOrElse(SortedMap.empty),
+        lastSnapshotContext.snapshotInfo.lastTokenLockRefs.getOrElse(SortedMap.empty),
         collateral,
         initialTxRef
       )
