@@ -141,14 +141,6 @@ object TokenLockBlockStorage {
     case _: MajorityBlock  => "Majority"
   }
 
-  case class MajorityReconciliationData(
-    waitingInRange: Set[ProofsHash],
-    postponedInRange: Set[ProofsHash],
-    relatedPostponed: Set[ProofsHash],
-    acceptedInRange: Set[ProofsHash],
-    acceptedAbove: Set[ProofsHash]
-  )
-
   sealed trait TokenLockBlockStorageError extends NoStackTrace {
     val errorMessage: String
     override def getMessage: String = errorMessage

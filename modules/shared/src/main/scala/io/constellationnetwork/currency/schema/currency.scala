@@ -90,7 +90,7 @@ object currency {
     lastAllowSpendRefs: Option[SortedMap[Address, AllowSpendReference]],
     activeAllowSpends: Option[SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
     globalSnapshotSyncView: Option[SortedMap[PeerId, Signed[GlobalSnapshotSync]]],
-    lastTokenLockRefsProof: Option[SortedMap[Address, TokenLockReference]],
+    lastTokenLockRefs: Option[SortedMap[Address, TokenLockReference]],
     activeTokenLocks: Option[SortedMap[Address, SortedSet[Signed[TokenLock]]]]
   ) extends SnapshotInfo[CurrencySnapshotStateProof] {
     def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[CurrencySnapshotStateProof] =
@@ -102,7 +102,7 @@ object currency {
         lastAllowSpendRefs.traverse(_.hash),
         activeAllowSpends.traverse(_.hash),
         globalSnapshotSyncView.traverse(_.hash),
-        lastTokenLockRefsProof.traverse(_.hash),
+        lastTokenLockRefs.traverse(_.hash),
         activeTokenLocks.traverse(_.hash)
       ).tupled
         .map(CurrencySnapshotStateProof.apply)

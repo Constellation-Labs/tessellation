@@ -111,7 +111,6 @@ object Main
         storages.block,
         storages.lastSnapshot,
         storages.transaction,
-        storages.allowSpendBlock,
         storages.allowSpend,
         sharedServices.globalSnapshotContextFns,
         Hasher.forKryo[IO]
