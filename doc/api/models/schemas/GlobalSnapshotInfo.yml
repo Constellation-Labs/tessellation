@@ -169,3 +169,24 @@ properties:
           - target: 893d9697bf76731edb6f92ad2396844724cd47a9c22195f02483cc84c3afafce
             sibling:
               Right: 893d9697bf76731edb6f92ad2396844724cd47a9c22195f02483cc84c3afafce
+  activeAllowSpends:
+    type: object
+    nullable: true
+    additionalProperties:
+      type: object
+      additionalProperties:
+        type: array
+        items:
+          $ref: 'SignedAllowSpend.yml'
+  tokenLockBalances:
+    type: object
+    nullable: true
+    additionalProperties:
+      type: object
+      additionalProperties:
+        $ref: 'Balance.yml'
+  lastAllowSpendRefs:
+    type: object
+    nullable: true
+    additionalProperties:
+      $ref: 'Hash.yml'

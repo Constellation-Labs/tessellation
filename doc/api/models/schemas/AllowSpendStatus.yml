@@ -1,0 +1,5 @@
+type: string
+enum:
+  - Waiting
+description: Current status of an AllowSpend transaction
+

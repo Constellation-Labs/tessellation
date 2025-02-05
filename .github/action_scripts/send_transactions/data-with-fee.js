@@ -120,7 +120,7 @@ const sendDataTransactionsUsingUrls = async (
         const response = await axios.post(`${metagraphL1DataUrl}/data`, body);
         console.log(`Response: ${JSON.stringify(response.data)}`);
     } catch (e) {
-        console.log('Error sending transaction', e.message);
+        console.log('Error sending transaction', e);
     }
 
     return [account.address, estimateFeeResponse];

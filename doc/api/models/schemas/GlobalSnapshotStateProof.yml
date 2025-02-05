@@ -10,3 +10,12 @@ properties:
     allOf:
       - $ref: 'MerkleRoot.yml'
     nullable: true
+  activeAllowSpends:
+    $ref: 'Hash.yml'
+    nullable: true
+  tokenLockBalances:
+    $ref: 'Hash.yml'
+    nullable: true
+  lastAllowSpendRefs:
+    $ref: 'Hash.yml'
+    nullable: true

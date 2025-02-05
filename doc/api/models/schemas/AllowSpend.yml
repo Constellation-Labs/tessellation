@@ -1,0 +1,24 @@
+type: object
+properties:
+  source:
+    $ref: 'Address.yml'
+  destination:
+    $ref: 'Address.yml'
+  currency:
+    $ref: 'CurrencyId.yml'
+    nullable: true
+  amount:
+    $ref: 'SwapAmount.yml'
+  fee:
+    $ref: 'AllowSpendFee.yml'
+  parent:
+    $ref: 'AllowSpendReference.yml'
+  lastValidEpochProgress:
+    $ref: 'EpochProgress.yml'
+  approvers:
+    type: array
+    items:
+      $ref: 'Address.yml'
+  ordinal:
+    $ref: 'AllowSpendOrdinal.yml'
+    readOnly: true

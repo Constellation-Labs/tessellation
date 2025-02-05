@@ -1,0 +1,7 @@
+type: object
+properties:
+  value:
+    type: integer
+    format: int64
+    minimum: 1
+    description: Positive long value representing the allow spend fee

@@ -159,7 +159,7 @@ object Main
         )
         .asResource
 
-      alignment = Alignment.make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo, Run](
+      alignment = GlobalSnapshotAlignment.make[IO, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo, Run](
         services,
         programs,
         storages

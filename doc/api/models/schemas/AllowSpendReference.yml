@@ -1,0 +1,6 @@
+type: object
+properties:
+  ordinal:
+    $ref: 'AllowSpendOrdinal.yml'
+  hash:
+    $ref: 'Hash.yml'

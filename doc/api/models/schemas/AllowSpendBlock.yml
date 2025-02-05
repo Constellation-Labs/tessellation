@@ -1,0 +1,10 @@
+type: object
+properties:
+  roundId:
+    $ref: 'RoundId.yml'
+  transactions:
+    type: array
+    minItems: 1
+    items:
+      $ref: 'SignedAllowSpend.yml'
+    uniqueItems: true
