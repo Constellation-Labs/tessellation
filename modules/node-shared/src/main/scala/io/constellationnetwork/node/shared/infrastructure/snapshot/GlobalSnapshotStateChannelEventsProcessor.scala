@@ -71,7 +71,9 @@ object GlobalSnapshotStateChannelEventsProcessor {
           case hash if hash == Hash.empty => SnapshotFeesInfo.empty.pure // genesis
           case _ =>
             deserialize[Signed[CurrencyIncrementalSnapshot]](event.snapshotBinary).flatMap {
-              case None => new Exception("Could not get snapshot after deserializing").raiseError[F, SnapshotFeesInfo]
+              case None =>
+                logger.warn(s"Could not get snapshot fee info after deserializing event $event, using empty snapshot fees") >>
+                  SnapshotFeesInfo.empty.pure
               case Some(snapshot) =>
                 Async[F].delay {
                   val stakingBalance = fetchStakingBalance(event.address, lastGlobalSnapshotInfo)
