@@ -1,0 +1,8 @@
+type: object
+properties:
+  transaction:
+    $ref: 'AllowSpend.yml'
+  hash:
+    $ref: 'Hash.yml'
+  status:
+    $ref: 'AllowSpendStatus.yml'

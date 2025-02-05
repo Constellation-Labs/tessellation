@@ -1,0 +1,12 @@
+type: object
+properties:
+  allowSpendRef:
+    $ref: 'Hash.yml'
+    nullable: true
+  currency:
+    $ref: 'Address.yml'
+    nullable: true
+  amount:
+    type: integer
+  destination:
+    $ref: 'Address.yml'

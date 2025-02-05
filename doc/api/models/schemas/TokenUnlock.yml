@@ -1,0 +1,11 @@
+type: object
+properties:
+  lockReference:
+    $ref: 'TokenLockReference.yml'
+  amount:
+    type: integer
+  currencyId:
+    $ref: 'Address.yml'
+    nullable: true
+  address:
+    $ref: 'Address.yml'

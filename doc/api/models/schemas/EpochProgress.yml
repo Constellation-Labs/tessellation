@@ -1,0 +1,4 @@
+type: integer
+description: Progress throughout epochs used for rewards minting
+format: int64
+example: 348603
