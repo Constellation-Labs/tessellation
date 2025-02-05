@@ -22,7 +22,7 @@ import fs2.Stream
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-class Alignment[F[_]: Async: HasherSelector: SecurityProvider, P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P], R <: CliMethod](
+class GlobalSnapshotAlignment[F[_]: Async: HasherSelector: SecurityProvider, P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P], R <: CliMethod](
   services: Services[F, P, S, SI, R],
   programs: Programs[F, P, S, SI],
   storages: Storages[F, P, S, SI]
@@ -79,10 +79,10 @@ class Alignment[F[_]: Async: HasherSelector: SecurityProvider, P <: StateProof, 
 
 }
 
-object Alignment {
+object GlobalSnapshotAlignment {
   def make[F[_]: Async: HasherSelector: SecurityProvider, P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P], R <: CliMethod](
     services: Services[F, P, S, SI, R],
     programs: Programs[F, P, S, SI],
     storages: Storages[F, P, S, SI]
-  ) = new Alignment[F, P, S, SI, R](services, programs, storages)
+  ) = new GlobalSnapshotAlignment[F, P, S, SI, R](services, programs, storages)
 }

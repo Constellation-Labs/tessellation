@@ -40,10 +40,7 @@ properties:
     items:
       $ref: 'RewardTransaction.yml'
   epochProgress:
-    type: integer
-    description: Progress throughout epochs used for rewards minting
-    format: int64
-    example: 348603
+    $ref: 'EpochProgress.yml'
   nextFacilitators:
     type: array
     items:
@@ -52,5 +49,17 @@ properties:
     $ref: 'SnapshotTips.yml'
   stateProof:
     $ref: 'GlobalSnapshotStateProof.yml'
+  allowSpendBlocks:
+    type: array
+    items:
+      $ref: 'SignedAllowSpendBlock.yml'
+    nullable: true
+  spendActions:
+    type: object
+    additionalProperties:
+      type: array
+      items:
+        $ref: 'SpendAction.yml'
+    nullable: true
   version:
     $ref: 'SnapshotVersion.yml'

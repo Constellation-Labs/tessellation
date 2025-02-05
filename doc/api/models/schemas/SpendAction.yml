@@ -1,0 +1,6 @@
+type: object
+properties:
+  input:
+    $ref: 'SpendTransaction.yml'
+  output:
+    $ref: 'SpendTransaction.yml'

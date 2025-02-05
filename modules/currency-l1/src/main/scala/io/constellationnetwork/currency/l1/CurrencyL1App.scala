@@ -264,7 +264,7 @@ abstract class CurrencyL1App(
               programs.joining.joinOneOf(cfg.majorityForkPeerIds)
         }
       }.asResource
-      alignment = Alignment
+      alignment = GlobalSnapshotAlignment
         .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](services, programs, storages)
       _ <- hasherSelector.withCurrent { implicit hasher =>
         services.dataApplication.map { da =>
