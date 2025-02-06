@@ -58,7 +58,8 @@ object method {
       c.lastKryoHashOrdinal,
       c.addresses,
       c.allowSpends,
-      c.tokenLocks
+      c.tokenLocks,
+      c.lastGlobalSnapshotsSync
     )
   }
 

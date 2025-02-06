@@ -27,7 +27,7 @@ import io.constellationnetwork.node.shared.domain.swap.{AllowSpendStorage, Conte
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.block.processing.BlockAcceptanceManager
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
-import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastSnapshotStorage
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
 import io.constellationnetwork.node.shared.modules.SharedValidators
 import io.constellationnetwork.node.shared.nodeSharedKryoRegistrar
 import io.constellationnetwork.schema._
@@ -46,7 +46,7 @@ import io.constellationnetwork.security.signature.Signed.forAsyncHasher
 import io.constellationnetwork.transaction.TransactionGenerator
 
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.NonNegLong
+import eu.timepit.refined.types.numeric.{NonNegLong, PosInt}
 import fs2.concurrent.SignallingRef
 import io.chrisdavenport.mapref.MapRef
 import org.scalacheck.Gen.Parameters
@@ -83,6 +83,9 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             balancesR <- Ref.of[IO, Map[Address, Balance]](Map.empty).asResource
             blocksR <- MapRef.ofConcurrentHashMap[IO, ProofsHash, StoredBlock]().asResource
             lastSnapR <- SignallingRef.of[IO, Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](None).asResource
+            lastNSnapR <- SignallingRef
+              .of[IO, SortedMap[SnapshotOrdinal, (Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](SortedMap.empty)
+              .asResource
             transactionsR <- MapRef
               .ofConcurrentHashMap[IO, Address, SortedMap[TransactionOrdinal, StoredTransaction]]()
               .asResource
@@ -104,6 +107,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               .asResource
 
             currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
+              LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10)),
               BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, Hasher.forKryo[IO]),
               TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
               AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
@@ -153,12 +157,15 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
               val blockStorage = new BlockStorage[IO](blocksR)
               val lastSnapshotStorage = LastSnapshotStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](lastSnapR)
-
+              val lastNSnapshotStorage = LastNGlobalSnapshotStorage.make[IO](lastNSnapR)
+              val lastGlobalSnapshotsSyncConfig = LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt.unsafeFrom(5))
               DAGSnapshotProcessor
                 .make[IO](
+                  lastGlobalSnapshotsSyncConfig,
                   addressStorage,
                   blockStorage,
                   lastSnapshotStorage,
+                  lastNSnapshotStorage,
                   transactionStorage,
                   allowSpendStorage,
                   globalSnapshotContextFns,

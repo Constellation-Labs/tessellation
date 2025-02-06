@@ -26,7 +26,6 @@ import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.types.SnapshotSizeConfig
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
-import io.constellationnetwork.node.shared.domain.tokenlock.block.{TokenLockBlockAwaitReason, TokenLockBlockRejectionReason}
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema._
@@ -37,8 +36,8 @@ import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.swap.AllowSpendBlock
 import io.constellationnetwork.schema.tokenLock.TokenLockBlock
 import io.constellationnetwork.schema.transaction.RewardTransaction
-import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.{Hashed, Hasher}
 import io.constellationnetwork.syntax.sortedCollection.sortedSetSyntax
 
 import eu.timepit.refined.auto._
@@ -62,7 +61,8 @@ trait CurrencySnapshotCreator[F[_]] {
     rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
     facilitators: Set[PeerId],
     feeTransactionFn: Option[() => SortedSet[Signed[FeeTransaction]]],
-    artifactsFn: Option[() => SortedSet[SharedArtifact]]
+    artifactsFn: Option[() => SortedSet[SharedArtifact]],
+    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]
 }
 
@@ -92,7 +92,8 @@ object CurrencySnapshotCreator {
       rewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
       facilitators: Set[PeerId],
       feeTransactionFn: Option[() => SortedSet[Signed[FeeTransaction]]],
-      artifactsFn: Option[() => SortedSet[SharedArtifact]]
+      artifactsFn: Option[() => SortedSet[SharedArtifact]],
+      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] = {
       val maxArtifactSize = maxProposalSizeInBytes(facilitators)
 
@@ -196,17 +197,13 @@ object CurrencySnapshotCreator {
                       )
                     )
                     .getOrElse(SortedSet.empty[RewardTransaction].pure[F]),
-                facilitators
+                facilitators,
+                lastGlobalSnapshots
               )
 
           (awaitingBlocks, rejectedBlocks) = currencySnapshotAcceptanceResult.block.notAccepted.partitionMap {
             case (b, _: BlockAwaitReason)     => b.asRight
             case (b, _: BlockRejectionReason) => b.asLeft
-          }
-
-          (awaitingTokenLockBlocks, rejectedTokenLockBlocks) = currencySnapshotAcceptanceResult.tokenLockBlock.notAccepted.partitionMap {
-            case (b, _: TokenLockBlockAwaitReason)     => b.asRight
-            case (b, _: TokenLockBlockRejectionReason) => b.asLeft
           }
 
           (deprecated, remainedActive, accepted) = getUpdatedTips(

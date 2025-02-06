@@ -22,9 +22,11 @@ import io.constellationnetwork.currency.l0.node.IdentifierStorage
 import io.constellationnetwork.currency.l0.snapshot.CurrencySnapshotConsensus
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
+import io.constellationnetwork.node.shared.config.types.LastGlobalSnapshotsSyncConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
+import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSyncGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.domain.snapshot.{PeerSelect, Validator}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencySnapshotContextFunctions
 import io.constellationnetwork.schema._
@@ -42,6 +44,7 @@ import retry._
 
 object Download {
   def make[F[_]: Async: Random](
+    lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
     p2pClient: P2PClient[F],
     clusterStorage: ClusterStorage[F],
     currencySnapshotContextFns: CurrencySnapshotContextFunctions[F],
@@ -49,7 +52,8 @@ object Download {
     consensus: CurrencySnapshotConsensus[F],
     peerSelect: PeerSelect[F],
     identifierStorage: IdentifierStorage[F],
-    maybeDataApplication: Option[BaseDataApplicationL0Service[F]]
+    maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
+    lastGlobalSnapshotStorage: LastSyncGlobalSnapshotStorage[F]
   )(implicit l0NodeContext: L0NodeContext[F]): Download[F] = new Download[F] {
 
     val logger = Slf4jLogger.getLogger[F]
@@ -139,9 +143,13 @@ object Download {
           } >>
             identifierStorage.get
               .flatMap(currencyAddress =>
-                currencySnapshotContextFns
-                  .createContext(CurrencySnapshotContext(currencyAddress, lastContext), lastSnapshot, snapshot)
-                  .handleErrorWith(_ => InvalidChain.raiseError[F, CurrencySnapshotContext])
+                lastGlobalSnapshotStorage
+                  .getLastNSynchronized(lastGlobalSnapshotsSyncConfig.minGlobalSnapshotsToParticipateConsensus.value)
+                  .flatMap(lastNGlobalSnapshots =>
+                    currencySnapshotContextFns
+                      .createContext(CurrencySnapshotContext(currencyAddress, lastContext), lastSnapshot, snapshot, lastNGlobalSnapshots)
+                      .handleErrorWith(_ => InvalidChain.raiseError[F, CurrencySnapshotContext])
+                  )
               )
               .map(c => (snapshot, c.snapshotInfo))
         }

@@ -12,7 +12,7 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.swap.SwapAmount._
-import io.constellationnetwork.schema.swap._
+import io.constellationnetwork.schema.swap.{AllowSpendFee, _}
 import io.constellationnetwork.security.Hashed
 import io.constellationnetwork.security.hash.Hash
 
@@ -85,10 +85,15 @@ object ContextualAllowSpendValidator {
         balance: Balance
       ): Either[ContextualAllowSpendValidationError, Hashed[AllowSpend]] = {
         val availableBalance = getBalanceAffectedByTxs(txs, balance)
-        if (allowSpend.amount.value <= availableBalance.value)
-          allowSpend.asRight
-        else
-          InsufficientBalance(allowSpend.amount, availableBalance).asLeft
+        SwapAmount.toAmount(allowSpend.amount).plus(AllowSpendFee.toAmount(allowSpend.fee)) match {
+          case Left(_) =>
+            AllowSpendArithmeticError(allowSpend.amount, allowSpend.fee).asLeft
+          case Right(amount) =>
+            if (amount.value <= availableBalance.value)
+              allowSpend.asRight
+            else
+              InsufficientBalance(allowSpend.amount, availableBalance).asLeft
+        }
       }
 
       private def validateEpochProgress(
@@ -197,6 +202,7 @@ object ContextualAllowSpendValidator {
   case class HasNoMatchingParent(parentHash: Hash) extends ContextualAllowSpendValidationError
   case class Conflict(ordinal: AllowSpendOrdinal, existingHash: Hash, newHash: Hash) extends ContextualAllowSpendValidationError
   case class InsufficientBalance(amount: Amount, balance: Balance) extends ContextualAllowSpendValidationError
+  case class AllowSpendArithmeticError(amount: Amount, fee: Amount) extends ContextualAllowSpendValidationError
   case class AllowSpendLimited(ref: AllowSpendReference, fee: AllowSpendFee) extends ContextualAllowSpendValidationError
   case class NonContextualValidationError(error: AllowSpendValidationError) extends ContextualAllowSpendValidationError
   case class LockedAddressError(address: Address) extends ContextualAllowSpendValidationError

@@ -32,4 +32,9 @@ object artifact {
     currencyId: Option[CurrencyId],
     address: Address
   ) extends SharedArtifact
+
+  @derive(decoder, encoder, order, ordering, show)
+  case class AllowSpendExpiration(
+    allowSpendRef: Hash
+  ) extends SharedArtifact
 }

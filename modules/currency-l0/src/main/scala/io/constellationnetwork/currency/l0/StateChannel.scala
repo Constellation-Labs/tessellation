@@ -15,6 +15,7 @@ import io.constellationnetwork.currency.l0.cli.method.Run
 import io.constellationnetwork.currency.l0.modules.{Programs, Services, Storages}
 import io.constellationnetwork.currency.schema.globalSnapshotSync.{GlobalSnapshotSync, GlobalSnapshotSyncReference}
 import io.constellationnetwork.kernel.{:: => _, _}
+import io.constellationnetwork.node.shared.config.types.LastGlobalSnapshotsSyncConfig
 import io.constellationnetwork.node.shared.domain.snapshot.Validator
 import io.constellationnetwork.node.shared.snapshot.currency.{CurrencySnapshotEvent, GlobalSnapshotSyncEvent}
 import io.constellationnetwork.schema.peer.PeerId
@@ -23,7 +24,6 @@ import io.constellationnetwork.security._
 import io.constellationnetwork.security.key.ops.PublicKeyOps
 import io.constellationnetwork.security.signature.Signed
 
-import eu.timepit.refined.auto._
 import fs2.Stream
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -32,6 +32,7 @@ object StateChannel {
   private val awakePeriod = 10.seconds
 
   def run[F[_]: Async: HasherSelector: SecurityProvider](
+    lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
     services: Services[F, Run],
     storages: Storages[F],
     programs: Programs[F],
@@ -106,7 +107,12 @@ object StateChannel {
                     case Some((lastSnapshot, lastState)) =>
                       HasherSelector[F]
                         .forOrdinal(snapshot.ordinal) { implicit hasher =>
-                          services.globalSnapshotContextFunctions.createContext(lastState, lastSnapshot.signed, snapshot.signed)
+                          storages.lastGlobalSnapshot
+                            .getLastNSynchronized(lastGlobalSnapshotsSyncConfig.minGlobalSnapshotsToParticipateConsensus.value)
+                            .flatMap(lastNSync =>
+                              services.globalSnapshotContextFunctions
+                                .createContext(lastState, lastSnapshot.signed, snapshot.signed, lastNSync)
+                            )
                         }
                         .flatMap { context =>
                           storages.lastGlobalSnapshot.set(snapshot, context) >>

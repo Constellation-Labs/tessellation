@@ -10,6 +10,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import io.constellationnetwork.currency.dataApplication.FeeTransaction
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSnapshotSync
+import io.constellationnetwork.node.shared.config.types.LastGlobalSnapshotsSyncConfig
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.swap.block.{
   AllowSpendBlockAcceptanceContext,
@@ -24,21 +25,23 @@ import io.constellationnetwork.node.shared.domain.tokenlock.block.{
 import io.constellationnetwork.node.shared.domain.transaction.FeeTransactionValidator
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.artifact.{SharedArtifact, TokenUnlock}
+import io.constellationnetwork.schema.artifact._
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.currencyMessage._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.swap.{AllowSpendBlock, AllowSpendReference}
+import io.constellationnetwork.schema.swap._
 import io.constellationnetwork.schema.tokenLock.TokenLockAmount.toAmount
 import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockBlock, TokenLockReference}
 import io.constellationnetwork.schema.transaction.{RewardTransaction, Transaction, TransactionReference}
-import io.constellationnetwork.security.Hasher
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.{Hashed, Hasher}
 import io.constellationnetwork.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._
-import eu.timepit.refined.types.numeric.NonNegLong
+import eu.timepit.refined.types.all.NonNegLong
+import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 case class CurrencyMessagesAcceptanceResult(
   contextUpdate: SortedMap[MessageType, Signed[CurrencyMessage]],
@@ -80,12 +83,14 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
     lastActiveTips: SortedSet[ActiveTip],
     lastDeprecatedTips: SortedSet[DeprecatedTip],
     calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]],
-    facilitators: Set[PeerId]
+    facilitators: Set[PeerId],
+    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult]
 }
 
 object CurrencySnapshotAcceptanceManager {
   def make[F[_]: Async](
+    lastGlobalSnapshotSyncCfg: LastGlobalSnapshotsSyncConfig,
     blockAcceptanceManager: BlockAcceptanceManager[F],
     tokenLockBlockAcceptanceManager: TokenLockBlockAcceptanceManager[F],
     allowSpendBlockAcceptanceManager: AllowSpendBlockAcceptanceManager[F],
@@ -94,6 +99,8 @@ object CurrencySnapshotAcceptanceManager {
     feeTransactionValidator: FeeTransactionValidator[F],
     globalSnapshotSyncValidator: GlobalSnapshotSyncValidator[F]
   ) = new CurrencySnapshotAcceptanceManager[F] {
+    val logger = Slf4jLogger.getLogger[F]
+
     def accept(
       blocksForAcceptance: List[Signed[Block]],
       tokenLockBlocksForAcceptance: List[Signed[TokenLockBlock]],
@@ -108,11 +115,13 @@ object CurrencySnapshotAcceptanceManager {
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip],
       calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]],
-      facilitators: Set[PeerId]
+      facilitators: Set[PeerId],
+      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult] = for {
       initialTxRef <- TransactionReference.emptyCurrency(lastSnapshotContext.address)
       tokenLockInitialTxRef <- TokenLockReference.emptyCurrency(lastSnapshotContext.address)
       initialAllowSpendRef <- AllowSpendReference.emptyCurrency(lastSnapshotContext.address)
+      metagraphId = lastSnapshotContext.address
 
       acceptanceBlocksResult <- acceptBlocks(
         blocksForAcceptance,
@@ -179,6 +188,46 @@ object CurrencySnapshotAcceptanceManager {
         facilitators
       )
 
+      offset = lastGlobalSnapshotSyncCfg.syncOffset
+      maybeSnapshotOrdinalSync = lastSnapshotContext.snapshotInfo.globalSnapshotSyncView.traverse {
+        _.values
+          .map(_.globalSnapshotOrdinal)
+          .groupBy(identity)
+          .maxByOption { case (ordinal, occurrences) => (occurrences.size, -ordinal.value.value) }
+          .flatMap { case (ordinal, _) => SnapshotOrdinal(ordinal.value - offset) }
+      }.flatten
+
+      maybeLastGlobalSnapshot = lastGlobalSnapshots
+        .flatMap(_.find { snapshot =>
+          maybeSnapshotOrdinalSync.exists { snapshotOrdinalSync =>
+            snapshotOrdinalSync === snapshot.ordinal
+          }
+        })
+
+      lastGlobalSnapshotEpochProgress <-
+        if (maybeLastGlobalSnapshot.isEmpty)
+          logger
+            .warn("Could not find lastGlobalSnapshot")
+            .as(
+              EpochProgress.MinValue
+            )
+        else
+          maybeLastGlobalSnapshot.get.epochProgress.pure
+
+      lastGlobalSnapshotSpendActions = maybeLastGlobalSnapshot
+        .flatMap(_.spendActions)
+        .getOrElse(SortedMap.empty[Address, List[SpendAction]])
+
+      lastMetagraphSpendActions = lastGlobalSnapshotSpendActions.getOrElse(metagraphId, List.empty)
+
+      allAcceptedSpendTxns =
+        lastMetagraphSpendActions
+          .flatMap(spendTxn => List(spendTxn.input, spendTxn.output))
+
+      allAcceptedSpendTxnsAllowSpendsRefs =
+        allAcceptedSpendTxns
+          .flatMap(_.allowSpendRef)
+
       incomingTokenLocks = acceptanceTokenLockBlocksResult.accepted.flatMap { tokenLockBlock =>
         tokenLockBlock.value.tokenLocks.toSortedSet
       }.toSortedSet
@@ -195,7 +244,7 @@ object CurrencySnapshotAcceptanceManager {
 
       acceptedTokenLocks = acceptTokenLocks(
         incomingTokenLocks,
-        EpochProgress.MinValue // TODO: Get last sync global snapshot epoch progress
+        lastGlobalSnapshotEpochProgress
       )
 
       acceptedTokenUnlocks = acceptTokenUnlocks(
@@ -215,13 +264,50 @@ object CurrencySnapshotAcceptanceManager {
         updatedBalancesByFeeTransactions
       )
 
+      acceptedCurrencyAllowSpends = allowSpendBlockAcceptanceResult.accepted.flatMap(_.value.transactions.toList)
+      incomingCurrencyAllowSpends = acceptedCurrencyAllowSpends
+        .groupBy(_.value.source)
+        .view
+        .mapValues(SortedSet.from(_))
+        .to(SortedMap)
+
+      lastActiveAllowSpends = lastSnapshotContext.snapshotInfo.activeAllowSpends.getOrElse(
+        SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]]
+      )
+      lastAllowSpendsRefs = lastSnapshotContext.snapshotInfo.lastAllowSpendRefs.getOrElse(SortedMap.empty[Address, AllowSpendReference])
+
+      (updatedAllowSpends, expiredAllowSpends, allowSpendsWithSpendTransaction) <-
+        acceptAllowSpends(
+          lastGlobalSnapshotEpochProgress,
+          incomingCurrencyAllowSpends,
+          lastActiveAllowSpends,
+          allAcceptedSpendTxnsAllowSpendsRefs
+        )
+
+      updatedAllowSpendRefs = acceptAllowSpendRefs(
+        lastAllowSpendsRefs,
+        allowSpendBlockAcceptanceResult.contextUpdate.lastTxRefs
+      )
+
+      updatedBalancesByAllowSpends = updateGlobalBalancesByAllowSpends(
+        updatedBalancesByTokenLocks,
+        incomingCurrencyAllowSpends,
+        expiredAllowSpends
+      )
+
+      updatedBalancesBySpendTransactions <- updateGlobalBalancesBySpendTransactions(
+        updatedBalancesByAllowSpends,
+        allowSpendsWithSpendTransaction,
+        allAcceptedSpendTxns
+      )
+
       csi = CurrencySnapshotInfo(
         transactionsRefs,
-        updatedBalancesByTokenLocks,
+        updatedBalancesBySpendTransactions,
         Option.when(messagesAcceptanceResult.contextUpdate.nonEmpty)(messagesAcceptanceResult.contextUpdate),
         None,
-        None,
-        None,
+        updatedAllowSpendRefs.some,
+        updatedAllowSpends.some,
         globalSnapshotSyncAcceptanceResult.contextUpdate.some,
         tokenLockRefs.some,
         updatedActiveTokenLocks
@@ -229,6 +315,9 @@ object CurrencySnapshotAcceptanceManager {
 
       stateProof <- csi.stateProof(snapshotOrdinal)
 
+      allowSpendsExpiredEvents <- emitAllowSpendsExpired(
+        expiredAllowSpends
+      )
     } yield
       CurrencySnapshotAcceptanceResult(
         acceptanceBlocksResult,
@@ -237,7 +326,7 @@ object CurrencySnapshotAcceptanceManager {
         messagesAcceptanceResult,
         globalSnapshotSyncAcceptanceResult,
         acceptedRewardTxs,
-        acceptedSharedArtifacts,
+        acceptedSharedArtifacts ++ allowSpendsExpiredEvents,
         acceptedFeeTxs,
         csi,
         stateProof
@@ -547,6 +636,163 @@ object CurrencySnapshotAcceptanceManager {
       activeTipsUsages ++ deprecatedTipsUsages
     }
 
+    private def filterAllowsSpends(
+      allowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
+      allAcceptedSpendTxnsAllowSpendsRefs: List[Hash],
+      spendTransactionAssociated: Boolean
+    )(implicit hasher: Hasher[F]): F[SortedMap[Address, SortedSet[Signed[AllowSpend]]]] =
+      allowSpends.toList.traverse {
+        case (address, allowSpends) =>
+          allowSpends.toList.traverse(_.toHashed).map { hashedAllowSpends =>
+            val validAllowSpends = if (spendTransactionAssociated) {
+              hashedAllowSpends.filter(h => allAcceptedSpendTxnsAllowSpendsRefs.contains(h.hash))
+            } else {
+              hashedAllowSpends.filterNot(h => allAcceptedSpendTxnsAllowSpendsRefs.contains(h.hash))
+            }
+            address -> validAllowSpends.map(_.signed).toSortedSet
+          }
+      }
+        .map(_.toSortedMap)
+
+    private def acceptAllowSpends(
+      epochProgress: EpochProgress,
+      incomingCurrencyAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
+      existentCurrencyAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
+      allAcceptedSpendTxnsAllowSpendsRefs: List[Hash]
+    )(implicit hasher: Hasher[F]): F[
+      (
+        SortedMap[Address, SortedSet[Signed[AllowSpend]]],
+        SortedMap[Address, SortedSet[Signed[AllowSpend]]],
+        SortedMap[Address, SortedSet[Signed[AllowSpend]]]
+      )
+    ] = {
+      val expiredAllowSpends = (incomingCurrencyAllowSpends.toList ++ existentCurrencyAllowSpends.toList).groupBy {
+        case (address, _) => address
+      }.view
+        .mapValues(_.flatMap { case (_, allowSpends) => allowSpends }.toSortedSet)
+        .collect {
+          case (address, allowSpends) => address -> allowSpends.filter(_.lastValidEpochProgress < epochProgress)
+        }
+        .toSortedMap
+
+      val unexpiredAllowSpends =
+        (incomingCurrencyAllowSpends.toList ++ expiredAllowSpends.toList).groupBy { case (address, _) => address }.view
+          .mapValues(_.flatMap { case (_, allowSpends) => allowSpends }.toSortedSet)
+          .foldLeft(existentCurrencyAllowSpends) {
+            case (acc, (address, allowSpends)) =>
+              val lastAddressAllowSpends = acc.getOrElse(address, SortedSet.empty[Signed[AllowSpend]])
+              val unexpired = (lastAddressAllowSpends ++ allowSpends).filter(_.lastValidEpochProgress >= epochProgress)
+              acc + (address -> unexpired)
+          }
+
+      for {
+        allowSpendsWithSpendTransaction <- filterAllowsSpends(
+          unexpiredAllowSpends,
+          allAcceptedSpendTxnsAllowSpendsRefs,
+          spendTransactionAssociated = true
+        )
+        unexpiredWithoutSpendTransactions =
+          unexpiredAllowSpends.map {
+            case (address, allowSpends) =>
+              val withoutSpendTransactions =
+                allowSpends.diff(allowSpendsWithSpendTransaction.getOrElse(address, SortedSet.empty))
+              address -> withoutSpendTransactions
+          }.filter { case (_, allowSpends) => allowSpends.nonEmpty }
+      } yield
+        (
+          unexpiredWithoutSpendTransactions,
+          expiredAllowSpends,
+          allowSpendsWithSpendTransaction
+        )
+    }
+
+    private def acceptAllowSpendRefs(
+      lastAllowSpendRefs: SortedMap[Address, AllowSpendReference],
+      lastAllowSpendContextUpdate: Map[Address, AllowSpendReference]
+    ): SortedMap[Address, AllowSpendReference] =
+      lastAllowSpendRefs ++ lastAllowSpendContextUpdate
+
+    private def updateGlobalBalancesByAllowSpends(
+      currentBalances: SortedMap[Address, Balance],
+      incomingCurrencyAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
+      expiredAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]]
+    ): SortedMap[Address, Balance] = {
+      val allowSpendsToLockBalances: SortedMap[Address, SortedSet[Signed[AllowSpend]]] =
+        incomingCurrencyAllowSpends.map {
+          case (address, spends) =>
+            val filteredSpends = spends
+              .diff(expiredAllowSpends.getOrElse(address, SortedSet.empty))
+            address -> filteredSpends
+        }.filter { case (_, spends) => spends.nonEmpty }
+
+      val balancesUpdatedByNewAllowSpends = allowSpendsToLockBalances.foldLeft(currentBalances) {
+        case (acc, (address, allowSpends)) =>
+          val updatedBalance = allowSpends.foldLeft(acc.getOrElse(address, Balance.empty)) { (balance, allowSpend) =>
+            balance
+              .minus(SwapAmount.toAmount(allowSpend.amount))
+              .getOrElse(balance)
+              .minus(AllowSpendFee.toAmount(allowSpend.fee))
+              .getOrElse(balance)
+          }
+          acc.updated(address, updatedBalance)
+      }
+
+      expiredAllowSpends.foldLeft(balancesUpdatedByNewAllowSpends) {
+        case (acc, (address, allowSpends)) =>
+          val updatedBalance = allowSpends.foldLeft(acc.getOrElse(address, Balance.empty)) { (balance, allowSpend) =>
+            balance.plus(SwapAmount.toAmount(allowSpend.amount)).getOrElse(balance)
+          }
+          acc.updated(address, updatedBalance)
+      }
+    }
+
+    private def updateGlobalBalancesBySpendTransactions(
+      currentBalances: SortedMap[Address, Balance],
+      allowSpendsWithSpendTransactions: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
+      allAcceptedSpendTxns: List[SpendTransaction]
+    )(implicit hasher: Hasher[F]): F[SortedMap[Address, Balance]] =
+      allAcceptedSpendTxns.foldLeftM(currentBalances) { (acc, spendTransaction) =>
+        val currentDestinationBalance = acc.getOrElse(spendTransaction.destination, Balance.empty)
+        val updatedDestinationBalance = currentDestinationBalance
+          .plus(SwapAmount.toAmount(spendTransaction.amount))
+          .getOrElse(currentDestinationBalance)
+
+        val allowSpendLookup: F[Option[Hashed[AllowSpend]]] = spendTransaction.allowSpendRef match {
+          case Some(allowSpendRef) =>
+            allowSpendsWithSpendTransactions.values.flatten.toList
+              .traverse(_.toHashed)
+              .map(_.find(_.hash === allowSpendRef))
+          case None => Async[F].pure(None)
+        }
+
+        allowSpendLookup.flatMap {
+          case Some(allowSpend) =>
+            val diffBetweenAllowSpendAndSpendTransaction = SwapAmount
+              .toAmount(allowSpend.signed.value.amount)
+              .minus(SwapAmount.toAmount(spendTransaction.amount))
+              .getOrElse(Amount.empty)
+
+            val currentSourceBalance = acc.getOrElse(allowSpend.signed.value.source, Balance.empty)
+            Async[F].pure(
+              acc
+                .updated(spendTransaction.destination, updatedDestinationBalance)
+                .updated(
+                  allowSpend.signed.value.source,
+                  currentSourceBalance.plus(diffBetweenAllowSpendAndSpendTransaction).getOrElse(currentSourceBalance)
+                )
+            )
+
+          case None =>
+            Async[F].pure(acc.updated(spendTransaction.destination, updatedDestinationBalance))
+        }
+      }
+
+    def emitAllowSpendsExpired(
+      addressToSet: SortedMap[address.Address, SortedSet[Signed[swap.AllowSpend]]]
+    )(implicit hasher: Hasher[F]): F[SortedSet[SharedArtifact]] =
+      addressToSet.values.flatten.toList
+        .traverse(_.toHashed)
+        .map(_.map(hashed => AllowSpendExpiration(hashed.hash): SharedArtifact).toSortedSet)
   }
 
 }

@@ -9,19 +9,18 @@ import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.traverse._
 
-import io.constellationnetwork.currency.l0.snapshot.storage.LastSynchronizedGlobalSnapshotStorage
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer, SizeCalculator}
 import io.constellationnetwork.node.shared.config.types.SnapshotSizeConfig
-import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastSnapshotStorage, SnapshotStorage}
+import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastSyncGlobalSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
 import io.constellationnetwork.node.shared.infrastructure.snapshot.DataApplicationSnapshotAcceptanceManager
 import io.constellationnetwork.node.shared.snapshot.currency.CurrencySnapshotArtifact
 import io.constellationnetwork.schema.ID.Id
+import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.hex.Hex
 import io.constellationnetwork.security.signature.Signed
@@ -54,8 +53,7 @@ object StateChannelSnapshotService {
   def make[F[_]: Async: JsonSerializer: SecurityProvider](
     keyPair: KeyPair,
     snapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
-    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
-      with LastSynchronizedGlobalSnapshotStorage[F],
+    lastGlobalSnapshotStorage: LastSyncGlobalSnapshotStorage[F],
     jsonBrotliBinarySerializer: JsonBrotliBinarySerializer[F],
     dataApplicationSnapshotAcceptanceManager: Option[DataApplicationSnapshotAcceptanceManager[F]],
     stateChannelBinarySender: StateChannelBinarySender[F],

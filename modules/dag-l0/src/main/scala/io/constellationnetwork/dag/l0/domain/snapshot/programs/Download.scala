@@ -132,8 +132,10 @@ object Download {
             } >>
             HasherSelector[F]
               .forOrdinal(snapshot.ordinal) { implicit hasher =>
-                globalSnapshotContextFns
-                  .createContext(lastContext, lastSnapshot, snapshot)
+                lastSnapshot.toHashed.flatMap { hashedLastSnapshot =>
+                  globalSnapshotContextFns
+                    .createContext(lastContext, lastSnapshot, snapshot, List(hashedLastSnapshot).some)
+                }
               }
               .handleErrorWith(_ => InvalidChain.raiseError[F, GlobalSnapshotContext])
               .flatTap { _ =>
@@ -240,8 +242,10 @@ object Download {
               case Some(snapshot) =>
                 HasherSelector[F]
                   .forOrdinal(snapshot.ordinal) { implicit hasher =>
-                    globalSnapshotContextFns
-                      .createContext(context, lastSnapshot, snapshot)
+                    lastSnapshot.toHashed.flatMap { hashedLastSnapshot =>
+                      globalSnapshotContextFns
+                        .createContext(context, lastSnapshot, snapshot, List(hashedLastSnapshot).some)
+                    }
                   }
                   .flatTap(newContext =>
                     hasherSelector

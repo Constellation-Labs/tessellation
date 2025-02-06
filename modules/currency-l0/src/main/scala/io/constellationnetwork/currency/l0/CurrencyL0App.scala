@@ -78,7 +78,7 @@ abstract class CurrencyL0App(
 
       queues <- Queues.make[IO](sharedQueues).asResource
       storages <- Storages
-        .make[IO](sharedStorages, cfg.snapshot, method.globalL0Peer, dataApplicationService, hasherSelectorAlwaysCurrent)
+        .make[IO](sharedConfig, sharedStorages, cfg.snapshot, method.globalL0Peer, dataApplicationService, hasherSelectorAlwaysCurrent)
         .asResource
       p2pClient = P2PClient.make[IO](sharedP2PClient, sharedResources.client, sharedServices.session)
       maybeAllowanceList = StateChannelAllowanceLists.get(cfg.environment)
@@ -90,6 +90,7 @@ abstract class CurrencyL0App(
       ).asResource
       services <- Services
         .make[IO, Run](
+          sharedConfig,
           p2pClient,
           sharedServices,
           storages,
@@ -115,6 +116,7 @@ abstract class CurrencyL0App(
           storages.identifier
         )
       programs = Programs.make[IO, Run](
+        sharedConfig,
         keyPair,
         nodeShared.nodeId,
         cfg.globalL0Peer,
@@ -335,7 +337,7 @@ abstract class CurrencyL0App(
               case _ => IO.unit
             }
             _ <- StateChannel
-              .run[IO](services, storages, programs, dataApplicationService, keyPair, mkCell)
+              .run[IO](sharedConfig.lastGlobalSnapshotsSync, services, storages, programs, dataApplicationService, keyPair, mkCell)
               .compile
               .drain
           } yield innerProgram

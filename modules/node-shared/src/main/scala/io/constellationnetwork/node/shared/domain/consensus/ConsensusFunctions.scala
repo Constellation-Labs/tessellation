@@ -4,9 +4,10 @@ import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions.InvalidArtifact
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
+import io.constellationnetwork.schema.GlobalIncrementalSnapshot
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.{Hashed, Hasher}
 
 trait ConsensusFunctions[F[_], Event, Key, Artifact, Context] {
 
@@ -19,7 +20,8 @@ trait ConsensusFunctions[F[_], Event, Key, Artifact, Context] {
     lastContext: Context,
     trigger: ConsensusTrigger,
     artifact: Artifact,
-    facilitators: Set[PeerId]
+    facilitators: Set[PeerId],
+    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[Either[InvalidArtifact, (Artifact, Context)]]
 
   def createProposalArtifact(
@@ -29,7 +31,8 @@ trait ConsensusFunctions[F[_], Event, Key, Artifact, Context] {
     lastArtifactHasher: Hasher[F],
     trigger: ConsensusTrigger,
     events: Set[Event],
-    facilitators: Set[PeerId]
+    facilitators: Set[PeerId],
+    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[(Artifact, Context, Set[Event])]
 }
 

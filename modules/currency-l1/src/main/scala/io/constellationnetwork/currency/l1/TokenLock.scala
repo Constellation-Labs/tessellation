@@ -16,9 +16,10 @@ import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnap
 import io.constellationnetwork.currency.tokenlock.ConsensusInput.OwnerConsensusInput
 import io.constellationnetwork.currency.tokenlock.{ConsensusInput, ConsensusOutput}
 import io.constellationnetwork.dag.l1.http.p2p.L0BlockOutputClient
+import io.constellationnetwork.node.shared.config.types.SharedConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorage, L0ClusterStorage}
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
-import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
+import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockStorage
 import io.constellationnetwork.node.shared.domain.tokenlock.consensus.Validator._
 import io.constellationnetwork.node.shared.domain.tokenlock.consensus.config.TokenLockConsensusConfig
@@ -33,10 +34,12 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object TokenLock {
   def run[F[_]: Async: Random: Hasher: SecurityProvider](
+    sharedCfg: SharedConfig,
     tokenLockConsensusConfig: TokenLockConsensusConfig,
     clusterStorage: ClusterStorage[F],
     l0ClusterStorage: L0ClusterStorage[F],
     lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
+    lastNGlobalSnapshot: LastNGlobalSnapshotStorage[F],
     nodeStorage: NodeStorage[F],
     blockOutputClient: L0BlockOutputClient[F],
     consensusClient: ConsensusClient[F],
@@ -62,9 +65,11 @@ object TokenLock {
         .awakeEvery(5.seconds)
         .evalFilter { _ =>
           canStartOwnTokenLockConsensus(
+            sharedCfg.lastGlobalSnapshotsSync,
             nodeStorage,
             clusterStorage,
             lastGlobalSnapshot,
+            lastNGlobalSnapshot,
             tokenLockConsensusConfig.peersCount,
             tokenLockStorage
           ).handleErrorWith { e =>

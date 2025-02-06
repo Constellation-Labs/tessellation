@@ -3,6 +3,7 @@ package io.constellationnetwork.dag.l0.infrastructure.snapshot
 import cats.data.NonEmptyList
 import cats.effect.std.Supervisor
 import cats.effect.{IO, Ref, Resource}
+import cats.implicits.none
 import cats.syntax.applicative._
 import cats.syntax.list._
 
@@ -129,7 +130,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       ordinal: SnapshotOrdinal,
       lastGlobalSnapshotInfo: GlobalSnapshotInfo,
       events: List[StateChannelOutput],
-      validationType: StateChannelValidationType
+      validationType: StateChannelValidationType,
+      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): IO[StateChannelAcceptanceResult] = IO(
       StateChannelAcceptanceResult(
         events.groupByNel(_.address).view.mapValues(_.map(_.snapshotBinary)).toSortedMap,
@@ -142,7 +144,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
     def processCurrencySnapshots(
       snapshotOrdinal: SnapshotOrdinal,
       lastGlobalSnapshotInfo: GlobalSnapshotContext,
-      events: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]]
+      events: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
+      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): IO[
       SortedMap[Address, (NonEmptyList[(Signed[StateChannelSnapshotBinary], Option[CurrencySnapshotWithState])], Map[Address, Balance])]
     ] = ???
@@ -215,14 +218,16 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         h,
         EventTrigger,
         Set(scEvent),
-        facilitators
+        facilitators,
+        none
       )
       result <- gscf.validateArtifact(
         signedLastArtifact,
         signedGenesis.value.info,
         EventTrigger,
         artifact,
-        facilitators
+        facilitators,
+        none
       )
 
       expected = Right(NonEmptyList.one(scEvent.value.snapshotBinary))
@@ -244,14 +249,16 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         h,
         EventTrigger,
         Set(scEvent),
-        facilitators
+        facilitators,
+        none
       )
       result <- gscf.validateArtifact(
         signedLastArtifact,
         signedGenesis.value.info,
         EventTrigger,
         artifact.copy(ordinal = artifact.ordinal.next),
-        facilitators
+        facilitators,
+        none
       )
     } yield expect.same(true, result.isLeft)
   }

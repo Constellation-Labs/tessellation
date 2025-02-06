@@ -22,7 +22,6 @@ import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelVal
 
 import derevo.cats.{eqv, show}
 import derevo.derive
-import eu.timepit.refined.auto._
 
 abstract class GlobalSnapshotContextFunctions[F[_]] extends SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
 
@@ -32,7 +31,8 @@ object GlobalSnapshotContextFunctions {
       def createContext(
         context: GlobalSnapshotInfo,
         lastArtifact: Signed[GlobalIncrementalSnapshot],
-        signedArtifact: Signed[GlobalIncrementalSnapshot]
+        signedArtifact: Signed[GlobalIncrementalSnapshot],
+        lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
       )(implicit hasher: Hasher[F]): F[GlobalSnapshotInfo] = for {
         lastActiveTips <- HasherSelector[F].forOrdinal(lastArtifact.ordinal)(implicit hasher => lastArtifact.activeTips)
         lastDeprecatedTips = lastArtifact.tips.deprecated
@@ -54,7 +54,8 @@ object GlobalSnapshotContextFunctions {
             lastActiveTips,
             lastDeprecatedTips,
             _ => signedArtifact.rewards.pure[F],
-            StateChannelValidationType.Historical
+            StateChannelValidationType.Historical,
+            lastGlobalSnapshots
           )
         _ <- CannotApplyBlocksError(acceptanceResult.notAccepted.map { case (_, reason) => reason })
           .raiseError[F, Unit]

@@ -1,4 +1,4 @@
-package io.constellationnetwork.currency.l0.snapshot.storage
+package io.constellationnetwork.node.shared.infrastructure.snapshot.storage
 
 import cats.effect.Ref
 import cats.effect.kernel.Async

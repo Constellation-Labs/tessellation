@@ -22,7 +22,9 @@ import fs2.Stream
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-class GlobalSnapshotAlignment[F[_]: Async: HasherSelector: SecurityProvider, P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[P], R <: CliMethod](
+class GlobalSnapshotAlignment[F[_]: Async: HasherSelector: SecurityProvider, P <: StateProof, S <: Snapshot, SI <: SnapshotInfo[
+  P
+], R <: CliMethod](
   services: Services[F, P, S, SI, R],
   programs: Programs[F, P, S, SI],
   storages: Storages[F, P, S, SI]

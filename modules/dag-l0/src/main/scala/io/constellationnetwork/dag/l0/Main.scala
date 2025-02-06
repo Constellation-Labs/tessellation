@@ -77,6 +77,7 @@ object Main
         .asResource
       services <- Services
         .make[IO, Run](
+          sharedConfig,
           sharedServices,
           queues,
           storages,

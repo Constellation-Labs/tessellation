@@ -52,7 +52,8 @@ object GlobalSnapshotConsensusFunctions {
       lastContext: GlobalSnapshotContext,
       trigger: ConsensusTrigger,
       artifact: GlobalSnapshotArtifact,
-      facilitators: Set[PeerId]
+      facilitators: Set[PeerId],
+      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): F[Either[InvalidArtifact, (GlobalSnapshotArtifact, GlobalSnapshotContext)]] = {
       val dagEvents = artifact.blocks.unsorted.map(_.block).map(DAGEvent(_))
       val scEvents = artifact.stateChannelSnapshots.toList.flatMap {
@@ -68,7 +69,8 @@ object GlobalSnapshotConsensusFunctions {
         Hasher.forKryo[F],
         trigger,
         events,
-        facilitators
+        facilitators,
+        lastGlobalSnapshots
       )
 
       def usingJson = createProposalArtifact(
@@ -78,7 +80,8 @@ object GlobalSnapshotConsensusFunctions {
         Hasher.forJson[F],
         trigger,
         events,
-        facilitators
+        facilitators,
+        lastGlobalSnapshots
       )
 
       def check(result: F[(GlobalSnapshotArtifact, GlobalSnapshotContext, Set[GlobalSnapshotEvent])]) =
@@ -103,7 +106,8 @@ object GlobalSnapshotConsensusFunctions {
       lastArtifactHasher: Hasher[F],
       trigger: ConsensusTrigger,
       events: Set[GlobalSnapshotEvent],
-      facilitators: Set[PeerId]
+      facilitators: Set[PeerId],
+      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): F[(GlobalSnapshotArtifact, GlobalSnapshotContext, Set[GlobalSnapshotEvent])] = {
       val scEventsBeforeCut = events.collect { case sc: StateChannelEvent => sc }
       val dagEventsBeforeCut = events.collect { case d: DAGEvent => d }
@@ -155,7 +159,8 @@ object GlobalSnapshotConsensusFunctions {
               lastActiveTips,
               lastDeprecatedTips,
               rewards.distribute(lastArtifact, snapshotContext.balances, _, trigger, events),
-              StateChannelValidationType.Full
+              StateChannelValidationType.Full,
+              lastGlobalSnapshots
             )
         (deprecated, remainedActive, accepted) = getUpdatedTips(
           lastActiveTips,

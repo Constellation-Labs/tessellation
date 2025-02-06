@@ -17,7 +17,7 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.signature.Signed
-import io.constellationnetwork.security.{Hasher, SecurityProvider}
+import io.constellationnetwork.security.{Hashed, Hasher, SecurityProvider}
 
 abstract class CurrencySnapshotConsensusFunctions[F[_]: Async: SecurityProvider]
     extends SnapshotConsensusFunctions[
@@ -51,10 +51,11 @@ object CurrencySnapshotConsensusFunctions {
       lastContext: CurrencySnapshotContext,
       trigger: ConsensusTrigger,
       artifact: CurrencySnapshotArtifact,
-      facilitators: Set[PeerId]
+      facilitators: Set[PeerId],
+      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): F[Either[ConsensusFunctions.InvalidArtifact, (CurrencySnapshotArtifact, CurrencySnapshotContext)]] =
       currencySnapshotValidator
-        .validateSnapshot(lastSignedArtifact, lastContext, artifact, facilitators)
+        .validateSnapshot(lastSignedArtifact, lastContext, artifact, facilitators, lastGlobalSnapshots)
         .map(_.leftMap(_ => ArtifactMismatch).toEither)
 
     def createProposalArtifact(
@@ -64,7 +65,8 @@ object CurrencySnapshotConsensusFunctions {
       lastArtifactHasher: Hasher[F],
       trigger: ConsensusTrigger,
       events: Set[CurrencySnapshotEvent],
-      facilitators: Set[PeerId]
+      facilitators: Set[PeerId],
+      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): F[(CurrencySnapshotArtifact, CurrencySnapshotContext, Set[CurrencySnapshotEvent])] = {
       val blocksForAcceptance: Set[CurrencySnapshotEvent] = events.filter {
         case BlockEvent(currencyBlock) => currencyBlock.height > lastArtifact.height
@@ -82,7 +84,8 @@ object CurrencySnapshotConsensusFunctions {
           rewards,
           facilitators,
           None,
-          None
+          None,
+          lastGlobalSnapshots
         )
         .map(created => (created.artifact, created.context, created.awaitingEvents))
     }

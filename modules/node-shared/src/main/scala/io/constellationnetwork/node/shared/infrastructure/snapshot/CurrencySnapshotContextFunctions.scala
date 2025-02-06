@@ -13,8 +13,9 @@ import scala.util.control.NoStackTrace
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotContext}
 import io.constellationnetwork.merkletree.StateProofValidator
 import io.constellationnetwork.node.shared.domain.snapshot.SnapshotContextFunctions
-import io.constellationnetwork.security.Hasher
+import io.constellationnetwork.schema.GlobalIncrementalSnapshot
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.{Hashed, Hasher}
 
 import derevo.cats.{eqv, show}
 import derevo.derive
@@ -29,9 +30,10 @@ object CurrencySnapshotContextFunctions {
       def createContext(
         context: CurrencySnapshotContext,
         lastArtifact: Signed[CurrencyIncrementalSnapshot],
-        signedArtifact: Signed[CurrencyIncrementalSnapshot]
+        signedArtifact: Signed[CurrencyIncrementalSnapshot],
+        lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
       )(implicit hasher: Hasher[F]): F[CurrencySnapshotContext] = for {
-        validatedS <- validator.validateSignedSnapshot(lastArtifact, context, signedArtifact)
+        validatedS <- validator.validateSignedSnapshot(lastArtifact, context, signedArtifact, lastGlobalSnapshots)
         validatedContext <- validatedS match {
           case Validated.Valid((_, validatedContext)) => validatedContext.pure[F]
           case Validated.Invalid(e)                   => CannotCreateContext(e).raiseError[F, CurrencySnapshotContext]

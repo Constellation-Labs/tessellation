@@ -19,11 +19,12 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.message._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.infrastructure.consensus.update.UnlockConsensusUpdate
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
+import io.constellationnetwork.schema.GlobalIncrementalSnapshot
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
+import io.constellationnetwork.security.{Hashed, Hasher}
 
 import eu.timepit.refined.auto._
 import io.circe.Encoder
@@ -249,7 +250,8 @@ object ConsensusStateUpdater {
     resources: ConsensusResources[Artifact, Kind],
     proposals: List[Hash],
     facilitators: Set[PeerId],
-    consensusFns: ConsensusFunctions[F, Event, Key, Artifact, Context]
+    consensusFns: ConsensusFunctions[F, Event, Key, Artifact, Context],
+    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[Option[ArtifactInfo[Artifact, Context]]] = {
     def go(proposals: List[(Int, Hash)]): F[Option[ArtifactInfo[Artifact, Context]]] =
       proposals match {
@@ -260,7 +262,7 @@ object ConsensusStateUpdater {
             resources.artifacts
               .get(majorityHash)
               .traverse { artifact =>
-                consensusFns.validateArtifact(lastSignedArtifact, lastContext, trigger, artifact, facilitators).map {
+                consensusFns.validateArtifact(lastSignedArtifact, lastContext, trigger, artifact, facilitators, lastGlobalSnapshots).map {
                   validationResultOrError =>
                     validationResultOrError.map {
                       case (artifact, context) =>

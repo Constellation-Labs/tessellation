@@ -17,9 +17,9 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{Con
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.SignedValidator.SignedValidationError
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
+import io.constellationnetwork.security.{Hashed, Hasher}
 
 import derevo.cats.{eqv, show}
 import derevo.derive
@@ -32,14 +32,16 @@ trait CurrencySnapshotValidator[F[_]] {
   def validateSignedSnapshot(
     lastArtifact: Signed[CurrencySnapshotArtifact],
     lastContext: CurrencySnapshotContext,
-    artifact: Signed[CurrencySnapshotArtifact]
+    artifact: Signed[CurrencySnapshotArtifact],
+    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotContext)]]
 
   def validateSnapshot(
     lastArtifact: Signed[CurrencySnapshotArtifact],
     lastContext: CurrencySnapshotContext,
     artifact: CurrencySnapshotArtifact,
-    facilitators: Set[PeerId]
+    facilitators: Set[PeerId],
+    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]]
 }
 
@@ -55,12 +57,13 @@ object CurrencySnapshotValidator {
     def validateSignedSnapshot(
       lastArtifact: Signed[CurrencySnapshotArtifact],
       lastContext: CurrencySnapshotContext,
-      artifact: Signed[CurrencySnapshotArtifact]
+      artifact: Signed[CurrencySnapshotArtifact],
+      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotContext)]] =
       validateSigned(artifact).flatMap { signedV =>
         val facilitators = artifact.proofs.map(_.id).map(PeerId.fromId).toSortedSet
 
-        validateSnapshot(lastArtifact, lastContext, artifact, facilitators).map { snapshotV =>
+        validateSnapshot(lastArtifact, lastContext, artifact, facilitators, lastGlobalSnapshots).map { snapshotV =>
           signedV.product(snapshotV.map { case (_, info) => info })
         }
       }
@@ -69,9 +72,10 @@ object CurrencySnapshotValidator {
       lastArtifact: Signed[CurrencySnapshotArtifact],
       lastContext: CurrencySnapshotContext,
       artifact: CurrencySnapshotArtifact,
-      facilitators: Set[PeerId]
+      facilitators: Set[PeerId],
+      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]] = for {
-      contentV <- validateRecreateContent(lastArtifact, lastContext, artifact, facilitators)
+      contentV <- validateRecreateContent(lastArtifact, lastContext, artifact, facilitators, lastGlobalSnapshots)
       blocksV <- contentV.map(validateNotAcceptedEvents).pure[F]
     } yield
       (contentV, blocksV).mapN {
@@ -101,7 +105,8 @@ object CurrencySnapshotValidator {
       lastArtifact: Signed[CurrencySnapshotArtifact],
       lastContext: CurrencySnapshotContext,
       expected: CurrencySnapshotArtifact,
-      facilitators: Set[PeerId]
+      facilitators: Set[PeerId],
+      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]] = {
       def dataApplicationBlocks = maybeDataApplication.flatTraverse { service =>
         expected.dataApplication.map(_.blocks).traverse {
@@ -114,11 +119,13 @@ object CurrencySnapshotValidator {
         dataApplicationEvents <- dataApplicationBlocks.map(_.map(DataApplicationBlockEvent(_)).toSet)
         blockEvents = expected.blocks.unsorted.map(_.block).map(BlockEvent(_))
         tokenLockBlockEvents = expected.tokenLockBlocks.map(_.unsorted.map(TokenLockBlockEvent(_))).getOrElse(Set.empty)
+        allowSpendsBlockEvents = expected.allowSpendBlocks.map(_.unsorted.map(AllowSpendBlockEvent(_))).getOrElse(Set.empty)
         messageEvents = expected.messages.map(_.toSet.map(CurrencyMessageEvent(_))).getOrElse(Set.empty[CurrencyMessageEvent])
         globalSnapshotSyncEvents = expected.globalSnapshotSyncs
           .map(_.toSet.map(GlobalSnapshotSyncEvent(_)))
           .getOrElse(Set.empty[GlobalSnapshotSyncEvent])
-      } yield dataApplicationEvents ++ blockEvents ++ messageEvents ++ globalSnapshotSyncEvents ++ tokenLockBlockEvents
+      } yield
+        dataApplicationEvents ++ blockEvents ++ messageEvents ++ globalSnapshotSyncEvents ++ tokenLockBlockEvents ++ allowSpendsBlockEvents
 
       // Rewrite if implementation not provided
       val rewards = maybeRewards.orElse(Some {
@@ -148,7 +155,8 @@ object CurrencySnapshotValidator {
                 rewards,
                 facilitators,
                 expected.feeTransactions.map(() => _),
-                expected.artifacts.map(() => _)
+                expected.artifacts.map(() => _),
+                lastGlobalSnapshots
               )
 
           def check(result: F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]) =
