@@ -132,10 +132,12 @@ abstract class CurrencyL1App(
         )
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync[IO].asResource
       snapshotProcessor = CurrencySnapshotProcessor.make(
+        sharedConfig.lastGlobalSnapshotsSync,
         method.identifier,
         storages.address,
         storages.block,
         storages.lastGlobalSnapshot,
+        storages.lastNGlobalSnapshot,
         storages.lastSnapshot,
         storages.transaction,
         sharedServices.globalSnapshotContextFns,
@@ -283,10 +285,12 @@ abstract class CurrencyL1App(
         }.getOrElse {
           Swap
             .run[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](
+              sharedConfig,
               cfg.swap,
               storages.cluster,
               storages.l0Cluster,
               storages.lastGlobalSnapshot,
+              storages.lastNGlobalSnapshot,
               storages.node,
               p2pClient.l0BlockOutputClient,
               p2pClient.swapConsensusClient,
@@ -300,10 +304,12 @@ abstract class CurrencyL1App(
             )
             .merge {
               TokenLock.run[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](
+                sharedConfig,
                 cfg.tokenLock,
                 storages.cluster,
                 storages.l0Cluster,
                 storages.lastGlobalSnapshot,
+                storages.lastNGlobalSnapshot,
                 storages.node,
                 p2pClient.l0BlockOutputClient,
                 p2pClient.tokenLockConsensusClient,

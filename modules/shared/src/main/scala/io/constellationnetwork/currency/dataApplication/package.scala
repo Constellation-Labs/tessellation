@@ -358,18 +358,15 @@ trait DataApplicationL0Service[F[_], D <: DataUpdate, DON <: DataOnChainState, D
     maybeLastSynchronizedGlobalSnapshot <- context.getLastSynchronizedGlobalSnapshot
     maybeLastCurrencySnapshotCombined <- context.getLastCurrencySnapshotCombined
 
-    lastSynchronizedGlobalSnapshot <- OptionT
-      .fromOption(maybeLastSynchronizedGlobalSnapshot)
-      .getOrRaise(new IllegalStateException("lastSynchronizedGlobalSnapshot unavailable"))
-
-    (_, lastCurrencySnapshotState) <- OptionT
-      .fromOption(maybeLastCurrencySnapshotCombined)
-      .getOrRaise(new IllegalStateException("lastCurrencySnapshot unavailable"))
-
-    lastGlobalEpochProgress = lastSynchronizedGlobalSnapshot.epochProgress
-    expiredTokenLocks = lastCurrencySnapshotState.activeTokenLocks.collect { activeTokenLocks =>
-      activeTokenLocks.values.flatten.toList
-        .filter(_.unlockEpoch <= lastGlobalEpochProgress)
+    maybeLastGlobalEpochProgress = maybeLastSynchronizedGlobalSnapshot.map(_.epochProgress)
+    expiredTokenLocks = maybeLastGlobalEpochProgress.flatMap { lastGlobalEpochProgress =>
+      maybeLastCurrencySnapshotCombined.map {
+        case (_, state) =>
+          state.activeTokenLocks.collect { activeTokenLocks =>
+            activeTokenLocks.values.flatten.toList
+              .filter(_.unlockEpoch <= lastGlobalEpochProgress)
+          }.getOrElse(List.empty)
+      }
     }.getOrElse(List.empty)
 
     result <- expiredTokenLocks.traverse { tokenLock =>

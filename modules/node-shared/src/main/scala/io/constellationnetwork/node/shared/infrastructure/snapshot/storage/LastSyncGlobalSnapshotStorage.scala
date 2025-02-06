@@ -1,4 +1,4 @@
-package io.constellationnetwork.currency.l0.snapshot.storage
+package io.constellationnetwork.node.shared.infrastructure.snapshot.storage
 
 import cats.effect.kernel.Async
 import cats.syntax.all._
@@ -7,8 +7,9 @@ import cats.{Applicative, MonadThrow}
 import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
+import io.constellationnetwork.node.shared.config.types.LastGlobalSnapshotsSyncConfig
 import io.constellationnetwork.node.shared.domain.snapshot.Validator.isNextSnapshot
-import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastSnapshotStorage, SnapshotStorage}
+import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastSnapshotStorage, LastSyncGlobalSnapshotStorage, SnapshotStorage}
 import io.constellationnetwork.schema._
 import io.constellationnetwork.security.Hashed
 
@@ -17,24 +18,21 @@ import eu.timepit.refined.types.all.NonNegLong
 import fs2.Stream
 import fs2.concurrent.SignallingRef
 
-trait LastSynchronizedGlobalSnapshotStorage[F[_]] {
-  def getLastSynchronizedCombined: F[Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]]
-  def deleteOlderThanSynchronized(): F[Unit]
-}
-
-object LastSynchronizedGlobalSnapshotStorage {
+object LastSyncGlobalSnapshotStorage {
   def make[F[_]: Async](
+    lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
     currencySnapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
-  ): F[LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo] with LastSynchronizedGlobalSnapshotStorage[F]] =
+  ): F[LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo] with LastSyncGlobalSnapshotStorage[F]] =
     SignallingRef
       .of[F, SortedMap[SnapshotOrdinal, (Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]](SortedMap.empty)
-      .map(make[F](_, currencySnapshotStorage))
+      .map(make[F](lastGlobalSnapshotsSyncConfig, _, currencySnapshotStorage))
 
   def make[F[_]: Async](
+    lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
     snapshotsR: SignallingRef[F, SortedMap[SnapshotOrdinal, (Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]],
     currencySnapshotStorage: SnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo]
-  ): LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo] with LastSynchronizedGlobalSnapshotStorage[F] =
-    new LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo] with LastSynchronizedGlobalSnapshotStorage[F] {
+  ): LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo] with LastSyncGlobalSnapshotStorage[F] =
+    new LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo] with LastSyncGlobalSnapshotStorage[F] {
 
       private def deleteBelow(ordinal: SnapshotOrdinal): F[Unit] = snapshotsR.update {
         _.filterNot { case (key, _) => key < ordinal }
@@ -42,6 +40,9 @@ object LastSynchronizedGlobalSnapshotStorage {
 
       def getCombined(ordinal: SnapshotOrdinal): F[Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] =
         snapshotsR.get.map(_.get(ordinal))
+
+      def get(ordinal: SnapshotOrdinal): F[Option[Hashed[GlobalIncrementalSnapshot]]] =
+        snapshotsR.get.map(_.get(ordinal).map { case (snapshot, _) => snapshot })
 
       def set(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): F[Unit] =
         snapshotsR.modify { snapshots =>
@@ -80,7 +81,7 @@ object LastSynchronizedGlobalSnapshotStorage {
         currencySnapshotStorage.head.flatMap {
           _.flatTraverse {
             case (_, info) =>
-              val offset = NonNegLong(2L)
+              val offset = lastGlobalSnapshotsSyncConfig.syncOffset
 
               info.globalSnapshotSyncView.flatTraverse {
                 _.values
@@ -93,9 +94,47 @@ object LastSynchronizedGlobalSnapshotStorage {
           }
         }
 
+      override def getLastNSynchronized(
+        n: Int
+      ): F[Option[List[Hashed[GlobalIncrementalSnapshot]]]] =
+        currencySnapshotStorage.head.flatMap {
+          case Some((_, info)) =>
+            info.globalSnapshotSyncView.flatTraverse { syncView =>
+              val lastOrdinalOpt = syncView.values
+                .map(_.globalSnapshotOrdinal)
+                .groupBy(identity)
+                .toList
+                .sortBy { case (ordinal, occurrences) => (-occurrences.size, ordinal.value.value) }
+                .map { case (ordinal, _) => ordinal }
+                .maxOption
+
+              lastOrdinalOpt match {
+                case Some(lastOrdinal) =>
+                  val selectedOrdinals = (0 until n).flatMap { i =>
+                    NonNegLong.from(lastOrdinal.value.value - i.toLong).toOption.flatMap(SnapshotOrdinal(_))
+                  }.toSet.toList
+
+                  selectedOrdinals.traverse(get).map { results =>
+                    val snapshots = results.flatten
+                    if (snapshots.isEmpty) None else Some(snapshots)
+                  }
+
+                case None =>
+                  Async[F].pure(None)
+              }
+            }
+          case None =>
+            Async[F].pure(None)
+        }
+
       def deleteOlderThanSynchronized(): F[Unit] = getLastSynchronizedCombined
         .flatMap(_.traverse {
-          case (snapshot, _) => deleteBelow(snapshot.ordinal)
+          case (snapshot, _) =>
+            val deleteOffset = lastGlobalSnapshotsSyncConfig.minGlobalSnapshotsToParticipateConsensus
+            NonNegLong.from(snapshot.ordinal.value - deleteOffset) match {
+              case Left(_)      => deleteBelow(SnapshotOrdinal.MinValue)
+              case Right(value) => deleteBelow(SnapshotOrdinal(value))
+            }
         })
         .void
     }

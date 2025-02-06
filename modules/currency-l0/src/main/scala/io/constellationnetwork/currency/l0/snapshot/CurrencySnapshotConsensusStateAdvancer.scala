@@ -15,8 +15,10 @@ import io.constellationnetwork.currency.l0.snapshot.services.StateChannelSnapsho
 import io.constellationnetwork.currency.schema.currency.CurrencySnapshotContext
 import io.constellationnetwork.ext.collection.FoldableOps.pickMajority
 import io.constellationnetwork.ext.crypto._
+import io.constellationnetwork.node.shared.config.types.LastGlobalSnapshotsSyncConfig
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
+import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSyncGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusStateUpdater._
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.consensus.declaration._
@@ -29,7 +31,7 @@ import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema.currencyMessage.fetchStakingAddress
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.signature.Signed
-import io.constellationnetwork.security.signature.signature.{Signature, _}
+import io.constellationnetwork.security.signature.signature._
 import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
 import io.constellationnetwork.syntax.sortedCollection._
 
@@ -50,6 +52,7 @@ abstract class CurrencySnapshotConsensusStateAdvancer[F[_]]
 object CurrencySnapshotConsensusStateAdvancer {
 
   def make[F[_]: Async: SecurityProvider: Metrics: HasherSelector](
+    lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
     keyPair: KeyPair,
     consensusStorage: CurrencyConsensusStorage[F],
     consensusFns: CurrencySnapshotConsensusFunctions[F],
@@ -58,7 +61,8 @@ object CurrencySnapshotConsensusStateAdvancer {
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
     restartService: RestartService[F, _],
     nodeStorage: NodeStorage[F],
-    leavingDelay: FiniteDuration
+    leavingDelay: FiniteDuration,
+    lastGlobalSnapshotStorage: LastSyncGlobalSnapshotStorage[F]
   ): CurrencySnapshotConsensusStateAdvancer[F] =
     new CurrencySnapshotConsensusStateAdvancer[F] {
       val logger = Slf4jLogger.getLogger[F]
@@ -105,6 +109,9 @@ object CurrencySnapshotConsensusStateAdvancer {
                             for {
                               peerEvents <- consensusStorage.pullEvents(bound)
                               events = peerEvents.toList.flatMap(_._2).map(_._2).toSet
+                              lastNGlobalSnapshotsSynchronized <- lastGlobalSnapshotStorage.getLastNSynchronized(
+                                lastGlobalSnapshotsSyncConfig.minGlobalSnapshotsToParticipateConsensus.value
+                              )
                               (artifact, context, returnedEvents) <- consensusFns
                                 .createProposalArtifact(
                                   state.key,
@@ -113,7 +120,8 @@ object CurrencySnapshotConsensusStateAdvancer {
                                   hasher,
                                   majorityTrigger,
                                   events,
-                                  state.facilitators.value.toSet
+                                  state.facilitators.value.toSet,
+                                  lastNGlobalSnapshotsSynchronized
                                 )
                               returnedPeerEvents = peerEvents.map {
                                 case (peerId, events) =>
@@ -150,39 +158,45 @@ object CurrencySnapshotConsensusStateAdvancer {
                     maybeAllProposals
                       .map(allProposals => allProposals.values.toList.map(_.hash))
                       .flatTraverse { allProposalHashes =>
-                        pickValidatedMajorityArtifact(
-                          proposalInfo,
-                          state.lastOutcome.finished.signedMajorityArtifact,
-                          state.lastOutcome.finished.context,
-                          majorityTrigger,
-                          resources,
-                          allProposalHashes,
-                          state.facilitators.value.toSet,
-                          consensusFns
-                        ).flatMap { maybeMajorityArtifactInfo =>
-                          state.facilitators.value.hash.flatMap { facilitatorsHash =>
-                            maybeMajorityArtifactInfo.traverse { majorityArtifactInfo =>
-                              val newState =
-                                state.copy(status =
-                                  identity[CurrencySnapshotStatus](
-                                    CollectingSignatures(
-                                      majorityArtifactInfo,
-                                      majorityTrigger,
-                                      candidates,
-                                      facilitatorsHash
+                        lastGlobalSnapshotStorage
+                          .getLastNSynchronized(lastGlobalSnapshotsSyncConfig.minGlobalSnapshotsToParticipateConsensus.value)
+                          .flatMap { lastNGlobalSnapshots =>
+                            pickValidatedMajorityArtifact(
+                              proposalInfo,
+                              state.lastOutcome.finished.signedMajorityArtifact,
+                              state.lastOutcome.finished.context,
+                              majorityTrigger,
+                              resources,
+                              allProposalHashes,
+                              state.facilitators.value.toSet,
+                              consensusFns,
+                              lastNGlobalSnapshots
+                            ).flatMap { maybeMajorityArtifactInfo =>
+                              state.facilitators.value.hash.flatMap { facilitatorsHash =>
+                                maybeMajorityArtifactInfo.traverse { majorityArtifactInfo =>
+                                  val newState =
+                                    state.copy(status =
+                                      identity[CurrencySnapshotStatus](
+                                        CollectingSignatures(
+                                          majorityArtifactInfo,
+                                          majorityTrigger,
+                                          candidates,
+                                          facilitatorsHash
+                                        )
+                                      )
                                     )
+                                  val effect = Signature.fromHash(keyPair.getPrivate, majorityArtifactInfo.hash).flatMap { signature =>
+                                    gossip.spread(ConsensusPeerDeclaration(state.key, MajoritySignature(signature, facilitatorsHash)))
+                                  } >> Metrics[F].recordDistribution(
+                                    "dag_consensus_proposal_affinity",
+                                    proposalAffinity(allProposalHashes, proposalInfo.hash)
                                   )
-                                )
-                              val effect = Signature.fromHash(keyPair.getPrivate, majorityArtifactInfo.hash).flatMap { signature =>
-                                gossip.spread(ConsensusPeerDeclaration(state.key, MajoritySignature(signature, facilitatorsHash)))
-                              } >> Metrics[F].recordDistribution(
-                                "dag_consensus_proposal_affinity",
-                                proposalAffinity(allProposalHashes, proposalInfo.hash)
-                              )
-                              (newState, effect).pure[F]
+                                  (newState, effect).pure[F]
+                                }
+                              }
                             }
                           }
-                        }
+
                       }
                 case CollectingSignatures(majorityArtifactInfo, majorityTrigger, candidates, ownFacilitatorsHash) =>
                   val maybeAllSignatures =

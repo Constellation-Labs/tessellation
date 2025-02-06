@@ -28,7 +28,7 @@ import io.constellationnetwork.schema.height.{Height, SubHeight}
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.snapshot.Snapshot
 import io.constellationnetwork.security.signature.Signed
-import io.constellationnetwork.security.{Hasher, SecurityProvider}
+import io.constellationnetwork.security.{Hashed, Hasher, SecurityProvider}
 import io.constellationnetwork.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._
@@ -64,7 +64,8 @@ abstract class SnapshotConsensusFunctions[
     lastContext: Context,
     trigger: ConsensusTrigger,
     artifact: Artifact,
-    facilitators: Set[PeerId]
+    facilitators: Set[PeerId],
+    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[Either[InvalidArtifact, (Artifact, Context)]]
 
   protected def getUpdatedTips(

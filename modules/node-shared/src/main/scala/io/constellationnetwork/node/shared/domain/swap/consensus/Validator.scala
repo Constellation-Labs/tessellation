@@ -5,13 +5,14 @@ import cats.effect.kernel.Async
 import cats.syntax.all._
 
 import io.constellationnetwork.currency.swap.ConsensusInput
+import io.constellationnetwork.node.shared.config.types.LastGlobalSnapshotsSyncConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
-import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
+import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
 import io.constellationnetwork.node.shared.domain.swap.AllowSpendStorage
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hasher, SecurityProvider}
 
@@ -27,6 +28,20 @@ object Validator {
     lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
   ): F[Boolean] =
     lastGlobalSnapshot.getOrdinal.map(_.isDefined)
+
+  def currentNLastGlobalSnapshotsPresent[F[_]: Async](
+    lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
+    lastGlobalSnapshotOrdinal: SnapshotOrdinal,
+    lastNGlobalSnapshot: LastNGlobalSnapshotStorage[F]
+  ): F[Long] = {
+    val minGlobalSnapshotsToParticipateConsensus = lastGlobalSnapshotsSyncConfig.minGlobalSnapshotsToParticipateConsensus.value
+    lastNGlobalSnapshot
+      .getLastN(lastGlobalSnapshotOrdinal, minGlobalSnapshotsToParticipateConsensus)
+      .flatMap {
+        case Some(snapshots) => snapshots.length.toLong.pure
+        case None            => 0L.pure
+      }
+  }
 
   private def enoughPeersForConsensus[F[_]: Async](
     clusterStorage: ClusterStorage[F],
@@ -49,9 +64,11 @@ object Validator {
   ): F[Boolean] = allowSpendStorage.areWaiting
 
   def canStartOwnSwapConsensus[F[_]: Async](
+    lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
     nodeStorage: NodeStorage[F],
     clusterStorage: ClusterStorage[F],
     lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
+    lastNGlobalSnapshot: LastNGlobalSnapshotStorage[F],
     peersCount: PosInt,
     allowSpendStorage: AllowSpendStorage[F]
   ): F[Boolean] =
@@ -59,15 +76,27 @@ object Validator {
       stateReadyForConsensus <- nodeStorage.getNodeState.map(isReadyForConsensus)
       enoughPeers <- enoughPeersForConsensus(clusterStorage, peersCount)
       lastGlobalSnapshotPresent <- isLastGlobalSnapshotPresent(lastGlobalSnapshot)
+      lastNGlobalSnapshotPresent <-
+        if (lastGlobalSnapshotPresent) {
+          lastGlobalSnapshot.get.flatMap(lastSnapshot =>
+            currentNLastGlobalSnapshotsPresent(lastGlobalSnapshotsSyncConfig, lastSnapshot.get.ordinal, lastNGlobalSnapshot)
+          )
+        } else {
+          0L.pure
+        }
       enoughTxs <- atLeastOneAllowSpend(allowSpendStorage)
-
-      res = stateReadyForConsensus && enoughPeers && lastGlobalSnapshotPresent && enoughTxs
+      minGlobalSnapshotsToParticipateConsensus = lastGlobalSnapshotsSyncConfig.minGlobalSnapshotsToParticipateConsensus.value
+      res =
+        stateReadyForConsensus && enoughPeers && lastGlobalSnapshotPresent && enoughTxs && lastNGlobalSnapshotPresent >= lastGlobalSnapshotsSyncConfig.minGlobalSnapshotsToParticipateConsensus.value
       _ <-
         Applicative[F].whenA(!res) {
           val reason = Seq(
             if (!stateReadyForConsensus) "State not ready for consensus" else "",
             if (!enoughPeers) "Not enough peers" else "",
             if (!lastGlobalSnapshotPresent) "No global snapshot" else "",
+            if (lastNGlobalSnapshotPresent < lastGlobalSnapshotsSyncConfig.minGlobalSnapshotsToParticipateConsensus.value)
+              s"No enough last N global snapshots present ($lastNGlobalSnapshotPresent/$minGlobalSnapshotsToParticipateConsensus)"
+            else "",
             if (!enoughTxs) "No allow spends" else ""
           ).filter(_.nonEmpty).mkString(", ")
           logger.debug(s"Cannot start swap own consensus: ${reason}")

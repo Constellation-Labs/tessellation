@@ -8,18 +8,18 @@ import cats.syntax.all._
 
 import scala.concurrent.duration.FiniteDuration
 
-import io.constellationnetwork.currency.dataApplication.{DataTransaction, _}
+import io.constellationnetwork.currency.dataApplication._
 import io.constellationnetwork.currency.l0.snapshot.schema.{CurrencyConsensusKind, CurrencyConsensusOutcome}
 import io.constellationnetwork.currency.l0.snapshot.services.StateChannelSnapshotService
 import io.constellationnetwork.currency.schema.currency._
-import io.constellationnetwork.node.shared.config.types.SnapshotConfig
+import io.constellationnetwork.node.shared.config.types.{SharedConfig, SnapshotConfig}
 import io.constellationnetwork.node.shared.domain.cluster.services.Session
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
-import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
+import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSyncGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
@@ -27,7 +27,6 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.{CurrencySnap
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo}
 import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
 
 import io.circe.Decoder
@@ -36,6 +35,7 @@ import org.http4s.client.Client
 object CurrencySnapshotConsensus {
 
   def make[F[_]: Async: Random: SecurityProvider: Metrics: Supervisor](
+    sharedCfg: SharedConfig,
     gossip: Gossip[F],
     selfId: PeerId,
     keyPair: KeyPair,
@@ -43,7 +43,7 @@ object CurrencySnapshotConsensus {
     collateral: Amount,
     clusterStorage: ClusterStorage[F],
     nodeStorage: NodeStorage[F],
-    lastGlobalSnapshotStorage: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
+    lastGlobalSnapshotStorage: LastSyncGlobalSnapshotStorage[F],
     maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
     snapshotConfig: SnapshotConfig,
     client: Client[F],
@@ -85,6 +85,7 @@ object CurrencySnapshotConsensus {
       )
       consensusStateAdvancer = CurrencySnapshotConsensusStateAdvancer
         .make[F](
+          sharedCfg.lastGlobalSnapshotsSync,
           keyPair,
           consensusStorage,
           consensusFunctions,
@@ -93,7 +94,8 @@ object CurrencySnapshotConsensus {
           maybeDataApplication,
           restartService,
           nodeStorage,
-          leavingDelay
+          leavingDelay,
+          lastGlobalSnapshotStorage
         )
       consensusStateCreator = CurrencySnapshotConsensusStateCreator
         .make[F](consensusFunctions, consensusStorage, lastGlobalSnapshotStorage, gossip, selfId, seedlist)

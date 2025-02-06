@@ -17,6 +17,7 @@ import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.cli.CliMethod
+import io.constellationnetwork.node.shared.config.types.SharedConfig
 import io.constellationnetwork.node.shared.domain.cluster.services.{Cluster, Session}
 import io.constellationnetwork.node.shared.domain.collateral.Collateral
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
@@ -41,6 +42,7 @@ import org.http4s.client.Client
 object Services {
 
   def make[F[_]: Async: Random: JsonSerializer: KryoSerializer: SecurityProvider: HasherSelector: Metrics: Supervisor, R <: CliMethod](
+    sharedCfg: SharedConfig,
     p2PClient: P2PClient[F],
     sharedServices: SharedServices[F, R],
     storages: Storages[F],
@@ -107,6 +109,7 @@ object Services {
 
       consensus <- CurrencySnapshotConsensus
         .make[F](
+          sharedCfg,
           sharedServices.gossip,
           selfId,
           keyPair,

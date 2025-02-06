@@ -25,11 +25,12 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.{SharedArtifact, SpendAction, TokenUnlock}
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
-import io.constellationnetwork.schema.swap.{AllowSpend, AllowSpendBlock, AllowSpendReference}
+import io.constellationnetwork.schema.swap._
 import io.constellationnetwork.schema.tokenLock.TokenLock
 import io.constellationnetwork.schema.tokenLock.TokenLockAmount.toAmount
 import io.constellationnetwork.schema.transaction.{RewardTransaction, Transaction, TransactionReference}
 import io.constellationnetwork.security._
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 import io.constellationnetwork.syntax.sortedCollection.sortedSetSyntax
@@ -49,7 +50,8 @@ trait GlobalSnapshotAcceptanceManager[F[_]] {
     lastActiveTips: SortedSet[ActiveTip],
     lastDeprecatedTips: SortedSet[DeprecatedTip],
     calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]],
-    validationType: StateChannelValidationType
+    validationType: StateChannelValidationType,
+    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
   ): F[
     (
       BlockAcceptanceResult,
@@ -85,7 +87,8 @@ object GlobalSnapshotAcceptanceManager {
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip],
       calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]],
-      validationType: StateChannelValidationType
+      validationType: StateChannelValidationType,
+      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
     ) = {
       implicit val hasher = HasherSelector[F].getForOrdinal(ordinal)
 
@@ -98,10 +101,11 @@ object GlobalSnapshotAcceptanceManager {
               ordinal,
               lastSnapshotContext.copy(balances = lastSnapshotContext.balances ++ acceptanceResult.contextUpdate.balances),
               scEvents,
-              validationType
+              validationType,
+              lastGlobalSnapshots
             )
 
-        spendActions = currencySnapshots.toList.map {
+        acceptedSpendActions = currencySnapshots.toList.map {
           case (_, Left(_))             => Map.empty[Address, List[SharedArtifact]]
           case (address, Right((s, _))) => Map(address -> (s.artifacts.getOrElse(SortedSet.empty[SharedArtifact]).toList))
         }
@@ -111,7 +115,7 @@ object GlobalSnapshotAcceptanceManager {
           .filter { case (_, actions) => actions.nonEmpty }
           .toMap
 
-        _ <- Slf4jLogger.getLogger[F].debug(s"--- Accepted spend actions: ${spendActions.show}")
+        _ <- Slf4jLogger.getLogger[F].debug(s"--- Accepted spend actions: ${acceptedSpendActions.show}")
 
         sCSnapshotHashes <- scSnapshots.toList.traverse {
           case (address, nel) => nel.last.toHashed.map(address -> _.hash)
@@ -124,16 +128,6 @@ object GlobalSnapshotAcceptanceManager {
           allowSpendBlocksForAcceptance,
           lastSnapshotContext,
           ordinal
-        )
-
-        acceptedAllowSpends = allowSpendBlockAcceptanceResult.accepted.flatMap(_.value.transactions.toList)
-
-        updatedAllowSpends = lastSnapshotContext.activeAllowSpends.map(
-          acceptAllowSpends(epochProgress, currencySnapshots, acceptedAllowSpends, _)
-        )
-
-        updatedAllowSpendRefs = lastSnapshotContext.lastAllowSpendRefs.map(
-          acceptAllowSpendRefs(_, allowSpendBlockAcceptanceResult.contextUpdate.lastTxRefs)
         )
 
         acceptedTransactions = acceptanceResult.accepted.flatMap { case (block, _) => block.value.transactions.toSortedSet }.toSortedSet
@@ -149,6 +143,50 @@ object GlobalSnapshotAcceptanceManager {
         (updatedBalancesByRewards, acceptedRewardTxs) = acceptRewardTxs(
           lastSnapshotContext.balances ++ acceptanceResult.contextUpdate.balances ++ currencyAcceptanceBalanceUpdate,
           rewards
+        )
+
+        acceptedGlobalAllowSpends = allowSpendBlockAcceptanceResult.accepted.flatMap(_.value.transactions.toList)
+
+        activeAllowSpendsFromCurrencySnapshots = currencySnapshots.map { case (key, value) => (key.some, value) }
+          .mapFilter(_.toOption.flatMap { case (_, info) => info.activeAllowSpends })
+
+        globalAllowSpends = acceptedGlobalAllowSpends
+          .groupBy(_.value.source)
+          .view
+          .mapValues(SortedSet.from(_))
+          .to(SortedMap)
+
+        allAcceptedSpendTxnsAllowSpendsRefs =
+          acceptedSpendActions.values.flatten
+            .flatMap(spendTxn => List(spendTxn.input, spendTxn.output))
+            .flatMap(_.allowSpendRef)
+            .toList
+
+        globalActiveAllowSpends = lastSnapshotContext.activeAllowSpends.getOrElse(
+          SortedMap.empty[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
+        )
+        globalLastAllowSpendRefs = lastSnapshotContext.lastAllowSpendRefs.getOrElse(
+          SortedMap.empty[Address, AllowSpendReference]
+        )
+
+        updatedAllowSpends <- acceptAllowSpends(
+          epochProgress,
+          activeAllowSpendsFromCurrencySnapshots,
+          globalAllowSpends,
+          globalActiveAllowSpends,
+          allAcceptedSpendTxnsAllowSpendsRefs
+        )
+
+        updatedAllowSpendRefs = acceptAllowSpendRefs(
+          globalLastAllowSpendRefs,
+          allowSpendBlockAcceptanceResult.contextUpdate.lastTxRefs
+        )
+
+        updatedBalancesByAllowSpends = updateGlobalBalancesByAllowSpends(
+          epochProgress,
+          updatedBalancesByRewards,
+          globalAllowSpends,
+          globalActiveAllowSpends
         )
 
         currencyTokenLocks = getTokenLocks(
@@ -219,12 +257,12 @@ object GlobalSnapshotAcceptanceManager {
         gsi = GlobalSnapshotInfo(
           updatedLastStateChannelSnapshotHashes,
           transactionsRefs,
-          updatedBalancesByRewards,
+          updatedBalancesByAllowSpends,
           updatedLastCurrencySnapshots,
           updatedLastCurrencySnapshotProofs,
-          updatedAllowSpends,
+          updatedAllowSpends.some,
           updatedTokenLockBalances.some,
-          updatedAllowSpendRefs
+          updatedAllowSpendRefs.some
         )
 
         stateProof <- gsi.stateProof(maybeMerkleTree)
@@ -238,55 +276,69 @@ object GlobalSnapshotAcceptanceManager {
           acceptedRewardTxs,
           gsi,
           stateProof,
-          spendActions
+          acceptedSpendActions
         )
     }
 
     private def acceptAllowSpends(
       epochProgress: EpochProgress,
-      currencySnapshots: SortedMap[Address, CurrencySnapshotWithState],
-      acceptedGlobalAllowSpends: List[Signed[AllowSpend]],
-      lastActiveAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
-    ): SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]] = {
-      val allowSpendsFromCurrencySnapshots = currencySnapshots.map { case (key, value) => (key.some, value) }
-        .mapFilter(_.toOption.flatMap { case (_, info) => info.activeAllowSpends })
-
-      val globalAllowSpends = acceptedGlobalAllowSpends
-        .groupBy(_.value.source)
-        .view
-        .mapValues(SortedSet.from(_))
-        .to(SortedMap)
-
+      activeAllowSpendsFromCurrencySnapshots: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
+      globalAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
+      lastActiveAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
+      allAcceptedSpendTxnsAllowSpendsRefs: List[Hash]
+    )(implicit hasher: Hasher[F]): F[SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]] = {
       val lastActiveGlobalAllowSpends = lastActiveAllowSpends.getOrElse(None, SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]])
-      val updatedGlobalAllowSpends = globalAllowSpends.foldLeft(lastActiveGlobalAllowSpends) {
+      val expiredGlobalAllowSpends = lastActiveGlobalAllowSpends.collect {
+        case (address, allowSpends) => address -> allowSpends.filter(_.lastValidEpochProgress < epochProgress)
+      }
+
+      val updatedGlobalAllowSpends = (globalAllowSpends ++ expiredGlobalAllowSpends).foldLeft(lastActiveGlobalAllowSpends) {
         case (acc, (address, allowSpends)) =>
           val lastAddressAllowSpends = acc.getOrElse(address, SortedSet.empty[Signed[AllowSpend]])
           val unexpired = (lastAddressAllowSpends ++ allowSpends).filter(_.lastValidEpochProgress >= epochProgress)
           acc + (address -> unexpired)
       }
 
-      val updatedCurrencyAllowSpends = allowSpendsFromCurrencySnapshots.foldLeft(lastActiveAllowSpends) {
-        case (accAllowSpends, (metagraphId, metagraphAllowSpends)) =>
-          val lastActiveMetagraphAllowSpends =
-            accAllowSpends.getOrElse(metagraphId, SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]])
+      def processMetagraphAllowSpends(
+        metagraphId: Option[Address],
+        metagraphAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
+        accAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
+      ): F[SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]] = {
+        val lastActiveMetagraphAllowSpends = accAllowSpends.getOrElse(metagraphId, SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]])
 
-          val updatedMetagraphAllowSpends =
-            metagraphAllowSpends.foldLeft(lastActiveMetagraphAllowSpends) {
-              case (accMetagraphAllowSpends, (address, addressAllowSpends)) =>
-                val lastAddressAllowSpends = accMetagraphAllowSpends.getOrElse(address, SortedSet.empty[Signed[AllowSpend]])
+        metagraphAllowSpends.toList.traverse {
+          case (address, addressAllowSpends) =>
+            val lastAddressAllowSpends = lastActiveMetagraphAllowSpends.getOrElse(address, SortedSet.empty[Signed[AllowSpend]])
 
-                val unexpired = (lastAddressAllowSpends ++ addressAllowSpends)
-                  .filter(_.lastValidEpochProgress >= epochProgress)
-                accMetagraphAllowSpends + (address -> unexpired)
-            }
+            val validAllowSpendsF = (lastAddressAllowSpends ++ addressAllowSpends)
+              .filter(_.lastValidEpochProgress >= epochProgress)
+              .toList
+              .traverse(_.toHashed)
+              .map { hashedAllowSpends =>
+                hashedAllowSpends.filterNot(h => allAcceptedSpendTxnsAllowSpendsRefs.contains(h.hash))
+              }
+              .map(_.map(_.signed).toSortedSet)
 
-          accAllowSpends + (metagraphId -> updatedMetagraphAllowSpends)
+            validAllowSpendsF.map(validAllowSpends => address -> validAllowSpends)
+        }.map { updatedMetagraphAllowSpends =>
+          accAllowSpends + (metagraphId -> SortedMap(updatedMetagraphAllowSpends: _*))
+        }
       }
 
-      if (updatedGlobalAllowSpends.nonEmpty)
-        updatedCurrencyAllowSpends + (None -> updatedGlobalAllowSpends)
-      else
-        updatedCurrencyAllowSpends
+      activeAllowSpendsFromCurrencySnapshots.toList
+        .foldLeft(lastActiveAllowSpends.pure[F]) {
+          case (accAllowSpendsF, (metagraphId, metagraphAllowSpends)) =>
+            for {
+              accAllowSpends <- accAllowSpendsF
+              updatedAllowSpends <- processMetagraphAllowSpends(metagraphId, metagraphAllowSpends, accAllowSpends)
+            } yield updatedAllowSpends
+        }
+        .map { updatedCurrencyAllowSpends =>
+          if (updatedGlobalAllowSpends.nonEmpty)
+            updatedCurrencyAllowSpends + (None -> updatedGlobalAllowSpends)
+          else
+            updatedCurrencyAllowSpends
+        }
     }
 
     private def getTokenLocks(
@@ -361,6 +413,40 @@ object GlobalSnapshotAcceptanceManager {
           }
 
           accTokenLockBalances + (metagraphId -> updatedMetagraphTokenLocksBalances)
+      }
+    }
+
+    private def updateGlobalBalancesByAllowSpends(
+      epochProgress: EpochProgress,
+      currentBalances: SortedMap[Address, Balance],
+      globalAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
+      lastActiveAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
+    ): SortedMap[Address, Balance] = {
+      val lastActiveGlobalAllowSpends = lastActiveAllowSpends.getOrElse(None, SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]])
+      val expiredGlobalAllowSpends = lastActiveGlobalAllowSpends.collect {
+        case (address, allowSpends) => address -> allowSpends.filter(_.lastValidEpochProgress < epochProgress)
+      }
+
+      (globalAllowSpends ++ expiredGlobalAllowSpends).foldLeft(currentBalances) {
+        case (acc, (address, allowSpends)) =>
+          val unexpired = allowSpends.filter(_.lastValidEpochProgress >= epochProgress)
+          val expired = allowSpends.filter(_.lastValidEpochProgress < epochProgress)
+
+          val updatedBalanceUnexpired =
+            unexpired.foldLeft(acc.getOrElse(address, Balance.empty)) { (currentBalance, allowSpend) =>
+              currentBalance
+                .minus(SwapAmount.toAmount(allowSpend.amount))
+                .getOrElse(currentBalance)
+                .minus(AllowSpendFee.toAmount(allowSpend.fee))
+                .getOrElse(currentBalance)
+            }
+          val updatedBalanceExpired = expired.foldLeft(updatedBalanceUnexpired) { (currentBalance, allowSpend) =>
+            currentBalance
+              .plus(SwapAmount.toAmount(allowSpend.amount))
+              .getOrElse(currentBalance)
+          }
+
+          acc.updated(address, updatedBalanceExpired)
       }
     }
 

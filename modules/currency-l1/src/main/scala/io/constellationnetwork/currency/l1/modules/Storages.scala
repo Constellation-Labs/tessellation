@@ -17,7 +17,7 @@ import io.constellationnetwork.node.shared.domain.swap.{AllowSpendStorage, Conte
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockStorage
 import io.constellationnetwork.node.shared.domain.tokenlock.{ContextualTokenLockValidator, TokenLockStorage}
 import io.constellationnetwork.node.shared.infrastructure.cluster.storage.L0ClusterStorage
-import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastSnapshotStorage
+import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
 import io.constellationnetwork.node.shared.modules.SharedStorages
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.peer.L0Peer
@@ -51,6 +51,8 @@ object Storages {
       globalL0ClusterStorage <- L0ClusterStorage.make[F](globalL0Peer)
       lastCurrencySnapshotStorage <- LastSnapshotStorage.make[F, S, SI]
       lastGlobalSnapshotStorage <- LastSnapshotStorage.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo]
+      lastNGlobalSnapshotStorage <- LastNGlobalSnapshotStorage.make[F]
+
       transactionStorage <- TransactionReference.emptyCurrency(currencyIdentifier).flatMap {
         TransactionStorage.make[F](_, contextualTransactionValidator)
       }
@@ -81,6 +83,7 @@ object Storages {
         val allowSpendBlock = allowSpendBlockStorage
         val tokenLock = tokenLockStorage
         val tokenLockBlock = tokenLockBlockStorage
+        val lastNGlobalSnapshot = lastNGlobalSnapshotStorage
       }
 }
 

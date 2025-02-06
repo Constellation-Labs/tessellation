@@ -14,7 +14,7 @@ import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.PeerId
 
 import com.comcast.ip4s.{Host, Port}
-import eu.timepit.refined.types.numeric.{NonNegLong, _}
+import eu.timepit.refined.types.numeric._
 import fs2.io.file.Path
 
 object types {
@@ -32,7 +32,8 @@ object types {
     lastKryoHashOrdinal: Map[AppEnvironment, SnapshotOrdinal],
     addresses: AddressesConfig,
     allowSpends: AllowSpendsConfig,
-    tokenLocks: TokenLocksConfig
+    tokenLocks: TokenLocksConfig,
+    lastGlobalSnapshotsSync: LastGlobalSnapshotsSyncConfig
   )
 
   case class SharedConfig(
@@ -50,7 +51,8 @@ object types {
     lastKryoHashOrdinal: Map[AppEnvironment, SnapshotOrdinal],
     addresses: AddressesConfig,
     allowSpends: AllowSpendsConfig,
-    tokenLocks: TokenLocksConfig
+    tokenLocks: TokenLocksConfig,
+    lastGlobalSnapshotsSync: LastGlobalSnapshotsSyncConfig
   )
 
   case class SharedTrustConfig(
@@ -155,4 +157,6 @@ object types {
   case class AllowSpendsConfig(lastValidEpochProgress: MinMax)
 
   case class TokenLocksConfig(minEpochProgressesToLock: NonNegLong)
+
+  case class LastGlobalSnapshotsSyncConfig(syncOffset: NonNegLong, minGlobalSnapshotsToParticipateConsensus: PosInt)
 }

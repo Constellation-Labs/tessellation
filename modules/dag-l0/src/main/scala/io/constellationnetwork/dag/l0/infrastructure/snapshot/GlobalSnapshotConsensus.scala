@@ -17,6 +17,7 @@ import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.{GlobalCons
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.cli.CliMethod
+import io.constellationnetwork.node.shared.config.types.SharedConfig
 import io.constellationnetwork.node.shared.domain.cluster.services.Session
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
@@ -48,6 +49,7 @@ import org.http4s.client.Client
 object GlobalSnapshotConsensus {
 
   def make[F[_]: Async: Random: KryoSerializer: JsonSerializer: HasherSelector: SecurityProvider: Metrics: Supervisor, R <: CliMethod](
+    sharedCfg: SharedConfig,
     gossip: Gossip[F],
     selfId: PeerId,
     keyPair: KeyPair,
@@ -111,6 +113,7 @@ object GlobalSnapshotConsensus {
       )
       consensusStateAdvancer = GlobalSnapshotConsensusStateAdvancer
         .make[F](
+          sharedCfg.lastGlobalSnapshotsSync,
           keyPair,
           consensusStorage,
           globalSnapshotStorage,

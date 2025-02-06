@@ -14,10 +14,11 @@ import io.constellationnetwork.currency.swap.{ConsensusInput, ConsensusOutput}
 import io.constellationnetwork.dag.l1.http.p2p.L0BlockOutputClient
 import io.constellationnetwork.dag.l1.modules.{Queues, Services}
 import io.constellationnetwork.node.shared.cli.CliMethod
+import io.constellationnetwork.node.shared.config.types.SharedConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorage, L0ClusterStorage}
 import io.constellationnetwork.node.shared.domain.consensus.config.SwapConsensusConfig
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
-import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
+import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockStorage
 import io.constellationnetwork.node.shared.domain.swap.consensus.Validator.{
   canStartOwnSwapConsensus,
@@ -42,10 +43,12 @@ object Swap {
     SI <: SnapshotInfo[P],
     R <: CliMethod
   ](
+    sharedCfg: SharedConfig,
     swapConsensusCfg: SwapConsensusConfig,
     clusterStorage: ClusterStorage[F],
     l0ClusterStorage: L0ClusterStorage[F],
     lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
+    lastNGlobalSnapshot: LastNGlobalSnapshotStorage[F],
     nodeStorage: NodeStorage[F],
     blockOutputClient: L0BlockOutputClient[F],
     consensusClient: ConsensusClient[F],
@@ -71,9 +74,11 @@ object Swap {
         .awakeEvery(5.seconds)
         .evalFilter { _ =>
           canStartOwnSwapConsensus(
+            sharedCfg.lastGlobalSnapshotsSync,
             nodeStorage,
             clusterStorage,
             lastGlobalSnapshot,
+            lastNGlobalSnapshot,
             swapConsensusCfg.peersCount,
             allowSpendStorage
           ).handleErrorWith { e =>

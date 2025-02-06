@@ -18,7 +18,7 @@ import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.kryo.KryoSerializer
-import io.constellationnetwork.node.shared.config.types.{AddressesConfig, SnapshotSizeConfig}
+import io.constellationnetwork.node.shared.config.types.{AddressesConfig, LastGlobalSnapshotsSyncConfig, SnapshotSizeConfig}
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
 import io.constellationnetwork.node.shared.domain.swap.block.{
   AllowSpendBlockAcceptanceLogic,
@@ -252,6 +252,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         .make[IO](addressesConfig, None, None, Some(Map.empty[Address, NonEmptySet[PeerId]]), SortedMap.empty, Long.MaxValue, txHasher)
 
     val currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
+      LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10)),
       BlockAcceptanceManager.make[IO](validators.currencyBlockValidator, txHasher),
       TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),
       AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
