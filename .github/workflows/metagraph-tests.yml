@@ -27,3 +27,8 @@ jobs:
     needs: call-workflow-setup-environment
     uses: ./.github/workflows/test-metagraph-rewards.yml
     secrets: inherit
+
+  call-test-allow-spends-and-spend-transactions:
+    needs: call-workflow-setup-environment
+    uses: ./.github/workflows/test-allow-spends-and-spend-transactions.yml
+    secrets: inherit
