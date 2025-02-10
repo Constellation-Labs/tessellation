@@ -17,12 +17,22 @@ jobs:
           JAVA_VERSION: 11
         uses: "./.github/templates/actions/setup_java_and_scala"
 
+      - name: Cache Hypergraph and Shared Jars
+        id: cache-hypergraph-artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            .github/code/hypergraph
+            .github/code/shared_jars
+          key: hypergraph-artifacts-${{ hashFiles('**/build.sbt', '**/src/main/scala/io/constellationnetwork/**') }}
+
       - name: Setup Hypergraph
+        if: steps.cache-hypergraph-artifacts.outputs.cache-hit != 'true'
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         uses: "./.github/templates/actions/hypergraph/setup"
 
-      - name: Cache SBT and Coursier (~/.ivy2, ~/.sbt, ~/.cache/coursier)
+      - name: Cache SBT and Coursier
         uses: actions/cache@v4
         with:
           path: ~/.m2
@@ -58,7 +68,15 @@ jobs:
           JAVA_VERSION: 11
         uses: "./.github/templates/actions/setup_java_and_scala"
 
-      - name: Cache SBT and Coursier (~/.ivy2, ~/.sbt, ~/.cache/coursier) - Reuse from setup hypergraph
+      # Cache for project template metagraph
+      - name: Cache Project Template Metagraph
+        id: cache-metagraph
+        uses: actions/cache@v4
+        with:
+          path: .github/code/metagraphs/project-template-metagraph
+          key: project-template-metagraph-${{ hashFiles('**/build.sbt', '**/src/main/scala/io/constellationnetwork/**', '**/templates/project_template/**') }}
+
+      - name: Cache SBT and Coursier
         uses: actions/cache@v4
         with:
           path: ~/.m2
@@ -67,6 +85,7 @@ jobs:
             maven-${{ runner.os }}-
 
       - name: Setup project template metagraph
+        if: steps.cache-metagraph.outputs.cache-hit != 'true'
         with:
           METAGRAPH_NAME: project-template-metagraph
           TEMPLATE_NAME: project_template

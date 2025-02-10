@@ -3,6 +3,7 @@ package com.my.project_template.shared_data.types
 import io.constellationnetwork.currency.dataApplication.{DataCalculatedState, DataOnChainState, DataUpdate}
 import io.constellationnetwork.ext.refined.{decoderOf, encoderOf}
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.artifact.SpendTransaction
 
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
@@ -44,6 +45,14 @@ object Types {
   case class UsageUpdateWithFee(
     address: Address,
     usage: NonNegLong
+  ) extends UsageUpdate
+
+  @derive(decoder, encoder)
+  case class UsageUpdateWithSpendTransaction(
+    address: Address,
+    usage: NonNegLong,
+    spendTransactionA: SpendTransaction,
+    spendTransactionB: SpendTransaction
   ) extends UsageUpdate
 
   @derive(decoder, encoder)
