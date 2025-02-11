@@ -32,9 +32,7 @@ import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
 import eu.timepit.refined.boolean.Or
 import eu.timepit.refined.pureconfig._
-import pureconfig.ConfigSource
 import pureconfig.generic.auto._
-import pureconfig.module.catseffect.syntax._
 import pureconfig.module.enumeratum._
 
 object Main
@@ -44,24 +42,21 @@ object Main
       ClusterId("17e78993-37ea-4539-a4f3-039068ea1e92"),
       version = TessellationVersion.unsafeFrom(BuildInfo.version)
     ) {
+
   val opts: Opts[Run] = cli.method.opts
+
+  protected val configFiles: List[String] = List("dag-l1.conf")
 
   type KryoRegistrationIdRange = DagL1KryoRegistrationIdRange Or SharedKryoRegistrationIdRange
 
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
     dagL1KryoRegistrar.union(sharedKryoRegistrar)
 
-  val networkStateAfterJoining: NodeState = NodeState.Ready
-
   def run(method: Run, nodeShared: NodeShared[IO, Run]): Resource[IO, Unit] = {
     import nodeShared._
 
     for {
-      cfgR <- ConfigSource
-        .resources("dag-l1.conf")
-        .withFallback(ConfigSource.default)
-        .loadF[IO, AppConfigReader]()
-        .asResource
+      cfgR <- loadConfigAs[AppConfigReader].asResource
       cfg = method.appConfig(cfgR, sharedConfig)
 
       queues <- Queues.make[IO](sharedQueues).asResource

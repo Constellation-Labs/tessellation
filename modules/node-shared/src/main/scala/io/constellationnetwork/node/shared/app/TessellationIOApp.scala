@@ -6,6 +6,8 @@ import cats.effect._
 import cats.effect.std.{Random, Supervisor}
 import cats.syntax.all._
 
+import scala.reflect.ClassTag
+
 import io.constellationnetwork.env.AppEnvironment.Dev
 import io.constellationnetwork.env.env._
 import io.constellationnetwork.env.{AppEnvironment, JarSignature}
@@ -30,7 +32,6 @@ import io.constellationnetwork.node.shared.resources.SharedResources
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.cluster.ClusterId
 import io.constellationnetwork.schema.generation.Generation
-import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.TessellationVersion
 import io.constellationnetwork.security._
@@ -45,10 +46,10 @@ import eu.timepit.refined.pureconfig._
 import fs2.Stream
 import fs2.concurrent.SignallingRef
 import org.typelevel.log4cats.slf4j.Slf4jLogger
-import pureconfig.ConfigSource
 import pureconfig.generic.auto._
 import pureconfig.module.catseffect.syntax._
 import pureconfig.module.enumeratum._
+import pureconfig.{ConfigReader, ConfigSource}
 
 abstract class TessellationIOApp[A <: CliMethod](
   name: String,
@@ -67,15 +68,22 @@ abstract class TessellationIOApp[A <: CliMethod](
     */
   def opts: Opts[A]
 
+  protected val configFiles: List[String]
+
   type KryoRegistrationIdRange
 
   /** Kryo registration is required for (de)serialization.
     */
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]]
 
-  val networkStateAfterJoining: NodeState
-
   protected val logger = Slf4jLogger.getLogger[IO]
+
+  protected def loadConfigAs[C: ConfigReader: ClassTag]: IO[C] =
+    configFiles
+      .foldRight(ConfigSource.default) { (file, acc) =>
+        ConfigSource.resources(file).withFallback(acc)
+      }
+      .loadF[IO, C]()
 
   override protected def computeWorkerThreadCount: Int =
     Math.max(2, Runtime.getRuntime().availableProcessors() - 1)
@@ -91,7 +99,7 @@ abstract class TessellationIOApp[A <: CliMethod](
       val registrar: Map[Class[_], Int Refined Or[KryoRegistrationIdRange, NodeSharedOrSharedRegistrationIdRange]] =
         kryoRegistrar.union(nodeSharedKryoRegistrar)
 
-      ConfigSource.default.loadF[IO, SharedConfigReader]().flatMap { cfgR =>
+      loadConfigAs[SharedConfigReader].flatMap { cfgR =>
         val cfg = method.nodeSharedConfig(cfgR)
 
         val _hashSelect = new HashSelect {
@@ -194,8 +202,7 @@ abstract class TessellationIOApp[A <: CliMethod](
                                           services.localHealthcheck,
                                           _seedlist,
                                           selfId,
-                                          versionHash,
-                                          networkStateAfterJoining
+                                          versionHash
                                         )
                                         .asResource
 
