@@ -11,7 +11,6 @@ import io.constellationnetwork.node.shared.domain.cluster.programs.{Joining, Pee
 import io.constellationnetwork.node.shared.domain.healthcheck.LocalHealthcheck
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.http.p2p.clients.{ClusterClient, SignClient}
-import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
@@ -27,8 +26,7 @@ object SharedPrograms {
     localHealthcheck: LocalHealthcheck[F],
     seedlist: Option[Set[SeedlistEntry]],
     nodeId: PeerId,
-    versionHash: Hash,
-    networkStateAfterJoin: NodeState
+    versionHash: Hash
   ): F[SharedPrograms[F, A]] =
     for {
       pd <- PeerDiscovery.make(clusterClient, storages.cluster, nodeId)
@@ -44,7 +42,7 @@ object SharedPrograms {
           localHealthcheck,
           seedlist,
           nodeId,
-          networkStateAfterJoin,
+          cfg.stateAfterJoining,
           versionHash,
           pd
         )
