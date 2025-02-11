@@ -31,9 +31,7 @@ import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvide
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
 import eu.timepit.refined.pureconfig._
-import pureconfig.ConfigSource
 import pureconfig.generic.auto._
-import pureconfig.module.catseffect.syntax._
 import pureconfig.module.enumeratum._
 
 trait OverridableL0 extends TessellationIOApp[Run] {
@@ -50,27 +48,28 @@ abstract class CurrencyL0App(
   clusterId: ClusterId,
   tessellationVersion: TessellationVersion,
   metagraphVersion: MetagraphVersion
-) extends TessellationIOApp[Run](name, header, clusterId, version = tessellationVersion)
+) extends TessellationIOApp[Run](
+      name,
+      header,
+      clusterId,
+      version = tessellationVersion
+    )
     with OverridableL0 {
 
   val opts: Opts[Run] = method.opts
+
+  protected val configFiles: List[String] = List("currency-l0.conf")
 
   type KryoRegistrationIdRange = NodeSharedOrSharedRegistrationIdRange
 
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
     nodeSharedKryoRegistrar
 
-  val networkStateAfterJoining: NodeState = NodeState.WaitingForDownload
-
   def run(method: Run, nodeShared: NodeShared[IO, Run]): Resource[IO, Unit] = {
     import nodeShared._
 
     for {
-      cfgR <- ConfigSource
-        .resources("currency-l0.conf")
-        .withFallback(ConfigSource.default)
-        .loadF[IO, AppConfigReader]()
-        .asResource
+      cfgR <- loadConfigAs[AppConfigReader].asResource
       cfg = method.appConfig(cfgR, sharedConfig)
 
       dataApplicationService <- dataApplication.sequence

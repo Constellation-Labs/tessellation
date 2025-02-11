@@ -34,9 +34,7 @@ import io.constellationnetwork.security.signature.Signed
 import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
 import eu.timepit.refined.pureconfig._
-import pureconfig.ConfigSource
 import pureconfig.generic.auto._
-import pureconfig.module.catseffect.syntax._
 import pureconfig.module.enumeratum._
 
 object Main
@@ -49,22 +47,18 @@ object Main
 
   val opts: Opts[Run] = cli.method.opts
 
+  protected val configFiles: List[String] = List("dag-l0.conf")
+
   type KryoRegistrationIdRange = DagL0KryoRegistrationIdRange
 
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
     dagL0KryoRegistrar
 
-  val networkStateAfterJoining: NodeState = NodeState.WaitingForDownload
-
   def run(method: Run, nodeShared: NodeShared[IO, Run]): Resource[IO, Unit] = {
     import nodeShared._
 
     for {
-      cfgR <- ConfigSource
-        .resources("dag-l0.conf")
-        .withFallback(ConfigSource.default)
-        .loadF[IO, AppConfigReader]()
-        .asResource
+      cfgR <- loadConfigAs[AppConfigReader].asResource
       cfg = method.appConfig(cfgR, sharedConfig)
       queues <- Queues.make[IO](sharedQueues).asResource
 

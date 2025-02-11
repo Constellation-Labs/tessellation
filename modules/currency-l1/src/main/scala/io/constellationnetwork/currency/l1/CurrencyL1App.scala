@@ -1,10 +1,7 @@
 package io.constellationnetwork.currency.l1
 
 import cats.effect.{IO, Resource}
-import cats.syntax.applicativeError._
-import cats.syntax.option._
-import cats.syntax.semigroupk._
-import cats.syntax.traverse._
+import cats.syntax.all._
 
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL1Service, L1NodeContext}
 import io.constellationnetwork.currency.l1.cli.method
@@ -42,9 +39,7 @@ import com.monovore.decline.Opts
 import eu.timepit.refined.auto._
 import eu.timepit.refined.boolean.Or
 import eu.timepit.refined.pureconfig._
-import pureconfig.ConfigSource
 import pureconfig.generic.auto._
-import pureconfig.module.catseffect.syntax._
 import pureconfig.module.enumeratum._
 
 trait OverridableL1 extends TessellationIOApp[Run] {
@@ -69,23 +64,18 @@ abstract class CurrencyL1App(
 
   val opts: Opts[Run] = method.opts
 
+  protected val configFiles: List[String] = List("currency-l1.conf", "dag-l1.conf")
+
   type KryoRegistrationIdRange = NodeSharedOrSharedRegistrationIdRange Or DagL1KryoRegistrationIdRange
 
   val kryoRegistrar: Map[Class[_], KryoRegistrationId[KryoRegistrationIdRange]] =
     nodeSharedKryoRegistrar.union(dagL1KryoRegistrar)
 
-  val networkStateAfterJoining: NodeState = NodeState.Ready
-
   def run(method: Run, nodeShared: NodeShared[IO, Run]): Resource[IO, Unit] = {
     import nodeShared._
 
     for {
-      cfgR <- ConfigSource
-        .resources("currency-l1.conf")
-        .withFallback(ConfigSource.resources("dag-l1.conf"))
-        .withFallback(ConfigSource.default)
-        .loadF[IO, AppConfigReader]()
-        .asResource
+      cfgR <- loadConfigAs[AppConfigReader].asResource
       cfg = method.appConfig(cfgR, sharedConfig)
 
       dagL1Queues <- DAGL1Queues.make[IO](sharedQueues).asResource

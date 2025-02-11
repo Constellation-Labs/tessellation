@@ -43,6 +43,7 @@ object method {
       c.gossip,
       httpConfig,
       c.leavingDelay,
+      c.stateAfterJoining,
       CollateralConfig(
         amount = collateralAmount.getOrElse(Amount(NonNegLong.MinValue))
       ),
