@@ -18,7 +18,7 @@ import io.constellationnetwork.currency.http.Codecs.{feeTransactionRequestDecode
 import io.constellationnetwork.currency.schema.EstimatedFee
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import io.constellationnetwork.ext.derevo.ordering
-import io.constellationnetwork.json.JsonBinarySerializer
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.routes.internal.ExternalUrlPrefix
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.{SharedArtifact, TokenUnlock}
@@ -71,7 +71,7 @@ object DataTransaction {
   def getHashes[F[_]: Async: Hasher](
     data: List[DataTransactions],
     serializeDataUpdate: DataUpdate => F[Array[Byte]]
-  ): F[List[NonEmptyList[hash.Hash]]] =
+  )(implicit jsonSerializer: JsonSerializer[F]): F[List[NonEmptyList[hash.Hash]]] =
     data.traverse { dataTransactions =>
       dataTransactions.toList.traverse { signedTransaction =>
         signedTransaction.value match {
@@ -104,8 +104,8 @@ case class FeeTransaction(
 ) extends DataTransaction
 
 object FeeTransaction {
-  def serialize[F[_]: Async](feeTransaction: FeeTransaction): F[Array[Byte]] =
-    Async[F].delay(JsonBinarySerializer.serialize(feeTransaction))
+  def serialize[F[_]: Async](feeTransaction: FeeTransaction)(implicit jsonSerializer: JsonSerializer[F]): F[Array[Byte]] =
+    jsonSerializer.serialize(feeTransaction)
 
   def getFeeTransactions(dataTransactions: List[DataTransactions]): List[Signed[FeeTransaction]] =
     collectTransactions(dataTransactions) {

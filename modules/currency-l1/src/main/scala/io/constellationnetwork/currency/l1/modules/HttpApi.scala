@@ -11,6 +11,7 @@ import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationL1Se
 import io.constellationnetwork.currency.l1.http.{DataApplicationRoutes, TransactionRoutes}
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.dag.l1.http.{Routes => DAGRoutes}
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.types.HttpConfig
 import io.constellationnetwork.node.shared.http.p2p.middlewares.{PeerAuthMiddleware, `X-Id-Middleware`}
@@ -28,7 +29,7 @@ import org.http4s.{HttpApp, HttpRoutes}
 object HttpApi {
 
   def make[
-    F[_]: Async: HasherSelector: SecurityProvider: Metrics: Supervisor: L1NodeContext,
+    F[_]: Async: HasherSelector: JsonSerializer: SecurityProvider: Metrics: Supervisor: L1NodeContext,
     P <: StateProof,
     S <: Snapshot,
     SI <: SnapshotInfo[P],
@@ -79,7 +80,7 @@ object HttpApi {
 }
 
 sealed abstract class HttpApi[
-  F[_]: Async: HasherSelector: SecurityProvider: Metrics: Supervisor: L1NodeContext,
+  F[_]: Async: HasherSelector: JsonSerializer: SecurityProvider: Metrics: Supervisor: L1NodeContext,
   R <: CliMethod
 ] private (
   maybeDataApplication: Option[BaseDataApplicationL1Service[F]],

@@ -2,7 +2,8 @@ const {dag4} = require('@stardust-collective/dag4');
 const jsSha256 = require('js-sha256');
 const axios = require('axios');
 const { z } = require('zod');
-const { parseSharedArgs } = require('../shared');
+const { compress } = require("brotli");
+const {parseSharedArgs} = require('../shared');
 
 const CliArgsSchema = z.object({
     privateKey: z.string()
@@ -35,6 +36,13 @@ const getEncoded = (value) => {
     return energyValue;
 };
 
+const serializeBrotli = (content, compressionLevel = 2) => {
+    const jsonString = JSON.stringify(content);
+    const encoder = new TextEncoder();
+    const utf8Bytes = encoder.encode(jsonString);
+    return compress(utf8Bytes, {quality: compressionLevel});
+};
+
 const serialize = (msg) => {
     const coded = Buffer.from(msg, 'utf8').toString('hex');
     return coded;
@@ -45,6 +53,21 @@ const generateProof = async (message, walletPrivateKey, account) => {
     const serializedTx = serialize(encoded);
     const hash = jsSha256.sha256(Buffer.from(serializedTx, 'hex'));
     const signature = await dag4.keyStore.sign(walletPrivateKey, hash);
+
+    const publicKey = account.publicKey;
+    const uncompressedPublicKey =
+        publicKey.length === 128 ? '04' + publicKey : publicKey;
+
+    return {
+        id: uncompressedPublicKey.substring(2),
+        signature
+    };
+};
+
+const generateProofFee = async (message, privateKey, account) => {
+    const serializedTx = await serializeBrotli(message);
+    const messageHash = jsSha256.sha256(Buffer.from(serializedTx, "hex"));
+    const signature = await dag4.keyStore.sign(privateKey, messageHash);
 
     const publicKey = account.publicKey;
     const uncompressedPublicKey =
@@ -94,12 +117,12 @@ const sendDataTransactionsUsingUrls = async (
 
     const estimateFeeResponse = await getEstimateFeeResponse(metagraphL1DataUrl, dataUpdate)
     const feeTransaction = {
-        source: account.address,
-        destination:estimateFeeResponse.address,
         amount: estimateFeeResponse.fee,
-        dataUpdateRef: estimateFeeResponse.updateHash
+        dataUpdateRef: estimateFeeResponse.updateHash,
+        destination: estimateFeeResponse.address,
+        source: account.address
     }
-    const feeTransactionProof = await generateProof(feeTransaction, privateKey, account);
+    const feeTransactionProof = await generateProofFee(feeTransaction, privateKey, account);
 
     const body = {
         data: {
