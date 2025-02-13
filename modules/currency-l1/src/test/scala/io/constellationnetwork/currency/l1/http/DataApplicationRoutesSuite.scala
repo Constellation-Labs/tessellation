@@ -57,7 +57,7 @@ import suite.HttpSuite
 
 object DataApplicationRoutesSuite extends HttpSuite {
 
-  type Res = (SecurityProvider[IO], Hasher[IO], Supervisor[IO], Random[IO])
+  type Res = (SecurityProvider[IO], Hasher[IO], Supervisor[IO], Random[IO], JsonSerializer[IO])
 
   val defaultL1Service = new DummyDataApplicationL1Service
   val defaultGlobalSnapshotStorage = mockLastSnapshotStorage[GlobalIncrementalSnapshot, GlobalSnapshotInfo]()
@@ -86,7 +86,7 @@ object DataApplicationRoutesSuite extends HttpSuite {
     lastCurrencySnapshotStorage: LastSnapshotStorage[IO, CurrencyIncrementalSnapshot, CurrencySnapshotInfo] = defaultCurrencySnapshotStorage
   ): IO[HttpRoutes[IO]] =
     sharedResource.use { res =>
-      implicit val (sp, h, sv, r) = res
+      implicit val (sp, h, sv, r, js) = res
       for {
         consensusQueue <- Queue.unbounded[IO, Signed[ConsensusInput.PeerConsensusInput]]
         implicit0(ctx: L1NodeContext[IO]) = L1NodeContext.make[IO](lastGlobalSnapshotStorage, lastCurrencySnapshotStorage)
@@ -109,7 +109,7 @@ object DataApplicationRoutesSuite extends HttpSuite {
     h: Hasher[IO] = Hasher.forJson[IO]
     sv <- Supervisor[IO]
     r <- Random.scalaUtilRandom.asResource
-  } yield (sp, h, sv, r)
+  } yield (sp, h, sv, r, json2bin)
 
   def mockLastSnapshotStorage[A <: Snapshot, B <: SnapshotInfo[_]](
     getOrdinalFn: IO[Option[SnapshotOrdinal]] = SnapshotOrdinal.MinValue.some.pure[IO],
@@ -305,7 +305,7 @@ object DataApplicationRoutesSuite extends HttpSuite {
   }
 
   test("POST /data returns OK - single data update") { implicit res =>
-    implicit val (sp, _, _, _) = res
+    implicit val (sp, _, _, _, js) = res
 
     val req: Request[IO] = POST(uri"/data")
 
@@ -361,7 +361,7 @@ object DataApplicationRoutesSuite extends HttpSuite {
   }
 
   test("POST /data returns OK - data transactions - only data update") { implicit res =>
-    implicit val (sp, _, _, _) = res
+    implicit val (sp, _, _, _, js) = res
 
     val req: Request[IO] = POST(uri"/data")
 
@@ -421,7 +421,7 @@ object DataApplicationRoutesSuite extends HttpSuite {
   }
 
   test("POST /data returns OK - data transactions - data update and fee transaction") { implicit res =>
-    implicit val (sp, _, _, _) = res
+    implicit val (sp, _, _, _, js) = res
 
     val req: Request[IO] = POST(uri"/data")
 
@@ -505,7 +505,7 @@ object DataApplicationRoutesSuite extends HttpSuite {
   }
 
   test("POST /data returns OK - data transactions - Bad request not enough balance") { implicit res =>
-    implicit val (sp, _, _, _) = res
+    implicit val (sp, _, _, _, js) = res
 
     val req: Request[IO] = POST(uri"/data")
 
@@ -593,7 +593,7 @@ object DataApplicationRoutesSuite extends HttpSuite {
   }
 
   test("POST /data returns OK - data transactions - Source wallet not sign the FeeTransaction") { implicit res =>
-    implicit val (sp, _, _, _) = res
+    implicit val (sp, _, _, _, js) = res
 
     val req: Request[IO] = POST(uri"/data")
 
@@ -686,7 +686,7 @@ object DataApplicationRoutesSuite extends HttpSuite {
   }
 
   test("POST /data returns OK - data transactions - Invalid signature") { implicit res =>
-    implicit val (sp, _, _, _) = res
+    implicit val (sp, _, _, _, js) = res
 
     val req: Request[IO] = POST(uri"/data")
 

@@ -14,6 +14,7 @@ import io.constellationnetwork.currency.schema.EstimatedFee
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import io.constellationnetwork.currency.validations.DataTransactionsValidator.validateDataTransactionsL1
 import io.constellationnetwork.ext.http4s.error._
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.domain.cluster.storage.L0ClusterStorage
 import io.constellationnetwork.node.shared.domain.queue.ViewableQueue
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
@@ -31,7 +32,7 @@ import org.http4s.{HttpRoutes, Response}
 import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-final case class DataApplicationRoutes[F[_]: Async: Hasher: SecurityProvider](
+final case class DataApplicationRoutes[F[_]: Async: Hasher: JsonSerializer: SecurityProvider](
   dataApplicationPeerConsensusInput: Queue[F, Signed[ConsensusInput.PeerConsensusInput]],
   l0ClusterStorage: L0ClusterStorage[F],
   dataApplication: BaseDataApplicationL1Service[F],

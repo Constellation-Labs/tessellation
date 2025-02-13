@@ -19,6 +19,7 @@ import io.constellationnetwork.currency.validations.DataTransactionsValidator.va
 import io.constellationnetwork.dag.l1.domain.consensus.block.config.DataConsensusConfig
 import io.constellationnetwork.effects.GenUUID
 import io.constellationnetwork.fsm.FSM
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.queue.ViewableQueue
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
@@ -86,7 +87,7 @@ object Engine {
   type Out = ConsensusOutput
   type State = ConsensusState
 
-  def fsm[F[_]: Async: Random: SecurityProvider: Hasher](
+  def fsm[F[_]: Async: Random: SecurityProvider: Hasher: JsonSerializer](
     dataConsensusCfg: DataConsensusConfig,
     dataApplication: BaseDataApplicationL1Service[F],
     clusterStorage: ClusterStorage[F],

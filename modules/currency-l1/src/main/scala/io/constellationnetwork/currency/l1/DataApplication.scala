@@ -18,6 +18,7 @@ import io.constellationnetwork.currency.l1.modules.{Queues, Services}
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.dag.l1.domain.consensus.block.config.DataConsensusConfig
 import io.constellationnetwork.dag.l1.http.p2p.L0BlockOutputClient
+import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorage, L0ClusterStorage}
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
@@ -30,7 +31,7 @@ import io.circe.Encoder
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object DataApplication {
-  def run[F[_]: Async: Random: Hasher: SecurityProvider: L1NodeContext](
+  def run[F[_]: Async: Random: Hasher: JsonSerializer: SecurityProvider: L1NodeContext](
     dataConsensusCfg: DataConsensusConfig,
     clusterStorage: ClusterStorage[F],
     l0ClusterStorage: L0ClusterStorage[F],
