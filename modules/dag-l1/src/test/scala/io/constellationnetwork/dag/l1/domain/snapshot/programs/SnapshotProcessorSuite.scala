@@ -70,7 +70,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
     MapRef[IO, ProofsHash, Option[StoredBlock]],
     Ref[IO, Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]],
     TransactionStorage[IO],
-    GlobalSnapshotContextFunctions[IO]
+    GlobalSnapshotContextFunctions[IO],
+    Ref[IO, SortedMap[SnapshotOrdinal, (Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]]
   )
 
   def testResources: Resource[IO, TestResources] =
@@ -198,7 +199,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               blocksR,
               lastSnapR,
               transactionStorage,
-              globalSnapshotContextFns
+              globalSnapshotContextFns,
+              lastNSnapR
             )
         }
       }
@@ -276,7 +278,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             blocksR,
             lastSnapR,
             ts,
-            _
+            _,
+            lastNSnapR
           ) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val hasher = h
@@ -392,7 +395,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             blocksR,
             lastSnapR,
             ts,
-            _
+            _,
+            lastNSnapR
           ) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val hasher = h
@@ -563,7 +567,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             blocksR,
             lastSnapR,
             ts,
-            _
+            _,
+            lastNSnapR
           ) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val hasher = h
@@ -736,7 +741,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
   test("alignment at same height should happen when snapshot with new ordinal but known height is processed") {
     testResources.use {
-      case (snapshotProcessor, sp, h, _, _, srcKey, _, _, _, peerId, balancesR, blocksR, lastSnapR, ts, _) =>
+      case (snapshotProcessor, sp, h, _, _, srcKey, _, _, _, peerId, balancesR, blocksR, lastSnapR, ts, _, lastNSnapsR) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val hasher = h
 
@@ -754,6 +759,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           _ <- lastSnapR.set((hashedLastSnapshot, GlobalSnapshotInfo.empty).some)
+          lastN = SortedMap(hashedLastSnapshot.ordinal -> (hashedLastSnapshot, GlobalSnapshotInfo.empty))
+          _ <- lastNSnapsR.set(lastN)
 
           processingResult <- snapshotProcessor.process(
             hashedNextSnapshot.asRight[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]
@@ -806,7 +813,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             blocksR,
             lastSnapR,
             ts,
-            _
+            _,
+            lastNSnapR
           ) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val kryo = ks
@@ -958,6 +966,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           }
           _ <- lastSnapR.set((hashedLastSnapshot, lastSnapshotInfo).some)
+          lastN = SortedMap(hashedLastSnapshot.ordinal -> (hashedLastSnapshot, GlobalSnapshotInfo.empty))
+          _ <- lastNSnapR.set(lastN)
           // Inserting tips
           _ <- blocksR(parent1.hash).set(MajorityBlock(parent1, 2L, Deprecated).some)
           _ <- blocksR(parent2.hash).set(MajorityBlock(parent2, 2L, Deprecated).some)
@@ -1069,7 +1079,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             blocksR,
             lastSnapR,
             ts,
-            _
+            _,
+            lastNSnapR
           ) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val hasher = h
@@ -1219,6 +1230,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           _ <- lastSnapR.set((hashedLastSnapshot, lastSnapshotInfo).some)
+          lastN = SortedMap(hashedLastSnapshot.ordinal -> (hashedLastSnapshot, GlobalSnapshotInfo.empty))
+          _ <- lastNSnapR.set(lastN)
           // Inserting tips
           _ <- blocksR(parent1.hash).set(MajorityBlock(parent1, 2L, Deprecated).some)
           _ <- blocksR(parent2.hash).set(MajorityBlock(parent2, 2L, Deprecated).some)
@@ -1343,7 +1356,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
   test("snapshot should be ignored when a snapshot pushed for processing is not a next one") {
     testResources.use {
-      case (snapshotProcessor, sp, h, _, _, srcKey, _, _, _, peerId, _, _, lastSnapR, _, _) =>
+      case (snapshotProcessor, sp, h, _, _, srcKey, _, _, _, peerId, _, _, lastSnapR, _, _, lastNSnapR) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val hasher = h
 
@@ -1360,6 +1373,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           _ <- lastSnapR.set((hashedLastSnapshot, GlobalSnapshotInfo.empty).some)
+          lastN = SortedMap(hashedLastSnapshot.ordinal -> (hashedLastSnapshot, GlobalSnapshotInfo.empty))
+          _ <- lastNSnapR.set(lastN)
           processingResult <- snapshotProcessor
             .process(hashedNextSnapshot.asRight[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)])
             .map(_.asRight[Throwable])
@@ -1382,7 +1397,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
 
   test("error should be thrown when the tips get misaligned") {
     testResources.use {
-      case (snapshotProcessor, sp, h, _, _, srcKey, _, _, _, peerId, _, blocksR, lastSnapR, _, _) =>
+      case (snapshotProcessor, sp, h, _, _, srcKey, _, _, _, peerId, _, blocksR, lastSnapR, _, _, lastNSnapR) =>
         implicit val securityProvider: SecurityProvider[IO] = sp
         implicit val hasher = h
 
@@ -1411,6 +1426,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             srcKey
           ).flatMap(_.toHashedWithSignatureCheck.map(_.toOption.get))
           _ <- lastSnapR.set((hashedLastSnapshot, GlobalSnapshotInfo.empty).some)
+          lastN = SortedMap(hashedLastSnapshot.ordinal -> (hashedLastSnapshot, GlobalSnapshotInfo.empty))
+          _ <- lastNSnapR.set(lastN)
           // Inserting tips
           _ <- blocksR(parent2.hash).set(MajorityBlock(parent2, 1L, Active).some)
 
