@@ -59,6 +59,8 @@ abstract class SnapshotProcessor[
 
   def onDownload(snapshot: Hashed[S], state: SI): F[Unit] = Applicative[F].unit
   def onRedownload(snapshot: Hashed[S], state: SI): F[Unit] = Applicative[F].unit
+  def setLastNSnapshots(snapshot: Hashed[S], state: SI): F[Unit] = Applicative[F].unit
+  def setInitialLastNSnapshots(snapshot: Hashed[S], state: SI): F[Unit] = Applicative[F].unit
 
   def processAlignment(
     alignment: Alignment,
@@ -94,7 +96,8 @@ abstract class SnapshotProcessor[
 
         adjustToMajority >>
           markTxRefsAsMajority >>
-          setSnapshot.as[SnapshotProcessingResult] {
+          setSnapshot >>
+          setLastNSnapshots(snapshot, state).as[SnapshotProcessingResult] {
             Aligned(
               SnapshotReference.fromHashedSnapshot(snapshot),
               Set.empty
@@ -129,7 +132,8 @@ abstract class SnapshotProcessor[
 
         adjustToMajority >>
           markTxRefsAsMajority >>
-          setSnapshot.as[SnapshotProcessingResult] {
+          setSnapshot >>
+          setLastNSnapshots(snapshot, state).as[SnapshotProcessingResult] {
             Aligned(
               SnapshotReference.fromHashedSnapshot(snapshot),
               obsoleteToRemove
@@ -159,7 +163,8 @@ abstract class SnapshotProcessor[
         adjustToMajority >>
           setBalances >>
           setTransactionRefs >>
-          setInitialSnapshot.as[SnapshotProcessingResult] {
+          setInitialSnapshot >>
+          setInitialLastNSnapshots(snapshot, state).as[SnapshotProcessingResult] {
             DownloadPerformed(
               SnapshotReference.fromHashedSnapshot(snapshot),
               toAdd.map(_._1.proofsHash),
@@ -204,7 +209,8 @@ abstract class SnapshotProcessor[
         adjustToMajority >>
           setBalances >>
           setTransactionRefs >>
-          setSnapshot.as[SnapshotProcessingResult] {
+          setSnapshot >>
+          setLastNSnapshots(snapshot, state).as[SnapshotProcessingResult] {
             RedownloadPerformed(
               SnapshotReference.fromHashedSnapshot(snapshot),
               toAdd.map(_._1.proofsHash),

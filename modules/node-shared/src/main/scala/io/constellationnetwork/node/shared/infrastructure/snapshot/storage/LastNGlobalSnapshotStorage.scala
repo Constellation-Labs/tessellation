@@ -32,15 +32,9 @@ object LastNGlobalSnapshotStorage {
       def set(snapshot: Hashed[GlobalIncrementalSnapshot], state: GlobalSnapshotInfo): F[Unit] =
         snapshotsR.modify { snapshots =>
           snapshots.lastOption match {
-            case Some((_, (latest, _))) =>
-              if (isNextSnapshot(latest, snapshot.signed.value)) {
-                (snapshots.updated(snapshot.ordinal, (snapshot, state)), Applicative[F].unit)
-              } else {
-                (snapshots, MonadThrow[F].raiseError[Unit](new Throwable("Failure during putting new global snapshot!")))
-              }
-            case None =>
+            case Some((_, (latest, _))) if isNextSnapshot(latest, snapshot.signed.value) =>
               (snapshots.updated(snapshot.ordinal, (snapshot, state)), Applicative[F].unit)
-
+            case _ => (snapshots, MonadThrow[F].raiseError[Unit](new Throwable("Failure during putting new global snapshot!")))
           }
         }.flatten
 
