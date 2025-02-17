@@ -43,6 +43,12 @@ object StateChannelAllowanceLists {
               "77f7f6ea96cee2eb7fe4e577eddc20e3f3ba6055095e1c0157974bb3e484b285fbc66e00a91b350ae0a36f50da722fe18e1a33ee91f8e73bb5eaf4684f1bc194",
               "ddec0a0d2742355565fdf7e2c2b0439cecf25aee55fe6426174fb42e122062d01e61292f526f9852a09a9ac21edcdd252dac229cbac645d7899c435695956c26",
               "3cbf6e802f2e7cf580f1498a74b9eb4d6522353522bfe1a5cb33cef8bc64e7a8a536bb12257d7d77f1b1fd440f2de8952b02aa0ab6a389b0ef5c78a1e6149fe1"
+            ),
+          Address("DAG1CRZj8HwjeMe9H18aLxW2iqQLaDjW9YxNqkg9") ->
+            NonEmptySet.of(
+              "bb16637e74281727fcee8a32f9b4df2af8c84005864ad7e44d34fcd3215e8bf95745e812005523d16b95c2d8f2dfad8e023dd13bd18b379af461d8ab04664ad7",
+              "5aea1023e4c236ca832943de7ae5f2e5a4b6cb40b750cec34207c8f9b8eb2671566c9b03de29d7f7330f94c7117b21efc505534232ea1b6c3e13b85ac6e53856",
+              "b29da8e4d9d286696903db4f2d0bf5a7ede47e4d4e80617faefbf94de8c198e3749f4fe600dfeae378d2d0b4ac73f2d4bc4bfdb2abd3fb7e4dc3859ae4a1ffd4"
             )
         ).some
     }
