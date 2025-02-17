@@ -7,10 +7,13 @@ const { parseSharedArgs } = require('../shared');
 const CONSTANTS = {
   MAX_VERIFICATION_ATTEMPTS: 60,
   VERIFICATION_INTERVAL_MS: 1000,
-  SNAPSHOT_WAIT_TIME_MS: 5000,
+  EXPIRATION_VERIFICATION_INTERVAL_MS: 10 * 1000,
+  SNAPSHOT_WAIT_TIME_MS: 5 * 1000,
   DEFAULT_COMPRESSION_LEVEL: 2,
   DEFAULT_LAST_VALID_EPOCH_PROGRESS: 50,
-  CURRENCY_TOKEN_ID: process.env.METAGRAPH_ID
+  CURRENCY_TOKEN_ID: process.env.METAGRAPH_ID,
+  EPOCH_PROGRESS_BUFFER: 5,
+  TRANSACTION_FEE: 1
 };
 
 const PRIVATE_KEYS = {
@@ -107,17 +110,29 @@ const generateProof = async (message, walletPrivateKey, account) => {
     return { id: cleanPublicKey, signature };
 };
 
-const createAllowSpendTransaction = async (sourceAccount, ammAddress, l1Url) => {
-    const { data: lastRef } = await axios.get(
-        `${l1Url}/allow-spends/last-reference/${sourceAccount.address}`
-    );
+const getEpochProgress = async (l0Url, isCurrency = false) => {
+    const snapshotUrl = isCurrency 
+        ? `${l0Url}/snapshots/latest/combined`
+        : `${l0Url}/global-snapshots/latest/combined`;
+    
+    const { data: snapshot } = await axios.get(snapshotUrl);
+    return snapshot[0].value.epochProgress;
+};
+
+const createAllowSpendTransaction = async (sourceAccount, ammAddress, l1Url, l0Url, isCurrency = false) => {
+    const [{ data: lastRef }, currentEpochProgress] = await Promise.all([
+        axios.get(`${l1Url}/allow-spends/last-reference/${sourceAccount.address}`),
+        getEpochProgress(l0Url, isCurrency)
+    ]);
+
+    console.log(`Current epoch progress: ${currentEpochProgress}, setting lastValidEpochProgress to ${currentEpochProgress + CONSTANTS.EPOCH_PROGRESS_BUFFER}`);
 
     return {
         amount: 100,
         approvers: [ammAddress],
         destination: ammAddress,
-        fee: 1,
-        lastValidEpochProgress: CONSTANTS.DEFAULT_LAST_VALID_EPOCH_PROGRESS,
+        fee: CONSTANTS.TRANSACTION_FEE,
+        lastValidEpochProgress: currentEpochProgress + CONSTANTS.EPOCH_PROGRESS_BUFFER,
         parent: lastRef,
         source: sourceAccount.address
     };
@@ -317,7 +332,7 @@ const createTransactionHandler = (urls) => {
         const sourceAccount = createAndConnectAccount(sourcePrivateKey, { l0Url, l1Url }, isCurrency);
         const ammAddress = dag4.createAccount(destinationPrivateKey).address;
         
-        const allowSpend = await createAllowSpendTransaction(sourceAccount, ammAddress, l1Url);
+        const allowSpend = await createAllowSpendTransaction(sourceAccount, ammAddress, l1Url, l0Url, isCurrency);
         const proof = await generateProof(allowSpend, sourcePrivateKey, sourceAccount);
 
         const response = await submitTransaction(allowSpend, proof, l1Url);
@@ -326,7 +341,8 @@ const createTransactionHandler = (urls) => {
             address: sourceAccount.address,
             hash: response.data.hash,
             amount: allowSpend.amount,
-            fee: allowSpend.fee
+            fee: allowSpend.fee,
+            lastValidEpochProgress: allowSpend.lastValidEpochProgress
         };
     };
 
@@ -336,6 +352,54 @@ const createTransactionHandler = (urls) => {
         sendCurrencyTransaction: (sourcePrivateKey, destinationPrivateKey) =>
             sendTransaction(sourcePrivateKey, destinationPrivateKey, urls.currencyL0Url, urls.currencyL1Url, true)
     };
+};
+
+const verifyAllowSpendExpiration = async (address, hash, initialBalance, urls, lastValidEpochProgress, fee, isCurrency = false) => {
+    const l0Url = isCurrency ? urls.currencyL0Url : urls.globalL0Url;
+    
+    await withRetry(
+        async () => {
+            const currentEpochProgress = await getEpochProgress(l0Url, isCurrency);
+            if (currentEpochProgress <= lastValidEpochProgress) {
+                throw new Error(
+                    `Current epoch progress (${currentEpochProgress}) has not passed lastValidEpochProgress (${lastValidEpochProgress})`
+                );
+            }
+            console.log(`Epoch progress advanced past ${lastValidEpochProgress}`);
+        },
+        { 
+            name: `${isCurrency ? 'Currency' : 'DAG'} epoch progress advancement`,
+            interval: CONSTANTS.EXPIRATION_VERIFICATION_INTERVAL_MS
+        }
+    );
+
+    const snapshotUrl = isCurrency 
+        ? `${l0Url}/snapshots/latest/combined`
+        : `${l0Url}/global-snapshots/latest/combined`;
+    
+    const { data: snapshot } = await axios.get(snapshotUrl);
+    
+    const activeAllowSpends = isCurrency
+        ? snapshot[1]?.activeAllowSpends?.[address] || []
+        : snapshot[1]?.activeAllowSpends?.[CONSTANTS.CURRENCY_TOKEN_ID]?.[address] || [];
+    
+    if (activeAllowSpends.length > 0) {
+        const hasMatchingHash = await findMatchingHash(activeAllowSpends, hash);
+        if (hasMatchingHash) {
+            throw new Error('Allow spend still active after expiration');
+        }
+    }
+
+    const currentBalance = snapshot[1]?.balances?.[address] || 0;
+    const expectedBalance = initialBalance - fee;
+
+    if (currentBalance !== expectedBalance) {
+        throw new Error(
+            `Balance not reverted correctly after expiration. Expected: ${expectedBalance} (initial - fee), got: ${currentBalance}`
+        );
+    }
+
+    console.log(`Allow spend expired and balance reverted successfully (minus fee) in ${isCurrency ? 'Currency' : 'DAG'}`);
 };
 
 const executeWorkflow = async ({ 
@@ -356,9 +420,9 @@ const executeWorkflow = async ({
     
     const initialBalance = await getInitialBalance(balanceManager);
     
-    const { address, hash, amount, fee } = await sendTransaction(transactionHandler);
+    const { address, hash, amount, fee, lastValidEpochProgress } = await sendTransaction(transactionHandler);
 
-    console.log("Allow spend transaction sent successfully")
+    console.log(`Allow spend transaction sent successfully with lastValidEpochProgress: ${lastValidEpochProgress}`);
     
     await verifyL1(verifier, hash);
     await sleep(CONSTANTS.SNAPSHOT_WAIT_TIME_MS);
@@ -370,7 +434,19 @@ const executeWorkflow = async ({
     
     await verifyBalance(balanceManager, initialBalance, amount, fee);
     
-    console.log(`${workflowName} workflow completed successfully`);
+    console.log(`${workflowName} workflow completed successfully, waiting for expiration...`);
+
+    await verifyAllowSpendExpiration(
+        address, 
+        hash, 
+        initialBalance,
+        urls,
+        lastValidEpochProgress,
+        fee,
+        workflowName === 'Currency'
+    );
+    
+    console.log(`${workflowName} workflow expiration verified successfully`);
 };
 
 const dagWorkflow = {
