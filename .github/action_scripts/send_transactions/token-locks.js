@@ -5,14 +5,14 @@ const {
     parseSharedArgs,
     CONSTANTS: sharedConstants,
     PRIVATE_KEYS,
-    brotliSerialize,
     generateProof,
-    generateProofWithBrotli,
     sleep,
     withRetry,
     createAndConnectAccount,
     createNetworkConfig,
-    getEpochProgress
+    getEpochProgress,
+    SerializerType,
+    createSerializer
 } = require('../shared');
 
 const CONSTANTS = {
@@ -70,7 +70,8 @@ const createVerifier = (urls) => {
             const prevResult = await acc;
             if (prevResult) return true;
 
-            const message = await brotliSerialize(tokenLock.value);
+            const serializer = createSerializer(SerializerType.BROTLI);
+            const message = await serializer.serialize(tokenLock.value);
             const tokenLockHash = jsSha256.sha256(Buffer.from(message, 'hex'));
             return tokenLockHash === targetHash;
         }, Promise.resolve(false));
@@ -212,7 +213,7 @@ const createTokenLockTransactionHandler = (urls) => {
         const sourceAccount = createAndConnectAccount(sourcePrivateKey, { l0Url, l1Url });
 
         const tokenLock = await createTokenLockTransaction(sourceAccount, l1Url, l0Url, epochProgressOffset);
-        const proof = await generateProofWithBrotli(tokenLock, sourcePrivateKey, sourceAccount);
+        const proof = await generateProof(tokenLock, sourcePrivateKey, sourceAccount, SerializerType.BROTLI);
 
         const response = await submitTransaction(tokenLock, proof, l1Url);
 
@@ -245,7 +246,7 @@ const createDataUpdateTransactionHandler = (urls) => {
         const sourceAccount = createAndConnectAccount(sourcePrivateKey, { l0Url, l1Url });
 
         const dataUpdateWithTokenUnlock = await createUpdateWithTokenUnlockTransaction(sourceAccount, tokenLockHash);
-        const proof = await generateProof(dataUpdateWithTokenUnlock, sourcePrivateKey, sourceAccount);
+        const proof = await generateProof(dataUpdateWithTokenUnlock, sourcePrivateKey, sourceAccount, SerializerType.STANDARD);
 
         await submitTransaction(dataUpdateWithTokenUnlock, proof, dataL1Url);
     };

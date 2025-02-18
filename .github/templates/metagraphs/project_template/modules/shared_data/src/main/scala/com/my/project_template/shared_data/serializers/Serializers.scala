@@ -7,14 +7,16 @@ import io.constellationnetwork.currency.dataApplication.dataApplication.DataAppl
 import io.constellationnetwork.security.signature.Signed
 
 import com.my.project_template.shared_data.types.Types.{UsageUpdate, UsageUpdateCalculatedState, UsageUpdateState}
-import io.circe.Encoder
+import io.circe.{Encoder, Printer}
 import io.circe.syntax.EncoderOps
 
 object Serializers {
   private def serialize[A: Encoder](
     serializableData: A
-  ): Array[Byte] =
-    serializableData.asJson.deepDropNullValues.noSpaces.getBytes(StandardCharsets.UTF_8)
+  ): Array[Byte] = {
+    def printer = Printer(dropNullValues = true, indent = "", sortKeys = true)
+    serializableData.asJson.printWith(printer).getBytes(StandardCharsets.UTF_8)
+  }
 
   def serializeUpdate(
     update: UsageUpdate

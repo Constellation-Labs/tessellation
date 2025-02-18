@@ -34,39 +34,47 @@ const sortAndRemoveNulls = (obj) => {
 
 const sortedJsonStringify = (obj) => JSON.stringify(sortAndRemoveNulls(obj));
 
+const SerializerType = {
+    STANDARD: 'standard',
+    BROTLI: 'brotli'
+};
+
 const brotliSerialize = async (content, compressionLevel = CONSTANTS.DEFAULT_COMPRESSION_LEVEL) => {
-    const jsonString = sortedJsonStringify(content);
+    const jsonString = content;
     const encoder = new TextEncoder();
     const utf8Bytes = encoder.encode(jsonString);
     return compress(utf8Bytes, { quality: compressionLevel });
 };
 
-const generateProofWithSerializer = async (message, walletPrivateKey, account, serializer) => {
-    const serializedTx = await serializer(message);
-    const hash = jsSha256.sha256(Buffer.from(serializedTx, "hex"));
-    const signature = await dag4.keyStore.sign(walletPrivateKey, hash);
+const createSerializer = (type = SerializerType.STANDARD) => {
+    const standardSerializer = {
+        serialize: (value) =>
+            Buffer.from(sortedJsonStringify(value), 'utf8').toString('hex')
+    };
 
+    const brotliSerializer = {
+        serialize: async (value) =>
+            await brotliSerialize(sortedJsonStringify(value))
+    };
+
+    return type === SerializerType.BROTLI ? brotliSerializer : standardSerializer;
+};
+
+const generateProof = async (message, walletPrivateKey, account, serializerType = SerializerType.STANDARD) => {
+    const serializer = createSerializer(serializerType);
+    const serializedTx = await serializer.serialize(message);
+    const hash = jsSha256.sha256(Buffer.from(serializedTx, 'hex'));
+
+    const signature = await dag4.keyStore.sign(walletPrivateKey, hash);
     const publicKey = account.publicKey;
     const cleanPublicKey = publicKey.length === 130 ? publicKey.substring(2) : publicKey;
 
     return { id: cleanPublicKey, signature };
 };
 
-const generateProof = async (message, walletPrivateKey, account) => {
-    return generateProofWithSerializer(
-        message,
-        walletPrivateKey,
-        account,
-        (msg) => Buffer.from(JSON.stringify(msg), 'utf8').toString('hex')
-    );
-};
-
-const generateProofWithBrotli = async (message, walletPrivateKey, account) => {
-    return generateProofWithSerializer(message, walletPrivateKey, account, brotliSerialize);
-};
-
 module.exports = {
+    sortedJsonStringify,
+    SerializerType,
+    createSerializer,
     generateProof,
-    generateProofWithBrotli,
-    brotliSerialize
 };
