@@ -86,7 +86,7 @@ object SnapshotStorage {
 
     def cutoffLogic: OrdinalCutoff = LogarithmicOrdinalCutoff.make
 
-    def offloadProcess =
+    def offloadProcess: Stream[F, Unit] =
       Stream
         .fromQueueUnterminated(offloadQueue)
         .evalMap { cutOffOrdinal =>
@@ -134,6 +134,7 @@ object SnapshotStorage {
               }
             }
         }
+        .void
 
     def snapshotInfoCutoffProcess: Stream[F, Unit] =
       Stream

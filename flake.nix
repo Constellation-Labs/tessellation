@@ -10,7 +10,7 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         jreOverlay = f: p: {
-          jre = p.graalvm11-ce;
+          jre = p.jdk11;
         };
 
         bloopOverlay = f: p: {
@@ -22,22 +22,9 @@
             else p.bloop;
         };
 
-        nativeOverlay = f: p: {
-          scala-cli-native = p.symlinkJoin
-            {
-              name = "scala-cli-native";
-              paths = [ p.scala-cli ];
-              buildInputs = [ p.makeWrapper ];
-              postBuild = ''
-                wrapProgram $out/bin/scala-cli \
-                  --prefix LLVM_BIN : "${p.llvmPackages.clang}/bin"
-              '';
-            };
-        };
-
         pkgs = import nixpkgs {
           inherit system;
-          overlays = [ jreOverlay bloopOverlay nativeOverlay ];
+          overlays = [ jreOverlay bloopOverlay ];
         };
       in
       {
@@ -52,7 +39,6 @@
               jre
               sbt
               bloop
-              scala-cli-native
               nodejs
             ];
 

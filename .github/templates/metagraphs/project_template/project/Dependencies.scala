@@ -32,11 +32,11 @@ object Dependencies {
     )
 
     val kindProjector = compilerPlugin(
-      ("org.typelevel" % "kind-projector" % "0.13.2").cross(CrossVersion.full)
+      ("org.typelevel" % "kind-projector" % "0.13.3").cross(CrossVersion.full)
     )
 
     val semanticDB = compilerPlugin(
-      ("org.scalameta" % "semanticdb-scalac" % "4.7.1").cross(CrossVersion.full)
+      ("org.scalameta" % "semanticdb-scalac" % "4.13.1.1").cross(CrossVersion.full)
     )
   }
 }

@@ -43,11 +43,11 @@ object Dependencies {
     val squants = "1.8.3"
     val twitterChill = "0.10.0"
     val betterMonadicFor = "0.3.1"
-    val kindProjector = "0.13.2"
+    val kindProjector = "0.13.3"
     val logback = "1.3.5"
     val logstashLogbackEncoder = "7.2"
     val organizeImports = "0.5.0"
-    val semanticDB = "4.8.15"
+    val semanticDB = "4.13.1.1"
     val weaver = "0.8.1"
   }
 
