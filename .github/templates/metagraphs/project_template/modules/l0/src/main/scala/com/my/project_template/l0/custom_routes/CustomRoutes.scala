@@ -29,9 +29,18 @@ case class CustomRoutes[F[_]: Async](
     calculatedStateService.getCalculatedState
       .flatMap(_.state.devices.get(address).fold(NotFound())(Ok(_)))
 
+  private def getLastSyncGlobalSnapshot: F[Response[F]] = {
+    import io.circe.generic.auto._
+    context.getLastSynchronizedGlobalSnapshot.flatMap {
+      case Some(snapshot) => Ok(snapshot.signed)
+      case None           => NotFound()
+    }
+  }
+
   private val routes: HttpRoutes[F] = HttpRoutes.of[F] {
     case GET -> Root / "addresses" / AddressVar(address) => getDeviceByAddress(address)
     case GET -> Root / "addresses"                       => getAllDevices
+    case GET -> Root / "global-snapshot" / "last-sync"   => getLastSyncGlobalSnapshot
   }
 
   val public: HttpRoutes[F] =

@@ -1,8 +1,10 @@
 package com.my.project_template.shared_data.combiners
 
+import cats.syntax.all._
+
 import io.constellationnetwork.currency.dataApplication.DataState
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.artifact.SpendAction
+import io.constellationnetwork.schema.artifact.{SpendAction, TokenUnlock}
 import io.constellationnetwork.security.signature.Signed
 
 import com.my.project_template.shared_data.types.Types._
@@ -40,6 +42,8 @@ object Combiners {
     val updatedSharedArtifacts = update match {
       case UsageUpdateWithSpendTransaction(_, _, spendTransactionA, spendTransactionB) =>
         acc.sharedArtifacts + SpendAction(spendTransactionA, spendTransactionB)
+      case UsageUpdateWithTokenUnlock(address, currencyId, tokenLockRef, unlockAmount, _) =>
+        acc.sharedArtifacts + TokenUnlock(tokenLockRef, unlockAmount, currencyId.some, address)
       case _ => acc.sharedArtifacts
     }
 

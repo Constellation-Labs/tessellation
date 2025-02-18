@@ -25,7 +25,6 @@ import io.constellationnetwork.schema.artifact.{SharedArtifact, TokenUnlock}
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.round.RoundId
 import io.constellationnetwork.schema.swap.CurrencyId
-import io.constellationnetwork.schema.tokenLock.TokenLockReference
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, SnapshotOrdinal}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
@@ -370,9 +369,9 @@ trait DataApplicationL0Service[F[_], D <: DataUpdate, DON <: DataOnChainState, D
     }.getOrElse(List.empty)
 
     result <- expiredTokenLocks.traverse { tokenLock =>
-      TokenLockReference.of(tokenLock).map { tokenLockReference =>
+      tokenLock.toHashed.map { tokenLockRef =>
         TokenUnlock(
-          tokenLockReference,
+          tokenLockRef.hash,
           tokenLock.amount,
           tokenLock.currencyId,
           tokenLock.source

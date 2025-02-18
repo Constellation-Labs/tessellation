@@ -32,3 +32,8 @@ jobs:
     needs: call-workflow-setup-environment
     uses: ./.github/workflows/test-allow-spends-and-spend-transactions.yml
     secrets: inherit
+
+  call-test-token-locks:
+    needs: call-workflow-setup-environment
+    uses: ./.github/workflows/test-token-locks.yml
+    secrets: inherit

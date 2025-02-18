@@ -188,13 +188,12 @@ object CurrencySnapshotAcceptanceManager {
         facilitators
       )
 
-      offset = lastGlobalSnapshotSyncCfg.syncOffset
       maybeSnapshotOrdinalSync = lastSnapshotContext.snapshotInfo.globalSnapshotSyncView.traverse {
         _.values
           .map(_.globalSnapshotOrdinal)
           .groupBy(identity)
           .maxByOption { case (ordinal, occurrences) => (occurrences.size, -ordinal.value.value) }
-          .flatMap { case (ordinal, _) => SnapshotOrdinal(ordinal.value - offset) }
+          .flatMap { case (ordinal, _) => SnapshotOrdinal(ordinal.value) }
       }.flatten
 
       maybeLastGlobalSnapshot = lastGlobalSnapshots
@@ -234,9 +233,9 @@ object CurrencySnapshotAcceptanceManager {
 
       activeTokenLocks = lastSnapshotContext.snapshotInfo.activeTokenLocks
 
-      tokenLocksReferences <-
+      tokenLocksRefs <-
         (incomingTokenLocks.toList ++ activeTokenLocks.toList.flatMap(_.values).flatten)
-          .traverse(tl => TokenLockReference.of(tl))
+          .traverse(_.toHashed.map(_.hash))
 
       tokenUnlocks = acceptedSharedArtifacts.collect {
         case tokenUnlock: TokenUnlock => tokenUnlock
@@ -249,7 +248,7 @@ object CurrencySnapshotAcceptanceManager {
 
       acceptedTokenUnlocks = acceptTokenUnlocks(
         tokenUnlocks,
-        tokenLocksReferences
+        tokenLocksRefs
       )
 
       updatedActiveTokenLocks <- updateActiveTokenLocks(
@@ -554,10 +553,10 @@ object CurrencySnapshotAcceptanceManager {
 
     private def acceptTokenUnlocks(
       incomingTokenUnlocks: SortedSet[TokenUnlock],
-      activeTokenLocksReferences: List[TokenLockReference]
+      activeTokenLocksRefs: List[Hash]
     ): SortedSet[TokenUnlock] =
       incomingTokenUnlocks.filter { itu =>
-        activeTokenLocksReferences.contains(itu.lockReference)
+        activeTokenLocksRefs.contains(itu.tokenLockRef)
       }
 
     private def updateActiveTokenLocks(
@@ -584,8 +583,8 @@ object CurrencySnapshotAcceptanceManager {
           allTokenLocks.toList.traverse {
             case (address, set) =>
               set.toList.filterA { signedTokenLock =>
-                TokenLockReference.of(signedTokenLock).map { tokenLockReference =>
-                  acceptedTokenUnlocks.forall(_.lockReference =!= tokenLockReference)
+                signedTokenLock.toHashed.map { hashedTokenLock =>
+                  acceptedTokenUnlocks.forall(_.tokenLockRef =!= hashedTokenLock.hash)
                 }
               }.map(filteredSet => address -> filteredSet.toSortedSet)
           }.map(_.toSortedMap.some)
