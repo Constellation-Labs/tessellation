@@ -319,6 +319,229 @@ paths:
             Request-Signature:
               $ref: '../../models/headers/Request-Signature.yml'
 
+  /delegated-stake:
+    post:
+      tags:
+        - Delegated stakes
+      description: Post delegated stake create request
+      requestBody:
+        description: Signed delegated stake create request
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '../../models/schemas/SignedCreateDelegatedStake.yml'
+      responses:
+        200:
+          description: Received delegated stake create request
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        400:
+          description: Invalid delegated stake create request
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        503:
+          description: Node is not Ready yet
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+    put:
+      tags:
+        - Delegated stakes
+      description: Put delegated stake withdraw request
+      requestBody:
+        description: Signed delegated stake withdraw request
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '../../models/schemas/SignedWithdrawDelegatedStake.yml'
+      responses:
+        200:
+          description: Received delegated stake withdraw request
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        400:
+          description: Invalid delegated stake withdraw request
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        503:
+          description: Node is not Ready yet
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+
+  /delegated-stake/{address}/info:
+    get:
+      tags:
+        - Delegated stakes
+      description: Get delegated stake info for a given address
+      parameters:
+        - name: address
+          in: path
+          description: User's address
+          required: true
+          schema:
+            $ref: '../../models/schemas/Address.yml'
+      responses:
+        200:
+          description: Received delegated stake info
+          content:
+            application/json:
+              schema:
+                $ref: '../../models/schemas/DelegatedStakesInfo.yml'
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+
+  /node-collateral:
+    post:
+      tags:
+        - Node collateral
+      description: Post node collateral create request
+      requestBody:
+        description: Signed node collateral create request
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '../../models/schemas/SignedCreateNodeCollateral.yml'
+      responses:
+        200:
+          description: Received node collateral create request
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        400:
+          description: Invalid node collateral create request
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        503:
+          description: Node is not Ready yet
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+    put:
+      tags:
+        - Node collateral
+      description: Put node collateral withdraw request
+      requestBody:
+        description: Signed node collateral withdraw request
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '../../models/schemas/SignedWithdrawNodeCollateral.yml'
+      responses:
+        200:
+          description: Received node collateral withdraw request
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        400:
+          description: Invalid node collateral withdraw request
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        503:
+          description: Node is not Ready yet
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+
+  /node-collateral/{address}/info:
+    get:
+      tags:
+        - Node collateral
+      description: Get node collateral info for a given address
+      parameters:
+        - name: address
+          in: path
+          description: User's address
+          required: true
+          schema:
+            $ref: '../../models/schemas/Address.yml'
+      responses:
+        200:
+          description: Received node collateral info
+          content:
+            application/json:
+              schema:
+                $ref: '../../models/schemas/NodeCollateralsInfo.yml'
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        503:
+          description: Node is not Ready yet
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+
   /metrics:
     get:
       tags:

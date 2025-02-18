@@ -24,9 +24,11 @@ import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.domain.block.processing._
+import io.constellationnetwork.node.shared.domain.delegatedStake.{UpdateDelegatedStakeAcceptanceManager, UpdateDelegatedStakeValidator}
 import io.constellationnetwork.node.shared.domain.fork.ForkInfo
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.{UpdateNodeParametersAcceptanceManager, UpdateNodeParametersValidator}
+import io.constellationnetwork.node.shared.domain.nodeCollateral.{UpdateNodeCollateralAcceptanceManager, UpdateNodeCollateralValidator}
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult
@@ -186,37 +188,50 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
   }
 
+  private val signedValidator = new SignedValidator[IO] {
+    override def validateSignatures[A: Encoder](signed: Signed[A])(implicit hasher: Hasher[IO]): IO[SignedValidationErrorOr[Signed[A]]] =
+      IO.pure(Valid(signed))
+
+    override def validateUniqueSigners[A: Encoder](signed: Signed[A]): SignedValidationErrorOr[Signed[A]] = ???
+
+    override def validateMinSignatureCount[A: Encoder](signed: Signed[A], minSignatureCount: PosInt): SignedValidationErrorOr[Signed[A]] =
+      ???
+
+    override def validateMaxSignatureCount[A: Encoder](signed: Signed[A], maxSignatureCount: PosInt): SignedValidationErrorOr[Signed[A]] =
+      ???
+
+    override def isSignedBy[A: Encoder](signed: Signed[A], signerAddress: Address): IO[SignedValidationErrorOr[Signed[A]]] = ???
+
+    override def isSignedExclusivelyBy[A: Encoder](signed: Signed[A], signerAddress: Address): IO[SignedValidationErrorOr[Signed[A]]] =
+      ???
+
+    override def validateSignaturesWithSeedlist[A <: AnyRef](
+      seedlist: Option[Set[PeerId]],
+      signed: Signed[A]
+    ): SignedValidationErrorOr[Signed[A]] = ???
+
+    override def validateSignedBySeedlistMajority[A](
+      seedlist: Option[Set[PeerId]],
+      signed: Signed[A]
+    ): SignedValidationErrorOr[Signed[A]] = ???
+  }
+
   def updateNodeParametersAcceptanceManager(implicit txHasher: Hasher[IO]) = {
-    val signedValidator = new SignedValidator[IO] {
-      override def validateSignatures[A: Encoder](signed: Signed[A])(implicit hasher: Hasher[IO]): IO[SignedValidationErrorOr[Signed[A]]] =
-        IO.pure(Valid(signed))
-
-      override def validateUniqueSigners[A: Encoder](signed: Signed[A]): SignedValidationErrorOr[Signed[A]] = ???
-
-      override def validateMinSignatureCount[A: Encoder](signed: Signed[A], minSignatureCount: PosInt): SignedValidationErrorOr[Signed[A]] =
-        ???
-
-      override def validateMaxSignatureCount[A: Encoder](signed: Signed[A], maxSignatureCount: PosInt): SignedValidationErrorOr[Signed[A]] =
-        ???
-
-      override def isSignedBy[A: Encoder](signed: Signed[A], signerAddress: Address): IO[SignedValidationErrorOr[Signed[A]]] = ???
-
-      override def isSignedExclusivelyBy[A: Encoder](signed: Signed[A], signerAddress: Address): IO[SignedValidationErrorOr[Signed[A]]] =
-        ???
-
-      override def validateSignaturesWithSeedlist[A <: AnyRef](
-        seedlist: Option[Set[PeerId]],
-        signed: Signed[A]
-      ): SignedValidationErrorOr[Signed[A]] = ???
-
-      override def validateSignedBySeedlistMajority[A](
-        seedlist: Option[Set[PeerId]],
-        signed: Signed[A]
-      ): SignedValidationErrorOr[Signed[A]] = ???
-    }
     val updateNodeParametersValidator =
       UpdateNodeParametersValidator.make(signedValidator, RewardFraction(5_000_000), RewardFraction(10_000_000))
     UpdateNodeParametersAcceptanceManager.make(updateNodeParametersValidator)
+  }
+
+  def updateDelegatedStakeAcceptanceManager(implicit hasher: Hasher[IO], sp: SecurityProvider[IO]) = {
+    val validator =
+      UpdateDelegatedStakeValidator.make(signedValidator, None)
+    UpdateDelegatedStakeAcceptanceManager.make(validator)
+  }
+
+  def updateNodeCollateralAcceptanceManager(implicit hasher: Hasher[IO], sp: SecurityProvider[IO]) = {
+    val validator =
+      UpdateNodeCollateralValidator.make(signedValidator, None)
+    UpdateNodeCollateralAcceptanceManager.make(validator)
   }
 
   val collateral: Amount = Amount.empty
@@ -243,8 +258,11 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
           tlbam,
           scProcessor,
           updateNodeParametersAcceptanceManager,
+          updateDelegatedStakeAcceptanceManager,
+          updateNodeCollateralAcceptanceManager,
           spendActionValidator,
-          collateral
+          collateral,
+          NonNegLong(136080L)
         )
 
     val feeCalculator = new SnapshotBinaryFeeCalculator[IO] {

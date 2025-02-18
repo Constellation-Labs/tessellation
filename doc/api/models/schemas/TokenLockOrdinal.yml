@@ -1,0 +1,4 @@
+type: integer
+format: int64
+minimum: 0
+description: Non-negative long value representing the token lock ordinal

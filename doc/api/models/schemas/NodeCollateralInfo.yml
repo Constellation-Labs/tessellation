@@ -1,0 +1,22 @@
+type: object
+properties:
+  acceptedOrdinal:
+    $ref: 'SnapshotOrdinal.yml'
+  tokenLockRef:
+    $ref: 'Hash.yml'
+  amount:
+    type: integer
+    format: int64
+    example: 125000
+    minimum: 0
+  fee:
+    type: integer
+    format: int64
+    example: 123
+    minimum: 0
+  withdrawalStarted:
+    $ref: 'SnapshotOrdinal.yml'
+    nullable: true
+  withdrawalFinishes:
+    $ref: 'SnapshotOrdinal.yml'
+    nullable: true

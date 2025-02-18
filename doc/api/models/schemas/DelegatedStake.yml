@@ -1,0 +1,16 @@
+type: object
+properties:
+  nodeId:
+    $ref: 'Id.yml'
+  amount:
+    type: integer
+    format: int64
+    example: 2567890
+    minimum: 0
+    description: Non-negative long value representing the delegated stake amount
+  fee:
+    type: integer
+    format: int64
+    example: 256
+    minimum: 0
+    description: Optional non-negative long value representing the delegated stake fee

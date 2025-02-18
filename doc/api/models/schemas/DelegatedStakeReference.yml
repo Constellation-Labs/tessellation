@@ -1,0 +1,9 @@
+type: object
+properties:
+  ordinal:
+    type: integer
+    format: int64
+    minimum: 0
+    description: Non-negative long value representing the delegated stake ordinal
+  hash:
+    $ref: 'Hash.yml'

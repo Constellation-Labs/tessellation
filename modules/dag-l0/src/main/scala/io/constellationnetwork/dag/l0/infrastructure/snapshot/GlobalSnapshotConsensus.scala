@@ -97,8 +97,11 @@ object GlobalSnapshotConsensus {
             feeCalculator
           ),
         sharedServices.updateNodeParametersAcceptanceManager,
+        sharedServices.updateDelegatedStakeAcceptanceManager,
+        sharedServices.updateNodeCollateralAcceptanceManager,
         validators.spendActionValidator,
-        collateral
+        collateral,
+        sharedCfg.delegatedStaking.withdrawalTimeLimit
       )
       consensusStorage <- ConsensusStorage
         .make[

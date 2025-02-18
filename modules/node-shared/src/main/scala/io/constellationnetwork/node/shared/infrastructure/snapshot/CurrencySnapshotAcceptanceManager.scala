@@ -249,7 +249,7 @@ object CurrencySnapshotAcceptanceManager {
       )
 
       acceptedTokenLocks = incomingTokenLocks
-        .filter(itl => itl.unlockEpoch >= epochProgress)
+        .filter(itl => itl.unlockEpoch.forall(_ >= epochProgress))
         .groupBy(_.source)
         .toSortedMap
 
@@ -589,7 +589,7 @@ object CurrencySnapshotAcceptanceManager {
         .foldM(lastActiveTokenLocks) {
           case (acc, (address, tokenLocks)) =>
             val lastAddressTokenLocks = acc.getOrElse(address, SortedSet.empty[Signed[TokenLock]])
-            val unexpired = (lastAddressTokenLocks ++ tokenLocks).filter(_.unlockEpoch >= epochProgress)
+            val unexpired = (lastAddressTokenLocks ++ tokenLocks).filter(_.unlockEpoch.forall(_ >= epochProgress))
             val unlocksRefs = acceptedTokenUnlocks.map(_.tokenLockRef)
 
             unexpired
@@ -617,8 +617,8 @@ object CurrencySnapshotAcceptanceManager {
 
       (acceptedTokenLocks |+| expiredGlobalTokenLocks).foldLeft(currentBalances) {
         case (acc, (address, tokenLocks)) =>
-          val unexpired = tokenLocks.filter(_.unlockEpoch >= epochProgress)
-          val expired = tokenLocks.filter(_.unlockEpoch < epochProgress)
+          val unexpired = tokenLocks.filter(_.unlockEpoch.forall(_ >= epochProgress))
+          val expired = tokenLocks.filter(_.unlockEpoch.exists(_ < epochProgress))
 
           val updatedBalanceUnexpired =
             unexpired.foldLeft(acc.getOrElse(address, Balance.empty)) { (currentBalance, tokenLock) =>
@@ -665,7 +665,7 @@ object CurrencySnapshotAcceptanceManager {
       tokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]],
       epochProgress: EpochProgress
     ): SortedMap[Address, SortedSet[Signed[TokenLock]]] =
-      tokenLocks.view.mapValues(_.filter(_.unlockEpoch < epochProgress)).to(SortedMap)
+      tokenLocks.view.mapValues(_.filter(_.unlockEpoch.exists(_ < epochProgress))).to(SortedMap)
 
     private def acceptCurrencyAllowSpends(
       epochProgress: EpochProgress,

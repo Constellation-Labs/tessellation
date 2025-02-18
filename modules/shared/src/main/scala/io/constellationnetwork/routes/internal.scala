@@ -68,6 +68,8 @@ object internal {
       :: Equal["/snapshots"]
       :: Equal["/global-snapshots"]
       :: Equal["/metagraph"]
+      :: Equal["/delegated-stakes"]
+      :: Equal["/node-collateral"]
       :: HNil
   ]
 

@@ -96,7 +96,13 @@ object Services {
       collateralService = Collateral.make[F](cfg.collateral, storages.globalSnapshot)
       stateChannelService = StateChannelService
         .make[F](
-          L0Cell.mkL0Cell(queues.l1Output, queues.stateChannelOutput, queues.updateNodeParametersOutput),
+          L0Cell.mkL0Cell(
+            queues.l1Output,
+            queues.stateChannelOutput,
+            queues.updateNodeParametersOutput,
+            queues.delegatedStakeOutput,
+            queues.nodeCollateralOutput
+          ),
           validators.stateChannelValidator
         )
       getOrdinal = storages.globalSnapshot.headSnapshot.map(_.map(_.ordinal))

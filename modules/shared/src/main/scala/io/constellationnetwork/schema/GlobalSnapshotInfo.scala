@@ -12,7 +12,9 @@ import io.constellationnetwork.merkletree.{MerkleRoot, MerkleTree, Proof}
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Balance
+import io.constellationnetwork.schema.delegatedStake.UpdateDelegatedStake
 import io.constellationnetwork.schema.node.UpdateNodeParameters
+import io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral
 import io.constellationnetwork.schema.snapshot.{SnapshotInfo, StateProof}
 import io.constellationnetwork.schema.swap.{AllowSpend, AllowSpendReference}
 import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockReference}
@@ -51,6 +53,10 @@ object GlobalSnapshotInfoV1 {
       Some(SortedMap.empty),
       Some(SortedMap.empty[Address, AllowSpendReference]),
       Some(SortedMap.empty[Address, TokenLockReference]),
+      Some(SortedMap.empty),
+      Some(SortedMap.empty),
+      Some(SortedMap.empty),
+      Some(SortedMap.empty),
       Some(SortedMap.empty)
     )
 }
@@ -68,6 +74,10 @@ case class GlobalSnapshotStateProofV1(
       lastTxRefsProof,
       balancesProof,
       lastCurrencySnapshotsProof,
+      None,
+      None,
+      None,
+      None,
       None,
       None,
       None,
@@ -102,14 +112,34 @@ case class GlobalSnapshotStateProof(
   tokenLockBalances: Option[Hash],
   lastAllowSpendRefs: Option[Hash],
   lastTokenLockRefs: Option[Hash],
-  updateNodeParameters: Option[Hash]
+  updateNodeParameters: Option[Hash],
+  activeDelegatedStakes: Option[Hash],
+  delegatedStakesWithdrawals: Option[Hash],
+  activeNodeCollaterals: Option[Hash],
+  nodeCollateralWithdrawals: Option[Hash]
 ) extends StateProof
 
 object GlobalSnapshotStateProof {
   def apply: (
-    (Hash, Hash, Hash, Option[MerkleRoot], Option[Hash], Option[Hash], Option[Hash], Option[Hash], Option[Hash], Option[Hash])
+    (
+      Hash,
+      Hash,
+      Hash,
+      Option[MerkleRoot],
+      Option[Hash],
+      Option[Hash],
+      Option[Hash],
+      Option[Hash],
+      Option[Hash],
+      Option[Hash],
+      Option[Hash],
+      Option[Hash],
+      Option[Hash],
+      Option[Hash]
+    )
   ) => GlobalSnapshotStateProof = {
-    case (x1, x2, x3, x4, x5, x6, x7, x8, x9, x10) => GlobalSnapshotStateProof.apply(x1, x2, x3, x4, x5, x6, x7, x8, x9, x10)
+    case (x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14) =>
+      GlobalSnapshotStateProof.apply(x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14)
   }
 }
 
@@ -132,6 +162,10 @@ case class GlobalSnapshotInfoV2(
         _.map { case (Signed(inc, proofs), info) => (Signed(inc.toCurrencyIncrementalSnapshot, proofs), info.toCurrencySnapshotInfo) }
       }.to(lastCurrencySnapshots.sortedMapFactory),
       lastCurrencySnapshotsProofs,
+      None,
+      None,
+      None,
+      None,
       None,
       None,
       None,
@@ -179,7 +213,11 @@ case class GlobalSnapshotInfo(
   tokenLockBalances: Option[SortedMap[Address, SortedMap[Address, Balance]]],
   lastAllowSpendRefs: Option[SortedMap[Address, AllowSpendReference]],
   lastTokenLockRefs: Option[SortedMap[Address, TokenLockReference]],
-  updateNodeParameters: Option[SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)]]
+  updateNodeParameters: Option[SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)]],
+  activeDelegatedStakes: Option[SortedMap[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]]],
+  delegatedStakesWithdrawals: Option[SortedMap[Address, List[(Signed[UpdateDelegatedStake.Withdraw], SnapshotOrdinal)]]],
+  activeNodeCollaterals: Option[SortedMap[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]]],
+  nodeCollateralWithdrawals: Option[SortedMap[Address, List[(Signed[UpdateNodeCollateral.Withdraw], SnapshotOrdinal)]]]
 ) extends SnapshotInfo[GlobalSnapshotStateProof] {
   def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
     lastCurrencySnapshots.merkleTree[F].flatMap(stateProof(_))
@@ -201,8 +239,12 @@ case class GlobalSnapshotInfo(
       tokenLockBalances.traverse(_.hash),
       lastAllowSpendRefs.traverse(_.hash),
       lastTokenLockRefs.traverse(_.hash),
-      updateNodeParameters.traverse(_.hash)
-    ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot), _, _, _, _, _, _))
+      updateNodeParameters.traverse(_.hash),
+      activeDelegatedStakes.traverse(_.hash),
+      delegatedStakesWithdrawals.traverse(_.hash),
+      activeNodeCollaterals.traverse(_.hash),
+      nodeCollateralWithdrawals.traverse(_.hash)
+    ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot), _, _, _, _, _, _, _, _, _, _))
 
 }
 
@@ -213,6 +255,10 @@ object GlobalSnapshotInfo {
     SortedMap.empty,
     SortedMap.empty,
     SortedMap.empty,
+    Some(SortedMap.empty),
+    Some(SortedMap.empty),
+    Some(SortedMap.empty),
+    Some(SortedMap.empty),
     Some(SortedMap.empty),
     Some(SortedMap.empty),
     Some(SortedMap.empty),

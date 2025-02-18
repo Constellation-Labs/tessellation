@@ -104,7 +104,7 @@ object ContextualTokenLockValidator {
         currentEpochProgress: EpochProgress
       ): Either[ContextualTokenLockValidationError, Hashed[TokenLock]] = {
         val validUnlockEpochProgress =
-          tokenLock.unlockEpoch >= (currentEpochProgress |+| EpochProgress(tokenLocksConfig.minEpochProgressesToLock))
+          tokenLock.unlockEpoch.forall(_ >= (currentEpochProgress |+| EpochProgress(tokenLocksConfig.minEpochProgressesToLock)))
 
         if (validUnlockEpochProgress) {
           tokenLock.asRight
@@ -213,7 +213,7 @@ object ContextualTokenLockValidator {
   case class InsufficientBalance(amount: Amount, balance: Balance) extends ContextualTokenLockValidationError
   case class NonContextualValidationError(error: TokenLockValidationError) extends ContextualTokenLockValidationError
   case class LockedAddressError(address: Address) extends ContextualTokenLockValidationError
-  case class TooShortUnlockEpochProgress(epochProgress: EpochProgress) extends ContextualTokenLockValidationError
+  case class TooShortUnlockEpochProgress(epochProgress: Option[EpochProgress]) extends ContextualTokenLockValidationError
   case class InvalidCurrencyId(currencyId: Option[CurrencyId]) extends ContextualTokenLockValidationError
   case class CustomValidationError(message: String) extends ContextualTokenLockValidationError
 

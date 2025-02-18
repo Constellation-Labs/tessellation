@@ -1,0 +1,8 @@
+type: object
+properties:
+  stake:
+    $ref: 'DelegatedStake.yml'
+  tokenLockRef:
+    $ref: 'Hash.yml'
+  stakeRef:
+    $ref: 'DelegatedStakeReference.yml'

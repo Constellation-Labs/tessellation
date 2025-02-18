@@ -8,7 +8,9 @@ import scala.collection.immutable.SortedMap
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.types.{AddressesConfig, DelegatedStakingConfig}
 import io.constellationnetwork.node.shared.domain.block.processing.BlockValidator
+import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator
 import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersValidator
+import io.constellationnetwork.node.shared.domain.nodeCollateral.UpdateNodeCollateralValidator
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.domain.statechannel.{FeeCalculator, FeeCalculatorConfig, StateChannelValidator}
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockValidator
@@ -67,6 +69,10 @@ object SharedValidators {
       delegatedStaking.minRewardFraction,
       delegatedStaking.maxRewardFraction
     )
+    val updateDelegatedStakeValidator =
+      UpdateDelegatedStakeValidator.make[F](signedValidator, l0Seedlist)
+    val updateNodeCollateralValidator =
+      UpdateNodeCollateralValidator.make[F](signedValidator, l0Seedlist)
 
     val spendActionValidator = SpendActionValidator.make[F]
 
@@ -88,7 +94,9 @@ object SharedValidators {
       allowSpendValidator,
       tokenLockValidator,
       updateNodeParametersValidator,
-      spendActionValidator
+      spendActionValidator,
+      updateDelegatedStakeValidator,
+      updateNodeCollateralValidator
     ) {}
   }
 }
@@ -111,5 +119,7 @@ sealed abstract class SharedValidators[F[_]] private (
   val allowSpendValidator: AllowSpendValidator[F],
   val tokenLockValidator: TokenLockValidator[F],
   val updateNodeParametersValidator: UpdateNodeParametersValidator[F],
-  val spendActionValidator: SpendActionValidator[F]
+  val spendActionValidator: SpendActionValidator[F],
+  val updateDelegatedStakeValidator: UpdateDelegatedStakeValidator[F],
+  val updateNodeCollateralValidator: UpdateNodeCollateralValidator[F]
 )

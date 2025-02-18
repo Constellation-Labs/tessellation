@@ -10,6 +10,8 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.schema.currency.SnapshotFee
 import io.constellationnetwork.dag.l0.domain.cell.L0Cell
+import io.constellationnetwork.dag.l0.domain.delegatedStake.DelegatedStakeOutput
+import io.constellationnetwork.dag.l0.domain.nodeCollateral.NodeCollateralOutput
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
@@ -88,7 +90,9 @@ object StateChannelServiceSuite extends MutableIOSuite {
       dagQueue <- Queue.unbounded[IO, Signed[Block]]
       scQueue <- Queue.unbounded[IO, StateChannelOutput]
       unpQueue <- Queue.unbounded[IO, Signed[UpdateNodeParameters]]
-    } yield StateChannelService.make[IO](L0Cell.mkL0Cell[IO](dagQueue, scQueue, unpQueue), validator)
+      dsQueue <- Queue.unbounded[IO, DelegatedStakeOutput]
+      ncQueue <- Queue.unbounded[IO, NodeCollateralOutput]
+    } yield StateChannelService.make[IO](L0Cell.mkL0Cell[IO](dagQueue, scQueue, unpQueue, dsQueue, ncQueue), validator)
   }
 
   def mkStateChannelOutput()(implicit S: SecurityProvider[IO], H: Hasher[IO]) = for {
@@ -112,7 +116,12 @@ object StateChannelServiceSuite extends MutableIOSuite {
           EpochProgress.MinValue,
           NonEmptyList.of(PeerId(Hex(""))),
           SnapshotTips(SortedSet.empty, SortedSet.empty),
-          stateProof = GlobalSnapshotStateProof(Hash.empty, Hash.empty, Hash.empty, None, None, None, None, None, None, None),
+          stateProof =
+            GlobalSnapshotStateProof(Hash.empty, Hash.empty, Hash.empty, None, None, None, None, None, None, None, None, None, None, None),
+          None,
+          None,
+          None,
+          None,
           None,
           None,
           None,

@@ -48,6 +48,8 @@ object Daemons {
           queues.l1AllowSpendOutput,
           queues.l1TokenLockOutput,
           queues.updateNodeParametersOutput,
+          queues.delegatedStakeOutput,
+          queues.nodeCollateralOutput,
           services.gossip,
           services.consensus.storage
         ),

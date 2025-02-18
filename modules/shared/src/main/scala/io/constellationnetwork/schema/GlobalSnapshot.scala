@@ -11,9 +11,11 @@ import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.{SharedArtifact, SpendAction}
 import io.constellationnetwork.schema.balance.Balance
+import io.constellationnetwork.schema.delegatedStake.UpdateDelegatedStake
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
 import io.constellationnetwork.schema.node.UpdateNodeParameters
+import io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.SnapshotVersion
 import io.constellationnetwork.schema.snapshot.{FullSnapshot, IncrementalSnapshot}
@@ -51,6 +53,10 @@ case class GlobalIncrementalSnapshot(
   spendActions: Option[SortedMap[Address, List[SpendAction]]],
   updateNodeParameters: Option[SortedMap[Id, Signed[UpdateNodeParameters]]],
   artifacts: Option[SortedSet[SharedArtifact]],
+  activeDelegatedStakes: Option[SortedMap[Address, List[Signed[UpdateDelegatedStake.Create]]]],
+  delegatedStakesWithdrawals: Option[SortedMap[Address, List[Signed[UpdateDelegatedStake.Withdraw]]]],
+  activeNodeCollaterals: Option[SortedMap[Address, List[Signed[UpdateNodeCollateral.Create]]]],
+  nodeCollateralWithdrawals: Option[SortedMap[Address, List[Signed[UpdateNodeCollateral.Withdraw]]]],
   version: SnapshotVersion = SnapshotVersion("0.0.1")
 ) extends IncrementalSnapshot[GlobalSnapshotStateProof]
 
@@ -73,7 +79,11 @@ object GlobalIncrementalSnapshot {
         Some(SortedSet.empty),
         Some(SortedMap.empty),
         snapshot.info.updateNodeParameters.map(_.map { case (k, v) => (k, v._1) }),
-        Some(SortedSet.empty)
+        Some(SortedSet.empty),
+        Some(SortedMap.empty),
+        Some(SortedMap.empty),
+        Some(SortedMap.empty),
+        Some(SortedMap.empty)
       )
     }
 }
@@ -111,6 +121,10 @@ case class GlobalIncrementalSnapshotV1(
       Some(SortedMap.empty),
       Some(SortedMap.empty),
       Some(SortedSet.empty),
+      Some(SortedMap.empty),
+      Some(SortedMap.empty),
+      Some(SortedMap.empty),
+      Some(SortedMap.empty),
       version
     )
 }
@@ -188,7 +202,11 @@ object GlobalSnapshot {
         Some(SortedSet.empty),
         Some(SortedMap.empty),
         Some(SortedMap.empty),
-        Some(SortedSet.empty)
+        Some(SortedSet.empty),
+        Some(SortedMap.empty),
+        Some(SortedMap.empty),
+        Some(SortedMap.empty),
+        Some(SortedMap.empty)
       )
     }
 

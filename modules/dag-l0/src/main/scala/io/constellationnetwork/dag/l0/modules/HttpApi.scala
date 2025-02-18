@@ -7,19 +7,23 @@ import cats.syntax.option._
 import cats.syntax.semigroupk._
 
 import io.constellationnetwork.dag.l0.domain.cell.{L0Cell, L0CellInput}
+import io.constellationnetwork.dag.l0.domain.delegatedStake.DelegatedStakeOutput
+import io.constellationnetwork.dag.l0.domain.nodeCollateral.NodeCollateralOutput
 import io.constellationnetwork.dag.l0.http.routes._
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.GlobalSnapshotKey
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.schema.GlobalConsensusOutcome
 import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.env.AppEnvironment._
 import io.constellationnetwork.node.shared.cli.CliMethod
-import io.constellationnetwork.node.shared.config.types.HttpConfig
+import io.constellationnetwork.node.shared.config.types.{DelegatedStakingConfig, HttpConfig}
 import io.constellationnetwork.node.shared.http.p2p.middlewares.{PeerAuthMiddleware, `X-Id-Middleware`}
 import io.constellationnetwork.node.shared.http.routes._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.modules.SharedValidators
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.delegatedStake.UpdateDelegatedStake
 import io.constellationnetwork.schema.node.UpdateNodeParameters
+import io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.TessellationVersion
 import io.constellationnetwork.security.signature.Signed
@@ -42,7 +46,8 @@ object HttpApi {
     selfId: PeerId,
     nodeVersion: TessellationVersion,
     httpCfg: HttpConfig,
-    sharedValidators: SharedValidators[F]
+    sharedValidators: SharedValidators[F],
+    delegatedStakingCfg: DelegatedStakingConfig
   ): HttpApi[F, R] =
     new HttpApi[F, R](
       storages,
@@ -54,7 +59,8 @@ object HttpApi {
       selfId,
       nodeVersion,
       httpCfg,
-      sharedValidators
+      sharedValidators,
+      delegatedStakingCfg
     ) {}
 }
 
@@ -68,16 +74,53 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
   selfId: PeerId,
   nodeVersion: TessellationVersion,
   httpCfg: HttpConfig,
-  sharedValidators: SharedValidators[F]
+  sharedValidators: SharedValidators[F],
+  delegatedStakingCfg: DelegatedStakingConfig
 ) {
 
   private val mkDagCell = (block: Signed[Block]) =>
-    L0Cell.mkL0Cell(queues.l1Output, queues.stateChannelOutput, queues.updateNodeParametersOutput).apply(L0CellInput.HandleDAGL1(block))
+    L0Cell
+      .mkL0Cell(
+        queues.l1Output,
+        queues.stateChannelOutput,
+        queues.updateNodeParametersOutput,
+        queues.delegatedStakeOutput,
+        queues.nodeCollateralOutput
+      )
+      .apply(L0CellInput.HandleDAGL1(block))
 
   private val mkNodeParametersCell = (params: Signed[UpdateNodeParameters]) =>
     L0Cell
-      .mkL0Cell(queues.l1Output, queues.stateChannelOutput, queues.updateNodeParametersOutput)
+      .mkL0Cell(
+        queues.l1Output,
+        queues.stateChannelOutput,
+        queues.updateNodeParametersOutput,
+        queues.delegatedStakeOutput,
+        queues.nodeCollateralOutput
+      )
       .apply(L0CellInput.HandleUpdateNodeParameters(params))
+
+  private val mkDelegatedStakesCell = (data: DelegatedStakeOutput) =>
+    L0Cell
+      .mkL0Cell(
+        queues.l1Output,
+        queues.stateChannelOutput,
+        queues.updateNodeParametersOutput,
+        queues.delegatedStakeOutput,
+        queues.nodeCollateralOutput
+      )
+      .apply(L0CellInput.HandleDelegatedStake(data))
+
+  private val mkNodeCollateralCell = (data: NodeCollateralOutput) =>
+    L0Cell
+      .mkL0Cell(
+        queues.l1Output,
+        queues.stateChannelOutput,
+        queues.updateNodeParametersOutput,
+        queues.delegatedStakeOutput,
+        queues.nodeCollateralOutput
+      )
+      .apply(L0CellInput.HandleNodeCollateral(data))
 
   private val clusterRoutes =
     HasherSelector[F].withCurrent { implicit hasher =>
@@ -111,6 +154,27 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
       storages.node,
       services.cluster,
       sharedValidators.updateNodeParametersValidator
+    )
+  }
+  private val delegatedStakesRoutes =
+    HasherSelector[F].withCurrent { implicit hasher =>
+      DelegatedStakesRoutes[F](
+        mkDelegatedStakesCell,
+        sharedValidators.updateDelegatedStakeValidator,
+        storages.globalSnapshot,
+        storages.fullGlobalSnapshot,
+        storages.node,
+        delegatedStakingCfg.withdrawalTimeLimit
+      )
+    }
+  private val nodeCollateralsRoutes = HasherSelector[F].withCurrent { implicit hasher =>
+    NodeCollateralRoutes[F](
+      mkNodeCollateralCell,
+      sharedValidators.updateNodeCollateralValidator,
+      storages.globalSnapshot,
+      storages.fullGlobalSnapshot,
+      storages.node,
+      delegatedStakingCfg.withdrawalTimeLimit
     )
   }
 
@@ -153,7 +217,9 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
               trustRoutes.publicRoutes <+>
               allowSpendRoutes.publicRoutes <+>
               tokenLockRoutes.publicRoutes <+>
-              nodeParametersRoutes.publicRoutes
+              nodeParametersRoutes.publicRoutes <+>
+              delegatedStakesRoutes.publicRoutes <+>
+              nodeCollateralsRoutes.publicRoutes
           }
         }
     }

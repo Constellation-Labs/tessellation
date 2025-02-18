@@ -17,7 +17,10 @@ import io.constellationnetwork.node.shared.domain.snapshot.SnapshotContextFuncti
 import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.delegatedStake.UpdateDelegatedStake
 import io.constellationnetwork.schema.node.UpdateNodeParameters
+import io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral
 import io.constellationnetwork.schema.transaction.RewardTransaction
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.Signed
@@ -54,10 +57,36 @@ object GlobalSnapshotContextFunctions {
           .values
           .toList
 
+        cdsEventsForAcceptance = signedArtifact.activeDelegatedStakes
+          .getOrElse(SortedMap.empty[Address, List[Signed[UpdateDelegatedStake.Create]]])
+          .values
+          .toList
+          .flatten
+
+        wdsEventsForAcceptance = signedArtifact.delegatedStakesWithdrawals
+          .getOrElse(SortedMap.empty[Address, List[Signed[UpdateDelegatedStake.Withdraw]]])
+          .values
+          .toList
+          .flatten
+
+        cncEventsForAcceptance = signedArtifact.activeNodeCollaterals
+          .getOrElse(SortedMap.empty[Address, List[Signed[UpdateNodeCollateral.Create]]])
+          .values
+          .toList
+          .flatten
+
+        wncEventsForAcceptance = signedArtifact.nodeCollateralWithdrawals
+          .getOrElse(SortedMap.empty[Address, List[Signed[UpdateNodeCollateral.Withdraw]]])
+          .values
+          .toList
+          .flatten
+
         (
           acceptanceResult,
           allowSpendBlockAcceptanceResult,
           tokenLockBlockAcceptanceResult,
+          delegatedStakeAcceptanceResult,
+          nodeCollateralAcceptanceResult,
           scSnapshots,
           returnedSCEvents,
           acceptedRewardTxs,
@@ -75,6 +104,10 @@ object GlobalSnapshotContextFunctions {
             tokenLockBlocksForAcceptance,
             scEvents,
             unpEventsForAcceptance,
+            cdsEventsForAcceptance,
+            wdsEventsForAcceptance,
+            cncEventsForAcceptance,
+            wncEventsForAcceptance,
             context,
             lastActiveTips,
             lastDeprecatedTips,

@@ -3,6 +3,8 @@ package io.constellationnetwork.dag.l0.infrastructure.snapshot
 import cats.effect.Async
 import cats.effect.std.{Queue, Supervisor}
 
+import io.constellationnetwork.dag.l0.domain.delegatedStake.{CreateDelegatedStakeOutput, DelegatedStakeOutput, WithdrawDelegatedStakeOutput}
+import io.constellationnetwork.dag.l0.domain.nodeCollateral.{CreateNodeCollateralOutput, NodeCollateralOutput, WithdrawNodeCollateralOutput}
 import io.constellationnetwork.dag.l0.infrastructure.snapshot.event._
 import io.constellationnetwork.node.shared.domain.Daemon
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
@@ -25,6 +27,8 @@ object GlobalSnapshotEventsPublisherDaemon {
     allowSpendOutputQueue: Queue[F, Signed[AllowSpendBlock]],
     tokenLockOutputQueue: Queue[F, Signed[TokenLockBlock]],
     updateNodeParametersQueue: Queue[F, Signed[UpdateNodeParameters]],
+    delegatedStakeOutputQueue: Queue[F, DelegatedStakeOutput],
+    nodeCollateralOutputQueue: Queue[F, NodeCollateralOutput],
     gossip: Gossip[F],
     consensusStorage: ConsensusStorage[F, GlobalSnapshotEvent, _, _, _, _, _, _]
   ): Daemon[F] = {
@@ -50,6 +54,22 @@ object GlobalSnapshotEventsPublisherDaemon {
         Stream
           .fromQueueUnterminated(updateNodeParametersQueue)
           .map(UpdateNodeParametersEvent(_))
+      )
+      .merge(
+        Stream
+          .fromQueueUnterminated(delegatedStakeOutputQueue)
+          .map {
+            case CreateDelegatedStakeOutput(data)   => CreateDelegatedStakeEvent(data)
+            case WithdrawDelegatedStakeOutput(data) => WithdrawDelegatedStakeEvent(data)
+          }
+      )
+      .merge(
+        Stream
+          .fromQueueUnterminated(nodeCollateralOutputQueue)
+          .map {
+            case CreateNodeCollateralOutput(data)   => CreateNodeCollateralEvent(data)
+            case WithdrawNodeCollateralOutput(data) => WithdrawNodeCollateralEvent(data)
+          }
       )
 
     SnapshotEventsPublisherDaemon

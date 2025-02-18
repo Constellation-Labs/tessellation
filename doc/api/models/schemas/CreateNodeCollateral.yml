@@ -1,0 +1,8 @@
+type: object
+properties:
+  stake:
+    $ref: 'NodeCollateral.yml'
+  tokenLockRef:
+    $ref: 'Hash.yml'
+  collateralRef:
+    $ref: 'NodeCollateralReference.yml'

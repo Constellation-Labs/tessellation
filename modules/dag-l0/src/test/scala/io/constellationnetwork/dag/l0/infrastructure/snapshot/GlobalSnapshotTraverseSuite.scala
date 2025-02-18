@@ -19,7 +19,9 @@ import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.config.types._
+import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceManager
 import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersAcceptanceManager
+import io.constellationnetwork.node.shared.domain.nodeCollateral.UpdateNodeCollateralAcceptanceManager
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
 import io.constellationnetwork.node.shared.domain.swap.block.{
   AllowSpendBlockAcceptanceLogic,
@@ -175,7 +177,11 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         Some(SortedSet.empty),
         Some(SortedMap.empty),
         None,
-        Some(SortedSet.empty)
+        Some(SortedSet.empty),
+        Some(SortedMap.empty),
+        Some(SortedMap.empty),
+        Some(SortedMap.empty),
+        Some(SortedMap.empty)
       )
       signed <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](snapshot, keyPair)
       hashed <- signed.toHashed
@@ -276,7 +282,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           SortedMap.empty,
           Long.MaxValue,
           txHasher,
-          DelegatedStakingConfig(RewardFraction(5_000_000), RewardFraction(10_000_000))
+          DelegatedStakingConfig(RewardFraction(5_000_000), RewardFraction(10_000_000), NonNegLong(7338977L))
         )
 
     val currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
@@ -320,6 +326,12 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           feeCalculator
         )
       updateNodeParametersAcceptanceManager = UpdateNodeParametersAcceptanceManager.make(validators.updateNodeParametersValidator)
+      updateDelegatedStakeAcceptanceManager = UpdateDelegatedStakeAcceptanceManager.make(
+        validators.updateDelegatedStakeValidator
+      )
+      updateNodeCollateralAcceptanceManager = UpdateNodeCollateralAcceptanceManager.make(
+        validators.updateNodeCollateralValidator
+      )
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager
         .make[IO](
           SnapshotOrdinal.MinValue,
@@ -328,8 +340,11 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           tokenLockBlockAcceptanceManager,
           stateChannelProcessor,
           updateNodeParametersAcceptanceManager,
+          updateDelegatedStakeAcceptanceManager,
+          updateNodeCollateralAcceptanceManager,
           validators.spendActionValidator,
-          Amount.empty
+          Amount.empty,
+          NonNegLong(136080L)
         )
       snapshotContextFunctions = GlobalSnapshotContextFunctions.make[IO](snapshotAcceptanceManager)
     } yield
@@ -352,6 +367,10 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           SortedMap.from(balances),
           SortedMap.empty,
           SortedMap.empty,
+          Some(SortedMap.empty),
+          Some(SortedMap.empty),
+          Some(SortedMap.empty),
+          Some(SortedMap.empty),
           Some(SortedMap.empty),
           Some(SortedMap.empty),
           Some(SortedMap.empty),
