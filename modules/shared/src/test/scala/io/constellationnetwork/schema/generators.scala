@@ -142,7 +142,7 @@ object generators {
       tokenLockAmount <- tokenLockAmountGen
       tokenLockReference <- tokenLockReferenceGen
       currencyId = CurrencyId(metagraphAddress).some
-    } yield TokenLock(src, tokenLockAmount, TokenLockFee(NonNegLong.MinValue), tokenLockReference, currencyId, EpochProgress.MaxValue)
+    } yield TokenLock(src, tokenLockAmount, TokenLockFee(NonNegLong.MinValue), tokenLockReference, currencyId, EpochProgress.MaxValue.some)
 
   val signatureGen: Gen[Signature] =
     /* BouncyCastle encodes ECDSA with ASN.1 DER which which is variable length. That generator should be changed to

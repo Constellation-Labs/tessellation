@@ -7,6 +7,12 @@ import cats.syntax.either._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
+import io.constellationnetwork.dag.l0.domain.cell.AlgebraCommand._
+import io.constellationnetwork.dag.l0.domain.cell.CoalgebraCommand._
+import io.constellationnetwork.dag.l0.domain.cell.L0Cell.{Algebra, Coalgebra}
+import io.constellationnetwork.dag.l0.domain.cell.L0CellInput._
+import io.constellationnetwork.dag.l0.domain.delegatedStake.DelegatedStakeOutput
+import io.constellationnetwork.dag.l0.domain.nodeCollateral.NodeCollateralOutput
 import io.constellationnetwork.kernel.Cell.NullTerminal
 import io.constellationnetwork.kernel._
 import io.constellationnetwork.schema.Block
@@ -16,24 +22,23 @@ import io.constellationnetwork.statechannel.StateChannelOutput
 
 import higherkindness.droste.{AlgebraM, CoalgebraM, scheme}
 
-import AlgebraCommand._
-import CoalgebraCommand._
-import L0Cell.{Algebra, Coalgebra}
-import L0CellInput._
-
 sealed trait L0CellInput
 
 object L0CellInput {
   case class HandleDAGL1(data: Signed[Block]) extends L0CellInput
   case class HandleStateChannelSnapshot(snapshot: StateChannelOutput) extends L0CellInput
   case class HandleUpdateNodeParameters(updateNodeParameters: Signed[UpdateNodeParameters]) extends L0CellInput
+  case class HandleDelegatedStake(delegatedStake: DelegatedStakeOutput) extends L0CellInput
+  case class HandleNodeCollateral(nodeCollateral: NodeCollateralOutput) extends L0CellInput
 }
 
 class L0Cell[F[_]: Async](
   data: L0CellInput,
   l1OutputQueue: Queue[F, Signed[Block]],
   stateChannelOutputQueue: Queue[F, StateChannelOutput],
-  updateNodeParametersQueue: Queue[F, Signed[UpdateNodeParameters]]
+  updateNodeParametersQueue: Queue[F, Signed[UpdateNodeParameters]],
+  delegatedStakeOutputQueue: Queue[F, DelegatedStakeOutput],
+  nodeCollateralOutputQueue: Queue[F, NodeCollateralOutput]
 ) extends Cell[F, StackF, L0CellInput, Either[CellError, Ω], CoalgebraCommand](
       data,
       scheme.hyloM(
@@ -47,6 +52,8 @@ class L0Cell[F[_]: Async](
                 Algebra.enqueueDAGL1Data(l1OutputQueue)(data)
               case EnqueueUpdateNodeParameters(updateNodeParameters) =>
                 Algebra.enqueueUpdateNodeParameters(updateNodeParametersQueue)(updateNodeParameters)
+              case EnqueueDelegatedStake(data) => Algebra.enqueueDelegatedStake(delegatedStakeOutputQueue)(data)
+              case EnqueueNodeCollateral(data) => Algebra.enqueueNodeCollateral(nodeCollateralOutputQueue)(data)
               case NoAction =>
                 NullTerminal.asRight[CellError].widen[Ω].pure[F]
             }
@@ -56,12 +63,16 @@ class L0Cell[F[_]: Async](
           case ProcessDAGL1(data)                                => Coalgebra.processDAGL1(data)
           case ProcessStateChannelSnapshot(snapshot)             => Coalgebra.processStateChannelSnapshot(snapshot)
           case ProcessUpdateNodeParameters(updateNodeParameters) => Coalgebra.processUpdateNodeParameters(updateNodeParameters)
+          case ProcessDelegatedStake(data)                       => Coalgebra.processDelegatedStake(data)
+          case ProcessNodeCollateral(data)                       => Coalgebra.processNodeCollateral(data)
         }
       ),
       {
         case HandleDAGL1(data)                                => ProcessDAGL1(data)
         case HandleStateChannelSnapshot(snapshot)             => ProcessStateChannelSnapshot(snapshot)
         case HandleUpdateNodeParameters(updateNodeParameters) => ProcessUpdateNodeParameters(updateNodeParameters)
+        case HandleDelegatedStake(create)                     => ProcessDelegatedStake(create)
+        case HandleNodeCollateral(create)                     => ProcessNodeCollateral(create)
       }
     )
 
@@ -72,9 +83,19 @@ object L0Cell {
   def mkL0Cell[F[_]: Async](
     l1OutputQueue: Queue[F, Signed[Block]],
     stateChannelOutputQueue: Queue[F, StateChannelOutput],
-    updateNodeParametersQueue: Queue[F, Signed[UpdateNodeParameters]]
+    updateNodeParametersQueue: Queue[F, Signed[UpdateNodeParameters]],
+    delegatedStakeOutputQueue: Queue[F, DelegatedStakeOutput],
+    nodeCollateralOutputQueue: Queue[F, NodeCollateralOutput]
   ): Mk[F] =
-    data => new L0Cell(data, l1OutputQueue, stateChannelOutputQueue, updateNodeParametersQueue)
+    data =>
+      new L0Cell(
+        data,
+        l1OutputQueue,
+        stateChannelOutputQueue,
+        updateNodeParametersQueue,
+        delegatedStakeOutputQueue,
+        nodeCollateralOutputQueue
+      )
 
   type AlgebraR[F[_]] = F[Either[CellError, Ω]]
   type CoalgebraR[F[_]] = F[StackF[CoalgebraCommand]]
@@ -96,6 +117,18 @@ object L0Cell {
     ): AlgebraR[F] =
       queue.offer(updateNodeParameters) >>
         NullTerminal.asRight[CellError].widen[Ω].pure[F]
+
+    def enqueueDelegatedStake[F[_]: Async](queue: Queue[F, DelegatedStakeOutput])(
+      data: DelegatedStakeOutput
+    ): AlgebraR[F] =
+      queue.offer(data) >>
+        NullTerminal.asRight[CellError].widen[Ω].pure[F]
+
+    def enqueueNodeCollateral[F[_]: Async](queue: Queue[F, NodeCollateralOutput])(
+      data: NodeCollateralOutput
+    ): AlgebraR[F] =
+      queue.offer(data) >>
+        NullTerminal.asRight[CellError].widen[Ω].pure[F]
   }
 
   object Coalgebra {
@@ -114,6 +147,18 @@ object L0Cell {
 
     def processUpdateNodeParameters[F[_]: Async](updateNodeParameters: Signed[UpdateNodeParameters]): CoalgebraR[F] = {
       def res: StackF[CoalgebraCommand] = Done(AlgebraCommand.EnqueueUpdateNodeParameters(updateNodeParameters).asRight[CellError])
+
+      res.pure[F]
+    }
+
+    def processDelegatedStake[F[_]: Async](data: DelegatedStakeOutput): CoalgebraR[F] = {
+      def res: StackF[CoalgebraCommand] = Done(AlgebraCommand.EnqueueDelegatedStake(data).asRight[CellError])
+
+      res.pure[F]
+    }
+
+    def processNodeCollateral[F[_]: Async](data: NodeCollateralOutput): CoalgebraR[F] = {
+      def res: StackF[CoalgebraCommand] = Done(AlgebraCommand.EnqueueNodeCollateral(data).asRight[CellError])
 
       res.pure[F]
     }

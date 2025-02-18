@@ -139,7 +139,7 @@ object TokenLockRoutesSuite extends HttpSuite {
       fee,
       parent,
       currencyId.some,
-      lastValidEpochProgress
+      lastValidEpochProgress.some
     )
 
     Signed.forAsyncHasher(tokenLock, keyPair)

@@ -1,0 +1,4 @@
+type: object
+properties:
+  collateralRef:
+    $ref: 'Hash.yml'

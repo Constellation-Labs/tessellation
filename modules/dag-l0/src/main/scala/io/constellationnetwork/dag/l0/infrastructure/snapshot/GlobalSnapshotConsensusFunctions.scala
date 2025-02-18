@@ -18,14 +18,17 @@ import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Serv
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.schema.ID.Id
-import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.{Amount, Balance}
+import io.constellationnetwork.schema.delegatedStake.UpdateDelegatedStake
 import io.constellationnetwork.schema.node.UpdateNodeParameters
+import io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.{nodeCollateral, _}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelValidationType}
+import io.constellationnetwork.syntax.sortedCollection.sortedMapSyntax
 
 import eu.timepit.refined.auto._
 
@@ -69,7 +72,25 @@ object GlobalSnapshotConsensusFunctions {
       val tokenLockEvents = artifact.tokenLockBlocks.map(_.toList.map(TokenLockEvent(_))).getOrElse(List.empty)
       val unpEvents =
         artifact.updateNodeParameters.getOrElse(SortedMap.empty[Id, Signed[UpdateNodeParameters]]).values.map(UpdateNodeParametersEvent(_))
-      val events: Set[GlobalSnapshotEvent] = dagEvents ++ scEvents ++ allowSpendEvents ++ unpEvents ++ tokenLockEvents
+      val cdsEvents = artifact.activeDelegatedStakes
+        .getOrElse(SortedMap.empty[Address, List[Signed[UpdateDelegatedStake.Create]]])
+        .values
+        .flatMap(_.map(CreateDelegatedStakeEvent(_)))
+      val wdsEvents = artifact.delegatedStakesWithdrawals
+        .getOrElse(SortedMap.empty[Address, List[Signed[UpdateDelegatedStake.Withdraw]]])
+        .values
+        .flatMap(_.map(WithdrawDelegatedStakeEvent(_)))
+      val cncEvents = artifact.activeNodeCollaterals
+        .getOrElse(SortedMap.empty[Address, List[Signed[UpdateNodeCollateral.Create]]])
+        .values
+        .flatMap(_.map(CreateNodeCollateralEvent(_)))
+      val wncEvents = artifact.nodeCollateralWithdrawals
+        .getOrElse(SortedMap.empty[Address, List[Signed[UpdateNodeCollateral.Withdraw]]])
+        .values
+        .flatMap(_.map(WithdrawNodeCollateralEvent(_)))
+
+      val events: Set[GlobalSnapshotEvent] =
+        dagEvents ++ scEvents ++ allowSpendEvents ++ unpEvents ++ tokenLockEvents ++ cdsEvents ++ wdsEvents ++ cncEvents ++ wncEvents
 
       def usingKryo = createProposalArtifact(
         lastSignedArtifact.ordinal,
@@ -127,6 +148,11 @@ object GlobalSnapshotConsensusFunctions {
       val tokenLockEventsForAcceptance = events.collect { case as: TokenLockEvent => as }
       val unpEventsBeforeCut = events.collect { case unp: UpdateNodeParametersEvent => unp }
 
+      val cdsEventsForAcceptance = events.collect { case e: CreateDelegatedStakeEvent => e }
+      val wdsEventsForAcceptance = events.collect { case e: WithdrawDelegatedStakeEvent => e }
+      val cncEventsForAcceptance = events.collect { case e: CreateNodeCollateralEvent => e }
+      val wncEventsForAcceptance = events.collect { case e: WithdrawNodeCollateralEvent => e }
+
       val dagEvents = dagEventsBeforeCut.filter(_.value.height > lastArtifact.height)
 
       def getLastArtifactHash = lastArtifactHasher.getLogic(lastArtifact.value.ordinal) match {
@@ -158,6 +184,8 @@ object GlobalSnapshotConsensusFunctions {
           acceptanceResult,
           allowSpendBlockAcceptanceResult,
           tokenLockBlockAcceptanceResult,
+          delegatedStakeAcceptanceResult,
+          nodeCollateralAcceptanceResult,
           scSnapshots,
           returnedSCEvents,
           acceptedRewardTxs,
@@ -176,6 +204,10 @@ object GlobalSnapshotConsensusFunctions {
               tokenLockEventsForAcceptance.toList.map(_.value),
               scEvents.map(_.value),
               unpEventsForAcceptance.map(_.updateNodeParameters),
+              cdsEventsForAcceptance.toList.map(_.value),
+              wdsEventsForAcceptance.toList.map(_.value),
+              cncEventsForAcceptance.toList.map(_.value),
+              wncEventsForAcceptance.toList.map(_.value),
               snapshotContext,
               lastActiveTips,
               lastDeprecatedTips,
@@ -194,6 +226,11 @@ object GlobalSnapshotConsensusFunctions {
         (height, subHeight) <- getHeightAndSubHeight(lastArtifact, deprecated, remainedActive, accepted)
 
         returnedDAGEvents = getReturnedDAGEvents(acceptanceResult)
+
+        acceptedDelegatedStakeCreates = delegatedStakeAcceptanceResult.acceptedCreates.view.mapValues(_.map(_._1)).toSortedMap
+        acceptedDelegatedStakeWithdrawals = delegatedStakeAcceptanceResult.acceptedWithdrawals.view.mapValues(_.map(_._1)).toSortedMap
+        acceptedNnodeCollateralCreates = nodeCollateralAcceptanceResult.acceptedCreates.view.mapValues(_.map(_._1)).toSortedMap
+        acceptedNnodeCollateralWithdrawals = nodeCollateralAcceptanceResult.acceptedWithdrawals.view.mapValues(_.map(_._1)).toSortedMap
 
         globalSnapshot = GlobalIncrementalSnapshot(
           currentOrdinal,
@@ -214,7 +251,11 @@ object GlobalSnapshotConsensusFunctions {
           SortedSet.from(tokenLockBlockAcceptanceResult.accepted).some,
           SortedMap.from(spendActions).some,
           updateNodeParameters.some,
-          sharedArtifacts.some
+          sharedArtifacts.some,
+          acceptedDelegatedStakeCreates.some,
+          acceptedDelegatedStakeWithdrawals.some,
+          acceptedNnodeCollateralCreates.some,
+          acceptedNnodeCollateralWithdrawals.some
         )
         returnedEvents = returnedSCEvents.map(StateChannelEvent(_)) ++ returnedDAGEvents
       } yield (globalSnapshot, snapshotInfo, returnedEvents)

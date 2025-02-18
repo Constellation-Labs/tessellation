@@ -15,7 +15,7 @@ import weaver.scalacheck.Checkers
 object L0CellSuite extends SimpleMutableIOSuite with Checkers {
 
   def mkL0CellMk(queue: Queue[IO, Signed[Block]]) =
-    L0Cell.mkL0Cell[IO](queue, null, null)
+    L0Cell.mkL0Cell[IO](queue, null, null, null, null)
 
   test("pass dag block to the queue") { _ =>
     forall(signedBlockGen) { dagBlock =>

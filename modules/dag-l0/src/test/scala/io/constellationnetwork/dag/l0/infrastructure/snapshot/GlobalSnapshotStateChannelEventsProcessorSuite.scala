@@ -85,7 +85,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
           SortedMap.empty,
           Long.MaxValue,
           Hasher.forKryo[IO],
-          DelegatedStakingConfig(RewardFraction(5_000_000), RewardFraction(10_000_000))
+          DelegatedStakingConfig(RewardFraction(5_000_000), RewardFraction(10_000_000), NonNegLong(7338977L))
         )
       currencySnapshotAcceptanceManager = CurrencySnapshotAcceptanceManager.make(
         LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt(10)),
@@ -256,7 +256,11 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
           Some(SortedSet.empty),
           Some(SortedMap.empty),
           Some(SortedMap.empty),
-          Some(SortedSet.empty)
+          Some(SortedSet.empty),
+          Some(SortedMap.empty),
+          Some(SortedMap.empty),
+          Some(SortedMap.empty),
+          Some(SortedMap.empty)
         ),
         NonEmptySet.fromSetUnsafe(SortedSet(SignatureProof(ID.Id(Hex("")), Signature(Hex("")))))
       ).toHashed[F]
@@ -274,6 +278,10 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       None,
       None,
       None,
+      Some(SortedMap.empty),
+      Some(SortedMap.empty),
+      Some(SortedMap.empty),
+      Some(SortedMap.empty),
       Some(SortedMap.empty)
     )
 

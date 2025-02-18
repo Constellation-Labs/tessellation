@@ -1,0 +1,12 @@
+type: object
+properties:
+  address:
+    $ref: 'Address.yml'
+  activeDelegatedStakes:
+    type: array
+    items:
+      $ref: 'DelegatedStakeInfo.yml'
+  pendingWithdrawals:
+    type: array
+    items:
+      $ref: 'DelegatedStakeInfo.yml'

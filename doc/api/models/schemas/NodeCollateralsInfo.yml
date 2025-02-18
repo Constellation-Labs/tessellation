@@ -1,0 +1,12 @@
+type: object
+properties:
+  address:
+    $ref: 'Address.yml'
+  activeNodeCollaterals:
+    type: array
+    items:
+      $ref: 'NodeCollateralInfo.yml'
+  pendingWithdrawals:
+    type: array
+    items:
+      $ref: 'NodeCollateralInfo.yml'

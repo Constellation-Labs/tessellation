@@ -14,7 +14,15 @@ import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.merkletree.Proof
 import io.constellationnetwork.merkletree.syntax._
 import io.constellationnetwork.node.shared.domain.block.processing._
+import io.constellationnetwork.node.shared.domain.delegatedStake.{
+  UpdateDelegatedStakeAcceptanceManager,
+  UpdateDelegatedStakeAcceptanceResult
+}
 import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersAcceptanceManager
+import io.constellationnetwork.node.shared.domain.nodeCollateral.{
+  UpdateNodeCollateralAcceptanceManager,
+  UpdateNodeCollateralAcceptanceResult
+}
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult.CurrencySnapshotWithState
 import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator
@@ -30,15 +38,17 @@ import io.constellationnetwork.node.shared.domain.tokenlock.block.{
   TokenLockBlockAcceptanceResult
 }
 import io.constellationnetwork.schema.ID.Id
-import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact._
 import io.constellationnetwork.schema.balance.{Amount, Balance}
+import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeReference, UpdateDelegatedStake}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.UpdateNodeParameters
+import io.constellationnetwork.schema.nodeCollateral.{NodeCollateralReference, UpdateNodeCollateral}
 import io.constellationnetwork.schema.swap._
 import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.schema.transaction.{RewardTransaction, Transaction, TransactionReference}
+import io.constellationnetwork.schema.{nodeCollateral, _}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
@@ -57,6 +67,10 @@ trait GlobalSnapshotAcceptanceManager[F[_]] {
     tokenLockBlocksForAcceptance: List[Signed[TokenLockBlock]],
     scEvents: List[StateChannelOutput],
     unpEvents: List[Signed[UpdateNodeParameters]],
+    cdsEvents: List[Signed[UpdateDelegatedStake.Create]],
+    wdsEvents: List[Signed[UpdateDelegatedStake.Withdraw]],
+    cncEvents: List[Signed[UpdateNodeCollateral.Create]],
+    wncEvents: List[Signed[UpdateNodeCollateral.Withdraw]],
     lastSnapshotContext: GlobalSnapshotInfo,
     lastActiveTips: SortedSet[ActiveTip],
     lastDeprecatedTips: SortedSet[DeprecatedTip],
@@ -69,6 +83,8 @@ trait GlobalSnapshotAcceptanceManager[F[_]] {
       BlockAcceptanceResult,
       AllowSpendBlockAcceptanceResult,
       TokenLockBlockAcceptanceResult,
+      UpdateDelegatedStakeAcceptanceResult,
+      UpdateNodeCollateralAcceptanceResult,
       SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
       Set[StateChannelOutput],
       SortedSet[RewardTransaction],
@@ -85,15 +101,18 @@ object GlobalSnapshotAcceptanceManager {
 
   case object InvalidMerkleTree extends NoStackTrace
 
-  def make[F[_]: Async: HasherSelector](
+  def make[F[_]: Async: HasherSelector: SecurityProvider](
     tokenLocksAddedToGl0Ordinal: SnapshotOrdinal,
     blockAcceptanceManager: BlockAcceptanceManager[F],
     allowSpendBlockAcceptanceManager: AllowSpendBlockAcceptanceManager[F],
     tokenLockBlockAcceptanceManager: TokenLockBlockAcceptanceManager[F],
     stateChannelEventsProcessor: GlobalSnapshotStateChannelEventsProcessor[F],
     updateNodeParametersAcceptanceManager: UpdateNodeParametersAcceptanceManager[F],
+    updateDelegatedStakeAcceptanceManager: UpdateDelegatedStakeAcceptanceManager[F],
+    updateNodeCollateralAcceptanceManager: UpdateNodeCollateralAcceptanceManager[F],
     spendActionValidator: SpendActionValidator[F],
-    collateral: Amount
+    collateral: Amount,
+    withdrawalTimeLimit: NonNegLong
   ) = new GlobalSnapshotAcceptanceManager[F] {
 
     def accept(
@@ -104,6 +123,10 @@ object GlobalSnapshotAcceptanceManager {
       tokenLockBlocksForAcceptance: List[Signed[TokenLockBlock]],
       scEvents: List[StateChannelOutput],
       unpEvents: List[Signed[UpdateNodeParameters]],
+      cdsEvents: List[Signed[UpdateDelegatedStake.Create]],
+      wdsEvents: List[Signed[UpdateDelegatedStake.Withdraw]],
+      cncEvents: List[Signed[UpdateNodeCollateral.Create]],
+      wncEvents: List[Signed[UpdateNodeCollateral.Withdraw]],
       lastSnapshotContext: GlobalSnapshotInfo,
       lastActiveTips: SortedSet[ActiveTip],
       lastDeprecatedTips: SortedSet[DeprecatedTip],
@@ -111,7 +134,23 @@ object GlobalSnapshotAcceptanceManager {
       validationType: StateChannelValidationType,
       lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
       getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
-    ) = {
+    ): F[
+      (
+        BlockAcceptanceResult,
+        AllowSpendBlockAcceptanceResult,
+        TokenLockBlockAcceptanceResult,
+        UpdateDelegatedStakeAcceptanceResult,
+        UpdateNodeCollateralAcceptanceResult,
+        SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
+        Set[StateChannelOutput],
+        SortedSet[RewardTransaction],
+        GlobalSnapshotInfo,
+        GlobalSnapshotStateProof,
+        Map[Address, List[SpendAction]],
+        SortedMap[Id, Signed[UpdateNodeParameters]],
+        SortedSet[SharedArtifact]
+      )
+    ] = {
       implicit val hasher = HasherSelector[F].getForOrdinal(ordinal)
 
       for {
@@ -370,6 +409,30 @@ object GlobalSnapshotAcceptanceManager {
 
         updatedUpdateNodeParameters = lastSnapshotUpdateNodeParameters ++ acceptedUpdateNodeParameters.view.mapValues(unp => (unp, ordinal))
 
+        delegatedStakeAcceptanceResult <- updateDelegatedStakeAcceptanceManager.accept(
+          cdsEvents,
+          wdsEvents,
+          lastSnapshotContext,
+          epochProgress,
+          ordinal
+        )
+        nodeCollateralAcceptanceResult <- updateNodeCollateralAcceptanceManager.accept(
+          cncEvents,
+          wncEvents,
+          lastSnapshotContext,
+          epochProgress,
+          ordinal,
+          delegatedStakeAcceptanceResult
+        )
+
+        (createDelegatedStakes, withdrawDelegatedStakes) <- withdrawDelegatedStakes(lastSnapshotContext, ordinal)
+        updatedCreateDelegatedStakes = createDelegatedStakes ++ delegatedStakeAcceptanceResult.acceptedCreates
+        updatedWithdrawDelegatedStakes = withdrawDelegatedStakes ++ delegatedStakeAcceptanceResult.acceptedWithdrawals
+
+        (createNodeCollaterals, withdrawNodeCollaterals) <- withdrawNodeCollaterals(lastSnapshotContext, ordinal)
+        updatedCreateNodeCollaterals = createNodeCollaterals ++ nodeCollateralAcceptanceResult.acceptedCreates
+        updatedWithdrawNodeCollaterals = withdrawNodeCollaterals ++ nodeCollateralAcceptanceResult.acceptedWithdrawals
+
         gsi = GlobalSnapshotInfo(
           updatedLastStateChannelSnapshotHashes,
           transactionsRefs,
@@ -381,7 +444,11 @@ object GlobalSnapshotAcceptanceManager {
           updatedTokenLockBalances.some,
           updatedAllowSpendRefs.some,
           updatedTokenLockRefs,
-          updatedUpdateNodeParameters.some
+          updatedUpdateNodeParameters.some,
+          updatedCreateDelegatedStakes.some,
+          updatedWithdrawDelegatedStakes.some,
+          updatedCreateNodeCollaterals.some,
+          updatedWithdrawNodeCollaterals.some
         )
 
         stateProof <- gsi.stateProof(maybeMerkleTree)
@@ -402,6 +469,8 @@ object GlobalSnapshotAcceptanceManager {
           acceptanceResult,
           allowSpendBlockAcceptanceResult,
           tokenLockBlockAcceptanceResult,
+          delegatedStakeAcceptanceResult,
+          nodeCollateralAcceptanceResult,
           scSnapshots,
           returnedSCEvents,
           acceptedRewardTxs,
@@ -411,6 +480,67 @@ object GlobalSnapshotAcceptanceManager {
           acceptedUpdateNodeParameters,
           allowSpendsExpiredEvents ++ tokenUnlocksEvents
         )
+    }
+
+    private def withdrawDelegatedStakes(lastSnapshotContext: GlobalSnapshotInfo, ordinal: SnapshotOrdinal)(implicit h: Hasher[F]): F[
+      (
+        SortedMap[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]],
+        SortedMap[Address, List[(Signed[UpdateDelegatedStake.Withdraw], SnapshotOrdinal)]]
+      )
+    ] = {
+      val lastCreateDelegatedStakes = lastSnapshotContext.activeDelegatedStakes.getOrElse(
+        SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]]
+      )
+
+      val lastWithdrawDelegatedStakes = lastSnapshotContext.delegatedStakesWithdrawals.getOrElse(
+        SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Withdraw], SnapshotOrdinal)]]
+      )
+      val currentWithdrawals =
+        lastWithdrawDelegatedStakes.view.mapValues(_.filter(_._2 <= ordinal.plus(withdrawalTimeLimit))).filter(x => x._2.nonEmpty)
+      val references = currentWithdrawals.mapValues(_.map(_._1.stakeRef)).values.flatten.toSet
+
+      for {
+        stakesWithReferences <- lastCreateDelegatedStakes.toList.traverse {
+          case (address, list) =>
+            list.traverse { case x @ (signed, ord) => DelegatedStakeReference.of(signed).map(ref => (x, ref)) }.map(x => (address, x))
+        }
+        filteredCreates = stakesWithReferences.map {
+          case (addr, list) => (addr, list.filterNot { case (_, ref) => references(ref.hash) }.map(_._1))
+        }.toSortedMap
+        filteredWithdawals = lastWithdrawDelegatedStakes.map {
+          case (addr, list) => (addr, list.filterNot { case (signed, _) => references(signed.stakeRef) })
+        }
+      } yield (filteredCreates.filter(_._2.nonEmpty), filteredWithdawals.filter(_._2.nonEmpty))
+    }
+
+    private def withdrawNodeCollaterals(lastSnapshotContext: GlobalSnapshotInfo, ordinal: SnapshotOrdinal)(implicit h: Hasher[F]): F[
+      (
+        SortedMap[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]],
+        SortedMap[Address, List[(Signed[UpdateNodeCollateral.Withdraw], SnapshotOrdinal)]]
+      )
+    ] = {
+      val lastCreates = lastSnapshotContext.activeNodeCollaterals.getOrElse(
+        SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]]
+      )
+
+      val lastWithdraws = lastSnapshotContext.nodeCollateralWithdrawals.getOrElse(
+        SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Withdraw], SnapshotOrdinal)]]
+      )
+      val currentWithdrawals = lastWithdraws.view.mapValues(_.filter(_._2 <= ordinal.plus(withdrawalTimeLimit))).filter(x => x._2.nonEmpty)
+      val references = currentWithdrawals.mapValues(_.map(_._1.collateralRef)).values.flatten.toSet
+
+      for {
+        stakesWithReferences <- lastCreates.toList.traverse {
+          case (address, list) =>
+            list.traverse { case x @ (signed, ord) => NodeCollateralReference.of(signed).map(ref => (x, ref)) }.map(x => (address, x))
+        }
+        filteredCreates = stakesWithReferences.map {
+          case (addr, list) => (addr, list.filterNot { case (_, ref) => references(ref.hash) }.map(_._1))
+        }.toSortedMap
+        filteredWithdawals = lastWithdraws.map {
+          case (addr, list) => (addr, list.filterNot { case (signed, _) => references(signed.collateralRef) })
+        }
+      } yield (filteredCreates.filter(_._2.nonEmpty), filteredWithdawals.filter(_._2.nonEmpty))
     }
 
     private def acceptAllowSpends(
@@ -503,7 +633,7 @@ object GlobalSnapshotAcceptanceManager {
       (acceptedGlobalTokenLocks |+| expiredGlobalTokenLocks).foldLeft(lastActiveGlobalTokenLocks) {
         case (acc, (address, tokenLocks)) =>
           val lastAddressTokenLocks = acc.getOrElse(address, SortedSet.empty[Signed[TokenLock]])
-          val unexpired = (lastAddressTokenLocks ++ tokenLocks).filter(_.unlockEpoch >= epochProgress)
+          val unexpired = (lastAddressTokenLocks ++ tokenLocks).filter(_.unlockEpoch.forall(_ >= epochProgress))
           acc + (address -> unexpired)
       }
     }
@@ -542,7 +672,7 @@ object GlobalSnapshotAcceptanceManager {
       tokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]],
       epochProgress: EpochProgress
     ): SortedMap[Address, SortedSet[Signed[TokenLock]]] =
-      tokenLocks.view.mapValues(_.filter(_.unlockEpoch < epochProgress)).to(SortedMap)
+      tokenLocks.view.mapValues(_.filter(_.unlockEpoch.exists(_ < epochProgress))).to(SortedMap)
 
     private def updateGlobalBalancesByAllowSpends(
       epochProgress: EpochProgress,
@@ -653,8 +783,8 @@ object GlobalSnapshotAcceptanceManager {
 
       (acceptedGlobalTokenLocks |+| expiredGlobalTokenLocks).foldLeft(currentBalances) {
         case (acc, (address, tokenLocks)) =>
-          val unexpired = tokenLocks.filter(_.unlockEpoch >= epochProgress)
-          val expired = tokenLocks.filter(_.unlockEpoch < epochProgress)
+          val unexpired = tokenLocks.filter(_.unlockEpoch.forall(_ >= epochProgress))
+          val expired = tokenLocks.filter(_.unlockEpoch.exists(_ < epochProgress))
 
           val updatedBalanceUnexpired =
             unexpired.foldLeft(acc.getOrElse(address, Balance.empty)) { (currentBalance, tokenLock) =>

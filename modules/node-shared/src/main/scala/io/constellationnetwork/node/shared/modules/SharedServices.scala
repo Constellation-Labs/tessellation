@@ -13,9 +13,11 @@ import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.cli.CliMethod
 import io.constellationnetwork.node.shared.config.types.{CollateralConfig, SharedConfig}
 import io.constellationnetwork.node.shared.domain.cluster.services.{Cluster, Session}
+import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeAcceptanceManager
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.healthcheck.LocalHealthcheck
 import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersAcceptanceManager
+import io.constellationnetwork.node.shared.domain.nodeCollateral.UpdateNodeCollateralAcceptanceManager
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcceptanceManager
@@ -112,6 +114,12 @@ object SharedServices {
       globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make(stateChannelAllowanceLists)
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync
       updateNodeParametersAcceptanceManager = UpdateNodeParametersAcceptanceManager.make(validators.updateNodeParametersValidator)
+      updateDelegatedStakeAcceptanceManager = UpdateDelegatedStakeAcceptanceManager.make(
+        validators.updateDelegatedStakeValidator
+      )
+      updateNodeCollateralAcceptanceManager = UpdateNodeCollateralAcceptanceManager.make(
+        validators.updateNodeCollateralValidator
+      )
       globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
         cfg.fieldsAddedOrdinals.globalTokenLocks.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
         BlockAcceptanceManager.make[F](validators.blockValidator, txHasher),
@@ -126,8 +134,11 @@ object SharedServices {
             feeCalculator
           ),
         updateNodeParametersAcceptanceManager,
+        updateDelegatedStakeAcceptanceManager,
+        updateNodeCollateralAcceptanceManager,
         validators.spendActionValidator,
-        collateral.amount
+        collateral.amount,
+        cfg.delegatedStaking.withdrawalTimeLimit
       )
       globalSnapshotContextFns = GlobalSnapshotContextFunctions.make(globalSnapshotAcceptanceManager)
     } yield
@@ -141,7 +152,9 @@ object SharedServices {
         currencySnapshotAcceptanceManager = currencySnapshotAcceptanceManager,
         currencyEventsCutter = currencyEventsCutter,
         restart = restartService,
-        updateNodeParametersAcceptanceManager = updateNodeParametersAcceptanceManager
+        updateNodeParametersAcceptanceManager = updateNodeParametersAcceptanceManager,
+        updateDelegatedStakeAcceptanceManager = updateDelegatedStakeAcceptanceManager,
+        updateNodeCollateralAcceptanceManager = updateNodeCollateralAcceptanceManager
       ) {}
 }
 
@@ -155,5 +168,7 @@ sealed abstract class SharedServices[F[_], A <: CliMethod] private (
   val currencySnapshotAcceptanceManager: CurrencySnapshotAcceptanceManager[F],
   val currencyEventsCutter: CurrencyEventsCutter[F],
   val restart: RestartService[F, A],
-  val updateNodeParametersAcceptanceManager: UpdateNodeParametersAcceptanceManager[F]
+  val updateNodeParametersAcceptanceManager: UpdateNodeParametersAcceptanceManager[F],
+  val updateDelegatedStakeAcceptanceManager: UpdateDelegatedStakeAcceptanceManager[F],
+  val updateNodeCollateralAcceptanceManager: UpdateNodeCollateralAcceptanceManager[F]
 )

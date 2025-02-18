@@ -363,7 +363,7 @@ trait DataApplicationL0Service[F[_], D <: DataUpdate, DON <: DataOnChainState, D
         case (_, state) =>
           state.activeTokenLocks.collect { activeTokenLocks =>
             activeTokenLocks.values.flatten.toList
-              .filter(_.unlockEpoch <= lastGlobalEpochProgress)
+              .filter(_.unlockEpoch.exists(_ <= lastGlobalEpochProgress))
           }.getOrElse(List.empty)
       }
     }.getOrElse(List.empty)

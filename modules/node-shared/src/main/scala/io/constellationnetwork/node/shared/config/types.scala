@@ -147,7 +147,8 @@ object types {
 
   case class DelegatedStakingConfig(
     minRewardFraction: RewardFraction,
-    maxRewardFraction: RewardFraction
+    maxRewardFraction: RewardFraction,
+    withdrawalTimeLimit: NonNegLong
   )
 
   case class TrustStorageConfig(

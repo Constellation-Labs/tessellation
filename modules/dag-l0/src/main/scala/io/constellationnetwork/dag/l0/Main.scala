@@ -125,7 +125,8 @@ object Main
           nodeShared.nodeId,
           TessellationVersion.unsafeFrom(BuildInfo.version),
           cfg.http,
-          sharedValidators
+          sharedValidators,
+          cfg.shared.delegatedStaking
         )
       _ <- MkHttpServer[IO].newEmber(ServerName("public"), cfg.http.publicHttp, api.publicApp)
       _ <- MkHttpServer[IO].newEmber(ServerName("p2p"), cfg.http.p2pHttp, api.p2pApp)

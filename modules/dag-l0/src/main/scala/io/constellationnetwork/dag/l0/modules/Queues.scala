@@ -5,6 +5,8 @@ import cats.effect.std.Queue
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 
+import io.constellationnetwork.dag.l0.domain.delegatedStake.DelegatedStakeOutput
+import io.constellationnetwork.dag.l0.domain.nodeCollateral.NodeCollateralOutput
 import io.constellationnetwork.node.shared.modules.SharedQueues
 import io.constellationnetwork.schema.Block
 import io.constellationnetwork.schema.gossip.RumorRaw
@@ -24,6 +26,8 @@ object Queues {
       l1AllowSpendOutputQueue <- Queue.unbounded[F, Signed[AllowSpendBlock]]
       l1TokenLockOutputQueue <- Queue.unbounded[F, Signed[TokenLockBlock]]
       updateNodeParametersQueue <- Queue.unbounded[F, Signed[UpdateNodeParameters]]
+      delegatedStakeOutputQueue <- Queue.unbounded[F, DelegatedStakeOutput]
+      nodeCollateralOutputQueue <- Queue.unbounded[F, NodeCollateralOutput]
     } yield
       new Queues[F] {
         val rumor = sharedQueues.rumor
@@ -32,6 +36,8 @@ object Queues {
         val l1AllowSpendOutput = l1AllowSpendOutputQueue
         val l1TokenLockOutput = l1TokenLockOutputQueue
         val updateNodeParametersOutput = updateNodeParametersQueue
+        val delegatedStakeOutput = delegatedStakeOutputQueue
+        val nodeCollateralOutput = nodeCollateralOutputQueue
       }
 }
 
@@ -42,4 +48,6 @@ sealed abstract class Queues[F[_]] private {
   val l1AllowSpendOutput: Queue[F, Signed[AllowSpendBlock]]
   val l1TokenLockOutput: Queue[F, Signed[TokenLockBlock]]
   val updateNodeParametersOutput: Queue[F, Signed[UpdateNodeParameters]]
+  val delegatedStakeOutput: Queue[F, DelegatedStakeOutput]
+  val nodeCollateralOutput: Queue[F, NodeCollateralOutput]
 }
