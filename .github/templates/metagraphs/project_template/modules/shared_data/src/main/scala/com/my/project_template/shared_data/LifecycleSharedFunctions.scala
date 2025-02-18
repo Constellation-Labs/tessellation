@@ -4,16 +4,11 @@ import cats.effect.Async
 import cats.syntax.all._
 
 import io.constellationnetwork.currency.dataApplication.DataState
-import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.schema.artifact.SpendAction
+import io.constellationnetwork.security.signature.Signed
 
 import com.my.project_template.shared_data.combiners.Combiners.combineUpdateUsage
-import com.my.project_template.shared_data.types.Types.{
-  UsageUpdate,
-  UsageUpdateCalculatedState,
-  UsageUpdateState,
-  UsageUpdateWithSpendTransaction
-}
+import com.my.project_template.shared_data.types.Types._
 
 object LifecycleSharedFunctions {
   def combine[F[_]: Async](
@@ -24,7 +19,7 @@ object LifecycleSharedFunctions {
       UsageUpdateState(List.empty),
       UsageUpdateCalculatedState(oldState.calculated.devices),
       oldState.sharedArtifacts ++ updates.map(_.value).collect {
-        case UsageUpdateWithSpendTransaction(_, _, spendTransactionA, spendTransactionB) => 
+        case UsageUpdateWithSpendTransaction(_, _, spendTransactionA, spendTransactionB) =>
           SpendAction(spendTransactionA, spendTransactionB)
       }
     )
@@ -38,5 +33,3 @@ object LifecycleSharedFunctions {
     }
   }
 }
-
-

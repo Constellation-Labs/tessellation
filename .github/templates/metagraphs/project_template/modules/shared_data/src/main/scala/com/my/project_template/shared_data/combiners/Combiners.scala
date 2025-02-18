@@ -37,7 +37,7 @@ object Combiners {
 
     val updates: List[UsageUpdate] = update :: acc.onChain.updates
 
-    val updatedSharedArtifacts = update match { 
+    val updatedSharedArtifacts = update match {
       case UsageUpdateWithSpendTransaction(_, _, spendTransactionA, spendTransactionB) =>
         acc.sharedArtifacts + SpendAction(spendTransactionA, spendTransactionB)
       case _ => acc.sharedArtifacts

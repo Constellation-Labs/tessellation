@@ -2,7 +2,7 @@ import Dependencies._
 import sbt._
 
 ThisBuild / organization := "com.my.project_template"
-ThisBuild / scalaVersion := "2.13.10"
+ThisBuild / scalaVersion := "2.13.16"
 ThisBuild / evictionErrorLevel := Level.Warn
 ThisBuild / scalafixDependencies += Libraries.organizeImports
 
