@@ -146,7 +146,7 @@ object Main
         A: Applicative[IO]
       ): IO[DataApplicationValidationErrorOr[Unit]] =
         dataUpdate.value match {
-          case _: UsageUpdateNoFee | UsageUpdateWithSpendTransaction(_, _, _, _) =>
+          case _: UsageUpdateNoFee | UsageUpdateWithSpendTransaction(_, _, _, _) | UsageUpdateWithTokenUnlock(_, _, _, _, _) =>
             ().validNec[DataApplicationValidationError].pure[IO]
           case _: UsageUpdateWithFee =>
             maybeFeeTransaction match {

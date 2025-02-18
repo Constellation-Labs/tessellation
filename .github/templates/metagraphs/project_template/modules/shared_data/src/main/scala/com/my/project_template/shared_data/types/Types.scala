@@ -4,6 +4,9 @@ import io.constellationnetwork.currency.dataApplication.{DataCalculatedState, Da
 import io.constellationnetwork.ext.refined.{decoderOf, encoderOf}
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.SpendTransaction
+import io.constellationnetwork.schema.swap.CurrencyId
+import io.constellationnetwork.schema.tokenLock.TokenLockAmount
+import io.constellationnetwork.security.hash.Hash
 
 import derevo.circe.magnolia.{decoder, encoder}
 import derevo.derive
@@ -53,6 +56,15 @@ object Types {
     usage: NonNegLong,
     spendTransactionA: SpendTransaction,
     spendTransactionB: SpendTransaction
+  ) extends UsageUpdate
+
+  @derive(decoder, encoder)
+  case class UsageUpdateWithTokenUnlock(
+    address: Address,
+    currencyId: CurrencyId,
+    tokenLockRef: Hash,
+    unlockAmount: TokenLockAmount,
+    usage: NonNegLong
   ) extends UsageUpdate
 
   @derive(decoder, encoder)

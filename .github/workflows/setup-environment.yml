@@ -74,7 +74,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .github/code/metagraphs/project-template-metagraph
-          key: project-template-metagraph-${{ hashFiles('**/build.sbt', '**/src/main/scala/io/constellationnetwork/**', '**/templates/project_template/**') }}
+          key: project-template-metagraph-${{ hashFiles('**/build.sbt', '**/src/main/scala/io/constellationnetwork/**', '**/templates/metagraphs/project_template/**') }}
 
       - name: Cache SBT and Coursier
         uses: actions/cache@v4
