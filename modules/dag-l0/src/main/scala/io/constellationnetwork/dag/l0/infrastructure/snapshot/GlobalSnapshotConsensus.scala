@@ -92,6 +92,7 @@ object GlobalSnapshotConsensus {
             feeCalculator
           ),
         sharedServices.updateNodeParametersAcceptanceManager,
+        validators.spendActionValidator,
         collateral
       )
       consensusStorage <- ConsensusStorage

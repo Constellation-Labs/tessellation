@@ -161,6 +161,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   feeCalculator
                 ),
               updateNodeParametersAcceptanceManager,
+              validators.spendActionValidator,
               Amount(0L)
             )
             globalSnapshotContextFns = GlobalSnapshotContextFunctions.make[IO](globalSnapshotAcceptanceManager)

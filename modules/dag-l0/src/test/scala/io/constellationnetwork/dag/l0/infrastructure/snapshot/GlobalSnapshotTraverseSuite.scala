@@ -311,6 +311,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           allowSpendBlockAcceptanceManager,
           stateChannelProcessor,
           updateNodeParametersAcceptanceManager,
+          validators.spendActionValidator,
           Amount.empty
         )
       snapshotContextFunctions = GlobalSnapshotContextFunctions.make[IO](snapshotAcceptanceManager)

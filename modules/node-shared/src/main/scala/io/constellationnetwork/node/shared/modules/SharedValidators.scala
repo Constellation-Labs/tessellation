@@ -12,7 +12,7 @@ import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersValid
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.node.shared.domain.statechannel.{FeeCalculator, FeeCalculatorConfig, StateChannelValidator}
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockValidator
-import io.constellationnetwork.node.shared.domain.swap.{AllowSpendChainValidator, AllowSpendValidator}
+import io.constellationnetwork.node.shared.domain.swap.{AllowSpendChainValidator, AllowSpendValidator, SpendActionValidator}
 import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockValidator
 import io.constellationnetwork.node.shared.domain.tokenlock.{TokenLockChainValidator, TokenLockValidator}
 import io.constellationnetwork.node.shared.domain.transaction.{FeeTransactionValidator, TransactionChainValidator, TransactionValidator}
@@ -68,6 +68,8 @@ object SharedValidators {
       delegatedStaking.maxRewardFraction
     )
 
+    val spendActionValidator = SpendActionValidator.make[F]
+
     new SharedValidators[F](
       signedValidator,
       transactionChainValidator,
@@ -85,7 +87,8 @@ object SharedValidators {
       allowSpendBlockValidator,
       allowSpendValidator,
       tokenLockValidator,
-      updateNodeParametersValidator
+      updateNodeParametersValidator,
+      spendActionValidator
     ) {}
   }
 }
@@ -107,5 +110,6 @@ sealed abstract class SharedValidators[F[_]] private (
   val allowSpendBlockValidator: AllowSpendBlockValidator[F],
   val allowSpendValidator: AllowSpendValidator[F],
   val tokenLockValidator: TokenLockValidator[F],
-  val updateNodeParametersValidator: UpdateNodeParametersValidator[F]
+  val updateNodeParametersValidator: UpdateNodeParametersValidator[F],
+  val spendActionValidator: SpendActionValidator[F]
 )

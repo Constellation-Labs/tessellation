@@ -2,6 +2,7 @@ package io.constellationnetwork.node.shared.infrastructure.snapshot
 
 import cats.MonadThrow
 import cats.data.NonEmptyList
+import cats.data.Validated.{Invalid, Valid}
 import cats.effect.Async
 import cats.syntax.all._
 
@@ -16,6 +17,7 @@ import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersAcceptanceManager
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult.CurrencySnapshotWithState
+import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator
 import io.constellationnetwork.node.shared.domain.swap.block.{
   AllowSpendBlockAcceptanceContext,
   AllowSpendBlockAcceptanceManager,
@@ -80,6 +82,7 @@ object GlobalSnapshotAcceptanceManager {
     allowSpendBlockAcceptanceManager: AllowSpendBlockAcceptanceManager[F],
     stateChannelEventsProcessor: GlobalSnapshotStateChannelEventsProcessor[F],
     updateNodeParametersAcceptanceManager: UpdateNodeParametersAcceptanceManager[F],
+    spendActionValidator: SpendActionValidator[F],
     collateral: Amount
   ) = new GlobalSnapshotAcceptanceManager[F] {
 
@@ -112,7 +115,7 @@ object GlobalSnapshotAcceptanceManager {
               lastGlobalSnapshots
             )
 
-        acceptedSpendActions = currencySnapshots.toList.map {
+        spendActions = currencySnapshots.toList.map {
           case (_, Left(_))             => Map.empty[Address, List[SharedArtifact]]
           case (address, Right((s, _))) => Map(address -> (s.artifacts.getOrElse(SortedSet.empty[SharedArtifact]).toList))
         }
@@ -122,7 +125,23 @@ object GlobalSnapshotAcceptanceManager {
           .filter { case (_, actions) => actions.nonEmpty }
           .toMap
 
+        lastActiveAllowSpends = lastSnapshotContext.activeAllowSpends.getOrElse(
+          SortedMap.empty[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
+        )
+
+        acceptedSpendActions <- spendActions.toList.traverse {
+          case (address, actions) =>
+            actions.traverse { action =>
+              spendActionValidator.validate(action, lastActiveAllowSpends).map(_.toOption)
+            }.map(address -> _.flatten)
+        }.map(_.filter { case (_, actions) => actions.nonEmpty }.toMap)
+
         _ <- Slf4jLogger.getLogger[F].debug(s"--- Accepted spend actions: ${acceptedSpendActions.show}")
+
+        allAcceptedSpendTxnsAllowSpendsRefs = acceptedSpendActions.toList.flatMap {
+          case (_, actions) =>
+            actions.flatMap(action => List(action.input, action.output).flatMap(_.allowSpendRef))
+        }
 
         sCSnapshotHashes <- scSnapshots.toList.traverse {
           case (address, nel) => nel.last.toHashed.map(address -> _.hash)
@@ -162,12 +181,6 @@ object GlobalSnapshotAcceptanceManager {
           .view
           .mapValues(SortedSet.from(_))
           .to(SortedMap)
-
-        allAcceptedSpendTxnsAllowSpendsRefs =
-          acceptedSpendActions.values.flatten
-            .flatMap(spendTxn => List(spendTxn.input, spendTxn.output))
-            .flatMap(_.allowSpendRef)
-            .toList
 
         globalActiveAllowSpends = lastSnapshotContext.activeAllowSpends.getOrElse(
           SortedMap.empty[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
@@ -313,7 +326,7 @@ object GlobalSnapshotAcceptanceManager {
         case (address, allowSpends) => address -> allowSpends.filter(_.lastValidEpochProgress < epochProgress)
       }
 
-      val updatedGlobalAllowSpends = (globalAllowSpends ++ expiredGlobalAllowSpends).foldLeft(lastActiveGlobalAllowSpends) {
+      val updatedGlobalAllowSpends = (globalAllowSpends |+| expiredGlobalAllowSpends).foldLeft(lastActiveGlobalAllowSpends) {
         case (acc, (address, allowSpends)) =>
           val lastAddressAllowSpends = acc.getOrElse(address, SortedSet.empty[Signed[AllowSpend]])
           val unexpired = (lastAddressAllowSpends ++ allowSpends).filter(_.lastValidEpochProgress >= epochProgress)
@@ -448,7 +461,7 @@ object GlobalSnapshotAcceptanceManager {
         case (address, allowSpends) => address -> allowSpends.filter(_.lastValidEpochProgress < epochProgress)
       }
 
-      (globalAllowSpends ++ expiredGlobalAllowSpends).foldLeft(currentBalances) {
+      (globalAllowSpends |+| expiredGlobalAllowSpends).foldLeft(currentBalances) {
         case (acc, (address, allowSpends)) =>
           val unexpired = allowSpends.filter(_.lastValidEpochProgress >= epochProgress)
           val expired = allowSpends.filter(_.lastValidEpochProgress < epochProgress)
