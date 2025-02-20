@@ -30,6 +30,7 @@ import io.constellationnetwork.node.shared.domain.node.{UpdateNodeParametersAcce
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult.CurrencySnapshotWithState
+import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator
 import io.constellationnetwork.node.shared.domain.swap.block._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{
@@ -206,8 +207,11 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
   ): GlobalSnapshotConsensusFunctions[IO] = {
     implicit val hs = HasherSelector.forSyncAlwaysCurrent(h)
 
+    val spendActionValidator = SpendActionValidator.make[IO]
+
     val snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[IO] =
-      GlobalSnapshotAcceptanceManager.make[IO](bam, asbam, scProcessor, updateNodeParametersAcceptanceManager, collateral)
+      GlobalSnapshotAcceptanceManager
+        .make[IO](bam, asbam, scProcessor, updateNodeParametersAcceptanceManager, spendActionValidator, collateral)
 
     val feeCalculator = new SnapshotBinaryFeeCalculator[IO] {
       override def calculateFee(

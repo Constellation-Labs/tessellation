@@ -122,6 +122,7 @@ object SharedServices {
             feeCalculator
           ),
         updateNodeParametersAcceptanceManager,
+        validators.spendActionValidator,
         collateral.amount
       )
       globalSnapshotContextFns = GlobalSnapshotContextFunctions.make(globalSnapshotAcceptanceManager)

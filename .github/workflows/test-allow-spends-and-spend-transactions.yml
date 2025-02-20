@@ -81,11 +81,26 @@ jobs:
           cd .github/action_scripts/check_clusters
           node metagraph-data.js 90 91 80 81 82
 
-      - name: Send transactions
+      - name: Test DAG Allow Spend Workflow
         run: |
           cd .github/action_scripts
-          node send_transactions/allow-spends-and-spend-transactions.js 90 91 80 81 82
-          
+          node send_transactions/allow-spends-and-spend-transactions.js 90 91 80 81 82 dag
+
+      - name: Test Currency Allow Spend Workflow  
+        run: |
+          cd .github/action_scripts
+          node send_transactions/allow-spends-and-spend-transactions.js 90 91 80 81 82 currency
+
+      - name: Test Spend Transaction Workflow
+        run: |
+          cd .github/action_scripts
+          node send_transactions/allow-spends-and-spend-transactions.js 90 91 80 81 82 spend
+
+      - name: Test Unauthorized Spend Transaction Workflow
+        run: |
+          cd .github/action_scripts
+          node send_transactions/allow-spends-and-spend-transactions.js 90 91 80 81 82 unauthorized
+
       - name: Save Global L0 Genesis logs
         uses: actions/upload-artifact@v4
         if: always()
