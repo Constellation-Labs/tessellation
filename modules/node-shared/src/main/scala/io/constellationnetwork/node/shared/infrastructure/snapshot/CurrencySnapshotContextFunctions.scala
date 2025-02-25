@@ -31,9 +31,10 @@ object CurrencySnapshotContextFunctions {
         context: CurrencySnapshotContext,
         lastArtifact: Signed[CurrencyIncrementalSnapshot],
         signedArtifact: Signed[CurrencyIncrementalSnapshot],
-        lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+        lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+        skipStateProofValidation: Boolean
       )(implicit hasher: Hasher[F]): F[CurrencySnapshotContext] = for {
-        validatedS <- validator.validateSignedSnapshot(lastArtifact, context, signedArtifact, lastGlobalSnapshots)
+        validatedS <- validator.validateSignedSnapshot(lastArtifact, context, signedArtifact, lastGlobalSnapshots, skipStateProofValidation)
         validatedContext <- validatedS match {
           case Validated.Valid((_, validatedContext)) => validatedContext.pure[F]
           case Validated.Invalid(e)                   => CannotCreateContext(e).raiseError[F, CurrencySnapshotContext]

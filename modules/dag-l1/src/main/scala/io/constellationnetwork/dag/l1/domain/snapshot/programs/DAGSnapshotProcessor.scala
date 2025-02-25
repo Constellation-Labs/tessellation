@@ -79,6 +79,12 @@ object DAGSnapshotProcessor {
         globalSnapshot: Signed[GlobalIncrementalSnapshot],
         lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
       )(implicit hasher: Hasher[F]): F[GlobalSnapshotInfo] =
-        globalSnapshotContextFns.createContext(lastGlobalState, lastGlobalSnapshot, globalSnapshot, lastGlobalSnapshots)
+        globalSnapshotContextFns.createContext(
+          lastGlobalState,
+          lastGlobalSnapshot,
+          globalSnapshot,
+          lastGlobalSnapshots,
+          skipStateProofValidation = false
+        )
     }
 }

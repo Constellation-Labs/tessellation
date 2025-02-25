@@ -147,7 +147,13 @@ object Download {
                   .getLastNSynchronized(lastGlobalSnapshotsSyncConfig.minGlobalSnapshotsToParticipateConsensus.value)
                   .flatMap(lastNGlobalSnapshots =>
                     currencySnapshotContextFns
-                      .createContext(CurrencySnapshotContext(currencyAddress, lastContext), lastSnapshot, snapshot, lastNGlobalSnapshots)
+                      .createContext(
+                        CurrencySnapshotContext(currencyAddress, lastContext),
+                        lastSnapshot,
+                        snapshot,
+                        lastNGlobalSnapshots,
+                        skipStateProofValidation = true
+                      )
                       .handleErrorWith(_ => InvalidChain.raiseError[F, CurrencySnapshotContext])
                   )
               )

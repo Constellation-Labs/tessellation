@@ -111,7 +111,7 @@ object StateChannel {
                             .getLastNSynchronized(lastGlobalSnapshotsSyncConfig.minGlobalSnapshotsToParticipateConsensus.value)
                             .flatMap(lastNSync =>
                               services.globalSnapshotContextFunctions
-                                .createContext(lastState, lastSnapshot.signed, snapshot.signed, lastNSync)
+                                .createContext(lastState, lastSnapshot.signed, snapshot.signed, lastNSync, skipStateProofValidation = false)
                             )
                         }
                         .flatMap { context =>

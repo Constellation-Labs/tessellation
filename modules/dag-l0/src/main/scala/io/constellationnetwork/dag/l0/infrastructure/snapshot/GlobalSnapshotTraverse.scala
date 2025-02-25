@@ -111,7 +111,7 @@ object GlobalSnapshotTraverse {
               loadIncOrErr(hash).flatMap { inc =>
                 HasherSelector[F].forOrdinal(inc.ordinal) { implicit hasher =>
                   lastInc.toHashed.flatMap { lastIncHashed =>
-                    contextFns.createContext(lastCtx, lastInc, inc, List(lastIncHashed).some).map(_ -> inc)
+                    contextFns.createContext(lastCtx, lastInc, inc, List(lastIncHashed).some, skipStateProofValidation = false).map(_ -> inc)
                   }
                 }
               }

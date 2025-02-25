@@ -34,7 +34,8 @@ object GlobalSnapshotContextFunctions {
         context: GlobalSnapshotInfo,
         lastArtifact: Signed[GlobalIncrementalSnapshot],
         signedArtifact: Signed[GlobalIncrementalSnapshot],
-        lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+        lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+        skipStateProofValidation: Boolean
       )(implicit hasher: Hasher[F]): F[GlobalSnapshotInfo] = for {
         lastActiveTips <- HasherSelector[F].forOrdinal(lastArtifact.ordinal)(implicit hasher => lastArtifact.activeTips)
         lastDeprecatedTips = lastArtifact.tips.deprecated

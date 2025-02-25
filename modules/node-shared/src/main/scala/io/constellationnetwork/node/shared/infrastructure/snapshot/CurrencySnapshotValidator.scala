@@ -33,7 +33,8 @@ trait CurrencySnapshotValidator[F[_]] {
     lastArtifact: Signed[CurrencySnapshotArtifact],
     lastContext: CurrencySnapshotContext,
     artifact: Signed[CurrencySnapshotArtifact],
-    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+    skipStateProofValidation: Boolean
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotContext)]]
 
   def validateSnapshot(
@@ -41,7 +42,8 @@ trait CurrencySnapshotValidator[F[_]] {
     lastContext: CurrencySnapshotContext,
     artifact: CurrencySnapshotArtifact,
     facilitators: Set[PeerId],
-    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+    skipStateProofValidation: Boolean
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]]
 }
 
@@ -58,12 +60,13 @@ object CurrencySnapshotValidator {
       lastArtifact: Signed[CurrencySnapshotArtifact],
       lastContext: CurrencySnapshotContext,
       artifact: Signed[CurrencySnapshotArtifact],
-      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+      skipStateProofValidation: Boolean
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(Signed[CurrencyIncrementalSnapshot], CurrencySnapshotContext)]] =
       validateSigned(artifact).flatMap { signedV =>
         val facilitators = artifact.proofs.map(_.id).map(PeerId.fromId).toSortedSet
 
-        validateSnapshot(lastArtifact, lastContext, artifact, facilitators, lastGlobalSnapshots).map { snapshotV =>
+        validateSnapshot(lastArtifact, lastContext, artifact, facilitators, lastGlobalSnapshots, skipStateProofValidation).map { snapshotV =>
           signedV.product(snapshotV.map { case (_, info) => info })
         }
       }
@@ -73,9 +76,10 @@ object CurrencySnapshotValidator {
       lastContext: CurrencySnapshotContext,
       artifact: CurrencySnapshotArtifact,
       facilitators: Set[PeerId],
-      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+      skipStateProofValidation: Boolean
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[(CurrencyIncrementalSnapshot, CurrencySnapshotContext)]] = for {
-      contentV <- validateRecreateContent(lastArtifact, lastContext, artifact, facilitators, lastGlobalSnapshots)
+      contentV <- validateRecreateContent(lastArtifact, lastContext, artifact, facilitators, lastGlobalSnapshots, skipStateProofValidation)
       blocksV <- contentV.map(validateNotAcceptedEvents).pure[F]
     } yield
       (contentV, blocksV).mapN {
@@ -106,7 +110,8 @@ object CurrencySnapshotValidator {
       lastContext: CurrencySnapshotContext,
       expected: CurrencySnapshotArtifact,
       facilitators: Set[PeerId],
-      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+      skipStateProofValidation: Boolean
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotValidationErrorOr[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]] = {
       def dataApplicationBlocks = maybeDataApplication.flatTraverse { service =>
         expected.dataApplication.map(_.blocks).traverse {
@@ -175,6 +180,12 @@ object CurrencySnapshotValidator {
             }.map { creationResult =>
               if (creationResult.artifact.messages.forall(_.isEmpty))
                 creationResult.focus(_.artifact.messages).replace(expected.messages)
+              else creationResult
+            }.map { creationResult =>
+              if (skipStateProofValidation)
+                creationResult
+                  .focus(_.artifact.stateProof).replace(expected.stateProof)
+                  .focus(_.artifact.globalSyncView).replace(expected.globalSyncView)
               else creationResult
             }.map { creationResult =>
               if (creationResult.artifact =!= expected)

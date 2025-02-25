@@ -134,7 +134,7 @@ object Download {
               .forOrdinal(snapshot.ordinal) { implicit hasher =>
                 lastSnapshot.toHashed.flatMap { hashedLastSnapshot =>
                   globalSnapshotContextFns
-                    .createContext(lastContext, lastSnapshot, snapshot, List(hashedLastSnapshot).some)
+                    .createContext(lastContext, lastSnapshot, snapshot, List(hashedLastSnapshot).some, skipStateProofValidation = true)
                 }
               }
               .handleErrorWith(_ => InvalidChain.raiseError[F, GlobalSnapshotContext])
@@ -244,7 +244,7 @@ object Download {
                   .forOrdinal(snapshot.ordinal) { implicit hasher =>
                     lastSnapshot.toHashed.flatMap { hashedLastSnapshot =>
                       globalSnapshotContextFns
-                        .createContext(context, lastSnapshot, snapshot, List(hashedLastSnapshot).some)
+                        .createContext(context, lastSnapshot, snapshot, List(hashedLastSnapshot).some, skipStateProofValidation = true)
                     }
                   }
                   .flatTap(newContext =>

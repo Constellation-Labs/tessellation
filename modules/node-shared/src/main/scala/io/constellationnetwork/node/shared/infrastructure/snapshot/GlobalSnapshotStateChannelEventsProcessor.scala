@@ -160,7 +160,13 @@ object GlobalSnapshotStateChannelEventsProcessor {
         lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
       )(implicit hasher: Hasher[F]): F[CurrencySnapshotInfo] =
         currencySnapshotContextFns
-          .createContext(CurrencySnapshotContext(currencyAddress, lastState), lastSnapshot, snapshot, lastGlobalSnapshots)
+          .createContext(
+            CurrencySnapshotContext(currencyAddress, lastState),
+            lastSnapshot,
+            snapshot,
+            lastGlobalSnapshots,
+            skipStateProofValidation = false
+          )
           .map(_.snapshotInfo)
 
       def processCurrencySnapshots(

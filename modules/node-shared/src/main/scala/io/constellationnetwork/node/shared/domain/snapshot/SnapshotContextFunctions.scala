@@ -9,6 +9,7 @@ trait SnapshotContextFunctions[F[_], Artifact, Context] {
     context: Context,
     lastArtifact: Signed[Artifact],
     signedArtifact: Signed[Artifact],
-    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+    skipStateProofValidation: Boolean
   )(implicit hasher: Hasher[F]): F[Context]
 }

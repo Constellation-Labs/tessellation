@@ -55,7 +55,7 @@ object CurrencySnapshotConsensusFunctions {
       lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): F[Either[ConsensusFunctions.InvalidArtifact, (CurrencySnapshotArtifact, CurrencySnapshotContext)]] =
       currencySnapshotValidator
-        .validateSnapshot(lastSignedArtifact, lastContext, artifact, facilitators, lastGlobalSnapshots)
+        .validateSnapshot(lastSignedArtifact, lastContext, artifact, facilitators, lastGlobalSnapshots, skipStateProofValidation = false)
         .map(_.leftMap(_ => ArtifactMismatch).toEither)
 
     def createProposalArtifact(

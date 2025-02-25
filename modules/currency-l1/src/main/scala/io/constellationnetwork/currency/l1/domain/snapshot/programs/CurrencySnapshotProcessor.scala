@@ -142,7 +142,7 @@ object CurrencySnapshotProcessor {
         snapshot: Signed[GlobalIncrementalSnapshot],
         lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
       )(implicit hasher: Hasher[F]): F[GlobalSnapshotInfo] =
-        globalSnapshotContextFns.createContext(lastState, lastSnapshot, snapshot, lastGlobalSnapshots)
+        globalSnapshotContextFns.createContext(lastState, lastSnapshot, snapshot, lastGlobalSnapshots, skipStateProofValidation = false)
 
       def applySnapshotFn(
         lastState: CurrencySnapshotInfo,
@@ -151,7 +151,13 @@ object CurrencySnapshotProcessor {
         lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
       )(implicit hasher: Hasher[F]): F[CurrencySnapshotInfo] =
         currencySnapshotContextFns
-          .createContext(CurrencySnapshotContext(identifier, lastState), lastSnapshot, snapshot, lastGlobalSnapshots)
+          .createContext(
+            CurrencySnapshotContext(identifier, lastState),
+            lastSnapshot,
+            snapshot,
+            lastGlobalSnapshots,
+            skipStateProofValidation = false
+          )
           .map(_.snapshotInfo)
 
       override def onDownload(snapshot: Hashed[CurrencyIncrementalSnapshot], state: CurrencySnapshotInfo): F[Unit] =
