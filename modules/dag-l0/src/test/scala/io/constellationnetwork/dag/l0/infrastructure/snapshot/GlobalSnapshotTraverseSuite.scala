@@ -13,6 +13,7 @@ import cats.syntax.traverse._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
+import io.constellationnetwork.env.AppEnvironment.Dev
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
@@ -302,7 +303,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
             currencyEventsCutter,
             validationErrorStorage
           )
-      currencySnapshotValidator = CurrencySnapshotValidator.make[IO](currencySnapshotCreator, validators.signedValidator, None, None)
+      currencySnapshotValidator = CurrencySnapshotValidator.make[IO](Dev, currencySnapshotCreator, validators.signedValidator, None, None)
 
       currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
       stateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, NonNegLong(10L))

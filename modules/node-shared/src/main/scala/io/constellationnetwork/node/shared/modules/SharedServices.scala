@@ -92,6 +92,7 @@ object SharedServices {
       currencyEventsCutter = CurrencyEventsCutter.make[F](None)
 
       currencySnapshotValidator = CurrencySnapshotValidator.make[F](
+        environment,
         CurrencySnapshotCreator.make[F](
           currencySnapshotAcceptanceManager,
           None,
