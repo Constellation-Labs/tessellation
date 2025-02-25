@@ -15,6 +15,7 @@ import io.constellationnetwork.merkletree.Proof
 import io.constellationnetwork.merkletree.syntax._
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersAcceptanceManager
+import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult.CurrencySnapshotWithState
 import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator
@@ -63,7 +64,8 @@ trait GlobalSnapshotAcceptanceManager[F[_]] {
     lastDeprecatedTips: SortedSet[DeprecatedTip],
     calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]],
     validationType: StateChannelValidationType,
-    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   ): F[
     (
       BlockAcceptanceResult,
@@ -107,7 +109,8 @@ object GlobalSnapshotAcceptanceManager {
       lastDeprecatedTips: SortedSet[DeprecatedTip],
       calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]],
       validationType: StateChannelValidationType,
-      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
     ) = {
       implicit val hasher = HasherSelector[F].getForOrdinal(ordinal)
 
@@ -121,7 +124,8 @@ object GlobalSnapshotAcceptanceManager {
               lastSnapshotContext.copy(balances = lastSnapshotContext.balances ++ acceptanceResult.contextUpdate.balances),
               scEvents,
               validationType,
-              lastGlobalSnapshots
+              lastGlobalSnapshots,
+              getGlobalSnapshotByOrdinal
             )
 
         spendActions = currencySnapshots.toList.map {

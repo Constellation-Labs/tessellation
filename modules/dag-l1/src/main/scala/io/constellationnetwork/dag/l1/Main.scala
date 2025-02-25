@@ -111,7 +111,8 @@ object Main
         storages.allowSpend,
         storages.tokenLock,
         sharedServices.globalSnapshotContextFns,
-        Hasher.forKryo[IO]
+        Hasher.forKryo[IO],
+        services.globalL0.pullGlobalSnapshot
       )
       programs = Programs.make(sharedPrograms, p2pClient, storages, snapshotProcessor)
 
@@ -165,12 +166,10 @@ object Main
 
       swapRuntime = hasherSelector.withCurrent { implicit hasher =>
         Swap.run(
-          sharedConfig,
           cfg.swap,
           storages.cluster,
           storages.l0Cluster,
           storages.lastSnapshot,
-          storages.lastNGlobalSnapshot,
           storages.node,
           p2pClient.l0BlockOutputClient,
           p2pClient.swapConsensusClient,
@@ -186,12 +185,10 @@ object Main
 
       tokenLockRuntime = hasherSelector.withCurrent { implicit hasher =>
         TokenLock.run(
-          sharedConfig,
           cfg.tokenLock,
           storages.cluster,
           storages.l0Cluster,
           storages.lastSnapshot,
-          storages.lastNGlobalSnapshot,
           storages.node,
           p2pClient.l0BlockOutputClient,
           p2pClient.tokenLockConsensusClient,

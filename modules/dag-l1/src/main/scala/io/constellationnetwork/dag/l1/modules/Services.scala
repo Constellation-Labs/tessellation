@@ -66,7 +66,8 @@ object Services {
         .make[F](p2PClient.l0GlobalSnapshot, globalL0Cluster, lastGlobalSnapshotStorage, None, maybeMajorityPeerIds)
       val session = sharedServices.session
       val transaction = TransactionService.make[F, P, S, SI](storages.transaction, storages.lastSnapshot, validators.transaction)
-      val allowSpend = AllowSpendService.make[F, P, S, SI](storages.allowSpend, storages.lastSnapshot, validators.allowSpend)
+      val allowSpend =
+        AllowSpendService.make[F, P, S, SI](storages.allowSpend, storages.lastSnapshot, validators.allowSpend)
       val allowSpendBlock = AllowSpendBlockService.make[F](
         AllowSpendBlockAcceptanceManager.make[F](validators.allowSpendBlock),
         storages.address,
@@ -74,7 +75,8 @@ object Services {
         storages.allowSpend,
         cfg.collateral.amount
       )
-      val tokenLock = TokenLockService.make[F, P, S, SI](storages.tokenLock, storages.lastSnapshot, validators.tokenLock)
+      val tokenLock =
+        TokenLockService.make[F, P, S, SI](storages.tokenLock, storages.lastSnapshot, validators.tokenLock)
       val tokenLockBlock = TokenLockBlockService.make[F](
         TokenLockBlockAcceptanceManager.make[F](validators.tokenLockBlock),
         storages.address,

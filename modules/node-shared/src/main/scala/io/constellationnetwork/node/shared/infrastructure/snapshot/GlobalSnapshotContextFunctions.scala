@@ -14,6 +14,7 @@ import scala.util.control.NoStackTrace
 import io.constellationnetwork.merkletree.StateProofValidator
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.snapshot.SnapshotContextFunctions
+import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.node.UpdateNodeParameters
@@ -34,7 +35,8 @@ object GlobalSnapshotContextFunctions {
         context: GlobalSnapshotInfo,
         lastArtifact: Signed[GlobalIncrementalSnapshot],
         signedArtifact: Signed[GlobalIncrementalSnapshot],
-        lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+        lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+        getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
       )(implicit hasher: Hasher[F]): F[GlobalSnapshotInfo] = for {
         lastActiveTips <- HasherSelector[F].forOrdinal(lastArtifact.ordinal)(implicit hasher => lastArtifact.activeTips)
         lastDeprecatedTips = lastArtifact.tips.deprecated
@@ -77,7 +79,8 @@ object GlobalSnapshotContextFunctions {
             lastDeprecatedTips,
             _ => signedArtifact.rewards.pure[F],
             StateChannelValidationType.Historical,
-            lastGlobalSnapshots
+            lastGlobalSnapshots,
+            getGlobalSnapshotByOrdinal
           )
         _ <- CannotApplyBlocksError(acceptanceResult.notAccepted.map { case (_, reason) => reason })
           .raiseError[F, Unit]

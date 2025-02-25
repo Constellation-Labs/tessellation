@@ -50,6 +50,7 @@ trait ContextualAllowSpendValidator {
 object ContextualAllowSpendValidator {
 
   def make(
+    currencyId: Option[CurrencyId],
     customValidator: Option[CustomContextualAllowSpendValidator],
     allowSpendsConfig: AllowSpendsConfig
   ): ContextualAllowSpendValidator =
@@ -61,6 +62,7 @@ object ContextualAllowSpendValidator {
       ): ContextualAllowSpendValidationErrorOr[ValidConflictResolveResult] =
         validateLastAllowSpendRef(hashedAllowSpend, context.sourceAllowSpends, context.sourceLastAllowSpendRef)
           .flatMap(validateEpochProgress(_, context.currentEpochProgress))
+          .flatMap(validateCurrencyId)
           .flatMap(validateConflictAtOrdinal(_, context.sourceAllowSpends))
           .flatMap {
             case (conflictResolveResult, conflictResolvedStoredTxs) =>
@@ -108,8 +110,16 @@ object ContextualAllowSpendValidator {
         if (low && high) {
           allowSpend.asRight
         } else
-          TooFarLastValidEpochProgress(allowSpend.lastValidEpochProgress).asLeft
+          TooFarLastValidEpochProgress(allowSpend.lastValidEpochProgress, currentEpochProgress).asLeft
       }
+
+      private def validateCurrencyId(
+        allowSpend: Hashed[AllowSpend]
+      ): Either[ContextualAllowSpendValidationError, Hashed[AllowSpend]] =
+        if ((currencyId.isEmpty && allowSpend.currency.isEmpty) || allowSpend.currency.exists(currencyId.contains(_)))
+          allowSpend.asRight
+        else
+          InvalidCurrencyId(allowSpend.currency, currencyId).asLeft
 
       private def validateConflictAtOrdinal(
         allowSpend: Hashed[AllowSpend],
@@ -206,7 +216,10 @@ object ContextualAllowSpendValidator {
   case class AllowSpendLimited(ref: AllowSpendReference, fee: AllowSpendFee) extends ContextualAllowSpendValidationError
   case class NonContextualValidationError(error: AllowSpendValidationError) extends ContextualAllowSpendValidationError
   case class LockedAddressError(address: Address) extends ContextualAllowSpendValidationError
-  case class TooFarLastValidEpochProgress(epochProgress: EpochProgress) extends ContextualAllowSpendValidationError
+  case class TooFarLastValidEpochProgress(epochProgress: EpochProgress, currentEpochProgress: EpochProgress)
+      extends ContextualAllowSpendValidationError
+  case class InvalidCurrencyId(allowSpendCurrencyId: Option[CurrencyId], currencyId: Option[CurrencyId])
+      extends ContextualAllowSpendValidationError
   case class CustomValidationError(message: String) extends ContextualAllowSpendValidationError
 
   type ContextualAllowSpendValidationErrorOr[A] = ValidatedNec[ContextualAllowSpendValidationError, A]

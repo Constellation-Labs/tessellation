@@ -14,6 +14,7 @@ import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions.InvalidArtifact
 import io.constellationnetwork.node.shared.domain.event.EventCutter
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
+import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.schema.ID.Id
@@ -57,7 +58,8 @@ object GlobalSnapshotConsensusFunctions {
       trigger: ConsensusTrigger,
       artifact: GlobalSnapshotArtifact,
       facilitators: Set[PeerId],
-      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): F[Either[InvalidArtifact, (GlobalSnapshotArtifact, GlobalSnapshotContext)]] = {
       val dagEvents = artifact.blocks.unsorted.map(_.block).map(DAGEvent(_))
       val scEvents = artifact.stateChannelSnapshots.toList.flatMap {
@@ -77,7 +79,8 @@ object GlobalSnapshotConsensusFunctions {
         trigger,
         events,
         facilitators,
-        lastGlobalSnapshots
+        lastGlobalSnapshots,
+        getGlobalSnapshotByOrdinal
       )
 
       def usingJson = createProposalArtifact(
@@ -88,7 +91,8 @@ object GlobalSnapshotConsensusFunctions {
         trigger,
         events,
         facilitators,
-        lastGlobalSnapshots
+        lastGlobalSnapshots,
+        getGlobalSnapshotByOrdinal
       )
 
       def check(result: F[(GlobalSnapshotArtifact, GlobalSnapshotContext, Set[GlobalSnapshotEvent])]) =
@@ -114,7 +118,8 @@ object GlobalSnapshotConsensusFunctions {
       trigger: ConsensusTrigger,
       events: Set[GlobalSnapshotEvent],
       facilitators: Set[PeerId],
-      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): F[(GlobalSnapshotArtifact, GlobalSnapshotContext, Set[GlobalSnapshotEvent])] = {
       val scEventsBeforeCut = events.collect { case sc: StateChannelEvent => sc }
       val dagEventsBeforeCut = events.collect { case d: DAGEvent => d }
@@ -175,7 +180,8 @@ object GlobalSnapshotConsensusFunctions {
               lastDeprecatedTips,
               rewards.distribute(lastArtifact, snapshotContext.balances, _, trigger, events),
               StateChannelValidationType.Full,
-              lastGlobalSnapshots
+              lastGlobalSnapshots,
+              getGlobalSnapshotByOrdinal
             )
         (deprecated, remainedActive, accepted) = getUpdatedTips(
           lastActiveTips,

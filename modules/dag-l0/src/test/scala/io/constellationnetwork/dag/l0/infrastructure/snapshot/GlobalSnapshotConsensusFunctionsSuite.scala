@@ -28,6 +28,7 @@ import io.constellationnetwork.node.shared.domain.fork.ForkInfo
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.{UpdateNodeParametersAcceptanceManager, UpdateNodeParametersValidator}
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
+import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult.CurrencySnapshotWithState
 import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator
@@ -161,7 +162,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       lastGlobalSnapshotInfo: GlobalSnapshotContext,
       events: List[StateChannelOutput],
       validationType: StateChannelValidationType,
-      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): IO[StateChannelAcceptanceResult] = IO(
       StateChannelAcceptanceResult(
         events.groupByNel(_.address).view.mapValues(_.map(_.snapshotBinary)).toSortedMap,
@@ -175,7 +177,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       snapshotOrdinal: SnapshotOrdinal,
       lastGlobalSnapshotInfo: GlobalSnapshotContext,
       events: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
-      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): IO[
       SortedMap[Address, (NonEmptyList[(Signed[StateChannelSnapshotBinary], Option[CurrencySnapshotWithState])], Map[Address, Balance])]
     ] = ???
@@ -287,7 +290,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         EventTrigger,
         Set(scEvent),
         facilitators,
-        none
+        none,
+        _ => None.pure[IO]
       )
       result <- gscf.validateArtifact(
         signedLastArtifact,
@@ -295,7 +299,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         EventTrigger,
         artifact,
         facilitators,
-        none
+        none,
+        _ => None.pure[IO]
       )
 
       expected = Right(NonEmptyList.one(scEvent.value.snapshotBinary))
@@ -318,7 +323,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         EventTrigger,
         Set(scEvent),
         facilitators,
-        none
+        none,
+        _ => None.pure[IO]
       )
       result <- gscf.validateArtifact(
         signedLastArtifact,
@@ -326,7 +332,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         EventTrigger,
         artifact.copy(ordinal = artifact.ordinal.next),
         facilitators,
-        none
+        none,
+        _ => None.pure[IO]
       )
     } yield expect.same(true, result.isLeft)
   }

@@ -18,6 +18,7 @@ import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.node.shared.config.types.LastGlobalSnapshotsSyncConfig
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
+import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSyncGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusStateUpdater._
 import io.constellationnetwork.node.shared.infrastructure.consensus._
@@ -30,9 +31,10 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.SnapshotConse
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema.currencyMessage.fetchStakingAddress
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature._
-import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
+import io.constellationnetwork.security.{Hashed, HasherSelector, SecurityProvider}
 import io.constellationnetwork.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._
@@ -62,7 +64,8 @@ object CurrencySnapshotConsensusStateAdvancer {
     restartService: RestartService[F, _],
     nodeStorage: NodeStorage[F],
     leavingDelay: FiniteDuration,
-    lastGlobalSnapshotStorage: LastSyncGlobalSnapshotStorage[F]
+    lastGlobalSnapshotStorage: LastSyncGlobalSnapshotStorage[F],
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   ): CurrencySnapshotConsensusStateAdvancer[F] =
     new CurrencySnapshotConsensusStateAdvancer[F] {
       val logger = Slf4jLogger.getLogger[F]
@@ -121,7 +124,8 @@ object CurrencySnapshotConsensusStateAdvancer {
                                   majorityTrigger,
                                   events,
                                   state.facilitators.value.toSet,
-                                  lastNGlobalSnapshotsSynchronized
+                                  lastNGlobalSnapshotsSynchronized,
+                                  getGlobalSnapshotByOrdinal
                                 )
                               returnedPeerEvents = peerEvents.map {
                                 case (peerId, events) =>
@@ -170,7 +174,8 @@ object CurrencySnapshotConsensusStateAdvancer {
                               allProposalHashes,
                               state.facilitators.value.toSet,
                               consensusFns,
-                              lastNGlobalSnapshots
+                              lastNGlobalSnapshots,
+                              getGlobalSnapshotByOrdinal
                             ).flatMap { maybeMajorityArtifactInfo =>
                               state.facilitators.value.hash.flatMap { facilitatorsHash =>
                                 maybeMajorityArtifactInfo.traverse { majorityArtifactInfo =>

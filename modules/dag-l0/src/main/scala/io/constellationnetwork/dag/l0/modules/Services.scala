@@ -65,30 +65,33 @@ object Services {
         )
         .pure[F]
 
-      consensus <- GlobalSnapshotConsensus
-        .make[F, R](
-          sharedCfg,
-          sharedServices.gossip,
-          selfId,
-          keyPair,
-          seedlist,
-          cfg.collateral.amount,
-          storages.cluster,
-          storages.node,
-          storages.globalSnapshot,
-          validators,
-          sharedServices,
-          cfg,
-          stateChannelPullDelay = cfg.stateChannel.pullDelay,
-          stateChannelPurgeDelay = cfg.stateChannel.purgeDelay,
-          stateChannelAllowanceLists,
-          feeConfigs = cfg.shared.feeConfigs,
-          client,
-          session,
-          rewards,
-          txHasher,
-          sharedServices.restart
-        )
+      consensus <- HasherSelector[F].withCurrent { implicit hs =>
+        GlobalSnapshotConsensus
+          .make[F, R](
+            sharedCfg,
+            sharedServices.gossip,
+            selfId,
+            keyPair,
+            seedlist,
+            cfg.collateral.amount,
+            storages.cluster,
+            storages.node,
+            storages.globalSnapshot,
+            validators,
+            sharedServices,
+            cfg,
+            stateChannelPullDelay = cfg.stateChannel.pullDelay,
+            stateChannelPurgeDelay = cfg.stateChannel.purgeDelay,
+            stateChannelAllowanceLists,
+            feeConfigs = cfg.shared.feeConfigs,
+            client,
+            session,
+            rewards,
+            txHasher,
+            sharedServices.restart,
+            storages.globalSnapshot.getHashed
+          )
+      }
       addressService = AddressService.make[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo](cfg.shared.addresses, storages.globalSnapshot)
       collateralService = Collateral.make[F](cfg.collateral, storages.globalSnapshot)
       stateChannelService = StateChannelService

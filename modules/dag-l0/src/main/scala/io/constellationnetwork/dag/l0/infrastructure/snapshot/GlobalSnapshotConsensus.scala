@@ -28,6 +28,7 @@ import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
+import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
 import io.constellationnetwork.node.shared.domain.statechannel.{FeeCalculator, FeeCalculatorConfig}
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockAcceptanceManager
@@ -46,7 +47,7 @@ import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotStateProof, SnapshotOrdinal}
-import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
+import io.constellationnetwork.security._
 
 import eu.timepit.refined.types.numeric.NonNegLong
 import org.http4s.client.Client
@@ -74,7 +75,8 @@ object GlobalSnapshotConsensus {
     session: Session[F],
     rewards: Rewards[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotEvent],
     txHasher: Hasher[F],
-    restartService: RestartService[F, R]
+    restartService: RestartService[F, R],
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   ): F[GlobalSnapshotConsensus[F]] =
     for {
       globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager
@@ -132,7 +134,8 @@ object GlobalSnapshotConsensus {
           gossip,
           restartService,
           nodeStorage,
-          appConfig.shared.leavingDelay
+          appConfig.shared.leavingDelay,
+          getGlobalSnapshotByOrdinal
         )
       consensusStateCreator = GlobalSnapshotConsensusStateCreator.make[F](consensusFunctions, consensusStorage, gossip, selfId, seedlist)
       consensusStateRemover = GlobalSnapshotConsensusStateRemover.make[F](consensusStorage, gossip)

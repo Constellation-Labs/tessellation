@@ -29,19 +29,6 @@ object Validator {
   ): F[Boolean] =
     lastGlobalSnapshot.getOrdinal.map(_.isDefined)
 
-  def currentNLastGlobalSnapshotsPresent[F[_]: Async](
-    lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
-    lastGlobalSnapshotOrdinal: SnapshotOrdinal,
-    lastNGlobalSnapshot: LastNGlobalSnapshotStorage[F]
-  ): F[Long] = {
-    val minGlobalSnapshotsToParticipateConsensus = lastGlobalSnapshotsSyncConfig.minGlobalSnapshotsToParticipateConsensus.value
-    lastNGlobalSnapshot
-      .getLastN(lastGlobalSnapshotOrdinal, minGlobalSnapshotsToParticipateConsensus.toInt)
-      .flatMap {
-        case Some(snapshots) => snapshots.length.toLong.pure
-        case None            => 0L.pure
-      }
-  }
   private def enoughPeersForConsensus[F[_]: Async](
     clusterStorage: ClusterStorage[F],
     peersCount: PosInt
@@ -63,11 +50,9 @@ object Validator {
   ): F[Boolean] = tokenLockStorage.areWaiting
 
   def canStartOwnTokenLockConsensus[F[_]: Async](
-    lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
     nodeStorage: NodeStorage[F],
     clusterStorage: ClusterStorage[F],
     lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
-    lastNGlobalSnapshot: LastNGlobalSnapshotStorage[F],
     peersCount: PosInt,
     tokenLockStorage: TokenLockStorage[F]
   ): F[Boolean] =
@@ -75,28 +60,16 @@ object Validator {
       stateReadyForConsensus <- nodeStorage.getNodeState.map(isReadyForConsensus)
       enoughPeers <- enoughPeersForConsensus(clusterStorage, peersCount)
       lastGlobalSnapshotPresent <- isLastGlobalSnapshotPresent(lastGlobalSnapshot)
-      lastNGlobalSnapshotPresent <-
-        if (lastGlobalSnapshotPresent) {
-          lastGlobalSnapshot.get.flatMap(lastSnapshot =>
-            currentNLastGlobalSnapshotsPresent(lastGlobalSnapshotsSyncConfig, lastSnapshot.get.ordinal, lastNGlobalSnapshot)
-          )
-        } else {
-          0L.pure
-        }
       enoughTokenLocks <- atLeastOneTokenLock(tokenLockStorage)
-      minGlobalSnapshotsToParticipateConsensus = lastGlobalSnapshotsSyncConfig.minGlobalSnapshotsToParticipateConsensus.value
 
       res =
-        stateReadyForConsensus && enoughPeers && lastGlobalSnapshotPresent && enoughTokenLocks && lastNGlobalSnapshotPresent >= lastGlobalSnapshotsSyncConfig.minGlobalSnapshotsToParticipateConsensus.value
+        stateReadyForConsensus && enoughPeers && lastGlobalSnapshotPresent && enoughTokenLocks
       _ <-
         Applicative[F].whenA(!res) {
           val reason = Seq(
             if (!stateReadyForConsensus) "State not ready for consensus" else "",
             if (!enoughPeers) "Not enough peers" else "",
             if (!lastGlobalSnapshotPresent) "No global snapshot" else "",
-            if (lastNGlobalSnapshotPresent < lastGlobalSnapshotsSyncConfig.minGlobalSnapshotsToParticipateConsensus.value)
-              s"No enough last N global snapshots present ($lastNGlobalSnapshotPresent/$minGlobalSnapshotsToParticipateConsensus)"
-            else "",
             if (!enoughTokenLocks) "No token locks" else ""
           ).filter(_.nonEmpty).mkString(", ")
           logger.debug(s"Cannot start token lock own consensus: ${reason}")

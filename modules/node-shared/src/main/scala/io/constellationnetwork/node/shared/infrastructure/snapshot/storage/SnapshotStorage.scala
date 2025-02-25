@@ -18,7 +18,7 @@ import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
-import io.constellationnetwork.security.{Hasher, HasherSelector}
+import io.constellationnetwork.security.{Hashed, Hasher, HasherSelector}
 
 import eu.timepit.refined.types.numeric.NonNegLong
 import fs2.Stream
@@ -209,6 +209,12 @@ object SnapshotStorage {
           ordinalCache(ordinal).get.flatMap {
             case Some(hash) => get(hash)
             case None       => snapshotLocalFileSystemStorage.read(ordinal)
+          }
+
+        def getHashed(ordinal: SnapshotOrdinal)(implicit hasher: Hasher[F]): F[Option[Hashed[S]]] =
+          ordinalCache(ordinal).get.flatMap {
+            case Some(hash) => get(hash).flatMap(_.traverse(_.toHashed))
+            case None       => snapshotLocalFileSystemStorage.read(ordinal).flatMap(_.traverse(_.toHashed))
           }
 
         def getLastN(ordinal: SnapshotOrdinal, n: Int): F[Option[List[Signed[S]]]] = {

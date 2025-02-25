@@ -10,6 +10,7 @@ import io.constellationnetwork.dag.l0.infrastructure.snapshot.GlobalSnapshotTrav
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.config.types.SnapshotConfig
+import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalSnapshotContextFunctions
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{
   GlobalSnapshotLocalFileSystemStorage,
@@ -17,9 +18,9 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.{
   SnapshotLocalFileSystemStorage
 }
 import io.constellationnetwork.schema._
+import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
-import io.constellationnetwork.security.{HashSelect, HasherSelector, SecurityProvider}
 
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
@@ -32,7 +33,8 @@ object RollbackLoader {
     snapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfo],
     snapshotStorage: SnapshotDownloadStorage[F],
     snapshotContextFunctions: GlobalSnapshotContextFunctions[F],
-    hashSelect: HashSelect
+    hashSelect: HashSelect,
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   ): RollbackLoader[F] =
     new RollbackLoader[F](
       keyPair,
@@ -41,7 +43,8 @@ object RollbackLoader {
       snapshotStorage: SnapshotDownloadStorage[F],
       snapshotContextFunctions,
       snapshotInfoLocalFileSystemStorage,
-      hashSelect
+      hashSelect,
+      getGlobalSnapshotByOrdinal
     ) {}
 }
 
@@ -52,7 +55,8 @@ sealed abstract class RollbackLoader[F[_]: Async: KryoSerializer: JsonSerializer
   snapshotStorage: SnapshotDownloadStorage[F],
   snapshotContextFunctions: GlobalSnapshotContextFunctions[F],
   snapshotInfoLocalFileSystemStorage: SnapshotInfoLocalFileSystemStorage[F, GlobalSnapshotStateProof, GlobalSnapshotInfo],
-  hashSelect: HashSelect
+  hashSelect: HashSelect,
+  getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
 ) {
 
   private val logger = Slf4jLogger.getLogger[F]
@@ -70,7 +74,8 @@ sealed abstract class RollbackLoader[F[_]: Async: KryoSerializer: JsonSerializer
                   fullGlobalSnapshotLocalFileSystemStorage.read(_),
                   snapshotInfoLocalFileSystemStorage.read(_),
                   snapshotContextFunctions,
-                  rollbackHash
+                  rollbackHash,
+                  getGlobalSnapshotByOrdinal
                 )
               snapshotTraverse.loadChain()
             }

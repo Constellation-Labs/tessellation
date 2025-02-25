@@ -1,7 +1,7 @@
 package io.constellationnetwork.node.shared.infrastructure.snapshot
 
 import cats.Order
-import cats.data.{NonEmptyList, Validated}
+import cats.data.{NonEmptyList, OptionT, Validated}
 import cats.effect.Async
 import cats.syntax.all._
 
@@ -9,7 +9,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.dataApplication.FeeTransaction
 import io.constellationnetwork.currency.schema.currency._
-import io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSnapshotSync
+import io.constellationnetwork.currency.schema.globalSnapshotSync.{GlobalSnapshotSync, GlobalSyncView}
 import io.constellationnetwork.node.shared.config.types.LastGlobalSnapshotsSyncConfig
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.swap.block.{
@@ -65,7 +65,8 @@ case class CurrencySnapshotAcceptanceResult(
   sharedArtifacts: SortedSet[SharedArtifact],
   feeTransactions: Option[SortedSet[Signed[FeeTransaction]]],
   info: CurrencySnapshotInfo,
-  stateProof: CurrencySnapshotStateProof
+  stateProof: CurrencySnapshotStateProof,
+  globalSyncView: GlobalSyncView
 )
 
 trait CurrencySnapshotAcceptanceManager[F[_]] {
@@ -84,13 +85,14 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
     lastDeprecatedTips: SortedSet[DeprecatedTip],
     calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]],
     facilitators: Set[PeerId],
-    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult]
 }
 
 object CurrencySnapshotAcceptanceManager {
   def make[F[_]: Async](
-    lastGlobalSnapshotSyncCfg: LastGlobalSnapshotsSyncConfig,
+    lastGlobalSnapshotsSyncConfig: LastGlobalSnapshotsSyncConfig,
     blockAcceptanceManager: BlockAcceptanceManager[F],
     tokenLockBlockAcceptanceManager: TokenLockBlockAcceptanceManager[F],
     allowSpendBlockAcceptanceManager: AllowSpendBlockAcceptanceManager[F],
@@ -116,7 +118,8 @@ object CurrencySnapshotAcceptanceManager {
       lastDeprecatedTips: SortedSet[DeprecatedTip],
       calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]],
       facilitators: Set[PeerId],
-      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult] = for {
       initialTxRef <- TransactionReference.emptyCurrency(lastSnapshotContext.address)
       tokenLockInitialTxRef <- TokenLockReference.emptyCurrency(lastSnapshotContext.address)
@@ -188,20 +191,23 @@ object CurrencySnapshotAcceptanceManager {
         facilitators
       )
 
-      maybeSnapshotOrdinalSync = lastSnapshotContext.snapshotInfo.globalSnapshotSyncView.traverse {
-        _.values
-          .map(_.globalSnapshotOrdinal)
-          .groupBy(identity)
-          .maxByOption { case (ordinal, occurrences) => (occurrences.size, -ordinal.value.value) }
-          .flatMap { case (ordinal, _) => SnapshotOrdinal(ordinal.value) }
-      }.flatten
+      maybeSnapshotOrdinalSync = globalSnapshotSyncAcceptanceResult.contextUpdate.values
+        .map(_.globalSnapshotOrdinal)
+        .groupBy(identity)
+        .maxByOption { case (ordinal, occurrences) => (occurrences.size, -ordinal.value.value) }
+        .flatMap { case (ordinal, _) => SnapshotOrdinal(ordinal.value - lastGlobalSnapshotsSyncConfig.syncOffset) }
 
-      maybeLastGlobalSnapshot = lastGlobalSnapshots
-        .flatMap(_.find { snapshot =>
-          maybeSnapshotOrdinalSync.exists { snapshotOrdinalSync =>
-            snapshotOrdinalSync === snapshot.ordinal
+      maybeLastGlobalSnapshot <- lastGlobalSnapshots.flatMap(_.find { snapshot =>
+        maybeSnapshotOrdinalSync.exists(_ === snapshot.ordinal)
+      }) match {
+        case some @ Some(_) => some.pure
+        case None =>
+          maybeSnapshotOrdinalSync match {
+            case Some(ordinal) =>
+              getGlobalSnapshotByOrdinal(ordinal)
+            case None => none.pure
           }
-        })
+      }
 
       lastGlobalSnapshotEpochProgress <-
         if (maybeLastGlobalSnapshot.isEmpty)
@@ -325,6 +331,16 @@ object CurrencySnapshotAcceptanceManager {
         acceptedTokenUnlocks,
         expiredTokenLocks
       )
+
+      globalSyncView = maybeLastGlobalSnapshot
+        .map(gs =>
+          GlobalSyncView(
+            gs.ordinal,
+            gs.hash,
+            gs.epochProgress
+          )
+        )
+        .getOrElse(GlobalSyncView.empty)
     } yield
       CurrencySnapshotAcceptanceResult(
         acceptanceBlocksResult,
@@ -336,7 +352,8 @@ object CurrencySnapshotAcceptanceManager {
         acceptedSharedArtifacts ++ allowSpendsExpiredEvents ++ tokenUnlocksEvents,
         acceptedFeeTxs,
         csi,
-        stateProof
+        stateProof,
+        globalSyncView
       )
 
     private def acceptMessages(

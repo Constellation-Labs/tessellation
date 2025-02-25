@@ -15,6 +15,7 @@ import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.node.shared.config.types.LastGlobalSnapshotsSyncConfig
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
+import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusStateUpdater._
 import io.constellationnetwork.node.shared.infrastructure.consensus._
@@ -24,11 +25,11 @@ import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.Time
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot.SnapshotConsensusFunctions.gossipForkInfo
-import io.constellationnetwork.schema.GlobalIncrementalSnapshot
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.signature._
-import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
+import io.constellationnetwork.security.{Hashed, HasherSelector, SecurityProvider}
 import io.constellationnetwork.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._
@@ -55,7 +56,8 @@ object GlobalSnapshotConsensusStateAdvancer {
     gossip: Gossip[F],
     restartService: RestartService[F, _],
     nodeStorage: NodeStorage[F],
-    leavingDelay: FiniteDuration
+    leavingDelay: FiniteDuration,
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   ): GlobalSnapshotConsensusStateAdvancer[F] = new GlobalSnapshotConsensusStateAdvancer[F] {
     val logger = Slf4jLogger.getLogger[F]
     val facilitatorsObservationName = "facilitators"
@@ -126,7 +128,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                                         majorityTrigger,
                                         events,
                                         state.facilitators.value.toSet,
-                                        lastGlobalSnapshots
+                                        lastGlobalSnapshots,
+                                        getGlobalSnapshotByOrdinal
                                       )
                                   }
 
@@ -188,7 +191,8 @@ object GlobalSnapshotConsensusStateAdvancer {
                                 allProposalHashes,
                                 state.facilitators.value.toSet,
                                 consensusFns,
-                                lastGlobalSnapshots
+                                lastGlobalSnapshots,
+                                getGlobalSnapshotByOrdinal
                               ).flatMap { maybeMajorityArtifactInfo =>
                                 state.facilitators.value.hash.flatMap { facilitatorsHash =>
                                   maybeMajorityArtifactInfo.traverse { majorityArtifactInfo =>

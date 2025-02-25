@@ -8,10 +8,11 @@ import io.constellationnetwork.dag.l1.domain.block.BlockStorage
 import io.constellationnetwork.dag.l1.domain.transaction.TransactionStorage
 import io.constellationnetwork.node.shared.config.types.LastGlobalSnapshotsSyncConfig
 import io.constellationnetwork.node.shared.domain.snapshot.SnapshotContextFunctions
+import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
 import io.constellationnetwork.node.shared.domain.swap.AllowSpendStorage
 import io.constellationnetwork.node.shared.domain.tokenlock.TokenLockStorage
-import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, GlobalSnapshotInfo, GlobalSnapshotStateProof}
+import io.constellationnetwork.schema._
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher, SecurityProvider}
 
@@ -27,7 +28,8 @@ object DAGSnapshotProcessor {
     allowSpendStorage: AllowSpendStorage[F],
     tokenLockStorage: TokenLockStorage[F],
     globalSnapshotContextFns: SnapshotContextFunctions[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
-    txHasher: Hasher[F]
+    txHasher: Hasher[F],
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   ): SnapshotProcessor[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo] =
     new SnapshotProcessor[F, GlobalSnapshotStateProof, GlobalIncrementalSnapshot, GlobalSnapshotInfo] {
 
@@ -57,7 +59,7 @@ object DAGSnapshotProcessor {
         lastNGlobalSnapshotStorage
           .getLastN(snapshotOrdinal, lastGlobalSnapshotsSyncConfig.minGlobalSnapshotsToParticipateConsensus.value)
           .flatMap { lastGlobalSnapshots =>
-            checkAlignment(snapshot, blockStorage, lastGlobalSnapshotStorage, txHasher, lastGlobalSnapshots)
+            checkAlignment(snapshot, blockStorage, lastGlobalSnapshotStorage, txHasher, lastGlobalSnapshots, getGlobalSnapshotByOrdinal)
               .flatMap(
                 processAlignment(
                   _,
@@ -74,15 +76,24 @@ object DAGSnapshotProcessor {
         lastState: GlobalSnapshotInfo,
         lastSnapshot: Signed[GlobalIncrementalSnapshot],
         snapshot: Signed[GlobalIncrementalSnapshot],
-        lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
-      )(implicit hasher: Hasher[F]): F[GlobalSnapshotInfo] = applyGlobalSnapshotFn(lastState, lastSnapshot, snapshot, lastGlobalSnapshots)
+        lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+        getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+      )(implicit hasher: Hasher[F]): F[GlobalSnapshotInfo] =
+        applyGlobalSnapshotFn(lastState, lastSnapshot, snapshot, lastGlobalSnapshots, getGlobalSnapshotByOrdinal)
 
       def applyGlobalSnapshotFn(
         lastGlobalState: GlobalSnapshotInfo,
         lastGlobalSnapshot: Signed[GlobalIncrementalSnapshot],
         globalSnapshot: Signed[GlobalIncrementalSnapshot],
-        lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+        lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+        getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
       )(implicit hasher: Hasher[F]): F[GlobalSnapshotInfo] =
-        globalSnapshotContextFns.createContext(lastGlobalState, lastGlobalSnapshot, globalSnapshot, lastGlobalSnapshots)
+        globalSnapshotContextFns.createContext(
+          lastGlobalState,
+          lastGlobalSnapshot,
+          globalSnapshot,
+          lastGlobalSnapshots,
+          getGlobalSnapshotByOrdinal
+        )
     }
 }

@@ -331,7 +331,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       snapshotContextFunctions = GlobalSnapshotContextFunctions.make[IO](snapshotAcceptanceManager)
     } yield
       GlobalSnapshotTraverse
-        .make[IO](loadGlobalIncrementalSnapshot, loadGlobalSnapshot, loadInfo, snapshotContextFunctions, rollbackHash)
+        .make[IO](loadGlobalIncrementalSnapshot, loadGlobalSnapshot, loadInfo, snapshotContextFunctions, rollbackHash, _ => None.pure[IO])
   }
 
   test("can compute state for given incremental global snapshot") { res =>
