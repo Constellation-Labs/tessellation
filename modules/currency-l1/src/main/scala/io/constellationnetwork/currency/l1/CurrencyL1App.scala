@@ -146,7 +146,8 @@ abstract class CurrencyL1App(
         cfg.transactionLimit,
         Hasher.forKryo[IO],
         storages.allowSpend,
-        storages.tokenLock
+        storages.tokenLock,
+        services.globalL0.pullGlobalSnapshot
       )
       programs = Programs
         .make[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](
@@ -285,12 +286,10 @@ abstract class CurrencyL1App(
         }.getOrElse {
           Swap
             .run[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](
-              sharedConfig,
               cfg.swap,
               storages.cluster,
               storages.l0Cluster,
               storages.lastGlobalSnapshot,
-              storages.lastNGlobalSnapshot,
               storages.node,
               p2pClient.l0BlockOutputClient,
               p2pClient.swapConsensusClient,
@@ -304,12 +303,10 @@ abstract class CurrencyL1App(
             )
             .merge {
               TokenLock.run[IO, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotInfo, Run](
-                sharedConfig,
                 cfg.tokenLock,
                 storages.cluster,
                 storages.l0Cluster,
                 storages.lastGlobalSnapshot,
-                storages.lastNGlobalSnapshot,
                 storages.node,
                 p2pClient.l0BlockOutputClient,
                 p2pClient.tokenLockConsensusClient,

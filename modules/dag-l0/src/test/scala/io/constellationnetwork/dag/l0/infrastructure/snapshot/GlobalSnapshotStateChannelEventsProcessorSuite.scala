@@ -142,7 +142,14 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         Set.empty,
         Map.empty
       )
-      result <- service.process(SnapshotOrdinal(1L), snapshotInfo, output :: Nil, StateChannelValidationType.Full, List(snapshot).some)
+      result <- service.process(
+        SnapshotOrdinal(1L),
+        snapshotInfo,
+        output :: Nil,
+        StateChannelValidationType.Full,
+        List(snapshot).some,
+        _ => None.pure[IO]
+      )
     } yield expect.eql(expected, result)
 
   }
@@ -173,7 +180,8 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         snapshotInfo,
         output1 :: output2 :: Nil,
         StateChannelValidationType.Full,
-        List(snapshot).some
+        List(snapshot).some,
+        _ => None.pure[IO]
       )
     } yield expect.eql(expected, result)
 
@@ -206,7 +214,8 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         snapshotInfo,
         output1 :: output2 :: Nil,
         StateChannelValidationType.Full,
-        List(snapshot).some
+        List(snapshot).some,
+        _ => None.pure[IO]
       )
     } yield expect.eql(expected, result)
 

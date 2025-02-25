@@ -92,6 +92,7 @@ object Main
           Hasher.forKryo[IO]
         )
         .asResource
+
       programs = Programs.make[IO, Run](
         sharedPrograms,
         storages,

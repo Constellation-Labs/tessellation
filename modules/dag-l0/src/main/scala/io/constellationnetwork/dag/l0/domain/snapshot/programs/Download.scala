@@ -18,6 +18,7 @@ import io.constellationnetwork.merkletree.StateProofValidator
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
+import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.snapshot.{PeerSelect, Validator}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.GlobalSnapshotContextFunctions
 import io.constellationnetwork.schema._
@@ -42,7 +43,8 @@ object Download {
     globalSnapshotContextFns: GlobalSnapshotContextFunctions[F],
     nodeStorage: NodeStorage[F],
     consensus: GlobalSnapshotConsensus[F],
-    peerSelect: PeerSelect[F]
+    peerSelect: PeerSelect[F],
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   ): Download[F] = new Download[F] {
 
     val logger = Slf4jLogger.getLogger[F]
@@ -134,7 +136,7 @@ object Download {
               .forOrdinal(snapshot.ordinal) { implicit hasher =>
                 lastSnapshot.toHashed.flatMap { hashedLastSnapshot =>
                   globalSnapshotContextFns
-                    .createContext(lastContext, lastSnapshot, snapshot, List(hashedLastSnapshot).some)
+                    .createContext(lastContext, lastSnapshot, snapshot, List(hashedLastSnapshot).some, getGlobalSnapshotByOrdinal)
                 }
               }
               .handleErrorWith(_ => InvalidChain.raiseError[F, GlobalSnapshotContext])
@@ -244,7 +246,7 @@ object Download {
                   .forOrdinal(snapshot.ordinal) { implicit hasher =>
                     lastSnapshot.toHashed.flatMap { hashedLastSnapshot =>
                       globalSnapshotContextFns
-                        .createContext(context, lastSnapshot, snapshot, List(hashedLastSnapshot).some)
+                        .createContext(context, lastSnapshot, snapshot, List(hashedLastSnapshot).some, getGlobalSnapshotByOrdinal)
                     }
                   }
                   .flatTap(newContext =>

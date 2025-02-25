@@ -13,15 +13,16 @@ import io.constellationnetwork.ext.collection.FoldableOps.pickMajority
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
+import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusState._
 import io.constellationnetwork.node.shared.infrastructure.consensus.ConsensusStorage.ModifyStateFn
 import io.constellationnetwork.node.shared.infrastructure.consensus.message._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.infrastructure.consensus.update.UnlockConsensusUpdate
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
-import io.constellationnetwork.schema.GlobalIncrementalSnapshot
 import io.constellationnetwork.schema.node.NodeState
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher}
@@ -251,7 +252,8 @@ object ConsensusStateUpdater {
     proposals: List[Hash],
     facilitators: Set[PeerId],
     consensusFns: ConsensusFunctions[F, Event, Key, Artifact, Context],
-    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[Option[ArtifactInfo[Artifact, Context]]] = {
     def go(proposals: List[(Int, Hash)]): F[Option[ArtifactInfo[Artifact, Context]]] =
       proposals match {
@@ -262,13 +264,22 @@ object ConsensusStateUpdater {
             resources.artifacts
               .get(majorityHash)
               .traverse { artifact =>
-                consensusFns.validateArtifact(lastSignedArtifact, lastContext, trigger, artifact, facilitators, lastGlobalSnapshots).map {
-                  validationResultOrError =>
+                consensusFns
+                  .validateArtifact(
+                    lastSignedArtifact,
+                    lastContext,
+                    trigger,
+                    artifact,
+                    facilitators,
+                    lastGlobalSnapshots,
+                    getGlobalSnapshotByOrdinal
+                  )
+                  .map { validationResultOrError =>
                     validationResultOrError.map {
                       case (artifact, context) =>
                         ArtifactInfo(artifact, context, majorityHash)
                     }
-                }
+                  }
               }
               .flatMap { maybeArtifactInfoOrErr =>
                 maybeArtifactInfoOrErr.flatTraverse { artifactInfoOrErr =>

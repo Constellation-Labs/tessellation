@@ -42,7 +42,7 @@ object swap {
 
   @derive(decoder, encoder, order, show)
   @newtype
-  case class AllowSpendFee(value: PosLong)
+  case class AllowSpendFee(value: NonNegLong)
 
   object AllowSpendFee {
     implicit def toAmount(fee: AllowSpendFee): Amount = Amount(fee.value)

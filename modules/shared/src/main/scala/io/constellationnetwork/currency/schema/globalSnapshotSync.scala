@@ -8,6 +8,7 @@ import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.ext.derevo.ordering
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.cluster.SessionToken
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -31,6 +32,21 @@ object globalSnapshotSync {
     session: SessionToken
   ) {
     def ordinal: GlobalSnapshotSyncOrdinal = parentOrdinal.next
+  }
+
+  @derive(decoder, encoder, order, ordering, show)
+  case class GlobalSyncView(
+    ordinal: SnapshotOrdinal,
+    hash: Hash,
+    epochProgress: EpochProgress
+  )
+
+  object GlobalSyncView {
+    def empty: GlobalSyncView = GlobalSyncView(
+      SnapshotOrdinal.MinValue,
+      Hash.empty,
+      EpochProgress.MinValue
+    )
   }
 
   @derive(decoder, encoder, show, order, ordering)

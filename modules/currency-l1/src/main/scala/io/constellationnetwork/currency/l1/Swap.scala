@@ -15,11 +15,10 @@ import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnap
 import io.constellationnetwork.currency.swap.ConsensusInput.OwnerConsensusInput
 import io.constellationnetwork.currency.swap.{ConsensusInput, ConsensusOutput}
 import io.constellationnetwork.dag.l1.http.p2p.L0BlockOutputClient
-import io.constellationnetwork.node.shared.config.types.SharedConfig
 import io.constellationnetwork.node.shared.domain.cluster.storage.{ClusterStorage, L0ClusterStorage}
 import io.constellationnetwork.node.shared.domain.consensus.config.SwapConsensusConfig
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
-import io.constellationnetwork.node.shared.domain.snapshot.storage.{LastNGlobalSnapshotStorage, LastSnapshotStorage}
+import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.node.shared.domain.swap.block.AllowSpendBlockStorage
 import io.constellationnetwork.node.shared.domain.swap.consensus.Validator._
 import io.constellationnetwork.node.shared.domain.swap.consensus.{ConsensusClient, ConsensusState, Engine}
@@ -33,12 +32,10 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 object Swap {
   def run[F[_]: Async: Random: Hasher: SecurityProvider](
-    sharedCfg: SharedConfig,
     swapConsensusCfg: SwapConsensusConfig,
     clusterStorage: ClusterStorage[F],
     l0ClusterStorage: L0ClusterStorage[F],
     lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
-    lastNGlobalSnapshotStorage: LastNGlobalSnapshotStorage[F],
     nodeStorage: NodeStorage[F],
     blockOutputClient: L0BlockOutputClient[F],
     consensusClient: ConsensusClient[F],
@@ -64,11 +61,9 @@ object Swap {
         .awakeEvery(5.seconds)
         .evalFilter { _ =>
           canStartOwnSwapConsensus(
-            sharedCfg.lastGlobalSnapshotsSync,
             nodeStorage,
             clusterStorage,
             lastGlobalSnapshot,
-            lastNGlobalSnapshotStorage,
             swapConsensusCfg.peersCount,
             allowSpendStorage
           ).handleErrorWith { e =>

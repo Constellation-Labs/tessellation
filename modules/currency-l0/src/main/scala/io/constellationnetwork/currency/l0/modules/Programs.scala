@@ -54,7 +54,8 @@ object Programs {
         peerSelect,
         storages.identifier,
         dataApplication.map { case (da, _) => da },
-        storages.lastGlobalSnapshot
+        storages.lastGlobalSnapshot,
+        services.globalL0.pullGlobalSnapshot
       )
 
     val globalL0PeerDiscovery = L0PeerDiscovery.make(

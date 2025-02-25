@@ -109,6 +109,11 @@ object Services {
         maybeDataApplication
       )
 
+      addressService = AddressService.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](cfg.shared.addresses, storages.snapshot)
+      collateralService = Collateral.make[F](cfg.collateral, storages.snapshot)
+      globalL0Service = GlobalL0Service
+        .make[F](p2PClient.l0GlobalSnapshot, storages.globalL0Cluster, storages.lastGlobalSnapshot, None, maybeMajorityPeerIds)
+
       consensus <- CurrencySnapshotConsensus
         .make[F](
           sharedCfg,
@@ -130,12 +135,9 @@ object Services {
           validator,
           hasherSelector,
           sharedServices.restart,
-          cfg.shared.leavingDelay
+          cfg.shared.leavingDelay,
+          globalL0Service.pullGlobalSnapshot
         )
-      addressService = AddressService.make[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo](cfg.shared.addresses, storages.snapshot)
-      collateralService = Collateral.make[F](cfg.collateral, storages.snapshot)
-      globalL0Service = GlobalL0Service
-        .make[F](p2PClient.l0GlobalSnapshot, storages.globalL0Cluster, storages.lastGlobalSnapshot, None, maybeMajorityPeerIds)
     } yield
       new Services[F, R](
         localHealthcheck = sharedServices.localHealthcheck,

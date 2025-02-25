@@ -26,6 +26,7 @@ import io.constellationnetwork.node.shared.config.types.LastGlobalSnapshotsSyncC
 import io.constellationnetwork.node.shared.domain.cluster.storage.ClusterStorage
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.programs.Download
+import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSyncGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.domain.snapshot.{PeerSelect, Validator}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.CurrencySnapshotContextFunctions
@@ -53,7 +54,8 @@ object Download {
     peerSelect: PeerSelect[F],
     identifierStorage: IdentifierStorage[F],
     maybeDataApplication: Option[BaseDataApplicationL0Service[F]],
-    lastGlobalSnapshotStorage: LastSyncGlobalSnapshotStorage[F]
+    lastGlobalSnapshotStorage: LastSyncGlobalSnapshotStorage[F],
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit l0NodeContext: L0NodeContext[F]): Download[F] = new Download[F] {
 
     val logger = Slf4jLogger.getLogger[F]
@@ -147,7 +149,13 @@ object Download {
                   .getLastNSynchronized(lastGlobalSnapshotsSyncConfig.minGlobalSnapshotsToParticipateConsensus.value)
                   .flatMap(lastNGlobalSnapshots =>
                     currencySnapshotContextFns
-                      .createContext(CurrencySnapshotContext(currencyAddress, lastContext), lastSnapshot, snapshot, lastNGlobalSnapshots)
+                      .createContext(
+                        CurrencySnapshotContext(currencyAddress, lastContext),
+                        lastSnapshot,
+                        snapshot,
+                        lastNGlobalSnapshots,
+                        getGlobalSnapshotByOrdinal
+                      )
                       .handleErrorWith(_ => InvalidChain.raiseError[F, CurrencySnapshotContext])
                   )
               )

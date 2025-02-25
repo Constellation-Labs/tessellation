@@ -9,6 +9,7 @@ import scala.util.control.NoStackTrace
 import io.constellationnetwork.ext.cats.syntax.partialPrevious.catsSyntaxPartialPrevious
 import io.constellationnetwork.merkletree.StateProofValidator
 import io.constellationnetwork.node.shared.domain.snapshot.SnapshotContextFunctions
+import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.schema._
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
@@ -27,7 +28,8 @@ object GlobalSnapshotTraverse {
     loadFull: Hash => F[Option[Signed[GlobalSnapshot]]],
     loadInfo: SnapshotOrdinal => F[Option[GlobalSnapshotInfo]],
     contextFns: SnapshotContextFunctions[F, GlobalSnapshotArtifact, GlobalSnapshotContext],
-    rollbackHash: Hash
+    rollbackHash: Hash,
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   ): GlobalSnapshotTraverse[F] =
     new GlobalSnapshotTraverse[F] {
       val logger = Slf4jLogger.getLogger[F]
@@ -111,7 +113,7 @@ object GlobalSnapshotTraverse {
               loadIncOrErr(hash).flatMap { inc =>
                 HasherSelector[F].forOrdinal(inc.ordinal) { implicit hasher =>
                   lastInc.toHashed.flatMap { lastIncHashed =>
-                    contextFns.createContext(lastCtx, lastInc, inc, List(lastIncHashed).some).map(_ -> inc)
+                    contextFns.createContext(lastCtx, lastInc, inc, List(lastIncHashed).some, getGlobalSnapshotByOrdinal).map(_ -> inc)
                   }
                 }
               }

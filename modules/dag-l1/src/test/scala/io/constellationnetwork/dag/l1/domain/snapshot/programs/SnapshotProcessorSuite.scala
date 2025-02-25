@@ -23,6 +23,7 @@ import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.node.shared.config.types._
 import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersAcceptanceManager
+import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculator
 import io.constellationnetwork.node.shared.domain.swap.block.{AllowSpendBlockAcceptanceManager, AllowSpendBlockStorage}
 import io.constellationnetwork.node.shared.domain.swap.{AllowSpendStorage, ContextualAllowSpendValidator}
@@ -119,7 +120,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             allowSpendStorage <- AllowSpendStorage
               .make[IO](
                 AllowSpendReference.empty,
-                ContextualAllowSpendValidator.make(None, AllowSpendsConfig(MinMax(min = NonNegLong(1L), max = NonNegLong(100L))))
+                ContextualAllowSpendValidator.make(None, None, AllowSpendsConfig(MinMax(min = NonNegLong(1L), max = NonNegLong(100L))))
               )
               .asResource
 
@@ -194,6 +195,18 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               val lastSnapshotStorage = LastSnapshotStorage.make[IO, GlobalIncrementalSnapshot, GlobalSnapshotInfo](lastSnapR)
               val lastNSnapshotStorage = LastNGlobalSnapshotStorage.make[IO](lastNSnapR)
               val lastGlobalSnapshotsSyncConfig = LastGlobalSnapshotsSyncConfig(NonNegLong(2L), PosInt.unsafeFrom(5))
+              val globalL0Service = new GlobalL0Service[IO] {
+                override def pullLatestSnapshot: IO[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] = ???
+
+                override def pullLatestSnapshotFromRandomPeer: IO[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)] = ???
+
+                override def pullGlobalSnapshots
+                  : IO[Either[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo), List[Hashed[GlobalIncrementalSnapshot]]]] = ???
+
+                override def pullGlobalSnapshot(ordinal: SnapshotOrdinal): IO[Option[Hashed[GlobalIncrementalSnapshot]]] = none.pure[IO]
+
+                override def pullGlobalSnapshot(hash: Hash): IO[Option[Hashed[GlobalIncrementalSnapshot]]] = ???
+              }
               DAGSnapshotProcessor
                 .make[IO](
                   lastGlobalSnapshotsSyncConfig,
@@ -205,7 +218,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                   allowSpendStorage,
                   tokenLockStorage,
                   globalSnapshotContextFns,
-                  Hasher.forKryo[IO]
+                  Hasher.forKryo[IO],
+                  globalL0Service.pullGlobalSnapshot
                 )
             }
             keys <- (

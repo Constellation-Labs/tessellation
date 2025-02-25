@@ -16,6 +16,7 @@ import io.constellationnetwork.dag.l1.domain.block.BlockStorage.MajorityReconcil
 import io.constellationnetwork.dag.l1.domain.block.{BlockRelations, BlockStorage}
 import io.constellationnetwork.dag.l1.domain.transaction.TransactionStorage
 import io.constellationnetwork.node.shared.domain.snapshot.Validator
+import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
@@ -47,14 +48,16 @@ abstract class SnapshotProcessor[
     lastGlobalState: GlobalSnapshotInfo,
     lastGlobalSnapshot: Signed[GlobalIncrementalSnapshot],
     globalSnapshot: Signed[GlobalIncrementalSnapshot],
-    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[GlobalSnapshotInfo]
 
   def applySnapshotFn(
     lastState: SI,
     lastSnapshot: Signed[S],
     snapshot: Signed[S],
-    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[SI]
 
   def onDownload(snapshot: Hashed[S], state: SI): F[Unit] = Applicative[F].unit
@@ -233,7 +236,8 @@ abstract class SnapshotProcessor[
     blockStorage: BlockStorage[F],
     lastSnapshotStorage: LastSnapshotStorage[F, S, SI],
     txHasher: Hasher[F],
-    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[Alignment] = {
     snapshotWithState
       .fold({ case (snapshot, _) => snapshot }, identity)
@@ -289,7 +293,13 @@ abstract class SnapshotProcessor[
                       (block: Signed[Block]) =>
                         BlockRelations.dependsOn[F](acceptedInMajority.values.map(_._1).toSet, txHasher = txHasher)(block)
 
-                    applySnapshotFn(lastState, lastSnapshot.signed, snapshot.signed, lastGlobalSnapshots).flatMap { state =>
+                    applySnapshotFn(
+                      lastState,
+                      lastSnapshot.signed,
+                      snapshot.signed,
+                      lastGlobalSnapshots,
+                      getGlobalSnapshotByOrdinal
+                    ).flatMap { state =>
                       blockStorage.getBlocksForMajorityReconciliation(lastSnapshot.height, snapshot.height, isDependent).flatMap {
                         case MajorityReconciliationData(deprecatedTips, activeTips, _, _, relatedPostponed, _, acceptedAbove) =>
                           val onlyInMajority = acceptedInMajority -- acceptedAbove
@@ -341,7 +351,13 @@ abstract class SnapshotProcessor[
                       (block: Signed[Block]) =>
                         BlockRelations.dependsOn[F](acceptedInMajority.values.map(_._1).toSet, txHasher = txHasher)(block)
 
-                    applySnapshotFn(lastState, lastSnapshot.signed, snapshot.signed, lastGlobalSnapshots).flatMap { state =>
+                    applySnapshotFn(
+                      lastState,
+                      lastSnapshot.signed,
+                      snapshot.signed,
+                      lastGlobalSnapshots,
+                      getGlobalSnapshotByOrdinal
+                    ).flatMap { state =>
                       blockStorage.getBlocksForMajorityReconciliation(lastSnapshot.height, snapshot.height, isDependent).flatMap {
                         case MajorityReconciliationData(
                               deprecatedTips,

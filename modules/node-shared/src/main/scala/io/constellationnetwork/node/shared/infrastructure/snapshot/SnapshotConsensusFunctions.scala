@@ -20,6 +20,7 @@ import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions.InvalidArtifact
 import io.constellationnetwork.node.shared.domain.fork.ForkInfo
 import io.constellationnetwork.node.shared.domain.gossip.Gossip
+import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
@@ -65,7 +66,8 @@ abstract class SnapshotConsensusFunctions[
     trigger: ConsensusTrigger,
     artifact: Artifact,
     facilitators: Set[PeerId],
-    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[Either[InvalidArtifact, (Artifact, Context)]]
 
   protected def getUpdatedTips(

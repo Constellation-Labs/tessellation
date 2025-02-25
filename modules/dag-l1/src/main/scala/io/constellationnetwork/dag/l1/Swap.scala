@@ -43,12 +43,10 @@ object Swap {
     SI <: SnapshotInfo[P],
     R <: CliMethod
   ](
-    sharedCfg: SharedConfig,
     swapConsensusCfg: SwapConsensusConfig,
     clusterStorage: ClusterStorage[F],
     l0ClusterStorage: L0ClusterStorage[F],
     lastGlobalSnapshot: LastSnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
-    lastNGlobalSnapshot: LastNGlobalSnapshotStorage[F],
     nodeStorage: NodeStorage[F],
     blockOutputClient: L0BlockOutputClient[F],
     consensusClient: ConsensusClient[F],
@@ -74,11 +72,9 @@ object Swap {
         .awakeEvery(5.seconds)
         .evalFilter { _ =>
           canStartOwnSwapConsensus(
-            sharedCfg.lastGlobalSnapshotsSync,
             nodeStorage,
             clusterStorage,
             lastGlobalSnapshot,
-            lastNGlobalSnapshot,
             swapConsensusCfg.peersCount,
             allowSpendStorage
           ).handleErrorWith { e =>

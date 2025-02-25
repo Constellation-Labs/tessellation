@@ -19,6 +19,7 @@ import io.constellationnetwork.node.shared.domain.gossip.Gossip
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
+import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSyncGlobalSnapshotStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
@@ -27,7 +28,8 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.{CurrencySnap
 import io.constellationnetwork.node.shared.snapshot.currency._
 import io.constellationnetwork.schema.balance.Amount
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.security.{HasherSelector, SecurityProvider}
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
+import io.constellationnetwork.security.{Hashed, HasherSelector, SecurityProvider}
 
 import io.circe.Decoder
 import org.http4s.client.Client
@@ -54,7 +56,8 @@ object CurrencySnapshotConsensus {
     validator: CurrencySnapshotValidator[F],
     hasherSelector: HasherSelector[F],
     restartService: RestartService[F, _],
-    leavingDelay: FiniteDuration
+    leavingDelay: FiniteDuration,
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   ): F[CurrencySnapshotConsensus[F]] = {
     def noopDecoder: Decoder[DataTransaction] = Decoder.failedWithMessage[DataTransaction]("not implemented")
 
@@ -95,7 +98,8 @@ object CurrencySnapshotConsensus {
           restartService,
           nodeStorage,
           leavingDelay,
-          lastGlobalSnapshotStorage
+          lastGlobalSnapshotStorage,
+          getGlobalSnapshotByOrdinal
         )
       consensusStateCreator = CurrencySnapshotConsensusStateCreator
         .make[F](consensusFunctions, consensusStorage, lastGlobalSnapshotStorage, gossip, selfId, seedlist)

@@ -9,6 +9,7 @@ import scala.collection.immutable.SortedMap
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.ext.cats.syntax.validated.validatedSyntax
 import io.constellationnetwork.json.JsonBrotliBinarySerializer
+import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult.CurrencySnapshotWithState
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelValidator.{StateChannelValidationError, getFeeAddresses}
 import io.constellationnetwork.node.shared.domain.statechannel._
@@ -37,14 +38,16 @@ trait GlobalSnapshotStateChannelEventsProcessor[F[_]] {
     lastGlobalSnapshotInfo: GlobalSnapshotInfo,
     events: List[StateChannelOutput],
     validationType: StateChannelValidationType,
-    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[StateChannelAcceptanceResult]
 
   def processCurrencySnapshots(
     snapshotOrdinal: SnapshotOrdinal,
     lastGlobalSnapshotInfo: GlobalSnapshotInfo,
     events: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
-    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   )(
     implicit hasher: Hasher[F]
   ): F[SortedMap[Address, MetagraphAcceptanceResult]]
@@ -92,7 +95,8 @@ object GlobalSnapshotStateChannelEventsProcessor {
         lastGlobalSnapshotInfo: GlobalSnapshotInfo,
         events: List[StateChannelOutput],
         validationType: StateChannelValidationType,
-        lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+        lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+        getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
       )(implicit hasher: Hasher[F]): F[StateChannelAcceptanceResult] = {
         val allFeesAddresses: Map[Address, Set[Address]] = getFeeAddresses(lastGlobalSnapshotInfo)
         type Acc = (Map[Address, Set[Address]], List[ValidatedNec[(Address, StateChannelValidationError), StateChannelOutput]])
@@ -125,7 +129,13 @@ object GlobalSnapshotStateChannelEventsProcessor {
           .flatMap { case (_, validatedEvents) => processStateChannelEvents(snapshotOrdinal, lastGlobalSnapshotInfo, validatedEvents) }
           .flatMap {
             case (scSnapshots, returnedSCEvents) =>
-              processCurrencySnapshots(snapshotOrdinal, lastGlobalSnapshotInfo, scSnapshots, lastGlobalSnapshots).map { accepted =>
+              processCurrencySnapshots(
+                snapshotOrdinal,
+                lastGlobalSnapshotInfo,
+                scSnapshots,
+                lastGlobalSnapshots,
+                getGlobalSnapshotByOrdinal
+              ).map { accepted =>
                 val lastCurrencyStates = calculateLastCurrencySnapshots(accepted, lastGlobalSnapshotInfo)
                 val finalScSnapshots = accepted.map { case (k, (v, _)) => k -> v.map(_._1) }
                 // TODO: ASSUMING that owner addresses are restricted from being shared at this point
@@ -157,17 +167,25 @@ object GlobalSnapshotStateChannelEventsProcessor {
         lastState: CurrencySnapshotInfo,
         lastSnapshot: Signed[CurrencyIncrementalSnapshot],
         snapshot: Signed[CurrencyIncrementalSnapshot],
-        lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+        lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+        getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
       )(implicit hasher: Hasher[F]): F[CurrencySnapshotInfo] =
         currencySnapshotContextFns
-          .createContext(CurrencySnapshotContext(currencyAddress, lastState), lastSnapshot, snapshot, lastGlobalSnapshots)
+          .createContext(
+            CurrencySnapshotContext(currencyAddress, lastState),
+            lastSnapshot,
+            snapshot,
+            lastGlobalSnapshots,
+            getGlobalSnapshotByOrdinal
+          )
           .map(_.snapshotInfo)
 
       def processCurrencySnapshots(
         snapshotOrdinal: SnapshotOrdinal,
         lastGlobalSnapshotInfo: GlobalSnapshotInfo,
         events: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
-        lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+        lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+        getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
       )(implicit hasher: Hasher[F]): F[SortedMap[Address, MetagraphAcceptanceResult]] = {
         val isFeeRequired = feeCalculator.isFeeRequired(snapshotOrdinal)
 
@@ -242,7 +260,8 @@ object GlobalSnapshotStateChannelEventsProcessor {
                             lastState,
                             lastIncremental,
                             snapshot,
-                            lastGlobalSnapshots
+                            lastGlobalSnapshots,
+                            getGlobalSnapshotByOrdinal
                           ).map { state =>
                             val maybeFeeAddress = state.lastMessages.flatMap(_.get(MessageType.Owner)).map(_.address)
 

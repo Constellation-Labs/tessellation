@@ -26,6 +26,7 @@ import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.node.shared.config.types.SnapshotSizeConfig
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
+import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.infrastructure.consensus.ValidationErrorStorage
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.{ConsensusTrigger, EventTrigger, TimeTrigger}
 import io.constellationnetwork.node.shared.snapshot.currency._
@@ -63,7 +64,8 @@ trait CurrencySnapshotCreator[F[_]] {
     facilitators: Set[PeerId],
     feeTransactionFn: Option[() => SortedSet[Signed[FeeTransaction]]],
     artifactsFn: Option[() => SortedSet[SharedArtifact]],
-    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]]
 }
 
@@ -95,7 +97,8 @@ object CurrencySnapshotCreator {
       facilitators: Set[PeerId],
       feeTransactionFn: Option[() => SortedSet[Signed[FeeTransaction]]],
       artifactsFn: Option[() => SortedSet[SharedArtifact]],
-      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotCreationResult[CurrencySnapshotEvent]] = {
       val maxArtifactSize = maxProposalSizeInBytes(facilitators)
 
@@ -200,7 +203,8 @@ object CurrencySnapshotCreator {
                     )
                     .getOrElse(SortedSet.empty[RewardTransaction].pure[F]),
                 facilitators,
-                lastGlobalSnapshots
+                lastGlobalSnapshots,
+                getGlobalSnapshotByOrdinal
               )
 
           rejectedBlockEvents = currencySnapshotAcceptanceResult.block.notAccepted.collect {
@@ -266,7 +270,8 @@ object CurrencySnapshotCreator {
             currencySnapshotAcceptanceResult.feeTransactions,
             currencySnapshotAcceptanceResult.sharedArtifacts.some,
             currencySnapshotAcceptanceResult.allowSpendBlock.accepted.toSortedSet.some,
-            currencySnapshotAcceptanceResult.tokenLockBlock.accepted.toSortedSet.some
+            currencySnapshotAcceptanceResult.tokenLockBlock.accepted.toSortedSet.some,
+            currencySnapshotAcceptanceResult.globalSyncView.some
           )
 
           artifactSize: Int <- JsonSerializer[F].serialize(artifact).map(_.length)

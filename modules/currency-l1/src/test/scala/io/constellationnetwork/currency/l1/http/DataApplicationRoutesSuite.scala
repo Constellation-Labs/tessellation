@@ -194,6 +194,7 @@ object DataApplicationRoutesSuite extends HttpSuite {
         None,
         None,
         None,
+        None,
         None
       )
     )

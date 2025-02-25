@@ -9,6 +9,7 @@ import scala.collection.immutable.SortedMap
 import io.constellationnetwork.currency.schema.currency._
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions
 import io.constellationnetwork.node.shared.domain.rewards.Rewards
+import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.node.shared.snapshot.currency._
@@ -52,10 +53,11 @@ object CurrencySnapshotConsensusFunctions {
       trigger: ConsensusTrigger,
       artifact: CurrencySnapshotArtifact,
       facilitators: Set[PeerId],
-      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): F[Either[ConsensusFunctions.InvalidArtifact, (CurrencySnapshotArtifact, CurrencySnapshotContext)]] =
       currencySnapshotValidator
-        .validateSnapshot(lastSignedArtifact, lastContext, artifact, facilitators, lastGlobalSnapshots)
+        .validateSnapshot(lastSignedArtifact, lastContext, artifact, facilitators, lastGlobalSnapshots, getGlobalSnapshotByOrdinal)
         .map(_.leftMap(_ => ArtifactMismatch).toEither)
 
     def createProposalArtifact(
@@ -66,7 +68,8 @@ object CurrencySnapshotConsensusFunctions {
       trigger: ConsensusTrigger,
       events: Set[CurrencySnapshotEvent],
       facilitators: Set[PeerId],
-      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
     )(implicit hasher: Hasher[F]): F[(CurrencySnapshotArtifact, CurrencySnapshotContext, Set[CurrencySnapshotEvent])] = {
       val blocksForAcceptance: Set[CurrencySnapshotEvent] = events.filter {
         case BlockEvent(currencyBlock) => currencyBlock.height > lastArtifact.height
@@ -85,7 +88,8 @@ object CurrencySnapshotConsensusFunctions {
           facilitators,
           None,
           None,
-          lastGlobalSnapshots
+          lastGlobalSnapshots,
+          getGlobalSnapshotByOrdinal
         )
         .map(created => (created.artifact, created.context, created.awaitingEvents))
     }

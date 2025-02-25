@@ -3,9 +3,10 @@ package io.constellationnetwork.node.shared.domain.consensus
 import scala.util.control.NoStackTrace
 
 import io.constellationnetwork.node.shared.domain.consensus.ConsensusFunctions.InvalidArtifact
+import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.ConsensusTrigger
-import io.constellationnetwork.schema.GlobalIncrementalSnapshot
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.{GlobalIncrementalSnapshot, SnapshotOrdinal}
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher}
 
@@ -21,7 +22,8 @@ trait ConsensusFunctions[F[_], Event, Key, Artifact, Context] {
     trigger: ConsensusTrigger,
     artifact: Artifact,
     facilitators: Set[PeerId],
-    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[Either[InvalidArtifact, (Artifact, Context)]]
 
   def createProposalArtifact(
@@ -32,7 +34,8 @@ trait ConsensusFunctions[F[_], Event, Key, Artifact, Context] {
     trigger: ConsensusTrigger,
     events: Set[Event],
     facilitators: Set[PeerId],
-    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]]
+    lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[(Artifact, Context, Set[Event])]
 }
 

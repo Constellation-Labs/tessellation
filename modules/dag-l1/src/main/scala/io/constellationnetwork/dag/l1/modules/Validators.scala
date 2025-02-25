@@ -52,7 +52,7 @@ object Validators {
 
     val allowSpendValidator = AllowSpendValidator.make[F](signedValidator)
     val allowSpendChainValidator = AllowSpendChainValidator.make[F]
-    val contextualAllowSpendValidator = ContextualAllowSpendValidator.make(None, cfg.allowSpends)
+    val contextualAllowSpendValidator = ContextualAllowSpendValidator.make(currencyId, None, cfg.allowSpends)
     val allowSpendBlockValidator = AllowSpendBlockValidator.make[F](signedValidator, allowSpendChainValidator, allowSpendValidator)
 
     val tokenLockValidator = TokenLockValidator.make[F](signedValidator)
