@@ -102,6 +102,7 @@ object Services {
       )
 
       validator = CurrencySnapshotValidator.make[F](
+        sharedCfg.environment,
         creator,
         signedValidator,
         maybeRewards,

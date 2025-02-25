@@ -9,6 +9,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.dataApplication.{BaseDataApplicationService, DataCalculatedState}
 import io.constellationnetwork.currency.schema.currency._
+import io.constellationnetwork.env.AppEnvironment
 import io.constellationnetwork.ext.cats.syntax.validated.validatedSyntax
 import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
@@ -48,6 +49,7 @@ trait CurrencySnapshotValidator[F[_]] {
 object CurrencySnapshotValidator {
 
   def make[F[_]: Async: KryoSerializer: JsonSerializer](
+    appEnvironment: AppEnvironment,
     currencySnapshotCreator: CurrencySnapshotCreator[F],
     signedValidator: SignedValidator[F],
     maybeRewards: Option[Rewards[F, CurrencySnapshotStateProof, CurrencyIncrementalSnapshot, CurrencySnapshotEvent]],
@@ -176,6 +178,11 @@ object CurrencySnapshotValidator {
               if (creationResult.artifact.messages.forall(_.isEmpty))
                 creationResult.focus(_.artifact.messages).replace(expected.messages)
               else creationResult
+            }.map { creationResult =>
+              appEnvironment match {
+                case AppEnvironment.Dev | AppEnvironment.Testnet => creationResult.focus(_.artifact.stateProof).replace(expected.stateProof)
+                case _                                           => creationResult
+              }
             }.map { creationResult =>
               if (creationResult.artifact =!= expected)
                 SnapshotDifferentThanExpected(expected, creationResult.artifact).invalidNec

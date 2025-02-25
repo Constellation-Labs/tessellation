@@ -16,6 +16,7 @@ import io.constellationnetwork.dag.l1.domain.block.BlockStorage
 import io.constellationnetwork.dag.l1.domain.block.BlockStorage._
 import io.constellationnetwork.dag.l1.domain.snapshot.programs.SnapshotProcessor._
 import io.constellationnetwork.dag.l1.domain.transaction._
+import io.constellationnetwork.env.AppEnvironment.Dev
 import io.constellationnetwork.ext.cats.effect.ResourceIO
 import io.constellationnetwork.ext.collection.MapRefUtils._
 import io.constellationnetwork.json.{JsonBrotliBinarySerializer, JsonSerializer}
@@ -151,7 +152,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 validationErrorStorage
               )
             currencySnapshotValidator = CurrencySnapshotValidator
-              .make[IO](currencySnapshotCreator, validators.signedValidator, None, None)
+              .make[IO](Dev, currencySnapshotCreator, validators.signedValidator, None, None)
 
             currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
             globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, NonNegLong(10L)).asResource
