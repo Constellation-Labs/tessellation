@@ -9,7 +9,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.dataApplication.FeeTransaction
 import io.constellationnetwork.currency.schema.currency._
-import io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSnapshotSync
+import io.constellationnetwork.currency.schema.globalSnapshotSync.{GlobalSnapshotSync, GlobalSyncView}
 import io.constellationnetwork.node.shared.config.types.LastGlobalSnapshotsSyncConfig
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.swap.block.{
@@ -65,7 +65,8 @@ case class CurrencySnapshotAcceptanceResult(
   sharedArtifacts: SortedSet[SharedArtifact],
   feeTransactions: Option[SortedSet[Signed[FeeTransaction]]],
   info: CurrencySnapshotInfo,
-  stateProof: CurrencySnapshotStateProof
+  stateProof: CurrencySnapshotStateProof,
+  globalSyncView: GlobalSyncView
 )
 
 trait CurrencySnapshotAcceptanceManager[F[_]] {
@@ -317,6 +318,17 @@ object CurrencySnapshotAcceptanceManager {
       allowSpendsExpiredEvents <- emitAllowSpendsExpired(
         expiredAllowSpends
       )
+
+      globalSyncView = maybeLastGlobalSnapshot
+        .map(gs =>
+          GlobalSyncView(
+            gs.ordinal,
+            gs.hash,
+            gs.epochProgress
+          )
+        )
+        .getOrElse(GlobalSyncView.empty)
+
     } yield
       CurrencySnapshotAcceptanceResult(
         acceptanceBlocksResult,
@@ -328,7 +340,8 @@ object CurrencySnapshotAcceptanceManager {
         acceptedSharedArtifacts ++ allowSpendsExpiredEvents,
         acceptedFeeTxs,
         csi,
-        stateProof
+        stateProof,
+        globalSyncView
       )
 
     private def acceptMessages(

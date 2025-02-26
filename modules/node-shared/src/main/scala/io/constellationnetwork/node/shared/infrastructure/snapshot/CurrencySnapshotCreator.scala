@@ -266,7 +266,8 @@ object CurrencySnapshotCreator {
             currencySnapshotAcceptanceResult.feeTransactions,
             currencySnapshotAcceptanceResult.sharedArtifacts.some,
             currencySnapshotAcceptanceResult.allowSpendBlock.accepted.toSortedSet.some,
-            currencySnapshotAcceptanceResult.tokenLockBlock.accepted.toSortedSet.some
+            currencySnapshotAcceptanceResult.tokenLockBlock.accepted.toSortedSet.some,
+            currencySnapshotAcceptanceResult.globalSyncView.some
           )
 
           artifactSize: Int <- JsonSerializer[F].serialize(artifact).map(_.length)

@@ -6,7 +6,7 @@ import cats.syntax.all._
 import scala.collection.immutable.{SortedMap, SortedSet}
 
 import io.constellationnetwork.currency.dataApplication.FeeTransaction
-import io.constellationnetwork.currency.schema.globalSnapshotSync.GlobalSnapshotSync
+import io.constellationnetwork.currency.schema.globalSnapshotSync.{GlobalSnapshotSync, GlobalSyncView}
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.schema._
@@ -182,6 +182,7 @@ object currency {
     artifacts: Option[SortedSet[SharedArtifact]],
     allowSpendBlocks: Option[SortedSet[Signed[AllowSpendBlock]]],
     tokenLockBlocks: Option[SortedSet[Signed[TokenLockBlock]]],
+    globalSyncView: Option[GlobalSyncView],
     version: SnapshotVersion = SnapshotVersion("0.0.1")
   ) extends IncrementalSnapshot[CurrencySnapshotStateProof]
 
@@ -199,6 +200,7 @@ object currency {
           stateProof.toCurrencySnapshotStateProof,
           snapshot.epochProgress,
           snapshot.dataApplication,
+          None,
           None,
           None,
           None,
@@ -236,6 +238,7 @@ object currency {
         stateProof.toCurrencySnapshotStateProof,
         epochProgress,
         dataApplication,
+        None,
         None,
         None,
         None,
@@ -293,6 +296,7 @@ object currency {
           stateProof.toCurrencySnapshotStateProof,
           genesis.epochProgress,
           genesis.dataApplication,
+          None,
           None,
           None,
           None,

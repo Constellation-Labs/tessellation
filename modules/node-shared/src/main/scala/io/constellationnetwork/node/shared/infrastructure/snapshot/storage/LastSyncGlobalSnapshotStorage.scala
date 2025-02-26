@@ -64,6 +64,9 @@ object LastSyncGlobalSnapshotStorage {
 
       def get: F[Option[Hashed[GlobalIncrementalSnapshot]]] = getCombined.map(_.map { case (snapshot, _) => snapshot })
 
+      def getAll: F[Option[List[Hashed[GlobalIncrementalSnapshot]]]] =
+        snapshotsR.get.map(_.values.map { case (snapshot, _) => snapshot }.toList.some)
+
       def getCombined: F[Option[(Hashed[GlobalIncrementalSnapshot], GlobalSnapshotInfo)]] = snapshotsR.get.map {
         _.lastOption.map { case (_, combined) => combined }
       }
@@ -99,32 +102,44 @@ object LastSyncGlobalSnapshotStorage {
       ): F[Option[List[Hashed[GlobalIncrementalSnapshot]]]] =
         currencySnapshotStorage.head.flatMap {
           case Some((_, info)) =>
-            info.globalSnapshotSyncView.flatTraverse { syncView =>
-              val lastOrdinalOpt = syncView.values
-                .map(_.globalSnapshotOrdinal)
-                .groupBy(identity)
-                .toList
-                .sortBy { case (ordinal, occurrences) => (-occurrences.size, ordinal.value.value) }
-                .map { case (ordinal, _) => ordinal }
-                .maxOption
+            val maybeSnapshots: F[Option[List[Hashed[GlobalIncrementalSnapshot]]]] =
+              info.globalSnapshotSyncView.fold(
+                Async[F].pure(Option.empty[List[Hashed[GlobalIncrementalSnapshot]]])
+              ) { syncView =>
+                val mostFrequentOrdinal = syncView.values
+                  .map(_.globalSnapshotOrdinal)
+                  .groupBy(identity)
+                  .toList
+                  .sortBy { case (ordinal, occurrences) => (-occurrences.size, ordinal.value.value) }
+                  .map { case (ordinal, _) => ordinal }
+                  .headOption
 
-              lastOrdinalOpt match {
-                case Some(lastOrdinal) =>
-                  val selectedOrdinals = (0 until n).flatMap { i =>
-                    NonNegLong.from(lastOrdinal.value.value - i.toLong).toOption.flatMap(SnapshotOrdinal(_))
-                  }.toSet.toList
+                mostFrequentOrdinal match {
+                  case Some(lastOrdinal) =>
+                    val selectedOrdinals = (0 until n).flatMap { i =>
+                      val value = lastOrdinal.value.value - i.toLong
+                      NonNegLong
+                        .from(value)
+                        .toOption
+                        .flatMap(SnapshotOrdinal(_))
+                    }.toList
 
-                  selectedOrdinals.traverse(get).map { results =>
-                    val snapshots = results.flatten
-                    if (snapshots.isEmpty) None else Some(snapshots)
-                  }
+                    selectedOrdinals.traverse(ordinal => get(ordinal)).map { maybeSnapshots =>
+                      val filteredSnapshots = maybeSnapshots.flatten
+                      if (filteredSnapshots.isEmpty) None else Some(filteredSnapshots)
+                    }
 
-                case None =>
-                  Async[F].pure(None)
+                  case None =>
+                    Async[F].pure(None)
+                }
               }
+            maybeSnapshots.flatMap {
+              case None => getAll
+              case some => Async[F].pure(some)
             }
+
           case None =>
-            Async[F].pure(None)
+            getAll
         }
 
       def deleteOlderThanSynchronized(): F[Unit] = getLastSynchronizedCombined

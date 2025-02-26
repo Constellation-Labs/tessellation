@@ -85,6 +85,7 @@ object JsonBinarySerializerSuite extends MutableIOSuite {
           None,
           None,
           None,
+          None,
           None
         ),
         NonEmptySet.one(SignatureProof(ID.Id(Hex("")), Signature(Hex(""))))

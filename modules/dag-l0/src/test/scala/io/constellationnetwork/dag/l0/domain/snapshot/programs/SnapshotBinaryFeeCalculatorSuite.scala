@@ -135,7 +135,8 @@ object SnapshotBinaryFeeCalculatorSuite extends SimpleMutableIOSuite with Checke
         feeTransactions = None,
         artifacts = None,
         allowSpendBlocks = None,
-        tokenLockBlocks = None
+        tokenLockBlocks = None,
+        globalSyncView = None
       )
     )
 
