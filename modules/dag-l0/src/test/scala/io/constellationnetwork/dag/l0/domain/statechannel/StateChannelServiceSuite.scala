@@ -112,7 +112,8 @@ object StateChannelServiceSuite extends MutableIOSuite {
           EpochProgress.MinValue,
           NonEmptyList.of(PeerId(Hex(""))),
           SnapshotTips(SortedSet.empty, SortedSet.empty),
-          stateProof = GlobalSnapshotStateProof(Hash.empty, Hash.empty, Hash.empty, None, None, None, None, None),
+          stateProof = GlobalSnapshotStateProof(Hash.empty, Hash.empty, Hash.empty, None, None, None, None, None, None, None),
+          None,
           None,
           None,
           None

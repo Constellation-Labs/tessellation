@@ -109,6 +109,7 @@ object Main
         storages.lastNGlobalSnapshot,
         storages.transaction,
         storages.allowSpend,
+        storages.tokenLock,
         sharedServices.globalSnapshotContextFns,
         Hasher.forKryo[IO]
       )

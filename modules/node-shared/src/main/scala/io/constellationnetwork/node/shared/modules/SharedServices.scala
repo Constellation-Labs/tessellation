@@ -113,6 +113,7 @@ object SharedServices {
       globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
         BlockAcceptanceManager.make[F](validators.blockValidator, txHasher),
         AllowSpendBlockAcceptanceManager.make[F](validators.allowSpendBlockValidator),
+        TokenLockBlockAcceptanceManager.make[F](validators.tokenLockBlockValidator),
         GlobalSnapshotStateChannelEventsProcessor
           .make[F](
             validators.stateChannelValidator,

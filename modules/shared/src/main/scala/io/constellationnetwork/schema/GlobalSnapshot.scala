@@ -18,6 +18,7 @@ import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.SnapshotVersion
 import io.constellationnetwork.schema.snapshot.{FullSnapshot, IncrementalSnapshot}
 import io.constellationnetwork.schema.swap.AllowSpendBlock
+import io.constellationnetwork.schema.tokenLock.TokenLockBlock
 import io.constellationnetwork.schema.transaction.RewardTransaction
 import io.constellationnetwork.security.hash.{Hash, ProofsHash}
 import io.constellationnetwork.security.hex.Hex
@@ -46,6 +47,7 @@ case class GlobalIncrementalSnapshot(
   tips: SnapshotTips,
   stateProof: GlobalSnapshotStateProof,
   allowSpendBlocks: Option[SortedSet[Signed[AllowSpendBlock]]],
+  tokenLockBlocks: Option[SortedSet[Signed[TokenLockBlock]]],
   spendActions: Option[SortedMap[Address, List[SpendAction]]],
   updateNodeParameters: Option[SortedMap[Id, Signed[UpdateNodeParameters]]],
   version: SnapshotVersion = SnapshotVersion("0.0.1")
@@ -66,6 +68,7 @@ object GlobalIncrementalSnapshot {
         snapshot.nextFacilitators,
         snapshot.tips,
         stateProof,
+        Some(SortedSet.empty),
         Some(SortedSet.empty),
         Some(SortedMap.empty),
         snapshot.info.updateNodeParameters.map(_.map { case (k, v) => (k, v._1) })
@@ -101,6 +104,7 @@ case class GlobalIncrementalSnapshotV1(
       nextFacilitators,
       tips,
       stateProof.toGlobalSnapshotStateProof,
+      Some(SortedSet.empty),
       Some(SortedSet.empty),
       Some(SortedMap.empty),
       Some(SortedMap.empty),
@@ -177,6 +181,7 @@ object GlobalSnapshot {
         nextFacilitators,
         genesis.tips,
         stateProof,
+        Some(SortedSet.empty),
         Some(SortedSet.empty),
         Some(SortedMap.empty),
         Some(SortedMap.empty)

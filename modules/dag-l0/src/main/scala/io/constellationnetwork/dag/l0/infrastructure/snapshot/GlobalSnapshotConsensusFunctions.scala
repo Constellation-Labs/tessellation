@@ -64,9 +64,10 @@ object GlobalSnapshotConsensusFunctions {
         case (address, stateChannelBinaries) => stateChannelBinaries.map(StateChannelOutput(address, _)).map(StateChannelEvent(_)).toList
       }
       val allowSpendEvents = artifact.allowSpendBlocks.map(_.toList.map(AllowSpendEvent(_))).getOrElse(List.empty)
+      val tokenLockEvents = artifact.tokenLockBlocks.map(_.toList.map(TokenLockEvent(_))).getOrElse(List.empty)
       val unpEvents =
         artifact.updateNodeParameters.getOrElse(SortedMap.empty[Id, Signed[UpdateNodeParameters]]).values.map(UpdateNodeParametersEvent(_))
-      val events: Set[GlobalSnapshotEvent] = dagEvents ++ scEvents ++ allowSpendEvents ++ unpEvents
+      val events: Set[GlobalSnapshotEvent] = dagEvents ++ scEvents ++ allowSpendEvents ++ unpEvents ++ tokenLockEvents
 
       def usingKryo = createProposalArtifact(
         lastSignedArtifact.ordinal,
@@ -118,6 +119,7 @@ object GlobalSnapshotConsensusFunctions {
       val scEventsBeforeCut = events.collect { case sc: StateChannelEvent => sc }
       val dagEventsBeforeCut = events.collect { case d: DAGEvent => d }
       val allowSpendEventsForAcceptance = events.collect { case as: AllowSpendEvent => as }
+      val tokenLockEventsForAcceptance = events.collect { case as: TokenLockEvent => as }
       val unpEventsBeforeCut = events.collect { case unp: UpdateNodeParametersEvent => unp }
 
       val dagEvents = dagEventsBeforeCut.filter(_.value.height > lastArtifact.height)
@@ -150,6 +152,7 @@ object GlobalSnapshotConsensusFunctions {
         (
           acceptanceResult,
           allowSpendBlockAcceptanceResult,
+          tokenLockBlockAcceptanceResult,
           scSnapshots,
           returnedSCEvents,
           acceptedRewardTxs,
@@ -164,6 +167,7 @@ object GlobalSnapshotConsensusFunctions {
               currentEpochProgress,
               blocksForAcceptance.map(_.value),
               allowSpendEventsForAcceptance.toList.map(_.value),
+              tokenLockEventsForAcceptance.toList.map(_.value),
               scEvents.map(_.value),
               unpEventsForAcceptance.map(_.updateNodeParameters),
               snapshotContext,
@@ -200,6 +204,7 @@ object GlobalSnapshotConsensusFunctions {
           ),
           stateProof,
           SortedSet.from(allowSpendBlockAcceptanceResult.accepted).some,
+          SortedSet.from(tokenLockBlockAcceptanceResult.accepted).some,
           SortedMap.from(spendActions).some,
           updateNodeParameters.some
         )

@@ -15,6 +15,7 @@ import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.snapshot.{SnapshotInfo, StateProof}
 import io.constellationnetwork.schema.swap.{AllowSpend, AllowSpendReference}
+import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockReference}
 import io.constellationnetwork.schema.transaction.TransactionReference
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
@@ -46,8 +47,10 @@ object GlobalSnapshotInfoV1 {
       SortedMap.empty,
       SortedMap.empty,
       Some(SortedMap.empty[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]),
+      Some(SortedMap.empty[Address, SortedSet[Signed[TokenLock]]]),
       Some(SortedMap.empty),
       Some(SortedMap.empty[Address, AllowSpendReference]),
+      Some(SortedMap.empty[Address, TokenLockReference]),
       Some(SortedMap.empty)
     )
 }
@@ -65,6 +68,8 @@ case class GlobalSnapshotStateProofV1(
       lastTxRefsProof,
       balancesProof,
       lastCurrencySnapshotsProof,
+      None,
+      None,
       None,
       None,
       None,
@@ -93,15 +98,18 @@ case class GlobalSnapshotStateProof(
   balancesProof: Hash,
   lastCurrencySnapshotsProof: Option[MerkleRoot],
   activeAllowSpends: Option[Hash],
+  activeTokenLocks: Option[Hash],
   tokenLockBalances: Option[Hash],
   lastAllowSpendRefs: Option[Hash],
+  lastTokenLockRefs: Option[Hash],
   updateNodeParameters: Option[Hash]
 ) extends StateProof
 
 object GlobalSnapshotStateProof {
-  def apply
-    : ((Hash, Hash, Hash, Option[MerkleRoot], Option[Hash], Option[Hash], Option[Hash], Option[Hash])) => GlobalSnapshotStateProof = {
-    case (x1, x2, x3, x4, x5, x6, x7, x8) => GlobalSnapshotStateProof.apply(x1, x2, x3, x4, x5, x6, x7, x8)
+  def apply: (
+    (Hash, Hash, Hash, Option[MerkleRoot], Option[Hash], Option[Hash], Option[Hash], Option[Hash], Option[Hash], Option[Hash])
+  ) => GlobalSnapshotStateProof = {
+    case (x1, x2, x3, x4, x5, x6, x7, x8, x9, x10) => GlobalSnapshotStateProof.apply(x1, x2, x3, x4, x5, x6, x7, x8, x9, x10)
   }
 }
 
@@ -124,6 +132,8 @@ case class GlobalSnapshotInfoV2(
         _.map { case (Signed(inc, proofs), info) => (Signed(inc.toCurrencyIncrementalSnapshot, proofs), info.toCurrencySnapshotInfo) }
       }.to(lastCurrencySnapshots.sortedMapFactory),
       lastCurrencySnapshotsProofs,
+      None,
+      None,
       None,
       None,
       None,
@@ -165,8 +175,10 @@ case class GlobalSnapshotInfo(
   lastCurrencySnapshots: SortedMap[Address, Either[Signed[CurrencySnapshot], (Signed[CurrencyIncrementalSnapshot], CurrencySnapshotInfo)]],
   lastCurrencySnapshotsProofs: SortedMap[Address, Proof],
   activeAllowSpends: Option[SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]],
+  activeTokenLocks: Option[SortedMap[Address, SortedSet[Signed[TokenLock]]]],
   tokenLockBalances: Option[SortedMap[Address, SortedMap[Address, Balance]]],
   lastAllowSpendRefs: Option[SortedMap[Address, AllowSpendReference]],
+  lastTokenLockRefs: Option[SortedMap[Address, TokenLockReference]],
   updateNodeParameters: Option[SortedMap[Id, (Signed[UpdateNodeParameters], SnapshotOrdinal)]]
 ) extends SnapshotInfo[GlobalSnapshotStateProof] {
   def stateProof[F[_]: Sync: Hasher](ordinal: SnapshotOrdinal): F[GlobalSnapshotStateProof] =
@@ -185,10 +197,12 @@ case class GlobalSnapshotInfo(
       lastTxRefs.hash,
       balances.hash,
       activeAllowSpends.traverse(_.hash),
+      activeTokenLocks.traverse(_.hash),
       tokenLockBalances.traverse(_.hash),
       lastAllowSpendRefs.traverse(_.hash),
+      lastTokenLockRefs.traverse(_.hash),
       updateNodeParameters.traverse(_.hash)
-    ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot), _, _, _, _))
+    ).mapN(GlobalSnapshotStateProof.apply(_, _, _, lastCurrencySnapshots.map(_.getRoot), _, _, _, _, _, _))
 
 }
 
@@ -199,6 +213,8 @@ object GlobalSnapshotInfo {
     SortedMap.empty,
     SortedMap.empty,
     SortedMap.empty,
+    Some(SortedMap.empty),
+    Some(SortedMap.empty),
     Some(SortedMap.empty),
     Some(SortedMap.empty),
     Some(SortedMap.empty),

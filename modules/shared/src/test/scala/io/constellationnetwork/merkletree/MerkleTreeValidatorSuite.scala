@@ -1,7 +1,7 @@
 package io.constellationnetwork.merkletree
 
 import cats.data.{NonEmptyList, NonEmptySet, Validated}
-import cats.effect.{Async, IO, Resource}
+import cats.effect._
 import cats.syntax.flatMap._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
@@ -47,6 +47,8 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
       None,
       None,
       None,
+      None,
+      None,
       Some(SortedMap.empty)
     )
     for {
@@ -62,6 +64,8 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
       SortedMap(Address("DAG2AUdecqFwEGcgAcH1ac2wrsg8acrgGwrQojzw") -> Balance(100L)),
       SortedMap.empty,
       SortedMap.empty,
+      None,
+      None,
       None,
       None,
       None,
@@ -91,6 +95,7 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
           NonEmptyList.of(PeerId(Hex(""))),
           SnapshotTips(SortedSet.empty, SortedSet.empty),
           stateProof = sp,
+          Some(SortedSet.empty),
           Some(SortedSet.empty),
           Some(SortedMap.empty),
           None

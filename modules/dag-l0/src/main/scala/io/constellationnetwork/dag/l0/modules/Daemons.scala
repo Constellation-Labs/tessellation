@@ -46,6 +46,7 @@ object Daemons {
           queues.stateChannelOutput,
           queues.l1Output,
           queues.l1AllowSpendOutput,
+          queues.l1TokenLockOutput,
           queues.updateNodeParametersOutput,
           services.gossip,
           services.consensus.storage
