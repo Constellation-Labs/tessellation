@@ -19,37 +19,51 @@ import derevo.derive
 import SpendActionValidator.SpendActionValidationErrorOr
 
 trait SpendActionValidator[F[_]] {
-  def validate(spendAction: SpendAction, activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]): F[SpendActionValidationErrorOr[SpendAction]]
+  def validate(
+    spendAction: SpendAction,
+    activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
+  ): F[SpendActionValidationErrorOr[SpendAction]]
 }
 
 object SpendActionValidator {
   def make[F[_]: Async: Hasher]: SpendActionValidator[F] = new SpendActionValidator[F] {
-    def validate(spendAction: SpendAction, activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]): F[SpendActionValidationErrorOr[SpendAction]] = {
-        for {
-            input <- validateSpendTx(spendAction.input, activeAllowSpends)
-            output <- validateSpendTx(spendAction.output, activeAllowSpends)
-        } yield (input *> output).as(spendAction)
-    }
+    def validate(
+      spendAction: SpendAction,
+      activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
+    ): F[SpendActionValidationErrorOr[SpendAction]] =
+      for {
+        input <- validateSpendTx(spendAction.input, activeAllowSpends)
+        output <- validateSpendTx(spendAction.output, activeAllowSpends)
+      } yield (input *> output).as(spendAction)
 
-    def validateSpendTx(tx: SpendTransaction, activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]): F[SpendActionValidationErrorOr[SpendTransaction]] = 
-        activeAllowSpends
-            .get(tx.currency.map(_.value))
-            .map(validateAllowSpendRef(tx, _))
-            .getOrElse(Applicative[F].pure(NoActiveAllowSpends(s"Currency ${tx.currency} not found in active allow spends").invalidNec[SpendTransaction]))
+    def validateSpendTx(
+      tx: SpendTransaction,
+      activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
+    ): F[SpendActionValidationErrorOr[SpendTransaction]] =
+      activeAllowSpends
+        .get(tx.currency.map(_.value))
+        .map(validateAllowSpendRef(tx, _))
+        .getOrElse(
+          Applicative[F].pure(NoActiveAllowSpends(s"Currency ${tx.currency} not found in active allow spends").invalidNec[SpendTransaction])
+        )
 
-    def validateAllowSpendRef(spendTransaction: SpendTransaction, activeAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]]): F[SpendActionValidationErrorOr[SpendTransaction]] =
-        spendTransaction.allowSpendRef match {
-            case Some(allowSpendRef) =>
-                activeAllowSpends
-                    .get(spendTransaction.destination)
-                    .traverse { _.toList.traverse(_.toHashed).map(_.exists(_.hash === allowSpendRef)) }
-                    .map(_.getOrElse(false))
-                    .ifF(
-                        spendTransaction.validNec[SpendActionValidationError],
-                        InvalidDestinationAddress(s"Destination address ${spendTransaction.destination} not found in active allow spends").invalidNec[SpendTransaction]
-                    )
-            case _ => spendTransaction.validNec[SpendActionValidationError].pure[F]
-        }
+    def validateAllowSpendRef(
+      spendTransaction: SpendTransaction,
+      activeAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]]
+    ): F[SpendActionValidationErrorOr[SpendTransaction]] =
+      spendTransaction.allowSpendRef match {
+        case Some(allowSpendRef) =>
+          activeAllowSpends
+            .get(spendTransaction.destination)
+            .traverse(_.toList.traverse(_.toHashed).map(_.exists(_.hash === allowSpendRef)))
+            .map(_.getOrElse(false))
+            .ifF(
+              spendTransaction.validNec[SpendActionValidationError],
+              InvalidDestinationAddress(s"Destination address ${spendTransaction.destination} not found in active allow spends")
+                .invalidNec[SpendTransaction]
+            )
+        case _ => spendTransaction.validNec[SpendActionValidationError].pure[F]
+      }
   }
 
   @derive(eqv, show)

@@ -239,6 +239,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
           SnapshotTips(SortedSet.empty, SortedSet.empty),
           stateProof = sp,
           Some(SortedSet.empty),
+          Some(SortedSet.empty),
           Some(SortedMap.empty),
           Some(SortedMap.empty)
         ),
@@ -253,6 +254,8 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
       SortedMap.empty,
       SortedMap.empty,
       SortedMap.empty,
+      None,
+      None,
       None,
       None,
       None,

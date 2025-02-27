@@ -41,6 +41,7 @@ object GlobalSnapshotContextFunctions {
 
         blocksForAcceptance = signedArtifact.blocks.toList.map(_.block)
         allowSpendBlocksForAcceptance = signedArtifact.allowSpendBlocks.map(_.toList).getOrElse(List.empty)
+        tokenLockBlocksForAcceptance = signedArtifact.tokenLockBlocks.map(_.toList).getOrElse(List.empty)
 
         scEvents = signedArtifact.stateChannelSnapshots.toList.flatMap {
           case (address, stateChannelBinaries) => stateChannelBinaries.map(StateChannelOutput(address, _)).toList
@@ -51,12 +52,24 @@ object GlobalSnapshotContextFunctions {
           .values
           .toList
 
-        (acceptanceResult, allowSpendBlockAcceptanceResult, scSnapshots, returnedSCEvents, acceptedRewardTxs, snapshotInfo, _, _, _) <-
+        (
+          acceptanceResult,
+          allowSpendBlockAcceptanceResult,
+          tokenLockBlockAcceptanceResult,
+          scSnapshots,
+          returnedSCEvents,
+          acceptedRewardTxs,
+          snapshotInfo,
+          _,
+          _,
+          _
+        ) <-
           snapshotAcceptanceManager.accept(
             signedArtifact.ordinal,
             signedArtifact.epochProgress,
             blocksForAcceptance,
             allowSpendBlocksForAcceptance,
+            tokenLockBlocksForAcceptance,
             scEvents,
             unpEventsForAcceptance,
             context,

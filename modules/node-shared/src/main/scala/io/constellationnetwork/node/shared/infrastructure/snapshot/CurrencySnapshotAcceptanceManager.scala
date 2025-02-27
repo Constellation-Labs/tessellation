@@ -32,7 +32,7 @@ import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.swap._
 import io.constellationnetwork.schema.tokenLock.TokenLockAmount.toAmount
-import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockBlock, TokenLockReference}
+import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.schema.transaction.{RewardTransaction, Transaction, TransactionReference}
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -231,36 +231,39 @@ object CurrencySnapshotAcceptanceManager {
         tokenLockBlock.value.tokenLocks.toSortedSet
       }.toSortedSet
 
-      activeTokenLocks = lastSnapshotContext.snapshotInfo.activeTokenLocks
+      activeTokenLocks = lastSnapshotContext.snapshotInfo.activeTokenLocks.getOrElse(SortedMap.empty[Address, SortedSet[Signed[TokenLock]]])
 
       tokenLocksRefs <-
-        (incomingTokenLocks.toList ++ activeTokenLocks.toList.flatMap(_.values).flatten)
+        (incomingTokenLocks.toList ++ activeTokenLocks.values.flatten)
           .traverse(_.toHashed.map(_.hash))
 
       tokenUnlocks = acceptedSharedArtifacts.collect {
         case tokenUnlock: TokenUnlock => tokenUnlock
       }
 
-      acceptedTokenLocks = acceptTokenLocks(
-        incomingTokenLocks,
-        lastGlobalSnapshotEpochProgress
-      )
-
       acceptedTokenUnlocks = acceptTokenUnlocks(
         tokenUnlocks,
         tokenLocksRefs
       )
 
-      updatedActiveTokenLocks <- updateActiveTokenLocks(
-        activeTokenLocks,
+      acceptedTokenLocks = incomingTokenLocks
+        .filter(itl => itl.unlockEpoch >= epochProgress)
+        .groupBy(_.source)
+        .toSortedMap
+
+      (updatedActiveTokenLocks, expiredTokenLocks) <- acceptTokenLocks(
+        lastGlobalSnapshotEpochProgress,
         acceptedTokenLocks,
+        activeTokenLocks,
         acceptedTokenUnlocks
       )
 
       updatedBalancesByTokenLocks = updateBalancesByTokenLocks(
+        epochProgress,
+        updatedBalancesByFeeTransactions,
         acceptedTokenLocks,
-        acceptedTokenUnlocks,
-        updatedBalancesByFeeTransactions
+        activeTokenLocks,
+        acceptedTokenUnlocks
       )
 
       acceptedCurrencyAllowSpends = allowSpendBlockAcceptanceResult.accepted.flatMap(_.value.transactions.toList)
@@ -309,13 +312,18 @@ object CurrencySnapshotAcceptanceManager {
         updatedAllowSpends.some,
         globalSnapshotSyncAcceptanceResult.contextUpdate.some,
         tokenLockRefs.some,
-        updatedActiveTokenLocks
+        updatedActiveTokenLocks.some
       )
 
       stateProof <- csi.stateProof(snapshotOrdinal)
 
       allowSpendsExpiredEvents <- emitAllowSpendsExpired(
         expiredAllowSpends
+      )
+
+      tokenUnlocksEvents <- emitTokenUnlocks(
+        acceptedTokenUnlocks,
+        expiredTokenLocks
       )
     } yield
       CurrencySnapshotAcceptanceResult(
@@ -325,7 +333,7 @@ object CurrencySnapshotAcceptanceManager {
         messagesAcceptanceResult,
         globalSnapshotSyncAcceptanceResult,
         acceptedRewardTxs,
-        acceptedSharedArtifacts ++ allowSpendsExpiredEvents,
+        acceptedSharedArtifacts ++ allowSpendsExpiredEvents ++ tokenUnlocksEvents,
         acceptedFeeTxs,
         csi,
         stateProof
@@ -545,12 +553,6 @@ object CurrencySnapshotAcceptanceManager {
     ): SortedSet[SharedArtifact] =
       sharedArtifactsForAcceptance
 
-    private def acceptTokenLocks(
-      incomingTokenLocks: SortedSet[Signed[TokenLock]],
-      lastSyncGlobalSnapshotEpochProgress: EpochProgress
-    ): SortedSet[Signed[TokenLock]] =
-      incomingTokenLocks.filter(itl => itl.unlockEpoch >= lastSyncGlobalSnapshotEpochProgress)
-
     private def acceptTokenUnlocks(
       incomingTokenUnlocks: SortedSet[TokenUnlock],
       activeTokenLocksRefs: List[Hash]
@@ -559,26 +561,60 @@ object CurrencySnapshotAcceptanceManager {
         activeTokenLocksRefs.contains(itu.tokenLockRef)
       }
 
-    private def updateActiveTokenLocks(
-      maybeActiveTokenLocks: Option[SortedMap[Address, SortedSet[Signed[TokenLock]]]],
-      acceptedTokenLocks: SortedSet[Signed[TokenLock]],
+    private def acceptTokenLocks(
+      epochProgress: EpochProgress,
+      acceptedTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]],
+      lastActiveTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]],
       acceptedTokenUnlocks: SortedSet[TokenUnlock]
-    )(implicit hasher: Hasher[F]): F[Option[SortedMap[Address, SortedSet[Signed[TokenLock]]]]] =
-      if (acceptedTokenLocks.isEmpty && acceptedTokenUnlocks.isEmpty) {
-        maybeActiveTokenLocks.pure
-      } else {
-        val incomingTokenLocks = acceptedTokenLocks.groupBy(_.source).toSortedMap
-        val activeTokenLocks = maybeActiveTokenLocks.getOrElse(SortedMap.empty[Address, SortedSet[Signed[TokenLock]]])
+    )(implicit hasher: Hasher[F]): F[
+      (
+        SortedMap[Address, SortedSet[Signed[TokenLock]]],
+        SortedMap[Address, SortedSet[Signed[TokenLock]]]
+      )
+    ] = {
+      val expiredTokenLocks = lastActiveTokenLocks.collect {
+        case (address, tokenLocks) => address -> tokenLocks.filter(_.unlockEpoch < epochProgress)
+      }
 
-        val allTokenLocks = (incomingTokenLocks.keySet ++ activeTokenLocks.keySet).toList.map { address =>
-          address -> (incomingTokenLocks.getOrElse(address, SortedSet.empty[Signed[TokenLock]]) ++ activeTokenLocks.getOrElse(
+      (acceptedTokenLocks |+| expiredTokenLocks).toList
+        .foldM(lastActiveTokenLocks) {
+          case (acc, (address, tokenLocks)) =>
+            val lastAddressTokenLocks = acc.getOrElse(address, SortedSet.empty[Signed[TokenLock]])
+            val unexpired = (lastAddressTokenLocks ++ tokenLocks).filter(_.unlockEpoch >= epochProgress)
+            val unlocksRefs = acceptedTokenUnlocks.map(_.tokenLockRef)
+
+            unexpired
+              .foldM(SortedSet.empty[Signed[TokenLock]]) { (acc, tokenLock) =>
+                tokenLock.toHashed.map { tlh =>
+                  if (unlocksRefs.contains(tlh.hash)) acc
+                  else acc + tokenLock
+                }
+              }
+              .map { updatedLocks =>
+                acc.updated(address, updatedLocks)
+              }
+        }
+        .map(updateTokenLocks => (updateTokenLocks, expiredTokenLocks))
+    }
+
+    private def updateActiveTokenLocks(
+      lastGlobalEpochProgress: EpochProgress,
+      activeTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]],
+      acceptedTokenLocks: Map[Address, SortedSet[Signed[TokenLock]]],
+      acceptedTokenUnlocks: SortedSet[TokenUnlock]
+    )(implicit hasher: Hasher[F]): F[SortedMap[Address, SortedSet[Signed[TokenLock]]]] =
+      if (acceptedTokenLocks.isEmpty && acceptedTokenUnlocks.isEmpty) {
+        activeTokenLocks.pure
+      } else {
+        val allTokenLocks = (acceptedTokenLocks.keySet ++ activeTokenLocks.keySet).toList.map { address =>
+          address -> (acceptedTokenLocks.getOrElse(address, SortedSet.empty[Signed[TokenLock]]) ++ activeTokenLocks.getOrElse(
             address,
             SortedSet.empty[Signed[TokenLock]]
           ))
         }.toSortedMap
 
         if (acceptedTokenUnlocks.isEmpty) {
-          allTokenLocks.some.pure
+          allTokenLocks.pure
         } else {
           allTokenLocks.toList.traverse {
             case (address, set) =>
@@ -587,43 +623,48 @@ object CurrencySnapshotAcceptanceManager {
                   acceptedTokenUnlocks.forall(_.tokenLockRef =!= hashedTokenLock.hash)
                 }
               }.map(filteredSet => address -> filteredSet.toSortedSet)
-          }.map(_.toSortedMap.some)
+          }.map(_.toSortedMap)
         }
       }
 
     private def updateBalancesByTokenLocks(
-      acceptedTokenLocks: SortedSet[Signed[TokenLock]],
-      acceptedTokenUnlocks: SortedSet[TokenUnlock],
-      balances: SortedMap[Address, Balance]
-    ): SortedMap[Address, Balance] =
-      if (acceptedTokenLocks.isEmpty && acceptedTokenUnlocks.isEmpty) {
-        balances
-      } else {
-        val balancesAfterTokenLocks = acceptedTokenLocks.foldLeft(balances) {
-          case (accBalances, signedTokenLock) =>
-            val tokenLock = signedTokenLock.value
-            val sourceAddress = tokenLock.source
-            val lastAddressBalance = accBalances.getOrElse(sourceAddress, Balance.empty)
-
-            val updatedBalance = lastAddressBalance
-              .minus(toAmount(tokenLock.amount))
-              .getOrElse(lastAddressBalance)
-
-            accBalances.updated(sourceAddress, updatedBalance)
-        }
-
-        acceptedTokenUnlocks.foldLeft(balancesAfterTokenLocks) {
-          case (accBalances, tokenUnlock) =>
-            val sourceAddress = tokenUnlock.address
-            val lastAddressBalance = accBalances.getOrElse(sourceAddress, Balance.empty)
-
-            val updatedBalance = lastAddressBalance
-              .plus(toAmount(tokenUnlock.amount))
-              .getOrElse(lastAddressBalance)
-
-            accBalances.updated(sourceAddress, updatedBalance)
-        }
+      epochProgress: EpochProgress,
+      currentBalances: SortedMap[Address, Balance],
+      acceptedTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]],
+      lastActiveTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]],
+      acceptedTokenUnlocks: SortedSet[TokenUnlock]
+    ): SortedMap[Address, Balance] = {
+      val expiredGlobalTokenLocks = lastActiveTokenLocks.collect {
+        case (address, allowSpends) => address -> allowSpends.filter(_.unlockEpoch < epochProgress)
       }
+
+      (acceptedTokenLocks |+| expiredGlobalTokenLocks).foldLeft(currentBalances) {
+        case (acc, (address, allowSpends)) =>
+          val unexpired = allowSpends.filter(_.unlockEpoch >= epochProgress)
+          val expired = allowSpends.filter(_.unlockEpoch < epochProgress)
+
+          val updatedBalanceUnexpired =
+            unexpired.foldLeft(acc.getOrElse(address, Balance.empty)) { (currentBalance, allowSpend) =>
+              currentBalance
+                .minus(TokenLockAmount.toAmount(allowSpend.amount))
+                .getOrElse(currentBalance)
+            }
+          val updatedBalanceExpired = expired.foldLeft(updatedBalanceUnexpired) { (currentBalance, allowSpend) =>
+            currentBalance
+              .plus(TokenLockAmount.toAmount(allowSpend.amount))
+              .getOrElse(currentBalance)
+          }
+
+          val updatedBalanceTokenUnlock = acceptedTokenUnlocks.foldLeft(updatedBalanceExpired) {
+            case (accBalances, tokenUnlock) =>
+              accBalances
+                .plus(toAmount(tokenUnlock.amount))
+                .getOrElse(accBalances)
+          }
+
+          acc.updated(address, updatedBalanceTokenUnlock)
+      }
+    }
 
     def getTipsUsages(
       lastActive: Set[ActiveTip],
@@ -787,11 +828,38 @@ object CurrencySnapshotAcceptanceManager {
       }
 
     def emitAllowSpendsExpired(
-      addressToSet: SortedMap[address.Address, SortedSet[Signed[swap.AllowSpend]]]
+      addressToSet: SortedMap[Address, SortedSet[Signed[AllowSpend]]]
     )(implicit hasher: Hasher[F]): F[SortedSet[SharedArtifact]] =
       addressToSet.values.flatten.toList
         .traverse(_.toHashed)
         .map(_.map(hashed => AllowSpendExpiration(hashed.hash): SharedArtifact).toSortedSet)
-  }
 
+    def emitTokenUnlocks(
+      acceptedTokenUnlocks: SortedSet[TokenUnlock],
+      expiredTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]]
+    )(implicit hasher: Hasher[F]): F[SortedSet[SharedArtifact]] = {
+      val acceptedTokenUnlocksHashes = acceptedTokenUnlocks.map(_.tokenLockRef)
+
+      expiredTokenLocks.values.flatten.toList
+        .traverse(_.toHashed)
+        .map { hashedLocks =>
+          val newUnlocks = hashedLocks.collect {
+            case hashed if !acceptedTokenUnlocksHashes.contains(hashed.hash) =>
+              TokenUnlock(
+                hashed.hash,
+                hashed.amount,
+                hashed.currencyId,
+                hashed.source
+              )
+          }
+
+          val newUnlocksAsShared: SortedSet[SharedArtifact] =
+            SortedSet.from[SharedArtifact](newUnlocks)
+          val acceptedUnlocksAsShared: SortedSet[SharedArtifact] =
+            SortedSet.from[SharedArtifact](acceptedTokenUnlocks)
+
+          newUnlocksAsShared ++ acceptedUnlocksAsShared
+        }
+    }
+  }
 }

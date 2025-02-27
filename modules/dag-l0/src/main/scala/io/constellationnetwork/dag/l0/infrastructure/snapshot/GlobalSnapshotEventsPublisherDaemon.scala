@@ -11,6 +11,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.daemon.Snapsh
 import io.constellationnetwork.schema.Block
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.swap.AllowSpendBlock
+import io.constellationnetwork.schema.tokenLock.TokenLockBlock
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.statechannel.StateChannelOutput
 
@@ -22,6 +23,7 @@ object GlobalSnapshotEventsPublisherDaemon {
     stateChannelOutputs: Queue[F, StateChannelOutput],
     l1OutputQueue: Queue[F, Signed[Block]],
     allowSpendOutputQueue: Queue[F, Signed[AllowSpendBlock]],
+    tokenLockOutputQueue: Queue[F, Signed[TokenLockBlock]],
     updateNodeParametersQueue: Queue[F, Signed[UpdateNodeParameters]],
     gossip: Gossip[F],
     consensusStorage: ConsensusStorage[F, GlobalSnapshotEvent, _, _, _, _, _, _]
@@ -38,6 +40,11 @@ object GlobalSnapshotEventsPublisherDaemon {
         Stream
           .fromQueueUnterminated(allowSpendOutputQueue)
           .map(AllowSpendEvent(_))
+      )
+      .merge(
+        Stream
+          .fromQueueUnterminated(tokenLockOutputQueue)
+          .map(TokenLockEvent(_))
       )
       .merge(
         Stream

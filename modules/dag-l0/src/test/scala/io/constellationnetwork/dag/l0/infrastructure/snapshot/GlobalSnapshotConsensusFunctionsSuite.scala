@@ -32,6 +32,7 @@ import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAccep
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult.CurrencySnapshotWithState
 import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator
 import io.constellationnetwork.node.shared.domain.swap.block._
+import io.constellationnetwork.node.shared.domain.tokenlock.block._
 import io.constellationnetwork.node.shared.infrastructure.consensus.trigger.EventTrigger
 import io.constellationnetwork.node.shared.infrastructure.snapshot.{
   GlobalSnapshotAcceptanceManager,
@@ -45,6 +46,7 @@ import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.RewardFraction
 import io.constellationnetwork.schema.peer.PeerId
+import io.constellationnetwork.schema.tokenLock.TokenLockBlock
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.key.ops.PublicKeyOps
@@ -134,6 +136,25 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
       ).pure[IO]
   }
 
+  val tlbam: TokenLockBlockAcceptanceManager[IO] = new TokenLockBlockAcceptanceManager[IO] {
+    override def acceptBlock(
+      block: Signed[TokenLockBlock],
+      context: TokenLockBlockAcceptanceContext[IO],
+      snapshotOrdinal: SnapshotOrdinal
+    )(implicit hasher: Hasher[IO]): IO[Either[TokenLockBlockNotAcceptedReason, TokenLockBlockAcceptanceContextUpdate]] = ???
+
+    override def acceptBlocksIteratively(
+      blocks: List[Signed[TokenLockBlock]],
+      context: TokenLockBlockAcceptanceContext[IO],
+      snapshotOrdinal: SnapshotOrdinal
+    )(implicit hasher: Hasher[IO]): IO[TokenLockBlockAcceptanceResult] =
+      TokenLockBlockAcceptanceResult(
+        TokenLockBlockAcceptanceContextUpdate.empty,
+        List.empty,
+        List.empty
+      ).pure[IO]
+  }
+
   val scProcessor: GlobalSnapshotStateChannelEventsProcessor[IO] = new GlobalSnapshotStateChannelEventsProcessor[IO] {
     def process(
       snapshotOrdinal: GlobalSnapshotKey,
@@ -211,7 +232,7 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
     val snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[IO] =
       GlobalSnapshotAcceptanceManager
-        .make[IO](bam, asbam, scProcessor, updateNodeParametersAcceptanceManager, spendActionValidator, collateral)
+        .make[IO](bam, asbam, tlbam, scProcessor, updateNodeParametersAcceptanceManager, spendActionValidator, collateral)
 
     val feeCalculator = new SnapshotBinaryFeeCalculator[IO] {
       override def calculateFee(

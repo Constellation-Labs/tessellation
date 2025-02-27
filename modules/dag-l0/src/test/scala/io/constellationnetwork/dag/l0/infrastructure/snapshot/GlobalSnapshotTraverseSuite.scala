@@ -26,7 +26,12 @@ import io.constellationnetwork.node.shared.domain.swap.block.{
   AllowSpendBlockValidator
 }
 import io.constellationnetwork.node.shared.domain.swap.{AllowSpendChainValidator, AllowSpendValidator}
-import io.constellationnetwork.node.shared.domain.tokenlock.block.TokenLockBlockAcceptanceManager
+import io.constellationnetwork.node.shared.domain.tokenlock.block.{
+  TokenLockBlockAcceptanceLogic,
+  TokenLockBlockAcceptanceManager,
+  TokenLockBlockValidator
+}
+import io.constellationnetwork.node.shared.domain.tokenlock.{TokenLockChainValidator, TokenLockValidator}
 import io.constellationnetwork.node.shared.domain.transaction.{TransactionChainValidator, TransactionValidator}
 import io.constellationnetwork.node.shared.infrastructure.block.processing.{BlockAcceptanceLogic, BlockAcceptanceManager, BlockValidator}
 import io.constellationnetwork.node.shared.infrastructure.consensus.CurrencySnapshotEventValidationErrorStorage
@@ -166,6 +171,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         lastSnapshot.tips.copy(remainedActive = activeTips),
         newSnapshotInfoStateProof,
         Some(SortedSet.empty),
+        Some(SortedSet.empty),
         Some(SortedMap.empty),
         None
       )
@@ -251,6 +257,12 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       AllowSpendBlockValidator.make[IO](signedValidator, AllowSpendChainValidator.make[IO], AllowSpendValidator.make[IO](signedValidator))
     val allowSpendBlockAcceptanceManager =
       AllowSpendBlockAcceptanceManager.make(AllowSpendBlockAcceptanceLogic.make[IO], allowSpendBlockValidator)
+
+    val tokenLockBlockValidator =
+      TokenLockBlockValidator.make[IO](signedValidator, TokenLockChainValidator.make[IO], TokenLockValidator.make[IO](signedValidator))
+    val tokenLockBlockAcceptanceManager =
+      TokenLockBlockAcceptanceManager.make(TokenLockBlockAcceptanceLogic.make[IO], tokenLockBlockValidator)
+
     val feeCalculator = FeeCalculator.make(SortedMap.empty)
     val validators =
       SharedValidators
@@ -309,6 +321,7 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         .make[IO](
           blockAcceptanceManager,
           allowSpendBlockAcceptanceManager,
+          tokenLockBlockAcceptanceManager,
           stateChannelProcessor,
           updateNodeParametersAcceptanceManager,
           validators.spendActionValidator,
@@ -335,6 +348,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
           SortedMap.from(balances),
           SortedMap.empty,
           SortedMap.empty,
+          Some(SortedMap.empty),
+          Some(SortedMap.empty),
           Some(SortedMap.empty),
           Some(SortedMap.empty),
           Some(SortedMap.empty),

@@ -58,7 +58,7 @@ object SpendActionValidatorSuite extends MutableIOSuite {
         AllowSpendReference.empty,
         EpochProgress(20L),
         List(ammAddress)
-        )
+      )
       signedAllowSpend <- Signed.forAsyncHasher(allowSpend, keyPair1)
       hashedAllowSpend <- signedAllowSpend.toHashed
 
@@ -95,7 +95,7 @@ object SpendActionValidatorSuite extends MutableIOSuite {
         AllowSpendReference.empty,
         EpochProgress(20L),
         List(ammAddress)
-        )
+      )
       signedAllowSpend <- Signed.forAsyncHasher(allowSpend, keyPair1)
       hashedAllowSpend <- signedAllowSpend.toHashed
 
@@ -134,7 +134,7 @@ object SpendActionValidatorSuite extends MutableIOSuite {
         AllowSpendReference.empty,
         EpochProgress(20L),
         List(ammAddress)
-        )
+      )
       signedAllowSpend <- Signed.forAsyncHasher(allowSpend, keyPair1)
       hashedAllowSpend <- signedAllowSpend.toHashed
 
@@ -145,11 +145,11 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       spendAction = SpendAction(userSpendTx, metagraphSpendTx)
 
       result <- validator.validate(spendAction, activeAllowSpends)
-    } yield expect(result.isInvalid) and
-      expect(result.toEither.left.map(_.head).left.exists {
+    } yield
+      expect(result.isInvalid).and(expect(result.toEither.left.map(_.head).left.exists {
         case SpendActionValidator.NoActiveAllowSpends(_) => true
-        case _ => false
-      })
+        case _                                           => false
+      }))
   }
 
   test("should fail validation when user-issued spend destination does not match allow spend") { res =>
@@ -176,7 +176,7 @@ object SpendActionValidatorSuite extends MutableIOSuite {
         AllowSpendReference.empty,
         EpochProgress(20L),
         List(ammAddress)
-        )
+      )
       signedAllowSpend <- Signed.forAsyncHasher(allowSpend, keyPair1)
       hashedAllowSpend <- signedAllowSpend.toHashed
 
@@ -187,11 +187,11 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       spendAction = SpendAction(userSpendTx, metagraphSpendTx)
 
       result <- validator.validate(spendAction, activeAllowSpends)
-    } yield expect(result.isInvalid) and
-      expect(result.toEither.left.map(_.head).left.exists {
+    } yield
+      expect(result.isInvalid).and(expect(result.toEither.left.map(_.head).left.exists {
         case SpendActionValidator.InvalidDestinationAddress(_) => true
-        case _ => false
-      })
+        case _                                                 => false
+      }))
   }
 
   test("should validate spend action with both metagraph-issued transactions") { res =>
@@ -239,7 +239,7 @@ object SpendActionValidatorSuite extends MutableIOSuite {
         AllowSpendReference.empty,
         EpochProgress(20L),
         List(ammAddress)
-        )
+      )
       signedAllowSpend <- Signed.forAsyncHasher(allowSpend, keyPair1)
       hashedAllowSpend <- signedAllowSpend.toHashed
       invalidHash = Hash.empty
@@ -251,10 +251,10 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       spendAction = SpendAction(userSpendTx, metagraphSpendTx)
 
       result <- validator.validate(spendAction, activeAllowSpends)
-    } yield expect(result.isInvalid) and
-      expect(result.toEither.left.map(_.head).left.exists {
+    } yield
+      expect(result.isInvalid).and(expect(result.toEither.left.map(_.head).left.exists {
         case SpendActionValidator.InvalidDestinationAddress(_) => true
-        case _ => false
-      })
+        case _                                                 => false
+      }))
   }
 }
