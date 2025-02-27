@@ -101,6 +101,11 @@ jobs:
           cd .github/action_scripts
           node send_transactions/allow-spends-and-spend-transactions.js 90 91 80 81 82 unauthorized
 
+      - name: Test Unauthorized Currency Spend Transaction Workflow
+        run: |
+          cd .github/action_scripts
+          node send_transactions/allow-spends-and-spend-transactions.js 90 91 80 81 82 unauthorized-currency
+
       - name: Save Global L0 Genesis logs
         uses: actions/upload-artifact@v4
         if: always()
