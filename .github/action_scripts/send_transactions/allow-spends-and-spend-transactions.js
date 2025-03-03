@@ -69,6 +69,35 @@ const createAllowSpendTransaction = async (sourceAccount, ammAddress, l1Url, l0U
     };
 };
 
+const createInvalidParentAllowSpendTransaction = async (sourceAccount, ammAddress, l1Url, l0Url, isCurrency = false) => {
+    const [{ data: lastRef }, currentEpochProgress] = await Promise.all([
+        axios.get(`${l1Url}/allow-spends/last-reference/${sourceAccount.address}`),
+        getEpochProgress(l0Url, isCurrency)
+    ]);
+
+    const { allowSpend: amount, fee } = getRandomAmounts();
+
+    const invalidParent = {
+        ...lastRef,
+        ordinal: lastRef.ordinal + 1
+    };
+
+    logWorkflow.info(`Current epoch progress: ${currentEpochProgress}, setting lastValidEpochProgress to ${currentEpochProgress + CONSTANTS.EPOCH_PROGRESS_BUFFER}`);
+    logWorkflow.info(`Using random amounts - allowSpend: ${amount}, fee: ${fee}`);
+    logWorkflow.info(`Original parent reference: ${JSON.stringify(lastRef)}`);
+    logWorkflow.info(`Modified invalid parent reference: ${JSON.stringify(invalidParent)}`);
+
+    return {
+        amount,
+        approvers: [ammAddress],
+        destination: ammAddress,
+        fee,
+        lastValidEpochProgress: currentEpochProgress + CONSTANTS.EPOCH_PROGRESS_BUFFER,
+        parent: invalidParent,
+        source: sourceAccount.address
+    };
+};
+
 const createVerifier = (urls) => {
     const findMatchingHash = async (allowSpends, targetHash) => {
         logWorkflow.info('Searching for hash: ' + targetHash);
@@ -363,13 +392,48 @@ const createTransactionHandler = (urls) => {
         }
     };
 
+    const sendInvalidParentTransaction = async (sourcePrivateKey, l0Url, l1Url, isCurrency = false) => {
+        const sourceAccount = createAndConnectAccount(sourcePrivateKey, { l0Url, l1Url }, isCurrency);
+        const ammAddress = CONSTANTS.CURRENCY_TOKEN_ID;
+
+        const allowSpend = await createInvalidParentAllowSpendTransaction(sourceAccount, ammAddress, l1Url, l0Url, isCurrency);
+        const proof = await generateProof(allowSpend, sourcePrivateKey, sourceAccount, SerializerType.BROTLI);
+
+        try {
+            const body = { value: allowSpend, proofs: [proof] };
+            logWorkflow.info(`Sending invalid parent AllowSpend transaction: ${JSON.stringify(body)}`);
+            const response = await axios.post(`${l1Url}/allow-spends`, body);
+            logWorkflow.success(`Response: ${JSON.stringify(response.data)}`);
+            return {
+                address: sourceAccount.address,
+                hash: response.data.hash,
+                amount: allowSpend.amount,
+                fee: allowSpend.fee,
+                lastValidEpochProgress: allowSpend.lastValidEpochProgress
+            };
+        } catch (error) {
+            if (error.response && error.response.status === 400) {
+                logWorkflow.success(`Transaction correctly rejected with 400 Bad Request: ${error.response.data}`);
+                return {
+                    address: sourceAccount.address,
+                    rejected: true,
+                    error: error.response.data
+                };
+            }
+            logWorkflow.error('Error sending invalid parent AllowSpend transaction', error);
+            throw error;
+        }
+    };
+
     return {
         sendDagTransaction: (sourcePrivateKey) =>
             sendTransaction(sourcePrivateKey, urls.globalL0Url, urls.dagL1Url, false),
         sendCurrencyTransaction: (sourcePrivateKey) =>
             sendTransaction(sourcePrivateKey, urls.currencyL0Url, urls.currencyL1Url, true),
         sendExceedingBalanceTransaction: (sourcePrivateKey) =>
-            sendExceedingBalanceTransaction(sourcePrivateKey, urls.globalL0Url, urls.dagL1Url)
+            sendExceedingBalanceTransaction(sourcePrivateKey, urls.globalL0Url, urls.dagL1Url),
+        sendInvalidParentTransaction: (sourcePrivateKey) =>
+            sendInvalidParentTransaction(sourcePrivateKey, urls.globalL0Url, urls.dagL1Url, false)
     };
 };
 
@@ -844,6 +908,29 @@ const executeExceedingBalanceWorkflow = async () => {
     }
 };
 
+const executeInvalidParentWorkflow = async () => {
+    try {
+        logWorkflow.start('InvalidParentAllowSpend');
+
+        const config = createConfig();
+        const urls = createNetworkConfig(config);
+        const handler = createTransactionHandler(urls);
+
+        logWorkflow.info('Invalid parent allow spend creation started');
+        const result = await handler.sendInvalidParentTransaction(PRIVATE_KEYS.key1);
+
+        if (result.rejected) {
+            logWorkflow.success('InvalidParentAllowSpend workflow completed successfully - transaction was correctly rejected');
+        } else {
+            logWorkflow.error('InvalidParentAllowSpend workflow failed - transaction was accepted when it should have been rejected');
+            throw new Error('Transaction with invalid parent was accepted when it should have been rejected');
+        }
+    } catch (error) {
+        logWorkflow.error('InvalidParentAllowSpend', error);
+        throw error;
+    }
+};
+
 const executeWorkflowByType = async (workflowType) => {
     const config = createConfig();
     const urls = createNetworkConfig(config);
@@ -866,6 +953,9 @@ const executeWorkflowByType = async (workflowType) => {
             break;
         case 'exceeding-balance':
             await executeExceedingBalanceWorkflow();
+            break;
+        case 'invalid-parent':
+            await executeInvalidParentWorkflow();
             break;
         default:
             throw new Error(`Unknown workflow type: ${workflowType}`);
