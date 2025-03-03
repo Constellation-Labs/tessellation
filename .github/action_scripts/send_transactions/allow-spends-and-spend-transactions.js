@@ -64,7 +64,8 @@ const createAllowSpendTransaction = async (sourceAccount, ammAddress, l1Url, l0U
         fee,
         lastValidEpochProgress: currentEpochProgress + CONSTANTS.EPOCH_PROGRESS_BUFFER,
         parent: lastRef,
-        source: sourceAccount.address
+        source: sourceAccount.address,
+        currency: isCurrency ? CONSTANTS.CURRENCY_TOKEN_ID : null
     };
 };
 
