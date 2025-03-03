@@ -19,6 +19,11 @@ import fs2.io.file.Path
 
 object types {
 
+  case class FieldsAddedOrdinals(
+    globalSyncView: Map[AppEnvironment, SnapshotOrdinal],
+    globalTokenLocks: Map[AppEnvironment, SnapshotOrdinal]
+  )
+
   case class SharedConfigReader(
     gossip: GossipConfig,
     leavingDelay: FiniteDuration,
@@ -35,7 +40,8 @@ object types {
     tokenLocks: TokenLocksConfig,
     lastGlobalSnapshotsSync: LastGlobalSnapshotsSyncConfig,
     validationErrorStorage: ValidationErrorStorageConfig,
-    delegatedStaking: DelegatedStakingConfig
+    delegatedStaking: DelegatedStakingConfig,
+    fieldsAddedOrdinals: FieldsAddedOrdinals
   )
 
   case class SharedConfig(
@@ -56,7 +62,8 @@ object types {
     tokenLocks: TokenLocksConfig,
     lastGlobalSnapshotsSync: LastGlobalSnapshotsSyncConfig,
     validationErrorStorage: ValidationErrorStorageConfig,
-    delegatedStaking: DelegatedStakingConfig
+    delegatedStaking: DelegatedStakingConfig,
+    fieldsAddedOrdinals: FieldsAddedOrdinals
   )
 
   case class SharedTrustConfig(

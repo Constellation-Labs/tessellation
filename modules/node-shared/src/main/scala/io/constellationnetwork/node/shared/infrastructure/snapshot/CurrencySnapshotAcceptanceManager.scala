@@ -318,7 +318,7 @@ object CurrencySnapshotAcceptanceManager {
         updatedAllowSpends.some,
         globalSnapshotSyncAcceptanceResult.contextUpdate.some,
         tokenLockRefs.some,
-        updatedActiveTokenLocks.some
+        if (updatedActiveTokenLocks.nonEmpty) Some(updatedActiveTokenLocks) else None
       )
 
       stateProof <- csi.stateProof(snapshotOrdinal)
@@ -332,15 +332,10 @@ object CurrencySnapshotAcceptanceManager {
         expiredTokenLocks
       )
 
-      globalSyncView = maybeLastGlobalSnapshot
-        .map(gs =>
-          GlobalSyncView(
-            gs.ordinal,
-            gs.hash,
-            gs.epochProgress
-          )
-        )
-        .getOrElse(GlobalSyncView.empty)
+      globalSyncView = maybeLastGlobalSnapshot match {
+        case Some(value) => GlobalSyncView(value.ordinal, value.hash, value.epochProgress)
+        case _           => GlobalSyncView.empty
+      }
     } yield
       CurrencySnapshotAcceptanceResult(
         acceptanceBlocksResult,

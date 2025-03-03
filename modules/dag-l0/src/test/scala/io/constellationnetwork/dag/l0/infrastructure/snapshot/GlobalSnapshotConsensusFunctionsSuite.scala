@@ -235,7 +235,16 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
 
     val snapshotAcceptanceManager: GlobalSnapshotAcceptanceManager[IO] =
       GlobalSnapshotAcceptanceManager
-        .make[IO](bam, asbam, tlbam, scProcessor, updateNodeParametersAcceptanceManager, spendActionValidator, collateral)
+        .make[IO](
+          SnapshotOrdinal.MinValue,
+          bam,
+          asbam,
+          tlbam,
+          scProcessor,
+          updateNodeParametersAcceptanceManager,
+          spendActionValidator,
+          collateral
+        )
 
     val feeCalculator = new SnapshotBinaryFeeCalculator[IO] {
       override def calculateFee(

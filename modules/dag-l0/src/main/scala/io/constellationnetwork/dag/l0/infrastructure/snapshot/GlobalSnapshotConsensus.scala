@@ -84,6 +84,7 @@ object GlobalSnapshotConsensus {
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync
       feeCalculator = FeeCalculator.make(feeConfigs)
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
+        sharedCfg.fieldsAddedOrdinals.globalTokenLocks.getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue),
         BlockAcceptanceManager.make[F](validators.blockValidator, txHasher),
         AllowSpendBlockAcceptanceManager.make[F](validators.allowSpendBlockValidator),
         TokenLockBlockAcceptanceManager.make[F](validators.tokenLockBlockValidator),

@@ -2,7 +2,6 @@ package io.constellationnetwork.node.shared.infrastructure.snapshot
 
 import cats.MonadThrow
 import cats.data.NonEmptyList
-import cats.data.Validated.{Invalid, Valid}
 import cats.effect.Async
 import cats.syntax.all._
 
@@ -15,7 +14,6 @@ import io.constellationnetwork.merkletree.Proof
 import io.constellationnetwork.merkletree.syntax._
 import io.constellationnetwork.node.shared.domain.block.processing._
 import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersAcceptanceManager
-import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult.CurrencySnapshotWithState
 import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator
@@ -32,12 +30,11 @@ import io.constellationnetwork.node.shared.domain.tokenlock.block.{
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.artifact.{SharedArtifact, SpendAction, TokenUnlock}
+import io.constellationnetwork.schema.artifact.{SharedArtifact, SpendAction}
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.UpdateNodeParameters
 import io.constellationnetwork.schema.swap._
-import io.constellationnetwork.schema.tokenLock.TokenLockAmount.toAmount
 import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.schema.transaction.{RewardTransaction, Transaction, TransactionReference}
 import io.constellationnetwork.security._
@@ -87,6 +84,7 @@ object GlobalSnapshotAcceptanceManager {
   case object InvalidMerkleTree extends NoStackTrace
 
   def make[F[_]: Async: HasherSelector](
+    tokenLocksAddedToGl0Ordinal: SnapshotOrdinal,
     blockAcceptanceManager: BlockAcceptanceManager[F],
     allowSpendBlockAcceptanceManager: AllowSpendBlockAcceptanceManager[F],
     tokenLockBlockAcceptanceManager: TokenLockBlockAcceptanceManager[F],
@@ -248,16 +246,26 @@ object GlobalSnapshotAcceptanceManager {
           globalActiveAllowSpends
         )
 
-        updatedGlobalTokenLocks = acceptTokenLocks(
-          epochProgress,
-          globalTokenLocks,
-          globalActiveTokenLocks
-        )
+        updatedGlobalTokenLocks =
+          if (ordinal < tokenLocksAddedToGl0Ordinal) {
+            None
+          } else {
+            acceptTokenLocks(
+              epochProgress,
+              globalTokenLocks,
+              globalActiveTokenLocks
+            ).some
+          }
 
-        updatedTokenLockRefs = acceptTokenLockRefs(
-          globalLastTokenLockRefs,
-          tokenLockBlockAcceptanceResult.contextUpdate.lastTokenLocksRefs
-        )
+        updatedTokenLockRefs =
+          if (ordinal < tokenLocksAddedToGl0Ordinal) {
+            None
+          } else {
+            acceptTokenLockRefs(
+              globalLastTokenLockRefs,
+              tokenLockBlockAcceptanceResult.contextUpdate.lastTokenLocksRefs
+            ).some
+          }
 
         updatedTokenLockBalances = updateTokenLockBalances(
           currencySnapshots,
@@ -341,10 +349,10 @@ object GlobalSnapshotAcceptanceManager {
           updatedLastCurrencySnapshots,
           updatedLastCurrencySnapshotProofs,
           updatedAllowSpends.some,
-          updatedGlobalTokenLocks.some,
+          updatedGlobalTokenLocks,
           updatedTokenLockBalances.some,
           updatedAllowSpendRefs.some,
-          updatedTokenLockRefs.some,
+          updatedTokenLockRefs,
           updatedUpdateNodeParameters.some
         )
 

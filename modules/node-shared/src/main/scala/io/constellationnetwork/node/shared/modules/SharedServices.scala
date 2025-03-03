@@ -28,6 +28,7 @@ import io.constellationnetwork.node.shared.infrastructure.healthcheck.LocalHealt
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.infrastructure.node.RestartService
 import io.constellationnetwork.node.shared.infrastructure.snapshot._
+import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.generation.Generation
 import io.constellationnetwork.schema.peer.PeerId
@@ -92,7 +93,7 @@ object SharedServices {
       currencyEventsCutter = CurrencyEventsCutter.make[F](None)
 
       currencySnapshotValidator = CurrencySnapshotValidator.make[F](
-        environment,
+        cfg.fieldsAddedOrdinals.globalSyncView.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
         CurrencySnapshotCreator.make[F](
           currencySnapshotAcceptanceManager,
           None,
@@ -112,6 +113,7 @@ object SharedServices {
       jsonBrotliBinarySerializer <- JsonBrotliBinarySerializer.forSync
       updateNodeParametersAcceptanceManager = UpdateNodeParametersAcceptanceManager.make(validators.updateNodeParametersValidator)
       globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
+        cfg.fieldsAddedOrdinals.globalTokenLocks.getOrElse(cfg.environment, SnapshotOrdinal.MinValue),
         BlockAcceptanceManager.make[F](validators.blockValidator, txHasher),
         AllowSpendBlockAcceptanceManager.make[F](validators.allowSpendBlockValidator),
         TokenLockBlockAcceptanceManager.make[F](validators.tokenLockBlockValidator),
