@@ -295,11 +295,81 @@ const createTransactionHandler = (urls) => {
         };
     };
 
+    const getBalanceFromL0 = async (address, l0Url) => {
+        try {
+            const { data } = await axios.get(`${l0Url}/dag/${address}/balance`);
+            logWorkflow.info(`Current balance for ${address}: ${JSON.stringify(data)}`);
+            return data.balance;
+        } catch (error) {
+            logWorkflow.error(`Error fetching balance from ${l0Url}/dag/${address}/balance:`, error.message);
+            throw error;
+        }
+    };
+
+    const createExceedingBalanceAllowSpendTransaction = async (sourceAccount, ammAddress, l1Url, l0Url) => {
+        const [{ data: lastRef }, currentEpochProgress, currentBalance] = await Promise.all([
+            axios.get(`${l1Url}/allow-spends/last-reference/${sourceAccount.address}`),
+            getEpochProgress(l0Url, false),
+            getBalanceFromL0(sourceAccount.address, l0Url)
+        ]);
+
+        const amount = Number(currentBalance) + 1000000;
+        const fee = getRandomInt(1, 20);
+
+        logWorkflow.info(`Current balance: ${currentBalance}, setting amount to exceed: ${amount}`);
+        logWorkflow.info(`Current epoch progress: ${currentEpochProgress}, setting lastValidEpochProgress to ${currentEpochProgress + CONSTANTS.EPOCH_PROGRESS_BUFFER}`);
+
+        return {
+            amount,
+            approvers: [ammAddress],
+            destination: ammAddress,
+            fee,
+            lastValidEpochProgress: currentEpochProgress + CONSTANTS.EPOCH_PROGRESS_BUFFER,
+            parent: lastRef,
+            source: sourceAccount.address
+        };
+    };
+
+    const sendExceedingBalanceTransaction = async (sourcePrivateKey, l0Url, l1Url) => {
+        const sourceAccount = createAndConnectAccount(sourcePrivateKey, { l0Url, l1Url }, false);
+        const ammAddress = CONSTANTS.CURRENCY_TOKEN_ID;
+
+        const allowSpend = await createExceedingBalanceAllowSpendTransaction(sourceAccount, ammAddress, l1Url, l0Url);
+        const proof = await generateProof(allowSpend, sourcePrivateKey, sourceAccount, SerializerType.BROTLI);
+
+        try {
+            const body = { value: allowSpend, proofs: [proof] };
+            logWorkflow.info(`Sending exceeding balance AllowSpend transaction: ${JSON.stringify(body)}`);
+            const response = await axios.post(`${l1Url}/allow-spends`, body);
+            logWorkflow.success(`Response: ${JSON.stringify(response.data)}`);
+            return {
+                address: sourceAccount.address,
+                hash: response.data.hash,
+                amount: allowSpend.amount,
+                fee: allowSpend.fee,
+                lastValidEpochProgress: allowSpend.lastValidEpochProgress
+            };
+        } catch (error) {
+            if (error.response && error.response.status === 400) {
+                logWorkflow.success(`Transaction correctly rejected with 400 Bad Request: ${error.response.data}`);
+                return {
+                    address: sourceAccount.address,
+                    rejected: true,
+                    error: error.response.data
+                };
+            }
+            logWorkflow.error('Error sending exceeding balance AllowSpend transaction', error);
+            throw error;
+        }
+    };
+
     return {
         sendDagTransaction: (sourcePrivateKey) =>
             sendTransaction(sourcePrivateKey, urls.globalL0Url, urls.dagL1Url, false),
         sendCurrencyTransaction: (sourcePrivateKey) =>
-            sendTransaction(sourcePrivateKey, urls.currencyL0Url, urls.currencyL1Url, true)
+            sendTransaction(sourcePrivateKey, urls.currencyL0Url, urls.currencyL1Url, true),
+        sendExceedingBalanceTransaction: (sourcePrivateKey) =>
+            sendExceedingBalanceTransaction(sourcePrivateKey, urls.globalL0Url, urls.dagL1Url)
     };
 };
 
@@ -751,6 +821,29 @@ const executeUnauthorizedCurrencySpendTransactionWorkflow = async () => {
     }
 };
 
+const executeExceedingBalanceWorkflow = async () => {
+    try {
+        logWorkflow.start('ExceedingBalanceAllowSpend');
+
+        const config = createConfig();
+        const urls = createNetworkConfig(config);
+        const handler = createTransactionHandler(urls);
+
+        logWorkflow.info('Exceeding balance allow spend creation started');
+        const result = await handler.sendExceedingBalanceTransaction(PRIVATE_KEYS.key1);
+
+        if (result.rejected) {
+            logWorkflow.success('ExceedingBalanceAllowSpend workflow completed successfully - transaction was correctly rejected');
+        } else {
+            logWorkflow.error('ExceedingBalanceAllowSpend workflow failed - transaction was accepted when it should have been rejected');
+            throw new Error('Transaction with exceeding balance was accepted when it should have been rejected');
+        }
+    } catch (error) {
+        logWorkflow.error('ExceedingBalanceAllowSpend', error);
+        throw error;
+    }
+};
+
 const executeWorkflowByType = async (workflowType) => {
     const config = createConfig();
     const urls = createNetworkConfig(config);
@@ -770,6 +863,9 @@ const executeWorkflowByType = async (workflowType) => {
             break;
         case 'unauthorized-currency':
             await executeUnauthorizedCurrencySpendTransactionWorkflow();
+            break;
+        case 'exceeding-balance':
+            await executeExceedingBalanceWorkflow();
             break;
         default:
             throw new Error(`Unknown workflow type: ${workflowType}`);
