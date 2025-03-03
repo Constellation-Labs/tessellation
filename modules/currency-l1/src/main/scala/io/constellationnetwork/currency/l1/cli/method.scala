@@ -58,7 +58,8 @@ object method {
       c.tokenLocks,
       c.lastGlobalSnapshotsSync,
       c.validationErrorStorage,
-      c.delegatedStaking
+      c.delegatedStaking,
+      c.fieldsAddedOrdinals
     )
   }
 

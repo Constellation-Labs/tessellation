@@ -33,6 +33,7 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot._
 import io.constellationnetwork.node.shared.infrastructure.snapshot.services.AddressService
 import io.constellationnetwork.node.shared.modules.SharedServices
 import io.constellationnetwork.node.shared.snapshot.currency._
+import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.signature.SignedValidator
 import io.constellationnetwork.security.{Hasher, HasherSelector, SecurityProvider}
@@ -102,7 +103,7 @@ object Services {
       )
 
       validator = CurrencySnapshotValidator.make[F](
-        sharedCfg.environment,
+        SnapshotOrdinal.MinValue,
         creator,
         signedValidator,
         maybeRewards,

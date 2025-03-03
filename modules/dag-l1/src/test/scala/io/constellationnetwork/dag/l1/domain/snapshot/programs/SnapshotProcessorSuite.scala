@@ -153,7 +153,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
                 validationErrorStorage
               )
             currencySnapshotValidator = CurrencySnapshotValidator
-              .make[IO](Dev, currencySnapshotCreator, validators.signedValidator, None, None)
+              .make[IO](SnapshotOrdinal.MinValue, currencySnapshotCreator, validators.signedValidator, None, None)
 
             currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
             globalSnapshotStateChannelManager <- GlobalSnapshotStateChannelAcceptanceManager.make[IO](None, NonNegLong(10L)).asResource
@@ -161,6 +161,7 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
             feeCalculator = FeeCalculator.make(SortedMap.empty)
             updateNodeParametersAcceptanceManager = UpdateNodeParametersAcceptanceManager.make(validators.updateNodeParametersValidator)
             globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
+              SnapshotOrdinal.MinValue,
               BlockAcceptanceManager.make[IO](validators.blockValidator, Hasher.forKryo[IO]),
               AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
               TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),

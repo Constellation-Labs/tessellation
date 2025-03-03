@@ -107,7 +107,8 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
           currencyEventsCutter,
           validationErrorStorage
         )
-      currencySnapshotValidator = CurrencySnapshotValidator.make[IO](Dev, creator, validators.signedValidator, None, None)
+      currencySnapshotValidator = CurrencySnapshotValidator
+        .make[IO](SnapshotOrdinal.MinValue, creator, validators.signedValidator, None, None)
       currencySnapshotContextFns = CurrencySnapshotContextFunctions.make(currencySnapshotValidator)
       manager = new GlobalSnapshotStateChannelAcceptanceManager[IO] {
         def accept(ordinal: SnapshotOrdinal, lastGlobalSnapshotInfo: GlobalSnapshotInfo, events: List[StateChannelOutput])(
