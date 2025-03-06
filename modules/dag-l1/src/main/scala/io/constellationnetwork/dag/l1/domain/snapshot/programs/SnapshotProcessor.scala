@@ -2,28 +2,29 @@ package io.constellationnetwork.dag.l1.domain.snapshot.programs
 
 import cats.data.NonEmptyList
 import cats.effect.Async
-import cats.syntax.applicativeError._
-import cats.syntax.either._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
-import cats.syntax.traverse._
+import cats.syntax.all._
 import cats.{Applicative, MonadThrow}
 
+import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
 
+import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshot, CurrencySnapshotInfo}
 import io.constellationnetwork.dag.l1.domain.address.storage.AddressStorage
 import io.constellationnetwork.dag.l1.domain.block.BlockStorage.MajorityReconciliationData
 import io.constellationnetwork.dag.l1.domain.block.{BlockRelations, BlockStorage}
 import io.constellationnetwork.dag.l1.domain.transaction.TransactionStorage
 import io.constellationnetwork.node.shared.domain.snapshot.Validator
-import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
 import io.constellationnetwork.node.shared.domain.snapshot.storage.LastSnapshotStorage
+import io.constellationnetwork.node.shared.domain.swap.AllowSpendStorage
+import io.constellationnetwork.node.shared.domain.tokenlock.TokenLockStorage
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.height.{Height, SubHeight}
 import io.constellationnetwork.schema.snapshot.{Snapshot, SnapshotInfo, StateProof}
+import io.constellationnetwork.schema.swap.AllowSpendReference
+import io.constellationnetwork.schema.tokenLock.{TokenLockBlock, TokenLockReference}
 import io.constellationnetwork.schema.transaction.TransactionReference
-import io.constellationnetwork.security.hash.ProofsHash
+import io.constellationnetwork.security.hash.{Hash, ProofsHash}
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hashed, Hasher, SecurityProvider}
 
@@ -69,6 +70,8 @@ abstract class SnapshotProcessor[
     alignment: Alignment,
     blockStorage: BlockStorage[F],
     transactionStorage: TransactionStorage[F],
+    allowSpendStorage: AllowSpendStorage[F],
+    tokenLockStorage: TokenLockStorage[F],
     lastSnapshotStorage: LastSnapshotStorage[F, S, SI],
     addressStorage: AddressStorage[F]
   ): F[SnapshotProcessingResult] =
@@ -80,6 +83,8 @@ abstract class SnapshotProcessor[
             tipsToDeprecate,
             tipsToRemove,
             txRefsToMarkMajority,
+            allowSpendRefsToMarkMajority,
+            tokenLockRefsToMarkMajority,
             postponedToWaiting
           ) =>
         val adjustToMajority: F[Unit] =
@@ -92,7 +97,9 @@ abstract class SnapshotProcessor[
             )
 
         val markTxRefsAsMajority: F[Unit] =
-          transactionStorage.advanceMajorityRefs(txRefsToMarkMajority, snapshot.ordinal)
+          transactionStorage.advanceMajorityRefs(txRefsToMarkMajority, snapshot.ordinal) >>
+            allowSpendStorage.advanceMajorityRefs(allowSpendRefsToMarkMajority, snapshot.ordinal) >>
+            tokenLockStorage.advanceMajorityRefs(tokenLockRefsToMarkMajority, snapshot.ordinal)
 
         val setSnapshot: F[Unit] =
           lastSnapshotStorage.set(snapshot, state)
@@ -115,6 +122,8 @@ abstract class SnapshotProcessor[
             tipsToDeprecate,
             tipsToRemove,
             txRefsToMarkMajority,
+            allowSpendRefsToMarkMajority,
+            tokenLockRefsToMarkMajority,
             postponedToWaiting
           ) =>
         val adjustToMajority: F[Unit] =
@@ -128,7 +137,9 @@ abstract class SnapshotProcessor[
             )
 
         val markTxRefsAsMajority: F[Unit] =
-          transactionStorage.advanceMajorityRefs(txRefsToMarkMajority, snapshot.ordinal)
+          transactionStorage.advanceMajorityRefs(txRefsToMarkMajority, snapshot.ordinal) >>
+            allowSpendStorage.advanceMajorityRefs(allowSpendRefsToMarkMajority, snapshot.ordinal) >>
+            tokenLockStorage.advanceMajorityRefs(tokenLockRefsToMarkMajority, snapshot.ordinal)
 
         val setSnapshot: F[Unit] =
           lastSnapshotStorage.set(snapshot, state)
@@ -239,16 +250,42 @@ abstract class SnapshotProcessor[
     lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
     getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
   )(implicit hasher: Hasher[F]): F[Alignment] = {
-    snapshotWithState
-      .fold({ case (snapshot, _) => snapshot }, identity)
-      .blocks
-      .toList
-      .traverse {
-        case BlockAsActiveTip(block, usageCount) =>
-          block.toHashedWithSignatureCheck.flatMap(_.liftTo[F]).map(b => b.proofsHash -> (b, usageCount))
-      }
+    val snapshot = snapshotWithState.fold({ case (snapshot, _) => snapshot }, identity)
+    val (blocks, allowSpendBlocks, tokenLockBlocks) = snapshot.signed.value match {
+      case currencySnapshot: CurrencyIncrementalSnapshot =>
+        (
+          currencySnapshot.blocks,
+          currencySnapshot.allowSpendBlocks.getOrElse(SortedSet.empty[Signed[swap.AllowSpendBlock]]),
+          currencySnapshot.tokenLockBlocks.getOrElse(SortedSet.empty[Signed[tokenLock.TokenLockBlock]])
+        )
+      case globalIncrementalSnapshot: GlobalIncrementalSnapshot =>
+        (
+          globalIncrementalSnapshot.blocks,
+          globalIncrementalSnapshot.allowSpendBlocks.getOrElse(SortedSet.empty[Signed[swap.AllowSpendBlock]]),
+          globalIncrementalSnapshot.tokenLockBlocks.getOrElse(SortedSet.empty[Signed[tokenLock.TokenLockBlock]])
+        )
+      case _ =>
+        (snapshot.blocks, SortedSet.empty[Signed[swap.AllowSpendBlock]], SortedSet.empty[Signed[tokenLock.TokenLockBlock]])
+    }
+
+    val acceptedBlocksF = blocks.toList.traverse {
+      case BlockAsActiveTip(block, usageCount) =>
+        block.toHashedWithSignatureCheck.flatMap(_.liftTo[F]).map(b => b.proofsHash -> (b, usageCount))
+    }
       .map(_.toMap)
-      .flatMap { acceptedInMajority =>
+
+    val acceptedAllowSpendBlocksF = allowSpendBlocks.toList.traverse { block =>
+      block.toHashedWithSignatureCheck.flatMap(_.liftTo[F]).map(b => b.hash -> b)
+    }
+      .map(_.toMap)
+
+    val acceptedTokenLockBlocksF = tokenLockBlocks.toList.traverse { block =>
+      block.toHashedWithSignatureCheck.flatMap(_.liftTo[F]).map(b => b.hash -> b)
+    }
+      .map(_.toMap)
+
+    (acceptedBlocksF, acceptedAllowSpendBlocksF, acceptedTokenLockBlocksF).mapN {
+      (acceptedInMajority, acceptedAllowSpendInMajority, acceptedTokenLockInMajority) =>
         snapshotWithState match {
           case Left((snapshot, state)) =>
             val SnapshotTips(snapshotDeprecatedTips, snapshotRemainedActive) = snapshot.tips
@@ -311,6 +348,8 @@ abstract class SnapshotProcessor[
                           val tipsToDeprecate = activeTips -- snapshotRemainedActive.map(_.block.hash)
                           val areTipsAligned = deprecatedTipsToAdd == tipsToDeprecate
                           lazy val txRefsToMarkMajority = extractMajorityTxRefs(acceptedInMajority, state)
+                          lazy val allowSpendsToMarkMajority = extractMajorityAllowSpendsTxRefs(acceptedAllowSpendInMajority, state)
+                          lazy val tokenLocksToMarkMajority = extractMajorityTokenLocksTxRefs(acceptedTokenLockInMajority, state)
                           lazy val postponedToWaiting = relatedPostponed -- toAdd.map(_._1.proofsHash) -- toReset
 
                           if (!areTipsAligned)
@@ -324,6 +363,8 @@ abstract class SnapshotProcessor[
                                 tipsToDeprecate,
                                 tipsToRemove,
                                 txRefsToMarkMajority,
+                                allowSpendsToMarkMajority,
+                                tokenLocksToMarkMajority,
                                 postponedToWaiting
                               )
                             )
@@ -380,6 +421,8 @@ abstract class SnapshotProcessor[
                           val tipsToDeprecate = activeTips -- snapshotRemainedActive.map(_.block.hash)
                           val areTipsAligned = deprecatedTipsToAdd == tipsToDeprecate
                           lazy val txRefsToMarkMajority = extractMajorityTxRefs(acceptedInMajority, state)
+                          lazy val allowSpendsToMarkMajority = extractMajorityAllowSpendsTxRefs(acceptedAllowSpendInMajority, state)
+                          lazy val tokenLocksToMarkMajority = extractMajorityTokenLocksTxRefs(acceptedTokenLockInMajority, state)
                           lazy val postponedToWaiting = relatedPostponed -- obsoleteToRemove -- toAdd.map(_._1.proofsHash) -- toReset
 
                           if (!areTipsAligned)
@@ -394,6 +437,8 @@ abstract class SnapshotProcessor[
                                 tipsToDeprecate,
                                 tipsToRemove,
                                 txRefsToMarkMajority,
+                                allowSpendsToMarkMajority,
+                                tokenLocksToMarkMajority,
                                 postponedToWaiting
                               )
                             )
@@ -432,8 +477,7 @@ abstract class SnapshotProcessor[
 
             }
         }
-
-      }
+    }.flatten
   }
 
   private def extractMajorityTxRefs(
@@ -447,6 +491,56 @@ abstract class SnapshotProcessor[
     state.lastTxRefs.view.filterKeys(address => sourceAddresses.contains(address) || newDestinationAddresses.contains(address)).toMap
   }
 
+  private def extractMajorityAllowSpendsTxRefs(
+    acceptedInMajority: Map[Hash, Hashed[swap.AllowSpendBlock]],
+    state: SI
+  ): Map[Address, AllowSpendReference] = {
+    val transactions = acceptedInMajority.values.flatMap(_.transactions.toSortedSet)
+    val sourceAddresses = transactions.map(_.source).toSet
+    val newDestinationAddresses = transactions.map(_.destination).toSet -- sourceAddresses
+
+    state match {
+      case currencyState: CurrencySnapshotInfo =>
+        currencyState.lastAllowSpendRefs
+          .getOrElse(SortedMap.empty[Address, AllowSpendReference])
+          .view
+          .filterKeys(address => sourceAddresses.contains(address) || newDestinationAddresses.contains(address))
+          .toMap
+      case globalState: GlobalSnapshotInfo =>
+        globalState.lastAllowSpendRefs
+          .getOrElse(SortedMap.empty[Address, AllowSpendReference])
+          .view
+          .filterKeys(address => sourceAddresses.contains(address) || newDestinationAddresses.contains(address))
+          .toMap
+      case _ => Map.empty
+    }
+
+  }
+
+  private def extractMajorityTokenLocksTxRefs(
+    acceptedInMajority: Map[Hash, Hashed[TokenLockBlock]],
+    state: SI
+  ): Map[Address, TokenLockReference] = {
+    val transactions = acceptedInMajority.values.flatMap(_.tokenLocks.toSortedSet)
+    val sourceAddresses = transactions.map(_.source).toSet
+
+    state match {
+      case currencyState: CurrencySnapshotInfo =>
+        currencyState.lastTokenLockRefs
+          .getOrElse(SortedMap.empty[Address, TokenLockReference])
+          .view
+          .filterKeys(address => sourceAddresses.contains(address))
+          .toMap
+      case globalState: GlobalSnapshotInfo =>
+        globalState.lastTokenLockRefs
+          .getOrElse(SortedMap.empty[Address, TokenLockReference])
+          .view
+          .filterKeys(address => sourceAddresses.contains(address))
+          .toMap
+      case _ => Map.empty
+    }
+
+  }
   sealed trait Alignment
 
   case class AlignedAtNewOrdinal(
@@ -456,6 +550,8 @@ abstract class SnapshotProcessor[
     tipsToDeprecate: Set[ProofsHash],
     tipsToRemove: Set[ProofsHash],
     txRefsToMarkMajority: Map[Address, TransactionReference],
+    allowSpendRefsToMarkMajority: Map[Address, AllowSpendReference],
+    tokenLockRefsToMarkMajority: Map[Address, TokenLockReference],
     postponedToWaiting: Set[ProofsHash]
   ) extends Alignment
 
@@ -467,6 +563,8 @@ abstract class SnapshotProcessor[
     tipsToDeprecate: Set[ProofsHash],
     tipsToRemove: Set[ProofsHash],
     txRefsToMarkMajority: Map[Address, TransactionReference],
+    allowSpendRefsToMarkMajority: Map[Address, AllowSpendReference],
+    tokenLockRefsToMarkMajority: Map[Address, TokenLockReference],
     postponedToWaiting: Set[ProofsHash]
   ) extends Alignment
 

@@ -144,6 +144,8 @@ abstract class CurrencyL1App(
         sharedServices.currencySnapshotContextFns,
         jsonBrotliBinarySerializer,
         cfg.transactionLimit,
+        sharedConfig.allowSpends,
+        sharedConfig.tokenLocks,
         Hasher.forKryo[IO],
         storages.allowSpend,
         storages.tokenLock,

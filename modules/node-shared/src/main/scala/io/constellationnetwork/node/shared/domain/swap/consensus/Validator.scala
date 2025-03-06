@@ -67,7 +67,8 @@ object Validator {
           val reason = Seq(
             if (!stateReadyForConsensus) "State not ready for consensus" else "",
             if (!enoughPeers) "Not enough peers" else "",
-            if (!lastGlobalSnapshotPresent) "No global snapshot" else ""
+            if (!lastGlobalSnapshotPresent) "No global snapshot" else "",
+            if (!enoughTxs) "No allow spends" else ""
           ).filter(_.nonEmpty).mkString(", ")
           logger.debug(s"Cannot start swap own consensus: ${reason}")
         }
