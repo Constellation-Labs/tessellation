@@ -4,6 +4,7 @@ import cats.Order._
 import cats.effect.Async
 import cats.syntax.all._
 
+import io.constellationnetwork.ext.cats.data.OrderBasedOrdering
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.ext.derevo.ordering
 import io.constellationnetwork.schema.SnapshotOrdinal
@@ -32,6 +33,10 @@ object globalSnapshotSync {
     session: SessionToken
   ) {
     def ordinal: GlobalSnapshotSyncOrdinal = parentOrdinal.next
+  }
+
+  object GlobalSnapshotSync {
+    implicit object OrderingInstance extends OrderBasedOrdering[GlobalSnapshotSync]
   }
 
   @derive(decoder, encoder, order, ordering, show)

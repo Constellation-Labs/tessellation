@@ -11,6 +11,7 @@ import cats.syntax.eq._
 import cats.syntax.functor._
 
 import io.constellationnetwork.env.AppEnvironment
+import io.constellationnetwork.ext.cats.data.OrderBasedOrdering
 import io.constellationnetwork.ext.derevo.ordering
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
@@ -67,6 +68,8 @@ object peer {
       fromId(publicKey.toId)
 
     val shortShow: Show[PeerId] = Show.show[PeerId](p => s"PeerId(${p.value.value.take(5)})")
+
+    implicit object OrderingInstance extends OrderBasedOrdering[PeerId]
   }
 
   implicit class PeerIdOps(peerId: PeerId) {

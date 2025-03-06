@@ -80,6 +80,8 @@ object swap {
     def emptyCurrency(currencyIdentifier: Hash): AllowSpendReference =
       AllowSpendReference(AllowSpendOrdinal(0L), currencyIdentifier)
 
+    implicit object OrderingInstance extends OrderBasedOrdering[AllowSpendReference]
+
   }
 
   @derive(decoder, encoder, order, show)

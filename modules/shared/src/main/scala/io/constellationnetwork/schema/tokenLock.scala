@@ -69,6 +69,8 @@ object tokenLock {
     def emptyCurrency(currencyIdentifier: Hash): TokenLockReference =
       TokenLockReference(TokenLockOrdinal(0L), currencyIdentifier)
 
+    implicit object OrderingInstance extends OrderBasedOrdering[TokenLockReference]
+
   }
 
   @derive(decoder, encoder, order, show)

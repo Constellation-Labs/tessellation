@@ -266,12 +266,12 @@ object CurrencySnapshotCreator {
             Option.when(currencySnapshotAcceptanceResult.info.lastMessages.nonEmpty)(
               currencySnapshotAcceptanceResult.messages.accepted.toSortedSet
             ),
-            currencySnapshotAcceptanceResult.globalSnapshotSync.accepted.toSortedSet.some,
+            currencySnapshotAcceptanceResult.globalSnapshotSync.accepted.toSortedSet.some.filter(_.nonEmpty),
             currencySnapshotAcceptanceResult.feeTransactions,
             currencySnapshotAcceptanceResult.sharedArtifacts.some,
-            currencySnapshotAcceptanceResult.allowSpendBlock.accepted.toSortedSet.some,
-            currencySnapshotAcceptanceResult.tokenLockBlock.accepted.toSortedSet.some,
-            currencySnapshotAcceptanceResult.globalSyncView.some
+            currencySnapshotAcceptanceResult.allowSpendBlock.accepted.toSortedSet.some.filter(_.nonEmpty),
+            currencySnapshotAcceptanceResult.tokenLockBlock.accepted.toSortedSet.some.filter(_.nonEmpty),
+            currencySnapshotAcceptanceResult.globalSyncView.some.filter(_.ordinal > SnapshotOrdinal.MinValue)
           )
 
           artifactSize: Int <- JsonSerializer[F].serialize(artifact).map(_.length)
