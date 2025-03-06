@@ -64,8 +64,8 @@ object SpendActionValidatorSuite extends MutableIOSuite {
 
       activeAllowSpends = SortedMap(none[Address] -> SortedMap(address -> SortedSet(signedAllowSpend)))
 
-      userSpendTx = SpendTransaction(hashedAllowSpend.hash.some, None, SwapAmount(1L), address)
-      metagraphSpendTx = SpendTransaction(none, None, SwapAmount(2L), address)
+      userSpendTx = SpendTransaction(hashedAllowSpend.hash.some, None, SwapAmount(1L), ammAddress)
+      metagraphSpendTx = SpendTransaction(none, None, SwapAmount(2L), ammAddress)
       spendAction = SpendAction(userSpendTx, metagraphSpendTx)
 
       result <- validator.validate(spendAction, activeAllowSpends).map(_.isValid)
@@ -101,8 +101,8 @@ object SpendActionValidatorSuite extends MutableIOSuite {
 
       activeAllowSpends = SortedMap(currencyId.value.some -> SortedMap(address -> SortedSet(signedAllowSpend)))
 
-      userSpendTx = SpendTransaction(hashedAllowSpend.hash.some, currencyId.some, SwapAmount(1L), address)
-      metagraphSpendTx = SpendTransaction(none, currencyId.some, SwapAmount(2L), address)
+      userSpendTx = SpendTransaction(hashedAllowSpend.hash.some, currencyId.some, SwapAmount(1L), ammAddress)
+      metagraphSpendTx = SpendTransaction(none, currencyId.some, SwapAmount(2L), ammAddress)
       spendAction = SpendAction(userSpendTx, metagraphSpendTx)
 
       result <- validator.validate(spendAction, activeAllowSpends).map(_.isValid)
@@ -253,7 +253,7 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       result <- validator.validate(spendAction, activeAllowSpends)
     } yield
       expect(result.isInvalid).and(expect(result.toEither.left.map(_.head).left.exists {
-        case SpendActionValidator.InvalidDestinationAddress(_) => true
+        case SpendActionValidator.AllowSpendNotFound(_) => true
         case _                                                 => false
       }))
   }

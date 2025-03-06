@@ -14,15 +14,16 @@ import io.constellationnetwork.dag.l1.domain.snapshot.programs.SnapshotProcessor
 import io.constellationnetwork.dag.l1.domain.transaction.{ContextualTransactionValidator, TransactionLimitConfig, TransactionStorage}
 import io.constellationnetwork.dag.l1.infrastructure.address.storage.AddressStorage
 import io.constellationnetwork.json.JsonBrotliBinarySerializer
-import io.constellationnetwork.node.shared.config.types.LastGlobalSnapshotsSyncConfig
-import io.constellationnetwork.node.shared.domain.snapshot.services.GlobalL0Service
+import io.constellationnetwork.node.shared.config.types.{AllowSpendsConfig, LastGlobalSnapshotsSyncConfig, TokenLocksConfig}
 import io.constellationnetwork.node.shared.domain.snapshot.storage._
 import io.constellationnetwork.node.shared.domain.snapshot.{SnapshotContextFunctions, Validator}
-import io.constellationnetwork.node.shared.domain.swap.AllowSpendStorage
-import io.constellationnetwork.node.shared.domain.tokenlock.TokenLockStorage
+import io.constellationnetwork.node.shared.domain.swap.{AllowSpendStorage, ContextualAllowSpendValidator}
+import io.constellationnetwork.node.shared.domain.tokenlock.{ContextualTokenLockValidator, TokenLockStorage}
 import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.LastSnapshotStorage
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.swap.{AllowSpendReference, CurrencyId}
+import io.constellationnetwork.schema.tokenLock.TokenLockReference
 import io.constellationnetwork.schema.transaction.TransactionReference
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.signature.Signed.InvalidSignatureForHash
@@ -53,6 +54,8 @@ object CurrencySnapshotProcessor {
     currencySnapshotContextFns: SnapshotContextFunctions[F, CurrencyIncrementalSnapshot, CurrencySnapshotContext],
     jsonBrotliBinarySerializer: JsonBrotliBinarySerializer[F],
     transactionLimitConfig: TransactionLimitConfig,
+    allowSpendsConfig: AllowSpendsConfig,
+    tokenLocksConfig: TokenLocksConfig,
     txHasher: Hasher[F],
     allowSpendStorage: AllowSpendStorage[F],
     tokenLockStorage: TokenLockStorage[F],
@@ -183,8 +186,15 @@ object CurrencySnapshotProcessor {
       )(implicit hasher: Hasher[F]): F[SnapshotProcessingResult] =
         fetchCurrencySnapshots(globalSnapshot).flatMap {
           case Some(Validated.Valid(hashedSnapshots)) =>
-            prepareIntermediateStorages(addressStorage, blockStorage, lastCurrencySnapshotStorage, transactionStorage).flatMap {
-              case (as, bs, lcss, ts) =>
+            prepareIntermediateStorages(
+              addressStorage,
+              blockStorage,
+              lastCurrencySnapshotStorage,
+              transactionStorage,
+              allowSpendStorage,
+              tokenLockStorage
+            ).flatMap {
+              case (as, bs, lcss, ts, als, tls) =>
                 type Success = NonEmptyList[Alignment]
                 type Agg = (NonEmptyList[Hashed[CurrencyIncrementalSnapshot]], List[Alignment])
                 type Result = Option[Success]
@@ -211,7 +221,7 @@ object CurrencySnapshotProcessor {
                           case _: Ignore =>
                             Applicative[F].pure(none[Success].asRight[Agg])
                           case alignment =>
-                            processAlignment(alignment, bs, ts, lcss, as).as {
+                            processAlignment(alignment, bs, ts, als, tls, lcss, as).as {
                               val updatedAgg = agg :+ alignment
 
                               NonEmptyList.fromList(nextSnapshots) match {
@@ -234,6 +244,8 @@ object CurrencySnapshotProcessor {
                     alignment,
                     blockStorage,
                     transactionStorage,
+                    allowSpendStorage,
+                    tokenLockStorage,
                     lastCurrencySnapshotStorage,
                     addressStorage
                   )
@@ -260,13 +272,17 @@ object CurrencySnapshotProcessor {
         addressStorage: AddressStorage[F],
         blockStorage: BlockStorage[F],
         lastCurrencySnapshotStorage: LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
-        transactionStorage: TransactionStorage[F]
+        transactionStorage: TransactionStorage[F],
+        allowSpendStorage: AllowSpendStorage[F],
+        tokenLockStorage: TokenLockStorage[F]
       )(implicit hasher: Hasher[F]): F[
         (
           AddressStorage[F],
           BlockStorage[F],
           LastSnapshotStorage[F, CurrencyIncrementalSnapshot, CurrencySnapshotInfo],
-          TransactionStorage[F]
+          TransactionStorage[F],
+          AllowSpendStorage[F],
+          TokenLockStorage[F]
         )
       ] = {
         val bs = blockStorage.getState().flatMap(BlockStorage.make[F](_))
@@ -277,6 +293,8 @@ object CurrencySnapshotProcessor {
           AddressStorage.make(balances)
         }
         val cv = ContextualTransactionValidator.make(transactionLimitConfig, None)
+        val capv = ContextualAllowSpendValidator.make(CurrencyId(identifier).some, None, allowSpendsConfig)
+        val ctlv = ContextualTokenLockValidator.make(None, tokenLocksConfig, CurrencyId(identifier).some)
         val ts =
           transactionStorage.getState.flatMap {
             case (lastTxs) =>
@@ -285,7 +303,22 @@ object CurrencySnapshotProcessor {
               }
           }
 
-        (as, bs, lcss, ts).mapN((_, _, _, _))
+        val als =
+          allowSpendStorage.getState.flatMap {
+            case (lastTxs) =>
+              AllowSpendReference.emptyCurrency(identifier).flatMap {
+                AllowSpendStorage.make(lastTxs, _, capv)
+              }
+          }
+
+        val tls =
+          tokenLockStorage.getState.flatMap {
+            case (lastTxs) =>
+              TokenLockReference.emptyCurrency(identifier).flatMap {
+                TokenLockStorage.make(lastTxs, _, ctlv)
+              }
+          }
+        (as, bs, lcss, ts, als, tls).mapN((_, _, _, _, _, _))
       }
 
       // We are extracting all currency snapshots, but we don't assume that all the state channel binaries need to be

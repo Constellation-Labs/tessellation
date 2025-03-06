@@ -65,6 +65,8 @@ object DAGSnapshotProcessor {
                   _,
                   blockStorage,
                   transactionStorage,
+                  allowSpendStorage,
+                  tokenLockStorage,
                   lastGlobalSnapshotStorage,
                   addressStorage
                 )

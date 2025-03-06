@@ -7,7 +7,6 @@ import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
-
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshotV1, CurrencySnapshotInfoV1}
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.merkletree.Proof
@@ -42,9 +41,9 @@ import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 import io.constellationnetwork.syntax.sortedCollection.{sortedMapSyntax, sortedSetSyntax}
-
 import eu.timepit.refined.types.numeric.NonNegLong
 import io.circe.disjunctionCodecs._
+import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait GlobalSnapshotAcceptanceManager[F[_]] {
@@ -93,7 +92,7 @@ object GlobalSnapshotAcceptanceManager {
     spendActionValidator: SpendActionValidator[F],
     collateral: Amount
   ) = new GlobalSnapshotAcceptanceManager[F] {
-
+    def logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F]("GlobalSnapshotAcceptanceManager")
     def accept(
       ordinal: SnapshotOrdinal,
       epochProgress: EpochProgress,
@@ -126,6 +125,12 @@ object GlobalSnapshotAcceptanceManager {
               getGlobalSnapshotByOrdinal
             )
 
+        currencyMetagraphsArtifacts = currencySnapshots.toList.map {
+          case (_, Left(_))             => Map.empty[Address, List[SharedArtifact]]
+          case (address, Right((s, _))) => Map(address -> (s.artifacts.getOrElse(SortedSet.empty[SharedArtifact]).toList))
+        }
+        _ <- logger.info(s"--- currencyMetagraphsArtifacts: ${currencyMetagraphsArtifacts.show}")
+
         spendActions = currencySnapshots.toList.map {
           case (_, Left(_))             => Map.empty[Address, List[SharedArtifact]]
           case (address, Right((s, _))) => Map(address -> (s.artifacts.getOrElse(SortedSet.empty[SharedArtifact]).toList))
@@ -136,9 +141,12 @@ object GlobalSnapshotAcceptanceManager {
           .filter { case (_, actions) => actions.nonEmpty }
           .toMap
 
+        _ <- logger.info(s"--- Accepted spend actions raw: ${spendActions}")
         lastActiveAllowSpends = lastSnapshotContext.activeAllowSpends.getOrElse(
           SortedMap.empty[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
         )
+
+        _ <- logger.info(s"--- lastActiveAllowSpends: ${lastActiveAllowSpends}")
 
         acceptedSpendActions <- spendActions.toList.traverse {
           case (address, actions) =>
@@ -147,12 +155,7 @@ object GlobalSnapshotAcceptanceManager {
             }.map(address -> _.flatten)
         }.map(_.filter { case (_, actions) => actions.nonEmpty }.toMap)
 
-        _ <- Slf4jLogger.getLogger[F].debug(s"--- Accepted spend actions: ${acceptedSpendActions.show}")
-
-        allAcceptedSpendTxnsAllowSpendsRefs = acceptedSpendActions.toList.flatMap {
-          case (_, actions) =>
-            actions.flatMap(action => List(action.input, action.output).flatMap(_.allowSpendRef))
-        }
+        _ <- logger.info(s"--- Accepted spend actions: ${acceptedSpendActions.show}")
 
         sCSnapshotHashes <- scSnapshots.toList.traverse {
           case (address, nel) => nel.last.toHashed.map(address -> _.hash)
