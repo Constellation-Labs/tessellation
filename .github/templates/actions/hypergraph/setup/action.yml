@@ -29,6 +29,15 @@ runs:
         mkdir -p code/hypergraph/dag-l1/validator-2
         echo "empty" > code/hypergraph/dag-l1/validator-2/placeholder.txt
         
+        mkdir -p code/hypergraph/dag-l1/validator-3
+        echo "empty" > code/hypergraph/dag-l1/validator-3/placeholder.txt
+        
+        mkdir -p code/hypergraph/dag-l1/validator-4
+        echo "empty" > code/hypergraph/dag-l1/validator-4/placeholder.txt
+        
+        mkdir -p code/hypergraph/dag-l1/validator-5
+        echo "empty" > code/hypergraph/dag-l1/validator-5/placeholder.txt
+        
         mkdir -p code/shared_jars
 
     - name: Copy genesis to DAG L0

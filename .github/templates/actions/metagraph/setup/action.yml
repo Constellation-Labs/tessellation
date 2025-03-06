@@ -35,6 +35,15 @@ runs:
         mkdir -p code/metagraphs/${{ inputs.METAGRAPH_NAME }}/currency-l1/validator-2
         echo "empty" > code/metagraphs/${{ inputs.METAGRAPH_NAME }}/currency-l1/validator-2/placeholder.txt
         
+        mkdir -p code/metagraphs/${{ inputs.METAGRAPH_NAME }}/currency-l1/validator-3
+        echo "empty" > code/metagraphs/${{ inputs.METAGRAPH_NAME }}/currency-l1/validator-3/placeholder.txt
+        
+        mkdir -p code/metagraphs/${{ inputs.METAGRAPH_NAME }}/currency-l1/validator-4
+        echo "empty" > code/metagraphs/${{ inputs.METAGRAPH_NAME }}/currency-l1/validator-4/placeholder.txt
+        
+        mkdir -p code/metagraphs/${{ inputs.METAGRAPH_NAME }}/currency-l1/validator-5
+        echo "empty" > code/metagraphs/${{ inputs.METAGRAPH_NAME }}/currency-l1/validator-5/placeholder.txt
+        
 
     - name: Create data layer directories if needed
       if: ${{ inputs.INCLUDE_DATA_LAYER == 'true' }}
@@ -50,6 +59,15 @@ runs:
         
         mkdir -p code/metagraphs/${{ inputs.METAGRAPH_NAME }}/data-l1/validator-2
         echo "empty" > code/metagraphs/${{ inputs.METAGRAPH_NAME }}/data-l1/validator-2/placeholder.txt
+        
+        mkdir -p code/metagraphs/${{ inputs.METAGRAPH_NAME }}/data-l1/validator-3
+        echo "empty" > code/metagraphs/${{ inputs.METAGRAPH_NAME }}/data-l1/validator-3/placeholder.txt
+        
+        mkdir -p code/metagraphs/${{ inputs.METAGRAPH_NAME }}/data-l1/validator-4
+        echo "empty" > code/metagraphs/${{ inputs.METAGRAPH_NAME }}/data-l1/validator-4/placeholder.txt
+        
+        mkdir -p code/metagraphs/${{ inputs.METAGRAPH_NAME }}/data-l1/validator-5
+        echo "empty" > code/metagraphs/${{ inputs.METAGRAPH_NAME }}/data-l1/validator-5/placeholder.txt
 
     - name: Copy genesis to metagraph L0 - ${{ inputs.METAGRAPH_NAME }}
       shell: bash

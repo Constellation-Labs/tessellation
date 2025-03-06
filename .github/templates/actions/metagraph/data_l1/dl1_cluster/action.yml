@@ -9,6 +9,8 @@ inputs:
     required: true
   GLOBAL_L0_PEER_HTTP_PORT:
     required: true
+  EXTENDED_L1:
+    required: false
 
 runs:
   using: "composite"
@@ -56,3 +58,45 @@ runs:
         CL_L0_PEER_HTTP_PORT: ${{ inputs.METAGRAPH_L0_PEER_HTTP_PORT }}
         CL_L1_INITIAL_VALIDATOR_P2P_PORT: ${{ inputs.PORT_PREFIX }}01
         NODE_NUMBER: 2
+
+    - name: Run Metagraph L1 - Data Validator - 3
+      uses: "./.github/templates/actions/metagraph/data_l1/validator"
+      if: ${{ inputs.EXTENDED_L1 == 'true' }}
+      with:
+        METAGRAPH_ID: ${{ env.METAGRAPH_ID }}
+        METAGRAPH_NAME: ${{ inputs.METAGRAPH_NAME }}
+        CL_PUBLIC_HTTP_PORT: ${{ inputs.PORT_PREFIX }}30
+        CL_P2P_HTTP_PORT: ${{ inputs.PORT_PREFIX }}31
+        CL_CLI_HTTP_PORT: ${{ inputs.PORT_PREFIX }}32
+        CL_GLOBAL_L0_PEER_HTTP_PORT: ${{ inputs.GLOBAL_L0_PEER_HTTP_PORT }}
+        CL_L0_PEER_HTTP_PORT: ${{ inputs.METAGRAPH_L0_PEER_HTTP_PORT }}
+        CL_L1_INITIAL_VALIDATOR_P2P_PORT: ${{ inputs.PORT_PREFIX }}01
+        NODE_NUMBER: 3
+
+    - name: Run Metagraph L1 - Data Validator - 4
+      uses: "./.github/templates/actions/metagraph/data_l1/validator"
+      if: ${{ inputs.EXTENDED_L1 == 'true' }}
+      with:
+        METAGRAPH_ID: ${{ env.METAGRAPH_ID }}
+        METAGRAPH_NAME: ${{ inputs.METAGRAPH_NAME }}
+        CL_PUBLIC_HTTP_PORT: ${{ inputs.PORT_PREFIX }}40
+        CL_P2P_HTTP_PORT: ${{ inputs.PORT_PREFIX }}41
+        CL_CLI_HTTP_PORT: ${{ inputs.PORT_PREFIX }}42
+        CL_GLOBAL_L0_PEER_HTTP_PORT: ${{ inputs.GLOBAL_L0_PEER_HTTP_PORT }}
+        CL_L0_PEER_HTTP_PORT: ${{ inputs.METAGRAPH_L0_PEER_HTTP_PORT }}
+        CL_L1_INITIAL_VALIDATOR_P2P_PORT: ${{ inputs.PORT_PREFIX }}01
+        NODE_NUMBER: 4
+
+    - name: Run Metagraph L1 - Data Validator - 5
+      uses: "./.github/templates/actions/metagraph/data_l1/validator"
+      if: ${{ inputs.EXTENDED_L1 == 'true' }}
+      with:
+        METAGRAPH_ID: ${{ env.METAGRAPH_ID }}
+        METAGRAPH_NAME: ${{ inputs.METAGRAPH_NAME }}
+        CL_PUBLIC_HTTP_PORT: ${{ inputs.PORT_PREFIX }}50
+        CL_P2P_HTTP_PORT: ${{ inputs.PORT_PREFIX }}51
+        CL_CLI_HTTP_PORT: ${{ inputs.PORT_PREFIX }}52
+        CL_GLOBAL_L0_PEER_HTTP_PORT: ${{ inputs.GLOBAL_L0_PEER_HTTP_PORT }}
+        CL_L0_PEER_HTTP_PORT: ${{ inputs.METAGRAPH_L0_PEER_HTTP_PORT }}
+        CL_L1_INITIAL_VALIDATOR_P2P_PORT: ${{ inputs.PORT_PREFIX }}01
+        NODE_NUMBER: 5

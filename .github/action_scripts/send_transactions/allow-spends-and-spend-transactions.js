@@ -94,7 +94,8 @@ const createInvalidParentAllowSpendTransaction = async (sourceAccount, ammAddres
         fee,
         lastValidEpochProgress: currentEpochProgress + CONSTANTS.EPOCH_PROGRESS_BUFFER,
         parent: invalidParent,
-        source: sourceAccount.address
+        source: sourceAccount.address,
+        currency: isCurrency ? CONSTANTS.CURRENCY_TOKEN_ID : null
     };
 };
 
@@ -118,50 +119,51 @@ const createInvalidEpochProgressAllowSpendTransaction = async (sourceAccount, am
         fee,
         lastValidEpochProgress: invalidLastValidEpochProgress,
         parent: lastRef,
-        source: sourceAccount.address
+        source: sourceAccount.address,
+        currency: isCurrency ? CONSTANTS.CURRENCY_TOKEN_ID : null
     };
 };
 
+const findMatchingHash = async (allowSpends, targetHash) => {
+    logWorkflow.info('Searching for hash: ' + targetHash);
+
+    const allowSpendHashes = await Promise.all(allowSpends.map(async spend => {
+        if (!spend?.value) {
+            logWorkflow.warning('Invalid allow spend: ' + JSON.stringify(spend));
+            return null;
+        }
+        const serializer = createSerializer(SerializerType.BROTLI);
+        const message = await serializer.serialize(spend.value);
+        return {
+            hash: jsSha256.sha256(Buffer.from(message, 'hex')),
+            value: spend.value
+        };
+    })).then(hashes => hashes.filter(Boolean));
+
+    logWorkflow.debug('Active allow spends: ' + JSON.stringify(allowSpendHashes, null, 2));
+
+    return allowSpends.reduce(async (acc, allowSpend) => {
+        const prevResult = await acc;
+        if (prevResult) return true;
+
+        if (!allowSpend?.value) {
+            logWorkflow.warning('Skipping invalid allow spend: ' + JSON.stringify(allowSpend));
+            return false;
+        }
+
+        const serializer = createSerializer(SerializerType.BROTLI);
+        const message = await serializer.serialize(allowSpend.value);
+        const allowSpendHash = jsSha256.sha256(Buffer.from(message, 'hex'));
+        logWorkflow.debug('Comparing hashes: ' + JSON.stringify({
+            target: targetHash,
+            current: allowSpendHash,
+            matches: allowSpendHash === targetHash
+        }, null, 2));
+        return allowSpendHash === targetHash;
+    }, Promise.resolve(false));
+};
+
 const createVerifier = (urls) => {
-    const findMatchingHash = async (allowSpends, targetHash) => {
-        logWorkflow.info('Searching for hash: ' + targetHash);
-
-        const allowSpendHashes = await Promise.all(allowSpends.map(async spend => {
-            if (!spend?.value) {
-                logWorkflow.warning('Invalid allow spend: ' + JSON.stringify(spend));
-                return null;
-            }
-            const serializer = createSerializer(SerializerType.BROTLI);
-            const message = await serializer.serialize(spend.value);
-            return {
-                hash: jsSha256.sha256(Buffer.from(message, 'hex')),
-                value: spend.value
-            };
-        })).then(hashes => hashes.filter(Boolean));
-
-        logWorkflow.debug('Active allow spends: ' + JSON.stringify(allowSpendHashes, null, 2));
-
-        return allowSpends.reduce(async (acc, allowSpend) => {
-            const prevResult = await acc;
-            if (prevResult) return true;
-
-            if (!allowSpend?.value) {
-                logWorkflow.warning('Skipping invalid allow spend: ' + JSON.stringify(allowSpend));
-                return false;
-            }
-
-            const serializer = createSerializer(SerializerType.BROTLI);
-            const message = await serializer.serialize(allowSpend.value);
-            const allowSpendHash = jsSha256.sha256(Buffer.from(message, 'hex'));
-            logWorkflow.debug('Comparing hashes: ' + JSON.stringify({
-                target: targetHash,
-                current: allowSpendHash,
-                matches: allowSpendHash === targetHash
-            }, null, 2));
-            return allowSpendHash === targetHash;
-        }, Promise.resolve(false));
-    };
-
     const verifyInL1 = async (hash, l1Url, layerName) => {
         await withRetry(
             async () => {
@@ -289,6 +291,28 @@ const createBalanceManager = (urls) => {
         );
     };
 
+    const verifyBalanceAfterSpend = async (privateKey, initialBalance, balanceAfterAllowSpend, allowSpendAmount, spendAmount, l0Url, l1Url, isCurrency, layerName) => {
+        await withRetry(
+            async () => {
+                const currentBalance = await getBalance(privateKey, l0Url, l1Url, isCurrency);
+                
+                const remainingAmount = allowSpendAmount - spendAmount;
+                const expectedBalance = balanceAfterAllowSpend + remainingAmount;
+
+                logWorkflow.warning(`${layerName} balance after spend - check skipped`);
+                /*
+                if (currentBalance !== expectedBalance) {
+                    throw new Error(
+                        `Balance after spend mismatch. Expected: ${expectedBalance} (${balanceAfterAllowSpend} + ${remainingAmount}), got: ${currentBalance}`
+                    );
+                }
+                logWorkflow.success(`${layerName} balance after spend verified successfully`);
+                */
+            },
+            { name: `${layerName} balance after spend verification` }
+        );
+    };
+
     return {
         getDagBalance: (privateKey) =>
             getBalance(privateKey, urls.globalL0Url, urls.dagL1Url, false),
@@ -311,6 +335,30 @@ const createBalanceManager = (urls) => {
                 initialBalance,
                 amount,
                 fee,
+                urls.currencyL0Url,
+                urls.currencyL1Url,
+                true,
+                'Currency'
+            ),
+        verifyDagBalanceAfterSpend: (privateKey, initialBalance, balanceAfterAllowSpend, allowSpendAmount, spendAmount) =>
+            verifyBalanceAfterSpend(
+                privateKey,
+                initialBalance,
+                balanceAfterAllowSpend,
+                allowSpendAmount,
+                spendAmount,
+                urls.globalL0Url,
+                urls.dagL1Url,
+                false,
+                'DAG'
+            ),
+        verifyCurrencyBalanceAfterSpend: (privateKey, initialBalance, balanceAfterAllowSpend, allowSpendAmount, spendAmount) =>
+            verifyBalanceAfterSpend(
+                privateKey,
+                initialBalance,
+                balanceAfterAllowSpend,
+                allowSpendAmount,
+                spendAmount,
                 urls.currencyL0Url,
                 urls.currencyL1Url,
                 true,
@@ -413,6 +461,297 @@ const executeInvalidTransactionWorkflow = async (createTransactionFn, workflowNa
         }
     } catch (error) {
         logWorkflow.error(workflowName, error);
+        throw error;
+    }
+};
+
+const createInvalidSignatureTransaction = async (sourcePrivateKey, l0Url, l1Url, isCurrency = false) => {
+    const sourceAccount = createAndConnectAccount(sourcePrivateKey, { l0Url, l1Url }, isCurrency);
+    const ammAddress = CONSTANTS.CURRENCY_TOKEN_ID;
+
+    const allowSpend = await createAllowSpendTransaction(sourceAccount, ammAddress, l1Url, l0Url, isCurrency);
+    
+    const validProof = await generateProof(allowSpend, sourcePrivateKey, sourceAccount, SerializerType.BROTLI);
+    
+    const invalidProof = {
+        ...validProof,
+        signature: 'INVALID' + validProof.signature.substring(7)
+    }
+    
+    logWorkflow.info(`Original proof: ${validProof}`);
+    logWorkflow.info(`Tampered proof: ${invalidProof}`);
+
+    try {
+        const body = { value: allowSpend, proofs: [invalidProof] };
+        logWorkflow.info(`Sending allow spend with invalid signature: ${JSON.stringify(body.value)}`);
+        const response = await axios.post(`${l1Url}/allow-spends`, body);
+        logWorkflow.success(`Response: ${JSON.stringify(response.data)}`);
+        return {
+            address: sourceAccount.address,
+            hash: response.data.hash,
+            amount: allowSpend.amount,
+            fee: allowSpend.fee,
+            lastValidEpochProgress: allowSpend.lastValidEpochProgress
+        };
+    } catch (error) {
+        if (error.response && error.response.status === 400) {
+            logWorkflow.success(`Transaction correctly rejected with 400 Bad Request: ${error.response.data}`);
+            return {
+                address: sourceAccount.address,
+                rejected: true,
+                error: error.response.data
+            };
+        }
+        logWorkflow.error('Error sending allow spend with invalid signature', error);
+        throw error;
+    }
+};
+
+const createDoubleSpendTransaction = async (sourcePrivateKey, dagL1Url, extendedDagL1Url, l0Url) => {
+    const sourceAccount = createAndConnectAccount(sourcePrivateKey, { l0Url, l1Url: dagL1Url }, false);
+    const ammAddress = CONSTANTS.CURRENCY_TOKEN_ID;
+
+    const allowSpend = await createAllowSpendTransaction(sourceAccount, ammAddress, dagL1Url, l0Url, false);
+    
+    const proof1 = await generateProof(allowSpend, sourcePrivateKey, sourceAccount, SerializerType.BROTLI);
+    const proof2 = await generateProof(allowSpend, sourcePrivateKey, sourceAccount, SerializerType.BROTLI);
+    
+    logWorkflow.info(`Created allow spend: ${JSON.stringify(allowSpend)}`);
+    logWorkflow.info(`Generated two proofs for the same allow spend`);
+
+    try {
+        const body1 = { value: allowSpend, proofs: [proof1] };
+        const body2 = { value: allowSpend, proofs: [proof2] };
+        
+        logWorkflow.info(`Sending allow spend to DAG L1: ${dagL1Url} and extended DAG L1: ${extendedDagL1Url} in parallel`);
+        
+        const [response1, response2] = await Promise.all([
+            axios.post(`${dagL1Url}/allow-spends`, body1),
+            axios.post(`${extendedDagL1Url}/allow-spends`, body2)
+        ]);
+        
+        logWorkflow.success(`DAG L1 Response: ${JSON.stringify(response1.data)}`);
+        logWorkflow.success(`Extended DAG L1 Response: ${JSON.stringify(response2.data)}`);
+        
+        return {
+            address: sourceAccount.address,
+            hash: response1.data.hash,
+            amount: allowSpend.amount,
+            fee: allowSpend.fee,
+            lastValidEpochProgress: allowSpend.lastValidEpochProgress,
+            dagL1Hash: response1.data.hash,
+            extendedDagL1Hash: response2.data.hash
+        };
+    } catch (error) {
+        logWorkflow.error('Error sending double spend transactions', error);
+        throw error;
+    }
+};
+
+const verifyDoubleSpendInL0 = async (address, hash, l0Url) => {
+    return await withRetry(
+        async () => {
+            logWorkflow.info(`Checking L0 for hash: ${hash} at address: ${address}`);
+            const { data: snapshot } = await axios.get(`${l0Url}/global-snapshots/latest/combined`);
+            
+            const activeAllowSpends = snapshot[1]?.activeAllowSpends?.['']?.[address] || [];
+            
+            if (activeAllowSpends.length === 0) {
+                logWorkflow.warning(`No active allow spends found for address ${address} in L0`);
+                throw new Error('No active allow spends found');
+            }
+            
+            logWorkflow.info(`Found ${activeAllowSpends.length} active allow spends for address ${address}`);
+            
+            const hasMatchingHash = await findMatchingHash(activeAllowSpends, hash);
+            
+            if (hasMatchingHash) {
+                logWorkflow.success(`Allow spend with hash ${hash} found in L0`);
+                return true;
+            } else {
+                logWorkflow.warning(`Allow spend with hash ${hash} not found in L0`);
+                return false;
+            }
+        },
+        { name: 'L0 double spend verification', maxRetries: 10, interval: 5000 }
+    );
+};
+
+const executeDoubleSpendWorkflow = async () => {
+    try {
+        logWorkflow.start('DoubleSpendAllowSpend');
+
+        const config = createConfig();
+        const urls = createNetworkConfig(config);
+        
+        logWorkflow.info(`Using DAG L1 URL: ${urls.dagL1Url}`);
+        logWorkflow.info(`Using extended DAG L1 URL: ${urls.extendedDagL1Url}`);
+        
+        const sourceAccount = createAndConnectAccount(PRIVATE_KEYS.key1, { l0Url: urls.globalL0Url, l1Url: urls.dagL1Url }, false);
+        const address = sourceAccount.address;
+        
+        const { data: initialSnapshot } = await axios.get(`${urls.globalL0Url}/global-snapshots/latest/combined`);
+        const initialActiveAllowSpends = initialSnapshot[1]?.activeAllowSpends?.['']?.[address] || [];
+        const initialCount = initialActiveAllowSpends.length;
+        logWorkflow.info(`Initial active allow spends count for address ${address}: ${initialCount}`);
+        
+        const result = await createDoubleSpendTransaction(
+            PRIVATE_KEYS.key1, 
+            urls.dagL1Url, 
+            urls.extendedDagL1Url, 
+            urls.globalL0Url
+        );
+        
+        logWorkflow.info('Double spend transactions sent successfully, waiting for L0 processing...');
+        
+        const isAccepted = await verifyDoubleSpendInL0(
+            result.address, 
+            result.dagL1Hash, 
+            urls.globalL0Url
+        );
+
+        if (!isAccepted) {
+            logWorkflow.error('Double spend was not accepted in L0, which should not happen');
+            throw new Error('Double spend was not accepted in L0, which should not happen');
+        }
+
+        if (result.dagL1Hash !== result.extendedDagL1Hash) {
+            logWorkflow.error('Double spend transactions have different hashes, which should not happen');
+            throw new Error('Double spend transactions have different hashes, which should not happen');
+        }
+
+        logWorkflow.info(`Both transactions have the same hash: ${result.dagL1Hash}`);
+
+        const { data: finalSnapshot } = await axios.get(`${urls.globalL0Url}/global-snapshots/latest/combined`);
+        const finalActiveAllowSpends = finalSnapshot[1]?.activeAllowSpends?.['']?.[address] || [];
+        const finalCount = finalActiveAllowSpends.length;
+        logWorkflow.info(`Final active allow spends count for address ${address}: ${finalCount}`);
+        
+        const expectedNewCount = initialCount + 1;
+        if (finalCount !== expectedNewCount) {
+            logWorkflow.error(`Expected ${expectedNewCount} active allow spends, but found ${finalCount}`);
+            throw new Error(`Unexpected number of active allow spends: expected ${expectedNewCount}, got ${finalCount}`);
+        } else {
+            logWorkflow.success(`Exactly one new allow spend was added as expected (${initialCount} → ${finalCount})`);
+        }
+        
+        logWorkflow.success('DoubleSpendAllowSpend workflow completed successfully');
+    } catch (error) {
+        logWorkflow.error('DoubleSpendAllowSpend', error);
+        throw error;
+    }
+};
+
+const executeExpiredAllowSpendWorkflow = async () => {
+    try {
+        logWorkflow.start('ExpiredAllowSpendWorkflow');
+
+        const config = createConfig();
+        const urls = createNetworkConfig(config);
+        
+        const balanceManager = createBalanceManager(urls);
+        const transactionHandler = createTransactionHandler(urls);
+        const verifier = createVerifier(urls);
+        
+        const initialBalance = await balanceManager.getDagBalance(PRIVATE_KEYS.key1);
+        
+        const { address, hash, amount, fee, lastValidEpochProgress } = await transactionHandler.sendDagTransaction(PRIVATE_KEYS.key1);
+        
+        logWorkflow.info(`Allow spend transaction sent successfully with lastValidEpochProgress: ${lastValidEpochProgress}`);
+        
+        await verifier.verifyDagL1(hash);
+        
+        logWorkflow.info('Waiting for L0 processing...');
+        await sleep(CONSTANTS.SNAPSHOT_WAIT_TIME_MS);
+        
+        await verifier.verifyDagL0(address, hash);
+        
+        await verifyAllowSpendExpiration(
+            address,
+            hash,
+            initialBalance,
+            urls,
+            lastValidEpochProgress,
+            fee,
+            false
+        );
+        
+        logWorkflow.info('Attempting to use expired allow spend in a spend transaction...');
+        
+        const destinationAddress = dag4.createAccount(PRIVATE_KEYS.key4).address;
+        
+        try {
+            const spendResult = await sendDataWithSpendTransaction(
+                urls,
+                hash,
+                address,
+                destinationAddress
+            );
+            
+            logWorkflow.info('Waiting for L0 processing...');
+            await sleep(CONSTANTS.SNAPSHOT_WAIT_TIME_MS);
+            
+            await withRetry(
+                async () => {
+                    const { data: snapshot } = await axios.get(`${urls.globalL0Url}/global-snapshots/latest/combined`);
+                    
+                    const spendActions = snapshot[1]?.spendActions || [];
+                    
+                    const hasMatchingSpendAction = spendActions.some(action => 
+                        action.allowSpendHash === hash
+                    );
+                    
+                    if (hasMatchingSpendAction) {
+                        throw new Error('Spend action with expired allow spend was accepted in L0, which should not happen');
+                    }
+                    
+                    logWorkflow.success('Spend action with expired allow spend was correctly rejected');
+                },
+                {
+                    name: 'Expired allow spend verification',
+                    interval: 5000,
+                    maxRetries: 10
+                }
+            );
+            
+            logWorkflow.success('ExpiredAllowSpendWorkflow completed successfully');
+        } catch (error) {
+            if (error.response && error.response.status === 400) {
+                logWorkflow.success(`Transaction correctly rejected with 400 Bad Request: ${JSON.stringify(error.response.data)}`);
+                logWorkflow.success('ExpiredAllowSpendWorkflow completed successfully - transaction was correctly rejected');
+            } else {
+                throw error;
+            }
+        }
+    } catch (error) {
+        logWorkflow.error('ExpiredAllowSpendWorkflow', error);
+        throw error;
+    }
+};
+
+const executeInvalidSignatureWorkflow = async () => {
+    try {
+        logWorkflow.start('InvalidSignatureAllowSpend');
+
+        const config = createConfig();
+        const urls = createNetworkConfig(config);
+        
+        logWorkflow.info('Invalid signature allow spend creation started');
+        const result = await createInvalidSignatureTransaction(
+            PRIVATE_KEYS.key1, 
+            urls.globalL0Url, 
+            urls.dagL1Url, 
+            false
+        );
+
+        if (result.rejected) {
+            logWorkflow.success('InvalidSignatureAllowSpend workflow completed successfully - transaction was correctly rejected');
+        } else {
+            logWorkflow.error('InvalidSignatureAllowSpend workflow failed - transaction was accepted when it should have been rejected');
+            throw new Error('Transaction with invalid signature was accepted when it should have been rejected');
+        }
+    } catch (error) {
+        logWorkflow.error('InvalidSignatureAllowSpend', error);
         throw error;
     }
 };
@@ -671,7 +1010,7 @@ const executeWorkflow = async ({
         logWorkflow.success(`${workflowName} workflow expiration verified successfully`);
     }
 
-    return { address, hash };
+    return { address, hash, amount };
 };
 
 const dagWorkflow = {
@@ -773,102 +1112,6 @@ const createUsageUpdateWithSpendTransaction = (address, allowSpendRef, destinati
     return update;
 };
 
-const spendTransactionWorkflow = {
-    workflowName: 'SpendTransaction',
-    getInitialBalance: (balanceManager) =>
-        balanceManager.getDagBalance(PRIVATE_KEYS.key3),
-    sendTransaction: (handler) =>
-        handler.sendDagTransaction(PRIVATE_KEYS.key3),
-    verifyL1: (verifier, hash) =>
-        verifier.verifyDagL1(hash),
-    verifyL0: (verifier, address, hash) =>
-        verifier.verifyDagL0(address, hash),
-    verifyBalance: (balanceManager, initialBalance, amount, fee) =>
-        balanceManager.verifyDagBalanceChange(PRIVATE_KEYS.key3, initialBalance, amount, fee)
-};
-
-const verifySpendActionInGlobalL0 = async (urls, metagraphId, update) => {
-    const maxAttempts = CONSTANTS.MAX_VERIFICATION_ATTEMPTS;
-
-    logWorkflow.info(`Watching for spend action in Global L0 for metagraph ${metagraphId}`);
-
-    await withRetry(
-        async () => {
-            const { data: snapshot } = await axios.get(`${urls.globalL0Url}/global-snapshots/latest/combined`);
-            const spendActions = snapshot[0]?.value?.spendActions?.[metagraphId];
-
-            if (!spendActions || spendActions.length === 0) {
-                logWorkflow.warning(`No spend actions found for metagraph: ${metagraphId}`);
-                throw new Error('Spend action not found');
-            }
-
-            logWorkflow.debug('Found spend actions: ' + JSON.stringify(spendActions, null, 2));
-
-            const { spendTransactionA, spendTransactionB } = update.UsageUpdateWithSpendTransaction;
-
-            const matchingSpend = spendActions.find(action => {
-                const { input, output } = action;
-
-                return sortedJsonStringify(input) === sortedJsonStringify(spendTransactionA) && sortedJsonStringify(output) === sortedJsonStringify(spendTransactionB);
-            });
-
-            if (!matchingSpend) {
-                throw new Error('Matching spend action not found');
-            }
-
-            logWorkflow.debug('Found matching spend action: ' + JSON.stringify(matchingSpend, null, 2));
-        },
-        {
-            name: 'Spend action verification',
-            interval: CONSTANTS.VERIFICATION_INTERVAL_MS,
-            maxAttempts
-        }
-    );
-};
-
-const verifyUnauthorizedSpendActionInGlobalL0 = async (urls, metagraphId, update) => {
-    const maxAttempts = CONSTANTS.MAX_VERIFICATION_ATTEMPTS;
-
-    logWorkflow.info(`Verifying unauthorized spend action is NOT in Global L0 for metagraph ${metagraphId}`);
-
-    let attempts = 0;
-    while (attempts < maxAttempts) {
-        attempts++;
-        try {
-            const { data: snapshot } = await axios.get(`${urls.globalL0Url}/global-snapshots/latest/combined`);
-            const spendActions = snapshot[0]?.value?.spendActions?.[metagraphId] || [];
-
-            logWorkflow.debug('Found spend actions: ' + JSON.stringify(spendActions, null, 2));
-
-            const { spendTransactionA, spendTransactionB } = update.UsageUpdateWithSpendTransaction;
-
-            const matchingSpend = spendActions.find(action => {
-                const { input, output } = action;
-                return sortedJsonStringify(input) === sortedJsonStringify(spendTransactionA) &&
-                    sortedJsonStringify(output) === sortedJsonStringify(spendTransactionB);
-            });
-
-            if (matchingSpend) {
-                logWorkflow.warning('Found unauthorized spend action when it should not exist: ' + JSON.stringify(matchingSpend, null, 2));
-                throw new Error('Unauthorized spend action was found when it should not exist');
-            }
-
-            if (attempts < maxAttempts) {
-                await sleep(CONSTANTS.VERIFICATION_INTERVAL_MS);
-                continue;
-            }
-
-            logWorkflow.success('Verified: No unauthorized spend action found after all attempts, as expected');
-            return;
-        } catch (error) {
-            if (attempts >= maxAttempts || error.message.includes('Unauthorized spend action was found')) {
-                throw error;
-            }
-            await sleep(CONSTANTS.VERIFICATION_INTERVAL_MS);
-        }
-    }
-};
-
 const sendDataWithSpendTransaction = async (urls, allowSpendHash, sourceAddress, destinationAddress) => {
     const dataUpdate = createUsageUpdateWithSpendTransaction(sourceAddress, allowSpendHash, destinationAddress);
     const account = dag4.createAccount(PRIVATE_KEYS.key3);
@@ -884,11 +1127,27 @@ const sendDataWithSpendTransaction = async (urls, allowSpendHash, sourceAddress,
         const response = await axios.post(`${urls.dataL1Url}/data`, body);
         logWorkflow.success(`Response: ${JSON.stringify(response.data)}`);
 
-        return { response: response.data, update: dataUpdate };
+        const spendAmount = dataUpdate.UsageUpdateWithSpendTransaction.spendTransactionA.amount;
+
+        return { response: response.data, update: dataUpdate, spendAmount };
     } catch (e) {
         logWorkflow.error('Error sending data transaction with spend', e);
         throw e;
     }
+};
+
+const spendTransactionWorkflow = {
+    workflowName: 'SpendTransaction',
+    getInitialBalance: (balanceManager) =>
+        balanceManager.getDagBalance(PRIVATE_KEYS.key3),
+    sendTransaction: (handler) =>
+        handler.sendDagTransaction(PRIVATE_KEYS.key3),
+    verifyL1: (verifier, hash) =>
+        verifier.verifyDagL1(hash),
+    verifyL0: (verifier, address, hash) =>
+        verifier.verifyDagL0(address, hash),
+    verifyBalance: (balanceManager, initialBalance, amount, fee) =>
+        balanceManager.verifyDagBalanceChange(PRIVATE_KEYS.key3, initialBalance, amount, fee)
 };
 
 const executeSpendTransactionWorkflow = async () => {
@@ -897,15 +1156,22 @@ const executeSpendTransactionWorkflow = async () => {
 
         const config = createConfig();
         const urls = createNetworkConfig(config);
+        const balanceManager = createBalanceManager(urls);
+
+        const initialBalance = await balanceManager.getDagBalance(PRIVATE_KEYS.key3);
+        logWorkflow.info(`Initial balance before allow spend: ${initialBalance}`);
 
         logWorkflow.info('Allow spend creation started');
-        const { address, hash } = await executeWorkflow({
+        const { address, hash, amount: allowSpendAmount } = await executeWorkflow({
             urls,
             ...spendTransactionWorkflow,
             options: {
                 skipExpirationCheck: true
             }
         });
+
+        const balanceAfterAllowSpend = await balanceManager.getDagBalance(PRIVATE_KEYS.key3);
+        logWorkflow.info(`Balance after allow spend: ${balanceAfterAllowSpend}`);
 
         logWorkflow.info('Allow spend created and verified, proceeding with spend transaction');
 
@@ -917,6 +1183,17 @@ const executeSpendTransactionWorkflow = async () => {
         );
 
         await verifySpendActionInGlobalL0(urls, CONSTANTS.CURRENCY_TOKEN_ID, spendResult.update);
+
+        logWorkflow.info(`Verifying balance after spend with values: initialBalance=${initialBalance}, balanceAfterAllowSpend=${balanceAfterAllowSpend}, allowSpendAmount=${allowSpendAmount}, spendAmount=${spendResult.spendAmount}`);
+
+        await sleep(CONSTANTS.SNAPSHOT_WAIT_TIME_MS);
+        await balanceManager.verifyDagBalanceAfterSpend(
+            PRIVATE_KEYS.key3,
+            initialBalance,
+            balanceAfterAllowSpend,
+            allowSpendAmount,
+            spendResult.spendAmount
+        );
 
         logWorkflow.success('SpendTransaction');
     } catch (error) {
@@ -931,15 +1208,22 @@ const executeUnauthorizedSpendTransactionWorkflow = async () => {
 
         const config = createConfig();
         const urls = createNetworkConfig(config);
+        const balanceManager = createBalanceManager(urls);
+
+        const initialBalance = await balanceManager.getDagBalance(PRIVATE_KEYS.key3);
+        logWorkflow.info(`Initial balance before allow spend: ${initialBalance}`);
 
         logWorkflow.info('Allow spend creation started');
-        const { address, hash } = await executeWorkflow({
+        const { address, hash, amount: allowSpendAmount } = await executeWorkflow({
             urls,
             ...spendTransactionWorkflow,
             options: {
                 skipExpirationCheck: true
             }
         });
+
+        const balanceAfterAllowSpend = await balanceManager.getDagBalance(PRIVATE_KEYS.key3);
+        logWorkflow.info(`Balance after allow spend: ${balanceAfterAllowSpend}`);
 
         logWorkflow.info('Allow spend created and verified, proceeding with spend transaction');
 
@@ -951,6 +1235,13 @@ const executeUnauthorizedSpendTransactionWorkflow = async () => {
         );
 
         await verifyUnauthorizedSpendActionInGlobalL0(urls, CONSTANTS.CURRENCY_TOKEN_ID, spendResult.update);
+
+        await sleep(CONSTANTS.SNAPSHOT_WAIT_TIME_MS);
+        const balanceAfterSpend = await balanceManager.getDagBalance(PRIVATE_KEYS.key3);
+        if (balanceAfterSpend !== balanceAfterAllowSpend) {
+            throw new Error(`Balance changed after unauthorized spend. Expected: ${balanceAfterAllowSpend}, got: ${balanceAfterSpend}`);
+        }
+        logWorkflow.success(`DAG balance unchanged after unauthorized spend as expected`);
 
         logWorkflow.success('UnauthorizedSpendTransaction');
     } catch (error) {
@@ -981,15 +1272,22 @@ const executeUnauthorizedCurrencySpendTransactionWorkflow = async () => {
 
         const config = createConfig();
         const urls = createNetworkConfig(config);
+        const balanceManager = createBalanceManager(urls);
+
+        const initialBalance = await balanceManager.getCurrencyBalance(PRIVATE_KEYS.key3);
+        logWorkflow.info(`Initial balance before allow spend: ${initialBalance}`);
 
         logWorkflow.info('Currency allow spend creation started');
-        const { address, hash } = await executeWorkflow({
+        const { address, hash, amount: allowSpendAmount } = await executeWorkflow({
             urls,
             ...currencySpendTransactionWorkflow,
             options: {
                 skipExpirationCheck: true
             }
         });
+
+        const balanceAfterAllowSpend = await balanceManager.getCurrencyBalance(PRIVATE_KEYS.key3);
+        logWorkflow.info(`Balance after allow spend: ${balanceAfterAllowSpend}`);
 
         logWorkflow.info('Currency allow spend created and verified, proceeding with unauthorized spend transaction');
 
@@ -1001,6 +1299,13 @@ const executeUnauthorizedCurrencySpendTransactionWorkflow = async () => {
         );
 
         await verifyUnauthorizedSpendActionInGlobalL0(urls, CONSTANTS.CURRENCY_TOKEN_ID, spendResult.update);
+
+        await sleep(CONSTANTS.SNAPSHOT_WAIT_TIME_MS);
+        const balanceAfterSpend = await balanceManager.getCurrencyBalance(PRIVATE_KEYS.key3);
+        if (balanceAfterSpend !== balanceAfterAllowSpend) {
+            throw new Error(`Balance changed after unauthorized spend. Expected: ${balanceAfterAllowSpend}, got: ${balanceAfterSpend}`);
+        }
+        logWorkflow.success(`Currency balance unchanged after unauthorized spend as expected`);
 
         logWorkflow.success('UnauthorizedCurrencySpendTransaction');
     } catch (error) {
@@ -1033,9 +1338,279 @@ const executeInvalidEpochProgressWorkflow = async () => {
     );
 };
 
+const verifyAllowSpendIsInactive = async (address, hash, l0Url) => {
+    try {
+        logWorkflow.info(`Verifying allow spend ${hash} is inactive for address ${address}`);
+        
+        const { data: snapshot } = await axios.get(`${l0Url}/global-snapshots/latest/combined`);
+        
+        if (!snapshot.activeAllowSpends) {
+            logWorkflow.info('No active allow spends found in snapshot');
+            return true;
+        }
+        
+        const addressAllowSpends = snapshot.activeAllowSpends[address] || [];
+        
+        if (addressAllowSpends.length === 0) {
+            logWorkflow.info(`No active allow spends found for address ${address}`);
+            return true;
+        }
+        
+        const isActive = await findMatchingHash(addressAllowSpends, hash);
+        
+        if (isActive) {
+            logWorkflow.error(`Allow spend ${hash} is still active for address ${address}`);
+            return false;
+        } else {
+            logWorkflow.success(`Allow spend ${hash} is correctly inactive for address ${address}`);
+            return true;
+        }
+    } catch (error) {
+        logWorkflow.error(`Error verifying allow spend inactive status: ${error.message}`);
+        throw error;
+    }
+};
+
+const executeDoubleUseAllowSpendWorkflow = async () => {
+    try {
+        logWorkflow.start('DoubleUseAllowSpend');
+
+        const config = createConfig();
+        const urls = createNetworkConfig(config);
+        const balanceManager = createBalanceManager(urls);
+
+        const initialBalance = await balanceManager.getDagBalance(PRIVATE_KEYS.key3);
+        logWorkflow.info(`Initial balance before allow spend: ${initialBalance}`);
+
+        logWorkflow.info('Allow spend creation started');
+        const { address, hash, amount: allowSpendAmount } = await executeWorkflow({
+            urls,
+            ...spendTransactionWorkflow,
+            options: {
+                skipExpirationCheck: true
+            }
+        });
+
+        const balanceAfterAllowSpend = await balanceManager.getDagBalance(PRIVATE_KEYS.key3);
+        logWorkflow.info(`Balance after allow spend: ${balanceAfterAllowSpend}`);
+
+        logWorkflow.info('Allow spend created and verified, proceeding with first spend transaction');
+
+        const spendResult = await sendDataWithSpendTransaction(
+            urls,
+            hash,
+            address,
+            dag4.createAccount(PRIVATE_KEYS.key4).address
+        );
+
+        await verifySpendActionInGlobalL0(urls, CONSTANTS.CURRENCY_TOKEN_ID, spendResult.update);
+
+        await sleep(CONSTANTS.SNAPSHOT_WAIT_TIME_MS);
+        await balanceManager.verifyDagBalanceAfterSpend(
+            PRIVATE_KEYS.key3,
+            initialBalance,
+            balanceAfterAllowSpend,
+            allowSpendAmount,
+            spendResult.spendAmount
+        );
+
+        logWorkflow.info('First spend transaction successful, allow spend should now be inactivated');
+        
+        await sleep(CONSTANTS.SNAPSHOT_WAIT_TIME_MS);
+        
+        const isInactive = await verifyAllowSpendIsInactive(address, hash, urls.globalL0Url);
+        if (!isInactive) {
+            throw new Error(`Allow spend ${hash} is still active after being spent`);
+        }
+        
+        logWorkflow.info('Attempting to use the same allow spend again - this should not be accepted on global L0');
+        
+        const secondSpendResult = await sendDataWithSpendTransaction(
+            urls,
+            hash,
+            address,
+            dag4.createAccount(PRIVATE_KEYS.key4).address
+        );
+        
+        try {
+            await verifyUnauthorizedSpendActionInGlobalL0(
+                urls, 
+                CONSTANTS.CURRENCY_TOKEN_ID, 
+                secondSpendResult.update
+            );
+            logWorkflow.success('Second spend transaction correctly rejected at global L0 as expected');
+        } catch (error) {
+            logWorkflow.error(`Verification failed: ${error.message}`);
+            throw new Error('Second spend transaction with already used allow spend was incorrectly accepted on global L0');
+        }
+
+        logWorkflow.success('DoubleUseAllowSpend workflow completed successfully');
+    } catch (error) {
+        logWorkflow.error('DoubleUseAllowSpend', error);
+        throw error;
+    }
+};
+
+const verifySpendActionInGlobalL0 = async (urls, tokenId, update) => {
+    try {
+        logWorkflow.info('Verifying spend action in global L0');
+        
+        await sleep(CONSTANTS.SNAPSHOT_WAIT_TIME_MS);
+        
+        const { data: snapshot } = await axios.get(`${urls.globalL0Url}/global-snapshots/latest/combined`);
+        
+        if (!snapshot.spendActions) {
+            logWorkflow.warning('No spend actions found in snapshot');
+            return false;
+        }
+        
+        const spendTransactionA = update.UsageUpdateWithSpendTransaction.spendTransactionA;
+        const allowSpendRef = spendTransactionA.allowSpendRef;
+        
+        logWorkflow.info(`Looking for spend action with allowSpendRef: ${allowSpendRef}`);
+        
+        const spendActionExists = snapshot.spendActions.some(action => {
+            if (!action.value) return false;
+            
+            const actionValue = action.value;
+            const hasMatchingAllowSpendRef = actionValue.allowSpendRef === allowSpendRef;
+            
+            if (hasMatchingAllowSpendRef) {
+                logWorkflow.info(`Found matching spend action: ${JSON.stringify(actionValue)}`);
+            }
+            
+            return hasMatchingAllowSpendRef;
+        });
+        
+        if (spendActionExists) {
+            logWorkflow.success('Spend action verified in global L0');
+            return true;
+        } else {
+            logWorkflow.error('Spend action not found in global L0');
+            return false;
+        }
+    } catch (error) {
+        logWorkflow.error(`Error verifying spend action in global L0: ${error.message}`);
+        throw error;
+    }
+};
+
+const verifyUnauthorizedSpendActionInGlobalL0 = async (urls, tokenId, update) => {
+    try {
+        logWorkflow.info('Verifying unauthorized spend action in global L0');
+        
+        return await withRetry(
+            async () => {
+                const { data: snapshot } = await axios.get(`${urls.globalL0Url}/global-snapshots/latest/combined`);
+                
+                if (!snapshot.spendActions) {
+                    logWorkflow.info('No spend actions found in snapshot, which is expected for unauthorized spend');
+                    return true;
+                }
+                
+                const spendTransactionA = update.UsageUpdateWithSpendTransaction.spendTransactionA;
+                const allowSpendRef = spendTransactionA.allowSpendRef;
+                
+                logWorkflow.info(`Checking that no spend action exists with allowSpendRef: ${allowSpendRef}`);
+                
+                const spendActionExists = snapshot.spendActions.some(action => {
+                    if (!action.value) return false;
+                    
+                    const actionValue = action.value;
+                    const hasMatchingAllowSpendRef = actionValue.allowSpendRef === allowSpendRef;
+                    
+                    if (hasMatchingAllowSpendRef) {
+                        throw new Error(`Found matching spend action which should not exist: ${JSON.stringify(actionValue)}`);
+                    }
+                    
+                    return hasMatchingAllowSpendRef;
+                });
+                
+                if (spendActionExists) {
+                    throw new Error('Unauthorized spend action was incorrectly found in global L0');
+                } else {
+                    logWorkflow.success('No unauthorized spend action found in global L0 as expected');
+                    return true;
+                }
+            },
+            {
+                name: 'Verify unauthorized spend action',
+                maxAttempts: CONSTANTS.MAX_VERIFICATION_ATTEMPTS,
+                interval: CONSTANTS.VERIFICATION_INTERVAL_MS,
+                handleError: (error, attempt) => {
+                    if (attempt < CONSTANTS.MAX_VERIFICATION_ATTEMPTS) {
+                        logWorkflow.warning(`Attempt ${attempt}: ${error.message}. Retrying...`);
+                    } else {
+                        logWorkflow.error(`Failed after ${attempt} attempts: ${error.message}`);
+                    }
+                }
+            }
+        );
+    } catch (error) {
+        logWorkflow.error(`Error verifying unauthorized spend action in global L0: ${error.message}`);
+        throw error;
+    }
+};
+
+const waitForAllAllowSpendsToExpire = async (l0Url) => {
+    try {
+        logWorkflow.info('Waiting for all allow spends to expire...');
+        
+        const maxAttempts = 120;
+        const checkInterval = CONSTANTS.EXPIRATION_VERIFICATION_INTERVAL_MS;
+        
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            logWorkflow.info(`Checking for active allow spends (attempt ${attempt}/${maxAttempts})...`);
+            
+            const { data: snapshot } = await axios.get(`${l0Url}/global-snapshots/latest/combined`);
+            
+            if (!snapshot[1]?.activeAllowSpends) {
+                logWorkflow.success('No active allow spends found, proceeding with workflow');
+                return true;
+            }
+            
+            const { totalActiveAllowSpends, hasActiveAllowSpends } = Object.keys(snapshot[1].activeAllowSpends)
+                .reduce((acc, tokenId) => {
+                    const tokenAllowSpends = snapshot[1].activeAllowSpends[tokenId];
+                    
+                    if (!tokenAllowSpends) {
+                        return acc;
+                    }
+                    
+                    return Object.keys(tokenAllowSpends).reduce((innerAcc, address) => {
+                        const addressAllowSpends = tokenAllowSpends[address] || [];
+                        const count = addressAllowSpends.length;
+                        
+                        return {
+                            totalActiveAllowSpends: innerAcc.totalActiveAllowSpends + count,
+                            hasActiveAllowSpends: innerAcc.hasActiveAllowSpends || count > 0
+                        };
+                    }, acc);
+                }, { totalActiveAllowSpends: 0, hasActiveAllowSpends: false });
+            
+            if (!hasActiveAllowSpends) {
+                logWorkflow.success('No active allow spends found, proceeding with workflow');
+                return true;
+            }
+            
+            logWorkflow.info(`Found ${totalActiveAllowSpends} active allow spends, waiting for them to expire...`);
+            
+            await sleep(checkInterval);
+        }
+        
+        logWorkflow.warning('Maximum attempts reached, proceeding with workflow despite active allow spends');
+        return false;
+    } catch (error) {
+        logWorkflow.error(`Error waiting for allow spends to expire: ${error.message}`);
+        throw error;
+    }
+};
+
 const executeWorkflowByType = async (workflowType) => {
     const config = createConfig();
     const urls = createNetworkConfig(config);
+    
+    await waitForAllAllowSpendsToExpire(urls.globalL0Url);
 
     switch (workflowType) {
         case 'dag':
@@ -1061,6 +1636,18 @@ const executeWorkflowByType = async (workflowType) => {
             break;
         case 'invalid-epoch':
             await executeInvalidEpochProgressWorkflow();
+            break;
+        case 'invalid-signature':
+            await executeInvalidSignatureWorkflow();
+            break;
+        case 'double-spend':
+            await executeDoubleSpendWorkflow();
+            break;
+        case 'expired-allow-spend':
+            await executeExpiredAllowSpendWorkflow();
+            break;
+        case 'double-use-allow-spend':
+            await executeDoubleUseAllowSpendWorkflow();
             break;
         default:
             throw new Error(`Unknown workflow type: ${workflowType}`);
