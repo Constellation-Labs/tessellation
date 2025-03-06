@@ -53,6 +53,7 @@ jobs:
         uses: "./.github/templates/actions/hypergraph/start"
         with:
           INCLUDE_DAG_L1: true
+          EXTENDED_DAG_L1: true
           DAG_L0_PORT_PREFIX: 90
           DAG_L1_PORT_PREFIX: 91
 
@@ -60,6 +61,7 @@ jobs:
         uses: "./.github/templates/actions/metagraph/start"
         with:
           INCLUDE_DATA_L1: true
+          EXTENDED_DATA_L1: true
           METAGRAPH_NAME: project-template-metagraph
           DL0_PORT_PREFIX: 90
           ML0_PORT_PREFIX: 80
@@ -69,7 +71,7 @@ jobs:
       - name: Check DAG cluster
         run: |
           cd .github/action_scripts/check_clusters
-          node dag.js 90 91 80 81 82
+          node dag.js 90 91 80 81 82 true
 
       - name: Check Metagraph currency cluster
         run: |
@@ -79,7 +81,7 @@ jobs:
       - name: Check Metagraph data cluster
         run: |
           cd .github/action_scripts/check_clusters
-          node metagraph-data.js 90 91 80 81 82
+          node metagraph-data.js 90 91 80 81 82 true
 
       - name: Test DAG Allow Spend Workflow
         run: |
@@ -126,6 +128,26 @@ jobs:
           cd .github/action_scripts
           node send_transactions/allow-spends-and-spend-transactions.js 90 91 80 81 82 invalid-epoch
 
+      - name: Test Invalid Signature Allow Spend Workflow
+        run: |
+          cd .github/action_scripts
+          node send_transactions/allow-spends-and-spend-transactions.js 90 91 80 81 82 invalid-signature
+
+      - name: Test Double Spend Allow Spend Workflow
+        run: |
+          cd .github/action_scripts
+          node send_transactions/allow-spends-and-spend-transactions.js 90 91 80 81 82 double-spend
+
+      - name: Test Expired Allow Spend Workflow
+        run: |
+          cd .github/action_scripts
+          node send_transactions/allow-spends-and-spend-transactions.js 90 91 80 81 82 expired-allow-spend
+
+      - name: Test Double Use Allow Spend Workflow
+        run: |
+          cd .github/action_scripts
+          node send_transactions/allow-spends-and-spend-transactions.js 90 91 80 81 82 double-use-allow-spend
+      
       - name: Save Global L0 Genesis logs
         uses: actions/upload-artifact@v4
         if: always()

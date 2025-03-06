@@ -3,6 +3,8 @@ name: Start hypergraph
 inputs:
   INCLUDE_DAG_L1:
     required: true
+  EXTENDED_DAG_L1:
+    required: false
   DAG_L0_PORT_PREFIX:
     required: true
   DAG_L1_PORT_PREFIX:
@@ -31,3 +33,4 @@ runs:
       with:
         PORT_PREFIX: ${{ inputs.DAG_L1_PORT_PREFIX }}
         GLOBAL_L0_PEER_HTTP_PORT: ${{ inputs.DAG_L0_PORT_PREFIX }}00
+        EXTENDED_L1: ${{ inputs.EXTENDED_DAG_L1 }}

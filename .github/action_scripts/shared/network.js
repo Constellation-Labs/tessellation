@@ -10,7 +10,9 @@ const createNetworkConfig = (args) => {
         dagL1Url: `http://localhost:${dagL1PortPrefix}00`,
         currencyL0Url: `http://localhost:${metagraphL0PortPrefix}00`,
         currencyL1Url: `http://localhost:${currencyL1PortPrefix}00`,
-        dataL1Url: `http://localhost:${dataL1PortPrefix}00`
+        dataL1Url: `http://localhost:${dataL1PortPrefix}00`,
+        extendedDagL1Url: `http://localhost:${dagL1PortPrefix}50`,
+        extendedDataL1Url: `http://localhost:${dataL1PortPrefix}50`
     };
 };
 

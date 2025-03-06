@@ -16,8 +16,7 @@ const withRetry = async (operation, {
 } = {}) => {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
-            await operation();
-            return;
+            return await operation();
         } catch (error) {
             handleError(error, attempt);
 

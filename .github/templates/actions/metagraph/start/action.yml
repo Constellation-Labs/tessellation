@@ -5,6 +5,8 @@ inputs:
     required: true
   INCLUDE_DATA_L1:
     required: true
+  EXTENDED_DATA_L1:
+    required: false
   DL0_PORT_PREFIX:
     required: true
   ML0_PORT_PREFIX:
@@ -48,4 +50,5 @@ runs:
         PORT_PREFIX: ${{ inputs.DL1_PORT_PREFIX }}
         GLOBAL_L0_PEER_HTTP_PORT: ${{ inputs.DL0_PORT_PREFIX }}00
         METAGRAPH_L0_PEER_HTTP_PORT: ${{ inputs.ML0_PORT_PREFIX }}00
+        EXTENDED_L1: ${{ inputs.EXTENDED_DATA_L1 }}
       uses: "./.github/templates/actions/metagraph/data_l1/dl1_cluster"
