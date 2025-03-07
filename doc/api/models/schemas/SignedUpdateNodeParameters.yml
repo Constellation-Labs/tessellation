@@ -1,0 +1,12 @@
+type: object
+description: Signed node parameters update
+properties:
+  value:
+    $ref: 'UpdateNodeParameters.yml'
+  proofs:
+    type: array
+    items:
+      $ref: 'SignatureProof.yml'
+required:
+  - value
+  - proofs

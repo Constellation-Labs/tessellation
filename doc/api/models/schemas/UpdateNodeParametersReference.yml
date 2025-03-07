@@ -1,0 +1,12 @@
+type: object
+description: Reference to a previous node parameters update
+properties:
+  ordinal:
+    type: integer
+    format: int64
+    example: 15
+  hash:
+    $ref: './Hash.yml'
+required:
+  - ordinal
+  - hash

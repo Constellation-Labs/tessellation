@@ -12,6 +12,7 @@ tags:
   - name: DAG
   - name: State channel
   - name: Metric
+  - name: Node parameters
 
 paths:
   /cluster/info:
@@ -338,3 +339,89 @@ paths:
             text/html:
               schema:
                 type: string
+
+  /node-params:
+    post:
+      tags:
+        - Node parameters
+      description: Submit node parameter metadata and delegated staking configuration
+      requestBody:
+        description: Signed node parameters
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '../../models/schemas/SignedUpdateNodeParameters.yml'
+      responses:
+        200:
+          description: Node parameters accepted
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        400:
+          description: Invalid node parameters
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        503:
+          description: Service unavailable, latest snapshot not found
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+
+  /node-params/{nodeId}:
+    get:
+      tags:
+        - Node parameters
+      description: Get node parameters for a specific node
+      parameters:
+        - name: nodeId
+          in: path
+          description: Peer ID of the node
+          required: true
+          schema:
+            $ref: '../../models/schemas/PeerId.yml'
+      responses:
+        200:
+          description: Node parameters for the specified node
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+          content:
+            application/json:
+              schema:
+                $ref: '../../models/schemas/UpdateNodeParameters.yml'
+        404:
+          description: Node parameters not found for the specified node
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        503:
+          description: Node is not Ready yet
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
