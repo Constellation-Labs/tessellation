@@ -2,11 +2,13 @@ package io.constellationnetwork.node.shared.infrastructure.snapshot
 
 import cats.MonadThrow
 import cats.data.NonEmptyList
+import cats.data.Validated.{Invalid, Valid}
 import cats.effect.Async
 import cats.syntax.all._
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 import scala.util.control.NoStackTrace
+
 import io.constellationnetwork.currency.schema.currency.{CurrencyIncrementalSnapshotV1, CurrencySnapshotInfoV1}
 import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.merkletree.Proof
@@ -16,6 +18,7 @@ import io.constellationnetwork.node.shared.domain.node.UpdateNodeParametersAccep
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult
 import io.constellationnetwork.node.shared.domain.statechannel.StateChannelAcceptanceResult.CurrencySnapshotWithState
 import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator
+import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator.SpendActionValidationError
 import io.constellationnetwork.node.shared.domain.swap.block.{
   AllowSpendBlockAcceptanceContext,
   AllowSpendBlockAcceptanceManager,
@@ -41,6 +44,7 @@ import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 import io.constellationnetwork.syntax.sortedCollection.{sortedMapSyntax, sortedSetSyntax}
+
 import eu.timepit.refined.types.numeric.NonNegLong
 import io.circe.disjunctionCodecs._
 import org.typelevel.log4cats.SelfAwareStructuredLogger
@@ -92,7 +96,7 @@ object GlobalSnapshotAcceptanceManager {
     spendActionValidator: SpendActionValidator[F],
     collateral: Amount
   ) = new GlobalSnapshotAcceptanceManager[F] {
-    def logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F]("GlobalSnapshotAcceptanceManager")
+
     def accept(
       ordinal: SnapshotOrdinal,
       epochProgress: EpochProgress,
@@ -125,12 +129,6 @@ object GlobalSnapshotAcceptanceManager {
               getGlobalSnapshotByOrdinal
             )
 
-        currencyMetagraphsArtifacts = currencySnapshots.toList.map {
-          case (_, Left(_))             => Map.empty[Address, List[SharedArtifact]]
-          case (address, Right((s, _))) => Map(address -> (s.artifacts.getOrElse(SortedSet.empty[SharedArtifact]).toList))
-        }
-        _ <- logger.info(s"--- currencyMetagraphsArtifacts: ${currencyMetagraphsArtifacts.show}")
-
         spendActions = currencySnapshots.toList.map {
           case (_, Left(_))             => Map.empty[Address, List[SharedArtifact]]
           case (address, Right((s, _))) => Map(address -> (s.artifacts.getOrElse(SortedSet.empty[SharedArtifact]).toList))
@@ -141,21 +139,36 @@ object GlobalSnapshotAcceptanceManager {
           .filter { case (_, actions) => actions.nonEmpty }
           .toMap
 
-        _ <- logger.info(s"--- Accepted spend actions raw: ${spendActions}")
         lastActiveAllowSpends = lastSnapshotContext.activeAllowSpends.getOrElse(
           SortedMap.empty[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
         )
 
-        _ <- logger.info(s"--- lastActiveAllowSpends: ${lastActiveAllowSpends}")
-
-        acceptedSpendActions <- spendActions.toList.traverse {
+        spendTransactionsValidations <- spendActions.toList.traverse {
           case (address, actions) =>
             actions.traverse { action =>
-              spendActionValidator.validate(action, lastActiveAllowSpends).map(_.toOption)
-            }.map(address -> _.flatten)
-        }.map(_.filter { case (_, actions) => actions.nonEmpty }.toMap)
+              spendActionValidator.validate(action, lastActiveAllowSpends).map {
+                case Valid(validAction) => Right(validAction)
+                case Invalid(errors)    => Left((action, errors.toNonEmptyList.toList))
+              }
+            }.map(address -> _.partitionMap(identity))
+        }
 
-        _ <- logger.info(s"--- Accepted spend actions: ${acceptedSpendActions.show}")
+        acceptedSpendActions = spendTransactionsValidations.map {
+          case (address, (_, accepted)) => address -> accepted
+        }.filter {
+          case (_, spendAction) => spendAction.nonEmpty
+        }.toMap
+
+        rejectedSpendActions = spendTransactionsValidations.flatMap {
+          case (address, (rejected, _)) =>
+            rejected.map {
+              case (action: SpendAction, errors: List[SpendActionValidationError]) =>
+                address -> (action, errors)
+            }
+        }
+
+        _ <- Slf4jLogger.getLogger[F].debug(s"--- Accepted spend actions: ${acceptedSpendActions.show}")
+        _ <- Slf4jLogger.getLogger[F].debug(s"--- Rejected spend actions: ${rejectedSpendActions.show}")
 
         sCSnapshotHashes <- scSnapshots.toList.traverse {
           case (address, nel) => nel.last.toHashed.map(address -> _.hash)

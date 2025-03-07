@@ -4,18 +4,19 @@ import cats.Applicative
 import cats.data.ValidatedNec
 import cats.effect.kernel.Async
 import cats.syntax.all._
-import derevo.cats.{eqv, show}
-import derevo.derive
-import io.constellationnetwork.node.shared.domain.swap.SpendActionValidator.SpendActionValidationErrorOr
+
+import scala.collection.immutable.{SortedMap, SortedSet}
+
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.{SpendAction, SpendTransaction}
 import io.constellationnetwork.schema.swap.AllowSpend
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.Signed
-import org.typelevel.log4cats.SelfAwareStructuredLogger
-import org.typelevel.log4cats.slf4j.Slf4jLogger
 
-import scala.collection.immutable.{SortedMap, SortedSet}
+import derevo.cats.{eqv, show}
+import derevo.derive
+
+import SpendActionValidator.SpendActionValidationErrorOr
 
 trait SpendActionValidator[F[_]] {
   def validate(
@@ -26,16 +27,13 @@ trait SpendActionValidator[F[_]] {
 
 object SpendActionValidator {
   def make[F[_]: Async: Hasher]: SpendActionValidator[F] = new SpendActionValidator[F] {
-    def logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLoggerFromName[F]("SpendActionValidator")
     def validate(
       spendAction: SpendAction,
       activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
     ): F[SpendActionValidationErrorOr[SpendAction]] =
       for {
         input <- validateSpendTx(spendAction.input, activeAllowSpends)
-        _ <- logger.info(s"INPUT: ${spendAction.input} validation: ${input}")
         output <- validateSpendTx(spendAction.output, activeAllowSpends)
-        _ <- logger.info(s"OUTPUT: ${spendAction.output} validation: ${output}")
       } yield (input *> output).as(spendAction)
 
     def validateSpendTx(
@@ -64,6 +62,11 @@ object SpendActionValidator {
             .map(_.flatten.toMap)
             .map { allowSpendHashes =>
               allowSpendHashes.get(allowSpendRef) match {
+                case None =>
+                  AllowSpendNotFound(
+                    s"Allow spend ${allowSpendRef} not found in active allow spends"
+                  ).invalidNec[SpendTransaction]
+
                 case Some(signedAllowSpend) =>
                   if (signedAllowSpend.currency != spendTransaction.currency)
                     InvalidCurrency(
@@ -75,11 +78,6 @@ object SpendActionValidator {
                     ).invalidNec[SpendTransaction]
                   else
                     spendTransaction.validNec[SpendActionValidationError]
-
-                case None =>
-                  AllowSpendNotFound(
-                    s"Allow spend ${allowSpendRef} not found in active allow spends"
-                  ).invalidNec[SpendTransaction]
               }
             }
 

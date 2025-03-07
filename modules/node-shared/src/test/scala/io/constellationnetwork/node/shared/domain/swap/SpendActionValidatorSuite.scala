@@ -254,7 +254,7 @@ object SpendActionValidatorSuite extends MutableIOSuite {
     } yield
       expect(result.isInvalid).and(expect(result.toEither.left.map(_.head).left.exists {
         case SpendActionValidator.AllowSpendNotFound(_) => true
-        case _                                                 => false
+        case _                                          => false
       }))
   }
 }
