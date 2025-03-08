@@ -1,0 +1,8 @@
+type: object
+properties:
+  name:
+    type: String
+    example: "Alice"
+  description:
+    type: String
+    example: "Alice's node"

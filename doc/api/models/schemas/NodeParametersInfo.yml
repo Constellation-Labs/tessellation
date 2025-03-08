@@ -1,0 +1,8 @@
+type: object
+properties:
+  node:
+    $ref: 'Id.yml'
+  delegatedStakeRewardParameters:
+    $ref: 'DelegatedStakeRewardParameters.yml'
+  nodeMetadataParameters:
+    $ref: 'NodeMetadataParameters.yml'

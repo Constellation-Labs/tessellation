@@ -338,3 +338,147 @@ paths:
             text/html:
               schema:
                 type: string
+
+  /node-params:
+    post:
+      tags:
+        - Node parameters
+      description: Post node parameters request
+      requestBody:
+        description: Signed node collateral create request
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '../../models/schemas/SignedUpdateNodeParameters.yml'
+      responses:
+        200:
+          description: Received update node parameters request
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        400:
+          description: Invalid update node parameters request
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        503:
+          description: Node is not Ready yet
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+    get:
+      tags:
+        - Node parameters
+      description: List of node parameters
+      parameters:
+        - name: search
+          in: query
+          description: Filter by name or peer ID
+          required: false
+          schema:
+            type: String
+        - name: sort
+          in: query
+          description: Sort by (name | peerID | address)
+          required: false
+          schema:
+            type: String
+        - name: sortOrder
+          in: query
+          description: Sort order (ASC|DESC)
+          required: false
+          schema:
+            type: String
+      responses:
+        200:
+          description: List of node parameters
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '../../models/schemas/NodeParametersInfo.yml'
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        400:
+          description: Invalid node collateral withdraw request
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        503:
+          description: Node is not Ready yet
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+
+  /node-params/{nodeId}:
+    get:
+      tags:
+        - Node parameters
+      description: Get node parameters for a given node
+      parameters:
+        - name: Node id
+          in: path
+          description: Node Id
+          required: true
+          schema:
+            $ref: '../../models/schemas/Id.yml'
+      responses:
+        200:
+          description: Node parameters
+          content:
+            application/json:
+              schema:
+                $ref: '../../models/schemas/UpdateNodeParameters.yml'
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        404:
+          description: Node parameters not found
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        503:
+          description: Node is not Ready yet
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+
