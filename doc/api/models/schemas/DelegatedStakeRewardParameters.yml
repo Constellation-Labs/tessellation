@@ -1,0 +1,8 @@
+type: object
+properties:
+  rewardFraction:
+    type: int32
+    minimum: 0
+    maximum: 100000000
+    required: true
+    example: 10000

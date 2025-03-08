@@ -1,17 +1,20 @@
 package io.constellationnetwork.schema
 
-import cats.syntax.semigroup._
-import cats.syntax.show._
+import cats.effect.Async
+import cats.syntax.all._
 import cats.{Eq, Order, Show}
 
 import scala.util.Try
 
 import io.constellationnetwork.ext.cats.data.OrderBasedOrdering
+import io.constellationnetwork.ext.crypto.RefinedHasher
 import io.constellationnetwork.ext.derevo.ordering
 import io.constellationnetwork.schema.cluster.{ClusterSessionToken, SessionToken}
 import io.constellationnetwork.schema.peer.{Peer, PeerId}
 import io.constellationnetwork.schema.semver.{MetagraphVersion, TessellationVersion}
+import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.hash.Hash
+import io.constellationnetwork.security.signature.Signed
 
 import com.comcast.ip4s.{Host, Port}
 import derevo.cats.{eqv, order, show}
@@ -150,6 +153,9 @@ object node {
 
   object UpdateNodeParametersReference {
     val empty = UpdateNodeParametersReference(UpdateNodeParametersOrdinal(0L), Hash.empty)
+
+    def of[F[_]: Async: Hasher](signed: Signed[UpdateNodeParameters]): F[UpdateNodeParametersReference] =
+      signed.value.hash.map(UpdateNodeParametersReference(signed.ordinal, _))
   }
 
   @derive(eqv, show, encoder, decoder)
