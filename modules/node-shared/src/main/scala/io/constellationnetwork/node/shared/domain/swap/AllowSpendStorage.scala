@@ -49,7 +49,9 @@ class AllowSpendStorage[F[_]: Async](
   def getState: F[Map[Address, SortedMap[AllowSpendOrdinal, StoredAllowSpend]]] = allowSpendsR.toMap
 
   def getLastProcessedAllowSpend(source: Address): F[StoredAllowSpend] =
-    allowSpendsR(source).get.map {
+    allowSpendsR(source).get.flatTap { stored =>
+      logger.debug(s"getLastProcessedAllowSpend for address ${source.show}. Stored: ${stored.show}")
+    }.map {
       _.flatMap(getLastProcessedAllowSpend).getOrElse(getInitialTx)
     }
 

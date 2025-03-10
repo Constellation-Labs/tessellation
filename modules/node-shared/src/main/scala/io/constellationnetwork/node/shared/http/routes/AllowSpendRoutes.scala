@@ -4,6 +4,8 @@ import cats.effect.Async
 import cats.effect.std.{Queue, Supervisor}
 import cats.syntax.all._
 
+import scala.Console.{MAGENTA, RESET}
+
 import io.constellationnetwork.currency.swap.ConsensusInput
 import io.constellationnetwork.ext.http4s.{AddressVar, HashVar}
 import io.constellationnetwork.node.shared.domain.cluster.storage.L0ClusterStorage
@@ -43,7 +45,9 @@ final case class AllowSpendRoutes[F[_]: Async: Hasher: SecurityProvider](
     case req @ POST -> Root / "allow-spends" =>
       for {
         transaction <- req.as[Signed[AllowSpend]]
+        _ <- logger.debug(s"${MAGENTA}Received Allow spend${RESET}")
         hashedTransaction <- transaction.toHashed[F]
+        _ <- logger.debug(s"${MAGENTA}Received Hashed Allow spend: ${hashedTransaction.hash}${RESET}")
         response <- allowSpendService
           .offer(hashedTransaction)
           .flatTap {
