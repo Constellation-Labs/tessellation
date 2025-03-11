@@ -130,6 +130,18 @@ object GlobalSnapshotAcceptanceManager {
               getGlobalSnapshotByOrdinal
             )
 
+        artifacts = currencySnapshots.values.map {
+          case Left(s) => (s.ordinal, List.empty[SharedArtifact])
+          case Right((s, info)) =>
+            val arts = s.artifacts.toList.flatMap(_.toList)
+            (s.ordinal, arts)
+        }
+
+        _ <- artifacts.toList.traverse {
+          case (ordinal, arts) =>
+            Slf4jLogger.getLogger[F].debug(s"--- Artifacts for ordinal $ordinal: ${arts.show}")
+        }
+
         acceptedTransactions = acceptanceResult.accepted.flatMap { case (block, _) => block.value.transactions.toSortedSet }.toSortedSet
 
         transactionsRefs = acceptTransactionRefs(
