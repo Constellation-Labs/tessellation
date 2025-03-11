@@ -1,10 +1,10 @@
-name: Test metagraph rewards
+name: Test allow spends
 
 on:
   workflow_call:
 
 jobs:
-  metagraph-rewards-tests:
+  allow-spends-tests:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -53,43 +53,72 @@ jobs:
         uses: "./.github/templates/actions/hypergraph/start"
         with:
           INCLUDE_DAG_L1: true
+          EXTENDED_DAG_L1: true
           DAG_L0_PORT_PREFIX: 90
           DAG_L1_PORT_PREFIX: 91
 
       - name: Start Metagraph - Project Template
         uses: "./.github/templates/actions/metagraph/start"
         with:
-          INCLUDE_DATA_L1: false
+          INCLUDE_DATA_L1: true
+          EXTENDED_DATA_L1: true
           METAGRAPH_NAME: project-template-metagraph
           DL0_PORT_PREFIX: 90
           ML0_PORT_PREFIX: 80
           CL1_PORT_PREFIX: 81
+          DL1_PORT_PREFIX: 82
 
-      - name: Check Metagraph cluster
-        run: |
-          cd .github/action_scripts/check_clusters
-          node metagraph-currency.js 90 91 80 81 82
-
-      - name: Check rewards
+      - name: Test DAG Allow Spend Workflow
         run: |
           cd .github/action_scripts
-          node rewards.js 90 91 80 81 82
+          node send_transactions/allow-spends-and-spend-transactions.js 90 91 80 81 82 dag
 
-      - name: Wait 1 minute before check cluster
+      - name: Test Currency Allow Spend Workflow  
         run: |
-          sleep 60
+          cd .github/action_scripts
+          node send_transactions/allow-spends-and-spend-transactions.js 90 91 80 81 82 currency
 
-      ## Checking cluster again because we already faced scenarios where the cluster dies after sending rewards transactions
-      - name: Check Metagraph cluster
+
+      - name: Test Exceeding Balance Allow Spend Workflow
         run: |
-          cd .github/action_scripts/check_clusters
-          node metagraph-currency.js 90 91 80 81 82
+          cd .github/action_scripts
+          node send_transactions/allow-spends-and-spend-transactions.js 90 91 80 81 82 exceeding-balance
+
+      - name: Test Invalid Parent Allow Spend Workflow
+        run: |
+          cd .github/action_scripts
+          node send_transactions/allow-spends-and-spend-transactions.js 90 91 80 81 82 invalid-parent
+
+      - name: Test Invalid Epoch Progress Allow Spend Workflow
+        run: |
+          cd .github/action_scripts
+          node send_transactions/allow-spends-and-spend-transactions.js 90 91 80 81 82 invalid-epoch
+
+      - name: Test Invalid Signature Allow Spend Workflow
+        run: |
+          cd .github/action_scripts
+          node send_transactions/allow-spends-and-spend-transactions.js 90 91 80 81 82 invalid-signature
+
+      - name: Test Double Spend Allow Spend Workflow
+        run: |
+          cd .github/action_scripts
+          node send_transactions/allow-spends-and-spend-transactions.js 90 91 80 81 82 double-spend
+
+      - name: Test Expired Allow Spend Workflow
+        run: |
+          cd .github/action_scripts
+          node send_transactions/allow-spends-and-spend-transactions.js 90 91 80 81 82 expired-allow-spend
+
+      - name: Test Double Use Allow Spend Workflow
+        run: |
+          cd .github/action_scripts
+          node send_transactions/allow-spends-and-spend-transactions.js 90 91 80 81 82 double-use-allow-spend
 
       - name: Upload log files
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: rewards-transactions-node-log-files-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}
+          name: allow-spends-node-log-files-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}
           path: .github/code/**/*.log
           if-no-files-found: warn
           retention-days: 7

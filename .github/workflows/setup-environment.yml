@@ -37,20 +37,18 @@ jobs:
         with:
           path: ~/.m2
           key: sbt-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}
-          restore-keys: |
-            maven-${{ runner.os }}-
 
       - name: Upload hypergraph artifacts to run CI tests
         uses: actions/upload-artifact@v4
         with:
-          name: hypergraph
+          name: hypergraph-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}
           path: .github/code/hypergraph
           retention-days: 7
 
       - name: Upload shared_jars artifacts to run CI tests
         uses: actions/upload-artifact@v4
         with:
-          name: shared_jars
+          name: shared_jars-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}
           path: .github/code/shared_jars
           retention-days: 7
 
@@ -81,8 +79,6 @@ jobs:
         with:
           path: ~/.m2
           key: sbt-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}
-          restore-keys: |
-            maven-${{ runner.os }}-
 
       - name: Setup project template metagraph
         if: steps.cache-metagraph.outputs.cache-hit != 'true'
@@ -96,6 +92,6 @@ jobs:
       - name: Upload project-template-metagraph artifacts to run CI tests
         uses: actions/upload-artifact@v4
         with:
-          name: project-template-metagraph
+          name: project-template-metagraph-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}
           path: .github/code/metagraphs/project-template-metagraph
           retention-days: 7
