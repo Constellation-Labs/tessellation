@@ -162,7 +162,7 @@ object GlobalSnapshotAcceptanceManager {
         spendTransactionsValidations <- spendActions.toList.traverse {
           case (address, actions) =>
             actions.traverse { action =>
-              spendActionValidator.validate(action, lastActiveAllowSpends, updatedBalancesByRewards, address).map {
+              spendActionValidator.validate(action, lastActiveAllowSpends, updatedBalancesByRewards, address, ordinal).map {
                 case Valid(validAction) => Right(validAction)
                 case Invalid(errors)    => Left((action, errors.toNonEmptyList.toList))
               }

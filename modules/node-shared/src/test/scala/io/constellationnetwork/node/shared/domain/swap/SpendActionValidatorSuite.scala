@@ -70,7 +70,7 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       spendAction = SpendAction(userSpendTx, metagraphSpendTx)
       balances = Map(ammAddress -> Balance(NonNegLong(1000L)))
 
-      result <- validator.validate(spendAction, activeAllowSpends, balances, ammAddress).map(_.isValid)
+      result <- validator.validate(spendAction, activeAllowSpends, balances, ammAddress, SnapshotOrdinal.MinValue).map(_.isValid)
     } yield expect(result)
   }
 
@@ -108,7 +108,7 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       spendAction = SpendAction(userSpendTx, metagraphSpendTx)
       balances = Map(ammAddress -> Balance(NonNegLong(1000L)))
 
-      result <- validator.validate(spendAction, activeAllowSpends, balances, ammAddress).map(_.isValid)
+      result <- validator.validate(spendAction, activeAllowSpends, balances, ammAddress, SnapshotOrdinal.MinValue).map(_.isValid)
 
     } yield expect(result)
   }
@@ -148,7 +148,7 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       spendAction = SpendAction(userSpendTx, metagraphSpendTx)
       balances = Map(ammAddress -> Balance(NonNegLong(1000L)))
 
-      result <- validator.validate(spendAction, activeAllowSpends, balances, ammAddress)
+      result <- validator.validate(spendAction, activeAllowSpends, balances, ammAddress, SnapshotOrdinal.MinValue)
     } yield
       expect(result.isInvalid).and(expect(result.toEither.left.map(_.head).left.exists {
         case SpendActionValidator.NoActiveAllowSpends(_) => true
@@ -156,7 +156,7 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       }))
   }
 
-  test("should fail validation when user-issued spend destination does not match allow spend") { res =>
+  test("should fail validation when user-issued spend destination does not mat4ch allow spend") { res =>
     implicit val (_, hs, sp) = res
 
     val validator = SpendActionValidator.make
@@ -191,7 +191,7 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       spendAction = SpendAction(userSpendTx, metagraphSpendTx)
       balances = Map(ammAddress -> Balance(NonNegLong(1000L)))
 
-      result <- validator.validate(spendAction, activeAllowSpends, balances, ammAddress)
+      result <- validator.validate(spendAction, activeAllowSpends, balances, ammAddress, SnapshotOrdinal.MinValue)
     } yield
       expect(result.isInvalid).and(expect(result.toEither.left.map(_.head).left.exists {
         case SpendActionValidator.InvalidDestinationAddress(_) => true
@@ -218,7 +218,7 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       activeAllowSpends = SortedMap(currencyId.value.some -> SortedMap(address -> SortedSet.empty[Signed[AllowSpend]]))
       balances = Map(currencyId.value -> Balance(NonNegLong(1000L)))
 
-      result <- validator.validate(spendAction, activeAllowSpends, balances, currencyId.value)
+      result <- validator.validate(spendAction, activeAllowSpends, balances, currencyId.value, SnapshotOrdinal.MinValue)
     } yield expect(result.isValid)
   }
 
@@ -257,7 +257,7 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       spendAction = SpendAction(userSpendTx, metagraphSpendTx)
       balances = Map(address -> Balance(NonNegLong(1000L)))
 
-      result <- validator.validate(spendAction, activeAllowSpends, balances, ammAddress)
+      result <- validator.validate(spendAction, activeAllowSpends, balances, ammAddress, SnapshotOrdinal.MinValue)
     } yield
       expect(result.isInvalid).and(expect(result.toEither.left.map(_.head).left.exists {
         case SpendActionValidator.AllowSpendNotFound(_) => true
@@ -284,7 +284,7 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       activeAllowSpends = SortedMap(currencyId.value.some -> SortedMap(address -> SortedSet.empty[Signed[AllowSpend]]))
       balances = Map.empty[Address, Balance]
 
-      result <- validator.validate(spendAction, activeAllowSpends, balances, currencyId.value)
+      result <- validator.validate(spendAction, activeAllowSpends, balances, currencyId.value, SnapshotOrdinal.MinValue)
     } yield
       expect(result.isInvalid).and(expect(result.toEither.left.map(_.head).left.exists {
         case SpendActionValidator.NotEnoughCurrencyIdBalance(_) => true
