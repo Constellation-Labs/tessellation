@@ -12,6 +12,7 @@ import io.constellationnetwork.json.JsonSerializer
 import io.constellationnetwork.kryo.KryoSerializer
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact.{SpendAction, SpendTransaction}
+import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.swap._
 import io.constellationnetwork.schema.{SnapshotOrdinal, _}
@@ -64,11 +65,12 @@ object SpendActionValidatorSuite extends MutableIOSuite {
 
       activeAllowSpends = SortedMap(none[Address] -> SortedMap(address -> SortedSet(signedAllowSpend)))
 
-      userSpendTx = SpendTransaction(hashedAllowSpend.hash.some, None, SwapAmount(1L), address)
-      metagraphSpendTx = SpendTransaction(none, None, SwapAmount(2L), address)
+      userSpendTx = SpendTransaction(hashedAllowSpend.hash.some, None, SwapAmount(1L), ammAddress)
+      metagraphSpendTx = SpendTransaction(none, None, SwapAmount(2L), ammAddress)
       spendAction = SpendAction(userSpendTx, metagraphSpendTx)
+      balances = Map(ammAddress -> Balance(NonNegLong(1000L)))
 
-      result <- validator.validate(spendAction, activeAllowSpends).map(_.isValid)
+      result <- validator.validate(spendAction, activeAllowSpends, balances, ammAddress).map(_.isValid)
     } yield expect(result)
   }
 
@@ -101,11 +103,12 @@ object SpendActionValidatorSuite extends MutableIOSuite {
 
       activeAllowSpends = SortedMap(currencyId.value.some -> SortedMap(address -> SortedSet(signedAllowSpend)))
 
-      userSpendTx = SpendTransaction(hashedAllowSpend.hash.some, currencyId.some, SwapAmount(1L), address)
-      metagraphSpendTx = SpendTransaction(none, currencyId.some, SwapAmount(2L), address)
+      userSpendTx = SpendTransaction(hashedAllowSpend.hash.some, currencyId.some, SwapAmount(1L), ammAddress)
+      metagraphSpendTx = SpendTransaction(none, currencyId.some, SwapAmount(2L), ammAddress)
       spendAction = SpendAction(userSpendTx, metagraphSpendTx)
+      balances = Map(ammAddress -> Balance(NonNegLong(1000L)))
 
-      result <- validator.validate(spendAction, activeAllowSpends).map(_.isValid)
+      result <- validator.validate(spendAction, activeAllowSpends, balances, ammAddress).map(_.isValid)
 
     } yield expect(result)
   }
@@ -143,8 +146,9 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       userSpendTx = SpendTransaction(hashedAllowSpend.hash.some, invalidCurrencyId.some, SwapAmount(1L), address)
       metagraphSpendTx = SpendTransaction(none, invalidCurrencyId.some, SwapAmount(2L), address)
       spendAction = SpendAction(userSpendTx, metagraphSpendTx)
+      balances = Map(ammAddress -> Balance(NonNegLong(1000L)))
 
-      result <- validator.validate(spendAction, activeAllowSpends)
+      result <- validator.validate(spendAction, activeAllowSpends, balances, ammAddress)
     } yield
       expect(result.isInvalid).and(expect(result.toEither.left.map(_.head).left.exists {
         case SpendActionValidator.NoActiveAllowSpends(_) => true
@@ -185,8 +189,9 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       userSpendTx = SpendTransaction(hashedAllowSpend.hash.some, currencyId.some, SwapAmount(1L), address2)
       metagraphSpendTx = SpendTransaction(none, currencyId.some, SwapAmount(2L), address1)
       spendAction = SpendAction(userSpendTx, metagraphSpendTx)
+      balances = Map(ammAddress -> Balance(NonNegLong(1000L)))
 
-      result <- validator.validate(spendAction, activeAllowSpends)
+      result <- validator.validate(spendAction, activeAllowSpends, balances, ammAddress)
     } yield
       expect(result.isInvalid).and(expect(result.toEither.left.map(_.head).left.exists {
         case SpendActionValidator.InvalidDestinationAddress(_) => true
@@ -211,8 +216,9 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       spendAction = SpendAction(inputTx, outputTx)
 
       activeAllowSpends = SortedMap(currencyId.value.some -> SortedMap(address -> SortedSet.empty[Signed[AllowSpend]]))
+      balances = Map(currencyId.value -> Balance(NonNegLong(1000L)))
 
-      result <- validator.validate(spendAction, activeAllowSpends)
+      result <- validator.validate(spendAction, activeAllowSpends, balances, currencyId.value)
     } yield expect(result.isValid)
   }
 
@@ -249,12 +255,40 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       userSpendTx = SpendTransaction(invalidHash.some, currencyId.some, SwapAmount(1L), address)
       metagraphSpendTx = SpendTransaction(none, currencyId.some, SwapAmount(2L), address)
       spendAction = SpendAction(userSpendTx, metagraphSpendTx)
+      balances = Map(address -> Balance(NonNegLong(1000L)))
 
-      result <- validator.validate(spendAction, activeAllowSpends)
+      result <- validator.validate(spendAction, activeAllowSpends, balances, ammAddress)
     } yield
       expect(result.isInvalid).and(expect(result.toEither.left.map(_.head).left.exists {
-        case SpendActionValidator.InvalidDestinationAddress(_) => true
-        case _                                                 => false
+        case SpendActionValidator.AllowSpendNotFound(_) => true
+        case _                                          => false
+      }))
+  }
+
+  test("should fail when currencyId doesn't have enough balance") { res =>
+    implicit val (_, hs, sp) = res
+
+    val validator = SpendActionValidator.make
+
+    for {
+      keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
+      keyPair2 <- KeyPairGenerator.makeKeyPair[IO]
+
+      address = keyPair1.getPublic.toAddress
+      currencyId = CurrencyId(keyPair2.getPublic.toAddress)
+
+      inputTx = SpendTransaction(none, currencyId.some, SwapAmount(1L), address)
+      outputTx = SpendTransaction(none, currencyId.some, SwapAmount(2L), keyPair2.getPublic.toAddress)
+      spendAction = SpendAction(inputTx, outputTx)
+
+      activeAllowSpends = SortedMap(currencyId.value.some -> SortedMap(address -> SortedSet.empty[Signed[AllowSpend]]))
+      balances = Map.empty[Address, Balance]
+
+      result <- validator.validate(spendAction, activeAllowSpends, balances, currencyId.value)
+    } yield
+      expect(result.isInvalid).and(expect(result.toEither.left.map(_.head).left.exists {
+        case SpendActionValidator.NotEnoughCurrencyIdBalance(_) => true
+        case _                                                  => false
       }))
   }
 }
