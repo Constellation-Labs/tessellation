@@ -30,7 +30,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          name: shared_jars
+          name: shared_jars-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}
           path: .github/code/shared_jars
 
       - name: Download Hypergraph Artifact
@@ -38,7 +38,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          name: hypergraph
+          name: hypergraph-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}
           path: .github/code/hypergraph
 
       - name: Download project template Artifact
@@ -46,7 +46,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          name: project-template-metagraph
+          name: project-template-metagraph-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}
           path: .github/code/metagraphs/project-template-metagraph
 
       - name: Start Hypergraph
@@ -76,65 +76,11 @@ jobs:
           cd .github/action_scripts
           node send_transactions/data-with-fee.js 90 91 80 81 82 ${{ secrets.CI_PRIVATE_KEY }}
           
-      - name: Save Global L0 Genesis logs
-        uses: actions/upload-artifact@v4
+      - name: Upload log files
         if: always()
-        with:
-          name: fee-transactions-global-l0-genesis-java-11
-          path: .github/code/hypergraph/dag-l0/genesis-node/dag-l0-genesis.log
-
-      - name: Save Global L0 - Validator 1 logs
         uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: fee-transactions-global-l0-validator-1-java-11
-          path: .github/code/hypergraph/dag-l0/validator-1/dag-l0-validator-1.log
-
-      - name: Save Global L0 - Validator 2 logs
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: fee-transactions-global-l0-validator-2-java-11
-          path: .github/code/hypergraph/dag-l0/validator-2/dag-l0-validator-2.log
-
-      - name: Save Metagraph L0 - Genesis logs
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: fee-transactions-metagraph-l0-genesis-java-11
-          path: .github/code/metagraphs/project-template-metagraph/metagraph-l0/genesis-node/metagraph-l0-run-genesis.log
-
-      - name: Save Metagraph L0 - Validator 1 logs
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: fee-transactions-metagraph-l0-validator-1-java-11
-          path: .github/code/metagraphs/project-template-metagraph/metagraph-l0/validador-1/metagraph-l0-validator-1.log
-
-      - name: Save Metagraph L0 - Validator 2 logs
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: fee-transactions-metagraph-l0-validator-2-java-11
-          path: .github/code/metagraphs/project-template-metagraph/metagraph-l0/validator-2/metagraph-l0-validator-2.log
-
-      - name: Save Currency L1 - Initial Validator logs
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: fee-transactions-currency-l1-initial-validator-java-11
-          path: .github/code/metagraphs/project-template-metagraph/currency-l1/initial-validator/currency-l1-initial-validator.log
-
-      - name: Save Currency L1 - Validator 1 logs
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: fee-transactions-currency-l1-validator-1-java-11
-          path: .github/code/metagraphs/project-template-metagraph/currency-l1/validator-1/currency-l1-1.log
-
-      - name: Save Currency L1 - Validator 2 logs
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: fee-transactions-currency-l1-validator-2-java-11
-          path: .github/code/metagraphs/project-template-metagraph/currency-l1/validator-2/currency-l1-2.log
+          name: fee-transactions-node-log-files-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}
+          path: .github/code/**/*.log
+          if-no-files-found: warn
+          retention-days: 7
