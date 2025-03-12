@@ -135,11 +135,13 @@ object GlobalSnapshotAcceptanceManager {
           case Right((s, info)) =>
             val arts = s.artifacts.toList.flatMap(_.toList)
             (s.ordinal, arts)
-        }
+        }.filterNot { case (_, arts) => arts.isEmpty }
 
         _ <- artifacts.toList.traverse {
-          case (ordinal, arts) =>
-            Slf4jLogger.getLogger[F].debug(s"--- Artifacts for ordinal $ordinal: ${arts.show}")
+          case (currencyOrdinal, arts) =>
+            Slf4jLogger
+              .getLogger[F]
+              .debug(s"--- Artifacts for currency ordinal $currencyOrdinal found in global ordinal: ${ordinal}: ${arts.show}")
         }
 
         acceptedTransactions = acceptanceResult.accepted.flatMap { case (block, _) => block.value.transactions.toSortedSet }.toSortedSet
