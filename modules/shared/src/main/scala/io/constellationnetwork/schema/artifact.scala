@@ -15,13 +15,14 @@ object artifact {
   sealed trait SharedArtifact
 
   @derive(decoder, encoder, order, ordering, show)
-  case class SpendAction(input: SpendTransaction, output: SpendTransaction) extends SharedArtifact
+  case class SpendAction(spendTransactions: List[SpendTransaction]) extends SharedArtifact
 
   @derive(decoder, encoder, order, ordering, show)
   case class SpendTransaction(
     allowSpendRef: Option[Hash],
     currency: Option[CurrencyId],
     amount: SwapAmount,
+    source: Address,
     destination: Address
   )
 

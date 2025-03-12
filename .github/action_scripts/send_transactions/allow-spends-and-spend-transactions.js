@@ -1065,51 +1065,55 @@ const currencyWorkflow = {
         balanceManager.verifyCurrencyBalanceChange(PRIVATE_KEYS.key1, initialBalance, amount, fee)
 };
 
-const createUserSpendTransaction = (allowSpendRef, address) => {
+const createUserSpendTransaction = (allowSpendRef, sourceAddress, destinationAddress) => {
     const { spend: amount } = getRandomAmounts();
     const tx = {
         allowSpendRef: allowSpendRef,
         currency: null,
         amount,
-        destination: address
+        source: sourceAddress,
+        destination: destinationAddress
     };
     logWorkflow.info('Created user spend transaction: ' + JSON.stringify({
         type: 'User',
         allowSpendRef,
-        destination: address,
+        source: sourceAddress,
+        destination: destinationAddress,
         amount
     }, null, 2));
     return tx;
 };
 
-const createMetagraphSpendTransaction = (address) => {
+const createMetagraphSpendTransaction = (destinationAddress) => {
     const { spend: amount } = getRandomAmounts();
     const tx = {
         allowSpendRef: null,
         currency: null,
         amount,
-        destination: address
+        source: CONSTANTS.CURRENCY_TOKEN_ID,
+        destination: destinationAddress
     };
     logWorkflow.info('Created metagraph spend transaction: ' + JSON.stringify({
         type: 'Metagraph',
-        destination: address,
+        source: CONSTANTS.CURRENCY_TOKEN_ID,
+        destination: destinationAddress,
         amount
     }, null, 2));
     return tx;
 };
 
-const createUsageUpdateWithSpendTransaction = (address, allowSpendRef, destinationAddress) => {
+const createUsageUpdateWithSpendTransaction = (allowSpendRef, sourceAddress, destinationAddress) => {
     logWorkflow.info('Creating usage update with spend transactions: ' + JSON.stringify({
-        sourceAddress: address,
+        sourceAddress,
         allowSpendRef,
         destinationAddress
     }, null, 2));
 
     const update = {
         UsageUpdateWithSpendTransaction: {
-            address: address,
+            address: sourceAddress,
             usage: 10,
-            spendTransactionA: createUserSpendTransaction(allowSpendRef, destinationAddress),
+            spendTransactionA: createUserSpendTransaction(allowSpendRef, sourceAddress, destinationAddress),
             spendTransactionB: createMetagraphSpendTransaction(destinationAddress)
         }
     };
@@ -1135,7 +1139,7 @@ const createUsageUpdateWithSpendTransaction = (address, allowSpendRef, destinati
 };
 
 const sendDataWithSpendTransaction = async (urls, allowSpendHash, sourceAddress, destinationAddress) => {
-    const dataUpdate = createUsageUpdateWithSpendTransaction(sourceAddress, allowSpendHash, destinationAddress);
+    const dataUpdate = createUsageUpdateWithSpendTransaction(allowSpendHash, sourceAddress, destinationAddress);
     const account = dag4.createAccount(PRIVATE_KEYS.key3);
     const proof = await generateProof(dataUpdate, PRIVATE_KEYS.key3, account, SerializerType.STANDARD);
 
@@ -1515,9 +1519,9 @@ const verifySpendActionInGlobalL0 = async (urls, metagraphId, update) => {
             const {spendTransactionA, spendTransactionB} = update.UsageUpdateWithSpendTransaction;
 
             const matchingSpend = spendActions.find(action => {
-                const {input, output} = action;
+                const [firstSpendTransaction, secondSpendTransaction] = action.spendTransactions || [];
 
-                return sortedJsonStringify(input) === sortedJsonStringify(spendTransactionA) && sortedJsonStringify(output) === sortedJsonStringify(spendTransactionB);
+                return sortedJsonStringify(firstSpendTransaction) === sortedJsonStringify(spendTransactionA) && sortedJsonStringify(secondSpendTransaction) === sortedJsonStringify(spendTransactionB);
             });
 
             if (!matchingSpend) {

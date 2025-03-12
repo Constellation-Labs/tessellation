@@ -41,7 +41,7 @@ object Combiners {
 
     val updatedSharedArtifacts = update match {
       case UsageUpdateWithSpendTransaction(_, _, spendTransactionA, spendTransactionB) =>
-        acc.sharedArtifacts + SpendAction(spendTransactionA, spendTransactionB)
+        acc.sharedArtifacts + SpendAction(List(spendTransactionA, spendTransactionB))
       case UsageUpdateWithTokenUnlock(address, currencyId, tokenLockRef, unlockAmount, _) =>
         acc.sharedArtifacts + TokenUnlock(tokenLockRef, unlockAmount, currencyId.some, address)
       case _ => acc.sharedArtifacts
