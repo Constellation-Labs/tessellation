@@ -20,7 +20,7 @@ object LifecycleSharedFunctions {
       UsageUpdateCalculatedState(oldState.calculated.devices),
       oldState.sharedArtifacts ++ updates.map(_.value).collect {
         case UsageUpdateWithSpendTransaction(_, _, spendTransactionA, spendTransactionB) =>
-          SpendAction(spendTransactionA, spendTransactionB)
+          SpendAction(List(spendTransactionA, spendTransactionB))
         case update: UsageUpdateWithTokenUnlock =>
           TokenUnlock(
             update.tokenLockRef,

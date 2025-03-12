@@ -36,20 +36,23 @@ object SpendActionValidator {
       currencyId: Address
     ): F[SpendActionValidationErrorOr[SpendAction]] = {
       val currencyIdBalance = globalBalances.getOrElse(currencyId, Balance.empty)
-      for {
-        input <- validateSpendTx(spendAction.input, activeAllowSpends, currencyIdBalance)
-        output <- validateSpendTx(spendAction.output, activeAllowSpends, currencyIdBalance)
-      } yield (input *> output).as(spendAction)
+
+      val validations = spendAction.spendTransactions.traverse { spendTransaction =>
+        validateSpendTx(spendTransaction, activeAllowSpends, currencyIdBalance, currencyId)
+      }
+
+      validations.map(_.sequence.as(spendAction))
     }
 
     def validateSpendTx(
       tx: SpendTransaction,
       activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
-      currencyIdBalance: Balance
+      currencyIdBalance: Balance,
+      currencyId: Address
     ): F[SpendActionValidationErrorOr[SpendTransaction]] =
       activeAllowSpends
         .get(tx.currency.map(_.value))
-        .map(validateAllowSpendRef(tx, _, currencyIdBalance))
+        .map(validateAllowSpendRef(tx, _, currencyIdBalance, currencyId))
         .getOrElse(
           Applicative[F].pure(NoActiveAllowSpends(s"Currency ${tx.currency} not found in active allow spends").invalidNec[SpendTransaction])
         )
@@ -57,7 +60,8 @@ object SpendActionValidator {
     def validateAllowSpendRef(
       spendTransaction: SpendTransaction,
       activeAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
-      currencyIdBalance: Balance
+      currencyIdBalance: Balance,
+      currencyId: Address
     ): F[SpendActionValidationErrorOr[SpendTransaction]] =
       spendTransaction.allowSpendRef match {
         case Some(allowSpendRef) =>
@@ -82,7 +86,11 @@ object SpendActionValidator {
                     ).invalidNec[SpendTransaction]
                   else if (signedAllowSpend.destination =!= spendTransaction.destination)
                     InvalidDestinationAddress(
-                      s"Destination address ${spendTransaction.destination} not found in active allow spends"
+                      s"Invalid destination address. Found: ${spendTransaction.destination}. Expected: ${signedAllowSpend.destination}"
+                    ).invalidNec[SpendTransaction]
+                  else if (signedAllowSpend.source =!= spendTransaction.source)
+                    InvalidSourceAddress(
+                      s"Invalid source address. Found: ${spendTransaction.source}. Expected: ${signedAllowSpend.source}"
                     ).invalidNec[SpendTransaction]
                   else if (signedAllowSpend.amount.value.value < spendTransaction.amount.value.value)
                     SpendAmountGreaterThanAllowed(
@@ -98,6 +106,10 @@ object SpendActionValidator {
             (NotEnoughCurrencyIdBalance(
               s"Spend amount: ${spendTransaction.amount} greater than currencyId balance: $currencyIdBalance"
             ): SpendActionValidationError).invalidNec[SpendTransaction].pure[F]
+          else if (spendTransaction.source =!= currencyId)
+            (InvalidSourceAddress(
+              s"Invalid source address. Found: ${spendTransaction.source}. Expected: $currencyId"
+            ): SpendActionValidationError).invalidNec[SpendTransaction].pure[F]
           else
             spendTransaction.validNec[SpendActionValidationError].pure[F]
       }
@@ -107,6 +119,7 @@ object SpendActionValidator {
   sealed trait SpendActionValidationError
   case class NoActiveAllowSpends(error: String) extends SpendActionValidationError
   case class InvalidDestinationAddress(error: String) extends SpendActionValidationError
+  case class InvalidSourceAddress(error: String) extends SpendActionValidationError
   case class AllowSpendNotFound(error: String) extends SpendActionValidationError
   case class InvalidCurrency(error: String) extends SpendActionValidationError
   case class SpendAmountGreaterThanAllowed(error: String) extends SpendActionValidationError

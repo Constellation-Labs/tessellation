@@ -225,7 +225,7 @@ object GlobalSnapshotAcceptanceManager {
 
         allAcceptedSpendTxns =
           acceptedSpendActions.values.flatten
-            .flatMap(spendTxn => List(spendTxn.input, spendTxn.output))
+            .flatMap(spendAction => spendAction.spendTransactions)
             .toList
 
         globalActiveAllowSpends = lastSnapshotContext.activeAllowSpends.getOrElse(
@@ -570,7 +570,7 @@ object GlobalSnapshotAcceptanceManager {
         response = allAcceptedSpendTransactionsByCurrencyId.foldLeft(currentBalances) {
           case (acc, (address, spendActions)) =>
             val currencySpendTransactions = spendActions
-              .flatMap(spendAction => List(spendAction.input, spendAction.output))
+              .flatMap(spendAction => spendAction.spendTransactions)
               .filter(_.currency.isEmpty)
 
             currencySpendTransactions.foldLeft(acc) { (innerAcc, spendTransaction) =>
