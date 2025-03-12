@@ -1649,6 +1649,65 @@ const waitForAllAllowSpendsToExpire = async (l0Url) => {
     }
 };
 
+const createInvalidCurrencyDestinationAllowSpendTransaction = async (sourceAccount, l1Url, l0Url) => {
+    const [{ data: lastRef }, currentEpochProgress] = await Promise.all([
+        axios.get(`${l1Url}/allow-spends/last-reference/${sourceAccount.address}`),
+        getEpochProgress(l0Url, true)
+    ]);
+
+    const { allowSpend: amount, fee } = getRandomAmounts();
+    const invalidDestination = dag4.createAccount(PRIVATE_KEYS.key4).address;
+
+    logWorkflow.info(`Current epoch progress: ${currentEpochProgress}, setting lastValidEpochProgress to ${currentEpochProgress + CONSTANTS.EPOCH_PROGRESS_BUFFER}`);
+    logWorkflow.info(`Using random amounts - allowSpend: ${amount}, fee: ${fee}`);
+    logWorkflow.info(`Using invalid destination for currency allow spend: ${invalidDestination} (should be ${CONSTANTS.CURRENCY_TOKEN_ID})`);
+
+    return {
+        amount,
+        approvers: [invalidDestination],
+        destination: invalidDestination,
+        fee,
+        lastValidEpochProgress: currentEpochProgress + CONSTANTS.EPOCH_PROGRESS_BUFFER,
+        parent: lastRef,
+        source: sourceAccount.address,
+        currency: invalidDestination
+    };
+};
+
+const executeInvalidCurrencyDestinationWorkflow = async () => {
+    try {
+        logWorkflow.start('InvalidCurrencyDestinationAllowSpend');
+
+        const config = createConfig();
+        const urls = createNetworkConfig(config);
+        
+        logWorkflow.info('Invalid currency destination allow spend creation started');
+        
+        const sourceAccount = createAndConnectAccount(PRIVATE_KEYS.key1, { l0Url: urls.currencyL0Url, l1Url: urls.currencyL1Url }, true);
+        const allowSpend = await createInvalidCurrencyDestinationAllowSpendTransaction(sourceAccount, urls.currencyL1Url, urls.currencyL0Url);
+        const proof = await generateProof(allowSpend, PRIVATE_KEYS.key1, sourceAccount, SerializerType.BROTLI);
+
+        try {
+            const body = { value: allowSpend, proofs: [proof] };
+            logWorkflow.info(`Sending allow spend with invalid currency destination: ${JSON.stringify(body.value)}`);
+            const response = await axios.post(`${urls.currencyL1Url}/allow-spends`, body);
+            logWorkflow.error(`Transaction was accepted when it should have been rejected: ${JSON.stringify(response.data)}`);
+            throw new Error('Transaction with invalid currency destination was accepted when it should have been rejected');
+        } catch (error) {
+            if (error.response && error.response.status === 400) {
+                logWorkflow.success(`Transaction correctly rejected with 400 Bad Request: ${error.response.data}`);
+                logWorkflow.success('InvalidCurrencyDestinationAllowSpend workflow completed successfully - transaction was correctly rejected');
+            } else {
+                logWorkflow.error('Error in InvalidCurrencyDestinationAllowSpend workflow', error);
+                throw error;
+            }
+        }
+    } catch (error) {
+        logWorkflow.error('InvalidCurrencyDestinationAllowSpend', error);
+        throw error;
+    }
+};
+
 const executeWorkflowByType = async (workflowType) => {
     const config = createConfig();
     const urls = createNetworkConfig(config);
@@ -1691,6 +1750,9 @@ const executeWorkflowByType = async (workflowType) => {
             break;
         case 'double-use-allow-spend':
             await executeDoubleUseAllowSpendWorkflow();
+            break;
+        case 'invalid-currency-destination':
+            await executeInvalidCurrencyDestinationWorkflow();
             break;
         default:
             throw new Error(`Unknown workflow type: ${workflowType}`);

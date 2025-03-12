@@ -118,6 +118,11 @@ jobs:
           cd .github/action_scripts
           node send_transactions/allow-spends-and-spend-transactions.js 90 91 80 81 82 double-use-allow-spend
 
+      - name: Test Invalid Currency Destination Allow Spend Workflow
+        run: |
+          cd .github/action_scripts
+          node send_transactions/allow-spends-and-spend-transactions.js 90 91 80 81 82 invalid-currency-destination
+
       - name: Upload log files
         if: always()
         uses: actions/upload-artifact@v4
