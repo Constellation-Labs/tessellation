@@ -226,7 +226,7 @@ object CurrencySnapshotAcceptanceManager {
 
       allAcceptedCurrencySpendTxns =
         lastGlobalSyncMetagraphSpendActions
-          .flatMap(spendAction => spendAction.spendTransactions)
+          .flatMap(spendAction => spendAction.spendTransactions.toList)
 
       incomingTokenLocks = acceptanceTokenLockBlocksResult.accepted.flatMap { tokenLockBlock =>
         tokenLockBlock.value.tokenLocks.toSortedSet
@@ -794,7 +794,7 @@ object CurrencySnapshotAcceptanceManager {
         currencySpendTransactionsByCurrencyId = lastGlobalSpendActions.map {
           case (address, spendActions) =>
             address -> spendActions
-              .flatMap(_.spendTransactions)
+              .flatMap(_.spendTransactions.toList)
               .filter(_.currency.exists(_.value == currencyId))
         }.filter { case (_, transactions) => transactions.nonEmpty }
 

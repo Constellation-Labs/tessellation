@@ -1,5 +1,6 @@
 package com.my.project_template.shared_data
 
+import cats.data.NonEmptyList
 import cats.effect.Async
 import cats.syntax.all._
 
@@ -20,7 +21,7 @@ object LifecycleSharedFunctions {
       UsageUpdateCalculatedState(oldState.calculated.devices),
       oldState.sharedArtifacts ++ updates.map(_.value).collect {
         case UsageUpdateWithSpendTransaction(_, _, spendTransactionA, spendTransactionB) =>
-          SpendAction(List(spendTransactionA, spendTransactionB))
+          SpendAction(NonEmptyList.of(spendTransactionA, spendTransactionB))
         case update: UsageUpdateWithTokenUnlock =>
           TokenUnlock(
             update.tokenLockRef,

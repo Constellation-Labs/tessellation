@@ -1,5 +1,7 @@
 package io.constellationnetwork.schema
 
+import cats.data.NonEmptyList
+
 import io.constellationnetwork.ext.derevo.ordering
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.swap.{CurrencyId, SwapAmount}
@@ -15,7 +17,7 @@ object artifact {
   sealed trait SharedArtifact
 
   @derive(decoder, encoder, order, ordering, show)
-  case class SpendAction(spendTransactions: List[SpendTransaction]) extends SharedArtifact
+  case class SpendAction(spendTransactions: NonEmptyList[SpendTransaction]) extends SharedArtifact
 
   @derive(decoder, encoder, order, ordering, show)
   case class SpendTransaction(
