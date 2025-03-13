@@ -164,7 +164,8 @@ object GlobalSnapshotConsensusFunctions {
           snapshotInfo,
           stateProof,
           spendActions,
-          updateNodeParameters
+          updateNodeParameters,
+          sharedArtifacts
         ) <-
           globalSnapshotAcceptanceManager
             .accept(
@@ -212,7 +213,8 @@ object GlobalSnapshotConsensusFunctions {
           SortedSet.from(allowSpendBlockAcceptanceResult.accepted).some,
           SortedSet.from(tokenLockBlockAcceptanceResult.accepted).some,
           SortedMap.from(spendActions).some,
-          updateNodeParameters.some
+          updateNodeParameters.some,
+          sharedArtifacts.some
         )
         returnedEvents = returnedSCEvents.map(StateChannelEvent(_)) ++ returnedDAGEvents
       } yield (globalSnapshot, snapshotInfo, returnedEvents)

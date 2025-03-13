@@ -82,7 +82,7 @@ object SnapshotDownloadStorage {
             info
               .bitraverse(_.stateProof(ordinal), _.stateProof(ordinal))
               .map(_.fold(identity, identity))
-              .map(StateProofValidator.validate(snapshot, _).isValid)
+              .flatMap(stateProof => StateProofValidator.validate(snapshot, stateProof).map(_.isValid))
               .ifM(
                 (snapshot.signed, info.leftMap(_.toGlobalSnapshotInfo).fold(identity, identity)).some.pure[F],
                 new Exception("Persisted snapshot info does not match the persisted snapshot")

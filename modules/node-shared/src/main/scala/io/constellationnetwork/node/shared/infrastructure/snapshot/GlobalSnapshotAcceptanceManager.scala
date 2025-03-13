@@ -32,7 +32,7 @@ import io.constellationnetwork.node.shared.domain.tokenlock.block.{
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.artifact.{SharedArtifact, SpendAction, SpendTransaction}
+import io.constellationnetwork.schema.artifact._
 import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.UpdateNodeParameters
@@ -40,14 +40,12 @@ import io.constellationnetwork.schema.swap._
 import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.schema.transaction.{RewardTransaction, Transaction, TransactionReference}
 import io.constellationnetwork.security._
-import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 import io.constellationnetwork.syntax.sortedCollection.{sortedMapSyntax, sortedSetSyntax}
 
 import eu.timepit.refined.types.numeric.NonNegLong
 import io.circe.disjunctionCodecs._
-import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 trait GlobalSnapshotAcceptanceManager[F[_]] {
@@ -77,7 +75,8 @@ trait GlobalSnapshotAcceptanceManager[F[_]] {
       GlobalSnapshotInfo,
       GlobalSnapshotStateProof,
       Map[Address, List[SpendAction]],
-      SortedMap[Id, Signed[UpdateNodeParameters]]
+      SortedMap[Id, Signed[UpdateNodeParameters]],
+      SortedSet[SharedArtifact]
     )
   ]
 }
@@ -119,7 +118,13 @@ object GlobalSnapshotAcceptanceManager {
         acceptanceResult <- acceptBlocks(blocksForAcceptance, lastSnapshotContext, lastActiveTips, lastDeprecatedTips, ordinal)
 
         updatedGlobalBalances = lastSnapshotContext.balances ++ acceptanceResult.contextUpdate.balances
-        StateChannelAcceptanceResult(scSnapshots, currencySnapshots, returnedSCEvents, currencyAcceptanceBalanceUpdate, incomingCurrencySnapshots) <-
+        StateChannelAcceptanceResult(
+          scSnapshots,
+          currencySnapshots,
+          returnedSCEvents,
+          currencyAcceptanceBalanceUpdate,
+          incomingCurrencySnapshots
+        ) <-
           stateChannelEventsProcessor
             .process(
               ordinal,
@@ -381,6 +386,17 @@ object GlobalSnapshotAcceptanceManager {
 
         stateProof <- gsi.stateProof(maybeMerkleTree)
 
+        allowSpendsExpiredEvents <- emitAllowSpendsExpired(
+          filterExpiredAllowSpends(
+            lastActiveAllowSpends.getOrElse(None, SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]]),
+            epochProgress
+          )
+        )
+
+        tokenUnlocksEvents <- emitTokenUnlocks(
+          filterExpiredTokenLocks(globalActiveTokenLocks, epochProgress)
+        )
+
       } yield
         (
           acceptanceResult,
@@ -392,7 +408,8 @@ object GlobalSnapshotAcceptanceManager {
           gsi,
           stateProof,
           acceptedSpendActions,
-          acceptedUpdateNodeParameters
+          acceptedUpdateNodeParameters,
+          allowSpendsExpiredEvents ++ tokenUnlocksEvents
         )
     }
 
@@ -408,9 +425,7 @@ object GlobalSnapshotAcceptanceManager {
           .flatMap(_.allowSpendRef)
 
       val lastActiveGlobalAllowSpends = lastActiveAllowSpends.getOrElse(None, SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]])
-      val expiredGlobalAllowSpends = lastActiveGlobalAllowSpends.collect {
-        case (address, allowSpends) => address -> allowSpends.filter(_.lastValidEpochProgress < epochProgress)
-      }
+      val expiredGlobalAllowSpends = filterExpiredAllowSpends(lastActiveGlobalAllowSpends, epochProgress)
 
       val unexpiredGlobalAllowSpends = (globalAllowSpends |+| expiredGlobalAllowSpends).foldLeft(lastActiveGlobalAllowSpends) {
         case (acc, (address, allowSpends)) =>
@@ -483,9 +498,7 @@ object GlobalSnapshotAcceptanceManager {
       acceptedGlobalTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]],
       lastActiveGlobalTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]]
     ): SortedMap[Address, SortedSet[Signed[TokenLock]]] = {
-      val expiredGlobalTokenLocks = lastActiveGlobalTokenLocks.collect {
-        case (address, tokenLocks) => address -> tokenLocks.filter(_.unlockEpoch < epochProgress)
-      }
+      val expiredGlobalTokenLocks = filterExpiredTokenLocks(lastActiveGlobalTokenLocks, epochProgress)
 
       (acceptedGlobalTokenLocks |+| expiredGlobalTokenLocks).foldLeft(lastActiveGlobalTokenLocks) {
         case (acc, (address, tokenLocks)) =>
@@ -519,6 +532,18 @@ object GlobalSnapshotAcceptanceManager {
       }
     }
 
+    private def filterExpiredAllowSpends(
+      allowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
+      epochProgress: EpochProgress
+    ): SortedMap[Address, SortedSet[Signed[AllowSpend]]] =
+      allowSpends.view.mapValues(_.filter(_.lastValidEpochProgress < epochProgress)).to(SortedMap)
+
+    private def filterExpiredTokenLocks(
+      tokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]],
+      epochProgress: EpochProgress
+    ): SortedMap[Address, SortedSet[Signed[TokenLock]]] =
+      tokenLocks.view.mapValues(_.filter(_.unlockEpoch < epochProgress)).to(SortedMap)
+
     private def updateGlobalBalancesByAllowSpends(
       epochProgress: EpochProgress,
       currentBalances: SortedMap[Address, Balance],
@@ -526,9 +551,7 @@ object GlobalSnapshotAcceptanceManager {
       lastActiveAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
     ): SortedMap[Address, Balance] = {
       val lastActiveGlobalAllowSpends = lastActiveAllowSpends.getOrElse(None, SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]])
-      val expiredGlobalAllowSpends = lastActiveGlobalAllowSpends.collect {
-        case (address, allowSpends) => address -> allowSpends.filter(_.lastValidEpochProgress < epochProgress)
-      }
+      val expiredGlobalAllowSpends = filterExpiredAllowSpends(lastActiveGlobalAllowSpends, epochProgress)
 
       (globalAllowSpends |+| expiredGlobalAllowSpends).foldLeft(currentBalances) {
         case (acc, (address, allowSpends)) =>
@@ -626,19 +649,19 @@ object GlobalSnapshotAcceptanceManager {
       acceptedGlobalTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]],
       lastActiveGlobalTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]]
     ): SortedMap[Address, Balance] = {
-      val expiredGlobalTokenLocks = lastActiveGlobalTokenLocks.collect {
-        case (address, allowSpends) => address -> allowSpends.filter(_.unlockEpoch < epochProgress)
-      }
+      val expiredGlobalTokenLocks = filterExpiredTokenLocks(lastActiveGlobalTokenLocks, epochProgress)
 
       (acceptedGlobalTokenLocks |+| expiredGlobalTokenLocks).foldLeft(currentBalances) {
-        case (acc, (address, allowSpends)) =>
-          val unexpired = allowSpends.filter(_.unlockEpoch >= epochProgress)
-          val expired = allowSpends.filter(_.unlockEpoch < epochProgress)
+        case (acc, (address, tokenLocks)) =>
+          val unexpired = tokenLocks.filter(_.unlockEpoch >= epochProgress)
+          val expired = tokenLocks.filter(_.unlockEpoch < epochProgress)
 
           val updatedBalanceUnexpired =
-            unexpired.foldLeft(acc.getOrElse(address, Balance.empty)) { (currentBalance, allowSpend) =>
+            unexpired.foldLeft(acc.getOrElse(address, Balance.empty)) { (currentBalance, tokenLock) =>
               currentBalance
-                .minus(TokenLockAmount.toAmount(allowSpend.amount))
+                .minus(TokenLockAmount.toAmount(tokenLock.amount))
+                .getOrElse(currentBalance)
+                .minus(TokenLockFee.toAmount(tokenLock.fee))
                 .getOrElse(currentBalance)
             }
           val updatedBalanceExpired = expired.foldLeft(updatedBalanceUnexpired) { (currentBalance, allowSpend) =>
@@ -736,6 +759,31 @@ object GlobalSnapshotAcceptanceManager {
           .getOrElse(acc)
       }
 
+    def emitAllowSpendsExpired(
+      addressToSet: SortedMap[Address, SortedSet[Signed[AllowSpend]]]
+    )(implicit hasher: Hasher[F]): F[SortedSet[SharedArtifact]] =
+      addressToSet.values.flatten.toList
+        .traverse(_.toHashed)
+        .map(_.map(hashed => AllowSpendExpiration(hashed.hash): SharedArtifact).toSortedSet)
+
+    def emitTokenUnlocks(
+      expiredTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]]
+    )(implicit hasher: Hasher[F]): F[SortedSet[SharedArtifact]] =
+      expiredTokenLocks.values.flatten.toList
+        .traverse(_.toHashed)
+        .map { hashedLocks =>
+          val newUnlocks = hashedLocks.collect {
+            case hashed =>
+              TokenUnlock(
+                hashed.hash,
+                hashed.amount,
+                hashed.currencyId,
+                hashed.source
+              )
+          }
+
+          SortedSet.from[SharedArtifact](newUnlocks)
+        }
     def getTipsUsages(
       lastActive: Set[ActiveTip],
       lastDeprecated: Set[DeprecatedTip]

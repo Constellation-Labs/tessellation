@@ -9,7 +9,7 @@ import scala.collection.immutable.{SortedMap, SortedSet}
 import io.constellationnetwork.ext.cats.syntax.next.catsSyntaxNext
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.artifact.SpendAction
+import io.constellationnetwork.schema.artifact.{SharedArtifact, SpendAction}
 import io.constellationnetwork.schema.balance.Balance
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.height.{Height, SubHeight}
@@ -50,6 +50,7 @@ case class GlobalIncrementalSnapshot(
   tokenLockBlocks: Option[SortedSet[Signed[TokenLockBlock]]],
   spendActions: Option[SortedMap[Address, List[SpendAction]]],
   updateNodeParameters: Option[SortedMap[Id, Signed[UpdateNodeParameters]]],
+  artifacts: Option[SortedSet[SharedArtifact]],
   version: SnapshotVersion = SnapshotVersion("0.0.1")
 ) extends IncrementalSnapshot[GlobalSnapshotStateProof]
 
@@ -71,7 +72,8 @@ object GlobalIncrementalSnapshot {
         Some(SortedSet.empty),
         Some(SortedSet.empty),
         Some(SortedMap.empty),
-        snapshot.info.updateNodeParameters.map(_.map { case (k, v) => (k, v._1) })
+        snapshot.info.updateNodeParameters.map(_.map { case (k, v) => (k, v._1) }),
+        Some(SortedSet.empty)
       )
     }
 }
@@ -108,6 +110,7 @@ case class GlobalIncrementalSnapshotV1(
       Some(SortedSet.empty),
       Some(SortedMap.empty),
       Some(SortedMap.empty),
+      Some(SortedSet.empty),
       version
     )
 }
@@ -184,7 +187,8 @@ object GlobalSnapshot {
         Some(SortedSet.empty),
         Some(SortedSet.empty),
         Some(SortedMap.empty),
-        Some(SortedMap.empty)
+        Some(SortedMap.empty),
+        Some(SortedSet.empty)
       )
     }
 

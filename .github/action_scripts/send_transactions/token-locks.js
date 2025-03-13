@@ -44,10 +44,11 @@ const createTokenLockTransaction = async (sourceAccount, l1Url, l0Url, epochProg
     console.log(`Current epoch progress: ${currentEpochProgress}, setting unlockEpoch to ${currentEpochProgress + epochProgressOffset}`);
 
     return {
-        source: sourceAccount.address,
         amount: 100,
-        parent: lastRef,
         currencyId: CONSTANTS.CURRENCY_TOKEN_ID,
+        fee: 0,
+        parent: lastRef,
+        source: sourceAccount.address,
         unlockEpoch: currentEpochProgress + epochProgressOffset,
     };
 };

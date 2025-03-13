@@ -310,7 +310,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
       Some(SortedSet.empty),
       Some(SortedSet.empty),
       Some(SortedMap.empty),
-      Some(SortedMap.empty)
+      Some(SortedMap.empty),
+      Some(SortedSet.empty)
     )
   }
 

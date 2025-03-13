@@ -238,7 +238,7 @@ class TokenLockStorage[F[_]: Async](
       }
 
     val order: Order[NonEmptyList[Hashed[TokenLock]]] =
-      Order.whenEqual(Order.by(-_.head.ordinal.value.value), Order[NonEmptyList[Hashed[TokenLock]]])
+      Order.whenEqual(Order.by(-_.head.fee.value.value), Order[NonEmptyList[Hashed[TokenLock]]])
     val sortedTxs = SortedSet.from(txs)(order.toOrdering)
 
     go(sortedTxs, List.empty)

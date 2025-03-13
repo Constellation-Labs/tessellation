@@ -116,6 +116,7 @@ object StateChannelServiceSuite extends MutableIOSuite {
           None,
           None,
           None,
+          None,
           None
         ),
         NonEmptySet.fromSetUnsafe(SortedSet(SignatureProof(ID.Id(Hex("")), Signature(Hex("")))))
