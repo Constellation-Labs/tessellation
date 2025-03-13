@@ -19,7 +19,8 @@ case class StateChannelAcceptanceResult(
   accepted: SortedMap[Address, NonEmptyList[Signed[StateChannelSnapshotBinary]]],
   calculatedCurrencyState: SortedMap[Address, CurrencySnapshotWithState],
   returned: Set[StateChannelOutput],
-  balanceUpdate: Map[Address, Balance]
+  balanceUpdate: Map[Address, Balance],
+  incomingCurrencySnapshotsWithState: SortedMap[Address, CurrencySnapshotWithState]
 )
 
 object StateChannelAcceptanceResult {
