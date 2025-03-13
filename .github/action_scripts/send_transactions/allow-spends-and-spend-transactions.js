@@ -321,15 +321,13 @@ const createBalanceManager = (urls) => {
                 const remainingAmount = allowSpendAmount - spendAmount;
                 const expectedBalance = balanceAfterAllowSpend + remainingAmount;
 
-                logWorkflow.warning(`${layerName} balance after spend - check skipped`);
-                /*
                 if (currentBalance !== expectedBalance) {
                     throw new Error(
                         `Balance after spend mismatch. Expected: ${expectedBalance} (${balanceAfterAllowSpend} + ${remainingAmount}), got: ${currentBalance}`
                     );
                 }
                 logWorkflow.success(`${layerName} balance after spend verified successfully`);
-                */
+                
             },
             { name: `${layerName} balance after spend verification` }
         );
