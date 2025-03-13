@@ -93,6 +93,11 @@ jobs:
           cd .github/action_scripts
           node send_transactions/allow-spends-and-spend-transactions.js 90 91 80 81 82 unauthorized-currency
 
+      - name: Test Exceeding Amount Spend Transaction Workflow
+        run: |
+          cd .github/action_scripts
+          node send_transactions/allow-spends-and-spend-transactions.js 90 91 80 81 82 exceeding-amount-spend
+
       - name: Upload log files
         if: always()
         uses: actions/upload-artifact@v4

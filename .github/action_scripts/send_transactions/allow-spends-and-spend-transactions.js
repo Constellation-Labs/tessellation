@@ -1708,6 +1708,136 @@ const executeInvalidCurrencyDestinationWorkflow = async () => {
     }
 };
 
+const createExceedingAmountSpendTransaction = async (allowSpendHash, sourceAddress, destinationAddress, allowSpendAmount) => {
+    const exceedingAmount = allowSpendAmount + 100;
+    
+    logWorkflow.info(`Creating spend transaction with amount (${exceedingAmount}) exceeding allow spend amount (${allowSpendAmount})`);
+    
+    const dataUpdate = {
+        UsageUpdateWithSpendTransaction: {
+            address: sourceAddress,
+            usage: 10,
+            spendTransactionA: {
+                allowSpendRef: allowSpendHash,
+                currency: null,
+                amount: exceedingAmount,
+                source: sourceAddress,
+                destination: destinationAddress
+            },
+            spendTransactionB: createMetagraphSpendTransaction(destinationAddress)
+        }
+    };
+
+    logWorkflow.debug('Created exceeding amount spend transaction: ' + JSON.stringify({
+        address: dataUpdate.UsageUpdateWithSpendTransaction.address,
+        usage: dataUpdate.UsageUpdateWithSpendTransaction.usage,
+        spendTransactionA: {
+            type: 'User',
+            hasAllowSpendRef: !!dataUpdate.UsageUpdateWithSpendTransaction.spendTransactionA.allowSpendRef,
+            destination: dataUpdate.UsageUpdateWithSpendTransaction.spendTransactionA.destination,
+            amount: dataUpdate.UsageUpdateWithSpendTransaction.spendTransactionA.amount
+        },
+        spendTransactionB: {
+            type: 'Metagraph',
+            hasAllowSpendRef: !!dataUpdate.UsageUpdateWithSpendTransaction.spendTransactionB.allowSpendRef,
+            destination: dataUpdate.UsageUpdateWithSpendTransaction.spendTransactionB.destination,
+            amount: dataUpdate.UsageUpdateWithSpendTransaction.spendTransactionB.amount
+        }
+    }, null, 2));
+
+    return dataUpdate;
+};
+
+const sendExceedingAmountSpendTransaction = async (urls, allowSpendHash, sourceAddress, destinationAddress, allowSpendAmount) => {
+    const dataUpdate = createExceedingAmountSpendTransaction(allowSpendHash, sourceAddress, destinationAddress, allowSpendAmount);
+    const account = dag4.createAccount(PRIVATE_KEYS.key3);
+    const proof = await generateProof(dataUpdate, PRIVATE_KEYS.key3, account, SerializerType.STANDARD);
+
+    const body = {
+        value: dataUpdate,
+        proofs: [proof]
+    };
+
+    try {
+        logWorkflow.info(`Sending data transaction with exceeding spend amount: ${JSON.stringify(body)}`);
+        const response = await axios.post(`${urls.dataL1Url}/data`, body);
+        logWorkflow.error(`Transaction was accepted when it should have been rejected: ${JSON.stringify(response.data)}`);
+        return { 
+            response: response.data, 
+            update: dataUpdate, 
+            accepted: true 
+        };
+    } catch (error) {
+        if (error.response && error.response.status === 400) {
+            logWorkflow.success(`Transaction correctly rejected with 400 Bad Request: ${error.response.data}`);
+            return { 
+                update: dataUpdate, 
+                rejected: true, 
+                error: error.response.data 
+            };
+        }
+        logWorkflow.error('Error sending data transaction with exceeding spend amount', error);
+        throw error;
+    }
+};
+
+const executeExceedingAmountSpendWorkflow = async () => {
+    try {
+        logWorkflow.start('ExceedingAmountSpendTransaction');
+
+        const config = createConfig();
+        const urls = createNetworkConfig(config);
+        const balanceManager = createBalanceManager(urls);
+
+        const initialBalance = await balanceManager.getDagBalance(PRIVATE_KEYS.key3);
+        logWorkflow.info(`Initial balance before allow spend: ${initialBalance}`);
+
+        await transferTokensToCurrencyId(urls);
+
+        logWorkflow.info('Allow spend creation started');
+        const { address, hash, amount: allowSpendAmount } = await executeWorkflow({
+            urls,
+            ...spendTransactionWorkflow,
+            options: {
+                skipExpirationCheck: true
+            }
+        });
+
+        const balanceAfterAllowSpend = await balanceManager.getDagBalance(PRIVATE_KEYS.key3);
+        logWorkflow.info(`Balance after allow spend: ${balanceAfterAllowSpend}`);
+        logWorkflow.info(`Allow spend amount: ${allowSpendAmount}`);
+
+        logWorkflow.info('Allow spend created and verified, proceeding with exceeding amount spend transaction');
+
+        const spendResult = await sendExceedingAmountSpendTransaction(
+            urls,
+            hash,
+            address,
+            CONSTANTS.CURRENCY_TOKEN_ID,
+            allowSpendAmount
+        );
+
+        if (spendResult.accepted) {
+            logWorkflow.error('Spend transaction with exceeding amount was incorrectly accepted');
+            throw new Error('Spend transaction with exceeding amount was incorrectly accepted');
+        }
+
+        await sleep(CONSTANTS.SNAPSHOT_WAIT_TIME_MS);
+        const finalBalance = await balanceManager.getDagBalance(PRIVATE_KEYS.key3);
+        
+        if (finalBalance !== balanceAfterAllowSpend) {
+            logWorkflow.error(`Balance changed after rejected transaction. Expected: ${balanceAfterAllowSpend}, got: ${finalBalance}`);
+            throw new Error('Balance changed after rejected transaction');
+        }
+        
+        logWorkflow.success('Balance remained unchanged after rejected transaction as expected');
+        logWorkflow.success('ExceedingAmountSpendTransaction workflow completed successfully');
+    } catch (error) {
+        logWorkflow.error('ExceedingAmountSpendTransaction', error);
+        throw error;
+    }
+};
+
 const executeWorkflowByType = async (workflowType) => {
     const config = createConfig();
     const urls = createNetworkConfig(config);
@@ -1753,6 +1883,9 @@ const executeWorkflowByType = async (workflowType) => {
             break;
         case 'invalid-currency-destination':
             await executeInvalidCurrencyDestinationWorkflow();
+            break;
+        case 'exceeding-amount-spend':
+            await executeExceedingAmountSpendWorkflow();
             break;
         default:
             throw new Error(`Unknown workflow type: ${workflowType}`);
