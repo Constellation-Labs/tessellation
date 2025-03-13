@@ -169,7 +169,8 @@ object GlobalSnapshotConsensusFunctionsSuite extends MutableIOSuite with Checker
         events.groupByNel(_.address).view.mapValues(_.map(_.snapshotBinary)).toSortedMap,
         SortedMap.empty,
         Set.empty,
-        Map.empty
+        Map.empty,
+        SortedMap.empty
       )
     )
 

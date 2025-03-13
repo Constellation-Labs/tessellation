@@ -136,7 +136,7 @@ object GlobalSnapshotStateChannelEventsProcessor {
                 lastGlobalSnapshots,
                 getGlobalSnapshotByOrdinal
               ).map { accepted =>
-                val lastCurrencyStates = calculateLastCurrencySnapshots(accepted, lastGlobalSnapshotInfo)
+                val (lastCurrencyStates, incomingCurrencyState) = calculateLastCurrencySnapshots(accepted, lastGlobalSnapshotInfo)
                 val finalScSnapshots = accepted.map { case (k, (v, _)) => k -> v.map(_._1) }
                 // TODO: ASSUMING that owner addresses are restricted from being shared at this point
                 val balanceUpdates = accepted.values.map(_._2).foldLeft(Map.empty[Address, Balance])(_ ++ _)
@@ -145,7 +145,8 @@ object GlobalSnapshotStateChannelEventsProcessor {
                   finalScSnapshots,
                   lastCurrencyStates,
                   returnedSCEvents,
-                  balanceUpdates
+                  balanceUpdates,
+                  incomingCurrencyState
                 )
               }
           }
@@ -153,13 +154,16 @@ object GlobalSnapshotStateChannelEventsProcessor {
       private def calculateLastCurrencySnapshots(
         processedCurrencySnapshots: SortedMap[Address, MetagraphAcceptanceResult],
         lastGlobalSnapshotInfo: GlobalSnapshotInfo
-      ): SortedMap[Address, CurrencySnapshotWithState] = {
+      ): (SortedMap[Address, CurrencySnapshotWithState], SortedMap[Address, CurrencySnapshotWithState]) = {
         val lastCurrencySnapshots =
           processedCurrencySnapshots.map { case (k, (v, _)) => k -> v.toList.flatMap(_._2).lastOption }.collect {
             case (key, Some(state)) => key -> state
           }
 
-        lastGlobalSnapshotInfo.lastCurrencySnapshots.concat(lastCurrencySnapshots)
+        (
+          lastGlobalSnapshotInfo.lastCurrencySnapshots.concat(lastCurrencySnapshots),
+          lastCurrencySnapshots
+        )
       }
 
       private def applyCurrencySnapshot(

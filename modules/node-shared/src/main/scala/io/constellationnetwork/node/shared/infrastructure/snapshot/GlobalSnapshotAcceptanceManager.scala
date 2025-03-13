@@ -119,7 +119,7 @@ object GlobalSnapshotAcceptanceManager {
         acceptanceResult <- acceptBlocks(blocksForAcceptance, lastSnapshotContext, lastActiveTips, lastDeprecatedTips, ordinal)
 
         updatedGlobalBalances = lastSnapshotContext.balances ++ acceptanceResult.contextUpdate.balances
-        StateChannelAcceptanceResult(scSnapshots, currencySnapshots, returnedSCEvents, currencyAcceptanceBalanceUpdate) <-
+        StateChannelAcceptanceResult(scSnapshots, currencySnapshots, returnedSCEvents, currencyAcceptanceBalanceUpdate, incomingCurrencySnapshots) <-
           stateChannelEventsProcessor
             .process(
               ordinal,
@@ -145,7 +145,7 @@ object GlobalSnapshotAcceptanceManager {
           rewards
         )
 
-        spendActions = currencySnapshots.toList.map {
+        spendActions = incomingCurrencySnapshots.toList.map {
           case (_, Left(_))             => Map.empty[Address, List[SharedArtifact]]
           case (address, Right((s, _))) => Map(address -> (s.artifacts.getOrElse(SortedSet.empty[SharedArtifact]).toList))
         }
@@ -208,7 +208,7 @@ object GlobalSnapshotAcceptanceManager {
         acceptedGlobalAllowSpends = allowSpendBlockAcceptanceResult.accepted.flatMap(_.value.transactions.toList)
         acceptedGlobalTokenLocks = tokenLockBlockAcceptanceResult.accepted.flatMap(_.value.tokenLocks.toList)
 
-        activeAllowSpendsFromCurrencySnapshots = currencySnapshots.map { case (key, value) => (key, value) }
+        activeAllowSpendsFromCurrencySnapshots = incomingCurrencySnapshots.map { case (key, value) => (key, value) }
           .mapFilter(_.toOption.flatMap { case (_, info) => info.activeAllowSpends })
 
         globalAllowSpends = acceptedGlobalAllowSpends
@@ -284,7 +284,7 @@ object GlobalSnapshotAcceptanceManager {
           }
 
         updatedTokenLockBalances = updateTokenLockBalances(
-          currencySnapshots,
+          incomingCurrencySnapshots,
           lastSnapshotContext.tokenLockBalances
         )
 
