@@ -3,7 +3,7 @@ import sbt.*
 object Dependencies {
 
   object V {
-    val tessellation = "99.99.99"
+    val tessellation: String = sys.env.getOrElse("TESSELLATION_VERSION", "99.99.99")
     val decline = "2.4.1"
     val organizeImports = "0.5.0"
     val requests = "0.8.0"

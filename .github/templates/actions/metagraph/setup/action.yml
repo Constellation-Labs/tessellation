@@ -9,6 +9,8 @@ inputs:
     required: true
   GITHUB_TOKEN:
     required: true
+  TESSELLATION_VERSION:
+    required: true
 
 runs:
   using: "composite"
@@ -85,6 +87,7 @@ runs:
         mv modules/l1/target/scala-2.13/*-assembly-* ../metagraphs/${{inputs.METAGRAPH_NAME}}/currency-l1/currency-l1.jar
       env:
         GITHUB_TOKEN: ${{ inputs.GITHUB_TOKEN }}
+        TESSELLATION_VERSION: ${{ inputs.TESSELLATION_VERSION }}
 
     - name: Copy data layer JARs if needed - Template
       if: ${{ inputs.INCLUDE_DATA_LAYER == 'true' }}
@@ -95,6 +98,7 @@ runs:
         mv modules/data_l1/target/scala-2.13/*-assembly-* ../metagraphs/${{ inputs.METAGRAPH_NAME }}/data-l1/data-l1.jar
       env:
         GITHUB_TOKEN: ${{ inputs.GITHUB_TOKEN }}
+        TESSELLATION_VERSION: ${{ inputs.TESSELLATION_VERSION }}
 
     - name: Cleaning directory
       shell: bash

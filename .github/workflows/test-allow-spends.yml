@@ -121,4 +121,4 @@ jobs:
           name: allow-spends-node-log-files-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}
           path: .github/code/**/*.log
           if-no-files-found: warn
-          retention-days: 7
+          retention-days: 3

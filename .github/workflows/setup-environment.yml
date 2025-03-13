@@ -26,10 +26,23 @@ jobs:
             .github/code/shared_jars
           key: hypergraph-artifacts-${{ hashFiles('**/build.sbt', '**/src/main/scala/io/constellationnetwork/**') }}
 
+      - name: Get Version
+        id: calculate_version
+        run: |
+          BASE_VERSION="1.0.0"
+          FILES_HASH=${{ hashFiles('**/build.sbt', '**/src/main/scala/io/constellationnetwork/**') }}
+          SHORT_HASH=${FILES_HASH:0:8}
+          
+          TESSELLATION_VERSION="$BASE_VERSION-$SHORT_HASH"
+          
+          echo "TESSELLATION_VERSION=$TESSELLATION_VERSION" >> $GITHUB_ENV
+          echo "tessellation_version=$TESSELLATION_VERSION" >> $GITHUB_OUTPUT
+
       - name: Setup Hypergraph
         if: steps.cache-hypergraph-artifacts.outputs.cache-hit != 'true'
         with:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TESSELLATION_VERSION: ${{ steps.calculate_version.outputs.tessellation_version }}
         uses: "./.github/templates/actions/hypergraph/setup"
 
       - name: Cache SBT and Coursier
@@ -43,14 +56,14 @@ jobs:
         with:
           name: hypergraph-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}
           path: .github/code/hypergraph
-          retention-days: 7
+          retention-days: 3
 
       - name: Upload shared_jars artifacts to run CI tests
         uses: actions/upload-artifact@v4
         with:
           name: shared_jars-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}
           path: .github/code/shared_jars
-          retention-days: 7
+          retention-days: 3
 
   setup-project-template-metagraph:
     name: Setup project template metagraph
@@ -80,6 +93,18 @@ jobs:
           path: ~/.m2
           key: sbt-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}
 
+      - name: Get Version
+        id: calculate_version
+        run: |
+          BASE_VERSION="1.0.0"
+          FILES_HASH=${{ hashFiles('**/build.sbt', '**/src/main/scala/io/constellationnetwork/**') }}
+          SHORT_HASH=${FILES_HASH:0:8}
+      
+          TESSELLATION_VERSION="$BASE_VERSION-$SHORT_HASH"
+      
+          echo "TESSELLATION_VERSION=$TESSELLATION_VERSION" >> $GITHUB_ENV
+          echo "tessellation_version=$TESSELLATION_VERSION" >> $GITHUB_OUTPUT
+
       - name: Setup project template metagraph
         if: steps.cache-metagraph.outputs.cache-hit != 'true'
         with:
@@ -87,6 +112,7 @@ jobs:
           TEMPLATE_NAME: project_template
           INCLUDE_DATA_LAYER: true
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TESSELLATION_VERSION: ${{ steps.calculate_version.outputs.tessellation_version }}
         uses: "./.github/templates/actions/metagraph/setup"
 
       - name: Upload project-template-metagraph artifacts to run CI tests
@@ -94,4 +120,4 @@ jobs:
         with:
           name: project-template-metagraph-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}
           path: .github/code/metagraphs/project-template-metagraph
-          retention-days: 7
+          retention-days: 3
