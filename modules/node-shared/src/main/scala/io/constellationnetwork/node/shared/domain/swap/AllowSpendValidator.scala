@@ -6,6 +6,7 @@ import cats.syntax.all._
 
 import io.constellationnetwork.ext.cats.syntax.validated._
 import io.constellationnetwork.node.shared.domain.swap.AllowSpendValidator.AllowSpendValidationErrorOr
+import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.swap.AllowSpend
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.SignedValidator.SignedValidationError
@@ -33,9 +34,11 @@ object AllowSpendValidator {
             .validateSignatures(signedAllowSpend)
             .map(_.errorMap[AllowSpendValidationError](InvalidSigned))
           srcAddressSignatureV <- validateSourceAddressSignature(signedAllowSpend)
+          approverV = validateApproverMatches(signedAllowSpend)
         } yield
           signaturesV
             .productR(srcAddressSignatureV)
+            .productR(approverV)
 
       private def validateSourceAddressSignature(
         signedTx: Signed[AllowSpend]
@@ -44,12 +47,28 @@ object AllowSpendValidator {
           .isSignedExclusivelyBy(signedTx, signedTx.source)
           .map(_.errorMap[AllowSpendValidationError](_ => NotSignedBySourceAddressOwner))
 
+      private def validateApproverMatches(
+        signedTx: Signed[AllowSpend]
+      ): AllowSpendValidationErrorOr[Signed[AllowSpend]] = {
+        val allowSpend = signedTx.value
+        val approversValid = allowSpend.approvers.forall { approver =>
+          allowSpend.destination === approver
+        }
+
+        if (approversValid) {
+          signedTx.validNec
+        } else {
+          InvalidApprover(allowSpend.approvers, allowSpend.destination).invalidNec
+        }
+      }
     }
 
   @derive(eqv, show)
   sealed trait AllowSpendValidationError
   case class InvalidSigned(error: SignedValidationError) extends AllowSpendValidationError
   case object NotSignedBySourceAddressOwner extends AllowSpendValidationError
+  case class InvalidApprover(approvers: List[Address], destination: Address)
+      extends AllowSpendValidationError
 
   type AllowSpendValidationErrorOr[A] = ValidatedNec[AllowSpendValidationError, A]
 }

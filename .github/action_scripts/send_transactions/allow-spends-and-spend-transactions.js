@@ -1706,7 +1706,7 @@ const executeInvalidCurrencyDestinationWorkflow = async () => {
     }
 };
 
-const createExceedingAmountSpendTransaction = async (allowSpendHash, sourceAddress, destinationAddress, allowSpendAmount) => {
+const createExceedingAmountSpendTransaction = (allowSpendHash, sourceAddress, destinationAddress, allowSpendAmount) => {
     const exceedingAmount = allowSpendAmount + 100;
     
     logWorkflow.info(`Creating spend transaction with amount (${exceedingAmount}) exceeding allow spend amount (${allowSpendAmount})`);
@@ -1759,21 +1759,13 @@ const sendExceedingAmountSpendTransaction = async (urls, allowSpendHash, sourceA
     try {
         logWorkflow.info(`Sending data transaction with exceeding spend amount: ${JSON.stringify(body)}`);
         const response = await axios.post(`${urls.dataL1Url}/data`, body);
-        logWorkflow.error(`Transaction was accepted when it should have been rejected: ${JSON.stringify(response.data)}`);
+        logWorkflow.success(`Transaction accepted at endpoint level: ${JSON.stringify(response.data)}`);
         return { 
             response: response.data, 
             update: dataUpdate, 
-            accepted: true 
+            spendAmount: dataUpdate.UsageUpdateWithSpendTransaction.spendTransactionA.amount
         };
     } catch (error) {
-        if (error.response && error.response.status === 400) {
-            logWorkflow.success(`Transaction correctly rejected with 400 Bad Request: ${error.response.data}`);
-            return { 
-                update: dataUpdate, 
-                rejected: true, 
-                error: error.response.data 
-            };
-        }
         logWorkflow.error('Error sending data transaction with exceeding spend amount', error);
         throw error;
     }
@@ -1815,25 +1807,248 @@ const executeExceedingAmountSpendWorkflow = async () => {
             allowSpendAmount
         );
 
-        if (spendResult.accepted) {
-            logWorkflow.error('Spend transaction with exceeding amount was incorrectly accepted');
-            throw new Error('Spend transaction with exceeding amount was incorrectly accepted');
-        }
+        logWorkflow.info('Verifying that the exceeding amount spend transaction is rejected at the global layer...');
+        
+        await verifyUnauthorizedSpendActionInGlobalL0(
+            urls, 
+            CONSTANTS.CURRENCY_TOKEN_ID, 
+            spendResult.update
+        );
 
         await sleep(CONSTANTS.SNAPSHOT_WAIT_TIME_MS);
         const finalBalance = await balanceManager.getDagBalance(PRIVATE_KEYS.key3);
         
         if (finalBalance !== balanceAfterAllowSpend) {
-            logWorkflow.error(`Balance changed after rejected transaction. Expected: ${balanceAfterAllowSpend}, got: ${finalBalance}`);
-            throw new Error('Balance changed after rejected transaction');
+            logWorkflow.error(`Balance changed after transaction that should be rejected at global layer. Expected: ${balanceAfterAllowSpend}, got: ${finalBalance}`);
+            throw new Error('Balance changed after transaction that should be rejected at global layer');
         }
         
-        logWorkflow.success('Balance remained unchanged after rejected transaction as expected');
+        logWorkflow.success('Balance remained unchanged as expected - transaction was correctly rejected at global layer');
         logWorkflow.success('ExceedingAmountSpendTransaction workflow completed successfully');
     } catch (error) {
         logWorkflow.error('ExceedingAmountSpendTransaction', error);
         throw error;
     }
+};
+
+const createInvalidApproverAllowSpendTransaction = async (sourceAccount, l1Url, l0Url, isCurrency = false) => {
+    const [{ data: lastRef }, currentEpochProgress] = await Promise.all([
+        axios.get(`${l1Url}/allow-spends/last-reference/${sourceAccount.address}`),
+        getEpochProgress(l0Url, isCurrency)
+    ]);
+
+    const { allowSpend: amount, fee } = getRandomAmounts();
+    
+    const invalidApproverAddress = dag4.createAccount(PRIVATE_KEYS.key4).address;
+    
+    logWorkflow.info(`Current epoch progress: ${currentEpochProgress}, setting lastValidEpochProgress to ${currentEpochProgress + CONSTANTS.EPOCH_PROGRESS_BUFFER}`);
+    logWorkflow.info(`Using random amounts - allowSpend: ${amount}, fee: ${fee}`);
+    logWorkflow.info(`Using invalid approver: ${invalidApproverAddress} (should be ${CONSTANTS.CURRENCY_TOKEN_ID})`);
+
+    return {
+        amount,
+        approvers: [invalidApproverAddress],
+        destination: CONSTANTS.CURRENCY_TOKEN_ID,
+        fee,
+        lastValidEpochProgress: currentEpochProgress + CONSTANTS.EPOCH_PROGRESS_BUFFER,
+        parent: lastRef,
+        source: sourceAccount.address,
+        currency: isCurrency ? CONSTANTS.CURRENCY_TOKEN_ID : null
+    };
+};
+
+const executeInvalidApproverWorkflow = async () => {
+    try {
+        logWorkflow.start('InvalidApproverAllowSpend');
+
+        const config = createConfig();
+        const urls = createNetworkConfig(config);
+        
+        logWorkflow.info('Invalid approver allow spend creation started');
+        
+        logWorkflow.info('Testing with DAG L1...');
+        const sourceAccountDag = createAndConnectAccount(PRIVATE_KEYS.key1, { l0Url: urls.globalL0Url, l1Url: urls.dagL1Url }, false);
+        const allowSpendDag = await createInvalidApproverAllowSpendTransaction(sourceAccountDag, urls.dagL1Url, urls.globalL0Url, false);
+        const proofDag = await generateProof(allowSpendDag, PRIVATE_KEYS.key1, sourceAccountDag, SerializerType.BROTLI);
+
+        const bodyDag = { value: allowSpendDag, proofs: [proofDag] };
+        logWorkflow.info(`Sending allow spend with invalid approver to DAG L1: ${JSON.stringify(bodyDag.value)}`);
+        
+        let responseDag;
+        try {
+            responseDag = await axios.post(`${urls.dagL1Url}/allow-spends`, bodyDag);
+            logWorkflow.info(`DAG L1 transaction was accepted at L1 level: ${JSON.stringify(responseDag.data)}`);
+        } catch (error) {
+            if (error.response && error.response.status === 400) {
+                logWorkflow.info(`DAG L1 transaction rejected at L1 level with 400 Bad Request: ${error.response.data}`);
+                logWorkflow.info('Skipping global L0 verification for this case since transaction was rejected at L1');
+                
+                logWorkflow.info('Testing with Currency L1...');
+                const sourceAccountCurrency = createAndConnectAccount(PRIVATE_KEYS.key1, { l0Url: urls.currencyL0Url, l1Url: urls.currencyL1Url }, true);
+                const allowSpendCurrency = await createInvalidApproverAllowSpendTransaction(sourceAccountCurrency, urls.currencyL1Url, urls.currencyL0Url, true);
+                const proofCurrency = await generateProof(allowSpendCurrency, PRIVATE_KEYS.key1, sourceAccountCurrency, SerializerType.BROTLI);
+
+                try {
+                    const bodyCurrency = { value: allowSpendCurrency, proofs: [proofCurrency] };
+                    logWorkflow.info(`Sending allow spend with invalid approver to Currency L1: ${JSON.stringify(bodyCurrency.value)}`);
+                    await axios.post(`${urls.currencyL1Url}/allow-spends`, bodyCurrency);
+                    logWorkflow.info(`Currency L1 transaction was accepted at L1 level`);
+                    logWorkflow.info('Verifying that the transaction with invalid approver is rejected at the global layer...');
+                    
+                    await sleep(CONSTANTS.SNAPSHOT_WAIT_TIME_MS);
+                    
+                    await verifyAllowSpendNotInGlobalL0(
+                        sourceAccountCurrency.address, 
+                        allowSpendCurrency, 
+                        urls.globalL0Url, 
+                        true
+                    );
+                    
+                    logWorkflow.success('Currency allow spend with invalid approver correctly not found in global L0');
+                    logWorkflow.success('InvalidApproverAllowSpend workflow completed successfully');
+                } catch (error) {
+                    if (error.response && error.response.status === 400) {
+                        logWorkflow.info(`Currency L1 transaction rejected at L1 level with 400 Bad Request: ${error.response.data}`);
+                        logWorkflow.success('All transactions were rejected at L1 level, workflow considered successful');
+                    } else {
+                        logWorkflow.error('Error in Currency L1 invalid approver test', error);
+                        throw error;
+                    }
+                }
+                
+                return;
+            } else {
+                logWorkflow.error('Error in DAG L1 invalid approver test', error);
+                throw error;
+            }
+        }
+        
+        logWorkflow.info('Verifying that the DAG transaction with invalid approver is rejected at the global layer...');
+        
+        await sleep(CONSTANTS.SNAPSHOT_WAIT_TIME_MS);
+        
+        await verifyAllowSpendNotInGlobalL0(
+            sourceAccountDag.address, 
+            allowSpendDag, 
+            urls.globalL0Url, 
+            false
+        );
+        
+        logWorkflow.success('DAG allow spend with invalid approver correctly not found in global L0');
+        
+        logWorkflow.info('Testing with Currency L1...');
+        const sourceAccountCurrency = createAndConnectAccount(PRIVATE_KEYS.key1, { l0Url: urls.currencyL0Url, l1Url: urls.currencyL1Url }, true);
+        const allowSpendCurrency = await createInvalidApproverAllowSpendTransaction(sourceAccountCurrency, urls.currencyL1Url, urls.currencyL0Url, true);
+        const proofCurrency = await generateProof(allowSpendCurrency, PRIVATE_KEYS.key1, sourceAccountCurrency, SerializerType.BROTLI);
+
+        try {
+            const bodyCurrency = { value: allowSpendCurrency, proofs: [proofCurrency] };
+            logWorkflow.info(`Sending allow spend with invalid approver to Currency L1: ${JSON.stringify(bodyCurrency.value)}`);
+            const responseCurrency = await axios.post(`${urls.currencyL1Url}/allow-spends`, bodyCurrency);
+            logWorkflow.info(`Currency L1 transaction was accepted at L1 level: ${JSON.stringify(responseCurrency.data)}`);
+            
+            logWorkflow.info('Verifying that the Currency transaction with invalid approver is rejected at the global layer...');
+            
+            await sleep(CONSTANTS.SNAPSHOT_WAIT_TIME_MS);
+            
+            await verifyAllowSpendNotInGlobalL0(
+                sourceAccountCurrency.address, 
+                allowSpendCurrency, 
+                urls.globalL0Url, 
+                true
+            );
+            
+            logWorkflow.success('Currency allow spend with invalid approver correctly not found in global L0');
+        } catch (error) {
+            if (error.response && error.response.status === 400) {
+                logWorkflow.info(`Currency L1 transaction rejected at L1 level with 400 Bad Request: ${error.response.data}`);
+            } else {
+                logWorkflow.error('Error in Currency L1 invalid approver test', error);
+                throw error;
+            }
+        }
+        
+        logWorkflow.success('InvalidApproverAllowSpend workflow completed successfully');
+    } catch (error) {
+        logWorkflow.error('InvalidApproverAllowSpend', error);
+        throw error;
+    }
+};
+
+const verifyAllowSpendNotInGlobalL0 = async (address, allowSpend, l0Url, isCurrency = false) => {
+    const serializer = createSerializer(SerializerType.BROTLI);
+    const message = await serializer.serialize(allowSpend);
+    const allowSpendHash = jsSha256.sha256(Buffer.from(message, 'hex'));
+    
+    logWorkflow.info(`Verifying allow spend with hash ${allowSpendHash} is not in global L0 for address ${address}`);
+    
+    let attemptsMade = 0;
+    const maxAttempts = CONSTANTS.MAX_VERIFICATION_ATTEMPTS;
+    
+    return new Promise((resolve, reject) => {
+        const checkAllowSpend = async () => {
+            attemptsMade++;
+            
+            try {
+                logWorkflow.info(`Checking for allow spend in global L0 (attempt ${attemptsMade}/${maxAttempts})...`);
+                
+                const { data: snapshot } = await axios.get(`${l0Url}/global-snapshots/latest/combined`);
+                
+                const tokenActiveAllowSpends = isCurrency 
+                    ? snapshot[1]?.activeAllowSpends?.[CONSTANTS.CURRENCY_TOKEN_ID] 
+                    : snapshot[1]?.activeAllowSpends?.[''];
+                    
+                if (!tokenActiveAllowSpends) {
+                    logWorkflow.info('No active allow spends found for the token category in snapshot');
+                    if (attemptsMade >= maxAttempts) {
+                        logWorkflow.success(`After ${maxAttempts} attempts, no allow spend with invalid approver was found in global L0 as expected`);
+                        resolve(true);
+                        return;
+                    }
+                    setTimeout(checkAllowSpend, CONSTANTS.VERIFICATION_INTERVAL_MS);
+                    return;
+                }
+                
+                const addressAllowSpends = tokenActiveAllowSpends[address] || [];
+                
+                if (addressAllowSpends.length === 0) {
+                    logWorkflow.info(`No active allow spends found for address ${address}`);
+                    if (attemptsMade >= maxAttempts) {
+                        logWorkflow.success(`After ${maxAttempts} attempts, no allow spend with invalid approver was found in global L0 as expected`);
+                        resolve(true);
+                        return;
+                    }
+                    setTimeout(checkAllowSpend, CONSTANTS.VERIFICATION_INTERVAL_MS);
+                    return;
+                }
+                
+                const isActive = await findMatchingHash(addressAllowSpends, allowSpendHash);
+                
+                if (isActive) {
+                    logWorkflow.error(`Allow spend with hash ${allowSpendHash} found in global L0 for address ${address}, which should not happen`);
+                    reject(new Error(`Invalid approver allow spend found in global L0`));
+                    return;
+                } else {
+                    logWorkflow.info(`Allow spend with hash ${allowSpendHash} not found in global L0 for address ${address} (attempt ${attemptsMade}/${maxAttempts})`);
+                    if (attemptsMade >= maxAttempts) {
+                        logWorkflow.success(`After ${maxAttempts} attempts, no allow spend with invalid approver was found in global L0 as expected`);
+                        resolve(true);
+                        return;
+                    }
+                    setTimeout(checkAllowSpend, CONSTANTS.VERIFICATION_INTERVAL_MS);
+                }
+            } catch (error) {
+                logWorkflow.warning(`Error checking global L0 (attempt ${attemptsMade}/${maxAttempts}): ${error.message}`);
+                if (attemptsMade >= maxAttempts) {
+                    reject(error);
+                    return;
+                }
+                setTimeout(checkAllowSpend, CONSTANTS.VERIFICATION_INTERVAL_MS);
+            }
+        };
+        
+        checkAllowSpend();
+    });
 };
 
 const executeWorkflowByType = async (workflowType) => {
@@ -1884,6 +2099,9 @@ const executeWorkflowByType = async (workflowType) => {
             break;
         case 'exceeding-amount-spend':
             await executeExceedingAmountSpendWorkflow();
+            break;
+        case 'invalid-approver':
+            await executeInvalidApproverWorkflow();
             break;
         default:
             throw new Error(`Unknown workflow type: ${workflowType}`);

@@ -29,6 +29,8 @@ bloopExportJarClassifiers in Global := Some(Set("sources"))
 
 val ghTokenSource = TokenSource.GitConfig("github.token") || TokenSource.Environment("GITHUB_TOKEN")
 
+This / githubTokenSource := ghTokenSource
+
 lazy val commonSettings = Seq(
   scalacOptions ++= List("-Ymacro-annotations", "-Yrangepos", "-Wconf:cat=unused:info", "-language:reflectiveCalls"),
   scalafmtOnCompile := true,
