@@ -110,8 +110,11 @@ object TokenLockBlockAcceptanceLogic {
 
         val sortedTxs = block.tokenLocks.toNonEmptyList
         val minusAmountOps = sortedTxs.groupMap(_.source)(tx => minusFn(tx.amount))
+        val minusFeeOps = sortedTxs.groupMap(_.source)(tx => minusFn(tx.fee))
 
-        val balancesUpdate = minusAmountOps
+        val allOps = minusAmountOps |+| minusFeeOps
+
+        val balancesUpdate = allOps
           .foldLeft(contextUpdate.balances.asRight[AddressBalanceOutOfRange].toEitherT[F]) { (acc, addressAndOps) =>
             acc.flatMap { balancesUpdate =>
               val (address, ops) = addressAndOps

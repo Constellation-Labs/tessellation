@@ -102,7 +102,7 @@ object GlobalSnapshotTraverse {
           }
 
           hashedFirstInc <- HasherSelector[F].forOrdinal(firstInc.ordinal)(implicit hasher => firstInc.toHashed)
-          stateProofInvalid = StateProofValidator.validate(hashedFirstInc, firstInfoCalculatedProof).isInvalid
+          stateProofInvalid <- StateProofValidator.validate(hashedFirstInc, firstInfoCalculatedProof).map(_.isInvalid)
 
           _ <- (new Exception(s"Snapshot info does not match the snapshot at ordinal=${firstInc.ordinal.show}"))
             .raiseError[F, Unit]

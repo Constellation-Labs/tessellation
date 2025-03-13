@@ -64,6 +64,7 @@ object GlobalSnapshotContextFunctions {
           snapshotInfo,
           _,
           _,
+          _,
           _
         ) <-
           snapshotAcceptanceManager.accept(
@@ -95,7 +96,8 @@ object GlobalSnapshotContextFunctions {
             case KryoHash => GlobalSnapshotInfoV2.fromGlobalSnapshotInfo(snapshotInfo).stateProof(signedArtifact.ordinal)
           }
         }
-        _ <- StateProofValidator.validate(hashedArtifact, calculatedStateProof) match {
+        validation <- StateProofValidator.validate(hashedArtifact, calculatedStateProof)
+        _ = validation match {
           case Validated.Valid(_)   => Async[F].unit
           case Validated.Invalid(e) => e.raiseError[F, Unit]
         }

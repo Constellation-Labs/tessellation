@@ -129,12 +129,14 @@ object TokenLockRoutesSuite extends HttpSuite {
   def buildSignedLockToken(keyPair: KeyPair)(implicit s: SecurityProvider[IO], h: Hasher[IO]): IO[Signed[TokenLock]] = {
     val src = keyPair.getPublic.toAddress
     val amount = TokenLockAmount(1L)
+    val fee = TokenLockFee(0L)
     val parent = TokenLockReference.empty
     val lastValidEpochProgress = EpochProgress(500L)
 
     val tokenLock = TokenLock(
       src,
       amount,
+      fee,
       parent,
       currencyId.some,
       lastValidEpochProgress
@@ -176,6 +178,7 @@ object TokenLockRoutesSuite extends HttpSuite {
           "transaction" -> Json.obj(
             "source" -> Json.fromString(tokenLock.source.value.value),
             "amount" -> Json.fromLong(tokenLock.amount.value),
+            "fee" -> Json.fromLong(tokenLock.fee.value),
             "parent" -> Json.obj(
               "ordinal" -> Json.fromLong(0L),
               "hash" -> Json.fromString(Hash.empty.value)

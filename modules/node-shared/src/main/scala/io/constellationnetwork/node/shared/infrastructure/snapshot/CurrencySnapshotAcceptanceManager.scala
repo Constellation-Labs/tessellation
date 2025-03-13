@@ -40,6 +40,7 @@ import io.constellationnetwork.syntax.sortedCollection._
 
 import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
+import org.typelevel.log4cats.SelfAwareStructuredLogger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
 case class CurrencyMessagesAcceptanceResult(
@@ -99,8 +100,8 @@ object CurrencySnapshotAcceptanceManager {
     messageValidator: CurrencyMessageValidator[F],
     feeTransactionValidator: FeeTransactionValidator[F],
     globalSnapshotSyncValidator: GlobalSnapshotSyncValidator[F]
-  ) = new CurrencySnapshotAcceptanceManager[F] {
-    val logger = Slf4jLogger.getLogger[F]
+  ): CurrencySnapshotAcceptanceManager[F] = new CurrencySnapshotAcceptanceManager[F] {
+    val logger: SelfAwareStructuredLogger[F] = Slf4jLogger.getLogger[F]
 
     def accept(
       blocksForAcceptance: List[Signed[Block]],
@@ -322,9 +323,7 @@ object CurrencySnapshotAcceptanceManager {
       stateProof <- csi.stateProof(snapshotOrdinal)
 
       allowSpendsExpiredEvents <- emitAllowSpendsExpired(
-        lastActiveAllowSpends.collect {
-          case (address, allowSpends) => address -> allowSpends.filter(_.lastValidEpochProgress < lastGlobalSnapshotEpochProgress)
-        }
+        filterExpiredAllowSpends(lastActiveAllowSpends, lastGlobalSnapshotEpochProgress)
       )
 
       tokenUnlocksEvents <- emitTokenUnlocks(
@@ -584,9 +583,7 @@ object CurrencySnapshotAcceptanceManager {
         SortedMap[Address, SortedSet[Signed[TokenLock]]]
       )
     ] = {
-      val expiredTokenLocks = lastActiveTokenLocks.collect {
-        case (address, tokenLocks) => address -> tokenLocks.filter(_.unlockEpoch < epochProgress)
-      }
+      val expiredTokenLocks = filterExpiredTokenLocks(lastActiveTokenLocks, epochProgress)
 
       (acceptedTokenLocks |+| expiredTokenLocks).toList
         .foldM(lastActiveTokenLocks) {
@@ -609,36 +606,6 @@ object CurrencySnapshotAcceptanceManager {
         .map(updateTokenLocks => (updateTokenLocks, expiredTokenLocks))
     }
 
-    private def updateActiveTokenLocks(
-      lastGlobalEpochProgress: EpochProgress,
-      activeTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]],
-      acceptedTokenLocks: Map[Address, SortedSet[Signed[TokenLock]]],
-      acceptedTokenUnlocks: SortedSet[TokenUnlock]
-    )(implicit hasher: Hasher[F]): F[SortedMap[Address, SortedSet[Signed[TokenLock]]]] =
-      if (acceptedTokenLocks.isEmpty && acceptedTokenUnlocks.isEmpty) {
-        activeTokenLocks.pure
-      } else {
-        val allTokenLocks = (acceptedTokenLocks.keySet ++ activeTokenLocks.keySet).toList.map { address =>
-          address -> (acceptedTokenLocks.getOrElse(address, SortedSet.empty[Signed[TokenLock]]) ++ activeTokenLocks.getOrElse(
-            address,
-            SortedSet.empty[Signed[TokenLock]]
-          ))
-        }.toSortedMap
-
-        if (acceptedTokenUnlocks.isEmpty) {
-          allTokenLocks.pure
-        } else {
-          allTokenLocks.toList.traverse {
-            case (address, set) =>
-              set.toList.filterA { signedTokenLock =>
-                signedTokenLock.toHashed.map { hashedTokenLock =>
-                  acceptedTokenUnlocks.forall(_.tokenLockRef =!= hashedTokenLock.hash)
-                }
-              }.map(filteredSet => address -> filteredSet.toSortedSet)
-          }.map(_.toSortedMap)
-        }
-      }
-
     private def updateBalancesByTokenLocks(
       epochProgress: EpochProgress,
       currentBalances: SortedMap[Address, Balance],
@@ -646,19 +613,19 @@ object CurrencySnapshotAcceptanceManager {
       lastActiveTokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]],
       acceptedTokenUnlocks: SortedSet[TokenUnlock]
     ): SortedMap[Address, Balance] = {
-      val expiredGlobalTokenLocks = lastActiveTokenLocks.collect {
-        case (address, allowSpends) => address -> allowSpends.filter(_.unlockEpoch < epochProgress)
-      }
+      val expiredGlobalTokenLocks = filterExpiredTokenLocks(lastActiveTokenLocks, epochProgress)
 
       (acceptedTokenLocks |+| expiredGlobalTokenLocks).foldLeft(currentBalances) {
-        case (acc, (address, allowSpends)) =>
-          val unexpired = allowSpends.filter(_.unlockEpoch >= epochProgress)
-          val expired = allowSpends.filter(_.unlockEpoch < epochProgress)
+        case (acc, (address, tokenLocks)) =>
+          val unexpired = tokenLocks.filter(_.unlockEpoch >= epochProgress)
+          val expired = tokenLocks.filter(_.unlockEpoch < epochProgress)
 
           val updatedBalanceUnexpired =
-            unexpired.foldLeft(acc.getOrElse(address, Balance.empty)) { (currentBalance, allowSpend) =>
+            unexpired.foldLeft(acc.getOrElse(address, Balance.empty)) { (currentBalance, tokenLock) =>
               currentBalance
-                .minus(TokenLockAmount.toAmount(allowSpend.amount))
+                .minus(TokenLockAmount.toAmount(tokenLock.amount))
+                .getOrElse(currentBalance)
+                .minus(TokenLockFee.toAmount(tokenLock.fee))
                 .getOrElse(currentBalance)
             }
           val updatedBalanceExpired = expired.foldLeft(updatedBalanceUnexpired) { (currentBalance, allowSpend) =>
@@ -688,23 +655,17 @@ object CurrencySnapshotAcceptanceManager {
       activeTipsUsages ++ deprecatedTipsUsages
     }
 
-    private def filterAllowsSpends(
+    private def filterExpiredAllowSpends(
       allowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
-      allAcceptedSpendTxnsAllowSpendsRefs: List[Hash],
-      spendTransactionAssociated: Boolean
-    )(implicit hasher: Hasher[F]): F[SortedMap[Address, SortedSet[Signed[AllowSpend]]]] =
-      allowSpends.toList.traverse {
-        case (address, allowSpends) =>
-          allowSpends.toList.traverse(_.toHashed).map { hashedAllowSpends =>
-            val validAllowSpends = if (spendTransactionAssociated) {
-              hashedAllowSpends.filter(h => allAcceptedSpendTxnsAllowSpendsRefs.contains(h.hash))
-            } else {
-              hashedAllowSpends.filterNot(h => allAcceptedSpendTxnsAllowSpendsRefs.contains(h.hash))
-            }
-            address -> validAllowSpends.map(_.signed).toSortedSet
-          }
-      }
-        .map(_.toSortedMap)
+      epochProgress: EpochProgress
+    ): SortedMap[Address, SortedSet[Signed[AllowSpend]]] =
+      allowSpends.view.mapValues(_.filter(_.lastValidEpochProgress < epochProgress)).to(SortedMap)
+
+    private def filterExpiredTokenLocks(
+      tokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]],
+      epochProgress: EpochProgress
+    ): SortedMap[Address, SortedSet[Signed[TokenLock]]] =
+      tokenLocks.view.mapValues(_.filter(_.unlockEpoch < epochProgress)).to(SortedMap)
 
     private def acceptCurrencyAllowSpends(
       epochProgress: EpochProgress,
@@ -716,9 +677,7 @@ object CurrencySnapshotAcceptanceManager {
         allAcceptedSpendTxns
           .flatMap(_.allowSpendRef)
 
-      val expiredAllowSpends = existentCurrencyAllowSpends.collect {
-        case (address, allowSpends) => address -> allowSpends.filter(_.lastValidEpochProgress < epochProgress)
-      }
+      val expiredAllowSpends = filterExpiredAllowSpends(existentCurrencyAllowSpends, epochProgress)
       val unexpiredAllowSpends = (incomingCurrencyAllowSpends |+| expiredAllowSpends).foldLeft(existentCurrencyAllowSpends) {
         case (acc, (address, allowSpends)) =>
           val lastAddressAllowSpends = acc.getOrElse(address, SortedSet.empty[Signed[AllowSpend]])
@@ -751,9 +710,7 @@ object CurrencySnapshotAcceptanceManager {
       incomingCurrencyAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
       lastActiveCurrencyAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]]
     ): SortedMap[Address, Balance] = {
-      val expiredCurrencyAllowSpends = lastActiveCurrencyAllowSpends.collect {
-        case (address, allowSpends) => address -> allowSpends.filter(_.lastValidEpochProgress < epochProgress)
-      }
+      val expiredCurrencyAllowSpends = filterExpiredAllowSpends(lastActiveCurrencyAllowSpends, epochProgress)
 
       (incomingCurrencyAllowSpends |+| expiredCurrencyAllowSpends).foldLeft(currentBalances) {
         case (acc, (address, allowSpends)) =>

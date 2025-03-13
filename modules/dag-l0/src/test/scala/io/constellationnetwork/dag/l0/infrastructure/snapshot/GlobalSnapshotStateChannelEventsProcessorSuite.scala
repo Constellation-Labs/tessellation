@@ -142,7 +142,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         SortedMap.empty[Address, StateChannelAcceptanceResult.CurrencySnapshotWithState],
         Set.empty,
         Map.empty,
-        SortedMap.empty[Address, StateChannelAcceptanceResult.CurrencySnapshotWithState],
+        SortedMap.empty[Address, StateChannelAcceptanceResult.CurrencySnapshotWithState]
       )
       result <- service.process(
         SnapshotOrdinal(1L),
@@ -176,7 +176,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         SortedMap.empty[Address, StateChannelAcceptanceResult.CurrencySnapshotWithState],
         Set.empty,
         Map.empty,
-        SortedMap.empty[Address, StateChannelAcceptanceResult.CurrencySnapshotWithState],
+        SortedMap.empty[Address, StateChannelAcceptanceResult.CurrencySnapshotWithState]
       )
       result <- service.process(
         SnapshotOrdinal(1L),
@@ -211,7 +211,7 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
         SortedMap.empty[Address, StateChannelAcceptanceResult.CurrencySnapshotWithState],
         Set.empty,
         Map.empty,
-        SortedMap.empty[Address, StateChannelAcceptanceResult.CurrencySnapshotWithState],
+        SortedMap.empty[Address, StateChannelAcceptanceResult.CurrencySnapshotWithState]
       )
       result <- service.process(
         SnapshotOrdinal(1L),
@@ -255,7 +255,8 @@ object GlobalSnapshotStateChannelEventsProcessorSuite extends MutableIOSuite {
           Some(SortedSet.empty),
           Some(SortedSet.empty),
           Some(SortedMap.empty),
-          Some(SortedMap.empty)
+          Some(SortedMap.empty),
+          Some(SortedSet.empty)
         ),
         NonEmptySet.fromSetUnsafe(SortedSet(SignatureProof(ID.Id(Hex("")), Signature(Hex("")))))
       ).toHashed[F]

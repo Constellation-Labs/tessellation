@@ -13,7 +13,7 @@ import io.constellationnetwork.security.{Hashed, Hasher}
 
 object Consecutive {
   def signedTxOrder: Order[Signed[TokenLock]] =
-    Order.whenEqual(Order.by(-_.ordinal.value.value), Order[Signed[TokenLock]])
+    Order.whenEqual(Order.by(-_.fee.value.value), Order[Signed[TokenLock]])
 
   def tokenLockTxOrder: Order[Hashed[TokenLock]] = signedTxOrder.contramap(_.signed)
 

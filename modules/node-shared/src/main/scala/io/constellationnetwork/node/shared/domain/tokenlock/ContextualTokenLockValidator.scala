@@ -18,7 +18,7 @@ import io.constellationnetwork.schema.balance.{Amount, Balance}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.swap.CurrencyId
 import io.constellationnetwork.schema.tokenLock.TokenLockAmount._
-import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockOrdinal, TokenLockReference}
+import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.security.Hashed
 import io.constellationnetwork.security.hash.Hash
 
@@ -88,10 +88,15 @@ object ContextualTokenLockValidator {
         balance: Balance
       ): Either[ContextualTokenLockValidationError, Hashed[TokenLock]] = {
         val availableBalance = getBalanceAffectedByTxs(txs, balance)
-        if (tokenLock.amount.value <= availableBalance.value)
-          tokenLock.asRight
-        else
-          InsufficientBalance(tokenLock.amount, availableBalance).asLeft
+        TokenLockAmount.toAmount(tokenLock.amount).plus(TokenLockFee.toAmount(tokenLock.fee)) match {
+          case Left(_) =>
+            TokenLockArithmeticError(tokenLock.amount, tokenLock.fee).asLeft
+          case Right(amount) =>
+            if (amount.value <= availableBalance.value)
+              tokenLock.asRight
+            else
+              InsufficientBalance(tokenLock.amount, availableBalance).asLeft
+        }
       }
 
       private def validateEpochProgress(
@@ -163,7 +168,7 @@ object ContextualTokenLockValidator {
             getTransactionsAboveMajority(txs)
               .foldLeftM(latestBalance) {
                 case (acc, curr) =>
-                  acc.minus(curr.transaction.amount)
+                  toAmount(curr.transaction.amount).plus(curr.transaction.fee).flatMap(acc.minus)
               }
               .getOrElse(Balance.empty)
           case None => latestBalance
@@ -174,7 +179,7 @@ object ContextualTokenLockValidator {
         txs: SortedMap[TokenLockOrdinal, StoredTokenLock]
       ): ConflictResolveResult =
         txs.get(tokenLock.ordinal) match {
-          case Some(WaitingTokenLock(existing)) if existing.amount < tokenLock.amount => CanOverride(tokenLock)
+          case Some(WaitingTokenLock(existing)) if existing.fee < tokenLock.fee => CanOverride(tokenLock)
           case Some(tx) => CannotOverride(tokenLock, tx.ref, TokenLockReference.of(tokenLock))
           case None     => NoConflict(tokenLock)
         }
@@ -204,6 +209,7 @@ object ContextualTokenLockValidator {
       extends ContextualTokenLockValidationError
   case class HasNoMatchingParent(parentHash: Hash) extends ContextualTokenLockValidationError
   case class Conflict(ordinal: TokenLockOrdinal, existingHash: Hash, newHash: Hash) extends ContextualTokenLockValidationError
+  case class TokenLockArithmeticError(amount: Amount, fee: Amount) extends ContextualTokenLockValidationError
   case class InsufficientBalance(amount: Amount, balance: Balance) extends ContextualTokenLockValidationError
   case class NonContextualValidationError(error: TokenLockValidationError) extends ContextualTokenLockValidationError
   case class LockedAddressError(address: Address) extends ContextualTokenLockValidationError

@@ -52,6 +52,14 @@ object tokenLock {
   }
 
   @derive(decoder, encoder, order, show)
+  @newtype
+  case class TokenLockFee(value: NonNegLong)
+
+  object TokenLockFee {
+    implicit def toAmount(fee: TokenLockFee): Amount = Amount(fee.value)
+  }
+
+  @derive(decoder, encoder, order, show)
   case class TokenLockReference(ordinal: TokenLockOrdinal, hash: Hash)
 
   object TokenLockReference {
@@ -75,6 +83,7 @@ object tokenLock {
   case class TokenLock(
     source: Address,
     amount: TokenLockAmount,
+    fee: TokenLockFee,
     parent: TokenLockReference,
     currencyId: Option[CurrencyId],
     unlockEpoch: EpochProgress

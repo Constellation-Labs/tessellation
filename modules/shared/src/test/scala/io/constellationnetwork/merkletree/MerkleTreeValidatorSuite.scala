@@ -98,7 +98,8 @@ object MerkleTreeValidatorSuite extends MutableIOSuite {
           Some(SortedSet.empty),
           Some(SortedSet.empty),
           Some(SortedMap.empty),
-          None
+          None,
+          Some(SortedSet.empty)
         ),
         NonEmptySet.fromSetUnsafe(SortedSet(SignatureProof(ID.Id(Hex("")), Signature(Hex("")))))
       ).toHashed[F]

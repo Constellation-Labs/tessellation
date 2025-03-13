@@ -174,7 +174,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
         Some(SortedSet.empty),
         Some(SortedSet.empty),
         Some(SortedMap.empty),
-        None
+        None,
+        Some(SortedSet.empty)
       )
       signed <- Signed.forAsyncHasher[IO, GlobalIncrementalSnapshot](snapshot, keyPair)
       hashed <- signed.toHashed
