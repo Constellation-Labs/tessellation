@@ -84,6 +84,14 @@ object SpendActionValidator {
                     InvalidCurrency(
                       s"Currency mismatch: expected ${signedAllowSpend.currency}, found ${spendTransaction.currency}"
                     ).invalidNec[SpendTransaction]
+                  else if (signedAllowSpend.destination =!= currencyId)
+                    InvalidCurrencyId(
+                      s"Currency mismatch: expected $currencyId, found ${signedAllowSpend.currency}"
+                    ).invalidNec[SpendTransaction]
+                  else if (!signedAllowSpend.approvers.contains(currencyId))
+                    InvalidCurrencyId(
+                      s"Currency mismatch: expected $currencyId, found ${signedAllowSpend.currency}"
+                    ).invalidNec[SpendTransaction]
                   else if (signedAllowSpend.destination =!= spendTransaction.destination)
                     InvalidDestinationAddress(
                       s"Invalid destination address. Found: ${spendTransaction.destination}. Expected: ${signedAllowSpend.destination}"
@@ -124,6 +132,7 @@ object SpendActionValidator {
   case class InvalidCurrency(error: String) extends SpendActionValidationError
   case class SpendAmountGreaterThanAllowed(error: String) extends SpendActionValidationError
   case class NotEnoughCurrencyIdBalance(error: String) extends SpendActionValidationError
+  case class InvalidCurrencyId(error: String) extends SpendActionValidationError
 
   type SpendActionValidationErrorOr[A] = ValidatedNec[SpendActionValidationError, A]
 }
