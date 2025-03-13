@@ -575,7 +575,9 @@ object GlobalSnapshotAcceptanceManager {
 
             currencySpendTransactions.foldLeft(acc) { (innerAcc, spendTransaction) =>
               val destinationAddress = spendTransaction.destination
-              val addressAllowSpends = allGlobalAllowSpends.getOrElse(destinationAddress, List.empty)
+              val sourceAddress = spendTransaction.source
+
+              val addressAllowSpends = allGlobalAllowSpends.getOrElse(sourceAddress, List.empty)
               val spendTransactionAmount = SwapAmount.toAmount(spendTransaction.amount)
               val currentDestinationBalance = innerAcc.getOrElse(destinationAddress, Balance.empty)
 
