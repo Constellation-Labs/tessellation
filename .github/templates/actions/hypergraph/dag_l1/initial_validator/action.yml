@@ -38,7 +38,7 @@ runs:
         java -jar $ROOT_DIRECTORY/.github/code/shared_jars/cl-keytool.jar generate
 
         touch dag-l1-initial-validator.log
-        nohup java -Denvironment=dev -jar $ROOT_DIRECTORY/.github/code/hypergraph/dag-l1.jar run-initial-validator --ip 127.0.0.1 > dag-l1-initial-validator.log 2>&1 &
+        nohup stdbuf -o0 -e0 java -Denvironment=dev -jar $ROOT_DIRECTORY/.github/code/hypergraph/dag-l1.jar run-initial-validator --ip 127.0.0.1 > dag-l1-initial-validator.log 2>&1 &
         sleep 5
 
     - name: Check if node started

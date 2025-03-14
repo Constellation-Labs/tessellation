@@ -33,7 +33,7 @@ runs:
         java -jar $ROOT_DIRECTORY/.github/code/shared_jars/cl-keytool.jar generate
 
         touch dag-l0-validator-${{ inputs.NODE_NUMBER }}.log
-        nohup java -Denvironment=dev -jar $ROOT_DIRECTORY/.github/code/hypergraph/dag-l0.jar run-validator --ip 127.0.0.1 > dag-l0-validator-${{ inputs.NODE_NUMBER }}.log 2>&1 &
+        nohup stdbuf -o0 -e0 java -Denvironment=dev -jar $ROOT_DIRECTORY/.github/code/hypergraph/dag-l0.jar run-validator --ip 127.0.0.1 > dag-l0-validator-${{ inputs.NODE_NUMBER }}.log 2>&1 &
         sleep 5
 
     - name: Join node after started - ${{ inputs.NODE_NUMBER }}
