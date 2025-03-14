@@ -29,7 +29,7 @@ runs:
         java -jar $ROOT_DIRECTORY/.github/code/shared_jars/cl-keytool.jar generate
 
         touch dag-l0-genesis.log
-        nohup java -Denvironment=dev -jar $ROOT_DIRECTORY/.github/code/hypergraph/dag-l0.jar run-genesis genesis.csv --ip 127.0.0.1 > dag-l0-genesis.log 2>&1 &
+        nohup stdbuf -o0 -e0 java -Denvironment=dev -jar $ROOT_DIRECTORY/.github/code/hypergraph/dag-l0.jar run-genesis genesis.csv --ip 127.0.0.1 > dag-l0-genesis.log 2>&1 &
         sleep 5
 
     - name: Check if node started
