@@ -4,41 +4,76 @@ on:
   pull_request: {}
 
 jobs:
+  calculate-version:
+    runs-on: ubuntu-latest
+    outputs:
+      tessellation_version: ${{ steps.calculate_version.outputs.tessellation_version }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Get Version
+        id: calculate_version
+        run: |
+          BASE_VERSION="1.0.0"
+          FILES_HASH=${{ hashFiles('**/project/*.sbt', '**/project/build.properties', '**/build.sbt', '**/src/main/scala/io/constellationnetwork/**') }}
+          SHORT_HASH=${FILES_HASH:0:8}
+          
+          TESSELLATION_VERSION="$BASE_VERSION-$SHORT_HASH"
+          
+          echo "TESSELLATION_VERSION=$TESSELLATION_VERSION" >> $GITHUB_ENV
+          echo "tessellation_version=$TESSELLATION_VERSION" >> $GITHUB_OUTPUT
+
   call-workflow-setup-environment:
+    needs: calculate-version
     uses: ./.github/workflows/setup-environment.yml
+    with:
+      tessellation_version: ${{ needs.calculate-version.outputs.tessellation_version }}
     secrets: inherit
 
   call-test-currency-transactions:
-    needs: call-workflow-setup-environment
+    needs: [calculate-version, call-workflow-setup-environment]
     uses: ./.github/workflows/test-currency-transactions.yml
+    with:
+      tessellation_version: ${{ needs.calculate-version.outputs.tessellation_version }}
     secrets: inherit
 
   call-test-data-transactions:
-    needs: call-workflow-setup-environment
+    needs: [calculate-version, call-workflow-setup-environment]
     uses: ./.github/workflows/test-data-transactions.yml
+    with:
+      tessellation_version: ${{ needs.calculate-version.outputs.tessellation_version }}
     secrets: inherit
 
   call-test-fee-transactions:
-    needs: call-workflow-setup-environment
+    needs: [calculate-version, call-workflow-setup-environment]
     uses: ./.github/workflows/test-fee-transactions.yml
+    with:
+      tessellation_version: ${{ needs.calculate-version.outputs.tessellation_version }}
     secrets: inherit
 
   call-test-metagraph-rewards:
-    needs: call-workflow-setup-environment
+    needs: [calculate-version, call-workflow-setup-environment]
     uses: ./.github/workflows/test-metagraph-rewards.yml
+    with:
+      tessellation_version: ${{ needs.calculate-version.outputs.tessellation_version }}
     secrets: inherit
 
   call-test-allow-spends:
-    needs: call-workflow-setup-environment
+    needs: [calculate-version, call-workflow-setup-environment]
     uses: ./.github/workflows/test-allow-spends.yml
+    with:
+      tessellation_version: ${{ needs.calculate-version.outputs.tessellation_version }}
     secrets: inherit
 
   call-test-spend-transactions:
-    needs: call-workflow-setup-environment
+    needs: [calculate-version, call-workflow-setup-environment]
     uses: ./.github/workflows/test-spend-transactions.yml
+    with:
+      tessellation_version: ${{ needs.calculate-version.outputs.tessellation_version }}
     secrets: inherit
 
   call-test-token-locks:
-    needs: call-workflow-setup-environment
+    needs: [calculate-version, call-workflow-setup-environment]
     uses: ./.github/workflows/test-token-locks.yml
+    with:
+      tessellation_version: ${{ needs.calculate-version.outputs.tessellation_version }}
     secrets: inherit

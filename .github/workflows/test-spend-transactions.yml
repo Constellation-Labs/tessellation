@@ -2,6 +2,10 @@ name: Test spend transactions
 
 on:
   workflow_call:
+    inputs:
+      tessellation_version:
+        required: true
+        type: string
 
 jobs:
   spend-transactions-tests:
@@ -25,12 +29,13 @@ jobs:
           npm i brotli
           npm i zod
 
+
       - name: Download shared_jars artifacts
         uses: actions/download-artifact@v4
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          name: shared_jars-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}
+          name: shared_jars-${{ inputs.tessellation_version }}
           path: .github/code/shared_jars
 
       - name: Download Hypergraph Artifact
@@ -38,7 +43,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          name: hypergraph-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}
+          name: hypergraph-${{ inputs.tessellation_version }}
           path: .github/code/hypergraph
 
       - name: Download project template Artifact
@@ -46,7 +51,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          name: project-template-metagraph-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}
+          name: project-template-metagraph-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}-${{ inputs.tessellation_version }}
           path: .github/code/metagraphs/project-template-metagraph
 
       - name: Start Hypergraph
@@ -92,7 +97,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: spend-transactions-node-log-files-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}
+          name: spend-transactions-node-log-files-${{ runner.os }}-${{ hashFiles('**/build.sbt', '**/project/*.sbt', '**/project/build.properties') }}-${{ inputs.tessellation_version }}
           path: .github/code/**/*.log
           if-no-files-found: warn
           retention-days: 3
