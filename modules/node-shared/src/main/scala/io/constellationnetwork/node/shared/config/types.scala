@@ -21,7 +21,9 @@ object types {
 
   case class FieldsAddedOrdinals(
     globalSyncView: Map[AppEnvironment, SnapshotOrdinal],
-    globalTokenLocks: Map[AppEnvironment, SnapshotOrdinal]
+    globalTokenLocks: Map[AppEnvironment, SnapshotOrdinal],
+    delegatedStaking: Map[AppEnvironment, SnapshotOrdinal],
+    nodeCollateral: Map[AppEnvironment, SnapshotOrdinal]
   )
 
   case class SharedConfigReader(

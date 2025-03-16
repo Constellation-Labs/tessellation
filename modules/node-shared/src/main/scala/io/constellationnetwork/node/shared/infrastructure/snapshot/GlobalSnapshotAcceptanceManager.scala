@@ -38,6 +38,7 @@ import io.constellationnetwork.node.shared.domain.tokenlock.block.{
   TokenLockBlockAcceptanceResult
 }
 import io.constellationnetwork.schema.ID.Id
+import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.artifact._
 import io.constellationnetwork.schema.balance.{Amount, Balance}
@@ -48,7 +49,6 @@ import io.constellationnetwork.schema.nodeCollateral.{NodeCollateralReference, U
 import io.constellationnetwork.schema.swap._
 import io.constellationnetwork.schema.tokenLock._
 import io.constellationnetwork.schema.transaction.{RewardTransaction, Transaction, TransactionReference}
-import io.constellationnetwork.schema.{nodeCollateral, _}
 import io.constellationnetwork.security._
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
@@ -103,6 +103,8 @@ object GlobalSnapshotAcceptanceManager {
 
   def make[F[_]: Async: HasherSelector: SecurityProvider](
     tokenLocksAddedToGl0Ordinal: SnapshotOrdinal,
+    delegatedStakingAddedToGl0Ordinal: SnapshotOrdinal,
+    nodeCollateralsAddedToGl0Ordinal: SnapshotOrdinal,
     blockAcceptanceManager: BlockAcceptanceManager[F],
     allowSpendBlockAcceptanceManager: AllowSpendBlockAcceptanceManager[F],
     tokenLockBlockAcceptanceManager: TokenLockBlockAcceptanceManager[F],
@@ -339,11 +341,27 @@ object GlobalSnapshotAcceptanceManager {
           globalActiveTokenLocks
         )
 
-        updatedBalancesBySpendTransactions <- updateGlobalBalancesBySpendTransactions(
+        updatedGlobalAllowSpends = updatedAllowSpends.getOrElse(None, SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]])
+        allGlobalAllowSpends <- updatedGlobalAllowSpends.toList.traverse {
+          case (address, allowSpends) =>
+            allowSpends.toList.traverse(_.toHashed).map(address -> _)
+        }.map(_.toSortedMap)
+
+        globalSpendTransactions = acceptedSpendActions.flatMap {
+          case (_, spendActions) =>
+            spendActions
+              .flatMap(_.spendTransactions.toList)
+              .filter(_.currency.isEmpty)
+        }.toList
+
+        _ <- Slf4jLogger.getLogger[F].debug(s"--- [GLOBAL] Last global epoch progress: $epochProgress")
+        _ <- Slf4jLogger.getLogger[F].debug(s"--- [GLOBAL] Global spend transactions: $globalSpendTransactions")
+        _ <- Slf4jLogger.getLogger[F].debug(s"--- [GLOBAL] Global all active allow spends: $allGlobalAllowSpends")
+
+        updatedBalancesBySpendTransactions = updateGlobalBalancesBySpendTransactions(
           updatedBalancesByTokenLocks,
-          globalAllowSpends,
-          globalActiveAllowSpends,
-          acceptedSpendActions
+          allGlobalAllowSpends,
+          globalSpendTransactions
         )
 
         (maybeMerkleTree, updatedLastCurrencySnapshotProofs) <- hasher.getLogic(ordinal) match {
@@ -426,12 +444,20 @@ object GlobalSnapshotAcceptanceManager {
         )
 
         (createDelegatedStakes, withdrawDelegatedStakes) <- withdrawDelegatedStakes(lastSnapshotContext, ordinal)
-        updatedCreateDelegatedStakes = createDelegatedStakes ++ delegatedStakeAcceptanceResult.acceptedCreates
-        updatedWithdrawDelegatedStakes = withdrawDelegatedStakes ++ delegatedStakeAcceptanceResult.acceptedWithdrawals
+        updatedCreateDelegatedStakes =
+          if (ordinal < delegatedStakingAddedToGl0Ordinal) None
+          else (createDelegatedStakes ++ delegatedStakeAcceptanceResult.acceptedCreates).some
+        updatedWithdrawDelegatedStakes =
+          if (ordinal < delegatedStakingAddedToGl0Ordinal) None
+          else (withdrawDelegatedStakes ++ delegatedStakeAcceptanceResult.acceptedWithdrawals).some
 
         (createNodeCollaterals, withdrawNodeCollaterals) <- withdrawNodeCollaterals(lastSnapshotContext, ordinal)
-        updatedCreateNodeCollaterals = createNodeCollaterals ++ nodeCollateralAcceptanceResult.acceptedCreates
-        updatedWithdrawNodeCollaterals = withdrawNodeCollaterals ++ nodeCollateralAcceptanceResult.acceptedWithdrawals
+        updatedCreateNodeCollaterals =
+          if (ordinal < nodeCollateralsAddedToGl0Ordinal) None
+          else (createNodeCollaterals ++ nodeCollateralAcceptanceResult.acceptedCreates).some
+        updatedWithdrawNodeCollaterals =
+          if (ordinal < nodeCollateralsAddedToGl0Ordinal) None
+          else (withdrawNodeCollaterals ++ nodeCollateralAcceptanceResult.acceptedWithdrawals).some
 
         gsi = GlobalSnapshotInfo(
           updatedLastStateChannelSnapshotHashes,
@@ -445,10 +471,10 @@ object GlobalSnapshotAcceptanceManager {
           updatedAllowSpendRefs.some,
           updatedTokenLockRefs,
           updatedUpdateNodeParameters.some,
-          updatedCreateDelegatedStakes.some,
-          updatedWithdrawDelegatedStakes.some,
-          updatedCreateNodeCollaterals.some,
-          updatedWithdrawNodeCollaterals.some
+          updatedCreateDelegatedStakes,
+          updatedWithdrawDelegatedStakes,
+          updatedCreateNodeCollaterals,
+          updatedWithdrawNodeCollaterals
         )
 
         stateProof <- gsi.stateProof(maybeMerkleTree)
@@ -708,71 +734,54 @@ object GlobalSnapshotAcceptanceManager {
 
     private def updateGlobalBalancesBySpendTransactions(
       currentBalances: SortedMap[Address, Balance],
-      incomingGlobalAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
-      lastActiveAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
-      allAcceptedSpendTransactionsByCurrencyId: Map[Address, List[SpendAction]]
-    )(implicit hasher: Hasher[F]): F[SortedMap[Address, Balance]] = {
-      val lastActiveGlobalAllowSpends = lastActiveAllowSpends.getOrElse(None, SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]])
+      allGlobalAllowSpends: SortedMap[Address, List[Hashed[AllowSpend]]],
+      globalSpendTransactions: List[SpendTransaction]
+    ): SortedMap[Address, Balance] =
+      globalSpendTransactions.foldLeft(currentBalances) { (innerAcc, spendTransaction) =>
+        val destinationAddress = spendTransaction.destination
+        val sourceAddress = spendTransaction.source
 
-      for {
-        allGlobalAllowSpends <- (incomingGlobalAllowSpends |+| lastActiveGlobalAllowSpends).toList.traverse {
-          case (address, allowSpends) =>
-            allowSpends.toList.traverse(_.toHashed).map(address -> _)
-        }.map(_.toSortedMap)
+        val addressAllowSpends = allGlobalAllowSpends.getOrElse(sourceAddress, List.empty)
+        val spendTransactionAmount = SwapAmount.toAmount(spendTransaction.amount)
+        val currentDestinationBalance = innerAcc.getOrElse(destinationAddress, Balance.empty)
 
-        response = allAcceptedSpendTransactionsByCurrencyId.foldLeft(currentBalances) {
-          case (acc, (address, spendActions)) =>
-            val currencySpendTransactions = spendActions
-              .flatMap(spendAction => spendAction.spendTransactions.toList)
-              .filter(_.currency.isEmpty)
+        spendTransaction.allowSpendRef.flatMap { allowSpendRef =>
+          addressAllowSpends.find(_.hash === allowSpendRef)
+        } match {
+          case Some(allowSpend) =>
+            val sourceAddress = allowSpend.source
+            val currentSourceBalance = innerAcc.getOrElse(sourceAddress, Balance.empty)
+            val balanceToReturnToAddress = allowSpend.amount.value.value - spendTransactionAmount.value.value
 
-            currencySpendTransactions.foldLeft(acc) { (innerAcc, spendTransaction) =>
-              val destinationAddress = spendTransaction.destination
-              val sourceAddress = spendTransaction.source
+            val updatedDestinationBalance = currentDestinationBalance
+              .plus(spendTransactionAmount)
+              .getOrElse(currentDestinationBalance)
 
-              val addressAllowSpends = allGlobalAllowSpends.getOrElse(sourceAddress, List.empty)
-              val spendTransactionAmount = SwapAmount.toAmount(spendTransaction.amount)
-              val currentDestinationBalance = innerAcc.getOrElse(destinationAddress, Balance.empty)
+            val updatedSourceBalance = currentSourceBalance
+              .plus(Amount(NonNegLong.from(balanceToReturnToAddress).getOrElse(NonNegLong.MinValue)))
+              .getOrElse(currentSourceBalance)
 
-              spendTransaction.allowSpendRef.flatMap { allowSpendRef =>
-                addressAllowSpends.find(_.hash === allowSpendRef)
-              } match {
-                case Some(allowSpend) =>
-                  val sourceAddress = allowSpend.source
-                  val currentSourceBalance = innerAcc.getOrElse(sourceAddress, Balance.empty)
-                  val balanceToReturnToAddress = allowSpend.amount.value.value - spendTransactionAmount.value.value
+            innerAcc
+              .updated(destinationAddress, updatedDestinationBalance)
+              .updated(sourceAddress, updatedSourceBalance)
 
-                  val updatedDestinationBalance = currentDestinationBalance
-                    .plus(spendTransactionAmount)
-                    .getOrElse(currentDestinationBalance)
+          case None =>
+            val currentSourceBalance = innerAcc.getOrElse(sourceAddress, Balance.empty)
 
-                  val updatedSourceBalance = currentSourceBalance
-                    .plus(Amount(NonNegLong.from(balanceToReturnToAddress).getOrElse(NonNegLong.MinValue)))
-                    .getOrElse(currentSourceBalance)
+            val updatedDestinationBalance = currentDestinationBalance
+              .plus(spendTransactionAmount)
+              .getOrElse(currentDestinationBalance)
 
-                  innerAcc
-                    .updated(destinationAddress, updatedDestinationBalance)
-                    .updated(sourceAddress, updatedSourceBalance)
+            val updatedSourceBalance = currentSourceBalance
+              .minus(spendTransactionAmount)
+              .getOrElse(currentSourceBalance)
 
-                case None =>
-                  val currentSourceBalance = innerAcc.getOrElse(address, Balance.empty)
-
-                  val updatedDestinationBalance = currentDestinationBalance
-                    .plus(spendTransactionAmount)
-                    .getOrElse(currentDestinationBalance)
-
-                  val updatedSourceBalance = currentSourceBalance
-                    .minus(spendTransactionAmount)
-                    .getOrElse(currentSourceBalance)
-
-                  innerAcc
-                    .updated(destinationAddress, updatedDestinationBalance)
-                    .updated(address, updatedSourceBalance)
-              }
-            }
+            innerAcc
+              .updated(destinationAddress, updatedDestinationBalance)
+              .updated(sourceAddress, updatedSourceBalance)
         }
-      } yield response
-    }
+      }
+
     private def updateGlobalBalancesByTokenLocks(
       epochProgress: EpochProgress,
       currentBalances: SortedMap[Address, Balance],
