@@ -85,6 +85,8 @@ object GlobalSnapshotConsensus {
       feeCalculator = FeeCalculator.make(feeConfigs)
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
         sharedCfg.fieldsAddedOrdinals.globalTokenLocks.getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue),
+        sharedCfg.fieldsAddedOrdinals.delegatedStaking.getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue),
+        sharedCfg.fieldsAddedOrdinals.nodeCollateral.getOrElse(sharedCfg.environment, SnapshotOrdinal.MinValue),
         BlockAcceptanceManager.make[F](validators.blockValidator, txHasher),
         AllowSpendBlockAcceptanceManager.make[F](validators.allowSpendBlockValidator),
         TokenLockBlockAcceptanceManager.make[F](validators.tokenLockBlockValidator),

@@ -168,6 +168,8 @@ object SnapshotProcessorSuite extends SimpleIOSuite with TransactionGenerator {
               .make(validators.updateNodeCollateralValidator)
             globalSnapshotAcceptanceManager = GlobalSnapshotAcceptanceManager.make(
               SnapshotOrdinal.MinValue,
+              SnapshotOrdinal.MinValue,
+              SnapshotOrdinal.MinValue,
               BlockAcceptanceManager.make[IO](validators.blockValidator, Hasher.forKryo[IO]),
               AllowSpendBlockAcceptanceManager.make[IO](validators.allowSpendBlockValidator),
               TokenLockBlockAcceptanceManager.make[IO](validators.tokenLockBlockValidator),

@@ -335,6 +335,8 @@ object GlobalSnapshotTraverseSuite extends MutableIOSuite with Checkers {
       snapshotAcceptanceManager = GlobalSnapshotAcceptanceManager
         .make[IO](
           SnapshotOrdinal.MinValue,
+          SnapshotOrdinal.MinValue,
+          SnapshotOrdinal.MinValue,
           blockAcceptanceManager,
           allowSpendBlockAcceptanceManager,
           tokenLockBlockAcceptanceManager,

@@ -223,11 +223,15 @@ object CurrencySnapshotAcceptanceManager {
         .flatMap(_.spendActions)
         .getOrElse(SortedMap.empty[Address, List[SpendAction]])
 
-      lastGlobalSyncMetagraphSpendActions = lastGlobalSnapshotSpendActions.getOrElse(metagraphId, List.empty)
+      metagraphIdSpendTransactions = lastGlobalSnapshotSpendActions.flatMap {
+        case (_, spendActions) =>
+          spendActions
+            .flatMap(_.spendTransactions.toList)
+            .filter(_.currency.exists(_.value == metagraphId))
+      }.toList
 
-      allAcceptedCurrencySpendTxns =
-        lastGlobalSyncMetagraphSpendActions
-          .flatMap(spendAction => spendAction.spendTransactions.toList)
+      _ <- logger.info(s"lastGlobalSnapshotSpendActions: ${lastGlobalSnapshotSpendActions}")
+      _ <- logger.info(s"metagraphIdSpendTransactions: ${metagraphIdSpendTransactions}")
 
       incomingTokenLocks = acceptanceTokenLockBlocksResult.accepted.flatMap { tokenLockBlock =>
         tokenLockBlock.value.tokenLocks.toSortedSet
@@ -285,7 +289,7 @@ object CurrencySnapshotAcceptanceManager {
           lastGlobalSnapshotEpochProgress,
           incomingCurrencyAllowSpends,
           lastActiveAllowSpends,
-          allAcceptedCurrencySpendTxns
+          metagraphIdSpendTransactions
         )
 
       updatedAllowSpendRefs = acceptAllowSpendRefs(
@@ -300,12 +304,19 @@ object CurrencySnapshotAcceptanceManager {
         lastActiveAllowSpends
       )
 
-      updatedBalancesBySpendTransactions <- updateCurrencyBalancesBySpendTransactions(
+      allActiveCurrencyAllowSpends <- updatedAllowSpends.toList.traverse {
+        case (address, allowSpends) =>
+          allowSpends.toList.traverse(_.toHashed).map(hashedAllowSpends => address -> hashedAllowSpends)
+      }.map(_.toSortedMap)
+
+      _ <- Slf4jLogger.getLogger[F].debug(s"--- [CURRENCY] Last global epoch progress: $lastGlobalSnapshotEpochProgress")
+      _ <- Slf4jLogger.getLogger[F].debug(s"--- [CURRENCY] Currency $metagraphId spend transactions: $metagraphIdSpendTransactions")
+      _ <- Slf4jLogger.getLogger[F].debug(s"--- [CURRENCY] Currency $metagraphId all active allow spends: $allActiveCurrencyAllowSpends")
+
+      updatedBalancesBySpendTransactions = updateCurrencyBalancesBySpendTransactions(
         updatedBalancesByAllowSpends,
-        incomingCurrencyAllowSpends,
-        lastActiveAllowSpends,
-        lastGlobalSnapshotSpendActions,
-        lastSnapshotContext.address
+        allActiveCurrencyAllowSpends,
+        metagraphIdSpendTransactions
       )
 
       csi = CurrencySnapshotInfo(
@@ -737,71 +748,53 @@ object CurrencySnapshotAcceptanceManager {
 
     private def updateCurrencyBalancesBySpendTransactions(
       currentBalances: SortedMap[Address, Balance],
-      incomingCurrencyAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
-      lastActiveCurrencyAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
-      lastGlobalSpendActions: Map[Address, List[SpendAction]],
-      currencyId: Address
-    )(implicit hasher: Hasher[F]): F[SortedMap[Address, Balance]] =
-      for {
-        allGlobalAllowSpends <- (incomingCurrencyAllowSpends |+| lastActiveCurrencyAllowSpends).toList.traverse {
-          case (address, allowSpends) =>
-            allowSpends.toList.traverse(_.toHashed).map(hashedAllowSpends => address -> hashedAllowSpends)
-        }.map(_.toSortedMap)
+      allActiveCurrencyAllowSpends: SortedMap[Address, List[Hashed[AllowSpend]]],
+      metagraphIdSpendTransactions: List[SpendTransaction]
+    ): SortedMap[Address, Balance] =
+      metagraphIdSpendTransactions.foldLeft(currentBalances) { (txnAcc, spendTransaction) =>
+        val destinationAddress = spendTransaction.destination
+        val sourceAddress = spendTransaction.source
 
-        currencySpendTransactionsByCurrencyId = lastGlobalSpendActions.map {
-          case (address, spendActions) =>
-            address -> spendActions
-              .flatMap(_.spendTransactions.toList)
-              .filter(_.currency.exists(_.value == currencyId))
-        }.filter { case (_, transactions) => transactions.nonEmpty }
+        val addressAllowSpends = allActiveCurrencyAllowSpends.getOrElse(sourceAddress, List.empty)
+        val spendTransactionAmount = SwapAmount.toAmount(spendTransaction.amount)
+        val currentDestinationBalance = txnAcc.getOrElse(destinationAddress, Balance.empty)
 
-        response = currencySpendTransactionsByCurrencyId.foldLeft(currentBalances) {
-          case (acc, (address, spendTransactions)) =>
-            spendTransactions.foldLeft(acc) { (txnAcc, spendTransaction) =>
-              val destinationAddress = spendTransaction.destination
-              val addressAllowSpends = allGlobalAllowSpends.getOrElse(destinationAddress, List.empty)
-              val spendTransactionAmount = SwapAmount.toAmount(spendTransaction.amount)
-              val currentDestinationBalance = txnAcc.getOrElse(destinationAddress, Balance.empty)
+        spendTransaction.allowSpendRef.flatMap { allowSpendRef =>
+          addressAllowSpends.find(_.hash === allowSpendRef)
+        } match {
+          case Some(allowSpend) =>
+            val sourceAddress = allowSpend.source
+            val currentSourceBalance = txnAcc.getOrElse(sourceAddress, Balance.empty)
+            val balanceToReturnToAddress = allowSpend.amount.value.value - spendTransactionAmount.value.value
 
-              spendTransaction.allowSpendRef.flatMap { allowSpendRef =>
-                addressAllowSpends.find(_.hash === allowSpendRef)
-              } match {
-                case Some(allowSpend) =>
-                  val sourceAddress = allowSpend.source
-                  val currentSourceBalance = txnAcc.getOrElse(sourceAddress, Balance.empty)
-                  val balanceToReturnToAddress = allowSpend.amount.value.value - spendTransactionAmount.value.value
+            val updatedDestinationBalance = currentDestinationBalance
+              .plus(spendTransactionAmount)
+              .getOrElse(currentDestinationBalance)
 
-                  val updatedDestinationBalance = currentDestinationBalance
-                    .plus(spendTransactionAmount)
-                    .getOrElse(currentDestinationBalance)
+            val updatedSourceBalance = currentSourceBalance
+              .plus(Amount(NonNegLong.from(balanceToReturnToAddress).getOrElse(NonNegLong.MinValue)))
+              .getOrElse(currentSourceBalance)
 
-                  val updatedSourceBalance = currentSourceBalance
-                    .plus(Amount(NonNegLong.from(balanceToReturnToAddress).getOrElse(NonNegLong.MinValue)))
-                    .getOrElse(currentSourceBalance)
+            txnAcc
+              .updated(destinationAddress, updatedDestinationBalance)
+              .updated(sourceAddress, updatedSourceBalance)
 
-                  txnAcc
-                    .updated(destinationAddress, updatedDestinationBalance)
-                    .updated(sourceAddress, updatedSourceBalance)
+          case None =>
+            val currentSourceBalance = txnAcc.getOrElse(sourceAddress, Balance.empty)
 
-                case None =>
-                  val sourceAddress = address
-                  val currentSourceBalance = txnAcc.getOrElse(sourceAddress, Balance.empty)
+            val updatedDestinationBalance = currentDestinationBalance
+              .plus(spendTransactionAmount)
+              .getOrElse(currentDestinationBalance)
 
-                  val updatedDestinationBalance = currentDestinationBalance
-                    .plus(spendTransactionAmount)
-                    .getOrElse(currentDestinationBalance)
+            val updatedSourceBalance = currentSourceBalance
+              .minus(spendTransactionAmount)
+              .getOrElse(currentSourceBalance)
 
-                  val updatedSourceBalance = currentSourceBalance
-                    .minus(spendTransactionAmount)
-                    .getOrElse(currentSourceBalance)
-
-                  txnAcc
-                    .updated(destinationAddress, updatedDestinationBalance)
-                    .updated(sourceAddress, updatedSourceBalance)
-              }
-            }
+            txnAcc
+              .updated(destinationAddress, updatedDestinationBalance)
+              .updated(sourceAddress, updatedSourceBalance)
         }
-      } yield response
+      }
 
     def emitAllowSpendsExpired(
       addressToSet: SortedMap[Address, SortedSet[Signed[AllowSpend]]]
