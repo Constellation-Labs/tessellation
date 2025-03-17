@@ -50,10 +50,8 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
     keyPair: KeyPair,
     tokenLockReference: Hash = Hash.empty
   ): UpdateDelegatedStake.Create = UpdateDelegatedStake.Create(
-    stake = DelegatedStake(
-      nodeId = PeerId.fromPublic(keyPair.getPublic),
-      amount = DelegatedStakeAmount(NonNegLong(100L))
-    ),
+    nodeId = PeerId.fromPublic(keyPair.getPublic),
+    amount = DelegatedStakeAmount(NonNegLong(100L)),
     tokenLockRef = tokenLockReference
   )
 
@@ -94,7 +92,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
       validCreate = testCreateDelegatedStake(keyPair, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair)
-      seedlist <- mkSeedlist(validCreate.stake.nodeId)
+      seedlist <- mkSeedlist(validCreate.nodeId)
       validator = mkValidator(seedlist)
       result <- validator.validateCreateDelegatedStake(signed, lastContext)
     } yield expect.same(Valid(signed), result)
@@ -114,7 +112,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
           )
         )
       )
-      seedlist <- mkSeedlist(validCreate.stake.nodeId)
+      seedlist <- mkSeedlist(validCreate.nodeId)
       validator = mkValidator(seedlist)
       result <- validator.validateCreateDelegatedStake(signed, lastContext)
     } yield expect.same(InvalidSigned(InvalidSignatures(signed.proofs)).invalidNec, result)
@@ -134,7 +132,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       signed1 <- forAsyncHasher(validCreate, keyPair1)
       signed2 <- forAsyncHasher(validCreate, keyPair2)
       signed = signed1.addProof(signed2.proofs.head)
-      seedlist <- mkSeedlist(validCreate.stake.nodeId)
+      seedlist <- mkSeedlist(validCreate.nodeId)
       validator = mkValidator(seedlist)
       result <- validator.validateCreateDelegatedStake(signed, lastContext1)
     } yield expect.same(TooManySignatures(signed.proofs).invalidNec, result)
@@ -162,7 +160,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       seedlist <- mkSeedlist()
       validator = mkValidator(seedlist)
       result <- validator.validateCreateDelegatedStake(signed, lastContext)
-    } yield expect.same(UnauthorizedNode(invalidCreate.stake.nodeId).invalidNec, result)
+    } yield expect.same(UnauthorizedNode(invalidCreate.nodeId).invalidNec, result)
   }
 
   test("should fail when there is another stake for this node") { res =>
@@ -178,7 +176,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
       result <- validator.validateCreateDelegatedStake(signed, context)
-    } yield expect.same(StakeExistsForNode(validCreate.stake.nodeId).invalidNec, result)
+    } yield expect.same(StakeExistsForNode(validCreate.nodeId).invalidNec, result)
   }
 
   test("should fail when the tokenLock is not available (another delegated stake exists)") { res =>
@@ -189,7 +187,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       parent = testCreateDelegatedStake(keyPair, tokenLockReference)
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
       nodeId1 = PeerId.fromPublic(keyPair1.getPublic)
-      signedParent <- forAsyncHasher(parent.copy(stake = parent.stake.copy(nodeId = nodeId1)), keyPair)
+      signedParent <- forAsyncHasher(parent.copy(nodeId = nodeId1), keyPair)
       address <- signedParent.proofs.head.id.toAddress
       context = lastContext.copy(activeDelegatedStakes = Some(SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue)))))
       validCreate = testCreateDelegatedStake(keyPair, tokenLockReference)
@@ -205,10 +203,8 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
     for {
       (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
       nodeCollateral = UpdateNodeCollateral.Create(
-        collateral = NodeCollateral(
-          nodeId = PeerId.fromPublic(keyPair.getPublic),
-          amount = NodeCollateralAmount(NonNegLong(100L))
-        ),
+        nodeId = PeerId.fromPublic(keyPair.getPublic),
+        amount = NodeCollateralAmount(NonNegLong(100L)),
         tokenLockRef = tokenLockReference
       )
       signedParent <- forAsyncHasher(nodeCollateral, keyPair)
@@ -418,9 +414,9 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       signed <- forAsyncHasher(validWithdraw, keyPair)
       context = mkGlobalContext(
         SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue))),
-        withdrawals = SortedMap(address -> List((signed, SnapshotOrdinal.MinValue)))
+        withdrawals = SortedMap(address -> List((signed, EpochProgress.MinValue)))
       )
-      seedlist <- mkSeedlist(validParent.stake.nodeId)
+      seedlist <- mkSeedlist(validParent.nodeId)
       validator = mkValidator(seedlist)
       result <- validator.validateWithdrawDelegatedStake(signed, context)
     } yield expect.same(AlreadyWithdrawn(lastRef.hash).invalidNec, result)
@@ -446,7 +442,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
 
   def mkGlobalContext(
     delegatedStakes: SortedMap[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]] = SortedMap.empty,
-    withdrawals: SortedMap[Address, List[(Signed[UpdateDelegatedStake.Withdraw], SnapshotOrdinal)]] = SortedMap.empty,
+    withdrawals: SortedMap[Address, List[(Signed[UpdateDelegatedStake.Withdraw], EpochProgress)]] = SortedMap.empty,
     tokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]] = SortedMap.empty
   ) =
     GlobalSnapshotInfo.empty.copy(

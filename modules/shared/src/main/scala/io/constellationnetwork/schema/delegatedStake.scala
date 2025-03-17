@@ -9,6 +9,7 @@ import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.ext.derevo.ordering
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -63,15 +64,17 @@ object delegatedStake {
   }
 
   @derive(eqv, show, encoder, decoder)
-  case class DelegatedStake(nodeId: PeerId, amount: DelegatedStakeAmount, fee: DelegatedStakeFee = DelegatedStakeFee(NonNegLong(0L)))
-
-  @derive(eqv, show, encoder, decoder)
   sealed trait UpdateDelegatedStake
   object UpdateDelegatedStake {
     @derive(eqv, show, encoder, decoder)
-    case class Create(stake: DelegatedStake, tokenLockRef: Hash, stakeRef: DelegatedStakeReference = DelegatedStakeReference.empty)
-        extends UpdateDelegatedStake {
-      def ordinal: DelegatedStakeOrdinal = stakeRef.ordinal.next
+    case class Create(
+      nodeId: PeerId,
+      amount: DelegatedStakeAmount,
+      fee: DelegatedStakeFee = DelegatedStakeFee(NonNegLong(0L)),
+      tokenLockRef: Hash,
+      parent: DelegatedStakeReference = DelegatedStakeReference.empty
+    ) extends UpdateDelegatedStake {
+      def ordinal: DelegatedStakeOrdinal = parent.ordinal.next
     }
 
     @derive(eqv, show, encoder, decoder)
@@ -83,8 +86,8 @@ object delegatedStake {
     tokenLockRef: Hash,
     amount: DelegatedStakeAmount,
     fee: DelegatedStakeFee,
-    withdrawalStarted: Option[SnapshotOrdinal],
-    withdrawalFinishes: Option[SnapshotOrdinal]
+    withdrawalStartEpoch: Option[EpochProgress],
+    withdrawalEndEpoch: Option[EpochProgress]
   )
 
   @derive(eqv, show, encoder)

@@ -54,6 +54,7 @@ import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.statechannel.{StateChannelOutput, StateChannelSnapshotBinary, StateChannelValidationType}
 import io.constellationnetwork.syntax.sortedCollection.{sortedMapSyntax, sortedSetSyntax}
 
+import eu.timepit.refined.auto._
 import eu.timepit.refined.types.numeric.NonNegLong
 import io.circe.disjunctionCodecs._
 import org.typelevel.log4cats.slf4j.Slf4jLogger
@@ -439,7 +440,7 @@ object GlobalSnapshotAcceptanceManager {
           delegatedStakeAcceptanceResult
         )
 
-        (createDelegatedStakes, withdrawDelegatedStakes) <- withdrawDelegatedStakes(lastSnapshotContext, ordinal)
+        (createDelegatedStakes, withdrawDelegatedStakes) <- withdrawDelegatedStakes(lastSnapshotContext, epochProgress)
         updatedCreateDelegatedStakes =
           if (ordinal < delegatedStakingAddedToGl0Ordinal) None
           else (createDelegatedStakes ++ delegatedStakeAcceptanceResult.acceptedCreates).some
@@ -447,7 +448,7 @@ object GlobalSnapshotAcceptanceManager {
           if (ordinal < delegatedStakingAddedToGl0Ordinal) None
           else (withdrawDelegatedStakes ++ delegatedStakeAcceptanceResult.acceptedWithdrawals).some
 
-        (createNodeCollaterals, withdrawNodeCollaterals) <- withdrawNodeCollaterals(lastSnapshotContext, ordinal)
+        (createNodeCollaterals, withdrawNodeCollaterals) <- withdrawNodeCollaterals(lastSnapshotContext, epochProgress)
         updatedCreateNodeCollaterals =
           if (ordinal < nodeCollateralsAddedToGl0Ordinal) None
           else (createNodeCollaterals ++ nodeCollateralAcceptanceResult.acceptedCreates).some
@@ -504,10 +505,10 @@ object GlobalSnapshotAcceptanceManager {
         )
     }
 
-    private def withdrawDelegatedStakes(lastSnapshotContext: GlobalSnapshotInfo, ordinal: SnapshotOrdinal)(implicit h: Hasher[F]): F[
+    private def withdrawDelegatedStakes(lastSnapshotContext: GlobalSnapshotInfo, epochProgress: EpochProgress)(implicit h: Hasher[F]): F[
       (
         SortedMap[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]],
-        SortedMap[Address, List[(Signed[UpdateDelegatedStake.Withdraw], SnapshotOrdinal)]]
+        SortedMap[Address, List[(Signed[UpdateDelegatedStake.Withdraw], EpochProgress)]]
       )
     ] = {
       val lastCreateDelegatedStakes = lastSnapshotContext.activeDelegatedStakes.getOrElse(
@@ -515,10 +516,13 @@ object GlobalSnapshotAcceptanceManager {
       )
 
       val lastWithdrawDelegatedStakes = lastSnapshotContext.delegatedStakesWithdrawals.getOrElse(
-        SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Withdraw], SnapshotOrdinal)]]
+        SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Withdraw], EpochProgress)]]
       )
+      val withdrawalEpoch = epochProgress |+| EpochProgress(withdrawalTimeLimit)
       val currentWithdrawals =
-        lastWithdrawDelegatedStakes.view.mapValues(_.filter(_._2 <= ordinal.plus(withdrawalTimeLimit))).filter(x => x._2.nonEmpty)
+        lastWithdrawDelegatedStakes.view
+          .mapValues(_.filter(_._2 <= withdrawalEpoch))
+          .filter(x => x._2.nonEmpty)
       val references = currentWithdrawals.mapValues(_.map(_._1.stakeRef)).values.flatten.toSet
 
       for {
@@ -535,10 +539,10 @@ object GlobalSnapshotAcceptanceManager {
       } yield (filteredCreates.filter(_._2.nonEmpty), filteredWithdawals.filter(_._2.nonEmpty))
     }
 
-    private def withdrawNodeCollaterals(lastSnapshotContext: GlobalSnapshotInfo, ordinal: SnapshotOrdinal)(implicit h: Hasher[F]): F[
+    private def withdrawNodeCollaterals(lastSnapshotContext: GlobalSnapshotInfo, epochProgress: EpochProgress)(implicit h: Hasher[F]): F[
       (
         SortedMap[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]],
-        SortedMap[Address, List[(Signed[UpdateNodeCollateral.Withdraw], SnapshotOrdinal)]]
+        SortedMap[Address, List[(Signed[UpdateNodeCollateral.Withdraw], EpochProgress)]]
       )
     ] = {
       val lastCreates = lastSnapshotContext.activeNodeCollaterals.getOrElse(
@@ -546,9 +550,11 @@ object GlobalSnapshotAcceptanceManager {
       )
 
       val lastWithdraws = lastSnapshotContext.nodeCollateralWithdrawals.getOrElse(
-        SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Withdraw], SnapshotOrdinal)]]
+        SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Withdraw], EpochProgress)]]
       )
-      val currentWithdrawals = lastWithdraws.view.mapValues(_.filter(_._2 <= ordinal.plus(withdrawalTimeLimit))).filter(x => x._2.nonEmpty)
+      val withdrawalEpoch = epochProgress |+| EpochProgress(withdrawalTimeLimit)
+      val currentWithdrawals =
+        lastWithdraws.view.mapValues(_.filter(_._2 <= withdrawalEpoch)).filter(x => x._2.nonEmpty)
       val references = currentWithdrawals.mapValues(_.map(_._1.collateralRef)).values.flatten.toSet
 
       for {

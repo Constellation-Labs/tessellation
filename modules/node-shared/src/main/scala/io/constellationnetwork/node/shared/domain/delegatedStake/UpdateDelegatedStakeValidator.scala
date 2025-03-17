@@ -82,10 +82,10 @@ object UpdateDelegatedStakeValidator {
       private def validateAuthorizedNodeId(
         signed: Signed[UpdateDelegatedStake.Create]
       ): UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]] =
-        if (seedlist.forall(_.exists(_.peerId === signed.stake.nodeId))) {
+        if (seedlist.forall(_.exists(_.peerId === signed.nodeId))) {
           signed.validNec
         } else {
-          UnauthorizedNode(signed.stake.nodeId).invalidNec
+          UnauthorizedNode(signed.nodeId).invalidNec
         }
 
       private def validateNodeId(
@@ -98,8 +98,8 @@ object UpdateDelegatedStakeValidator {
             .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]])
             .getOrElse(address, List.empty[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)])
         } yield
-          if (activeDelegatedStakes.exists(s => s._1.stake.nodeId == signed.stake.nodeId)) {
-            StakeExistsForNode(signed.stake.nodeId).invalidNec
+          if (activeDelegatedStakes.exists(s => s._1.nodeId == signed.nodeId)) {
+            StakeExistsForNode(signed.nodeId).invalidNec
           } else {
             signed.validNec
           }
@@ -160,7 +160,7 @@ object UpdateDelegatedStakeValidator {
           } yield
             tokenLocksWithReferences.find { case (_, r) => r.hash === signed.tokenLockRef } match {
               case Some((tokenLock, _)) =>
-                signed.stake.amount.value.value === tokenLock.amount.value.value && tokenLock.unlockEpoch.isEmpty
+                signed.amount.value.value === tokenLock.amount.value.value && tokenLock.unlockEpoch.isEmpty
               case None => false
             }
         }
