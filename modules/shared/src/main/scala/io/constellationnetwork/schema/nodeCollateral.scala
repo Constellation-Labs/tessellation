@@ -9,6 +9,7 @@ import io.constellationnetwork.ext.crypto._
 import io.constellationnetwork.ext.derevo.ordering
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
@@ -64,18 +65,17 @@ object nodeCollateral {
   }
 
   @derive(eqv, show, encoder, decoder)
-  case class NodeCollateral(nodeId: PeerId, amount: NodeCollateralAmount, fee: NodeCollateralFee = NodeCollateralFee(NonNegLong(0L)))
-
-  @derive(eqv, show, encoder, decoder)
   sealed trait UpdateNodeCollateral
   case object UpdateNodeCollateral {
     @derive(eqv, show, encoder, decoder)
     case class Create(
-      collateral: NodeCollateral,
+      nodeId: PeerId,
+      amount: NodeCollateralAmount,
+      fee: NodeCollateralFee = NodeCollateralFee(NonNegLong(0L)),
       tokenLockRef: Hash,
-      collateralRef: NodeCollateralReference = NodeCollateralReference.empty
+      parent: NodeCollateralReference = NodeCollateralReference.empty
     ) extends UpdateNodeCollateral {
-      def ordinal: NodeCollateralOrdinal = collateralRef.ordinal.next
+      def ordinal: NodeCollateralOrdinal = parent.ordinal.next
     }
 
     @derive(eqv, show, encoder, decoder)
@@ -87,8 +87,8 @@ object nodeCollateral {
     tokenLockRef: Hash,
     amount: NodeCollateralAmount,
     fee: NodeCollateralFee,
-    withdrawalStarted: Option[SnapshotOrdinal],
-    withdrawalFinishes: Option[SnapshotOrdinal]
+    withdrawalStartEpoch: Option[EpochProgress],
+    withdrawalEndEpoch: Option[EpochProgress]
   )
 
   @derive(eqv, show, encoder)

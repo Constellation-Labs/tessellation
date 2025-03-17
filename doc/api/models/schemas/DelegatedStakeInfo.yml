@@ -14,9 +14,9 @@ properties:
     format: int64
     example: 123
     minimum: 0
-  withdrawalStarted:
-    $ref: 'SnapshotOrdinal.yml'
+  withdrawalStartEpoch:
+    $ref: 'EpochProgress.yml'
     nullable: true
-  withdrawalFinishes:
-    $ref: 'SnapshotOrdinal.yml'
+  withdrawalEndEpoch:
+    $ref: 'EpochProgress.yml'
     nullable: true

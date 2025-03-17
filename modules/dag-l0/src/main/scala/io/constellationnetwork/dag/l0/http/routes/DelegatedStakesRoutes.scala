@@ -17,6 +17,7 @@ import io.constellationnetwork.routes.internal._
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.delegatedStake._
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.Hasher
 import io.constellationnetwork.security.signature.Signed
@@ -58,9 +59,9 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
       lastSnapshot.info.activeDelegatedStakes
         .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]])
         .getOrElse(address, List.empty)
-    val lastWithdrawals: List[(Signed[UpdateDelegatedStake.Withdraw], SnapshotOrdinal)] =
+    val lastWithdrawals: List[(Signed[UpdateDelegatedStake.Withdraw], EpochProgress)] =
       lastSnapshot.info.delegatedStakesWithdrawals
-        .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Withdraw], SnapshotOrdinal)]])
+        .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Withdraw], EpochProgress)]])
         .getOrElse(address, List.empty)
 
     for {
@@ -72,17 +73,17 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
           DelegatedStakeInfo(
             acceptedOrdinal = acceptedOrdinal,
             tokenLockRef = stake.tokenLockRef,
-            amount = stake.stake.amount,
-            fee = stake.stake.fee,
-            withdrawalStarted = maybeWithdraw.map(_._2),
-            withdrawalFinishes = maybeWithdraw.map(_._2.plus(withdrawalTimeLimit))
+            amount = stake.amount,
+            fee = stake.fee,
+            withdrawalStartEpoch = maybeWithdraw.map(_._2),
+            withdrawalEndEpoch = maybeWithdraw.map(_._2 |+| EpochProgress(withdrawalTimeLimit))
           )
       }
     } yield
       DelegatedStakesInfo(
         address = address,
         activeDelegatedStakes = infos,
-        pendingWithdrawals = infos.filter(_.withdrawalStarted.nonEmpty)
+        pendingWithdrawals = infos.filter(_.withdrawalStartEpoch.nonEmpty)
       )
   }
 

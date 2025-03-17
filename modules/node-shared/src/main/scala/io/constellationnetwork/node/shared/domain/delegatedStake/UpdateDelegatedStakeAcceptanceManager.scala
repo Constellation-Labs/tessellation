@@ -69,8 +69,8 @@ object UpdateDelegatedStakeAcceptanceManager {
             .map(_.groupBy(_._1).view.mapValues(_.map(_._2)).toSortedMap)
 
           acceptedWithdrawalsMap <- acceptedWithdrawals
-            .map(w => (w, lastSnapshotOrdinal))
-            .traverse { case (signed, ord) => signed.proofs.head.id.toAddress.map((_, (signed, ord))) }
+            .map(w => (w, lastGlobalEpochProgress))
+            .traverse { case (signed, epoch) => signed.proofs.head.id.toAddress.map((_, (signed, epoch))) }
             .map(_.groupBy(_._1).view.mapValues(_.map(_._2)).toSortedMap)
         } yield
           UpdateDelegatedStakeAcceptanceResult(

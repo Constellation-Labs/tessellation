@@ -49,10 +49,8 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
     keyPair: KeyPair,
     tokenLockReference: Hash = Hash.empty
   ): UpdateNodeCollateral.Create = UpdateNodeCollateral.Create(
-    collateral = NodeCollateral(
-      nodeId = PeerId.fromPublic(keyPair.getPublic),
-      amount = NodeCollateralAmount(NonNegLong(100L))
-    ),
+    nodeId = PeerId.fromPublic(keyPair.getPublic),
+    amount = NodeCollateralAmount(NonNegLong(100L)),
     tokenLockRef = tokenLockReference
   )
 
@@ -95,7 +93,7 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
       (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
       validCreate = testCreateNodeCollateral(keyPair, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair)
-      seedlist <- mkSeedlist(validCreate.collateral.nodeId)
+      seedlist <- mkSeedlist(validCreate.nodeId)
       validator = mkValidator(seedlist)
       result <- validator.validateCreateNodeCollateral(signed, lastContext)
     } yield expect.same(Valid(signed), result)
@@ -115,7 +113,7 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
           )
         )
       )
-      seedlist <- mkSeedlist(validCreate.collateral.nodeId)
+      seedlist <- mkSeedlist(validCreate.nodeId)
       validator = mkValidator(seedlist)
       result <- validator.validateCreateNodeCollateral(signed, lastContext)
     } yield expect.same(InvalidSigned(InvalidSignatures(signed.proofs)).invalidNec, result)
@@ -135,7 +133,7 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
       signed1 <- forAsyncHasher(validCreate, keyPair1)
       signed2 <- forAsyncHasher(validCreate, keyPair2)
       signed = signed1.addProof(signed2.proofs.head)
-      seedlist <- mkSeedlist(validCreate.collateral.nodeId)
+      seedlist <- mkSeedlist(validCreate.nodeId)
       validator = mkValidator(seedlist)
       result <- validator.validateCreateNodeCollateral(signed, lastContext1)
     } yield expect.same(TooManySignatures(signed.proofs).invalidNec, result)
@@ -163,7 +161,7 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
       seedlist <- mkSeedlist()
       validator = mkValidator(seedlist)
       result <- validator.validateCreateNodeCollateral(signed, lastContext)
-    } yield expect.same(UnauthorizedNode(invalidCreate.collateral.nodeId).invalidNec, result)
+    } yield expect.same(UnauthorizedNode(invalidCreate.nodeId).invalidNec, result)
   }
 
   test("should fail when there is another collateral for this node") { res =>
@@ -179,7 +177,7 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
       result <- validator.validateCreateNodeCollateral(signed, context)
-    } yield expect.same(StakeExistsForNode(validCreate.collateral.nodeId).invalidNec, result)
+    } yield expect.same(StakeExistsForNode(validCreate.nodeId).invalidNec, result)
   }
 
   test("should fail when the tokenLock is not available (another node collateral exists)") { res =>
@@ -190,7 +188,7 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
       parent = testCreateNodeCollateral(keyPair, tokenLockReference)
       keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
       nodeId1 = PeerId.fromPublic(keyPair1.getPublic)
-      signedParent <- forAsyncHasher(parent.copy(collateral = parent.collateral.copy(nodeId = nodeId1)), keyPair)
+      signedParent <- forAsyncHasher(parent.copy(nodeId = nodeId1), keyPair)
       address <- signedParent.proofs.head.id.toAddress
       context = lastContext.copy(activeNodeCollaterals = Some(SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue)))))
       validCreate = testCreateNodeCollateral(keyPair, tokenLockReference)
@@ -206,10 +204,8 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
     for {
       (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
       parent = UpdateDelegatedStake.Create(
-        stake = DelegatedStake(
-          nodeId = PeerId.fromPublic(keyPair.getPublic),
-          amount = DelegatedStakeAmount(NonNegLong(100L))
-        ),
+        nodeId = PeerId.fromPublic(keyPair.getPublic),
+        amount = DelegatedStakeAmount(NonNegLong(100L)),
         tokenLockRef = tokenLockReference
       )
       signedParent <- forAsyncHasher(parent, keyPair)
@@ -265,7 +261,7 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
       lastRef <- NodeCollateralReference.of(signedParent)
       validWithdraw = testWithdrawNodeCollateral(keyPair).copy(collateralRef = lastRef.hash)
       signed <- forAsyncHasher(validWithdraw, keyPair)
-      seedlist <- mkSeedlist(validParent.collateral.nodeId)
+      seedlist <- mkSeedlist(validParent.nodeId)
       validator = mkValidator(seedlist)
       result <- validator.validateWithdrawNodeCollateral(signed, context)
     } yield expect.same(Valid(signed), result)
@@ -290,7 +286,7 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
           )
         )
       )
-      seedlist <- mkSeedlist(validParent.collateral.nodeId)
+      seedlist <- mkSeedlist(validParent.nodeId)
       validator = mkValidator(seedlist)
       result <- validator.validateWithdrawNodeCollateral(signed, context)
     } yield
@@ -421,9 +417,9 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
       signed <- forAsyncHasher(validWithdraw, keyPair)
       context = mkGlobalContext(
         SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue))),
-        withdrawals = SortedMap(address -> List((signed, SnapshotOrdinal.MinValue)))
+        withdrawals = SortedMap(address -> List((signed, EpochProgress.MinValue)))
       )
-      seedlist <- mkSeedlist(validParent.collateral.nodeId)
+      seedlist <- mkSeedlist(validParent.nodeId)
       validator = mkValidator(seedlist)
       result <- validator.validateWithdrawNodeCollateral(signed, context)
     } yield expect.same(AlreadyWithdrawn(lastRef.hash).invalidNec, result)
@@ -449,7 +445,7 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
 
   def mkGlobalContext(
     nodeCollaterals: SortedMap[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]] = SortedMap.empty,
-    withdrawals: SortedMap[Address, List[(Signed[UpdateNodeCollateral.Withdraw], SnapshotOrdinal)]] = SortedMap.empty,
+    withdrawals: SortedMap[Address, List[(Signed[UpdateNodeCollateral.Withdraw], EpochProgress)]] = SortedMap.empty,
     tokenLocks: SortedMap[Address, SortedSet[Signed[TokenLock]]] = SortedMap.empty
   ) =
     GlobalSnapshotInfo.empty.copy(

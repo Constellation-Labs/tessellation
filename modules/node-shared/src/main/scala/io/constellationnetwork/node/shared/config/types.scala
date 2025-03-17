@@ -10,6 +10,7 @@ import io.constellationnetwork.node.shared.domain.statechannel.FeeCalculatorConf
 import io.constellationnetwork.schema.SnapshotOrdinal
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.balance.Amount
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.node.{NodeState, RewardFraction}
 import io.constellationnetwork.schema.peer.PeerId
 

@@ -94,8 +94,8 @@ object UpdateNodeCollateralValidator {
             .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]])
             .getOrElse(address, List.empty[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)])
         } yield
-          if (activeNodeCollaterals.exists(s => s._1.collateral.nodeId == signed.collateral.nodeId)) {
-            StakeExistsForNode(signed.collateral.nodeId).invalidNec
+          if (activeNodeCollaterals.exists(s => s._1.nodeId == signed.nodeId)) {
+            StakeExistsForNode(signed.nodeId).invalidNec
           } else {
             signed.validNec
           }
@@ -103,10 +103,10 @@ object UpdateNodeCollateralValidator {
       private def validateAuthorizedNodeId(
         signed: Signed[UpdateNodeCollateral.Create]
       ): UpdateNodeCollateralValidationErrorOr[Signed[UpdateNodeCollateral.Create]] =
-        if (seedlist.forall(_.exists(_.peerId === signed.collateral.nodeId))) {
+        if (seedlist.forall(_.exists(_.peerId === signed.nodeId))) {
           signed.validNec
         } else {
-          UnauthorizedNode(signed.collateral.nodeId).invalidNec
+          UnauthorizedNode(signed.nodeId).invalidNec
         }
 
       private def validateWithdrawal(
@@ -165,7 +165,7 @@ object UpdateNodeCollateralValidator {
           } yield
             tokenLocksWithReferences.find { case (_, r) => r.hash === signed.tokenLockRef } match {
               case Some((tokenLock, _)) =>
-                signed.collateral.amount.value.value === tokenLock.amount.value.value && tokenLock.unlockEpoch.isEmpty
+                signed.amount.value.value === tokenLock.amount.value.value && tokenLock.unlockEpoch.isEmpty
               case None => false
             }
         }
