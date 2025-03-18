@@ -47,11 +47,13 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
 
   def testCreateNodeCollateral(
     keyPair: KeyPair,
-    tokenLockReference: Hash = Hash.empty
+    tokenLockReference: Hash = Hash.empty,
+    parent: NodeCollateralReference = NodeCollateralReference.empty
   ): UpdateNodeCollateral.Create = UpdateNodeCollateral.Create(
     nodeId = PeerId.fromPublic(keyPair.getPublic),
     amount = NodeCollateralAmount(NonNegLong(100L)),
-    tokenLockRef = tokenLockReference
+    tokenLockRef = tokenLockReference,
+    parent = parent
   )
 
   def testWithdrawNodeCollateral(keyPair: KeyPair): UpdateNodeCollateral.Withdraw = UpdateNodeCollateral.Withdraw(
@@ -180,7 +182,26 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
     } yield expect.same(StakeExistsForNode(validCreate.nodeId).invalidNec, result)
   }
 
-  test("should fail when the tokenLock is not available (another node collateral exists)") { res =>
+  test("should succeed when the tokenLock is not available (another node collateral exists / overwrite)") { res =>
+    implicit val (json, h, sp, keyPair) = res
+
+    for {
+      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
+      keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
+      nodeId1 = PeerId.fromPublic(keyPair1.getPublic)
+      parent = testCreateNodeCollateral(keyPair, tokenLockReference)
+      signedParent <- forAsyncHasher(parent.copy(nodeId = nodeId1), keyPair)
+      lastRef <- NodeCollateralReference.of(signedParent)
+      address <- signedParent.proofs.head.id.toAddress
+      context = lastContext.copy(activeNodeCollaterals = Some(SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue)))))
+      validCreate = testCreateNodeCollateral(keyPair, tokenLockReference, lastRef)
+      signed <- forAsyncHasher(validCreate, keyPair)
+      validator = mkValidator()
+      result <- validator.validateCreateNodeCollateral(signed, context)
+    } yield expect.same(Valid(signed), result)
+  }
+
+  test("should fail when the lastRef of the existing node collateral is different") { res =>
     implicit val (json, h, sp, keyPair) = res
 
     for {
@@ -195,7 +216,7 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
       result <- validator.validateCreateNodeCollateral(signed, context)
-    } yield expect.same(InvalidTokenLock(tokenLockReference).invalidNec, result)
+    } yield expect.same(InvalidParent(validCreate.parent).invalidNec, result)
   }
 
   test("should fail when the tokenLock is not available (a delegated stake exists)") { res =>
