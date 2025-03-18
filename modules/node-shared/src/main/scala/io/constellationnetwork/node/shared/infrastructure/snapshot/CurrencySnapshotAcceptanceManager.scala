@@ -1,9 +1,9 @@
 package io.constellationnetwork.node.shared.infrastructure.snapshot
 
-import cats.Order
 import cats.data.{NonEmptyList, Validated}
 import cats.effect.Async
 import cats.syntax.all._
+import cats.{Applicative, Order}
 
 import scala.collection.immutable.{SortedMap, SortedSet}
 
@@ -225,7 +225,8 @@ object CurrencySnapshotAcceptanceManager {
         lastGlobalSyncView,
         maybeLastGlobalSnapshot,
         lastGlobalSnapshots,
-        getGlobalSnapshotByOrdinal
+        getGlobalSnapshotByOrdinal,
+        metagraphId
       )
 
       metagraphIdSpendTransactions = lastGlobalSnapshotsSpendActions.flatMap {
@@ -235,9 +236,12 @@ object CurrencySnapshotAcceptanceManager {
             .filter(_.currency.exists(_.value == metagraphId))
       }.toList
 
-      _ <- Slf4jLogger.getLogger[F].debug(s"--- [CURRENCY] Last global sync view: $lastGlobalSyncView")
-      _ <- Slf4jLogger.getLogger[F].debug(s"--- [CURRENCY] Last sync global snapshot ordinal: ${maybeLastGlobalSnapshot.map(_.ordinal)}")
-      _ <- Slf4jLogger.getLogger[F].debug(s"--- [CURRENCY] Currency $metagraphId spend transactions: $metagraphIdSpendTransactions")
+      _ <- metagraphIdSpendTransactions.nonEmpty
+        .pure[F]
+        .ifM(
+          Slf4jLogger.getLogger[F].debug(s"--- [CURRENCY] Currency $metagraphId spend transactions: $metagraphIdSpendTransactions"),
+          Applicative[F].unit
+        )
 
       incomingTokenLocks = acceptanceTokenLockBlocksResult.accepted.flatMap { tokenLockBlock =>
         tokenLockBlock.value.tokenLocks.toSortedSet
@@ -444,7 +448,8 @@ object CurrencySnapshotAcceptanceManager {
       lastGlobalSyncView: Option[GlobalSyncView],
       maybeLastGlobalSnapshot: Option[Hashed[GlobalIncrementalSnapshot]],
       lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
-      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+      currencyId: Address
     ): F[SortedMap[Address, List[SpendAction]]] =
       maybeLastGlobalSnapshot match {
         case None => SortedMap.empty[Address, List[SpendAction]].pure[F]
@@ -464,7 +469,17 @@ object CurrencySnapshotAcceptanceManager {
               .map(l => SnapshotOrdinal(NonNegLong.unsafeFrom(l)))
               .toList
 
-            Slf4jLogger.getLogger[F].debug(s"--- [CURRENCY] Fetching spend actions from global snapshots: $snapshotOrdinals") >>
+            val limitOfOrdinalsToFetch = 20L
+            if (snapshotOrdinals.length > limitOfOrdinalsToFetch) {
+              Slf4jLogger
+                .getLogger[F]
+                .warn(
+                  s"Interval of ordinals of metagraph $currencyId between lastSyncGlobalSnapshot and lastGlobalView greater than $limitOfOrdinalsToFetch, skipping fetching interval"
+                )
+                .as(
+                  lastGlobalSnapshot.spendActions.getOrElse(SortedMap.empty[Address, List[SpendAction]])
+                )
+            } else {
               snapshotOrdinals.foldMapM { ordinal =>
                 snapshotsMap.get(ordinal) match {
                   case Some(snapshot) =>
@@ -476,6 +491,7 @@ object CurrencySnapshotAcceptanceManager {
                     )
                 }
               }
+            }
           }
       }
 

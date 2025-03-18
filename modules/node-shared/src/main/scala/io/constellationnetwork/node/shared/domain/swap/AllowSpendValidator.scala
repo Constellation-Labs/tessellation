@@ -67,8 +67,7 @@ object AllowSpendValidator {
   sealed trait AllowSpendValidationError
   case class InvalidSigned(error: SignedValidationError) extends AllowSpendValidationError
   case object NotSignedBySourceAddressOwner extends AllowSpendValidationError
-  case class InvalidApprover(approvers: List[Address], destination: Address)
-      extends AllowSpendValidationError
+  case class InvalidApprover(approvers: List[Address], destination: Address) extends AllowSpendValidationError
 
   type AllowSpendValidationErrorOr[A] = ValidatedNec[AllowSpendValidationError, A]
 }
