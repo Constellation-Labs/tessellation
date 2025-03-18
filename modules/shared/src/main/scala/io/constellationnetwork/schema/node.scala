@@ -179,4 +179,10 @@ object node {
     def ordinal: UpdateNodeParametersOrdinal = parent.ordinal.next
   }
 
+  @derive(eqv, show, encoder, decoder, order, ordering)
+  case class NodeParamsInfo(
+    latest: Signed[UpdateNodeParameters],
+    lastRef: UpdateNodeParametersReference,
+    acceptedOrdinal: SnapshotOrdinal
+  )
 }

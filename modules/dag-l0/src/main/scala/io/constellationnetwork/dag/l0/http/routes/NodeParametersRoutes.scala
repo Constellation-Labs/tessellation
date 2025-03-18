@@ -53,10 +53,23 @@ final case class NodeParametersRoutes[F[_]: Async: Hasher: SecurityProvider](
       maybeSnapshot <- readLatestFullSnapshot(maybeOrdinal)
     } yield maybeSnapshot
 
-  private def getLatestNodeParameters(nodeId: Id): F[Option[(Signed[UpdateNodeParameters], SnapshotOrdinal)]] =
+  private def getLatestNodeParameters(nodeId: Id): F[Option[NodeParamsInfo]] =
     for {
       maybeSnapshot <- getLatestFullSnapshot
-    } yield maybeSnapshot.flatMap(_.value.info.updateNodeParameters.flatMap(_.get(nodeId)))
+      paramsAndOrdinal = maybeSnapshot.flatMap(_.value.info.updateNodeParameters.flatMap(_.get(nodeId)))
+      info <- paramsAndOrdinal.traverse {
+        case (signed, ord) =>
+          UpdateNodeParametersReference
+            .of(signed)
+            .map(ref =>
+              NodeParamsInfo(
+                latest = signed,
+                lastRef = ref,
+                acceptedOrdinal = ord
+              )
+            )
+      }
+    } yield info
 
   @derive(eqv, show, encoder)
   case class NodeParametersInfo(
@@ -142,7 +155,7 @@ final case class NodeParametersRoutes[F[_]: Async: Hasher: SecurityProvider](
         .map(validStateForSnapshotReturn)
         .ifM(
           getLatestNodeParameters(nodeId.toId).flatMap {
-            case Some(params) => Ok(params._1.value)
+            case Some(params) => Ok(params)
             case _            => NotFound()
           },
           ServiceUnavailable()
@@ -158,17 +171,15 @@ final case class NodeParametersRoutes[F[_]: Async: Hasher: SecurityProvider](
             case Left(err) => BadRequest(err)
             case Right((sortOrder, sort)) =>
               cluster.info.flatMap { clusterInfo =>
-                clusterInfo.toList.traverse(peerInfo =>
-                  getLatestNodeParameters(peerInfo.id.toId).map(_.map(params => (peerInfo, params._1)))
-                )
+                clusterInfo.toList.traverse(peerInfo => getLatestNodeParameters(peerInfo.id.toId).map(_.map(params => (peerInfo, params))))
               }.flatMap { infoWithNodeParams =>
                 val filtered = filter(
                   infoWithNodeParams.collect {
                     case Some((node, params)) =>
                       NodeParametersInfo(
                         node = node,
-                        delegatedStakeRewardParameters = params.delegatedStakeRewardParameters,
-                        nodeMetadataParameters = params.nodeMetadataParameters
+                        delegatedStakeRewardParameters = params.latest.delegatedStakeRewardParameters,
+                        nodeMetadataParameters = params.latest.nodeMetadataParameters
                       )
                   },
                   req.params.get("search")
