@@ -204,7 +204,8 @@ object CurrencySnapshotCreator {
                     .getOrElse(SortedSet.empty[RewardTransaction].pure[F]),
                 facilitators,
                 lastGlobalSnapshots,
-                getGlobalSnapshotByOrdinal
+                getGlobalSnapshotByOrdinal,
+                lastArtifact.globalSyncView
               )
 
           rejectedBlockEvents = currencySnapshotAcceptanceResult.block.notAccepted.collect {

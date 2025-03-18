@@ -86,7 +86,8 @@ trait CurrencySnapshotAcceptanceManager[F[_]] {
     calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]],
     facilitators: Set[PeerId],
     lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
-    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+    getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+    lastGlobalSyncView: Option[GlobalSyncView]
   )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult]
 }
 
@@ -119,7 +120,8 @@ object CurrencySnapshotAcceptanceManager {
       calculateRewardsFn: SortedSet[Signed[Transaction]] => F[SortedSet[RewardTransaction]],
       facilitators: Set[PeerId],
       lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
-      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]],
+      lastGlobalSyncView: Option[GlobalSyncView]
     )(implicit hasher: Hasher[F]): F[CurrencySnapshotAcceptanceResult] = for {
       initialTxRef <- TransactionReference.emptyCurrency(lastSnapshotContext.address)
       tokenLockInitialTxRef <- TokenLockReference.emptyCurrency(lastSnapshotContext.address)
@@ -219,19 +221,23 @@ object CurrencySnapshotAcceptanceManager {
         else
           maybeLastGlobalSnapshot.get.epochProgress.pure
 
-      lastGlobalSnapshotSpendActions = maybeLastGlobalSnapshot
-        .flatMap(_.spendActions)
-        .getOrElse(SortedMap.empty[Address, List[SpendAction]])
+      lastGlobalSnapshotsSpendActions <- getLastSpendActions(
+        lastGlobalSyncView,
+        maybeLastGlobalSnapshot,
+        lastGlobalSnapshots,
+        getGlobalSnapshotByOrdinal
+      )
 
-      metagraphIdSpendTransactions = lastGlobalSnapshotSpendActions.flatMap {
+      metagraphIdSpendTransactions = lastGlobalSnapshotsSpendActions.flatMap {
         case (_, spendActions) =>
           spendActions
             .flatMap(_.spendTransactions.toList)
             .filter(_.currency.exists(_.value == metagraphId))
       }.toList
 
-      _ <- logger.info(s"lastGlobalSnapshotSpendActions: ${lastGlobalSnapshotSpendActions}")
-      _ <- logger.info(s"metagraphIdSpendTransactions: ${metagraphIdSpendTransactions}")
+      _ <- Slf4jLogger.getLogger[F].debug(s"--- [CURRENCY] Last global sync view: $lastGlobalSyncView")
+      _ <- Slf4jLogger.getLogger[F].debug(s"--- [CURRENCY] Last sync global snapshot ordinal: ${maybeLastGlobalSnapshot.map(_.ordinal)}")
+      _ <- Slf4jLogger.getLogger[F].debug(s"--- [CURRENCY] Currency $metagraphId spend transactions: $metagraphIdSpendTransactions")
 
       incomingTokenLocks = acceptanceTokenLockBlocksResult.accepted.flatMap { tokenLockBlock =>
         tokenLockBlock.value.tokenLocks.toSortedSet
@@ -304,14 +310,10 @@ object CurrencySnapshotAcceptanceManager {
         lastActiveAllowSpends
       )
 
-      allActiveCurrencyAllowSpends <- updatedAllowSpends.toList.traverse {
+      allActiveCurrencyAllowSpends <- (incomingCurrencyAllowSpends |+| lastActiveAllowSpends).toList.traverse {
         case (address, allowSpends) =>
           allowSpends.toList.traverse(_.toHashed).map(hashedAllowSpends => address -> hashedAllowSpends)
       }.map(_.toSortedMap)
-
-      _ <- Slf4jLogger.getLogger[F].debug(s"--- [CURRENCY] Last global epoch progress: $lastGlobalSnapshotEpochProgress")
-      _ <- Slf4jLogger.getLogger[F].debug(s"--- [CURRENCY] Currency $metagraphId spend transactions: $metagraphIdSpendTransactions")
-      _ <- Slf4jLogger.getLogger[F].debug(s"--- [CURRENCY] Currency $metagraphId all active allow spends: $allActiveCurrencyAllowSpends")
 
       updatedBalancesBySpendTransactions = updateCurrencyBalancesBySpendTransactions(
         updatedBalancesByAllowSpends,
@@ -437,6 +439,45 @@ object CurrencySnapshotAcceptanceManager {
         }
         .map { case (contextUpdate, toAdd, toReject) => GlobalSnapshotSyncAcceptanceResult(contextUpdate, toAdd, toReject) }
     }
+
+    private def getLastSpendActions(
+      lastGlobalSyncView: Option[GlobalSyncView],
+      maybeLastGlobalSnapshot: Option[Hashed[GlobalIncrementalSnapshot]],
+      lastGlobalSnapshots: Option[List[Hashed[GlobalIncrementalSnapshot]]],
+      getGlobalSnapshotByOrdinal: SnapshotOrdinal => F[Option[Hashed[GlobalIncrementalSnapshot]]]
+    ): F[SortedMap[Address, List[SpendAction]]] =
+      maybeLastGlobalSnapshot match {
+        case None => SortedMap.empty[Address, List[SpendAction]].pure[F]
+        case Some(lastGlobalSnapshot) =>
+          val lastSyncOrdinal = lastGlobalSyncView.map(_.ordinal).getOrElse(lastGlobalSnapshot.ordinal)
+
+          if (lastGlobalSnapshot.ordinal.value.value < lastSyncOrdinal.value.value) {
+            SortedMap.empty[Address, List[SpendAction]].pure[F]
+          } else {
+            val snapshotsMap = lastGlobalSnapshots.map { snapshots =>
+              snapshots.map(s => (s.ordinal, s)).toMap
+            }.getOrElse(Map.empty)
+
+            val start = lastSyncOrdinal.value.value
+            val end = lastGlobalSnapshot.ordinal.value.value
+            val snapshotOrdinals = (start until end)
+              .map(l => SnapshotOrdinal(NonNegLong.unsafeFrom(l)))
+              .toList
+
+            Slf4jLogger.getLogger[F].debug(s"--- [CURRENCY] Fetching spend actions from global snapshots: $snapshotOrdinals") >>
+              snapshotOrdinals.foldMapM { ordinal =>
+                snapshotsMap.get(ordinal) match {
+                  case Some(snapshot) =>
+                    snapshot.spendActions.getOrElse(SortedMap.empty[Address, List[SpendAction]]).pure[F]
+                  case None =>
+                    getGlobalSnapshotByOrdinal(ordinal).map(
+                      _.flatMap(_.spendActions)
+                        .getOrElse(SortedMap.empty[Address, List[SpendAction]])
+                    )
+                }
+              }
+          }
+      }
 
     private def acceptTransactionRefs(
       lastTxRefs: SortedMap[Address, TransactionReference],
