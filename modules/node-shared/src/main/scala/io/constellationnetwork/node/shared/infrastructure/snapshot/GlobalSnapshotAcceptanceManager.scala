@@ -341,8 +341,8 @@ object GlobalSnapshotAcceptanceManager {
           globalActiveTokenLocks
         )
 
-        updatedGlobalAllowSpends = updatedAllowSpends.getOrElse(None, SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]])
-        allGlobalAllowSpends <- updatedGlobalAllowSpends.toList.traverse {
+        lastActiveGlobalAllowSpends = globalActiveAllowSpends.getOrElse(None, SortedMap.empty[Address, SortedSet[Signed[AllowSpend]]])
+        allGlobalAllowSpends <- (globalAllowSpends |+| lastActiveGlobalAllowSpends).toList.traverse {
           case (address, allowSpends) =>
             allowSpends.toList.traverse(_.toHashed).map(address -> _)
         }.map(_.toSortedMap)
@@ -353,10 +353,6 @@ object GlobalSnapshotAcceptanceManager {
               .flatMap(_.spendTransactions.toList)
               .filter(_.currency.isEmpty)
         }.toList
-
-        _ <- Slf4jLogger.getLogger[F].debug(s"--- [GLOBAL] Last global epoch progress: $epochProgress")
-        _ <- Slf4jLogger.getLogger[F].debug(s"--- [GLOBAL] Global spend transactions: $globalSpendTransactions")
-        _ <- Slf4jLogger.getLogger[F].debug(s"--- [GLOBAL] Global all active allow spends: $allGlobalAllowSpends")
 
         updatedBalancesBySpendTransactions = updateGlobalBalancesBySpendTransactions(
           updatedBalancesByTokenLocks,
