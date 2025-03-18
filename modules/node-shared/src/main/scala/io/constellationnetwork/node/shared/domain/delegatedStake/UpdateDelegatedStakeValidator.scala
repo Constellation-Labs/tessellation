@@ -53,8 +53,10 @@ object UpdateDelegatedStakeValidator {
             .map(_.errorMap[UpdateDelegatedStakeValidationError](InvalidSigned))
           authorizedNodeIdV = validateAuthorizedNodeId(signed)
           nodeIdV <- validateNodeId(signed, lastContext)
+          parentV <- validateParent(signed, lastContext)
           tokenLockV <- validateTokenLock(signed, lastContext)
-        } yield numberOfSignaturesV.productR(signaturesV).productR(authorizedNodeIdV).productR(nodeIdV).productR(tokenLockV)
+        } yield
+          numberOfSignaturesV.productR(signaturesV).productR(authorizedNodeIdV).productR(nodeIdV).productR(parentV).productR(tokenLockV)
 
       def validateWithdrawDelegatedStake(
         signed: Signed[UpdateDelegatedStake.Withdraw],
@@ -78,6 +80,28 @@ object UpdateDelegatedStakeValidator {
         }
         result.pure[F]
       }
+
+      private def validateParent(
+        signed: Signed[UpdateDelegatedStake.Create],
+        lastContext: GlobalSnapshotInfo
+      ): F[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]]] =
+        for {
+          address <- getAddress(signed)
+          maybeExistingStake = lastContext.activeDelegatedStakes
+            .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]])
+            .getOrElse(address, List.empty[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)])
+            .find(_._1.tokenLockRef === signed.tokenLockRef)
+            .map(_._1)
+          maybeLastRef <- maybeExistingStake.traverse(DelegatedStakeReference.of(_))
+        } yield
+          if (
+            (maybeExistingStake.isEmpty && signed.parent === DelegatedStakeReference.empty) ||
+            maybeLastRef.exists(_ === signed.parent)
+          ) {
+            signed.validNec
+          } else {
+            InvalidParent(signed.parent).invalidNec
+          }
 
       private def validateAuthorizedNodeId(
         signed: Signed[UpdateDelegatedStake.Create]
@@ -140,16 +164,20 @@ object UpdateDelegatedStakeValidator {
         lastContext: GlobalSnapshotInfo
       ): F[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]]] = {
 
-        def tokenLockAvailable(address: Address): F[Boolean] =
-          (!(lastContext.activeDelegatedStakes
+        def tokenLockAvailable(address: Address): Boolean = {
+          val maybeExistingStake = lastContext.activeDelegatedStakes
             .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]])
             .getOrElse(address, List.empty[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)])
-            .exists(_._1.tokenLockRef === signed.tokenLockRef) ||
-            lastContext.activeNodeCollaterals
-              .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]])
-              .getOrElse(address, List.empty[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)])
-              .exists(_._1.tokenLockRef === signed.tokenLockRef)))
-            .pure[F]
+            .find(_._1.tokenLockRef === signed.tokenLockRef)
+            .map(_._1)
+
+          val maybeExistingCollateral = lastContext.activeNodeCollaterals
+            .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]])
+            .getOrElse(address, List.empty[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)])
+            .find(_._1.tokenLockRef === signed.tokenLockRef)
+            .map(_._1)
+          maybeExistingCollateral.isEmpty && maybeExistingStake.forall(_.nodeId != signed.nodeId)
+        }
 
         def tokenLockValid(address: Address): F[Boolean] = {
           val tokenLocks = lastContext.activeTokenLocks
@@ -167,7 +195,7 @@ object UpdateDelegatedStakeValidator {
 
         for {
           address <- getAddress(signed)
-          available <- tokenLockAvailable(address)
+          available = tokenLockAvailable(address)
           valid <- if (available) tokenLockValid(address) else available.pure[F]
         } yield if (valid) signed.validNec else InvalidTokenLock(signed.tokenLockRef).invalidNec
       }
@@ -195,6 +223,7 @@ object UpdateDelegatedStakeValidator {
   case class InvalidStake(parent: Hash) extends UpdateDelegatedStakeValidationError
   case class InvalidTokenLock(tokenLockRef: Hash) extends UpdateDelegatedStakeValidationError
   case class AlreadyWithdrawn(parent: Hash) extends UpdateDelegatedStakeValidationError
+  case class InvalidParent(parent: DelegatedStakeReference) extends UpdateDelegatedStakeValidationError
 
   type UpdateDelegatedStakeValidationErrorOr[A] = ValidatedNec[UpdateDelegatedStakeValidationError, A]
 }

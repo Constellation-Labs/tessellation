@@ -48,11 +48,13 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
 
   def testCreateDelegatedStake(
     keyPair: KeyPair,
-    tokenLockReference: Hash = Hash.empty
+    tokenLockReference: Hash = Hash.empty,
+    parent: DelegatedStakeReference = DelegatedStakeReference.empty
   ): UpdateDelegatedStake.Create = UpdateDelegatedStake.Create(
     nodeId = PeerId.fromPublic(keyPair.getPublic),
     amount = DelegatedStakeAmount(NonNegLong(100L)),
-    tokenLockRef = tokenLockReference
+    tokenLockRef = tokenLockReference,
+    parent = parent
   )
 
   def testWithdrawDelegatedStake(keyPair: KeyPair): UpdateDelegatedStake.Withdraw = UpdateDelegatedStake.Withdraw(
@@ -179,7 +181,26 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
     } yield expect.same(StakeExistsForNode(validCreate.nodeId).invalidNec, result)
   }
 
-  test("should fail when the tokenLock is not available (another delegated stake exists)") { res =>
+  test("should succeed when the tokenLock is not available (another delegated stake exists / overwrite)") { res =>
+    implicit val (json, h, sp, keyPair) = res
+
+    for {
+      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
+      keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
+      nodeId1 = PeerId.fromPublic(keyPair1.getPublic)
+      parent = testCreateDelegatedStake(keyPair, tokenLockReference)
+      signedParent <- forAsyncHasher(parent.copy(nodeId = nodeId1), keyPair)
+      lastRef <- DelegatedStakeReference.of(signedParent)
+      address <- signedParent.proofs.head.id.toAddress
+      context = lastContext.copy(activeDelegatedStakes = Some(SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue)))))
+      validCreate = testCreateDelegatedStake(keyPair, tokenLockReference, lastRef)
+      signed <- forAsyncHasher(validCreate, keyPair)
+      validator = mkValidator()
+      result <- validator.validateCreateDelegatedStake(signed, context)
+    } yield expect.same(Valid(signed), result)
+  }
+
+  test("should fair when the lastRef of the existing delegated stake is different") { res =>
     implicit val (json, h, sp, keyPair) = res
 
     for {
@@ -194,7 +215,7 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
       result <- validator.validateCreateDelegatedStake(signed, context)
-    } yield expect.same(InvalidTokenLock(tokenLockReference).invalidNec, result)
+    } yield expect.same(InvalidParent(validCreate.parent).invalidNec, result)
   }
 
   test("should fail when the tokenLock is not available (a node collateral exists)") { res =>
