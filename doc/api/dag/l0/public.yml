@@ -426,6 +426,42 @@ paths:
             Request-Signature:
               $ref: '../../models/headers/Request-Signature.yml'
 
+  /delegated-stake/last-reference/{address}:
+    get:
+      tags:
+        - Delegated stakes
+      description: Get last delegated stake reference of the given address
+      parameters:
+        - name: address
+          in: path
+          description: User's address
+          required: true
+          schema:
+            $ref: '../../models/schemas/Address.yml'
+      responses:
+        200:
+          description: Last delegated stake reference of the given address
+          content:
+            application/json:
+              schema:
+                $ref: '../../models/schemas/DelegatedStakeReference.yml'
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        503:
+          description: Node is not Ready yet
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+
   /node-collateral:
     post:
       tags:
@@ -525,6 +561,42 @@ paths:
             application/json:
               schema:
                 $ref: '../../models/schemas/NodeCollateralsInfo.yml'
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+        503:
+          description: Node is not Ready yet
+          headers:
+            X-Id:
+              $ref: '../../models/headers/X-Id.yml'
+            X-Session-Token:
+              $ref: '../../models/headers/X-Session-Token.yml'
+            Request-Signature:
+              $ref: '../../models/headers/Request-Signature.yml'
+
+  /node-collateral/last-reference/{address}:
+    get:
+      tags:
+        - Node collateral
+      description: Get last node collateral reference of the given address
+      parameters:
+        - name: address
+          in: path
+          description: User's address
+          required: true
+          schema:
+            $ref: '../../models/schemas/Address.yml'
+      responses:
+        200:
+          description: Last node collateral reference of the given address
+          content:
+            application/json:
+              schema:
+                $ref: '../../models/schemas/NodeCollateralReference.yml'
           headers:
             X-Id:
               $ref: '../../models/headers/X-Id.yml'

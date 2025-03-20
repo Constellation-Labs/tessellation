@@ -108,17 +108,15 @@ object UpdateNodeCollateralValidator {
       ): F[UpdateNodeCollateralValidationErrorOr[Signed[UpdateNodeCollateral.Create]]] =
         for {
           address <- getAddress(signed)
-          maybeExistingCollateral = lastContext.activeNodeCollaterals
+          lastRef <- lastContext.activeNodeCollaterals
             .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]])
-            .getOrElse(address, List.empty[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)])
-            .find(_._1.tokenLockRef === signed.tokenLockRef)
-            .map(_._1)
-          maybeLastRef <- maybeExistingCollateral.traverse(NodeCollateralReference.of(_))
+            .get(address)
+            .flatMap(collaterals => Option.when(collaterals.nonEmpty)(collaterals.maxBy(_._1.ordinal)))
+            .traverse(collateral => NodeCollateralReference.of(collateral._1))
+            .map(_.getOrElse(NodeCollateralReference.empty))
+
         } yield
-          if (
-            (maybeExistingCollateral.isEmpty && signed.parent === NodeCollateralReference.empty) ||
-            maybeLastRef.exists(_ === signed.parent)
-          ) {
+          if (lastRef === signed.parent) {
             signed.validNec
           } else {
             InvalidParent(signed.parent).invalidNec

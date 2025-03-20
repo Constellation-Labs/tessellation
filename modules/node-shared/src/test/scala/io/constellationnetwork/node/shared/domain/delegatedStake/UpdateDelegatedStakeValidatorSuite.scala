@@ -174,7 +174,8 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       signedParent <- forAsyncHasher(parent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
       context = lastContext.copy(activeDelegatedStakes = Some(SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue)))))
-      validCreate = testCreateDelegatedStake(keyPair, tokenLockReference)
+      lastRef <- DelegatedStakeReference.of(signedParent)
+      validCreate = testCreateDelegatedStake(keyPair, tokenLockReference, lastRef)
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
       result <- validator.validateCreateDelegatedStake(signed, context)

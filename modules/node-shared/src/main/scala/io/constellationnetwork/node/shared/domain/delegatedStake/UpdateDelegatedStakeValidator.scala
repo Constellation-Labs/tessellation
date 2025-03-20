@@ -10,6 +10,7 @@ import io.constellationnetwork.ext.cats.syntax.validated._
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator.UpdateDelegatedStakeValidationErrorOr
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.delegatedStake.DelegatedStakeReference._
 import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeReference, UpdateDelegatedStake}
 import io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral
 import io.constellationnetwork.schema.peer.PeerId
@@ -87,17 +88,14 @@ object UpdateDelegatedStakeValidator {
       ): F[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]]] =
         for {
           address <- getAddress(signed)
-          maybeExistingStake = lastContext.activeDelegatedStakes
+          lastRef <- lastContext.activeDelegatedStakes
             .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]])
-            .getOrElse(address, List.empty[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)])
-            .find(_._1.tokenLockRef === signed.tokenLockRef)
-            .map(_._1)
-          maybeLastRef <- maybeExistingStake.traverse(DelegatedStakeReference.of(_))
+            .get(address)
+            .flatMap(stakes => Option.when(stakes.nonEmpty)(stakes.maxBy(_._1.ordinal)))
+            .traverse(stake => DelegatedStakeReference.of(stake._1))
+            .map(_.getOrElse(DelegatedStakeReference.empty))
         } yield
-          if (
-            (maybeExistingStake.isEmpty && signed.parent === DelegatedStakeReference.empty) ||
-            maybeLastRef.exists(_ === signed.parent)
-          ) {
+          if (lastRef == signed.parent) {
             signed.validNec
           } else {
             InvalidParent(signed.parent).invalidNec
