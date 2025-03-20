@@ -82,6 +82,7 @@ object delegatedStake {
   }
   @derive(eqv, show, encoder)
   case class DelegatedStakeInfo(
+    nodeId: PeerId,
     acceptedOrdinal: SnapshotOrdinal,
     tokenLockRef: Hash,
     amount: DelegatedStakeAmount,

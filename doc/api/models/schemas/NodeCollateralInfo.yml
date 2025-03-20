@@ -1,5 +1,7 @@
 type: object
 properties:
+  nodeId:
+    $ref: 'Id.yml'
   acceptedOrdinal:
     $ref: 'SnapshotOrdinal.yml'
   tokenLockRef:
