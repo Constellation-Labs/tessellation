@@ -175,7 +175,8 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
       signedParent <- forAsyncHasher(parent, keyPair)
       address <- signedParent.proofs.head.id.toAddress
       context = lastContext.copy(activeNodeCollaterals = Some(SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue)))))
-      validCreate = testCreateNodeCollateral(keyPair, tokenLockReference)
+      lastRef <- NodeCollateralReference.of(signedParent)
+      validCreate = testCreateNodeCollateral(keyPair, tokenLockReference, lastRef)
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()
       result <- validator.validateCreateNodeCollateral(signed, context)

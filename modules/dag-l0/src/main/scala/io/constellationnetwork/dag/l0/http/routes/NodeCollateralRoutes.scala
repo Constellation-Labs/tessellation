@@ -7,7 +7,7 @@ import cats.syntax.all._
 import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.dag.l0.domain.nodeCollateral.{CreateNodeCollateralOutput, NodeCollateralOutput, WithdrawNodeCollateralOutput}
-import io.constellationnetwork.ext.http4s.AddressVar
+import io.constellationnetwork.ext.http4s.{AddressVar, HashVar}
 import io.constellationnetwork.kernel._
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.nodeCollateral.UpdateNodeCollateralValidator
@@ -21,6 +21,7 @@ import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.nodeCollateral._
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.Hasher
+import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
@@ -89,6 +90,17 @@ final case class NodeCollateralRoutes[F[_]: Async: Hasher](
       )
   }
 
+  private def getLastReference(
+    address: Address,
+    lastSnapshot: Signed[GlobalSnapshot]
+  ): F[NodeCollateralReference] =
+    lastSnapshot.info.activeNodeCollaterals
+      .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]])
+      .get(address)
+      .flatMap(collaterals => Option.when(collaterals.nonEmpty)(collaterals.maxBy(_._1.ordinal)))
+      .traverse(collateral => NodeCollateralReference.of(collateral._1))
+      .map(_.getOrElse(NodeCollateralReference.empty))
+
   protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root =>
       getLatestFullSnapshot.flatMap {
@@ -140,6 +152,13 @@ final case class NodeCollateralRoutes[F[_]: Async: Hasher](
       getLatestFullSnapshot.flatMap {
         case Some(lastSnapshot) =>
           Ok(getNodeCollateralInfo(address, lastSnapshot))
+        case None => ServiceUnavailable()
+      }
+
+    case GET -> Root / "last-reference" / AddressVar(address) =>
+      getLatestFullSnapshot.flatMap {
+        case Some(lastSnapshot) =>
+          Ok(getLastReference(address, lastSnapshot))
         case None => ServiceUnavailable()
       }
   }
