@@ -74,6 +74,7 @@ final case class NodeCollateralRoutes[F[_]: Async: Hasher](
       infos = collaterals.map {
         case ((collateral, acceptedOrdinal), maybeWithdraw) =>
           NodeCollateralInfo(
+            nodeId = collateral.nodeId,
             acceptedOrdinal = acceptedOrdinal,
             tokenLockRef = collateral.tokenLockRef,
             amount = collateral.amount,

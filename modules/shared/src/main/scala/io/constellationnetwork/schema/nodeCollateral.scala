@@ -83,6 +83,7 @@ object nodeCollateral {
   }
   @derive(eqv, show, encoder)
   case class NodeCollateralInfo(
+    nodeId: PeerId,
     acceptedOrdinal: SnapshotOrdinal,
     tokenLockRef: Hash,
     amount: NodeCollateralAmount,

@@ -73,6 +73,7 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
       infos = stakes.map {
         case ((stake, acceptedOrdinal), maybeWithdraw) =>
           DelegatedStakeInfo(
+            nodeId = stake.nodeId,
             acceptedOrdinal = acceptedOrdinal,
             tokenLockRef = stake.tokenLockRef,
             amount = stake.amount,
