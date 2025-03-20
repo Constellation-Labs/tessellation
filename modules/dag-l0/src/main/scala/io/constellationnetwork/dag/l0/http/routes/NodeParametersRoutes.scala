@@ -4,6 +4,8 @@ import cats.data.Validated.{Invalid, Valid}
 import cats.effect.Async
 import cats.syntax.all._
 
+import scala.collection.immutable.SortedMap
+
 import io.constellationnetwork.ext.http4s.PeerIdVar
 import io.constellationnetwork.kernel._
 import io.constellationnetwork.node.shared.domain.cluster.services.Cluster
@@ -13,7 +15,10 @@ import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.Snaps
 import io.constellationnetwork.routes.internal._
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
+import io.constellationnetwork.schema.address.Address
+import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeAmount, UpdateDelegatedStake}
 import io.constellationnetwork.schema.node._
+import io.constellationnetwork.schema.nodeCollateral.NodeCollateralAmount
 import io.constellationnetwork.schema.peer.{PeerId, PeerInfo}
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hasher, SecurityProvider}
@@ -22,6 +27,7 @@ import derevo.cats.{eqv, show}
 import derevo.circe.magnolia.encoder
 import derevo.derive
 import eu.timepit.refined.auto._
+import eu.timepit.refined.types.all.NonNegLong
 import org.http4s.circe.CirceEntityCodec.circeEntityEncoder
 import org.http4s.dsl.Http4sDsl
 import org.http4s.{HttpRoutes, Request}
@@ -75,7 +81,9 @@ final case class NodeParametersRoutes[F[_]: Async: Hasher: SecurityProvider](
   case class NodeParametersInfo(
     node: PeerInfo,
     delegatedStakeRewardParameters: DelegatedStakeRewardParameters,
-    nodeMetadataParameters: NodeMetadataParameters
+    nodeMetadataParameters: NodeMetadataParameters,
+    totalAmountDelegated: DelegatedStakeAmount,
+    totalAddressesAssigned: Int
   )
 
   object SortOrder extends Enumeration {
@@ -173,18 +181,42 @@ final case class NodeParametersRoutes[F[_]: Async: Hasher: SecurityProvider](
               cluster.info.flatMap { clusterInfo =>
                 clusterInfo.toList.traverse(peerInfo => getLatestNodeParameters(peerInfo.id.toId).map(_.map(params => (peerInfo, params))))
               }.flatMap { infoWithNodeParams =>
-                val filtered = filter(
-                  infoWithNodeParams.collect {
-                    case Some((node, params)) =>
-                      NodeParametersInfo(
-                        node = node,
-                        delegatedStakeRewardParameters = params.latest.delegatedStakeRewardParameters,
-                        nodeMetadataParameters = params.latest.nodeMetadataParameters
-                      )
-                  },
-                  req.params.get("search")
-                )
-                Ok(Sort.sort(filtered, sortOrder, sort))
+                getLatestFullSnapshot.flatMap { lastSnapshot =>
+                  val activeDelegatedStakes = lastSnapshot
+                    .map(
+                      _.info.activeDelegatedStakes
+                        .getOrElse(
+                          SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]]
+                        )
+                        .toList
+                        .flatMap { case (address, stakes) => stakes.map(s => (s._1.value, address)) }
+                        .groupBy {
+                          case (stake, _) => stake.nodeId
+                        }
+                    )
+                    .getOrElse(Map.empty[PeerId, List[(UpdateDelegatedStake.Create, Address)]])
+
+                  val filtered = filter(
+                    infoWithNodeParams.collect {
+                      case Some((node, params)) =>
+                        val zero = DelegatedStakeAmount(NonNegLong(0L))
+                        val totalAmount = activeDelegatedStakes
+                          .get(node.id)
+                          .map(stakes => stakes.map(_._1.amount).foldLeft(zero)((acc, x) => acc.plus(x)))
+                          .getOrElse(zero)
+                        val totalAddresses = activeDelegatedStakes.get(node.id).map(stakes => stakes.map(_._2).distinct.size).getOrElse(0)
+                        NodeParametersInfo(
+                          node = node,
+                          delegatedStakeRewardParameters = params.latest.delegatedStakeRewardParameters,
+                          nodeMetadataParameters = params.latest.nodeMetadataParameters,
+                          totalAmountDelegated = totalAmount,
+                          totalAddressesAssigned = totalAddresses
+                        )
+                    },
+                    req.params.get("search")
+                  )
+                  Ok(Sort.sort(filtered, sortOrder, sort))
+                }
               }
           },
           ServiceUnavailable()

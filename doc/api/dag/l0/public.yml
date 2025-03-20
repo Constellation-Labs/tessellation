@@ -615,7 +615,7 @@ paths:
             type: String
         - name: sort
           in: query
-          description: Sort by (name | peerID | address)
+          description: Sort by (name | peerID | address | totalAddressesAssigned | totalAmountDelegated)
           required: false
           schema:
             type: String

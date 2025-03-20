@@ -6,3 +6,13 @@ properties:
     $ref: 'DelegatedStakeRewardParameters.yml'
   nodeMetadataParameters:
     $ref: 'NodeMetadataParameters.yml'
+  totalAmountDelegated:
+    type: integer
+    format: int64
+    example: 125000
+    minimum: 0
+  totalAddressesAssigned:
+    type: integer
+    format: int32
+    example: 256
+    minimum: 0
