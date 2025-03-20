@@ -202,6 +202,13 @@ object GlobalSnapshotAcceptanceManager {
           .filter { case (_, actions) => actions.nonEmpty }
           .toMap
 
+        currencyBalances = incomingCurrencySnapshots.toList.map {
+          case (_, Left(_))              => Map.empty[Option[Address], SortedMap[Address, Balance]]
+          case (address, Right((_, si))) => Map(address.some -> si.balances)
+        }
+          .foldLeft(Map.empty[Option[Address], SortedMap[Address, Balance]])(_ ++ _)
+        globalBalances = Map(none[Address] -> updatedBalancesByRewards)
+
         lastActiveAllowSpends = lastSnapshotContext.activeAllowSpends.getOrElse(
           SortedMap.empty[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]]
         )
@@ -209,10 +216,17 @@ object GlobalSnapshotAcceptanceManager {
         spendTransactionsValidations <- spendActions.toList.traverse {
           case (address, actions) =>
             actions.traverse { action =>
-              spendActionValidator.validate(action, lastActiveAllowSpends, updatedBalancesByRewards, address).map {
-                case Valid(validAction) => Right(validAction)
-                case Invalid(errors)    => Left((action, errors.toNonEmptyList.toList))
-              }
+              spendActionValidator
+                .validate(
+                  action,
+                  lastActiveAllowSpends,
+                  currencyBalances ++ globalBalances,
+                  address
+                )
+                .map {
+                  case Valid(validAction) => Right(validAction)
+                  case Invalid(errors)    => Left((action, errors.toNonEmptyList.toList))
+                }
             }.map(address -> _.partitionMap(identity))
         }
 

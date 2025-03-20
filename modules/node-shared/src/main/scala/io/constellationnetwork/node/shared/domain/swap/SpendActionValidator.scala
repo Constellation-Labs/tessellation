@@ -22,7 +22,7 @@ trait SpendActionValidator[F[_]] {
   def validate(
     spendAction: SpendAction,
     activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
-    globalBalances: Map[Address, Balance],
+    allBalances: Map[Option[Address], SortedMap[Address, Balance]],
     currencyId: Address
   ): F[SpendActionValidationErrorOr[SpendAction]]
 }
@@ -32,13 +32,11 @@ object SpendActionValidator {
     def validate(
       spendAction: SpendAction,
       activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
-      globalBalances: Map[Address, Balance],
+      allBalances: Map[Option[Address], SortedMap[Address, Balance]],
       currencyId: Address
     ): F[SpendActionValidationErrorOr[SpendAction]] = {
-      val currencyIdBalance = globalBalances.getOrElse(currencyId, Balance.empty)
-
       val validations = spendAction.spendTransactions.traverse { spendTransaction =>
-        validateSpendTx(spendTransaction, activeAllowSpends, currencyIdBalance, currencyId)
+        validateSpendTx(spendTransaction, activeAllowSpends, allBalances, currencyId)
       }
 
       validations.map(_.sequence.as(spendAction))
@@ -47,12 +45,12 @@ object SpendActionValidator {
     def validateSpendTx(
       tx: SpendTransaction,
       activeAllowSpends: SortedMap[Option[Address], SortedMap[Address, SortedSet[Signed[AllowSpend]]]],
-      currencyIdBalance: Balance,
+      allBalances: Map[Option[Address], SortedMap[Address, Balance]],
       currencyId: Address
     ): F[SpendActionValidationErrorOr[SpendTransaction]] =
       activeAllowSpends
         .get(tx.currency.map(_.value))
-        .map(validateAllowSpendRef(tx, _, currencyIdBalance, currencyId))
+        .map(validateAllowSpendRef(tx, _, allBalances, currencyId))
         .getOrElse(
           Applicative[F].pure(NoActiveAllowSpends(s"Currency ${tx.currency} not found in active allow spends").invalidNec[SpendTransaction])
         )
@@ -60,7 +58,7 @@ object SpendActionValidator {
     def validateAllowSpendRef(
       spendTransaction: SpendTransaction,
       activeAllowSpends: SortedMap[Address, SortedSet[Signed[AllowSpend]]],
-      currencyIdBalance: Balance,
+      allBalances: Map[Option[Address], SortedMap[Address, Balance]],
       currencyId: Address
     ): F[SpendActionValidationErrorOr[SpendTransaction]] =
       spendTransaction.allowSpendRef match {
@@ -110,6 +108,10 @@ object SpendActionValidator {
             }
 
         case None =>
+          val spendTransactionCurrencyAddress = spendTransaction.currency.map(_.value)
+          val spendTransactionCurrencyBalances = allBalances.getOrElse(spendTransactionCurrencyAddress, SortedMap.empty[Address, Balance])
+          val currencyIdBalance = spendTransactionCurrencyBalances.getOrElse(currencyId, Balance.empty)
+
           if (spendTransaction.amount.value.value > currencyIdBalance.value.value)
             (NotEnoughCurrencyIdBalance(
               s"Spend amount: ${spendTransaction.amount} greater than currencyId balance: $currencyIdBalance"

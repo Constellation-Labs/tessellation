@@ -68,7 +68,7 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       userSpendTx = SpendTransaction(hashedAllowSpend.hash.some, None, SwapAmount(1L), address, ammAddress)
       metagraphSpendTx = SpendTransaction(none, None, SwapAmount(2L), ammAddress, ammAddress)
       spendAction = SpendAction(NonEmptyList.of(userSpendTx, metagraphSpendTx))
-      balances = Map(ammAddress -> Balance(NonNegLong(1000L)))
+      balances = Map(none[Address] -> SortedMap(ammAddress -> Balance(NonNegLong(1000L))))
 
       result <- validator.validate(spendAction, activeAllowSpends, balances, ammAddress).map(_.isValid)
     } yield expect(result)
@@ -106,7 +106,7 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       userSpendTx = SpendTransaction(hashedAllowSpend.hash.some, currencyId.some, SwapAmount(1L), address, ammAddress)
       metagraphSpendTx = SpendTransaction(none, currencyId.some, SwapAmount(2L), ammAddress, ammAddress)
       spendAction = SpendAction(NonEmptyList.of(userSpendTx, metagraphSpendTx))
-      balances = Map(ammAddress -> Balance(NonNegLong(1000L)))
+      balances = Map(currencyId.value.some -> SortedMap(ammAddress -> Balance(NonNegLong(1000L))))
 
       result <- validator.validate(spendAction, activeAllowSpends, balances, ammAddress).map(_.isValid)
 
@@ -146,7 +146,7 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       userSpendTx = SpendTransaction(hashedAllowSpend.hash.some, invalidCurrencyId.some, SwapAmount(1L), currencyId.value, address)
       metagraphSpendTx = SpendTransaction(none, invalidCurrencyId.some, SwapAmount(2L), currencyId.value, address)
       spendAction = SpendAction(NonEmptyList.of(userSpendTx, metagraphSpendTx))
-      balances = Map(ammAddress -> Balance(NonNegLong(1000L)))
+      balances = Map(none[Address] -> SortedMap(ammAddress -> Balance(NonNegLong(1000L))))
 
       result <- validator.validate(spendAction, activeAllowSpends, balances, ammAddress)
     } yield
@@ -189,7 +189,7 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       userSpendTx = SpendTransaction(hashedAllowSpend.hash.some, currencyId.some, SwapAmount(1L), address1, address2)
       metagraphSpendTx = SpendTransaction(none, currencyId.some, SwapAmount(2L), address2, address1)
       spendAction = SpendAction(NonEmptyList.of(userSpendTx, metagraphSpendTx))
-      balances = Map(ammAddress -> Balance(NonNegLong(1000L)))
+      balances = Map(none[Address] -> SortedMap(ammAddress -> Balance(NonNegLong(1000L))))
 
       result <- validator.validate(spendAction, activeAllowSpends, balances, ammAddress)
     } yield
@@ -216,7 +216,9 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       spendAction = SpendAction(NonEmptyList.of(inputTx, outputTx))
 
       activeAllowSpends = SortedMap(currencyId.value.some -> SortedMap(address -> SortedSet.empty[Signed[AllowSpend]]))
-      balances = Map(currencyId.value -> Balance(NonNegLong(1000L)))
+      balances: Map[Option[Address], SortedMap[Address, Balance]] = Map(
+        currencyId.value.some -> SortedMap(currencyId.value -> Balance(NonNegLong(1000L)))
+      )
 
       result <- validator.validate(spendAction, activeAllowSpends, balances, currencyId.value)
     } yield expect(result.isValid)
@@ -255,7 +257,7 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       userSpendTx = SpendTransaction(invalidHash.some, currencyId.some, SwapAmount(1L), ammAddress, address)
       metagraphSpendTx = SpendTransaction(none, currencyId.some, SwapAmount(2L), ammAddress, address)
       spendAction = SpendAction(NonEmptyList.of(userSpendTx, metagraphSpendTx))
-      balances = Map(address -> Balance(NonNegLong(1000L)))
+      balances = Map(none[Address] -> SortedMap(ammAddress -> Balance(NonNegLong(1000L))))
 
       result <- validator.validate(spendAction, activeAllowSpends, balances, ammAddress)
     } yield
@@ -282,7 +284,7 @@ object SpendActionValidatorSuite extends MutableIOSuite {
       spendAction = SpendAction(NonEmptyList.of(inputTx, outputTx))
 
       activeAllowSpends = SortedMap(currencyId.value.some -> SortedMap(address -> SortedSet.empty[Signed[AllowSpend]]))
-      balances = Map.empty[Address, Balance]
+      balances = Map.empty[Option[Address], SortedMap[Address, Balance]]
 
       result <- validator.validate(spendAction, activeAllowSpends, balances, currencyId.value)
     } yield
