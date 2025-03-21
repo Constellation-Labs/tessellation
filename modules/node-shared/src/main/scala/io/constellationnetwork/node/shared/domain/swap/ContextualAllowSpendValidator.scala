@@ -116,10 +116,10 @@ object ContextualAllowSpendValidator {
       private def validateCurrencyId(
         allowSpend: Hashed[AllowSpend]
       ): Either[ContextualAllowSpendValidationError, Hashed[AllowSpend]] =
-        if ((currencyId.isEmpty && allowSpend.currency.isEmpty) || allowSpend.currency.exists(currencyId.contains(_)))
+        if ((currencyId.isEmpty && allowSpend.currencyId.isEmpty) || allowSpend.currencyId.exists(currencyId.contains(_)))
           allowSpend.asRight
         else
-          InvalidCurrencyId(allowSpend.currency, currencyId).asLeft
+          InvalidCurrencyId(allowSpend.currencyId, currencyId).asLeft
 
       private def validateConflictAtOrdinal(
         allowSpend: Hashed[AllowSpend],

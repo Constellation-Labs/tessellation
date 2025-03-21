@@ -22,7 +22,7 @@ object artifact {
   @derive(decoder, encoder, order, ordering, show)
   case class SpendTransaction(
     allowSpendRef: Option[Hash],
-    currency: Option[CurrencyId],
+    currencyId: Option[CurrencyId],
     amount: SwapAmount,
     source: Address,
     destination: Address
@@ -33,7 +33,7 @@ object artifact {
     tokenLockRef: Hash,
     amount: TokenLockAmount,
     currencyId: Option[CurrencyId],
-    address: Address
+    source: Address
   ) extends SharedArtifact
 
   @derive(decoder, encoder, order, ordering, show)

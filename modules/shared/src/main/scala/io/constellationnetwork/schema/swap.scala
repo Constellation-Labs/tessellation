@@ -86,7 +86,7 @@ object swap {
   case class AllowSpend(
     source: Address,
     destination: Address,
-    currency: Option[CurrencyId],
+    currencyId: Option[CurrencyId],
     amount: SwapAmount,
     fee: AllowSpendFee,
     parent: AllowSpendReference,
@@ -132,6 +132,7 @@ object swap {
     implicit val roundIdShow: Show[RoundId] = RoundId.shortShow
     implicit val transactionsDecoder: Decoder[NonEmptySet[Signed[AllowSpend]]] =
       NonEmptySetCodec.decoder[Signed[AllowSpend]]
+
     implicit object OrderingInstance extends OrderBasedOrdering[AllowSpendBlock]
   }
 }

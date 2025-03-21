@@ -49,10 +49,11 @@ object SpendActionValidator {
       currencyId: Address
     ): F[SpendActionValidationErrorOr[SpendTransaction]] =
       activeAllowSpends
-        .get(tx.currency.map(_.value))
+        .get(tx.currencyId.map(_.value))
         .map(validateAllowSpendRef(tx, _, allBalances, currencyId))
         .getOrElse(
-          Applicative[F].pure(NoActiveAllowSpends(s"Currency ${tx.currency} not found in active allow spends").invalidNec[SpendTransaction])
+          Applicative[F]
+            .pure(NoActiveAllowSpends(s"Currency ${tx.currencyId} not found in active allow spends").invalidNec[SpendTransaction])
         )
 
     def validateAllowSpendRef(
@@ -78,17 +79,17 @@ object SpendActionValidator {
                   ).invalidNec[SpendTransaction]
 
                 case Some(signedAllowSpend) =>
-                  if (signedAllowSpend.currency =!= spendTransaction.currency)
+                  if (signedAllowSpend.currencyId =!= spendTransaction.currencyId)
                     InvalidCurrency(
-                      s"Currency mismatch: expected ${signedAllowSpend.currency}, found ${spendTransaction.currency}"
+                      s"Currency mismatch: expected ${signedAllowSpend.currencyId}, found ${spendTransaction.currencyId}"
                     ).invalidNec[SpendTransaction]
                   else if (signedAllowSpend.destination =!= currencyId)
                     InvalidCurrencyId(
-                      s"Currency mismatch: expected $currencyId, found ${signedAllowSpend.currency}"
+                      s"Currency mismatch: expected $currencyId, found ${signedAllowSpend.currencyId}"
                     ).invalidNec[SpendTransaction]
                   else if (!signedAllowSpend.approvers.contains(currencyId))
                     InvalidCurrencyId(
-                      s"Currency mismatch: expected $currencyId, found ${signedAllowSpend.currency}"
+                      s"Currency mismatch: expected $currencyId, found ${signedAllowSpend.currencyId}"
                     ).invalidNec[SpendTransaction]
                   else if (signedAllowSpend.destination =!= spendTransaction.destination)
                     InvalidDestinationAddress(
@@ -108,7 +109,7 @@ object SpendActionValidator {
             }
 
         case None =>
-          val spendTransactionCurrencyAddress = spendTransaction.currency.map(_.value)
+          val spendTransactionCurrencyAddress = spendTransaction.currencyId.map(_.value)
           val spendTransactionCurrencyBalances = allBalances.getOrElse(spendTransactionCurrencyAddress, SortedMap.empty[Address, Balance])
           val currencyIdBalance = spendTransactionCurrencyBalances.getOrElse(currencyId, Balance.empty)
 

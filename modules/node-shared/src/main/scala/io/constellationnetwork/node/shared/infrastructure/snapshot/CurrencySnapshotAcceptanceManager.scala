@@ -233,7 +233,7 @@ object CurrencySnapshotAcceptanceManager {
         case (_, spendActions) =>
           spendActions
             .flatMap(_.spendTransactions.toList)
-            .filter(_.currency.exists(_.value == metagraphId))
+            .filter(_.currencyId.exists(_.value == metagraphId))
       }.toList
 
       _ <- metagraphIdSpendTransactions.nonEmpty
