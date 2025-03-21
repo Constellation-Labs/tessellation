@@ -7,21 +7,18 @@ import cats.syntax.all._
 import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.dag.l0.domain.delegatedStake.{CreateDelegatedStakeOutput, DelegatedStakeOutput, WithdrawDelegatedStakeOutput}
-import io.constellationnetwork.ext.http4s.{AddressVar, HashVar}
+import io.constellationnetwork.ext.http4s.AddressVar
 import io.constellationnetwork.kernel._
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
-import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage
 import io.constellationnetwork.routes.internal._
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.peer.PeerId
-import io.constellationnetwork.schema.tokenLock.TokenLockReference
 import io.constellationnetwork.security.Hasher
-import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
@@ -35,7 +32,6 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
   mkCell: DelegatedStakeOutput => Cell[F, StackF, _, Either[CellError, Ω], _],
   validator: UpdateDelegatedStakeValidator[F],
   snapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
-  fullGlobalSnapshotStorage: SnapshotLocalFileSystemStorage[F, GlobalSnapshot],
   nodeStorage: NodeStorage[F],
   withdrawalTimeLimit: NonNegLong
 ) extends Http4sDsl[F]
@@ -47,22 +43,13 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
 
   protected val prefixPath: InternalUrlPrefix = "/delegated-stakes"
 
-  private def readLatestFullSnapshot(maybeOrdinal: Option[SnapshotOrdinal]): F[Option[Signed[GlobalSnapshot]]] =
-    maybeOrdinal.traverse(fullGlobalSnapshotStorage.read).map(_.flatten)
-
-  private def getLatestFullSnapshot: F[Option[Signed[GlobalSnapshot]]] =
-    for {
-      maybeOrdinal <- snapshotStorage.headSnapshot.map(_.map(_.ordinal))
-      maybeSnapshot <- readLatestFullSnapshot(maybeOrdinal)
-    } yield maybeSnapshot
-
-  private def getDelegatedStakesInfo(address: Address, lastSnapshot: Signed[GlobalSnapshot]): F[DelegatedStakesInfo] = {
+  private def getDelegatedStakesInfo(address: Address, info: GlobalSnapshotInfo): F[DelegatedStakesInfo] = {
     val lastStakes: List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)] =
-      lastSnapshot.info.activeDelegatedStakes
+      info.activeDelegatedStakes
         .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]])
         .getOrElse(address, List.empty)
     val lastWithdrawals: List[(Signed[UpdateDelegatedStake.Withdraw], EpochProgress)] =
-      lastSnapshot.info.delegatedStakesWithdrawals
+      info.delegatedStakesWithdrawals
         .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Withdraw], EpochProgress)]])
         .getOrElse(address, List.empty)
 
@@ -92,9 +79,9 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
 
   private def getLastReference(
     address: Address,
-    lastSnapshot: Signed[GlobalSnapshot]
+    info: GlobalSnapshotInfo
   ): F[DelegatedStakeReference] =
-    lastSnapshot.info.activeDelegatedStakes
+    info.activeDelegatedStakes
       .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]])
       .get(address)
       .flatMap(stakes => Option.when(stakes.nonEmpty)(stakes.maxBy(_._1.ordinal)))
@@ -103,11 +90,11 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
 
   protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root =>
-      getLatestFullSnapshot.flatMap {
-        case Some(lastSnapshot) =>
+      snapshotStorage.head.flatMap {
+        case Some((_, info)) =>
           req
             .as[Signed[UpdateDelegatedStake.Create]]
-            .flatMap(signed => validator.validateCreateDelegatedStake(signed, lastSnapshot.info))
+            .flatMap(signed => validator.validateCreateDelegatedStake(signed, info))
             .flatTap {
               case Valid(signed) =>
                 logger.info(s"Accepted create delegated stake from ${signed.proofs.map(_.id).map(PeerId.fromId(_))}")
@@ -126,11 +113,11 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
       }
 
     case req @ PUT -> Root =>
-      getLatestFullSnapshot.flatMap {
-        case Some(lastSnapshot) =>
+      snapshotStorage.head.flatMap {
+        case Some((_, info)) =>
           req
             .as[Signed[UpdateDelegatedStake.Withdraw]]
-            .flatMap(signed => validator.validateWithdrawDelegatedStake(signed, lastSnapshot.info))
+            .flatMap(signed => validator.validateWithdrawDelegatedStake(signed, info))
             .flatTap {
               case Valid(signed) =>
                 logger.info(s"Accepted withdraw delegated stake from ${signed.proofs.map(_.id).map(PeerId.fromId(_))}")
@@ -149,16 +136,16 @@ final case class DelegatedStakesRoutes[F[_]: Async: Hasher](
       }
 
     case GET -> Root / AddressVar(address) / "info" =>
-      getLatestFullSnapshot.flatMap {
-        case Some(lastSnapshot) =>
-          Ok(getDelegatedStakesInfo(address, lastSnapshot))
+      snapshotStorage.head.flatMap {
+        case Some((_, info)) =>
+          Ok(getDelegatedStakesInfo(address, info))
         case None => ServiceUnavailable()
       }
 
     case GET -> Root / "last-reference" / AddressVar(address) =>
-      getLatestFullSnapshot.flatMap {
-        case Some(lastSnapshot) =>
-          Ok(getLastReference(address, lastSnapshot))
+      snapshotStorage.head.flatMap {
+        case Some((_, info)) =>
+          Ok(getLastReference(address, info))
         case None => ServiceUnavailable()
       }
   }

@@ -11,14 +11,12 @@ import io.constellationnetwork.kernel._
 import io.constellationnetwork.node.shared.domain.cluster.services.Cluster
 import io.constellationnetwork.node.shared.domain.node.{NodeStorage, UpdateNodeParametersValidator}
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
-import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage
 import io.constellationnetwork.routes.internal._
 import io.constellationnetwork.schema.ID.Id
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeAmount, UpdateDelegatedStake}
 import io.constellationnetwork.schema.node._
-import io.constellationnetwork.schema.nodeCollateral.NodeCollateralAmount
 import io.constellationnetwork.schema.peer.{PeerId, PeerInfo}
 import io.constellationnetwork.security.signature.Signed
 import io.constellationnetwork.security.{Hasher, SecurityProvider}
@@ -36,7 +34,6 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 final case class NodeParametersRoutes[F[_]: Async: Hasher: SecurityProvider](
   mkCell: Signed[UpdateNodeParameters] => Cell[F, StackF, _, Either[CellError, Ω], _],
   snapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
-  fullGlobalSnapshotStorage: SnapshotLocalFileSystemStorage[F, GlobalSnapshot],
   nodeStorage: NodeStorage[F],
   cluster: Cluster[F],
   validator: UpdateNodeParametersValidator[F]
@@ -50,19 +47,10 @@ final case class NodeParametersRoutes[F[_]: Async: Hasher: SecurityProvider](
 
   private def validStateForSnapshotReturn(state: NodeState): Boolean = state === NodeState.Ready
 
-  private def readLatestFullSnapshot(maybeOrdinal: Option[SnapshotOrdinal]): F[Option[Signed[GlobalSnapshot]]] =
-    maybeOrdinal.traverse(fullGlobalSnapshotStorage.read).map(_.flatten)
-
-  private def getLatestFullSnapshot: F[Option[Signed[GlobalSnapshot]]] =
-    for {
-      maybeOrdinal <- snapshotStorage.headSnapshot.map(_.map(_.ordinal))
-      maybeSnapshot <- readLatestFullSnapshot(maybeOrdinal)
-    } yield maybeSnapshot
-
   private def getLatestNodeParameters(nodeId: Id): F[Option[NodeParamsInfo]] =
     for {
-      maybeSnapshot <- getLatestFullSnapshot
-      paramsAndOrdinal = maybeSnapshot.flatMap(_.value.info.updateNodeParameters.flatMap(_.get(nodeId)))
+      maybeSnapshot <- snapshotStorage.head
+      paramsAndOrdinal = maybeSnapshot.flatMap(_._2.updateNodeParameters.flatMap(_.get(nodeId)))
       info <- paramsAndOrdinal.traverse {
         case (signed, ord) =>
           UpdateNodeParametersReference
@@ -137,11 +125,11 @@ final case class NodeParametersRoutes[F[_]: Async: Hasher: SecurityProvider](
 
   protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root =>
-      getLatestFullSnapshot.flatMap {
-        case Some(lastSnapshot) =>
+      snapshotStorage.head.flatMap {
+        case Some((_, info)) =>
           req
             .as[Signed[UpdateNodeParameters]]
-            .flatMap(signed => validator.validate(signed, lastSnapshot.value.info))
+            .flatMap(signed => validator.validate(signed, info))
             .flatTap {
               case Valid(signed) =>
                 logger.info(s"Accepted node parameters from ${signed.proofs.map(_.id).map(PeerId.fromId(_))}")
@@ -150,11 +138,11 @@ final case class NodeParametersRoutes[F[_]: Async: Hasher: SecurityProvider](
             }
             .flatMap {
               case Valid(signed)   => mkCell(signed).run()
-              case Invalid(errors) => CellError(errors.toString).asLeft[Ω].pure[F]
+              case Invalid(errors) => CellError(errors.show).asLeft[Ω].pure[F]
             }
             .flatMap {
-              case Left(_)  => BadRequest()
-              case Right(_) => Ok()
+              case Left(err) => BadRequest(err.reason)
+              case Right(_)  => Ok()
             }
         case None => ServiceUnavailable()
       }
@@ -181,10 +169,10 @@ final case class NodeParametersRoutes[F[_]: Async: Hasher: SecurityProvider](
               cluster.info.flatMap { clusterInfo =>
                 clusterInfo.toList.traverse(peerInfo => getLatestNodeParameters(peerInfo.id.toId).map(_.map(params => (peerInfo, params))))
               }.flatMap { infoWithNodeParams =>
-                getLatestFullSnapshot.flatMap { lastSnapshot =>
+                snapshotStorage.head.flatMap { lastSnapshot =>
                   val activeDelegatedStakes = lastSnapshot
                     .map(
-                      _.info.activeDelegatedStakes
+                      _._2.activeDelegatedStakes
                         .getOrElse(
                           SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]]
                         )
