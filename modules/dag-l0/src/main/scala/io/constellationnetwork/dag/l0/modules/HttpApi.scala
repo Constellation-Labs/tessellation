@@ -21,9 +21,7 @@ import io.constellationnetwork.node.shared.http.routes._
 import io.constellationnetwork.node.shared.infrastructure.metrics.Metrics
 import io.constellationnetwork.node.shared.modules.SharedValidators
 import io.constellationnetwork.schema._
-import io.constellationnetwork.schema.delegatedStake.UpdateDelegatedStake
 import io.constellationnetwork.schema.node.UpdateNodeParameters
-import io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.semver.TessellationVersion
 import io.constellationnetwork.security.signature.Signed
@@ -150,7 +148,6 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
     NodeParametersRoutes[F](
       mkNodeParametersCell,
       storages.globalSnapshot,
-      storages.fullGlobalSnapshot,
       storages.node,
       services.cluster,
       sharedValidators.updateNodeParametersValidator
@@ -162,7 +159,6 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
         mkDelegatedStakesCell,
         sharedValidators.updateDelegatedStakeValidator,
         storages.globalSnapshot,
-        storages.fullGlobalSnapshot,
         storages.node,
         delegatedStakingCfg.withdrawalTimeLimit
       )
@@ -172,7 +168,6 @@ sealed abstract class HttpApi[F[_]: Async: SecurityProvider: HasherSelector: Met
       mkNodeCollateralCell,
       sharedValidators.updateNodeCollateralValidator,
       storages.globalSnapshot,
-      storages.fullGlobalSnapshot,
       storages.node,
       delegatedStakingCfg.withdrawalTimeLimit
     )

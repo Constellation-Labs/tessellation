@@ -7,21 +7,18 @@ import cats.syntax.all._
 import scala.collection.immutable.SortedMap
 
 import io.constellationnetwork.dag.l0.domain.nodeCollateral.{CreateNodeCollateralOutput, NodeCollateralOutput, WithdrawNodeCollateralOutput}
-import io.constellationnetwork.ext.http4s.{AddressVar, HashVar}
+import io.constellationnetwork.ext.http4s.AddressVar
 import io.constellationnetwork.kernel._
 import io.constellationnetwork.node.shared.domain.node.NodeStorage
 import io.constellationnetwork.node.shared.domain.nodeCollateral.UpdateNodeCollateralValidator
 import io.constellationnetwork.node.shared.domain.snapshot.storage.SnapshotStorage
-import io.constellationnetwork.node.shared.infrastructure.snapshot.storage.SnapshotLocalFileSystemStorage
 import io.constellationnetwork.routes.internal._
 import io.constellationnetwork.schema._
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.delegatedStake._
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.nodeCollateral._
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.security.Hasher
-import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.Signed
 
 import eu.timepit.refined.auto._
@@ -35,7 +32,6 @@ final case class NodeCollateralRoutes[F[_]: Async: Hasher](
   mkCell: NodeCollateralOutput => Cell[F, StackF, _, Either[CellError, Ω], _],
   validator: UpdateNodeCollateralValidator[F],
   snapshotStorage: SnapshotStorage[F, GlobalIncrementalSnapshot, GlobalSnapshotInfo],
-  fullGlobalSnapshotStorage: SnapshotLocalFileSystemStorage[F, GlobalSnapshot],
   nodeStorage: NodeStorage[F],
   withdrawalTimeLimit: NonNegLong
 ) extends Http4sDsl[F]
@@ -47,22 +43,13 @@ final case class NodeCollateralRoutes[F[_]: Async: Hasher](
 
   protected val prefixPath: InternalUrlPrefix = "/node-collateral"
 
-  private def readLatestFullSnapshot(maybeOrdinal: Option[SnapshotOrdinal]): F[Option[Signed[GlobalSnapshot]]] =
-    maybeOrdinal.traverse(fullGlobalSnapshotStorage.read).map(_.flatten)
-
-  private def getLatestFullSnapshot: F[Option[Signed[GlobalSnapshot]]] =
-    for {
-      maybeOrdinal <- snapshotStorage.headSnapshot.map(_.map(_.ordinal))
-      maybeSnapshot <- readLatestFullSnapshot(maybeOrdinal)
-    } yield maybeSnapshot
-
-  private def getNodeCollateralInfo(address: Address, lastSnapshot: Signed[GlobalSnapshot]): F[NodeCollateralsInfo] = {
+  private def getNodeCollateralInfo(address: Address, info: GlobalSnapshotInfo): F[NodeCollateralsInfo] = {
     val lastCollaterals: List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)] =
-      lastSnapshot.info.activeNodeCollaterals
+      info.activeNodeCollaterals
         .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]])
         .getOrElse(address, List.empty)
     val lastWithdrawals: List[(Signed[UpdateNodeCollateral.Withdraw], EpochProgress)] =
-      lastSnapshot.info.nodeCollateralWithdrawals
+      info.nodeCollateralWithdrawals
         .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Withdraw], EpochProgress)]])
         .getOrElse(address, List.empty)
 
@@ -93,9 +80,9 @@ final case class NodeCollateralRoutes[F[_]: Async: Hasher](
 
   private def getLastReference(
     address: Address,
-    lastSnapshot: Signed[GlobalSnapshot]
+    info: GlobalSnapshotInfo
   ): F[NodeCollateralReference] =
-    lastSnapshot.info.activeNodeCollaterals
+    info.activeNodeCollaterals
       .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]])
       .get(address)
       .flatMap(collaterals => Option.when(collaterals.nonEmpty)(collaterals.maxBy(_._1.ordinal)))
@@ -104,11 +91,11 @@ final case class NodeCollateralRoutes[F[_]: Async: Hasher](
 
   protected val public: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ POST -> Root =>
-      getLatestFullSnapshot.flatMap {
-        case Some(lastSnapshot) =>
+      snapshotStorage.head.flatMap {
+        case Some((_, info)) =>
           req
             .as[Signed[UpdateNodeCollateral.Create]]
-            .flatMap(signed => validator.validateCreateNodeCollateral(signed, lastSnapshot.info))
+            .flatMap(signed => validator.validateCreateNodeCollateral(signed, info))
             .flatTap {
               case Valid(signed) =>
                 logger.info(s"Accepted create node collateral from ${signed.proofs.map(_.id).map(PeerId.fromId(_))}")
@@ -127,11 +114,11 @@ final case class NodeCollateralRoutes[F[_]: Async: Hasher](
       }
 
     case req @ PUT -> Root =>
-      getLatestFullSnapshot.flatMap {
-        case Some(lastSnapshot) =>
+      snapshotStorage.head.flatMap {
+        case Some((_, info)) =>
           req
             .as[Signed[UpdateNodeCollateral.Withdraw]]
-            .flatMap(signed => validator.validateWithdrawNodeCollateral(signed, lastSnapshot.info))
+            .flatMap(signed => validator.validateWithdrawNodeCollateral(signed, info))
             .flatTap {
               case Valid(signed) =>
                 logger.info(s"Accepted withdraw node collateral from ${signed.proofs.map(_.id).map(PeerId.fromId(_))}")
@@ -150,16 +137,16 @@ final case class NodeCollateralRoutes[F[_]: Async: Hasher](
       }
 
     case GET -> Root / AddressVar(address) / "info" =>
-      getLatestFullSnapshot.flatMap {
-        case Some(lastSnapshot) =>
-          Ok(getNodeCollateralInfo(address, lastSnapshot))
+      snapshotStorage.head.flatMap {
+        case Some((_, info)) =>
+          Ok(getNodeCollateralInfo(address, info))
         case None => ServiceUnavailable()
       }
 
     case GET -> Root / "last-reference" / AddressVar(address) =>
-      getLatestFullSnapshot.flatMap {
-        case Some(lastSnapshot) =>
-          Ok(getLastReference(address, lastSnapshot))
+      snapshotStorage.head.flatMap {
+        case Some((_, info)) =>
+          Ok(getLastReference(address, info))
         case None => ServiceUnavailable()
       }
   }
