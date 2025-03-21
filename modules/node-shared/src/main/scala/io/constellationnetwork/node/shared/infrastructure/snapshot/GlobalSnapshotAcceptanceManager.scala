@@ -532,10 +532,10 @@ object GlobalSnapshotAcceptanceManager {
       val lastWithdrawDelegatedStakes = lastSnapshotContext.delegatedStakesWithdrawals.getOrElse(
         SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Withdraw], EpochProgress)]]
       )
-      val withdrawalEpoch = epochProgress |+| EpochProgress(withdrawalTimeLimit)
+      val withdrawalEpoch = EpochProgress(withdrawalTimeLimit)
       val currentWithdrawals =
         lastWithdrawDelegatedStakes.view
-          .mapValues(_.filter(_._2 <= withdrawalEpoch))
+          .mapValues(_.filter { case (_, epoch) => (epoch |+| withdrawalEpoch) <= epochProgress })
           .filter(x => x._2.nonEmpty)
       val references = currentWithdrawals.mapValues(_.map(_._1.stakeRef)).values.flatten.toSet
 
@@ -568,7 +568,10 @@ object GlobalSnapshotAcceptanceManager {
       )
       val withdrawalEpoch = epochProgress |+| EpochProgress(withdrawalTimeLimit)
       val currentWithdrawals =
-        lastWithdraws.view.mapValues(_.filter(_._2 <= withdrawalEpoch)).filter(x => x._2.nonEmpty)
+        lastWithdraws.view
+          .mapValues(_.filter { case (_, epoch) => (epoch |+| withdrawalEpoch) <= epochProgress })
+          .filter(x => x._2.nonEmpty)
+
       val references = currentWithdrawals.mapValues(_.map(_._1.collateralRef)).values.flatten.toSet
 
       for {
