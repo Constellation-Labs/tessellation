@@ -87,7 +87,7 @@ const createAllowSpendTransaction = async (sourceAccount, ammAddress, l1Url, l0U
         lastValidEpochProgress: currentEpochProgress + CONSTANTS.EPOCH_PROGRESS_BUFFER,
         parent: lastRef,
         source: sourceAccount.address,
-        currency: isCurrency ? CONSTANTS.CURRENCY_TOKEN_ID : null
+        currencyId: isCurrency ? CONSTANTS.CURRENCY_TOKEN_ID : null
     };
 };
 
@@ -117,7 +117,7 @@ const createInvalidParentAllowSpendTransaction = async (sourceAccount, ammAddres
         lastValidEpochProgress: currentEpochProgress + CONSTANTS.EPOCH_PROGRESS_BUFFER,
         parent: invalidParent,
         source: sourceAccount.address,
-        currency: isCurrency ? CONSTANTS.CURRENCY_TOKEN_ID : null
+        currencyId: isCurrency ? CONSTANTS.CURRENCY_TOKEN_ID : null
     };
 };
 
@@ -142,7 +142,7 @@ const createInvalidEpochProgressAllowSpendTransaction = async (sourceAccount, am
         lastValidEpochProgress: invalidLastValidEpochProgress,
         parent: lastRef,
         source: sourceAccount.address,
-        currency: isCurrency ? CONSTANTS.CURRENCY_TOKEN_ID : null
+        currencyId: isCurrency ? CONSTANTS.CURRENCY_TOKEN_ID : null
     };
 };
 
@@ -419,7 +419,7 @@ const createExceedingBalanceAllowSpendTransaction = async (sourceAccount, ammAdd
         lastValidEpochProgress: currentEpochProgress + CONSTANTS.EPOCH_PROGRESS_BUFFER,
         parent: lastRef,
         source: sourceAccount.address,
-        currency: isCurrency ? CONSTANTS.CURRENCY_TOKEN_ID : null
+        currencyId: isCurrency ? CONSTANTS.CURRENCY_TOKEN_ID : null
     };
 };
 
@@ -1067,7 +1067,7 @@ const createUserSpendTransaction = (allowSpendRef, sourceAddress, destinationAdd
     const { spend: amount } = getRandomAmounts();
     const tx = {
         allowSpendRef: allowSpendRef,
-        currency: null,
+        currencyId: null,
         amount,
         source: sourceAddress,
         destination: destinationAddress
@@ -1086,7 +1086,7 @@ const createMetagraphSpendTransaction = (destinationAddress) => {
     const { spend: amount } = getRandomAmounts();
     const tx = {
         allowSpendRef: null,
-        currency: null,
+        currencyId: null,
         amount,
         source: CONSTANTS.CURRENCY_TOKEN_ID,
         destination: destinationAddress
@@ -1668,7 +1668,7 @@ const createInvalidCurrencyDestinationAllowSpendTransaction = async (sourceAccou
         lastValidEpochProgress: currentEpochProgress + CONSTANTS.EPOCH_PROGRESS_BUFFER,
         parent: lastRef,
         source: sourceAccount.address,
-        currency: invalidDestination
+        currencyId: invalidDestination
     };
 };
 
@@ -1853,7 +1853,7 @@ const createInvalidApproverAllowSpendTransaction = async (sourceAccount, l1Url, 
         lastValidEpochProgress: currentEpochProgress + CONSTANTS.EPOCH_PROGRESS_BUFFER,
         parent: lastRef,
         source: sourceAccount.address,
-        currency: isCurrency ? CONSTANTS.CURRENCY_TOKEN_ID : null
+        currencyId: isCurrency ? CONSTANTS.CURRENCY_TOKEN_ID : null
     };
 };
 

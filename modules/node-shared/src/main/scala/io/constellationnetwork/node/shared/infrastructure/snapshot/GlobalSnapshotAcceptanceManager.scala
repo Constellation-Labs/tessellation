@@ -366,7 +366,7 @@ object GlobalSnapshotAcceptanceManager {
           case (_, spendActions) =>
             spendActions
               .flatMap(_.spendTransactions.toList)
-              .filter(_.currency.isEmpty)
+              .filter(_.currencyId.isEmpty)
         }.toList
 
         updatedBalancesBySpendTransactions = updateGlobalBalancesBySpendTransactions(
