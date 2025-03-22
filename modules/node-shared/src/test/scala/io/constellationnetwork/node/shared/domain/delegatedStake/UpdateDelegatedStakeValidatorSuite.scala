@@ -201,6 +201,30 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
     } yield expect.same(Valid(signed), result)
   }
 
+  test("should fail an overwrite request when a pending withdrawal exists") { res =>
+    implicit val (json, h, sp, keyPair) = res
+
+    for {
+      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
+      keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
+      nodeId1 = PeerId.fromPublic(keyPair1.getPublic)
+      parent = testCreateDelegatedStake(keyPair, tokenLockReference)
+      signedParent <- forAsyncHasher(parent.copy(nodeId = nodeId1), keyPair)
+      lastRef <- DelegatedStakeReference.of(signedParent)
+      validWithdraw = testWithdrawDelegatedStake(keyPair).copy(stakeRef = lastRef.hash)
+      signedWithdraw <- forAsyncHasher(validWithdraw, keyPair)
+      address <- signedParent.proofs.head.id.toAddress
+      context = lastContext.copy(
+        activeDelegatedStakes = Some(SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue)))),
+        delegatedStakesWithdrawals = Some(SortedMap(address -> List((signedWithdraw, EpochProgress.MinValue))))
+      )
+      validCreate = testCreateDelegatedStake(keyPair, tokenLockReference, lastRef)
+      signed <- forAsyncHasher(validCreate, keyPair)
+      validator = mkValidator()
+      result <- validator.validateCreateDelegatedStake(signed, context)
+    } yield expect.same(AlreadyWithdrawn(validCreate.parent.hash).invalidNec, result)
+  }
+
   test("should fair when the lastRef of the existing delegated stake is different") { res =>
     implicit val (json, h, sp, keyPair) = res
 
@@ -262,7 +286,6 @@ object UpdateDelegatedStakeValidatorSuite extends MutableIOSuite {
       (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair, tokenLockUnlockEpoch = EpochProgress.MaxValue.some)
       parent = testCreateDelegatedStake(keyPair, tokenLockReference)
       signedParent <- forAsyncHasher(parent, keyPair)
-      address <- signedParent.proofs.head.id.toAddress
       validCreate = testCreateDelegatedStake(keyPair, tokenLockReference)
       signed <- forAsyncHasher(validCreate, keyPair)
       validator = mkValidator()

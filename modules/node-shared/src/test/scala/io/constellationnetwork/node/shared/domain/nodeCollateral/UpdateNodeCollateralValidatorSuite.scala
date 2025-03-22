@@ -202,6 +202,30 @@ object UpdateNodeCollateralValidatorSuite extends MutableIOSuite {
     } yield expect.same(Valid(signed), result)
   }
 
+  test("should fail an overwrite request when a pending withdrawal exists") { res =>
+    implicit val (json, h, sp, keyPair) = res
+
+    for {
+      (tokenLockReference, lastContext) <- mkValidGlobalContext(keyPair)
+      keyPair1 <- KeyPairGenerator.makeKeyPair[IO]
+      nodeId1 = PeerId.fromPublic(keyPair1.getPublic)
+      parent = testCreateNodeCollateral(keyPair, tokenLockReference)
+      signedParent <- forAsyncHasher(parent.copy(nodeId = nodeId1), keyPair)
+      lastRef <- NodeCollateralReference.of(signedParent)
+      validWithdraw = testWithdrawNodeCollateral(keyPair).copy(collateralRef = lastRef.hash)
+      signedWithdraw <- forAsyncHasher(validWithdraw, keyPair)
+      address <- signedParent.proofs.head.id.toAddress
+      context = lastContext.copy(
+        activeNodeCollaterals = Some(SortedMap(address -> List((signedParent, SnapshotOrdinal.MinValue)))),
+        nodeCollateralWithdrawals = Some(SortedMap(address -> List((signedWithdraw, EpochProgress.MinValue))))
+      )
+      validCreate = testCreateNodeCollateral(keyPair, tokenLockReference, lastRef)
+      signed <- forAsyncHasher(validCreate, keyPair)
+      validator = mkValidator()
+      result <- validator.validateCreateNodeCollateral(signed, context)
+    } yield expect.same(AlreadyWithdrawn(validCreate.parent.hash).invalidNec, result)
+  }
+
   test("should fail when the lastRef of the existing node collateral is different") { res =>
     implicit val (json, h, sp, keyPair) = res
 

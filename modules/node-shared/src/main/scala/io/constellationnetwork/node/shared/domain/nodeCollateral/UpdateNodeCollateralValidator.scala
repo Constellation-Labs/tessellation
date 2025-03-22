@@ -60,8 +60,15 @@ object UpdateNodeCollateralValidator {
           nodeIdV <- validateNodeId(signed, lastContext)
           parentV <- validateParent(signed, lastContext)
           tokenLockV <- validateTokenLock(signed, lastContext)
+          pendingWithdrawalV <- validatePendingWithdrawal(signed, lastContext)
         } yield
-          numberOfSignaturesV.productR(signaturesV).productR(authorizedNodeIdV).productR(nodeIdV).productR(parentV).productR(tokenLockV)
+          numberOfSignaturesV
+            .productR(signaturesV)
+            .productR(authorizedNodeIdV)
+            .productR(nodeIdV)
+            .productR(parentV)
+            .productR(tokenLockV)
+            .productR(pendingWithdrawalV)
 
       def validateWithdrawNodeCollateral(
         signed: Signed[UpdateNodeCollateral.Withdraw],
@@ -130,6 +137,28 @@ object UpdateNodeCollateralValidator {
         } else {
           UnauthorizedNode(signed.nodeId).invalidNec
         }
+
+      private def validatePendingWithdrawal(
+        signed: Signed[UpdateNodeCollateral.Create],
+        lastContext: GlobalSnapshotInfo
+      ): F[UpdateNodeCollateralValidationErrorOr[Signed[UpdateNodeCollateral.Create]]] =
+        for {
+          address <- getAddress(signed)
+          stakeRef <- lastContext.activeNodeCollaterals
+            .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]])
+            .getOrElse(address, List.empty)
+            .traverse { case (stake, _) => NodeCollateralReference.of(stake) }
+            .map(_.find(_ === signed.parent))
+          withdrawalRef = lastContext.nodeCollateralWithdrawals
+            .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Withdraw], EpochProgress)]])
+            .getOrElse(address, List.empty)
+            .find { case (w, _) => stakeRef.map(_.hash).contains(w.collateralRef) }
+        } yield
+          if (withdrawalRef.isEmpty) {
+            signed.validNec
+          } else {
+            AlreadyWithdrawn(signed.parent.hash).invalidNec
+          }
 
       private def validateWithdrawal(
         signed: Signed[UpdateNodeCollateral.Withdraw],
