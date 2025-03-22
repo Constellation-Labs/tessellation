@@ -12,6 +12,7 @@ import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.schema.address.Address
 import io.constellationnetwork.schema.delegatedStake.DelegatedStakeReference._
 import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeReference, UpdateDelegatedStake}
+import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral
 import io.constellationnetwork.schema.peer.PeerId
 import io.constellationnetwork.schema.tokenLock.{TokenLock, TokenLockReference}
@@ -56,8 +57,15 @@ object UpdateDelegatedStakeValidator {
           nodeIdV <- validateNodeId(signed, lastContext)
           parentV <- validateParent(signed, lastContext)
           tokenLockV <- validateTokenLock(signed, lastContext)
+          pendingWithdrawalV <- validatePendingWithdrawal(signed, lastContext)
         } yield
-          numberOfSignaturesV.productR(signaturesV).productR(authorizedNodeIdV).productR(nodeIdV).productR(parentV).productR(tokenLockV)
+          numberOfSignaturesV
+            .productR(signaturesV)
+            .productR(authorizedNodeIdV)
+            .productR(nodeIdV)
+            .productR(parentV)
+            .productR(tokenLockV)
+            .productR(pendingWithdrawalV)
 
       def validateWithdrawDelegatedStake(
         signed: Signed[UpdateDelegatedStake.Withdraw],
@@ -124,6 +132,28 @@ object UpdateDelegatedStakeValidator {
             StakeExistsForNode(signed.nodeId).invalidNec
           } else {
             signed.validNec
+          }
+
+      private def validatePendingWithdrawal(
+        signed: Signed[UpdateDelegatedStake.Create],
+        lastContext: GlobalSnapshotInfo
+      ): F[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]]] =
+        for {
+          address <- getAddress(signed)
+          stakeRef <- lastContext.activeDelegatedStakes
+            .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]])
+            .getOrElse(address, List.empty)
+            .traverse { case (stake, _) => DelegatedStakeReference.of(stake) }
+            .map(_.find(_ === signed.parent))
+          withdrawalRef = lastContext.delegatedStakesWithdrawals
+            .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Withdraw], EpochProgress)]])
+            .getOrElse(address, List.empty)
+            .find { case (w, _) => stakeRef.map(_.hash).contains(w.stakeRef) }
+        } yield
+          if (withdrawalRef.isEmpty) {
+            signed.validNec
+          } else {
+            AlreadyWithdrawn(signed.parent.hash).invalidNec
           }
 
       private def validateWithdrawal(
