@@ -1,5 +1,7 @@
 type: object
 properties:
+  source:
+    $ref: 'Address.yml'
   nodeId:
     $ref: 'Id.yml'
   amount:

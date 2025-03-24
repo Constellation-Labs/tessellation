@@ -1,4 +1,6 @@
 type: object
 properties:
+  source:
+    $ref: 'Address.yml'
   collateralRef:
     $ref: 'Hash.yml'

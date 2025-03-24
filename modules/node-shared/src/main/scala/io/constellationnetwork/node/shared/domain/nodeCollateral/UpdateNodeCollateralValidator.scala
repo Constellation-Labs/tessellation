@@ -10,7 +10,7 @@ import io.constellationnetwork.ext.cats.syntax.validated._
 import io.constellationnetwork.node.shared.domain.nodeCollateral.UpdateNodeCollateralValidator.UpdateNodeCollateralValidationErrorOr
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeReference, UpdateDelegatedStake}
+import io.constellationnetwork.schema.delegatedStake.UpdateDelegatedStake
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.nodeCollateral._
 import io.constellationnetwork.schema.peer.PeerId
@@ -20,17 +20,17 @@ import io.constellationnetwork.security.hash.Hash
 import io.constellationnetwork.security.signature.SignedValidator.SignedValidationError
 import io.constellationnetwork.security.signature.signature.SignatureProof
 import io.constellationnetwork.security.signature.{Signed, SignedValidator}
-import io.constellationnetwork.security.{Hashed, Hasher, SecurityProvider}
+import io.constellationnetwork.security.{Hasher, SecurityProvider}
 
 import derevo.cats.{eqv, show}
 import derevo.derive
-import eu.timepit.refined.types.numeric.NonNegLong
 
 trait UpdateNodeCollateralValidator[F[_]] {
   def validateCreateNodeCollateral(
     signed: Signed[UpdateNodeCollateral.Create],
     lastContext: GlobalSnapshotInfo
   ): F[UpdateNodeCollateralValidationErrorOr[Signed[UpdateNodeCollateral.Create]]]
+
   def validateWithdrawNodeCollateral(
     signed: Signed[UpdateNodeCollateral.Withdraw],
     lastContext: GlobalSnapshotInfo
@@ -56,8 +56,11 @@ object UpdateNodeCollateralValidator {
           signaturesV <- signedValidator
             .validateSignatures(signed)
             .map(_.errorMap[UpdateNodeCollateralValidationError](InvalidSigned))
+          isSignedExclusivelyBySource <- signedValidator
+            .isSignedExclusivelyBy(signed, signed.source)
+            .map(_.errorMap[UpdateNodeCollateralValidationError](InvalidSigned))
           authorizedNodeIdV = validateAuthorizedNodeId(signed)
-          nodeIdV <- validateNodeId(signed, lastContext)
+          nodeIdV = validateNodeId(signed, lastContext)
           parentV <- validateParent(signed, lastContext)
           tokenLockV <- validateTokenLock(signed, lastContext)
           pendingWithdrawalV <- validatePendingWithdrawal(signed, lastContext)
@@ -65,6 +68,7 @@ object UpdateNodeCollateralValidator {
           numberOfSignaturesV
             .productR(signaturesV)
             .productR(authorizedNodeIdV)
+            .productR(isSignedExclusivelyBySource)
             .productR(nodeIdV)
             .productR(parentV)
             .productR(tokenLockV)
@@ -79,8 +83,14 @@ object UpdateNodeCollateralValidator {
           signaturesV <- signedValidator
             .validateSignatures(signed)
             .map(_.errorMap[UpdateNodeCollateralValidationError](InvalidSigned))
+          isSignedExclusivelyBySource <- signedValidator
+            .isSignedExclusivelyBy(signed, signed.source)
+            .map(_.errorMap[UpdateNodeCollateralValidationError](InvalidSigned))
           withdrawV <- validateWithdrawal(signed, lastContext)
-        } yield numberOfSignaturesV.productR(signaturesV).productR(withdrawV)
+        } yield numberOfSignaturesV
+          .productR(signaturesV)
+          .productR(isSignedExclusivelyBySource)
+          .productR(withdrawV)
 
       private def validateNumberOfSignatures[A <: UpdateNodeCollateral](
         signed: Signed[A]
@@ -96,28 +106,25 @@ object UpdateNodeCollateralValidator {
       private def validateNodeId(
         signed: Signed[UpdateNodeCollateral.Create],
         lastContext: GlobalSnapshotInfo
-      ): F[UpdateNodeCollateralValidationErrorOr[Signed[UpdateNodeCollateral.Create]]] =
-        for {
-          address <- getAddress(signed)
-          activeNodeCollaterals = lastContext.activeNodeCollaterals
-            .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]])
-            .getOrElse(address, List.empty[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)])
-        } yield
-          if (activeNodeCollaterals.exists(s => s._1.nodeId == signed.nodeId)) {
-            StakeExistsForNode(signed.nodeId).invalidNec
-          } else {
-            signed.validNec
-          }
+      ): UpdateNodeCollateralValidationErrorOr[Signed[UpdateNodeCollateral.Create]] = {
+        val activeNodeCollaterals = lastContext.activeNodeCollaterals
+          .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]])
+          .getOrElse(signed.source, List.empty[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)])
+        if (activeNodeCollaterals.exists(s => s._1.nodeId == signed.nodeId)) {
+          StakeExistsForNode(signed.nodeId).invalidNec
+        } else {
+          signed.validNec
+        }
+      }
 
       private def validateParent(
         signed: Signed[UpdateNodeCollateral.Create],
         lastContext: GlobalSnapshotInfo
       ): F[UpdateNodeCollateralValidationErrorOr[Signed[UpdateNodeCollateral.Create]]] =
         for {
-          address <- getAddress(signed)
           lastRef <- lastContext.activeNodeCollaterals
             .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]])
-            .get(address)
+            .get(signed.source)
             .flatMap(collaterals => Option.when(collaterals.nonEmpty)(collaterals.maxBy(_._1.ordinal)))
             .traverse(collateral => NodeCollateralReference.of(collateral._1))
             .map(_.getOrElse(NodeCollateralReference.empty))
@@ -143,15 +150,14 @@ object UpdateNodeCollateralValidator {
         lastContext: GlobalSnapshotInfo
       ): F[UpdateNodeCollateralValidationErrorOr[Signed[UpdateNodeCollateral.Create]]] =
         for {
-          address <- getAddress(signed)
           stakeRef <- lastContext.activeNodeCollaterals
             .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Create], SnapshotOrdinal)]])
-            .getOrElse(address, List.empty)
+            .getOrElse(signed.source, List.empty)
             .traverse { case (stake, _) => NodeCollateralReference.of(stake) }
             .map(_.find(_ === signed.parent))
           withdrawalRef = lastContext.nodeCollateralWithdrawals
             .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateNodeCollateral.Withdraw], EpochProgress)]])
-            .getOrElse(address, List.empty)
+            .getOrElse(signed.source, List.empty)
             .find { case (w, _) => stakeRef.map(_.hash).contains(w.collateralRef) }
         } yield
           if (withdrawalRef.isEmpty) {
@@ -178,16 +184,18 @@ object UpdateNodeCollateralValidator {
 
         def validateCreate(address: Address): F[UpdateNodeCollateralValidationErrorOr[Signed[UpdateNodeCollateral.Withdraw]]] =
           getParent(address, lastContext.activeNodeCollaterals.getOrElse(SortedMap.empty), signed).map {
-            case Some(_) =>
-              signed.validNec
+            case Some(nodeCollateral) =>
+              if (nodeCollateral.source =!= signed.source)
+                InvalidSourceAddress(signed.collateralRef).invalidNec
+              else
+                signed.validNec
             case _ =>
               InvalidCollateral(signed.collateralRef).invalidNec
           }
 
         for {
-          address <- getAddress(signed)
-          parentV <- validateCreate(address)
-          uniqueV = validateUniqueness(address)
+          parentV <- validateCreate(signed.source)
+          uniqueV = validateUniqueness(signed.source)
         } yield uniqueV.productR(parentV)
       }
 
@@ -225,14 +233,12 @@ object UpdateNodeCollateralValidator {
             }
         }
 
+        val available = tokenLockAvailable(signed.source)
+
         for {
-          address <- getAddress(signed)
-          available = tokenLockAvailable(address)
-          valid <- if (available) tokenLockValid(address) else available.pure[F]
+          valid <- if (available) tokenLockValid(signed.source) else available.pure[F]
         } yield if (valid) signed.validNec else InvalidTokenLock(signed.tokenLockRef).invalidNec
       }
-
-      private def getAddress(signed: Signed[UpdateNodeCollateral]): F[Address] = signed.proofs.head.id.toAddress
 
       private def getParent(
         address: Address,
@@ -249,13 +255,23 @@ object UpdateNodeCollateralValidator {
 
   @derive(eqv, show)
   sealed trait UpdateNodeCollateralValidationError
+
   case class InvalidSigned(error: SignedValidationError) extends UpdateNodeCollateralValidationError
+
   case class TooManySignatures(proofs: NonEmptySet[SignatureProof]) extends UpdateNodeCollateralValidationError
+
   case class StakeExistsForNode(peerId: PeerId) extends UpdateNodeCollateralValidationError
+
   case class UnauthorizedNode(peerId: PeerId) extends UpdateNodeCollateralValidationError
+
   case class InvalidCollateral(collateralRef: Hash) extends UpdateNodeCollateralValidationError
+
+  case class InvalidSourceAddress(collateralRef: Hash) extends UpdateNodeCollateralValidationError
+
   case class InvalidTokenLock(tokenLockReference: Hash) extends UpdateNodeCollateralValidationError
+
   case class AlreadyWithdrawn(collateralRef: Hash) extends UpdateNodeCollateralValidationError
+
   case class InvalidParent(parent: NodeCollateralReference) extends UpdateNodeCollateralValidationError
 
   type UpdateNodeCollateralValidationErrorOr[A] = ValidatedNec[UpdateNodeCollateralValidationError, A]

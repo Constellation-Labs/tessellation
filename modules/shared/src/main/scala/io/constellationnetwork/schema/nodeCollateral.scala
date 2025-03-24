@@ -69,6 +69,7 @@ object nodeCollateral {
   case object UpdateNodeCollateral {
     @derive(eqv, show, encoder, decoder)
     case class Create(
+      source: Address,
       nodeId: PeerId,
       amount: NodeCollateralAmount,
       fee: NodeCollateralFee = NodeCollateralFee(NonNegLong(0L)),
@@ -79,7 +80,10 @@ object nodeCollateral {
     }
 
     @derive(eqv, show, encoder, decoder)
-    case class Withdraw(collateralRef: Hash) extends UpdateNodeCollateral
+    case class Withdraw(
+      source: Address,
+      collateralRef: Hash
+    ) extends UpdateNodeCollateral
   }
   @derive(eqv, show, encoder)
   case class NodeCollateralInfo(

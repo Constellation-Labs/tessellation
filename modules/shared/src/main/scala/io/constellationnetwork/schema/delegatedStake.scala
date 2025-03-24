@@ -68,6 +68,7 @@ object delegatedStake {
   object UpdateDelegatedStake {
     @derive(eqv, show, encoder, decoder)
     case class Create(
+      source: Address,
       nodeId: PeerId,
       amount: DelegatedStakeAmount,
       fee: DelegatedStakeFee = DelegatedStakeFee(NonNegLong(0L)),
@@ -78,7 +79,10 @@ object delegatedStake {
     }
 
     @derive(eqv, show, encoder, decoder)
-    case class Withdraw(stakeRef: Hash) extends UpdateDelegatedStake
+    case class Withdraw(
+      source: Address,
+      stakeRef: Hash
+    ) extends UpdateDelegatedStake
   }
   @derive(eqv, show, encoder)
   case class DelegatedStakeInfo(

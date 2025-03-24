@@ -10,7 +10,6 @@ import io.constellationnetwork.ext.cats.syntax.validated._
 import io.constellationnetwork.node.shared.domain.delegatedStake.UpdateDelegatedStakeValidator.UpdateDelegatedStakeValidationErrorOr
 import io.constellationnetwork.node.shared.domain.seedlist.SeedlistEntry
 import io.constellationnetwork.schema.address.Address
-import io.constellationnetwork.schema.delegatedStake.DelegatedStakeReference._
 import io.constellationnetwork.schema.delegatedStake.{DelegatedStakeReference, UpdateDelegatedStake}
 import io.constellationnetwork.schema.epoch.EpochProgress
 import io.constellationnetwork.schema.nodeCollateral.UpdateNodeCollateral
@@ -31,6 +30,7 @@ trait UpdateDelegatedStakeValidator[F[_]] {
     signed: Signed[UpdateDelegatedStake.Create],
     lastContext: GlobalSnapshotInfo
   ): F[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]]]
+
   def validateWithdrawDelegatedStake(
     signed: Signed[UpdateDelegatedStake.Withdraw],
     lastContext: GlobalSnapshotInfo
@@ -53,14 +53,18 @@ object UpdateDelegatedStakeValidator {
           signaturesV <- signedValidator
             .validateSignatures(signed)
             .map(_.errorMap[UpdateDelegatedStakeValidationError](InvalidSigned))
+          isSignedExclusivelyBySource <- signedValidator
+            .isSignedExclusivelyBy(signed, signed.source)
+            .map(_.errorMap[UpdateDelegatedStakeValidationError](InvalidSigned))
           authorizedNodeIdV = validateAuthorizedNodeId(signed)
-          nodeIdV <- validateNodeId(signed, lastContext)
+          nodeIdV = validateNodeId(signed, lastContext)
           parentV <- validateParent(signed, lastContext)
           tokenLockV <- validateTokenLock(signed, lastContext)
           pendingWithdrawalV <- validatePendingWithdrawal(signed, lastContext)
         } yield
           numberOfSignaturesV
             .productR(signaturesV)
+            .productR(isSignedExclusivelyBySource)
             .productR(authorizedNodeIdV)
             .productR(nodeIdV)
             .productR(parentV)
@@ -76,8 +80,14 @@ object UpdateDelegatedStakeValidator {
           signaturesV <- signedValidator
             .validateSignatures(signed)
             .map(_.errorMap[UpdateDelegatedStakeValidationError](InvalidSigned))
+          isSignedExclusivelyBySource <- signedValidator
+            .isSignedExclusivelyBy(signed, signed.source)
+            .map(_.errorMap[UpdateDelegatedStakeValidationError](InvalidSigned))
           withdrawV <- validateWithdrawal(signed, lastContext)
-        } yield numberOfSignaturesV.productR(signaturesV).productR(withdrawV)
+        } yield numberOfSignaturesV
+          .productR(signaturesV)
+          .productR(isSignedExclusivelyBySource)
+          .productR(withdrawV)
 
       private def validateNumberOfSignatures[A <: UpdateDelegatedStake](
         signed: Signed[A]
@@ -95,10 +105,9 @@ object UpdateDelegatedStakeValidator {
         lastContext: GlobalSnapshotInfo
       ): F[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]]] =
         for {
-          address <- getAddress(signed)
           lastRef <- lastContext.activeDelegatedStakes
             .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]])
-            .get(address)
+            .get(signed.source)
             .flatMap(stakes => Option.when(stakes.nonEmpty)(stakes.maxBy(_._1.ordinal)))
             .traverse(stake => DelegatedStakeReference.of(stake._1))
             .map(_.getOrElse(DelegatedStakeReference.empty))
@@ -121,33 +130,30 @@ object UpdateDelegatedStakeValidator {
       private def validateNodeId(
         signed: Signed[UpdateDelegatedStake.Create],
         lastContext: GlobalSnapshotInfo
-      ): F[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]]] =
-        for {
-          address <- getAddress(signed)
-          activeDelegatedStakes = lastContext.activeDelegatedStakes
-            .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]])
-            .getOrElse(address, List.empty[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)])
-        } yield
-          if (activeDelegatedStakes.exists(s => s._1.nodeId == signed.nodeId)) {
-            StakeExistsForNode(signed.nodeId).invalidNec
-          } else {
-            signed.validNec
-          }
+      ): UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]] = {
+        val activeDelegatedStakes = lastContext.activeDelegatedStakes
+          .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]])
+          .getOrElse(signed.source, List.empty[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)])
+        if (activeDelegatedStakes.exists(s => s._1.nodeId == signed.nodeId)) {
+          StakeExistsForNode(signed.nodeId).invalidNec
+        } else {
+          signed.validNec
+        }
+      }
 
       private def validatePendingWithdrawal(
         signed: Signed[UpdateDelegatedStake.Create],
         lastContext: GlobalSnapshotInfo
       ): F[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Create]]] =
         for {
-          address <- getAddress(signed)
           stakeRef <- lastContext.activeDelegatedStakes
             .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Create], SnapshotOrdinal)]])
-            .getOrElse(address, List.empty)
+            .getOrElse(signed.source, List.empty)
             .traverse { case (stake, _) => DelegatedStakeReference.of(stake) }
             .map(_.find(_ === signed.parent))
           withdrawalRef = lastContext.delegatedStakesWithdrawals
             .getOrElse(SortedMap.empty[Address, List[(Signed[UpdateDelegatedStake.Withdraw], EpochProgress)]])
-            .getOrElse(address, List.empty)
+            .getOrElse(signed.source, List.empty)
             .find { case (w, _) => stakeRef.map(_.hash).contains(w.stakeRef) }
         } yield
           if (withdrawalRef.isEmpty) {
@@ -174,16 +180,18 @@ object UpdateDelegatedStakeValidator {
 
         def validateCreate(address: Address): F[UpdateDelegatedStakeValidationErrorOr[Signed[UpdateDelegatedStake.Withdraw]]] =
           getParent(address, lastContext.activeDelegatedStakes.getOrElse(SortedMap.empty), signed).map {
-            case Some(_) =>
-              signed.validNec
+            case Some(delegatedStaking) =>
+              if (delegatedStaking.source =!= signed.source)
+                InvalidSourceAddress(signed.stakeRef).invalidNec
+              else
+                signed.validNec
             case _ =>
               InvalidStake(signed.stakeRef).invalidNec
           }
 
         for {
-          address <- getAddress(signed)
-          parentV <- validateCreate(address)
-          uniqueV = validateUniqueness(address)
+          parentV <- validateCreate(signed.source)
+          uniqueV = validateUniqueness(signed.source)
         } yield uniqueV.productR(parentV)
       }
 
@@ -221,14 +229,12 @@ object UpdateDelegatedStakeValidator {
             }
         }
 
+        val available = tokenLockAvailable(signed.source)
+
         for {
-          address <- getAddress(signed)
-          available = tokenLockAvailable(address)
-          valid <- if (available) tokenLockValid(address) else available.pure[F]
+          valid <- if (available) tokenLockValid(signed.source) else available.pure[F]
         } yield if (valid) signed.validNec else InvalidTokenLock(signed.tokenLockRef).invalidNec
       }
-
-      private def getAddress(signed: Signed[UpdateDelegatedStake]): F[Address] = signed.proofs.head.id.toAddress
 
       private def getParent(
         address: Address,
@@ -244,13 +250,22 @@ object UpdateDelegatedStakeValidator {
 
   @derive(eqv, show)
   sealed trait UpdateDelegatedStakeValidationError
+
   case class InvalidSigned(error: SignedValidationError) extends UpdateDelegatedStakeValidationError
   case class TooManySignatures(proofs: NonEmptySet[SignatureProof]) extends UpdateDelegatedStakeValidationError
+
   case class StakeExistsForNode(peerId: PeerId) extends UpdateDelegatedStakeValidationError
+
   case class UnauthorizedNode(peerId: PeerId) extends UpdateDelegatedStakeValidationError
+
   case class InvalidStake(parent: Hash) extends UpdateDelegatedStakeValidationError
+
   case class InvalidTokenLock(tokenLockRef: Hash) extends UpdateDelegatedStakeValidationError
+
+  case class InvalidSourceAddress(tokenLockRef: Hash) extends UpdateDelegatedStakeValidationError
+
   case class AlreadyWithdrawn(parent: Hash) extends UpdateDelegatedStakeValidationError
+
   case class InvalidParent(parent: DelegatedStakeReference) extends UpdateDelegatedStakeValidationError
 
   type UpdateDelegatedStakeValidationErrorOr[A] = ValidatedNec[UpdateDelegatedStakeValidationError, A]
